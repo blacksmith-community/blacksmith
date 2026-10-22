@@ -1296,6 +1296,9 @@ func (m *Manager) GetTaskWithRunningInstance(instanceID string) (*UpgradeTask, *
 }
 
 // PauseTask pauses a running task. Current instance continues, but next instances won't start.
+// A certificate redeploy's running deploy and its verification finish
+// before the pause holds the task, since the processor waits only
+// between instances.
 func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 	m.mu.Lock()
 
@@ -1335,8 +1338,14 @@ func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// ResumeTask resumes a paused task.
+// ResumeTask resumes a paused task. A certificate task resumes only when
+// the switches allow its mode to write, and a refusal leaves it paused.
 func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
+	err := m.certResumeAllowed(taskID)
+	if err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	task, exists := m.tasks[taskID]
 	if !exists {
@@ -1381,7 +1390,11 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 // restart, and which a loaded upgrade is still settling. It
 // leaves every instance's status and the counts to the upgrade, which
 // records each instance's outcome from its task's final state. The
-// manager's lock is never held across a director call.
+// manager's lock is never held across a director call. A certificate
+// instance that is verifying a done deploy finishes its verification. A
+// running instance of a certificate redeploy that nothing follows and
+// that has nothing in flight is cancelled here, or by its processor once
+// it stops, so none stays reserved with nothing following it.
 func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	m.mu.Lock()
 	task, exists := m.tasks[taskID]
@@ -1417,11 +1430,17 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
 
+	ended := m.cancelIdleLocked(task)
+
 	// No deploy of a pending instance is sent once the upgrade is
 	// cancelled, so those are free now, and a running one stays held while
 	// its processor follows it.
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
+
+	if ended > 0 {
+		m.logger.Info("Cancelled %d idle instances of certificate task %s", ended, taskID)
+	}
 
 	for _, deploy := range running {
 		m.cancelDeployTask(ctx, deploy.instanceID, deploy.boshTaskID)
@@ -1566,8 +1585,18 @@ func (m *Manager) runTask(task *UpgradeTask) {
 
 		m.mu.Lock()
 		delete(m.owned, task.ID)
+		ended := m.cancelIdleLocked(task)
 		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
+
+		if ended > 0 {
+			m.logger.Info("Cancelled %d idle instances of certificate task %s once its processor stopped", ended, task.ID)
+
+			err := m.persistTask(context.WithoutCancel(m.ctx), task)
+			if err != nil {
+				m.logger.Error("Failed to persist the cancelled instances of task %s: %v", task.ID, err)
+			}
+		}
 	}()
 
 	release, ok := m.acquireSlot(task, cancelCh)
@@ -1968,18 +1997,25 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 		m.owned[task.ID] = true
 	}
 
-	skipped := 0
+	skipped, ended := 0, 0
 	if settled && task.Status == TaskStatusCancelled {
 		skipped = m.skipPendingLocked(task)
+		ended = m.cancelIdleLocked(task)
 	}
 	m.mu.Unlock()
 
+	if ended > 0 {
+		m.logger.Info("Cancelled %d idle instances of certificate task %s", ended, task.ID)
+	}
+
 	if skipped > 0 {
 		m.logger.Info("Skipped %d pending instances of cancelled task %s", skipped, task.ID)
+	}
 
+	if skipped > 0 || ended > 0 {
 		err := m.persistTask(context.WithoutCancel(m.ctx), task)
 		if err != nil {
-			m.logger.Error("Failed to persist the skipped instances of task %s: %v", task.ID, err)
+			m.logger.Error("Failed to persist the ended instances of task %s: %v", task.ID, err)
 		}
 	}
 
@@ -2517,6 +2553,17 @@ func (m *Manager) adoptTask(taskID int) {
 func (m *Manager) settleLoadedDeploy(deploy loadedDeploy) {
 	defer m.wg.Done()
 	defer m.endSettling(deploy)
+
+	failedBefore := m.instanceFailed(deploy.instance)
+
+	// A certificate instance whose settle fails it pauses the task as a
+	// failure its processor records does, before endSettling moves the
+	// task on.
+	defer func() {
+		if !failedBefore && m.instanceFailed(deploy.instance) && deploy.task.KindOrDefault() == TaskKindCertificates {
+			m.pauseAfterFailure(context.WithoutCancel(m.ctx), deploy.task, deploy.instance)
+		}
+	}()
 
 	switch {
 	case deploy.ended:

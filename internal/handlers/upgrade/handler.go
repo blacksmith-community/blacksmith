@@ -539,11 +539,18 @@ func writeCreateError(writer http.ResponseWriter, err error) {
 	}
 }
 
-// writeTaskActionError answers a failed pause, resume, or cancel. An unknown
-// task is not found, a task whose state does not allow the action is a
+// writeTaskActionError answers a failed pause, resume, or cancel. An error
+// that carries its own status and code answers with them, an unknown task
+// is not found, a task whose state does not allow the action is a
 // conflict, and anything else is an internal error.
 func writeTaskActionError(w http.ResponseWriter, err error) {
+	var apiErr *apierr.Error
+
 	switch {
+	case errors.As(err, &apiErr):
+		// A refusal that carries its own status and code, such as a
+		// certificate task's resume while rotation is off, keeps them.
+		apierr.Write(w, err, http.StatusInternalServerError)
 	case errors.Is(err, upgrade.ErrTaskNotFound):
 		response.WriteErrorCode(w, http.StatusNotFound, apierr.CodeInstanceNotFound, err.Error())
 	case errors.Is(err, upgrade.ErrTaskNotRunning), errors.Is(err, upgrade.ErrTaskNotPaused):

@@ -428,3 +428,16 @@ func TestDecisionRoutesAnswerErrors(t *testing.T) {
 		t.Fatalf("expected no manager call for an undecodable body, got %d", after-before)
 	}
 }
+
+// A refusal of a resume by the switches answers with its own status and
+// code, so the operator sees why the task stays paused.
+func TestResumeRefusalKeepsItsCode(t *testing.T) {
+	t.Parallel()
+
+	err := apierr.New(http.StatusForbidden, apierr.CodeRotationDisabled, "Rotation is off on this broker.")
+
+	status, body := serve(t, http.MethodPost, "/b/upgrade/tasks/x/resume", err)
+	if status != http.StatusForbidden || body["code"] != apierr.CodeRotationDisabled || body["error"] != "Rotation is off on this broker." {
+		t.Fatalf("status %d, body %v", status, body)
+	}
+}

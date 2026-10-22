@@ -9,12 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/config"
@@ -347,6 +349,9 @@ type redeployEnv struct {
 	oldLeaf, newLeaf *x509.Certificate
 	newKey           *ecdsa.PrivateKey
 
+	// settings, when set, is the manager's certificate settings.
+	settings func() certinventory.Settings
+
 	mu       sync.Mutex
 	switches config.CertificatesConfig
 	scans    []string
@@ -468,6 +473,7 @@ func (e *redeployEnv) newManager() *Manager {
 		Now:          func() time.Time { return validateNow },
 		ScanInstance: e.scan,
 		Prober:       certinventory.Prober{Timeout: 2 * time.Second},
+		Settings:     e.settings,
 	})
 	if err != nil {
 		e.t.Fatalf("Configure: %v", err)
@@ -1416,4 +1422,512 @@ func TestRedeployVerifyEmptyAnswers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// missingLeaf is a variable the director does not deploy, so a preflight
+// that checks it fails and changes nothing.
+const missingLeaf = "/ws-bosh/redis-instance-0/missing_leaf"
+
+// twoInstanceTask returns a confirmed redeploy task of the env's real
+// instance followed by a second instance on its own deployment.
+func (e *redeployEnv) twoInstanceTask() UpgradeTask {
+	task := e.task()
+
+	second := e.task().Instances[0]
+	second.InstanceID = "instance-2"
+	second.DeploymentName = "redis-instance-2"
+
+	task.Instances = append(task.Instances, second)
+	task.TotalCount = 2
+
+	return task
+}
+
+// failingFirstTask returns a confirmed redeploy task whose first instance
+// selects a variable the director does not deploy, so its preflight fails,
+// followed by the env's real instance.
+func (e *redeployEnv) failingFirstTask() UpgradeTask {
+	task := e.task()
+
+	failing := e.task().Instances[0]
+	failing.InstanceID = "instance-0"
+	failing.DeploymentName = "redis-instance-0"
+	failing.Certificates.Approved.Selected = []VersionPair{{Name: missingLeaf, DeployedVersionID: "v1", LatestVersionID: "v1"}}
+	failing.Certificates.Variables = []VariableRotation{{Name: missingLeaf, CertificateID: "cert-0", OldVersionID: "v1", RegenerateState: RegenerateNotSent}}
+
+	task.Instances = append([]InstanceUpgrade{failing}, task.Instances...)
+	task.TotalCount = 2
+
+	return task
+}
+
+// startLoaded loads a task that never started, which loads paused, and
+// resumes it.
+func (e *redeployEnv) startLoaded(task UpgradeTask) *Manager {
+	e.t.Helper()
+
+	manager := e.load(task)
+
+	waitUntil(e.t, "the task to load paused", func() bool { return current(e.t, manager).Status == TaskStatusPaused })
+
+	err := manager.ResumeTask(context.Background(), certTaskID)
+	if err != nil {
+		e.t.Fatalf("ResumeTask: %v", err)
+	}
+
+	return manager
+}
+
+// gateDeploys makes the wait on a deploy report that it started and hold
+// until the returned release, after which the deploy ends done and applies
+// v2, as the default wait does. A stop ends the hold.
+func (e *redeployEnv) gateDeploys() (<-chan struct{}, func()) {
+	started := make(chan struct{})
+	gate := make(chan struct{})
+
+	var startOnce, releaseOnce sync.Once
+
+	e.director.mu.Lock()
+	e.director.finish = func(ctx context.Context, taskID int) (*bosh.Task, error) {
+		startOnce.Do(func() { close(started) })
+
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+
+		e.deployedNewVersion()
+
+		return &bosh.Task{ID: taskID, State: boshTaskDone, Deployment: waitDeployment}, nil
+	}
+	e.director.mu.Unlock()
+
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	e.t.Cleanup(release)
+
+	return started, release
+}
+
+// A pause during a redeploy lets the running deploy and its verification
+// finish, and the next instance does not start until a resume.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificatePauseBetweenInstances(t *testing.T) {
+	env := newRedeployEnv(t)
+	started, release := env.gateDeploys()
+
+	manager := env.startLoaded(env.twoInstanceTask())
+
+	select {
+	case <-started:
+	case <-time.After(waitTimeout):
+		t.Fatal("the deploy never started")
+	}
+
+	err := manager.PauseTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("PauseTask: %v", err)
+	}
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusRunning {
+		t.Fatalf("expected the pause to leave the deploying instance running, got %s", inst.Status)
+	}
+
+	release()
+
+	task := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if task.Status != TaskStatusPaused {
+		t.Fatalf("expected the task to stay paused, got %s", task.Status)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	task = current(t, manager)
+	if task.Instances[1].Status != InstanceStatusPending {
+		t.Fatalf("expected the next instance to wait for a resume, got %s", task.Instances[1].Status)
+	}
+
+	if sent := len(env.director.deploys()); sent != 1 {
+		t.Fatalf("expected one deploy, got %d", sent)
+	}
+
+	if saved := env.stored(); saved.Status != TaskStatusPaused || saved.Instances[0].Status != InstanceStatusSuccess {
+		t.Fatalf("expected the saved task paused with the instance done, got %s and %s", saved.Status, saved.Instances[0].Status)
+	}
+}
+
+// A cancel during a redeploy's deploy cancels its BOSH task. The instance
+// stays reserved until its follower sees the task end, and then fails
+// with the new versions left deploy_pending.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelCancelsDeploy(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	started := make(chan struct{})
+	gate := make(chan struct{})
+
+	var startOnce, releaseOnce sync.Once
+
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+
+	env.director.finish = func(ctx context.Context, taskID int) (*bosh.Task, error) {
+		startOnce.Do(func() { close(started) })
+
+		for !slices.Contains(env.director.cancelled(), taskID) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+
+		return &bosh.Task{ID: taskID, State: boshTaskCancelled, Deployment: waitDeployment}, nil
+	}
+
+	manager := env.startLoaded(env.task())
+
+	select {
+	case <-started:
+	case <-time.After(waitTimeout):
+		t.Fatal("the deploy never started")
+	}
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	if cancels := env.director.cancelled(); !slices.Equal(cancels, []int{redeployTaskID}) {
+		t.Fatalf("expected BOSH task %d to be cancelled once, got %v", redeployTaskID, cancels)
+	}
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusRunning {
+		t.Fatalf("expected the instance to stay running until its task ends, got %s", inst.Status)
+	}
+
+	expectHeld(t, manager)
+
+	release()
+
+	task := eventuallyInstance(t, manager, InstanceStatusFailed)
+	if task.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", task.Status)
+	}
+
+	if !strings.Contains(task.Instances[0].Error, "was cancelled") || !strings.Contains(task.Instances[0].Error, "deploy_pending") {
+		t.Fatalf("expected the cancelled deploy's message, got %q", task.Instances[0].Error)
+	}
+
+	expectReleased(t, manager)
+}
+
+// waitForInstance waits until the task's instance at index has the status.
+func waitForInstance(t *testing.T, manager *Manager, index int, status InstanceStatus) UpgradeTask {
+	t.Helper()
+
+	waitUntil(t, fmt.Sprintf("instance %d status %s", index, status), func() bool {
+		return current(t, manager).Instances[index].Status == status
+	})
+
+	return current(t, manager)
+}
+
+// With pause_on_failure on, as it is by default, a failed instance pauses
+// the task, and the next instance waits for the operator.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificatePauseOnFailure(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	manager := env.startLoaded(env.failingFirstTask())
+
+	waitForInstance(t, manager, 0, InstanceStatusFailed)
+	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	time.Sleep(100 * time.Millisecond)
+
+	task := current(t, manager)
+	if !task.Paused || task.Instances[1].Status != InstanceStatusPending {
+		t.Fatalf("expected a paused task with the next instance pending, got paused %v and %s", task.Paused, task.Instances[1].Status)
+	}
+
+	if count := env.credhub.regenerateCount(); count != 0 {
+		t.Fatalf("expected no regenerate, got %d", count)
+	}
+
+	if saved := env.stored(); saved.Status != TaskStatusPaused {
+		t.Fatalf("expected the paused task to be saved, got %s", saved.Status)
+	}
+}
+
+// With pause_on_failure off, a failed instance does not pause the task,
+// and the next instance runs.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateNoPauseOnFailureWhenOff(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.settings = func() certinventory.Settings {
+		settings := certinventory.DefaultSettings()
+		settings.PauseOnFailure = false
+
+		return settings
+	}
+
+	manager := env.startLoaded(env.failingFirstTask())
+
+	task := waitForInstance(t, manager, 1, InstanceStatusSuccess)
+	if task.Instances[0].Status != InstanceStatusFailed {
+		t.Fatalf("expected the first instance to fail, got %s", task.Instances[0].Status)
+	}
+
+	waitUntil(t, "the task to complete", func() bool { return current(t, manager).Status == TaskStatusCompleted })
+}
+
+// A resume after a failure pause goes on with the remaining instances and
+// never retries the failed one.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateResumeSkipsFailed(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	manager := env.startLoaded(env.failingFirstTask())
+
+	waitForInstance(t, manager, 0, InstanceStatusFailed)
+	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	failed := current(t, manager).Instances[0]
+
+	err := manager.ResumeTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	waitForInstance(t, manager, 1, InstanceStatusSuccess)
+	waitUntil(t, "the task to complete", func() bool { return current(t, manager).Status == TaskStatusCompleted })
+
+	task := current(t, manager)
+	if task.FailedCount != 1 || task.CompletedCount != 1 {
+		t.Fatalf("expected one failed and one completed instance, got %d and %d", task.FailedCount, task.CompletedCount)
+	}
+
+	again := task.Instances[0]
+	if again.Status != InstanceStatusFailed || again.Error != failed.Error || !again.CompletedAt.Equal(*failed.CompletedAt) {
+		t.Fatalf("expected the failed instance to stay as it was, got %s: %q", again.Status, again.Error)
+	}
+
+	if sent := len(env.director.deploys()); sent != 1 {
+		t.Fatalf("expected only the remaining instance to deploy, got %d deploys", sent)
+	}
+}
+
+// A failure that a loaded deploy's follower records pauses the task too,
+// so the next instance waits for the operator.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificatePauseOnFailureOfLoadedDeploy(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.madeNewVersion()
+	env.director.finish = func(_ context.Context, taskID int) (*bosh.Task, error) {
+		return &bosh.Task{ID: taskID, State: boshTaskError, Result: "compilation failed"}, nil
+	}
+
+	stored := env.deployedTask()
+	second := env.task().Instances[0]
+	second.InstanceID = "instance-2"
+	second.DeploymentName = "redis-instance-2"
+	stored.Instances = append(stored.Instances, second)
+	stored.TotalCount = 2
+
+	manager := env.load(stored)
+
+	eventuallyInstance(t, manager, InstanceStatusFailed)
+	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	time.Sleep(100 * time.Millisecond)
+
+	if task := current(t, manager); task.Instances[1].Status != InstanceStatusPending {
+		t.Fatalf("expected the next instance to stay pending, got %s", task.Instances[1].Status)
+	}
+}
+
+// A resume with rotation off is refused with rotation_disabled, and the
+// task stays paused with nothing changed.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateResumeRefusedWithRotationOff(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	manager := env.load(env.task())
+
+	waitUntil(t, "the task to load paused", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	env.setSwitches(false)
+
+	err := manager.ResumeTask(context.Background(), certTaskID)
+
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden || apiErr.Code != apierr.CodeRotationDisabled {
+		t.Fatalf("expected a 403 rotation_disabled refusal, got %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	task := current(t, manager)
+	if task.Status != TaskStatusPaused || !task.Paused {
+		t.Fatalf("expected the task to stay paused, got %s", task.Status)
+	}
+
+	if saved := env.stored(); saved.Status != TaskStatusPaused {
+		t.Fatalf("expected the saved task to stay paused, got %s", saved.Status)
+	}
+
+	if count := env.credhub.regenerateCount(); count != 0 {
+		t.Fatalf("expected no regenerate, got %d", count)
+	}
+}
+
+// A cancel never interrupts a verification that is running. The deploy is
+// done, so no BOSH cancel is sent, and the instance completes and frees
+// its reservation.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelLetsVerificationFinish(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	accepted, release := env.listener.hold()
+	t.Cleanup(release)
+
+	manager := env.startLoaded(env.task())
+
+	select {
+	case <-accepted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the verification never probed the listener")
+	}
+
+	if sent := len(env.director.deploys()); sent != 1 {
+		t.Fatalf("expected the deploy to be sent before the probe, got %d deploys", sent)
+	}
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusRunning {
+		t.Fatalf("expected the verifying instance to stay running, got %s", inst.Status)
+	}
+
+	expectHeld(t, manager)
+
+	release()
+
+	task := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if task.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", task.Status)
+	}
+
+	if cancels := env.director.cancelled(); len(cancels) != 0 {
+		t.Fatalf("expected no BOSH cancel for a done deploy, got %v", cancels)
+	}
+
+	expectReleased(t, manager)
+}
+
+// idleTask returns a task paused with its instance running and nothing in
+// flight, as a pause before a write leaves it. A regenerated instance has
+// v2 in CredHub and paused before its deploy phase began.
+func (e *redeployEnv) idleTask(regenerated bool) UpgradeTask {
+	task := e.runningTask()
+	task.Status = TaskStatusPaused
+	task.Paused = true
+	task.Instances[0].Error = rotationOffMessage
+
+	if regenerated {
+		e.madeNewVersion()
+
+		task.Instances[0].Certificates.Variables[0].RegenerateState = RegenerateConfirmed
+		task.Instances[0].Certificates.Variables[0].NewVersionID = "v2"
+	}
+
+	return task
+}
+
+// A cancel of a task that nothing processes ends its running instance
+// that has nothing in flight, so no instance stays reserved with nothing
+// following it. A regenerated instance says its new versions are
+// deploy_pending.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelEndsIdleInstance(t *testing.T) {
+	for _, regenerated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("regenerated=%v", regenerated), func(t *testing.T) {
+			env := newRedeployEnv(t)
+
+			manager := env.load(env.idleTask(regenerated))
+			expectHeld(t, manager)
+
+			err := manager.CancelTask(context.Background(), certTaskID)
+			if err != nil {
+				t.Fatalf("CancelTask: %v", err)
+			}
+
+			task := eventuallyInstance(t, manager, InstanceStatusCancelled)
+			if task.CancelledCount != 1 || task.Status != TaskStatusCancelled {
+				t.Fatalf("expected one cancelled instance of a cancelled task, got %d and %s", task.CancelledCount, task.Status)
+			}
+
+			if pending := strings.Contains(task.Instances[0].Error, "deploy_pending"); pending != regenerated {
+				t.Fatalf("expected deploy_pending in the message only when regenerated, got %q", task.Instances[0].Error)
+			}
+
+			expectReleased(t, manager)
+
+			waitUntil(t, "the cancelled instance to be saved", func() bool {
+				return env.stored().Instances[0].Status == InstanceStatusCancelled
+			})
+
+			if sent := len(env.director.deploys()); sent != 0 {
+				t.Fatalf("expected no deploy, got %d", sent)
+			}
+		})
+	}
+}
+
+// A cancel of a task whose processor waits out a pause ends the idle
+// instance once the processor stops.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelEndsPausedProcessorsInstance(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.setSwitches(false)
+
+	manager := env.load(env.runningTask())
+
+	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	task := eventuallyInstance(t, manager, InstanceStatusCancelled)
+	if task.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", task.Status)
+	}
+
+	expectReleased(t, manager)
+
+	waitUntil(t, "the cancelled instance to be saved", func() bool {
+		return env.stored().Instances[0].Status == InstanceStatusCancelled
+	})
 }

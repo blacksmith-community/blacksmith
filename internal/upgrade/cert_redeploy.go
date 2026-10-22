@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,12 +143,19 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 
 		m.mu.RLock()
 		settled := inst.Status.settled() && !waitsForDecision(inst)
+		failed := inst.Status == InstanceStatusFailed
 		paused := task.Paused
 		cancelled := task.Status == TaskStatusCancelled
 		m.mu.RUnlock()
 
 		switch {
 		case settled:
+			// The task goes on to its next instance, whose pause wait
+			// holds it when this failure paused the task.
+			if failed {
+				m.pauseAfterFailure(persistCtx, task, inst)
+			}
+
 			return true
 		case paused || cancelled:
 			continue
@@ -223,7 +231,7 @@ func (m *Manager) rotateInstanceRedeploy(ctx context.Context, task *UpgradeTask,
 		return m.instanceSettled(inst)
 	}
 
-	if m.stopIfCancelled(ctx, task, inst, "The task was cancelled before the rotation changed anything.") {
+	if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
 		return true
 	}
 
@@ -234,7 +242,7 @@ func (m *Manager) rotateInstanceRedeploy(ctx context.Context, task *UpgradeTask,
 			return m.instanceSettled(inst)
 		}
 
-		if m.stopIfCancelled(ctx, task, inst, "The task was cancelled before the rotation changed anything.") {
+		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
 			return true
 		}
 	}
@@ -268,7 +276,7 @@ func (m *Manager) redeployFromMutation(ctx context.Context, task *UpgradeTask, i
 		return m.instanceSettled(inst)
 	}
 
-	if m.stopIfCancelled(ctx, task, inst, "The task was cancelled before the deploy. "+deployPendingNote) {
+	if m.stopIfCancelled(ctx, task, inst, cancelledUndeployed) {
 		return true
 	}
 
@@ -747,6 +755,138 @@ func (m *Manager) awaitVerifyDecision(ctx context.Context, task *UpgradeTask, in
 	if err != nil {
 		m.logger.Error("Failed to save instance %s while it waits for a decision: %v", inst.InstanceID, err)
 	}
+}
+
+// pauseAfterFailure pauses a running certificate task once one of its
+// instances failed, when pause_on_failure is on and an instance is still
+// pending, so the operator decides whether the remaining instances go on.
+// A resume goes on with them and never retries the failed one, which is
+// settled. It saves the pause.
+func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
+	if !m.pausesOnFailure() {
+		return
+	}
+
+	m.mu.Lock()
+
+	pause := task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
+	if pause {
+		task.Paused = true
+		task.Status = TaskStatusPaused
+	}
+
+	m.mu.Unlock()
+
+	if !pause {
+		return
+	}
+
+	m.logger.Info("Instance %s of certificate task %s failed, so the task pauses before its remaining instances", inst.InstanceID, task.ID)
+
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to save certificate task %s paused after a failure: %v", task.ID, err)
+	}
+}
+
+// certResumeAllowed refuses the resume of a paused certificate task while
+// the switches refuse its mode, with the reason a paused task shows. Any
+// other task, and a task that is not paused, is left to ResumeTask.
+func (m *Manager) certResumeAllowed(taskID string) error {
+	m.mu.RLock()
+	task, exists := m.tasks[taskID]
+	check := exists && task.KindOrDefault() == TaskKindCertificates && task.Status == TaskStatusPaused
+
+	var mode RotationMode
+	if check {
+		mode = certTaskMode(task)
+	}
+
+	m.mu.RUnlock()
+
+	if !check {
+		return nil
+	}
+
+	err := m.certWritesAllowed(mode)
+	if err != nil {
+		m.logger.Info("Certificate task %s stays paused, because its writes are refused: %v", taskID, err)
+
+		return writesRefused(err)
+	}
+
+	return nil
+}
+
+// instanceFailed reports whether the instance failed.
+func (m *Manager) instanceFailed(inst *InstanceUpgrade) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return inst.Status == InstanceStatusFailed
+}
+
+// Messages of an instance that a cancel ends before its deploy was sent.
+const (
+	cancelledUnchanged  = "The task was cancelled before the rotation changed anything."
+	cancelledUndeployed = "The task was cancelled before the deploy. " + deployPendingNote
+)
+
+// cancelIdleLocked ends each running instance of a cancelled redeploy
+// task that nothing processes or settles and that has nothing in flight:
+// no deploy task or context ID on record, and no regeneration whose
+// outcome is unknown. Such an instance would otherwise stay reserved with
+// nothing to follow it. It is marked cancelled, saying that its new
+// versions are deploy_pending when its regeneration started, and
+// released. An instance with a deploy or a regeneration in flight is left
+// to whatever follows it, or to the next load, which makes it wait for a
+// decision. A manager that is stopping ends nothing, since the next load
+// does it. It returns how many instances it ended. The caller holds mu.
+func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
+	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCertificates ||
+		certTaskMode(task) != RotationModeRedeploy || m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
+		return 0
+	}
+
+	ended := 0
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status != InstanceStatusRunning || followedTaskID(inst) > 0 || followedContextID(inst) != "" || regenerationUncertainLocked(inst) {
+			continue
+		}
+
+		message := cancelledUnchanged
+		if regenerationStartedLocked(inst) {
+			message = cancelledUndeployed
+		}
+
+		now := m.certNowLocked()
+		inst.Status = InstanceStatusCancelled
+		inst.CompletedAt = &now
+		inst.Error = message
+		task.CancelledCount++
+		ended++
+	}
+
+	if ended > 0 {
+		m.releaseUnheldLocked(task)
+	}
+
+	return ended
+}
+
+// regenerationUncertainLocked reports whether a regeneration of the
+// instance may have reached CredHub without its answer being recorded.
+// The caller holds mu.
+func regenerationUncertainLocked(inst *InstanceUpgrade) bool {
+	if inst.Certificates == nil {
+		return false
+	}
+
+	return slices.ContainsFunc(inst.Certificates.Variables, func(v VariableRotation) bool {
+		return v.RegenerateState == RegenerateSending || v.RegenerateState == RegenerateOutcomeUnknown
+	})
 }
 
 // verifyIfCancelled verifies an instance of a cancelled task whose done
