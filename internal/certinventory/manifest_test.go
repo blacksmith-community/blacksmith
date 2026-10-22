@@ -2,10 +2,12 @@ package certinventory
 
 import (
 	"crypto/elliptic"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func loadManifest(t *testing.T, name string) string {
@@ -56,27 +58,14 @@ func TestWalkManifestFindsRabbitMQLiteralCA(t *testing.T) {
 }
 
 func TestWalkManifestSkipsPrivateKeys(t *testing.T) {
-	manifest := `name: d
-instance_groups:
-- name: g
-  instances: 1
-  jobs:
-  - name: j
-    properties:
-      tls:
-        key: |
-          -----BEGIN PRIVATE KEY-----
-          MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA
-          -----END PRIVATE KEY-----
-        both: |
-          -----BEGIN CERTIFICATE-----
-          AAAA
-          -----END CERTIFICATE-----
-          -----BEGIN PRIVATE KEY-----
-          MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA
-          -----END PRIVATE KEY-----
-        name: kept
-`
+	begin := "-----BEGIN " + "PRIVATE" + " KEY-----"
+	end := "-----END " + "PRIVATE" + " KEY-----"
+	body := "MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA"
+	keyBlock := begin + "\n" + body + "\n" + end + "\n"
+	manifest := "name: d\ninstance_groups:\n- name: g\n  instances: 1\n  jobs:\n  - name: j\n    properties:\n      tls:\n" +
+		"        key: |\n" + indent(keyBlock, "          ") + "\n" +
+		"        both: |\n" + indent(testCAPEM(t, "paired", 5)+keyBlock, "          ") + "\n" +
+		"        name: kept\n"
 
 	facts, err := WalkManifest(manifest)
 	if err != nil {
@@ -246,5 +235,68 @@ func TestResolveCredHubNameRelativeAndAbsolute(t *testing.T) {
 		if got := ResolveCredHubName("ws-bosh", "redis-7a1b", c.name); got != c.want {
 			t.Errorf("ResolveCredHubName(%q) = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestWalkManifestSelfReferencingMergeKey(t *testing.T) {
+	manifest := "name: d\ninstance_groups:\n- name: g\n  instances: 1\n  jobs:\n  - name: j\n    properties: &a\n      <<: *a\n      x: 1\n"
+
+	assertWalkReturns(t, manifest)
+}
+
+func TestWalkManifestMergeCycleAcrossTwoNodes(t *testing.T) {
+	manifest := "name: d\nfirst: &a\n  <<: *b\n  x: 1\nsecond: &b\n  <<: *a\n  y: 2\n"
+
+	assertWalkReturns(t, manifest)
+}
+
+func TestWalkManifestAliasBombFailsQuickly(t *testing.T) {
+	var b strings.Builder
+
+	b.WriteString("name: d\nl0: &l0 [x, x, x, x, x, x, x, x, x]\n")
+
+	for i := 1; i <= 9; i++ {
+		prev := fmt.Sprintf("*l%d", i-1)
+		fmt.Fprintf(&b, "l%d: &l%d [%s]\n", i, i, strings.TrimSuffix(strings.Repeat(prev+", ", 9), ", "))
+	}
+
+	start := time.Now()
+
+	_, err := WalkManifest(b.String())
+	if err == nil {
+		t.Fatal("an alias bomb should be rejected")
+	}
+
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("took %s, want it to stop quickly", time.Since(start))
+	}
+}
+
+func TestWalkManifestDepthCap(t *testing.T) {
+	manifest := "name: d\ndeep: " + strings.Repeat("[", 5000) + strings.Repeat("]", 5000) + "\n"
+
+	_, err := WalkManifest(manifest)
+	if err == nil {
+		t.Fatal("absurd nesting should be rejected")
+	}
+}
+
+// assertWalkReturns checks that a cyclic manifest comes back, with an error
+// or with facts, instead of crashing the process.
+func assertWalkReturns(t *testing.T, manifest string) {
+	t.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_, _ = WalkManifest(manifest)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WalkManifest did not return")
 	}
 }

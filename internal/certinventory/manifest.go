@@ -21,8 +21,11 @@ type Literal struct {
 
 // JobFacts describes one job of an instance group.
 type JobFacts struct {
-	Group      string
-	Job        string
+	Group string
+	Job   string
+	// Properties holds the job's properties minus any private key. It can
+	// still hold other secrets such as passwords, so callers must never log
+	// it or return it.
 	Properties map[string]interface{}
 	// CertRefs maps a dotted property path to the variable named in a
 	// ((name.certificate)) reference.
@@ -62,25 +65,30 @@ func WalkManifest(manifest string) (*ManifestFacts, error) {
 		return nil, errors.New("parse manifest: the manifest is empty")
 	}
 
-	root := &doc
-	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
-		root = root.Content[0]
-	}
-
-	root = deref(root)
-	if root.Kind != yaml.MappingNode {
-		return nil, errors.New("parse manifest: the top level is not a mapping")
-	}
-
 	w := &walker{
 		facts: &ManifestFacts{
 			SigningCAs: map[string]string{},
 			Groups:     map[string]int{},
 		},
-		active: map[*yaml.Node]bool{},
+		active:  map[*yaml.Node]bool{},
+		merging: map[*yaml.Node]bool{},
+	}
+
+	root := &doc
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+
+	root = w.deref(root)
+	if root.Kind != yaml.MappingNode {
+		return nil, errors.New("parse manifest: the top level is not a mapping")
 	}
 
 	w.top(root)
+
+	if w.err != nil {
+		return nil, w.err
+	}
 
 	return w.facts, nil
 }
@@ -95,15 +103,79 @@ func ResolveCredHubName(director, deployment, name string) string {
 	return "/" + director + "/" + deployment + "/" + name
 }
 
+// Limits that keep an untrusted manifest from costing unbounded time or
+// memory. A real director manifest stays far below all of them.
+const (
+	maxWalkDepth    = 200
+	maxAliasUses    = 10000
+	maxNodesVisited = 500000
+)
+
 type walker struct {
-	facts  *ManifestFacts
-	active map[*yaml.Node]bool
+	facts   *ManifestFacts
+	active  map[*yaml.Node]bool
+	merging map[*yaml.Node]bool
+	err     error
+	depth   int
+	aliases int
+	visited int
 }
 
-// deref follows an alias to the node it names.
-func deref(n *yaml.Node) *yaml.Node {
+// stop records the first limit that tripped. Every later step sees the error
+// and returns without doing more work.
+func (w *walker) stop(format string, args ...interface{}) {
+	if w.err == nil {
+		w.err = fmt.Errorf("parse manifest: "+format, args...)
+	}
+}
+
+// enter counts a visit and a level of depth. It reports false when the walk
+// must not go further, and leave must follow only after a true result.
+func (w *walker) enter() bool {
+	if w.err != nil {
+		return false
+	}
+
+	w.visited++
+	if w.visited > maxNodesVisited {
+		w.stop("the manifest is too large to walk (more than %d nodes)", maxNodesVisited)
+
+		return false
+	}
+
+	if w.depth >= maxWalkDepth {
+		w.stop("the manifest nests deeper than %d levels", maxWalkDepth)
+
+		return false
+	}
+
+	w.depth++
+
+	return true
+}
+
+func (w *walker) leave() { w.depth-- }
+
+// emptyNode stands in for a node once a limit has tripped, so callers that
+// read the result never meet nil.
+var emptyNode = &yaml.Node{Kind: yaml.ScalarNode}
+
+// deref follows an alias to the node it names. Each alias followed spends
+// from a budget shared by the whole walk.
+func (w *walker) deref(n *yaml.Node) *yaml.Node {
 	for n != nil && n.Kind == yaml.AliasNode {
+		w.aliases++
+		if w.aliases > maxAliasUses {
+			w.stop("the manifest uses more than %d aliases", maxAliasUses)
+
+			return emptyNode
+		}
+
 		n = n.Alias
+	}
+
+	if w.err != nil {
+		return emptyNode
 	}
 
 	return n
@@ -113,7 +185,19 @@ type pair struct{ key, value *yaml.Node }
 
 // pairs returns a mapping's entries with merge keys expanded. Explicit keys
 // win over merged ones.
-func pairs(n *yaml.Node) []pair {
+func (w *walker) pairs(n *yaml.Node) []pair {
+	if w.err != nil || w.merging[n] {
+		return nil
+	}
+
+	if !w.enter() {
+		return nil
+	}
+	defer w.leave()
+
+	w.merging[n] = true
+	defer delete(w.merging, n)
+
 	var out []pair
 
 	seen := map[string]bool{}
@@ -123,13 +207,13 @@ func pairs(n *yaml.Node) []pair {
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
 		if k.Kind == yaml.ScalarNode && k.Tag == "!!merge" {
-			src := deref(v)
+			src := w.deref(v)
 			if src != nil && src.Kind == yaml.MappingNode {
-				merged = append(merged, pairs(src)...)
+				merged = append(merged, w.pairs(src)...)
 			} else if src != nil && src.Kind == yaml.SequenceNode {
 				for _, item := range src.Content {
-					if m := deref(item); m != nil && m.Kind == yaml.MappingNode {
-						merged = append(merged, pairs(m)...)
+					if m := w.deref(item); m != nil && m.Kind == yaml.MappingNode {
+						merged = append(merged, w.pairs(m)...)
 					}
 				}
 			}
@@ -162,8 +246,8 @@ func joinPath(base, key string) string {
 }
 
 func (w *walker) top(root *yaml.Node) {
-	for _, p := range pairs(root) {
-		val := deref(p.value)
+	for _, p := range w.pairs(root) {
+		val := w.deref(p.value)
 
 		switch p.key.Value {
 		case "name":
@@ -187,15 +271,15 @@ func (w *walker) variables(n *yaml.Node) {
 	}
 
 	for _, item := range n.Content {
-		m := deref(item)
+		m := w.deref(item)
 		if m == nil || m.Kind != yaml.MappingNode {
 			continue
 		}
 
 		var name, typ, ca string
 
-		for _, p := range pairs(m) {
-			v := deref(p.value)
+		for _, p := range w.pairs(m) {
+			v := w.deref(p.value)
 
 			switch p.key.Value {
 			case "name":
@@ -204,9 +288,9 @@ func (w *walker) variables(n *yaml.Node) {
 				typ = scalar(v)
 			case "options":
 				if v.Kind == yaml.MappingNode {
-					for _, o := range pairs(v) {
+					for _, o := range w.pairs(v) {
 						if o.key.Value == "ca" {
-							ca = scalar(deref(o.value))
+							ca = scalar(w.deref(o.value))
 						}
 					}
 				}
@@ -234,7 +318,7 @@ func (w *walker) instanceGroups(n *yaml.Node) {
 	}
 
 	for i, item := range n.Content {
-		m := deref(item)
+		m := w.deref(item)
 		if m == nil || m.Kind != yaml.MappingNode {
 			continue
 		}
@@ -242,14 +326,14 @@ func (w *walker) instanceGroups(n *yaml.Node) {
 		path := fmt.Sprintf("instance_groups[%d]", i)
 		group := ""
 
-		for _, p := range pairs(m) {
+		for _, p := range w.pairs(m) {
 			if p.key.Value == "name" {
-				group = scalar(deref(p.value))
+				group = scalar(w.deref(p.value))
 			}
 		}
 
-		for _, p := range pairs(m) {
-			v := deref(p.value)
+		for _, p := range w.pairs(m) {
+			v := w.deref(p.value)
 
 			switch p.key.Value {
 			case "instances":
@@ -276,7 +360,7 @@ func (w *walker) jobs(n *yaml.Node, path, group string) {
 	}
 
 	for i, item := range n.Content {
-		m := deref(item)
+		m := w.deref(item)
 		if m == nil || m.Kind != yaml.MappingNode {
 			continue
 		}
@@ -284,8 +368,8 @@ func (w *walker) jobs(n *yaml.Node, path, group string) {
 		jobPath := fmt.Sprintf("%s[%d]", path, i)
 		job := JobFacts{Group: group, CertRefs: map[string]string{}}
 
-		for _, p := range pairs(m) {
-			v := deref(p.value)
+		for _, p := range w.pairs(m) {
+			v := w.deref(p.value)
 
 			switch p.key.Value {
 			case "name":
@@ -306,10 +390,15 @@ func (w *walker) jobs(n *yaml.Node, path, group string) {
 
 // generic walks any node looking for certificate strings.
 func (w *walker) generic(n *yaml.Node, path, group string) {
-	n = deref(n)
+	n = w.deref(n)
 	if n == nil || w.active[n] {
 		return
 	}
+
+	if !w.enter() {
+		return
+	}
+	defer w.leave()
 
 	switch n.Kind {
 	case yaml.ScalarNode:
@@ -317,7 +406,7 @@ func (w *walker) generic(n *yaml.Node, path, group string) {
 	case yaml.MappingNode:
 		w.active[n] = true
 
-		for _, p := range pairs(n) {
+		for _, p := range w.pairs(n) {
 			w.generic(p.value, joinPath(path, p.key.Value), group)
 		}
 
@@ -351,10 +440,15 @@ func (w *walker) literal(text, path, group string) {
 // value converts a node to plain Go values. It follows aliases, guards
 // against cycles, and drops any string that holds a private key.
 func (w *walker) value(n *yaml.Node) interface{} {
-	n = deref(n)
+	n = w.deref(n)
 	if n == nil || w.active[n] {
 		return nil
 	}
+
+	if !w.enter() {
+		return nil
+	}
+	defer w.leave()
 
 	switch n.Kind {
 	case yaml.MappingNode:
@@ -363,8 +457,8 @@ func (w *walker) value(n *yaml.Node) interface{} {
 
 		out := map[string]interface{}{}
 
-		for _, p := range pairs(n) {
-			if s := deref(p.value); s != nil && s.Kind == yaml.ScalarNode && strings.Contains(s.Value, pemKeyMarker) {
+		for _, p := range w.pairs(n) {
+			if s := w.deref(p.value); s != nil && s.Kind == yaml.ScalarNode && strings.Contains(s.Value, pemKeyMarker) {
 				continue
 			}
 
@@ -379,7 +473,7 @@ func (w *walker) value(n *yaml.Node) interface{} {
 		out := make([]interface{}, 0, len(n.Content))
 
 		for _, item := range n.Content {
-			if s := deref(item); s != nil && s.Kind == yaml.ScalarNode && strings.Contains(s.Value, pemKeyMarker) {
+			if s := w.deref(item); s != nil && s.Kind == yaml.ScalarNode && strings.Contains(s.Value, pemKeyMarker) {
 				continue
 			}
 
@@ -402,10 +496,15 @@ func (w *walker) value(n *yaml.Node) interface{} {
 // refs records every ((name.certificate)) reference under a properties
 // node, keyed by the dotted property path.
 func (w *walker) refs(n *yaml.Node, path string, out map[string]string) {
-	n = deref(n)
+	n = w.deref(n)
 	if n == nil || w.active[n] {
 		return
 	}
+
+	if !w.enter() {
+		return
+	}
+	defer w.leave()
 
 	switch n.Kind {
 	case yaml.ScalarNode:
@@ -419,7 +518,7 @@ func (w *walker) refs(n *yaml.Node, path string, out map[string]string) {
 	case yaml.MappingNode:
 		w.active[n] = true
 
-		for _, p := range pairs(n) {
+		for _, p := range w.pairs(n) {
 			w.refs(p.value, joinPath(path, p.key.Value), out)
 		}
 

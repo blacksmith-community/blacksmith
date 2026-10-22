@@ -47,7 +47,9 @@ func (p Prober) Leaf(ctx context.Context, addr, serverName string) (*x509.Certif
 			ServerName: serverName,
 			//nolint:gosec // The probe reads the presented certificate; it does not trust it.
 			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS12,
+			// The floor is TLS 1.2, so a listener that only offers TLS 1.0 or
+			// 1.1 fails the handshake and reports as unreachable.
+			MinVersion: tls.VersionTLS12,
 			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 				raw = make([][]byte, len(rawCerts))
 				for i, c := range rawCerts {

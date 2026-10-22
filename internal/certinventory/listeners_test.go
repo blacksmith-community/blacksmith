@@ -137,3 +137,21 @@ func TestListenerRulesNilFacts(t *testing.T) {
 		t.Errorf("got %+v, want nil", got)
 	}
 }
+
+func TestListenerRulesUnknownVariable(t *testing.T) {
+	facts := factsWith(JobFacts{
+		Group: "redis", Job: "cluster-7",
+		Properties: map[string]interface{}{"redis": map[string]interface{}{"tls": map[string]interface{}{"enabled": true}}},
+		CertRefs: map[string]string{
+			"other.first":  "first_crt",
+			"other.second": "second_crt",
+		},
+	})
+
+	got := ListenerRules(facts)
+	want := []Listener{{Group: "redis", Job: "cluster-7", Variable: "", Port: 6379, Name: "tls"}}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}

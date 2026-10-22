@@ -9,9 +9,9 @@ import (
 type Listener struct {
 	Group string
 	Job   string
-	// Variable is the certificate variable the listener serves. It is empty
-	// when the job holds several certificate references and none is named
-	// for this service.
+	// Variable is the certificate variable the listener serves. An empty
+	// value means the variable is unknown, because the job holds several
+	// certificate references and none is named for this service.
 	Variable string
 	Port     int
 	// Name is "amqps", "management", or "tls".
