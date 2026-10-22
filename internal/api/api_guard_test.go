@@ -50,6 +50,14 @@ func TestDeploymentActionsUseDependenciesGuard(t *testing.T) {
 	apiHandler := api.NewInternalAPI(deps)
 	t.Cleanup(apiHandler.UpgradeHandler().Stop)
 
+	// Deployment actions answer tasks_loading until the stored tasks are
+	// loaded, so the restart waits for the load.
+	select {
+	case <-apiHandler.UpgradeHandler().GetManager().Loaded():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the upgrade manager did not load its stored tasks")
+	}
+
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/redis-7a1b/restart", nil)
 	recorder := httptest.NewRecorder()
 
