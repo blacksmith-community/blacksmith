@@ -16093,6 +16093,63 @@
   })();
 
   // ================================================================
+  // SHARED RUNBOOK BUILDERS
+  // ================================================================
+  //
+  // The fleet drawer and the broker Overview both print the Genesis
+  // commands for the broker HTTPS certificate and the services CA. The
+  // commands, the notes about them, and the rekey procedure live here
+  // once, so the two callers cannot drift apart.
+
+  const CertRunbooks = (() => {
+    const el = CertView.el;
+
+    const P_NOTE = 'Add -P to rotate every problematic secret in one pass.';
+    const CHECK_NOTE = 'Check the exact command against your Genesis version before running it.';
+    const REKEY_NOTE = 'Rekey is not supported in this release. It is an external procedure, and the kit generates only one broker/ca today, so it needs kit work and lab validation before anyone follows it on a customer environment.';
+
+    const brokerHttpsCommands = (name) => [`genesis ${name} rotate-secrets broker/server`, `genesis ${name} deploy`];
+    const caCommands = (name) => [`genesis ${name} rotate-secrets broker/ca`, `genesis ${name} deploy`];
+
+    // One block per command, each with its own Copy button, so a copy
+    // never carries a second command along.
+    const commands = (list) => {
+      const wrap = el('div', 'cert-runbook-commands');
+      list.forEach((command) => {
+        const line = el('div', 'cert-runbook-command');
+        line.appendChild(el('pre', 'cert-runbook-pre', command));
+        line.appendChild(CertView.copyButton(`Copy command: ${command}`, command, 'Copy'));
+        wrap.appendChild(line);
+      });
+      return wrap;
+    };
+
+    const bullets = (notes) => {
+      const list = el('ul', 'cert-runbook-notes');
+      notes.forEach((note) => list.appendChild(el('li', null, note)));
+      return list;
+    };
+
+    // The rekey half of the CA runbook, as a list of nodes.
+    const rekeySection = () => {
+      const nodes = [];
+      nodes.push(el('h4', 'cert-ov-runbook-heading', 'Rekey, which is an external procedure'));
+      nodes.push(el('p', null, 'A compromised CA key needs a new key. Rotation deliberately refuses to issue leaves from a CA that did not sign the deployed leaf, so this feature does not run a rekey for us. The steps below happen outside Blacksmith.'));
+      const steps = el('ol', 'cert-runbook-notes');
+      [
+        'Distribute a bundle holding both CAs to every app trust store and to the broker services CA file.',
+        'Set the new CA in CredHub, regenerate each instance leaf with the credhub CLI, and deploy each instance with bosh deploy --force-latest-variables.',
+        'Remove the old CA from the bundles only after the inventory shows no leaf chaining to it.'
+      ].forEach((step) => steps.appendChild(el('li', null, step)));
+      nodes.push(steps);
+      nodes.push(el('p', 'cert-muted', REKEY_NOTE));
+      return nodes;
+    };
+
+    return { P_NOTE, CHECK_NOTE, REKEY_NOTE, brokerHttpsCommands, caCommands, commands, bullets, rekeySection };
+  })();
+
+  // ================================================================
   // CERTIFICATE OVERVIEWS: INSTANCE AND BROKER
   // ================================================================
   //
@@ -16292,23 +16349,12 @@
 
     // ----- runbooks -----
 
-    const runbookCommands = (commands) => {
-      const text = commands.join('\n');
-      const head = el('div', 'cert-runbook-commands');
-      head.appendChild(el('pre', 'cert-runbook-pre', text));
-      head.appendChild(CertView.copyButton('Copy commands', text, 'Copy'));
-      return head;
-    };
-
-    const bullets = (notes) => {
-      const list = el('ul', 'cert-runbook-notes');
-      notes.forEach((note) => list.appendChild(el('li', null, note)));
-      return list;
-    };
+    const runbookCommands = CertRunbooks.commands;
+    const bullets = CertRunbooks.bullets;
 
     const brokerEnv = () => {
       const env = window.blacksmithData && typeof window.blacksmithData.env === 'string' ? window.blacksmithData.env.trim() : '';
-      return env && env !== 'Unknown' ? env : '';
+      return env && env !== 'Unknown' && /^[A-Za-z0-9._-]+$/.test(env) ? env : '';
     };
 
     const disclosure = (id, title) => {
@@ -16322,39 +16368,26 @@
       const env = brokerEnv();
       const name = env || '<env>';
       const wrap = el('div', 'cert-ov-runbooks');
-      const envNote = env
-        ? 'Check the exact command form against your Genesis version before running it.'
-        : 'The broker did not report its Genesis environment name. We replace <env> with the name of the environment that deploys Blacksmith, and we check the command form against our Genesis version before running it.';
+      const envNotes = env ? [] : ['The broker did not report its Genesis environment name. We replace <env> with the name of the environment that deploys Blacksmith, and we check the command form against our Genesis version before running it.'];
 
       const https = disclosure('cert-ov-runbook-https', 'Runbook: renew the broker HTTPS certificate');
       https.appendChild(el('p', null, 'The broker HTTPS certificate belongs to the Blacksmith kit, so we rotate it through Genesis. We run the two commands below in order against the environment that deploys Blacksmith.'));
-      https.appendChild(runbookCommands([`genesis ${name} rotate-secrets broker/server`, `genesis ${name} deploy`]));
+      https.appendChild(runbookCommands(CertRunbooks.brokerHttpsCommands(name)));
       https.appendChild(bullets([
-        'Genesis leaves secrets marked as fixed alone unless the command includes -P. With -P it rotates every problematic secret in one pass.',
-        envNote
-      ]));
+        CertRunbooks.P_NOTE
+      ].concat(envNotes)));
       wrap.appendChild(https);
 
       const ca = disclosure('cert-ov-runbook-ca', 'Runbook: services CA renewal (supported) and rekey (external procedure)');
       ca.appendChild(el('h4', 'cert-ov-runbook-heading', 'Renewal under the same key, which this release supports'));
       ca.appendChild(el('p', null, 'Genesis keeps the existing key and subject when it renews a certificate, so a renewed CA still verifies every leaf the old one signed and no leaf needs reissuing. We run the two commands below in order.'));
-      ca.appendChild(runbookCommands([`genesis ${name} rotate-secrets broker/ca`, `genesis ${name} deploy`]));
+      ca.appendChild(runbookCommands(CertRunbooks.caCommands(name)));
       ca.appendChild(bullets([
         'The deploy rewrites the broker services CA file, and the post-deploy hook seeds the renewed CA into the director CredHub.',
         'App trust stores need the renewed CA before the old one expires, because many TLS stacks check the validity of a trust anchor.',
-        'RabbitMQ instances keep the old literal copy of the CA until their manifests are regenerated, which today needs forge work.',
-        envNote
-      ]));
-      ca.appendChild(el('h4', 'cert-ov-runbook-heading', 'Rekey, which is an external procedure'));
-      ca.appendChild(el('p', null, 'A compromised CA key needs a new key. Rotation deliberately refuses to issue leaves from a CA that did not sign the deployed leaf, so this feature does not run a rekey for us. The steps below happen outside Blacksmith.'));
-      const steps = el('ol', 'cert-runbook-notes');
-      [
-        'Distribute a bundle holding both CAs to every app trust store and to the broker services CA file.',
-        'Set the new CA in CredHub, regenerate each instance leaf with the credhub CLI, and deploy each instance with bosh deploy --force-latest-variables.',
-        'Remove the old CA from the bundles only after the inventory shows no leaf chaining to it.'
-      ].forEach((step) => steps.appendChild(el('li', null, step)));
-      ca.appendChild(steps);
-      ca.appendChild(el('p', 'cert-muted', 'The kit generates only one broker/ca today. This procedure needs kit work and lab validation before anyone follows it on a customer environment.'));
+        'RabbitMQ instances keep the old literal copy of the CA until their manifests are regenerated, which today needs forge work.'
+      ].concat(envNotes)));
+      CertRunbooks.rekeySection().forEach((node) => ca.appendChild(node));
       wrap.appendChild(ca);
 
       const credhub = disclosure('cert-ov-runbook-credhub', 'How to enable CredHub certificates and rotation');
@@ -20985,34 +21018,29 @@
       const box = el('section', 'cert-runbook');
       box.appendChild(el('h4', 'cert-runbook-title', title));
       box.appendChild(el('p', null, intro));
-      const text = commands.join('\n');
-      const head = el('div', 'cert-runbook-commands');
-      head.appendChild(el('pre', 'cert-runbook-pre', text));
-      head.appendChild(CertView.copyButton('Copy commands', text, 'Copy'));
-      box.appendChild(head);
-      const list = el('ul', 'cert-runbook-notes');
-      notes.forEach((note) => list.appendChild(el('li', null, note)));
-      box.appendChild(list);
+      box.appendChild(CertRunbooks.commands(commands));
+      box.appendChild(CertRunbooks.bullets(notes));
       return box;
     };
 
     const caRunbook = () => runbookPanel(
       'Renewing this certificate authority',
       'Renewing a CA replaces every certificate it signed. We run the two commands below in order, against the Genesis environment that deploys Blacksmith, and we replace <env> with that environment name.',
-      ['genesis <env> rotate-secrets broker/ca', 'genesis <env> deploy'],
+      CertRunbooks.caCommands('<env>'),
       [
-        'A renewal keeps the CA key pair. If the private key may have been exposed, we need a rekey instead, which issues a new key pair and takes longer to roll out.',
-        'Check the exact command against your Genesis version before running it.'
+        'A renewal keeps the CA key pair.',
+        CertRunbooks.REKEY_NOTE,
+        CertRunbooks.CHECK_NOTE
       ]
     );
 
     const brokerRunbook = () => runbookPanel(
       'Rotating this broker certificate with Genesis',
       'This certificate belongs to the broker itself, so we rotate it through Genesis. We replace <env> with the environment name that deploys Blacksmith.',
-      ['genesis <env> rotate-secrets broker/server', 'genesis <env> deploy'],
+      CertRunbooks.brokerHttpsCommands('<env>'),
       [
-        'Genesis leaves secrets marked as fixed alone unless the command includes -P.',
-        'Check the exact command against your Genesis version before running it.'
+        CertRunbooks.P_NOTE,
+        CertRunbooks.CHECK_NOTE
       ]
     );
 

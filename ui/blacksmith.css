@@ -12658,6 +12658,12 @@ span.config-type.resurrection {
 
 .cert-runbook-commands {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cert-runbook-command {
+  display: flex;
   align-items: flex-start;
   gap: 8px;
 }
