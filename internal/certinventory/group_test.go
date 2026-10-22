@@ -328,3 +328,93 @@ func TestGroupKeepsRepresentativeCertificate(t *testing.T) {
 		t.Error("the literal CA's representative is not the observed certificate")
 	}
 }
+
+func TestGroupKeepsFailedObservationWithoutListener(t *testing.T) {
+	t.Parallel()
+
+	owner := instOwner("i9")
+	failed := []RawObservation{
+		{Observation: Observation{Source: SourceProbe, Owner: owner, Locator: "10.0.0.9:6379", State: StateFailed, Error: "refused"}},
+		{Observation: Observation{Source: SourceProbe, Owner: owner, Locator: "10.0.0.8:6379", State: StateFailed, Error: "refused"}, Listener: &Listener{}},
+		{Observation: Observation{Source: SourceBroker, Owner: Owner{Kind: OwnerBroker}, Locator: "/etc/ca.pem", State: StateFailed, Error: "unreadable"}},
+	}
+
+	certs, _ := Group(nil, failed)
+	if len(certs) != 3 {
+		t.Fatalf("got %d certificates, want one per failed observation", len(certs))
+	}
+
+	ApplyFindings(certs, FindingInput{})
+
+	c := findCert(t, certs, "10.0.0.9:6379")
+	if c.ID != hashID("probe:"+"i9"+"10.0.0.9:6379") {
+		t.Errorf("ID %q", c.ID)
+	}
+
+	if len(c.Owners) != 1 || c.Owners[0] != owner || c.AffectedInstances != 1 {
+		t.Errorf("owners %+v", c.Owners)
+	}
+
+	for _, c := range certs {
+		if c.Coverage.Complete {
+			t.Errorf("%s: coverage complete after a failure", c.Key)
+		}
+	}
+}
+
+func TestGroupFailedProbeWithVariableJoinsVariableGroup(t *testing.T) {
+	t.Parallel()
+
+	owner := instOwner("i1")
+	ch := CredHubCert{Name: "/d/redis-i1/crt", Owner: owner, Deployed: groupLeaf(t, "x", 1)}
+	r := RawObservation{
+		Observation: Observation{Source: SourceProbe, Owner: owner, Locator: "p", State: StateFailed, Error: "refused"},
+		Listener:    &Listener{Variable: "crt"},
+	}
+
+	certs, _ := Group([]CredHubCert{ch}, []RawObservation{r})
+	if len(certs) != 1 {
+		t.Fatalf("got %d certificates, want the failure inside the variable's group", len(certs))
+	}
+
+	ApplyFindings(certs, FindingInput{})
+
+	if certs[0].Coverage.Complete {
+		t.Error("coverage complete after a failed probe")
+	}
+}
+
+func TestGroupFingerprintOwnershipIgnoresInputOrder(t *testing.T) {
+	t.Parallel()
+
+	shared := groupLeaf(t, "shared", 1)
+	a := CredHubCert{Name: "/d/dep/a", Owner: instOwner("i1"), Deployed: shared}
+	b := CredHubCert{Name: "/d/dep/b", Owner: instOwner("i2"), Deployed: shared}
+	raw := []RawObservation{rawObs(SourceProbe, instOwner("i3"), "p", shared)}
+
+	one, _ := Group([]CredHubCert{a, b}, raw)
+	two, _ := Group([]CredHubCert{b, a}, raw)
+
+	if !reflect.DeepEqual(one, two) {
+		t.Fatalf("membership depends on input order:\n%+v\n%+v", one, two)
+	}
+
+	if len(findCert(t, one, "/d/dep/a").Observations) != 2 {
+		t.Error("the first name in sorted order should take the shared fingerprint")
+	}
+}
+
+func TestGroupRepresentativeWithoutDeployedIsFirstObservation(t *testing.T) {
+	t.Parallel()
+
+	latest, seen := groupLeaf(t, "latest", 1), groupLeaf(t, "seen", 2)
+	owner := instOwner("i1")
+	ch := CredHubCert{Name: "/d/dep/crt", Owner: owner, Latest: latest}
+	r := rawObs(SourceProbe, owner, "p", seen)
+	r.Listener = &Listener{Variable: "crt"}
+
+	certs, reps := Group([]CredHubCert{ch}, []RawObservation{r})
+	if got := reps[certs[0].ID]; got == nil || !reflect.DeepEqual(got.Raw, seen.Raw) {
+		t.Error("representative should be the first observation when nothing is deployed")
+	}
+}

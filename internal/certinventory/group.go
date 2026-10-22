@@ -56,10 +56,16 @@ func Group(credhub []CredHubCert, raw []RawObservation) ([]Certificate, map[stri
 
 	var credhubOrder []*group
 
-	byFP := map[string]*group{} // deployed or latest fingerprint -> CredHub group
-
+	// Sorted names make the owner of a shared fingerprint independent of
+	// input order: the first name wins.
+	sorted := make([]*CredHubCert, 0, len(credhub))
 	for i := range credhub {
-		ch := &credhub[i]
+		sorted = append(sorted, &credhub[i])
+	}
+
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+
+	for _, ch := range sorted {
 		id := hashID("credhub:" + ch.Name)
 
 		if _, dup := groups[id]; dup {
@@ -70,18 +76,22 @@ func Group(credhub []CredHubCert, raw []RawObservation) ([]Certificate, map[stri
 		groups[id] = g
 		credhubOrder = append(credhubOrder, g)
 
-		if ch.Latest != nil {
-			byFP[Fingerprint(ch.Latest)] = g
-		}
+		g.add(credhubObservation(ch), nil)
 	}
+
+	byFP := map[string]*group{} // deployed or latest fingerprint -> CredHub group
 
 	// Deployed fingerprints win over latest ones when both name a group.
 	for _, g := range credhubOrder {
 		if g.credhub.Deployed != nil {
-			byFP[Fingerprint(g.credhub.Deployed)] = g
+			claim(byFP, Fingerprint(g.credhub.Deployed), g)
 		}
+	}
 
-		g.add(credhubObservation(g.credhub), nil)
+	for _, g := range credhubOrder {
+		if g.credhub.Latest != nil {
+			claim(byFP, Fingerprint(g.credhub.Latest), g)
+		}
 	}
 
 	for i := range raw {
@@ -120,16 +130,16 @@ func Group(credhub []CredHubCert, raw []RawObservation) ([]Certificate, map[stri
 			continue
 		}
 
+		id, key := hashID("fp:"+obs.Fingerprint), "sha256:"+obs.Fingerprint
 		if obs.Fingerprint == "" {
-			// Nothing identifies it, so it has no logical certificate to join.
-			continue
+			// Nothing identifies it, but dropping it would hide a failure
+			// and let coverage read complete, so it gets a group of its own.
+			id, key = hashID("probe:"+obs.Owner.InstanceID+obs.Locator), obs.Locator
 		}
-
-		id := hashID("fp:" + obs.Fingerprint)
 
 		g, ok := groups[id]
 		if !ok {
-			g = &group{id: id, key: "sha256:" + obs.Fingerprint}
+			g = &group{id: id, key: key}
 			groups[id] = g
 		}
 
@@ -184,12 +194,7 @@ func (g *group) build() (Certificate, *x509.Certificate) {
 		c.Versions = &v
 		c.Variable = lastSegment(g.credhub.Name)
 
-		switch {
-		case g.credhub.Deployed != nil:
-			rep = g.credhub.Deployed
-		case g.credhub.Latest != nil:
-			rep = g.credhub.Latest
-		}
+		rep = g.credhub.Deployed
 	}
 
 	seenOwner := map[Owner]bool{}
@@ -232,6 +237,12 @@ func (g *group) build() (Certificate, *x509.Certificate) {
 	}
 
 	return c, rep
+}
+
+func claim(m map[string]*group, fp string, g *group) {
+	if _, taken := m[fp]; !taken {
+		m[fp] = g
+	}
 }
 
 func credhubObservation(ch *CredHubCert) Observation {

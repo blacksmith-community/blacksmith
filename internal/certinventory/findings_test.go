@@ -474,3 +474,18 @@ func mustRead(t *testing.T, path string) []byte {
 
 	return b
 }
+
+func TestFindingSigningCAChangedIgnoresCAFlag(t *testing.T) {
+	t.Parallel()
+
+	// A signing certificate that lacks the CA flag.
+	plain := issue(t, issueSpec{cn: "plain", serial: 1})
+	leaf := issue(t, issueSpec{cn: "leaf", serial: 2, parent: &plain})
+
+	certs, reps := credhubLeaf(t, leaf.cert, "/d/dep/ca", Versions{})
+	ApplyFindings(certs, FindingInput{CAs: map[string]*x509.Certificate{"/d/dep/ca": plain.cert}, Reps: reps, Now: time.Now()})
+
+	if hasFinding(certs[0], FindingSigningCAChanged) {
+		t.Errorf("signing_ca_changed fired for the right signer: %+v", certs[0].Findings)
+	}
+}

@@ -177,7 +177,9 @@ func chainFindings(c *Certificate, rep *x509.Certificate, in FindingInput) []Fin
 		})
 	}
 
-	if err := rep.CheckSignatureFrom(ca); err != nil {
+	// CheckSignature skips the CA-flag checks that CheckSignatureFrom makes,
+	// since this rule asks only who signed the leaf.
+	if err := ca.CheckSignature(rep.SignatureAlgorithm, rep.RawTBSCertificate, rep.Signature); err != nil {
 		out = append(out, Finding{
 			Code: FindingSigningCAChanged, Severity: SeverityError,
 			Message: fmt.Sprintf("The CA %s would sign a regenerated certificate, but it is not the CA that issued the deployed one.", c.Versions.SigningCA),

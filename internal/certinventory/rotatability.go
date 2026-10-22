@@ -57,7 +57,11 @@ func RotatabilityOf(c *Certificate, caps Capabilities, director string, vmCount 
 		reasons = append(reasons, fmt.Sprintf("The name %s is not under /%s/<deployment>/, so the certificate does not belong to this instance alone.", c.Key, director))
 	}
 
-	if c.Kind != KindLeaf {
+	switch c.Kind {
+	case KindLeaf:
+	case "":
+		reasons = append(reasons, "The kind of this certificate is unknown, so Blacksmith cannot tell whether it is a leaf.")
+	default:
 		reasons = append(reasons, "Only a leaf certificate can be rotated, and this one is a CA or an intermediate.")
 	}
 
@@ -101,22 +105,34 @@ func RotatabilityOf(c *Certificate, caps Capabilities, director string, vmCount 
 }
 
 // inInstanceNamespace says whether the certificate's name sits directly
-// under /<director>/<deployment>/ for one of its owning deployments.
+// under /<director>/<deployment>/ for the deployment of its CredHub
+// observation, and no other deployment holds it too.
 func inInstanceNamespace(c *Certificate, director string) bool {
 	if director == "" {
 		return false
 	}
 
-	for _, o := range c.Owners {
-		if o.Deployment == "" {
-			continue
-		}
+	deployment := ""
 
-		prefix := "/" + director + "/" + o.Deployment + "/"
-		if rest, ok := strings.CutPrefix(c.Key, prefix); ok && rest != "" && !strings.Contains(rest, "/") {
-			return true
+	for _, o := range c.Observations {
+		if o.Source == SourceCredHub {
+			deployment = o.Owner.Deployment
+
+			break
 		}
 	}
 
-	return false
+	if deployment == "" {
+		return false
+	}
+
+	for _, o := range c.Owners {
+		if o.Deployment != "" && o.Deployment != deployment {
+			return false
+		}
+	}
+
+	rest, ok := strings.CutPrefix(c.Key, "/"+director+"/"+deployment+"/")
+
+	return ok && rest != "" && rest != "." && rest != ".." && !strings.Contains(rest, "/")
 }

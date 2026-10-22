@@ -25,6 +25,10 @@ func rotLeaf() *Certificate {
 		Kind:     KindLeaf,
 		Versions: &Versions{},
 		Owners:   []Owner{{Kind: OwnerInstance, InstanceID: "i1", Deployment: "redis-i1"}},
+		Observations: []Observation{{
+			Source: SourceCredHub, Locator: "/bosh-lab/redis-i1/redis_crt",
+			Owner: Owner{Kind: OwnerInstance, InstanceID: "i1", Deployment: "redis-i1"},
+		}},
 	}
 }
 
@@ -69,6 +73,14 @@ func TestRotatabilityOf(t *testing.T) {
 		{"a CA", func() *Certificate { c := rotLeaf(); c.Kind = KindCA; return c }(), allOn(), "leaf"},
 		{"outside the namespace", func() *Certificate { c := rotLeaf(); c.Key = "/bosh-lab/other-dep/redis_crt"; return c }(), allOn(), "not under /bosh-lab/"},
 		{"another director", func() *Certificate { c := rotLeaf(); c.Key = "/elsewhere/redis-i1/redis_crt"; return c }(), allOn(), "not under /bosh-lab/"},
+		{"held by a literal in another deployment", func() *Certificate {
+			c := rotLeaf()
+			c.Owners = append(c.Owners, Owner{Kind: OwnerInstance, InstanceID: "i2", Deployment: "redis-i2"})
+
+			return c
+		}(), allOn(), "does not belong to this instance alone"},
+		{"dot segment", func() *Certificate { c := rotLeaf(); c.Key = "/bosh-lab/redis-i1/.."; return c }(), allOn(), "not under /bosh-lab/"},
+		{"unknown kind", func() *Certificate { c := rotLeaf(); c.Kind = ""; return c }(), allOn(), "kind of this certificate is unknown"},
 		{"not a CredHub variable", func() *Certificate { c := rotLeaf(); c.Versions = nil; return c }(), allOn(), "not a CredHub variable"},
 		{"signing CA changed", func() *Certificate {
 			c := rotLeaf()
