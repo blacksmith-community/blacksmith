@@ -161,6 +161,12 @@ type Broker struct {
 	// nil, the broker reserves nothing in a guard.
 	Guard *mutation.Guard
 
+	// tasksLoaded is closed once the upgrade manager has loaded the stored
+	// upgrade and certificate tasks and restored their reservations in the
+	// guard. Until then a provision or deprovision gets 422
+	// ConcurrencyError. When it was never set, nothing is waited for.
+	tasksLoaded atomic.Pointer[<-chan struct{}]
+
 	// VM monitoring integration
 	vmMonitor interfaces.VMMonitor
 
@@ -433,6 +439,11 @@ func (b *Broker) Provision(
 		return osbapi.ProvisionResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
+	err := b.tasksLoadingAnswer(instanceID, operationTypeProvision, logger)
+	if err != nil {
+		return osbapi.ProvisionResponse{}, false, err
+	}
+
 	// Claim the instance ID before any write. A platform that retries while
 	// the first request is still being accepted, or while its goroutine still
 	// runs, must not start a second deploy of the same deployment, and a
@@ -520,6 +531,11 @@ func (b *Broker) Deprovision(
 		logger.Error("Async operations required but not allowed by client")
 
 		return osbapi.DeprovisionResponse{}, false, osbapi.ErrAsyncRequired
+	}
+
+	err := b.tasksLoadingAnswer(instanceID, operationTypeDeprovision, logger)
+	if err != nil {
+		return osbapi.DeprovisionResponse{}, false, err
 	}
 
 	// Claim the instance ID before anything is written to the vault, so a
@@ -1134,6 +1150,35 @@ func (b *Broker) releaseOperation(instanceID string, claim *operationClaim) {
 	}
 
 	b.activeOperations.CompareAndDelete(instanceID, claim)
+}
+
+// SetTasksLoaded hands the broker the upgrade manager's loaded gate. Until
+// it closes, the stored upgrade and certificate tasks may not hold their
+// instances in the guard yet, so a provision or deprovision gets 422
+// ConcurrencyError and the platform retries it. The operations the broker
+// re-adopts at boot never wait for it.
+func (b *Broker) SetTasksLoaded(loaded <-chan struct{}) {
+	b.tasksLoaded.Store(&loaded)
+}
+
+// tasksLoadingAnswer is the 422 ConcurrencyError a provision or
+// deprovision gets while the stored tasks are still loading, and nil once
+// they are loaded or when no gate was set.
+func (b *Broker) tasksLoadingAnswer(instanceID, operation string, logger logger.Logger) error {
+	loaded := b.tasksLoaded.Load()
+	if loaded == nil || *loaded == nil {
+		return nil
+	}
+
+	select {
+	case <-*loaded:
+		return nil
+	default:
+	}
+
+	logger.Warning("Rejecting %s of instance %s: the stored upgrade and certificate tasks are still loading", operation, instanceID)
+
+	return fmt.Errorf("%w: the stored upgrade and certificate tasks are still loading, so the %s of instance %s can't start yet", osbapi.ErrConcurrencyError, operation, instanceID)
 }
 
 // guardBusyAnswer is the 422 ConcurrencyError a provision or deprovision

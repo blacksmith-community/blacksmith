@@ -405,3 +405,44 @@ func TestDeprovisionReservesRecordedDeployment(t *testing.T) {
 		t.Fatalf("the director got deletes %v, want none", calls)
 	}
 }
+
+// Until the stored upgrade and certificate tasks are loaded, a stored task
+// may own an instance without holding it in the guard yet, so a provision
+// or deprovision gets 422 ConcurrencyError, which the platform retries,
+// before it claims or reserves anything.
+func TestOperationsWaitForLoadedTasks(t *testing.T) {
+	t.Parallel()
+
+	const instanceID = "loading-1"
+
+	guard := mutation.NewGuard(time.Now)
+	director := testutil.NewScriptedBOSHDirector()
+	brokerInstance := guardedBroker(t, director, nil, guard)
+	brokerInstance.SetTasksLoaded(make(chan struct{}))
+
+	_, async, err := brokerInstance.Provision(t.Context(), instanceID, osbapi.ProvisionRequest{
+		ServiceID: guardServiceID, PlanID: guardPlanID, OrganizationGUID: "org", SpaceGUID: "space",
+	}, true)
+	if !errors.Is(err, osbapi.ErrConcurrencyError) || async || !strings.Contains(err.Error(), "still loading") {
+		t.Fatalf("Provision = async %v, err %v, want a ConcurrencyError while the tasks load", async, err)
+	}
+
+	_, async, err = brokerInstance.Deprovision(t.Context(), instanceID, osbapi.DeprovisionRequest{
+		ServiceID: guardServiceID, PlanID: guardPlanID,
+	}, true)
+	if !errors.Is(err, osbapi.ErrConcurrencyError) || async || !strings.Contains(err.Error(), "still loading") {
+		t.Fatalf("Deprovision = async %v, err %v, want a ConcurrencyError while the tasks load", async, err)
+	}
+
+	if brokerInstance.OperationClaimed(instanceID) {
+		t.Fatal("an operation refused while the tasks load kept a claim")
+	}
+
+	if held := guard.Snapshot(); len(held) != 0 {
+		t.Fatalf("guard holds %v, want nothing while the tasks load", held)
+	}
+
+	if calls := len(director.Calls("CreateDeployment")) + len(director.Calls("DeleteDeployment")); calls != 0 {
+		t.Fatalf("the director got %d deploys or deletes, want none", calls)
+	}
+}

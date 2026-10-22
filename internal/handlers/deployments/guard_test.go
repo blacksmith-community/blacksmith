@@ -267,3 +267,60 @@ func TestDeploymentActionsReleaseGuard(t *testing.T) {
 		}
 	}
 }
+
+// Until the stored upgrade and certificate tasks are loaded, a stored task
+// may still own the deployment without holding it in the guard, so every
+// mutating deployment action answers 503 with tasks_loading, sends nothing
+// to the director, and holds nothing. Once they are loaded, the action
+// goes ahead.
+func TestDeploymentActionsWaitForLoadedTasks(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range deploymentActions() {
+		t.Run(action.name, func(t *testing.T) {
+			t.Parallel()
+
+			guard := mutation.NewGuard(time.Now)
+			loaded := make(chan struct{})
+			director := newRecordingDirector(guard, false)
+			handler := deployments.NewHandler(deployments.Dependencies{
+				Logger:      logger.NewNoOpLogger(),
+				Director:    director,
+				Guard:       guard,
+				TasksLoaded: loaded,
+			})
+
+			recorder := serveAction(t, handler, action)
+
+			if recorder.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+			}
+
+			var body map[string]interface{}
+
+			err := json.Unmarshal(recorder.Body.Bytes(), &body)
+			if err != nil {
+				t.Fatalf("expected a JSON body, got %q: %v", recorder.Body.String(), err)
+			}
+
+			if body["code"] != apierr.CodeTasksLoading || body["success"] != false || len(body) != 3 {
+				t.Errorf("body = %v, want success false and code %s", body, apierr.CodeTasksLoading)
+			}
+
+			if calls, _ := director.recorded(); len(calls) != 0 {
+				t.Errorf("director calls = %v, want none while the tasks load", calls)
+			}
+
+			if held := guard.Snapshot(); len(held) != 0 {
+				t.Errorf("guard holds %v, want nothing while the tasks load", held)
+			}
+
+			close(loaded)
+
+			recorder = serveAction(t, handler, action)
+			if recorder.Code != action.accepted {
+				t.Fatalf("status once loaded = %d, want %d: %s", recorder.Code, action.accepted, recorder.Body.String())
+			}
+		})
+	}
+}

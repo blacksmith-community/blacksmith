@@ -104,6 +104,10 @@ type apiHandlers struct {
 }
 
 func createHandlers(deps Dependencies) apiHandlers {
+	// The upgrade handler starts the manager, whose loaded gate holds the
+	// deployment actions back until the stored tasks hold their instances.
+	upgradeHandler := createUpgradeHandler(deps)
+
 	return apiHandlers{
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
 		inventory:         createInventoryHandler(deps),
@@ -116,10 +120,10 @@ func createHandlers(deps Dependencies) apiHandlers {
 		bosh:              createBOSHHandler(deps),
 		blacksmith:        createBlacksmithHandler(deps),
 		tasks:             createTasksHandler(deps),
-		deployments:       createDeploymentsHandler(deps),
+		deployments:       createDeploymentsHandler(deps, upgradeHandler.GetManager().Loaded()),
 		configuration:     createConfigurationHandler(deps),
 		services:          createServicesHandler(deps),
-		upgrade:           createUpgradeHandler(deps),
+		upgrade:           upgradeHandler,
 	}
 }
 
@@ -198,13 +202,14 @@ func createTasksHandler(deps Dependencies) *tasks.Handler {
 	})
 }
 
-func createDeploymentsHandler(deps Dependencies) *deployments.Handler {
+func createDeploymentsHandler(deps Dependencies, tasksLoaded <-chan struct{}) *deployments.Handler {
 	return deployments.NewHandler(deployments.Dependencies{
-		Logger:   deps.Logger,
-		Config:   deps.Config,
-		Vault:    deps.Vault,
-		Director: deps.Director,
-		Guard:    deps.Guard,
+		Logger:      deps.Logger,
+		Config:      deps.Config,
+		Vault:       deps.Vault,
+		Director:    deps.Director,
+		Guard:       deps.Guard,
+		TasksLoaded: tasksLoaded,
 	})
 }
 

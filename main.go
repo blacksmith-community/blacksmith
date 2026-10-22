@@ -1267,6 +1267,13 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Guard:                          brokerInstance.Guard,
 	})
 
+	// Provisions and deprovisions wait for the stored tasks to hold their
+	// instances before the servers start taking requests.
+	upgradeHandler := internalAPI.UpgradeHandler()
+	if upgradeHandler != nil {
+		brokerInstance.SetTasksLoaded(upgradeHandler.GetManager().Loaded())
+	}
+
 	return &broker.API{
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,
@@ -1274,7 +1281,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Logger:   logger.Named("api"),
 		Internal: internalAPI,
 		Primary:  osbapibroker.NewHandler(brokerInstance, osbapibroker.WithLogger(broker.NewOSBAPILogger(logger.Named("osbapi")))),
-	}, internalAPI.UpgradeHandler()
+	}, upgradeHandler
 }
 
 // readoptServiceOperations re-adopts the provisions and deprovisions a

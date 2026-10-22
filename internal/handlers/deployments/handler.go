@@ -47,6 +47,7 @@ type Handler struct {
 	vault    interfaces.Vault
 	director interfaces.Director
 	guard    *mutation.Guard
+	loaded   <-chan struct{}
 }
 
 // Dependencies contains all dependencies needed by the Deployments handler.
@@ -59,6 +60,11 @@ type Dependencies struct {
 	// deployment holds the deployment in it while the action submits its
 	// task. A nil Guard holds nothing.
 	Guard *mutation.Guard
+	// TasksLoaded is closed once the stored upgrade and certificate tasks
+	// are loaded and hold their instances in the guard. Until then each
+	// action that changes a deployment answers 503. A nil TasksLoaded
+	// waits for nothing.
+	TasksLoaded <-chan struct{}
 }
 
 // Deployment represents a BOSH deployment.
@@ -92,6 +98,7 @@ func NewHandler(deps Dependencies) *Handler {
 		vault:    deps.Vault,
 		director: deps.Director,
 		guard:    deps.Guard,
+		loaded:   deps.TasksLoaded,
 	}
 }
 
@@ -1015,10 +1022,20 @@ func extractOSFromStemcell(name string) string {
 // a certificate rotation, or a broker operation is changing. When another
 // holder has the deployment or its instance, it answers 409 with the code
 // instance_busy and the holder's description, and reports false so the
-// caller sends nothing to the director. The caller runs the returned
-// release once its director call returns. Without a guard it holds
-// nothing and always reports true.
+// caller sends nothing to the director. Until the stored tasks are loaded
+// and hold their instances, it answers 503 with the code tasks_loading
+// instead, because a stored task may own the deployment. The caller runs
+// the returned release once its director call returns. Without a guard it
+// holds nothing and always reports true.
 func (h *Handler) reserveDeployment(writer http.ResponseWriter, logger interfaces.Logger, deploymentName, action string) (func(), bool) {
+	if !h.tasksLoaded() {
+		message := fmt.Sprintf("the stored upgrade and certificate tasks are still loading, so the %s of deployment %s can't start yet", action, deploymentName)
+		logger.Warning("Refusing the %s of deployment %s: %s", action, deploymentName, message)
+		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeTasksLoading, message), http.StatusServiceUnavailable)
+
+		return nil, false
+	}
+
 	if h.guard == nil {
 		return func() {}, true
 	}
@@ -1044,6 +1061,21 @@ func (h *Handler) reserveDeployment(writer http.ResponseWriter, logger interface
 	apierr.Write(writer, err, http.StatusInternalServerError)
 
 	return nil, false
+}
+
+// tasksLoaded reports whether the stored upgrade and certificate tasks are
+// loaded, which is always so without a loaded gate.
+func (h *Handler) tasksLoaded() bool {
+	if h.loaded == nil {
+		return true
+	}
+
+	select {
+	case <-h.loaded:
+		return true
+	default:
+		return false
+	}
 }
 
 // warnIgnoredForce warns when a job-state request carries force. The
