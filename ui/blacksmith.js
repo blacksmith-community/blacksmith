@@ -15808,7 +15808,34 @@
     // certificate endpoints return only dates, so for those lists we
     // derive a display status from the date with the default thresholds
     // of 7 and 30 days. The inventory views never use this path.
+    //
+    // The thresholds come from GET /b/certificates/settings, which is
+    // fetched once per page load. Until it answers, and whenever it
+    // fails or answers 403 or 404, the defaults of 7 and 30 days apply.
+    const thresholds = { warningDays: 30, criticalDays: 7 };
+    let thresholdsPromise = null;
+
+    const loadThresholds = () => {
+      if (!thresholdsPromise) {
+        thresholdsPromise = fetch('/b/certificates/settings', { headers: { 'Accept': 'application/json' } })
+          .then((response) => (response.ok ? response.json() : null))
+          .then((body) => {
+            const settings = body && (body.data && typeof body.data === 'object' ? body.data : body);
+            const warning = settings && Number(settings.warning_days);
+            const critical = settings && Number(settings.critical_days);
+            if (Number.isFinite(warning) && Number.isFinite(critical) && critical > 0 && warning > critical) {
+              thresholds.warningDays = warning;
+              thresholds.criticalDays = critical;
+            }
+            return thresholds;
+          })
+          .catch(() => thresholds);
+      }
+      return thresholdsPromise;
+    };
+
     const displayExpiry = (notAfter) => {
+      loadThresholds();
       const date = new Date(notAfter);
       if (!notAfter || Number.isNaN(date.getTime())) {
         return { status: 'unknown', daysLeft: null };
@@ -15819,8 +15846,8 @@
         return { status: 'expired', daysLeft: -Math.ceil(-remaining / day) };
       }
       const daysLeft = Math.floor(remaining / day);
-      if (remaining < 7 * day) return { status: 'critical', daysLeft };
-      if (remaining < 30 * day) return { status: 'warning', daysLeft };
+      if (remaining < thresholds.criticalDays * day) return { status: 'critical', daysLeft };
+      if (remaining < thresholds.warningDays * day) return { status: 'warning', daysLeft };
       return { status: 'ok', daysLeft };
     };
 
