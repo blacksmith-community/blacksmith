@@ -1,0 +1,127 @@
+//nolint:testpackage // the tests read the manager's guard after a load
+package upgrade
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"blacksmith/internal/mutation"
+	"blacksmith/pkg/logger"
+)
+
+// patchingTask returns the test certificate task with its instance part way
+// through a patch, its first VM swapping files, and no decision pending.
+func patchingTask(status TaskStatus) UpgradeTask {
+	task := fullCertificateTask()
+	task.Status = status
+	task.Instances[0].Certificates.Pending = nil
+	task.Instances[0].Certificates.VMs[0].Phase = VMPhaseSwapping
+
+	return task
+}
+
+// expectHeld fails the test unless the guard still holds the test instance
+// for the certificate task.
+func expectHeld(t *testing.T, manager *Manager) {
+	t.Helper()
+
+	holder, held := manager.Guard().Holder(waitInstanceID, waitDeployment)
+	if !held || holder.TaskID != certTaskID {
+		t.Fatalf("expected the certificate task to keep the instance reserved, got %+v held %v", holder, held)
+	}
+}
+
+// Cancelling a loaded certificate task whose VM is mid-swap leaves the
+// instance reserved, since its files may be half replaced.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCancelKeepsAPatchingCertificateInstanceHeld(t *testing.T) {
+	vault := newWaitVault()
+	storeCertificateTask(t, vault, patchingTask(TaskStatusRunning))
+
+	manager := loadManager(t, newWaitDirector(), vault)
+	expectHeld(t, manager)
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("cancelling the task: %v", err)
+	}
+
+	expectHeld(t, manager)
+}
+
+// A certificate task stored cancelled with an instance still running keeps
+// that instance reserved after the load.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestLoadKeepsARunningInstanceOfACancelledCertificateTaskHeld(t *testing.T) {
+	vault := newWaitVault()
+	storeCertificateTask(t, vault, patchingTask(TaskStatusCancelled))
+
+	manager := loadManager(t, newWaitDirector(), vault)
+
+	expectHeld(t, manager)
+}
+
+// An instance that waits on a decision stays reserved even when its task
+// was cancelled.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestLoadKeepsAnAwaitingInstanceOfACancelledCertificateTaskHeld(t *testing.T) {
+	vault := newWaitVault()
+
+	stored := patchingTask(TaskStatusCancelled)
+	stored.Instances[0].Status = StatusAwaitingDecision
+	storeCertificateTask(t, vault, stored)
+
+	manager := loadManager(t, newWaitDirector(), vault)
+
+	expectHeld(t, manager)
+}
+
+// A cancelled certificate task's running instance that a deprovision held
+// at load waits for it, and is reserved once the deprovision frees it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCancelledCertificateInstanceWaitsForAnotherHolder(t *testing.T) {
+	guard := mutation.NewGuard(time.Now)
+
+	freeDeprovision, err := guard.Acquire(waitInstanceID, waitDeployment, mutation.Holder{
+		Kind:        mutation.KindDeprovision,
+		Description: "deprovision of " + waitDeployment,
+	})
+	if err != nil {
+		t.Fatalf("holding %s: %v", waitInstanceID, err)
+	}
+
+	t.Cleanup(freeDeprovision)
+
+	vault := newWaitVault()
+	storeCertificateTask(t, vault, patchingTask(TaskStatusCancelled))
+
+	manager := NewManager(&logger.NoOpLogger{}, newWaitDirector(), vault)
+	manager.SetGuard(guard)
+	manager.restoreWait = 20 * time.Millisecond
+	manager.restoreRetry = 5 * time.Millisecond
+	t.Cleanup(manager.Stop)
+	manager.Start()
+
+	waitForLoad(t, manager)
+
+	manager.mu.RLock()
+	waiting := manager.waitingLocked(certTaskID)
+	manager.mu.RUnlock()
+
+	if !waiting {
+		t.Fatalf("expected the cancelled certificate task to wait for the instance")
+	}
+
+	freeDeprovision()
+
+	waitUntil(t, "the certificate task's reservation of "+waitInstanceID, func() bool {
+		holder, held := guard.Holder(waitInstanceID, "")
+
+		return held && holder.Kind == mutation.KindCertificates && holder.TaskID == certTaskID
+	})
+}
