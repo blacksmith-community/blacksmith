@@ -3332,13 +3332,169 @@
     ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0) + (task.unknown_count || 0)) / task.total_count * 100)
     : 0);
 
+  // ---- Errors, poll status, and re-render helpers for the task panel ----
+
+  // Reads a failed response into an Error that carries the HTTP status and the
+  // API's error code. Callers branch on the code and show the message.
+  const readApiError = async (response) => {
+    let text = '';
+    try {
+      text = await response.text();
+    } catch (readError) {
+      text = '';
+    }
+    let body = null;
+    try {
+      body = JSON.parse(text);
+    } catch (parseError) {
+      body = null;
+    }
+    const message = (body && (body.error || body.message)) || String(text || '').trim() || `HTTP ${response.status}`;
+    const error = new Error(String(message));
+    error.status = response.status;
+    error.code = body && typeof body.code === 'string' ? body.code : '';
+    return error;
+  };
+
+  // Advice that goes with an error code. The server's message always shows
+  // first, and the advice only adds what the operator can do next.
+  const API_ERROR_ADVICE = {
+    tasks_loading: 'Blacksmith is still loading its saved tasks. Try again in a few seconds.',
+    deployment_locked: 'The director is still working on this deployment. Try again when its task finishes.',
+    not_awaiting_decision: 'That instance is not waiting for a decision any more. Refresh the task to see where it stands.',
+    instance_busy: 'Another operation holds this instance. Wait for it to finish, then try again.',
+    credhub_unavailable: 'CredHub did not answer. Check its connection, then try again.'
+  };
+
+  // The text to show for an API error: its message, and the advice for its
+  // code when there is some.
+  const apiErrorText = (error) => {
+    const message = (error && error.message) ? String(error.message) : 'The request failed.';
+    const advice = error && error.code ? API_ERROR_ADVICE[error.code] : '';
+    return advice ? `${message} ${advice}` : message;
+  };
+
+  // The feedback panel for the task controls, created beside the task list.
+  const ensureTaskFeedback = () => {
+    const tasks = document.querySelector('#upgrade .upgrade-tasks');
+    if (!tasks || !tasks.parentNode) return null;
+    let panel = tasks.parentNode.querySelector('.feedback-panel[data-feedback-context="upgrade-tasks"]');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.className = 'feedback-panel';
+      panel.setAttribute('data-feedback-context', 'upgrade-tasks');
+      panel.setAttribute('role', 'alert');
+      tasks.parentNode.insertBefore(panel, tasks);
+    }
+    return panel;
+  };
+
+  // Reports a failed task action through the feedback panel.
+  const reportTaskError = (summary, error) => {
+    ensureTaskFeedback();
+    window.Feedback.error(`${summary} ${apiErrorText(error)}`, { context: 'upgrade-tasks' });
+  };
+
+  const clockTime = (date) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  };
+
+  // The line above the task list. It says when the list last updated, and
+  // after a failed poll it says so, names the time of the data on screen,
+  // and offers Retry.
+  let upgradePollUpdatedAt = null;
+  let upgradePollFailed = false;
+
+  const ensurePollStatus = () => {
+    const tasks = document.querySelector('#upgrade .upgrade-tasks');
+    if (!tasks || !tasks.parentNode) return null;
+    let bar = document.getElementById('upgrade-poll-status');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'upgrade-poll-status';
+      bar.className = 'upgrade-poll-status';
+      const updated = document.createElement('span');
+      updated.className = 'upgrade-poll-updated';
+      const failed = document.createElement('span');
+      failed.className = 'upgrade-poll-failed';
+      failed.setAttribute('role', 'status');
+      failed.hidden = true;
+      const note = document.createElement('span');
+      note.className = 'upgrade-poll-note';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.id = 'upgrade-poll-retry';
+      retry.className = 'btn-secondary btn-sm';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', () => { fetchUpgradeTasks(); });
+      failed.appendChild(note);
+      failed.appendChild(retry);
+      bar.appendChild(updated);
+      bar.appendChild(failed);
+      tasks.parentNode.insertBefore(bar, tasks);
+    }
+    return bar;
+  };
+
+  const renderPollStatus = () => {
+    const bar = ensurePollStatus();
+    if (!bar) return;
+    const stamp = upgradePollUpdatedAt ? clockTime(upgradePollUpdatedAt) : '';
+    const updated = bar.querySelector('.upgrade-poll-updated');
+    const failed = bar.querySelector('.upgrade-poll-failed');
+    updated.textContent = stamp && !upgradePollFailed ? `Updated ${stamp}` : '';
+    updated.hidden = upgradePollFailed || !stamp;
+    failed.hidden = !upgradePollFailed;
+    failed.querySelector('.upgrade-poll-note').textContent = stamp
+      ? `Could not refresh, showing ${stamp}`
+      : 'Could not refresh the task list';
+  };
+
+  // Redraws the task panel and puts back what the operator was using. The
+  // expanded rows are the details elements that carry data-keep-key, the
+  // focus is the element with a data-keep-key that held it, and the scroll is
+  // the panel's own. The scroll comes back only when the panel shows the same
+  // view as before.
+  const rerenderTaskPanel = (container, viewKey, draw) => {
+    const sameView = container.dataset.view === viewKey;
+    const open = new Set();
+    container.querySelectorAll('details[data-keep-key]').forEach((node) => {
+      if (node.open) open.add(node.dataset.keepKey);
+    });
+    const active = document.activeElement;
+    const focusKey = active && container.contains(active) && active.dataset ? (active.dataset.keepKey || '') : '';
+    const scrollTop = container.scrollTop;
+    const scrolls = Array.from(container.querySelectorAll('[data-keep-scroll]'))
+      .map((node) => [node.dataset.keepScroll, node.scrollTop]);
+
+    draw();
+
+    container.dataset.view = viewKey;
+    if (!sameView) return;
+    container.querySelectorAll('details[data-keep-key]').forEach((node) => {
+      if (open.has(node.dataset.keepKey)) node.open = true;
+    });
+    scrolls.forEach(([key, top]) => {
+      const node = Array.from(container.querySelectorAll('[data-keep-scroll]')).find((n) => n.dataset.keepScroll === key);
+      if (node) node.scrollTop = top;
+    });
+    container.scrollTop = scrollTop;
+    if (focusKey) {
+      const target = Array.from(container.querySelectorAll('[data-keep-key]')).find((n) => n.dataset.keepKey === focusKey);
+      if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    }
+  };
+
   // Render the task list in the right panel
   const renderUpgradeTaskList = () => {
     const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
     if (!tasksContainer) return;
 
     if (upgradeTasks.length === 0) {
-      tasksContainer.innerHTML = '<div class="no-tasks p-4 text-center text-gray-500">No upgrade tasks yet. Select instances and click Upgrade to start.</div>';
+      rerenderTaskPanel(tasksContainer, 'list', () => {
+        tasksContainer.innerHTML = '<div class="no-tasks p-4 text-center text-gray-500">No upgrade tasks yet. Select instances and click Upgrade to start.</div>';
+      });
       return;
     }
 
@@ -3347,28 +3503,34 @@
       const statusClass = getTaskStatusClass(task.status);
       const statusIcon = getTaskStatusIcon(task.status);
       const progress = upgradeTaskProgress(task);
-      const taskName = task.name || describeUpgradeTargets(task).label;
+      const taskName = task.name || task.target || describeUpgradeTargets(task).label;
+      const kindBadge = task.kind === 'certificates'
+        ? '<span class="upgrade-task-kind">Certificates</span>'
+        : '';
 
       return `
-        <div class="upgrade-task-item ${isSelected ? 'selected' : ''} ${statusClass}" data-task-id="${task.id}">
+        <div class="upgrade-task-item ${isSelected ? 'selected' : ''} ${statusClass}" data-task-id="${escapeAttribute(task.id)}" data-keep-key="task:${escapeAttribute(task.id)}" role="button" tabindex="0">
           <div class="upgrade-task-header">
             <span class="upgrade-task-status">${statusIcon}</span>
             <span class="upgrade-task-name">${escapeHtml(taskName)}</span>
+            ${kindBadge}
           </div>
           <div class="upgrade-task-progress">
-            <div class="upgrade-task-progress-bar" style="width: ${progress}%"></div>
+            <div class="upgrade-task-progress-bar" style="width: ${Number(progress) || 0}%"></div>
           </div>
           <div class="upgrade-task-stats">
-            <span class="success">${task.completed_count} done</span>
-            <span class="failed">${task.failed_count} failed</span>
-            <span class="total">${task.total_count} total</span>
+            <span class="success">${escapeHtml(String(task.completed_count))} done</span>
+            <span class="failed">${escapeHtml(String(task.failed_count))} failed</span>
+            <span class="total">${escapeHtml(String(task.total_count))} total</span>
           </div>
-          <div class="upgrade-task-time">${formatTaskTime(task.created_at)}</div>
+          <div class="upgrade-task-time">${escapeHtml(formatTaskTime(task.created_at))}</div>
         </div>
       `;
     }).join('');
 
-    tasksContainer.innerHTML = `<div class="upgrade-task-list">${taskListHtml}</div>`;
+    rerenderTaskPanel(tasksContainer, 'list', () => {
+      tasksContainer.innerHTML = `<div class="upgrade-task-list">${taskListHtml}</div>`;
+    });
 
     // Set up click handlers for tasks
     setupTaskClickHandlers();
@@ -3406,15 +3568,30 @@
   // Set up click handlers for task items
   const setupTaskClickHandlers = () => {
     document.querySelectorAll('#upgrade .upgrade-task-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const taskId = item.dataset.taskId;
-        selectUpgradeTask(taskId);
+      const open = () => { selectUpgradeTask(item.dataset.taskId); };
+      item.addEventListener('click', open);
+      item.addEventListener('keydown', (event) => {
+        if (event.target !== item) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          open();
+        }
       });
     });
   };
 
-  // Select a task and show its details
-  const selectUpgradeTask = async (taskId) => {
+  // Fetches one task's full record. It throws an Error with the API's status
+  // and code when the broker refuses.
+  const loadUpgradeTask = async (taskId) => {
+    const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}`);
+    if (!response.ok) throw await readApiError(response);
+    return response.json();
+  };
+
+  // Select a task and show its details. It resolves true when the details
+  // are on screen. With throwOnError it rethrows a failure for a caller that
+  // shows it, and otherwise it reports the failure through the feedback panel.
+  const selectUpgradeTask = async (taskId, options = {}) => {
     selectedTaskId = taskId;
 
     // Update UI to show selected task
@@ -3422,15 +3599,14 @@
       item.classList.toggle('selected', item.dataset.taskId === taskId);
     });
 
-    // Fetch full task details
     try {
-      const response = await fetch(`/b/upgrade/tasks/${taskId}`);
-      if (response.ok) {
-        const task = await response.json();
-        renderTaskDetail(task);
-      }
+      renderTaskDetail(await loadUpgradeTask(taskId));
+      return true;
     } catch (err) {
       console.error('Failed to fetch task details:', err);
+      if (options.throwOnError) throw err;
+      reportTaskError('Could not load the task.', err);
+      return false;
     }
   };
 
@@ -3443,16 +3619,17 @@
     const instancesHtml = instances.map(instance => {
       const statusIcon = getInstanceStatusIcon(instance.status);
       const statusClass = getInstanceStatusClass(instance.status);
+      const boshTaskId = Number(instance.bosh_task_id) || 0;
 
       return `
         <div class="upgrade-task-instance ${statusClass}">
           <span class="instance-status">${statusIcon}</span>
           <div class="instance-info">
-            <div class="instance-id">${instance.instance_name || instance.instance_id}</div>
-            <div class="instance-deployment">${instance.deployment_name || ''}</div>
+            <div class="instance-id">${escapeHtml(instance.instance_name || instance.instance_id)}</div>
+            <div class="instance-deployment">${escapeHtml(instance.deployment_name || '')}</div>
             ${(instance.applied_releases || []).length ? `<div class="instance-releases">Applied: ${escapeHtml(instance.applied_releases.map(r => `${r.name}/${r.version}`).join(', '))}</div>` : ''}
             <div class="instance-actions">
-              ${instance.bosh_task_id ? `<button class="bosh-task-btn" onclick="showTaskDetails(${instance.bosh_task_id}, event)">BOSH Task: ${instance.bosh_task_id}</button>` : ''}
+              ${boshTaskId ? `<button class="bosh-task-btn" onclick="showTaskDetails(${boshTaskId}, event)">BOSH Task: ${boshTaskId}</button>` : ''}
             </div>
             ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
           </div>
@@ -3470,24 +3647,29 @@
     if (canControl) {
       controlButtonsHtml = `
         <div class="job-control-buttons">
-          ${isRunning ? `<button class="job-control-btn pause-btn" onclick="window.pauseTask('${task.id}', event)">Pause</button>` : ''}
-          ${isPaused ? `<button class="job-control-btn resume-btn" onclick="window.resumeTask('${task.id}', event)">Resume</button>` : ''}
-          <button class="job-control-btn cancel-btn" onclick="window.cancelTask('${task.id}', event)">Cancel Job</button>
+          ${isRunning ? '<button type="button" class="job-control-btn pause-btn" data-task-action="pause" data-keep-key="action:pause">Pause</button>' : ''}
+          ${isPaused ? '<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">Resume</button>' : ''}
+          <button type="button" class="job-control-btn cancel-btn" data-task-action="cancel" data-keep-key="action:cancel">Cancel Job</button>
         </div>
       `;
     }
 
+    const isCertificates = task.kind === 'certificates';
     const targets = describeUpgradeTargets(task);
-    const jobName = task.name || `Upgrade to ${targets.label}`;
-
-    tasksContainer.innerHTML = `
-      <div class="upgrade-task-detail">
-        <div class="task-detail-header">
-          <button class="back-to-list" onclick="window.backToTaskList()">&#8592; Back to Jobs</button>
-          <h3>${escapeHtml(jobName)}</h3>
-          ${controlButtonsHtml}
-        </div>
-        <div class="task-detail-summary">
+    const spec = task.certificates || {};
+    const jobName = task.name || (isCertificates ? 'Certificate rotation' : `Upgrade to ${targets.label}`);
+    const targetRows = isCertificates
+      ? `
+          <div class="summary-row">
+            <span class="label">Mode:</span>
+            <span class="value">${escapeHtml(spec.mode || '')}</span>
+          </div>
+          ${spec.reason ? `
+          <div class="summary-row">
+            <span class="label">Reason:</span>
+            <span class="value">${escapeHtml(spec.reason)}</span>
+          </div>` : ''}`
+      : `
           <div class="summary-row">
             <span class="label">Target Stemcell:</span>
             <span class="value">${escapeHtml(targets.stemcell) || 'keep current'}</span>
@@ -3496,26 +3678,48 @@
           <div class="summary-row">
             <span class="label">Target Releases:</span>
             <span class="value">${escapeHtml(targets.releases.join(', '))}</span>
-          </div>` : ''}
+          </div>` : ''}`;
+
+    rerenderTaskPanel(tasksContainer, `detail:${task.id}`, () => {
+      tasksContainer.innerHTML = `
+      <div class="upgrade-task-detail">
+        <div class="task-detail-header">
+          <button type="button" class="back-to-list" data-task-action="back" data-keep-key="action:back">&#8592; Back to Jobs</button>
+          <h3>${escapeHtml(jobName)}</h3>
+          ${controlButtonsHtml}
+        </div>
+        <div class="task-detail-summary">
+          ${targetRows}
           <div class="summary-row">
             <span class="label">Status:</span>
-            <span class="value status-${task.status}">${task.status}${isPaused ? ' (waiting to resume)' : ''}</span>
+            <span class="value status-${escapeAttribute(task.status)}">${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : ''}</span>
           </div>
           <div class="summary-row">
             <span class="label">Progress:</span>
-            <span class="value">${task.completed_count}/${task.total_count} completed${task.failed_count ? `, ${task.failed_count} failed` : ''}${task.cancelled_count ? `, ${task.cancelled_count} cancelled` : ''}${task.skipped_count ? `, ${task.skipped_count} skipped` : ''}${task.unknown_count ? `, ${task.unknown_count} outcome unknown` : ''} (${progress}%)</span>
+            <span class="value">${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)</span>
           </div>
           <div class="summary-row">
             <span class="label">Created:</span>
-            <span class="value">${formatTaskTime(task.created_at)}</span>
+            <span class="value">${escapeHtml(formatTaskTime(task.created_at))}</span>
           </div>
         </div>
         <div class="task-detail-instances">
           <h4>Instances (${instances.length})</h4>
-          <div class="instances-list">${instancesHtml}</div>
+          <div class="instances-list" data-keep-scroll="instances">${instancesHtml}</div>
         </div>
       </div>
     `;
+    });
+
+    const actions = {
+      back: () => window.backToTaskList(),
+      pause: (event) => window.pauseTask(task.id, event),
+      resume: (event) => window.resumeTask(task.id, event),
+      cancel: (event) => window.cancelTask(task.id, event)
+    };
+    tasksContainer.querySelectorAll('[data-task-action]').forEach((button) => {
+      button.addEventListener('click', actions[button.dataset.taskAction]);
+    });
   };
 
   // Get icon for instance status
@@ -3554,40 +3758,35 @@
     renderUpgradeTaskList();
   };
 
+  // Sends pause, resume, or cancel for a task. A refusal comes back with an
+  // error code, and the broker's message shows in the feedback panel.
+  const sendTaskControl = async (taskId, verb) => {
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}/${verb}`, { method: 'POST' });
+      if (response.ok) {
+        ensureTaskFeedback();
+        window.Feedback.clear('upgrade-tasks');
+        fetchUpgradeTasks(); // Refresh the view
+        return true;
+      }
+      throw await readApiError(response);
+    } catch (err) {
+      console.error(`Failed to ${verb} task:`, err);
+      reportTaskError(`Could not ${verb} the task.`, err);
+      return false;
+    }
+  };
+
   // Pause a running task
   window.pauseTask = async (taskId, event) => {
     if (event) event.stopPropagation();
-    try {
-      const response = await fetch(`/b/upgrade/tasks/${taskId}/pause`, { method: 'POST' });
-      if (response.ok) {
-        console.log('Task paused:', taskId);
-        fetchUpgradeTasks(); // Refresh the view
-      } else {
-        const data = await response.json();
-        alert('Failed to pause task: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Failed to pause task:', err);
-      alert('Failed to pause task: ' + err.message);
-    }
+    return sendTaskControl(taskId, 'pause');
   };
 
   // Resume a paused task
   window.resumeTask = async (taskId, event) => {
     if (event) event.stopPropagation();
-    try {
-      const response = await fetch(`/b/upgrade/tasks/${taskId}/resume`, { method: 'POST' });
-      if (response.ok) {
-        console.log('Task resumed:', taskId);
-        fetchUpgradeTasks(); // Refresh the view
-      } else {
-        const data = await response.json();
-        alert('Failed to resume task: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Failed to resume task:', err);
-      alert('Failed to resume task: ' + err.message);
-    }
+    return sendTaskControl(taskId, 'resume');
   };
 
   // Cancel a running or paused task
@@ -3602,48 +3801,162 @@
       danger: true
     });
 
-    if (!confirmed) return;
+    if (!confirmed) return false;
 
+    return sendTaskControl(taskId, 'cancel');
+  };
+
+  // Fetch upgrade tasks from API. It resolves true when the list and any open
+  // detail are current, and false after a failed poll, which the status line
+  // above the list reports.
+  let fetchTasksInFlight = null;
+  let upgradeTasksLastError = null;
+
+  const fetchUpgradeTasks = () => {
+    if (!fetchTasksInFlight) {
+      fetchTasksInFlight = pollUpgradeTasks().finally(() => { fetchTasksInFlight = null; });
+    }
+    return fetchTasksInFlight;
+  };
+
+  const pollUpgradeTasks = async () => {
     try {
-      const response = await fetch(`/b/upgrade/tasks/${taskId}/cancel`, { method: 'POST' });
-      if (response.ok) {
-        console.log('Task cancelled:', taskId);
-        fetchUpgradeTasks(); // Refresh the view
+      const response = await fetch('/b/upgrade/tasks');
+      if (!response.ok) throw await readApiError(response);
+      const list = await response.json();
+      upgradeTasks = Array.isArray(list) ? list : [];
+
+      // If we're viewing a task detail, refresh it
+      if (selectedTaskId) {
+        const selectedTask = upgradeTasks.find(t => t.id === selectedTaskId);
+        if (selectedTask) {
+          // Fetch full details and re-render
+          renderTaskDetail(await loadUpgradeTask(selectedTaskId));
+        }
       } else {
-        const data = await response.json();
-        alert('Failed to cancel task: ' + (data.error || 'Unknown error'));
+        renderUpgradeTaskList();
       }
+
+      upgradePollUpdatedAt = new Date();
+      upgradePollFailed = false;
+      upgradeTasksLastError = null;
+      renderPollStatus();
+      return true;
     } catch (err) {
-      console.error('Failed to cancel task:', err);
-      alert('Failed to cancel task: ' + err.message);
+      console.error('Failed to fetch upgrade tasks:', err);
+      upgradePollFailed = true;
+      upgradeTasksLastError = err;
+      renderPollStatus();
+      return false;
     }
   };
 
-  // Fetch upgrade tasks from API
-  const fetchUpgradeTasks = async () => {
-    try {
-      const response = await fetch('/b/upgrade/tasks');
-      if (response.ok) {
-        upgradeTasks = await response.json();
-
-        // If we're viewing a task detail, refresh it
-        if (selectedTaskId) {
-          const selectedTask = upgradeTasks.find(t => t.id === selectedTaskId);
-          if (selectedTask) {
-            // Fetch full details and re-render
-            const detailResponse = await fetch(`/b/upgrade/tasks/${selectedTaskId}`);
-            if (detailResponse.ok) {
-              const task = await detailResponse.json();
-              renderTaskDetail(task);
-            }
-          }
-        } else {
-          renderUpgradeTaskList();
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch upgrade tasks:', err);
+  // Opens Batch Operations and shows one task. It rejects with an Error that
+  // says what failed, so a caller can show the failure and offer Retry.
+  window.blacksmithNav.openTask = async (taskId) => {
+    const switched = await window.blacksmithNav.switchTab('upgrade');
+    if (switched === false) throw new Error('The Batch Operations tab could not be opened.');
+    const loaded = await fetchUpgradeTasks();
+    if (!loaded) {
+      throw new Error(`The task list could not be loaded. ${apiErrorText(upgradeTasksLastError)}`);
     }
+    if (!upgradeTasks.some((task) => task.id === taskId)) {
+      throw new Error('The task list does not include this task yet.');
+    }
+    try {
+      await selectUpgradeTask(taskId, { throwOnError: true });
+    } catch (err) {
+      throw new Error(`The task could not be opened. ${apiErrorText(err)}`);
+    }
+    return true;
+  };
+
+  // Replaces a dialog's form with a panel that stays until it is closed. The
+  // panel names the task and links to it through openTask. A failure to fetch
+  // or navigate shows in the panel with Retry.
+  //
+  // Options
+  //   title   the heading
+  //   taskId  the task to name and link to
+  //   error   a failure to show, with Retry when retry is a function
+  //   retry   called by Retry when there is a failure to retry
+  //   onClose called after the operator closes the panel
+  window.blacksmithResultPanel = (container, options = {}) => {
+    if (!container) return null;
+    const make = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      return node;
+    };
+
+    container.textContent = '';
+    const panel = make('section', 'result-panel');
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', String(options.title || 'Result'));
+    panel.tabIndex = -1;
+    panel.appendChild(make('h3', 'result-panel-title', options.title || 'Result'));
+
+    let retryAction = typeof options.retry === 'function' ? options.retry : null;
+    const taskId = options.taskId ? String(options.taskId) : '';
+    if (taskId) {
+      const line = make('p', 'result-panel-task');
+      line.appendChild(document.createTextNode('Task '));
+      line.appendChild(make('code', 'result-panel-task-id', taskId));
+      panel.appendChild(line);
+    }
+
+    const errorBox = make('div', 'result-panel-error');
+    errorBox.setAttribute('role', 'alert');
+    errorBox.hidden = true;
+    const errorText = make('span', 'result-panel-error-text');
+    const retryBtn = make('button', 'btn-secondary btn-sm result-panel-retry', 'Retry');
+    retryBtn.type = 'button';
+    errorBox.appendChild(errorText);
+    errorBox.appendChild(retryBtn);
+    panel.appendChild(errorBox);
+
+    const showError = (message, retryFn) => {
+      errorText.textContent = String(message || 'Something went wrong.');
+      retryAction = typeof retryFn === 'function' ? retryFn : retryAction;
+      retryBtn.hidden = !retryAction;
+      errorBox.hidden = false;
+    };
+
+    retryBtn.addEventListener('click', () => {
+      errorBox.hidden = true;
+      if (retryAction) retryAction();
+    });
+
+    const actions = make('div', 'result-panel-actions');
+    if (taskId) {
+      const openBtn = make('button', 'btn-primary btn-sm result-panel-open', 'Open task');
+      openBtn.type = 'button';
+      const openIt = async () => {
+        errorBox.hidden = true;
+        try {
+          await window.blacksmithNav.openTask(taskId);
+        } catch (err) {
+          showError(err && err.message ? err.message : 'The task could not be opened.', openIt);
+        }
+      };
+      openBtn.addEventListener('click', openIt);
+      actions.appendChild(openBtn);
+    }
+    const closeBtn = make('button', 'btn-secondary btn-sm result-panel-close', 'Close');
+    closeBtn.type = 'button';
+    const close = () => {
+      container.textContent = '';
+      if (typeof options.onClose === 'function') options.onClose();
+    };
+    closeBtn.addEventListener('click', close);
+    actions.appendChild(closeBtn);
+    panel.appendChild(actions);
+
+    container.appendChild(panel);
+    if (options.error) showError(options.error, retryAction);
+    panel.focus();
+    return { close, showError, element: panel };
   };
 
   // Start upgrade for selected instances

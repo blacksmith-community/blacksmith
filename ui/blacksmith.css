@@ -12950,3 +12950,99 @@ span.config-type.resurrection {
 .cert-ov-runbook ol.cert-runbook-notes {
   list-style: decimal;
 }
+
+/* Batch Operations task panel: poll status, kind badge, and the result panel */
+#upgrade .upgrade-poll-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 1em;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#upgrade .upgrade-poll-status[hidden],
+#upgrade .upgrade-poll-failed[hidden],
+#upgrade .upgrade-poll-updated[hidden] {
+  display: none;
+}
+
+#upgrade .upgrade-poll-failed {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--cert-critical-fg);
+  background: var(--cert-critical-bg);
+  border: 1px solid var(--cert-critical);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+#upgrade .upgrade-task-kind {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+#upgrade .upgrade-task-item:focus-visible,
+#upgrade .job-control-btn:focus-visible,
+#upgrade .back-to-list:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.result-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.result-panel:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.result-panel-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.result-panel-task {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.result-panel-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--cert-critical);
+  border-radius: 6px;
+  color: var(--cert-critical-fg);
+  background: var(--cert-critical-bg);
+}
+
+.result-panel-error[hidden] {
+  display: none;
+}
+
+.result-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
