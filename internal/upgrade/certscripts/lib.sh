@@ -54,6 +54,8 @@ norm_hash() {
 
 # The path validators. Each one returns 0 when it accepts and 13 when it
 # refuses, and a script exits with that code before it touches the path.
+# A call with the wrong number of arguments is a fault in the calling
+# script, not a refused path, so it returns the usage code 2.
 # The patterns are the ones in paths.go. The checks of the VM's files
 # then add what only the VM can see.
 #
@@ -149,14 +151,14 @@ _cp_make_private() {
 
 # valid_task <task> accepts only a lowercase canonical UUID.
 valid_task() {
-	[ "$#" -eq 1 ] || return "$EXIT_REFUSED"
+	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 	[[ $1 =~ $CP_TASK_RE ]] || return "$EXIT_REFUSED"
 }
 
 # valid_logical <path> accepts a path under /var/vcap/jobs/<job>/. Only
 # discovery reports such paths, and nothing writes to one.
 valid_logical() {
-	[ "$#" -eq 1 ] || return "$EXIT_REFUSED"
+	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 	_cp_shaped "$1" "$CP_LOGICAL_RE" || return "$EXIT_REFUSED"
 }
 
@@ -169,7 +171,7 @@ valid_logical() {
 # path is the path itself. A second link would let the write change a
 # file outside the job's tree.
 valid_pinned() {
-	[ "$#" -eq 2 ] || return "$EXIT_REFUSED"
+	[ "$#" -eq 2 ] || return "$EXIT_USAGE"
 
 	local path=$1 jobdir=$2 root rest job link full real
 
@@ -201,7 +203,7 @@ valid_pinned() {
 # private to root and none is a symlink, and that anything already at
 # the path is a regular file and not a symlink.
 valid_work() {
-	[ "$#" -eq 2 ] || return "$EXIT_REFUSED"
+	[ "$#" -eq 2 ] || return "$EXIT_USAGE"
 
 	local path=$1 task=$2 root tail full
 
@@ -232,7 +234,7 @@ valid_work() {
 # not a symlink, so a task that resumes reuses its own directory and a
 # planted one stops the script.
 make_work_dir() {
-	[ "$#" -eq 1 ] || return "$EXIT_REFUSED"
+	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 
 	local task=$1 root base kind
 

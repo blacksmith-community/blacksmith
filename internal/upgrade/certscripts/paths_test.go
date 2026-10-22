@@ -18,6 +18,7 @@ const (
 	pinnedTarget = pinnedJobDir + "/config/server.crt"
 	otherTaskID  = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	workBase     = "/var/vcap/data/certpatch/"
+	usageExit    = 2
 	refusedExit  = 13
 	vcapUID      = 1000
 )
@@ -279,11 +280,32 @@ func TestValidatorShapeParityWithBash(t *testing.T) {
 			t.Errorf("valid_work %q %q did not refuse", tc.path, tc.task)
 		}
 	}
+}
 
-	for _, args := range [][]string{{}, {pinnedTarget}, {pinnedTarget, pinnedJobDir, "x"}} {
-		if libCheck(t, root, "valid_pinned", args...) != refusedExit {
-			t.Errorf("valid_pinned with %d arguments did not refuse", len(args))
+func TestValidatorsReportUsage(t *testing.T) {
+	t.Parallel()
+	requireLinux(t)
+
+	root := t.TempDir()
+	wrong := map[string][][]string{
+		"valid_task":    {{}, {testTaskID, testTaskID}},
+		"valid_logical": {{}, {"/var/vcap/jobs/valkey/x", "/var/vcap/jobs/valkey/y"}},
+		"valid_pinned":  {{}, {pinnedTarget}, {pinnedTarget, pinnedJobDir, "x"}},
+		"valid_work":    {{}, {workBase + testTaskID + "/s/0"}, {workBase + testTaskID + "/s/0", testTaskID, "x"}},
+		"make_work_dir": {{}, {testTaskID, testTaskID}},
+	}
+
+	for function, calls := range wrong {
+		for _, args := range calls {
+			if got := libCheck(t, root, function, args...); got != usageExit {
+				t.Errorf("%s with %d arguments exited %d, want 2", function, len(args), got)
+			}
 		}
+	}
+
+	_, err := os.Lstat(filepath.Join(root, "var"))
+	if err == nil {
+		t.Error("a call with the wrong arguments created a directory")
 	}
 }
 
