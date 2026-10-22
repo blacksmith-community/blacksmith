@@ -383,6 +383,7 @@ type redeployEnv struct {
 	director *redeployDirector
 	listener *tlsListener
 	manifest string
+	logs     *redeployLogger
 
 	oldLeaf, newLeaf *x509.Certificate
 	newKey           *ecdsa.PrivateKey
@@ -409,6 +410,7 @@ func newRedeployEnv(t *testing.T) *redeployEnv {
 			pems:     make(map[string]credhub.CertificatePublic),
 		},
 		log:      log,
+		logs:     &redeployLogger{NoOpLogger: &logger.NoOpLogger{}},
 		ca:       newTestCA(t, "services-ca"),
 		switches: switches(true, false),
 	}
@@ -497,12 +499,68 @@ func (e *redeployEnv) scanned() []string {
 	return slices.Clone(e.scans)
 }
 
+// redeployLogger keeps each audit line the manager logs, and counts each
+// time a task's processing waits for a resume.
+type redeployLogger struct {
+	*logger.NoOpLogger
+
+	mu     sync.Mutex
+	audits []string
+	waits  int
+}
+
+func (l *redeployLogger) Named(string) logger.Logger { return l }
+
+func (l *redeployLogger) Info(msg string, args ...interface{}) {
+	if !strings.HasPrefix(msg, "audit=") {
+		return
+	}
+
+	l.mu.Lock()
+	l.audits = append(l.audits, fmt.Sprintf(msg, args...))
+	l.mu.Unlock()
+}
+
+func (l *redeployLogger) Debug(msg string, _ ...interface{}) {
+	if !strings.HasPrefix(msg, "Task %s is paused") {
+		return
+	}
+
+	l.mu.Lock()
+	l.waits++
+	l.mu.Unlock()
+}
+
+// auditLines returns the audit lines logged so far.
+func (l *redeployLogger) auditLines() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return slices.Clone(l.audits)
+}
+
+// resumeWaits returns how many times a task waited for a resume.
+func (l *redeployLogger) resumeWaits() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.waits
+}
+
+// awaitResumeWait waits until a task waits for a resume more times than
+// before, so a test can check that nothing went on past a pause.
+func (e *redeployEnv) awaitResumeWait(before int) {
+	e.t.Helper()
+
+	waitUntil(e.t, "the task to wait for a resume", func() bool { return e.logs.resumeWaits() > before })
+}
+
 // newManager returns a configured manager over the env's director and
 // vault, which the caller starts or runs directly.
 func (e *redeployEnv) newManager() *Manager {
 	e.t.Helper()
 
-	manager := NewManager(&logger.NoOpLogger{}, e.director, e.vault)
+	manager := NewManager(e.logs, e.director, e.vault)
 	e.t.Cleanup(manager.Stop)
 
 	err := manager.Configure(Deps{
@@ -1563,6 +1621,8 @@ func TestCertificatePauseBetweenInstances(t *testing.T) {
 		t.Fatal("the deploy never started")
 	}
 
+	waits := env.logs.resumeWaits()
+
 	err := manager.PauseTask(context.Background(), certTaskID)
 	if err != nil {
 		t.Fatalf("PauseTask: %v", err)
@@ -1579,7 +1639,7 @@ func TestCertificatePauseBetweenInstances(t *testing.T) {
 		t.Fatalf("expected the task to stay paused, got %s", task.Status)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	env.awaitResumeWait(waits)
 
 	task = current(t, manager)
 	if task.Instances[1].Status != InstanceStatusPending {
@@ -1687,11 +1747,12 @@ func TestCertificatePauseOnFailure(t *testing.T) {
 	env := newRedeployEnv(t)
 
 	manager := env.startLoaded(env.failingFirstTask())
+	waits := env.logs.resumeWaits()
 
 	waitForInstance(t, manager, 0, InstanceStatusFailed)
 	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
 
-	time.Sleep(100 * time.Millisecond)
+	env.awaitResumeWait(waits)
 
 	task := current(t, manager)
 	if !task.Paused || task.Instances[1].Status != InstanceStatusPending {
@@ -1879,6 +1940,62 @@ func TestCertificateCancelLetsVerificationFinish(t *testing.T) {
 	}
 
 	expectReleased(t, manager)
+}
+
+// A pause during a verification never interrupts it. The pause takes
+// effect once the verification settles the instance, and the next
+// instance waits for a resume.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificatePauseDuringVerification(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	accepted, release := env.listener.hold()
+	t.Cleanup(release)
+
+	manager := env.startLoaded(env.twoInstanceTask())
+	waits := env.logs.resumeWaits()
+
+	select {
+	case <-accepted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the verification never probed the listener")
+	}
+
+	err := manager.PauseTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("PauseTask: %v", err)
+	}
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusRunning {
+		t.Fatalf("expected the verifying instance to stay running, got %s", inst.Status)
+	}
+
+	if env.logs.resumeWaits() != waits {
+		t.Fatal("expected the pause to wait for the verification to settle")
+	}
+
+	release()
+
+	task := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if task.Status != TaskStatusPaused {
+		t.Fatalf("expected the task to stay paused, got %s", task.Status)
+	}
+
+	env.awaitResumeWait(waits)
+
+	task = current(t, manager)
+	if task.Instances[1].Status != InstanceStatusPending {
+		t.Fatalf("expected the next instance to wait for a resume, got %s", task.Instances[1].Status)
+	}
+
+	if sent := len(env.director.deploys()); sent != 1 {
+		t.Fatalf("expected one deploy, got %d", sent)
+	}
+
+	if saved := env.stored(); saved.Status != TaskStatusPaused || saved.Instances[0].Status != InstanceStatusSuccess {
+		t.Fatalf("expected the saved task paused with the instance done, got %s and %s", saved.Status, saved.Instances[0].Status)
+	}
 }
 
 // idleTask returns a task paused with its instance running and nothing in

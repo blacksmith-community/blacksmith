@@ -480,6 +480,97 @@ func TestDecisionRequestIDReplay(t *testing.T) {
 	})
 }
 
+// A settling decision sent twice with the same request ID applies once,
+// logs one audit line, and answers the second as it did the first.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestSettlingDecisionReplay(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored func(env *redeployEnv) UpgradeTask
+		decide func(manager *Manager) error
+		status InstanceStatus
+		choice string
+	}{
+		{
+			name:   "resolve verify",
+			stored: (*redeployEnv).awaitingOutcome,
+			decide: func(manager *Manager) error {
+				return manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "verify", ClientRequestID: "replay-1"})
+			},
+			status: InstanceStatusSuccess,
+			choice: "verify",
+		},
+		{
+			name:   "resolve failed",
+			stored: (*redeployEnv).awaitingOutcome,
+			decide: func(manager *Manager) error {
+				return manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "failed", ClientRequestID: "replay-1"})
+			},
+			status: InstanceStatusFailed,
+			choice: "failed",
+		},
+		{
+			name:   "resolve abandon",
+			stored: (*redeployEnv).awaitingOutcome,
+			decide: func(manager *Manager) error {
+				return manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "abandon", ClientRequestID: "replay-1"})
+			},
+			status: InstanceStatusOutcomeUnknown,
+			choice: "abandon",
+		},
+		{
+			name: "abandon regeneration",
+			stored: func(env *redeployEnv) UpgradeTask {
+				env.madeNewVersion()
+
+				return env.awaitingReconcile(nil)
+			},
+			decide: func(manager *Manager) error {
+				return manager.ReconcileRegeneration(context.Background(), certTaskID, waitInstanceID, ReconcileRequest{
+					Variable: regenLeaf, Action: "abandon", ClientRequestID: "replay-1",
+				})
+			},
+			status: InstanceStatusFailed,
+			choice: "abandon",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			manager := env.load(tc.stored(env))
+
+			for attempt := 1; attempt <= 2; attempt++ {
+				err := tc.decide(manager)
+				if err != nil {
+					t.Fatalf("attempt %d: %v", attempt, err)
+				}
+			}
+
+			inst := current(t, manager).Instances[0]
+			if inst.Status != tc.status || inst.Certificates.Pending != nil {
+				t.Fatalf("expected a settled %s instance, got %s with %+v", tc.status, inst.Status, inst.Certificates.Pending)
+			}
+
+			if got := inst.Certificates.DecisionRequestID; got != "replay-1" {
+				t.Fatalf("expected the request ID recorded, got %q", got)
+			}
+
+			audits := env.logs.auditLines()
+			if len(audits) != 1 || !strings.Contains(audits[0], "audit=certificate-rotation event=decision") || !strings.Contains(audits[0], "choice="+tc.choice) {
+				t.Fatalf("expected one audit line for the %s decision, got %q", tc.choice, audits)
+			}
+
+			expectReleased(t, manager)
+
+			waitUntil(t, "the saved request ID", func() bool {
+				return env.stored().Instances[0].Certificates.DecisionRequestID == "replay-1"
+			})
+		})
+	}
+}
+
 // The same request ID with another body is a conflict, on any decision
 // endpoint, and a new ID against an instance that no longer waits is
 // refused.
