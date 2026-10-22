@@ -14397,6 +14397,25 @@
     }
   };
 
+  // Render a list of certificates through the safe certificate views
+  const renderCertificateRows = (container, certificates, sourceLabel) => {
+    const header = CertView.el('div', 'cert-list-header');
+    header.appendChild(CertView.el('h4', 'cert-list-title', `${sourceLabel} Certificates`));
+    header.appendChild(CertView.el('span', 'cert-list-count',
+      `${certificates.length} certificate${certificates.length === 1 ? '' : 's'}`));
+
+    const list = CertView.el('div', 'cert-list');
+    certificates.forEach((cert, index) => {
+      list.appendChild(CertView.summary(cert, {
+        fallbackName: `Certificate ${index + 1}`,
+        onInspect: (selected) => window.inspectCertificateFromList(selected)
+      }));
+    });
+
+    container.replaceChildren(header, list);
+    container.certificateData = certificates;
+  };
+
   // Render a list of certificates
   const renderCertificateList = (container, certificates, source) => {
     if (!certificates || certificates.length === 0) {
@@ -14409,6 +14428,11 @@
         source === 'manifest' ? 'Manifest' :
           source === 'vm-trusted' ? 'VM Trusted Store' :
             source === 'service-endpoint' ? 'Service Endpoint' : 'Endpoint';
+
+    if (source === 'endpoint') {
+      renderCertificateRows(container, certificates, sourceLabel);
+      return;
+    }
 
     const html = `
       <div class="cert-list-header">
@@ -15286,6 +15310,344 @@
       }
     }
   };
+
+  // ================================================================
+  // CERTIFICATE VIEW COMPONENTS
+  // ================================================================
+  //
+  // Every function here builds DOM nodes. Values from a certificate, a
+  // manifest, a probe, or the API reach the page through textContent or
+  // setAttribute, never through innerHTML, and every action binds with
+  // addEventListener. Copy values live in a Map keyed by a generated ID,
+  // so no handler is ever built from data.
+
+  const CertView = (() => {
+    const COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+    const INSPECT_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false" style="margin-right: 4px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+
+    // The copy map is bounded so long sessions do not hold every PEM that
+    // was ever rendered.
+    const COPY_LIMIT = 2000;
+    const copyValues = new Map();
+    let copySequence = 0;
+
+    const registerCopy = (value) => {
+      copySequence += 1;
+      const id = `cert-copy-${copySequence}`;
+      copyValues.set(id, String(value ?? ''));
+      if (copyValues.size > COPY_LIMIT) {
+        copyValues.delete(copyValues.keys().next().value);
+      }
+      return id;
+    };
+
+    const el = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      return node;
+    };
+
+    const asList = (value) => {
+      if (value === undefined || value === null || value === '') return [];
+      return Array.isArray(value) ? value.map(String) : [String(value)];
+    };
+
+    const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+    // Subject and issuer arrive as a string or as the parsed name object.
+    const formatName = (name) => {
+      if (!name) return 'N/A';
+      if (typeof name === 'string') return name;
+      if (typeof name !== 'object') return String(name);
+
+      const parts = [];
+      if (name.commonName) parts.push(`CN=${name.commonName}`);
+      const add = (label, value) => {
+        const list = asList(value);
+        if (list.length > 0) parts.push(`${label}=${list.join(', ')}`);
+      };
+      add('O', name.organization);
+      add('OU', name.organizationalUnit);
+      add('C', name.country);
+      add('L', name.locality);
+      add('ST', name.province);
+      return parts.length > 0 ? parts.join(', ') : 'N/A';
+    };
+
+    const formatDate = (value) => {
+      if (!value) return 'N/A';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+    };
+
+    const utcString = (value) => {
+      const date = new Date(value);
+      if (!value || Number.isNaN(date.getTime())) return '';
+      return `${date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')} UTC`;
+    };
+
+    const EXPIRY = {
+      expired: { icon: '✕' },
+      critical: { icon: '!' },
+      warning: { icon: '▲' },
+      ok: { icon: '✓' },
+      unknown: { icon: '?' }
+    };
+
+    const expiryText = (status, daysLeft) => {
+      const hasDays = typeof daysLeft === 'number' && Number.isFinite(daysLeft);
+      switch (status) {
+        case 'expired': {
+          if (!hasDays) return 'Expired';
+          const ago = Math.abs(Math.trunc(daysLeft));
+          return ago === 0 ? 'Expired, today' : `Expired, ${plural(ago, 'day')} ago`;
+        }
+        case 'critical':
+          return hasDays ? `Critical, ${plural(Math.max(0, Math.trunc(daysLeft)), 'day')}` : 'Critical';
+        case 'warning':
+          return hasDays ? `Warning, ${plural(Math.max(0, Math.trunc(daysLeft)), 'day')}` : 'Warning';
+        case 'ok':
+          return 'Expiry OK';
+        default:
+          return 'Expiry unknown';
+      }
+    };
+
+    // Expiry pill: a span.cert-pill.cert-pill--<status> with an icon, the
+    // status wording with the days left, and the exact UTC expiry in the
+    // title. The wording differs per status, so colour is never the only
+    // signal.
+    const expiryPill = (status, daysLeft, notAfter) => {
+      const known = Object.prototype.hasOwnProperty.call(EXPIRY, status) ? status : 'unknown';
+      const pill = el('span', `cert-pill cert-pill--${known}`);
+      const icon = el('span', 'cert-pill-icon', EXPIRY[known].icon);
+      icon.setAttribute('aria-hidden', 'true');
+      pill.appendChild(icon);
+      pill.appendChild(el('span', 'cert-pill-text', expiryText(known, daysLeft)));
+
+      const utc = utcString(notAfter);
+      if (utc) {
+        pill.setAttribute('title', `${known === 'expired' ? 'Expired' : 'Expires'} ${utc}`);
+      } else {
+        pill.setAttribute('title', 'Expiry date not available');
+      }
+      return pill;
+    };
+
+    const HEALTH = {
+      error: { icon: '✕', text: 'Health error' },
+      warning: { icon: '▲', text: 'Health warning' },
+      unknown: { icon: '?', text: 'Health unknown' },
+      ok: { icon: '✓', text: 'Health OK' }
+    };
+
+    const healthPill = (health) => {
+      const known = Object.prototype.hasOwnProperty.call(HEALTH, health) ? health : 'unknown';
+      const pill = el('span', `health-pill health-pill--${known}`);
+      const icon = el('span', 'health-pill-icon', HEALTH[known].icon);
+      icon.setAttribute('aria-hidden', 'true');
+      pill.appendChild(icon);
+      pill.appendChild(el('span', 'health-pill-text', HEALTH[known].text));
+      return pill;
+    };
+
+    // The inventory API computes expiry status itself. The older per
+    // certificate endpoints return only dates, so for those lists we
+    // derive a display status from the date with the default thresholds
+    // of 7 and 30 days. The inventory views never use this path.
+    const displayExpiry = (notAfter) => {
+      const date = new Date(notAfter);
+      if (!notAfter || Number.isNaN(date.getTime())) {
+        return { status: 'unknown', daysLeft: null };
+      }
+      const remaining = date.getTime() - Date.now();
+      const day = 24 * 60 * 60 * 1000;
+      if (remaining <= 0) {
+        return { status: 'expired', daysLeft: -Math.ceil(-remaining / day) };
+      }
+      const daysLeft = Math.floor(remaining / day);
+      if (remaining < 7 * day) return { status: 'critical', daysLeft };
+      if (remaining < 30 * day) return { status: 'warning', daysLeft };
+      return { status: 'ok', daysLeft };
+    };
+
+    // Copy button. The value stays in the module map. The click listener
+    // reads it back by ID when the operator copies.
+    const copyButton = (label, value, text) => {
+      const id = registerCopy(value);
+      const button = el('button', 'cert-copy-btn');
+      button.type = 'button';
+      button.setAttribute('aria-label', label);
+      button.setAttribute('title', label);
+      button.dataset.copyId = id;
+      if (text) {
+        button.appendChild(document.createTextNode(`${text} `));
+      }
+      const icon = el('span');
+      icon.innerHTML = COPY_ICON;
+      button.appendChild(icon.firstChild);
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        copyToClipboard(copyValues.get(id), button);
+      });
+      return button;
+    };
+
+    // A comfortable summary row for lists. It takes either the legacy
+    // list item ({name, path, details}) or an inventory certificate.
+    const summary = (item, opts = {}) => {
+      const cert = item || {};
+      const details = cert.details || {};
+      const row = el('div', 'cert-list-item');
+
+      const info = el('div', 'cert-item-info');
+      const name = cert.name || cert.variable || cert.key || cert.common_name || opts.fallbackName || 'Certificate';
+      info.appendChild(el('div', 'cert-item-name', name));
+
+      const subjectSource = details.subject || cert.subject || cert.common_name;
+      const subject = subjectSource ? formatName(subjectSource) : '';
+      if (subject) info.appendChild(el('div', 'cert-item-subject', subject));
+
+      const issuerSource = details.issuer || cert.issuer;
+      if (opts.showIssuer && issuerSource) {
+        info.appendChild(el('div', 'cert-item-issuer', `Issuer: ${formatName(issuerSource)}`));
+      }
+
+      const path = cert.path || cert.locator;
+      if (path) info.appendChild(el('div', 'cert-item-path', path));
+
+      const notAfter = details.notAfter || cert.effective_not_after || cert.notAfter;
+      if (notAfter || cert.expiry) {
+        const pills = el('div', 'cert-item-pills');
+        if (cert.expiry) {
+          pills.appendChild(expiryPill(cert.expiry, cert.days_left, notAfter));
+        } else {
+          const shown = displayExpiry(notAfter);
+          pills.appendChild(expiryPill(shown.status, shown.daysLeft, notAfter));
+        }
+        if (cert.health) pills.appendChild(healthPill(cert.health));
+        info.appendChild(pills);
+      }
+      row.appendChild(info);
+
+      const actions = el('div', 'cert-item-actions');
+      const fingerprint = details.fingerprints && details.fingerprints.sha256;
+      if (fingerprint) {
+        actions.appendChild(copyButton('Copy SHA-256 fingerprint', fingerprint));
+      } else if (subject) {
+        actions.appendChild(copyButton('Copy subject', subject));
+      }
+
+      const inspect = typeof opts.onInspect === 'function'
+        ? opts.onInspect
+        : (cert.details || cert.pemEncoded) && typeof window.inspectCertificateFromList === 'function'
+          ? window.inspectCertificateFromList
+          : null;
+      if (inspect) {
+        const button = el('button', 'cert-inspect-btn');
+        button.type = 'button';
+        button.innerHTML = INSPECT_ICON;
+        button.appendChild(document.createTextNode('Inspect'));
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          inspect(cert);
+        });
+        actions.appendChild(button);
+      }
+      row.appendChild(actions);
+      return row;
+    };
+
+    const fieldRow = (label, text, copyValue) => {
+      const tr = el('tr');
+      tr.appendChild(el('th', null, label));
+      const td = el('td');
+      const wrap = el('div', 'cert-field-value');
+      const span = el('span', 'cert-field-text');
+      if (text instanceof Node) {
+        span.appendChild(text);
+      } else {
+        span.textContent = text;
+      }
+      wrap.appendChild(span);
+      if (copyValue) wrap.appendChild(copyButton(`Copy ${label}`, copyValue));
+      td.appendChild(wrap);
+      tr.appendChild(td);
+      return tr;
+    };
+
+    // Full detail block for the inspector and for the drawer.
+    const detail = (details) => {
+      const cert = details;
+      if (!cert || typeof cert !== 'object') {
+        return el('div', 'cert-error', 'No certificate data available');
+      }
+
+      const hasBasicData = cert.subject || cert.issuer || cert.serialNumber || cert.version;
+      if (!hasBasicData) {
+        const box = el('div', 'cert-error');
+        box.appendChild(el('h4', null, 'Certificate Data Unavailable'));
+        box.appendChild(el('p', null, 'The certificate data structure is not in the expected format.'));
+        const disclosure = el('details');
+        disclosure.appendChild(el('summary', null, 'Raw Certificate Data'));
+        disclosure.appendChild(el('pre', 'cert-raw-data', JSON.stringify(cert, null, 2)));
+        box.appendChild(disclosure);
+        return box;
+      }
+
+      const table = el('table', 'cert-details-table');
+      const body = el('tbody');
+      table.appendChild(body);
+
+      const na = (value) => (value === undefined || value === null || value === '' ? 'N/A' : String(value));
+      const raw = (value) => (value === undefined || value === null ? '' : String(value));
+
+      body.appendChild(fieldRow('Version', na(cert.version), raw(cert.version)));
+      body.appendChild(fieldRow('Serial Number', na(cert.serialNumber), raw(cert.serialNumber)));
+      body.appendChild(fieldRow('Subject', formatName(cert.subject), formatName(cert.subject)));
+      body.appendChild(fieldRow('Issuer', formatName(cert.issuer), formatName(cert.issuer)));
+      body.appendChild(fieldRow('Valid From', formatDate(cert.notBefore), formatDate(cert.notBefore)));
+
+      const validTo = el('span');
+      validTo.appendChild(document.createTextNode(`${formatDate(cert.notAfter)} `));
+      if (cert.notAfter) {
+        const shown = displayExpiry(cert.notAfter);
+        validTo.appendChild(expiryPill(shown.status, shown.daysLeft, cert.notAfter));
+      }
+      body.appendChild(fieldRow('Valid To', validTo, formatDate(cert.notAfter)));
+
+      body.appendChild(fieldRow('Signature Algorithm', na(cert.signatureAlgorithm), raw(cert.signatureAlgorithm)));
+
+      if (cert.publicKey && (cert.publicKey.algorithm || cert.publicKey.bits)) {
+        const key = [cert.publicKey.algorithm, cert.publicKey.bits ? `${cert.publicKey.bits} bits` : '', cert.publicKey.curve]
+          .filter(Boolean).join(', ');
+        body.appendChild(fieldRow('Public Key', key, key));
+      }
+
+      const sans = asList(cert.subjectAltNames);
+      if (sans.length > 0) {
+        const list = el('ul', 'cert-san-list');
+        sans.forEach((san) => list.appendChild(el('li', null, san)));
+        body.appendChild(fieldRow('Subject Alt Names', list, sans.join(', ')));
+      }
+
+      const ekus = asList(cert.extKeyUsage);
+      if (ekus.length > 0) {
+        body.appendChild(fieldRow('Extended Key Usage', ekus.join(', '), ekus.join(', ')));
+      }
+
+      if (cert.fingerprints) {
+        const code = el('code', null, na(cert.fingerprints.sha256));
+        body.appendChild(fieldRow('SHA256 Fingerprint', code, raw(cert.fingerprints.sha256)));
+      }
+      return table;
+    };
+
+    return { expiryPill, healthPill, summary, detail, copyButton, formatName, formatDate, displayExpiry, el };
+  })();
 
   // Certificate Inspector Modal functionality
   const CertificateInspector = {
@@ -17365,6 +17727,7 @@
   // Make ModalManager and CertificateInspector available globally for debugging
   window.ModalManager = ModalManager;
   window.CertificateInspector = CertificateInspector;
+  window.CertView = CertView;
 
   // Terminal Manager Implementation
   const TerminalManager = {

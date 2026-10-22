@@ -11671,3 +11671,163 @@ span.config-type.resurrection {
   color: #0ea5e9;
   font-weight: 700;
 }
+
+/* ================================================================
+   Certificate status tokens, expiry pills, and health pills.
+   Each foreground and background pair keeps a contrast ratio of at
+   least 4.5 to 1. The base token is the accent used for borders.
+   ================================================================ */
+
+:root {
+  --cert-expired: #b91c1c;
+  --cert-expired-fg: #7f1d1d;
+  --cert-expired-bg: #fee2e2;
+  --cert-critical: #c2410c;
+  --cert-critical-fg: #9a3412;
+  --cert-critical-bg: #ffedd5;
+  --cert-warning: #a16207;
+  --cert-warning-fg: #713f12;
+  --cert-warning-bg: #fef3c7;
+  --cert-ok: #15803d;
+  --cert-ok-fg: #14532d;
+  --cert-ok-bg: #dcfce7;
+  --cert-unknown: #6b7280;
+  --cert-unknown-fg: #374151;
+  --cert-unknown-bg: #e5e7eb;
+  --health-error: #b91c1c;
+  --health-error-fg: #7f1d1d;
+  --health-error-bg: #fecaca;
+  --health-warning: #a16207;
+  --health-warning-fg: #78350f;
+  --health-warning-bg: #fde68a;
+}
+
+[data-theme="dark"] {
+  --cert-expired: #f87171;
+  --cert-expired-fg: #fecaca;
+  --cert-expired-bg: #450a0a;
+  --cert-critical: #fb923c;
+  --cert-critical-fg: #fed7aa;
+  --cert-critical-bg: #431407;
+  --cert-warning: #fbbf24;
+  --cert-warning-fg: #fde68a;
+  --cert-warning-bg: #422006;
+  --cert-ok: #4ade80;
+  --cert-ok-fg: #bbf7d0;
+  --cert-ok-bg: #052e16;
+  --cert-unknown: #9ca3af;
+  --cert-unknown-fg: #d1d5db;
+  --cert-unknown-bg: #1f2937;
+  --health-error: #fb7185;
+  --health-error-fg: #fecdd3;
+  --health-error-bg: #4c0519;
+  --health-warning: #facc15;
+  --health-warning-fg: #fde68a;
+  --health-warning-bg: #3b2a05;
+}
+
+.cert-pill,
+.health-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.cert-pill-icon,
+.health-pill-icon {
+  font-weight: 700;
+  line-height: 1;
+}
+
+.cert-pill--expired {
+  color: var(--cert-expired-fg);
+  background: var(--cert-expired-bg);
+  border-color: var(--cert-expired);
+}
+
+.cert-pill--critical {
+  color: var(--cert-critical-fg);
+  background: var(--cert-critical-bg);
+  border-color: var(--cert-critical);
+}
+
+.cert-pill--warning {
+  color: var(--cert-warning-fg);
+  background: var(--cert-warning-bg);
+  border-color: var(--cert-warning);
+}
+
+.cert-pill--ok {
+  color: var(--cert-ok-fg);
+  background: var(--cert-ok-bg);
+  border-color: var(--cert-ok);
+}
+
+.cert-pill--unknown {
+  color: var(--cert-unknown-fg);
+  background: var(--cert-unknown-bg);
+  border-color: var(--cert-unknown);
+}
+
+.health-pill--error {
+  color: var(--health-error-fg);
+  background: var(--health-error-bg);
+  border-color: var(--health-error);
+}
+
+.health-pill--warning {
+  color: var(--health-warning-fg);
+  background: var(--health-warning-bg);
+  border-color: var(--health-warning);
+}
+
+.health-pill--ok {
+  color: var(--cert-ok-fg);
+  background: var(--cert-ok-bg);
+  border-color: var(--cert-ok);
+}
+
+.health-pill--unknown {
+  color: var(--cert-unknown-fg);
+  background: var(--cert-unknown-bg);
+  border-color: var(--cert-unknown);
+}
+
+.cert-list-item .cert-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cert-item-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.cert-item-name,
+.cert-item-subject,
+.cert-item-path,
+.cert-field-text {
+  overflow-wrap: anywhere;
+}
+
+.cert-san-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cert-raw-data {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
