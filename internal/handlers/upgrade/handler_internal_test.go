@@ -143,6 +143,9 @@ func TestCreateBusyIsCodedWithTheHolder(t *testing.T) {
 type certTasks struct {
 	taskManager
 
+	// createdFrom is where the manager says each task was created.
+	createdFrom string
+
 	mu       sync.Mutex
 	requests []upgrade.CreateCertificateTaskRequest
 }
@@ -161,7 +164,7 @@ func (c *certTasks) CreateCertificateTask(_ context.Context, req upgrade.CreateC
 
 	c.requests = append(c.requests, req)
 
-	return &upgrade.UpgradeTask{ID: "task-1", Kind: upgrade.TaskKindCertificates, Name: req.Name, ClientRequestID: req.ClientRequestID}, existing, nil
+	return &upgrade.UpgradeTask{ID: "task-1", Kind: upgrade.TaskKindCertificates, Name: req.Name, ClientRequestID: req.ClientRequestID, CreatedFrom: c.createdFrom}, existing, nil
 }
 
 // postCertificateTask sends the body to POST /b/upgrade/tasks and returns
@@ -203,7 +206,7 @@ func TestCreateHandlerAnswers200OnRetry(t *testing.T) {
 func TestCreateHandlerIgnoresClientCreatedFrom(t *testing.T) {
 	t.Parallel()
 
-	tasks := &certTasks{}
+	tasks := &certTasks{createdFrom: "api"}
 	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: tasks}
 
 	body := strings.Replace(certificateCreateBody, `"reason"`, `"created_from":"spoofed","reason"`, 1)
@@ -213,10 +216,15 @@ func TestCreateHandlerIgnoresClientCreatedFrom(t *testing.T) {
 		t.Fatalf("status %d, body %v", status, answer)
 	}
 
-	if _, set := answer["created_from"]; set {
-		t.Fatalf("the task must not carry the client's created_from: %v", answer)
+	// The answer carries where the manager says the task was created,
+	// never the value the client sent.
+	if answer["created_from"] != "api" {
+		t.Fatalf("expected the manager's created_from %q, got %v", "api", answer)
 	}
 
+	// The request the manager gets has no created_from. If the request type
+	// ever gained that field, the client's value would show up here and
+	// the comparison would fail.
 	want := upgrade.CreateCertificateTaskRequest{PreviewID: "pv-5d0c", ClientRequestID: "3b8f", Name: "CHG-1234 Redis leaves", Reason: "CHG-1234"}
 	if len(tasks.requests) != 1 || tasks.requests[0] != want {
 		t.Fatalf("expected the manager to get %+v, got %+v", want, tasks.requests)
