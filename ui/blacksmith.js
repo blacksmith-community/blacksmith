@@ -19775,6 +19775,21 @@
           (cert.owners || []).forEach((o) => { if (o && o.kind === 'instance' && o.instance_id) instances.add(o.instance_id); });
         });
       });
+      // The union comes out in toggle order, so restore the server's
+      // order: soonest effective expiry first, then id. Certificates
+      // without a parseable expiry sort last.
+      const expiryKey = (cert) => {
+        const t = Date.parse(cert.effective_not_after);
+        return Number.isNaN(t) ? Infinity : t;
+      };
+      certificates.sort((a, b) => {
+        const ka = expiryKey(a);
+        const kb = expiryKey(b);
+        if (ka !== kb) return ka < kb ? -1 : 1;
+        const ia = String(a.id);
+        const ib = String(b.id);
+        return ia < ib ? -1 : (ia > ib ? 1 : 0);
+      });
       const body = { ...results[0].body, certificates };
       body.filtered = { ...(results[0].body.filtered || {}), certificates: certificates.length, affected_instances: instances.size };
       return { ok: true, status: results[0].status, body };
