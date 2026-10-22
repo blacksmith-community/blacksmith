@@ -372,6 +372,13 @@ func (m *Manager) Stop() {
 	m.stopOnce.Do(func() {
 		close(m.stopCh)
 		m.cancel()
+
+		// A goroutine the WaitGroup doesn't count adds to it only under mu
+		// and only while the context is live. Taking mu once here means
+		// every such Add has happened before Wait, or never will.
+		m.mu.Lock()
+		m.mu.Unlock() //nolint:staticcheck // an empty critical section is the barrier
+
 		m.wg.Wait()
 	})
 }

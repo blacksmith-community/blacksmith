@@ -534,6 +534,74 @@ func TestCreateSecondSaveUnconfirmedHoldsReservations(t *testing.T) {
 	expectCertificateHolder(t, env.manager, waitInstanceID, retried.ID)
 }
 
+// recordWrites counts the certificate record writes the vault was asked
+// for.
+func (v *createVault) recordWrites() int {
+	v.script.Lock()
+	defer v.script.Unlock()
+
+	return v.writes
+}
+
+// Stop takes mu once after it cancels the manager's context, so a create
+// that is deciding under mu whether to start its retry loop either adds
+// the loop to the WaitGroup before Stop waits or sees the context
+// cancelled and starts none.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestStopWaitsForCreateCriticalSection(t *testing.T) {
+	env, _ := createEnv(t)
+
+	env.manager.mu.Lock()
+
+	stopped := make(chan struct{})
+
+	go func() {
+		env.manager.Stop()
+		close(stopped)
+	}()
+
+	<-env.manager.ctx.Done()
+
+	select {
+	case <-stopped:
+		env.manager.mu.Unlock()
+		t.Fatal("Stop returned while a create could still be deciding under mu")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	env.manager.mu.Unlock()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop never returned after mu was released")
+	}
+}
+
+// An unconfirmed create after Stop starts no retry loop, so nothing writes
+// to Vault once the create has answered.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCreateAfterStopStartsNoRetryLoop(t *testing.T) {
+	env, vault := createEnv(t)
+	preview := previewOf(t, env, redeploy(waitInstanceID))
+
+	vault.failRecords(func(int) bool { return true })
+	env.manager.Stop()
+
+	_, _, err := env.manager.CreateCertificateTask(context.Background(), createRequest(preview.ID))
+	expectAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+
+	writes := vault.recordWrites()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if later := vault.recordWrites(); later != writes {
+		t.Fatalf("expected no record write after the create answered, got %d more", later-writes)
+	}
+}
+
 // A stored certificate task whose creation was never confirmed loads
 // failed, holds nothing, and never runs.
 //

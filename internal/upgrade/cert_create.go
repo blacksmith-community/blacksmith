@@ -342,13 +342,20 @@ func (m *Manager) failUnconfirmedCreate(task *UpgradeTask, cause error) error {
 	}
 
 	interval := m.createRetry
+
+	// The check and the Add happen under mu, and Stop takes mu once after
+	// it cancels the context and before it waits. So either Stop's Wait
+	// counts this loop, or the check sees the context cancelled and no
+	// loop starts.
+	retry := m.ctx.Err() == nil
+	if retry {
+		m.wg.Add(1)
+	}
 	m.mu.Unlock()
 
 	m.logger.Error("Certificate task %s failed, because its creation could not be confirmed: %v", task.ID, cause)
 
-	if m.ctx.Err() == nil {
-		m.wg.Add(1)
-
+	if retry {
 		go m.saveUnconfirmedCreate(task, interval)
 	}
 
