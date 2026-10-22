@@ -268,7 +268,8 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		Switches:              deps.Switches,
 		Previews:              upgrade.NewPreviewStore(time.Now),
 		// The redeploy probes listeners as the inventory scanner does,
-		// with the same timeout and the system roots.
+		// with the same timeout. RootCAs stays nil because Leaf never
+		// verifies the chain, and the redeploy compares fingerprints.
 		Prober: certinventory.Prober{Timeout: certinventory.DefaultProbeTimeout},
 	})
 }

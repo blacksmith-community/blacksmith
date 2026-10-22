@@ -195,13 +195,26 @@ type redeployDirector struct {
 	// and a negative count fails every call. lists counts the calls.
 	listFails int
 	lists     int
+
+	// nameless and empty make GetInfo and GetDeployment answer with
+	// nothing and no error.
+	nameless bool
+	empty    bool
 }
 
 func (d *redeployDirector) GetInfo(context.Context) (*bosh.Info, error) {
+	if d.nameless {
+		return nil, nil
+	}
+
 	return &bosh.Info{Name: redeployDirectorName, Version: "280.0.4"}, nil
 }
 
 func (d *redeployDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+	if d.empty {
+		return nil, nil
+	}
+
 	return &bosh.DeploymentDetail{Name: name, Manifest: d.manifest}, nil
 }
 
@@ -1257,5 +1270,37 @@ func TestRedeployFailedTaskRescans(t *testing.T) {
 
 	if saved := env.stored().Instances[0]; saved.Certificates.Phase != RotationPhaseDone {
 		t.Fatalf("expected phase done to be saved, got %s", saved.Certificates.Phase)
+	}
+}
+
+// A director that answers with nothing and no error leaves the
+// verification unreadable, with a message that reads cleanly.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestRedeployVerifyEmptyAnswers(t *testing.T) {
+	cases := map[string]func(d *redeployDirector){
+		"no director name": func(d *redeployDirector) { d.nameless = true },
+		"no deployment":    func(d *redeployDirector) { d.empty = true },
+	}
+
+	for name, empty := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			env.madeNewVersion()
+			env.deployedNewVersion()
+			empty(env.director)
+
+			manager := env.newManager()
+			task := env.deployedTask()
+
+			err := manager.verifyRedeploy(context.Background(), &task.Instances[0])
+			if !errors.Is(err, errVerifyUnreadable) {
+				t.Fatalf("expected an unreadable verification, got %v", err)
+			}
+
+			if strings.Contains(err.Error(), "%!") {
+				t.Fatalf("expected a clean message, got %q", err.Error())
+			}
+		})
 	}
 }

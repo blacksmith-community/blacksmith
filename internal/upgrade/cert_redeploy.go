@@ -906,15 +906,23 @@ func (m *Manager) verifyListeners(ctx context.Context, deployment string, select
 // returns the listeners the rules give for the selected variables.
 func (m *Manager) listenersToVerify(ctx context.Context, deployment string, selected []VariableRotation) ([]verifiedListener, *certinventory.ManifestFacts, error) {
 	info, err := directorCall(ctx, m.director.GetInfo)
-	if err != nil || info == nil || info.Name == "" {
+	if err != nil {
 		return nil, nil, fmt.Errorf("%w: the director did not report its name: %w", errVerifyUnreadable, err)
+	}
+
+	if info == nil || info.Name == "" {
+		return nil, nil, fmt.Errorf("%w: the director reported no name", errVerifyUnreadable)
 	}
 
 	detail, err := directorCall(ctx, func(c context.Context) (*bosh.DeploymentDetail, error) {
 		return m.director.GetDeployment(c, deployment)
 	})
-	if err != nil || detail == nil {
+	if err != nil {
 		return nil, nil, fmt.Errorf("%w: the director did not return deployment %s: %w", errVerifyUnreadable, deployment, err)
+	}
+
+	if detail == nil {
+		return nil, nil, fmt.Errorf("%w: the director returned no manifest for deployment %s", errVerifyUnreadable, deployment)
 	}
 
 	facts, err := certinventory.WalkManifest(detail.Manifest)
