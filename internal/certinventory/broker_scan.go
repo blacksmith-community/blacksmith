@@ -226,18 +226,21 @@ func (s *Scanner) readServicesCA(ctx context.Context, name string, owner Owner) 
 	ch.Versions.CertificateID = meta.ID
 	ch.Versions.SigningCA = meta.SignedBy
 
-	if len(meta.Versions) == 0 || meta.Versions[0].ID == "" {
-		ch.Err = "CredHub lists no version of this certificate"
+	current, msg, _ := s.newestVersion(ctx, name)
+	if current == "" {
+		ch.Err = msg
 
 		return ch
 	}
 
-	current := meta.Versions[0]
-	ch.Versions.DeployedVersionID = current.ID
-	ch.Versions.LatestVersionID = current.ID
-	ch.Versions.Transitional = current.Transitional
+	ch.Versions.DeployedVersionID = current
+	ch.Versions.LatestVersionID = current
 
-	cert, chain, msg, _ := s.readVersion(ctx, current.ID)
+	if mv, ok := versionMeta(meta, current); ok {
+		ch.Versions.Transitional = mv.Transitional
+	}
+
+	cert, chain, msg, _ := s.readVersion(ctx, current)
 	if msg != "" {
 		ch.Err = msg
 

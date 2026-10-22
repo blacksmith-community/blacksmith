@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -73,10 +74,13 @@ func (f *fakeDirector) ListVariables(_ context.Context, name string) ([]bosh.Var
 }
 
 // fakeCredHub answers metadata by name and versions by ID. A non-nil err
-// fails every call.
+// fails every call. created gives each name's versions with their creation
+// times; a name without an entry lists its metadata versions in the order
+// given, newest first.
 type fakeCredHub struct {
 	meta     map[string]*credhub.CertificateMeta
 	versions map[string]*credhub.CertificatePublic
+	created  map[string][]credhub.CredentialVersion
 	err      error
 
 	mu    sync.Mutex
@@ -103,6 +107,33 @@ func (f *fakeCredHub) CertificateMetadata(_ context.Context, name string) (*cred
 	}
 
 	return m, nil
+}
+
+func (f *fakeCredHub) CredentialVersions(_ context.Context, name string, limit int) ([]credhub.CredentialVersion, error) {
+	f.record("versions-of " + name)
+
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	var out []credhub.CredentialVersion
+
+	if list, ok := f.created[name]; ok {
+		out = append(out, list...)
+		sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	} else if m, ok := f.meta[name]; ok {
+		for _, v := range m.Versions {
+			out = append(out, credhub.CredentialVersion{ID: v.ID, Type: "certificate"})
+		}
+	} else {
+		return nil, fmt.Errorf("%w: %q", credhub.ErrNotFound, name)
+	}
+
+	if len(out) > limit {
+		out = out[:limit]
+	}
+
+	return out, nil
 }
 
 func (f *fakeCredHub) CertificateVersion(_ context.Context, id string) (*credhub.CertificatePublic, error) {
@@ -855,5 +886,77 @@ func TestDescribeCredHubError(t *testing.T) {
 		if !strings.HasPrefix(msg, r.prefix) || outage != r.outage {
 			t.Errorf("%v: %q outage %v, want prefix %q outage %v", r.err, msg, outage, r.prefix, r.outage)
 		}
+	}
+}
+
+func TestScanInstanceLatestByCreationTime(t *testing.T) {
+	t.Parallel()
+
+	caOld := issue(t, issueSpec{cn: "services-ca", serial: 1, isCA: true, notAfter: 48 * time.Hour})
+	caNew := issue(t, issueSpec{cn: "services-ca", serial: 2, isCA: true, notAfter: 96 * time.Hour})
+	v1 := issue(t, issueSpec{cn: "redis.bosh", serial: 3, parent: &caOld})
+	v2 := issue(t, issueSpec{cn: "redis.bosh", serial: 4, parent: &caNew, notAfter: 72 * time.Hour})
+
+	name := "/ws-bosh/redis-7a1b/redis_cluster_crt"
+	caName := "/ws-bosh/ws-blacksmith/blacksmith_services_ca"
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+	// The metadata lists every version oldest first, so only the creation
+	// times say which one is newest.
+	ch := &fakeCredHub{
+		meta: map[string]*credhub.CertificateMeta{
+			name: {ID: "cert-id", Name: name, SignedBy: caName, Versions: []credhub.CertificateVersionMeta{
+				{ID: "v1", ExpiryDate: v1.cert.NotAfter},
+				{ID: "v2", ExpiryDate: v2.cert.NotAfter},
+			}},
+			caName: {ID: "ca-id", Name: caName, Versions: []credhub.CertificateVersionMeta{
+				{ID: "ca1", CertificateAuthority: true},
+				{ID: "ca2", CertificateAuthority: true},
+			}},
+		},
+		created: map[string][]credhub.CredentialVersion{
+			name:   {{ID: "v1", CreatedAt: base}, {ID: "v2", CreatedAt: base.Add(time.Hour)}},
+			caName: {{ID: "ca1", CreatedAt: base}, {ID: "ca2", CreatedAt: base.Add(time.Hour)}},
+		},
+		versions: map[string]*credhub.CertificatePublic{
+			"v1":  {VersionID: "v1", Name: name, Certificate: certPEM(v1.cert), CA: certPEM(caOld.cert)},
+			"v2":  {VersionID: "v2", Name: name, Certificate: certPEM(v2.cert), CA: certPEM(caNew.cert)},
+			"ca1": {VersionID: "ca1", Name: caName, Certificate: certPEM(caOld.cert), CA: certPEM(caOld.cert)},
+			"ca2": {VersionID: "ca2", Name: caName, Certificate: certPEM(caNew.cert), CA: certPEM(caNew.cert)},
+		},
+	}
+
+	f := scannerFixture{
+		director: &fakeDirector{
+			manifest: loadManifest(t, "redis-cluster-7.yml"),
+			vars:     []bosh.Variable{{ID: "v1", Name: name}},
+			vms:      redisVMs(3),
+		},
+		credhub:  ch,
+		state:    credhub.StateConfigured,
+		settings: DefaultSettings(),
+		leaf:     &fakeLeaf{},
+	}
+
+	scan := f.scanner().ScanInstance(context.Background(), testRef("redis-7a1b"))
+	if scan.Err != "" || len(scan.Material.CredHub) != 1 {
+		t.Fatalf("scan err %q, CredHub %d entries", scan.Err, len(scan.Material.CredHub))
+	}
+
+	c := scan.Material.CredHub[0]
+	if c.Versions.LatestVersionID != "v2" || c.Versions.DeployedVersionID != "v1" {
+		t.Errorf("versions = %+v, want deployed v1 and latest v2", c.Versions)
+	}
+
+	if c.Versions.LatestNotAfter == nil || !c.Versions.LatestNotAfter.Equal(v2.cert.NotAfter) {
+		t.Errorf("latest not-after = %v, want v2's", c.Versions.LatestNotAfter)
+	}
+
+	if c.Latest == nil || Fingerprint(c.Latest) != Fingerprint(v2.cert) {
+		t.Error("Latest is not version v2")
+	}
+
+	if got := scan.Material.SigningCAs[caName]; got == nil || Fingerprint(got) != Fingerprint(caNew.cert) {
+		t.Error("the signing CA's current certificate is not its newest version")
 	}
 }

@@ -42,11 +42,14 @@ type DirectorReader interface {
 	ListVariables(ctx context.Context, deployment string) ([]bosh.Variable, error)
 }
 
-// CredHubReader is the part of the CredHub client the scanner reads. Neither
-// method ever returns a private key.
+// CredHubReader is the part of the CredHub client the scanner reads. No
+// method ever returns a private key. CertificateMetadata keeps CredHub's
+// order of versions, which says nothing about age, so the newest version
+// always comes from CredentialVersions, which sorts by creation time.
 type CredHubReader interface {
 	CertificateMetadata(ctx context.Context, name string) (*credhub.CertificateMeta, error)
 	CertificateVersion(ctx context.Context, versionID string) (*credhub.CertificatePublic, error)
+	CredentialVersions(ctx context.Context, name string, limit int) ([]credhub.CredentialVersion, error)
 }
 
 // InstanceRef names one service instance and what the catalog calls its
@@ -539,21 +542,22 @@ func (s *Scanner) readCertificate(ctx context.Context, ch *CredHubCert) (string,
 		ch.Versions.SigningCA = meta.SignedBy
 	}
 
-	// CredHub lists a certificate's versions newest first.
-	if len(meta.Versions) > 0 {
-		latest := meta.Versions[0]
-		ch.Versions.LatestVersionID = latest.ID
-
-		if !latest.ExpiryDate.IsZero() {
-			t := latest.ExpiryDate
-			ch.Versions.LatestNotAfter = &t
-		}
+	if mv, ok := versionMeta(meta, ch.Versions.DeployedVersionID); ok {
+		ch.Versions.Transitional = mv.Transitional
 	}
 
-	for _, mv := range meta.Versions {
-		if mv.ID == ch.Versions.DeployedVersionID {
-			ch.Versions.Transitional = mv.Transitional
-		}
+	latestID, latestMsg, outage := s.newestVersion(ctx, ch.Name)
+	if outage {
+		ch.Err = latestMsg
+
+		return latestMsg, true
+	}
+
+	ch.Versions.LatestVersionID = latestID
+
+	if mv, ok := versionMeta(meta, latestID); ok && !mv.ExpiryDate.IsZero() {
+		t := mv.ExpiryDate
+		ch.Versions.LatestNotAfter = &t
 	}
 
 	if ch.Versions.DeployedVersionID == "" {
@@ -573,16 +577,20 @@ func (s *Scanner) readCertificate(ctx context.Context, ch *CredHubCert) (string,
 	t := deployed.NotAfter
 	ch.Versions.DeployedNotAfter = &t
 
-	latestID := ch.Versions.LatestVersionID
-	if latestID == "" || latestID == ch.Versions.DeployedVersionID {
+	// When the newest version cannot be named, Latest stays empty. The
+	// deployed version still gives the expiry, so the certificate is not
+	// failed.
+	if latestID == "" {
+		return latestMsg, false
+	}
+
+	if latestID == ch.Versions.DeployedVersionID {
 		ch.Latest = deployed
 		ch.Versions.LatestNotAfter = &t
 
 		return "", false
 	}
 
-	// A failed read of the latest version leaves Latest empty. The deployed
-	// version still gives the expiry, so the certificate is not failed.
 	latest, _, msg, outage := s.readVersion(ctx, latestID)
 	if msg != "" {
 		return msg, outage
@@ -678,22 +686,48 @@ func (s *Scanner) readSigningCAs(ctx context.Context, certs []CredHubCert, down 
 
 // readCurrent reads the newest version of the named certificate.
 func (s *Scanner) readCurrent(ctx context.Context, name string) (*x509.Certificate, string, bool) {
-	meta, err := within(ctx, CredHubCallTimeout, func(c context.Context) (*credhub.CertificateMeta, error) {
-		return s.deps.CredHub.CertificateMetadata(c, name)
+	id, msg, outage := s.newestVersion(ctx, name)
+	if id == "" {
+		return nil, msg, outage
+	}
+
+	cur, _, msg, outage := s.readVersion(ctx, id)
+
+	return cur, msg, outage
+}
+
+// newestVersion returns the ID of the named credential's newest version by
+// CredHub's creation time, or why it cannot, and whether CredHub looks down.
+func (s *Scanner) newestVersion(ctx context.Context, name string) (string, string, bool) {
+	versions, err := within(ctx, CredHubCallTimeout, func(c context.Context) ([]credhub.CredentialVersion, error) {
+		return s.deps.CredHub.CredentialVersions(c, name, 1)
 	})
 	if err != nil {
 		msg, outage := describeCredHubError(err)
 
-		return nil, msg, outage
+		return "", msg, outage
 	}
 
-	if meta == nil || len(meta.Versions) == 0 || meta.Versions[0].ID == "" {
-		return nil, "CredHub lists no version of " + name, false
+	if len(versions) == 0 || versions[0].ID == "" {
+		return "", "CredHub lists no version of " + name, false
 	}
 
-	cur, _, msg, outage := s.readVersion(ctx, meta.Versions[0].ID)
+	return versions[0].ID, "", false
+}
 
-	return cur, msg, outage
+// versionMeta finds one version in a certificate's metadata.
+func versionMeta(meta *credhub.CertificateMeta, id string) (credhub.CertificateVersionMeta, bool) {
+	if meta == nil || id == "" {
+		return credhub.CertificateVersionMeta{}, false
+	}
+
+	for _, mv := range meta.Versions {
+		if mv.ID == id {
+			return mv, true
+		}
+	}
+
+	return credhub.CertificateVersionMeta{}, false
 }
 
 func firstNonNil(certs ...*x509.Certificate) *x509.Certificate {

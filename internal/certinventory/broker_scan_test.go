@@ -338,3 +338,53 @@ func TestBrokerSourceDefaults(t *testing.T) {
 		t.Errorf("defaults = %q, %q", DefaultServicesCAPath, DefaultTrustStoreGlob)
 	}
 }
+
+func TestScanBrokerServicesCAByCreationTime(t *testing.T) {
+	t.Parallel()
+
+	name := "/ws-bosh/ws-blacksmith/blacksmith_services_ca"
+	older := issue(t, issueSpec{cn: "services-ca", serial: 1, isCA: true})
+	newer := issue(t, issueSpec{cn: "services-ca", serial: 2, isCA: true, notAfter: 96 * time.Hour})
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+	ch := &fakeCredHub{
+		meta: map[string]*credhub.CertificateMeta{
+			name: {ID: "ca-id", Name: name, Versions: []credhub.CertificateVersionMeta{
+				{ID: "ca-v1", ExpiryDate: older.cert.NotAfter, CertificateAuthority: true},
+				{ID: "ca-v2", ExpiryDate: newer.cert.NotAfter, CertificateAuthority: true, Transitional: true},
+			}},
+		},
+		created: map[string][]credhub.CredentialVersion{
+			name: {{ID: "ca-v1", CreatedAt: base}, {ID: "ca-v2", CreatedAt: base.Add(time.Hour)}},
+		},
+		versions: map[string]*credhub.CertificatePublic{
+			"ca-v1": {VersionID: "ca-v1", Name: name, Certificate: certPEM(older.cert), CA: certPEM(older.cert)},
+			"ca-v2": {VersionID: "ca-v2", Name: name, Certificate: certPEM(newer.cert), CA: certPEM(newer.cert)},
+		},
+	}
+
+	dir := t.TempDir()
+	src := BrokerSources{
+		ServicesCAPath: writeFile(t, filepath.Join(dir, "blacksmith_services_ca"), certPEM(newer.cert)),
+		TrustStoreGlob: filepath.Join(dir, "none-*.pem"),
+		ServicesCAName: name,
+	}
+
+	scan := brokerScanner(ch, credhub.StateConfigured).ScanBroker(context.Background(), src)
+	if len(scan.Material.CredHub) != 1 {
+		t.Fatalf("CredHub = %d entries, want the services CA", len(scan.Material.CredHub))
+	}
+
+	c := scan.Material.CredHub[0]
+	if c.Versions.DeployedVersionID != "ca-v2" || c.Versions.LatestVersionID != "ca-v2" || !c.Versions.Transitional {
+		t.Errorf("versions = %+v, want ca-v2 current and transitional", c.Versions)
+	}
+
+	if c.Deployed == nil || Fingerprint(c.Deployed) != Fingerprint(newer.cert) {
+		t.Error("the services CA's current certificate is not its newest version")
+	}
+
+	if scan.Material.ServicesCADrift {
+		t.Error("the file matches the newest version, so there is no drift")
+	}
+}
