@@ -221,8 +221,13 @@ func waitUntilFree(t *testing.T, what string, brokerInstance *broker.Broker, gua
 	})
 }
 
-//nolint:paralleltest // each subtest runs an in-process vault
+// The finished deprovision frees the guard only once its delete monitor
+// has polled the task, so the monitor polls quickly here.
+//
+//nolint:paralleltest // each subtest runs an in-process vault, and the test changes the package's task poll interval
 func TestDeprovisionReleasesGuardOnCompletion(t *testing.T) {
+	defer broker.SetTaskPollInterval(10 * time.Millisecond)()
+
 	t.Run("the deprovision finishes", deprovisionFinishesFreesGuard)
 	t.Run("the deprovision fails", deprovisionFailureFreesGuard)
 	t.Run("the delete fails after the deprovision is accepted", deleteFailureFreesGuard)

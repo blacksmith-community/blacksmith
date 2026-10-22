@@ -625,11 +625,15 @@ func (b *Broker) Deprovision(
 	handedOff = true
 
 	b.track("deprovision of instance "+instanceID, func() {
-		// The goroutine gives the claim up on every return, a panic included.
+		// The reservation in the mutation guard passes to deprovisionAsync,
+		// which keeps it until the delete monitor ends. The goroutine gives
+		// the claim itself up on every return, a panic included.
+		release := claim.takeRelease()
+
 		defer b.releaseOperation(instanceID, claim)
 		defer cancelAsync()
 
-		b.deprovisionAsync(asyncCtx, instanceID, instance)
+		b.deprovisionAsync(asyncCtx, instanceID, instance, release)
 	})
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
@@ -1092,6 +1096,21 @@ func (b *Broker) deprovisionDeployment(ctx context.Context, instanceID, planID s
 	}
 
 	return deploymentNameForInstance(instanceID, instance)
+}
+
+// takeRelease hands the claim's reservation in the mutation guard to the
+// caller, so releaseOperation no longer frees it. It returns a function
+// that does nothing when the claim holds no reservation. Only the
+// goroutine that owns the claim calls it.
+func (c *operationClaim) takeRelease() func() {
+	release := c.release
+	c.release = nil
+
+	if release == nil {
+		return func() {}
+	}
+
+	return release
 }
 
 // operationHolderKind names the guard holder kind of a claim's operation.

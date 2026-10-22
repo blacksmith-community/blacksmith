@@ -1127,9 +1127,21 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 //
 // Both cleanup paths are idempotent (Index removal and timestamp storage can be
 // repeated safely), so there's no harm if both execute.
-func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance) {
+func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance, release func()) { //nolint:contextcheck // the delete monitor outlives ctx and runs under the service context
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
+
+	// release frees the deprovision's reservation in the mutation guard.
+	// It passes to the delete monitor once that starts, so the instance
+	// stays reserved while its delete task runs, and it runs here on every
+	// other way out, a panic included.
+	monitored := false
+
+	defer func() {
+		if !monitored {
+			release()
+		}
+	}()
 
 	// The delete request carries this context ID. It goes on record now,
 	// with the name of the deployment the delete names, before anything is
@@ -1187,8 +1199,13 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	// which a shutdown ends. LastOperation finishes a deprovision whose
 	// monitor is gone.
 	monitorCtx := b.serviceContext()
+	monitored = true
 
 	b.track(fmt.Sprintf("deprovision monitor of instance %s (BOSH task %d)", phase.instanceID, deleteTask.ID), func() {
+		// The monitor frees the reservation on every return, a panic
+		// included.
+		defer release()
+
 		phase.monitorAndCleanupTask(monitorCtx, deleteTask)
 	})
 
