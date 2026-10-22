@@ -181,13 +181,15 @@ var ErrMountListRefused = errors.New("vault refused to list the root of the moun
 
 // stateFolders are the folders at the root of the mount that hold the
 // broker's own state rather than an instance's: the upgrade tasks, the
-// broker's settings, and the CF registrations under secret/.
+// certificate tasks, the broker's settings, and the CF registrations under
+// secret/.
 //
 //nolint:gochecknoglobals // a fixed set read by ListOperationRecordIDs
 var stateFolders = map[string]bool{
-	"upgrade-tasks/": true,
-	"blacksmith/":    true,
-	"secret/":        true,
+	"upgrade-tasks/":     true,
+	"certificate-tasks/": true,
+	"blacksmith/":        true,
+	"secret/":            true,
 }
 
 // ListOperationRecordIDs makes one listing of the root of the mount and

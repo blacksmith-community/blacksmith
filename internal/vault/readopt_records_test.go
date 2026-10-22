@@ -31,6 +31,7 @@ func TestListOperationRecordIDsNamesInstanceFolders(t *testing.T) {
 		"instance-a/task":                    {"action": "provision"},
 		"instance-b/metadata":                {"created_at": "2026-01-01T00:00:00Z"},
 		"upgrade-tasks/task-1":               {upgradeStatusKey: "running"},
+		"certificate-tasks/task-2":           {upgradeStatusKey: "running"},
 		"blacksmith/settings":                {"max_batch_jobs": 2},
 		"secret/blacksmith/registrations/r1": {registrationNameKey: "cf"},
 		"upgrade-settings":                   {"max_batch_jobs": 2},
