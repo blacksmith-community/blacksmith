@@ -1129,3 +1129,59 @@ func TestRegenerateReadsModeUnderLock(t *testing.T) {
 		t.Fatalf("expected the step to go on, got stop %v and %v", stop, err)
 	}
 }
+
+// The decision prompt says that Blacksmith, not CredHub, won't send the
+// request again, and a decision whose save can't be confirmed says so.
+func TestRegenerateReconcileMessage(t *testing.T) {
+	t.Parallel()
+
+	uncertain := func(env *regenEnv) {
+		env.credhub.answer(func(string) (*credhub.RegenerateResult, error) {
+			env.reissue(t, regenLeaf, "v2", func(*certSpec) {})
+
+			return nil, &credhub.UncertainError{Op: "regenerate", Cause: "deadline passed after the request was sent"}
+		})
+	}
+
+	t.Run("saved", func(t *testing.T) {
+		t.Parallel()
+
+		env := newRegenEnv(t)
+		uncertain(env)
+
+		_, err := env.run()
+		if err != nil {
+			t.Fatalf("expected the decision saved, got %v", err)
+		}
+
+		message := env.current().Instances[0].Error
+		if !strings.Contains(message, "Blacksmith won't send the CredHub request again.") || strings.Contains(message, "could not confirm") {
+			t.Fatalf("expected the prompt to name Blacksmith, got %q", message)
+		}
+	})
+
+	t.Run("unconfirmed", func(t *testing.T) {
+		t.Parallel()
+
+		env := newRegenEnv(t)
+		uncertain(env)
+		env.vault.refuse = func(task UpgradeTask) bool {
+			return firstVariable(task).RegenerateState == RegenerateOutcomeUnknown
+		}
+
+		stop, err := env.run()
+		if !stop || !errors.Is(err, ErrSaveUnconfirmed) {
+			t.Fatalf("expected the step to stop with an unconfirmed save, got stop %v and %v", stop, err)
+		}
+
+		inst := env.current().Instances[0]
+		if inst.Status != StatusAwaitingDecision || inst.Certificates.Pending == nil {
+			t.Fatalf("expected the instance still awaiting the decision, got %s and %+v", inst.Status, inst.Certificates.Pending)
+		}
+
+		if !strings.Contains(inst.Error, "Blacksmith won't send the CredHub request again.") ||
+			!strings.Contains(inst.Error, "Blacksmith could not confirm that it saved this task's progress to Vault") {
+			t.Fatalf("expected the prompt and the unconfirmed save, got %q", inst.Error)
+		}
+	})
+}

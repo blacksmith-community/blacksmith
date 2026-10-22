@@ -276,7 +276,7 @@ func (m *Manager) reconcileRegeneration(ctx context.Context, api CredHubAPI, tas
 	m.mu.Lock()
 	inst.Status = StatusAwaitingDecision
 	inst.CompletedAt = nil
-	inst.Error = why + " It never sends the request again. Adopt a candidate version that passed every check, or abandon the regeneration."
+	inst.Error = why + " Blacksmith won't send the CredHub request again. Adopt a candidate version that passed every check, or abandon the regeneration."
 	inst.Certificates.Pending = &PendingDecision{
 		Kind:       DecisionReconcileRegeneration,
 		Variable:   variable.Name,
@@ -290,6 +290,16 @@ func (m *Manager) reconcileRegeneration(ctx context.Context, api CredHubAPI, tas
 
 	err = m.persistCertConfirmed(ctx, task)
 	if err != nil {
+		// The instance still waits for the decision, but Vault may hold an
+		// older record, so a restart may ask the question again.
+		message := "Blacksmith could not confirm that it saved this task's progress to Vault, so after a restart the instance may ask for this decision again. Resume once Vault is healthy."
+
+		m.mu.Lock()
+		inst.Error += " " + message
+		m.mu.Unlock()
+
+		m.logger.Error("Certificate task %s paused: %s", task.ID, message)
+
 		return true, err
 	}
 
