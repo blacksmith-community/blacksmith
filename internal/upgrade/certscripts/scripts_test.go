@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -680,5 +681,72 @@ func TestScriptJoinsLib(t *testing.T) {
 		if body != lib+readSource(t, name) {
 			t.Errorf("Script(%s) is not lib.sh followed by the script", name)
 		}
+	}
+}
+
+func TestExitCodesMatchLib(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]int{
+		"EXIT_USAGE":   certscripts.ExitUsage,
+		"EXIT_DRIFT":   certscripts.ExitDrift,
+		"EXIT_BACKUP":  certscripts.ExitBackup,
+		"EXIT_RESTART": certscripts.ExitRestart,
+		"EXIT_REFUSED": certscripts.ExitRefused,
+	}
+
+	if certscripts.ExitOK != 0 {
+		t.Errorf("ExitOK = %d, want 0", certscripts.ExitOK)
+	}
+
+	assignment := regexp.MustCompile(`\b(EXIT_[A-Z]+)=([0-9]+)\b`)
+	got := make(map[string]int)
+
+	for _, line := range strings.Split(readSource(t, libScript), "\n") {
+		if !strings.HasPrefix(line, "readonly ") {
+			continue
+		}
+
+		for _, match := range assignment.FindAllStringSubmatch(line, -1) {
+			code, err := strconv.Atoi(match[2])
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, seen := got[match[1]]; seen {
+				t.Errorf("lib.sh sets %s twice", match[1])
+			}
+
+			got[match[1]] = code
+		}
+	}
+
+	for name, code := range want {
+		if got[name] != code {
+			t.Errorf("lib.sh sets %s=%d, but the Go constant is %d", name, got[name], code)
+		}
+	}
+
+	for name := range got {
+		if _, known := want[name]; !known {
+			t.Errorf("lib.sh sets %s, which has no Go constant", name)
+		}
+	}
+
+	if runtime.GOOS != "linux" {
+		return
+	}
+
+	// Sourcing lib.sh shows the values the scripts really see.
+	out, err := exec.CommandContext(t.Context(), "bash", "-c",
+		`source lib.sh; echo "$EXIT_USAGE $EXIT_DRIFT $EXIT_BACKUP $EXIT_RESTART $EXIT_REFUSED"`).Output()
+	if err != nil {
+		t.Fatalf("sourcing lib.sh: %v", err)
+	}
+
+	sourced := fmt.Sprintf("%d %d %d %d %d\n", certscripts.ExitUsage, certscripts.ExitDrift,
+		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused)
+	if string(out) != sourced {
+		t.Errorf("sourced exit codes = %q, want %q", out, sourced)
 	}
 }
