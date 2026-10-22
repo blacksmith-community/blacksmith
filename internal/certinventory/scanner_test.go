@@ -286,7 +286,7 @@ func serveTLS(t *testing.T, leaf issued) int {
 			}
 
 			if tc, ok := conn.(*tls.Conn); ok {
-				_ = tc.Handshake()
+				_ = tc.HandshakeContext(context.Background())
 			}
 
 			_ = conn.Close()
