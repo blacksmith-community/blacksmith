@@ -581,3 +581,67 @@ func TestUpgradeCancelBeforeTheLastInstanceStartsSkipsIt(t *testing.T) {
 		t.Fatalf("expected no cancel, since no deploy was running, got %v", cancels)
 	}
 }
+
+// A cancel frees a pending instance at once, since no deploy of it will be
+// sent, and keeps the running one until its deploy task settles it.
+//
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestCancelledInFlightInstanceHeldUntilSettled(t *testing.T) {
+	director := newWaitDirector()
+	endTheTaskAtCleanup(t, director)
+
+	manager, task, _ := startUpgrade(t, director, newWaitVault(), waitInstanceID, "instance-2")
+
+	expectHeldBy(t, manager, waitInstanceID, task.ID)
+	expectHeldBy(t, manager, "instance-2", task.ID)
+
+	cancelUpgrade(t, manager, task)
+
+	expectHeldBy(t, manager, waitInstanceID, task.ID)
+	expectFree(t, manager, "instance-2")
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskCancelled}
+
+	done := eventually(t, manager, task, "the settling of the running instance", func(current UpgradeTask) bool {
+		return current.Instances[0].Status == InstanceStatusCancelled && current.Instances[1].Status == InstanceStatusSkipped
+	})
+
+	if done.Status != TaskStatusCancelled {
+		t.Fatalf("expected the upgrade to stay cancelled, got %s", done.Status)
+	}
+
+	eventuallyFree(t, manager, waitInstanceID)
+
+	if snap := manager.Guard().Snapshot(); len(snap) != 0 {
+		t.Fatalf("expected no reservation once the cancelled upgrade settled, got %v", snap)
+	}
+}
+
+// An instance whose deploy outlives the wait after a cancel stays running,
+// and the upgrade keeps it only while its processor still follows it.
+//
+//nolint:paralleltest // it shortens the wait after a cancel, a package variable
+func TestCancelledInstanceLeftRunningIsFreedWhenTheProcessorEnds(t *testing.T) {
+	previous := cancelWaitTimeout
+	cancelWaitTimeout = 100 * time.Millisecond
+
+	t.Cleanup(func() { cancelWaitTimeout = previous })
+
+	director := newWaitDirector()
+	manager, task, _ := startUpgrade(t, director, newWaitVault())
+
+	cancelUpgrade(t, manager, task)
+
+	eventually(t, manager, task, "the message after the deadline", func(current UpgradeTask) bool {
+		return current.Instances[0].Error == fmt.Sprintf("cancel requested for BOSH task %d", waitDeployTaskID)
+	})
+
+	waitUntil(t, "the end of the upgrade's processing", func() bool {
+		manager.mu.RLock()
+		defer manager.mu.RUnlock()
+
+		return !manager.owned[task.ID]
+	})
+
+	eventuallyFree(t, manager, waitInstanceID)
+}

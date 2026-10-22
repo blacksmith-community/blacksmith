@@ -10,6 +10,7 @@ import (
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/mutation"
 	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/http/response"
 )
@@ -39,6 +40,9 @@ type Dependencies struct {
 	Director              interfaces.Director
 	Vault                 interfaces.Vault
 	OnMaxBatchJobsChanged func(maxJobs int) // Callback to update BatchDirector pool size
+	// Guard is the broker's one mutation guard. The manager reserves each
+	// upgrade's instances in it, and keeps a private guard when it is nil.
+	Guard *mutation.Guard
 }
 
 // NewHandler creates a new upgrade handler. It applies the persisted
@@ -46,6 +50,7 @@ type Dependencies struct {
 // of an upgrade sends runs above the persisted limit.
 func NewHandler(deps Dependencies) *Handler {
 	manager := upgrade.NewManager(deps.Logger, deps.Director, deps.Vault)
+	manager.SetGuard(deps.Guard)
 
 	// Set callback to sync BatchDirector pool with max_batch_jobs setting
 	if deps.OnMaxBatchJobsChanged != nil {
@@ -266,7 +271,8 @@ func writeCreateError(writer http.ResponseWriter, err error) {
 		errors.Is(err, upgrade.ErrReleaseNotOnDirector):
 		response.WriteError(writer, http.StatusBadRequest, err.Error())
 	case errors.Is(err, upgrade.ErrInstanceBusy):
-		response.WriteError(writer, http.StatusConflict, err.Error())
+		// The guard's error names the operation that holds the instance.
+		response.WriteErrorCode(writer, http.StatusConflict, apierr.CodeInstanceBusy, err.Error())
 	case errors.Is(err, upgrade.ErrTasksLoading):
 		response.WriteError(writer, http.StatusServiceUnavailable, err.Error())
 	default:

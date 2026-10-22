@@ -12,6 +12,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/mutation"
 	vaultPkg "blacksmith/pkg/vault"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
@@ -115,8 +116,10 @@ var (
 	ErrNoDirector           = errors.New("no BOSH director is configured to check the release targets against")
 	ErrTaskNotRunning       = errors.New("task is not running")
 	ErrTaskNotPaused        = errors.New("task is not paused")
-	ErrInstanceBusy         = errors.New("an unfinished upgrade task already holds the instance")
-	ErrTasksLoading         = errors.New("the stored upgrade tasks are still loading, so try again shortly")
+	// ErrInstanceBusy is the guard's own sentinel, so a caller that matches
+	// it sees an instance held by any broker operation, not only an upgrade.
+	ErrInstanceBusy = mutation.ErrInstanceBusy
+	ErrTasksLoading = errors.New("the stored upgrade tasks are still loading, so try again shortly")
 )
 
 // Manager manages upgrade tasks.
@@ -188,6 +191,15 @@ type Manager struct {
 	// heldResumes holds, under mu, the loaded upgrades that resume once
 	// the last lookup ends.
 	heldResumes []*UpgradeTask
+
+	// guard is the broker-wide lock on instances. Each upgrade reserves its
+	// instances in it, so no other broker operation changes one while the
+	// upgrade may still deploy it.
+	guard *mutation.Guard
+
+	// reservations holds, under mu, the release of each instance an
+	// upgrade has reserved in the guard, by task ID and then instance ID.
+	reservations map[string]map[string]func()
 }
 
 // taskSnapshot is a copy of an upgrade task taken under the manager's lock,
@@ -220,6 +232,8 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		settling:     make(map[string]int),
 		loaded:       make(chan struct{}),
 		owned:        make(map[string]bool),
+		guard:        mutation.NewGuard(time.Now),
+		reservations: make(map[string]map[string]func()),
 	}
 
 	// The manager's context is a root. The manager lives as long as the
@@ -237,6 +251,29 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 	m.updateJobSemaphore()
 
 	return m
+}
+
+// SetGuard makes the manager reserve its instances in the broker's guard
+// instead of the private one NewManager built. It must be called before
+// Start, since the loader restores the stored upgrades' reservations in
+// whichever guard is set then. A nil guard changes nothing.
+func (m *Manager) SetGuard(guard *mutation.Guard) {
+	if guard == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.guard = guard
+}
+
+// Guard returns the guard the manager reserves its instances in.
+func (m *Manager) Guard() *mutation.Guard {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.guard
 }
 
 // Start starts the task dispatcher and the loader, which loads the
@@ -325,11 +362,12 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		CreatedAt:      time.Now(),
 	}
 
-	// The check and the store share one critical section, so two requests
-	// for the same instance can't both pass the check.
+	// The reservations and the store share one critical section, so the
+	// upgrade is never seen without the instances it holds. The guard
+	// never blocks, so no other broker operation waits on this lock.
 	m.mu.Lock()
 
-	err = m.instancesFree(req.InstanceIDs)
+	err = m.reserveNewLocked(task)
 	if err != nil {
 		m.mu.Unlock()
 
@@ -338,6 +376,11 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 
 	m.tasks[task.ID] = task
 	m.owned[task.ID] = true
+
+	// An instance that failed when its data was read has settled already,
+	// so the upgrade gives it back at once.
+	m.releaseUnheldLocked(task)
+
 	created := copyTask(task)
 	m.mu.Unlock()
 
@@ -518,6 +561,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = "deployment name is missing"
 		task.FailedCount++
+		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 		m.logger.Error("Instance %s has no deployment name", instance.InstanceID)
 		m.persistTask(persistCtx, task) //nolint:errcheck
@@ -538,6 +582,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("failed to get deployment: %v", err)
 		task.FailedCount++
+		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 		m.logger.Error("Failed to get deployment %s: %v", instance.DeploymentName, err)
 		m.persistTask(persistCtx, task) //nolint:errcheck
@@ -549,6 +594,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = "deployment returned nil without error"
 		task.FailedCount++
+		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 		m.logger.Error("Deployment %s returned nil without error", instance.DeploymentName)
 		m.persistTask(persistCtx, task) //nolint:errcheck
@@ -633,6 +679,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("BOSH task failed: %v", err)
 		task.FailedCount++
+		m.releaseUnheldLocked(task)
 		m.logger.Error("Update failed for %s: %v", instance.DeploymentName, err)
 		m.mu.Unlock()
 		m.persistTask(persistCtx, task) //nolint:errcheck
@@ -644,6 +691,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = "the director named no task for the deploy"
 		task.FailedCount++
+		m.releaseUnheldLocked(task)
 		m.logger.Error("The director named no task for the deploy of %s", instance.DeploymentName)
 		m.mu.Unlock()
 		m.persistTask(persistCtx, task) //nolint:errcheck
@@ -722,6 +770,7 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("stopped waiting for BOSH task %d, which may still be running: %v", taskID, err)
 		task.FailedCount++
+		m.releaseUnheldLocked(task)
 		m.logger.Error("Stopped waiting for BOSH task %d of %s: %v", taskID, instance.DeploymentName, err)
 		m.mu.Unlock()
 		m.persistTask(persistCtx, task) //nolint:errcheck
@@ -857,6 +906,7 @@ func (m *Manager) settleLostAnswer(task *UpgradeTask, instance *InstanceUpgrade,
 		instance.Status = InstanceStatusSkipped
 		instance.Error = fmt.Sprintf("skipped, because %s (context ID %s)", replaced, contextID)
 		task.SkippedCount++
+		m.releaseUnheldLocked(task)
 
 		m.logger.Info("Instance %s: %s", instance.InstanceID, instance.Error)
 
@@ -874,6 +924,7 @@ func (m *Manager) settleLostAnswer(task *UpgradeTask, instance *InstanceUpgrade,
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("no BOSH task with context ID %s turned up within %v after the deploy's answer was lost", contextID, bosh.UnknownOutcomeGrace)
 		task.FailedCount++
+		m.releaseUnheldLocked(task)
 
 		m.logger.Error("Instance %s: %s: %v", instance.InstanceID, instance.Error, err)
 
@@ -903,6 +954,7 @@ func (m *Manager) settleOutcomeUnknown(task *UpgradeTask, instance *InstanceUpgr
 	instance.Error = fmt.Sprintf("Blacksmith stopped following the deploy with context ID %s%s before its outcome was known. "+
 		"Check the director's task list for that context ID.", instance.ContextID, followed)
 	task.UnknownCount++
+	m.releaseUnheldLocked(task)
 
 	m.logger.Error("Instance %s of %s: %s: %s", instance.InstanceID, instance.DeploymentName, instance.Error, reason)
 }
@@ -969,6 +1021,10 @@ func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instan
 func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, taskID int, finished *bosh.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Deferred calls run in reverse, so the settled instance is released
+	// before the lock is.
+	defer m.releaseUnheldLocked(task)
 
 	completedAt := time.Now()
 	instance.CompletedAt = &completedAt
@@ -1172,6 +1228,11 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	task.Status = TaskStatusCancelled
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
+
+	// No deploy of a pending instance is sent once the upgrade is
+	// cancelled, so those are free now, and a running one stays held while
+	// its processor follows it.
+	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
 	for _, deploy := range running {
@@ -1306,6 +1367,7 @@ func (m *Manager) runTask(task *UpgradeTask) {
 
 		m.mu.Lock()
 		delete(m.owned, task.ID)
+		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 	}()
 
@@ -1434,6 +1496,7 @@ func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 	task.Status = TaskStatusFailed
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
+	m.releaseUnheldLocked(task)
 
 	m.mu.Unlock()
 
@@ -1629,6 +1692,7 @@ func (m *Manager) finishTask(ctx context.Context, task *UpgradeTask) {
 		task.Status = finishedStatus(task)
 	}
 
+	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
 	// Persist completed state
@@ -1668,6 +1732,8 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 		task.SkippedCount++
 		skipped++
 	}
+
+	m.releaseUnheldLocked(task)
 
 	return skipped
 }
@@ -1731,6 +1797,7 @@ func (m *Manager) enqueue(task *UpgradeTask) {
 	case <-m.ctx.Done():
 		m.mu.Lock()
 		delete(m.owned, task.ID)
+		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 
 		m.logger.Info("Upgrade manager stopping, so task %s was not queued", task.ID)
@@ -1849,6 +1916,8 @@ func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 	}
 
 	m.logger.Info("Loaded %d persisted upgrade tasks", len(loaded))
+
+	m.restoreLoadedReservations(loaded)
 
 	return loaded, true
 }
@@ -2001,7 +2070,12 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) [
 		})
 	}
 
+	// The load counted the in-flight instances before it restored the
+	// reservations, and a conflict there fails an instance, so the count
+	// is set again from what is still in flight.
 	if len(deploys) == 0 {
+		delete(m.settling, task.ID)
+
 		return nil
 	}
 
@@ -2090,6 +2164,10 @@ func (m *Manager) endSettling(deploy loadedDeploy) {
 	}
 
 	delete(m.settling, deploy.task.ID)
+
+	// The loader no longer follows the upgrade, so an in-flight instance
+	// of a finished upgrade, which it alone held, is free now.
+	m.releaseUnheldLocked(deploy.task)
 
 	m.taskCancelLock.Lock()
 	if m.taskCancelCh[deploy.task.ID] == deploy.cancelCh {
@@ -2429,6 +2507,9 @@ func (m *Manager) resetToPending(ctx context.Context, task *UpgradeTask, instanc
 	instance.ContextID = ""
 	instance.UnknownSince = nil
 	instance.Error = ""
+
+	// A pending instance of a finished upgrade is never deployed again.
+	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
 	m.logger.Info("Instance %s goes back to pending, because %s", instance.InstanceID, reason)
@@ -2483,6 +2564,7 @@ func (m *Manager) failInstance(ctx context.Context, task *UpgradeTask, instance 
 	instance.Status = InstanceStatusFailed
 	instance.Error = message
 	task.FailedCount++
+	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
 	m.logger.Error("Instance %s of %s: %s", instance.InstanceID, instance.DeploymentName, message)
@@ -2509,6 +2591,7 @@ func (m *Manager) skipWithoutTargets(ctx context.Context, task *UpgradeTask, ins
 	instance.Error = fmt.Sprintf("skipped, because the manifest of %s holds none of the target releases (%s)",
 		instance.DeploymentName, strings.Join(targets, ", "))
 	task.SkippedCount++
+	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
 	m.logger.Info("Instance %s: %s", instance.InstanceID, instance.Error)
@@ -2717,6 +2800,7 @@ func (m *Manager) endForReleaseTargets(ctx context.Context, task *UpgradeTask, c
 	task.CompletedAt = &completedAt
 	status := task.Status
 
+	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
 	m.logger.Error("Task %s ended %s before its next deploy: %v", task.ID, status, cause)
@@ -2727,29 +2811,212 @@ func (m *Manager) endForReleaseTargets(ctx context.Context, task *UpgradeTask, c
 	}
 }
 
-// instancesFree returns ErrInstanceBusy, naming the instance and the task,
-// when another upgrade task holds one of the instances. An unfinished task
-// holds each instance it has not settled, since a deploy of it may still
-// be sent or still be under way. Any other task holds a running or
-// interrupted instance while a processor still follows it, as runTask does
-// after a cancel and the loader does while it settles, since that deploy
-// may still be under way on the director. Callers hold m.mu.
-func (m *Manager) instancesFree(instanceIDs []string) error {
-	for _, other := range m.tasks {
-		unfinished := other.Status == TaskStatusPending || other.Status == TaskStatusRunning || other.Status == TaskStatusPaused
-		followed := m.owned[other.ID] || m.settling[other.ID] > 0
+// shouldHoldLocked reports whether the upgrade must keep the instance
+// reserved in the guard. An unfinished upgrade holds each instance it has
+// not settled, since a deploy of it may still be sent or still be under
+// way. Any upgrade holds a running or interrupted instance while a
+// processor still follows it, as runTask does after a cancel and the
+// loader does while it settles, since that deploy may still be under way
+// on the director. The caller holds mu.
+func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
+	unfinished := task.Status == TaskStatusPending || task.Status == TaskStatusRunning || task.Status == TaskStatusPaused
+	followed := m.owned[task.ID] || m.settling[task.ID] > 0
+	inFlight := inst.Status == InstanceStatusRunning || inst.Status == InstanceStatusInterrupted
 
-		for _, instance := range other.Instances {
-			if !slices.Contains(instanceIDs, instance.InstanceID) {
-				continue
-			}
+	return (unfinished && !inst.Status.settled()) || (followed && inFlight)
+}
 
-			inFlight := instance.Status == InstanceStatusRunning || instance.Status == InstanceStatusInterrupted
-			if (unfinished && !instance.Status.settled()) || (followed && inFlight) {
-				return fmt.Errorf("%w: instance %s is in upgrade task %s", ErrInstanceBusy, instance.InstanceID, other.ID)
-			}
+// upgradeHolder describes the upgrade to whoever finds its instances busy.
+func upgradeHolder(task *UpgradeTask) mutation.Holder {
+	description := "upgrade task " + task.ID
+	if task.Name != "" {
+		description = fmt.Sprintf("upgrade %q", task.Name)
+	}
+
+	return mutation.Holder{
+		Kind:        mutation.KindUpgrade,
+		TaskID:      task.ID,
+		Description: description,
+	}
+}
+
+// acquireLocked reserves the instance for the upgrade and keeps its
+// release. An instance the upgrade already reserves is left as it is. It
+// returns the guard's error unwrapped, which names the holder. The caller
+// holds mu, and the guard's lock is only ever taken under it.
+func (m *Manager) acquireLocked(task *UpgradeTask, inst *InstanceUpgrade) error {
+	if _, held := m.reservations[task.ID][inst.InstanceID]; held {
+		return nil
+	}
+
+	release, err := m.guard.Acquire(inst.InstanceID, inst.DeploymentName, upgradeHolder(task))
+	if err != nil {
+		return err //nolint:wrapcheck // the caller names the instance
+	}
+
+	if m.reservations[task.ID] == nil {
+		m.reservations[task.ID] = make(map[string]func())
+	}
+
+	m.reservations[task.ID][inst.InstanceID] = release
+
+	return nil
+}
+
+// reserveNewLocked reserves every instance of a new upgrade. When any
+// instance is busy, it frees each reservation it took, so a refused
+// upgrade holds nothing, and returns the guard's error, which names the
+// holder. The caller holds mu.
+func (m *Manager) reserveNewLocked(task *UpgradeTask) error {
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+
+		err := m.acquireLocked(task, inst)
+		if err != nil {
+			m.releaseAllLocked(task.ID)
+
+			return fmt.Errorf("%w, so instance %s can't be upgraded", err, inst.InstanceID)
 		}
 	}
 
 	return nil
+}
+
+// releaseAllLocked frees every reservation the upgrade holds. The caller
+// holds mu.
+func (m *Manager) releaseAllLocked(taskID string) {
+	for _, release := range m.reservations[taskID] {
+		release()
+	}
+
+	delete(m.reservations, taskID)
+}
+
+// releaseUnheldLocked frees each reservation of the upgrade whose instance
+// it no longer has to hold, which is where shouldHoldLocked turns false.
+// The caller holds mu.
+func (m *Manager) releaseUnheldLocked(task *UpgradeTask) {
+	held := m.reservations[task.ID]
+	if len(held) == 0 {
+		return
+	}
+
+	for instanceID, release := range held {
+		if m.holdsInstanceLocked(task, instanceID) {
+			continue
+		}
+
+		release()
+		delete(held, instanceID)
+	}
+
+	if len(held) == 0 {
+		delete(m.reservations, task.ID)
+	}
+}
+
+// holdsInstanceLocked reports whether any entry of the upgrade for the
+// instance must still be held. The caller holds mu.
+func (m *Manager) holdsInstanceLocked(task *UpgradeTask, instanceID string) bool {
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.InstanceID == instanceID && m.shouldHoldLocked(task, inst) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// restoreReservationsLocked reserves every instance the upgrade must hold,
+// as the loader does for each upgrade it reads from Vault. Two saved
+// upgrades can only both hold an instance when their records are corrupt,
+// so the later one's instance fails, naming the upgrade that holds it, and
+// no deploy of it is sent. It reports whether it changed the upgrade. The
+// caller holds mu.
+func (m *Manager) restoreReservationsLocked(task *UpgradeTask) bool {
+	changed := false
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if !m.shouldHoldLocked(task, inst) {
+			continue
+		}
+
+		err := m.acquireLocked(task, inst)
+		if err == nil {
+			continue
+		}
+
+		var busy *mutation.BusyError
+		if !errors.As(err, &busy) {
+			m.logger.Error("Upgrade task %s could not reserve instance %s: %v", task.ID, inst.InstanceID, err)
+
+			continue
+		}
+
+		holder := "task " + busy.Holder.TaskID
+		if busy.Holder.TaskID == "" {
+			holder = busy.Holder.Description
+		}
+
+		completedAt := time.Now()
+		inst.Status = InstanceStatusFailed
+		inst.Error = "instance reserved by " + holder
+		inst.CompletedAt = &completedAt
+		task.FailedCount++
+		changed = true
+
+		m.logger.Error("Upgrade task %s failed instance %s, because %s already holds it", task.ID, inst.InstanceID, holder)
+	}
+
+	return changed
+}
+
+// restoreLoadedReservations reserves the instances of the loaded upgrades
+// before the loaded gate closes, oldest upgrade first, so a conflict fails
+// the later upgrade's instance. The loader follows every running or
+// interrupted instance it loads, whatever its upgrade's status, so each
+// upgrade counts those as settling while its reservations are restored,
+// and prepareSettlingLocked sets the count again from what is then still
+// in flight. An upgrade whose instance failed here is saved again.
+func (m *Manager) restoreLoadedReservations(loaded []*UpgradeTask) {
+	ordered := slices.Clone(loaded)
+	slices.SortStableFunc(ordered, func(first, second *UpgradeTask) int {
+		if order := first.CreatedAt.Compare(second.CreatedAt); order != 0 {
+			return order
+		}
+
+		return strings.Compare(first.ID, second.ID)
+	})
+
+	var changed []*UpgradeTask
+
+	m.mu.Lock()
+	for _, task := range ordered {
+		inFlight := 0
+
+		for i := range task.Instances {
+			status := task.Instances[i].Status
+			if status == InstanceStatusRunning || status == InstanceStatusInterrupted {
+				inFlight++
+			}
+		}
+
+		if inFlight > 0 {
+			m.settling[task.ID] = inFlight
+		}
+
+		if m.restoreReservationsLocked(task) {
+			changed = append(changed, task)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, task := range changed {
+		err := m.persistTask(context.WithoutCancel(m.ctx), task)
+		if err != nil {
+			m.logger.Error("Failed to persist upgrade task %s after its reservations were restored: %v", task.ID, err)
+		}
+	}
 }

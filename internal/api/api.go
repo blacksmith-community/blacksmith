@@ -24,6 +24,7 @@ import (
 	upgradehandler "blacksmith/internal/handlers/upgrade"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/middleware"
+	"blacksmith/internal/mutation"
 	"blacksmith/internal/routing"
 	pkgmiddleware "blacksmith/pkg/http/middleware"
 	"blacksmith/pkg/services"
@@ -78,6 +79,9 @@ type Dependencies struct {
 	// Certificates serves /b/certificates/. When nil, the routes answer
 	// inventory_disabled.
 	Certificates *certinventory.Service
+	// Guard is the broker's one mutation guard, which every operation that
+	// changes an instance reserves it through.
+	Guard *mutation.Guard
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
@@ -234,6 +238,7 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		Director:              director,
 		Vault:                 deps.Vault,
 		OnMaxBatchJobsChanged: deps.OnMaxBatchJobsChanged,
+		Guard:                 deps.Guard,
 	})
 }
 

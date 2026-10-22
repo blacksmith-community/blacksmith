@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 
+	"blacksmith/internal/bosh"
+	"blacksmith/internal/mutation"
 	"blacksmith/pkg/logger"
 )
 
@@ -90,12 +92,14 @@ func TestCreateTaskRejectsAnInstanceAnUnfinishedUpgradeHolds(t *testing.T) {
 			held := InstanceUpgrade{InstanceID: waitInstanceID, DeploymentName: waitDeployment, Status: holding.instance}
 			if holding.heldID != "" {
 				held.InstanceID = holding.heldID
+				held.DeploymentName = "redis-" + holding.heldID
 			}
 
 			manager.mu.Lock()
 			manager.tasks[busyTaskID] = &UpgradeTask{ID: busyTaskID, Status: holding.task, Instances: []InstanceUpgrade{held}}
 			manager.owned[busyTaskID] = holding.owned
 			manager.settling[busyTaskID] = holding.settling
+			manager.restoreReservationsLocked(manager.tasks[busyTaskID])
 			manager.mu.Unlock()
 
 			task, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
@@ -189,6 +193,7 @@ func TestCreateTaskFreesAnInstanceOnceItsFollowerLetsGo(t *testing.T) {
 			manager.mu.Lock()
 			manager.tasks[busyTaskID] = &UpgradeTask{ID: busyTaskID, Status: TaskStatusCancelled, Instances: []InstanceUpgrade{held}}
 			following.follow(manager)
+			manager.restoreReservationsLocked(manager.tasks[busyTaskID])
 			manager.mu.Unlock()
 
 			_, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
@@ -198,6 +203,7 @@ func TestCreateTaskFreesAnInstanceOnceItsFollowerLetsGo(t *testing.T) {
 
 			manager.mu.Lock()
 			following.letGo(manager)
+			manager.releaseUnheldLocked(manager.tasks[busyTaskID])
 			manager.mu.Unlock()
 
 			task, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
@@ -244,5 +250,235 @@ func TestCreateTaskRejectsAnUpgradeWhileTheStoredUpgradesLoad(t *testing.T) {
 	_, err = manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
 	if !errors.Is(err, ErrInstanceBusy) || !strings.Contains(err.Error(), loadedTaskID) {
 		t.Fatalf("expected ErrInstanceBusy naming the stored upgrade %s, got %v", loadedTaskID, err)
+	}
+}
+
+// holdFor reserves the instance and its deployment in the manager's guard
+// for a provision, as the broker does, and frees it when the test ends.
+func holdFor(t *testing.T, manager *Manager, instanceID string) {
+	t.Helper()
+
+	release, err := manager.Guard().Acquire(instanceID, "redis-"+instanceID, mutation.Holder{
+		Kind:        mutation.KindProvision,
+		Description: "provision of " + instanceID,
+	})
+	if err != nil {
+		t.Fatalf("holding %s: %v", instanceID, err)
+	}
+
+	t.Cleanup(release)
+}
+
+// expectFree fails the test when the guard holds the instance.
+func expectFree(t *testing.T, manager *Manager, instanceID string) {
+	t.Helper()
+
+	if holder, held := manager.Guard().Holder(instanceID, ""); held {
+		t.Fatalf("expected %s to be free, but %+v holds it", instanceID, holder)
+	}
+}
+
+// expectHeldBy fails the test unless the upgrade with the task ID holds
+// the instance.
+func expectHeldBy(t *testing.T, manager *Manager, instanceID, taskID string) {
+	t.Helper()
+
+	holder, held := manager.Guard().Holder(instanceID, "")
+	if !held || holder.Kind != mutation.KindUpgrade || holder.TaskID != taskID {
+		t.Fatalf("expected upgrade %s to hold %s, got %+v (held %v)", taskID, instanceID, holder, held)
+	}
+}
+
+// eventuallyFree waits until the guard no longer holds the instance.
+func eventuallyFree(t *testing.T, manager *Manager, instanceID string) {
+	t.Helper()
+
+	waitUntil(t, "the release of "+instanceID, func() bool {
+		_, held := manager.Guard().Holder(instanceID, "")
+
+		return !held
+	})
+}
+
+func TestCreateTaskBusyFromGuard(t *testing.T) {
+	t.Parallel()
+
+	director := newResumeDirector()
+	manager := loadManager(t, director, newWaitVault())
+	holdFor(t, manager, waitInstanceID)
+
+	_, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
+	if !errors.Is(err, ErrInstanceBusy) || !strings.Contains(err.Error(), "provision") {
+		t.Fatalf("expected ErrInstanceBusy naming the provision, got %v", err)
+	}
+
+	var busy *mutation.BusyError
+	if !errors.As(err, &busy) || busy.Holder.Kind != mutation.KindProvision {
+		t.Fatalf("expected a BusyError naming the provision, got %#v", err)
+	}
+
+	if len(manager.ListTasks()) != 0 || director.deployCount(waitDeployment) != 0 {
+		t.Fatalf("expected no upgrade and no deploy, got %d upgrades and %d deploys", len(manager.ListTasks()), director.deployCount(waitDeployment))
+	}
+}
+
+func TestCreateTaskReleasesOnAcquireFailure(t *testing.T) {
+	t.Parallel()
+
+	director := newResumeDirector()
+	manager := loadManager(t, director, newWaitVault())
+	holdFor(t, manager, "instance-2")
+
+	_, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID, "instance-2"))
+	if !errors.Is(err, ErrInstanceBusy) {
+		t.Fatalf("expected ErrInstanceBusy, got %v", err)
+	}
+
+	expectFree(t, manager, waitInstanceID)
+
+	if _, held := manager.Guard().Holder("", waitDeployment); held {
+		t.Fatalf("expected deployment %s to be free", waitDeployment)
+	}
+
+	manager.mu.RLock()
+	reservations := len(manager.reservations)
+	manager.mu.RUnlock()
+
+	if reservations != 0 {
+		t.Fatalf("expected the manager to keep no reservation, got %d tasks", reservations)
+	}
+}
+
+// An instance that failed when the upgrade was created, because Vault
+// does not know it, has settled, so the upgrade does not hold it.
+func TestCreateTaskFreesAnInstanceSettledAtCreation(t *testing.T) {
+	t.Parallel()
+
+	director := newResumeDirector()
+	director.holdDeployment(waitDeployment)
+	t.Cleanup(func() { director.releaseDeployment(waitDeployment) })
+
+	manager := loadManager(t, director, newWaitVault())
+
+	task, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID, "unknown-instance"))
+	if err != nil {
+		t.Fatalf("creating the upgrade: %v", err)
+	}
+
+	expectHeldBy(t, manager, waitInstanceID, task.ID)
+	expectFree(t, manager, "unknown-instance")
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestInstanceReleasedWhenSettled(t *testing.T) {
+	director := newResumeDirector()
+	director.holdDeployment(nextDeployment)
+	t.Cleanup(func() { director.releaseDeployment(nextDeployment) })
+
+	manager := loadManager(t, director, newWaitVault())
+
+	task, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID, "instance-2"))
+	if err != nil {
+		t.Fatalf("creating the upgrade: %v", err)
+	}
+
+	director.waitForDeployOf(t, nextDeployment)
+
+	running := snapshot(manager, task)
+	if running.Instances[0].Status != InstanceStatusSuccess {
+		t.Fatalf("expected the first instance to have settled, got %+v", running.Instances[0])
+	}
+
+	expectFree(t, manager, waitInstanceID)
+	expectHeldBy(t, manager, "instance-2", task.ID)
+
+	director.releaseDeployment(nextDeployment)
+	expectCompleted(t, manager, task.ID)
+	eventuallyFree(t, manager, "instance-2")
+
+	if snap := manager.Guard().Snapshot(); len(snap) != 0 {
+		t.Fatalf("expected no reservation once the upgrade completed, got %v", snap)
+	}
+}
+
+// refusingDirector refuses every deploy, as a director that rejects the
+// manifest does.
+type refusingDirector struct {
+	*resumeDirector
+}
+
+var errDeployRefusedInTest = errors.New("the director refused the deploy")
+
+func (d *refusingDirector) UpdateDeployment(context.Context, string, string) (*bosh.Task, error) {
+	return nil, errDeployRefusedInTest
+}
+
+// abandoningDirector stops following every deploy task it is asked about,
+// so its outcome is never known.
+type abandoningDirector struct {
+	*resumeDirector
+}
+
+func (d *abandoningDirector) WaitForTask(context.Context, int) (*bosh.Task, error) {
+	return nil, fmt.Errorf("watching the task: %w", bosh.ErrWatchAbandoned)
+}
+
+// erroringDirector ends every deploy task in the error state.
+type erroringDirector struct {
+	*resumeDirector
+}
+
+func (d *erroringDirector) WaitForTask(_ context.Context, taskID int) (*bosh.Task, error) {
+	return &bosh.Task{ID: taskID, State: "error", Result: "the deploy broke"}, nil
+}
+
+// Every way an instance can end frees its reservation, so no upgrade
+// keeps an instance it has finished with.
+//
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestTerminalInstancesReleaseTheirReservations(t *testing.T) {
+	cases := map[string]struct {
+		director func() bosh.Director
+		status   InstanceStatus
+	}{
+		"succeeded":       {director: func() bosh.Director { return newResumeDirector() }, status: InstanceStatusSuccess},
+		"deploy refused":  {director: func() bosh.Director { return &refusingDirector{newResumeDirector()} }, status: InstanceStatusFailed},
+		"task errored":    {director: func() bosh.Director { return &erroringDirector{newResumeDirector()} }, status: InstanceStatusFailed},
+		"outcome unknown": {director: func() bosh.Director { return &abandoningDirector{newResumeDirector()} }, status: InstanceStatusOutcomeUnknown},
+	}
+
+	for name, ending := range cases {
+		t.Run(name, func(t *testing.T) {
+			manager := loadManager(t, ending.director(), newWaitVault())
+
+			task, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
+			if err != nil {
+				t.Fatalf("creating the upgrade: %v", err)
+			}
+
+			done := eventually(t, manager, task, "the end of the upgrade", func(current UpgradeTask) bool {
+				return current.Status == TaskStatusCompleted || current.Status == TaskStatusFailed
+			})
+
+			if done.Instances[0].Status != ending.status {
+				t.Fatalf("expected the instance to end %s, got %+v", ending.status, done.Instances[0])
+			}
+
+			eventuallyFree(t, manager, waitInstanceID)
+
+			if _, held := manager.Guard().Holder("", waitDeployment); held {
+				t.Fatalf("expected deployment %s to be free", waitDeployment)
+			}
+
+			// A new upgrade of the instance is accepted at once.
+			again, err := manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
+			if err != nil {
+				t.Fatalf("expected a new upgrade of the freed instance, got %v", err)
+			}
+
+			eventually(t, manager, again, "the end of the second upgrade", func(current UpgradeTask) bool {
+				return current.Status == TaskStatusCompleted || current.Status == TaskStatusFailed
+			})
+		})
 	}
 }

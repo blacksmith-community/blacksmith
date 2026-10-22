@@ -348,3 +348,131 @@ func TestGetTaskReturnsASnapshot(t *testing.T) {
 		t.Fatalf("changing the task GetTask returned changed the manager's task: %+v", *after)
 	}
 }
+
+// A stored upgrade's reservations are back in the guard by the time the
+// load is done, so nothing else can take its instances first.
+func TestLoadRestoresReservationsBeforeLoaded(t *testing.T) {
+	t.Parallel()
+
+	director := newResumeDirector()
+	director.holdDeployment(firstDeployment)
+	t.Cleanup(func() { director.releaseDeployment(firstDeployment) })
+
+	vault := newWaitVault()
+	storeUpgrade(t, vault, storedUpgrade(loadedTaskID, pendingInstance(waitInstanceID, firstDeployment)))
+
+	manager := NewManager(&logger.NoOpLogger{}, director, vault)
+	t.Cleanup(manager.Stop)
+	manager.Start()
+
+	<-manager.Loaded()
+
+	expectHeldBy(t, manager, waitInstanceID, loadedTaskID)
+
+	if _, held := manager.Guard().Holder("", firstDeployment); !held {
+		t.Fatalf("expected deployment %s to be held", firstDeployment)
+	}
+}
+
+// The load reserves by each instance's state. An unfinished upgrade holds
+// the instances it has not settled, and any upgrade holds an instance whose
+// deploy was in flight until the loader settles it.
+func TestLoadReservesByInstanceState(t *testing.T) {
+	t.Parallel()
+
+	const (
+		batchTaskID     = "running-batch"
+		cancelledTaskID = "cancelled-upgrade"
+		thirdInstanceID = "instance-3"
+	)
+
+	director := newResumeDirector()
+	director.holdAdopted()
+	director.holdDeployment(nextDeployment)
+	t.Cleanup(func() {
+		director.release(adoptedTaskID)
+		director.releaseDeployment(nextDeployment)
+	})
+
+	upgraded := pendingInstance(waitInstanceID, firstDeployment)
+	upgraded.Status = InstanceStatusSuccess
+
+	batch := storedUpgrade(batchTaskID, upgraded, pendingInstance("instance-2", nextDeployment))
+	batch.CompletedCount = 1
+
+	running := inFlight(adoptedDeployment, InstanceStatusRunning, adoptedTaskID, loadedContextID)
+	running.InstanceID = thirdInstanceID
+	cancelled := storedUpgrade(cancelledTaskID, running)
+	cancelled.Status = TaskStatusCancelled
+
+	vault := newWaitVault()
+	storeUpgrade(t, vault, batch)
+	storeUpgrade(t, vault, cancelled)
+
+	manager := NewManager(&logger.NoOpLogger{}, director, vault)
+	t.Cleanup(manager.Stop)
+	manager.Start()
+
+	<-manager.Loaded()
+
+	expectFree(t, manager, waitInstanceID)
+	expectHeldBy(t, manager, "instance-2", batchTaskID)
+	expectHeldBy(t, manager, thirdInstanceID, cancelledTaskID)
+
+	director.waitForWaitOn(t, adoptedTaskID)
+	director.release(adoptedTaskID)
+
+	eventuallyFree(t, manager, thirdInstanceID)
+	expectHeldBy(t, manager, "instance-2", batchTaskID)
+}
+
+// Two stored upgrades that hold the same instance can only come from
+// corrupt records. The earlier upgrade keeps the instance, and the later
+// one's instance fails naming it.
+func TestLoadConflictFailsTheLaterUpgrade(t *testing.T) {
+	t.Parallel()
+
+	const (
+		earlierTaskID = "earlier-upgrade"
+		laterTaskID   = "later-upgrade"
+	)
+
+	director := newResumeDirector()
+	director.holdDeployment(firstDeployment)
+	t.Cleanup(func() { director.releaseDeployment(firstDeployment) })
+
+	earlier := storedUpgrade(earlierTaskID, pendingInstance(waitInstanceID, firstDeployment))
+	earlier.CreatedAt = time.Now().Add(-2 * time.Hour)
+
+	later := storedUpgrade(laterTaskID, pendingInstance(waitInstanceID, firstDeployment))
+
+	vault := newWaitVault()
+	storeUpgrade(t, vault, earlier)
+	storeUpgrade(t, vault, later)
+
+	manager := loadManager(t, director, vault)
+
+	expectHeldBy(t, manager, waitInstanceID, earlierTaskID)
+
+	done := eventuallyWithin(t, manager, laterTaskID, waitTimeout, "the end of the later upgrade", func(current UpgradeTask) bool {
+		return current.Status == TaskStatusFailed
+	})
+
+	if done.Instances[0].Status != InstanceStatusFailed || done.Instances[0].Error != "instance reserved by task "+earlierTaskID || done.FailedCount != 1 {
+		t.Fatalf("expected the later upgrade's instance to fail naming %s, got %+v", earlierTaskID, done)
+	}
+
+	saved := eventuallySaved(t, vault, laterTaskID, func(saved UpgradeTask) bool {
+		return saved.Instances[0].Status == InstanceStatusFailed
+	})
+
+	if saved.Instances[0].Error != "instance reserved by task "+earlierTaskID {
+		t.Fatalf("expected the saved instance to name %s, got %+v", earlierTaskID, saved.Instances[0])
+	}
+
+	director.waitForDeployOf(t, firstDeployment)
+
+	if director.deployCount(firstDeployment) != 1 {
+		t.Fatalf("expected one deploy of %s, from the earlier upgrade, got %d", firstDeployment, director.deployCount(firstDeployment))
+	}
+}
