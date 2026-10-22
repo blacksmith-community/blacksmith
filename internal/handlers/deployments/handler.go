@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/mutation"
 	"blacksmith/pkg/http/response"
 	"gopkg.in/yaml.v3"
 )
@@ -44,6 +46,7 @@ type Handler struct {
 	config   interfaces.Config
 	vault    interfaces.Vault
 	director interfaces.Director
+	guard    *mutation.Guard
 }
 
 // Dependencies contains all dependencies needed by the Deployments handler.
@@ -52,6 +55,10 @@ type Dependencies struct {
 	Config   interfaces.Config
 	Vault    interfaces.Vault
 	Director interfaces.Director
+	// Guard is the broker-wide mutation guard. Each action that changes a
+	// deployment holds the deployment in it while the action submits its
+	// task. A nil Guard holds nothing.
+	Guard *mutation.Guard
 }
 
 // Deployment represents a BOSH deployment.
@@ -84,6 +91,7 @@ func NewHandler(deps Dependencies) *Handler {
 		config:   deps.Config,
 		vault:    deps.Vault,
 		director: deps.Director,
+		guard:    deps.Guard,
 	}
 }
 
@@ -165,6 +173,12 @@ func (h *Handler) DeleteDeployment(writer http.ResponseWriter, req *http.Request
 	logger := h.logger.Named("deployment-delete")
 	logger.Info("Deleting deployment: %s", deploymentName)
 
+	release, reserved := h.reserveDeployment(writer, logger, deploymentName, "delete")
+	if !reserved {
+		return
+	}
+	defer release()
+
 	task, err := h.director.DeleteDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to delete deployment %s: %v", deploymentName, err)
@@ -235,6 +249,12 @@ func (h *Handler) UpdateManifest(writer http.ResponseWriter, req *http.Request, 
 
 		return
 	}
+
+	release, reserved := h.reserveDeployment(writer, logger, deploymentName, "manifest update")
+	if !reserved {
+		return
+	}
+	defer release()
 
 	task, err := h.director.UpdateDeployment(ctx, deploymentName, string(manifestBytes))
 	if err != nil {
@@ -409,6 +429,12 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 
 	opts := parseErrandOpts(req)
 
+	release, reserved := h.reserveDeployment(writer, logger, deploymentName, "errand "+errandName)
+	if !reserved {
+		return
+	}
+	defer release()
+
 	result, err := h.director.RunErrand(ctx, deploymentName, errandName, opts)
 	if err != nil {
 		logger.Error("Failed to run errand %s for deployment %s: %v", errandName, deploymentName, err)
@@ -459,6 +485,12 @@ func (h *Handler) RecreateDeployment(writer http.ResponseWriter, req *http.Reque
 
 	opts := parseRecreateOpts(req)
 
+	release, reserved := h.reserveDeployment(writer, logger, deploymentName, "recreate")
+	if !reserved {
+		return
+	}
+	defer release()
+
 	task, err := h.director.RecreateDeployment(ctx, deploymentName, opts)
 	if err != nil {
 		logger.Error("Failed to recreate deployment %s: %v", deploymentName, err)
@@ -488,6 +520,12 @@ func (h *Handler) RestartDeployment(writer http.ResponseWriter, req *http.Reques
 	warnIgnoredForce(logger, req)
 
 	opts := parseRestartOpts(req)
+
+	release, reserved := h.reserveDeployment(writer, logger, deploymentName, "restart")
+	if !reserved {
+		return
+	}
+	defer release()
 
 	task, err := h.director.RestartDeployment(ctx, deploymentName, opts)
 	if err != nil {
@@ -519,6 +557,12 @@ func (h *Handler) StopDeployment(writer http.ResponseWriter, req *http.Request, 
 
 	opts := parseStopOpts(req)
 
+	release, reserved := h.reserveDeployment(writer, logger, deploymentName, "stop")
+	if !reserved {
+		return
+	}
+	defer release()
+
 	task, err := h.director.StopDeployment(ctx, deploymentName, opts)
 	if err != nil {
 		logger.Error("Failed to stop deployment %s: %v", deploymentName, err)
@@ -548,6 +592,12 @@ func (h *Handler) StartDeployment(writer http.ResponseWriter, req *http.Request,
 	warnIgnoredForce(logger, req)
 
 	opts := parseStartOpts(req)
+
+	release, reserved := h.reserveDeployment(writer, logger, deploymentName, "start")
+	if !reserved {
+		return
+	}
+	defer release()
 
 	task, err := h.director.StartDeployment(ctx, deploymentName, opts)
 	if err != nil {
@@ -963,6 +1013,42 @@ func extractOSFromStemcell(name string) string {
 // warnIgnoredForce warns when a job-state request carries force. The
 // director ignores force on job-state changes, so it is never sent, and the
 // request goes ahead without it.
+// reserveDeployment holds the deployment in the mutation guard for the
+// named action, so the action never changes a deployment that an upgrade,
+// a certificate rotation, or a broker operation is changing. When another
+// holder has the deployment or its instance, it answers 409 with the code
+// instance_busy and the holder's description, and reports false so the
+// caller sends nothing to the director. The caller runs the returned
+// release once its director call returns. Without a guard it holds
+// nothing and always reports true.
+func (h *Handler) reserveDeployment(writer http.ResponseWriter, logger interfaces.Logger, deploymentName, action string) (func(), bool) {
+	if h.guard == nil {
+		return func() {}, true
+	}
+
+	release, err := h.guard.Acquire("", deploymentName, mutation.Holder{
+		Kind:        mutation.KindDeploymentAction,
+		Description: action + " from the UI",
+	})
+	if err == nil {
+		return release, true
+	}
+
+	var busy *mutation.BusyError
+	if errors.As(err, &busy) {
+		message := fmt.Sprintf("deployment %s is busy with %s", deploymentName, busy.Holder.Description)
+		logger.Warning("Refusing the %s of deployment %s: %s", action, deploymentName, message)
+		apierr.Write(writer, apierr.New(http.StatusConflict, apierr.CodeInstanceBusy, message), http.StatusConflict)
+
+		return nil, false
+	}
+
+	logger.Error("Failed to reserve deployment %s for the %s: %v", deploymentName, action, err)
+	apierr.Write(writer, err, http.StatusInternalServerError)
+
+	return nil, false
+}
+
 func warnIgnoredForce(logger interfaces.Logger, req *http.Request) {
 	if req.URL.Query().Has("force") {
 		logger.Warning("The BOSH director ignores force on job-state changes, so %s %s goes ahead without it", req.Method, req.URL.Path)

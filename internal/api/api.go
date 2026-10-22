@@ -204,6 +204,7 @@ func createDeploymentsHandler(deps Dependencies) *deployments.Handler {
 		Config:   deps.Config,
 		Vault:    deps.Vault,
 		Director: deps.Director,
+		Guard:    deps.Guard,
 	})
 }
 
