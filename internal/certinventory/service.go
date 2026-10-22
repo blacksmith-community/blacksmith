@@ -2,6 +2,7 @@ package certinventory
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 const (
 	directorInfoTTL     = 5 * time.Minute
 	directorInfoTimeout = 10 * time.Second
+	directorInfoBackoff = 30 * time.Second
 	settingsLoadTimeout = 15 * time.Second
 	credhubProbeSegment = "blacksmith-credhub-probe"
 )
@@ -71,9 +73,40 @@ type Service struct {
 	probeState  credhub.CapabilityState
 	probeReason string
 
-	info       *bosh.Info
-	infoAt     time.Time
-	infoFailed bool
+	// infoMu guards the cached director info. It is separate from mu, so a
+	// slow director never holds up a caller that needs mu.
+	infoMu       sync.Mutex
+	info         *bosh.Info
+	infoAt       time.Time
+	infoFailedAt time.Time
+	infoFetching bool
+
+	// noDirector is true when the broker has no BOSH director.
+	noDirector bool
+}
+
+// ErrDirectorUnavailable is what every director call answers when the broker
+// has no BOSH director.
+var ErrDirectorUnavailable = errors.New("BOSH director unavailable")
+
+// missingDirector stands in for a director the broker does not have, so a
+// scan fails with a reason instead of dereferencing nil.
+type missingDirector struct{}
+
+func (missingDirector) GetInfo(context.Context) (*bosh.Info, error) {
+	return nil, ErrDirectorUnavailable
+}
+
+func (missingDirector) GetDeployment(context.Context, string) (*bosh.DeploymentDetail, error) {
+	return nil, ErrDirectorUnavailable
+}
+
+func (missingDirector) GetDeploymentVMs(context.Context, string) ([]bosh.VM, error) {
+	return nil, ErrDirectorUnavailable
+}
+
+func (missingDirector) ListVariables(context.Context, string) ([]bosh.Variable, error) {
+	return nil, ErrDirectorUnavailable
 }
 
 // NewService builds a Service. It starts nothing; call Start.
@@ -97,6 +130,11 @@ func NewService(deps ServiceDeps) *Service {
 
 	if s.store == nil {
 		s.store = NewSettingsStore(deps.Scanner.Vault)
+	}
+
+	if deps.Scanner.Director == nil {
+		deps.Scanner.Director = missingDirector{}
+		s.noDirector = true
 	}
 
 	// Only a real client goes into the interface, so a missing one stays a
@@ -246,19 +284,22 @@ func (s *Service) Item(id string) (ItemDetail, bool) {
 }
 
 // current returns the fleet, rebuilding it only when the cache, the
-// settings, or the capabilities changed since the last build.
+// settings, or the capabilities changed since the last build. The director
+// is asked outside every lock.
 func (s *Service) current() (*Fleet, Settings, Capabilities) {
 	set := s.store.Current()
 	gen := s.cache.Generation()
+	info := s.directorInfo()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.hasBuilt && s.builtGen == gen && s.builtSet == set && s.builtCapV == s.capVersion {
+	caps := s.capabilitiesLocked(set, info)
+
+	if s.hasBuilt && s.builtGen == gen && s.builtSet == set && s.builtCapV == s.capVersion && s.caps == caps {
 		return s.fleet, set, s.caps
 	}
 
-	caps := s.capabilitiesLocked(set)
 	s.fleet = s.aggregate(s.cache.Snapshot(), set, caps, s.deps.Now())
 	s.caps = caps
 	s.builtGen, s.builtSet, s.builtCapV, s.hasBuilt = gen, set, s.capVersion, true
@@ -266,65 +307,85 @@ func (s *Service) current() (*Fleet, Settings, Capabilities) {
 	return s.fleet, set, caps
 }
 
-func (s *Service) capabilitiesLocked(set Settings) Capabilities {
+func (s *Service) capabilitiesLocked(set Settings, info *bosh.Info) Capabilities {
 	state, reason := s.credhubStateLocked()
-	info := s.directorInfoLocked()
 
 	caps := Capabilities{
-		CredHub:         state,
-		CredHubReason:   reason,
-		DirectorName:    s.deps.Scanner.DirectorName,
-		RotationEnabled: s.deps.RotationEnabled,
-		PatchEnabled:    s.deps.PatchEnabled,
-		ProbeEnabled:    set.ProbeEnabled,
+		CredHub:             state,
+		CredHubReason:       reason,
+		DirectorName:        s.deps.Scanner.DirectorName,
+		DirectorUnavailable: s.noDirector,
+		RotationEnabled:     s.deps.RotationEnabled,
+		PatchEnabled:        s.deps.PatchEnabled,
+		ProbeEnabled:        set.ProbeEnabled,
 	}
 
-	if info != nil {
+	switch {
+	case s.noDirector:
+		caps.ForceLatestReason = ErrDirectorUnavailable.Error()
+	case info != nil:
 		caps.DirectorVersion = info.Version
 		caps.ForceLatest, caps.ForceLatestReason = bosh.ForceLatestVariablesSupported(info.Version)
 
 		if caps.DirectorName == "" {
 			caps.DirectorName = info.Name
 		}
-	} else {
+	default:
 		caps.ForceLatestReason = "the director did not report a version"
 	}
 
 	return caps
 }
 
-// directorInfoLocked returns the director's info, cached for five minutes
-// after a success and retried at once after a failure.
-func (s *Service) directorInfoLocked() *bosh.Info {
-	now := s.deps.Now()
-	if s.info != nil && now.Sub(s.infoAt) < directorInfoTTL {
-		return s.info
+// directorInfo returns the director's info. A success is cached for five
+// minutes and a failure for 30 seconds. One caller at a time asks the
+// director, and any other caller gets the cached value at once instead of
+// waiting. No lock of the service is held during the call.
+func (s *Service) directorInfo() *bosh.Info {
+	if s.noDirector {
+		return nil
 	}
 
-	if s.deps.Scanner.Director == nil {
-		return s.info
+	now := s.deps.Now()
+
+	s.infoMu.Lock()
+
+	fresh := s.info != nil && now.Sub(s.infoAt) < directorInfoTTL
+	backingOff := !s.infoFailedAt.IsZero() && now.Sub(s.infoFailedAt) < directorInfoBackoff
+
+	if fresh || backingOff || s.infoFetching {
+		info := s.info
+		s.infoMu.Unlock()
+
+		return info
 	}
+
+	s.infoFetching = true
+	s.infoMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), directorInfoTimeout)
 	defer cancel()
 
 	info, err := s.deps.Scanner.Director.GetInfo(ctx)
+
+	s.infoMu.Lock()
+	defer s.infoMu.Unlock()
+
+	s.infoFetching = false
+
 	if err != nil || info == nil {
-		s.infoFailed = true
+		s.infoFailedAt = now
 
 		return s.info
 	}
 
-	s.info, s.infoAt, s.infoFailed = info, now, false
+	s.info, s.infoAt, s.infoFailedAt = info, now, time.Time{}
 
 	return info
 }
 
 func (s *Service) directorName() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if info := s.directorInfoLocked(); info != nil {
+	if info := s.directorInfo(); info != nil {
 		return info.Name
 	}
 

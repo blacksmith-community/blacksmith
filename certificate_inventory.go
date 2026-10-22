@@ -17,10 +17,11 @@ import (
 )
 
 // newCertificateService builds the certificate inventory over the broker's
-// director, Vault, and CredHub client. Without a BOSH director there is
-// nothing to scan, so the service is built switched off and the API answers
-// inventory_disabled. A missing CredHub client stays a nil pointer in the
-// service, which then reports CredHub as not configured.
+// director, Vault, and CredHub client. Without a BOSH director the inventory
+// stays on but degraded, since the service then fails each instance scan
+// with "BOSH director unavailable" and reports rotation as unavailable. A
+// missing CredHub client stays a nil pointer in the service, which then
+// reports CredHub as not configured.
 func newCertificateService(cfg *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) *certinventory.Service {
 	enabled := cfg.Certificates.InventoryEnabled()
 
@@ -28,12 +29,8 @@ func newCertificateService(cfg *config.Config, brokerInstance *broker.Broker, va
 
 	if boshDirector != nil {
 		scanner.Director = boshDirector
-	} else {
-		if enabled {
-			logger.Warn("BOSH director unavailable - the certificate inventory will be disabled")
-		}
-
-		enabled = false
+	} else if enabled {
+		logger.Warn("BOSH director unavailable - the certificate inventory will scan the broker only")
 	}
 
 	if vault != nil {

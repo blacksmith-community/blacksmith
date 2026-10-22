@@ -2,10 +2,13 @@ package certinventory
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/credhub"
 )
 
@@ -107,5 +110,179 @@ func TestServiceDisabledDoesNotStartScheduler(t *testing.T) {
 
 	if svc.Enabled() {
 		t.Error("Enabled should follow the switch")
+	}
+}
+
+func TestServiceForcedScanWithoutCredHubClient(t *testing.T) {
+	t.Parallel()
+
+	served := issue(t, issueSpec{cn: "rabbitmq.bosh", serial: 7})
+	port := serveTLS(t, served)
+
+	dir := &fakeDirector{
+		manifest: rabbitManifest(port),
+		vars: []bosh.Variable{
+			{ID: "v1", Name: "/ws-bosh/rabbitmq-1/rabbitmq_crt"},
+			{ID: "v2", Name: "/ws-bosh/rabbitmq-1/rabbitmq_ca"},
+		},
+		vms: []bosh.VM{{CID: "vm-0", Job: "standalone", Index: 0, IPs: []string{"127.0.0.1"}}},
+	}
+
+	svc := NewService(ServiceDeps{
+		Scanner:          ScannerDeps{Director: dir, Vault: newFakeVault(), Prober: Prober{Timeout: 2 * time.Second}, DirectorName: testDirector},
+		List:             func(context.Context) ([]InstanceRef, error) { return []InstanceRef{testRef("rabbitmq-1")}, nil },
+		InventoryEnabled: true,
+	})
+
+	scan, err := svc.ScanInstance(context.Background(), testInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(scan.Material.CredHub) == 0 {
+		t.Fatal("the scan found no CredHub variables")
+	}
+
+	for _, ch := range scan.Material.CredHub {
+		if ch.Err != "CredHub not configured" || ch.Deployed != nil {
+			t.Errorf("%s: err %q deployed %v, want CredHub not configured", ch.Name, ch.Err, ch.Deployed != nil)
+		}
+	}
+}
+
+func TestServiceWithoutDirectorDegrades(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(ServiceDeps{
+		Scanner:          ScannerDeps{Vault: newFakeVault(), Prober: Prober{Timeout: time.Second}, DirectorName: testDirector},
+		List:             func(context.Context) ([]InstanceRef, error) { return []InstanceRef{testRef("rabbitmq-1")}, nil },
+		InventoryEnabled: true,
+		RotationEnabled:  true,
+		Now:              func() time.Time { return fleetNow },
+	})
+
+	if !svc.Enabled() {
+		t.Fatal("a broker with no director must keep the inventory on")
+	}
+
+	resp := svc.Response(context.Background(), Filter{})
+	if resp.Capabilities.Director.ForceLatestVariables {
+		t.Error("force_latest_variables should be false without a director")
+	}
+
+	if rot := resp.Capabilities.Rotation; rot.Enabled || rot.Reason != "BOSH director unavailable" {
+		t.Errorf("rotation %+v, want unavailable for BOSH director unavailable", rot)
+	}
+
+	scan, err := svc.ScanInstance(context.Background(), testInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(scan.Err, "BOSH director unavailable") {
+		t.Errorf("instance scan error %q should name the missing director", scan.Err)
+	}
+}
+
+// infoDirector is a director whose GetInfo can block or fail.
+type infoDirector struct {
+	DirectorReader
+
+	entered chan struct{}
+	release chan struct{}
+	err     error
+	calls   atomic.Int32
+}
+
+func (d *infoDirector) GetInfo(context.Context) (*bosh.Info, error) {
+	d.calls.Add(1)
+
+	if d.entered != nil {
+		select {
+		case d.entered <- struct{}{}:
+		default:
+		}
+
+		<-d.release
+	}
+
+	if d.err != nil {
+		return nil, d.err
+	}
+
+	return &bosh.Info{Name: testDirector, Version: "282.0.0"}, nil
+}
+
+func TestServiceSlowDirectorDoesNotBlockOthers(t *testing.T) {
+	t.Parallel()
+
+	dir := &infoDirector{entered: make(chan struct{}, 1), release: make(chan struct{})}
+
+	svc := NewService(ServiceDeps{
+		Scanner:          ScannerDeps{Director: dir, Vault: newFakeVault(), DirectorName: testDirector},
+		List:             func(context.Context) ([]InstanceRef, error) { return nil, nil },
+		InventoryEnabled: true,
+		Now:              func() time.Time { return fleetNow },
+	})
+	svc.deps.CredHubClient = &credhub.Client{}
+
+	first := make(chan struct{})
+
+	go func() {
+		defer close(first)
+
+		svc.Response(context.Background(), Filter{})
+	}()
+
+	<-dir.entered
+
+	others := make(chan struct{})
+
+	go func() {
+		defer close(others)
+
+		svc.SetCredHubProbe(nil)
+		svc.credhubState()
+		svc.Response(context.Background(), Filter{})
+	}()
+
+	select {
+	case <-others:
+	case <-time.After(3 * time.Second):
+		close(dir.release)
+		t.Fatal("other callers blocked behind the slow director")
+	}
+
+	close(dir.release)
+	<-first
+}
+
+func TestServiceCachesDirectorFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := &infoDirector{err: errors.New("director down")}
+	now := fleetNow
+
+	svc := NewService(ServiceDeps{
+		Scanner:          ScannerDeps{Director: dir, Vault: newFakeVault(), DirectorName: testDirector},
+		List:             func(context.Context) ([]InstanceRef, error) { return nil, nil },
+		InventoryEnabled: true,
+		Now:              func() time.Time { return now },
+	})
+
+	ctx := context.Background()
+	svc.Response(ctx, Filter{})
+	svc.Response(ctx, Filter{Attention: true})
+
+	if got := dir.calls.Load(); got != 1 {
+		t.Fatalf("two reads called GetInfo %d times, want 1", got)
+	}
+
+	now = now.Add(31 * time.Second)
+
+	svc.Response(ctx, Filter{})
+
+	if got := dir.calls.Load(); got != 2 {
+		t.Errorf("after the backoff GetInfo ran %d times, want 2", got)
 	}
 }

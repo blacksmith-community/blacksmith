@@ -21,12 +21,14 @@ type Capabilities struct {
 	CredHubReason   string
 	DirectorVersion string
 	// DirectorName is the name in every CredHub path the director owns.
-	DirectorName      string
-	ForceLatest       bool
-	ForceLatestReason string
-	RotationEnabled   bool
-	PatchEnabled      bool
-	ProbeEnabled      bool
+	DirectorName string
+	ForceLatest  bool
+	// DirectorUnavailable is true when the broker has no BOSH director.
+	DirectorUnavailable bool
+	ForceLatestReason   string
+	RotationEnabled     bool
+	PatchEnabled        bool
+	ProbeEnabled        bool
 }
 
 // RotatabilityOf applies the conditions of spec 7.9. director is the

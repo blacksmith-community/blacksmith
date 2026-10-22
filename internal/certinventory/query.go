@@ -298,6 +298,10 @@ func (c Capabilities) View() CapabilitiesView {
 }
 
 func (c Capabilities) rotationState() (bool, string) {
+	if c.DirectorUnavailable {
+		return false, "BOSH director unavailable"
+	}
+
 	switch c.CredHub {
 	case credhub.StateConfigured:
 	case credhub.StateNotConfigured:
