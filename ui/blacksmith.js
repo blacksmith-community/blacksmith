@@ -4053,7 +4053,233 @@
     }
   };
 
-  window.blacksmithRotate = { previewAndCreate };
+  // The instances other operations hold right now, read once from the task
+  // list and the details of its active tasks. A caller uses it to show Busy
+  // before the operator tries. The broker still refuses a rotation on a
+  // held instance, so a failed read returns nothing and blocks nothing.
+  const readHoldersOnce = async () => {
+    try {
+      const response = await fetch('/b/upgrade/tasks');
+      if (!response.ok) return new Map();
+      const list = await response.json();
+      const active = (Array.isArray(list) ? list : []).filter((task) => task && ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
+      const details = await Promise.all(active.map(async (task) => {
+        try {
+          const detail = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`);
+          return detail.ok ? await detail.json() : null;
+        } catch (err) {
+          return null;
+        }
+      }));
+      return computeUpgradeHolders(details.filter(Boolean));
+    } catch (err) {
+      return new Map();
+    }
+  };
+
+  // Whether a Rotate button can start a rotation, and what it says when it
+  // cannot. A busy instance reads Busy with the holder's description.
+  const rotateAvailability = (capabilities, eligibleCount, holder, noneReason) => {
+    const rotation = capabilities && capabilities.rotation;
+    if (!rotation || rotation.enabled !== true) {
+      return { state: 'disabled', label: 'Rotate...', note: (rotation && rotation.reason) || 'Certificate rotation is turned off on this broker.' };
+    }
+    if (holder) return { state: 'busy', label: 'Busy', note: `Busy: ${holder}` };
+    if (eligibleCount === 0) {
+      return { state: 'disabled', label: 'Rotate...', note: noneReason || 'No certificate on this instance can be rotated.' };
+    }
+    return { state: 'enabled', label: 'Rotate...', note: '' };
+  };
+
+  // What the operator chose the last time the dialog was open for an
+  // instance, so a second opening keeps their choice and the threshold
+  // default applies on the first opening only.
+  const rotateDialogMemory = new Map();
+
+  // The rotate dialog for one instance, drawn inside host. The options are
+  //   instanceId, instanceName
+  //   certs      [{key, variable, daysLeft, expiry}] the rotatable certificates
+  //   preselect  a Set of keys to check, or null for those under the warning
+  //              threshold on the first opening
+  //   opener     the control that opened it, which gets focus back
+  //   origin     a label for the entry point
+  //   onCreated  called after the task is created
+  //   onClose    called when the operator cancels
+  // It lists the certificates with checkboxes, offers Redeploy, takes a
+  // reason, and hands the preview and the create to previewAndCreate.
+  const openInstanceRotateDialog = (host, options = {}) => {
+    if (!host) return null;
+    const instanceId = String(options.instanceId || '');
+    const instanceName = String(options.instanceName || instanceId);
+    const certs = (Array.isArray(options.certs) ? options.certs : []).filter((cert) => cert && cert.key);
+    const keys = new Set(certs.map((cert) => String(cert.key)));
+    const underThreshold = (cert) => ['expired', 'critical', 'warning'].includes(cert.expiry);
+
+    let chosen;
+    if (options.preselect instanceof Set) {
+      chosen = new Set(Array.from(options.preselect).map(String).filter((key) => keys.has(key)));
+    } else if (rotateDialogMemory.has(instanceId)) {
+      chosen = new Set(Array.from(rotateDialogMemory.get(instanceId)).filter((key) => keys.has(key)));
+    } else {
+      chosen = new Set(certs.filter(underThreshold).map((cert) => String(cert.key)));
+    }
+
+    host.textContent = '';
+    const root = rotateEl('section', 'cert-rotate-dialog');
+    root.setAttribute('role', 'group');
+    root.setAttribute('aria-label', `Rotate certificates on ${instanceName}`);
+    const form = rotateEl('div', 'cert-rotate-form');
+    const resultHost = rotateEl('div', 'cert-rotate-result');
+    root.appendChild(form);
+    root.appendChild(resultHost);
+    host.appendChild(root);
+
+    form.appendChild(rotateEl('h4', 'cert-rotate-title', 'Rotate certificates'));
+    form.appendChild(rotateEl('p', 'cert-rotate-instance', `Instance ${instanceName}`));
+
+    const list = rotateEl('fieldset', 'cert-rotate-list');
+    list.appendChild(rotateEl('legend', '', 'Certificates to rotate'));
+    const boxes = [];
+    certs.forEach((cert, index) => {
+      const label = rotateEl('label', 'cert-rotate-option');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.id = `cert-rotate-${instanceId.replace(/[^A-Za-z0-9_-]/g, '_')}-${index}`;
+      box.value = String(cert.key);
+      box.checked = chosen.has(String(cert.key));
+      box.setAttribute('aria-label', `Rotate ${cert.variable || cert.key} on ${instanceName}`);
+      box.addEventListener('change', () => {
+        if (box.checked) chosen.add(String(cert.key)); else chosen.delete(String(cert.key));
+        sync();
+      });
+      boxes.push(box);
+      label.appendChild(box);
+      label.appendChild(rotateEl('span', 'cert-rotate-name', String(cert.variable || cert.key)));
+      const days = typeof cert.daysLeft === 'number' ? `expires in ${pluralize(cert.daysLeft, 'day')}` : (cert.expiry ? String(cert.expiry) : 'expiry unknown');
+      label.appendChild(rotateEl('span', 'cert-rotate-days', days));
+      list.appendChild(label);
+    });
+    form.appendChild(list);
+
+    const modes = rotateEl('fieldset', 'cert-rotate-mode');
+    modes.appendChild(rotateEl('legend', '', 'Mode'));
+    [['redeploy', 'Redeploy'], ['patch', 'Patch in place']].forEach(([value, text]) => {
+      const label = rotateEl('label', 'rotate-mode-option');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `cert-rotate-mode-${instanceId}`;
+      radio.value = value;
+      radio.checked = value === 'redeploy';
+      if (value === 'patch') {
+        radio.disabled = true;
+        radio.setAttribute('aria-describedby', `cert-rotate-patch-${instanceId.replace(/[^A-Za-z0-9_-]/g, '_')}`);
+      }
+      label.appendChild(radio);
+      label.appendChild(rotateEl('span', '', text));
+      modes.appendChild(label);
+    });
+    const patchNote = rotateEl('p', 'cert-rotate-note', PATCH_UNAVAILABLE_REASON);
+    patchNote.id = `cert-rotate-patch-${instanceId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    modes.appendChild(patchNote);
+    form.appendChild(modes);
+
+    const reasonRow = rotateEl('div', 'cert-rotate-reason');
+    const reasonLabel = rotateEl('label', '', 'Reason');
+    const reasonInput = document.createElement('input');
+    reasonInput.type = 'text';
+    reasonInput.id = `cert-rotate-reason-${instanceId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    reasonInput.setAttribute('autocomplete', 'off');
+    reasonLabel.setAttribute('for', reasonInput.id);
+    reasonRow.appendChild(reasonLabel);
+    reasonRow.appendChild(reasonInput);
+    form.appendChild(reasonRow);
+
+    const actions = rotateEl('div', 'cert-rotate-actions');
+    const cancel = rotateEl('button', 'btn-secondary btn-sm cert-rotate-cancel', 'Cancel');
+    cancel.type = 'button';
+    const preview = rotateEl('button', 'btn-primary btn-sm cert-rotate-preview', 'Preview rotation');
+    preview.type = 'button';
+    const hint = rotateEl('span', 'cert-rotate-note cert-rotate-hint');
+    hint.setAttribute('role', 'status');
+    actions.appendChild(cancel);
+    actions.appendChild(preview);
+    actions.appendChild(hint);
+    form.appendChild(actions);
+
+    let busy = false;
+    const sync = () => {
+      const none = chosen.size === 0;
+      preview.disabled = none;
+      hint.textContent = none ? 'Select at least one certificate to preview a rotation.' : '';
+    };
+    sync();
+
+    const remember = () => { rotateDialogMemory.set(instanceId, new Set(chosen)); };
+    const focusOpener = () => {
+      const target = options.opener;
+      if (target && target.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
+    };
+
+    cancel.addEventListener('click', () => {
+      remember();
+      host.textContent = '';
+      focusOpener();
+      if (typeof options.onClose === 'function') options.onClose();
+    });
+
+    preview.addEventListener('click', async () => {
+      if (busy || chosen.size === 0) return;
+      busy = true;
+      remember();
+      preview.setAttribute('aria-disabled', 'true');
+      preview.textContent = 'Previewing...';
+      let result = null;
+      try {
+        result = await previewAndCreate({
+          mode: 'redeploy',
+          selections: [{ instance_id: instanceId, variables: Array.from(chosen) }],
+          reason: reasonInput.value,
+          origin: options.origin || 'instance',
+          container: resultHost,
+          onCreated: (task, included) => {
+            form.remove();
+            if (typeof options.onCreated === 'function') options.onCreated(task, included);
+          }
+        });
+      } finally {
+        busy = false;
+        preview.removeAttribute('aria-disabled');
+        preview.textContent = 'Preview rotation';
+      }
+      // An error stays on the result panel, which holds the message and its
+      // Retry button. A cancel returns to the preview button, and a created
+      // task, which removed the form, returns to the control that opened it.
+      if (result && result.cancelled && preview.isConnected && !preview.disabled) preview.focus({ preventScroll: true });
+      else if (result && result.ok) focusOpener();
+    });
+
+    return { root, form, resultHost, preview, cancel };
+  };
+
+  // Opens Batch Operations in rotate mode with the selection the
+  // Certificates tab holds, which both tabs share.
+  const openBatchRotate = async () => {
+    const switched = await window.blacksmithNav.switchTab('upgrade');
+    if (switched === false) return false;
+    renderOperation('rotate');
+    rotateRefresh();
+    const radio = document.getElementById('rotate-op-rotate');
+    if (radio && typeof radio.focus === 'function') radio.focus({ preventScroll: true });
+    return true;
+  };
+
+  window.blacksmithRotate = {
+    previewAndCreate,
+    openInstanceDialog: openInstanceRotateDialog,
+    availability: rotateAvailability,
+    readHolders: readHoldersOnce
+  };
+  window.blacksmithBatch = { openRotate: openBatchRotate };
 
   // The footer button of rotate and converge mode.
   const startRotatePreview = async () => {
@@ -18451,7 +18677,7 @@
 
     const current = (container, token) => container.isConnected && container._certToken === token;
 
-    const instanceHeader = (state, onRescan) => {
+    const instanceHeader = (state, onRescan, rotateOptions) => {
       const bar = el('div', 'cert-ov-bar');
       const title = el('h4', 'cert-ov-title', 'Certificates on this instance');
       bar.appendChild(title);
@@ -18461,14 +18687,23 @@
       if (state === 'loading') rescan.setAttribute('aria-busy', 'true');
       rescan.addEventListener('click', onRescan);
       actions.appendChild(rescan);
-      const rotate = button('cert-action-btn cert-ov-rotate', 'Rotate...');
-      rotate.disabled = true;
-      rotate.setAttribute('aria-describedby', 'cert-ov-rotate-note');
+      const avail = rotateOptions && rotateOptions.avail
+        ? rotateOptions.avail
+        : { state: 'disabled', label: 'Rotate...', note: 'Rotation is available once the scan finishes.' };
+      const rotate = button('cert-action-btn cert-ov-rotate', avail.label);
+      rotate.disabled = avail.state !== 'enabled';
+      if (avail.note) rotate.setAttribute('aria-describedby', 'cert-ov-rotate-note');
+      if (rotateOptions && rotateOptions.onRotate) rotate.addEventListener('click', () => rotateOptions.onRotate(rotate));
       actions.appendChild(rotate);
       bar.appendChild(actions);
-      const note = el('p', 'cert-muted cert-ov-rotate-note', ROTATION_WAIT_TEXT);
-      note.id = 'cert-ov-rotate-note';
-      return [bar, note];
+      const nodes = [bar];
+      if (avail.note) {
+        const note = el('p', 'cert-muted cert-ov-rotate-note', avail.note);
+        note.id = 'cert-ov-rotate-note';
+        nodes.push(note);
+      }
+      if (rotateOptions && rotateOptions.host) nodes.push(rotateOptions.host);
+      return nodes;
     };
 
     const mountInstance = async (container, instanceId) => {
@@ -18479,11 +18714,37 @@
       container.replaceChildren(...instanceHeader('loading', reload), loading('Scanning this instance...'));
       container.setAttribute('aria-busy', 'true');
 
-      const res = await request(`/b/certificates/instances/${encodeURIComponent(instanceId)}`);
+      const [res, holders] = await Promise.all([
+        request(`/b/certificates/instances/${encodeURIComponent(instanceId)}`),
+        window.blacksmithRotate.readHolders()
+      ]);
       if (!current(container, token)) return;
       container.removeAttribute('aria-busy');
 
-      const header = instanceHeader('ready', reload);
+      const rotatable = ((res.ok && res.body && Array.isArray(res.body.certificates)) ? res.body.certificates : [])
+        .filter((cert) => cert && cert.key && cert.rotation && cert.rotation.allowed);
+      const rotateHost = el('div', 'cert-ov-rotate-host');
+      const instanceName = (res.ok && res.body && res.body.instance && (res.body.instance.name || res.body.instance.id)) || instanceId;
+      const header = instanceHeader('ready', reload, {
+        avail: window.blacksmithRotate.availability(
+          res.ok && res.body ? res.body.capabilities : null,
+          rotatable.length,
+          holders.get(instanceId),
+          'No certificate on this instance can be rotated.'
+        ),
+        host: rotateHost,
+        onRotate: (opener) => {
+          window.blacksmithRotate.openInstanceDialog(rotateHost, {
+            instanceId,
+            instanceName: String(instanceName),
+            certs: rotatable.map((cert) => ({ key: cert.key, variable: cert.variable || cert.key, daysLeft: cert.days_left, expiry: cert.expiry })),
+            origin: 'instance',
+            opener
+          });
+          const first = rotateHost.querySelector('input[type="checkbox"]');
+          if (first) first.focus({ preventScroll: true });
+        }
+      });
 
       if (!res.ok || !res.body || typeof res.body !== 'object') {
         const block = CertView.errorBlock({ message: errorText(res, 'The instance scan'), onRetry: reload });
@@ -22479,6 +22740,7 @@
         nodes.push(el('span', 'cert-count cert-count--muted', `Row selection is off.${why}`));
       }
       holder.replaceChildren(...nodes);
+      syncRotateSelected();
     };
 
     // ----- table -----
@@ -22976,7 +23238,32 @@
         holder.appendChild(b);
         return { key, b };
       });
+      const rotateSel = button('cert-action-btn cert-rotate-selected', 'Rotate selected...');
+      rotateSel.addEventListener('click', () => {
+        if (rotateSel.disabled) return;
+        window.blacksmithBatch.openRotate();
+      });
+      const rotateNote = el('span', 'cert-muted cert-rotate-selected-note');
+      rotateNote.id = 'cert-rotate-selected-note';
+      rotateSel.setAttribute('aria-describedby', 'cert-rotate-selected-note');
+      holder.appendChild(rotateSel);
+      holder.appendChild(rotateNote);
+      view.refs.rotateSelected = rotateSel;
+      view.refs.rotateSelectedNote = rotateNote;
       renderGroupBy();
+      syncRotateSelected();
+    };
+
+    const syncRotateSelected = () => {
+      const b = view.refs.rotateSelected;
+      if (!b) return;
+      const rotation = (view.resp && view.resp.capabilities && view.resp.capabilities.rotation) || {};
+      const total = selectionCount();
+      let why = '';
+      if (!rotation.enabled) why = rotation.reason ? `Rotation is off. ${rotation.reason}` : 'Rotation is off on this broker.';
+      else if (total === 0) why = 'Select certificates to rotate them together.';
+      b.disabled = why !== '';
+      view.refs.rotateSelectedNote.textContent = why;
     };
 
     const renderGroupBy = () => {
@@ -23242,14 +23529,29 @@
         actions.appendChild(open);
       }
       if (d.item && d.item.pem) actions.appendChild(CertView.copyButton('Copy PEM', d.item.pem, 'Copy PEM'));
-      const rotate = button('cert-action-btn', 'Rotate...');
-      rotate.disabled = true;
-      rotate.setAttribute('aria-describedby', 'cert-drawer-rotate-note');
+      const allowed = allowedPairs(cert);
+      const holder = allowed.length > 0 && d.holders ? d.holders.get(allowed[0][0]) : '';
+      const avail = window.blacksmithRotate.availability(
+        view.resp && view.resp.capabilities,
+        allowed.length,
+        holder,
+        'This certificate cannot be rotated from here.'
+      );
+      const rotate = button('cert-action-btn cert-drawer-rotate', avail.label);
+      rotate.disabled = avail.state !== 'enabled';
+      if (avail.note) rotate.setAttribute('aria-describedby', 'cert-drawer-rotate-note');
+      rotate.addEventListener('click', () => { openDrawerRotate(d, rotate); });
       actions.appendChild(rotate);
-      const note = el('span', 'cert-muted cert-drawer-rotate-note', ROTATION_WAIT_TEXT);
-      note.id = 'cert-drawer-rotate-note';
-      actions.appendChild(note);
+      if (avail.note) {
+        const note = el('span', 'cert-muted cert-drawer-rotate-note', avail.note);
+        note.id = 'cert-drawer-rotate-note';
+        actions.appendChild(note);
+      }
       nodes.push(actions);
+      nodes.push(d.rotateHost);
+      if (allowed.length > 1) {
+        nodes.push(el('p', 'cert-muted cert-drawer-rotate-owners', `This certificate is used by ${allowed.length} instances. Rotate... starts with ${ownerLabel((cert.owners || []).find((o) => o && o.instance_id === allowed[0][0]))}, and Batch Operations can rotate the others together.`));
+      }
 
       nodes.push(expansionContent(cert));
 
@@ -23276,6 +23578,24 @@
 
       body.replaceChildren(...nodes);
     };
+
+    function openDrawerRotate(d, opener) {
+      const cert = d.item || d.cert;
+      const pairs = allowedPairs(cert);
+      if (pairs.length === 0) return;
+      const [instanceId, key] = pairs[0];
+      const owner = (cert.owners || []).find((o) => o && o.instance_id === instanceId);
+      window.blacksmithRotate.openInstanceDialog(d.rotateHost, {
+        instanceId,
+        instanceName: ownerLabel(owner),
+        certs: [{ key, variable: certName(cert), daysLeft: cert.days_left, expiry: cert.expiry }],
+        preselect: new Set([key]),
+        origin: 'drawer',
+        opener
+      });
+      const first = d.rotateHost.querySelector('.cert-rotate-preview');
+      if (first && !first.disabled) first.focus({ preventScroll: true });
+    }
 
     async function loadItem(d) {
       d.status = 'loading';
@@ -23314,7 +23634,7 @@
         return;
       }
       closeDrawer({ restore: false });
-      const d = { id: cert.id, cert, item: null, status: 'loading', error: '', opener, surface: null };
+      const d = { id: cert.id, cert, item: null, status: 'loading', error: '', opener, surface: null, holders: new Map(), rotateHost: el('div', 'cert-drawer-rotate-host') };
       d.surface = { close: () => closeDrawer() };
       view.drawer = d;
       window.blacksmithSurfaces.push(d.surface);
@@ -23323,6 +23643,11 @@
       view.refs.drawer.classList.add('cert-fleet-drawer--open');
       markOpenRow();
       loadItem(d);
+      window.blacksmithRotate.readHolders().then((holders) => {
+        if (view.drawer !== d) return;
+        d.holders = holders;
+        if (holders.size > 0 && !d.rotateHost.firstChild) renderDrawerBody();
+      });
       view.refs.drawerTitle.focus();
     }
 

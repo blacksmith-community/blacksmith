@@ -13466,3 +13466,17 @@ span.config-type.resurrection {
   background: var(--cert-critical-bg);
   overflow-wrap: anywhere;
 }
+
+/* Rotate dialog for one instance, and the Rotate selected button. */
+.cert-rotate-dialog { margin: 0.75rem 0; padding: 0.75rem 1rem; border: 1px solid var(--cert-unknown); border-radius: 6px; }
+.cert-rotate-form { display: flex; flex-direction: column; gap: 0.6rem; }
+.cert-rotate-title { margin: 0; }
+.cert-rotate-instance { margin: 0; }
+.cert-rotate-list, .cert-rotate-mode { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.cert-rotate-option, .cert-rotate-dialog .rotate-mode-option { display: flex; align-items: center; gap: 0.5rem; }
+.cert-rotate-days { color: var(--cert-unknown-fg); font-size: 0.85em; }
+.cert-rotate-note { margin: 0; color: var(--cert-unknown-fg); font-size: 0.85em; }
+.cert-rotate-reason { display: flex; flex-direction: column; gap: 0.2rem; }
+.cert-rotate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.cert-rotate-selected { margin-left: auto; }
+.cert-rotate-selected-note { font-size: 0.85em; }
