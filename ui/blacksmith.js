@@ -11696,6 +11696,7 @@
                 window.blacksmithTabs.bind(document.getElementById(`service-cert-tablist-${instanceId}`), {
                   label: 'Service certificate sources'
                 });
+                CertOverview.mountInstance(document.getElementById(`service-cert-overview-${instanceId}`), instanceId);
               }, 100);
             }
           }, 100);
@@ -14849,21 +14850,29 @@
       <div class="service-testing-container">
         <div class="manifest-details-container">
           <div class="manifest-tabs-nav" id="service-cert-tablist-${safeId}">
-            <button class="manifest-tab-btn active" data-tab="manifest" data-group="${tabGroupId}">Manifest</button>
+            <button class="manifest-tab-btn active" data-tab="overview" data-group="${tabGroupId}">Overview</button>
+            <button class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">Manifest</button>
             <button class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
             <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
           </div>
 
           <div class="manifest-tab-content">
+            <!-- Overview Tab -->
+            <div class="manifest-tab-pane active" data-tab="overview" data-group="${tabGroupId}">
+              <div class="operation-content">
+                <div id="service-cert-overview-${safeId}" class="cert-ov"></div>
+              </div>
+            </div>
+
             <!-- Manifest Certificates Tab -->
-            <div class="manifest-tab-pane active" data-tab="manifest" data-group="${tabGroupId}">
+            <div class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}">
 
               <div class="operation-content">
                 <table class="operation-form">
                   <tr>
                     <td>
                       <h5>Deployment Manifest Certificates</h5>
-                      <p>Scan the deployment manifest for certificate references and TLS configurations.</p>
+                      <p>Read the certificates in the manifest the director has deployed for this instance.</p>
                       <div class="form-row">
                         <button class="execute-btn" data-cert-action="fetch-manifest" data-instance-id="${safeId}">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -15167,7 +15176,9 @@
   // SERVICE INSTANCE CERTIFICATE FUNCTIONS
   // ================================================================
 
-  // Fetch certificates from service instance manifest
+  // Fetch the certificates in the manifest the director has deployed. The
+  // instance endpoint reports them as observations from the manifest
+  // source.
   window.fetchManifestCertificates = async function (instanceId) {
     const resultsContainer = document.getElementById(`manifest-certificates-results-${instanceId}`);
     const listContainer = document.getElementById(`manifest-certificates-list-${instanceId}`);
@@ -15177,33 +15188,7 @@
       return;
     }
 
-    try {
-      listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Scanning manifest for certificates...</div>';
-      resultsContainer.style.display = 'block';
-
-      const response = await fetch(`/b/internal/certificates/services/${instanceId}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to fetch manifest certificates');
-      }
-
-      renderCertificateList(listContainer, data.data.certificates, 'manifest');
-
-    } catch (error) {
-      console.error('Failed to fetch manifest certificates:', error);
-      CertView.setError(listContainer, `Failed to scan manifest certificates: ${error.message}`);
-    }
+    await CertOverview.loadManifest(instanceId, resultsContainer, listContainer);
   };
 
   // Fetch trusted certificates from service instance VMs
@@ -16095,6 +16080,332 @@
     };
 
     return { expiryPill, healthPill, summary, detail, copyButton, formatName, formatDate, displayExpiry, setThresholds, el, errorBlock, setError, textPanel };
+  })();
+
+  // ================================================================
+  // CERTIFICATE OVERVIEWS: INSTANCE AND BROKER
+  // ================================================================
+  //
+  // The instance Certificates tab and the Blacksmith Certificates
+  // sub-tab each open on an Overview that reads the inventory API and
+  // renders what the broker computed. Nothing here works out an expiry
+  // status, a health state, or whether an action is allowed. All markup
+  // is built with DOM calls, so every value from the API reaches the page
+  // through textContent or setAttribute.
+
+  const CertOverview = (() => {
+    const el = CertView.el;
+
+    const ROTATION_WAIT_TEXT = 'Rotation arrives with certificates.rotation.enabled';
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    const button = (className, text) => {
+      const node = el('button', className, text);
+      node.type = 'button';
+      return node;
+    };
+
+    const pad = (n) => String(n).padStart(2, '0');
+
+    const validDate = (value) => {
+      if (!value) return null;
+      const date = new Date(value);
+      // The API sends Go's zero time for a scan that never ran.
+      return Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971 ? null : date;
+    };
+
+    const dayText = (value) => {
+      const date = validDate(value);
+      return date ? `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}` : '';
+    };
+
+    const timeText = (value) => {
+      const date = validDate(value);
+      return date ? `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC` : '';
+    };
+
+    // A JSON request that never throws. It resolves to the status and the
+    // parsed body, or to status 0 when the network failed.
+    const request = async (url, init) => {
+      try {
+        const response = await fetch(url, Object.assign({ headers: { 'Accept': 'application/json' } }, init || {}));
+        let body = null;
+        try { body = await response.json(); } catch (parseError) { body = null; }
+        return { ok: response.ok, status: response.status, body };
+      } catch (error) {
+        return { ok: false, status: 0, body: null, networkError: (error && error.message) || 'The request could not be sent.' };
+      }
+    };
+
+    const errorText = (res, subject) => {
+      const apiMessage = res.body && typeof res.body === 'object' && typeof res.body.error === 'string' ? res.body.error : '';
+      if (res.status === 0) return `${subject} could not be reached. ${res.networkError || ''}`.trim();
+      if (res.status === 401) return 'Authentication is required to read certificates.';
+      if (res.status === 403) return apiMessage || 'You do not have permission to read certificates, or the certificate inventory is off on this broker.';
+      if (res.status === 404) return apiMessage || `${subject} was not found.`;
+      return apiMessage || `${subject} failed with HTTP ${res.status}.`;
+    };
+
+    const notice = (kind, role) => {
+      const box = el('div', `cert-notice cert-notice--${kind}`);
+      if (role) box.setAttribute('role', role);
+      return box;
+    };
+
+    const loading = (text) => {
+      const box = el('div', 'cert-loading');
+      box.setAttribute('role', 'status');
+      box.appendChild(el('div', 'cert-loading-spinner'));
+      box.appendChild(document.createTextNode(text));
+      return box;
+    };
+
+    // ----- table -----
+
+    const instanceLabel = (cert) => cert.variable || cert.common_name || cert.key || 'Certificate';
+
+    const versionText = (cert) => {
+      const v = cert.versions;
+      if (!v || !v.deployed_version_id) return 'n/a';
+      if (v.deployed_version_id === v.latest_version_id) return 'Deployed is the latest';
+      return v.transitional ? 'Newer version waiting, transitional' : 'Newer version not deployed yet';
+    };
+
+    const certTable = (certs, opts = {}) => {
+      const labeler = opts.labeler || instanceLabel;
+      const wrap = el('div', 'cert-table-wrap');
+      const table = el('table', 'cert-table cert-ov-table');
+      table.appendChild(el('caption', 'visually-hidden', opts.caption || 'Certificates'));
+      const headRow = el('tr');
+      ['Expiry', 'Health', 'Certificate', 'Expires'].concat(opts.versions ? ['Deployed vs latest'] : []).forEach((title) => {
+        const th = el('th', null, title);
+        th.setAttribute('scope', 'col');
+        headRow.appendChild(th);
+      });
+      table.appendChild(el('thead')).appendChild(headRow);
+      const body = el('tbody');
+      certs.forEach((cert) => {
+        const tr = el('tr');
+        if (opts.stale) tr.classList.add('cert-ov-row--stale');
+        const expiry = el('td');
+        expiry.appendChild(CertView.expiryPill(cert.expiry, cert.days_left, cert.effective_not_after));
+        tr.appendChild(expiry);
+        const health = el('td');
+        health.appendChild(CertView.healthPill(cert.health));
+        tr.appendChild(health);
+
+        const name = el('td', 'cert-ov-name');
+        const label = labeler(cert);
+        name.appendChild(el('div', 'cert-ov-label', label));
+        if (cert.common_name && cert.common_name !== label) name.appendChild(el('div', 'cert-muted', cert.common_name));
+        if (opts.stale || (cert.coverage && cert.coverage.stale)) {
+          name.appendChild(el('div', 'cert-ov-stale', 'Stale, from the last good scan'));
+        }
+        (cert.findings || []).forEach((finding) => {
+          name.appendChild(el('div', `cert-ov-finding cert-ov-finding--${/^(error|warning|info)$/.test(finding.severity) ? finding.severity : 'info'}`, finding.message || finding.code || ''));
+        });
+        tr.appendChild(name);
+
+        const expires = el('td');
+        const day = dayText(cert.effective_not_after);
+        expires.textContent = day || cert.expiry_reason || 'Unknown';
+        if (day) expires.setAttribute('title', timeText(cert.effective_not_after));
+        tr.appendChild(expires);
+        if (opts.versions) tr.appendChild(el('td', null, versionText(cert)));
+        body.appendChild(tr);
+      });
+      table.appendChild(body);
+      wrap.appendChild(table);
+      return wrap;
+    };
+
+    const observationText = (obs) => {
+      let text = String(obs.locator || 'listener');
+      if (obs.state === 'failed') {
+        text += obs.error ? `, failed: ${obs.error}` : ', failed';
+      } else if (obs.state === 'stale') {
+        text += ', stale';
+      } else {
+        text += ', observed';
+        if (obs.matches === 'deployed') text += ', deployed certificate';
+        else if (obs.matches === 'latest') text += ', latest certificate';
+        else if (obs.matches === 'other') text += ', another certificate';
+      }
+      return text;
+    };
+
+    const listenerLines = (certs, labeler) => {
+      const lines = [];
+      certs.forEach((cert) => {
+        const probes = (cert.observations || []).filter((o) => o.source === 'probe');
+        if (probes.length === 0) return;
+        const line = el('p', 'cert-ov-listeners');
+        line.appendChild(el('strong', null, 'Listeners'));
+        line.appendChild(el('span', 'cert-muted', ` ${labeler(cert)}`));
+        const list = el('ul', 'cert-ov-listener-list');
+        probes.forEach((obs) => {
+          const item = el('li', obs.state === 'failed' ? 'cert-ov-listener cert-ov-listener--failed' : 'cert-ov-listener', observationText(obs));
+          list.appendChild(item);
+        });
+        line.appendChild(list);
+        lines.push(line);
+      });
+      return lines;
+    };
+
+    // ----- instance overview -----
+
+    const newToken = (container) => {
+      container._certToken = (container._certToken || 0) + 1;
+      return container._certToken;
+    };
+
+    const current = (container, token) => container.isConnected && container._certToken === token;
+
+    const instanceHeader = (state, onRescan) => {
+      const bar = el('div', 'cert-ov-bar');
+      const title = el('h4', 'cert-ov-title', 'Certificates on this instance');
+      bar.appendChild(title);
+      const actions = el('div', 'cert-ov-actions');
+      const rescan = button('cert-action-btn cert-ov-rescan', 'Rescan');
+      rescan.disabled = state === 'loading';
+      if (state === 'loading') rescan.setAttribute('aria-busy', 'true');
+      rescan.addEventListener('click', onRescan);
+      actions.appendChild(rescan);
+      const rotate = button('cert-action-btn cert-ov-rotate', 'Rotate...');
+      rotate.disabled = true;
+      rotate.setAttribute('aria-describedby', 'cert-ov-rotate-note');
+      actions.appendChild(rotate);
+      bar.appendChild(actions);
+      const note = el('p', 'cert-muted cert-ov-rotate-note', ROTATION_WAIT_TEXT);
+      note.id = 'cert-ov-rotate-note';
+      return [bar, note];
+    };
+
+    const mountInstance = async (container, instanceId) => {
+      if (!container) return;
+      const token = newToken(container);
+      const reload = () => mountInstance(container, instanceId);
+
+      container.replaceChildren(...instanceHeader('loading', reload), loading('Scanning this instance...'));
+      container.setAttribute('aria-busy', 'true');
+
+      const res = await request(`/b/certificates/instances/${encodeURIComponent(instanceId)}`);
+      if (!current(container, token)) return;
+      container.removeAttribute('aria-busy');
+
+      const header = instanceHeader('ready', reload);
+
+      if (!res.ok || !res.body || typeof res.body !== 'object') {
+        const block = CertView.errorBlock({ message: errorText(res, 'The instance scan'), onRetry: reload });
+        block.setAttribute('role', 'alert');
+        container.replaceChildren(...header, block);
+        return;
+      }
+
+      const body = res.body;
+      const certs = Array.isArray(body.certificates) ? body.certificates : [];
+      const scan = body.scan && typeof body.scan === 'object' ? body.scan : {};
+      const failed = typeof scan.error === 'string' && scan.error !== '';
+
+      if (failed && certs.length === 0) {
+        const block = CertView.errorBlock({ message: `The scan failed. ${scan.error}`, onRetry: reload });
+        block.setAttribute('role', 'alert');
+        container.replaceChildren(...header, block);
+        return;
+      }
+
+      const nodes = header.slice();
+      const stale = failed || scan.stale === true;
+      if (failed) {
+        const warn = notice('warn', 'alert');
+        const scannedAt = timeText(scan.scanned_at);
+        const lastGood = timeText(scan.last_success_at);
+        let text = `The scan${scannedAt ? ` at ${scannedAt}` : ''} failed. ${scan.error}`;
+        text += lastGood ? ` The certificates below are from the last good scan at ${lastGood} and are marked stale.` : ' The certificates below are marked stale.';
+        warn.appendChild(el('span', 'cert-notice-text', text));
+        const retry = button('cert-action-btn', 'Retry');
+        retry.addEventListener('click', reload);
+        warn.appendChild(retry);
+        nodes.push(warn);
+      }
+
+      if (certs.length === 0) {
+        nodes.push(el('p', 'cert-muted', 'This instance has no certificates in the inventory.'));
+      } else {
+        nodes.push(certTable(certs, { stale, versions: true, caption: 'Certificates on this instance' }));
+        listenerLines(certs, instanceLabel).forEach((line) => nodes.push(line));
+        let expected = 0;
+        let observed = 0;
+        certs.forEach((cert) => {
+          if (cert.coverage) {
+            expected += Number(cert.coverage.expected_listeners) || 0;
+            observed += Number(cert.coverage.observed_listeners) || 0;
+          }
+        });
+        const when = timeText(scan.scanned_at);
+        const parts = [];
+        if (when) parts.push(`Scanned ${when}`);
+        if (expected > 0) parts.push(`${observed} of ${expected} listeners observed`);
+        if (parts.length) nodes.push(el('p', 'cert-muted cert-ov-footer', parts.join(', ')));
+      }
+
+      container.replaceChildren(...nodes);
+    };
+
+    // The Manifest sub-tab lists the certificates the director's manifest
+    // holds, which the instance endpoint reports as observations from the
+    // manifest source.
+    const manifestItems = (certs) => {
+      const items = [];
+      certs.forEach((cert) => {
+        (cert.observations || []).filter((o) => o.source === 'manifest').forEach((obs) => {
+          items.push(Object.assign({}, cert, {
+            name: cert.variable || cert.common_name || obs.locator || 'Certificate',
+            locator: obs.locator,
+            observations: [obs]
+          }));
+        });
+      });
+      return items;
+    };
+
+    const loadManifest = async (instanceId, resultsContainer, listContainer) => {
+      listContainer.replaceChildren(loading('Reading the deployed manifest...'));
+      resultsContainer.style.display = 'block';
+      const token = newToken(listContainer);
+      const retry = () => loadManifest(instanceId, resultsContainer, listContainer);
+
+      const res = await request(`/b/certificates/instances/${encodeURIComponent(instanceId)}`);
+      if (!current(listContainer, token)) return;
+
+      if (!res.ok || !res.body || typeof res.body !== 'object') {
+        listContainer.replaceChildren(CertView.errorBlock({ message: `Failed to read the manifest certificates. ${errorText(res, 'The instance scan')}`, onRetry: retry }));
+        return;
+      }
+      const scan = res.body.scan && typeof res.body.scan === 'object' ? res.body.scan : {};
+      const certs = Array.isArray(res.body.certificates) ? res.body.certificates : [];
+      const items = manifestItems(certs);
+      const nodes = [];
+      if (scan.error) {
+        const warn = notice('warn', 'alert');
+        warn.appendChild(el('span', 'cert-notice-text', `The last scan failed. ${scan.error} These certificates come from the last good scan.`));
+        nodes.push(warn);
+      }
+      if (items.length === 0) {
+        nodes.push(el('div', 'cert-error', scan.error ? 'No manifest certificates are available from the last good scan.' : 'The deployed manifest holds no certificates.'));
+      } else {
+        const header = el('div', 'cert-list-header');
+        header.appendChild(el('h4', 'cert-list-title', 'Manifest Certificates'));
+        header.appendChild(el('span', 'cert-list-count', `${items.length} certificate${items.length === 1 ? '' : 's'}`));
+        const list = el('div', 'cert-list');
+        items.forEach((item) => list.appendChild(CertView.summary(item, { fallbackName: 'Certificate' })));
+        nodes.push(header, list);
+      }
+      listContainer.replaceChildren(...nodes);
+    };
+
+    return { mountInstance, loadManifest, ROTATION_WAIT_TEXT };
   })();
 
   // Certificate Inspector Modal functionality

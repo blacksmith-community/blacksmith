@@ -12763,3 +12763,117 @@ span.config-type.resurrection {
   gap: 8px;
   justify-content: flex-end;
 }
+
+/* ================================================================
+   Instance certificate overview
+   ================================================================ */
+
+.cert-ov {
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.cert-ov-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.cert-ov-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.cert-ov-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cert-ov-actions .cert-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cert-ov-rotate-note {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.cert-ov .cert-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cert-notice--error {
+  border-left-color: var(--cert-expired);
+}
+
+.cert-ov-table {
+  min-width: 560px;
+}
+
+.cert-ov-row--stale td {
+  opacity: 0.75;
+}
+
+.cert-ov-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cert-ov-stale {
+  margin-top: 2px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--cert-warning-fg);
+}
+
+.cert-ov-finding {
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.cert-ov-finding--error {
+  color: var(--cert-expired-fg);
+}
+
+.cert-ov-finding--warning {
+  color: var(--cert-warning-fg);
+}
+
+.cert-ov-listeners {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.cert-ov-listener-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cert-ov-listener {
+  overflow-wrap: anywhere;
+}
+
+.cert-ov-listener--failed {
+  color: var(--cert-expired-fg);
+}
+
+.cert-ov-footer {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
