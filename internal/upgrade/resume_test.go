@@ -47,6 +47,9 @@ type resumeDirector struct {
 	states      map[int]string
 	waits       map[int]int
 	cancels     []int
+
+	// deployOptions holds the options of each deploy sent with options.
+	deployOptions []bosh.DeployOptions
 }
 
 func newResumeDirector() *resumeDirector {
@@ -81,6 +84,22 @@ func (d *resumeDirector) UpdateDeployment(_ context.Context, name, _ string) (*b
 	}
 
 	return &bosh.Task{ID: taskID, State: waitStateRunning, Deployment: name}, nil
+}
+
+// UpdateDeploymentWithOptions records the options it received and then
+// answers the way UpdateDeployment does.
+func (d *resumeDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts bosh.DeployOptions) (*bosh.Task, error) {
+	d.recordOptions(opts)
+
+	return d.UpdateDeployment(ctx, name, manifest)
+}
+
+// recordOptions notes the options of a deploy.
+func (d *resumeDirector) recordOptions(opts bosh.DeployOptions) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.deployOptions = append(d.deployOptions, opts)
 }
 
 func (d *resumeDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {

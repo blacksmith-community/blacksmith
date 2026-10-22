@@ -203,6 +203,23 @@ func (b *BatchDirector) Stop() {
 // slot of its own deployment, and no deploy queued for another deployment
 // can take it in between.
 func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*Task, error) {
+	return b.updateDeployment(ctx, name, func(ctx context.Context) (*Task, error) {
+		return b.director.UpdateDeployment(ctx, name, manifest)
+	})
+}
+
+// UpdateDeploymentWithOptions is UpdateDeployment with deploy options. It
+// takes the same slot, with the same lost-answer handling and the same
+// hand-off to the watcher.
+func (b *BatchDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts DeployOptions) (*Task, error) {
+	return b.updateDeployment(ctx, name, func(ctx context.Context) (*Task, error) {
+		return b.director.UpdateDeploymentWithOptions(ctx, name, manifest, opts)
+	})
+}
+
+// updateDeployment is the deploy both entry points share. send makes the
+// call on the base director.
+func (b *BatchDirector) updateDeployment(ctx context.Context, name string, send func(context.Context) (*Task, error)) (*Task, error) {
 	if !b.follow.supersedeLostAnswer(name) {
 		err := b.acquireSlot(ctx)
 		if err != nil {
@@ -222,7 +239,7 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 		}
 	}()
 
-	task, err := b.director.UpdateDeployment(ctx, name, manifest)
+	task, err := send(ctx)
 
 	task, err = b.follow.settleCall(deployFollow(name), task, err, &handedOff)
 	if err != nil {
@@ -483,6 +500,10 @@ func (b *BatchDirector) RunErrand(ctx context.Context, deployment, errand string
 
 func (b *BatchDirector) GetInstances(ctx context.Context, deployment string) ([]Instance, error) {
 	return b.director.GetInstances(ctx, deployment)
+}
+
+func (b *BatchDirector) ListVariables(ctx context.Context, deployment string) ([]Variable, error) {
+	return b.director.ListVariables(ctx, deployment)
 }
 
 func (b *BatchDirector) GetPoolStats() (*PoolStats, error) {

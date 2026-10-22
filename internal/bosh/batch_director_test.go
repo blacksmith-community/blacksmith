@@ -125,6 +125,10 @@ type fakeBatchBase struct {
 	// hold, when set, runs first in every UpdateDeployment call, so a test
 	// can keep the call in flight.
 	hold func(name string)
+
+	// deployOptions holds the options of each UpdateDeploymentWithOptions
+	// call, in order.
+	deployOptions []bosh.DeployOptions
 }
 
 func newFakeBatchBase() *fakeBatchBase {
@@ -140,6 +144,28 @@ func newFakeBatchBase() *fakeBatchBase {
 }
 
 func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*bosh.Task, error) {
+	return f.update(ctx, name)
+}
+
+// UpdateDeploymentWithOptions records the options it received, and then
+// answers the way UpdateDeployment does.
+func (f *fakeBatchBase) UpdateDeploymentWithOptions(ctx context.Context, name, _ string, opts bosh.DeployOptions) (*bosh.Task, error) {
+	f.mu.Lock()
+	f.deployOptions = append(f.deployOptions, opts)
+	f.mu.Unlock()
+
+	return f.update(ctx, name)
+}
+
+// optionsSeen returns the options of each UpdateDeploymentWithOptions call.
+func (f *fakeBatchBase) optionsSeen() []bosh.DeployOptions {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]bosh.DeployOptions(nil), f.deployOptions...)
+}
+
+func (f *fakeBatchBase) update(ctx context.Context, name string) (*bosh.Task, error) {
 	if f.hold != nil {
 		f.hold(name)
 	}
@@ -742,10 +768,15 @@ func waitBatchStats(t *testing.T, batch *bosh.BatchDirector, wantActive, wantQue
 // deployInBackground runs an upgrade deploy on its own goroutine and
 // returns a channel with its error.
 func deployInBackground(ctx context.Context, batch *bosh.BatchDirector, name string) <-chan error {
+	return deployInBackgroundVia(ctx, batch, name, deployEntries[0])
+}
+
+// deployInBackgroundVia is deployInBackground through the given entry point.
+func deployInBackgroundVia(ctx context.Context, batch *bosh.BatchDirector, name string, entry deployEntry) <-chan error {
 	result := make(chan error, 1)
 
 	go func() {
-		_, err := batch.UpdateDeployment(ctx, name, "manifest")
+		_, err := entry.deploy(ctx, batch, name, "manifest")
 		result <- err
 	}()
 
@@ -1104,84 +1135,97 @@ func TestResizingTheBatchWhileDeploysRunIsRaceFree(t *testing.T) {
 func TestBatchSlotIsHeldUntilTheDeployFinishes(t *testing.T) {
 	t.Parallel()
 
-	base := newFakeBatchBase()
-	batch, _ := newTestBatch(t, base, 2)
+	for _, entry := range deployEntries {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
 
-	first := deployInBackground(t.Context(), batch, firstDeployment)
-	base.waitAccepted(t)
+			base := newFakeBatchBase()
+			batch, _ := newTestBatch(t, base, 2)
 
-	second := deployInBackground(t.Context(), batch, secondDeployment)
-	base.waitAccepted(t)
+			first := deployInBackgroundVia(t.Context(), batch, firstDeployment, entry)
+			base.waitAccepted(t)
 
-	for _, result := range []<-chan error{first, second} {
-		err := <-result
-		if err != nil {
-			t.Fatalf("expected the deploy to be accepted, got %v", err)
-		}
+			second := deployInBackgroundVia(t.Context(), batch, secondDeployment, entry)
+			base.waitAccepted(t)
+
+			for _, result := range []<-chan error{first, second} {
+				err := <-result
+				if err != nil {
+					t.Fatalf("expected the deploy to be accepted, got %v", err)
+				}
+			}
+
+			third := deployInBackgroundVia(t.Context(), batch, thirdDeployment, entry)
+			waitBatchStats(t, batch, 2, 1)
+
+			if got := base.acceptedCount(); got != 2 {
+				t.Fatalf("expected the third deploy to wait while two deploy tasks run, but %d were accepted", got)
+			}
+
+			base.finish(t, base.taskOf(t, firstDeployment), batchTaskDone)
+
+			if name := base.waitAccepted(t); name != thirdDeployment {
+				t.Fatalf("expected dep-3 to be accepted once dep-1's task was done, got %s", name)
+			}
+
+			err := <-third
+			if err != nil {
+				t.Fatalf("expected the third deploy to be accepted, got %v", err)
+			}
+
+			waitBatchStats(t, batch, 2, 0)
+			checkDeployOptionsSeen(t, entry, base.optionsSeen(), 3)
+		})
 	}
-
-	third := deployInBackground(t.Context(), batch, thirdDeployment)
-	waitBatchStats(t, batch, 2, 1)
-
-	if got := base.acceptedCount(); got != 2 {
-		t.Fatalf("expected the third deploy to wait while two deploy tasks run, but %d were accepted", got)
-	}
-
-	base.finish(t, base.taskOf(t, firstDeployment), batchTaskDone)
-
-	if name := base.waitAccepted(t); name != thirdDeployment {
-		t.Fatalf("expected dep-3 to be accepted once dep-1's task was done, got %s", name)
-	}
-
-	err := <-third
-	if err != nil {
-		t.Fatalf("expected the third deploy to be accepted, got %v", err)
-	}
-
-	waitBatchStats(t, batch, 2, 0)
 }
 
 func TestBatchSlotIsReleasedWhenTheDeployIsRejected(t *testing.T) {
 	t.Parallel()
 
-	rejections := map[string]error{
-		"a rejection": &boshapi.APIError{
-			StatusCode: 400, Method: "POST", Path: deploymentsRoute, Code: 440001, Description: "manifest is invalid", Mutation: true,
-		},
-		"a request that was never sent": &boshapi.TransportError{
-			Method: "POST", Path: deploymentsRoute, Sent: false, Mutation: true, Attempts: 1, Err: errBatchTestRejected,
-		},
-		"a context ID the director would refuse": fmt.Errorf("deploy: %w", bosh.ErrInvalidContextID),
-	}
-
-	for name, rejection := range rejections {
-		t.Run(name, func(t *testing.T) {
+	for _, entry := range deployEntries {
+		t.Run(entry.name, func(t *testing.T) {
 			t.Parallel()
 
-			base := newFakeBatchBase()
-			base.updateErr = func(deployment string) error {
-				if deployment == firstDeployment {
-					return rejection
-				}
-
-				return nil
-			}
-			batch, _ := newTestBatch(t, base, 1)
-
-			_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
-			if !errors.Is(err, rejection) {
-				t.Fatalf("expected the director's answer, got %v", err)
+			rejections := map[string]error{
+				"a rejection": &boshapi.APIError{
+					StatusCode: 400, Method: "POST", Path: deploymentsRoute, Code: 440001, Description: "manifest is invalid", Mutation: true,
+				},
+				"a request that was never sent": &boshapi.TransportError{
+					Method: "POST", Path: deploymentsRoute, Sent: false, Mutation: true, Attempts: 1, Err: errBatchTestRejected,
+				},
+				"a context ID the director would refuse": fmt.Errorf("deploy: %w", bosh.ErrInvalidContextID),
 			}
 
-			waitBatchStats(t, batch, 0, 0)
+			for name, rejection := range rejections {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
 
-			_, err = batch.UpdateDeployment(t.Context(), secondDeployment, "manifest")
-			if err != nil {
-				t.Fatalf("expected the next deploy to get the slot, got %v", err)
-			}
+					base := newFakeBatchBase()
+					base.updateErr = func(deployment string) error {
+						if deployment == firstDeployment {
+							return rejection
+						}
 
-			if running := bosh.BatchWatchersRunning(batch); running != 1 {
-				t.Fatalf("expected only the accepted deploy to be followed, got %d watchers", running)
+						return nil
+					}
+					batch, _ := newTestBatch(t, base, 1)
+
+					_, err := entry.deploy(t.Context(), batch, firstDeployment, "manifest")
+					if !errors.Is(err, rejection) {
+						t.Fatalf("expected the director's answer, got %v", err)
+					}
+
+					waitBatchStats(t, batch, 0, 0)
+
+					_, err = entry.deploy(t.Context(), batch, secondDeployment, "manifest")
+					if err != nil {
+						t.Fatalf("expected the next deploy to get the slot, got %v", err)
+					}
+
+					if running := bosh.BatchWatchersRunning(batch); running != 1 {
+						t.Fatalf("expected only the accepted deploy to be followed, got %d watchers", running)
+					}
+				})
 			}
 		})
 	}
@@ -1294,53 +1338,59 @@ func TestBatchSlotOfAFinishedDeployIsReleasedWhenTheDirectorCannotBeRead(t *test
 func TestBatchSlotIsHeldWhileAnUnknownOutcomeIsResolved(t *testing.T) {
 	t.Parallel()
 
-	base := newFakeBatchBase()
-	base.updateErr = lostAnswer(firstDeployment)
-	batch, clock := newTestBatch(t, base, 1)
+	for _, entry := range deployEntries {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
 
-	_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
-	if !errors.Is(err, bosh.ErrOutcomeUnknown) {
-		t.Fatalf("expected the lost answer to reach the caller, got %v", err)
-	}
+			base := newFakeBatchBase()
+			base.updateErr = lostAnswer(firstDeployment)
+			batch, clock := newTestBatch(t, base, 1)
 
-	second := deployInBackground(t.Context(), batch, secondDeployment)
-	waitBatchStats(t, batch, 1, 1)
-	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+			_, err := entry.deploy(t.Context(), batch, firstDeployment, "manifest")
+			if !errors.Is(err, bosh.ErrOutcomeUnknown) {
+				t.Fatalf("expected the lost answer to reach the caller, got %v", err)
+			}
 
-	if base.lookups() == 0 {
-		t.Fatal("expected the watcher to look the task up by its context ID")
-	}
+			second := deployInBackgroundVia(t.Context(), batch, secondDeployment, entry)
+			waitBatchStats(t, batch, 1, 1)
+			clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
 
-	const lostTaskID = 500
+			if base.lookups() == 0 {
+				t.Fatal("expected the watcher to look the task up by its context ID")
+			}
 
-	base.addTask(lostTaskID, firstDeployment, bosh.DeployTaskDescription)
-	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
+			const lostTaskID = 500
 
-	waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForContextID(t.Context(), firstContextID) })
+			base.addTask(lostTaskID, firstDeployment, bosh.DeployTaskDescription)
+			base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
 
-	clock.advance(bosh.BatchLostAnswerInterval)
-	waitUntil(t, "the watcher follows the task it found", func() bool { return base.waitCallsFor(lostTaskID) == 1 })
-	clock.advance(bosh.UnknownOutcomeGrace)
-	waitBatchStats(t, batch, 1, 1)
+			waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForContextID(t.Context(), firstContextID) })
 
-	if got := base.acceptedCount(); got != 0 {
-		t.Fatalf("expected the next deploy to wait while the found task runs, but %d were accepted", got)
-	}
+			clock.advance(bosh.BatchLostAnswerInterval)
+			waitUntil(t, "the watcher follows the task it found", func() bool { return base.waitCallsFor(lostTaskID) == 1 })
+			clock.advance(bosh.UnknownOutcomeGrace)
+			waitBatchStats(t, batch, 1, 1)
 
-	base.finish(t, lostTaskID, batchTaskDone)
+			if got := base.acceptedCount(); got != 0 {
+				t.Fatalf("expected the next deploy to wait while the found task runs, but %d were accepted", got)
+			}
 
-	if name := base.waitAccepted(t); name != secondDeployment {
-		t.Fatalf("expected dep-2 to be accepted, got %s", name)
-	}
+			base.finish(t, lostTaskID, batchTaskDone)
 
-	err = <-second
-	if err != nil {
-		t.Fatalf("expected the next deploy to be accepted, got %v", err)
-	}
+			if name := base.waitAccepted(t); name != secondDeployment {
+				t.Fatalf("expected dep-2 to be accepted, got %s", name)
+			}
 
-	got := receive(t, waited)
-	if got.err != nil || got.task == nil || got.task.ID != lostTaskID || got.task.State != batchTaskDone {
-		t.Fatalf("expected the found task, done, got %+v and %v", got.task, got.err)
+			err = <-second
+			if err != nil {
+				t.Fatalf("expected the next deploy to be accepted, got %v", err)
+			}
+
+			got := receive(t, waited)
+			if got.err != nil || got.task == nil || got.task.ID != lostTaskID || got.task.State != batchTaskDone {
+				t.Fatalf("expected the found task, done, got %+v and %v", got.task, got.err)
+			}
+		})
 	}
 }
 

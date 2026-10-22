@@ -91,6 +91,15 @@ type Director interface {
 	// Deployment update
 	UpdateDeployment(ctx context.Context, name, manifest string) (*Task, error)
 
+	// UpdateDeploymentWithOptions is UpdateDeployment with deploy options.
+	// It is the only other way to send a deploy, so the batch and pooled
+	// directors treat both the same way.
+	UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts DeployOptions) (*Task, error)
+
+	// ListVariables returns the variables the deployment uses, each with
+	// the CredHub version ID the director deployed it with.
+	ListVariables(ctx context.Context, deployment string) ([]Variable, error)
+
 	// FindRunningTaskForDeployment finds a currently running task for the given deployment.
 	// Returns nil if no running task is found.
 	FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*Task, error)
@@ -110,6 +119,20 @@ type Director interface {
 
 	// Pool statistics (for PooledDirector)
 	GetPoolStats() (*PoolStats, error)
+}
+
+// Variable is one variable a deployment uses. ID is the CredHub version ID
+// the deployment uses.
+type Variable struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// DeployOptions are the options a deploy can carry.
+type DeployOptions struct {
+	// ForceLatestVariables makes the director deploy the latest version of
+	// every variable instead of the versions the deployment already uses.
+	ForceLatestVariables bool
 }
 
 // Info represents BOSH director information.

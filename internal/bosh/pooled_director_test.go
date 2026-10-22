@@ -456,6 +456,16 @@ func (m *MockDirector) UpdateDeployment(_ context.Context, name, manifest string
 	return finishedMockTask(1, name), nil
 }
 
+func (m *MockDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, _ bosh.DeployOptions) (*bosh.Task, error) {
+	return m.UpdateDeployment(ctx, name, manifest)
+}
+
+func (m *MockDirector) ListVariables(_ context.Context, _ string) ([]bosh.Variable, error) {
+	m.incrementCallCount()
+
+	return []bosh.Variable{}, nil
+}
+
 func (m *MockDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
@@ -1434,6 +1444,8 @@ const (
 	poolRestartContext = "ctx-restart"
 	poolCreate         = "CreateDeployment"
 	poolDelete         = "DeleteDeployment"
+	poolUpdate         = "UpdateDeployment"
+	poolUpdateContext  = "ctx-update"
 	poolRestart        = "RestartDeployment"
 	poolUploadRelease  = "UploadRelease"
 	poolUploadStemcell = "UploadStemcell"
@@ -1488,6 +1500,10 @@ type fakePoolBase struct {
 	runningErr   error
 	runningCalls int
 
+	// deployOptions holds the options of each UpdateDeploymentWithOptions
+	// call, in order.
+	deployOptions []bosh.DeployOptions
+
 	errandStarted chan struct{}
 }
 
@@ -1504,6 +1520,20 @@ func newFakePoolBase() *fakePoolBase {
 
 func (f *fakePoolBase) CreateDeployment(_ context.Context, manifest string) (*bosh.Task, error) {
 	return f.mutate(poolCreate, bosh.ExtractDeploymentName(manifest), bosh.DeployTaskDescription)
+}
+
+func (f *fakePoolBase) UpdateDeployment(_ context.Context, name, _ string) (*bosh.Task, error) {
+	return f.mutate(poolUpdate, name, bosh.DeployTaskDescription)
+}
+
+// UpdateDeploymentWithOptions records the options it received, and then
+// answers the way UpdateDeployment does.
+func (f *fakePoolBase) UpdateDeploymentWithOptions(_ context.Context, name, _ string, opts bosh.DeployOptions) (*bosh.Task, error) {
+	f.mu.Lock()
+	f.deployOptions = append(f.deployOptions, opts)
+	f.mu.Unlock()
+
+	return f.mutate(poolUpdate, name, bosh.DeployTaskDescription)
 }
 
 func (f *fakePoolBase) DeleteDeployment(_ context.Context, name string) (*bosh.Task, error) {
@@ -1852,15 +1882,45 @@ func createRunning(t *testing.T, pool *bosh.PooledDirector) int {
 	return task.ID
 }
 
+// updateRunning sends a deploy through the pool by the given entry point
+// and returns the task the fake base started for it.
+func updateRunning(t *testing.T, pool *bosh.PooledDirector, entry deployEntry) int {
+	t.Helper()
+
+	task, err := entry.deploy(t.Context(), pool, poolDeployment, "name: "+poolDeployment)
+	if err != nil || task == nil {
+		t.Fatalf("the deploy failed: %+v, %v", task, err)
+	}
+
+	return task.ID
+}
+
 // A pooled deploy holds its slot until its task ends, even when nobody
 // waits for the task.
 func TestPooledSlotIsHeldUntilTheTaskEndsWhenNobodyWaits(t *testing.T) {
 	t.Parallel()
 
+	for _, entry := range deployEntries {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
+
+			checkPooledSlotHeldUntilTheTaskEnds(t, entry)
+		})
+	}
+}
+
+func checkPooledSlotHeldUntilTheTaskEnds(t *testing.T, entry deployEntry) {
+	t.Helper()
+
 	base := newFakePoolBase()
 	pool, _, _ := newTestPool(t, base, 1)
 
-	taskID := createRunning(t, pool)
+	taskID := updateRunning(t, pool, entry)
+
+	base.mu.Lock()
+	seen := append([]bosh.DeployOptions(nil), base.deployOptions...)
+	base.mu.Unlock()
+	checkDeployOptionsSeen(t, entry, seen, 1)
 
 	if active := activeSlots(t, pool); active != 1 {
 		t.Fatalf("expected the running deploy to hold its slot, got %d", active)
@@ -2033,35 +2093,41 @@ func TestPooledFollowerUsesALifetimeContextAndNotTheCallers(t *testing.T) {
 	waitSlotsFree(t, pool)
 }
 
-// A delete whose answer was lost holds its slot while the follower looks
+// A deploy whose answer was lost holds its slot while the follower looks
 // for its task by context ID, and frees it when the task it found ends.
 func TestPooledSlotIsHeldThroughALostAnswerWhileTheFollowerLooks(t *testing.T) {
 	t.Parallel()
 
-	base := newFakePoolBase()
-	base.addTask(9, poolDeployment, poolDeleteDesc)
-	base.contextAnswers = []int{0, 0, 9}
-	base.answers[poolDelete] = fakePoolAnswer{err: poolLostAnswer(poolDelete, poolDeployment, poolDeleteContext)}
-	pool, clock, _ := newTestPool(t, base, 1)
+	for _, entry := range deployEntries {
+		t.Run(entry.name, func(t *testing.T) {
+			t.Parallel()
 
-	_, err := pool.DeleteDeployment(t.Context(), poolDeployment)
-	if !errors.Is(err, bosh.ErrOutcomeUnknown) {
-		t.Fatalf("expected the lost answer, got %v", err)
+			base := newFakePoolBase()
+			base.addTask(9, poolDeployment, bosh.DeployTaskDescription)
+			base.contextAnswers = []int{0, 0, 9}
+			base.answers[poolUpdate] = fakePoolAnswer{err: poolLostAnswer(poolUpdate, poolDeployment, poolUpdateContext)}
+			pool, clock, _ := newTestPool(t, base, 1)
+
+			_, err := entry.deploy(t.Context(), pool, poolDeployment, "name: "+poolDeployment)
+			if !errors.Is(err, bosh.ErrOutcomeUnknown) {
+				t.Fatalf("expected the lost answer, got %v", err)
+			}
+
+			checkSlotHeld(t, pool, clock)
+			stepLostChecks(t, clock, 1)
+			checkSlotHeld(t, pool, clock)
+			stepLostChecks(t, clock, 1)
+
+			waitUntil(t, "the follower follows task 9", func() bool { return base.waitCallsFor(9) == 1 })
+
+			if active := activeSlots(t, pool); active != 1 {
+				t.Fatalf("expected the found task to hold the slot, got %d", active)
+			}
+
+			base.finish(t, 9)
+			waitSlotsFree(t, pool)
+		})
 	}
-
-	checkSlotHeld(t, pool, clock)
-	stepLostChecks(t, clock, 1)
-	checkSlotHeld(t, pool, clock)
-	stepLostChecks(t, clock, 1)
-
-	waitUntil(t, "the follower follows task 9", func() bool { return base.waitCallsFor(9) == 1 })
-
-	if active := activeSlots(t, pool); active != 1 {
-		t.Fatalf("expected the found task to hold the slot, got %d", active)
-	}
-
-	base.finish(t, 9)
-	waitSlotsFree(t, pool)
 }
 
 // A lost delete answer follows the delete task, not a deploy that also

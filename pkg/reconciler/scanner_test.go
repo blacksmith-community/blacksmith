@@ -213,6 +213,14 @@ func (d *mockDirector) UpdateDeployment(_ context.Context, name, manifest string
 	return nil, ErrScannerNotImplemented
 }
 
+func (d *mockDirector) UpdateDeploymentWithOptions(_ context.Context, _, _ string, _ bosh.DeployOptions) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) ListVariables(_ context.Context, _ string) ([]bosh.Variable, error) {
+	return nil, ErrScannerNotImplemented
+}
+
 func (d *mockDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, nil
 }

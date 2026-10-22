@@ -114,6 +114,9 @@ type waitDirector struct {
 	mu      sync.Mutex
 	cancels []int
 	waits   int
+
+	// deployOptions holds the options of each deploy sent with options.
+	deployOptions []bosh.DeployOptions
 }
 
 func newWaitDirector() *waitDirector {
@@ -131,6 +134,22 @@ func (d *waitDirector) UpdateDeployment(_ context.Context, _, _ string) (*bosh.T
 	}
 
 	return &bosh.Task{ID: waitDeployTaskID, State: waitStateRunning, Deployment: waitDeployment}, nil
+}
+
+// UpdateDeploymentWithOptions records the options it received and then
+// answers the way UpdateDeployment does.
+func (d *waitDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts bosh.DeployOptions) (*bosh.Task, error) {
+	d.recordOptions(opts)
+
+	return d.UpdateDeployment(ctx, name, manifest)
+}
+
+// recordOptions notes the options of a deploy.
+func (d *waitDirector) recordOptions(opts bosh.DeployOptions) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.deployOptions = append(d.deployOptions, opts)
 }
 
 func (d *waitDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {

@@ -148,6 +148,7 @@ type fakeDirector struct {
 	updateDeploymentCalled   bool
 	updateDeploymentTask     *bosh.Task
 	updateDeploymentErr      error
+	updateDeploymentOptions  []bosh.DeployOptions
 }
 
 func newFakeDirector() *fakeDirector {
@@ -167,6 +168,14 @@ func (f *fakeDirector) UpdateDeployment(_ context.Context, name, manifest string
 	}
 
 	return &bosh.Task{ID: 1, State: "done"}, nil
+}
+
+// UpdateDeploymentWithOptions records the options it received and answers
+// the way UpdateDeployment does.
+func (f *fakeDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts bosh.DeployOptions) (*bosh.Task, error) {
+	f.updateDeploymentOptions = append(f.updateDeploymentOptions, opts)
+
+	return f.UpdateDeployment(ctx, name, manifest)
 }
 
 func (f *fakeDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {

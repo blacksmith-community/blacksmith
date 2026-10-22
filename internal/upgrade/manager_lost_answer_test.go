@@ -78,6 +78,14 @@ func (d *lostDirector) UpdateDeployment(ctx context.Context, name, manifest stri
 	return d.waitDirector.UpdateDeployment(ctx, name, manifest)
 }
 
+// UpdateDeploymentWithOptions records the options it received and then
+// answers the way UpdateDeployment does, lost answers included.
+func (d *lostDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts bosh.DeployOptions) (*bosh.Task, error) {
+	d.recordOptions(opts)
+
+	return d.UpdateDeployment(ctx, name, manifest)
+}
+
 func (d *lostDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	d.mu.Lock()
 	abandon := d.abandonWaits > 0

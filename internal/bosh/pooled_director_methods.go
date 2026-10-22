@@ -324,6 +324,25 @@ func (p *PooledDirector) UpdateDeployment(ctx context.Context, name, manifest st
 	})
 }
 
+// UpdateDeploymentWithOptions implements Director interface with pooling,
+// through the same follow as UpdateDeployment, so the deploy holds its slot
+// until its task ends.
+func (p *PooledDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts DeployOptions) (*Task, error) {
+	return p.followMutation(ctx, poolDeployFollow(name), func(ctx context.Context) (*Task, error) {
+		return p.director.UpdateDeploymentWithOptions(ctx, name, manifest, opts)
+	})
+}
+
+// ListVariables implements Director interface - no pooling for read operations.
+func (p *PooledDirector) ListVariables(ctx context.Context, deployment string) ([]Variable, error) {
+	variables, err := p.director.ListVariables(ctx, deployment)
+	if err != nil {
+		return nil, fmt.Errorf("list the variables of deployment %s: %w", deployment, err)
+	}
+
+	return variables, nil
+}
+
 // FindRunningTaskForDeployment implements Director interface - no pooling for read operations.
 func (p *PooledDirector) FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*Task, error) {
 	return p.director.FindRunningTaskForDeployment(ctx, deploymentName)

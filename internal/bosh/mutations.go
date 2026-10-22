@@ -173,7 +173,7 @@ func (d *DirectorAdapter) CreateDeployment(ctx context.Context, manifest string)
 		return nil, ErrDeploymentNameExtractionFailed
 	}
 
-	return d.deploy(ctx, "CreateDeployment", deploymentName, manifest)
+	return d.deploy(ctx, "CreateDeployment", deploymentName, manifest, DeployOptions{})
 }
 
 // UpdateDeployment sends a new manifest for the deployment and returns the
@@ -181,10 +181,19 @@ func (d *DirectorAdapter) CreateDeployment(ctx context.Context, manifest string)
 func (d *DirectorAdapter) UpdateDeployment(ctx context.Context, name, manifest string) (_ *Task, err error) {
 	defer d.explainContext(ctx, "UpdateDeployment", &err)
 
-	return d.deploy(ctx, "UpdateDeployment", name, manifest)
+	return d.deploy(ctx, "UpdateDeployment", name, manifest, DeployOptions{})
 }
 
-func (d *DirectorAdapter) deploy(ctx context.Context, operation, deploymentName, manifest string) (*Task, error) {
+// UpdateDeploymentWithOptions is UpdateDeployment with deploy options. It
+// sends the deploy the same way, with the same context ID and the same
+// lookup when the answer is lost.
+func (d *DirectorAdapter) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts DeployOptions) (_ *Task, err error) {
+	defer d.explainContext(ctx, "UpdateDeployment", &err)
+
+	return d.deploy(ctx, "UpdateDeployment", name, manifest, opts)
+}
+
+func (d *DirectorAdapter) deploy(ctx context.Context, operation, deploymentName, manifest string, opts DeployOptions) (*Task, error) {
 	ctx, contextID, err := mutationContext(ctx, operation)
 	if err != nil {
 		return nil, err
@@ -193,7 +202,7 @@ func (d *DirectorAdapter) deploy(ctx context.Context, operation, deploymentName,
 	d.log.Infof("Deploying deployment %s (context ID %s)", deploymentName, contextID)
 	d.log.Debugf("Manifest size: %d bytes", len(manifest))
 
-	task, err := d.api.Deployments().Deploy(ctx, manifest, nil)
+	task, err := d.api.Deployments().Deploy(ctx, manifest, &boshapi.DeployOptions{ForceLatestVariables: opts.ForceLatestVariables})
 
 	return d.accepted(ctx, mutation{
 		operation:  operation,

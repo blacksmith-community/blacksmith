@@ -107,6 +107,14 @@ func (d *releaseDirector) UpdateDeployment(ctx context.Context, name, manifest s
 	return d.resumeDirector.UpdateDeployment(ctx, name, manifest)
 }
 
+// UpdateDeploymentWithOptions records the options it received and then
+// answers the way UpdateDeployment does, manifests included.
+func (d *releaseDirector) UpdateDeploymentWithOptions(ctx context.Context, name, manifest string, opts bosh.DeployOptions) (*bosh.Task, error) {
+	d.recordOptions(opts)
+
+	return d.UpdateDeployment(ctx, name, manifest)
+}
+
 func (d *releaseDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	d.resumeDirector.mu.Lock()
 	deployment := d.deployments[taskID]

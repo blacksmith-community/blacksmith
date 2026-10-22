@@ -178,6 +178,14 @@ func (m *mockDirector) GetInstances(_ context.Context, deployment string) ([]bos
 func (m *mockDirector) UpdateDeployment(_ context.Context, name, manifest string) (*bosh.Task, error) {
 	return nil, ErrMockNotImplemented
 }
+
+func (m *mockDirector) UpdateDeploymentWithOptions(_ context.Context, _, _ string, _ bosh.DeployOptions) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+
+func (m *mockDirector) ListVariables(_ context.Context, _ string) ([]bosh.Variable, error) {
+	return nil, ErrMockNotImplemented
+}
 func (m *mockDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, ErrMockNotImplemented
 }

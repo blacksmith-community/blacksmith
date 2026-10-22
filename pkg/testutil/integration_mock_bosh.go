@@ -257,6 +257,16 @@ func (imb *IntegrationMockBOSH) UpdateDeployment(_ context.Context, name, manife
 	return nil, ErrIntegrationMockNotImplemented
 }
 
+// UpdateDeploymentWithOptions implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) UpdateDeploymentWithOptions(_ context.Context, _, _ string, _ bosh.DeployOptions) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// ListVariables implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) ListVariables(_ context.Context, _ string) ([]bosh.Variable, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
 // FindRunningTaskForDeployment implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, ErrIntegrationMockNotImplemented

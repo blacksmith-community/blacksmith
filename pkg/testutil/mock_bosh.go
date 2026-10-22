@@ -249,6 +249,16 @@ func (mb *MockBOSHDirector) UpdateDeployment(_ context.Context, name, manifest s
 	return nil, ErrMockNotImplemented
 }
 
+// UpdateDeploymentWithOptions implements the BOSH Director interface.
+func (mb *MockBOSHDirector) UpdateDeploymentWithOptions(_ context.Context, _, _ string, _ bosh.DeployOptions) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+
+// ListVariables implements the BOSH Director interface.
+func (mb *MockBOSHDirector) ListVariables(_ context.Context, _ string) ([]bosh.Variable, error) {
+	return nil, ErrMockNotImplemented
+}
+
 // FindRunningTaskForDeployment implements the BOSH Director interface.
 func (mb *MockBOSHDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, ErrMockNotImplemented
