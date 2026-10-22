@@ -83,7 +83,7 @@ func do(t *testing.T, svc *fakeInventory, method, target, body string) *httptest
 
 	h := certificates.NewInventoryHandler(svc, nil, logger.NewNoOpLogger())
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
 	h.ServeHTTP(rec, req)
 
 	return rec

@@ -207,7 +207,7 @@ func TestCredHubClientBuiltWhenCleanupDisabled(t *testing.T) {
 		URL:          "https://10.0.0.6:8844",
 		CACert:       caPEM,
 		ClientID:     "blacksmith_credhub",
-		ClientSecret: "not-a-real-secret",
+		ClientSecret: "not-a-real-secret", //nolint:gosec // A placeholder, not a credential.
 		DirectorName: "lab-bosh",
 		UAAURL:       "https://10.0.0.6:8443",
 	}

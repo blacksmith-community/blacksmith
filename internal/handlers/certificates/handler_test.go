@@ -2,6 +2,7 @@ package certificates_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -812,7 +813,7 @@ func TestBlacksmithCertificatesIncludesBOSHCAFromPEM(t *testing.T) {
 	api := certificates.NewHandler(&testConfig{boshCACert: pemText}, NewTestLogger("test", "INFO"), nil)
 
 	recorder := httptest.NewRecorder()
-	api.HandleBlacksmithCertificates(recorder, httptest.NewRequest(http.MethodGet, "/b/internal/certificates/blacksmith", nil))
+	api.HandleBlacksmithCertificates(recorder, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/b/internal/certificates/blacksmith", nil))
 
 	var response pkgCertificates.CertificateResponse
 

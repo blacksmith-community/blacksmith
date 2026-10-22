@@ -33,7 +33,7 @@ func doPreview(t *testing.T, svc *fakeInventory, previewer certificates.Rotation
 
 	h := certificates.NewInventoryHandler(svc, previewer, logger.NewNoOpLogger())
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/b/certificates/rotation/preview", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/b/certificates/rotation/preview", strings.NewReader(body))
 	h.ServeHTTP(rec, req)
 
 	return rec

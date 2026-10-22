@@ -111,7 +111,7 @@ func (d *startupDirector) FindRunningTasksForDeployment(context.Context, string)
 }
 
 func (d *startupDirector) FindRunningTaskForDeployment(context.Context, string) (*bosh.Task, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // The real client answers no running task with nil.
 }
 
 func (d *startupDirector) UpdateDeploymentWithOptions(_ context.Context, name, _ string, opts bosh.DeployOptions) (*bosh.Task, error) {

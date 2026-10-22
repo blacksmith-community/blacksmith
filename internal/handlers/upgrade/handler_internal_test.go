@@ -38,7 +38,7 @@ func serve(t *testing.T, method, path string, err error) (int, map[string]interf
 
 	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: &fakeTasks{err: err}}
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, path, nil))
 
 	var body map[string]interface{}
 
