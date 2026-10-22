@@ -272,3 +272,62 @@ func TestLostDeployAnswerWaitsForADecision(t *testing.T) {
 		})
 	}
 }
+
+// A cancelled certificate deploy whose BOSH task outlives the wait after
+// the cancel waits for a decision on its outcome. It stays reserved with
+// nothing following it only until an operator resolves it, and no timer
+// fails it.
+//
+//nolint:paralleltest // it shortens the wait after a cancel, a package variable
+func TestCancelledDeployThatOutlivesTheWaitAwaitsADecision(t *testing.T) {
+	previous := cancelWaitTimeout
+	cancelWaitTimeout = 50 * time.Millisecond
+
+	t.Cleanup(func() { cancelWaitTimeout = previous })
+
+	vault := newWaitVault()
+	storeCertificateTask(t, vault, deployingTask())
+
+	// The director never ends the deploy task.
+	director := newWaitDirector()
+	manager := loadManager(t, director, vault)
+
+	select {
+	case <-director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the loader never waited on the deploy task")
+	}
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("cancelling the task: %v", err)
+	}
+
+	task := settledLoad(t, manager)
+	inst := task.Instances[0]
+
+	if inst.Status != InstanceStatusOutcomeUnknown || inst.CompletedAt != nil {
+		t.Fatalf("expected the instance's outcome to be unknown and unsettled, got %s, completed at %v", inst.Status, inst.CompletedAt)
+	}
+
+	if pending := inst.Certificates.Pending; pending == nil || pending.Kind != DecisionResolveDeployOutcome {
+		t.Fatalf("expected a decision on the deploy's outcome, got %+v", pending)
+	}
+
+	if task.Status != TaskStatusCancelled || task.FailedCount != 0 || task.CancelledCount != 0 || task.CompletedCount != 0 {
+		t.Fatalf("expected the task to stay cancelled with no count changed, got %s, failed %d, cancelled %d, completed %d",
+			task.Status, task.FailedCount, task.CancelledCount, task.CompletedCount)
+	}
+
+	if cancels := director.cancelled(); len(cancels) == 0 || cancels[0] != waitDeployTaskID {
+		t.Fatalf("expected the cancel to reach BOSH task %d, got %v", waitDeployTaskID, cancels)
+	}
+
+	expectHeld(t, manager)
+
+	waitUntil(t, "the decision to be saved", func() bool {
+		saved := storedRotation(t, vault).Pending
+
+		return saved != nil && saved.Kind == DecisionResolveDeployOutcome
+	})
+}

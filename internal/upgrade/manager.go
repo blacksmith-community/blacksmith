@@ -855,6 +855,22 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 			message := fmt.Sprintf("cancel requested for BOSH task %d", taskID)
 
 			m.mu.Lock()
+			if task.KindOrDefault() == TaskKindCertificates {
+				// Nothing follows the task once this wait ends, and no
+				// timer may settle a certificate instance, so it waits for
+				// an operator to resolve the deploy's outcome.
+				m.awaitDeployDecisionLocked(task, instance,
+					fmt.Sprintf("A cancel was requested for BOSH task %d, which had not ended when Blacksmith stopped waiting: %v.", taskID, err))
+				m.mu.Unlock()
+
+				saveErr := m.persistTask(persistCtx, task)
+				if saveErr != nil {
+					m.logger.Error("Failed to save instance %s while it waits for a decision: %v", instance.InstanceID, saveErr)
+				}
+
+				return
+			}
+
 			instance.Error = message
 			m.mu.Unlock()
 			m.logger.Error("Instance %s: %s, and the task had not ended when Blacksmith stopped waiting: %v", instance.InstanceID, message, err)
