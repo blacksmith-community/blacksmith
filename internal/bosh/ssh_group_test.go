@@ -175,6 +175,51 @@ func TestSSHGroupSessionRefusesNoIndices(t *testing.T) {
 	}
 }
 
+// A setup result that does not hold exactly one host for each requested
+// index, or that names one instance twice, gives no session, and the user
+// the setup created is removed as after any other failed setup.
+func TestSSHGroupSessionRefusesHostsThatDoNotMatch(t *testing.T) {
+	t.Parallel()
+
+	hostKey := newHostKey(t).PublicKey()
+	sameKey := func(int) ssh.PublicKey { return hostKey }
+
+	for name, output := range map[string]string{
+		"one host short":     groupSetupOutput([]int{0, 1}, sameKey),
+		"one host too many":  groupSetupOutput([]int{0, 1, 2, 3}, sameKey),
+		"one instance twice": groupSetupOutput([]int{0, 1, 1}, sameKey),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
+				return boshtest.SSHAnswer{Output: output}
+			})
+
+			var session *sshconn.Session
+
+			err := callWithin(t, sshCallLimit, func() error {
+				var err error
+
+				session, err = director.SSHGroupSession(t.Context(), sshDeployment, sshGroup, []int{0, 1, 2})
+
+				return err //nolint:wrapcheck // the test asserts on the adapter's own error
+			})
+			if !errors.Is(err, bosh.ErrSSHGroupHostsInvalid) {
+				t.Errorf("SSHGroupSession returned %v, want ErrSSHGroupHostsInvalid", err)
+			}
+
+			if session != nil {
+				t.Errorf("SSHGroupSession returned session %+v with its error", session)
+			}
+
+			setup := onlyCall(t, server, boshtest.SSHSetup)
+			awaitCleanup(t, server, setup)
+			awaitCleared(t, store, setup.User())
+		})
+	}
+}
+
 // DialSSHHost connects to the host it is given, as the session's user,
 // and accepts only the host key the director reported for that host.
 func TestDialSSHHostPinsTheGivenHost(t *testing.T) {

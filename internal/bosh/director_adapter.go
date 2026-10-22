@@ -1700,7 +1700,7 @@ func (d *DirectorAdapter) SSHCommand(ctx context.Context, deployment, instance s
 	d.log.Infof("Executing SSH command on deployment %s, instance %s/%d", deployment, instance, index)
 	d.log.Debugf("Command: %s, Args: %v", command, args)
 
-	session, err := d.setUpSSH(ctx, "SSHCommand", deployment, target)
+	session, err := d.setUpSSH(ctx, "SSHCommand", deployment, target, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1738,7 +1738,7 @@ func (d *DirectorAdapter) SSHSession(ctx context.Context, deployment, instance s
 
 	d.log.Infof("Creating SSH session for deployment %s, instance %s/%d", deployment, instance, index)
 
-	session, err := d.setUpSSH(ctx, "SSHSession", deployment, target)
+	session, err := d.setUpSSH(ctx, "SSHSession", deployment, target, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2643,8 +2643,9 @@ func sshGroupTarget(group string, indices []int) (boshapi.SSHTarget, error) {
 // wraps it too. A setup the director refused created no user, so its
 // record is cleared at once. Every other failure after the setup was sent
 // returns at once, and the user's cleanup follows in the background once
-// the setup task has ended.
-func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment string, target boshapi.SSHTarget) (*sshconn.Session, error) {
+// the setup task has ended. checkHosts, when it is not nil, judges the
+// hosts the setup returned, and a refusal is handled as such a failure.
+func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment string, target boshapi.SSHTarget, checkHosts func([]sshconn.Host) error) (*sshconn.Session, error) {
 	ctx, contextID, err := mutationContext(ctx, operation)
 	if err != nil {
 		return nil, err
@@ -2676,6 +2677,10 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 	}
 
 	hosts, err := d.sshSetupHosts(ctx, operation, deployment, task.ID, credentials.User)
+	if err == nil && checkHosts != nil {
+		err = checkHosts(hosts)
+	}
+
 	if err != nil {
 		return nil, d.afterFailedSSHSetup(ctx, operation, pending, task.ID, err)
 	}
