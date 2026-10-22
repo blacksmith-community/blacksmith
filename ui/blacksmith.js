@@ -11283,6 +11283,11 @@
             } else if (tabType === 'certificates') {
               // Set up tab switching for service instance certificates
               setTimeout(() => {
+                bindCertificateActions(document, {
+                  'fetch-manifest': (id) => window.fetchManifestCertificates(id),
+                  'fetch-vm': (id) => window.fetchServiceVMCertificates(id),
+                  'fetch-service-endpoint': (id) => window.fetchServiceEndpointCertificate(id)
+                }, instanceId);
                 const tabGroupId = `service-cert-tabs-${instanceId}`;
                 const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
                 const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
@@ -11721,7 +11726,7 @@
                   <tr>
                     <td>
                       <div class="form-row">
-                        <button class="execute-btn" onclick="fetchTrustedCertificates()">
+                        <button class="execute-btn" data-cert-action="fetch-trusted">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
                             <polyline points="3.27,6.96 12,12.01 20.73,6.96"/>
@@ -11749,7 +11754,7 @@
                   <tr>
                     <td>
                       <div class="form-row">
-                        <button class="execute-btn" onclick="fetchBlacksmithCertificates()">
+                        <button class="execute-btn" data-cert-action="fetch-config">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
                           </svg>
@@ -11782,7 +11787,7 @@
                                value="" />
                       </div>
                       <div class="form-row">
-                        <button class="execute-btn" onclick="fetchEndpointCertificate()">
+                        <button class="execute-btn" data-cert-action="fetch-endpoint">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
                             <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
@@ -11813,10 +11818,33 @@
     `;
   };
 
+  // Bind the certificate action buttons inside a root element. Each
+  // button names its action in data-cert-action, and an instance
+  // button also carries its instance ID in data-instance-id.
+  const bindCertificateActions = (root, handlers, instanceId) => {
+    root.querySelectorAll('[data-cert-action]').forEach((button) => {
+      if (button.dataset.certBound === 'true') return;
+      if (instanceId !== undefined && button.dataset.instanceId !== instanceId) return;
+      const handler = handlers[button.dataset.certAction];
+      if (!handler) return;
+      button.dataset.certBound = 'true';
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        handler(button.dataset.instanceId);
+      });
+    });
+  };
+
   // Initialize certificates tab functionality
   const initializeCertificatesTab = () => {
     // Clear any existing state
     console.log('Certificates tab initialized');
+
+    bindCertificateActions(document, {
+      'fetch-trusted': () => window.fetchTrustedCertificates(),
+      'fetch-config': () => window.fetchBlacksmithCertificates(),
+      'fetch-endpoint': () => window.fetchEndpointCertificate()
+    });
 
     // Reset form fields
     const endpointInput = document.getElementById('endpoint-address');
@@ -13871,7 +13899,7 @@
   window.fetchTrustedCertificates = async function () {
     const resultsContainer = document.getElementById('trusted-certificates-results');
     const listContainer = document.getElementById('trusted-certificates-list');
-    const button = document.querySelector('[onclick="fetchTrustedCertificates()"]');
+    const button = document.querySelector('[data-cert-action="fetch-trusted"]');
 
     if (!resultsContainer || !listContainer) {
       console.error('Trusted certificates containers not found');
@@ -13942,19 +13970,11 @@
         ? 'Request timed out. The server may be busy.'
         : error.message;
 
-      listContainer.innerHTML = `
-        <div class="cert-error">
-          <h4>Failed to Load Trusted Certificate Files</h4>
-          <p>${errorMessage}</p>
-          <button class="execute-btn" onclick="fetchTrustedCertificates()" style="margin-top: 10px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M1 4v6h6"/>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-            </svg>
-            Retry
-          </button>
-        </div>
-      `;
+      listContainer.replaceChildren(CertView.errorBlock({
+        title: 'Failed to Load Trusted Certificate Files',
+        message: errorMessage,
+        onRetry: () => window.fetchTrustedCertificates()
+      }));
 
       // Error feedback on button
       if (button) {
@@ -13980,35 +14000,38 @@
       return;
     }
 
-    const fileListHTML = `
-      <div class="cert-list-header">
-        <h4>BOSH Trusted Certificate Files</h4>
-        <span class="cert-list-count">${files.length} file${files.length === 1 ? '' : 's'}</span>
-      </div>
-      <div class="cert-file-list">
-        ${files.map((file, index) => `
-          <div class="cert-file-item" data-index="${index}">
-            <div class="cert-file-header">
-              <div class="cert-file-name">${file.name}</div>
-              <button class="cert-file-load-btn" onclick="loadTrustedCertificateFile('${file.path}', '${file.name}', ${index})">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14,2 14,8 20,8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                  <line x1="10" y1="9" x2="8" y2="9"/>
-                </svg>
-                Load Certificate
-              </button>
-            </div>
-            <div class="cert-file-path">${file.path}</div>
-            <div class="cert-file-details" id="cert-file-details-${index}" style="display: none;"></div>
-          </div>
-        `).join('')}
-      </div>
-    `;
+    const header = CertView.el('div', 'cert-list-header');
+    header.appendChild(CertView.el('h4', null, 'BOSH Trusted Certificate Files'));
+    header.appendChild(CertView.el('span', 'cert-list-count', `${files.length} file${files.length === 1 ? '' : 's'}`));
 
-    container.innerHTML = fileListHTML;
+    const list = CertView.el('div', 'cert-file-list');
+    files.forEach((file, index) => {
+      const item = CertView.el('div', 'cert-file-item');
+      item.setAttribute('data-index', String(index));
+
+      const head = CertView.el('div', 'cert-file-header');
+      head.appendChild(CertView.el('div', 'cert-file-name', file.name));
+      const loadButton = CertView.el('button', 'cert-file-load-btn');
+      loadButton.type = 'button';
+      loadButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
+      loadButton.appendChild(document.createTextNode(' Load Certificate'));
+      loadButton.addEventListener('click', () => {
+        window.loadTrustedCertificateFile(file.path, file.name, index);
+      });
+      head.appendChild(loadButton);
+      item.appendChild(head);
+
+      item.appendChild(CertView.el('div', 'cert-file-path', file.path));
+
+      const details = CertView.el('div', 'cert-file-details');
+      details.id = `cert-file-details-${index}`;
+      details.style.display = 'none';
+      item.appendChild(details);
+
+      list.appendChild(item);
+    });
+
+    container.replaceChildren(header, list);
   };
 
   // Load individual certificate file details
@@ -14067,31 +14090,38 @@
 
       // Display certificate details
       const certificate = data.data.certificates[0];
-      detailsContainer.innerHTML = `
-        <div class="cert-details-summary">
-          <div class="cert-detail-row">
-            <span class="cert-detail-label">Subject:</span>
-            <span class="cert-detail-value">${formatCertificateSubject(certificate.details.subject)}</span>
-          </div>
-          <div class="cert-detail-row">
-            <span class="cert-detail-label">Issuer:</span>
-            <span class="cert-detail-value">${formatCertificateSubject(certificate.details.issuer)}</span>
-          </div>
-          <div class="cert-detail-row">
-            <span class="cert-detail-label">Valid Until:</span>
-            <span class="cert-detail-value">${new Date(certificate.details.notAfter).toLocaleDateString()}</span>
-          </div>
-          <div class="cert-actions">
-            <button class="cert-inspect-btn">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="11" cy="11" r="8"/>
-                <path d="M21 21l-4.35-4.35"/>
-              </svg>
-              Inspect Certificate
-            </button>
-          </div>
-        </div>
-      `;
+      const info = certificate.details || {};
+      const summaryBox = CertView.el('div', 'cert-details-summary');
+      const addRow = (label, value) => {
+        const row = CertView.el('div', 'cert-detail-row');
+        row.appendChild(CertView.el('span', 'cert-detail-label', label));
+        const holder = CertView.el('span', 'cert-detail-value');
+        if (value instanceof Node) {
+          holder.appendChild(value);
+        } else {
+          holder.textContent = value;
+        }
+        row.appendChild(holder);
+        summaryBox.appendChild(row);
+      };
+      addRow('Subject:', CertView.formatName(info.subject));
+      addRow('Issuer:', CertView.formatName(info.issuer));
+      const validUntil = CertView.el('span');
+      validUntil.appendChild(document.createTextNode(`${CertView.formatDate(info.notAfter)} `));
+      if (info.notAfter) {
+        const shown = CertView.displayExpiry(info.notAfter);
+        validUntil.appendChild(CertView.expiryPill(shown.status, shown.daysLeft, info.notAfter));
+      }
+      addRow('Valid Until:', validUntil);
+
+      const actionsBox = CertView.el('div', 'cert-actions');
+      const inspectBtn = CertView.el('button', 'cert-inspect-btn');
+      inspectBtn.type = 'button';
+      inspectBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+      inspectBtn.appendChild(document.createTextNode(' Inspect Certificate'));
+      actionsBox.appendChild(inspectBtn);
+      summaryBox.appendChild(actionsBox);
+      detailsContainer.replaceChildren(summaryBox);
       detailsContainer.style.display = 'block';
 
       // Add event listener to the inspect button
@@ -14121,28 +14151,13 @@
         ? 'Request timed out. The server may be busy.'
         : error.message;
 
-      detailsContainer.innerHTML = `
-        <div class="cert-error">
-          <h5>Failed to Load Certificate</h5>
-          <p>${errorMessage}</p>
-          <button class="execute-btn cert-retry-button" style="margin-top: 10px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M1 4v6h6"/>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-            </svg>
-            Retry
-          </button>
-        </div>
-      `;
+      detailsContainer.replaceChildren(CertView.errorBlock({
+        title: 'Failed to Load Certificate',
+        headingTag: 'h5',
+        message: errorMessage,
+        onRetry: () => window.loadTrustedCertificateFile(filePath, fileName, index)
+      }));
       detailsContainer.style.display = 'block';
-
-      // Add event listener to retry button
-      const retryButton = detailsContainer.querySelector('.cert-retry-button');
-      if (retryButton) {
-        retryButton.addEventListener('click', () => {
-          window.loadTrustedCertificateFile(filePath, fileName, index);
-        });
-      }
 
       // Update button to error state
       button.innerHTML = `
@@ -14169,7 +14184,7 @@
   window.fetchBlacksmithCertificates = async function () {
     const resultsContainer = document.getElementById('blacksmith-certificates-results');
     const listContainer = document.getElementById('blacksmith-certificates-list');
-    const button = document.querySelector('[onclick="fetchBlacksmithCertificates()"]');
+    const button = document.querySelector('[data-cert-action="fetch-config"]');
 
     if (!resultsContainer || !listContainer) {
       console.error('Blacksmith certificates containers not found');
@@ -14228,7 +14243,7 @@
 
     } catch (error) {
       console.error('Failed to fetch blacksmith certificates:', error);
-      listContainer.innerHTML = `<div class="cert-error">Failed to load configuration certificates: ${error.message}</div>`;
+      CertView.setError(listContainer, `Failed to load configuration certificates: ${error.message}`);
 
       // Error feedback
       if (button) {
@@ -14250,7 +14265,7 @@
     const endpointInput = document.getElementById('endpoint-address');
     const resultsContainer = document.getElementById('endpoint-certificate-results');
     const detailsContainer = document.getElementById('endpoint-certificate-details');
-    const button = document.querySelector('[onclick="fetchEndpointCertificate()"]');
+    const button = document.querySelector('[data-cert-action="fetch-endpoint"]');
 
     if (!endpointInput || !resultsContainer || !detailsContainer) {
       console.error('Endpoint certificate containers not found');
@@ -14366,19 +14381,11 @@
         ? 'Connection timed out. The endpoint may be unreachable.'
         : error.message;
 
-      detailsContainer.innerHTML = `
-        <div class="cert-error">
-          <h4>Connection Failed</h4>
-          <p>${errorMessage}</p>
-          <button class="execute-btn" onclick="fetchEndpointCertificate()" style="margin-top: 10px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M1 4v6h6"/>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-            </svg>
-            Retry
-          </button>
-        </div>
-      `;
+      detailsContainer.replaceChildren(CertView.errorBlock({
+        title: 'Connection Failed',
+        message: errorMessage,
+        onRetry: () => window.fetchEndpointCertificate()
+      }));
 
       // Error feedback on button
       if (button) {
@@ -14429,80 +14436,7 @@
           source === 'vm-trusted' ? 'VM Trusted Store' :
             source === 'service-endpoint' ? 'Service Endpoint' : 'Endpoint';
 
-    if (source === 'endpoint') {
-      renderCertificateRows(container, certificates, sourceLabel);
-      return;
-    }
-
-    const html = `
-      <div class="cert-list-header">
-        <h4 class="cert-list-title">${sourceLabel} Certificates</h4>
-        <span class="cert-list-count">${certificates.length} certificate${certificates.length === 1 ? '' : 's'}</span>
-      </div>
-      <div class="cert-list">
-        ${certificates.map((cert, index) => `
-          <div class="cert-list-item">
-            <div class="cert-item-info">
-              <div class="cert-item-name">${cert.name || `Certificate ${index + 1}`}</div>
-              ${cert.details && cert.details.subject ? `
-                <div class="cert-item-subject">${formatCertificateSubject(cert.details.subject)}</div>
-              ` : ''}
-              ${cert.path ? `
-                <div class="cert-item-path">${cert.path}</div>
-              ` : ''}
-            </div>
-            <button class="cert-inspect-btn" data-cert-index="${index}">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
-                <circle cx="11" cy="11" r="8"/>
-                <path d="M21 21l-4.35-4.35"/>
-              </svg>
-              Inspect
-            </button>
-          </div>
-        `).join('')}
-      </div>
-    `;
-
-    container.innerHTML = html;
-
-    // Store certificate data for reference and add event listeners
-    container.certificateData = certificates;
-
-    // Add event listeners to all inspect buttons
-    const inspectButtons = container.querySelectorAll('.cert-inspect-btn');
-
-    // Validate that buttons were created
-    if (inspectButtons.length !== certificates.length) {
-      console.error(`Expected ${certificates.length} inspect buttons, but found ${inspectButtons.length}`);
-    }
-
-    inspectButtons.forEach((button, index) => {
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const cert = certificates[index];
-        console.log(`Inspect button clicked for certificate ${index}:`, cert);
-        if (cert) {
-          window.inspectCertificateFromList(cert);
-        } else {
-          console.error('No certificate found at index:', index);
-        }
-      });
-    });
-  };
-
-  // Format certificate subject for display
-  const formatCertificateSubject = (subject) => {
-    if (typeof subject === 'string') return subject;
-    if (!subject) return 'N/A';
-
-    const parts = [];
-    if (subject.commonName) parts.push(`CN=${subject.commonName}`);
-    if (subject.organization && subject.organization.length > 0) parts.push(`O=${subject.organization.join(', ')}`);
-    if (subject.country && subject.country.length > 0) parts.push(`C=${subject.country.join(', ')}`);
-
-    return parts.length > 0 ? parts.join(', ') : 'N/A';
+    renderCertificateRows(container, certificates, sourceLabel);
   };
 
   // Handle certificate inspection from list
@@ -14544,7 +14478,8 @@
 
   // Render certificates tab for service instances
   const renderServiceCertificatesTab = (instanceId) => {
-    const tabGroupId = `service-cert-tabs-${instanceId}`;
+    const tabGroupId = escapeAttribute(`service-cert-tabs-${safeId}`);
+    const safeId = escapeAttribute(instanceId);
     return `
       <div class="service-testing-container">
         <div class="manifest-details-container">
@@ -14565,7 +14500,7 @@
                       <h5>Deployment Manifest Certificates</h5>
                       <p>Scan the deployment manifest for certificate references and TLS configurations.</p>
                       <div class="form-row">
-                        <button class="execute-btn" onclick="fetchManifestCertificates('${instanceId}')">
+                        <button class="execute-btn" data-cert-action="fetch-manifest" data-instance-id="${safeId}">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                             <polyline points="14,2 14,8 20,8"/>
@@ -14576,11 +14511,11 @@
                           Scan Manifest
                         </button>
                       </div>
-                      <div id="manifest-certificates-results-${instanceId}" class="testing-history" style="display: none;">
+                      <div id="manifest-certificates-results-${safeId}" class="testing-history" style="display: none;">
                         <div class="history-header">
                           <h5>Manifest Certificates</h5>
                         </div>
-                        <div id="manifest-certificates-list-${instanceId}" class="cert-list-container">
+                        <div id="manifest-certificates-list-${safeId}" class="cert-list-container">
                           <!-- Certificate list will be populated here -->
                         </div>
                       </div>
@@ -14599,7 +14534,7 @@
                       <h5>Service VM Certificate Store</h5>
                       <p>Access the trusted certificate store on service instance virtual machines.</p>
                       <div class="form-row">
-                        <button class="execute-btn" onclick="fetchServiceVMCertificates('${instanceId}')">
+                        <button class="execute-btn" data-cert-action="fetch-vm" data-instance-id="${safeId}">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
                             <line x1="8" y1="21" x2="16" y2="21"/>
@@ -14608,11 +14543,11 @@
                           Fetch VM Certificates
                         </button>
                       </div>
-                      <div id="vm-certificates-results-${instanceId}" class="testing-history" style="display: none;">
+                      <div id="vm-certificates-results-${safeId}" class="testing-history" style="display: none;">
                         <div class="history-header">
                           <h5>VM Certificates</h5>
                         </div>
-                        <div id="vm-certificates-list-${instanceId}" class="cert-list-container">
+                        <div id="vm-certificates-list-${safeId}" class="cert-list-container">
                           <!-- Certificate list will be populated here -->
                         </div>
                       </div>
@@ -14633,12 +14568,12 @@
                       <p>Connect to the service instance endpoint and retrieve its certificate.</p>
                       <div class="form-row">
                         <label>Service Endpoint:</label>
-                        <input type="text" id="service-endpoint-address-${instanceId}"
+                        <input type="text" id="service-endpoint-address-${safeId}"
                                placeholder="service-ip:port or service.domain.com:443"
                                value="" />
                       </div>
                       <div class="form-row">
-                        <button class="execute-btn" onclick="fetchServiceEndpointCertificate('${instanceId}')">
+                        <button class="execute-btn" data-cert-action="fetch-service-endpoint" data-instance-id="${safeId}">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
                             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
@@ -14646,11 +14581,11 @@
                           Fetch Service Certificate
                         </button>
                       </div>
-                      <div id="service-endpoint-results-${instanceId}" class="testing-history" style="display: none;">
+                      <div id="service-endpoint-results-${safeId}" class="testing-history" style="display: none;">
                         <div class="history-header">
                           <h5>Service Endpoint Certificate</h5>
                         </div>
-                        <div id="service-endpoint-details-${instanceId}" class="cert-list-container">
+                        <div id="service-endpoint-details-${safeId}" class="cert-list-container">
                           <!-- Certificate details will be populated here -->
                         </div>
                       </div>
@@ -14902,7 +14837,7 @@
 
     } catch (error) {
       console.error('Failed to fetch manifest certificates:', error);
-      listContainer.innerHTML = `<div class="cert-error">Failed to scan manifest certificates: ${error.message}</div>`;
+      CertView.setError(listContainer, `Failed to scan manifest certificates: ${error.message}`);
     }
   };
 
@@ -14949,40 +14884,48 @@
 
     } catch (error) {
       console.error('Failed to fetch VM certificate files:', error);
-      listContainer.innerHTML = `<div class="cert-error">Failed to list VM certificate files: ${error.message}</div>`;
+      CertView.setError(listContainer, `Failed to list VM certificate files: ${error.message}`);
     }
   };
 
   // Render certificate files list for selection
   const renderCertificateFilesList = (container, files, instanceId) => {
-    const filesHtml = files.map(file => `
-      <div class="cert-file-item" data-file-path="${file.path}">
-        <div class="cert-file-header" onclick="toggleCertificateFile(this, '${instanceId}', '${file.path}')">
-          <div class="cert-file-name">${file.name}</div>
-          <div class="cert-file-path">${file.path}</div>
-          <button class="load-cert-btn" onclick="loadCertificateFile(event, '${instanceId}', '${file.path}', '${file.name}')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14,2 14,8 20,8"/>
-            </svg>
-            Load Certificate
-          </button>
-        </div>
-        <div class="cert-file-content" style="display: none;">
-          <div class="cert-loading-placeholder">Click "Load Certificate" to fetch certificate content...</div>
-        </div>
-      </div>
-    `).join('');
+    const wrapper = CertView.el('div', 'cert-files-list');
+    const head = CertView.el('div', 'cert-files-header');
+    head.appendChild(CertView.el('h6', null, `Certificate Files (${files.length})`));
+    head.appendChild(CertView.el('p', null, 'Select a certificate file to load its content and details'));
+    wrapper.appendChild(head);
 
-    container.innerHTML = `
-      <div class="cert-files-list">
-        <div class="cert-files-header">
-          <h6>Certificate Files (${files.length})</h6>
-          <p>Select a certificate file to load its content and details</p>
-        </div>
-        ${filesHtml}
-      </div>
-    `;
+    files.forEach((file) => {
+      const item = CertView.el('div', 'cert-file-item');
+      item.setAttribute('data-file-path', file.path);
+
+      const header = CertView.el('div', 'cert-file-header');
+      header.appendChild(CertView.el('div', 'cert-file-name', file.name));
+      header.appendChild(CertView.el('div', 'cert-file-path', file.path));
+      header.addEventListener('click', () => {
+        window.toggleCertificateFile(header, instanceId, file.path);
+      });
+
+      const loadButton = CertView.el('button', 'load-cert-btn');
+      loadButton.type = 'button';
+      loadButton.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>';
+      loadButton.appendChild(document.createTextNode(' Load Certificate'));
+      loadButton.addEventListener('click', (event) => {
+        window.loadCertificateFile(event, instanceId, file.path, file.name);
+      });
+      header.appendChild(loadButton);
+      item.appendChild(header);
+
+      const content = CertView.el('div', 'cert-file-content');
+      content.style.display = 'none';
+      content.appendChild(CertView.el('div', 'cert-loading-placeholder', 'Click "Load Certificate" to fetch certificate content...'));
+      item.appendChild(content);
+
+      wrapper.appendChild(item);
+    });
+
+    container.replaceChildren(wrapper);
   };
 
   // Toggle certificate file expansion
@@ -15056,7 +14999,7 @@
 
     } catch (error) {
       console.error('Failed to load certificate file:', error);
-      contentDiv.innerHTML = `<div class="cert-error">Failed to load certificate: ${error.message}</div>`;
+      CertView.setError(contentDiv, `Failed to load certificate: ${error.message}`);
 
       // Reset button state
       button.innerHTML = `
@@ -15123,7 +15066,7 @@
 
     } catch (error) {
       console.error('Failed to fetch service endpoint certificate:', error);
-      detailsContainer.innerHTML = `<div class="cert-error">Failed to connect to service endpoint: ${error.message}</div>`;
+      CertView.setError(detailsContainer, `Failed to connect to service endpoint: ${error.message}`);
     }
   };
 
@@ -15646,7 +15589,49 @@
       return table;
     };
 
-    return { expiryPill, healthPill, summary, detail, copyButton, formatName, formatDate, displayExpiry, el };
+    const RETRY_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+
+    // Error block with an optional Retry button. The title and message
+    // are plain text, whatever they contain.
+    const errorBlock = (opts = {}) => {
+      const box = el('div', 'cert-error');
+      if (opts.title) box.appendChild(el(opts.headingTag || 'h4', null, opts.title));
+      box.appendChild(el('p', null, opts.message || ''));
+      if (typeof opts.onRetry === 'function') {
+        const retry = el('button', 'execute-btn cert-retry-button');
+        retry.type = 'button';
+        retry.style.marginTop = '10px';
+        retry.innerHTML = RETRY_ICON;
+        retry.appendChild(document.createTextNode(' Retry'));
+        retry.addEventListener('click', (event) => {
+          event.preventDefault();
+          opts.onRetry();
+        });
+        box.appendChild(retry);
+      }
+      return box;
+    };
+
+    // A one line error message in a container.
+    const setError = (container, message) => {
+      container.replaceChildren(el('div', 'cert-error', message));
+    };
+
+    // Panel for the PEM and the OpenSSL text, each with a copy button.
+    const textPanel = (kind, title, copyLabel, text) => {
+      const prefix = kind === 'pem' ? 'cert-pem' : 'cert-text';
+      const box = el('div', `${prefix === 'cert-pem' ? 'cert-pem' : 'cert-text'}-container`);
+      const header = el('div', `${prefix}-header`);
+      header.appendChild(el('h3', `${prefix}-title`, title));
+      header.appendChild(copyButton(copyLabel, text, copyLabel));
+      box.appendChild(header);
+      const content = el('div', `${prefix}-content`);
+      content.appendChild(el('pre', kind === 'pem' ? 'cert-pem-text' : 'cert-text-output', text));
+      box.appendChild(content);
+      return box;
+    };
+
+    return { expiryPill, healthPill, summary, detail, copyButton, formatName, formatDate, displayExpiry, el, errorBlock, setError, textPanel };
   })();
 
   // Certificate Inspector Modal functionality
@@ -15692,15 +15677,9 @@
                 <button class="cert-tab-btn" data-tab="text" data-group="cert-tabs-${modalId}">Text</button>
               </div>
               <div class="cert-tab-content">
-                <div class="cert-tab-pane active" data-tab="details" data-group="cert-tabs-${modalId}">
-                  ${this.renderCertificateDetails(certificateData)}
-                </div>
-                <div class="cert-tab-pane" data-tab="pem" data-group="cert-tabs-${modalId}" style="display: none;">
-                  ${this.renderCertificatePEM(certificateData)}
-                </div>
-                <div class="cert-tab-pane" data-tab="text" data-group="cert-tabs-${modalId}" style="display: none;">
-                  ${this.renderCertificateText(certificateData)}
-                </div>
+                <div class="cert-tab-pane active" data-tab="details" data-group="cert-tabs-${modalId}"></div>
+                <div class="cert-tab-pane" data-tab="pem" data-group="cert-tabs-${modalId}" style="display: none;"></div>
+                <div class="cert-tab-pane" data-tab="text" data-group="cert-tabs-${modalId}" style="display: none;"></div>
               </div>
             </div>
           </div>
@@ -15711,6 +15690,14 @@
       const modalElement = document.createElement('div');
       modalElement.innerHTML = modalHtml;
       const modal = modalElement.firstElementChild;
+
+      // The certificate content goes in as DOM nodes, never as markup.
+      const fillPane = (tab, node) => {
+        modal.querySelector(`.cert-tab-pane[data-tab="${tab}"]`).appendChild(node);
+      };
+      fillPane('details', this.renderCertificateDetails(certificateData));
+      fillPane('pem', this.renderCertificatePEM(certificateData));
+      fillPane('text', this.renderCertificateText(certificateData));
 
       // Add tab switching functionality
       this.setupTabSwitching(modal, modalId);
@@ -15749,227 +15736,23 @@
 
     // Render certificate details tab
     renderCertificateDetails: function (cert) {
-      if (!cert) return '<div class="cert-error">No certificate data available</div>';
-
-      // Check if we have minimal required data
-      const hasBasicData = cert.subject || cert.issuer || cert.serialNumber || cert.version;
-      if (!hasBasicData) {
-        return `
-          <div class="cert-error">
-            <h4>Certificate Data Unavailable</h4>
-            <p>The certificate data structure is not in the expected format.</p>
-            <details>
-              <summary>Raw Certificate Data</summary>
-              <pre>${JSON.stringify(cert, null, 2)}</pre>
-            </details>
-          </div>
-        `;
-      }
-
-      return `
-        <table class="cert-details-table">
-          <tr>
-            <th>Version</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${cert.version || 'N/A'}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.version || ''}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <th>Serial Number</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${cert.serialNumber || 'N/A'}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.serialNumber || ''}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <th>Subject</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${this.formatSubject(cert.subject)}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(this.formatSubject(cert.subject))}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <th>Issuer</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${this.formatSubject(cert.issuer)}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(this.formatSubject(cert.issuer))}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <th>Valid From</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${this.formatDate(cert.notBefore)}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${this.formatDate(cert.notBefore)}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <th>Valid To</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${this.formatDate(cert.notAfter)}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${this.formatDate(cert.notAfter)}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <th>Signature Algorithm</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${cert.signatureAlgorithm || 'N/A'}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.signatureAlgorithm || ''}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          ${cert.subjectAltNames && cert.subjectAltNames.length > 0 ? `
-          <tr>
-            <th>Subject Alt Names</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text">${cert.subjectAltNames.join(', ')}</span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.subjectAltNames.join(', ')}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          ` : ''}
-          ${cert.fingerprints ? `
-          <tr>
-            <th>SHA256 Fingerprint</th>
-            <td>
-              <div class="cert-field-value">
-                <span class="cert-field-text"><code>${cert.fingerprints.sha256 || 'N/A'}</code></span>
-                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.fingerprints.sha256 || ''}', this)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-                  </svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-          ` : ''}
-        </table>
-      `;
+      return CertView.detail(cert);
     },
 
     // Render certificate PEM tab
     renderCertificatePEM: function (cert) {
       if (!cert || !cert.pemEncoded) {
-        return '<div class="cert-error">No PEM data available</div>';
+        return CertView.el('div', 'cert-error', 'No PEM data available');
       }
-
-      return `
-        <div class="cert-pem-container">
-          <div class="cert-pem-header">
-            <h3 class="cert-pem-title">PEM Encoded Certificate</h3>
-            <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(cert.pemEncoded)}', this)">
-              Copy PEM
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-              </svg>
-            </button>
-          </div>
-          <div class="cert-pem-content">
-            <pre class="cert-pem-text">${cert.pemEncoded}</pre>
-          </div>
-        </div>
-      `;
+      return CertView.textPanel('pem', 'PEM Encoded Certificate', 'Copy PEM', cert.pemEncoded);
     },
 
     // Render certificate text tab
     renderCertificateText: function (cert) {
       if (!cert || !cert.textDetails) {
-        return '<div class="cert-error">No text details available</div>';
+        return CertView.el('div', 'cert-error', 'No text details available');
       }
-
-      return `
-        <div class="cert-text-container">
-          <div class="cert-text-header">
-            <h3 class="cert-text-title">OpenSSL Text Output</h3>
-            <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(cert.textDetails)}', this)">
-              Copy Text
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
-              </svg>
-            </button>
-          </div>
-          <div class="cert-text-content">
-            <pre class="cert-text-output">${cert.textDetails}</pre>
-          </div>
-        </div>
-      `;
-    },
-
-    // Helper functions
-    formatSubject: function (subject) {
-      if (!subject) return 'N/A';
-      if (typeof subject === 'string') return subject;
-
-      const parts = [];
-      if (subject.commonName) parts.push(`CN=${subject.commonName}`);
-      if (subject.organization && subject.organization.length > 0) parts.push(`O=${subject.organization.join(', ')}`);
-      if (subject.organizationalUnit && subject.organizationalUnit.length > 0) parts.push(`OU=${subject.organizationalUnit.join(', ')}`);
-      if (subject.country && subject.country.length > 0) parts.push(`C=${subject.country.join(', ')}`);
-      if (subject.locality && subject.locality.length > 0) parts.push(`L=${subject.locality.join(', ')}`);
-      if (subject.province && subject.province.length > 0) parts.push(`ST=${subject.province.join(', ')}`);
-
-      return parts.length > 0 ? parts.join(', ') : 'N/A';
-    },
-
-    formatDate: function (dateStr) {
-      if (!dateStr) return 'N/A';
-      try {
-        const date = new Date(dateStr);
-        return date.toLocaleString();
-      } catch (e) {
-        return dateStr;
-      }
-    },
-
-    escapeQuotes: function (str) {
-      if (!str) return '';
-      return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+      return CertView.textPanel('text', 'OpenSSL Text Output', 'Copy Text', cert.textDetails);
     }
   };
 
