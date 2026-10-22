@@ -193,18 +193,24 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 	if err != nil || replayed {
 		m.mu.Unlock()
 
-		return err
+		return m.answerReplay(ctx, task, replayed, err)
 	}
 
 	if req.Action == actionSkip {
-		rescan := m.skipInstanceLocked(task, inst)
-		recordDecisionLocked(inst, req.ClientRequestID, digest)
-		m.mu.Unlock()
+		now := m.certNowLocked()
 
-		rescan()
+		err = m.applyConfirmedLocked(ctx, task, inst, func(task *UpgradeTask, inst *InstanceUpgrade) {
+			skipInstanceLocked(task, inst, now)
+			recordDecisionLocked(inst, req.ClientRequestID, digest)
+		})
+		if err != nil {
+			return err
+		}
+
 		m.auditDecision(task.ID, inst, DecisionApproveChangedEffects, actionSkip, "")
+		m.resumeAfterDecision(ctx, task, false)
 
-		return m.saveDecision(ctx, task, false)
+		return nil
 	}
 
 	err = approvalMismatchLocked(task, inst, preview, fetchErr)
@@ -278,18 +284,24 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 	if err != nil || replayed {
 		m.mu.Unlock()
 
-		return err
+		return m.answerReplay(ctx, task, replayed, err)
 	}
 
 	if req.Action == actionAbandon {
-		rescan := m.abandonRegenerationLocked(task, inst)
-		recordDecisionLocked(inst, req.ClientRequestID, digest)
-		m.mu.Unlock()
+		now := m.certNowLocked()
 
-		rescan()
+		err = m.applyConfirmedLocked(ctx, task, inst, func(task *UpgradeTask, inst *InstanceUpgrade) {
+			abandonRegenerationLocked(task, inst, now)
+			recordDecisionLocked(inst, req.ClientRequestID, digest)
+		})
+		if err != nil {
+			return err
+		}
+
 		m.auditDecision(task.ID, inst, DecisionReconcileRegeneration, actionAbandon, "variable "+req.Variable)
+		m.resumeAfterDecision(ctx, task, true)
 
-		return m.saveDecision(ctx, task, true)
+		return nil
 	}
 
 	if task.Status == TaskStatusCancelled {
@@ -380,15 +392,15 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	if err != nil || replayed {
 		m.mu.Unlock()
 
-		return err
+		return m.answerReplay(ctx, task, replayed, err)
 	}
 
 	since := inst.Certificates.Pending.Since
 
 	var (
-		rescan func()
-		failed bool
-		detail string
+		ok      bool
+		message string
+		detail  string
 	)
 
 	switch req.Action {
@@ -410,29 +422,34 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 			return err
 		}
 
-		message := ""
-		if verifyErr != nil {
+		ok = verifyErr == nil
+		if !ok {
 			message = verifyErr.Error()
 			detail = "verification failed"
 		}
-
-		failed = verifyErr != nil
-		rescan, _ = m.settleCertificateInstanceLocked(task, inst, verifyErr == nil, message)
 	case actionFailed:
-		failed = true
-		rescan, _ = m.settleCertificateInstanceLocked(task, inst, false, "The operator marked the deploy failed. "+deployPendingNote)
-	default:
-		rescan = m.abandonOutcomeLocked(task, inst)
+		message = "The operator marked the deploy failed. " + deployPendingNote
 	}
 
-	recordDecisionLocked(inst, req.ClientRequestID, digest)
+	now := m.certNowLocked()
 
-	m.mu.Unlock()
+	err = m.applyConfirmedLocked(ctx, task, inst, func(task *UpgradeTask, inst *InstanceUpgrade) {
+		if req.Action == actionAbandon {
+			abandonOutcomeLocked(task, inst, now)
+		} else {
+			settleOutcomeLocked(task, inst, ok, message, now)
+		}
 
-	rescan()
+		recordDecisionLocked(inst, req.ClientRequestID, digest)
+	})
+	if err != nil {
+		return err
+	}
+
 	m.auditDecision(task.ID, inst, DecisionResolveDeployOutcome, req.Action, detail)
+	m.resumeAfterDecision(ctx, task, req.Action != actionAbandon && !ok)
 
-	return m.saveDecision(ctx, task, failed)
+	return nil
 }
 
 // decisionsReady turns a decision away until the loader has put every
@@ -748,11 +765,8 @@ func sortedNames(names []string) []string {
 }
 
 // skipInstanceLocked marks an instance that waits for a new approval
-// skipped, and frees it. It returns the function that starts the
-// inventory's scan, which the caller runs once it lets go of mu. The
-// caller holds mu.
-func (m *Manager) skipInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade) func() {
-	now := m.certNowLocked()
+// skipped at the time given and closes its rotation. The caller holds mu.
+func skipInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade, now time.Time) {
 	message := "The operator skipped this instance instead of approving its changed effects."
 
 	if regenerationStartedLocked(inst) {
@@ -764,37 +778,106 @@ func (m *Manager) skipInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade) f
 	inst.Error = message
 	task.SkippedCount++
 
-	return m.endCertificateInstanceLocked(task, inst)
+	closeRotationLocked(inst)
 }
 
 // abandonRegenerationLocked fails an instance whose regeneration an
-// operator abandoned, and frees it. Any version CredHub made stays there,
-// undeployed, and the inventory shows it as deploy_pending. The caller
-// holds mu.
-func (m *Manager) abandonRegenerationLocked(task *UpgradeTask, inst *InstanceUpgrade) func() {
+// operator abandoned, at the time given, and closes its rotation. Any
+// version CredHub made stays there, undeployed, and the inventory shows it
+// as deploy_pending. The caller holds mu.
+func abandonRegenerationLocked(task *UpgradeTask, inst *InstanceUpgrade, now time.Time) {
 	pending := inst.Certificates.Pending
 	_, index := variableNamed(inst, pending.Variable)
 	inst.Certificates.Variables[index].RegenerateState = RegenerateAbandoned
 
-	now := m.certNowLocked()
 	inst.Status = InstanceStatusFailed
 	inst.CompletedAt = &now
 	inst.Error = shortName(pending.Variable) + ": regeneration abandoned. Any version CredHub made stays there and is not deployed."
 	task.FailedCount++
 
-	return m.endCertificateInstanceLocked(task, inst)
+	closeRotationLocked(inst)
 }
 
 // abandonOutcomeLocked closes an instance whose deploy outcome an operator
-// abandoned. It stays outcome_unknown, which is now final, and is freed.
-// The caller holds mu.
-func (m *Manager) abandonOutcomeLocked(task *UpgradeTask, inst *InstanceUpgrade) func() {
-	now := m.certNowLocked()
+// abandoned, at the time given. It stays outcome_unknown, which is now
+// final. The caller holds mu.
+func abandonOutcomeLocked(task *UpgradeTask, inst *InstanceUpgrade, now time.Time) {
 	inst.CompletedAt = &now
 	inst.Error = "The operator abandoned this deploy, so its outcome stays unknown. Check which certificates the deployment serves. " + deployPendingNote
 	task.UnknownCount++
 
-	return m.endCertificateInstanceLocked(task, inst)
+	closeRotationLocked(inst)
+}
+
+// applyConfirmedLocked applies a decision that settles the instance only
+// once Vault holds it. It applies the decision to a copy of the task first
+// and saves the copy with confirmation, so a save that is not confirmed
+// changes nothing in memory: the instance still waits, the task still
+// holds it, and the same request sent again applies and saves it again.
+// Once the save is confirmed, it applies the decision to the live task,
+// frees the instance, and has the inventory scan it again. apply must
+// change only the task and the instance it is given, and give the same
+// result each time. The caller holds mu and the decision's request lock,
+// and applyConfirmedLocked lets go of mu.
+func (m *Manager) applyConfirmedLocked(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, apply func(*UpgradeTask, *InstanceUpgrade)) error {
+	index := slices.IndexFunc(task.Instances, func(other InstanceUpgrade) bool { return other.InstanceID == inst.InstanceID })
+
+	draft := copyTask(task)
+	apply(draft, &draft.Instances[index])
+	draft.Revision = task.Revision + 1
+	snapshot := taskSnapshot{task: draft, seq: m.snapshotSeq.Add(1)}
+
+	m.mu.Unlock()
+
+	err := m.confirmSnapshot(ctx, snapshot)
+	if err != nil {
+		m.logger.Error("Certificate task %s did not apply a decision on instance %s: %v", task.ID, inst.InstanceID, err)
+
+		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
+			"Blacksmith could not confirm that it saved the decision to Vault, so it did not apply it, and the instance still waits for it. Send the decision again once Vault is healthy.")
+	}
+
+	m.mu.Lock()
+
+	// The request lock keeps every other decision off the instance, and
+	// nothing else answers a decision, so the instance still waits for it.
+	apply(task, inst)
+	task.Revision = max(task.Revision, draft.Revision)
+	rescan := m.endCertificateInstanceLocked(task, inst)
+
+	m.mu.Unlock()
+
+	rescan()
+
+	// A save of the task taken after the copy, without the decision, may
+	// have landed after it, so the live task is saved once more.
+	if m.snapshotSeq.Load() != snapshot.seq {
+		err = m.persistTask(context.WithoutCancel(ctx), task)
+		if err != nil {
+			m.logger.Error("Failed to save certificate task %s after a decision: %v", task.ID, err)
+		}
+	}
+
+	return nil
+}
+
+// answerReplay answers a decision request. A request that repeats the
+// decision applied last saves the task again with confirmation, since the
+// first request's save may not have been confirmed, and answers as the
+// first did once it is. Any other request answers err. The caller does
+// not hold mu.
+func (m *Manager) answerReplay(ctx context.Context, task *UpgradeTask, replayed bool, err error) error {
+	if !replayed {
+		return err
+	}
+
+	err = m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
+			"The decision is recorded, but Blacksmith could not confirm that it saved it to Vault. Send it again once Vault is healthy.")
+	}
+
+	return nil
 }
 
 // saveDecision saves the task once a decision applied, and resumes it.

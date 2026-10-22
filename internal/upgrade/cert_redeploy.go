@@ -925,8 +925,18 @@ func (m *Manager) settleCertificateInstance(task *UpgradeTask, inst *InstanceUpg
 // starts the inventory's scan, which the caller runs once it lets go of
 // mu, and the instance's status. The caller holds mu.
 func (m *Manager) settleCertificateInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade, ok bool, message string) (func(), InstanceStatus) {
+	settleOutcomeLocked(task, inst, ok, message, m.certNowLocked())
+
+	return m.endCertificateInstanceLocked(task, inst), inst.Status
+}
+
+// settleOutcomeLocked records the outcome on the instance and counts it, as
+// settleCertificateInstance describes, with the time given, and closes the
+// instance's rotation. It changes only the task and the instance, so it
+// can be applied to a copy of the task before the live task. The caller
+// holds mu.
+func settleOutcomeLocked(task *UpgradeTask, inst *InstanceUpgrade, ok bool, message string, now time.Time) {
 	if !inst.Status.settled() || waitsForDecision(inst) {
-		now := m.certNowLocked()
 		inst.CompletedAt = &now
 
 		if ok {
@@ -940,7 +950,7 @@ func (m *Manager) settleCertificateInstanceLocked(task *UpgradeTask, inst *Insta
 		}
 	}
 
-	return m.endCertificateInstanceLocked(task, inst), inst.Status
+	closeRotationLocked(inst)
 }
 
 // endCertificateInstanceLocked closes a settled certificate instance. It
@@ -950,13 +960,7 @@ func (m *Manager) settleCertificateInstanceLocked(task *UpgradeTask, inst *Insta
 // stopping, or has no scan, gets a function that does nothing. The caller
 // holds mu.
 func (m *Manager) endCertificateInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade) func() {
-	if inst.Certificates == nil {
-		inst.Certificates = &InstanceRotation{}
-	}
-
-	inst.Certificates.Phase = RotationPhaseDone
-	inst.Certificates.Pending = nil
-
+	closeRotationLocked(inst)
 	m.releaseUnheldLocked(task)
 
 	scan := m.deps.ScanInstance
@@ -969,6 +973,17 @@ func (m *Manager) endCertificateInstanceLocked(task *UpgradeTask, inst *Instance
 	instanceID := inst.InstanceID
 
 	return func() { go m.rescan(scan, instanceID) }
+}
+
+// closeRotationLocked sets a settled instance's rotation to phase done and
+// drops any pending decision. The caller holds mu.
+func closeRotationLocked(inst *InstanceUpgrade) {
+	if inst.Certificates == nil {
+		inst.Certificates = &InstanceRotation{}
+	}
+
+	inst.Certificates.Phase = RotationPhaseDone
+	inst.Certificates.Pending = nil
 }
 
 // rescan has the inventory scan one instance again, under its own bound.

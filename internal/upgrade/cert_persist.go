@@ -41,6 +41,14 @@ func (m *Manager) persistCertConfirmed(ctx context.Context, task *UpgradeTask) e
 	snapshot := m.snapshotLocked(task)
 	m.mu.Unlock()
 
+	return m.confirmSnapshot(ctx, snapshot)
+}
+
+// confirmSnapshot saves a snapshot of a certificate task and returns nil
+// only once it knows the record and the task's index entry hold it, as
+// persistCertConfirmed describes. The caller does not hold mu. Every error
+// it returns wraps ErrSaveUnconfirmed.
+func (m *Manager) confirmSnapshot(ctx context.Context, snapshot taskSnapshot) error {
 	// The record must land even when the caller's context has ended, as
 	// writeSnapshot's own saves must, and the confirmation as a whole is
 	// bounded by one save's timeout.
@@ -53,7 +61,7 @@ func (m *Manager) persistCertConfirmed(ctx context.Context, task *UpgradeTask) e
 	}
 
 	if err != nil {
-		m.logger.Error("Could not confirm the save of certificate task %s at revision %d: %v", task.ID, snapshot.task.Revision, err)
+		m.logger.Error("Could not confirm the save of certificate task %s at revision %d: %v", snapshot.task.ID, snapshot.task.Revision, err)
 
 		return err
 	}

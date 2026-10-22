@@ -652,3 +652,154 @@ func TestResolveNotAwaiting(t *testing.T) {
 
 	expectStillAwaiting(t, manager, StatusAwaitingDecision, DecisionApproveChangedEffects)
 }
+
+// refuseSaves has the vault refuse every write of the certificate task's
+// record until the function it returns is called.
+func (e *redeployEnv) refuseSaves() func() {
+	e.vault.script.Lock()
+	e.vault.refuse = func(UpgradeTask) bool { return true }
+	e.vault.script.Unlock()
+
+	return func() {
+		e.vault.script.Lock()
+		e.vault.refuse = nil
+		e.vault.script.Unlock()
+	}
+}
+
+// A decision that settles the instance is applied only once its save is
+// confirmed. When the save fails, the instance still waits and is still
+// held, and the same request sent again applies and saves it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestDecisionUnsavedThenRetried(t *testing.T) {
+	cases := []struct {
+		name     string
+		task     func(e *redeployEnv) UpgradeTask
+		status   InstanceStatus
+		kind     string
+		decide   func(m *Manager) error
+		settled  InstanceStatus
+		finished TaskStatus
+	}{
+		{
+			name:   "skip",
+			task:   (*redeployEnv).awaitingApproval,
+			status: StatusAwaitingDecision,
+			kind:   DecisionApproveChangedEffects,
+			decide: func(m *Manager) error {
+				return m.ApproveChangedEffects(context.Background(), certTaskID, waitInstanceID, ApproveRequest{Action: "skip", ClientRequestID: "retry-1"})
+			},
+			settled:  InstanceStatusSkipped,
+			finished: TaskStatusCompleted,
+		},
+		{
+			name: "abandon regeneration",
+			task: func(e *redeployEnv) UpgradeTask {
+				e.madeNewVersion()
+
+				return e.awaitingReconcile(nil)
+			},
+			status: StatusAwaitingDecision,
+			kind:   DecisionReconcileRegeneration,
+			decide: func(m *Manager) error {
+				return m.ReconcileRegeneration(context.Background(), certTaskID, waitInstanceID, ReconcileRequest{Variable: regenLeaf, Action: "abandon", ClientRequestID: "retry-1"})
+			},
+			settled:  InstanceStatusFailed,
+			finished: TaskStatusFailed,
+		},
+		{
+			name:   "resolve failed",
+			task:   (*redeployEnv).awaitingOutcome,
+			status: InstanceStatusOutcomeUnknown,
+			kind:   DecisionResolveDeployOutcome,
+			decide: func(m *Manager) error {
+				return m.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "failed", ClientRequestID: "retry-1"})
+			},
+			settled:  InstanceStatusFailed,
+			finished: TaskStatusFailed,
+		},
+		{
+			name:   "resolve abandon",
+			task:   (*redeployEnv).awaitingOutcome,
+			status: InstanceStatusOutcomeUnknown,
+			kind:   DecisionResolveDeployOutcome,
+			decide: func(m *Manager) error {
+				return m.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "abandon", ClientRequestID: "retry-1"})
+			},
+			settled:  InstanceStatusOutcomeUnknown,
+			finished: TaskStatusCompleted,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			manager := env.load(tc.task(env))
+
+			allow := env.refuseSaves()
+
+			err := tc.decide(manager)
+			expectAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+			expectStillAwaiting(t, manager, tc.status, tc.kind)
+
+			if got := current(t, manager).Instances[0].Certificates.DecisionRequestID; got != "" {
+				t.Fatalf("expected no request ID recorded before the save, got %q", got)
+			}
+
+			allow()
+
+			err = tc.decide(manager)
+			if err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+
+			inst := current(t, manager).Instances[0]
+			if inst.Status != tc.settled || inst.Certificates.Pending != nil {
+				t.Fatalf("expected %s with no pending decision, got %s with %+v", tc.settled, inst.Status, inst.Certificates.Pending)
+			}
+
+			saved := env.stored().Instances[0]
+			if saved.Status != tc.settled || saved.Certificates.DecisionRequestID != "retry-1" {
+				t.Fatalf("expected Vault to hold %s with the request ID, got %s with %q", tc.settled, saved.Status, saved.Certificates.DecisionRequestID)
+			}
+
+			expectReleased(t, manager)
+			waitUntil(t, "the task to finish", func() bool { return current(t, manager).Status == tc.finished })
+		})
+	}
+}
+
+// A repeat of an approval whose save was not confirmed saves the task
+// again, and answers as the first did only once the save is confirmed.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestDecisionReplaySavesAgain(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.load(env.awaitingApproval())
+
+	preview, err := manager.RepreviewForDecision(context.Background(), certTaskID, waitInstanceID)
+	if err != nil {
+		t.Fatalf("RepreviewForDecision: %v", err)
+	}
+
+	req := ApproveRequest{PreviewID: preview.ID, ClientRequestID: "approve-1"}
+	allow := env.refuseSaves()
+
+	err = manager.ApproveChangedEffects(context.Background(), certTaskID, waitInstanceID, req)
+	expectAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+
+	err = manager.ApproveChangedEffects(context.Background(), certTaskID, waitInstanceID, req)
+	expectAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+
+	allow()
+
+	err = manager.ApproveChangedEffects(context.Background(), certTaskID, waitInstanceID, req)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if got := env.stored().Instances[0].Certificates.DecisionRequestID; got != "approve-1" {
+		t.Fatalf("expected Vault to hold the approval's request ID, got %q", got)
+	}
+}
