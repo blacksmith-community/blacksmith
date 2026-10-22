@@ -35,9 +35,12 @@ type runnerVM struct {
 	listener net.Listener
 	hostKey  ssh.Signer
 	handle   execHandle
-	config   *ssh.ServerConfig
-	stop     chan struct{}
-	wg       sync.WaitGroup
+	// onExec, when set, runs as each exec request arrives, before the
+	// request is answered.
+	onExec func()
+	config *ssh.ServerConfig
+	stop   chan struct{}
+	wg     sync.WaitGroup
 
 	channels atomic.Int32
 	execs    atomic.Int32
@@ -46,7 +49,10 @@ type runnerVM struct {
 	conns []net.Conn
 }
 
-func startRunnerVM(t *testing.T, handle execHandle) *runnerVM {
+// startRunnerVM starts a test VM that runs every exec request through
+// handle. onExec, when given, runs as each exec request arrives, before
+// it is answered.
+func startRunnerVM(t *testing.T, handle execHandle, onExec ...func()) *runnerVM {
 	t.Helper()
 
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
@@ -68,6 +74,9 @@ func startRunnerVM(t *testing.T, handle execHandle) *runnerVM {
 	config.AddHostKey(hostKey)
 
 	server := &runnerVM{listener: listener, hostKey: hostKey, handle: handle, config: config, stop: make(chan struct{})}
+	if len(onExec) > 0 {
+		server.onExec = onExec[0]
+	}
 
 	server.wg.Add(1)
 
@@ -157,6 +166,10 @@ func (s *runnerVM) serveChannel(channel ssh.Channel, requests <-chan *ssh.Reques
 
 		s.execs.Add(1)
 
+		if s.onExec != nil {
+			s.onExec()
+		}
+
 		_ = request.Reply(true, nil)
 
 		// Keep answering the channel's other requests while the command
@@ -181,13 +194,21 @@ func (s *runnerVM) serveChannel(channel ssh.Channel, requests <-chan *ssh.Reques
 func (s *runnerVM) dial(t *testing.T) *ssh.Client {
 	t.Helper()
 
+	return s.dialVia(t, s.listener.Addr().String())
+}
+
+// dialVia connects to the test VM through addr, such as a proxy's, as
+// vcap, pinning the VM's host key.
+func (s *runnerVM) dialVia(t *testing.T, addr string) *ssh.Client {
+	t.Helper()
+
 	config := &ssh.ClientConfig{
 		User:            "vcap",
 		HostKeyCallback: ssh.FixedHostKey(s.hostKey.PublicKey()),
 		Timeout:         5 * time.Second,
 	}
 
-	client, err := ssh.Dial("tcp", s.listener.Addr().String(), config)
+	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
 		t.Fatalf("dial the test VM: %v", err)
 	}

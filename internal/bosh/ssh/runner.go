@@ -21,9 +21,13 @@ import (
 const DefaultOutputLimit int64 = 1 << 20
 
 // runnerCloseGrace is how long a run whose context has ended waits for
-// its closed session to finish before it returns anyway. A VM that has
-// stopped answering never acknowledges the close.
+// its session to wind down after the connection is closed, before it
+// returns anyway.
 const runnerCloseGrace = 500 * time.Millisecond
+
+// errStdinStopped is what the session's copy of stdin reads once the run
+// has returned.
+var errStdinStopped = errors.New("the run has returned, so its stdin is closed")
 
 var (
 	// ErrContentInArgs means a program or an argument carried text that
@@ -32,7 +36,8 @@ var (
 	ErrContentInArgs = errors.New("a command line carries text that may only be sent on stdin, so nothing was sent")
 	// ErrNoConnection means the runner was made without a connection.
 	ErrNoConnection = errors.New("the runner has no SSH connection")
-	// ErrRunnerClosed means the runner's connection was closed by Close.
+	// ErrRunnerClosed means the runner's connection is closed, by Close or
+	// by a run whose context ended.
 	ErrRunnerClosed = errors.New("the runner's SSH connection is closed")
 	// ErrSessionNotOpened means the connection would not open a session
 	// for the command.
@@ -67,19 +72,25 @@ type Runner struct {
 	client *ssh.Client
 	log    logger.Logger
 
+	// done closes when the connection is closed.
+	done      chan struct{}
 	closed    atomic.Bool
 	closeOnce sync.Once
 	closeErr  error
 }
 
 // NewRunner returns a runner over client. A nil log logs nothing. Close
-// closes client.
+// closes client, and so does a run whose context ends before its command
+// does. A VM that has stopped answering leaves nothing else on the
+// connection that can be trusted to end, so a deadline costs the
+// connection, every later run on the runner returns ErrRunnerClosed, and
+// the caller opens a new connection with DialSSHHost and a new runner.
 func NewRunner(client *ssh.Client, log logger.Logger) *Runner {
 	if log == nil {
 		log = logger.NewNoOpLogger()
 	}
 
-	return &Runner{client: client, log: log}
+	return &Runner{client: client, log: log, done: make(chan struct{})}
 }
 
 // Run runs program with args on the VM, sends stdin to it, and returns
@@ -91,11 +102,17 @@ func NewRunner(client *ssh.Client, log logger.Logger) *Runner {
 // and dropped so the command can finish.
 //
 // A command that exits with any status returns a nil error, and the
-// caller reads ExitCode. When ctx ends first, the session is closed and
-// the error wraps ctx's error, such as context.DeadlineExceeded. A VM
-// that does not acknowledge the close is given runnerCloseGrace, and the
-// copy of stdin may then still be running when Run returns. No error
-// carries the command's output.
+// caller reads ExitCode. When ctx ends first, whether the session is
+// opening, starting, or running, Run closes the runner's whole SSH
+// connection, which ends every channel on it, and returns an error that
+// wraps ctx's error, such as context.DeadlineExceeded. The runner is
+// closed from then on, and the caller dials a new connection with
+// DialSSHHost. No error carries the command's output.
+//
+// stdin is never read after Run returns. Run waits for a read that is
+// under way to finish before it returns, so stdin should be an in-memory
+// reader, such as a bytes.Reader, whose reads never block. Once Run has
+// returned, the caller may wipe the buffer behind it.
 func (r *Runner) Run(ctx context.Context, program string, args []string, stdin io.Reader, limit int64) (Result, error) {
 	command, err := r.prepare(ctx, program, args)
 	if err != nil {
@@ -121,7 +138,10 @@ func (r *Runner) Run(ctx context.Context, program string, args []string, stdin i
 	session.Stderr = stderr
 
 	if stdin != nil {
-		session.Stdin = stdin
+		gate := &stdinGate{reader: stdin}
+		session.Stdin = gate
+
+		defer gate.stop()
 	}
 
 	end, err := r.execute(ctx, session, command, shown)
@@ -133,13 +153,17 @@ func (r *Runner) Run(ctx context.Context, program string, args []string, stdin i
 }
 
 // Close closes the shared connection, which ends any run still on it. A
-// run that starts after Close returns ErrRunnerClosed without touching
-// the connection. Close acts once, and a second call returns the first
-// call's answer.
+// run that starts after Close, or that is still opening its session,
+// returns ErrRunnerClosed. Close acts once, and a second call returns the
+// first call's answer.
 func (r *Runner) Close() error {
 	r.closed.Store(true)
 
 	r.closeOnce.Do(func() {
+		if r.done != nil {
+			close(r.done)
+		}
+
 		if r.client == nil {
 			return
 		}
@@ -153,11 +177,14 @@ func (r *Runner) Close() error {
 	return r.closeErr
 }
 
-// ended logs and returns the error for a run whose context ended first.
+// ended closes the runner's connection for a run whose context ended
+// first, and logs and returns the run's error.
 func (r *Runner) ended(ctx context.Context, shown string) error {
-	r.log.Debugf("Closed the session running %s, because its context ended", shown)
+	_ = r.Close()
 
-	return fmt.Errorf("the command did not finish before its context ended: %w", ctx.Err())
+	r.log.Debugf("Closed the SSH connection, because the context of the run of %s ended", shown)
+
+	return fmt.Errorf("the command did not finish before its context ended, so the runner closed its SSH connection: %w", ctx.Err())
 }
 
 // openedSession is what an attempt to open a session came back with.
@@ -166,10 +193,10 @@ type openedSession struct {
 	err     error
 }
 
-// openSession opens a session on the shared connection, and gives up when
-// ctx ends first, because opening a channel on a connection that is going
-// away can wait without end. A session that opens after the run gave up
-// is closed at once.
+// openSession opens a session on the shared connection. Opening a channel
+// on a connection that is going away can wait without end, so it gives up
+// when ctx ends, which closes the connection, or when the runner is
+// closed. A session that opens after the run gave up is closed at once.
 func (r *Runner) openSession(ctx context.Context, shown string) (*ssh.Session, error) {
 	opened := make(chan openedSession, 1)
 
@@ -188,14 +215,21 @@ func (r *Runner) openSession(ctx context.Context, shown string) (*ssh.Session, e
 
 		return got.session, nil
 	case <-ctx.Done():
-		go func() {
-			got := <-opened
-			if got.session != nil {
-				_ = got.session.Close()
-			}
-		}()
+		go closeLateSession(opened)
 
 		return nil, r.ended(ctx, shown)
+	case <-r.done:
+		go closeLateSession(opened)
+
+		return nil, ErrRunnerClosed
+	}
+}
+
+// closeLateSession closes a session that opened after its run gave up.
+func closeLateSession(opened <-chan openedSession) {
+	got := <-opened
+	if got.session != nil {
+		_ = got.session.Close()
 	}
 }
 
@@ -233,10 +267,13 @@ type sessionEnd struct {
 // execute starts command on session and waits for it to end. Any exit
 // status ends it with a nil error. A session that ended without one ends
 // with an error that carries none of the output. execute returns err when
-// the command did not start or ctx ended first. Closing the session when
-// ctx ends unblocks a start or a wait on a VM that has stopped answering.
+// the command did not start, the runner was closed, or ctx ended first.
+// When ctx ends, the whole connection is closed, because closing only the
+// session sends a message that a VM which has stopped answering never
+// acknowledges, and a start waiting on its reply would wait for good.
+// Closing the connection ends every channel on it at once.
 func (r *Runner) execute(ctx context.Context, session *ssh.Session, command, shown string) (sessionEnd, error) {
-	stopClosing := context.AfterFunc(ctx, func() { _ = session.Close() })
+	stopClosing := context.AfterFunc(ctx, func() { _ = r.Close() })
 	defer stopClosing()
 
 	r.log.Debugf("Running %s over SSH", shown)
@@ -245,6 +282,10 @@ func (r *Runner) execute(ctx context.Context, session *ssh.Session, command, sho
 	if err != nil {
 		if ctx.Err() != nil {
 			return sessionEnd{}, r.ended(ctx, shown)
+		}
+
+		if r.closed.Load() {
+			return sessionEnd{}, ErrRunnerClosed
 		}
 
 		r.log.Debugf("The VM did not start %s", shown)
@@ -265,12 +306,14 @@ func (r *Runner) execute(ctx context.Context, session *ssh.Session, command, sho
 	select {
 	case <-finished:
 	case <-ctx.Done():
+		err = r.ended(ctx, shown)
+
 		select {
 		case <-finished:
 		case <-time.After(runnerCloseGrace):
 		}
 
-		return sessionEnd{}, r.ended(ctx, shown)
+		return sessionEnd{}, err
 	}
 
 	var exitErr *ssh.ExitError
@@ -286,6 +329,8 @@ func (r *Runner) execute(ctx context.Context, session *ssh.Session, command, sho
 		// A session the context closed ends without an exit status, and
 		// that is the context's doing, not the command's.
 		return sessionEnd{}, r.ended(ctx, shown)
+	case r.closed.Load():
+		return sessionEnd{}, ErrRunnerClosed
 	case errors.As(waitErr, new(*ssh.ExitMissingError)):
 		return sessionEnd{err: ErrNoExitStatus}, nil
 	default:
@@ -330,6 +375,34 @@ func checkCommandLine(program string, args []string) error {
 // or a NUL.
 func carriesContent(s string) bool {
 	return strings.Contains(s, "BEGIN") || strings.Contains(s, "PRIVATE") || strings.ContainsAny(s, "\n\r\x00")
+}
+
+// stdinGate passes the caller's stdin to the session until stop, and
+// fails every read after it. stop waits for a read that is under way to
+// return, so once it has returned the caller's reader is never read
+// again, even by a copy the SSH library left running.
+type stdinGate struct {
+	mu      sync.Mutex
+	reader  io.Reader
+	stopped bool
+}
+
+func (g *stdinGate) Read(buf []byte) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.stopped {
+		return 0, errStdinStopped
+	}
+
+	return g.reader.Read(buf) //nolint:wrapcheck // the caller's reader's own answer, io.EOF included
+}
+
+func (g *stdinGate) stop() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.stopped = true
 }
 
 // boundedBuffer keeps the first limit bytes written to it and drops the
