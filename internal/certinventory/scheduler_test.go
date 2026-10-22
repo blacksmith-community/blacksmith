@@ -930,3 +930,124 @@ func TestRescanKeepsLastGoodCertificate(t *testing.T) {
 		t.Errorf("scans = %d, want 3", sc.count("a"))
 	}
 }
+
+func TestTimedScanFollowsSubsetRun(t *testing.T) {
+	t.Parallel()
+
+	sc := newFakeScanner()
+	sc.gates["a"] = make(chan struct{})
+	fa := newFakeAfter()
+
+	var cache Cache
+
+	s := NewScheduler(sc, &cache, staticLister("a", "b"), nil, settingsWith(4, 60), time.Now, fa.after)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Start(ctx)
+	defer s.Stop()
+
+	fa.next(t)
+
+	subset, _ := s.RequestScan([]string{"a"})
+	sc.waitStarted(t, 1)
+
+	// The timed scan comes due while the subset run holds the slot.
+	fa.fire(t, 0)
+	time.Sleep(50 * time.Millisecond)
+
+	if sc.count("b") != 0 {
+		t.Fatal("b was scanned while the subset run held the slot")
+	}
+
+	close(sc.gates["a"])
+	waitScan(t, s, subset)
+
+	if second := fa.next(t); second != 60*time.Minute {
+		t.Errorf("wait after the full scan = %s, want 60m", second)
+	}
+
+	if sc.count("a") != 2 || sc.count("b") != 1 {
+		t.Errorf("scans: a %d, b %d; want a full scan after the subset run", sc.count("a"), sc.count("b"))
+	}
+
+	if s.State().ID == subset {
+		t.Error("the state still shows the subset run")
+	}
+}
+
+func TestDropSkipsLockedInstances(t *testing.T) {
+	t.Parallel()
+
+	sc := newFakeScanner()
+
+	var current atomic.Pointer[[]InstanceRef]
+
+	both := refs("a", "b")
+	current.Store(&both)
+
+	var cache Cache
+
+	s := newTestScheduler(t, sc, &cache, listerOf(&current), nil, settingsWith(2, 60))
+
+	id, _ := s.RequestScan(nil)
+	waitScan(t, s, id)
+
+	onlyA := refs("a")
+	current.Store(&onlyA)
+
+	// A forced scan of b holds its lock while the fleet scan finishes.
+	lock := s.lockFor("b")
+	lock <- struct{}{}
+
+	id, _ = s.RequestScan(nil)
+	waitScan(t, s, id)
+
+	if _, ok := cache.Get("b"); !ok {
+		t.Error("b was dropped while its lock was held")
+	}
+
+	<-lock
+
+	id, _ = s.RequestScan(nil)
+	waitScan(t, s, id)
+
+	if _, ok := cache.Get("b"); ok {
+		t.Error("b stayed in the cache once its lock was free")
+	}
+}
+
+func TestStopCancelsScanInstanceNow(t *testing.T) {
+	t.Parallel()
+
+	sc := newFakeScanner()
+	sc.gates["a"] = make(chan struct{})
+
+	var cache Cache
+
+	s := NewScheduler(sc, &cache, staticLister("a"), nil, settingsWith(4, 60), time.Now, newFakeAfter().after)
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := s.ScanInstanceNow(context.Background(), "a")
+		done <- err
+	}()
+
+	sc.waitStarted(t, 1)
+	s.Stop()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(testWait):
+		t.Fatal("Stop left the forced scan running")
+	}
+
+	if _, ok := cache.Get("a"); ok {
+		t.Error("a scan cancelled by Stop was stored")
+	}
+}

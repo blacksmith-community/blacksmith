@@ -120,11 +120,14 @@ type Scheduler struct {
 	locks   map[string]chan struct{}
 }
 
-// fleetRun is one fleet scan. Its fields other than id and done are guarded
-// by the scheduler's mutex.
+// fleetRun is one fleet scan. Its fields other than id, done, and subset
+// are guarded by the scheduler's mutex.
 type fleetRun struct {
-	id          string
-	done        chan struct{}
+	id   string
+	done chan struct{}
+	// subset says the run scans only named instances, so it cannot stand
+	// in for a timed full scan.
+	subset      bool
 	running     bool
 	failed      bool
 	startedAt   time.Time
@@ -217,16 +220,23 @@ func (s *Scheduler) loop() {
 		case <-s.after(delay):
 		}
 
-		// A scan already running stands in for this one.
-		run, _ := s.requestScan(nil)
-		if run == nil {
-			return
-		}
+		// A full scan already running stands in for this one. A subset
+		// run does not, so the full scan starts once it ends.
+		for {
+			run, joined := s.requestScan(nil)
+			if run == nil {
+				return
+			}
 
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-run.done:
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-run.done:
+			}
+
+			if !joined || !run.subset {
+				break
+			}
 		}
 
 		delay = scanInterval(s.settings())
@@ -258,7 +268,7 @@ func (s *Scheduler) requestScan(ids []string) (*fleetRun, bool) {
 		return s.run, true
 	}
 
-	run := &fleetRun{id: newScanID(), done: make(chan struct{}), running: true, startedAt: s.now()}
+	run := &fleetRun{id: newScanID(), done: make(chan struct{}), subset: len(ids) > 0, running: true, startedAt: s.now()}
 	s.run = run
 
 	var subset map[string]bool
@@ -411,6 +421,16 @@ func (s *Scheduler) tryScan(ctx context.Context, job scanJob) (bool, bool) {
 // its earlier data marked stale when this scan failed. An ID the index does
 // not list returns ErrUnknownInstance. The broker answers to BrokerScanID.
 func (s *Scheduler) ScanInstanceNow(ctx context.Context, id string) (InstanceScan, error) {
+	// Stop cancels a forced scan as it cancels a fleet scan.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	defer context.AfterFunc(s.ctx, cancel)()
+
+	if err := ctx.Err(); err != nil {
+		return InstanceScan{}, err
+	}
+
 	var job *scanJob
 
 	if id == BrokerScanID {
@@ -631,10 +651,19 @@ func keepLastGood(m ScanMaterial, prev InstanceScan) ScanMaterial {
 }
 
 // drop removes every cached instance the index no longer lists, keeping the
-// broker entry.
+// broker entry. An instance whose lock is held, by a forced scan that is
+// about to store a result, stays until a later fleet scan.
 func (s *Scheduler) drop(listed map[string]bool) {
 	for _, id := range s.cache.ids() {
 		if id == BrokerScanID || listed[id] {
+			continue
+		}
+
+		lock := s.lockFor(id)
+
+		select {
+		case lock <- struct{}{}:
+		default:
 			continue
 		}
 
@@ -643,6 +672,8 @@ func (s *Scheduler) drop(listed map[string]bool) {
 		s.mu.Lock()
 		delete(s.errs, id)
 		s.mu.Unlock()
+
+		<-lock
 	}
 }
 

@@ -1207,3 +1207,38 @@ func TestScanInstanceVMsFailureKeepsExpected(t *testing.T) {
 		t.Errorf("CredHub = %d entries, want the variable still listed", len(scan.Material.CredHub))
 	}
 }
+
+func TestScanInstanceDropsJobProperties(t *testing.T) {
+	t.Parallel()
+
+	for _, probe := range []bool{true, false} {
+		settings := DefaultSettings()
+		settings.ProbeEnabled = probe
+
+		f := scannerFixture{
+			director: &fakeDirector{
+				manifest: loadManifest(t, "redis-cluster-7.yml"),
+				vars:     []bosh.Variable{{ID: "v1", Name: "/ws-bosh/redis-7a1b/redis_cluster_crt"}},
+				vms:      redisVMs(3),
+			},
+			state:    credhub.StateNotConfigured,
+			settings: settings,
+			leaf:     &fakeLeaf{},
+		}
+
+		scan := f.scanner().ScanInstance(context.Background(), testRef("redis-7a1b"))
+		if scan.Err != "" || scan.Facts == nil || len(scan.Facts.Jobs) == 0 {
+			t.Fatalf("probe %v: scan = %q with facts %+v", probe, scan.Err, scan.Facts)
+		}
+
+		if probe && len(scan.Material.Expected) != 3 {
+			t.Errorf("probe %v: expected listeners = %d, want 3 from the properties", probe, len(scan.Material.Expected))
+		}
+
+		for _, j := range scan.Facts.Jobs {
+			if j.Properties != nil {
+				t.Errorf("probe %v: job %s/%s still holds its properties", probe, j.Group, j.Job)
+			}
+		}
+	}
+}

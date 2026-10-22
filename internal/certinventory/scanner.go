@@ -305,6 +305,12 @@ func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings
 		}
 	}
 
+	// The listener rules were the last reader of the job properties, which
+	// can hold passwords, so the cached facts never keep them.
+	for i := range facts.Jobs {
+		facts.Jobs[i].Properties = nil
+	}
+
 	return scan, nil
 }
 
