@@ -25,6 +25,7 @@ const (
 	targetDir   = pinnedJobDir + "/config"
 	monitPath   = "/var/vcap/bosh/bin/monit"
 	opCheck     = "check"
+	opStage     = "stage"
 	driftExit   = 10
 	backupExit  = 11
 	restartExit = 12
@@ -817,9 +818,9 @@ func TestPatchRefusesBadArguments(t *testing.T) {
 		{"no operation", nil, usageExit},
 		{"prepare with no task", []string{"prepare"}, usageExit},
 		{"prepare with a bad task", []string{"prepare", "../x"}, refusedExit},
-		{"stage with no path", []string{"stage", testTaskID}, usageExit},
-		{"stage to a backup path", []string{"stage", testTaskID, backupPath}, refusedExit},
-		{"stage to another task", []string{"stage", testTaskID, workBase + otherTaskID + "/s/0"}, refusedExit},
+		{"stage with no path", []string{opStage, testTaskID}, usageExit},
+		{"stage to a backup path", []string{opStage, testTaskID, backupPath}, refusedExit},
+		{"stage to another task", []string{opStage, testTaskID, workBase + otherTaskID + "/s/0"}, refusedExit},
 		{"check with too few arguments", []string{opCheck, testTaskID, pinnedJobDir, pinnedTarget, old, fresh}, usageExit},
 		{"check with a bad hash", []string{opCheck, testTaskID, pinnedJobDir, pinnedTarget, "abc", fresh, backupPath}, usageExit},
 		{"check with equal hashes", []string{opCheck, testTaskID, pinnedJobDir, pinnedTarget, old, old, backupPath}, usageExit},
