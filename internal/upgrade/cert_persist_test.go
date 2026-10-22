@@ -343,12 +343,17 @@ func TestConfirmedSaveDroppedAsOlder(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 
-	// A newer snapshot lands while the confirmed save waits its turn.
+	// A newer snapshot lands, record and index entry, while the confirmed
+	// save waits its turn.
 	manager.mu.Lock()
 	newer := manager.snapshotLocked(task)
 	manager.mu.Unlock()
 
 	err := vault.Put(context.Background(), certRecordPath, newer.task)
+	if err == nil {
+		err = manager.addToTasksIndex(context.Background(), newer.task)
+	}
+
 	if err != nil {
 		persistence.mu.Unlock()
 		t.Fatalf("storing the newer snapshot: %v", err)
@@ -533,5 +538,137 @@ func TestConfirmedSaveKeepsOneDeadline(t *testing.T) {
 		if deadline.IsZero() || deadline.After(latest) || !deadline.Equal(deadlines[0]) {
 			t.Fatalf("write %d ran under deadline %v, want the save's one deadline %v, no later than %v", i+1, deadline, deadlines[0], latest)
 		}
+	}
+}
+
+// hookVault is a confirmVault that runs hook once, right after the read
+// of hookPath numbered hookAt has been answered and before the answer is
+// returned.
+type hookVault struct {
+	*confirmVault
+
+	hookPath string
+	hookAt   int
+	hook     func()
+	reads    int
+	once     sync.Once
+}
+
+func (v *hookVault) Get(ctx context.Context, path string, result interface{}) (bool, error) {
+	exists, err := v.confirmVault.Get(ctx, path, result)
+
+	if path == v.hookPath {
+		v.script.Lock()
+		v.reads++
+		fire := v.reads == v.hookAt
+		v.script.Unlock()
+
+		if fire {
+			v.once.Do(v.hook)
+		}
+	}
+
+	return exists, err
+}
+
+// indexedStatus returns the status the index of certificate tasks holds
+// for the test task.
+func indexedStatus(t *testing.T, vault *confirmVault) string {
+	t.Helper()
+
+	var index map[string]map[string]interface{}
+
+	found, err := vault.waitVault.Get(context.Background(), certificateTasksVaultPath, &index)
+	if err != nil || !found {
+		t.Fatalf("reading the index: found %v, %v", found, err)
+	}
+
+	status, _ := index[certTaskID][indexStatus].(string)
+
+	return status
+}
+
+// A confirmed save that finds the index without the task, while a newer
+// save of the task lands, never writes its older status over the newer
+// one.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestConfirmedIndexNeverRegressesTheStatus(t *testing.T) {
+	inner := newConfirmVault()
+	vault := &hookVault{confirmVault: inner, hookPath: certificateTasksVaultPath, hookAt: 2}
+	manager, task := confirmManager(t, inner)
+	manager.vault = vault
+
+	// The confirmed save's own index write is refused, so it finds the
+	// index without the task when it reads it back.
+	inner.scriptPut(certificateTasksVaultPath, 1, 0)
+
+	newer := make(chan error, 1)
+
+	vault.hook = func() {
+		go func() {
+			manager.mu.Lock()
+			task.Status = TaskStatusCompleted
+			manager.mu.Unlock()
+
+			newer <- manager.persistTask(context.Background(), task)
+		}()
+
+		// The newer save goes ahead now unless the confirmed save holds
+		// the task's save lock.
+		select {
+		case err := <-newer:
+			newer <- err
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	err := manager.persistCertConfirmed(context.Background(), task)
+	if err != nil {
+		t.Fatalf("expected the save to be confirmed, got %v", err)
+	}
+
+	select {
+	case err = <-newer:
+		if err != nil {
+			t.Fatalf("the newer save failed: %v", err)
+		}
+	case <-time.After(waitTimeout):
+		t.Fatal("the newer save never finished")
+	}
+
+	if status := indexedStatus(t, inner); status != string(TaskStatusCompleted) {
+		t.Fatalf("expected the index to keep the newer status %s, got %q", TaskStatusCompleted, status)
+	}
+}
+
+// When a newer save of the task wrote its record but not its index entry,
+// an older confirmed save does not write its own status there, and its
+// save is not confirmed.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestConfirmedIndexLeavesANewerSavesEntry(t *testing.T) {
+	vault := newConfirmVault()
+	manager, task := confirmManager(t, vault)
+
+	manager.mu.Lock()
+	older := manager.snapshotLocked(task)
+	task.Status = TaskStatusCompleted
+	manager.mu.Unlock()
+
+	vault.scriptPut(certificateTasksVaultPath, 1, 0)
+
+	err := manager.persistTask(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected the newer save's index write to fail")
+	}
+
+	err = manager.confirmIndex(context.Background(), older)
+	if !errors.Is(err, ErrSaveUnconfirmed) {
+		t.Fatalf("expected %v, got %v", ErrSaveUnconfirmed, err)
+	}
+
+	if count := vault.putCount(certificateTasksVaultPath); count != 1 {
+		t.Fatalf("expected no index write from the older save, got %d writes in all", count)
 	}
 }

@@ -49,7 +49,7 @@ func (m *Manager) persistCertConfirmed(ctx context.Context, task *UpgradeTask) e
 
 	err := m.confirmRecord(ctx, snapshot)
 	if err == nil {
-		err = m.confirmIndex(ctx, snapshot.task)
+		err = m.confirmIndex(ctx, snapshot)
 	}
 
 	if err != nil {
@@ -127,12 +127,22 @@ func (m *Manager) recordLanded(ctx context.Context, snapshot taskSnapshot) (bool
 
 // confirmIndex makes sure the task's index names it, once per task, as
 // persistCertConfirmed describes. It writes the task's entry from the
-// snapshot, never from the live task.
-func (m *Manager) confirmIndex(ctx context.Context, task *UpgradeTask) error {
+// snapshot, never from the live task. The read and the write run under the
+// task's save lock, as writeSnapshot's own index writes do, and only while
+// the snapshot is the newest one written, so a newer save's entry is never
+// overwritten with an older status. When a newer save wrote the record but
+// not the index, the save is not confirmed, and the next one writes the
+// index again.
+func (m *Manager) confirmIndex(ctx context.Context, snapshot taskSnapshot) error {
+	task := snapshot.task
+
 	persistence := m.persistenceFor(task.ID)
 	if persistence.indexed.Load() {
 		return nil
 	}
+
+	persistence.mu.Lock()
+	defer persistence.mu.Unlock()
 
 	indexPath := tasksIndexPath(task.KindOrDefault())
 
@@ -144,6 +154,10 @@ func (m *Manager) confirmIndex(ctx context.Context, task *UpgradeTask) error {
 	}
 
 	if _, named := index[task.ID]; !exists || !named {
+		if persistence.written > snapshot.seq {
+			return fmt.Errorf("%w: %s does not name task %s, and a newer save of it did not add it", ErrSaveUnconfirmed, indexPath, task.ID)
+		}
+
 		err = m.addToTasksIndex(ctx, task)
 		if err != nil {
 			return fmt.Errorf("%w: %s does not name task %s: %w", ErrSaveUnconfirmed, indexPath, task.ID, err)
