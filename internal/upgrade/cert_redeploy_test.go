@@ -65,7 +65,7 @@ type tlsListener struct {
 func startTLSListener(t *testing.T, cert *x509.Certificate, key *ecdsa.PrivateKey) *tlsListener {
 	t.Helper()
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listening: %v", err)
 	}
@@ -243,7 +243,7 @@ func (d *redeployDirector) runTask(running bool) {
 
 func (d *redeployDirector) GetInfo(context.Context) (*bosh.Info, error) {
 	if d.nameless {
-		return nil, nil
+		return nil, nil //nolint:nilnil // The real client answers a nameless director with no info.
 	}
 
 	return &bosh.Info{Name: redeployDirectorName, Version: "280.0.4"}, nil
@@ -259,7 +259,7 @@ func (d *redeployDirector) GetDeployment(_ context.Context, name string) (*bosh.
 	}
 
 	if d.empty {
-		return nil, nil
+		return nil, nil //nolint:nilnil // The real client answers a missing deployment with no detail.
 	}
 
 	return &bosh.DeploymentDetail{Name: name, Manifest: d.manifest}, nil
@@ -291,7 +291,7 @@ func (d *redeployDirector) FindRunningTasksForDeployment(context.Context, string
 }
 
 func (d *redeployDirector) FindRunningTaskForDeployment(context.Context, string) (*bosh.Task, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // The real client answers no running task with nil.
 }
 
 func (d *redeployDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*bosh.Task, error) {

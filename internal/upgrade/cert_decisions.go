@@ -436,7 +436,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	case actionVerify:
 		m.mu.Unlock()
 
-		verifyErr := m.verifyNow(inst)
+		verifyErr := m.verifyNow(inst) //nolint:contextcheck // The verification runs on the manager's lifecycle context, so a finished request never cancels it.
 		if errors.Is(verifyErr, errVerifyUnreadable) {
 			return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 				"Blacksmith could not verify the deploy now, so the instance still waits for this decision: "+verifyErr.Error())
@@ -962,7 +962,7 @@ func (m *Manager) applyConfirmedLocked(ctx context.Context, task *UpgradeTask, i
 	// nothing else answers a decision, so the instance still waits for it.
 	apply(task, inst)
 	task.Revision = max(task.Revision, draft.Revision)
-	rescan := m.endCertificateInstanceLocked(task, inst)
+	rescan := m.endCertificateInstanceLocked(task, inst) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	m.mu.Unlock()
 

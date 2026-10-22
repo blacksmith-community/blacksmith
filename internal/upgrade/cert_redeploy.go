@@ -149,7 +149,7 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 		failed := inst.Status == InstanceStatusFailed
 		m.mu.RUnlock()
 
-		switch end {
+		switch end { //nolint:exhaustive // The default branch covers every other value.
 		case endSettled:
 			// The task goes on to its next instance, whose pause wait
 			// holds it when this failure paused the task.
@@ -495,7 +495,7 @@ func (m *Manager) instanceSettled(inst *InstanceUpgrade) bool {
 // closed the instance with phase done and no pending decision. The caller
 // holds mu.
 func waitsForDecision(inst *InstanceUpgrade) bool {
-	switch inst.Status {
+	switch inst.Status { //nolint:exhaustive // The default branch covers every other value.
 	case StatusAwaitingDecision:
 		return true
 	case InstanceStatusOutcomeUnknown:
@@ -668,7 +668,7 @@ func (m *Manager) certAfterDeploy(ctx context.Context, task *UpgradeTask, inst *
 
 	rescan := func() {}
 	if failed {
-		rescan = m.endCertificateInstanceLocked(task, inst)
+		rescan = m.endCertificateInstanceLocked(task, inst) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 	}
 
 	m.mu.Unlock()
@@ -788,7 +788,7 @@ func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *In
 		return unconfirmed("finish instance "+inst.InstanceID+" after its verification", err)
 	}
 
-	m.settleCertificateInstance(task, inst, ok, message)
+	m.settleCertificateInstance(task, inst, ok, message) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	err = m.persistCertConfirmed(ctx, task)
 	if err != nil {
@@ -1147,7 +1147,7 @@ func (m *Manager) rescan(scan func(ctx context.Context, instanceID string) (cert
 // failCertificateDeploy fails an instance whose deploy the director did
 // not take, with the note that the new versions wait in CredHub.
 func (m *Manager) failCertificateDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, why string) {
-	m.settleCertificateInstance(task, inst, false, why+" "+deployPendingNote)
+	m.settleCertificateInstance(task, inst, false, why+" "+deployPendingNote) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	err := m.persistCertConfirmed(ctx, task)
 	if err != nil {
@@ -1446,7 +1446,10 @@ func (m *Manager) deployWithContext(ctx context.Context, task *UpgradeTask, inst
 		m.releaseUnheldLocked(task)
 		m.logger.Error("Update failed for %s: %v", inst.DeploymentName, err)
 		m.mu.Unlock()
-		m.persistTask(persistCtx, task) //nolint:errcheck
+
+		if perr := m.persistTask(persistCtx, task); perr != nil {
+			m.logger.Error("Failed to save the failed deploy of instance %s in task %s: %v", inst.InstanceID, task.ID, perr)
+		}
 
 		return true
 	}
@@ -1465,7 +1468,10 @@ func (m *Manager) deployWithContext(ctx context.Context, task *UpgradeTask, inst
 		m.releaseUnheldLocked(task)
 		m.logger.Error("The director named no task for the deploy of %s", inst.DeploymentName)
 		m.mu.Unlock()
-		m.persistTask(persistCtx, task) //nolint:errcheck
+
+		if perr := m.persistTask(persistCtx, task); perr != nil {
+			m.logger.Error("Failed to save the failed deploy of instance %s in task %s: %v", inst.InstanceID, task.ID, perr)
+		}
 
 		return true
 	}

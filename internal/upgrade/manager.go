@@ -835,8 +835,8 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 		if err != nil {
 			m.pauseUnconfirmed(task, instance, fmt.Sprintf("start anything after BOSH task %d", taskID))
 		}
-	} else {
-		m.persistTask(persistCtx, task) //nolint:errcheck
+	} else if err := m.persistTask(persistCtx, task); err != nil {
+		m.logger.Error("Failed to save upgrade task %s after BOSH task %d started for instance %s: %v", task.ID, taskID, instance.InstanceID, err)
 	}
 
 	finished, cancelRequested, err := m.awaitDeployTask(ctx, task, instance, taskID, cancelCh)
@@ -1435,7 +1435,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 
 	ended := m.cancelIdleLocked(task)
 	skipped := m.skipUnownedLocked(task)
-	verify := m.verifyCancelledLocked(task)
+	verify := m.verifyCancelledLocked(task) //nolint:contextcheck // Resuming the task runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	// No deploy of a pending instance is sent once the upgrade is
 	// cancelled, so those are free now, and a running one stays held while
