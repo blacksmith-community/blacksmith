@@ -13183,15 +13183,25 @@ span.config-type.resurrection {
   border-color: var(--cert-expired);
 }
 
+#upgrade {
+  --rotate-pressed-bg: #1d4ed8;
+  --rotate-pressed-text: #ffffff;
+}
+
+[data-theme="dark"] #upgrade {
+  --rotate-pressed-bg: #8ab8ff;
+  --rotate-pressed-text: #0c1422;
+}
+
 #upgrade .rotate-chip[aria-pressed="true"] {
-  background-color: #1d4ed8;
-  border-color: #1d4ed8;
-  color: #ffffff;
+  background-color: var(--rotate-pressed-bg);
+  border-color: var(--rotate-pressed-bg);
+  color: var(--rotate-pressed-text);
 }
 
 #upgrade .rotate-chip:focus-visible,
 #upgrade .rotate-operation-option input:focus-visible {
-  outline: 2px solid #1d4ed8;
+  outline: 2px solid var(--border-active);
   outline-offset: 2px;
 }
 
