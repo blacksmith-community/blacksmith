@@ -100,9 +100,9 @@ func createCases() map[string]createCase {
 			body:   `{"instance_ids":["i-1"],"target_releases":[{"name":"redis-forge","version":"9.9.10"}]}`,
 			status: http.StatusBadRequest, says: "redis-forge/9.9.10", listings: 1,
 		},
-		"a certificate task without a preview": {
+		"a certificate task with rotation off": {
 			body:   `{"kind":"certificates","instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,
-			status: http.StatusGone, says: `"code":"preview_expired"`,
+			status: http.StatusForbidden, says: `"code":"rotation_disabled"`,
 		},
 		"an unknown kind": {
 			body:   `{"kind":"reboot","instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,

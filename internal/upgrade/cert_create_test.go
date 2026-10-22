@@ -386,6 +386,51 @@ func TestCreateCertificateTaskRotationOff(t *testing.T) {
 	}
 }
 
+// A retry finds the task its request ID made even after the preview has
+// left the store and rotation was turned off, because answering it writes
+// nothing.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCreateCertificateTaskRetryAfterPreviewExpired(t *testing.T) {
+	env, _ := createEnv(t)
+	preview := previewOf(t, env, redeploy(waitInstanceID))
+
+	created, _, err := env.manager.CreateCertificateTask(context.Background(), createRequest(preview.ID))
+	if err != nil {
+		t.Fatalf("CreateCertificateTask: %v", err)
+	}
+
+	store := env.manager.certDeps().Previews
+	store.mu.Lock()
+	delete(store.previews, preview.ID)
+	store.mu.Unlock()
+
+	env.setSwitches(false, true)
+
+	retried, existing, err := env.manager.CreateCertificateTask(context.Background(), createRequest(preview.ID))
+	if err != nil || !existing || retried.ID != created.ID {
+		t.Fatalf("expected the original task %s back, got %+v existing %v, %v", created.ID, retried, existing, err)
+	}
+}
+
+// A new request with rotation off answers rotation_disabled before it
+// reads the preview, so an unknown preview doesn't hide the real reason.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCreateCertificateTaskUnknownPreviewRotationOff(t *testing.T) {
+	env, vault := createEnv(t)
+	env.setSwitches(false, true)
+
+	_, _, err := env.manager.CreateCertificateTask(context.Background(), createRequest("pv-unknown"))
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeRotationDisabled)
+
+	expectNothingHeld(t, env.manager)
+
+	if paths := vault.storedPaths(); len(paths) != 0 {
+		t.Fatalf("expected nothing saved, got %v", paths)
+	}
+}
+
 // expectUnconfirmedCreate checks the answer and the state an unconfirmed
 // create leaves: a failed task in memory that still holds its instance,
 // owns no processor, and has no request index entry.

@@ -131,6 +131,15 @@ func (m *Manager) CreateCertificateTask(ctx context.Context, req CreateCertifica
 		return original, found, err
 	}
 
+	// The rotation switch and CredHub don't depend on the mode, so a new
+	// request learns that rotation is off before it learns anything about
+	// its preview. The patch switch needs the preview's mode, so it is
+	// checked once the preview is read.
+	err = m.certWritesAllowed(RotationModeRedeploy)
+	if err != nil {
+		return nil, false, err
+	}
+
 	preview, err := m.createPreview(req.PreviewID)
 	if err != nil {
 		return nil, false, err
@@ -212,13 +221,8 @@ func (m *Manager) existingCertificateTask(requestID, digest string) (*UpgradeTas
 func (m *Manager) createPreview(previewID string) (*Preview, error) {
 	d := m.certDeps()
 	if d.Previews == nil {
-		// A manager that was never configured has no store, and refuses
-		// every certificate write for that reason first.
-		err := m.certWritesAllowed(RotationModeRedeploy)
-		if err != nil {
-			return nil, err
-		}
-
+		// Only a manager that was never configured has no store, and
+		// certWritesAllowed refuses every write on it first.
 		return nil, apierr.New(http.StatusInternalServerError, apierr.CodeInternal, "Blacksmith has no store for previews.")
 	}
 
