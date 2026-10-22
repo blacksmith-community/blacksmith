@@ -310,7 +310,8 @@ func (d *Discovery) unsafe(format string, args ...any) error {
 // variable's certificate file and no key file or the reverse, or a
 // different number of each, when a file holds an old certificate or key
 // inside larger content, when a matching file fails the checks a write
-// would make (rootdirs=no). A VM that holds none of a variable's files
+// would make (rootdirs=no), and when the job of a consumer has no monit
+// process to restart. A VM that holds none of a variable's files
 // has no consumer of it and nothing to patch for it, because the files
 // can live in another instance group, so RequireConsumers checks across
 // all the VMs that every variable has a consumer somewhere. Consumers come
@@ -410,6 +411,13 @@ func (d *Discovery) pair(variables []string, certs, keys map[string]map[string][
 			case len(certPaths) != len(keyPaths):
 				return nil, d.unsafe("the variable %s has %d certificate files and %d key files in the job %s",
 					variable, len(certPaths), len(keyPaths), job)
+			}
+
+			// A consumer whose job names no process would have its files
+			// replaced and nothing restarted, so the old certificate would
+			// keep serving.
+			if len(d.Processes[job]) == 0 {
+				return nil, d.unsafe("the job %s holds the variable %s and has no monit process to restart", job, variable)
 			}
 
 			sort.Strings(certPaths)

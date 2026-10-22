@@ -555,6 +555,8 @@ func TestBuildConsumersFailures(t *testing.T) {
 			certs, keys, []string{testVM}},
 		{"a variable without a key hash", jobdirs + certLine + keyLine,
 			certs, map[string]string{}, []string{testVariable}},
+		{"a job with no monit process", jobdirs + certLine + keyLine + "proc job=bpm name=bpm\n",
+			certs, keys, []string{testVM, valkeyJob, testVariable, "no monit process"}},
 	}
 
 	for _, row := range rows {
