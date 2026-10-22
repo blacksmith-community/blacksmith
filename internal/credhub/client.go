@@ -25,14 +25,15 @@ const (
 
 // Client errors.
 var (
-	ErrNotFound          = errors.New("credential does not exist")
-	ErrEmptyVersionID    = errors.New("refusing to read a certificate version with an empty ID")
-	ErrProtectedName     = errors.New("refusing to delete a credential under a protected prefix")
-	ErrEmptyName         = errors.New("refusing to delete a credential with an empty name")
-	ErrInvalidCredHubURL = errors.New("CredHub URL must be an https URL")
-	ErrNoTokenProvider   = errors.New("CredHub client needs a token provider")
-	ErrBadFindAnswer     = errors.New("CredHub find answer is not valid JSON")
-	ErrAnswerTooLarge    = errors.New("CredHub answer is larger than the limit")
+	ErrNotFound           = errors.New("credential does not exist")
+	ErrEmptyVersionID     = errors.New("refusing to read a certificate version with an empty ID")
+	ErrProtectedName      = errors.New("refusing to delete a credential under a protected prefix")
+	ErrEmptyName          = errors.New("refusing to delete a credential with an empty name")
+	ErrEmptyCertificateID = errors.New("refusing to regenerate a certificate with an empty ID")
+	ErrInvalidCredHubURL  = errors.New("CredHub URL must be an https URL")
+	ErrNoTokenProvider    = errors.New("CredHub client needs a token provider")
+	ErrBadFindAnswer      = errors.New("CredHub find answer is not valid JSON")
+	ErrAnswerTooLarge     = errors.New("CredHub answer is larger than the limit")
 )
 
 // tokenProvider is what the client needs from a TokenSource.
@@ -78,10 +79,10 @@ func (e *APIError) Error() string {
 }
 
 // Client is a CredHub client that can find credential names under a path,
-// delete one credential by its exact name, and read certificate metadata,
-// version lists, and the public half of a certificate. It has no way to
-// read a secret value or a private key, to set, generate, or regenerate a
-// credential, or to change a permission.
+// delete one credential by its exact name, read certificate metadata,
+// version lists, and the public half of a certificate, and regenerate one
+// certificate by its ID. It has no way to read a secret value or a private
+// key, to set or generate a credential, or to change a permission.
 type Client struct {
 	baseURL    string
 	tokens     tokenProvider
