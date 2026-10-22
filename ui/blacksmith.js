@@ -9071,6 +9071,22 @@
   };
 
   // Format manifest details with tabbed view
+  // Delegate manifest navigation so newly rendered tabs work immediately.
+  document.addEventListener('click', event => {
+    const button = event.target.closest('[data-manifest-navigation]');
+    if (!button) return;
+    const container = button.closest('.manifest-details-container');
+    if (!container) return;
+    container.querySelectorAll('[data-manifest-navigation]').forEach(tab => {
+      tab.classList.toggle('active', tab === button);
+    });
+    container.querySelectorAll('.manifest-tab-pane').forEach(pane => {
+      if (pane.dataset.group === button.dataset.group) {
+        pane.style.display = pane.dataset.tab === button.dataset.tab ? 'block' : 'none';
+      }
+    });
+  });
+
   const formatManifestDetails = (manifestData, instanceId) => {
     if (!manifestData || !manifestData.text || !manifestData.parsed) {
       return '<div class="error">Failed to load manifest details</div>';
@@ -9131,15 +9147,15 @@
     let html = `
       <div class="manifest-details-container">
         <div class="manifest-tabs-nav">
-          <button class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
-          ${instanceGroups.length > 0 ? `<button class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
-          ${releases.length > 0 ? `<button class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
-          ${stemcells.length > 0 ? `<button class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
-          ${Object.keys(features).length > 0 ? `<button class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
-          ${Object.keys(update).length > 0 ? `<button class="manifest-tab-btn" data-tab="update" data-group="${tabGroupId}">Update</button>` : ''}
-          ${variables.length > 0 ? `<button class="manifest-tab-btn" data-tab="variables" data-group="${tabGroupId}">Variables</button>` : ''}
-          ${addons.length > 0 ? `<button class="manifest-tab-btn" data-tab="addons" data-group="${tabGroupId}">Addons</button>` : ''}
-          <button class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">YAML</button>
+          <button data-manifest-navigation class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
+          ${instanceGroups.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
+          ${releases.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
+          ${stemcells.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
+          ${Object.keys(features).length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
+          ${Object.keys(update).length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="update" data-group="${tabGroupId}">Update</button>` : ''}
+          ${variables.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="variables" data-group="${tabGroupId}">Variables</button>` : ''}
+          ${addons.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="addons" data-group="${tabGroupId}">Addons</button>` : ''}
+          <button data-manifest-navigation class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">YAML</button>
         </div>
 
         <div class="manifest-tab-content">
@@ -9585,28 +9601,6 @@
 
     // Set up event handlers after the HTML is added to the DOM
     setTimeout(() => {
-      // Tab switching
-      const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
-      const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
-
-      tabButtons.forEach(button => {
-        button.addEventListener('click', () => {
-          const tabName = button.dataset.tab;
-
-          // Update active states
-          tabButtons.forEach(btn => btn.classList.remove('active'));
-          button.classList.add('active');
-
-          tabPanes.forEach(pane => {
-            if (pane.dataset.tab === tabName) {
-              pane.style.display = 'block';
-            } else {
-              pane.style.display = 'none';
-            }
-          });
-        });
-      });
-
       // Instance group selector
       const instanceGroupSelect = document.getElementById(`instance-group-select-${manifestId}`);
       if (instanceGroupSelect) {
