@@ -156,6 +156,13 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// deps and configured hold, under mu, what certificate tasks use besides
+	// the director and Vault, and started records under mu that Start has
+	// run, after which Configure refuses.
+	deps       Deps
+	configured bool
+	started    bool
+
 	// Cancellation tracking - maps taskID to cancel channel
 	taskCancelCh   map[string]chan struct{}
 	taskCancelLock sync.RWMutex
@@ -328,6 +335,10 @@ func (m *Manager) Guard() *mutation.Guard {
 // them. A second call, or a call after Stop, does nothing.
 func (m *Manager) Start() {
 	m.startOnce.Do(func() {
+		m.mu.Lock()
+		m.started = true
+		m.mu.Unlock()
+
 		if m.ctx.Err() != nil {
 			close(m.loaded)
 

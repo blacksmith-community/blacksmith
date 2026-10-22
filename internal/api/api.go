@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"blacksmith/internal/certinventory"
+	"blacksmith/internal/config"
+	"blacksmith/internal/credhub"
 	"blacksmith/internal/handlers/blacksmith"
 	"blacksmith/internal/handlers/bosh"
 	"blacksmith/internal/handlers/certificates"
@@ -83,6 +85,12 @@ type Dependencies struct {
 	// Guard is the broker's one mutation guard, which every operation that
 	// changes an instance reserves it through.
 	Guard *mutation.Guard
+	// CredHub is the director's CredHub client, or nil when the broker has
+	// none. The upgrade manager's certificate tasks use it.
+	CredHub *credhub.Client
+	// Switches returns the certificate configuration switches. The upgrade
+	// manager reads it before each certificate write.
+	Switches func() config.CertificatesConfig
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
@@ -241,12 +249,23 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 	if director == nil {
 		director = deps.Director
 	}
+
+	// A nil *credhub.Client inside the interface would not compare equal to
+	// nil, so the manager gets a true nil when the broker has no CredHub.
+	var credhubAPI upgrade.CredHubAPI
+	if deps.CredHub != nil {
+		credhubAPI = deps.CredHub
+	}
+
 	return upgradehandler.NewHandler(upgradehandler.Dependencies{
 		Logger:                deps.Logger,
 		Director:              director,
 		Vault:                 deps.Vault,
 		OnMaxBatchJobsChanged: deps.OnMaxBatchJobsChanged,
 		Guard:                 deps.Guard,
+		CredHub:               credhubAPI,
+		Certificates:          deps.Certificates,
+		Switches:              deps.Switches,
 	})
 }
 

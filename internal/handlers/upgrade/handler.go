@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/certinventory"
+	"blacksmith/internal/config"
+	"blacksmith/internal/credhub"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
 	"blacksmith/internal/upgrade"
@@ -43,6 +46,15 @@ type Dependencies struct {
 	// Guard is the broker's one mutation guard. The manager reserves each
 	// upgrade's instances in it, and keeps a private guard when it is nil.
 	Guard *mutation.Guard
+	// CredHub is the director's CredHub, or nil when the broker has none.
+	CredHub upgrade.CredHubAPI
+	// CredHubState reports whether CredHub is usable. It may be nil.
+	CredHubState func() (credhub.CapabilityState, string)
+	// Certificates is the certificate inventory. It may be nil.
+	Certificates *certinventory.Service
+	// Switches returns the certificate configuration switches as they stand
+	// now. When nil, rotation counts as off.
+	Switches func() config.CertificatesConfig
 }
 
 // NewHandler creates a new upgrade handler. It applies the persisted
@@ -51,6 +63,7 @@ type Dependencies struct {
 func NewHandler(deps Dependencies) *Handler {
 	manager := upgrade.NewManager(deps.Logger, deps.Director, deps.Vault)
 	manager.SetGuard(deps.Guard)
+	configureManager(manager, deps)
 
 	// Set callback to sync BatchDirector pool with max_batch_jobs setting
 	if deps.OnMaxBatchJobsChanged != nil {
@@ -67,6 +80,31 @@ func NewHandler(deps Dependencies) *Handler {
 		logger:  deps.Logger.Named("upgrade-handler"),
 		manager: manager,
 		tasks:   manager,
+	}
+}
+
+// configureManager hands the manager what its certificate tasks need. It
+// runs before Start, which loads the stored certificate tasks, so no loaded
+// rotation runs without its checks.
+func configureManager(manager *upgrade.Manager, deps Dependencies) {
+	d := upgrade.Deps{
+		CredHub:      deps.CredHub,
+		CredHubState: deps.CredHubState,
+		Switches:     deps.Switches,
+	}
+
+	if deps.Certificates != nil {
+		d.ScanInstance = deps.Certificates.ScanInstance
+		d.Settings = deps.Certificates.Settings
+
+		if d.CredHubState == nil {
+			d.CredHubState = deps.Certificates.CredHubState
+		}
+	}
+
+	err := manager.Configure(d)
+	if err != nil {
+		deps.Logger.Error("Failed to configure the upgrade manager for certificate tasks: %v", err)
 	}
 }
 

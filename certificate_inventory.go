@@ -52,6 +52,13 @@ func newCertificateService(cfg *config.Config, brokerInstance *broker.Broker, va
 	})
 }
 
+// certificateSwitches returns a function that reads the certificate switches
+// from the configuration each time it is called, so the upgrade manager sees
+// the switches as they stand when it is about to write.
+func certificateSwitches(cfg *config.Config) func() config.CertificatesConfig {
+	return func() config.CertificatesConfig { return cfg.Certificates }
+}
+
 // indexEntry is the part of a Vault index entry the inventory reads.
 type indexEntry struct {
 	vaultPkg.Instance

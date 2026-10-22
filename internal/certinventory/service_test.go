@@ -340,3 +340,14 @@ func TestServiceRescansBrokerOnceWhenServicesCAIsLearned(t *testing.T) {
 		t.Errorf("the broker was rescanned again: %d calls", got)
 	}
 }
+
+func TestCredHubStateIsExported(t *testing.T) {
+	t.Parallel()
+
+	svc := serviceFixture(t, &fakeDirector{})
+
+	state, _ := svc.CredHubState()
+	if state != credhub.StateNotConfigured {
+		t.Fatalf("state = %q, want not_configured for a service with no CredHub client", state)
+	}
+}

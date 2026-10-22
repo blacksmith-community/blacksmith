@@ -165,6 +165,12 @@ func NewService(deps ServiceDeps) *Service {
 	return s
 }
 
+// CredHubState reports whether CredHub is usable now, with a fixed reason
+// when it is not.
+func (s *Service) CredHubState() (credhub.CapabilityState, string) {
+	return s.credhubState()
+}
+
 func (s *Service) credhubState() (credhub.CapabilityState, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
