@@ -141,15 +141,19 @@ type previewCredHub struct {
 	latest map[string]string
 	// failVersions maps a name to the status its versions read answers.
 	failVersions map[string]int
+	// failCertificates maps a name to the status its certificate read
+	// answers.
+	failCertificates map[string]int
 }
 
 func newPreviewCredHub(t *testing.T) *previewCredHub {
 	t.Helper()
 
 	fake := &previewCredHub{
-		certs:        make(map[string]string),
-		latest:       make(map[string]string),
-		failVersions: make(map[string]int),
+		certs:            make(map[string]string),
+		latest:           make(map[string]string),
+		failVersions:     make(map[string]int),
+		failCertificates: make(map[string]int),
 	}
 	fake.server = httptest.NewTLSServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(fake.server.Close)
@@ -167,6 +171,12 @@ func (f *previewCredHub) handle(writer http.ResponseWriter, request *http.Reques
 
 	switch request.URL.Path {
 	case "/api/v1/certificates":
+		if status, failing := f.failCertificates[name]; failing {
+			writer.WriteHeader(status)
+
+			return
+		}
+
 		entry, ok := f.certs[name]
 		if !ok {
 			writer.WriteHeader(http.StatusNotFound)
@@ -216,6 +226,13 @@ func (f *previewCredHub) failVersionsRead(name string, status int) {
 	defer f.mu.Unlock()
 
 	f.failVersions[name] = status
+}
+
+func (f *previewCredHub) failCertificatesRead(name string, status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.failCertificates[name] = status
 }
 
 func (f *previewCredHub) client(t *testing.T) *credhub.Client {
@@ -524,6 +541,10 @@ func TestPreviewCredHubFailureBlocksPreview(t *testing.T) {
 
 	_, err := env.manager.PreviewRotation(context.Background(), redeploy(waitInstanceID))
 	expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable)
+
+	if !strings.Contains(err.Error(), "the preview needs") {
+		t.Fatalf("expected the error to say the read was for the preview, got %v", err)
+	}
 }
 
 func TestPreviewBlocksBusyInstance(t *testing.T) {

@@ -398,6 +398,22 @@ func TestRecheckEffects(t *testing.T) {
 	}
 }
 
+// A CredHub read of a selected certificate that fails during the
+// preflight says the read was for the preflight, not for a preview.
+func TestPreflightCredHubFailureNamesPreflight(t *testing.T) {
+	t.Parallel()
+
+	env := newPreflightEnv(t, RotationModeRedeploy)
+	env.credhub.failCertificatesRead(previewLeaf(waitDeployment), http.StatusServiceUnavailable)
+
+	err := env.preflight()
+	expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable)
+
+	if !strings.Contains(err.Error(), "the preflight check of the selected certificates needs") {
+		t.Fatalf("expected the error to say the read was for the preflight, got %v", err)
+	}
+}
+
 // A CredHub failure is an error, never an empty list of changes, at every
 // point.
 func TestRecheckEffectsCredHubUnavailable(t *testing.T) {
@@ -414,8 +430,8 @@ func TestRecheckEffectsCredHubUnavailable(t *testing.T) {
 
 		expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable)
 
-		if !strings.Contains(err.Error(), "CredHub") {
-			t.Fatalf("point %d: expected the error to name CredHub, got %v", at, err)
+		if !strings.Contains(err.Error(), "CredHub") || !strings.Contains(err.Error(), "the re-check of the approved effects needs") {
+			t.Fatalf("point %d: expected the error to name CredHub and the re-check, got %v", at, err)
 		}
 	}
 }

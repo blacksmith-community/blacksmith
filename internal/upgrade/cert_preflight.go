@@ -186,7 +186,7 @@ func (m *Manager) preflightVariables(ctx context.Context, instanceID, deployment
 	}
 
 	for _, name := range names {
-		check := m.checkSelected(ctx, d.CredHub, directorName, scan, deployed, name)
+		check := m.checkSelected(ctx, d.CredHub, purposePreflight, directorName, scan, deployed, name)
 		if check.failure != nil {
 			return check.failure
 		}
@@ -249,7 +249,7 @@ func (m *Manager) readEffects(ctx context.Context, deployment string) (effectsNo
 			fmt.Sprintf("The director did not list the variables of deployment %s: %v", deployment, err))
 	}
 
-	latest, err := latestVersions(ctx, api, variables)
+	latest, err := latestVersions(ctx, api, purposeRecheck, variables)
 	if err != nil {
 		return effectsNow{}, err
 	}

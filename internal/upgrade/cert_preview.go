@@ -509,7 +509,7 @@ func (m *Manager) previewDeployment(ctx context.Context, inst *PreviewInstance, 
 	inst.certificateIDs = make(map[string]string, len(sel.Variables))
 
 	for _, name := range sel.Variables {
-		check := m.checkSelected(ctx, api, directorName, scan, deployed, name)
+		check := m.checkSelected(ctx, api, purposePreview, directorName, scan, deployed, name)
 		if check.failure != nil {
 			inst.failure = check.failure
 
@@ -526,7 +526,7 @@ func (m *Manager) previewDeployment(ctx context.Context, inst *PreviewInstance, 
 		inst.certificateIDs[name] = check.certificateID
 	}
 
-	latest, err := latestVersions(ctx, api, variables)
+	latest, err := latestVersions(ctx, api, purposePreview, variables)
 	if err != nil {
 		inst.failure = err
 
@@ -655,7 +655,8 @@ func blockedCheck(code, message string) selectedCheck {
 
 // checkSelected applies the rotatability rules of spec 7.9 to one selected
 // variable. The switches and the director version were checked already.
-func (m *Manager) checkSelected(ctx context.Context, api CredHubAPI, directorName string, scan certinventory.InstanceScan, deployed map[string]string, name string) selectedCheck {
+// purpose names the step the CredHub read is for, in a failure's message.
+func (m *Manager) checkSelected(ctx context.Context, api CredHubAPI, purpose, directorName string, scan certinventory.InstanceScan, deployed map[string]string, name string) selectedCheck {
 	prefix := "/" + directorName + "/" + scan.Ref.Deployment + "/"
 	if !strings.HasPrefix(name, prefix) || len(name) == len(prefix) {
 		return blockedCheck(apierr.CodeNotRotatable, fmt.Sprintf("%s is not under %s, so it does not belong to this instance alone.", name, prefix))
@@ -672,7 +673,7 @@ func (m *Manager) checkSelected(ctx context.Context, api CredHubAPI, directorNam
 	case errors.Is(err, credhub.ErrNotFound):
 		return blockedCheck(apierr.CodeNotRotatable, name+" is not a certificate in CredHub.")
 	case err != nil:
-		return selectedCheck{failure: credhubUnavailable(err)}
+		return selectedCheck{failure: credhubUnavailable(purpose, err)}
 	case meta == nil:
 		return blockedCheck(apierr.CodeNotRotatable, name+" is not a certificate in CredHub.")
 	}
@@ -749,8 +750,9 @@ func (m *Manager) daysLeft(expiry time.Time) int {
 
 // latestVersions reads the newest CredHub version of every variable, four
 // at a time. A variable CredHub does not know is left out, since a deploy
-// generates nothing for it, and any other failure fails the whole read.
-func latestVersions(ctx context.Context, api CredHubAPI, variables []bosh.Variable) (map[string]string, error) {
+// generates nothing for it, and any other failure fails the whole read
+// with a message that names the purpose of the read.
+func latestVersions(ctx context.Context, api CredHubAPI, purpose string, variables []bosh.Variable) (map[string]string, error) {
 	readCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -804,7 +806,7 @@ feed:
 	wg.Wait()
 
 	if firstErr != nil {
-		return nil, credhubUnavailable(firstErr)
+		return nil, credhubUnavailable(purpose, firstErr)
 	}
 
 	err := ctx.Err()
@@ -815,11 +817,19 @@ feed:
 	return latest, nil
 }
 
-// credhubUnavailable reports a CredHub read that failed. The client's
-// errors carry no credential value.
-func credhubUnavailable(err error) error {
+// Purposes name what a CredHub read was for, so a credhub_unavailable
+// message tells the operator which step could not go on.
+const (
+	purposePreview   = "the preview"
+	purposePreflight = "the preflight check of the selected certificates"
+	purposeRecheck   = "the re-check of the approved effects"
+)
+
+// credhubUnavailable reports a CredHub read that failed, naming the
+// purpose the read was for. The client's errors carry no credential value.
+func credhubUnavailable(purpose string, err error) error {
 	return apierr.New(http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable,
-		fmt.Sprintf("CredHub did not answer a read the preview needs, so it can't list every effect: %v", err))
+		fmt.Sprintf("CredHub did not answer a read that %s needs: %v", purpose, err))
 }
 
 func internalPreviewError(message string) error {
