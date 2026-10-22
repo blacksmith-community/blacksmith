@@ -12059,6 +12059,23 @@ span.config-type.resurrection {
   background: var(--bg-hover);
 }
 
+.cert-export-link--disabled {
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
+.cert-export-link--disabled:hover {
+  background: transparent;
+}
+
+.cert-export-note {
+  max-width: 260px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .cert-fleet-state {
   margin: 16px 0;
 }

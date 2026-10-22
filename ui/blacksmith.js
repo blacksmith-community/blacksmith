@@ -19736,6 +19736,60 @@
       return params.toString();
     };
 
+    // The three attention toggles combine with OR, but the server ANDs
+    // different query parameters. When two or more are pressed we send
+    // one request per toggle, with every other filter held constant.
+    const ATTENTION_TOGGLES = [
+      { pressed: (f) => Boolean(f.attention), clear: (f) => { f.attention = false; }, set: (f) => { f.attention = true; } },
+      { pressed: (f) => f.health.includes('error'), clear: (f) => { f.health = f.health.filter((v) => v !== 'error'); }, set: (f) => { f.health = f.health.concat('error'); } },
+      { pressed: (f) => f.finding.includes('unconverged'), clear: (f) => { f.finding = f.finding.filter((v) => v !== 'unconverged'); }, set: (f) => { f.finding = f.finding.concat('unconverged'); } }
+    ];
+
+    const attentionPressedCount = (f) => ATTENTION_TOGGLES.filter((t) => t.pressed(f)).length;
+
+    const attentionVariants = (filters) => {
+      const f = filters || state;
+      if (attentionPressedCount(f) < 2) return [f];
+      const base = { ...f, health: f.health.slice(), finding: f.finding.slice() };
+      ATTENTION_TOGGLES.forEach((t) => t.clear(base));
+      return ATTENTION_TOGGLES.filter((t) => t.pressed(f)).map((t) => {
+        const variant = { ...base, health: base.health.slice(), finding: base.finding.slice() };
+        t.set(variant);
+        return variant;
+      });
+    };
+
+    // Merges the answers to the per-toggle requests. Certificates are
+    // unioned by id, and the filtered counts come from that union.
+    const mergeInventory = (results) => {
+      const failed = results.find((r) => !r.ok || !r.body || typeof r.body !== 'object');
+      if (failed) return failed;
+      const seen = new Set();
+      const certificates = [];
+      const instances = new Set();
+      results.forEach((r) => {
+        (Array.isArray(r.body.certificates) ? r.body.certificates : []).forEach((cert) => {
+          if (seen.has(cert.id)) return;
+          seen.add(cert.id);
+          certificates.push(cert);
+          (cert.owners || []).forEach((o) => { if (o && o.kind === 'instance' && o.instance_id) instances.add(o.instance_id); });
+        });
+      });
+      const body = { ...results[0].body, certificates };
+      body.filtered = { ...(results[0].body.filtered || {}), certificates: certificates.length, affected_instances: instances.size };
+      return { ok: true, status: results[0].status, body };
+    };
+
+    const fetchInventory = async (filters) => {
+      const variants = attentionVariants(filters);
+      const fetchOne = (f) => {
+        const query = toQuery(f);
+        return getJSON(`/b/certificates/inventory${query ? `?${query}` : ''}`);
+      };
+      if (variants.length === 1) return fetchOne(variants[0]);
+      return mergeInventory(await Promise.all(variants.map(fetchOne)));
+    };
+
     const view = {
       root: null,
       built: false,
@@ -19872,6 +19926,7 @@
             <div class="cert-export">
               <button type="button" class="cert-action-btn" id="cert-export-btn" aria-haspopup="true" aria-expanded="false" aria-controls="cert-export-menu">Export</button>
               <div class="cert-export-menu" id="cert-export-menu" hidden>
+                <p class="cert-export-note" id="cert-export-note" hidden></p>
                 <a class="cert-export-link" id="cert-export-csv" download>Download CSV</a>
                 <a class="cert-export-link" id="cert-export-json" download>Download JSON</a>
               </div>
@@ -20106,6 +20161,11 @@
       const days = Number((resp.settings || {}).warning_days) || 30;
       const credhub = ((resp.capabilities || {}).credhub || {}).state;
       const scanErrors = Array.isArray((resp.scan || {}).errors) ? resp.scan.errors.length : 0;
+      // One dead listener shared by many certificates is one dead listener,
+      // so we count distinct probe locators. Without observation data we
+      // fall back to the per-certificate counts.
+      const failedLocators = new Set();
+      let sawObservations = false;
       let failedListeners = 0;
       view.fleet.forEach((cert) => {
         const observations = Array.isArray(cert.observations) ? cert.observations : [];
@@ -20169,11 +20229,6 @@
         { label: 'Critical', tone: 'critical', count: (s) => s.critical, pressed: () => state.expiry.includes('critical'), toggle: () => toggleValue('expiry', 'critical') },
         { label: 'Warning', tone: 'warning', count: (s) => s.warning, pressed: () => state.expiry.includes('warning'), toggle: () => toggleValue('expiry', 'warning') },
         { label: 'Expiry OK', tone: 'ok', count: (s) => s.expiry_ok, pressed: () => state.expiry.includes('ok'), toggle: () => toggleValue('expiry', 'ok') },
-      // One dead listener shared by many certificates is one dead listener,
-      // so we count distinct probe locators. Without observation data we
-      // fall back to the per-certificate counts.
-      const failedLocators = new Set();
-      let sawObservations = false;
         { label: 'Unknown', tone: 'unknown', count: (s) => s.expiry_unknown, pressed: () => state.expiry.includes('unknown'), toggle: () => toggleValue('expiry', 'unknown') }
       ]
     };
@@ -20683,6 +20738,31 @@
       restoreFocus(key);
     };
 
+    // ----- export links -----
+
+    // The server cannot express an OR across attention toggles in one
+    // query, so an export of that view is disabled with a visible reason.
+    const EXPORT_BLOCKED_TEXT = 'Export is unavailable while two or more of Needs attention, Health errors, and Unconverged are pressed. Press one of them, or clear them, to export.';
+
+    const renderExportLinks = () => {
+      const blocked = attentionPressedCount(state) >= 2;
+      [[view.refs.exportCsv, 'csv'], [view.refs.exportJson, 'json']].forEach(([link, format]) => {
+        if (blocked) {
+          link.removeAttribute('href');
+          link.setAttribute('aria-disabled', 'true');
+          link.classList.add('cert-export-link--disabled');
+          link.setAttribute('title', EXPORT_BLOCKED_TEXT);
+        } else {
+          link.href = `/b/certificates/inventory?${toQuery(state, { format })}`;
+          link.removeAttribute('aria-disabled');
+          link.classList.remove('cert-export-link--disabled');
+          link.removeAttribute('title');
+        }
+      });
+      view.refs.exportNote.hidden = !blocked;
+      view.refs.exportNote.textContent = blocked ? EXPORT_BLOCKED_TEXT : '';
+    };
+
     // ----- render all -----
 
     const renderAll = () => {
@@ -20695,8 +20775,7 @@
       renderGroupBy();
       renderSelectionLine();
       renderTable();
-      view.refs.exportCsv.href = `/b/certificates/inventory?${toQuery(state, { format: 'csv' })}`;
-      view.refs.exportJson.href = `/b/certificates/inventory?${toQuery(state, { format: 'json' })}`;
+      renderExportLinks();
     };
 
     // ----- timeline -----
@@ -20887,26 +20966,21 @@
       return m ? m[1].trim() : '';
     };
 
+    // A certificate joins the group of every owner it has, so a shared
+    // certificate shows under each instance that uses it.
     const groupByOwner = (certs) => {
       const groups = new Map();
+      const add = (id, make, cert) => {
+        if (!groups.has(id)) groups.set(id, make());
+        const group = groups.get(id);
+        if (!group.certs.includes(cert)) group.certs.push(cert);
+      };
       certs.forEach((cert) => {
         const owners = (cert.owners || []).filter(Boolean);
         if (owners.length === 0) {
           add('owner:none', () => ({ id: 'owner:none', label: 'Unknown owner', sub: '', certs: [], selectable: true, instanceId: '' }), cert);
           return;
         }
-        groups.get(id).certs.push(cert);
-      });
-      return Array.from(groups.values());
-    };
-
-    const groupByCA = (certs) => {
-      const cas = (view.fleet.length > 0 ? view.fleet : certs).filter((c) => c.kind === 'ca' || c.kind === 'intermediate');
-      const bySki = new Map();
-      cas.forEach((ca) => { if (ca.subject_key_id && !bySki.has(ca.subject_key_id)) bySki.set(ca.subject_key_id, ca); });
-      const groups = new Map();
-      const add = (id, label, sub, cert) => {
-        if (!groups.has(id)) groups.set(id, { id, label, sub, certs: [], selectable: false });
         owners.forEach((owner) => {
           const id = `owner:${owner.kind || ''}:${owner.instance_id || ''}`;
           add(id, () => ({
@@ -20918,6 +20992,18 @@
             instanceId: owner.kind === 'instance' ? (owner.instance_id || '') : ''
           }), cert);
         });
+      });
+      return Array.from(groups.values());
+    };
+
+    const groupByCA = (certs) => {
+      const cas = (view.fleet.length > 0 ? view.fleet : certs).filter((c) => c.kind === 'ca' || c.kind === 'intermediate');
+      const bySki = new Map();
+      cas.forEach((ca) => { if (ca.subject_key_id && !bySki.has(ca.subject_key_id)) bySki.set(ca.subject_key_id, ca); });
+      const groups = new Map();
+      const add = (id, label, sub, cert) => {
+        if (!groups.has(id)) groups.set(id, { id, label, sub, certs: [], selectable: false });
+        groups.get(id).certs.push(cert);
       };
       certs.forEach((cert) => {
         let parent = cert.authority_key_id ? bySki.get(cert.authority_key_id) : null;
@@ -20955,6 +21041,7 @@
         const seen = new Set();
         const pairs = [];
         group.certs.forEach((cert) => allowedPairs(cert).forEach(([id, name]) => {
+          if (id !== group.instanceId) return;
           const k = `${id}\u0000${name}`;
           if (!seen.has(k)) { seen.add(k); pairs.push([id, name]); }
         }));
@@ -20989,15 +21076,8 @@
       toggle.appendChild(chevron);
       toggle.appendChild(el('span', 'cert-group-name', group.label));
       toggle.appendChild(el('span', 'cert-group-count', `${group.certs.length}`));
-    // A certificate joins the group of every owner it has, so a shared
-    // certificate shows under each instance that uses it.
       toggle.addEventListener('click', () => {
         if (view.collapsed.has(group.id)) view.collapsed.delete(group.id); else view.collapsed.add(group.id);
-      const add = (id, make, cert) => {
-        if (!groups.has(id)) groups.set(id, make());
-        const group = groups.get(id);
-        if (!group.certs.includes(cert)) group.certs.push(cert);
-      };
         renderTable();
       });
       td.appendChild(toggle);
@@ -21054,7 +21134,6 @@
     };
 
     const caRunbook = () => runbookPanel(
-          if (id !== group.instanceId) return;
       'Renewing this certificate authority',
       'Renewing a CA replaces every certificate it signed. We run the two commands below in order, against the Genesis environment that deploys Blacksmith, and we replace <env> with that environment name.',
       CertRunbooks.caCommands('<env>'),
@@ -21333,7 +21412,7 @@
         if (seq !== view.seq) return;
 
         const query = toQuery(state);
-        const requests = [getJSON(`/b/certificates/inventory${query ? `?${query}` : ''}`)];
+        const requests = [fetchInventory(state)];
         if (query !== '') requests.push(getJSON('/b/certificates/inventory'));
         const results = await Promise.all(requests);
         if (seq !== view.seq) return;
@@ -21731,6 +21810,7 @@
         actions: q('cert-fleet-actions'),
         exportBtn: q('cert-export-btn'),
         exportMenu: q('cert-export-menu'),
+        exportNote: q('cert-export-note'),
         exportCsv: q('cert-export-csv'),
         exportJson: q('cert-export-json')
       };
@@ -21774,7 +21854,8 @@
         view.refs.exportMenu.hidden = !open;
         view.refs.exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
-      view.refs.exportMenu.addEventListener('click', () => {
+      view.refs.exportMenu.addEventListener('click', (event) => {
+        if (event.target.closest && event.target.closest('[aria-disabled="true"], .cert-export-note')) return;
         view.refs.exportMenu.hidden = true;
         view.refs.exportBtn.setAttribute('aria-expanded', 'false');
       });
@@ -21811,7 +21892,7 @@
       await refresh({ announce: false });
     };
 
-    return { state, toQuery, refresh, selection, init, startBadge, view, resetState, closeDrawer };
+    return { state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
   })();
 
   window.blacksmithCerts = {
