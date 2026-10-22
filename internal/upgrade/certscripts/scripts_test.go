@@ -15,8 +15,11 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
+	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/certpatch"
 	"blacksmith/internal/upgrade/certscripts"
 )
@@ -157,36 +160,125 @@ func TestNormHashRefusesNUL(t *testing.T) {
 	}
 }
 
+// stageProgramText is the fixed staging program. It refuses a name that
+// exists as anything at all, and a parent directory that is not root's
+// with mode 0700, before it writes.
+const stageProgramText = `sudo -n /bin/sh -c 'set -C && umask 077 && ` +
+	`[ ! -e "$1" ] && [ ! -L "$1" ] && [ ! -L "${1%/*}" ] && ` +
+	`[ "$(stat -c %u:%a -- "${1%/*}")" = 0:700 ] && cat > "$1"' sh`
+
 func TestStageCommandExact(t *testing.T) {
 	t.Parallel()
 
 	path := "/var/vcap/data/certpatch/" + testTaskID + "/s/0"
-	want := `sudo -n /bin/sh -c 'set -C && umask 077 && cat > "$1"' sh '` + path + `'`
+	want := stageProgramText + ` '` + path + `'`
 
-	got := certscripts.StageCommand(path)
+	got, err := certscripts.StageCommand(path, testTaskID)
+	if err != nil {
+		t.Fatalf("StageCommand: %v", err)
+	}
+
 	if got != want {
 		t.Errorf("StageCommand = %q\nwant         %q", got, want)
+	}
+}
+
+func TestStageCommandRefusesOtherPaths(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		"/var/vcap/data/certpatch/" + otherTaskID + "/s/0",
+		"/var/vcap/data/certpatch/" + testTaskID + "/s/../b/0",
+		pinnedTarget,
+		"/etc/shadow",
+		"",
+	} {
+		got, err := certscripts.StageCommand(path, testTaskID)
+		if !errors.Is(err, certscripts.ErrPathRefused) {
+			t.Errorf("StageCommand(%q) error = %v, want ErrPathRefused", path, err)
+		}
+
+		if got != "" {
+			t.Errorf("StageCommand(%q) returned %q with its error", path, got)
+		}
+	}
+}
+
+func TestCommandsPassTheRunnerCheck(t *testing.T) {
+	t.Parallel()
+
+	runner := ssh.NewRunner(nil, nil)
+
+	stage, err := certscripts.StageCommand("/var/vcap/data/certpatch/"+testTaskID+"/b/12", testTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	program, argv := certscripts.Invocation("patch", pinnedTarget, testTaskID, strings.Repeat("0123456789abcdef", 4))
+
+	for name, run := range map[string]func() error{
+		"staging": func() error {
+			_, err := runner.Run(t.Context(), stage, nil, nil, 0)
+
+			return err //nolint:wrapcheck // compared below
+		},
+		"invocation": func() error {
+			_, err := runner.Run(t.Context(), program, argv, nil, 0)
+
+			return err //nolint:wrapcheck // compared below
+		},
+	} {
+		// A runner with no connection checks the command line first, so
+		// ErrNoConnection means the command passed that check.
+		err := run()
+		if !errors.Is(err, ssh.ErrNoConnection) {
+			t.Errorf("%s command: Run error = %v, want ErrNoConnection", name, err)
+		}
 	}
 }
 
 // stagedText is what the staging tests try to write.
 const stagedText = "staged\n"
 
-// runStage runs the staging command without its sudo prefix, because the
-// container already runs as root and has no sudo. It reports whether the
-// command succeeded.
+// runStage runs the staging command on path, without its sudo prefix,
+// because the container already runs as root and has no sudo. It reports
+// whether the command succeeded. A command that blocks, as a write to a
+// FIFO would, fails the test when its context ends.
 func runStage(t *testing.T, path string) bool {
 	t.Helper()
 
-	command, ok := strings.CutPrefix(certscripts.StageCommand(path), "sudo -n ")
-	if !ok {
-		t.Fatalf("StageCommand does not start with sudo -n")
+	// Build the command for a real work path, then point it at path,
+	// so the test runs the program text StageCommand produces.
+	form := workBase + testTaskID + "/s/0"
+
+	command, err := certscripts.StageCommand(form, testTaskID)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	cmd := exec.CommandContext(t.Context(), "/bin/sh", "-c", command) //nolint:gosec // the command under test
+	program, found := strings.CutSuffix(command, " "+ssh.Quote(form))
+	if !found {
+		t.Fatal("the staging command does not end with its quoted path")
+	}
+
+	program, found = strings.CutPrefix(program, "sudo -n ")
+	if !found {
+		t.Fatal("the staging command does not start with sudo -n")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", program+" "+ssh.Quote(path)) //nolint:gosec // the command under test
 	cmd.Stdin = strings.NewReader(stagedText)
 
-	return cmd.Run() == nil
+	err = cmd.Run()
+
+	if ctx.Err() != nil {
+		t.Fatalf("staging %s blocked until its deadline", filepath.Base(path))
+	}
+
+	return err == nil
 }
 
 // writeFile writes a fixture file and fails the test when it cannot.
@@ -209,13 +301,27 @@ func symlink(t *testing.T, target, link string) {
 	}
 }
 
-func TestStageCommandRefusesExisting(t *testing.T) {
+// privateDir makes a directory with mode 0700 under dir.
+func privateDir(t *testing.T, dir, name string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, name)
+
+	err := os.Mkdir(path, 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+func TestStageCommandWritesNewFile(t *testing.T) {
 	t.Parallel()
-	requireLinux(t)
+	requireRoot(t)
 
-	dir := t.TempDir()
+	dir := privateDir(t, t.TempDir(), "s")
 
-	fresh := filepath.Join(dir, "fresh")
+	fresh := filepath.Join(dir, "0")
 	if !runStage(t, fresh) {
 		t.Fatal("staging a new name failed")
 	}
@@ -230,6 +336,14 @@ func TestStageCommandRefusesExisting(t *testing.T) {
 	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Errorf("staged file mode = %o, want 600", mode)
 	}
+}
+
+func TestStageCommandRefusesExisting(t *testing.T) {
+	t.Parallel()
+	requireRoot(t)
+
+	top := t.TempDir()
+	dir := privateDir(t, top, "s")
 
 	existing := filepath.Join(dir, "existing")
 	writeFile(t, existing, "other\n")
@@ -240,7 +354,7 @@ func TestStageCommandRefusesExisting(t *testing.T) {
 
 	assertContent(t, existing, "other\n")
 
-	target := filepath.Join(dir, "target")
+	target := filepath.Join(top, "target")
 	writeFile(t, target, "target\n")
 
 	link := filepath.Join(dir, "link")
@@ -253,15 +367,86 @@ func TestStageCommandRefusesExisting(t *testing.T) {
 	assertContent(t, target, "target\n")
 
 	dangling := filepath.Join(dir, "dangling")
-	symlink(t, filepath.Join(dir, "absent"), dangling)
+	symlink(t, filepath.Join(top, "absent"), dangling)
 
 	if runStage(t, dangling) {
 		t.Error("staging through a dangling symlink succeeded")
 	}
 
-	_, err = os.Lstat(filepath.Join(dir, "absent"))
+	_, err := os.Lstat(filepath.Join(top, "absent"))
 	if err == nil {
 		t.Error("staging through a dangling symlink created its target")
+	}
+
+	// set -C refuses only an existing regular file, so these two are
+	// refused by the explicit check that runs before the write. Without
+	// it, a FIFO would hand the staged bytes to whoever reads it, and the
+	// symlink would send them to /dev/null while staging reported success.
+	fifo := filepath.Join(dir, "fifo")
+
+	err = syscall.Mkfifo(fifo, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runStage(t, fifo) {
+		t.Error("staging onto a FIFO succeeded")
+	}
+
+	devNull := filepath.Join(dir, "null")
+	symlink(t, "/dev/null", devNull)
+
+	if runStage(t, devNull) {
+		t.Error("staging through a symlink to /dev/null succeeded")
+	}
+
+	sub := privateDir(t, dir, "sub")
+	if runStage(t, sub) {
+		t.Error("staging onto a directory succeeded")
+	}
+}
+
+func TestStageCommandRefusesUnprivateDirectory(t *testing.T) {
+	t.Parallel()
+	requireRoot(t)
+
+	top := t.TempDir()
+
+	open := privateDir(t, top, "open")
+
+	err := os.Chmod(open, 0o755) //nolint:gosec // the directory under test must be too open
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runStage(t, filepath.Join(open, "0")) {
+		t.Error("staging into a 0755 directory succeeded")
+	}
+
+	owned := privateDir(t, top, "owned")
+
+	err = os.Chown(owned, vcapUID, vcapUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runStage(t, filepath.Join(owned, "0")) {
+		t.Error("staging into a directory owned by vcap succeeded")
+	}
+
+	inside := privateDir(t, top, "inside")
+	linked := filepath.Join(top, "linked")
+	symlink(t, inside, linked)
+
+	if runStage(t, filepath.Join(linked, "0")) {
+		t.Error("staging through a symlinked directory succeeded")
+	}
+
+	for _, path := range []string{filepath.Join(open, "0"), filepath.Join(owned, "0"), filepath.Join(inside, "0")} {
+		_, err := os.Lstat(path)
+		if err == nil {
+			t.Errorf("the refused staging created %s", path)
+		}
 	}
 }
 
