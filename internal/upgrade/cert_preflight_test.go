@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -393,6 +394,124 @@ func TestRecheckEffects(t *testing.T) {
 
 			if !slices.Equal(changes, tc.want) {
 				t.Fatalf("expected changes %q, got %q", tc.want, changes)
+			}
+		})
+	}
+}
+
+// selectSecond makes the password a second selected variable of the
+// instance, at state, with the latest version latest in CredHub.
+func (e *preflightEnv) selectSecond(state, newVersionID, latest string) {
+	password := previewPassword(waitDeployment)
+
+	rotation := e.inst().Certificates
+	rotation.Approved.Selected = append(rotation.Approved.Selected, VersionPair{Name: password, DeployedVersionID: "p1", LatestVersionID: "p1"})
+	rotation.Approved.Additional = slices.DeleteFunc(rotation.Approved.Additional, func(p VersionPair) bool { return p.Name == password })
+	rotation.Variables = append(rotation.Variables, VariableRotation{
+		Name: password, CertificateID: "cert-password", OldVersionID: "p1", Baseline: []string{"p1"},
+		RegenerateState: state, NewVersionID: newVersionID,
+	})
+
+	e.credhub.setLatest(password, latest)
+}
+
+// A task that resumes after it regenerated a leaf finds that leaf's own
+// new version in CredHub, which is no outside change. A leaf whose
+// regeneration is being reconciled is left to the regeneration step, so
+// the re-check neither stops the task for re-approval nor touches the
+// pending decision.
+func TestRecheckBeforeRegenerateAcceptsOwnVersions(t *testing.T) {
+	t.Parallel()
+
+	leaf := previewLeaf(waitDeployment)
+
+	// confirmedLeaf records that the task made v2 of the leaf, which is
+	// CredHub's latest.
+	confirmedLeaf := func(env *preflightEnv, state, latest string) {
+		env.inst().Certificates.Variables[0].Baseline = []string{"v1"}
+		env.inst().Certificates.Variables[0].RegenerateState = state
+		env.inst().Certificates.Variables[0].NewVersionID = "v2"
+		env.credhub.setLatest(leaf, latest)
+	}
+
+	reconciling := &PendingDecision{
+		Kind: DecisionReconcileRegeneration, Variable: previewPassword(waitDeployment), Since: validateNow,
+		Candidates: []Candidate{{VersionID: "p2", CreatedAt: validateNow, Valid: true}},
+	}
+
+	tests := []struct {
+		name  string
+		setup func(env *preflightEnv)
+		want  []string
+	}{
+		{
+			name: "a confirmed leaf at its own version, with a second leaf being reconciled",
+			setup: func(env *preflightEnv) {
+				confirmedLeaf(env, RegenerateConfirmed, "v2")
+				env.selectSecond(RegenerateOutcomeUnknown, "", "p2")
+				env.inst().Status = StatusAwaitingDecision
+				env.inst().Certificates.Pending = reconciling.Clone()
+			},
+		},
+		{
+			name:  "an adopted leaf at the version an operator adopted",
+			setup: func(env *preflightEnv) { confirmedLeaf(env, RegenerateAdopted, "v2") },
+		},
+		{
+			name: "a leaf that was sending when the broker stopped",
+			setup: func(env *preflightEnv) {
+				env.selectSecond(RegenerateSending, "", "p2")
+			},
+		},
+		{
+			name: "a second leaf not yet sent still gets compared",
+			setup: func(env *preflightEnv) {
+				confirmedLeaf(env, RegenerateConfirmed, "v2")
+				env.selectSecond(RegenerateNotSent, "", "p2")
+			},
+			want: []string{"redis_password has a newer version (p2) than the preview listed (p1)."},
+		},
+		{
+			name:  "a confirmed leaf whose latest version is not its own",
+			setup: func(env *preflightEnv) { confirmedLeaf(env, RegenerateConfirmed, "v3") },
+			want:  []string{"redis_crt has a newer version (v3) that this task did not create."},
+		},
+		{
+			name: "a confirmed leaf that is deployed at another version",
+			setup: func(env *preflightEnv) {
+				confirmedLeaf(env, RegenerateConfirmed, "v2")
+				env.editDirector(func(d *previewDirector) {
+					for i := range d.variables[waitDeployment] {
+						if d.variables[waitDeployment][i].Name == leaf {
+							d.variables[waitDeployment][i].ID = "v0"
+						}
+					}
+				})
+			},
+			want: []string{"redis_crt is deployed at version v0, not v1 as in the preview."},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := newPreflightEnv(t, RotationModeRedeploy)
+			tc.setup(env)
+
+			before := env.inst().Certificates.Pending.Clone()
+
+			changes, err := env.recheck(BeforeRegenerate)
+			if err != nil {
+				t.Fatalf("recheckEffects: %v", err)
+			}
+
+			if !slices.Equal(changes, tc.want) {
+				t.Fatalf("expected changes %q, got %q", tc.want, changes)
+			}
+
+			if after := env.inst().Certificates.Pending; !reflect.DeepEqual(after, before) {
+				t.Fatalf("expected the pending decision untouched, got %+v, was %+v", after, before)
 			}
 		})
 	}

@@ -292,7 +292,9 @@ func (e effectsNow) differing(skip map[string]bool) []VersionPair {
 //
 // BeforeRegenerate compares everything in Approved: the VM CIDs, each
 // selected variable's deployed and latest versions, and the additional
-// variables. BeforeMutation compares the additional variables and
+// variables. A selected variable the task already regenerated is compared
+// with its own new version, and one still being reconciled is left to the
+// regeneration step. BeforeMutation compares the additional variables and
 // requires each selected variable's latest version to be the one the task
 // made. BeforeConverge compares the full set of variables whose latest
 // version differs from the deployed one with the set the task expects,
@@ -332,7 +334,7 @@ func (m *Manager) recheckEffects(ctx context.Context, task *UpgradeTask, inst *I
 		}
 
 		changes = append(changes, cidChanges...)
-		changes = append(changes, selectedChanges(approved.Selected, now)...)
+		changes = append(changes, selectedChanges(approved.Selected, variables, now)...)
 		changes = append(changes, additionalChanges(approved.Additional, now.differing(selected))...)
 	case BeforeMutation:
 		changes = append(changes, additionalChanges(approved.Additional, now.differing(selected))...)
@@ -383,8 +385,18 @@ func shortName(name string) string {
 }
 
 // selectedChanges compares each selected variable's deployed and latest
-// versions with the approved ones.
-func selectedChanges(approved []VersionPair, now effectsNow) []string {
+// versions with the approved ones. A variable the task has regenerated
+// must have its own new version as the latest one, so a task that resumes
+// after a regeneration does not report its own version as an outside
+// change. A variable whose request was sent but whose outcome is not known
+// yet is left to the regeneration step, which reconciles it, so only its
+// deployed version is compared.
+func selectedChanges(approved []VersionPair, variables []VariableRotation, now effectsNow) []string {
+	rotations := make(map[string]VariableRotation, len(variables))
+	for _, variable := range variables {
+		rotations[variable.Name] = variable
+	}
+
 	var changes []string
 
 	for _, pair := range approved {
@@ -401,11 +413,18 @@ func selectedChanges(approved []VersionPair, now effectsNow) []string {
 			changes = append(changes, fmt.Sprintf("%s is deployed at version %s, not %s as in the preview.", name, deployed, pair.DeployedVersionID))
 		}
 
+		rotation := rotations[pair.Name]
 		latest, ok := now.latest[pair.Name]
 
 		switch {
 		case !ok:
 			changes = append(changes, name+" has no version in CredHub any more.")
+		case rotation.NewVersionID != "":
+			if latest != rotation.NewVersionID {
+				changes = append(changes, fmt.Sprintf("%s has a newer version (%s) that this task did not create.", name, latest))
+			}
+		case rotation.RegenerateState != "" && rotation.RegenerateState != RegenerateNotSent:
+			// The regeneration step reconciles this variable's versions.
 		case latest != pair.LatestVersionID:
 			changes = append(changes, fmt.Sprintf("%s has a newer version (%s) than the preview listed (%s).", name, latest, pair.LatestVersionID))
 		}
