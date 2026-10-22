@@ -20877,10 +20877,10 @@
     const groupByOwner = (certs) => {
       const groups = new Map();
       certs.forEach((cert) => {
-        const owner = (cert.owners || [])[0];
-        const id = owner ? `owner:${owner.kind || ''}:${owner.instance_id || ''}` : 'owner:none';
-        if (!groups.has(id)) {
-          groups.set(id, { id, label: owner ? ownerLabel(owner) : 'Unknown owner', sub: owner && owner.service_name ? `${owner.service_name}${owner.plan_name ? ` / ${owner.plan_name}` : ''}` : '', certs: [], selectable: true });
+        const owners = (cert.owners || []).filter(Boolean);
+        if (owners.length === 0) {
+          add('owner:none', () => ({ id: 'owner:none', label: 'Unknown owner', sub: '', certs: [], selectable: true, instanceId: '' }), cert);
+          return;
         }
         groups.get(id).certs.push(cert);
       });
@@ -20894,7 +20894,17 @@
       const groups = new Map();
       const add = (id, label, sub, cert) => {
         if (!groups.has(id)) groups.set(id, { id, label, sub, certs: [], selectable: false });
-        groups.get(id).certs.push(cert);
+        owners.forEach((owner) => {
+          const id = `owner:${owner.kind || ''}:${owner.instance_id || ''}`;
+          add(id, () => ({
+            id,
+            label: ownerLabel(owner),
+            sub: owner.service_name ? `${owner.service_name}${owner.plan_name ? ` / ${owner.plan_name}` : ''}` : '',
+            certs: [],
+            selectable: true,
+            instanceId: owner.kind === 'instance' ? (owner.instance_id || '') : ''
+          }), cert);
+        });
       };
       certs.forEach((cert) => {
         let parent = cert.authority_key_id ? bySki.get(cert.authority_key_id) : null;
@@ -20966,8 +20976,15 @@
       toggle.appendChild(chevron);
       toggle.appendChild(el('span', 'cert-group-name', group.label));
       toggle.appendChild(el('span', 'cert-group-count', `${group.certs.length}`));
+    // A certificate joins the group of every owner it has, so a shared
+    // certificate shows under each instance that uses it.
       toggle.addEventListener('click', () => {
         if (view.collapsed.has(group.id)) view.collapsed.delete(group.id); else view.collapsed.add(group.id);
+      const add = (id, make, cert) => {
+        if (!groups.has(id)) groups.set(id, make());
+        const group = groups.get(id);
+        if (!group.certs.includes(cert)) group.certs.push(cert);
+      };
         renderTable();
       });
       td.appendChild(toggle);
@@ -21024,6 +21041,7 @@
     };
 
     const caRunbook = () => runbookPanel(
+          if (id !== group.instanceId) return;
       'Renewing this certificate authority',
       'Renewing a CA replaces every certificate it signed. We run the two commands below in order, against the Genesis environment that deploys Blacksmith, and we replace <env> with that environment name.',
       CertRunbooks.caCommands('<env>'),
