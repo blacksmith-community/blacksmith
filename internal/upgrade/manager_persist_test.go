@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -376,7 +377,10 @@ func TestLoadRestoresReservationsBeforeLoaded(t *testing.T) {
 
 // The load reserves by each instance's state. An unfinished upgrade holds
 // the instances it has not settled, and any upgrade holds an instance whose
-// deploy was in flight until the loader settles it.
+// deploy was in flight until the loader settles it. The loaded cancelled
+// upgrade cancels its own deploy task, which the director keeps running
+// until the test releases it, so the settle can't free the instance before
+// the test looks.
 func TestLoadReservesByInstanceState(t *testing.T) {
 	t.Parallel()
 
@@ -388,6 +392,7 @@ func TestLoadReservesByInstanceState(t *testing.T) {
 
 	director := newResumeDirector()
 	director.holdAdopted()
+	director.holdThroughCancel()
 	director.holdDeployment(nextDeployment)
 	t.Cleanup(func() {
 		director.release(adoptedTaskID)
@@ -420,6 +425,13 @@ func TestLoadReservesByInstanceState(t *testing.T) {
 	expectHeldBy(t, manager, thirdInstanceID, cancelledTaskID)
 
 	director.waitForWaitOn(t, adoptedTaskID)
+
+	if cancels := director.cancelled(); !slices.Contains(cancels, adoptedTaskID) {
+		t.Fatalf("expected the cancelled upgrade to cancel its BOSH task %d, got %v", adoptedTaskID, cancels)
+	}
+
+	expectHeldBy(t, manager, thirdInstanceID, cancelledTaskID)
+
 	director.release(adoptedTaskID)
 
 	eventuallyFree(t, manager, thirdInstanceID)

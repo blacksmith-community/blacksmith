@@ -33,8 +33,9 @@ const (
 // resumeDirector is a director for resumed upgrades. Each deploy gets a
 // task of its own, and the wait on a task returns it done at once, unless
 // the test holds the task or its deployment, when the wait lasts until the
-// test releases it or cancels it. A call it does not script panics through
-// the nil embedded Director.
+// test releases it or cancels it. A test that holds tasks through a cancel
+// releases them itself. A call it does not script panics through the nil
+// embedded Director.
 type resumeDirector struct {
 	bosh.Director
 
@@ -47,6 +48,10 @@ type resumeDirector struct {
 	states      map[int]string
 	waits       map[int]int
 	cancels     []int
+
+	// heldThroughCancel keeps a cancelled task's wait going until the test
+	// releases the task.
+	heldThroughCancel bool
 
 	// deployOptions holds the options of each deploy sent with options.
 	deployOptions []bosh.DeployOptions
@@ -139,11 +144,23 @@ func (d *resumeDirector) CancelTask(_ context.Context, taskID int) error {
 	d.mu.Lock()
 	d.cancels = append(d.cancels, taskID)
 	d.states[taskID] = boshTaskCancelled
+	heldThroughCancel := d.heldThroughCancel
 	d.mu.Unlock()
 
-	d.release(taskID)
+	if !heldThroughCancel {
+		d.release(taskID)
+	}
 
 	return nil
+}
+
+// holdThroughCancel makes a cancel leave a held task's wait going until
+// the test releases the task, which then ends in state cancelled.
+func (d *resumeDirector) holdThroughCancel() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.heldThroughCancel = true
 }
 
 // holdAdopted makes the wait on the adopted task last until the test
