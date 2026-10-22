@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" type="text/css" href="/tailwind.css">
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=2026102204">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=2026102205">
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261021">
@@ -71,6 +71,7 @@
         <button class="tab-button flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service
           Instances</button>
         <button class="tab-button flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="upgrade" role="tab" aria-selected="false" aria-controls="upgrade">Batch Operations</button>
+        <button class="tab-button flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="certificates" role="tab" aria-selected="false" aria-controls="certificates">Certificates <span id="certificates-badge" class="cert-nav-badge" role="img" hidden></span></button>
       </div>
 
       <!-- Tab content panels -->
@@ -129,6 +130,8 @@
             </div>
           </div>
         </div>
+
+        <div id="certificates" class="tab-panel flex-1 flex flex-col" role="tabpanel" aria-hidden="true"></div>
 
       </div>
     </div>
@@ -361,7 +364,7 @@
   <div id="blacksmith-live-region" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script type="text/javascript" src="/xterm.min.js"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=2026102204"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=2026102205"></script>
   <dialog id="navigation-dialog" aria-labelledby="navigation-title">
     <div class="navigation-heading"><h2 id="navigation-title">Go to a screen</h2><button type="button" data-close aria-label="Close navigation">Esc</button></div>
     <label for="navigation-search">Search screens or service instances</label>

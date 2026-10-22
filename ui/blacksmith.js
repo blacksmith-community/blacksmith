@@ -10880,6 +10880,14 @@
         }
       }
 
+      if (tabId === 'certificates') {
+        try {
+          await initCertificatesTab();
+        } catch (error) {
+          console.error('Failed to initialize the certificates tab:', error);
+        }
+      }
+
       // Re-initialize sorting for any tables in the newly activated tab
       await new Promise((resolve) => {
         setTimeout(() => {
@@ -19064,5 +19072,1294 @@
   window.showCFEndpointForm = showCFEndpointForm;
   window.hideCFEndpointForm = hideCFEndpointForm;
   window.saveCFEndpoint = saveCFEndpoint;
+
+  // ================================================================
+  // FLEET CERTIFICATES TAB
+  // ================================================================
+  //
+  // The tab reads GET /b/certificates/inventory and renders what the
+  // broker computed. It never works out an expiry class, a health state,
+  // or whether an action is allowed. All structure is built with DOM
+  // calls, and every value from the API reaches the page through
+  // textContent or setAttribute.
+
+  const CertsFleet = (() => {
+    const el = CertView.el;
+
+    const LIST_FIELDS = ['expiry', 'health', 'kind', 'source', 'owner', 'service', 'plan', 'instance', 'finding'];
+    const KIND_VALUES = ['ca', 'intermediate', 'leaf'];
+    const SOURCE_VALUES = ['credhub', 'manifest', 'probe', 'broker', 'trust-store', 'platform', 'vault'];
+    const HEALTH_VALUES = ['error', 'warning', 'ok', 'unknown'];
+    const FINDING_VALUES = [
+      'chain_broken', 'services_ca_drift', 'pinned_ca_mismatch', 'signing_ca_changed', 'patch_reverted',
+      'unconverged', 'issuer_expires_first', 'san_mismatch', 'served_mismatch', 'weak_key', 'weak_signature',
+      'deploy_pending', 'probe_failed'
+    ];
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const ROTATION_WAIT_TEXT = 'Rotation arrives with certificates.rotation.enabled';
+
+    const POLL_RUNNING_MS = 5000;
+    const POLL_IDLE_MS = 60000;
+    const BADGE_POLL_MS = 5 * 60 * 1000;
+
+    // One filter object. Its fields mirror certinventory.Filter, and
+    // every query string, chip, and export link derives from it.
+    const newFilterState = () => ({
+      expiry: [],
+      health: [],
+      kind: [],
+      source: [],
+      owner: [],
+      service: [],
+      plan: [],
+      instance: [],
+      finding: [],
+      attention: false,
+      expires_after: '',
+      expires_before: '',
+      q: ''
+    });
+
+    const state = newFilterState();
+
+    // Shared with Batch Operations: instance ID -> Set of full variable names.
+    const selection = new Map();
+
+    const resetState = () => {
+      const fresh = newFilterState();
+      Object.keys(fresh).forEach((key) => { state[key] = fresh[key]; });
+    };
+
+    const toQuery = (filters, extra) => {
+      const f = filters || state;
+      const params = new URLSearchParams();
+      LIST_FIELDS.forEach((field) => {
+        (f[field] || []).forEach((value) => params.append(field, value));
+      });
+      if (f.attention) params.set('attention', 'true');
+      if (f.expires_after) params.set('expires_after', f.expires_after);
+      if (f.expires_before) params.set('expires_before', f.expires_before);
+      if (f.q && String(f.q).trim()) params.set('q', String(f.q).trim());
+      if (extra) {
+        Object.keys(extra).forEach((key) => params.set(key, extra[key]));
+      }
+      return params.toString();
+    };
+
+    const view = {
+      root: null,
+      built: false,
+      resp: null,
+      fleet: [],
+      mode: 'loading',
+      errorMessage: '',
+      refreshError: '',
+      expanded: new Set(),
+      seq: 0,
+      timer: null,
+      signature: '',
+      defaultsApplied: false,
+      facets: { service: new Set(), plan: new Set() },
+      facetSignature: '',
+      lastProgress: '',
+      announceNext: false,
+      refs: {},
+      badgeTimer: null,
+      badgeStarted: false
+    };
+
+    // ----- small helpers -----
+
+    const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+    const pad = (n) => String(n).padStart(2, '0');
+
+    const clock = (value) => {
+      const d = new Date(value);
+      if (!value || Number.isNaN(d.getTime())) return '';
+      return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+    };
+
+    const shortDate = (value) => {
+      const d = new Date(value);
+      if (!value || Number.isNaN(d.getTime())) return 'Unknown';
+      return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+    };
+
+    const isActive = () => Boolean(view.root && view.root.classList.contains('active'));
+
+    const button = (className, text) => {
+      const b = el('button', className, text);
+      b.type = 'button';
+      return b;
+    };
+
+    const getJSON = async (url, options = {}) => {
+      const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-cache', ...options });
+      let body = null;
+      try {
+        body = await response.json();
+      } catch (_) {
+        body = null;
+      }
+      return { ok: response.ok, status: response.status, body };
+    };
+
+    const errorText = (result, fallback) => {
+      const body = result && result.body;
+      if (body && typeof body.error === 'string' && body.error) return body.error;
+      return fallback || `The broker answered ${result ? result.status : 'with an error'}.`;
+    };
+
+    const isDisabledAnswer = (result) => Boolean(result && result.status === 403 && result.body && result.body.code === 'inventory_disabled');
+
+    const ownerLabel = (owner) => {
+      if (!owner) return '';
+      if (owner.kind === 'broker') return 'Broker';
+      if (owner.kind === 'platform') return owner.instance_name || 'Platform';
+      return owner.instance_name || owner.instance_id || 'Instance';
+    };
+
+    const certName = (cert) => cert.variable || cert.common_name || cert.key || cert.id || 'Certificate';
+
+    const ownerSummary = (cert) => {
+      const owners = Array.isArray(cert.owners) ? cert.owners : [];
+      const first = owners.length > 0 ? ownerLabel(owners[0]) : 'Unknown';
+      const total = Math.max(Number(cert.affected_instances) || 0, owners.length);
+      return total > 1 ? `${first} (+${total - 1})` : first;
+    };
+
+    const instancePairs = (cert) => {
+      const owners = Array.isArray(cert.owners) ? cert.owners : [];
+      const seen = new Set();
+      const pairs = [];
+      owners.forEach((owner) => {
+        if (owner && owner.kind === 'instance' && owner.instance_id && cert.key && !seen.has(owner.instance_id)) {
+          seen.add(owner.instance_id);
+          pairs.push([owner.instance_id, cert.key]);
+        }
+      });
+      return pairs;
+    };
+
+    // ----- selection -----
+
+    const selectionCount = () => {
+      let count = 0;
+      selection.forEach((names) => { count += names.size; });
+      return count;
+    };
+
+    const pairSelected = (instanceId, name) => Boolean(selection.get(instanceId) && selection.get(instanceId).has(name));
+
+    const setPair = (instanceId, name, on) => {
+      if (on) {
+        if (!selection.has(instanceId)) selection.set(instanceId, new Set());
+        selection.get(instanceId).add(name);
+      } else if (selection.has(instanceId)) {
+        selection.get(instanceId).delete(name);
+        if (selection.get(instanceId).size === 0) selection.delete(instanceId);
+      }
+    };
+
+    // ----- shell -----
+
+    const SHELL = `
+      <div class="cert-fleet" id="cert-fleet">
+        <div class="cert-fleet-header">
+          <div class="cert-fleet-heading">
+            <h2 class="cert-fleet-title" id="cert-fleet-title" tabindex="-1">Certificates</h2>
+            <p class="cert-fleet-summary" id="cert-fleet-summary"></p>
+          </div>
+          <div class="cert-fleet-actions" id="cert-fleet-actions">
+            <button type="button" class="execute-btn" id="cert-scan-btn">Scan now</button>
+            <div class="cert-export">
+              <button type="button" class="cert-action-btn" id="cert-export-btn" aria-haspopup="true" aria-expanded="false" aria-controls="cert-export-menu">Export</button>
+              <div class="cert-export-menu" id="cert-export-menu" hidden>
+                <a class="cert-export-link" id="cert-export-csv" download>Download CSV</a>
+                <a class="cert-export-link" id="cert-export-json" download>Download JSON</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="cert-fleet-state" class="cert-fleet-state" hidden></div>
+        <div id="cert-fleet-main">
+          <div id="cert-fleet-notices" class="cert-notices"></div>
+          <div class="cert-strips" id="cert-strips">
+            <div class="cert-strip" id="cert-strip-attention" role="group" aria-label="Attention filters"></div>
+            <div class="cert-strip" id="cert-strip-expiry" role="group" aria-label="Expiry filters"></div>
+          </div>
+          <div id="cert-fleet-timeline" class="cert-timeline-wrap"></div>
+          <div class="cert-toolbar" id="cert-toolbar">
+            <label class="cert-field cert-field-search">
+              <span class="cert-field-label">Search</span>
+              <input type="search" id="cert-search" placeholder="Search CN, variable, owner..." autocomplete="off" aria-keyshortcuts="/">
+            </label>
+            <label class="cert-field">
+              <span class="cert-field-label">Service</span>
+              <select id="cert-filter-service"></select>
+            </label>
+            <label class="cert-field">
+              <span class="cert-field-label">Plan</span>
+              <select id="cert-filter-plan"></select>
+            </label>
+            <button type="button" class="cert-action-btn" id="cert-more-btn" aria-expanded="false" aria-controls="cert-more-panel">More filters</button>
+          </div>
+          <div class="cert-more-panel" id="cert-more-panel" hidden></div>
+          <div class="cert-chips" id="cert-chips" aria-label="Active filters"></div>
+          <div class="cert-selection-line" id="cert-selection-line"></div>
+          <div class="cert-groupby" id="cert-groupby"></div>
+          <div class="cert-table-wrap" id="cert-table-wrap" tabindex="-1">
+            <table class="cert-table" id="cert-table">
+              <caption class="visually-hidden">Certificates in the fleet</caption>
+              <thead id="cert-thead"></thead>
+              <tbody id="cert-tbody"></tbody>
+            </table>
+          </div>
+          <div id="cert-empty" class="cert-empty" hidden></div>
+        </div>
+      </div>
+    `;
+
+    // ----- state panels -----
+
+    const showStatePanel = (node, hideActions) => {
+      view.refs.state.replaceChildren(node);
+      view.refs.state.hidden = false;
+      view.refs.main.hidden = true;
+      view.refs.actions.hidden = Boolean(hideActions);
+    };
+
+    const showMain = () => {
+      view.refs.state.hidden = true;
+      view.refs.state.replaceChildren();
+      view.refs.main.hidden = false;
+      view.refs.actions.hidden = false;
+    };
+
+    const disabledPanel = () => {
+      const box = el('div', 'cert-state-panel cert-state-disabled');
+      box.setAttribute('role', 'status');
+      box.appendChild(el('h3', null, 'Certificate inventory is turned off'));
+      const p = el('p');
+      p.appendChild(document.createTextNode('This broker has the certificate inventory switched off. To turn it on, set '));
+      p.appendChild(el('code', null, 'certificates.inventory.enabled'));
+      p.appendChild(document.createTextNode(' to true in the broker configuration and redeploy.'));
+      box.appendChild(p);
+      return box;
+    };
+
+    const firstScanErrorPanel = (message) => {
+      const box = el('div', 'cert-state-panel cert-state-error');
+      box.setAttribute('role', 'alert');
+      box.appendChild(el('h3', null, 'The first certificate scan failed'));
+      box.appendChild(el('p', null, message || 'The broker has no certificates to show yet.'));
+      const retry = button('execute-btn cert-retry-button', 'Retry');
+      retry.addEventListener('click', () => { startScan({ retryFirst: true }); });
+      box.appendChild(retry);
+      return box;
+    };
+
+    const loadErrorPanel = (message) => {
+      const box = CertView.errorBlock({
+        title: 'The certificate inventory could not be loaded',
+        message,
+        onRetry: () => { refresh({ announce: true }); }
+      });
+      box.classList.add('cert-state-panel');
+      box.setAttribute('role', 'alert');
+      return box;
+    };
+
+    // ----- header, notices, strips -----
+
+    const renderHeader = () => {
+      const { resp } = view;
+      const summaryEl = view.refs.summary;
+      if (!resp || view.mode === 'first-error' || view.mode === 'loading') {
+        summaryEl.textContent = '';
+        return;
+      }
+      const s = resp.summary || {};
+      const scan = resp.scan || {};
+      if (view.mode === 'skeleton') {
+        const progress = scan.progress || {};
+        summaryEl.textContent = scan.state === 'running'
+          ? `Scanning ${progress.done || 0} of ${progress.total || 0} instances.`
+          : 'Waiting for the first scan to finish.';
+        return;
+      }
+      const parts = [`${plural(s.certificates || 0, 'certificate')} on ${plural(s.affected_instances || 0, 'instance')}.`];
+      if (scan.state === 'running') {
+        const progress = scan.progress || {};
+        parts.push(`Scanning ${progress.done || 0} of ${progress.total || 0} instances.`);
+      } else if (scan.completed_at) {
+        let line = `Scanned ${clock(scan.completed_at)}`;
+        if (scan.next_at) line += `, next ${clock(scan.next_at)}`;
+        parts.push(`${line}.`);
+      }
+      summaryEl.textContent = parts.join(' ');
+    };
+
+    const credhubNotice = (resp) => {
+      const caps = resp.capabilities || {};
+      const credhub = caps.credhub || {};
+      const unknown = (resp.summary && resp.summary.expiry_unknown) || 0;
+      if (!credhub.state || credhub.state === 'configured') return null;
+
+      const box = el('div', 'cert-notice cert-notice--info');
+      box.setAttribute('role', 'note');
+      const lead = el('p', 'cert-notice-text');
+      if (credhub.state === 'not_configured') {
+        lead.textContent = unknown > 0
+          ? `CredHub is not configured, so ${plural(unknown, 'certificate')} show${unknown === 1 ? 's' : ''} an unknown expiry.`
+          : 'CredHub is not configured.';
+      } else if (credhub.state === 'unreachable') {
+        lead.textContent = `CredHub could not be reached${credhub.reason ? `. ${credhub.reason}` : '.'}`;
+      } else if (credhub.state === 'refused') {
+        lead.textContent = `CredHub refused the broker's request${credhub.reason ? `. ${credhub.reason}` : '.'}`;
+      } else {
+        lead.textContent = `CredHub is ${credhub.state}.`;
+      }
+      box.appendChild(lead);
+
+      if (credhub.state === 'not_configured') {
+        const details = el('details', 'cert-notice-help');
+        details.appendChild(el('summary', null, 'How to turn on CredHub certificates'));
+        details.appendChild(el('p', null, 'The Blacksmith kit renders the broker\'s credhub block only when the BOSH director\'s exodus record holds all five blacksmith_credhub_* keys. Deploy the BOSH kit release that creates the blacksmith_credhub UAA client on the director, redeploy Blacksmith, and then turn on certificates.rotation.enabled in the kit parameters.'));
+        box.appendChild(details);
+      }
+      return box;
+    };
+
+    const directorNotice = (resp) => {
+      const caps = resp.capabilities || {};
+      const director = caps.director || {};
+      const rotation = caps.rotation || {};
+      const missing = rotation.reason === 'BOSH director unavailable';
+      if (!missing && !director.reason) return null;
+      const box = el('div', 'cert-notice cert-notice--info');
+      box.setAttribute('role', 'note');
+      box.appendChild(el('p', 'cert-notice-text', missing
+        ? 'The BOSH director is unavailable, so certificates on service instances may be missing from this list.'
+        : director.reason));
+      return box;
+    };
+
+    const staleNotice = (resp) => {
+      const scan = resp.scan || {};
+      const errors = Array.isArray(scan.errors) ? scan.errors : [];
+      if (errors.length === 0) return null;
+
+      let oldest = '';
+      errors.forEach((entry) => {
+        if (entry.last_success_at && (!oldest || new Date(entry.last_success_at) < new Date(oldest))) {
+          oldest = entry.last_success_at;
+        }
+      });
+      const shownAt = oldest || scan.completed_at;
+
+      const box = el('div', 'cert-notice cert-notice--warn');
+      box.setAttribute('role', 'alert');
+      const text = `${plural(errors.length, 'instance')} could not be scanned.${shownAt ? ` Showing data from ${clock(shownAt)}.` : ''}`;
+      box.appendChild(el('p', 'cert-notice-text', text));
+
+      const ids = errors.map((entry) => entry.instance_id).filter(Boolean);
+      if (ids.length > 0) {
+        const show = button('cert-link-btn', 'Show them');
+        show.addEventListener('click', () => {
+          state.instance = ids;
+          changed();
+        });
+        box.appendChild(show);
+      }
+
+      const list = el('ul', 'cert-notice-list');
+      errors.slice(0, 5).forEach((entry) => {
+        list.appendChild(el('li', null, `${entry.instance_id || 'Broker'}: ${entry.error || 'scan failed'}`));
+      });
+      box.appendChild(list);
+      return box;
+    };
+
+    const refreshErrorNotice = () => {
+      if (!view.refreshError) return null;
+      const box = el('div', 'cert-notice cert-notice--warn');
+      box.setAttribute('role', 'alert');
+      const when = view.resp && view.resp.generated_at ? ` Showing data from ${clock(view.resp.generated_at)}.` : '';
+      box.appendChild(el('p', 'cert-notice-text', `The inventory could not be refreshed. ${view.refreshError}${when}`));
+      const retry = button('cert-link-btn', 'Retry');
+      retry.addEventListener('click', () => { refresh({ announce: true }); });
+      box.appendChild(retry);
+      return box;
+    };
+
+    const renderNotices = () => {
+      const holder = view.refs.notices;
+      const resp = view.resp;
+      const nodes = [];
+      if (resp && view.mode === 'ready') {
+        [refreshErrorNotice(), credhubNotice(resp), directorNotice(resp), staleNotice(resp)].forEach((node) => {
+          if (node) nodes.push(node);
+        });
+      } else {
+        const failed = refreshErrorNotice();
+        if (failed) nodes.push(failed);
+      }
+      holder.replaceChildren(...nodes);
+    };
+
+    // A strip button is a toggle. The two strips are built once, and each
+    // render only updates the counts and the pressed state.
+    const toggleValue = (field, value) => {
+      const list = state[field];
+      const index = list.indexOf(value);
+      if (index >= 0) list.splice(index, 1); else list.push(value);
+    };
+
+    const STRIPS = {
+      attention: [
+        { label: 'Needs attention', tone: 'critical', count: (s) => s.needs_attention, pressed: () => state.attention, toggle: () => { state.attention = !state.attention; } },
+        { label: 'Health errors', tone: 'critical', count: (s) => s.health_errors, pressed: () => state.health.includes('error'), toggle: () => toggleValue('health', 'error') },
+        { label: 'Unconverged', tone: 'warning', count: (s) => s.unconverged, pressed: () => state.finding.includes('unconverged'), toggle: () => toggleValue('finding', 'unconverged') }
+      ],
+      expiry: [
+        { label: 'Expired', tone: 'expired', count: (s) => s.expired, pressed: () => state.expiry.includes('expired'), toggle: () => toggleValue('expiry', 'expired') },
+        { label: 'Critical', tone: 'critical', count: (s) => s.critical, pressed: () => state.expiry.includes('critical'), toggle: () => toggleValue('expiry', 'critical') },
+        { label: 'Warning', tone: 'warning', count: (s) => s.warning, pressed: () => state.expiry.includes('warning'), toggle: () => toggleValue('expiry', 'warning') },
+        { label: 'Expiry OK', tone: 'ok', count: (s) => s.expiry_ok, pressed: () => state.expiry.includes('ok'), toggle: () => toggleValue('expiry', 'ok') },
+        { label: 'Unknown', tone: 'unknown', count: (s) => s.expiry_unknown, pressed: () => state.expiry.includes('unknown'), toggle: () => toggleValue('expiry', 'unknown') }
+      ]
+    };
+
+    const buildStrips = () => {
+      view.refs.stripButtons = [];
+      [['attention', view.refs.stripAttention], ['expiry', view.refs.stripExpiry]].forEach(([name, holder]) => {
+        STRIPS[name].forEach((def) => {
+          const b = button(`cert-strip-btn cert-strip-btn--${def.tone}`);
+          b.appendChild(el('span', 'cert-strip-label', def.label));
+          const count = el('span', 'cert-strip-count', '0');
+          b.appendChild(count);
+          b.addEventListener('click', () => {
+            def.toggle();
+            changed();
+          });
+          holder.appendChild(b);
+          view.refs.stripButtons.push({ def, b, count });
+        });
+      });
+    };
+
+    const renderStrips = () => {
+      const summary = (view.resp && view.resp.summary) || {};
+      view.refs.stripButtons.forEach(({ def, b, count }) => {
+        const n = Number(def.count(summary)) || 0;
+        count.textContent = String(n);
+        b.setAttribute('aria-pressed', def.pressed() ? 'true' : 'false');
+        b.setAttribute('aria-label', `${def.label}, ${n}`);
+      });
+    };
+
+    // ----- toolbar and chips -----
+
+    const collectFacets = () => {
+      const source = view.fleet.length > 0 ? view.fleet : ((view.resp && view.resp.certificates) || []);
+      source.forEach((cert) => {
+        (cert.owners || []).forEach((owner) => {
+          if (owner.service_name) view.facets.service.add(owner.service_name);
+          if (owner.plan_name) view.facets.plan.add(owner.plan_name);
+        });
+      });
+      state.service.forEach((v) => view.facets.service.add(v));
+      state.plan.forEach((v) => view.facets.plan.add(v));
+    };
+
+    const fillSelect = (select, values, current) => {
+      const sorted = Array.from(values).sort((a, b) => a.localeCompare(b));
+      const options = [''].concat(sorted);
+      const sig = options.join('\u0000');
+      if (select.dataset.sig !== sig) {
+        select.dataset.sig = sig;
+        select.replaceChildren(...options.map((value) => {
+          const o = el('option', null, value === '' ? 'All' : value);
+          o.value = value;
+          return o;
+        }));
+      }
+      select.value = current || '';
+    };
+
+    const buildMorePanel = () => {
+      const groups = [
+        ['health', 'Health', HEALTH_VALUES],
+        ['kind', 'Kind', KIND_VALUES],
+        ['source', 'Source', SOURCE_VALUES],
+        ['finding', 'Finding', FINDING_VALUES]
+      ];
+      view.refs.moreChecks = [];
+      groups.forEach(([field, label, values]) => {
+        const fieldset = el('fieldset', 'cert-more-group');
+        fieldset.appendChild(el('legend', null, label));
+        values.forEach((value) => {
+          const wrap = el('label', 'cert-check');
+          const input = el('input');
+          input.type = 'checkbox';
+          input.addEventListener('change', () => {
+            const list = state[field];
+            const index = list.indexOf(value);
+            if (input.checked && index < 0) list.push(value);
+            if (!input.checked && index >= 0) list.splice(index, 1);
+            changed();
+          });
+          wrap.appendChild(input);
+          wrap.appendChild(el('span', null, value));
+          fieldset.appendChild(wrap);
+          view.refs.moreChecks.push({ field, value, input });
+        });
+        view.refs.morePanel.appendChild(fieldset);
+      });
+    };
+
+    const renderToolbar = () => {
+      collectFacets();
+      fillSelect(view.refs.service, view.facets.service, state.service[0]);
+      fillSelect(view.refs.plan, view.facets.plan, state.plan[0]);
+      view.refs.moreChecks.forEach(({ field, value, input }) => {
+        input.checked = state[field].includes(value);
+      });
+      if (document.activeElement !== view.refs.search && view.refs.search.value !== state.q) {
+        view.refs.search.value = state.q;
+      }
+      const hiddenFilters = view.refs.moreChecks.filter(({ field, value }) => state[field].includes(value)).length;
+      view.refs.moreBtn.textContent = hiddenFilters > 0 ? `More filters (${hiddenFilters})` : 'More filters';
+    };
+
+    const chipDefs = () => {
+      const chips = [];
+      LIST_FIELDS.forEach((field) => {
+        state[field].forEach((value) => {
+          chips.push({
+            text: `${field}=${value}`,
+            remove: () => { state[field] = state[field].filter((v) => v !== value); }
+          });
+        });
+      });
+      if (state.attention) chips.push({ text: 'attention=true', remove: () => { state.attention = false; } });
+      if (state.expires_after || state.expires_before) {
+        const from = state.expires_after ? shortDate(state.expires_after) : 'any time';
+        const to = state.expires_before ? shortDate(state.expires_before) : 'any time';
+        chips.push({
+          text: `expires ${from} to ${to}`,
+          remove: () => { state.expires_after = ''; state.expires_before = ''; }
+        });
+      }
+      if (state.q && state.q.trim()) {
+        chips.push({ text: `search="${state.q.trim()}"`, remove: () => { state.q = ''; view.refs.search.value = ''; } });
+      }
+      return chips;
+    };
+
+    const renderChips = () => {
+      const chips = chipDefs();
+      const holder = view.refs.chips;
+      if (chips.length === 0) {
+        holder.replaceChildren();
+        holder.hidden = true;
+        return;
+      }
+      holder.hidden = false;
+      const nodes = [el('span', 'cert-chips-label', 'Filters:')];
+      chips.forEach((chip) => {
+        const b = button('cert-chip');
+        b.appendChild(el('span', 'cert-chip-text', chip.text));
+        const x = el('span', 'cert-chip-x', '×');
+        x.setAttribute('aria-hidden', 'true');
+        b.appendChild(x);
+        b.setAttribute('aria-label', `Remove filter ${chip.text}`);
+        b.addEventListener('click', () => {
+          chip.remove();
+          changed();
+          view.refs.search.focus();
+        });
+        nodes.push(b);
+      });
+      const clear = button('cert-link-btn cert-clear-btn', 'Clear filters');
+      clear.addEventListener('click', () => { clearFilters(); });
+      nodes.push(clear);
+      holder.replaceChildren(...nodes);
+    };
+
+    const clearFilters = () => {
+      resetState();
+      view.refs.search.value = '';
+      changed();
+    };
+
+    // ----- selection line -----
+
+    const shownPairs = () => {
+      const keys = new Set();
+      ((view.resp && view.resp.certificates) || []).forEach((cert) => {
+        instancePairs(cert).forEach(([id, name]) => keys.add(`${id}\u0000${name}`));
+      });
+      return keys;
+    };
+
+    const renderSelectionLine = () => {
+      const holder = view.refs.selectionLine;
+      const resp = view.resp;
+      if (!resp || view.mode !== 'ready') {
+        holder.replaceChildren();
+        return;
+      }
+      const nodes = [];
+      const filtered = resp.filtered || {};
+      nodes.push(el('span', 'cert-count', `${filtered.certificates || 0} shown.`));
+
+      const total = selectionCount();
+      if (total > 0) {
+        const visible = shownPairs();
+        let hiddenCount = 0;
+        selection.forEach((names, id) => {
+          names.forEach((name) => { if (!visible.has(`${id}\u0000${name}`)) hiddenCount += 1; });
+        });
+        nodes.push(el('span', 'cert-count', `${total} selected, ${hiddenCount} not shown by these filters.`));
+      }
+
+      const rotation = (resp.capabilities && resp.capabilities.rotation) || {};
+      if (!rotation.enabled) {
+        const why = rotation.reason ? ` ${rotation.reason}.` : '';
+        nodes.push(el('span', 'cert-count cert-count--muted', `Row selection is off.${why}`));
+      }
+      holder.replaceChildren(...nodes);
+    };
+
+    // ----- table -----
+
+    const COLUMNS = [
+      { key: 'select', label: 'Select', className: 'cert-col-select' },
+      { key: 'expiry', label: 'Expiry' },
+      { key: 'health', label: 'Health' },
+      { key: 'cert', label: 'Certificate' },
+      { key: 'owner', label: 'Owner' },
+      { key: 'expires', label: 'Expires' },
+      { key: 'kind', label: 'Kind', className: 'cert-col-wide' },
+      { key: 'source', label: 'Source', className: 'cert-col-wide' },
+      { key: 'issuer', label: 'Issuer', className: 'cert-col-wide' }
+    ];
+
+    const buildHead = () => {
+      const tr = el('tr');
+      COLUMNS.forEach((col) => {
+        const th = el('th', col.className || '', col.key === 'select' ? '' : col.label);
+        th.scope = 'col';
+        if (col.key === 'select') th.appendChild(el('span', 'visually-hidden', col.label));
+        tr.appendChild(th);
+      });
+      view.refs.thead.replaceChildren(tr);
+    };
+
+    const sourcesOf = (cert) => {
+      const seen = [];
+      (cert.observations || []).forEach((o) => { if (o.source && !seen.includes(o.source)) seen.push(o.source); });
+      return seen.join(', ');
+    };
+
+    const checkboxFor = (cert) => {
+      const cell = el('td', 'cert-col-select');
+      const pairs = instancePairs(cert);
+      const input = el('input');
+      input.type = 'checkbox';
+      const names = (cert.owners || []).filter((o) => o.kind === 'instance').map(ownerLabel);
+      const target = names.length > 1 ? `${names[0]} and ${names.length - 1} more` : (names[0] || ownerSummary(cert));
+      input.setAttribute('aria-label', `Rotate ${certName(cert)} on ${target}`);
+      const allowed = Boolean(cert.rotation && cert.rotation.allowed) && pairs.length > 0;
+      if (!allowed) {
+        input.disabled = true;
+        const reasons = (cert.rotation && cert.rotation.reasons) || [];
+        const reason = reasons.length > 0 ? reasons.join(' ') : (pairs.length === 0 ? 'This certificate does not belong to a service instance.' : 'Rotation is not available.');
+        input.setAttribute('title', reason);
+      } else {
+        input.checked = pairs.every(([id, name]) => pairSelected(id, name));
+        input.addEventListener('click', (event) => event.stopPropagation());
+        input.addEventListener('change', () => {
+          pairs.forEach(([id, name]) => setPair(id, name, input.checked));
+          renderSelectionLine();
+        });
+      }
+      cell.appendChild(input);
+      return cell;
+    };
+
+    const observationRow = (obs) => {
+      const li = el('li', `cert-obs cert-obs--${obs.state === 'failed' ? 'failed' : (obs.state === 'stale' ? 'stale' : 'ok')}`);
+      li.appendChild(el('span', 'cert-obs-source', obs.source || 'unknown'));
+      li.appendChild(el('span', 'cert-obs-locator', obs.locator || ''));
+      const bits = [];
+      if (obs.fingerprint) bits.push(`sha256 ${String(obs.fingerprint).slice(0, 8)}`);
+      if (obs.matches) bits.push(`matches ${obs.matches}`);
+      if (obs.not_after) bits.push(`expires ${shortDate(obs.not_after)}`);
+      if (obs.state === 'failed') bits.push(obs.error ? `failed: ${obs.error}` : 'failed');
+      else if (obs.state === 'stale') bits.push(`stale, last seen ${clock(obs.observed_at)}${obs.error ? `: ${obs.error}` : ''}`);
+      else if (obs.state && obs.state !== 'ok') bits.push(obs.state);
+      li.appendChild(el('span', 'cert-obs-result', bits.join(', ')));
+      return li;
+    };
+
+    const factRow = (dl, label, value) => {
+      if (value === undefined || value === null || value === '') return;
+      dl.appendChild(el('dt', null, label));
+      dl.appendChild(el('dd', null, value));
+    };
+
+    const coverageText = (coverage) => {
+      if (!coverage) return '';
+      const expected = coverage.expected_listeners || 0;
+      let text = expected > 0
+        ? `${coverage.observed_listeners || 0} of ${plural(expected, 'listener')} observed`
+        : 'No listeners expected';
+      if (coverage.failed_listeners) text += `, ${coverage.failed_listeners} did not answer`;
+      if (coverage.stale) text += ', some observations are stale';
+      return text;
+    };
+
+    const versionsText = (versions) => {
+      if (!versions) return { deployed: '', latest: '' };
+      const short = (id) => (id ? String(id).slice(0, 8) : '');
+      const deployed = `${short(versions.deployed_version_id)}${versions.deployed_not_after ? ` expires ${shortDate(versions.deployed_not_after)}` : ''}`.trim();
+      const same = versions.latest_version_id && versions.latest_version_id === versions.deployed_version_id;
+      const latest = same ? 'same as deployed' : `${short(versions.latest_version_id)}${versions.latest_not_after ? ` expires ${shortDate(versions.latest_not_after)}` : ''}`.trim();
+      return { deployed, latest };
+    };
+
+    const expansionContent = (cert) => {
+      const box = el('div', 'cert-expansion');
+      const dl = el('dl', 'cert-facts');
+      factRow(dl, 'Key', cert.key);
+      factRow(dl, 'Kind', cert.kind);
+      factRow(dl, 'Issuer', cert.issuer);
+      factRow(dl, 'Sources', sourcesOf(cert));
+      const versions = versionsText(cert.versions);
+      factRow(dl, 'Deployed', versions.deployed);
+      factRow(dl, 'Latest', versions.latest);
+      if (cert.versions && cert.versions.transitional) factRow(dl, 'Transitional', 'Yes');
+      factRow(dl, 'Coverage', coverageText(cert.coverage));
+      if (cert.expiry === 'unknown' && cert.expiry_reason) factRow(dl, 'Expiry', cert.expiry_reason);
+      if (cert.divergence) factRow(dl, 'Divergence', `${cert.divergence.state} since ${shortDate(cert.divergence.since)}`);
+      if (cert.rotation && !cert.rotation.allowed && (cert.rotation.reasons || []).length > 0) {
+        factRow(dl, 'Rotation', cert.rotation.reasons.join(' '));
+      }
+      box.appendChild(dl);
+
+      if ((cert.findings || []).length > 0) {
+        const list = el('ul', 'cert-findings');
+        cert.findings.forEach((finding) => {
+          const li = el('li', `cert-finding cert-finding--${finding.severity || 'info'}`);
+          li.appendChild(el('span', 'cert-finding-severity', finding.severity || 'info'));
+          li.appendChild(el('span', 'cert-finding-text', finding.message || finding.code || ''));
+          list.appendChild(li);
+        });
+        box.appendChild(list);
+      }
+
+      const observations = cert.observations || [];
+      if (observations.length > 0) {
+        const list = el('ul', 'cert-obs-list');
+        list.setAttribute('aria-label', 'Observations');
+        observations.forEach((obs) => list.appendChild(observationRow(obs)));
+        box.appendChild(list);
+      } else {
+        box.appendChild(el('p', 'cert-muted', 'No observations recorded.'));
+      }
+      return box;
+    };
+
+    const buildRow = (cert) => {
+      const rows = [];
+      const tr = el('tr', 'cert-row');
+      tr.dataset.certId = cert.id;
+      const expanded = view.expanded.has(cert.id);
+
+      tr.appendChild(checkboxFor(cert));
+
+      const expiryCell = el('td', 'cert-col-expiry');
+      expiryCell.appendChild(CertView.expiryPill(cert.expiry, cert.days_left, cert.effective_not_after));
+      tr.appendChild(expiryCell);
+
+      const healthCell = el('td', 'cert-col-health');
+      healthCell.appendChild(CertView.healthPill(cert.health));
+      tr.appendChild(healthCell);
+
+      const certCell = el('td', 'cert-col-cert');
+      const toggle = button('cert-expand-btn');
+      toggle.dataset.certExpand = cert.id;
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      toggle.setAttribute('aria-label', `${expanded ? 'Hide' : 'Show'} observations for ${certName(cert)}`);
+      const chevron = el('span', 'cert-chevron', expanded ? '▾' : '▸');
+      chevron.setAttribute('aria-hidden', 'true');
+      toggle.appendChild(chevron);
+      toggle.appendChild(el('span', 'cert-name', certName(cert)));
+      toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (view.expanded.has(cert.id)) view.expanded.delete(cert.id); else view.expanded.add(cert.id);
+        renderTable();
+      });
+      certCell.appendChild(toggle);
+      if (cert.variable && cert.common_name) certCell.appendChild(el('div', 'cert-subname', cert.common_name));
+      tr.appendChild(certCell);
+
+      const ownerCell = el('td', 'cert-col-owner', ownerSummary(cert));
+      const allOwners = (cert.owners || []).map(ownerLabel).join(', ');
+      if (allOwners) ownerCell.setAttribute('title', allOwners);
+      tr.appendChild(ownerCell);
+
+      const expiresCell = el('td', 'cert-col-expires', cert.effective_not_after ? shortDate(cert.effective_not_after) : 'Unknown');
+      if (cert.effective_not_after) expiresCell.setAttribute('title', CertView.formatDate(cert.effective_not_after));
+      tr.appendChild(expiresCell);
+
+      tr.appendChild(el('td', 'cert-col-wide', cert.kind || ''));
+      tr.appendChild(el('td', 'cert-col-wide', sourcesOf(cert)));
+      tr.appendChild(el('td', 'cert-col-wide', cert.issuer || ''));
+      rows.push(tr);
+
+      if (expanded) {
+        const detail = el('tr', 'cert-row-detail');
+        detail.dataset.certDetailFor = cert.id;
+        const td = el('td');
+        td.colSpan = COLUMNS.length;
+        td.appendChild(expansionContent(cert));
+        detail.appendChild(td);
+        rows.push(detail);
+      }
+      return rows;
+    };
+
+    const skeletonRows = () => {
+      const rows = [];
+      for (let i = 0; i < 6; i += 1) {
+        const tr = el('tr', 'cert-skeleton-row');
+        tr.setAttribute('aria-hidden', 'true');
+        const td = el('td');
+        td.colSpan = COLUMNS.length;
+        td.appendChild(el('div', 'cert-skeleton-bar'));
+        tr.appendChild(td);
+        rows.push(tr);
+      }
+      return rows;
+    };
+
+    const focusKey = () => {
+      const active = document.activeElement;
+      if (!active || !view.refs.table.contains(active)) return null;
+      if (active.dataset && active.dataset.certExpand) return { kind: 'expand', id: active.dataset.certExpand };
+      const row = active.closest ? active.closest('tr[data-cert-id]') : null;
+      if (row) return { kind: active.matches('input') ? 'check' : 'row', id: row.dataset.certId };
+      return null;
+    };
+
+    const restoreFocus = (key) => {
+      if (!key) return;
+      const rows = Array.from(view.refs.tbody.querySelectorAll('tr[data-cert-id]'));
+      const row = rows.find((r) => r.dataset.certId === key.id);
+      if (!row) return;
+      let target = row;
+      if (key.kind === 'expand') target = row.querySelector('.cert-expand-btn') || row;
+      if (key.kind === 'check') target = row.querySelector('input') || row;
+      if (target && typeof target.focus === 'function') target.focus();
+    };
+
+    const renderEmpty = (certs) => {
+      const holder = view.refs.empty;
+      holder.replaceChildren();
+      if (view.mode === 'skeleton' || certs.length > 0) {
+        holder.hidden = true;
+        return;
+      }
+      holder.hidden = false;
+      const filtered = chipDefs().length > 0;
+      if (filtered) {
+        holder.appendChild(el('p', null, 'No certificates match these filters'));
+        const clear = button('execute-btn', 'Clear filters');
+        clear.addEventListener('click', () => { clearFilters(); });
+        holder.appendChild(clear);
+      } else {
+        holder.appendChild(el('p', null, 'The inventory holds no certificates yet.'));
+      }
+    };
+
+    const renderTable = () => {
+      const key = focusKey();
+      const wrap = view.refs.tableWrap;
+      const scrollTop = wrap.scrollTop;
+      const scrollLeft = wrap.scrollLeft;
+
+      const resp = view.resp;
+      const certs = (resp && resp.certificates) || [];
+      const nodes = [];
+
+      if (view.mode === 'skeleton') {
+        skeletonRows().forEach((row) => nodes.push(row));
+        view.refs.table.setAttribute('aria-busy', 'true');
+      } else {
+        view.refs.table.removeAttribute('aria-busy');
+        certs.forEach((cert) => buildRow(cert).forEach((row) => nodes.push(row)));
+      }
+      view.refs.tbody.replaceChildren(...nodes);
+      renderEmpty(certs);
+
+      wrap.scrollTop = scrollTop;
+      wrap.scrollLeft = scrollLeft;
+      restoreFocus(key);
+    };
+
+    // ----- render all -----
+
+    const renderAll = () => {
+      renderHeader();
+      renderNotices();
+      renderStrips();
+      renderToolbar();
+      renderChips();
+      renderSelectionLine();
+      renderTable();
+      view.refs.exportCsv.href = `/b/certificates/inventory?${toQuery(state, { format: 'csv' })}`;
+      view.refs.exportJson.href = `/b/certificates/inventory?${toQuery(state, { format: 'json' })}`;
+    };
+
+    // ----- data -----
+
+    const applyResponse = (resp, fleetCerts) => {
+      const scan = resp.scan || {};
+      const summary = resp.summary || {};
+      const never = !scan.completed_at;
+
+      view.resp = resp;
+      view.fleet = fleetCerts;
+      view.refreshError = '';
+
+      if (scan.state === 'failed' && (summary.certificates || 0) === 0) {
+        view.mode = 'first-error';
+        const first = Array.isArray(scan.errors) && scan.errors[0] ? scan.errors[0].error : '';
+        showStatePanel(firstScanErrorPanel(first));
+        view.refs.summary.textContent = '';
+        return;
+      }
+
+      showMain();
+      view.mode = (never && (summary.certificates || 0) === 0 && scan.state !== 'failed') ? 'skeleton' : 'ready';
+      renderAll();
+    };
+
+    const announceResult = (resp) => {
+      const nav = window.blacksmithNav;
+      if (!nav || !resp) return;
+      const count = (resp.filtered && resp.filtered.certificates) || 0;
+      nav.announce(count === 0 ? 'No certificates match these filters' : `${plural(count, 'certificate')} shown`);
+    };
+
+    const announceProgress = (resp) => {
+      const scan = resp && resp.scan;
+      if (!scan || scan.state !== 'running') {
+        view.lastProgress = '';
+        return;
+      }
+      const progress = scan.progress || {};
+      const text = `Scanning ${progress.done || 0} of ${progress.total || 0} instances`;
+      if (text !== view.lastProgress) {
+        view.lastProgress = text;
+        if (window.blacksmithNav) window.blacksmithNav.announce(text);
+      }
+    };
+
+    const schedule = () => {
+      clearTimeout(view.timer);
+      view.timer = null;
+      if (!isActive() || document.hidden) return;
+      const running = view.resp && view.resp.scan && view.resp.scan.state === 'running';
+      view.timer = setTimeout(() => {
+        if (!isActive() || document.hidden) return;
+        refresh({ silent: true });
+      }, running ? POLL_RUNNING_MS : POLL_IDLE_MS);
+    };
+
+    const signatureOf = (resp, fleetCerts) => JSON.stringify([resp.summary, resp.filtered, resp.scan, resp.capabilities, resp.settings, resp.certificates, fleetCerts.length]);
+
+    const applyDefaults = async () => {
+      if (view.defaultsApplied) return;
+      view.defaultsApplied = true;
+      try {
+        const result = await getJSON(`/b/certificates/inventory?${toQuery({ ...newFilterState() }, { summary_only: 'true' })}`);
+        if (result.ok && result.body && result.body.summary && result.body.summary.needs_attention > 0 && toQuery(state) === '') {
+          state.attention = true;
+        }
+      } catch (_) {
+        // The first full request reports any real failure.
+      }
+    };
+
+    async function refresh(opts = {}) {
+      view.seq += 1;
+      const seq = view.seq;
+
+      try {
+        if (!opts.silent) await applyDefaults();
+        if (seq !== view.seq) return;
+
+        const query = toQuery(state);
+        const requests = [getJSON(`/b/certificates/inventory${query ? `?${query}` : ''}`)];
+        if (query !== '') requests.push(getJSON('/b/certificates/inventory'));
+        const results = await Promise.all(requests);
+        if (seq !== view.seq) return;
+
+        const main = results[0];
+        if (isDisabledAnswer(main)) {
+          view.mode = 'disabled';
+          view.resp = null;
+          showStatePanel(disabledPanel(), true);
+          view.refs.summary.textContent = '';
+          setBadge(null);
+          return;
+        }
+
+        if (!main.ok || !main.body || typeof main.body !== 'object') {
+          const message = errorText(main, 'The inventory request failed.');
+          if (view.resp && view.mode !== 'first-error') {
+            view.refreshError = message;
+            renderNotices();
+          } else {
+            view.mode = 'error';
+            view.errorMessage = message;
+            showStatePanel(loadErrorPanel(message));
+          }
+          return;
+        }
+
+        const resp = main.body;
+        if (!Array.isArray(resp.certificates)) resp.certificates = [];
+        let fleetCerts = resp.certificates;
+        if (results.length > 1) {
+          const full = results[1];
+          fleetCerts = full.ok && full.body && Array.isArray(full.body.certificates) ? full.body.certificates : view.fleet;
+        }
+
+        const signature = signatureOf(resp, fleetCerts);
+        const same = signature === view.signature && view.mode === 'ready' && !view.refreshError && !opts.announce;
+        view.signature = signature;
+        if (!same) applyResponse(resp, fleetCerts);
+        else view.resp = resp;
+
+        setBadge(resp.summary);
+        announceProgress(resp);
+        if (opts.announce) announceResult(resp);
+      } catch (error) {
+        if (seq !== view.seq) return;
+        const message = (error && error.message) || 'The inventory request failed.';
+        if (view.resp && view.mode !== 'first-error') {
+          view.refreshError = message;
+          renderNotices();
+        } else {
+          view.mode = 'error';
+          view.errorMessage = message;
+          showStatePanel(loadErrorPanel(message));
+        }
+      } finally {
+        if (seq === view.seq) schedule();
+      }
+    }
+
+    function changed() {
+      view.signature = '';
+      refresh({ announce: true });
+      if (view.built) {
+        renderChips();
+        renderStrips();
+        renderToolbar();
+      }
+    }
+
+    // ----- scan -----
+
+    async function startScan(opts = {}) {
+      const btn = view.refs.scanBtn;
+      if (btn) btn.disabled = true;
+      try {
+        const result = await getJSON('/b/certificates/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: '{}'
+        });
+        if (!result.ok) {
+          window.Feedback.error(errorText(result, 'The scan could not be started.'), { toast: true });
+          return;
+        }
+        if (window.blacksmithNav) window.blacksmithNav.announce('Scan started');
+        if (opts.retryFirst) showMain();
+        view.signature = '';
+        await refresh({ silent: true });
+      } catch (error) {
+        window.Feedback.error(`The scan could not be started. ${(error && error.message) || ''}`.trim(), { toast: true });
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    // ----- navigation badge -----
+
+    function setBadge(summary) {
+      const badge = document.getElementById('certificates-badge');
+      if (!badge) return;
+      const count = summary && Number(summary.needs_attention) > 0 ? Number(summary.needs_attention) : 0;
+      if (count === 0) {
+        badge.hidden = true;
+        badge.textContent = '';
+        badge.removeAttribute('aria-label');
+        return;
+      }
+      badge.hidden = false;
+      badge.textContent = String(count);
+      badge.setAttribute('aria-label', `${count} ${count === 1 ? 'certificate needs' : 'certificates need'} attention`);
+    }
+
+    const pollBadge = async () => {
+      if (document.hidden) return;
+      try {
+        const result = await getJSON('/b/certificates/inventory?summary_only=true');
+        if (result.ok && result.body && result.body.summary) {
+          setBadge(result.body.summary);
+        } else if (isDisabledAnswer(result)) {
+          setBadge(null);
+        }
+      } catch (_) {
+        // The badge keeps its last value until the next poll.
+      }
+    };
+
+    const startBadge = () => {
+      if (view.badgeStarted) return;
+      view.badgeStarted = true;
+      pollBadge();
+      view.badgeTimer = setInterval(pollBadge, BADGE_POLL_MS);
+    };
+
+    // ----- build and bind -----
+
+    const build = () => {
+      view.root = document.getElementById('certificates');
+      view.root.innerHTML = SHELL;
+      const q = (id) => document.getElementById(id);
+      view.refs = {
+        summary: q('cert-fleet-summary'),
+        state: q('cert-fleet-state'),
+        main: q('cert-fleet-main'),
+        notices: q('cert-fleet-notices'),
+        stripAttention: q('cert-strip-attention'),
+        stripExpiry: q('cert-strip-expiry'),
+        timeline: q('cert-fleet-timeline'),
+        search: q('cert-search'),
+        service: q('cert-filter-service'),
+        plan: q('cert-filter-plan'),
+        moreBtn: q('cert-more-btn'),
+        morePanel: q('cert-more-panel'),
+        chips: q('cert-chips'),
+        selectionLine: q('cert-selection-line'),
+        groupby: q('cert-groupby'),
+        tableWrap: q('cert-table-wrap'),
+        table: q('cert-table'),
+        thead: q('cert-thead'),
+        tbody: q('cert-tbody'),
+        empty: q('cert-empty'),
+        scanBtn: q('cert-scan-btn'),
+        actions: q('cert-fleet-actions'),
+        exportBtn: q('cert-export-btn'),
+        exportMenu: q('cert-export-menu'),
+        exportCsv: q('cert-export-csv'),
+        exportJson: q('cert-export-json')
+      };
+
+      buildStrips();
+      buildMorePanel();
+      buildHead();
+
+      view.refs.scanBtn.addEventListener('click', () => { startScan(); });
+
+      let searchTimer = null;
+      view.refs.search.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          state.q = view.refs.search.value;
+          changed();
+        }, 300);
+      });
+
+      view.refs.service.addEventListener('change', () => {
+        state.service = view.refs.service.value ? [view.refs.service.value] : [];
+        changed();
+      });
+      view.refs.plan.addEventListener('change', () => {
+        state.plan = view.refs.plan.value ? [view.refs.plan.value] : [];
+        changed();
+      });
+
+      view.refs.moreBtn.addEventListener('click', () => {
+        const open = view.refs.morePanel.hidden;
+        view.refs.morePanel.hidden = !open;
+        view.refs.moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+
+      view.refs.exportBtn.addEventListener('click', () => {
+        const open = view.refs.exportMenu.hidden;
+        view.refs.exportMenu.hidden = !open;
+        view.refs.exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      view.refs.exportMenu.addEventListener('click', () => {
+        view.refs.exportMenu.hidden = true;
+        view.refs.exportBtn.setAttribute('aria-expanded', 'false');
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== '/' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+        if (!isActive()) return;
+        const target = event.target;
+        if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+        if (window.blacksmithSurfaces.size() > 0) return;
+        event.preventDefault();
+        view.refs.search.focus();
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          clearTimeout(view.timer);
+          view.timer = null;
+        } else if (isActive()) {
+          refresh({ silent: true });
+        }
+      });
+
+      view.built = true;
+    };
+
+    const init = async () => {
+      if (!view.built) {
+        build();
+        view.mode = 'skeleton';
+        renderTable();
+      }
+      startBadge();
+      await refresh({ announce: false });
+    };
+
+    return { state, toQuery, refresh, selection, init, startBadge, view, resetState };
+  })();
+
+  window.blacksmithCerts = {
+    state: CertsFleet.state,
+    toQuery: CertsFleet.toQuery,
+    refresh: CertsFleet.refresh,
+    selection: CertsFleet.selection
+  };
+
+  const initCertificatesTab = () => CertsFleet.init();
+
+  // The badge fills in on page load, before the tab is ever opened.
+  domReady(() => { CertsFleet.startBadge(); });
 
 })(document, window);
