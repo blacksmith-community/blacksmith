@@ -10846,6 +10846,9 @@
 
     // Tab switching functionality
     const switchTab = async (tabId) => {
+      if (tabId !== 'certificates' && window.blacksmithCerts && window.blacksmithCerts.closeDrawer) {
+        window.blacksmithCerts.closeDrawer({ restore: false });
+      }
       const targetPanel = document.getElementById(tabId);
       const targetButton = document.querySelector(`.tab-button[data-tab="${tabId}"]`);
 
@@ -19097,6 +19100,11 @@
     ];
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const ROTATION_WAIT_TEXT = 'Rotation arrives with certificates.rotation.enabled';
+    const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const DAY_MS = 86400000;
+    const TIMELINE_WEEKS = 13;
+    const EXPIRY_RANK = { expired: 0, critical: 1, warning: 2, unknown: 3, ok: 4 };
+    const HEALTH_RANK = { error: 0, warning: 1, unknown: 2, ok: 3 };
 
     const POLL_RUNNING_MS = 5000;
     const POLL_IDLE_MS = 60000;
@@ -19164,6 +19172,12 @@
       lastProgress: '',
       announceNext: false,
       refs: {},
+      anchor: 0,
+      buckets: null,
+      groupBy: 'flat',
+      collapsed: new Set(),
+      groupChecks: [],
+      drawer: null,
       badgeTimer: null,
       badgeStarted: false
     };
@@ -19784,6 +19798,7 @@
         input.addEventListener('change', () => {
           pairs.forEach(([id, name]) => setPair(id, name, input.checked));
           renderSelectionLine();
+          syncGroupChecks();
         });
       }
       cell.appendChild(input);
@@ -19795,7 +19810,7 @@
       li.appendChild(el('span', 'cert-obs-source', obs.source || 'unknown'));
       li.appendChild(el('span', 'cert-obs-locator', obs.locator || ''));
       const bits = [];
-      if (obs.fingerprint) bits.push(`sha256 ${String(obs.fingerprint).slice(0, 8)}`);
+      if (obs.sha256_fingerprint) bits.push(`sha256 ${String(obs.sha256_fingerprint).slice(0, 8)}`);
       if (obs.matches) bits.push(`matches ${obs.matches}`);
       if (obs.not_after) bits.push(`expires ${shortDate(obs.not_after)}`);
       if (obs.state === 'failed') bits.push(obs.error ? `failed: ${obs.error}` : 'failed');
@@ -19877,6 +19892,20 @@
       const rows = [];
       const tr = el('tr', 'cert-row');
       tr.dataset.certId = cert.id;
+      tr.tabIndex = 0;
+      tr.setAttribute('title', 'Open certificate details');
+      if (view.drawer && view.drawer.id === cert.id) tr.classList.add('cert-row--open');
+      tr.addEventListener('click', (event) => {
+        if (event.target.closest && event.target.closest('button, input, a, summary')) return;
+        openDrawer(cert, tr);
+      });
+      tr.addEventListener('keydown', (event) => {
+        if (event.target !== tr || event.defaultPrevented) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openDrawer(cert, tr);
+        }
+      });
       const expanded = view.expanded.has(cert.id);
 
       tr.appendChild(checkboxFor(cert));
@@ -19951,6 +19980,8 @@
       const active = document.activeElement;
       if (!active || !view.refs.table.contains(active)) return null;
       if (active.dataset && active.dataset.certExpand) return { kind: 'expand', id: active.dataset.certExpand };
+      const groupRow = active.closest ? active.closest('tr.cert-group-row') : null;
+      if (groupRow) return { kind: 'group', id: groupRow.dataset.groupId, sub: active.matches('input') ? 'check' : 'toggle' };
       const row = active.closest ? active.closest('tr[data-cert-id]') : null;
       if (row) return { kind: active.matches('input') ? 'check' : 'row', id: row.dataset.certId };
       return null;
@@ -19958,6 +19989,12 @@
 
     const restoreFocus = (key) => {
       if (!key) return;
+      if (key.kind === 'group') {
+        const header = Array.from(view.refs.tbody.querySelectorAll('tr.cert-group-row')).find((r) => r.dataset.groupId === key.id);
+        const t = header && (key.sub === 'check' ? header.querySelector('input:not([disabled])') : header.querySelector('.cert-group-toggle'));
+        if (t) t.focus();
+        return;
+      }
       const rows = Array.from(view.refs.tbody.querySelectorAll('tr[data-cert-id]'));
       const row = rows.find((r) => r.dataset.certId === key.id);
       if (!row) return;
@@ -20001,7 +20038,9 @@
         view.refs.table.setAttribute('aria-busy', 'true');
       } else {
         view.refs.table.removeAttribute('aria-busy');
-        certs.forEach((cert) => buildRow(cert).forEach((row) => nodes.push(row)));
+        view.groupChecks = [];
+        if (view.groupBy === 'flat') certs.forEach((cert) => buildRow(cert).forEach((row) => nodes.push(row)));
+        else groupedNodes(certs).forEach((node) => nodes.push(node));
       }
       view.refs.tbody.replaceChildren(...nodes);
       renderEmpty(certs);
@@ -20017,12 +20056,554 @@
       renderHeader();
       renderNotices();
       renderStrips();
+      renderTimeline();
       renderToolbar();
       renderChips();
+      renderGroupBy();
       renderSelectionLine();
       renderTable();
       view.refs.exportCsv.href = `/b/certificates/inventory?${toQuery(state, { format: 'csv' })}`;
       view.refs.exportJson.href = `/b/certificates/inventory?${toQuery(state, { format: 'json' })}`;
+    };
+
+    // ----- timeline -----
+
+    // The anchor is the moment every week boundary counts from. It stays
+    // put while a timeline button is pressed, so the pressed range keeps
+    // meaning the same thing across refreshes.
+    const updateAnchor = (resp) => {
+      if ((state.expires_after || state.expires_before) && view.anchor) return;
+      const t = Date.parse(resp && resp.generated_at);
+      view.anchor = Number.isNaN(t) ? Date.now() : t;
+    };
+
+    const isoOf = (ms) => new Date(ms).toISOString();
+
+    const fullDate = (ms) => {
+      const d = new Date(ms);
+      return `${d.getUTCDate()} ${FULL_MONTHS[d.getUTCMonth()]}`;
+    };
+
+    const timelineBuckets = () => {
+      const anchor = view.anchor;
+      const buckets = [{ label: 'Expired', after: '', before: isoOf(anchor), critical: 0, warning: 0, ok: 0 }];
+      for (let k = 0; k < TIMELINE_WEEKS; k += 1) {
+        const start = anchor + k * 7 * DAY_MS;
+        buckets.push({
+          label: `${new Date(start).getUTCDate()} ${MONTHS[new Date(start).getUTCMonth()]}`,
+          spoken: `Week of ${fullDate(start)}`,
+          after: isoOf(start),
+          before: isoOf(start + 7 * DAY_MS),
+          critical: 0,
+          warning: 0,
+          ok: 0
+        });
+      }
+      view.fleet.forEach((cert) => {
+        if (!cert.effective_not_after) return;
+        const t = Date.parse(cert.effective_not_after);
+        if (Number.isNaN(t)) return;
+        let bucket = null;
+        if (t < anchor) bucket = buckets[0];
+        else {
+          const k = Math.floor((t - anchor) / (7 * DAY_MS));
+          if (k < TIMELINE_WEEKS) bucket = buckets[k + 1];
+        }
+        if (!bucket) return;
+        if (cert.expiry === 'expired' || cert.expiry === 'critical') bucket.critical += 1;
+        else if (cert.expiry === 'warning') bucket.warning += 1;
+        else bucket.ok += 1;
+      });
+      return buckets;
+    };
+
+    const buildTimeline = () => {
+      const holder = view.refs.timeline;
+      holder.replaceChildren();
+      holder.appendChild(el('h3', 'cert-timeline-title', 'Expiring in the next 90 days'));
+      const row = el('div', 'cert-timeline');
+      row.setAttribute('role', 'group');
+      row.setAttribute('aria-label', 'Certificates by expiry week');
+      view.refs.timelineButtons = [];
+      for (let i = 0; i <= TIMELINE_WEEKS; i += 1) {
+        const b = button('cert-tl-btn');
+        const total = el('span', 'cert-tl-total', '0');
+        total.setAttribute('aria-hidden', 'true');
+        const bar = el('span', 'cert-tl-bar');
+        bar.setAttribute('aria-hidden', 'true');
+        const segs = {
+          ok: el('span', 'cert-tl-seg cert-tl-seg--ok'),
+          warning: el('span', 'cert-tl-seg cert-tl-seg--warning'),
+          critical: el('span', 'cert-tl-seg cert-tl-seg--critical')
+        };
+        bar.appendChild(segs.ok);
+        bar.appendChild(segs.warning);
+        bar.appendChild(segs.critical);
+        const label = el('span', 'cert-tl-label');
+        label.setAttribute('aria-hidden', 'true');
+        b.appendChild(total);
+        b.appendChild(bar);
+        b.appendChild(label);
+        b.addEventListener('click', () => {
+          const bucket = view.buckets && view.buckets[i];
+          if (!bucket) return;
+          if (b.getAttribute('aria-pressed') === 'true') {
+            state.expires_after = '';
+            state.expires_before = '';
+          } else {
+            state.expires_after = bucket.after;
+            state.expires_before = bucket.before;
+          }
+          changed();
+        });
+        row.appendChild(b);
+        view.refs.timelineButtons.push({ b, total, segs, label });
+      }
+      holder.appendChild(row);
+    };
+
+    const renderTimeline = () => {
+      const holder = view.refs.timeline;
+      if (view.mode !== 'ready' || !view.anchor || view.fleet.length === 0) {
+        holder.hidden = true;
+        return;
+      }
+      holder.hidden = false;
+      const buckets = timelineBuckets();
+      view.buckets = buckets;
+      let max = 1;
+      buckets.forEach((b) => { max = Math.max(max, b.critical + b.warning + b.ok); });
+      buckets.forEach((bucket, i) => {
+        const ref = view.refs.timelineButtons[i];
+        const total = bucket.critical + bucket.warning + bucket.ok;
+        ref.total.textContent = String(total);
+        ref.label.textContent = bucket.label;
+        ['critical', 'warning', 'ok'].forEach((name) => {
+          ref.segs[name].style.height = `${(bucket[name] / max) * 100}%`;
+        });
+        const pressed = state.expires_after === bucket.after && state.expires_before === bucket.before;
+        ref.b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+        const bits = [];
+        if (i === 0) {
+          bits.push(total === 0 ? 'Expired, none' : `Expired, ${plural(total, 'certificate')}`);
+        } else {
+          bits.push(bucket.spoken);
+          if (bucket.critical > 0) bits.push(`${bucket.critical} critical`);
+          if (bucket.warning > 0) bits.push(`${bucket.warning} warning`);
+          if (bucket.critical === 0 && bucket.warning === 0) bits.push(bucket.ok > 0 ? `${bucket.ok} ok` : 'none');
+        }
+        ref.b.setAttribute('aria-label', bits.join(', '));
+      });
+    };
+
+    // ----- group by -----
+
+    const GROUPINGS = [['flat', 'Flat'], ['owner', 'By owner'], ['ca', 'By issuing CA']];
+
+    const buildGroupBy = () => {
+      const holder = view.refs.groupby;
+      holder.replaceChildren();
+      holder.setAttribute('role', 'group');
+      holder.setAttribute('aria-label', 'Group by');
+      holder.appendChild(el('span', 'cert-groupby-label', 'Group by'));
+      view.refs.groupButtons = GROUPINGS.map(([key, label]) => {
+        const b = button('cert-action-btn cert-groupby-btn', label);
+        b.addEventListener('click', () => {
+          if (view.groupBy === key) return;
+          view.groupBy = key;
+          renderGroupBy();
+          renderTable();
+          if (window.blacksmithNav) window.blacksmithNav.announce(key === 'flat' ? 'Not grouped' : `Grouped ${label.toLowerCase()}`);
+        });
+        holder.appendChild(b);
+        return { key, b };
+      });
+      renderGroupBy();
+    };
+
+    const renderGroupBy = () => {
+      view.refs.groupButtons.forEach(({ key, b }) => {
+        b.setAttribute('aria-pressed', view.groupBy === key ? 'true' : 'false');
+      });
+      view.refs.groupby.hidden = view.mode !== 'ready';
+    };
+
+    const expiryRank = (status) => (Object.prototype.hasOwnProperty.call(EXPIRY_RANK, status) ? EXPIRY_RANK[status] : 3);
+    const healthRank = (status) => (Object.prototype.hasOwnProperty.call(HEALTH_RANK, status) ? HEALTH_RANK[status] : 2);
+
+    const worstExpiry = (certs) => {
+      let worst = certs[0];
+      certs.forEach((cert) => {
+        const a = expiryRank(cert.expiry);
+        const b = expiryRank(worst.expiry);
+        const da = typeof cert.days_left === 'number' ? cert.days_left : Infinity;
+        const db = typeof worst.days_left === 'number' ? worst.days_left : Infinity;
+        if (a < b || (a === b && da < db)) worst = cert;
+      });
+      return worst;
+    };
+
+    const worstHealth = (certs) => {
+      let worst = certs[0];
+      certs.forEach((cert) => { if (healthRank(cert.health) < healthRank(worst.health)) worst = cert; });
+      return worst;
+    };
+
+    const issuerCommonName = (issuer) => {
+      const m = /(?:^|,\s*)CN=([^,]+)/.exec(String(issuer || ''));
+      return m ? m[1].trim() : '';
+    };
+
+    const groupByOwner = (certs) => {
+      const groups = new Map();
+      certs.forEach((cert) => {
+        const owner = (cert.owners || [])[0];
+        const id = owner ? `owner:${owner.kind || ''}:${owner.instance_id || ''}` : 'owner:none';
+        if (!groups.has(id)) {
+          groups.set(id, { id, label: owner ? ownerLabel(owner) : 'Unknown owner', sub: owner && owner.service_name ? `${owner.service_name}${owner.plan_name ? ` / ${owner.plan_name}` : ''}` : '', certs: [], selectable: true });
+        }
+        groups.get(id).certs.push(cert);
+      });
+      return Array.from(groups.values());
+    };
+
+    const groupByCA = (certs) => {
+      const cas = (view.fleet.length > 0 ? view.fleet : certs).filter((c) => c.kind === 'ca' || c.kind === 'intermediate');
+      const bySki = new Map();
+      cas.forEach((ca) => { if (ca.subject_key_id && !bySki.has(ca.subject_key_id)) bySki.set(ca.subject_key_id, ca); });
+      const groups = new Map();
+      const add = (id, label, sub, cert) => {
+        if (!groups.has(id)) groups.set(id, { id, label, sub, certs: [], selectable: false });
+        groups.get(id).certs.push(cert);
+      };
+      certs.forEach((cert) => {
+        let parent = cert.authority_key_id ? bySki.get(cert.authority_key_id) : null;
+        if (!parent && cert.issuer) {
+          const cn = issuerCommonName(cert.issuer);
+          if (cn) parent = cas.find((ca) => ca.common_name === cn) || null;
+        }
+        const selfSigned = (cert.authority_key_id && cert.authority_key_id === cert.subject_key_id)
+          || (parent && parent.id === cert.id)
+          || (!cert.authority_key_id && cert.kind === 'ca' && cert.issuer && issuerCommonName(cert.issuer) === cert.common_name);
+        if (selfSigned) add('ca:self', 'Self-signed roots', 'Certificate authorities that sign themselves', cert);
+        else if (parent) add(`ca:${parent.id}`, parent.common_name || certName(parent), 'Issuing CA', cert);
+        else add('ca:none', 'Issuer not in the inventory', 'We could not match these to a CA we know about', cert);
+      });
+      return Array.from(groups.values());
+    };
+
+    const allowedPairs = (cert) => (cert.rotation && cert.rotation.allowed ? instancePairs(cert) : []);
+
+    const syncGroupCheck = (ref) => {
+      const selected = ref.pairs.filter(([id, name]) => pairSelected(id, name)).length;
+      ref.input.checked = ref.pairs.length > 0 && selected === ref.pairs.length;
+      ref.input.indeterminate = selected > 0 && selected < ref.pairs.length;
+    };
+
+    const syncGroupChecks = () => { view.groupChecks.forEach(syncGroupCheck); };
+
+    const groupHeader = (group) => {
+      const tr = el('tr', 'cert-group-row');
+      tr.dataset.groupId = group.id;
+      const collapsed = view.collapsed.has(group.id);
+
+      const selectCell = el('td', 'cert-col-select');
+      if (group.selectable) {
+        const seen = new Set();
+        const pairs = [];
+        group.certs.forEach((cert) => allowedPairs(cert).forEach(([id, name]) => {
+          const k = `${id}\u0000${name}`;
+          if (!seen.has(k)) { seen.add(k); pairs.push([id, name]); }
+        }));
+        const input = el('input');
+        input.type = 'checkbox';
+        input.setAttribute('aria-label', `Select every rotatable certificate for ${group.label}`);
+        if (pairs.length === 0) {
+          input.disabled = true;
+          input.setAttribute('title', 'None of these certificates can be rotated yet.');
+        } else {
+          const ref = { input, pairs };
+          view.groupChecks.push(ref);
+          syncGroupCheck(ref);
+          input.addEventListener('change', () => {
+            pairs.forEach(([id, name]) => setPair(id, name, input.checked));
+            renderSelectionLine();
+            renderTable();
+          });
+        }
+        selectCell.appendChild(input);
+      }
+      tr.appendChild(selectCell);
+
+      const td = el('td');
+      td.colSpan = COLUMNS.length - 1;
+      const toggle = button('cert-group-toggle');
+      toggle.dataset.groupToggle = group.id;
+      toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      toggle.setAttribute('aria-label', `${group.label}, ${plural(group.certs.length, 'certificate')}`);
+      const chevron = el('span', 'cert-chevron', collapsed ? '▸' : '▾');
+      chevron.setAttribute('aria-hidden', 'true');
+      toggle.appendChild(chevron);
+      toggle.appendChild(el('span', 'cert-group-name', group.label));
+      toggle.appendChild(el('span', 'cert-group-count', `${group.certs.length}`));
+      toggle.addEventListener('click', () => {
+        if (view.collapsed.has(group.id)) view.collapsed.delete(group.id); else view.collapsed.add(group.id);
+        renderTable();
+      });
+      td.appendChild(toggle);
+      const worst = worstExpiry(group.certs);
+      td.appendChild(CertView.expiryPill(worst.expiry, worst.days_left, worst.effective_not_after));
+      td.appendChild(CertView.healthPill(worstHealth(group.certs).health));
+      if (group.sub) td.appendChild(el('span', 'cert-subname cert-group-sub', group.sub));
+      tr.appendChild(td);
+      return tr;
+    };
+
+    const groupedNodes = (certs) => {
+      const groups = view.groupBy === 'owner' ? groupByOwner(certs) : groupByCA(certs);
+      groups.sort((a, b) => {
+        const d = expiryRank(worstExpiry(a.certs).expiry) - expiryRank(worstExpiry(b.certs).expiry);
+        return d !== 0 ? d : a.label.localeCompare(b.label);
+      });
+      const nodes = [];
+      groups.forEach((group) => {
+        nodes.push(groupHeader(group));
+        if (!view.collapsed.has(group.id)) group.certs.forEach((cert) => buildRow(cert).forEach((row) => nodes.push(row)));
+      });
+      return nodes;
+    };
+
+    // ----- drawer -----
+
+    const toLegacy = (item) => {
+      const f = item.facts || {};
+      const observed = (item.observations || []).map((o) => o.sha256_fingerprint).find(Boolean) || '';
+      return {
+        version: f.version,
+        serialNumber: f.serial,
+        subject: f.common_name ? `CN=${f.common_name}` : '',
+        issuer: f.issuer,
+        notBefore: f.not_before,
+        notAfter: f.not_after,
+        signatureAlgorithm: f.signature_algorithm,
+        publicKey: { algorithm: f.key_algorithm, bits: f.key_bits },
+        subjectAltNames: [].concat(f.dns_names || [], f.ip_addresses || []),
+        extKeyUsage: f.ext_key_usages || [],
+        fingerprints: { sha256: observed },
+        pemEncoded: item.pem
+      };
+    };
+
+    const runbookPanel = (title, intro, commands, notes) => {
+      const box = el('section', 'cert-runbook');
+      box.appendChild(el('h4', 'cert-runbook-title', title));
+      box.appendChild(el('p', null, intro));
+      const text = commands.join('\n');
+      const head = el('div', 'cert-runbook-commands');
+      head.appendChild(el('pre', 'cert-runbook-pre', text));
+      head.appendChild(CertView.copyButton('Copy commands', text, 'Copy'));
+      box.appendChild(head);
+      const list = el('ul', 'cert-runbook-notes');
+      notes.forEach((note) => list.appendChild(el('li', null, note)));
+      box.appendChild(list);
+      return box;
+    };
+
+    const caRunbook = () => runbookPanel(
+      'Renewing this certificate authority',
+      'Renewing a CA replaces every certificate it signed. We run the two commands below in order, against the Genesis environment that deploys Blacksmith, and we replace <env> with that environment name.',
+      ['genesis <env> rotate-secrets broker/ca', 'genesis <env> deploy'],
+      [
+        'A renewal keeps the CA key pair. If the private key may have been exposed, we need a rekey instead, which issues a new key pair and takes longer to roll out.',
+        'Check the exact command against your Genesis version before running it.'
+      ]
+    );
+
+    const brokerRunbook = () => runbookPanel(
+      'Rotating this broker certificate with Genesis',
+      'This certificate belongs to the broker itself, so we rotate it through Genesis. We replace <env> with the environment name that deploys Blacksmith.',
+      ['genesis <env> rotate-secrets broker/server', 'genesis <env> deploy'],
+      [
+        'Genesis leaves secrets marked as fixed alone unless the command includes -P.',
+        'Check the exact command against your Genesis version before running it.'
+      ]
+    );
+
+    const openInstance = (instanceId) => {
+      closeDrawer({ restore: false });
+      let tries = 0;
+      const find = () => Array.from(document.querySelectorAll('#services .service-item')).find((node) => node.dataset.instanceId === instanceId);
+      const attempt = () => {
+        const node = find();
+        if (node) {
+          node.click();
+          if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' });
+          return;
+        }
+        tries += 1;
+        if (tries < 20) setTimeout(attempt, 150);
+        else window.Feedback.warning('That instance is not in the services list right now.', { toast: true });
+      };
+      Promise.resolve(window.blacksmithNav.switchTab('services')).then(attempt);
+    };
+
+    const renderDrawerBody = () => {
+      const d = view.drawer;
+      const body = view.refs.drawerBody;
+      if (!d) { body.replaceChildren(); return; }
+      const cert = d.item || d.cert;
+      const nodes = [];
+
+      const pills = el('div', 'cert-drawer-pills');
+      pills.appendChild(CertView.expiryPill(cert.expiry, cert.days_left, cert.effective_not_after));
+      pills.appendChild(CertView.healthPill(cert.health));
+      nodes.push(pills);
+
+      const actions = el('div', 'cert-drawer-actions');
+      const inspect = button('cert-action-btn', 'Inspect');
+      inspect.disabled = d.status !== 'ready';
+      inspect.addEventListener('click', () => { if (d.item) window.inspectCertificate(toLegacy(d.item)); });
+      actions.appendChild(inspect);
+      const pairs = instancePairs(cert);
+      if (pairs.length > 0) {
+        const open = button('cert-action-btn', 'Open instance');
+        open.addEventListener('click', () => { openInstance(pairs[0][0]); });
+        actions.appendChild(open);
+      }
+      if (d.item && d.item.pem) actions.appendChild(CertView.copyButton('Copy PEM', d.item.pem, 'Copy PEM'));
+      const rotate = button('cert-action-btn', 'Rotate...');
+      rotate.disabled = true;
+      rotate.setAttribute('aria-describedby', 'cert-drawer-rotate-note');
+      actions.appendChild(rotate);
+      const note = el('span', 'cert-muted cert-drawer-rotate-note', ROTATION_WAIT_TEXT);
+      note.id = 'cert-drawer-rotate-note';
+      actions.appendChild(note);
+      nodes.push(actions);
+
+      nodes.push(expansionContent(cert));
+
+      const detailBox = el('section', 'cert-drawer-detail');
+      detailBox.appendChild(el('h4', null, 'Certificate details'));
+      if (d.status === 'loading') {
+        const p = el('p', 'cert-muted', 'Loading certificate details...');
+        p.setAttribute('role', 'status');
+        detailBox.appendChild(p);
+      } else if (d.status === 'error') {
+        const block = CertView.errorBlock({
+          message: d.error,
+          onRetry: () => { view.refs.drawerTitle.focus(); loadItem(d); }
+        });
+        block.setAttribute('role', 'alert');
+        detailBox.appendChild(block);
+      } else {
+        detailBox.appendChild(CertView.detail(toLegacy(d.item)));
+      }
+      nodes.push(detailBox);
+
+      if (cert.kind === 'ca' || cert.kind === 'intermediate') nodes.push(caRunbook());
+      else if ((cert.owners || []).some((o) => o.kind === 'broker')) nodes.push(brokerRunbook());
+
+      body.replaceChildren(...nodes);
+    };
+
+    async function loadItem(d) {
+      d.status = 'loading';
+      d.error = '';
+      renderDrawerBody();
+      try {
+        const result = await getJSON(`/b/certificates/items/${encodeURIComponent(d.id)}`);
+        if (view.drawer !== d) return;
+        if (result.ok && result.body && typeof result.body === 'object') {
+          d.item = result.body;
+          d.status = 'ready';
+        } else {
+          d.status = 'error';
+          d.error = result.status === 404
+            ? 'This certificate is no longer in the inventory.'
+            : errorText(result, 'The certificate details could not be loaded.');
+        }
+      } catch (error) {
+        if (view.drawer !== d) return;
+        d.status = 'error';
+        d.error = (error && error.message) || 'The certificate details could not be loaded.';
+      }
+      renderDrawerBody();
+    }
+
+    const markOpenRow = () => {
+      if (!view.refs.tbody) return;
+      Array.from(view.refs.tbody.querySelectorAll('tr[data-cert-id]')).forEach((row) => {
+        row.classList.toggle('cert-row--open', Boolean(view.drawer) && row.dataset.certId === view.drawer.id);
+      });
+    };
+
+    function openDrawer(cert, opener) {
+      if (view.drawer && view.drawer.id === cert.id) {
+        view.refs.drawerTitle.focus();
+        return;
+      }
+      closeDrawer({ restore: false });
+      const d = { id: cert.id, cert, item: null, status: 'loading', error: '', opener, surface: null };
+      d.surface = { close: () => closeDrawer() };
+      view.drawer = d;
+      window.blacksmithSurfaces.push(d.surface);
+      view.refs.drawerTitle.textContent = certName(cert);
+      view.refs.drawer.hidden = false;
+      view.refs.drawer.classList.add('cert-fleet-drawer--open');
+      markOpenRow();
+      loadItem(d);
+      view.refs.drawerTitle.focus();
+    }
+
+    function closeDrawer(opts = {}) {
+      const d = view.drawer;
+      if (!d) return;
+      view.drawer = null;
+      window.blacksmithSurfaces.remove(d.surface);
+      view.refs.drawer.hidden = true;
+      view.refs.drawer.classList.remove('cert-fleet-drawer--open');
+      view.refs.drawerBody.replaceChildren();
+      markOpenRow();
+      if (opts.restore === false) return;
+      let target = d.opener && document.contains(d.opener) ? d.opener : null;
+      if (!target && view.refs.tbody) {
+        target = Array.from(view.refs.tbody.querySelectorAll('tr[data-cert-id]')).find((row) => row.dataset.certId === d.id) || null;
+      }
+      if (target && typeof target.focus === 'function') target.focus();
+    }
+
+    const buildDrawer = () => {
+      const drawer = el('aside', 'cert-fleet-drawer');
+      drawer.id = 'cert-fleet-drawer';
+      drawer.setAttribute('role', 'dialog');
+      drawer.setAttribute('aria-modal', 'false');
+      drawer.setAttribute('aria-labelledby', 'cert-drawer-title');
+      drawer.hidden = true;
+
+      const header = el('div', 'cert-drawer-header');
+      const title = el('h3', 'cert-drawer-title');
+      title.id = 'cert-drawer-title';
+      title.tabIndex = -1;
+      header.appendChild(title);
+      const close = button('cert-action-btn cert-drawer-close', 'Close');
+      close.setAttribute('aria-label', 'Close certificate details');
+      close.addEventListener('click', () => { closeDrawer(); });
+      header.appendChild(close);
+      drawer.appendChild(header);
+
+      const body = el('div', 'cert-drawer-body');
+      drawer.appendChild(body);
+      view.root.appendChild(drawer);
+      view.refs.drawer = drawer;
+      view.refs.drawerTitle = title;
+      view.refs.drawerBody = body;
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || event.defaultPrevented) return;
+        if (!view.drawer || !window.blacksmithSurfaces.isTop(view.drawer.surface)) return;
+        event.preventDefault();
+        closeDrawer();
+      });
     };
 
     // ----- data -----
@@ -20045,6 +20626,7 @@
       }
 
       showMain();
+      updateAnchor(resp);
       view.mode = (never && (summary.certificates || 0) === 0 && scan.state !== 'failed') ? 'skeleton' : 'ready';
       renderAll();
     };
@@ -20276,8 +20858,11 @@
       };
 
       buildStrips();
+      buildTimeline();
+      buildGroupBy();
       buildMorePanel();
       buildHead();
+      buildDrawer();
 
       view.refs.scanBtn.addEventListener('click', () => { startScan(); });
 
@@ -20347,14 +20932,15 @@
       await refresh({ announce: false });
     };
 
-    return { state, toQuery, refresh, selection, init, startBadge, view, resetState };
+    return { state, toQuery, refresh, selection, init, startBadge, view, resetState, closeDrawer };
   })();
 
   window.blacksmithCerts = {
     state: CertsFleet.state,
     toQuery: CertsFleet.toQuery,
     refresh: CertsFleet.refresh,
-    selection: CertsFleet.selection
+    selection: CertsFleet.selection,
+    closeDrawer: CertsFleet.closeDrawer
   };
 
   const initCertificatesTab = () => CertsFleet.init();
