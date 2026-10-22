@@ -43,6 +43,12 @@ func (m *Manager) settleCertificateDeployLocked(task *UpgradeTask, instance *Ins
 	}
 
 	if finished.State == boshTaskDone {
+		// An instance saved interrupted at shutdown runs again, so its
+		// verification can follow.
+		if instance.Status == InstanceStatusInterrupted {
+			instance.Status = InstanceStatusRunning
+		}
+
 		instance.Error = ""
 
 		m.logger.Info("BOSH task %d deployed %s for instance %s, so its certificates are verified next", taskID, instance.DeploymentName, instance.InstanceID)

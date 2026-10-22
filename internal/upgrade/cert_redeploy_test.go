@@ -976,3 +976,76 @@ func TestRedeployNeverStartedTaskLoadsPaused(t *testing.T) {
 
 	expectHeld(t, manager)
 }
+
+// runningTask returns the task as a restart finds it once the instance
+// started, before its regeneration, so the loaded task runs at once.
+func (e *redeployEnv) runningTask() UpgradeTask {
+	task := e.task()
+	started := validateNow
+
+	task.Instances[0].Status = InstanceStatusRunning
+	task.Instances[0].StartedAt = &started
+	task.Instances[0].Certificates.Phase = RotationPhaseRegenerate
+
+	return task
+}
+
+// stored reads the task as Vault holds it.
+func (e *redeployEnv) stored() UpgradeTask {
+	e.t.Helper()
+
+	var saved UpgradeTask
+
+	found, err := e.vault.Get(context.Background(), certificateTasksVaultPath+"/"+certTaskID, &saved)
+	if err != nil || !found {
+		e.t.Fatalf("reading the saved task: found %v, %v", found, err)
+	}
+
+	return saved
+}
+
+// A restart while the deploy runs saves the instance interrupted. Once the
+// next start sees the deploy finish, the instance is verified, completes,
+// and frees its reservation.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployRestartMidDeployVerifies(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	env.director.mu.Lock()
+	env.director.finish = func(ctx context.Context, _ int) (*bosh.Task, error) {
+		<-ctx.Done()
+
+		return nil, ctx.Err()
+	}
+	env.director.mu.Unlock()
+
+	first := env.load(env.runningTask())
+
+	waitUntil(t, "the deploy's wait", func() bool { return len(env.director.waited()) > 0 })
+
+	first.Stop()
+
+	if inst := env.stored().Instances[0]; inst.Status != InstanceStatusInterrupted || inst.BOSHTaskID != redeployTaskID {
+		t.Fatalf("expected the instance saved interrupted with task %d, got %s with task %d", redeployTaskID, inst.Status, inst.BOSHTaskID)
+	}
+
+	env.director.mu.Lock()
+	env.director.finish = nil
+	env.director.mu.Unlock()
+
+	second := env.newManager()
+	second.Start()
+	waitForLoad(t, second)
+
+	task := eventuallyInstance(t, second, InstanceStatusSuccess)
+	if task.Instances[0].Certificates.Phase != RotationPhaseDone {
+		t.Fatalf("expected phase done, got %s", task.Instances[0].Certificates.Phase)
+	}
+
+	if len(env.director.deploys()) != 1 {
+		t.Fatalf("expected the one deploy from before the restart, got %d", len(env.director.deploys()))
+	}
+
+	expectReleased(t, second)
+}

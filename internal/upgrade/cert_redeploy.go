@@ -170,7 +170,7 @@ func (m *Manager) nextCertificateStep(inst *InstanceUpgrade) certificateStep {
 	inFlight := inst.Status == InstanceStatusRunning || inst.Status == InstanceStatusInterrupted
 
 	switch {
-	case inst.Status == InstanceStatusRunning && rotation.Deploy != nil && rotation.Deploy.State == boshTaskDone &&
+	case inFlight && rotation.Deploy != nil && rotation.Deploy.State == boshTaskDone &&
 		taskID > 0 && rotation.Deploy.BOSHTaskID == taskID:
 		return stepVerify
 	case inFlight && (taskID > 0 || followedContextID(inst) != ""):
