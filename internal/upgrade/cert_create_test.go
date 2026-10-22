@@ -22,27 +22,63 @@ const (
 // createVault is a waitVault whose writes of certificate task records fail
 // before they store anything while the test's rule says so. The rule gets
 // the number of the record write, counted from 1.
+//
+// Under the land rule a chosen record write stores the record and then
+// returns an error anyway, and while blind is set every read of a record
+// fails, so the manager can't tell that the write landed.
 type createVault struct {
 	*waitVault
 
 	script sync.Mutex
 	writes int
 	fail   func(n int) bool
+	land   func(n int) bool
+	blind  bool
 }
 
 func (v *createVault) Put(ctx context.Context, path string, data interface{}) error {
-	if strings.HasPrefix(path, certificateTasksVaultPath+"/") {
-		v.script.Lock()
-		v.writes++
-		refused := v.fail != nil && v.fail(v.writes)
-		v.script.Unlock()
-
-		if refused {
-			return errPutRefused
-		}
+	if !strings.HasPrefix(path, certificateTasksVaultPath+"/") {
+		return v.waitVault.Put(ctx, path, data)
 	}
 
-	return v.waitVault.Put(ctx, path, data)
+	v.script.Lock()
+	v.writes++
+	refused := v.fail != nil && v.fail(v.writes)
+	unacknowledged := v.land != nil && v.land(v.writes)
+	v.script.Unlock()
+
+	if refused {
+		return errPutRefused
+	}
+
+	err := v.waitVault.Put(ctx, path, data)
+	if err == nil && unacknowledged {
+		return errAnswerLost
+	}
+
+	return err
+}
+
+func (v *createVault) Get(ctx context.Context, path string, result interface{}) (bool, error) {
+	v.script.Lock()
+	blind := v.blind && strings.HasPrefix(path, certificateTasksVaultPath+"/")
+	v.script.Unlock()
+
+	if blind {
+		return false, errGetRefused
+	}
+
+	return v.waitVault.Get(ctx, path, result)
+}
+
+// landUnacknowledged sets the rule that picks the record writes that store
+// the record but answer an error, and makes every record read fail.
+func (v *createVault) landUnacknowledged(land func(n int) bool) {
+	v.script.Lock()
+	defer v.script.Unlock()
+
+	v.land = land
+	v.blind = true
 }
 
 // failRecords sets the rule that picks the record writes that fail.
@@ -53,8 +89,15 @@ func (v *createVault) failRecords(fail func(n int) bool) {
 	v.fail = fail
 }
 
-// heal lets every later write land.
-func (v *createVault) heal() { v.failRecords(nil) }
+// heal lets every later write land and every later read answer.
+func (v *createVault) heal() {
+	v.script.Lock()
+	defer v.script.Unlock()
+
+	v.fail = nil
+	v.land = nil
+	v.blind = false
+}
 
 // createEnv returns a preview environment whose manager saves to a
 // createVault, retries an unconfirmed create's save at once, and has
@@ -532,6 +575,33 @@ func TestCreateSecondSaveUnconfirmedHoldsReservations(t *testing.T) {
 	}
 
 	expectCertificateHolder(t, env.manager, waitInstanceID, retried.ID)
+}
+
+// When the save that carries creation_confirmed lands in Vault but its
+// answer is lost and the read-back fails, the task fails held, and the
+// failed status, without creation_confirmed, replaces the confirmed record
+// before the guard frees the instance.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCreateConfirmedSaveLandsUnacknowledged(t *testing.T) {
+	env, vault := createEnv(t)
+	preview := previewOf(t, env, redeploy(waitInstanceID))
+
+	vault.landUnacknowledged(func(n int) bool { return n >= 2 })
+
+	_, _, err := env.manager.CreateCertificateTask(context.Background(), createRequest(preview.ID))
+	taskID := expectUnconfirmedCreate(t, env, err)
+
+	stored, ok := vault.storedRecord(t, certificateTasksVaultPath+"/"+taskID)
+	if !ok || !stored.CreationConfirmed || stored.Status != TaskStatusPending {
+		t.Fatalf("expected the confirmed record to have landed, got %+v (stored %v)", stored, ok)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	expectCertificateHolder(t, env.manager, waitInstanceID, taskID)
+
+	vault.heal()
+	expectFailedSaved(t, env, vault, taskID)
 }
 
 // recordWrites counts the certificate record writes the vault was asked
