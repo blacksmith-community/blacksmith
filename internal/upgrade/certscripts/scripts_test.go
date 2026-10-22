@@ -523,6 +523,20 @@ func TestParseLinesRejectsUnknownKeys(t *testing.T) {
 		"carriage return":      "path=/x\r\n",
 		"pem marker line":      "-----BEGIN PRIVATE KEY-----\n",
 		"uppercase key":        "PATH=/x\n",
+		"escape sequence":      "path=/x\x1b[2J\n",
+		"start of heading":     "path=/x\x01\n",
+		"backspace":            "path=/x\x08y\n",
+		"bell in a key":        "pa\x07th=/x\n",
+		"unit separator":       "path=/x\x1f\n",
+		"delete":               "path=/x\x7f\n",
+		"C1 next line":         "path=/x\u0085y\n",
+		"C1 control sequence":  "path=/x\u009b2J\n",
+		"C1 first":             "path=/x\u0080\n",
+		"C1 last":              "path=/x\u009f\n",
+		"invalid byte":         "path=/x\xff\n",
+		"truncated sequence":   "path=/x\xc3\n",
+		"overlong slash":       "path=\xc0\xaf\n",
+		"surrogate half":       "path=/x\xed\xa0\x80\n",
 	}
 
 	for name, out := range bad {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"blacksmith/internal/bosh/ssh"
 )
@@ -123,7 +124,8 @@ var outputKey = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 // key=value pairs separated by single spaces. Each line becomes one map.
 // Empty lines are skipped. A key outside allowed, a key that repeats on
 // a line, a field without an equals sign, and any stray whitespace fail
-// the whole parse. The error names the line and field by number and
+// the whole parse, and so does a line that is not valid UTF-8 or holds
+// a control character. The error names the line and field by number and
 // never repeats the output, which could hold anything a script misprinted.
 func ParseLines(out []byte, allowed map[string]bool) ([]map[string]string, error) {
 	lines := strings.Split(string(out), "\n")
@@ -148,6 +150,7 @@ func ParseLines(out []byte, allowed map[string]bool) ([]map[string]string, error
 // The ways a line of output can break the contract. None of them repeats
 // the output.
 var (
+	errEncoding = errors.New("the line is not valid UTF-8")
 	errControl  = errors.New("the line holds a control character")
 	errNoPair   = errors.New("a field is not a key=value pair")
 	errBadKey   = errors.New("a field has a malformed key")
@@ -155,9 +158,22 @@ var (
 	errRepeated = errors.New("a field repeats a key")
 )
 
-// parseLine reads one line of key=value fields.
+// isControl reports whether r is a C0 control, DEL, or a C1 control.
+// A value printed into the journal, the UI, or a log must not carry any
+// of them, because a terminal or a viewer would act on them. Tab counts
+// as a control here too, because only a single space separates fields.
+func isControl(r rune) bool {
+	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+}
+
+// parseLine reads one line of key=value fields. The line must be valid
+// UTF-8 with no control character.
 func parseLine(line string, allowed map[string]bool) (map[string]string, error) {
-	if strings.ContainsAny(line, "\t\r\v\f\x00") {
+	if !utf8.ValidString(line) {
+		return nil, errEncoding
+	}
+
+	if strings.IndexFunc(line, isControl) >= 0 {
 		return nil, errControl
 	}
 
