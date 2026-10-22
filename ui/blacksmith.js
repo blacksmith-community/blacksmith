@@ -2091,9 +2091,9 @@
           </label>
         </div>
         <div class="filter-buttons">
-          <button id="refresh-services" class="copy-deployment-names-btn" title="Refresh Service Instances">
+          <button id="refresh-services" class="copy-deployment-names-btn" title="Refresh Service Instances" aria-label="Refresh service instances">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span></span>
+            <span>Refresh</span>
           </button>
           <button id="copy-deployment-names" class="copy-deployment-names-btn" title="Copy Service Instance Deployment Names">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -10698,66 +10698,70 @@
         // Store instances data for later use
         window.serviceInstances = data.instances;
 
-        // Set up service instance click handlers
+        // One awaited selection path for pointer, keyboard and quick navigation.
+        let instanceSelectionSequence = 0;
+        window.navigateToInstance = async (instanceId, signal) => {
+          const item = [...document.querySelectorAll('#services .service-item')]
+            .find(element => element.dataset.instanceId === instanceId);
+          const details = window.serviceInstances?.[instanceId];
+          if (!item || !details) return false;
+          const selection = ++instanceSelectionSequence;
+          // Fetch vault data for the instance
+          let vaultData = null;
+          try {
+            const response = await fetch(`/b/${instanceId}/details`, { cache: 'no-cache' });
+            if (response.ok) {
+              vaultData = await response.json();
+              console.log('Vault data received:', vaultData); // Debug logging
+            }
+          } catch (error) {
+            console.error('Failed to fetch vault data:', error);
+          }
+
+          // Fetch manifest to extract deployment name if not already in vault data
+          if (vaultData && !vaultData.deployment_name) {
+            try {
+              const manifestResponse = await fetch(`/b/${instanceId}/manifest`, { cache: 'no-cache' });
+              if (manifestResponse.ok) {
+                const manifestData = await manifestResponse.json();
+                if (manifestData && manifestData.parsed && manifestData.parsed.name) {
+                  vaultData.deployment_name = manifestData.parsed.name;
+                  console.log(`Extracted deployment name from manifest for ${instanceId}: ${vaultData.deployment_name}`);
+                }
+              }
+            } catch (error) {
+              console.error('Failed to fetch manifest data:', error);
+            }
+          }
+
+          if (signal?.aborted || selection !== instanceSelectionSequence || !item.isConnected) return false;
+
+          // Store current instance info globally for log selection
+          window.currentInstanceInfo = {
+            id: instanceId,
+            service: details.service_id,
+            plan: details.plan?.name
+          };
+
+          // Update active state
+          document.querySelectorAll('#services .service-item').forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+
+          // Render detail view with vault data
+          const detailContainer = document.querySelector('#services .service-detail');
+          detailContainer.innerHTML = renderServiceDetail(instanceId, details, vaultData);
+
+          // Load initial tab content (details)
+          loadDetailTab(instanceId, 'details');
+
+          // Set up detail tab handlers
+          setupDetailTabHandlers(instanceId);
+          return true;
+        };
         const setupServiceHandlers = () => {
-          // Handle service item clicks
           document.querySelectorAll('#services .service-item').forEach(item => {
-            item.addEventListener('click', async function () {
-              const instanceId = this.dataset.instanceId;
-              const details = window.serviceInstances[instanceId];
-
-              // Store current instance info globally for log selection
-              window.currentInstanceInfo = {
-                id: instanceId,
-                service: details.service_id,
-                plan: details.plan?.name
-              };
-
-              // Update active state
-              document.querySelectorAll('#services .service-item').forEach(i => i.classList.remove('active'));
-              this.classList.add('active');
-
-              // Fetch vault data for the instance
-              let vaultData = null;
-              try {
-                const response = await fetch(`/b/${instanceId}/details`, { cache: 'no-cache' });
-                if (response.ok) {
-                  vaultData = await response.json();
-                  console.log('Vault data received:', vaultData); // Debug logging
-                }
-              } catch (error) {
-                console.error('Failed to fetch vault data:', error);
-              }
-
-              // Fetch manifest to extract deployment name if not already in vault data
-              if (vaultData && !vaultData.deployment_name) {
-                try {
-                  const manifestResponse = await fetch(`/b/${instanceId}/manifest`, { cache: 'no-cache' });
-                  if (manifestResponse.ok) {
-                    const manifestData = await manifestResponse.json();
-                    if (manifestData && manifestData.parsed && manifestData.parsed.name) {
-                      vaultData.deployment_name = manifestData.parsed.name;
-                      console.log(`Extracted deployment name from manifest for ${instanceId}: ${vaultData.deployment_name}`);
-                    }
-                  }
-                } catch (error) {
-                  console.error('Failed to fetch manifest data:', error);
-                }
-              }
-
-              // Render detail view with vault data
-              const detailContainer = document.querySelector('#services .service-detail');
-              detailContainer.innerHTML = renderServiceDetail(instanceId, details, vaultData);
-
-              // Load initial tab content (details)
-              loadDetailTab(instanceId, 'details');
-
-              // Set up detail tab handlers
-              setupDetailTabHandlers(instanceId);
-            });
+            item.addEventListener('click', () => window.navigateToInstance(item.dataset.instanceId));
           });
-
-          // Set up filter handlers
           setupFilterHandlers();
         };
 
@@ -11217,8 +11221,10 @@
           });
         };
 
+        let detailRequestSequence = 0;
         // Load detail tab content
         const loadDetailTab = async (instanceId, tabType) => {
+          const request = ++detailRequestSequence;
           const contentContainer = document.querySelector('#services .detail-content');
           contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
@@ -11229,6 +11235,7 @@
           }
 
           const content = await fetchServiceDetail(instanceId, tabType);
+          if (request !== detailRequestSequence || !contentContainer.isConnected || window.currentInstanceInfo?.id !== instanceId) return;
           contentContainer.innerHTML = content;
 
           // Initialize sorting and filtering for tables
@@ -11323,7 +11330,9 @@
         });
       };
 
+      let blacksmithRequestSequence = 0;
       const loadBlacksmithDetailTab = async (tabType) => {
+        const request = ++blacksmithRequestSequence;
         const contentContainer = document.querySelector('#blacksmith .detail-content');
         // Clean up any special layout classes
         contentContainer.classList.remove('plans-view');
@@ -11335,8 +11344,10 @@
             // Fetch credentials and merge with details
             try {
               const response = await fetch('/b/blacksmith/credentials');
+              if (request !== blacksmithRequestSequence) return;
               if (response.ok) {
                 const creds = await response.json();
+                if (request !== blacksmithRequestSequence) return;
 
                 // Create details content with credentials
                 const data = window.blacksmithData || {};
@@ -11524,6 +11535,7 @@
                 contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
               }
             } catch (error) {
+              if (request !== blacksmithRequestSequence) return;
               console.error('Failed to load credentials:', error);
               // Fallback to original details content
               contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
@@ -11571,7 +11583,7 @@
 
             // Initialize broker functionality after content is rendered
             setTimeout(() => {
-              initBrokerTab();
+              if (request === blacksmithRequestSequence) initBrokerTab();
             }, 50);
             return;
           }
@@ -11581,10 +11593,12 @@
           const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
 
           const content = await fetchBlacksmithDetail(deploymentName, tabType);
+          if (request !== blacksmithRequestSequence) return;
           contentContainer.innerHTML = content;
 
           // Initialize sorting and filtering for tables
           setTimeout(() => {
+            if (request !== blacksmithRequestSequence) return;
             if (tabType === 'events') {
               initializeSorting('events-table');
               attachSearchFilter('events-table-events');
@@ -11621,6 +11635,7 @@
             }
           }, 100);
         } catch (error) {
+          if (request !== blacksmithRequestSequence) return;
           contentContainer.innerHTML = `<div class="error">Failed to load tab: ${error.message}</div>`;
         }
       };

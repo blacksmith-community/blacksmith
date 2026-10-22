@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
   <meta charset="utf-8">
@@ -9,9 +9,11 @@
   <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20250901">
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/console.css?v=20261021">
 </head>
 
 <body>
+  <a class="skip-link" href="#console-main">Skip to console</a>
 
   <header>
     <div class="wrap flex items-center justify-between mx-5">
@@ -31,6 +33,7 @@
         </span>
       </div>
       <div class="flex items-center space-x-4">
+        <button type="button" id="navigation-trigger" aria-haspopup="dialog" aria-controls="navigation-dialog">Go to… <kbd>Ctrl K</kbd></button>
         <span id="deployment-name"></span>
         <span id="ident"></span>
       </div>
@@ -58,8 +61,9 @@
     </div>
   </div>
 
-  <div class="main-content">
+  <main class="main-content" id="console-main" tabindex="-1">
     <div class="wrap mx-5 flex-1 flex flex-col">
+      <div class="console-heading"><h1 id="console-title">Blacksmith</h1><p>Manage services, inspect deployments, and monitor batch operations.</p></div>
       <!-- Tab navigation -->
       <div class="tabs flex bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-600 overflow-x-auto scrollbar-hide" role="tablist" aria-label="Main navigation">
         <button class="tab-button active flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 data-[active]:bg-white dark:data-[active]:bg-gray-800 data-[active]:border-b-blue-500 data-[active]:text-blue-600 dark:data-[active]:text-blue-400 data-[active]:font-semibold data-[active]:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="blacksmith" role="tab" aria-selected="true"
@@ -101,19 +105,20 @@
           <div class="upgrade-main">
             <div class="upgrade-top">
               <div class="upgrade-services-panel">
-                <h2>Services</h2>
+                <h2>1. Select instances</h2>
                 <div class="upgrade-services upgrade-filters">
                   <div class="loading p-4 text-center">loading...</div>
                 </div>
               </div>
               <div class="upgrade-targets-panel">
-                <h2>Targets</h2>
+                <h2>2. Choose targets</h2>
                 <div class="upgrade-targets upgrade-filters"></div>
               </div>
             </div>
             <div class="upgrade-instances">
             </div>
             <div class="upgrade-footer">
+              <p class="upgrade-guidance">Select instances and a stemcell or release target. Review the confirmation before starting.</p>
               <button id="upgrade-start" class="btn-primary" disabled>Upgrade Selected (0)</button>
             </div>
           </div>
@@ -127,7 +132,7 @@
 
       </div>
     </div>
-  </div>
+  </main>
 
   <footer>
     <div class="wrap mx-5">
@@ -353,8 +358,17 @@
     </div>
   </div>
 
+  <dialog id="navigation-dialog" aria-labelledby="navigation-title">
+    <div class="navigation-heading"><h2 id="navigation-title">Go to a screen</h2><button type="button" data-close aria-label="Close navigation">Esc</button></div>
+    <label for="navigation-search">Search screens or service instances</label>
+    <input id="navigation-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="navigation-results" autocomplete="off" spellcheck="false" placeholder="Try certificates, batch, or an instance ID…">
+    <div id="navigation-results" role="listbox" aria-label="Destinations"></div>
+    <p role="status" aria-live="polite"></p>
+    <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
+  </dialog>
   <script type="text/javascript" src="/xterm.min.js"></script>
   <script type="text/javascript" src="/blacksmith.js?v=20250901"></script>
+  <script src="/navigation.js?v=20261021"></script>
 </body>
 
 </html>
