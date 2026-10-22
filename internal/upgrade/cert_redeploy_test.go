@@ -2029,3 +2029,32 @@ func TestCertificateCancelBeforeApprovalStop(t *testing.T) {
 		})
 	}
 }
+
+// Once a step returns, a running instance whose decision was answered and
+// whose task resumed reads its next step again rather than stopping the
+// processor of a running task.
+func TestStepEnd(t *testing.T) {
+	t.Parallel()
+
+	waiting := &InstanceRotation{Pending: &PendingDecision{Kind: DecisionApproveChangedEffects}}
+
+	cases := []struct {
+		name     string
+		task     UpgradeTask
+		instance InstanceUpgrade
+		want     stepEnd
+	}{
+		{"settled", UpgradeTask{Status: TaskStatusRunning}, InstanceUpgrade{Status: InstanceStatusSuccess}, endSettled},
+		{"paused", UpgradeTask{Status: TaskStatusPaused, Paused: true}, InstanceUpgrade{Status: InstanceStatusRunning}, endAgain},
+		{"cancelled", UpgradeTask{Status: TaskStatusCancelled}, InstanceUpgrade{Status: InstanceStatusRunning}, endAgain},
+		{"decision answered and resumed", UpgradeTask{Status: TaskStatusRunning}, InstanceUpgrade{Status: InstanceStatusRunning, Certificates: &InstanceRotation{}}, endAgain},
+		{"waiting on a running task", UpgradeTask{Status: TaskStatusRunning}, InstanceUpgrade{Status: StatusAwaitingDecision, Certificates: waiting}, endStop},
+		{"interrupted", UpgradeTask{Status: TaskStatusRunning}, InstanceUpgrade{Status: InstanceStatusInterrupted}, endStop},
+	}
+
+	for _, tc := range cases {
+		if got := stepEndLocked(&tc.task, &tc.instance); got != tc.want {
+			t.Errorf("%s: got %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}

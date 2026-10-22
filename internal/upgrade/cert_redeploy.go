@@ -145,14 +145,12 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 		}
 
 		m.mu.RLock()
-		settled := inst.Status.settled() && !waitsForDecision(inst)
+		end := stepEndLocked(task, inst)
 		failed := inst.Status == InstanceStatusFailed
-		paused := task.Paused
-		cancelled := task.Status == TaskStatusCancelled
 		m.mu.RUnlock()
 
-		switch {
-		case settled:
+		switch end {
+		case endSettled:
 			// The task goes on to its next instance, whose pause wait
 			// holds it when this failure paused the task.
 			if failed {
@@ -160,11 +158,42 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 			}
 
 			return true
-		case paused || cancelled:
+		case endAgain:
 			continue
 		default:
 			return false
 		}
+	}
+}
+
+// stepEnd is what the processor does once a step of an instance returns.
+type stepEnd int
+
+const (
+	// endStop stops the processor, and the task waits to be queued again.
+	endStop stepEnd = iota
+	// endAgain reads the instance's next step.
+	endAgain
+	// endSettled goes on to the task's next instance.
+	endSettled
+)
+
+// stepEndLocked reads the task and the instance once a step returns. A
+// settled instance ends the step. A paused or cancelled task, or a running
+// instance with no pending decision, reads the next step again: the last
+// case is an instance whose decision an operator answered, and whose task
+// resumed, after the step stopped for it, which this processor still
+// owns. The caller holds mu for reading.
+func stepEndLocked(task *UpgradeTask, inst *InstanceUpgrade) stepEnd {
+	switch {
+	case inst.Status.settled() && !waitsForDecision(inst):
+		return endSettled
+	case task.Paused || task.Status == TaskStatusCancelled:
+		return endAgain
+	case inst.Status == InstanceStatusRunning && !waitsForDecision(inst):
+		return endAgain
+	default:
+		return endStop
 	}
 }
 
