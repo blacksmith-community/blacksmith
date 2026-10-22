@@ -15849,6 +15849,18 @@
       return thresholdsPromise;
     };
 
+    // Called after the settings are saved, so the pills use the new
+    // thresholds without another request.
+    const setThresholds = (warning, critical) => {
+      const w = Number(warning);
+      const c = Number(critical);
+      if (Number.isFinite(w) && Number.isFinite(c) && c > 0 && w > c) {
+        thresholds.warningDays = w;
+        thresholds.criticalDays = c;
+        thresholdsPromise = Promise.resolve(thresholds);
+      }
+    };
+
     const displayExpiry = (notAfter) => {
       loadThresholds();
       const date = new Date(notAfter);
@@ -16082,7 +16094,7 @@
       return box;
     };
 
-    return { expiryPill, healthPill, summary, detail, copyButton, formatName, formatDate, displayExpiry, el, errorBlock, setError, textPanel };
+    return { expiryPill, healthPill, summary, detail, copyButton, formatName, formatDate, displayExpiry, setThresholds, el, errorBlock, setError, textPanel };
   })();
 
   // Certificate Inspector Modal functionality
@@ -19286,6 +19298,7 @@
           </div>
           <div class="cert-fleet-actions" id="cert-fleet-actions">
             <button type="button" class="execute-btn" id="cert-scan-btn">Scan now</button>
+            <button type="button" class="cert-action-btn" id="cert-settings-btn" aria-haspopup="dialog">Settings</button>
             <div class="cert-export">
               <button type="button" class="cert-action-btn" id="cert-export-btn" aria-haspopup="true" aria-expanded="false" aria-controls="cert-export-menu">Export</button>
               <div class="cert-export-menu" id="cert-export-menu" hidden>
@@ -19507,12 +19520,49 @@
       return box;
     };
 
+    // The reassurance line. It says nothing expires only when the scan
+    // covered everything, and otherwise says what it could and could not see.
+    const joinPhrases = (phrases) => {
+      if (phrases.length <= 1) return phrases.join('');
+      if (phrases.length === 2) return `${phrases[0]} and ${phrases[1]}`;
+      return `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
+    };
+
+    const reassuranceNotice = (resp) => {
+      const s = resp.summary || {};
+      if ((s.certificates || 0) === 0) return null;
+      if ((s.expired || 0) + (s.critical || 0) + (s.warning || 0) > 0) return null;
+
+      const days = Number((resp.settings || {}).warning_days) || 30;
+      const credhub = ((resp.capabilities || {}).credhub || {}).state;
+      const scanErrors = Array.isArray((resp.scan || {}).errors) ? resp.scan.errors.length : 0;
+      let failedListeners = 0;
+      view.fleet.forEach((cert) => { failedListeners += Number(cert.coverage && cert.coverage.failed_listeners) || 0; });
+
+      const gaps = [];
+      if ((s.expiry_unknown || 0) > 0) gaps.push(`${plural(s.expiry_unknown, 'certificate')} ${s.expiry_unknown === 1 ? 'has' : 'have'} an unknown expiry`);
+      if (failedListeners > 0) gaps.push(`${plural(failedListeners, 'listener')} did not answer`);
+      if (scanErrors > 0) gaps.push(`${plural(scanErrors, 'instance')} could not be scanned`);
+      if ((s.stale || 0) > 0) gaps.push(`${plural(s.stale, 'certificate')} ${s.stale === 1 ? 'is' : 'are'} showing stale data`);
+      if (gaps.length === 0 && (s.incomplete_coverage || 0) > 0) gaps.push(`${plural(s.incomplete_coverage, 'certificate')} ${s.incomplete_coverage === 1 ? 'has' : 'have'} incomplete coverage`);
+      if (credhub && credhub !== 'configured') gaps.push('CredHub is not available');
+
+      const box = el('div', 'cert-notice cert-notice--ok');
+      box.setAttribute('role', 'status');
+      box.id = 'cert-reassurance';
+      const text = gaps.length === 0
+        ? `Nothing expires within ${plural(days, 'day')}.`
+        : `Nothing we could observe expires within ${plural(days, 'day')}. ${joinPhrases(gaps)}.`;
+      box.appendChild(el('p', 'cert-notice-text', text));
+      return box;
+    };
+
     const renderNotices = () => {
       const holder = view.refs.notices;
       const resp = view.resp;
       const nodes = [];
       if (resp && view.mode === 'ready') {
-        [refreshErrorNotice(), credhubNotice(resp), directorNotice(resp), staleNotice(resp)].forEach((node) => {
+        [refreshErrorNotice(), credhubNotice(resp), directorNotice(resp), staleNotice(resp), reassuranceNotice(resp)].forEach((node) => {
           if (node) nodes.push(node);
         });
       } else {
@@ -20822,6 +20872,237 @@
       view.badgeTimer = setInterval(pollBadge, BADGE_POLL_MS);
     };
 
+    // ----- settings -----
+
+    const SETTINGS_FIELDS = [
+      { key: 'warning_days', label: 'Warning threshold (days)', type: 'number', help: 'A whole number of days, at least 1. A certificate shows Warning when it expires within this many days.' },
+      { key: 'critical_days', label: 'Critical threshold (days)', type: 'number', help: 'A whole number of days, at least 1, and below the warning threshold. A certificate shows Critical inside this window.' },
+      { key: 'scan_interval_minutes', label: 'Scan interval (minutes)', type: 'number', help: 'Minutes between scheduled scans, at least 5.' },
+      { key: 'scan_concurrency', label: 'Scan concurrency', type: 'number', help: 'How many instances we scan at the same time, from 1 to 16.' },
+      { key: 'instance_scan_timeout_seconds', label: 'Instance scan timeout (seconds)', type: 'number', help: 'Seconds we wait on one instance before we give up on it, at least 1.' },
+      { key: 'preview_ttl_minutes', label: 'Preview lifetime (minutes)', type: 'number', help: 'Minutes a preview stays valid before we need a fresh one, from 5 to 60.' },
+      { key: 'probe_enabled', label: 'Probe live listeners', type: 'checkbox', help: 'Connect to each listener and read the certificate it serves, so we can compare it with the stored one.' },
+      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'When this is off, a batch carries on after a failure.' }
+    ];
+
+    const settingKeys = () => SETTINGS_FIELDS.map((f) => f.key);
+
+    const fieldOfError = (message) => {
+      const m = /^([a-z_]+)\s/.exec(String(message || ''));
+      return m && settingKeys().includes(m[1]) ? m[1] : null;
+    };
+
+    const unwrapSettings = (body) => (body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : body);
+
+    const buildSettingsModal = () => {
+      const overlay = el('div', 'modal-overlay cert-settings-overlay');
+      overlay.id = 'cert-settings-modal';
+      const modal = el('div', 'modal cert-settings-modal');
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.setAttribute('aria-labelledby', 'cert-settings-title');
+
+      const header = el('div', 'modal-header');
+      const title = el('h2', 'modal-title', 'Certificate settings');
+      title.id = 'cert-settings-title';
+      header.appendChild(title);
+      const close = el('button', 'modal-close');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close modal');
+      const x = el('span', null, '×');
+      x.setAttribute('aria-hidden', 'true');
+      close.appendChild(x);
+      header.appendChild(close);
+      modal.appendChild(header);
+
+      const body = el('div', 'modal-body');
+      modal.appendChild(body);
+      overlay.appendChild(modal);
+      return { overlay, body };
+    };
+
+    const settingsForm = (current, onSaved) => {
+      const form = el('form', 'cert-settings-form');
+      form.noValidate = true;
+      const general = el('p', 'cert-settings-error');
+      general.setAttribute('role', 'alert');
+      general.hidden = true;
+      form.appendChild(general);
+
+      const fields = new Map();
+      SETTINGS_FIELDS.forEach((def) => {
+        const wrap = el('div', `cert-settings-field cert-settings-field--${def.type}`);
+        const id = `cert-setting-${def.key}`;
+        const input = el('input');
+        input.id = id;
+        input.name = def.key;
+        input.type = def.type;
+        if (def.type === 'number') {
+          input.inputMode = 'numeric';
+          input.step = '1';
+          input.value = current[def.key] === undefined || current[def.key] === null ? '' : String(current[def.key]);
+        } else {
+          input.checked = Boolean(current[def.key]);
+        }
+        const label = el('label', 'cert-settings-label', def.label);
+        label.htmlFor = id;
+        const help = el('p', 'cert-settings-help', def.help);
+        help.id = `${id}-help`;
+        const error = el('p', 'cert-settings-error');
+        error.id = `${id}-error`;
+        error.setAttribute('role', 'alert');
+        error.hidden = true;
+        input.setAttribute('aria-describedby', help.id);
+        if (def.type === 'checkbox') {
+          const row = el('div', 'cert-settings-checkrow');
+          row.appendChild(input);
+          row.appendChild(label);
+          wrap.appendChild(row);
+        } else {
+          wrap.appendChild(label);
+          wrap.appendChild(input);
+        }
+        wrap.appendChild(help);
+        wrap.appendChild(error);
+        input.addEventListener('input', () => clearFieldError(fields.get(def.key)));
+        fields.set(def.key, { def, input, help, error });
+        form.appendChild(wrap);
+      });
+
+      const actions = el('div', 'cert-settings-actions');
+      const save = button('execute-btn', 'Save');
+      save.type = 'submit';
+      const cancel = button('cert-action-btn', 'Cancel');
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+      form.appendChild(actions);
+
+      const clearFieldError = (ref) => {
+        if (!ref) return;
+        ref.error.hidden = true;
+        ref.error.textContent = '';
+        ref.input.removeAttribute('aria-invalid');
+        ref.input.setAttribute('aria-describedby', ref.help.id);
+      };
+
+      const showFieldError = (key, message) => {
+        const ref = fields.get(key);
+        ref.error.textContent = message;
+        ref.error.hidden = false;
+        ref.input.setAttribute('aria-invalid', 'true');
+        ref.input.setAttribute('aria-describedby', `${ref.help.id} ${ref.error.id}`);
+      };
+
+      const clearAllErrors = () => {
+        fields.forEach(clearFieldError);
+        general.hidden = true;
+        general.textContent = '';
+      };
+
+      const collect = () => {
+        const out = {};
+        const problems = [];
+        fields.forEach((ref, key) => {
+          if (ref.def.type === 'checkbox') {
+            out[key] = ref.input.checked;
+            return;
+          }
+          const raw = ref.input.value.trim();
+          if (!/^-?\d+$/.test(raw)) {
+            problems.push([key, `${key} must be a whole number`]);
+            return;
+          }
+          out[key] = Number(raw);
+        });
+        return { out, problems };
+      };
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        clearAllErrors();
+        const { out, problems } = collect();
+        if (problems.length > 0) {
+          problems.forEach(([key, message]) => showFieldError(key, message));
+          fields.get(problems[0][0]).input.focus();
+          return;
+        }
+        save.disabled = true;
+        try {
+          const result = await getJSON('/b/certificates/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(out)
+          });
+          if (result.ok) {
+            onSaved(unwrapSettings(result.body) || out);
+            return;
+          }
+          const message = errorText(result, 'The settings could not be saved.');
+          const key = fieldOfError(message);
+          if (key) {
+            showFieldError(key, message);
+            fields.get(key).input.focus();
+          } else {
+            general.textContent = message;
+            general.hidden = false;
+          }
+        } catch (error) {
+          general.textContent = `The settings could not be saved. ${(error && error.message) || ''}`.trim();
+          general.hidden = false;
+        } finally {
+          save.disabled = false;
+        }
+      });
+
+      return { form, cancel, fields };
+    };
+
+    async function openSettings() {
+      const ui = buildSettingsModal();
+      ModalManager.openModal(ui.overlay);
+      const closeIt = () => ModalManager.closeModal(ui.overlay);
+
+      const load = async () => {
+        const status = el('p', 'cert-muted', 'Loading the settings...');
+        status.setAttribute('role', 'status');
+        ui.body.replaceChildren(status);
+        try {
+          const result = await getJSON('/b/certificates/settings');
+          const current = result.ok ? unwrapSettings(result.body) : null;
+          if (!current || typeof current !== 'object') {
+            const block = CertView.errorBlock({
+              title: 'The settings could not be loaded',
+              message: errorText(result, 'The settings could not be loaded.'),
+              onRetry: load
+            });
+            block.setAttribute('role', 'alert');
+            ui.body.replaceChildren(block);
+            return;
+          }
+          const built = settingsForm(current, (saved) => {
+            closeIt();
+            CertView.setThresholds(saved.warning_days, saved.critical_days);
+            window.Feedback.success('Certificate settings saved.', { toast: true });
+            view.signature = '';
+            refresh({ announce: false });
+          });
+          built.cancel.addEventListener('click', closeIt);
+          ui.body.replaceChildren(built.form);
+          const first = built.form.querySelector('input');
+          if (first) first.focus();
+        } catch (error) {
+          const block = CertView.errorBlock({
+            title: 'The settings could not be loaded',
+            message: (error && error.message) || 'The settings could not be loaded.',
+            onRetry: load
+          });
+          block.setAttribute('role', 'alert');
+          ui.body.replaceChildren(block);
+        }
+      };
+      await load();
+    }
+
     // ----- build and bind -----
 
     const build = () => {
@@ -20850,6 +21131,7 @@
         tbody: q('cert-tbody'),
         empty: q('cert-empty'),
         scanBtn: q('cert-scan-btn'),
+        settingsBtn: q('cert-settings-btn'),
         actions: q('cert-fleet-actions'),
         exportBtn: q('cert-export-btn'),
         exportMenu: q('cert-export-menu'),
@@ -20865,6 +21147,7 @@
       buildDrawer();
 
       view.refs.scanBtn.addEventListener('click', () => { startScan(); });
+      view.refs.settingsBtn.addEventListener('click', () => { openSettings(); });
 
       let searchTimer = null;
       view.refs.search.addEventListener('input', () => {

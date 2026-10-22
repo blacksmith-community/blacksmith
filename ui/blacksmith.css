@@ -12685,3 +12685,81 @@ span.config-type.resurrection {
     width: 100%;
   }
 }
+
+/* ================================================================
+   Certificate settings and coverage notice
+   ================================================================ */
+
+.cert-notice--ok {
+  border-left-color: var(--cert-ok);
+}
+
+.cert-settings-modal {
+  max-width: 560px;
+}
+
+.cert-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cert-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cert-settings-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cert-settings-checkrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cert-settings-field input[type="number"] {
+  max-width: 180px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+.cert-settings-field input[aria-invalid="true"] {
+  border-color: var(--cert-expired);
+}
+
+.cert-settings-field input:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.cert-settings-help {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.cert-settings-error {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cert-expired-fg);
+}
+
+.cert-settings-error[hidden] {
+  display: none;
+}
+
+.cert-settings-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
