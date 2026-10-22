@@ -95,9 +95,9 @@ func NewRunner(client *ssh.Client, log logger.Logger) *Runner {
 
 // Run runs program with args on the VM, sends stdin to it, and returns
 // its output and exit status. Every argument is quoted, and a program or
-// an argument that carries "BEGIN", "PRIVATE", a newline, a carriage
-// return, or a NUL is refused before anything is sent, so content can
-// travel only on stdin. Each stream keeps at most limit bytes, or
+// an argument that may carry key content, such as a PEM marker, a key
+// body, a colon-hex dump, a line break, or a NUL, is refused before
+// anything is sent, so content can travel only on stdin. Each stream keeps at most limit bytes, or
 // DefaultOutputLimit when limit is not positive, and the rest is read
 // and dropped so the command can finish.
 //
@@ -374,12 +374,25 @@ func checkCommandLine(program string, args []string) error {
 	return nil
 }
 
-// carriesContent reports whether s holds a line break or a NUL, or any
-// text Withheld would keep out of a log line, such as a PEM marker word,
-// a long base64 run, or a hex key dump. A command line reaches the VM's
-// process list and audit log, so it is held to the same rule as output.
+// carriesContent reports whether s holds a line break or a NUL, or text
+// Withheld would keep out of a log line, because a command line reaches
+// the VM's process list and audit log. That means a PEM marker word,
+// bytes that are not text, or a colon-hex key dump. The base64 rule is
+// applied to each part of s between slashes, so a path whose parts are
+// ordinary names still passes, while a key body, which almost always
+// holds 40 or more base64 characters between two slashes, is refused.
 func carriesContent(s string) bool {
-	return strings.ContainsAny(s, "\n\r\x00") || Withheld([]byte(s))
+	if strings.ContainsAny(s, "\n\r\x00") || hasMarkerOrDump([]byte(s)) {
+		return true
+	}
+
+	for segment := range strings.SplitSeq(s, "/") {
+		if hasLongBase64Run([]byte(segment)) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // stdinGate passes the caller's stdin to the session until stop, and

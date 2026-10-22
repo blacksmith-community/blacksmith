@@ -43,17 +43,20 @@ var colonHexRun = regexp.MustCompile(`(?:[0-9A-Fa-f]{2}:\s*){15,}[0-9A-Fa-f]{2}`
 // openssl pkey -text prints. Every rule judges the whole stream, never
 // only the part around a marker.
 func Withheld(stream []byte) bool {
+	return hasMarkerOrDump(stream) || hasLongBase64Run(stream)
+}
+
+// hasMarkerOrDump reports whether stream holds "-----", "BEGIN", or
+// "PRIVATE", is not text, or holds a colon-hex key dump. These are the
+// rules of Withheld other than the base64 run.
+func hasMarkerOrDump(stream []byte) bool {
 	for _, marker := range withheldMarkers {
 		if bytes.Contains(stream, marker) {
 			return true
 		}
 	}
 
-	if !isText(stream) || colonHexRun.Match(stream) {
-		return true
-	}
-
-	return hasLongBase64Run(stream)
+	return !isText(stream) || colonHexRun.Match(stream)
 }
 
 // isText reports whether stream is UTF-8 with no control character but a

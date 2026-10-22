@@ -5,6 +5,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -339,19 +342,27 @@ func TestRunnerRefusesContentInArgs(t *testing.T) {
 	fakeVM := startRunnerVM(t, func(string, ssh.Channel, <-chan struct{}) uint32 { return 0 })
 	log := &runnerLog{}
 	runner := boshssh.NewRunner(fakeVM.dial(t), log)
+	rsaKey := rsaKeyBase64(t)
 
 	cases := map[string]struct {
 		program string
 		args    []string
 	}{
-		"a certificate header":  {catProgram, []string{"-----BEGIN CERTIFICATE-----"}},
-		"a key word":            {catProgram, []string{"x", "RSA PRIVATE"}},
-		"a newline":             {catProgram, []string{"a\nb"}},
-		"a NUL":                 {catProgram, []string{"a\x00b"}},
-		"a newline in program":  {"cat\nrm", nil},
-		"a bare key body line":  {catProgram, []string{"-in", testKeyBody}},
-		"a key body as program": {testKeyBody, nil},
-		"an escape character":   {catProgram, []string{"a\x1bb"}},
+		"a one-line base64 RSA key": {catProgram, []string{"-in", rsaKey}},
+		"a long letters-and-digits path segment": {
+			catProgram, []string{"/var/vcap/data/" + strings.Repeat("Ab3", 23) + "x/server.crt"},
+		},
+		"a colon-hex dump":       {catProgram, []string{strings.TrimSpace(colonHex(16, false, 16))}},
+		"five dashes":            {catProgram, []string{"-----"}},
+		"text that is not UTF-8": {catProgram, []string{"a\xffb"}},
+		"a certificate header":   {catProgram, []string{"-----BEGIN CERTIFICATE-----"}},
+		"a key word":             {catProgram, []string{"x", "RSA PRIVATE"}},
+		"a newline":              {catProgram, []string{"a\nb"}},
+		"a NUL":                  {catProgram, []string{"a\x00b"}},
+		"a newline in program":   {"cat\nrm", nil},
+		"a bare key body line":   {catProgram, []string{"-in", testKeyBody}},
+		"a key body as program":  {testKeyBody, nil},
+		"an escape character":    {catProgram, []string{"a\x1bb"}},
 	}
 
 	for name, testCase := range cases {
@@ -361,7 +372,7 @@ func TestRunnerRefusesContentInArgs(t *testing.T) {
 		}
 
 		if err != nil && (strings.Contains(err.Error(), "BEGIN") || strings.Contains(err.Error(), "PRIVATE") ||
-			strings.Contains(err.Error(), testKeyBody)) {
+			strings.Contains(err.Error(), testKeyBody) || strings.Contains(err.Error(), rsaKey[:40])) {
 			t.Errorf("%s: the error %q repeats the argument", name, err)
 		}
 	}
@@ -371,10 +382,24 @@ func TestRunnerRefusesContentInArgs(t *testing.T) {
 	}
 
 	for _, line := range log.all() {
-		if strings.Contains(line, "BEGIN") || strings.Contains(line, "PRIVATE") || strings.Contains(line, testKeyBody) {
+		if strings.Contains(line, "BEGIN") || strings.Contains(line, "PRIVATE") || strings.Contains(line, testKeyBody) ||
+			strings.Contains(line, rsaKey[:40]) {
 			t.Errorf("the runner logged %q", line)
 		}
 	}
+}
+
+// rsaKeyBase64 generates a throwaway 2048-bit RSA key and returns its
+// PKCS#1 DER form in standard base64 on one line.
+func rsaKeyBase64(t *testing.T) string {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate the test key: %v", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(key))
 }
 
 // The reason a VM's sshd gives for refusing a session is free text, so
@@ -417,14 +442,22 @@ func TestRunnerAllowsPathsAndHashesInArgs(t *testing.T) {
 	})
 	runner := boshssh.NewRunner(fakeVM.dial(t), &runnerLog{})
 
-	args := []string{"/var/vcap/jobs/nginx/config/tls/server.crt", testHash, "sha256=" + testHash, "a\tb"}
+	args := []string{
+		"/var/vcap/jobs/nginx/config/tls/server.crt",
+		"/var/vcap/data/jobs/valkey/abc/config/tls/server.crt",
+		"/var/vcap/data/jobs/blacksmith/" + testHash[:40] + "/config/tls/server.crt",
+		"/var/vcap/store/" + testHash + "/s/1",
+		"/var/vcap/jobs/blacksmith/config/certs/director-ca.pem",
+		testHash,
+		"sha256=" + testHash,
+	}
 
-	result, err := runner.Run(t.Context(), "sha256sum", args, nil, 0)
+	result, err := runner.Run(t.Context(), "sha256sum", append(args, "a\tb"), nil, 0)
 	if err != nil {
 		t.Fatalf("Run returned %v, want nil", err)
 	}
 
-	for _, arg := range args[:3] {
+	for _, arg := range args {
 		if !strings.Contains(string(result.Stdout), arg) {
 			t.Errorf("the VM ran %q, which lacks the argument %q", result.Stdout, arg)
 		}
