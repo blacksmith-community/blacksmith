@@ -361,6 +361,37 @@ func (m *Manager) Loaded() <-chan struct{} {
 	return m.loaded
 }
 
+// WaitingFor reports the stored task that waits to reserve the instance,
+// or an instance of the deployment, in the guard once its current holder
+// frees it. Between the retries the guard can be free while the task
+// still owns the instance, so a caller that reserves an instance or a
+// deployment checks this as well and answers busy with the holder it
+// returns. An empty instanceID or deployment matches nothing.
+func (m *Manager) WaitingFor(instanceID, deployment string) (mutation.Holder, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, waiter := range m.waiting {
+		inst := &waiter.task.Instances[waiter.index]
+
+		matches := (instanceID != "" && inst.InstanceID == instanceID) || (deployment != "" && inst.DeploymentName == deployment)
+		if !matches || !m.shouldHoldLocked(waiter.task, inst) {
+			continue
+		}
+
+		holder := taskHolder(waiter.task)
+		if waiter.task.Name != "" {
+			holder.Description += " (task " + waiter.task.ID + ")"
+		}
+
+		holder.Description += ", which waits to reserve it"
+
+		return holder, true
+	}
+
+	return mutation.Holder{}, false
+}
+
 // CreateTask creates a new upgrade task.
 func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*UpgradeTask, error) {
 	switch req.Kind {
@@ -2681,6 +2712,31 @@ func (m *Manager) persistenceFor(taskID string) *taskPersistence {
 // number is recorded only once the task's record is written, so a failed
 // save never keeps a later one from landing.
 func (m *Manager) writeSnapshot(ctx context.Context, snapshot taskSnapshot) error {
+	// The task's in-memory state and the director's task have already
+	// changed by the time this runs, so the save must land even when the
+	// request or manager context has ended. It keeps ctx's values and
+	// ignores its cancellation, under its own deadline, which starts once
+	// the task's save lock is held.
+	return m.saveSnapshot(ctx, snapshot, func(ctx context.Context) (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.WithoutCancel(ctx), persistTaskTimeout)
+	})
+}
+
+// writeSnapshotWithin saves the snapshot as writeSnapshot does, under
+// ctx's own cancellation and deadline, which the caller has already
+// detached from the request and bounded, so a save made of several writes
+// stays within one deadline.
+func (m *Manager) writeSnapshotWithin(ctx context.Context, snapshot taskSnapshot) error {
+	return m.saveSnapshot(ctx, snapshot, func(ctx context.Context) (context.Context, context.CancelFunc) {
+		return ctx, func() {}
+	})
+}
+
+// saveSnapshot writes the snapshot's record and then names the task in
+// its index, unless a newer snapshot of the task was already written. The
+// writes run under the context bound returns from ctx once the task's save
+// lock is held.
+func (m *Manager) saveSnapshot(ctx context.Context, snapshot taskSnapshot, bound func(context.Context) (context.Context, context.CancelFunc)) error {
 	task := snapshot.task
 
 	persistence := m.persistenceFor(task.ID)
@@ -2696,11 +2752,7 @@ func (m *Manager) writeSnapshot(ctx context.Context, snapshot taskSnapshot) erro
 
 	m.logger.Debug("Persisting task %s to vault", task.ID)
 
-	// The task's in-memory state and the director's task have already
-	// changed by the time this runs, so the save must land even when the
-	// request or manager context has ended. It keeps ctx's values and
-	// ignores its cancellation, under its own deadline.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTaskTimeout)
+	ctx, cancel := bound(ctx)
 	defer cancel()
 
 	// Save the full task data under its kind's index
@@ -3324,37 +3376,6 @@ func (m *Manager) waiterLocked(instanceID string) (*UpgradeTask, bool) {
 	}
 
 	return nil, false
-}
-
-// WaitingFor reports the stored task that waits to reserve the instance,
-// or an instance of the deployment, in the guard once its current holder
-// frees it. Between the retries the guard can be free while the task
-// still owns the instance, so a caller that reserves an instance or a
-// deployment checks this as well and answers busy with the holder it
-// returns. An empty instanceID or deployment matches nothing.
-func (m *Manager) WaitingFor(instanceID, deployment string) (mutation.Holder, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, waiter := range m.waiting {
-		inst := &waiter.task.Instances[waiter.index]
-
-		matches := (instanceID != "" && inst.InstanceID == instanceID) || (deployment != "" && inst.DeploymentName == deployment)
-		if !matches || !m.shouldHoldLocked(waiter.task, inst) {
-			continue
-		}
-
-		holder := taskHolder(waiter.task)
-		if waiter.task.Name != "" {
-			holder.Description += " (task " + waiter.task.ID + ")"
-		}
-
-		holder.Description += ", which waits to reserve it"
-
-		return holder, true
-	}
-
-	return mutation.Holder{}, false
 }
 
 // retryWaitingLocked tries again to reserve each waiting instance, oldest
