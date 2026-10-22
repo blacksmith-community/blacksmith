@@ -550,10 +550,6 @@ func TestBuildConsumersFailures(t *testing.T) {
 			certs, keys, []string{testVM, testVariable}},
 		{"rootdirs=no", jobdirs + strings.Replace(certLine, "rootdirs=yes", "rootdirs=no", 1) + keyLine,
 			certs, keys, []string{testVM, testVariable, valkeyCert}},
-		{noConsumer, jobdirs, certs, keys, []string{testVM, testVariable, noConsumer}},
-		{"one of two variables has no consumer", jobdirs + certLine + keyLine,
-			map[string]string{testVariable: hashA, otherVariable: hashC}, map[string]string{testVariable: hashB, otherVariable: hashD},
-			[]string{testVM, otherVariable, noConsumer}},
 		{"a hash nobody asked for", jobdirs + certLine + keyLine +
 			"match job=valkey path=" + valkeyJobDir + "/x.crt hash=" + hashC + " owner=root:root mode=0644 rootdirs=yes\n",
 			certs, keys, []string{testVM}},
@@ -581,6 +577,92 @@ func TestBuildConsumersFailures(t *testing.T) {
 			if !strings.Contains(err.Error(), word) {
 				t.Errorf("%s: error %q does not name %q", row.name, err, word)
 			}
+		}
+	}
+}
+
+// TestBuildConsumersAllowsVMWithoutConsumer shows that a VM that holds
+// none of a variable's files simply has nothing to patch for it, because
+// another instance group can hold them.
+func TestBuildConsumersAllowsVMWithoutConsumer(t *testing.T) {
+	t.Parallel()
+
+	jobdirs := "jobdir job=valkey path=" + valkeyJobDir + "\n"
+
+	got, err := consumersFor(t, jobdirs, map[string]string{testVariable: hashA}, map[string]string{testVariable: hashB})
+	if err != nil {
+		t.Fatalf("BuildConsumers on a VM with no consumer: %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Errorf("consumers = %+v, want none", got)
+	}
+
+	got, err = consumersFor(t, discoveryText(hashC, hashD),
+		map[string]string{testVariable: hashA, otherVariable: hashC}, map[string]string{testVariable: hashB, otherVariable: hashD})
+	if err != nil {
+		t.Fatalf("BuildConsumers with one of two variables on the VM: %v", err)
+	}
+
+	if len(got) != 1 || got[0].Variable != otherVariable {
+		t.Errorf("consumers = %+v, want one of %s", got, otherVariable)
+	}
+}
+
+// TestRequireConsumers runs discovery on two instance groups, where only
+// the valkey VM holds the certificate, and shows that a variable needs a
+// consumer on some VM, not on every VM.
+func TestRequireConsumers(t *testing.T) {
+	t.Parallel()
+
+	certs := map[string]string{testVariable: hashA}
+	keys := map[string]string{testVariable: hashB}
+
+	onValkey, err := consumersFor(t, discoveryText(hashA, hashB), certs, keys)
+	if err != nil {
+		t.Fatalf("BuildConsumers on the valkey VM: %v", err)
+	}
+
+	onProxy, err := consumersFor(t, "jobdir job=bpm path="+bpmJobDir+"\n", certs, keys)
+	if err != nil {
+		t.Fatalf("BuildConsumers on the proxy VM: %v", err)
+	}
+
+	perVM := map[string][]certscripts.Consumer{testVM: onValkey, "proxy/0": onProxy}
+
+	err = certscripts.RequireConsumers([]string{testVariable}, perVM)
+	if err != nil {
+		t.Errorf("RequireConsumers with a consumer on one VM: %v", err)
+	}
+
+	for name, row := range map[string]struct {
+		variables []string
+		perVM     map[string][]certscripts.Consumer
+		missing   []string
+	}{
+		"a variable on neither VM": {[]string{testVariable, otherVariable}, perVM, []string{otherVariable}},
+		"no VM has a consumer":     {[]string{otherVariable, testVariable}, map[string][]certscripts.Consumer{"proxy/0": onProxy}, []string{otherVariable, testVariable}},
+		"no VMs at all":            {[]string{testVariable}, nil, []string{testVariable}},
+	} {
+		err := certscripts.RequireConsumers(row.variables, row.perVM)
+		if !errors.Is(err, certscripts.ErrPatchUnsafe) {
+			t.Errorf("%s: RequireConsumers error = %v, want ErrPatchUnsafe", name, err)
+
+			continue
+		}
+
+		for _, variable := range row.missing {
+			if !strings.Contains(err.Error(), variable) {
+				t.Errorf("%s: error %q does not name %s", name, err, variable)
+			}
+		}
+
+		if !strings.Contains(err.Error(), noConsumer) {
+			t.Errorf("%s: error %q does not say %q", name, err, noConsumer)
+		}
+
+		if len(row.missing) == 1 && row.missing[0] == otherVariable && strings.Contains(err.Error(), testVariable) {
+			t.Errorf("%s: error %q names %s, which has a consumer", name, err, testVariable)
 		}
 	}
 }

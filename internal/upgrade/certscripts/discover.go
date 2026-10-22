@@ -310,8 +310,11 @@ func (d *Discovery) unsafe(format string, args ...any) error {
 // variable's certificate file and no key file or the reverse, or a
 // different number of each, when a file holds an old certificate or key
 // inside larger content, when a matching file fails the checks a write
-// would make (rootdirs=no), and when a selected variable has no consumer
-// on this VM. Consumers come back sorted by job, variable, and paths.
+// would make (rootdirs=no). A VM that holds none of a variable's files
+// has no consumer of it and nothing to patch for it, because the files
+// can live in another instance group, so RequireConsumers checks across
+// all the VMs that every variable has a consumer somewhere. Consumers come
+// back sorted by job, variable, and paths.
 func BuildConsumers(disc *Discovery, oldCertHash, oldKeyHash map[string]string) ([]Consumer, error) {
 	variables := make([]string, 0, len(oldCertHash))
 	for variable := range oldCertHash {
@@ -376,7 +379,7 @@ func BuildConsumers(disc *Discovery, oldCertHash, oldKeyHash map[string]string) 
 }
 
 // pair matches each job's certificate files to its key files for every
-// variable, and checks that every variable has a consumer.
+// variable.
 func (d *Discovery) pair(variables []string, certs, keys map[string]map[string][]string) ([]Consumer, error) {
 	jobs := make([]string, 0, len(certs)+len(keys))
 	for job := range certs {
@@ -392,8 +395,6 @@ func (d *Discovery) pair(variables []string, certs, keys map[string]map[string][
 	sort.Strings(jobs)
 
 	var consumers []Consumer
-
-	found := make(map[string]bool)
 
 	for _, job := range jobs {
 		for _, variable := range variables {
@@ -420,18 +421,42 @@ func (d *Discovery) pair(variables []string, certs, keys map[string]map[string][
 					Processes: slices.Clone(d.Processes[job]),
 				})
 			}
-
-			found[variable] = true
-		}
-	}
-
-	for _, variable := range variables {
-		if !found[variable] {
-			return nil, d.unsafe("the variable %s has no consumer", variable)
 		}
 	}
 
 	return consumers, nil
+}
+
+// RequireConsumers checks, across every VM of an instance, that each
+// selected variable has at least one consumer. perVM maps each VM to the
+// consumers BuildConsumers returned for it. A variable that no VM holds
+// gives patch mode nothing to apply, so RequireConsumers then fails with
+// an error that wraps ErrPatchUnsafe and names every such variable, and
+// the operator should redeploy instead.
+func RequireConsumers(variables []string, perVM map[string][]Consumer) error {
+	held := make(map[string]bool)
+
+	for _, consumers := range perVM {
+		for _, consumer := range consumers {
+			held[consumer.Variable] = true
+		}
+	}
+
+	var missing []string
+
+	for _, variable := range variables {
+		if !held[variable] {
+			missing = append(missing, variable)
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	sort.Strings(missing)
+
+	return fmt.Errorf("%w: the selected variables %s have no consumer on any VM", ErrPatchUnsafe, strings.Join(missing, ", "))
 }
 
 // invert maps each hash to the variables that have it, in name order.
