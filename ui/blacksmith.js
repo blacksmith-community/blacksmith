@@ -1890,11 +1890,12 @@
 
     // Build the plans list for the left column
     const plansList = [];
-    data.services.forEach(service => {
+    data.services.forEach((service, serviceIndex) => {
       if (!service || !service.plans) return;
-      service.plans.forEach(plan => {
+      service.plans.forEach((plan, planIndex) => {
         if (!plan) return;
         plansList.push({
+          serviceIndex, planIndex,
           service: service,
           plan: plan,
           id: `${service.name || service.id || 'unknown'}-${plan.name || plan.id || 'unknown'}`
@@ -1903,7 +1904,7 @@
     });
 
     const listHtml = plansList.map(item => `
-      <div class="plan-item" data-plan-id="${item.id}">
+      <div class="plan-item" data-plan-id="${item.id}" data-service-index="${item.serviceIndex}" data-plan-index="${item.planIndex}">
         <div class="plan-name">${item.service.name || item.service.id || 'unknown'} / ${item.plan.name || item.plan.id || 'unknown'}</div>
         <div class="plan-meta">
           Instances: ${item.plan.blacksmith?.instances || 0} / ${item.plan.blacksmith?.limit > 0 ? item.plan.blacksmith.limit : item.plan.blacksmith?.limit == 0 ? '∞' : '‑'}
@@ -11548,23 +11549,8 @@
               // Set up plan click handlers
               document.querySelectorAll('#blacksmith .plan-item').forEach(item => {
                 item.addEventListener('click', function () {
-                  const planId = this.dataset.planId;
-
-                  // Find the service and plan from the stored data
-                  let selectedService = null;
-                  let selectedPlan = null;
-
-                  if (window.plansData && window.plansData.services) {
-                    window.plansData.services.forEach(service => {
-                      if (!service || !service.plans) return;
-                      service.plans.forEach(plan => {
-                        if (plan && plan.id === planId) {
-                          selectedService = service;
-                          selectedPlan = plan;
-                        }
-                      });
-                    });
-                  }
+                  const selectedService = window.plansData?.services?.[this.dataset.serviceIndex];
+                  const selectedPlan = selectedService?.plans?.[this.dataset.planIndex];
 
                   if (selectedService && selectedPlan) {
                     // Update active plan selection
