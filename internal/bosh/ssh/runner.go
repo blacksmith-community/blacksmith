@@ -109,10 +109,13 @@ func NewRunner(client *ssh.Client, log logger.Logger) *Runner {
 // closed from then on, and the caller dials a new connection with
 // DialSSHHost. No error carries the command's output.
 //
-// stdin is never read after Run returns. Run waits for a read that is
-// under way to finish before it returns, so stdin should be an in-memory
-// reader, such as a bytes.Reader, whose reads never block. Once Run has
-// returned, the caller may wipe the buffer behind it.
+// No read of stdin starts after Run returns, and Run does not wait for a
+// read that is under way. Such a read may finish after Run returns, but
+// what it reads is wiped and dropped, never sent. A reader whose read
+// never returns keeps one goroutine of the SSH library alive, so stdin
+// should be an in-memory reader, such as a bytes.Reader. The caller may
+// wipe the buffer behind a bytes.Reader once Run has returned, because a
+// bytes.Reader read copies its bytes before it returns.
 func (r *Runner) Run(ctx context.Context, program string, args []string, stdin io.Reader, limit int64) (Result, error) {
 	command, err := r.prepare(ctx, program, args)
 	if err != nil {
@@ -396,9 +399,12 @@ func carriesContent(s string) bool {
 }
 
 // stdinGate passes the caller's stdin to the session until stop, and
-// fails every read after it. stop waits for a read that is under way to
-// return, so once it has returned the caller's reader is never read
-// again, even by a copy the SSH library left running.
+// fails every read after it. It never holds its lock across the caller's
+// Read, so stop returns at once even while a read is blocked. A read that
+// was under way when stop ran reads into a buffer of its own, and once it
+// returns its bytes are wiped and dropped, so nothing it read reaches the
+// session. A reader whose read never returns still keeps that one copy
+// goroutine of the SSH library alive, but it can deliver no bytes.
 type stdinGate struct {
 	mu      sync.Mutex
 	reader  io.Reader
@@ -406,14 +412,33 @@ type stdinGate struct {
 }
 
 func (g *stdinGate) Read(buf []byte) (int, error) {
+	if g.isStopped() {
+		return 0, errStdinStopped
+	}
+
+	local := make([]byte, len(buf))
+	count, err := g.reader.Read(local)
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	if g.stopped {
+		clear(local)
+
 		return 0, errStdinStopped
 	}
 
-	return g.reader.Read(buf) //nolint:wrapcheck // the caller's reader's own answer, io.EOF included
+	copy(buf, local[:count])
+	clear(local)
+
+	return count, err //nolint:wrapcheck // the caller's reader's own answer, io.EOF included
+}
+
+func (g *stdinGate) isStopped() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.stopped
 }
 
 func (g *stdinGate) stop() {

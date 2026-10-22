@@ -119,7 +119,7 @@ func (p *freezingProxy) close() {
 func (p *freezingProxy) addr() string { return p.listener.Addr().String() }
 
 // watchedReader yields bytes without end, a little at a time, and counts
-// every read that is under way once returned is set.
+// every read that starts once returned is set.
 type watchedReader struct {
 	returned atomic.Bool
 	late     atomic.Int32
@@ -131,10 +131,6 @@ func (r *watchedReader) Read(buf []byte) (int, error) {
 	}
 
 	time.Sleep(2 * time.Millisecond)
-
-	if r.returned.Load() {
-		r.late.Add(1)
-	}
 
 	n := min(len(buf), 1024)
 	for i := range n {
@@ -199,8 +195,8 @@ func TestRunnerDeadlineWhenExecIsNeverAnswered(t *testing.T) {
 }
 
 // A VM that stops answering while its command reads a large stdin holds
-// the copy of stdin, and Run still returns at its deadline without the
-// stdin reader being read after it returns.
+// the copy of stdin, and Run still returns at its deadline, and no read
+// of the stdin reader starts after it returns.
 func TestRunnerDeadlineWhenVMStopsMidRun(t *testing.T) {
 	t.Parallel()
 
@@ -229,8 +225,27 @@ func TestRunnerDeadlineWhenVMStopsMidRun(t *testing.T) {
 	}
 }
 
-// A command that ends without reading all of its stdin leaves no copy of
-// the stdin reader running once Run returns.
+// A stdin reader whose read never returns does not hold Run past its
+// deadline.
+func TestRunnerDeadlineWhenStdinBlocks(t *testing.T) {
+	t.Parallel()
+
+	fakeVM := startRunnerVM(t, func(_ string, _ ssh.Channel, stop <-chan struct{}) uint32 {
+		<-stop
+
+		return 0
+	})
+	runner := boshssh.NewRunner(fakeVM.dial(t), &runnerLog{})
+
+	stdin, writer := io.Pipe()
+
+	t.Cleanup(func() { _ = writer.Close() })
+
+	runWithDeadline(t, runner, stdin)
+}
+
+// A command that ends without reading all of its stdin leaves no read of
+// the stdin reader to start once Run returns.
 func TestRunnerReadsNoStdinAfterItReturns(t *testing.T) {
 	t.Parallel()
 
