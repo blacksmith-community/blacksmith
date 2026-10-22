@@ -15,7 +15,6 @@ import (
 	"blacksmith/internal/mutation"
 	vaultPkg "blacksmith/pkg/vault"
 
-	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/google/uuid"
 )
 
@@ -249,6 +248,10 @@ type Manager struct {
 
 	// certFinisher ends the following of a certificate instance's deploy.
 	certFinisher certFinisher
+
+	// verifyInterval is the time between the probes of a listener after a
+	// redeploy, which a test shortens before Start.
+	verifyInterval time.Duration
 }
 
 // waitingReservation is an instance of a loaded task that waits for
@@ -285,26 +288,27 @@ type taskPersistence struct {
 // Start resumes any upgrade.
 func NewManager(logger interfaces.Logger, director interfaces.Director, vault interfaces.Vault) *Manager {
 	m := &Manager{
-		tasks:        make(map[string]*UpgradeTask),
-		logger:       logger.Named("upgrade-manager"),
-		director:     director,
-		vault:        vault,
-		taskQueue:    make(chan *UpgradeTask, taskQueueCapacity),
-		stopCh:       make(chan struct{}),
-		taskCancelCh: make(map[string]chan struct{}),
-		settling:     make(map[string]int),
-		loaded:       make(chan struct{}),
-		owned:        make(map[string]bool),
-		guard:        mutation.NewGuard(time.Now),
-		reservations: make(map[string]map[string]func()),
-		requests:     newRequestIndex(),
-		restoreWait:  restoreWaitBound,
-		restoreRetry: restoreRetryInterval,
-		createRetry:  createRetryInterval,
-		createLocks:  make(map[string]*requestLock),
+		tasks:          make(map[string]*UpgradeTask),
+		logger:         logger.Named("upgrade-manager"),
+		director:       director,
+		vault:          vault,
+		taskQueue:      make(chan *UpgradeTask, taskQueueCapacity),
+		stopCh:         make(chan struct{}),
+		taskCancelCh:   make(map[string]chan struct{}),
+		settling:       make(map[string]int),
+		loaded:         make(chan struct{}),
+		owned:          make(map[string]bool),
+		guard:          mutation.NewGuard(time.Now),
+		reservations:   make(map[string]map[string]func()),
+		requests:       newRequestIndex(),
+		restoreWait:    restoreWaitBound,
+		restoreRetry:   restoreRetryInterval,
+		createRetry:    createRetryInterval,
+		createLocks:    make(map[string]*requestLock),
+		verifyInterval: verifyIntervalDefault,
 	}
 
-	m.certFinisher = deployContract{m: m}
+	m.certFinisher = m
 
 	// The manager's context is a root. The manager lives as long as the
 	// broker, NewManager receives no context, and Stop is what ends it, so
@@ -631,9 +635,14 @@ func (m *Manager) dispatchTasks() {
 
 			return
 		case task := <-m.taskQueue:
-			// The upgrade path never runs a certificate task. One that
-			// reaches the queue is let go, and keeps its reservations.
-			if task.KindOrDefault() != TaskKindUpgrade {
+			// A certificate task runs only when the manager can rotate
+			// it. Any other one that reaches the queue is let go, and
+			// keeps its reservations.
+			m.mu.RLock()
+			runs := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task)
+			m.mu.RUnlock()
+
+			if !runs {
 				m.dropFromQueue(task)
 
 				continue
@@ -772,61 +781,26 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	m.logger.Debug("Overlays merged for %s (%d of %d release targets applied), new manifest size: %d bytes",
 		instance.DeploymentName, len(applied), len(task.TargetReleases), len(newManifest))
 
-	// The context ID is saved before the deploy is sent, so a broker that
-	// stops while the deploy is in flight leaves it on record, and the
-	// deploy's task can still be found by it.
-	contextID := uuid.NewString()
-
 	m.mu.Lock()
-	instance.ContextID = contextID
 	instance.AppliedReleases = applied
 	m.mu.Unlock()
 
-	err = m.persistTask(persistCtx, task)
-	if err != nil {
-		m.logger.Error("Failed to save context ID %s of the deploy of %s before sending it: %v", contextID, instance.DeploymentName, err)
+	// An upgrade's save of the context ID logs a failure and lets the
+	// deploy go.
+	save := func() error {
+		err := m.persistTask(persistCtx, task)
+		if err != nil {
+			m.mu.RLock()
+			contextID := instance.ContextID
+			m.mu.RUnlock()
+
+			m.logger.Error("Failed to save context ID %s of the deploy of %s before sending it: %v", contextID, instance.DeploymentName, err)
+		}
+
+		return nil
 	}
 
-	deployTask, err := m.director.UpdateDeployment(boshapi.WithContextID(ctx, contextID), instance.DeploymentName, newManifest)
-	if errors.Is(err, bosh.ErrOutcomeUnknown) {
-		m.awaitLostAnswer(ctx, task, instance, contextID, err, cancelCh)
-
-		return
-	}
-
-	// Any error but a lost answer shows the director never received the
-	// deploy, including a wait for a batch slot that Stop ended.
-	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
-		m.returnToPending(persistCtx, task, instance, err)
-
-		return
-	}
-
-	if err != nil {
-		m.mu.Lock()
-		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("BOSH task failed: %v", err)
-		task.FailedCount++
-		m.releaseUnheldLocked(task)
-		m.logger.Error("Update failed for %s: %v", instance.DeploymentName, err)
-		m.mu.Unlock()
-		m.persistTask(persistCtx, task) //nolint:errcheck
-		return
-	}
-
-	if deployTask == nil || deployTask.ID <= 0 {
-		m.mu.Lock()
-		instance.Status = InstanceStatusFailed
-		instance.Error = "the director named no task for the deploy"
-		task.FailedCount++
-		m.releaseUnheldLocked(task)
-		m.logger.Error("The director named no task for the deploy of %s", instance.DeploymentName)
-		m.mu.Unlock()
-		m.persistTask(persistCtx, task) //nolint:errcheck
-		return
-	}
-
-	m.followDeployTask(ctx, task, instance, deployTask.ID, cancelCh)
+	m.deployWithContext(ctx, task, instance, newManifest, bosh.DeployOptions{}, save, cancelCh)
 }
 
 // followDeployTask saves the deploy's task ID and waits for the task to
@@ -840,9 +814,11 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 	// this point found no task ID to cancel, so the upgrade cancels the
 	// task itself. The ID and the upgrade's status are read and written
 	// under the same lock as CancelTask's, so exactly one side sends it.
+	// A certificate deploy whose end is already on record is followed
+	// again only to verify it, so it is never cancelled.
 	m.mu.Lock()
-	instance.BOSHTaskID = taskID
-	cancelledBeforeTheTask := task.Status == TaskStatusCancelled
+	recordFollowedTask(instance, taskID)
+	cancelledBeforeTheTask := task.Status == TaskStatusCancelled && !deployEnded(instance, taskID)
 	m.mu.Unlock()
 	m.logger.Info("BOSH task %d deploys %s for instance %s", taskID, instance.DeploymentName, instance.InstanceID)
 
@@ -850,7 +826,17 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 		m.cancelDeployTask(ctx, instance.InstanceID, taskID)
 	}
 
-	m.persistTask(persistCtx, task) //nolint:errcheck
+	if task.KindOrDefault() == TaskKindCertificates {
+		// The task ID of a certificate deploy is saved for certain, and
+		// when it isn't, the task pauses, so nothing starts after this
+		// deploy, which is still followed to its end.
+		err := m.persistCertConfirmed(persistCtx, task)
+		if err != nil {
+			m.pauseUnconfirmed(task, instance, fmt.Sprintf("start anything after BOSH task %d", taskID))
+		}
+	} else {
+		m.persistTask(persistCtx, task) //nolint:errcheck
+	}
 
 	finished, cancelRequested, err := m.awaitDeployTask(ctx, task, instance, taskID, cancelCh)
 	if err != nil {
@@ -976,7 +962,7 @@ func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instan
 			}
 
 			m.mu.Lock()
-			instance.BOSHTaskID = taskID
+			recordFollowedTask(instance, taskID)
 			m.mu.Unlock()
 
 			m.finishFollowedDeploy(ctx, task, instance, taskID, finished)
@@ -1417,8 +1403,8 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 		instance := &task.Instances[i]
 
 		inFlight := instance.Status == InstanceStatusRunning || instance.Status == InstanceStatusInterrupted
-		if inFlight && instance.BOSHTaskID > 0 {
-			running = append(running, runningDeploy{instanceID: instance.InstanceID, boshTaskID: instance.BOSHTaskID})
+		if boshTaskID := followedTaskID(instance); inFlight && boshTaskID > 0 && !deployEnded(instance, boshTaskID) {
+			running = append(running, runningDeploy{instanceID: instance.InstanceID, boshTaskID: boshTaskID})
 		}
 	}
 
@@ -1721,6 +1707,10 @@ func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 // instance. targetsChecked records whether this run has checked the
 // targets since it started or was last resumed.
 func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}, targetsChecked *bool) bool {
+	if task.KindOrDefault() == TaskKindCertificates {
+		return m.processCertificateInstance(task, instance, cancelCh)
+	}
+
 	deploy, goOn := m.readyToDeploy(task, instance, cancelCh, targetsChecked)
 	if !deploy {
 		return goOn
@@ -1962,8 +1952,8 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	resumable := task.Status == TaskStatusRunning || task.Status == TaskStatusPending
 	status := task.Status
 
-	// The upgrade path never runs a certificate task, so none is queued.
-	upgrade := task.KindOrDefault() == TaskKindUpgrade
+	// A certificate task is queued only when the manager can rotate it.
+	upgrade := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task)
 
 	ready := upgrade && settled && m.lookups == 0 && !m.waitingLocked(task.ID) && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
 	noDirector := ready && m.director == nil
@@ -2246,6 +2236,16 @@ func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
 
 	m.mu.Lock()
 	for _, task := range tasks {
+		// A certificate task that changed nothing may have had its
+		// creation reported as failed, so it never runs on its own.
+		if neverStartedLocked(task) {
+			m.pauseNeverStartedLocked(task)
+
+			changed = append(changed, task)
+
+			continue
+		}
+
 		found, taskChanged := m.prepareSettlingLocked(task, loadedAt)
 		deploys = append(deploys, found...)
 
@@ -2344,7 +2344,7 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) (
 			continue
 		}
 
-		taskID, contextID := instance.BOSHTaskID, instance.ContextID
+		taskID, contextID := followedTaskID(instance), followedContextID(instance)
 
 		if certificates {
 			settle, instanceChanged := m.prepareCertificateLocked(task, instance, loadedAt)
@@ -2354,15 +2354,11 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) (
 				continue
 			}
 
-			// A converge deploy saved its IDs on the rotation record when
-			// the instance holds none of its own.
-			if converge := instance.Certificates.Converge; instance.Certificates.Phase == RotationPhaseConverge && converge != nil && taskID == 0 && contextID == "" {
-				taskID, contextID = converge.BOSHTaskID, converge.ContextID
-			}
-
-			// The outcome of this deploy's task is already on record, so
-			// the rotation's runner takes it from there.
-			if outcome := instance.Certificates.Deploy; outcome != nil && taskID > 0 && outcome.BOSHTaskID == taskID {
+			// The outcome of this deploy's task is already on record. A
+			// redeploy the manager runs follows the task again so it is
+			// verified, even in a cancelled task, and otherwise the
+			// rotation's runner takes it from there.
+			if deployEnded(instance, taskID) && (!m.configured || certTaskMode(task) != RotationModeRedeploy) {
 				continue
 			}
 		}
@@ -2701,7 +2697,7 @@ func (m *Manager) storeFoundTask(ctx context.Context, task *UpgradeTask, instanc
 	}
 
 	m.mu.Lock()
-	instance.BOSHTaskID = taskID
+	recordFollowedTask(instance, taskID)
 	cancelledBeforeTheTask := task.Status == TaskStatusCancelled
 	m.mu.Unlock()
 
@@ -2903,6 +2899,11 @@ func (m *Manager) resetToPending(ctx context.Context, task *UpgradeTask, instanc
 	instance.UnknownSince = nil
 	instance.Error = ""
 
+	if converge := convergeRecord(instance); converge != nil {
+		converge.BOSHTaskID = 0
+		converge.ContextID = ""
+	}
+
 	// A pending instance of a finished upgrade is never deployed again.
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
@@ -2940,7 +2941,7 @@ func (m *Manager) interruptAtShutdown(ctx context.Context, task *UpgradeTask, in
 func (m *Manager) interruptLostAnswer(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, contextID string) {
 	m.mu.RLock()
 
-	taskID := instance.BOSHTaskID
+	taskID := followedTaskID(instance)
 
 	m.mu.RUnlock()
 

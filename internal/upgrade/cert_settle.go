@@ -52,11 +52,11 @@ func (m *Manager) settleCertificateDeployLocked(task *UpgradeTask, instance *Ins
 
 	instance.CompletedAt = &now
 	instance.Status = InstanceStatusFailed
-	instance.Error = fmt.Sprintf("BOSH task %d ended in state %s: %s. CredHub keeps the new certificate versions, which are not deployed yet.",
-		taskID, finished.State, finished.Result)
+	instance.Error = fmt.Sprintf("BOSH task %d ended in state %s: %s. %s",
+		taskID, finished.State, finished.Result, deployPendingNote)
 
 	if finished.State == boshTaskCancelled {
-		instance.Error = fmt.Sprintf("BOSH task %d was cancelled. CredHub keeps the new certificate versions, which are not deployed yet.", taskID)
+		instance.Error = fmt.Sprintf("BOSH task %d was cancelled. %s", taskID, deployPendingNote)
 	}
 
 	task.FailedCount++
@@ -92,21 +92,68 @@ func (m *Manager) awaitDeployDecisionLocked(task *UpgradeTask, instance *Instanc
 	m.logger.Error("Instance %s of %s waits for a decision: %s", instance.InstanceID, instance.DeploymentName, instance.Error)
 }
 
-// followedContextID returns the context ID of the deploy a certificate
-// instance follows. A converge deploy saves its context ID on the
-// rotation's converge record when the instance holds none of its own, as
-// the loader reads it. Following the deploy puts its task ID on the
-// instance, so only the context ID tells which record to read.
-func followedContextID(instance *InstanceUpgrade) string {
-	if instance.ContextID != "" {
-		return instance.ContextID
-	}
-
+// convergeRecord returns the rotation's converge record when the instance
+// is converging. A converge deploy keeps both of its IDs there, so the
+// record is the one home of the deploy the instance follows.
+func convergeRecord(instance *InstanceUpgrade) *ConvergeDeploy {
 	if rotation := instance.Certificates; rotation != nil && rotation.Phase == RotationPhaseConverge && rotation.Converge != nil {
-		return rotation.Converge.ContextID
+		return rotation.Converge
 	}
 
-	return ""
+	return nil
+}
+
+// followedTaskID returns the BOSH task ID of the deploy an instance
+// follows, from the converge record when the instance is converging.
+func followedTaskID(instance *InstanceUpgrade) int {
+	if converge := convergeRecord(instance); converge != nil {
+		return converge.BOSHTaskID
+	}
+
+	return instance.BOSHTaskID
+}
+
+// followedContextID returns the context ID of the deploy an instance
+// follows, from the converge record when the instance is converging.
+func followedContextID(instance *InstanceUpgrade) string {
+	if converge := convergeRecord(instance); converge != nil {
+		return converge.ContextID
+	}
+
+	return instance.ContextID
+}
+
+// recordFollowedTask records the BOSH task ID of the deploy an instance
+// follows where followedTaskID reads it. The caller holds mu.
+func recordFollowedTask(instance *InstanceUpgrade, taskID int) {
+	if converge := convergeRecord(instance); converge != nil {
+		converge.BOSHTaskID = taskID
+
+		return
+	}
+
+	instance.BOSHTaskID = taskID
+}
+
+// recordContextID records the context ID of the deploy an instance is
+// about to send where followedContextID reads it. The caller holds mu.
+func recordContextID(instance *InstanceUpgrade, contextID string) {
+	if converge := convergeRecord(instance); converge != nil {
+		converge.ContextID = contextID
+
+		return
+	}
+
+	instance.ContextID = contextID
+}
+
+// deployEnded reports whether the end of the BOSH task given is already on
+// a certificate instance's record. An upgrade instance has no such record.
+// The caller holds mu.
+func deployEnded(instance *InstanceUpgrade, taskID int) bool {
+	rotation := instance.Certificates
+
+	return rotation != nil && rotation.Deploy != nil && taskID > 0 && rotation.Deploy.BOSHTaskID == taskID
 }
 
 // pauseForDecisionLocked pauses a certificate task one of whose instances
@@ -123,16 +170,6 @@ func pauseForDecisionLocked(task *UpgradeTask) {
 // its BOSH task has ended, or its wait returned no task.
 type certFinisher interface {
 	certAfterDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, taskID int, finished *bosh.Task)
-}
-
-// deployContract is the certificate finisher that records the deploy's
-// outcome and goes no further.
-type deployContract struct {
-	m *Manager
-}
-
-func (c deployContract) certAfterDeploy(_ context.Context, task *UpgradeTask, inst *InstanceUpgrade, taskID int, finished *bosh.Task) {
-	c.m.settleCertificateDeploy(task, inst, taskID, finished)
 }
 
 // settleCertificateDeploy records how a certificate instance's deploy

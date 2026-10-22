@@ -44,6 +44,9 @@ type Deps struct {
 	// Previews holds the rotation previews. Configure gives the manager a
 	// store of its own when it is nil.
 	Previews *PreviewStore
+	// Prober reads the leaf certificate each listener serves, which a
+	// redeploy checks once the deploy is done.
+	Prober certinventory.Prober
 }
 
 // Configure gives the manager the dependencies its certificate tasks use. It
@@ -77,6 +80,11 @@ func (m *Manager) Configured() bool {
 	defer m.mu.RUnlock()
 
 	return m.configured
+}
+
+// Dependencies returns the dependencies Configure gave the manager.
+func (m *Manager) Dependencies() Deps {
+	return m.certDeps()
 }
 
 // certDeps returns the dependencies as they stand.

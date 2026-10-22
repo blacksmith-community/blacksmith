@@ -267,6 +267,9 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		Certificates:          deps.Certificates,
 		Switches:              deps.Switches,
 		Previews:              upgrade.NewPreviewStore(time.Now),
+		// The redeploy probes listeners as the inventory scanner does,
+		// with the same timeout and the system roots.
+		Prober: certinventory.Prober{Timeout: certinventory.DefaultProbeTimeout},
 	})
 }
 

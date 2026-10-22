@@ -60,6 +60,9 @@ type Dependencies struct {
 	// Previews holds the rotation previews. The manager keeps its own
 	// store when it is nil.
 	Previews *upgrade.PreviewStore
+	// Prober reads the leaf certificate a listener serves, which a
+	// redeploy checks once its deploy is done.
+	Prober certinventory.Prober
 }
 
 // NewHandler creates a new upgrade handler. It applies the persisted
@@ -97,6 +100,7 @@ func configureManager(manager *upgrade.Manager, deps Dependencies) {
 		CredHubState: deps.CredHubState,
 		Switches:     deps.Switches,
 		Previews:     deps.Previews,
+		Prober:       deps.Prober,
 	}
 
 	if deps.Certificates != nil {
