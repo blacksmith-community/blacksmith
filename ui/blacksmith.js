@@ -3047,7 +3047,6 @@
   // failed has no readAt, so the next pass reads it again.
   const HOLDER_DETAIL_MAX_AGE_MS = 30000;
   const holderDetails = new Map();
-  let awaitingSignature = '';
 
   // Reads the details of the active tasks to learn which instances they
   // hold. It reads a task again only when its status changed or its detail
@@ -3074,13 +3073,6 @@
         }
       }));
       setUpgradeHolders(computeUpgradeHolders(Array.from(holderDetails.values()).map((entry) => entry.detail)));
-      // The list shows which tasks wait on a decision, so it draws again when
-      // that changes.
-      const awaiting = Array.from(awaitingDecisionTaskIds()).sort().join(',');
-      if (awaiting !== awaitingSignature) {
-        awaitingSignature = awaiting;
-        if (!selectedTaskId) renderUpgradeTaskList();
-      }
     } finally {
       upgradeHoldersInFlight = false;
     }
@@ -3817,11 +3809,19 @@
       radio.id = `rotate-op-${mode}`;
       radio.value = mode;
       radio.checked = mode === upgradeOperation;
+      if (mode === 'converge') {
+        radio.disabled = true;
+        radio.checked = false;
+        radio.setAttribute('aria-describedby', 'rotate-op-converge-reason');
+      }
       radio.addEventListener('change', () => { if (radio.checked) requestOperation(mode); });
       label.appendChild(radio);
       label.appendChild(rotateEl('span', '', OPERATION_LABELS[mode]));
       fieldset.appendChild(label);
     });
+    const convergeReason = rotateEl('p', 'rotate-op-hint', CONVERGE_UNAVAILABLE_REASON);
+    convergeReason.id = 'rotate-op-converge-reason';
+    fieldset.appendChild(convergeReason);
     main.insertBefore(fieldset, top);
   };
 
@@ -3837,6 +3837,7 @@
     patch: 'Patch in place',
     converge: 'Converge'
   };
+  const CONVERGE_UNAVAILABLE_REASON = 'Converge is not available yet, because the runner does not verify and settle a converge deploy.';
   const PATCH_UNAVAILABLE_REASON = 'Patching in place is not available yet, so a rotation redeploys the instance.';
 
   // The text to show for an error from the preview or the create request.
@@ -4215,8 +4216,11 @@
     sync();
 
     const remember = () => { rotateDialogMemory.set(instanceId, new Set(chosen)); };
+    // The opener can be redrawn while the dialog is open, so a caller can
+    // supply findOpener to look for the live control or a stable fallback.
     const focusOpener = () => {
-      const target = options.opener;
+      let target = options.opener;
+      if ((!target || !target.isConnected) && typeof options.findOpener === 'function') target = options.findOpener();
       if (target && target.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
     };
 
@@ -4894,7 +4898,8 @@
     not_awaiting_decision: 'That instance is not waiting for a decision any more. Refresh the task to see where it stands.',
     instance_busy: 'Another operation holds this instance. Wait for it to finish, then try again.',
     credhub_unavailable: 'CredHub did not answer. Check its connection, then try again.',
-    invalid_request: 'The broker did not accept that request. Refresh the task, then try again.'
+    invalid_request: 'The broker did not accept that request. Refresh the task, then try again.',
+    empty_preview: 'Nothing was changed, so choose Preview again to ask for a fresh one.'
   };
 
   // The text to show for an API error: its message, and the advice for its
@@ -5039,7 +5044,8 @@
       const kindBadge = isCertificates
         ? '<span class="task-kind-badge task-kind-badge--certificates">Certificates</span>'
         : '';
-      const awaitingBadge = awaitingDecisionTaskIds().has(task.id)
+      const awaitingCount = Number(task.awaiting_decision_count) || 0;
+      const awaitingBadge = awaitingCount > 0
         ? '<span class="task-awaiting-badge">Awaiting decision</span>'
         : '';
       const targetLine = isCertificates && task.target
@@ -5158,6 +5164,8 @@
   // its last failed answer until the operator tries again.
   const taskDetailCache = new Map();
   const decisionState = new Map();
+  // The client request ID of each decision whose answer is not known yet.
+  const decisionRequestIds = new Map();
   const decisionKey = (taskId, instanceId) => `${taskId}|${instanceId}`;
 
   // A day such as 2026-10-21 for a time from the broker. Go's zero time and
@@ -5172,17 +5180,6 @@
   const confirmedAnswer = (answer) => answer === true || Boolean(answer && answer.confirmed);
 
   const certInstanceName = (instance) => String(instance.instance_name || instance.instance_id || '');
-
-  // The task ids whose latest read shows an instance waiting on a decision.
-  // The holder poll reads those details, so this adds no request.
-  const awaitingDecisionTaskIds = () => {
-    const ids = new Set();
-    holderDetails.forEach((entry, id) => {
-      const instances = entry && entry.detail && Array.isArray(entry.detail.instances) ? entry.detail.instances : [];
-      if (instances.some((instance) => instance && instance.status === 'awaiting_decision')) ids.add(id);
-    });
-    return ids;
-  };
 
   const redrawTaskDetail = (taskId) => {
     const cached = taskDetailCache.get(taskId);
@@ -5214,7 +5211,7 @@
   // failure keeps its message on the instance, announces it, and leaves focus
   // on that message. The code decides what the operator is told next, and the
   // message text is only shown.
-  const sendDecision = async (task, instance, verb, body, action) => {
+  const sendDecision = async (task, instance, verb, body, action, idKey) => {
     const key = decisionKey(task.id, instance.instance_id);
     decisionState.set(key, { busy: true });
     redrawTaskDetail(task.id);
@@ -5222,6 +5219,7 @@
       const url = `/b/upgrade/tasks/${encodeURIComponent(task.id)}/instances/${encodeURIComponent(instance.instance_id)}/${verb}`;
       const { body: updated } = await rotatePostJSON(url, body);
       decisionState.delete(key);
+      if (idKey) decisionRequestIds.delete(idKey);
       announce('Decision recorded.');
       if (updated && typeof updated === 'object' && updated.id === task.id) {
         taskDetailCache.set(task.id, updated);
@@ -5234,6 +5232,7 @@
       return true;
     } catch (err) {
       const text = apiErrorText(err);
+      if (idKey && err && err.code) decisionRequestIds.delete(idKey);
       decisionState.set(key, { error: { code: err && err.code ? err.code : '', text } });
       announce(`The decision was not recorded. ${text}`);
       redrawTaskDetail(task.id);
@@ -5262,11 +5261,16 @@
     const current = decisionState.get(key);
     if (current && current.busy) return false;
     decisionState.set(key, { busy: true });
-    const clientRequestId = newClientRequestId();
+    // The ID stays with the decision until the broker answers it for certain,
+    // so a repeat after a lost response applies once.
+    const idKey = `${key}|${action}`;
+    if (!decisionRequestIds.has(idKey)) decisionRequestIds.set(idKey, newClientRequestId());
+    const clientRequestId = decisionRequestIds.get(idKey);
     let outcome = null;
     try {
       outcome = await flow(clientRequestId);
     } catch (err) {
+      if (err && err.code) decisionRequestIds.delete(idKey);
       decisionState.set(key, { error: { code: err && err.code ? err.code : '', text: apiErrorText(err) } });
       announce(`That did not work. ${apiErrorText(err)}`);
       redrawTaskDetail(task.id);
@@ -5275,12 +5279,13 @@
     }
     if (!outcome) {
       // The operator cancelled. Focus goes back to the control they used.
+      decisionRequestIds.delete(idKey);
       decisionState.delete(key);
       redrawTaskDetail(task.id);
       focusDecisionControl(key, action);
       return false;
     }
-    return sendDecision(task, instance, outcome.verb, { ...outcome.body, client_request_id: clientRequestId }, action);
+    return sendDecision(task, instance, outcome.verb, { ...outcome.body, client_request_id: clientRequestId }, action, idKey);
   };
 
   const decisionButton = (task, instance, action, text, onClick, className) => {
@@ -5379,8 +5384,8 @@
         if (!response.ok) throw await readApiError(response);
         const preview = await response.json();
         if (!preview || !preview.preview_id) {
-          const error = new Error('The broker did not return a preview.');
-          error.code = 'invalid_request';
+          const error = new Error('The broker answered, but its preview was empty.');
+          error.code = 'empty_preview';
           throw error;
         }
         const answer = await showConfirmDialog({
@@ -5453,8 +5458,14 @@
     const patch = task.certificates && task.certificates.mode === 'patch';
     const label = patch ? 'Converge this instance' : 'Redeploy this instance';
     const key = decisionKey(task.id, instance.instance_id);
+    const wrap = rotateEl('div', 'cert-remediation');
     const button = rotateEl('button', 'btn-secondary btn-sm', label);
     button.type = 'button';
+    button.disabled = true;
+    const noteId = `cert-remediate-note-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    button.setAttribute('aria-describedby', noteId);
+    const note = rotateEl('p', 'cert-muted cert-remediation-note', CONVERGE_UNAVAILABLE_REASON);
+    note.id = noteId;
     button.dataset.decisionAction = 'remediate';
     button.dataset.decisionKey = key;
     button.dataset.keepKey = `decision:${key}:remediate`;
@@ -5469,7 +5480,9 @@
       if (!errorShowing) focusDecisionControl(key, 'remediate');
       return result;
     });
-    return button;
+    wrap.appendChild(button);
+    wrap.appendChild(note);
+    return wrap;
   };
 
   // What one certificate instance shows under its name: the phase, each
@@ -18706,8 +18719,61 @@
       return nodes;
     };
 
+    // Rotations started from an instance's Overview that have not ended yet,
+    // by instance ID. Nothing polls. The Overview reads the task once when the
+    // operator returns to the page or opens another sub-tab of that instance,
+    // and draws again from a fresh scan when the task has ended. Opening the
+    // Overview and Rescan already scan the instance, so they drop the entry.
+    const rotationWatches = new Map();
+
+    const dropRotationWatch = (instanceId) => {
+      const watch = rotationWatches.get(instanceId);
+      if (!watch) return;
+      rotationWatches.delete(instanceId);
+      if (watch.tablist) watch.tablist.removeEventListener('click', watch.onTab);
+      if (rotationWatches.size === 0) document.removeEventListener('visibilitychange', onRotationVisibility);
+    };
+
+    const checkRotationWatch = async (instanceId) => {
+      const watch = rotationWatches.get(instanceId);
+      if (!watch || watch.checking) return;
+      if (!watch.container.isConnected) { dropRotationWatch(instanceId); return; }
+      watch.checking = true;
+      try {
+        const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(watch.taskId)}`);
+        if (!response.ok) return;
+        const task = await response.json();
+        if (rotationWatches.get(instanceId) !== watch) return;
+        if (task && typeof task.status === 'string' && !ACTIVE_TASK_STATUSES.has(task.status)) {
+          dropRotationWatch(instanceId);
+          watch.reload();
+        }
+      } catch (err) {
+        // The next visit reads the task again.
+      } finally {
+        watch.checking = false;
+      }
+    };
+
+    function onRotationVisibility() {
+      if (document.visibilityState !== 'visible') return;
+      Array.from(rotationWatches.keys()).forEach((instanceId) => { checkRotationWatch(instanceId); });
+    }
+
+    const watchRotation = (container, instanceId, taskId, reload) => {
+      if (!taskId) return;
+      dropRotationWatch(instanceId);
+      const tablist = document.getElementById(`service-cert-tablist-${instanceId}`);
+      const watch = { taskId: String(taskId), container, reload, tablist, checking: false, onTab: null };
+      watch.onTab = () => { checkRotationWatch(instanceId); };
+      if (tablist) tablist.addEventListener('click', watch.onTab);
+      if (rotationWatches.size === 0) document.addEventListener('visibilitychange', onRotationVisibility);
+      rotationWatches.set(instanceId, watch);
+    };
+
     const mountInstance = async (container, instanceId) => {
       if (!container) return;
+      dropRotationWatch(instanceId);
       const token = newToken(container);
       const reload = () => mountInstance(container, instanceId);
 
@@ -18739,7 +18805,8 @@
             instanceName: String(instanceName),
             certs: rotatable.map((cert) => ({ key: cert.key, variable: cert.variable || cert.key, daysLeft: cert.days_left, expiry: cert.expiry })),
             origin: 'instance',
-            opener
+            opener,
+            onCreated: (task) => { watchRotation(container, instanceId, task && task.id, reload); }
           });
           const first = rotateHost.querySelector('input[type="checkbox"]');
           if (first) first.focus({ preventScroll: true });
@@ -23591,7 +23658,10 @@
         certs: [{ key, variable: certName(cert), daysLeft: cert.days_left, expiry: cert.expiry }],
         preselect: new Set([key]),
         origin: 'drawer',
-        opener
+        opener,
+        findOpener: () => (view.drawer === d
+          ? (view.refs.drawerBody.querySelector('.cert-drawer-rotate:not([disabled])') || view.refs.drawerTitle)
+          : null)
       });
       const first = d.rotateHost.querySelector('.cert-rotate-preview');
       if (first && !first.disabled) first.focus({ preventScroll: true });
