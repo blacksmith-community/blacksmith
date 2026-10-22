@@ -1,12 +1,14 @@
 package upgrade
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
 	"strings"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/http/response"
@@ -16,6 +18,19 @@ import (
 type Handler struct {
 	logger  interfaces.Logger
 	manager *upgrade.Manager
+	tasks   taskManager
+}
+
+// taskManager is the part of the upgrade manager that the handlers call.
+type taskManager interface {
+	CreateTask(ctx context.Context, req upgrade.CreateTaskRequest) (*upgrade.UpgradeTask, error)
+	GetTask(taskID string) (*upgrade.UpgradeTask, error)
+	ListTasks() []*upgrade.UpgradeTask
+	PauseTask(ctx context.Context, taskID string) error
+	ResumeTask(ctx context.Context, taskID string) error
+	CancelTask(ctx context.Context, taskID string) error
+	GetSettings() upgrade.Settings
+	UpdateSettings(ctx context.Context, settings upgrade.Settings) error
 }
 
 // Dependencies contains all dependencies needed by the upgrade handler.
@@ -46,6 +61,7 @@ func NewHandler(deps Dependencies) *Handler {
 	return &Handler{
 		logger:  deps.Logger.Named("upgrade-handler"),
 		manager: manager,
+		tasks:   manager,
 	}
 }
 
@@ -110,7 +126,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("Creating upgrade task for %d instances, targets: %s", len(req.InstanceIDs), req.DescribeTargets())
 
-	task, err := h.manager.CreateTask(r.Context(), req)
+	task, err := h.tasks.CreateTask(r.Context(), req)
 	if err != nil {
 		h.logger.Error("Failed to create upgrade task: %v", err)
 		writeCreateError(w, err)
@@ -126,7 +142,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("List upgrade tasks request")
 
-	tasks := h.manager.ListTasks()
+	tasks := h.tasks.ListTasks()
 
 	// Sort by created_at descending (newest first)
 	sort.Slice(tasks, func(i, j int) bool {
@@ -146,12 +162,10 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	h.logger.Debug("Get upgrade task request: %s", taskID)
 
-	task, err := h.manager.GetTask(taskID)
+	task, err := h.tasks.GetTask(taskID)
 	if err != nil {
 		h.logger.Error("Failed to get upgrade task %s: %v", taskID, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"success": false, "error": "task not found"}`))
+		response.WriteErrorCode(w, http.StatusNotFound, apierr.CodeInstanceNotFound, "task not found")
 
 		return
 	}
@@ -163,12 +177,10 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request, taskID string)
 func (h *Handler) PauseTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	h.logger.Info("Pause upgrade task request: %s", taskID)
 
-	err := h.manager.PauseTask(r.Context(), taskID)
+	err := h.tasks.PauseTask(r.Context(), taskID)
 	if err != nil {
 		h.logger.Error("Failed to pause upgrade task %s: %v", taskID, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success": false, "error": "` + err.Error() + `"}`))
+		writeTaskActionError(w, err)
 
 		return
 	}
@@ -180,12 +192,10 @@ func (h *Handler) PauseTask(w http.ResponseWriter, r *http.Request, taskID strin
 func (h *Handler) ResumeTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	h.logger.Info("Resume upgrade task request: %s", taskID)
 
-	err := h.manager.ResumeTask(r.Context(), taskID)
+	err := h.tasks.ResumeTask(r.Context(), taskID)
 	if err != nil {
 		h.logger.Error("Failed to resume upgrade task %s: %v", taskID, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success": false, "error": "` + err.Error() + `"}`))
+		writeTaskActionError(w, err)
 
 		return
 	}
@@ -197,12 +207,10 @@ func (h *Handler) ResumeTask(w http.ResponseWriter, r *http.Request, taskID stri
 func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	h.logger.Info("Cancel upgrade task request: %s", taskID)
 
-	err := h.manager.CancelTask(r.Context(), taskID)
+	err := h.tasks.CancelTask(r.Context(), taskID)
 	if err != nil {
 		h.logger.Error("Failed to cancel upgrade task %s: %v", taskID, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success": false, "error": "` + err.Error() + `"}`))
+		writeTaskActionError(w, err)
 
 		return
 	}
@@ -214,7 +222,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request, taskID stri
 func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("Get upgrade settings request")
 
-	settings := h.manager.GetSettings()
+	settings := h.tasks.GetSettings()
 	response.HandleJSON(w, upgrade.SettingsResponse(settings), nil)
 }
 
@@ -233,7 +241,7 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	settings := upgrade.Settings(req)
 
-	if err := h.manager.UpdateSettings(r.Context(), settings); err != nil {
+	if err := h.tasks.UpdateSettings(r.Context(), settings); err != nil {
 		h.logger.Error("Failed to update settings: %v", err)
 		response.HandleJSON(w, nil, err)
 
@@ -263,5 +271,19 @@ func writeCreateError(writer http.ResponseWriter, err error) {
 		response.WriteError(writer, http.StatusServiceUnavailable, err.Error())
 	default:
 		response.HandleJSON(writer, nil, err)
+	}
+}
+
+// writeTaskActionError answers a failed pause, resume, or cancel. An unknown
+// task is not found, a task whose state does not allow the action is a
+// conflict, and anything else is an internal error.
+func writeTaskActionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, upgrade.ErrTaskNotFound):
+		response.WriteErrorCode(w, http.StatusNotFound, apierr.CodeInstanceNotFound, err.Error())
+	case errors.Is(err, upgrade.ErrTaskNotRunning), errors.Is(err, upgrade.ErrTaskNotPaused):
+		response.WriteErrorCode(w, http.StatusConflict, apierr.CodeInvalidTaskState, err.Error())
+	default:
+		response.WriteErrorCode(w, http.StatusInternalServerError, apierr.CodeInternal, err.Error())
 	}
 }

@@ -99,3 +99,23 @@ func JSON(writer http.ResponseWriter, statusCode int, data interface{}) {
 		_, _ = fmt.Fprintf(writer, `{"success": false, "error": "failed to marshal response"}`)
 	}
 }
+
+// WriteErrorCode writes a JSON error response with the given status, a
+// machine-readable code, and a message.
+func WriteErrorCode(writer http.ResponseWriter, statusCode int, code, message string) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(statusCode)
+
+	errorResponse := map[string]interface{}{
+		"success": false,
+		"error":   message,
+		"code":    code,
+	}
+
+	jsonData, err := json.Marshal(errorResponse)
+	if err == nil {
+		_, _ = writer.Write(jsonData)
+	} else {
+		_, _ = fmt.Fprintf(writer, `{"success": false, "error": "internal error", "code": "internal_error"}`)
+	}
+}
