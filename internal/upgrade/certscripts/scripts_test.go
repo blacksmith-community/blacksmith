@@ -161,18 +161,14 @@ func TestNormHashRefusesNUL(t *testing.T) {
 	}
 }
 
-// stageProgramText is the fixed staging program. It refuses a name that
-// exists as anything at all, and a parent directory that is not root's
-// with mode 0700, before it writes.
-const stageProgramText = `sudo -n /bin/sh -c 'set -C && umask 077 && ` +
-	`[ ! -e "$1" ] && [ ! -L "$1" ] && [ ! -L "${1%/*}" ] && ` +
-	`[ "$(stat -c %u:%a -- "${1%/*}")" = 0:700 ] && cat > "$1"' sh`
-
+// TestStageCommandExact shows that staging runs patch.sh's stage
+// operation through the same program as every other operation, so the
+// script's own checks run before it writes.
 func TestStageCommandExact(t *testing.T) {
 	t.Parallel()
 
 	path := "/var/vcap/data/certpatch/" + testTaskID + "/s/0"
-	want := stageProgramText + ` '` + path + `'`
+	want := "sudo -n /bin/bash -s -- 'stage' '" + testTaskID + "' '" + path + "'"
 
 	got, err := certscripts.StageCommand(path, testTaskID)
 	if err != nil {
@@ -190,6 +186,7 @@ func TestStageCommandRefusesOtherPaths(t *testing.T) {
 	for _, path := range []string{
 		"/var/vcap/data/certpatch/" + otherTaskID + "/s/0",
 		"/var/vcap/data/certpatch/" + testTaskID + "/s/../b/0",
+		"/var/vcap/data/certpatch/" + testTaskID + "/b/0",
 		pinnedTarget,
 		"/etc/shadow",
 		"",
@@ -210,7 +207,7 @@ func TestCommandsPassTheRunnerCheck(t *testing.T) {
 
 	runner := ssh.NewRunner(nil, nil)
 
-	stage, err := certscripts.StageCommand("/var/vcap/data/certpatch/"+testTaskID+"/b/12", testTaskID)
+	stage, err := certscripts.StageCommand("/var/vcap/data/certpatch/"+testTaskID+"/s/12", testTaskID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,45 +238,57 @@ func TestCommandsPassTheRunnerCheck(t *testing.T) {
 // stagedText is what the staging tests try to write.
 const stagedText = "staged\n"
 
-// runStage runs the staging command on path, without its sudo prefix,
-// because the container already runs as root and has no sudo. It reports
-// whether the command succeeded. A command that blocks, as a write to a
-// FIFO would, fails the test when its context ends.
-func runStage(t *testing.T, path string) bool {
+// runStage runs the command StageCommand builds for path in the tree at
+// root, without its sudo prefix, because the container already runs as
+// root and has no sudo. stdin is what StageInput builds for content. It
+// returns the exit code. A command that blocks, as a write to a FIFO
+// would, fails the test when its context ends.
+func runStage(t *testing.T, root, path, content string) int {
 	t.Helper()
 
-	// Build the command for a real work path, then point it at path,
-	// so the test runs the program text StageCommand produces.
-	form := workBase + testTaskID + "/s/0"
-
-	command, err := certscripts.StageCommand(form, testTaskID)
+	command, err := certscripts.StageCommand(path, testTaskID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	program, found := strings.CutSuffix(command, " "+ssh.Quote(form))
-	if !found {
-		t.Fatal("the staging command does not end with its quoted path")
-	}
-
-	program, found = strings.CutPrefix(program, "sudo -n ")
+	program, found := strings.CutPrefix(command, "sudo -n ")
 	if !found {
 		t.Fatal("the staging command does not start with sudo -n")
+	}
+
+	stdin, err := certscripts.StageInput(strings.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", program+" "+ssh.Quote(path)) //nolint:gosec // the command under test
-	cmd.Stdin = strings.NewReader(stagedText)
+	var stderr strings.Builder
+
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", program) //nolint:gosec // the command under test
+	cmd.Env = []string{"CERTPATCH_ROOT=" + root}
+	cmd.Stdin = stdin
+	cmd.Stderr = &stderr
 
 	err = cmd.Run()
 
 	if ctx.Err() != nil {
-		t.Fatalf("staging %s blocked until its deadline", filepath.Base(path))
+		t.Fatalf("staging %s blocked until its deadline", path)
 	}
 
-	return err == nil
+	if err == nil {
+		return 0
+	}
+
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("staging %s: %v", path, err)
+	}
+
+	t.Logf("staging %s exited %d; stderr: %s", path, exit.ExitCode(), stderr.String())
+
+	return exit.ExitCode()
 }
 
 // writeFile writes a fixture file and fails the test when it cannot.
@@ -302,153 +311,159 @@ func symlink(t *testing.T, target, link string) {
 	}
 }
 
-// privateDir makes a directory with mode 0700 under dir.
-func privateDir(t *testing.T, dir, name string) string {
-	t.Helper()
-
-	path := filepath.Join(dir, name)
-
-	err := os.Mkdir(path, 0o700)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return path
-}
-
 func TestStageCommandWritesNewFile(t *testing.T) {
 	t.Parallel()
-	requireRoot(t)
 
-	dir := privateDir(t, t.TempDir(), "s")
+	tree := newPatchTree(t)
 
-	fresh := filepath.Join(dir, "0")
-	if !runStage(t, fresh) {
-		t.Fatal("staging a new name failed")
+	if code := runStage(t, tree.root, stagePath, stagedText); code != 0 {
+		t.Fatalf("staging a new name exited %d, want 0", code)
 	}
 
-	assertContent(t, fresh, stagedText)
+	tree.assert(t, stagePath, stagedText)
+	tree.assertOwnerMode(t, stagePath, 0, 0o600)
 
-	info, err := os.Stat(fresh)
+	// The content is data, never script, even when it reads as shell.
+	planted := tree.at("/planted")
+	content := "staged\ntouch " + planted + "\nexit 3\n"
+	next := patchTask + "/s/1"
+
+	if code := runStage(t, tree.root, next, content); code != 0 {
+		t.Fatalf("staging shell text exited %d, want 0", code)
+	}
+
+	tree.assert(t, next, content)
+
+	if tree.exists(t, "/planted") {
+		t.Error("the staged content ran as a command")
+	}
+
+	assertOnlyStaged(t, tree, "0", "1")
+}
+
+// assertOnlyStaged checks that the task's s directory holds the named
+// files and nothing else, so no temporary file was left behind.
+func assertOnlyStaged(t *testing.T, tree *vmTree, names ...string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(tree.at(patchTask + "/s"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Errorf("staged file mode = %o, want 600", mode)
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		got = append(got, entry.Name())
+	}
+
+	if strings.Join(got, " ") != strings.Join(names, " ") {
+		t.Errorf("the s directory holds %v, want %v", got, names)
 	}
 }
 
 func TestStageCommandRefusesExisting(t *testing.T) {
 	t.Parallel()
-	requireRoot(t)
 
-	top := t.TempDir()
-	dir := privateDir(t, top, "s")
+	tree := newPatchTree(t)
+	tree.mkdir(t, "/etc")
+	tree.write(t, "/etc/target", "target\n")
 
-	existing := filepath.Join(dir, "existing")
-	writeFile(t, existing, "other\n")
+	existing := patchTask + "/s/1"
+	tree.write(t, existing, "other\n")
 
-	if runStage(t, existing) {
-		t.Error("staging over an existing file succeeded")
-	}
+	link := patchTask + "/s/2"
+	symlink(t, tree.at("/etc/target"), tree.at(link))
 
-	assertContent(t, existing, "other\n")
+	dangling := patchTask + "/s/3"
+	symlink(t, tree.at("/etc/absent"), tree.at(dangling))
 
-	target := filepath.Join(top, "target")
-	writeFile(t, target, "target\n")
+	// set -C would refuse only an existing regular file, so a FIFO would
+	// hand the staged bytes to whoever reads it, and a symlink to
+	// /dev/null would swallow them while staging reported success.
+	fifo := patchTask + "/s/4"
 
-	link := filepath.Join(dir, "link")
-	symlink(t, target, link)
-
-	if runStage(t, link) {
-		t.Error("staging through a symlink succeeded")
-	}
-
-	assertContent(t, target, "target\n")
-
-	dangling := filepath.Join(dir, "dangling")
-	symlink(t, filepath.Join(top, "absent"), dangling)
-
-	if runStage(t, dangling) {
-		t.Error("staging through a dangling symlink succeeded")
-	}
-
-	_, err := os.Lstat(filepath.Join(top, "absent"))
-	if err == nil {
-		t.Error("staging through a dangling symlink created its target")
-	}
-
-	// set -C refuses only an existing regular file, so these two are
-	// refused by the explicit check that runs before the write. Without
-	// it, a FIFO would hand the staged bytes to whoever reads it, and the
-	// symlink would send them to /dev/null while staging reported success.
-	fifo := filepath.Join(dir, "fifo")
-
-	err = syscall.Mkfifo(fifo, 0o600)
+	err := syscall.Mkfifo(tree.at(fifo), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if runStage(t, fifo) {
-		t.Error("staging onto a FIFO succeeded")
+	devNull := patchTask + "/s/5"
+	symlink(t, "/dev/null", tree.at(devNull))
+
+	sub := patchTask + "/s/6"
+	tree.mkdir(t, sub)
+
+	for name, path := range map[string]string{
+		"an existing file":    existing,
+		"a symlink":           link,
+		"a dangling symlink":  dangling,
+		"a FIFO":              fifo,
+		"a link to /dev/null": devNull,
+		"a directory":         sub,
+	} {
+		if code := runStage(t, tree.root, path, stagedText); code != refusedExit {
+			t.Errorf("staging onto %s exited %d, want 13", name, code)
+		}
 	}
 
-	devNull := filepath.Join(dir, "null")
-	symlink(t, "/dev/null", devNull)
+	tree.assert(t, existing, "other\n")
+	tree.assert(t, "/etc/target", "target\n")
 
-	if runStage(t, devNull) {
-		t.Error("staging through a symlink to /dev/null succeeded")
-	}
-
-	sub := privateDir(t, dir, "sub")
-	if runStage(t, sub) {
-		t.Error("staging onto a directory succeeded")
+	if tree.exists(t, "/etc/absent") {
+		t.Error("staging through a dangling symlink created its target")
 	}
 }
 
 func TestStageCommandRefusesUnprivateDirectory(t *testing.T) {
 	t.Parallel()
-	requireRoot(t)
 
-	top := t.TempDir()
+	t.Run("an open s directory", func(t *testing.T) {
+		t.Parallel()
 
-	open := privateDir(t, top, "open")
+		tree := newPatchTree(t)
+		tree.chmod(t, patchTask+"/s", 0o755)
 
-	err := os.Chmod(open, 0o755) //nolint:gosec // the directory under test must be too open
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if runStage(t, filepath.Join(open, "0")) {
-		t.Error("staging into a 0755 directory succeeded")
-	}
-
-	owned := privateDir(t, top, "owned")
-
-	err = os.Chown(owned, vcapUID, vcapUID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if runStage(t, filepath.Join(owned, "0")) {
-		t.Error("staging into a directory owned by vcap succeeded")
-	}
-
-	inside := privateDir(t, top, "inside")
-	linked := filepath.Join(top, "linked")
-	symlink(t, inside, linked)
-
-	if runStage(t, filepath.Join(linked, "0")) {
-		t.Error("staging through a symlinked directory succeeded")
-	}
-
-	for _, path := range []string{filepath.Join(open, "0"), filepath.Join(owned, "0"), filepath.Join(inside, "0")} {
-		_, err := os.Lstat(path)
-		if err == nil {
-			t.Errorf("the refused staging created %s", path)
+		if code := runStage(t, tree.root, stagePath, stagedText); code != refusedExit {
+			t.Errorf("staging into a 0755 directory exited %d, want 13", code)
 		}
-	}
+
+		if tree.exists(t, stagePath) {
+			t.Error("the refused staging wrote the file")
+		}
+	})
+
+	t.Run("an s directory vcap owns", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newPatchTree(t)
+		tree.giveToVCAP(t, patchTask+"/s")
+
+		if code := runStage(t, tree.root, stagePath, stagedText); code != refusedExit {
+			t.Errorf("staging into a directory owned by vcap exited %d, want 13", code)
+		}
+
+		if tree.exists(t, stagePath) {
+			t.Error("the refused staging wrote the file")
+		}
+	})
+
+	t.Run("a symlinked s directory", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newPatchTree(t)
+		tree.mkdir(t, "/etc/inside")
+		tree.chmod(t, "/etc/inside", 0o700)
+		tree.replace(t, patchTask+"/s")
+		symlink(t, tree.at("/etc/inside"), tree.at(patchTask+"/s"))
+
+		if code := runStage(t, tree.root, stagePath, stagedText); code != refusedExit {
+			t.Errorf("staging through a symlinked directory exited %d, want 13", code)
+		}
+
+		if tree.exists(t, "/etc/inside/0") {
+			t.Error("the refused staging wrote through the symlink")
+		}
+	})
 }
 
 func assertContent(t *testing.T, path, want string) {

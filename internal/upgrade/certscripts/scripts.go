@@ -8,6 +8,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -25,6 +26,9 @@ var scripts embed.FS
 // and is never run on its own.
 const libName = "lib"
 
+// patchScript is the script that changes files on a VM, staging included.
+const patchScript = "patch"
+
 // The exit codes every script uses, which lib.sh lists as well.
 const (
 	ExitOK      = 0
@@ -39,19 +43,9 @@ const (
 // operation and its arguments follow as quoted words.
 const invokeProgram = "sudo -n /bin/bash -s --"
 
-// stageProgram writes stdin to a new file in a directory that is private
-// to root. set -C alone is not enough, because POSIX noclobber refuses
-// only an existing regular file, so a FIFO or a symlink to a device at
-// the name would still be opened. The program therefore refuses a name
-// that exists as anything, and a parent that is a symlink or is not
-// root's with mode 0700, before it writes. Only root can add an entry to
-// such a directory, so nothing can appear between the checks and the
-// write, and set -C stays as a second guard. The umask keeps the new
-// file readable by root alone. The path arrives as $1, so it is never
-// read as shell syntax.
-const stageProgram = `sudo -n /bin/sh -c 'set -C && umask 077 && ` +
-	`[ ! -e "$1" ] && [ ! -L "$1" ] && [ ! -L "${1%/*}" ] && ` +
-	`[ "$(stat -c %u:%a -- "${1%/*}")" = 0:700 ] && cat > "$1"' sh`
+// opStage is patch.sh's operation that writes the content on stdin to a
+// staging path.
+const opStage = "stage"
 
 // scriptName is the form of a script name, which is a file name in this
 // directory without its .sh suffix.
@@ -100,21 +94,41 @@ func Invocation(op string, args ...string) (string, []string) {
 	return invokeProgram, argv
 }
 
-// StageCommand returns the command line that writes stdin to path, a
-// staging or backup path of the task, which is the staging program
-// followed by the quoted path. It refuses, with an error that wraps
-// ErrPathRefused, any path that ValidWorkPath refuses. The caller runs
-// make_work_dir and valid_work on the VM first, so the path's directory
-// is the private one they made and checked. On the VM the command fails,
-// and writes nothing, when anything already exists at the path or its
-// directory is not private to root.
+// StageCommand returns the command line that writes the content on
+// stdin to path, a staging path of the task. It runs patch.sh's stage
+// operation, which takes the input StageInput builds. It refuses, with an
+// error that wraps ErrPathRefused, any path that ValidWorkPath refuses and
+// any backup path. On the VM the stage operation runs valid_work on the
+// task's directories itself, so it writes nothing unless they are the
+// private ones prepare made, and it refuses a name that already exists
+// as anything.
 func StageCommand(path, taskID string) (string, error) {
 	err := ValidWorkPath(path, taskID)
 	if err != nil {
 		return "", err
 	}
 
-	return ssh.Command(stageProgram, []string{path}), nil
+	if !strings.HasPrefix(path, workRoot+taskID+"/s/") {
+		return "", refused("not a staging path of this task")
+	}
+
+	program, argv := Invocation(opStage, taskID, path)
+
+	return ssh.Command(program, argv), nil
+}
+
+// StageInput returns the stdin for the command StageCommand builds,
+// which is lib.sh and patch.sh followed by content. patch.sh starts its
+// operation from its last line, so bash has read the whole script before
+// the stage operation copies the rest of stdin, and content is never read
+// as shell.
+func StageInput(content io.Reader) (io.Reader, error) {
+	text, err := Script(patchScript)
+	if err != nil {
+		return nil, err
+	}
+
+	return io.MultiReader(strings.NewReader(text), content), nil
 }
 
 // outputKey is the form of a key in a script's output.

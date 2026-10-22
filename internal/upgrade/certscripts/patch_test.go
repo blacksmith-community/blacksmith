@@ -208,8 +208,8 @@ func TestPrepareRefusesForeignTaskDir(t *testing.T) {
 }
 
 // TestStagingNeedsPrepare shows that staging works only after prepare has
-// made and checked the task's directories on the same VM, and that
-// prepare refuses the trees that staging alone would not notice.
+// made the task's directories, and that staging itself refuses every
+// tree that prepare refuses, so no caller can stage before those checks.
 func TestStagingNeedsPrepare(t *testing.T) {
 	t.Parallel()
 
@@ -218,8 +218,8 @@ func TestStagingNeedsPrepare(t *testing.T) {
 
 		tree := newPinnedTree(t, pinnedTarget, pinnedJobDir)
 
-		if runStage(t, tree.at(stagePath)) {
-			t.Fatal("staging succeeded before prepare")
+		if code := runStage(t, tree.root, stagePath, stagedText); code != refusedExit {
+			t.Fatalf("staging before prepare exited %d, want 13", code)
 		}
 
 		if tree.exists(t, workBase) {
@@ -230,8 +230,8 @@ func TestStagingNeedsPrepare(t *testing.T) {
 			t.Fatalf("prepare exited %d, want 0", code)
 		}
 
-		if !runStage(t, tree.at(stagePath)) {
-			t.Fatal("staging failed after prepare")
+		if code := runStage(t, tree.root, stagePath, stagedText); code != 0 {
+			t.Fatalf("staging after prepare exited %d, want 0", code)
 		}
 
 		tree.assert(t, stagePath, stagedText)
@@ -251,30 +251,54 @@ func TestStagingNeedsPrepare(t *testing.T) {
 			t.Error("prepare in an insecure tree created the work directory")
 		}
 
-		if runStage(t, tree.at(stagePath)) {
-			t.Error("staging succeeded in an insecure tree")
+		if code := runStage(t, tree.root, stagePath, stagedText); code != refusedExit {
+			t.Errorf("staging in an insecure tree exited %d, want 13", code)
 		}
 	})
+}
 
-	// A planted task directory with a private s directory inside a work
-	// directory that others can write is what the staging command
-	// cannot see, because it checks only its own directory. prepare
-	// refuses it, so the broker never stages there.
-	t.Run("a planted work directory", func(t *testing.T) {
-		t.Parallel()
+// TestStagingRefusesPlantedTree shows that a planted task directory with
+// a private s directory, inside a work directory others can write or as
+// a task directory others can read, which a check of the s directory
+// alone would pass, makes both prepare and staging refuse.
+func TestStagingRefusesPlantedTree(t *testing.T) {
+	t.Parallel()
 
-		tree := newPinnedTree(t, pinnedTarget, pinnedJobDir)
-		tree.mkdir(t, patchTask+"/s")
-		tree.mkdir(t, patchTask+"/b")
-		tree.chmod(t, patchTask+"/s", 0o700)
-		tree.chmod(t, patchTask+"/b", 0o700)
-		tree.chmod(t, patchTask, 0o700)
-		tree.chmod(t, workBase, 0o777)
+	for name, open := range map[string]string{
+		"a planted work directory": workBase,
+		"an open task directory":   patchTask,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-		if _, code := tree.patch(t, "prepare", testTaskID); code != refusedExit {
-			t.Fatalf("prepare in a planted work directory exited %d, want 13", code)
-		}
-	})
+			tree := newPinnedTree(t, pinnedTarget, pinnedJobDir)
+			tree.mkdir(t, patchTask+"/s")
+			tree.mkdir(t, patchTask+"/b")
+			tree.chmod(t, patchTask+"/s", 0o700)
+			tree.chmod(t, patchTask+"/b", 0o700)
+			tree.chmod(t, patchTask, 0o700)
+			tree.chmod(t, workBase, 0o700)
+
+			mode := os.FileMode(0o755)
+			if open == workBase {
+				mode = 0o777
+			}
+
+			tree.chmod(t, open, mode)
+
+			if _, code := tree.patch(t, "prepare", testTaskID); code != refusedExit {
+				t.Fatalf("prepare exited %d, want 13", code)
+			}
+
+			if code := runStage(t, tree.root, stagePath, stagedText); code != refusedExit {
+				t.Errorf("staging exited %d, want 13", code)
+			}
+
+			if tree.exists(t, stagePath) {
+				t.Error("the refused staging wrote the file")
+			}
+		})
+	}
 }
 
 func TestStagecheck(t *testing.T) {
@@ -793,6 +817,9 @@ func TestPatchRefusesBadArguments(t *testing.T) {
 		{"no operation", nil, usageExit},
 		{"prepare with no task", []string{"prepare"}, usageExit},
 		{"prepare with a bad task", []string{"prepare", "../x"}, refusedExit},
+		{"stage with no path", []string{"stage", testTaskID}, usageExit},
+		{"stage to a backup path", []string{"stage", testTaskID, backupPath}, refusedExit},
+		{"stage to another task", []string{"stage", testTaskID, workBase + otherTaskID + "/s/0"}, refusedExit},
 		{"check with too few arguments", []string{opCheck, testTaskID, pinnedJobDir, pinnedTarget, old, fresh}, usageExit},
 		{"check with a bad hash", []string{opCheck, testTaskID, pinnedJobDir, pinnedTarget, "abc", fresh, backupPath}, usageExit},
 		{"check with equal hashes", []string{opCheck, testTaskID, pinnedJobDir, pinnedTarget, old, old, backupPath}, usageExit},

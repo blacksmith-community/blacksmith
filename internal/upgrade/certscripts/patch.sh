@@ -2,6 +2,7 @@
 # operation takes the task ID first and checks it before anything else.
 #
 #   prepare <task>
+#   stage <task> <staged>
 #   check <task> <jobdir> <path> <old> <new> <backup>
 #   stagecheck <task> <staged> <new>
 #   backup <task> <jobdir> <path> <old> <backup>
@@ -16,11 +17,14 @@
 # lines that start with ok, drift, or unrecovered and name the file or
 # process, and never prints file content.
 #
-# The broker runs prepare, then the staging command, then the other
-# operations, all on one connection to the VM. prepare makes the task's
-# directories through make_work_dir and checks them with valid_work, and
-# the staging command refuses a directory that is not private to root,
-# so nothing is staged before those checks pass.
+# The broker runs prepare, then stage, then the other operations, all on
+# one connection to the VM. prepare makes the task's directories through
+# make_work_dir, and stage runs valid_work on them before it writes, so
+# nothing is staged into a directory that is not private to root.
+#
+# stage reads the content that follows this script on stdin. The script
+# starts its operation from its last line, so bash has read every line
+# of the script before stage reads, and the content is never run.
 #
 # Every write goes to a new temporary file that is synced and then
 # renamed over its target, so a target always holds either its whole old
@@ -112,6 +116,35 @@ prepare() {
 	valid_work "$CP_WORK_ROOT/$task/b/0" "$task" || return
 
 	printf 'ok path=%s\n' "$CP_WORK_ROOT/$task"
+}
+
+# stage writes the content that follows the script on stdin to the
+# task's staging path. It refuses a name that already exists as anything.
+# The content goes to a temporary file that is synced and then linked to
+# the staging path, so the path holds the whole content or nothing.
+stage() {
+	_pt_args 2 "$#" || return
+	valid_task "$1" || return
+
+	local task=$1 staged=$2 root full
+
+	_pt_work "$staged" "$task" s || return
+	root=$(_cp_root) || return "$EXIT_REFUSED"
+	full=$root$staged
+
+	if [ -e "$full" ] || [ -L "$full" ]; then
+		return "$EXIT_REFUSED"
+	fi
+
+	_PT_TMP=$(mktemp -- "${full%/*}/.tmp.XXXXXXXXXX") || return 1
+	cat > "$_PT_TMP" || return 1
+	_pt_sync "$_PT_TMP" || return 1
+	ln -- "$_PT_TMP" "$full" || return 1
+	rm -f -- "$_PT_TMP" || return 1
+	_PT_TMP=
+	_pt_sync "${full%/*}" || return 1
+
+	printf 'ok path=%s\n' "$staged"
 }
 
 check() {
@@ -427,39 +460,27 @@ cleanup() {
 	printf 'ok path=%s\n' "$CP_WORK_ROOT/$task"
 }
 
-operation=${1:-}
-shift
+# _pt_main runs the operation that its first argument names.
+_pt_main() {
+	local operation=${1:-}
 
-case $operation in
-prepare)
-	prepare "$@"
-	;;
-check)
-	check "$@"
-	;;
-stagecheck)
-	stagecheck "$@"
-	;;
-backup)
-	backup "$@"
-	;;
-replace)
-	replace "$@"
-	;;
-restore)
-	restore "$@"
-	;;
-restart)
-	restart "$@"
-	;;
-cleanup)
-	cleanup "$@"
-	;;
-*)
-	exit "$EXIT_USAGE"
-	;;
-esac
+	[ "$#" -eq 0 ] || shift
 
-# exit with no argument keeps the operation's status, which the EXIT
-# trap does not change.
-exit
+	case $operation in
+	prepare) prepare "$@" ;;
+	stage) stage "$@" ;;
+	check) check "$@" ;;
+	stagecheck) stagecheck "$@" ;;
+	backup) backup "$@" ;;
+	replace) replace "$@" ;;
+	restore) restore "$@" ;;
+	restart) restart "$@" ;;
+	cleanup) cleanup "$@" ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
+}
+
+# This line must stay the last line of the script, with nothing after it,
+# because stage reads what follows it on stdin. exit with no argument
+# keeps the operation's status, which the EXIT trap does not change.
+_pt_main "$@"; exit
