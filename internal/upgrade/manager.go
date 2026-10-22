@@ -1433,6 +1433,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	task.CompletedAt = &completedAt
 
 	ended := m.cancelIdleLocked(task)
+	skipped := m.skipUnownedLocked(task)
 	verify := m.verifyCancelledLocked(task)
 
 	// No deploy of a pending instance is sent once the upgrade is
@@ -1443,6 +1444,10 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 
 	if ended > 0 {
 		m.logger.Info("Cancelled %d idle instances of certificate task %s", ended, taskID)
+	}
+
+	if skipped > 0 {
+		m.logger.Info("Skipped %d pending instances of cancelled certificate task %s", skipped, taskID)
 	}
 
 	verify()
@@ -1954,7 +1959,10 @@ func finishedStatus(task *UpgradeTask) TaskStatus {
 }
 
 // skipPendingLocked marks every pending instance of a cancelled upgrade
-// skipped and returns how many it marked. The caller holds mu.
+// skipped and returns how many it marked. A pending certificate instance
+// whose regeneration already made new versions, such as a loaded one whose
+// deploy went back to pending, says that they are deploy_pending. The
+// caller holds mu.
 func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 	skipped := 0
 
@@ -1966,6 +1974,11 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 
 		instance.Status = InstanceStatusSkipped
 		instance.Error = "skipped due to task cancellation"
+
+		if task.KindOrDefault() == TaskKindCertificates && regenerationStartedLocked(instance) {
+			instance.Error = cancelledUndeployed
+		}
+
 		task.SkippedCount++
 		skipped++
 	}

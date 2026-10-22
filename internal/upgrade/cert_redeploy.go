@@ -957,6 +957,19 @@ func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
 	return ended
 }
 
+// skipUnownedLocked skips the pending instances of a cancelled
+// certificate task that nothing processes or settles, as its processor or
+// the end of its settles would, since neither will come to it. It returns
+// how many it skipped. The caller holds mu.
+func (m *Manager) skipUnownedLocked(task *UpgradeTask) int {
+	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCertificates ||
+		m.owned[task.ID] || m.settling[task.ID] > 0 {
+		return 0
+	}
+
+	return m.skipPendingLocked(task)
+}
+
 // regenerationUncertainLocked reports whether a regeneration of the
 // instance may have reached CredHub without its answer being recorded.
 // The caller holds mu.

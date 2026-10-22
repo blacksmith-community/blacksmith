@@ -2136,3 +2136,56 @@ func TestCertificateCancelLoadedPauseAwaitsResolve(t *testing.T) {
 
 	expectReleased(t, manager)
 }
+
+// A loaded instance whose deploy saved no ID goes back to pending, and a
+// cancel then skips it, saying that its new versions are deploy_pending,
+// whether nothing processes the paused task or its processor waits out a
+// pause.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelSkipsUndeployedPending(t *testing.T) {
+	for _, processed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("processed=%v", processed), func(t *testing.T) {
+			env := newRedeployEnv(t)
+
+			stored := env.idleTask(true)
+			stored.Instances[0].Certificates.Phase = RotationPhaseDeploy
+
+			if processed {
+				stored.Status = TaskStatusRunning
+				stored.Paused = false
+				stored.Instances[0].Error = ""
+
+				env.setSwitches(false)
+			}
+
+			manager := env.load(stored)
+
+			waitUntil(t, "the paused task with its instance pending", func() bool {
+				task := current(t, manager)
+
+				return task.Status == TaskStatusPaused && task.Instances[0].Status == InstanceStatusPending
+			})
+
+			err := manager.CancelTask(context.Background(), certTaskID)
+			if err != nil {
+				t.Fatalf("CancelTask: %v", err)
+			}
+
+			task := eventuallyInstance(t, manager, InstanceStatusSkipped)
+			if inst := task.Instances[0]; inst.Error != cancelledUndeployed || task.SkippedCount != 1 {
+				t.Fatalf("expected one skipped instance whose versions are deploy_pending, got %d skipped with %q", task.SkippedCount, inst.Error)
+			}
+
+			expectReleased(t, manager)
+
+			waitUntil(t, "the skipped instance to be saved", func() bool {
+				return env.stored().Instances[0].Status == InstanceStatusSkipped
+			})
+
+			if sent := len(env.director.deploys()); sent != 0 {
+				t.Fatalf("expected no deploy, got %d", sent)
+			}
+		})
+	}
+}
