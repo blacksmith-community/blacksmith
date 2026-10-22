@@ -278,8 +278,18 @@ func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings
 	scan := InstanceScan{Facts: facts, VMs: vms, Variables: vars}
 
 	scan.Material.Raw = literalObservations(facts, owner, s.now())
-	scan.Material.CredHub, scan.Material.SigningCAs = s.readCredHub(ctx, director, deployment, facts, vars, owner)
-	scan.Material.Hosts = s.readHosts(ctx, ref.ID)
+
+	var failed []RawObservation
+
+	scan.Material.CredHub, scan.Material.SigningCAs, failed = s.readCredHub(ctx, director, deployment, facts, vars, owner)
+	scan.Material.Raw = append(scan.Material.Raw, failed...)
+
+	hosts, hostsFailed := s.readHosts(ctx, ref.ID, owner)
+	scan.Material.Hosts = hosts
+
+	if hostsFailed != nil {
+		scan.Material.Raw = append(scan.Material.Raw, *hostsFailed)
+	}
 
 	if st.ProbeEnabled {
 		listeners := ListenerRules(facts)
@@ -362,6 +372,22 @@ func literalObservations(facts *ManifestFacts, owner Owner, at time.Time) []RawO
 	}
 
 	return out
+}
+
+// readFailure records a read that failed, so grouping keeps it and coverage
+// reads incomplete. When the read belongs to one certificate variable, the
+// observation names that variable, which places it in the variable's group;
+// otherwise it gets a group of its own. msg must never hold a secret value.
+func (s *Scanner) readFailure(src Source, owner Owner, locator, variable, msg string) RawObservation {
+	r := RawObservation{Observation: Observation{
+		Source: src, Owner: owner, Locator: locator, State: StateFailed, Error: msg, ObservedAt: s.now(),
+	}}
+
+	if variable != "" {
+		r.Listener = &Listener{Variable: lastSegment(variable)}
+	}
+
+	return r
 }
 
 func certObservation(src Source, owner Owner, locator string, c *x509.Certificate, at time.Time) Observation {
@@ -469,10 +495,12 @@ func certificateNames(facts *ManifestFacts, director, deployment string) (map[st
 
 // readCredHub builds one CredHubCert for each certificate variable the
 // director says the deployment uses. The director's list works without
-// CredHub, so every certificate is present even when CredHub is not.
+// CredHub, so every certificate is present even when CredHub is not. It also
+// returns a failed observation for each latest version or signing CA that
+// could not be read.
 func (s *Scanner) readCredHub(ctx context.Context, director, deployment string, facts *ManifestFacts,
 	vars []bosh.Variable, owner Owner,
-) ([]CredHubCert, map[string]*x509.Certificate) {
+) ([]CredHubCert, map[string]*x509.Certificate, []RawObservation) {
 	names, signers := certificateNames(facts, director, deployment)
 	blocked := s.credhubBlocked()
 
@@ -480,9 +508,10 @@ func (s *Scanner) readCredHub(ctx context.Context, director, deployment string, 
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 
 	var (
-		out  []CredHubCert
-		down string
-		seen = map[string]bool{}
+		out    []CredHubCert
+		failed []RawObservation
+		down   string
+		seen   = map[string]bool{}
 	)
 
 	for _, v := range sorted {
@@ -505,8 +534,14 @@ func (s *Scanner) readCredHub(ctx context.Context, director, deployment string, 
 		case down != "":
 			ch.Err = down
 		default:
-			if msg, outage := s.readCertificate(ctx, &ch); outage {
+			msg, outage := s.readCertificate(ctx, &ch)
+			if outage {
 				down = msg
+			}
+
+			// A message without Err means only the latest version failed.
+			if msg != "" && ch.Err == "" {
+				failed = append(failed, s.readFailure(SourceCredHub, owner, name, name, "the latest version could not be read: "+msg))
 			}
 		}
 
@@ -514,10 +549,12 @@ func (s *Scanner) readCredHub(ctx context.Context, director, deployment string, 
 	}
 
 	if blocked != "" {
-		return out, nil
+		return out, nil, failed
 	}
 
-	return out, s.readSigningCAs(ctx, out, down)
+	cas, caFailed := s.readSigningCAs(ctx, out, down)
+
+	return out, cas, append(failed, caFailed...)
 }
 
 // readCertificate fills ch from CredHub. It returns the failure message and
@@ -635,15 +672,19 @@ func (s *Scanner) readVersion(ctx context.Context, id string) (*x509.Certificate
 }
 
 // readSigningCAs reads the current certificate of every CA that signs one of
-// certs. A CA that cannot be read is left out, which only skips the findings
-// that compare against it.
-func (s *Scanner) readSigningCAs(ctx context.Context, certs []CredHubCert, down string) map[string]*x509.Certificate {
+// certs. A CA that cannot be read is left out, which skips the findings that
+// compare against it, and each certificate it signs gets a failed
+// observation so its coverage reads incomplete.
+func (s *Scanner) readSigningCAs(ctx context.Context, certs []CredHubCert, down string) (map[string]*x509.Certificate, []RawObservation) {
 	cas := map[string]*x509.Certificate{}
+	unread := map[string]string{}
 
 	known := map[string]*CredHubCert{}
 	for i := range certs {
 		known[certs[i].Name] = &certs[i]
 	}
+
+	var failed []RawObservation
 
 	for _, c := range certs {
 		name := c.Versions.SigningCA
@@ -651,37 +692,59 @@ func (s *Scanner) readSigningCAs(ctx context.Context, certs []CredHubCert, down 
 			continue
 		}
 
-		if _, done := cas[name]; done {
-			continue
-		}
-
-		if k, ok := known[name]; ok {
-			if cur := firstNonNil(k.Latest, k.Deployed); cur != nil {
-				cas[name] = cur
+		if _, done := cas[name]; !done {
+			if _, tried := unread[name]; !tried {
+				cur, msg := s.signingCA(ctx, name, known, &down)
+				if cur != nil {
+					cas[name] = cur
+				} else {
+					unread[name] = msg
+				}
 			}
-
-			continue
 		}
 
-		if down != "" {
-			continue
-		}
-
-		cur, msg, outage := s.readCurrent(ctx, name)
-		if outage {
-			down = msg
-		}
-
-		if cur != nil {
-			cas[name] = cur
+		if msg, bad := unread[name]; bad {
+			failed = append(failed, s.readFailure(SourceCredHub, c.Owner, name, c.Name, "the signing CA could not be read: "+msg))
 		}
 	}
 
 	if len(cas) == 0 {
-		return nil
+		return nil, failed
 	}
 
-	return cas
+	return cas, failed
+}
+
+// signingCA returns a CA's current certificate, from the certificates
+// already read when it is one of them, or why it cannot. A CredHub outage
+// is recorded in down, and later CAs are not read.
+func (s *Scanner) signingCA(ctx context.Context, name string, known map[string]*CredHubCert, down *string) (*x509.Certificate, string) {
+	if k, ok := known[name]; ok {
+		if cur := firstNonNil(k.Latest, k.Deployed); cur != nil {
+			return cur, ""
+		}
+
+		if k.Err != "" {
+			return nil, k.Err
+		}
+
+		return nil, "CredHub returned no certificate"
+	}
+
+	if *down != "" {
+		return nil, *down
+	}
+
+	cur, msg, outage := s.readCurrent(ctx, name)
+	if outage {
+		*down = msg
+	}
+
+	if cur == nil && msg == "" {
+		msg = "CredHub returned no certificate"
+	}
+
+	return cur, msg
 }
 
 // readCurrent reads the newest version of the named certificate.
@@ -749,16 +812,20 @@ type bindingHosts struct {
 }
 
 // readHosts returns the names the instance's binding credentials hand to
-// apps. A failed or missing read gives none, which only skips the SAN check.
-func (s *Scanner) readHosts(ctx context.Context, instanceID string) []string {
+// apps. An instance with no stored credentials has none. A failed read gives
+// none and a failed observation, whose message never quotes the error,
+// because a decoder error can echo the secret it was reading.
+func (s *Scanner) readHosts(ctx context.Context, instanceID string, owner Owner) ([]string, *RawObservation) {
 	if isNil(s.deps.Vault) {
-		return nil
+		return nil, nil
 	}
+
+	path := instanceID + "/credentials"
 
 	creds, err := within(ctx, vaultCallTimeout, func(c context.Context) (bindingHosts, error) {
 		var out bindingHosts
 
-		found, err := s.deps.Vault.Get(c, instanceID+"/credentials", &out)
+		found, err := s.deps.Vault.Get(c, path, &out)
 		if err != nil || !found {
 			return bindingHosts{}, err
 		}
@@ -766,7 +833,14 @@ func (s *Scanner) readHosts(ctx context.Context, instanceID string) []string {
 		return out, nil
 	})
 	if err != nil {
-		return nil
+		msg := "the binding credentials could not be read from Vault"
+		if errors.Is(err, context.DeadlineExceeded) {
+			msg += ": the read timed out"
+		}
+
+		failed := s.readFailure(SourceVault, owner, path, "", msg)
+
+		return nil, &failed
 	}
 
 	var hosts []string
@@ -785,7 +859,7 @@ func (s *Scanner) readHosts(ctx context.Context, instanceID string) []string {
 		}
 	}
 
-	return hosts
+	return hosts, nil
 }
 
 // stringOrList reads a JSON string or a list of strings. Anything else gives

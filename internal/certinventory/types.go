@@ -37,10 +37,12 @@ const (
 	KindLeaf         Kind = "leaf"
 )
 
-// Source is "credhub", "manifest", "probe", "broker", "trust-store", or "platform".
+// Source is "credhub", "manifest", "probe", "broker", "trust-store",
+// "platform", or "vault".
 type Source string
 
-// Source values.
+// Source values. SourceVault only marks a failed read of an instance's
+// binding credentials; no certificate is ever observed from Vault.
 const (
 	SourceCredHub    Source = "credhub"
 	SourceManifest   Source = "manifest"
@@ -48,6 +50,7 @@ const (
 	SourceBroker     Source = "broker"
 	SourceTrustStore Source = "trust-store"
 	SourcePlatform   Source = "platform"
+	SourceVault      Source = "vault"
 )
 
 // OwnerKind is "broker", "instance", or "platform".

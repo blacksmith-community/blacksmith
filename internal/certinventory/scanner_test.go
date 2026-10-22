@@ -960,3 +960,143 @@ func TestScanInstanceLatestByCreationTime(t *testing.T) {
 		t.Error("the signing CA's current certificate is not its newest version")
 	}
 }
+
+// failingVault fails every read with an error that quotes a secret, the way
+// a decoder error might.
+type failingVault struct {
+	*fakeVault
+}
+
+func (failingVault) Get(context.Context, string, interface{}) (bool, error) {
+	return false, errors.New(`decode {"password":"hunter2"}: unexpected end`)
+}
+
+// coverageFor groups a scan's material and returns the coverage of the
+// certificate with the given key.
+func coverageFor(t *testing.T, m ScanMaterial, key string) Coverage {
+	t.Helper()
+
+	certs, _ := Group(m.CredHub, m.Raw)
+	for i := range certs {
+		if certs[i].Key == key {
+			return coverageOf(&certs[i], 0)
+		}
+	}
+
+	t.Fatalf("no certificate has key %q", key)
+
+	return Coverage{}
+}
+
+func findRaw(scan InstanceScan, src Source, locator string) (RawObservation, bool) {
+	for _, r := range scan.Material.Raw {
+		if r.Source == src && r.Locator == locator {
+			return r, true
+		}
+	}
+
+	return RawObservation{}, false
+}
+
+func TestScanInstanceRecordsFailedReads(t *testing.T) {
+	t.Parallel()
+
+	ca := issue(t, issueSpec{cn: "services-ca", serial: 1, isCA: true, notAfter: 48 * time.Hour})
+	v1 := issue(t, issueSpec{cn: "redis.bosh", serial: 2, parent: &ca})
+
+	name := "/ws-bosh/redis-7a1b/redis_cluster_crt"
+	caName := "/ws-bosh/ws-blacksmith/blacksmith_services_ca"
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+	// v2 is newest but cannot be read, and the signing CA is unknown to
+	// CredHub.
+	ch := &fakeCredHub{
+		meta: map[string]*credhub.CertificateMeta{
+			name: {ID: "cert-id", Name: name, SignedBy: caName, Versions: []credhub.CertificateVersionMeta{
+				{ID: "v1", ExpiryDate: v1.cert.NotAfter},
+				{ID: "v2"},
+			}},
+		},
+		created: map[string][]credhub.CredentialVersion{
+			name: {{ID: "v1", CreatedAt: base}, {ID: "v2", CreatedAt: base.Add(time.Hour)}},
+		},
+		versions: map[string]*credhub.CertificatePublic{
+			"v1": {VersionID: "v1", Name: name, Certificate: certPEM(v1.cert), CA: certPEM(ca.cert)},
+		},
+	}
+
+	f := scannerFixture{
+		director: &fakeDirector{
+			manifest: loadManifest(t, "redis-cluster-7.yml"),
+			vars:     []bosh.Variable{{ID: "v1", Name: name}},
+			vms:      redisVMs(3),
+		},
+		credhub:  ch,
+		state:    credhub.StateConfigured,
+		settings: DefaultSettings(),
+		leaf:     &fakeLeaf{},
+	}
+
+	s := f.scanner()
+	s.deps.Vault = failingVault{newFakeVault()}
+
+	scan := s.ScanInstance(context.Background(), testRef("redis-7a1b"))
+	if scan.Err != "" {
+		t.Fatalf("scan failed: %s", scan.Err)
+	}
+
+	if c := scan.Material.CredHub[0]; c.Err != "" || c.Deployed == nil {
+		t.Errorf("the deployed version should still read: err %q", c.Err)
+	}
+
+	latest, ok := findRaw(scan, SourceCredHub, name)
+	if !ok || latest.State != StateFailed || !strings.Contains(latest.Error, "latest version") ||
+		latest.Listener == nil || latest.Listener.Variable != "redis_cluster_crt" || latest.Owner != wantOwner("redis-7a1b") {
+		t.Errorf("latest-version failure = %+v, %v", latest, ok)
+	}
+
+	signer, ok := findRaw(scan, SourceCredHub, caName)
+	if !ok || signer.State != StateFailed || !strings.Contains(signer.Error, "signing CA") ||
+		signer.Listener == nil || signer.Listener.Variable != "redis_cluster_crt" {
+		t.Errorf("signing-CA failure = %+v, %v", signer, ok)
+	}
+
+	hosts, ok := findRaw(scan, SourceVault, testInstanceID+"/credentials")
+	if !ok || hosts.State != StateFailed || hosts.Error == "" || hosts.Owner != wantOwner("redis-7a1b") {
+		t.Errorf("Vault hosts failure = %+v, %v", hosts, ok)
+	}
+
+	raw, err := json.Marshal(scan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(raw), "hunter2") {
+		t.Error("a Vault error leaked a secret value into the scan")
+	}
+
+	if cov := coverageFor(t, scan.Material, name); cov.Complete || cov.SourceStates[SourceCredHub] != StateFailed {
+		t.Errorf("coverage = %+v, want incomplete with CredHub failed", cov)
+	}
+}
+
+func TestScanInstanceMissingCredentialsIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
+	f := scannerFixture{
+		director: &fakeDirector{
+			manifest: loadManifest(t, "redis-cluster-7.yml"),
+			vars:     []bosh.Variable{{ID: "v1", Name: "/ws-bosh/redis-7a1b/redis_cluster_crt"}},
+			vms:      redisVMs(3),
+		},
+		state:    credhub.StateNotConfigured,
+		vault:    newFakeVault(),
+		settings: DefaultSettings(),
+		leaf:     &fakeLeaf{},
+	}
+
+	scan := f.scanner().ScanInstance(context.Background(), testRef("redis-7a1b"))
+	if _, ok := findRaw(scan, SourceVault, testInstanceID+"/credentials"); ok {
+		t.Error("an instance without stored credentials got a failed Vault read")
+	}
+}

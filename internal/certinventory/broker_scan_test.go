@@ -138,15 +138,16 @@ func TestScanBrokerUnreadableSourceFails(t *testing.T) {
 	scan := brokerScanner(nil, credhub.StateNotConfigured).ScanBroker(context.Background(), src)
 	got := rawByLocator(scan)
 
-	for _, locator := range []string{"config:broker.tls.certificate", "config:vault.cacert"} {
+	// A configured services CA path that holds no file is a failed read.
+	for _, locator := range []string{"config:broker.tls.certificate", "config:vault.cacert", src.ServicesCAPath} {
 		r, ok := got[locator]
 		if !ok || r.State != StateFailed || r.Error == "" || r.Cert != nil {
 			t.Errorf("%s: %+v, want a failed observation", locator, r)
 		}
 	}
 
-	if len(scan.Material.Raw) != 2 {
-		t.Errorf("raw = %d, want 2 (an absent services CA file is not an error)", len(scan.Material.Raw))
+	if len(scan.Material.Raw) != 3 {
+		t.Errorf("raw = %d, want 3", len(scan.Material.Raw))
 	}
 }
 
@@ -325,8 +326,65 @@ func TestScanBrokerServicesCAWithoutCredHub(t *testing.T) {
 	}
 
 	scan := brokerScanner(nil, credhub.StateNotConfigured).ScanBroker(context.Background(), src)
-	if scan.Material.ServicesCADrift || len(scan.Material.CredHub) != 0 {
-		t.Errorf("drift %v CredHub %d, want neither without CredHub", scan.Material.ServicesCADrift, len(scan.Material.CredHub))
+	if scan.Material.ServicesCADrift {
+		t.Error("drift reported without a CredHub copy to compare")
+	}
+
+	if len(scan.Material.CredHub) != 1 {
+		t.Fatalf("CredHub = %d entries, want the unread services CA", len(scan.Material.CredHub))
+	}
+
+	c := scan.Material.CredHub[0]
+	if c.Name != src.ServicesCAName || c.Err != "CredHub not configured" || c.Owner != (Owner{Kind: OwnerBroker}) || c.Deployed != nil {
+		t.Errorf("services CA entry = %+v", c)
+	}
+
+	if cov := coverageFor(t, scan.Material, src.ServicesCAName); cov.Complete {
+		t.Errorf("coverage = %+v, want incomplete", cov)
+	}
+}
+
+func TestScanBrokerMissingServicesCAFile(t *testing.T) {
+	t.Parallel()
+
+	if _, err := os.Stat(DefaultServicesCAPath); err == nil {
+		t.Skip("this host has a real services CA file")
+	}
+
+	dir := t.TempDir()
+	custom := filepath.Join(dir, "missing_services_ca")
+
+	for _, tc := range []struct {
+		name    string
+		path    string
+		caName  string
+		locator string
+		want    bool
+	}{
+		{"default path and no CredHub name", "", "", DefaultServicesCAPath, false},
+		{"default path with a CredHub name", "", "/ws-bosh/ws-blacksmith/blacksmith_services_ca", DefaultServicesCAPath, true},
+		{"configured path", custom, "", custom, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			src := BrokerSources{
+				ServicesCAPath: tc.path,
+				ServicesCAName: tc.caName,
+				TrustStoreGlob: filepath.Join(dir, "none-*.pem"),
+			}
+
+			scan := brokerScanner(nil, credhub.StateNotConfigured).ScanBroker(context.Background(), src)
+
+			r, ok := rawByLocator(scan)[tc.locator]
+			if ok != tc.want {
+				t.Fatalf("observation at %s = %v, want %v", tc.locator, ok, tc.want)
+			}
+
+			if ok && (r.State != StateFailed || r.Source != SourceBroker || r.Error == "") {
+				t.Errorf("missing file observation = %+v", r)
+			}
+		})
 	}
 }
 

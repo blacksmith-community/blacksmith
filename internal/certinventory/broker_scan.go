@@ -97,10 +97,16 @@ func (s *Scanner) scanBroker(ctx context.Context, src BrokerSources, st Settings
 		servicesPath = DefaultServicesCAPath
 	}
 
-	// Outside a broker VM the services CA file does not exist, which is not
-	// a failure worth an observation.
+	// Outside a broker VM the default services CA file does not exist, and
+	// nothing expects it unless a manifest names the services CA. A
+	// configured path, or a named services CA, makes a missing file a
+	// failed read.
 	var servicesCAs []*x509.Certificate
-	if _, err := os.Stat(servicesPath); !errors.Is(err, fs.ErrNotExist) {
+
+	_, statErr := os.Stat(servicesPath)
+	quiet := errors.Is(statErr, fs.ErrNotExist) && src.ServicesCAPath == "" && src.ServicesCAName == ""
+
+	if !quiet {
 		servicesCAs = add(SourceBroker, servicesPath, servicesPath)
 	}
 
@@ -130,8 +136,14 @@ func (s *Scanner) scanBroker(ctx context.Context, src BrokerSources, st Settings
 		add(SourceTrustStore, f, f)
 	}
 
-	if src.ServicesCAName != "" && s.credhubBlocked() == "" {
-		ch := s.readServicesCA(ctx, src.ServicesCAName, broker)
+	if src.ServicesCAName != "" {
+		// When CredHub cannot be read the copy is recorded unread, the way
+		// an instance's certificates are, so its coverage reads incomplete.
+		ch := CredHubCert{Name: src.ServicesCAName, Owner: broker, Err: s.credhubBlocked()}
+		if ch.Err == "" {
+			ch = s.readServicesCA(ctx, src.ServicesCAName, broker)
+		}
+
 		m.CredHub = append(m.CredHub, ch)
 		m.ServicesCADrift = ch.Deployed != nil && len(servicesCAs) > 0 && !holds(servicesCAs, ch.Deployed)
 	}
