@@ -2855,11 +2855,24 @@
       return;
     }
 
+    // Keep the scroll position and the focused row across the redraw.
+    const scrollTop = instancesContainer.scrollTop;
+    const activeRow = document.activeElement && document.activeElement.closest
+      ? document.activeElement.closest('.upgrade-instance-item') : null;
+    const focusedId = activeRow && instancesContainer.contains(activeRow) ? activeRow.dataset.instanceId : '';
+
     instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
 
     // Set up checkbox handlers
     setupUpgradeInstanceHandlers();
     updateUpgradeButton();
+
+    instancesContainer.scrollTop = scrollTop;
+    if (focusedId) {
+      const row = Array.from(instancesContainer.querySelectorAll('.upgrade-instance-item')).find((item) => item.dataset.instanceId === focusedId);
+      const input = row && row.querySelector('input[type="checkbox"]');
+      if (input && !input.disabled) input.focus({ preventScroll: true });
+    }
   };
 
   // =====================================================
@@ -3022,23 +3035,44 @@
     return true;
   };
 
+  // Whether the Batch Operations tab is showing in a visible page. The
+  // background work for it runs only then.
+  const batchTabActive = () => {
+    const panel = document.getElementById('upgrade');
+    return Boolean(panel && panel.classList.contains('active')) && document.visibilityState === 'visible';
+  };
+
+  // The details read for each active task, from task ID to the detail, the
+  // "id:status" signature it was read at, and when. An entry whose last read
+  // failed has no readAt, so the next pass reads it again.
+  const HOLDER_DETAIL_MAX_AGE_MS = 30000;
+  const holderDetails = new Map();
+
   // Reads the details of the active tasks to learn which instances they
-  // hold. A failed read keeps the holders already known.
+  // hold. It reads a task again only when its status changed or its detail
+  // is old, and a task whose read fails keeps the holders it last had and
+  // is tried again on the next pass.
   const refreshUpgradeHolders = async () => {
-    if (upgradeHoldersInFlight) return;
+    if (upgradeHoldersInFlight || !batchTabActive()) return;
     upgradeHoldersInFlight = true;
     try {
       const active = upgradeTasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
-      const details = await Promise.all(active.map(async (task) => {
+      const activeIds = new Set(active.map((task) => task.id));
+      Array.from(holderDetails.keys()).forEach((id) => { if (!activeIds.has(id)) holderDetails.delete(id); });
+      const now = Date.now();
+      await Promise.all(active.map(async (task) => {
+        const signature = `${task.id}:${task.status}`;
+        const known = holderDetails.get(task.id);
+        if (known && known.readAt && known.signature === signature && now - known.readAt < HOLDER_DETAIL_MAX_AGE_MS) return;
         try {
           const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`);
-          return response.ok ? await response.json() : null;
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          holderDetails.set(task.id, { detail: await response.json(), signature, readAt: now });
         } catch (err) {
-          return null;
+          if (known) holderDetails.set(task.id, { detail: known.detail, signature, readAt: 0 });
         }
       }));
-      if (details.some((detail) => detail === null)) return;
-      setUpgradeHolders(computeUpgradeHolders(details));
+      setUpgradeHolders(computeUpgradeHolders(Array.from(holderDetails.values()).map((entry) => entry.detail)));
     } finally {
       upgradeHoldersInFlight = false;
     }
@@ -3488,7 +3522,7 @@
 
   // Redraws the inventory when the poll finds it stale.
   const maybeRefreshRotateInventory = () => {
-    if (upgradeOperation === 'upgrade' || rotateState.loadState === 'loading') return;
+    if (upgradeOperation === 'upgrade' || rotateState.loadState === 'loading' || !batchTabActive()) return;
     if (Date.now() - rotateState.lastLoad > INVENTORY_REFRESH_MS) loadRotateInventory({ silent: true });
   };
 
