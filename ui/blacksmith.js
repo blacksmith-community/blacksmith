@@ -2694,12 +2694,9 @@
     return pickServiceRelease(Array.from(planNames)) || pickServiceRelease(Array.from(deployedNames));
   };
 
-  // Render upgrade instance list
-  const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor, releaseFloor) => {
-    if (!instances || Object.keys(instances).length === 0) {
-      return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
-    }
-
+  // The instances the filters leave, sorted by service name then ID, with the
+  // service names and each service's own release.
+  const filterUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor, releaseFloor) => {
     // Create service id to name mapping
     const serviceIdToName = {};
     if (window.plansData && window.plansData.services) {
@@ -2753,6 +2750,18 @@
       return a[0].localeCompare(b[0]);
     });
 
+    return { rows: filteredInstances, serviceIdToName, serviceReleaseOf };
+  };
+
+  // Render upgrade instance list
+  const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor, releaseFloor) => {
+    if (!instances || Object.keys(instances).length === 0) {
+      return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
+    }
+
+    const { rows: filteredInstances, serviceIdToName, serviceReleaseOf } =
+      filterUpgradeInstances(instances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
+
     if (filteredInstances.length === 0) {
       return '<div class="no-instances p-4 text-center text-gray-500">No instances match the current filters.</div>';
     }
@@ -2761,12 +2770,13 @@
       const rowNumber = index + 1;
       const serviceName = serviceIdToName[details.service_id] || details.service_id;
       const planName = details.plan?.name || details.plan_id || 'unknown';
-      const isSelected = selectedUpgradeInstances.has(id);
+      const holder = upgradeHolders.get(id) || '';
+      const isSelected = !holder && selectedUpgradeInstances.has(id);
 
       // Get current stemcell version if available
       const stemcellInfo = details.stemcell;
       const stemcellDisplay = stemcellInfo
-        ? `<span class="upgrade-instance-stemcell" title="${stemcellInfo.name || ''}">${stemcellInfo.os || ''}/${stemcellInfo.version || ''}</span>`
+        ? `<span class="upgrade-instance-stemcell" title="${escapeAttribute(stemcellInfo.name || '')}">${escapeHtml(stemcellInfo.os || '')}/${escapeHtml(stemcellInfo.version || '')}</span>`
         : '<span class="upgrade-instance-stemcell unknown">unknown</span>';
 
       // The service's own release as its deployment runs it (e.g. "valkey-forge/1.4.3"),
@@ -2781,15 +2791,16 @@
       }
 
       return `
-        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-row-number="${rowNumber}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}" data-stemcell-os="${stemcellInfo?.os || ''}" data-stemcell-version="${stemcellInfo?.version || ''}">
+        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${escapeAttribute(id)}" data-row-number="${rowNumber}" data-service-id="${escapeAttribute(details.service_id)}" data-plan-id="${escapeAttribute(details.plan?.id || details.plan_id || '')}" data-stemcell-os="${escapeAttribute(stemcellInfo?.os || '')}" data-stemcell-version="${escapeAttribute(stemcellInfo?.version || '')}"${holder ? ' data-held="true"' : ''}>
           <span class="upgrade-instance-row-number">${rowNumber}</span>
           <label class="upgrade-instance-checkbox">
-            <input type="checkbox" ${isSelected ? 'checked' : ''} />
+            <input type="checkbox" ${isSelected ? 'checked' : ''}${holder ? ' disabled' : ''} />
             <span class="checkmark"></span>
           </label>
           <div class="upgrade-instance-info">
-            <div class="upgrade-instance-id">${id}</div>
-            <div class="upgrade-instance-meta">${serviceName} / ${planName}</div>
+            <div class="upgrade-instance-id">${escapeHtml(id)}</div>
+            <div class="upgrade-instance-meta">${escapeHtml(serviceName)} / ${escapeHtml(planName)}</div>
+            ${holder ? `<div class="rotate-row-reason">${escapeHtml(`Busy: ${holder}`)}</div>` : ''}
           </div>
           <div class="upgrade-instance-stemcell-container">
             ${stemcellDisplay}
@@ -2809,6 +2820,9 @@
 
   // Update the upgrade button state
   const updateUpgradeButton = () => {
+    // Rotate and converge have their own footer, and never touch this button.
+    if (upgradeOperation !== 'upgrade') return;
+
     const button = document.getElementById('upgrade-start');
     const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
     const releaseSelect = document.getElementById('upgrade-release-filter');
@@ -2835,11 +2849,883 @@
     const stemcellFloor = document.getElementById('upgrade-stemcell-floor')?.value || '';
     const releaseFloor = document.getElementById('upgrade-release-floor')?.value || '';
 
+    if (upgradeOperation !== 'upgrade') {
+      renderRotateInstances();
+      updateOperationFooter();
+      return;
+    }
+
     instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
 
     // Set up checkbox handlers
     setupUpgradeInstanceHandlers();
     updateUpgradeButton();
+  };
+
+  // =====================================================
+  // Operation selection: upgrade, rotate certificates, converge
+  // =====================================================
+
+  // The operation the Batch Operations tab is set up for. Upgrade is the
+  // default, and its controls stay in the page (hidden) while another
+  // operation shows, so their choices and listeners survive a switch.
+  let upgradeOperation = 'upgrade';
+  const OPERATION_LABELS = {
+    upgrade: 'Upgrade',
+    rotate: 'Rotate certificates',
+    converge: 'Converge'
+  };
+  const OPERATION_HINTS = {
+    rotate: 'Pick the certificates to replace. Each instance redeploys once for all of its selected certificates.',
+    converge: 'Converge redeploys instances whose patched certificates BOSH has not picked up yet.'
+  };
+
+  // Instances picked for a converge, and the fallback certificate selection
+  // for a page where the Certificates tab has not loaded yet.
+  const convergeSelected = new Set();
+  const rotateLocalSelection = new Map();
+
+  // Instances another operation holds, from instance ID to a short
+  // description of the holder, such as: rotation "Spring renewals".
+  let upgradeHolders = new Map();
+  let upgradeHoldersSignature = '';
+  let upgradeHoldersInFlight = false;
+
+  const rotateState = {
+    inventory: null,
+    byInstance: new Map(),
+    loadState: 'idle',
+    loadError: '',
+    refreshError: '',
+    capabilities: null,
+    warningDays: 30,
+    criticalDays: 7,
+    thresholdDays: 30,
+    thresholdTouched: false,
+    thresholdApplied: false,
+    imported: false,
+    mode: 'redeploy',
+    name: '',
+    reviewOpen: false,
+    lastLoad: 0,
+    loadSeq: 0
+  };
+
+  const INVENTORY_REFRESH_MS = 15000;
+  const HOLDING_INSTANCE_STATUSES = new Set(['pending', 'running', 'interrupted', 'awaiting_decision']);
+  const ACTIVE_TASK_STATUSES = new Set(['pending', 'running', 'paused']);
+
+  // The certificates chosen for rotation, as instance ID to a Set of full
+  // variable names. The Certificates tab shares this Map.
+  const rotateSelection = () => {
+    const shared = window.blacksmithCerts && window.blacksmithCerts.selection;
+    return shared instanceof Map ? shared : rotateLocalSelection;
+  };
+
+  const rotatePairs = () => {
+    const pairs = [];
+    rotateSelection().forEach((names, instanceId) => {
+      names.forEach((name) => pairs.push([instanceId, name]));
+    });
+    return pairs;
+  };
+
+  const rotateSetPair = (instanceId, name, on) => {
+    const selection = rotateSelection();
+    if (on) {
+      if (!selection.has(instanceId)) selection.set(instanceId, new Set());
+      selection.get(instanceId).add(name);
+    } else if (selection.has(instanceId)) {
+      selection.get(instanceId).delete(name);
+      if (selection.get(instanceId).size === 0) selection.delete(instanceId);
+    }
+  };
+
+  const rotatePairSelected = (instanceId, name) => {
+    const names = rotateSelection().get(instanceId);
+    return Boolean(names && names.has(name));
+  };
+
+  const pluralize = (count, singular, plural) => `${count} ${count === 1 ? singular : (plural || `${singular}s`)}`;
+
+  // Groups the inventory by the instance that owns each certificate. Only a
+  // leaf certificate the server allows to rotate is eligible, and the rest
+  // keep the reason they are not.
+  const rotateIndexInventory = (inventory) => {
+    const byInstance = new Map();
+    const certs = inventory && Array.isArray(inventory.certificates) ? inventory.certificates : [];
+    certs.forEach((cert) => {
+      if (!cert || !cert.key) return;
+      const owners = Array.isArray(cert.owners) ? cert.owners : [];
+      const seen = new Set();
+      owners.forEach((owner) => {
+        if (!owner || owner.kind !== 'instance' || !owner.instance_id || seen.has(owner.instance_id)) return;
+        seen.add(owner.instance_id);
+        let entry = byInstance.get(owner.instance_id);
+        if (!entry) {
+          entry = { id: owner.instance_id, name: '', certs: [], divergent: false };
+          byInstance.set(owner.instance_id, entry);
+        }
+        if (!entry.name && owner.instance_name) entry.name = owner.instance_name;
+        const rotation = cert.rotation || {};
+        const leaf = cert.kind === 'leaf';
+        const eligible = leaf && Boolean(rotation.allowed);
+        let reason = '';
+        if (!eligible) {
+          reason = !leaf
+            ? 'Only leaf certificates rotate here.'
+            : ((Array.isArray(rotation.reasons) ? rotation.reasons.join(' ') : '') || 'Rotation is not available for this certificate.');
+        }
+        entry.certs.push({
+          key: String(cert.key),
+          variable: String(cert.variable || cert.key),
+          daysLeft: typeof cert.days_left === 'number' ? cert.days_left : null,
+          expiry: String(cert.effective_not_after || cert.expiry || ''),
+          eligible,
+          reason
+        });
+        const state = cert.divergence && cert.divergence.state;
+        if (state === 'unconverged' || state === 'reverted') entry.divergent = true;
+        if ((Array.isArray(cert.findings) ? cert.findings : []).some((f) => f && f.code === 'deploy_pending')) {
+          entry.divergent = true;
+        }
+      });
+    });
+    return byInstance;
+  };
+
+  // The holders in the tasks: each unfinished instance of an active task.
+  const computeUpgradeHolders = (tasks) => {
+    const holders = new Map();
+    (Array.isArray(tasks) ? tasks : []).forEach((task) => {
+      if (!task || !ACTIVE_TASK_STATUSES.has(task.status) || !Array.isArray(task.instances)) return;
+      const kind = task.kind === 'certificates' ? 'rotation' : 'upgrade';
+      const description = `${kind} "${task.name || task.id}"`;
+      task.instances.forEach((instance) => {
+        if (instance && instance.instance_id && HOLDING_INSTANCE_STATUSES.has(instance.status) && !holders.has(instance.instance_id)) {
+          holders.set(instance.instance_id, description);
+        }
+      });
+    });
+    return holders;
+  };
+
+  const setUpgradeHolders = (holders) => {
+    const signature = JSON.stringify(Array.from(holders.entries()).sort());
+    if (signature === upgradeHoldersSignature) return false;
+    upgradeHoldersSignature = signature;
+    upgradeHolders = holders;
+    holders.forEach((_, instanceId) => selectedUpgradeInstances.delete(instanceId));
+    refreshUpgradeInstanceList();
+    return true;
+  };
+
+  // Reads the details of the active tasks to learn which instances they
+  // hold. A failed read keeps the holders already known.
+  const refreshUpgradeHolders = async () => {
+    if (upgradeHoldersInFlight) return;
+    upgradeHoldersInFlight = true;
+    try {
+      const active = upgradeTasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
+      const details = await Promise.all(active.map(async (task) => {
+        try {
+          const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`);
+          return response.ok ? await response.json() : null;
+        } catch (err) {
+          return null;
+        }
+      }));
+      if (details.some((detail) => detail === null)) return;
+      setUpgradeHolders(computeUpgradeHolders(details));
+    } finally {
+      upgradeHoldersInFlight = false;
+    }
+  };
+
+  const currentUpgradeFilters = () => ({
+    service: document.getElementById('upgrade-service-filter')?.value || '',
+    plan: document.getElementById('upgrade-plan-filter')?.value || '',
+    stemcellFloor: document.getElementById('upgrade-stemcell-floor')?.value || '',
+    releaseFloor: document.getElementById('upgrade-release-floor')?.value || ''
+  });
+
+  // The rows the instance list shows in rotate or converge mode.
+  const rotateVisibleRows = () => {
+    const filters = currentUpgradeFilters();
+    const context = filterUpgradeInstances(window.serviceInstances, filters.service, filters.plan, filters.stemcellFloor, filters.releaseFloor);
+    const rows = context.rows.map(([id, details]) => {
+      const entry = rotateState.byInstance.get(id) || null;
+      const chips = entry ? entry.certs.filter((cert) => cert.eligible) : [];
+      const holder = upgradeHolders.get(id) || '';
+      let reason = '';
+      if (holder) {
+        reason = `Busy: ${holder}`;
+      } else if (upgradeOperation === 'rotate') {
+        if (rotateState.loadState !== 'ready') {
+          reason = rotateState.loadState === 'loading' || rotateState.loadState === 'idle'
+            ? 'Loading certificates...'
+            : 'Certificates are not available.';
+        } else if (!entry) {
+          reason = 'No certificates in the inventory for this instance.';
+        } else if (chips.length === 0) {
+          const first = entry.certs.find((cert) => !cert.eligible);
+          reason = (first && first.reason) || 'No certificate on this instance can be rotated.';
+        }
+      }
+      return {
+        id,
+        details,
+        entry,
+        chips,
+        holder,
+        reason,
+        serviceName: context.serviceIdToName[details.service_id] || details.service_id,
+        planName: details.plan?.name || details.plan_id || 'unknown'
+      };
+    });
+    return upgradeOperation === 'converge' ? rows.filter((row) => row.entry && row.entry.divergent) : rows;
+  };
+
+  const rotateInstanceLabel = (row) => (row.entry && row.entry.name) || row.id;
+
+  const rotateSelectVisible = () => {
+    let added = 0;
+    rotateVisibleRows().forEach((row) => {
+      if (row.holder) return;
+      if (upgradeOperation === 'converge') {
+        if (!convergeSelected.has(row.id)) { convergeSelected.add(row.id); added++; }
+        return;
+      }
+      row.chips.forEach((cert) => {
+        if (!rotatePairSelected(row.id, cert.key)) { rotateSetPair(row.id, cert.key, true); added++; }
+      });
+    });
+    return added;
+  };
+
+  const rotateClearVisible = () => {
+    rotateVisibleRows().forEach((row) => {
+      if (upgradeOperation === 'converge') {
+        convergeSelected.delete(row.id);
+        return;
+      }
+      (row.entry ? row.entry.certs : []).forEach((cert) => rotateSetPair(row.id, cert.key, false));
+      (rotateSelection().get(row.id) || new Set()).forEach((name) => rotateSetPair(row.id, name, false));
+    });
+  };
+
+  // Selects the eligible certificates of the visible rows that expire within
+  // the given days.
+  const rotateSelectMatching = (days) => {
+    let added = 0;
+    rotateVisibleRows().forEach((row) => {
+      if (row.holder) return;
+      row.chips.forEach((cert) => {
+        if (cert.daysLeft !== null && cert.daysLeft <= days && !rotatePairSelected(row.id, cert.key)) {
+          rotateSetPair(row.id, cert.key, true);
+          added++;
+        }
+      });
+    });
+    return added;
+  };
+
+  const rotateSelectRange = (start, end) => {
+    rotateVisibleRows().forEach((row, index) => {
+      const number = index + 1;
+      if (number < start || number > end || row.holder) return;
+      if (upgradeOperation === 'converge') {
+        convergeSelected.add(row.id);
+      } else {
+        row.chips.forEach((cert) => rotateSetPair(row.id, cert.key, true));
+      }
+    });
+  };
+
+  // Whether a selected pair can still be rotated. Until the inventory loads
+  // nothing can say it cannot.
+  const rotatePairEligible = (instanceId, name) => {
+    if (rotateState.loadState !== 'ready') return true;
+    if (upgradeHolders.has(instanceId)) return false;
+    const entry = rotateState.byInstance.get(instanceId);
+    return Boolean(entry && entry.certs.some((cert) => cert.key === name && cert.eligible));
+  };
+
+  const rotateSummary = () => {
+    if (upgradeOperation === 'converge') {
+      const visible = new Set(rotateVisibleRows().map((row) => row.id));
+      let hidden = 0;
+      convergeSelected.forEach((id) => { if (!visible.has(id)) hidden++; });
+      return { pairs: 0, instances: convergeSelected.size, hidden, stale: 0 };
+    }
+    const pairs = rotatePairs();
+    const visible = new Set(rotateVisibleRows().map((row) => row.id));
+    let hidden = 0;
+    let stale = 0;
+    pairs.forEach(([id, name]) => {
+      if (!visible.has(id)) hidden++;
+      if (!rotatePairEligible(id, name)) stale++;
+    });
+    return { pairs: pairs.length, instances: new Set(pairs.map((pair) => pair[0])).size, hidden, stale };
+  };
+
+  const rotateFooterLabel = () => {
+    const summary = rotateSummary();
+    if (upgradeOperation === 'converge') {
+      return `Preview converge of ${pluralize(summary.instances, 'instance')}`;
+    }
+    return `Preview rotation of ${pluralize(summary.pairs, 'certificate')} on ${pluralize(summary.instances, 'instance')}`;
+  };
+
+  const rotateEl = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  // The note above the bulk controls: loading, failures, and capability notes.
+  const renderRotateNotice = () => {
+    const notice = document.getElementById('rotate-notice');
+    if (!notice) return;
+    notice.textContent = '';
+    notice.className = 'rotate-notice';
+    const add = (text, withRetry) => {
+      notice.appendChild(rotateEl('span', 'rotate-notice-text', text));
+      if (withRetry) {
+        const retry = rotateEl('button', 'btn-secondary btn-sm', 'Retry');
+        retry.type = 'button';
+        retry.id = 'rotate-retry';
+        retry.addEventListener('click', () => { loadRotateInventory(); });
+        notice.appendChild(retry);
+      }
+      notice.classList.add('is-visible');
+    };
+    if (rotateState.loadState === 'loading' || rotateState.loadState === 'idle') {
+      add('Loading the certificate inventory...', false);
+    } else if (rotateState.loadState === 'disabled') {
+      add('The certificate inventory is turned off, so there is nothing to rotate here.', false);
+    } else if (rotateState.loadState === 'error') {
+      add(`The certificate inventory could not be loaded. ${rotateState.loadError}`, true);
+    } else if (rotateState.refreshError) {
+      add(`The certificate inventory could not be refreshed, so this list may be out of date. ${rotateState.refreshError}`, true);
+    } else {
+      const rotation = rotateState.capabilities && rotateState.capabilities.rotation;
+      if (rotation && rotation.enabled === false) {
+        add(`Certificate rotation is turned off. ${rotation.reason || ''}`.trim(), false);
+      }
+    }
+  };
+
+  const rotateFocusKey = (container) => {
+    const active = document.activeElement;
+    return active && container.contains(active) && active.dataset && active.dataset.keepKey ? active.dataset.keepKey : '';
+  };
+
+  const rotateRestoreFocus = (container, key) => {
+    if (!key) return;
+    const target = Array.from(container.querySelectorAll('[data-keep-key]')).find((node) => node.dataset.keepKey === key);
+    if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
+  };
+
+  const rotateChip = (row, cert) => {
+    const on = rotatePairSelected(row.id, cert.key);
+    const label = rotateInstanceLabel(row);
+    const chip = rotateEl('button', 'rotate-chip');
+    chip.type = 'button';
+    chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+    chip.setAttribute('aria-label', `Rotate ${cert.variable} on ${label}`);
+    chip.dataset.keepKey = `chip:${row.id}:${cert.key}`;
+    chip.dataset.variable = cert.key;
+    if (cert.daysLeft !== null) {
+      if (cert.daysLeft < 0) chip.classList.add('is-expired');
+      else if (cert.daysLeft <= rotateState.criticalDays) chip.classList.add('is-critical');
+      else if (cert.daysLeft <= rotateState.warningDays) chip.classList.add('is-warning');
+    }
+    const days = cert.daysLeft === null ? '' : (cert.daysLeft < 0 ? 'expired' : `${cert.daysLeft}d`);
+    chip.title = `${cert.key}${cert.expiry ? `, expires ${cert.expiry}` : ''}`;
+    chip.appendChild(rotateEl('span', 'rotate-chip-mark', on ? '✓' : ''));
+    chip.appendChild(rotateEl('span', 'rotate-chip-name', cert.variable));
+    if (days) chip.appendChild(rotateEl('span', 'rotate-chip-days', days));
+    chip.addEventListener('click', (event) => {
+      event.stopPropagation();
+      rotateSetPair(row.id, cert.key, !rotatePairSelected(row.id, cert.key));
+      rotateRefresh();
+    });
+    return chip;
+  };
+
+  // The instance list in rotate and converge modes.
+  const renderRotateInstances = () => {
+    const container = document.querySelector('#upgrade .upgrade-instances');
+    if (!container) return;
+    const focusKey = rotateFocusKey(container);
+    const scrollTop = container.scrollTop;
+    const converge = upgradeOperation === 'converge';
+    const rows = rotateVisibleRows();
+    container.textContent = '';
+
+    if (!window.serviceInstances || Object.keys(window.serviceInstances).length === 0) {
+      container.appendChild(rotateEl('div', 'no-instances p-4 text-center text-gray-500', 'No service instances available.'));
+      return;
+    }
+    if (rows.length === 0) {
+      const empty = converge && rotateState.loadState === 'ready'
+        ? 'No instance is waiting for a deploy of its patched certificates.'
+        : (converge && rotateState.loadState !== 'ready' ? 'Loading the certificate inventory...' : 'No instances match the current filters.');
+      container.appendChild(rotateEl('div', 'no-instances p-4 text-center text-gray-500', empty));
+      return;
+    }
+
+    container.appendChild(rotateEl('div', 'upgrade-instance-count', `${pluralize(rows.length, 'instance')} (rows 1-${rows.length})`));
+    const list = rotateEl('div', 'upgrade-instances-list');
+    rows.forEach((row, index) => {
+      const item = rotateEl('div', 'upgrade-instance-item rotate-row');
+      item.dataset.instanceId = row.id;
+      item.dataset.rowNumber = String(index + 1);
+      if (row.holder) item.dataset.held = 'true';
+      const selectedChips = row.chips.filter((cert) => rotatePairSelected(row.id, cert.key));
+      const rowOn = converge ? convergeSelected.has(row.id) : selectedChips.length > 0;
+      if (rowOn) item.classList.add('selected');
+
+      item.appendChild(rotateEl('span', 'upgrade-instance-row-number', String(index + 1)));
+      const label = rotateEl('label', 'upgrade-instance-checkbox');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.dataset.keepKey = `row:${row.id}`;
+      input.setAttribute('aria-label', converge
+        ? `Converge ${rotateInstanceLabel(row)}`
+        : `Rotate every certificate on ${rotateInstanceLabel(row)}`);
+      const disabled = Boolean(row.holder) || (!converge && row.chips.length === 0);
+      input.disabled = disabled;
+      if (converge) {
+        input.checked = convergeSelected.has(row.id);
+      } else {
+        input.checked = row.chips.length > 0 && selectedChips.length === row.chips.length;
+        input.indeterminate = selectedChips.length > 0 && selectedChips.length < row.chips.length;
+      }
+      input.addEventListener('click', (event) => event.stopPropagation());
+      input.addEventListener('change', () => {
+        if (converge) {
+          if (input.checked) convergeSelected.add(row.id); else convergeSelected.delete(row.id);
+        } else {
+          row.chips.forEach((cert) => rotateSetPair(row.id, cert.key, input.checked));
+        }
+        rotateRefresh();
+      });
+      label.appendChild(input);
+      label.appendChild(rotateEl('span', 'checkmark'));
+      item.appendChild(label);
+
+      const info = rotateEl('div', 'upgrade-instance-info');
+      info.appendChild(rotateEl('div', 'upgrade-instance-id', row.id));
+      const meta = [row.serviceName, row.planName].join(' / ');
+      info.appendChild(rotateEl('div', 'upgrade-instance-meta', row.entry && row.entry.name && row.entry.name !== row.id ? `${row.entry.name}, ${meta}` : meta));
+      if (!converge && row.chips.length > 0 && !row.holder) {
+        const chips = rotateEl('div', 'rotate-chips');
+        chips.setAttribute('role', 'group');
+        chips.setAttribute('aria-label', `Certificates on ${rotateInstanceLabel(row)}`);
+        row.chips.forEach((cert) => chips.appendChild(rotateChip(row, cert)));
+        info.appendChild(chips);
+      }
+      if (converge && !row.holder) {
+        info.appendChild(rotateEl('div', 'rotate-row-note', 'BOSH has not deployed the patched certificates yet.'));
+      }
+      if (row.reason) info.appendChild(rotateEl('div', 'rotate-row-reason', row.reason));
+      item.appendChild(info);
+
+      item.addEventListener('click', (event) => {
+        if (row.holder || disabled) return;
+        if (event.target.closest && event.target.closest('.rotate-chip, button, a, input, label')) return;
+        if (converge) {
+          if (convergeSelected.has(row.id)) convergeSelected.delete(row.id); else convergeSelected.add(row.id);
+        } else {
+          const all = selectedChips.length === row.chips.length;
+          row.chips.forEach((cert) => rotateSetPair(row.id, cert.key, !all));
+        }
+        rotateRefresh();
+      });
+      list.appendChild(item);
+    });
+    container.appendChild(list);
+    container.scrollTop = scrollTop;
+    rotateRestoreFocus(container, focusKey);
+  };
+
+  // The review list under the selection line.
+  const renderRotateReview = () => {
+    const review = document.getElementById('rotate-review-list');
+    const toggle = document.getElementById('rotate-review');
+    if (!review) return;
+    if (toggle) toggle.setAttribute('aria-expanded', rotateState.reviewOpen ? 'true' : 'false');
+    review.hidden = !rotateState.reviewOpen;
+    review.textContent = '';
+    if (!rotateState.reviewOpen) return;
+    const items = upgradeOperation === 'converge'
+      ? Array.from(convergeSelected).map((id) => ({ id, name: '', stale: false }))
+      : rotatePairs().map(([id, name]) => ({ id, name, stale: !rotatePairEligible(id, name) }));
+    if (items.length === 0) {
+      review.appendChild(rotateEl('p', 'rotate-review-empty', 'Nothing is selected yet.'));
+      return;
+    }
+    const list = rotateEl('ul', 'rotate-review-items');
+    items.forEach((item) => {
+      const entry = rotateState.byInstance.get(item.id);
+      const instanceLabel = (entry && entry.name) || item.id;
+      const li = rotateEl('li', item.stale ? 'rotate-review-item is-stale' : 'rotate-review-item');
+      const cert = entry && entry.certs.find((c) => c.key === item.name);
+      li.appendChild(rotateEl('span', 'rotate-review-name', item.name ? `${cert ? cert.variable : item.name} on ${instanceLabel}` : instanceLabel));
+      if (item.stale) li.appendChild(rotateEl('span', 'rotate-review-flag', 'no longer eligible'));
+      const remove = rotateEl('button', 'btn-secondary btn-sm', 'Remove');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', item.name ? `Remove ${cert ? cert.variable : item.name} on ${instanceLabel} from the selection` : `Remove ${instanceLabel} from the selection`);
+      remove.addEventListener('click', () => {
+        if (item.name) rotateSetPair(item.id, item.name, false); else convergeSelected.delete(item.id);
+        rotateRefresh();
+      });
+      li.appendChild(remove);
+      list.appendChild(li);
+    });
+    review.appendChild(list);
+  };
+
+  // The selection line and the footer button.
+  const updateOperationFooter = () => {
+    if (upgradeOperation === 'upgrade') return;
+    const line = document.getElementById('rotate-selection-line');
+    const button = document.getElementById('rotate-preview');
+    const summary = rotateSummary();
+    if (line) {
+      let text = upgradeOperation === 'converge'
+        ? `${pluralize(summary.instances, 'instance')} selected.`
+        : `${pluralize(summary.pairs, 'certificate')} selected on ${pluralize(summary.instances, 'instance')}.`;
+      if (summary.hidden > 0) text += ` ${summary.hidden} ${summary.hidden === 1 ? 'is' : 'are'} hidden by the filters.`;
+      if (summary.stale > 0) text += ` ${summary.stale} no longer eligible.`;
+      line.textContent = text;
+    }
+    if (button) {
+      button.textContent = rotateFooterLabel();
+      button.disabled = true;
+      button.title = 'Previewing a rotation is not available yet.';
+    }
+    renderRotateReview();
+  };
+
+  // Redraws the list and the footer together after a selection change.
+  const rotateRefresh = () => {
+    if (upgradeOperation === 'upgrade') return;
+    renderRotateInstances();
+    updateOperationFooter();
+  };
+
+  // Loads the inventory that rotate and converge draw on. A silent load
+  // keeps what is showing and reports a failure in the note.
+  const loadRotateInventory = async (options = {}) => {
+    const seq = ++rotateState.loadSeq;
+    if (!options.silent || rotateState.loadState !== 'ready') {
+      rotateState.loadState = 'loading';
+      renderRotateNotice();
+    }
+    try {
+      const response = await fetch('/b/certificates/inventory', { headers: { Accept: 'application/json' }, cache: 'no-cache' });
+      if (!response.ok) throw await readApiError(response);
+      const body = await response.json();
+      if (seq !== rotateState.loadSeq) return false;
+      const inventory = body && typeof body === 'object' ? body : {};
+      rotateState.inventory = inventory;
+      rotateState.byInstance = rotateIndexInventory(inventory);
+      rotateState.capabilities = inventory.capabilities || null;
+      const settings = inventory.settings || {};
+      if (settings.warning_days > 0) rotateState.warningDays = settings.warning_days;
+      if (settings.critical_days > 0) rotateState.criticalDays = settings.critical_days;
+      if (!rotateState.thresholdTouched) {
+        rotateState.thresholdDays = rotateState.warningDays;
+        const field = document.getElementById('rotate-threshold');
+        if (field) field.value = String(rotateState.thresholdDays);
+      }
+      rotateState.loadState = 'ready';
+      rotateState.loadError = '';
+      rotateState.refreshError = '';
+      rotateState.lastLoad = Date.now();
+      applyDefaultThreshold();
+      renderRotateNotice();
+      rotateRefresh();
+      return true;
+    } catch (err) {
+      if (seq !== rotateState.loadSeq) return false;
+      if (err && err.code === 'inventory_disabled') {
+        rotateState.loadState = 'disabled';
+      } else if (rotateState.loadState === 'ready' && options.silent) {
+        rotateState.refreshError = apiErrorText(err);
+      } else {
+        rotateState.loadState = 'error';
+        rotateState.loadError = apiErrorText(err);
+      }
+      renderRotateNotice();
+      rotateRefresh();
+      return false;
+    }
+  };
+
+  // On entering rotate mode with nothing imported from the Certificates tab,
+  // selects the certificates that expire within the threshold. It runs once
+  // per entry, so a chip the operator clears stays clear.
+  const applyDefaultThreshold = () => {
+    if (upgradeOperation !== 'rotate' || rotateState.thresholdApplied || rotateState.loadState !== 'ready') return;
+    if (rotateVisibleRows().length === 0) return;
+    rotateState.thresholdApplied = true;
+    if (!rotateState.imported) rotateSelectMatching(rotateState.thresholdDays);
+  };
+
+  // Redraws the inventory when the poll finds it stale.
+  const maybeRefreshRotateInventory = () => {
+    if (upgradeOperation === 'upgrade' || rotateState.loadState === 'loading') return;
+    if (Date.now() - rotateState.lastLoad > INVENTORY_REFRESH_MS) loadRotateInventory({ silent: true });
+  };
+
+  const buildRotateOptions = (container) => {
+    const pane = rotateEl('div', 'rotate-pane');
+    pane.dataset.pane = 'rotate-options';
+    pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS[upgradeOperation]));
+    const notice = rotateEl('div', 'rotate-notice');
+    notice.id = 'rotate-notice';
+    notice.setAttribute('role', 'status');
+    pane.appendChild(notice);
+
+    const bulk = rotateEl('div', 'rotate-bulk');
+    const selectVisible = rotateEl('button', 'btn-secondary btn-sm', 'Select visible');
+    selectVisible.type = 'button';
+    selectVisible.id = 'rotate-select-visible';
+    selectVisible.addEventListener('click', () => { rotateSelectVisible(); rotateRefresh(); });
+    const clearVisible = rotateEl('button', 'btn-secondary btn-sm', 'Clear visible');
+    clearVisible.type = 'button';
+    clearVisible.id = 'rotate-clear-visible';
+    clearVisible.addEventListener('click', () => { rotateClearVisible(); rotateRefresh(); });
+    bulk.appendChild(selectVisible);
+    bulk.appendChild(clearVisible);
+    pane.appendChild(bulk);
+
+    if (upgradeOperation === 'rotate') {
+      const row = rotateEl('div', 'filter-row rotate-threshold-row');
+      const label = rotateEl('label', '', 'Expiring within');
+      label.setAttribute('for', 'rotate-threshold');
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.id = 'rotate-threshold';
+      input.min = '1';
+      input.value = String(rotateState.thresholdDays);
+      input.addEventListener('input', () => {
+        const value = parseInt(input.value, 10);
+        if (value > 0) { rotateState.thresholdDays = value; rotateState.thresholdTouched = true; }
+      });
+      const unit = rotateEl('span', 'rotate-threshold-unit', 'days');
+      const match = rotateEl('button', 'btn-secondary btn-sm', 'Select matching');
+      match.type = 'button';
+      match.id = 'rotate-select-matching';
+      match.addEventListener('click', () => {
+        const value = parseInt(input.value, 10);
+        if (!(value > 0)) {
+          window.Feedback.warning('Enter a number of days greater than zero.', { toast: true });
+          return;
+        }
+        rotateState.thresholdDays = value;
+        rotateState.thresholdTouched = true;
+        rotateSelectMatching(value);
+        rotateRefresh();
+      });
+      row.appendChild(label);
+      row.appendChild(input);
+      row.appendChild(unit);
+      row.appendChild(match);
+      pane.appendChild(row);
+    }
+
+    const nameRow = rotateEl('div', 'filter-row rotate-name-row');
+    const nameLabel = rotateEl('label', '', 'Job name');
+    nameLabel.setAttribute('for', 'rotate-name');
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.id = 'rotate-name';
+    nameInput.placeholder = 'Optional';
+    nameInput.value = rotateState.name;
+    nameInput.addEventListener('input', () => { rotateState.name = nameInput.value; });
+    nameRow.appendChild(nameLabel);
+    nameRow.appendChild(nameInput);
+    pane.appendChild(nameRow);
+    container.appendChild(pane);
+    renderRotateNotice();
+  };
+
+  const buildRotateFooter = (container) => {
+    const pane = rotateEl('div', 'rotate-pane rotate-footer-pane');
+    pane.dataset.pane = 'rotate-footer';
+    const line = rotateEl('p', 'upgrade-guidance rotate-selection-line');
+    line.id = 'rotate-selection-line';
+    line.setAttribute('role', 'status');
+    pane.appendChild(line);
+    const review = rotateEl('div', 'rotate-review-list');
+    review.id = 'rotate-review-list';
+    review.hidden = true;
+    pane.appendChild(review);
+    const actions = rotateEl('div', 'rotate-footer-actions');
+    const reviewButton = rotateEl('button', 'btn-secondary', 'Review selection');
+    reviewButton.type = 'button';
+    reviewButton.id = 'rotate-review';
+    reviewButton.setAttribute('aria-controls', 'rotate-review-list');
+    reviewButton.setAttribute('aria-expanded', 'false');
+    reviewButton.addEventListener('click', () => {
+      rotateState.reviewOpen = !rotateState.reviewOpen;
+      renderRotateReview();
+    });
+    const preview = rotateEl('button', 'btn-primary');
+    preview.type = 'button';
+    preview.id = 'rotate-preview';
+    preview.disabled = true;
+    actions.appendChild(reviewButton);
+    actions.appendChild(preview);
+    pane.appendChild(actions);
+    container.appendChild(pane);
+  };
+
+  const paneOf = (container) =>
+    Array.from(container.children).find((child) => child.classList.contains('upgrade-mode-pane')) || null;
+
+  // Wraps the Upgrade controls of a panel in a pane that can hide.
+  const wrapUpgradePane = (container) => {
+    if (paneOf(container)) return;
+    const pane = document.createElement('div');
+    pane.className = 'upgrade-mode-pane';
+    pane.dataset.pane = 'upgrade';
+    while (container.firstChild) pane.appendChild(container.firstChild);
+    container.appendChild(pane);
+  };
+
+  const setPaneMode = (container, mode) => {
+    const pane = paneOf(container);
+    if (pane) pane.hidden = mode !== 'upgrade';
+    Array.from(container.children).forEach((child) => {
+      if (child.classList.contains('rotate-pane')) container.removeChild(child);
+    });
+  };
+
+  const syncOperationRadios = () => {
+    document.querySelectorAll('#upgrade input[name="upgrade-operation"]').forEach((radio) => {
+      radio.checked = radio.value === upgradeOperation;
+    });
+  };
+
+  // Shows the Targets panel, the footer, and the instance list for the mode.
+  // Every operation switch goes through here.
+  const renderOperation = (mode) => {
+    const next = OPERATION_LABELS[mode] ? mode : 'upgrade';
+    const panel = document.getElementById('upgrade');
+    if (!panel) return;
+    const targets = panel.querySelector('.upgrade-targets');
+    const footer = panel.querySelector('.upgrade-footer');
+    const heading = panel.querySelector('.upgrade-targets-panel h2');
+    if (!targets || !footer) return;
+    const entering = next !== upgradeOperation;
+    upgradeOperation = next;
+    panel.dataset.operation = next;
+    wrapUpgradePane(targets);
+    wrapUpgradePane(footer);
+    setPaneMode(targets, next);
+    setPaneMode(footer, next);
+    syncOperationRadios();
+    if (heading) {
+      heading.textContent = next === 'upgrade' ? '2. Choose targets' : (next === 'rotate' ? '2. Certificate options' : '2. Converge options');
+    }
+
+    if (next === 'upgrade') {
+      refreshUpgradeInstanceList();
+      return;
+    }
+
+    buildRotateOptions(targets);
+    buildRotateFooter(footer);
+    if (entering) {
+      rotateState.thresholdApplied = false;
+      rotateState.reviewOpen = false;
+      rotateState.imported = rotatePairs().length > 0;
+    }
+    refreshUpgradeInstanceList();
+    if (rotateState.loadState === 'ready') {
+      if (entering) {
+        applyDefaultThreshold();
+        rotateRefresh();
+        loadRotateInventory({ silent: true });
+      }
+    } else if (entering || rotateState.loadState === 'idle' || rotateState.loadState === 'error') {
+      loadRotateInventory();
+    }
+  };
+
+  const selectionCountFor = (mode) => {
+    if (mode === 'rotate') return rotatePairs().length;
+    if (mode === 'converge') return convergeSelected.size;
+    return selectedUpgradeInstances.size;
+  };
+
+  const clearSelectionFor = (mode) => {
+    if (mode === 'rotate') rotateSelection().clear();
+    else if (mode === 'converge') convergeSelected.clear();
+    else selectedUpgradeInstances.clear();
+  };
+
+  // Switches the operation. A switch with something selected asks first,
+  // since the selection does not carry across operations.
+  const requestOperation = async (mode) => {
+    if (mode === upgradeOperation || !OPERATION_LABELS[mode]) {
+      syncOperationRadios();
+      return false;
+    }
+    const count = selectionCountFor(upgradeOperation);
+    if (count > 0) {
+      const noun = upgradeOperation === 'rotate' ? pluralize(count, 'certificate') : pluralize(count, 'instance');
+      const confirmed = await showConfirmDialog({
+        title: `Switch to ${OPERATION_LABELS[mode]}?`,
+        message: `Your ${noun} selected for ${OPERATION_LABELS[upgradeOperation].toLowerCase()} will be cleared when we switch to ${OPERATION_LABELS[mode].toLowerCase()}.`,
+        confirmText: 'Switch and clear',
+        cancelText: 'Keep selection'
+      });
+      if (!confirmed) {
+        syncOperationRadios();
+        return false;
+      }
+      clearSelectionFor(upgradeOperation);
+    }
+    renderOperation(mode);
+    return true;
+  };
+
+  // The Operation radio group, above the Services and Targets panels.
+  const installOperationSelector = () => {
+    const panel = document.getElementById('upgrade');
+    const main = panel && panel.querySelector('.upgrade-main');
+    const top = main && main.querySelector('.upgrade-top');
+    if (!main || !top || document.getElementById('rotate-operation')) return;
+    const targets = panel.querySelector('.upgrade-targets');
+    const footer = panel.querySelector('.upgrade-footer');
+    if (targets) wrapUpgradePane(targets);
+    if (footer) wrapUpgradePane(footer);
+
+    const fieldset = rotateEl('fieldset', 'rotate-operation');
+    fieldset.id = 'rotate-operation';
+    fieldset.appendChild(rotateEl('legend', '', 'Operation'));
+    Object.keys(OPERATION_LABELS).forEach((mode) => {
+      const label = rotateEl('label', 'rotate-operation-option');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'upgrade-operation';
+      radio.id = `rotate-op-${mode}`;
+      radio.value = mode;
+      radio.checked = mode === upgradeOperation;
+      radio.addEventListener('change', () => { if (radio.checked) requestOperation(mode); });
+      label.appendChild(radio);
+      label.appendChild(rotateEl('span', '', OPERATION_LABELS[mode]));
+      fieldset.appendChild(label);
+    });
+    main.insertBefore(fieldset, top);
   };
 
   // Set up handlers for upgrade instance checkboxes
@@ -2850,6 +3736,13 @@
 
       // Handle click on the entire item
       item.addEventListener('click', (e) => {
+        // A row another operation holds cannot be picked, and a click on a
+        // control inside the row belongs to that control.
+        if (item.dataset.held) {
+          e.preventDefault();
+          return;
+        }
+        if (e.target.closest && e.target.closest('.rotate-chip, button, a')) return;
         if (e.target.type !== 'checkbox') {
           checkbox.checked = !checkbox.checked;
         }
@@ -2881,6 +3774,7 @@
     // Render the Services (filters/selection) and Targets (stemcell/releases) panels
     servicesContainer.innerHTML = renderUpgradeServices();
     targetsContainer.innerHTML = renderUpgradeTargets();
+    installOperationSelector();
 
     // Load stemcells from API
     try {
@@ -3143,7 +4037,14 @@
     const selectAllBtn = document.getElementById('upgrade-select-all');
     if (selectAllBtn) {
       selectAllBtn.addEventListener('click', () => {
+        if (upgradeOperation !== 'upgrade') {
+          rotateSelectVisible();
+          rotateRefresh();
+          return;
+        }
         document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          // A row another operation holds shows its holder and stays out
+          if (item.dataset.held) return;
           const checkbox = item.querySelector('input[type="checkbox"]');
           const instanceId = item.dataset.instanceId;
           checkbox.checked = true;
@@ -3158,6 +4059,11 @@
     const deselectAllBtn = document.getElementById('upgrade-deselect-all');
     if (deselectAllBtn) {
       deselectAllBtn.addEventListener('click', () => {
+        if (upgradeOperation !== 'upgrade') {
+          rotateClearVisible();
+          rotateRefresh();
+          return;
+        }
         document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
           const checkbox = item.querySelector('input[type="checkbox"]');
           checkbox.checked = false;
@@ -3178,13 +4084,23 @@
         const end = parseInt(endInput?.value, 10);
 
         if (isNaN(start) || isNaN(end) || start < 1 || end < start) {
+          if (upgradeOperation !== 'upgrade') {
+            window.Feedback.warning('Enter a valid range. The start must be at least 1 and the end at least the start.', { toast: true });
+            return;
+          }
           alert('Please enter a valid range (start must be >= 1 and end must be >= start).');
+          return;
+        }
+
+        if (upgradeOperation !== 'upgrade') {
+          rotateSelectRange(start, end);
+          rotateRefresh();
           return;
         }
 
         document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
           const rowNumber = parseInt(item.dataset.rowNumber, 10);
-          if (rowNumber >= start && rowNumber <= end) {
+          if (rowNumber >= start && rowNumber <= end && !item.dataset.held) {
             const checkbox = item.querySelector('input[type="checkbox"]');
             const instanceId = item.dataset.instanceId;
             checkbox.checked = true;
@@ -3841,6 +4757,8 @@
       upgradePollFailed = false;
       upgradeTasksLastError = null;
       renderPollStatus();
+      refreshUpgradeHolders().catch((err) => console.error('Failed to read task holders:', err));
+      maybeRefreshRotateInventory();
       return true;
     } catch (err) {
       console.error('Failed to fetch upgrade tasks:', err);

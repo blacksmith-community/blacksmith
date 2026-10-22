@@ -13046,3 +13046,231 @@ span.config-type.resurrection {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* Operation selection: upgrade, rotate certificates, converge. */
+#upgrade .rotate-operation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 8px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border-primary);
+  background-color: var(--bg-secondary);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+#upgrade .rotate-operation legend {
+  float: left;
+  padding: 0;
+  margin-right: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+#upgrade .rotate-operation-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+#upgrade .upgrade-mode-pane:not([hidden]) {
+  display: contents;
+}
+
+#upgrade .upgrade-mode-pane[hidden] {
+  display: none;
+}
+
+#upgrade .rotate-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+#upgrade .upgrade-footer .rotate-footer-pane {
+  flex: 1;
+}
+
+#upgrade .rotate-op-hint,
+#upgrade .rotate-row-note,
+#upgrade .rotate-review-empty {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+#upgrade .rotate-notice {
+  display: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+#upgrade .rotate-notice.is-visible {
+  display: flex;
+}
+
+#upgrade .rotate-bulk,
+#upgrade .rotate-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#upgrade .rotate-footer-actions {
+  justify-content: flex-end;
+}
+
+#upgrade .rotate-threshold-row,
+#upgrade .rotate-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+#upgrade .rotate-threshold-row input[type="number"] {
+  width: 5em;
+}
+
+#upgrade .rotate-name-row input[type="text"] {
+  flex: 1 1 10em;
+  min-width: 0;
+}
+
+#upgrade .rotate-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+#upgrade .rotate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 14px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+#upgrade .rotate-chip.is-warning {
+  border-color: var(--cert-warning);
+}
+
+#upgrade .rotate-chip.is-critical {
+  border-color: var(--cert-critical);
+}
+
+#upgrade .rotate-chip.is-expired {
+  border-color: var(--cert-expired);
+}
+
+#upgrade .rotate-chip[aria-pressed="true"] {
+  background-color: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #ffffff;
+}
+
+#upgrade .rotate-chip:focus-visible,
+#upgrade .rotate-operation-option input:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+#upgrade .rotate-chip-mark {
+  display: inline-block;
+  min-width: 1em;
+  text-align: center;
+  font-weight: 700;
+}
+
+#upgrade .rotate-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#upgrade .rotate-chip-days {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+#upgrade .rotate-row-reason {
+  margin-top: 2px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+#upgrade .upgrade-instance-item[data-held="true"],
+#upgrade .upgrade-instance-item.rotate-row:has(input:disabled) {
+  cursor: default;
+}
+
+#upgrade .upgrade-instance-item[data-held="true"] .upgrade-instance-id {
+  color: var(--text-secondary);
+}
+
+#upgrade .rotate-review-list {
+  max-height: 30vh;
+  overflow-y: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background-color: var(--bg-primary);
+}
+
+#upgrade .rotate-review-list[hidden] {
+  display: none;
+}
+
+#upgrade .rotate-review-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#upgrade .rotate-review-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+#upgrade .rotate-review-item:last-child {
+  border-bottom: 0;
+}
+
+#upgrade .rotate-review-name {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#upgrade .rotate-review-flag {
+  padding: 1px 8px;
+  border-radius: 10px;
+  color: var(--cert-critical-fg);
+  background-color: var(--cert-critical-bg);
+  font-size: 0.75rem;
+}
