@@ -10,3 +10,4 @@ ui/node_modules/
 .gocache
 test-*
 *.test
+/output/playwright/
