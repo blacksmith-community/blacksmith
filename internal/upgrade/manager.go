@@ -224,6 +224,11 @@ type taskSnapshot struct {
 type taskPersistence struct {
 	mu      sync.Mutex
 	written uint64
+
+	// indexed is set once a confirmed save has seen the task in its
+	// index. Nothing removes a task from the index while it exists, so
+	// later confirmed saves skip the check.
+	indexed atomic.Bool
 }
 
 // NewManager creates a new upgrade manager and loads its settings. It
