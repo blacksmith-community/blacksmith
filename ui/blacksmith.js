@@ -14828,8 +14828,8 @@
 
   // Render certificates tab for service instances
   const renderServiceCertificatesTab = (instanceId) => {
-    const tabGroupId = escapeAttribute(`service-cert-tabs-${safeId}`);
     const safeId = escapeAttribute(instanceId);
+    const tabGroupId = escapeAttribute(`service-cert-tabs-${instanceId}`);
     return `
       <div class="service-testing-container">
         <div class="manifest-details-container">
