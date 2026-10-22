@@ -3,6 +3,9 @@ package bosh
 import (
 	"context"
 	"time"
+
+	"blacksmith/internal/bosh/sshconn"
+	"golang.org/x/crypto/ssh"
 )
 
 // Director defines the BOSH operations Blacksmith uses. DirectorAdapter
@@ -70,6 +73,10 @@ type Director interface {
 	// SSH operations
 	SSHCommand(ctx context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
 	SSHSession(ctx context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
+	// SSHGroupSession sets up one SSH user on several instances of a group.
+	SSHGroupSession(ctx context.Context, deployment, group string, indices []int) (*sshconn.Session, error)
+	// DialSSHHost connects to one host of a session, pinning its host key.
+	DialSSHHost(ctx context.Context, session *sshconn.Session, host sshconn.Host) (*ssh.Client, error)
 
 	// Resurrection operations
 	EnableResurrection(ctx context.Context, deployment string, enabled bool) error

@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/sshconn"
 	. "blacksmith/pkg/reconciler"
+	"golang.org/x/crypto/ssh"
 )
 
 // Static errors for scanner test err113 compliance.
@@ -134,6 +136,14 @@ func (d *mockDirector) SSHCommand(_ context.Context, deployment, instance string
 }
 
 func (d *mockDirector) SSHSession(_ context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) SSHGroupSession(_ context.Context, _, _ string, _ []int) (*sshconn.Session, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) DialSSHHost(_ context.Context, _ *sshconn.Session, _ sshconn.Host) (*ssh.Client, error) {
 	return nil, ErrScannerNotImplemented
 }
 func (d *mockDirector) EnableResurrection(_ context.Context, deployment string, enabled bool) error {

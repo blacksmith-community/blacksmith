@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/sshconn"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
+	"golang.org/x/crypto/ssh"
 )
 
 // Static errors for test err113 compliance.
@@ -352,6 +354,18 @@ func (m *MockDirector) SSHSession(_ context.Context, deployment, instance string
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
+	return nil, ErrMockError
+}
+
+func (m *MockDirector) SSHGroupSession(_ context.Context, _, _ string, _ []int) (*sshconn.Session, error) {
+	m.incrementCallCount()
+
+	return nil, ErrMockError
+}
+
+func (m *MockDirector) DialSSHHost(_ context.Context, _ *sshconn.Session, _ sshconn.Host) (*ssh.Client, error) {
+	m.incrementCallCount()
 
 	return nil, ErrMockError
 }

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"path"
 	"sort"
@@ -2600,6 +2599,32 @@ func sshTarget(instance string, index int) (boshapi.SSHTarget, error) {
 	return boshapi.SSHTarget{Job: instance, Indices: []int{index}}, nil
 }
 
+// sshGroupTarget names several instances of one group by their indices,
+// which is the target SSHGroupSession takes. An empty group would select
+// every instance in the deployment and an empty index list every instance
+// in the group, so both are refused before anything is sent, as are a
+// negative index and an index named twice. The indices are copied, so the
+// caller's slice can change without changing the target.
+func sshGroupTarget(group string, indices []int) (boshapi.SSHTarget, error) {
+	if group == "" || len(indices) == 0 {
+		return boshapi.SSHTarget{}, fmt.Errorf("%w: got group %q and indices %v, so nothing was sent",
+			ErrSSHGroupTargetInvalid, group, indices)
+	}
+
+	seen := make(map[int]bool, len(indices))
+
+	for _, index := range indices {
+		if index < 0 || seen[index] {
+			return boshapi.SSHTarget{}, fmt.Errorf("%w: got group %q and indices %v, so nothing was sent",
+				ErrSSHGroupTargetInvalid, group, indices)
+		}
+
+		seen[index] = true
+	}
+
+	return boshapi.SSHTarget{Job: group, Indices: append([]int(nil), indices...)}, nil
+}
+
 // setUpSSH asks the director to create a throwaway user with a fresh
 // ed25519 key on the target's instances, waits for the setup task, and
 // returns the session that connects as that user. The request goes
@@ -2868,28 +2893,7 @@ func (d *DirectorAdapter) requestSSHCleanup(ctx context.Context, deployment stri
 // user. The connection to the host accepts only the host key the director
 // reported for it.
 func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.Session) (*ssh.Client, error) {
-	host := session.Hosts[0]
-
-	config, err := sshconn.HostConfig(session.Deployment, host, session.Signer)
-	if err != nil {
-		d.log.Errorf("Refused to connect to %s of deployment %s: %v", host.Instance(), session.Deployment, err)
-
-		return nil, fmt.Errorf("failed to connect to host: %w", err)
-	}
-
-	config.Timeout = httpClientTimeout
-
-	targetAddr := net.JoinHostPort(host.Address, d.sshPort)
-
-	client, err := sshconn.DialDirect(ctx, targetAddr, config)
-	if err != nil {
-		err = sshconn.ExplainHostKeyRefusal(err, session.Deployment, host, targetAddr)
-		d.log.Errorf("Failed to connect to %s of deployment %s at %s: %v", host.Instance(), session.Deployment, targetAddr, err)
-
-		return nil, fmt.Errorf("failed to connect to host: %w", err)
-	}
-
-	return client, nil
+	return d.DialSSHHost(ctx, session, session.Hosts[0])
 }
 
 // executeSSHCommand executes the command on the SSH client.

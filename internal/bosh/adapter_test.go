@@ -7,6 +7,8 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
+	"blacksmith/internal/bosh/sshconn"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestFactoryCreation(t *testing.T) {
@@ -147,6 +149,14 @@ func (m *mockDirector) SSHCommand(_ context.Context, deployment, instance string
 }
 func (m *mockDirector) SSHSession(_ context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return map[string]interface{}{"session_id": "mock-session"}, nil
+}
+
+func (m *mockDirector) SSHGroupSession(_ context.Context, _, _ string, _ []int) (*sshconn.Session, error) {
+	return nil, ErrMockNotImplemented
+}
+
+func (m *mockDirector) DialSSHHost(_ context.Context, _ *sshconn.Session, _ sshconn.Host) (*ssh.Client, error) {
+	return nil, ErrMockNotImplemented
 }
 func (m *mockDirector) EnableResurrection(_ context.Context, deployment string, enabled bool) error {
 	return ErrMockNotImplemented

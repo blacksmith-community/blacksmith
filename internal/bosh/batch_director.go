@@ -7,6 +7,9 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"blacksmith/internal/bosh/sshconn"
+	"golang.org/x/crypto/ssh"
 )
 
 // Errors of the batch director.
@@ -464,6 +467,18 @@ func (b *BatchDirector) SSHCommand(ctx context.Context, deployment, instance str
 
 func (b *BatchDirector) SSHSession(ctx context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return b.director.SSHSession(ctx, deployment, instance, index, options)
+}
+
+// SSHGroupSession sets up one SSH user on several instances. It changes no
+// deployment, so it is forwarded without a batch slot.
+func (b *BatchDirector) SSHGroupSession(ctx context.Context, deployment, group string, indices []int) (*sshconn.Session, error) {
+	return b.director.SSHGroupSession(ctx, deployment, group, indices) //nolint:wrapcheck // the wrapped director's own error
+}
+
+// DialSSHHost connects to one host of a session. It changes no
+// deployment, so it is forwarded without a batch slot.
+func (b *BatchDirector) DialSSHHost(ctx context.Context, session *sshconn.Session, host sshconn.Host) (*ssh.Client, error) {
+	return b.director.DialSSHHost(ctx, session, host) //nolint:wrapcheck // the wrapped director's own error
 }
 
 func (b *BatchDirector) EnableResurrection(ctx context.Context, deployment string, enabled bool) error {

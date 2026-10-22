@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/sshconn"
+	"golang.org/x/crypto/ssh"
 )
 
 // Mock error constants.
@@ -148,6 +150,16 @@ func (mb *MockBOSHDirector) SSHCommand(_ context.Context, deployment, instance s
 
 // SSHSession implements the BOSH Director interface.
 func (mb *MockBOSHDirector) SSHSession(_ context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+	return nil, ErrMockNotImplemented
+}
+
+// SSHGroupSession implements the BOSH Director interface.
+func (mb *MockBOSHDirector) SSHGroupSession(_ context.Context, _, _ string, _ []int) (*sshconn.Session, error) {
+	return nil, ErrMockNotImplemented
+}
+
+// DialSSHHost implements the BOSH Director interface.
+func (mb *MockBOSHDirector) DialSSHHost(_ context.Context, _ *sshconn.Session, _ sshconn.Host) (*ssh.Client, error) {
 	return nil, ErrMockNotImplemented
 }
 

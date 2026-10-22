@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"blacksmith/internal/bosh/sshconn"
+	"golang.org/x/crypto/ssh"
 )
 
 // Static error variables to satisfy err113.
@@ -200,6 +203,18 @@ func (p *PooledDirector) SSHCommand(ctx context.Context, deployment, instance st
 // SSHSession implements Director interface - no pooling for read operations.
 func (p *PooledDirector) SSHSession(ctx context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return p.director.SSHSession(ctx, deployment, instance, index, options)
+}
+
+// SSHGroupSession implements Director interface - no pooling, because
+// setting up an SSH user changes no deployment.
+func (p *PooledDirector) SSHGroupSession(ctx context.Context, deployment, group string, indices []int) (*sshconn.Session, error) {
+	return p.director.SSHGroupSession(ctx, deployment, group, indices) //nolint:wrapcheck // the wrapped director's own error
+}
+
+// DialSSHHost implements Director interface - no pooling, because a
+// connection to a VM changes no deployment.
+func (p *PooledDirector) DialSSHHost(ctx context.Context, session *sshconn.Session, host sshconn.Host) (*ssh.Client, error) {
+	return p.director.DialSSHHost(ctx, session, host) //nolint:wrapcheck // the wrapped director's own error
 }
 
 // SetSSHCleanupStore hands the wrapped director the store its SSH setups

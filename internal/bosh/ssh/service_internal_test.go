@@ -27,6 +27,7 @@ const (
 var (
 	errTestKeyRefused     = errors.New("test server refuses every key")
 	errTestCleanupRefused = errors.New("director refused the cleanup")
+	errTestNoGroupSSH     = errors.New("the test director sets up no group SSH")
 )
 
 // testVMServer is an in-process SSH server on a random loopback port. It
@@ -268,6 +269,14 @@ func (d *cleanupDirector) SSHSession(_ context.Context, deployment, instance str
 			return d.cleanupErr
 		},
 	}, nil
+}
+
+func (d *cleanupDirector) SSHGroupSession(_ context.Context, _, _ string, _ []int) (*sshconn.Session, error) {
+	return nil, errTestNoGroupSSH
+}
+
+func (d *cleanupDirector) DialSSHHost(_ context.Context, _ *sshconn.Session, _ sshconn.Host) (*ssh.Client, error) {
+	return nil, errTestNoGroupSSH
 }
 
 func newTestService(t *testing.T, director DirectorInterface, port string) *ServiceImpl {
@@ -595,6 +604,14 @@ func (d *fixedDirector) SSHCommand(context.Context, string, string, int, string,
 
 func (d *fixedDirector) SSHSession(context.Context, string, string, int, map[string]interface{}) (interface{}, error) {
 	return d.info, nil
+}
+
+func (d *fixedDirector) SSHGroupSession(_ context.Context, _, _ string, _ []int) (*sshconn.Session, error) {
+	return nil, errTestNoGroupSSH
+}
+
+func (d *fixedDirector) DialSSHHost(_ context.Context, _ *sshconn.Session, _ sshconn.Host) (*ssh.Client, error) {
+	return nil, errTestNoGroupSSH
 }
 
 // The terminal refuses a director answer it cannot connect with. A setup
