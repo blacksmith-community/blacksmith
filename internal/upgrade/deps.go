@@ -97,7 +97,7 @@ func (m *Manager) certWritesAllowed(mode RotationMode) error {
 		return apierr.New(http.StatusForbidden, apierr.CodeRotationDisabled, "Certificate rotation is turned off. Set certificates.rotation.enabled to true to allow it.")
 	}
 
-	if (mode == RotationModePatch || mode == RotationModeConverge) && !switches.PatchInPlaceEnabled() {
+	if mode == RotationModePatch && !switches.PatchInPlaceEnabled() {
 		return apierr.New(http.StatusForbidden, apierr.CodePatchDisabled, "Patching certificates in place is turned off. Set certificates.patch_in_place.enabled to true to allow it.")
 	}
 

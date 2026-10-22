@@ -82,7 +82,7 @@ func TestCertWritesAllowed(t *testing.T) {
 	}{
 		{name: "rotation off", switches: switches(false, false), credhub: stubCredHub{}, mode: RotationModeRedeploy, code: apierr.CodeRotationDisabled},
 		{name: "patch needs its own switch", switches: switches(true, false), credhub: stubCredHub{}, mode: RotationModePatch, code: apierr.CodePatchDisabled},
-		{name: "converge after a patch needs the patch switch", switches: switches(true, false), credhub: stubCredHub{}, mode: RotationModeConverge, code: apierr.CodePatchDisabled},
+		{name: "converge needs only rotation", switches: switches(true, false), credhub: stubCredHub{}, mode: RotationModeConverge},
 		{name: "a patch switch alone does not turn rotation on", switches: switches(false, true), credhub: stubCredHub{}, mode: RotationModePatch, code: apierr.CodeRotationDisabled},
 		{name: "no CredHub", switches: switches(true, true), credhub: nil, mode: RotationModePatch, code: apierr.CodeCredHubNotConfigured},
 		{name: "redeploy with rotation on", switches: switches(true, false), credhub: stubCredHub{}, mode: RotationModeRedeploy},
