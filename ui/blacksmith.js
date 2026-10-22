@@ -395,6 +395,7 @@
       // The keydown handler acts only for the topmost surface, and only
       // while focus is inside the dialog. Tab keeps focus in the dialog.
       function handleKeydown(e) {
+        if (e.defaultPrevented) return;
         if (!window.blacksmithSurfaces.isTop(surface)) return;
 
         const active = document.activeElement;
@@ -533,6 +534,7 @@
       };
 
       const handleKeydown = (e) => {
+        if (e.defaultPrevented) return;
         if (!window.blacksmithSurfaces.isTop(surface)) return;
         if (e.key === 'Escape') {
           cleanup();
@@ -1148,6 +1150,7 @@
       const originalTitle = button.title;
       button.classList.add('copied');
       button.title = 'Copied!';
+      announce('Copied');
       setTimeout(() => {
         button.classList.remove('copied');
         button.title = originalTitle;
@@ -1163,6 +1166,7 @@
       textarea.select();
       try {
         document.execCommand('copy');
+        announce('Copied');
         button.classList.add('copied');
         setTimeout(() => button.classList.remove('copied'), 2000);
       } catch (err) {
@@ -16071,6 +16075,7 @@
   })();
 
   // Certificate Inspector Modal functionality
+  let certModalCounter = 0;
   const CertificateInspector = {
     // Create and show certificate inspector modal
     inspect: function (certificateData, options = {}) {
@@ -16093,13 +16098,13 @@
 
     // Create modal HTML structure
     createModal: function (certificateData, options) {
-      const modalId = `cert-modal-${Date.now()}`;
+      const modalId = `cert-modal-${++certModalCounter}`;
 
       const modalHtml = `
         <div class="modal-overlay" id="${modalId}">
-          <div class="modal">
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="${modalId}-title">
             <div class="modal-header">
-              <h2 class="modal-title">Certificate Inspector</h2>
+              <h2 class="modal-title" id="${modalId}-title">Certificate Inspector</h2>
               <button class="modal-close" aria-label="Close modal">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                   <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -17869,6 +17874,7 @@
     }
 
     navigator.clipboard.writeText(text).then(() => {
+      window.blacksmithNav.announce('Copied');
       // Visual feedback
       if (buttonElement) {
         const originalText = buttonElement.textContent;
