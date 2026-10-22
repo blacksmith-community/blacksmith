@@ -200,7 +200,14 @@ type openedSession struct {
 // on a connection that is going away can wait without end, so it gives up
 // when ctx ends, which closes the connection, or when the runner is
 // closed. A session that opens after the run gave up is closed at once.
+// A runner that is already closed, or that closes while the open fails,
+// returns ErrRunnerClosed every time, whichever of its select cases Go
+// would pick.
 func (r *Runner) openSession(ctx context.Context, shown string) (*ssh.Session, error) {
+	if r.closed.Load() {
+		return nil, ErrRunnerClosed
+	}
+
 	opened := make(chan openedSession, 1)
 
 	go func() {
@@ -210,6 +217,10 @@ func (r *Runner) openSession(ctx context.Context, shown string) (*ssh.Session, e
 
 	select {
 	case got := <-opened:
+		if got.err != nil && r.closed.Load() {
+			return nil, ErrRunnerClosed
+		}
+
 		if got.err != nil {
 			// The library's error can carry the reason the VM's sshd
 			// gave, which is free text, so it reaches only a log line,
