@@ -939,12 +939,10 @@ func TestRedeployReleasesGuardAndRescans(t *testing.T) {
 	})
 }
 
-// An instance whose reservation waits for another holder does not run
-// until that holder frees it.
-//
-//nolint:paralleltest // the manager's loader shares test seams
-func TestRedeployWaitsForTheRestoreWaitingList(t *testing.T) {
-	env := newRedeployEnv(t)
+// holdForDeprovision returns a guard in which a deprovision holds the
+// test instance, and the function that frees it.
+func holdForDeprovision(t *testing.T) (*mutation.Guard, func()) {
+	t.Helper()
 
 	guard := mutation.NewGuard(time.Now)
 
@@ -953,23 +951,49 @@ func TestRedeployWaitsForTheRestoreWaitingList(t *testing.T) {
 		t.Fatalf("holding the instance: %v", err)
 	}
 
-	stored := env.task()
-	started := validateNow
-	stored.Instances[0].Status = InstanceStatusRunning
-	stored.Instances[0].StartedAt = &started
-	stored.Instances[0].Certificates.Phase = RotationPhaseRegenerate
-	storeCertificateTask(t, env.vault.waitVault, stored)
+	return guard, free
+}
 
-	manager := env.newManager()
+// loadWaiting stores the task, and starts a manager over the guard that
+// loads it, with short restore waits. The loaded task's reservation waits
+// for the guard's holder.
+func (e *redeployEnv) loadWaiting(guard *mutation.Guard, task UpgradeTask) *Manager {
+	e.t.Helper()
+
+	storeCertificateTask(e.t, e.vault.waitVault, task)
+
+	manager := e.newManager()
 	manager.SetGuard(guard)
 	manager.restoreWait = 20 * time.Millisecond
 	manager.restoreRetry = 20 * time.Millisecond
 	manager.Start()
-	waitForLoad(t, manager)
+	waitForLoad(e.t, manager)
 
 	if _, waiting := manager.WaitingFor(waitInstanceID, ""); !waiting {
-		t.Fatal("expected the task to wait for the instance")
+		e.t.Fatal("expected the task to wait for the instance")
 	}
+
+	return manager
+}
+
+// The processor does not run an instance whose reservation waits for
+// another holder until that holder frees it. The test runs the processor
+// itself, since the task is never queued while it waits.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployWaitsForTheRestoreWaitingList(t *testing.T) {
+	env := newRedeployEnv(t)
+	guard, free := holdForDeprovision(t)
+	manager := env.loadWaiting(guard, env.runningTask())
+
+	manager.mu.Lock()
+	task := manager.tasks[certTaskID]
+	manager.owned[certTaskID] = true
+	manager.mu.Unlock()
+
+	done := make(chan bool, 1)
+
+	go func() { done <- manager.processCertificateInstance(task, &task.Instances[0], make(chan struct{})) }()
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -979,7 +1003,46 @@ func TestRedeployWaitsForTheRestoreWaitingList(t *testing.T) {
 
 	free()
 
+	select {
+	case goOn := <-done:
+		if !goOn {
+			t.Fatalf("expected the processor to go on, got %+v", current(t, manager).Instances[0])
+		}
+	case <-time.After(waitTimeout):
+		t.Fatal("the processor never returned")
+	}
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusSuccess {
+		t.Fatalf("expected the instance to complete, got %s: %s", inst.Status, inst.Error)
+	}
+}
+
+// The verification of a loaded done deploy waits while the instance's
+// reservation waits for another holder, and runs once that holder frees
+// it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployVerifyWaitsForTheRestoreWaitingList(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.madeNewVersion()
+	env.deployedNewVersion()
+
+	stored := env.deployedTask()
+	stored.Instances[0].Certificates.Deploy = &DeployOutcome{BOSHTaskID: redeployTaskID, State: boshTaskDone, FinishedAt: validateNow}
+
+	guard, free := holdForDeprovision(t)
+	manager := env.loadWaiting(guard, stored)
+
+	time.Sleep(200 * time.Millisecond)
+
+	if calls := env.director.listCalls(); calls != 0 {
+		t.Fatalf("expected no verification while the instance waits, got %d variable reads", calls)
+	}
+
+	free()
+
 	eventuallyInstance(t, manager, InstanceStatusSuccess)
+	expectReleased(t, manager)
 }
 
 // A loaded certificate task that never started may be one whose creation
