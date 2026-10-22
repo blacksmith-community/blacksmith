@@ -533,16 +533,36 @@ func (m *Manager) stopIfCancelled(ctx context.Context, task *UpgradeTask, inst *
 func (m *Manager) certAfterDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, taskID int, finished *bosh.Task) {
 	m.settleCertificateDeploy(task, inst, taskID, finished)
 
-	m.mu.RLock()
-	verify := finished != nil && finished.State == boshTaskDone && m.configured &&
-		certTaskMode(task) == RotationModeRedeploy && inst.Status == InstanceStatusRunning
-	m.mu.RUnlock()
+	m.mu.Lock()
 
-	if !verify {
+	redeploy := finished != nil && m.configured && certTaskMode(task) == RotationModeRedeploy
+	verify := redeploy && finished.State == boshTaskDone && inst.Status == InstanceStatusRunning
+
+	// A redeploy whose BOSH task failed closes as one the director
+	// rejected does, at phase done and scanned again.
+	failed := redeploy && finished.State != boshTaskDone && inst.Status == InstanceStatusFailed
+
+	rescan := func() {}
+	if failed {
+		rescan = m.endCertificateInstanceLocked(task, inst)
+	}
+
+	m.mu.Unlock()
+
+	if failed {
+		rescan()
+
+		err := m.persistCertConfirmed(context.WithoutCancel(ctx), task)
+		if err != nil {
+			m.logger.Error("Certificate task %s: %v", task.ID, err)
+		}
+
 		return
 	}
 
-	m.verifyAndSettle(ctx, task, inst)
+	if verify {
+		m.verifyAndSettle(ctx, task, inst)
+	}
 }
 
 // verifyAndSettle verifies a done redeploy and settles the instance. It
@@ -729,22 +749,7 @@ func (m *Manager) settleCertificateInstance(task *UpgradeTask, inst *InstanceUpg
 		}
 	}
 
-	if inst.Certificates == nil {
-		inst.Certificates = &InstanceRotation{}
-	}
-
-	inst.Certificates.Phase = RotationPhaseDone
-	inst.Certificates.Pending = nil
-
-	m.releaseUnheldLocked(task)
-
-	scan := m.deps.ScanInstance
-	rescan := scan != nil && m.ctx.Err() == nil
-
-	if rescan {
-		m.wg.Add(1)
-	}
-
+	rescan := m.endCertificateInstanceLocked(task, inst)
 	status := inst.Status
 
 	m.mu.Unlock()
@@ -755,9 +760,35 @@ func (m *Manager) settleCertificateInstance(task *UpgradeTask, inst *InstanceUpg
 		m.logger.Error("Instance %s of certificate task %s ended %s: %s", inst.InstanceID, task.ID, status, message)
 	}
 
-	if rescan {
-		go m.rescan(scan, inst.InstanceID)
+	rescan()
+}
+
+// endCertificateInstanceLocked closes a settled certificate instance. It
+// sets phase done, drops any pending decision, releases the instance's
+// reservation, and returns the function that starts the inventory's scan
+// of it, which the caller runs once it lets go of mu. A manager that is
+// stopping, or has no scan, gets a function that does nothing. The caller
+// holds mu.
+func (m *Manager) endCertificateInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade) func() {
+	if inst.Certificates == nil {
+		inst.Certificates = &InstanceRotation{}
 	}
+
+	inst.Certificates.Phase = RotationPhaseDone
+	inst.Certificates.Pending = nil
+
+	m.releaseUnheldLocked(task)
+
+	scan := m.deps.ScanInstance
+	if scan == nil || m.ctx.Err() != nil {
+		return func() {}
+	}
+
+	m.wg.Add(1)
+
+	instanceID := inst.InstanceID
+
+	return func() { go m.rescan(scan, instanceID) }
 }
 
 // rescan has the inventory scan one instance again, under its own bound.

@@ -1222,3 +1222,40 @@ func TestRedeployCancelAfterVerifyPause(t *testing.T) {
 
 	expectReleased(t, manager)
 }
+
+// A BOSH task that fails ends the instance as a deploy the director
+// rejected does, at phase done with the inventory scanning it again, so
+// the deploy_pending finding shows at once.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestRedeployFailedTaskRescans(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.director.finish = func(_ context.Context, taskID int) (*bosh.Task, error) {
+		return &bosh.Task{ID: taskID, State: boshTaskError, Result: "compilation failed"}, nil
+	}
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.directRun(manager, &task)
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusFailed || inst.Certificates.Phase != RotationPhaseDone {
+		t.Fatalf("expected a failed instance at phase done, got %s at %s", inst.Status, inst.Certificates.Phase)
+	}
+
+	if got := current(t, manager).FailedCount; got != 1 {
+		t.Fatalf("expected one failed instance, got %d", got)
+	}
+
+	// The preflight scans once, and the failure scans again.
+	waitUntil(t, "the rescan of the instance", func() bool {
+		scans := env.scanned()
+
+		return len(scans) >= 2 && scans[len(scans)-1] == waitInstanceID
+	})
+
+	if saved := env.stored().Instances[0]; saved.Certificates.Phase != RotationPhaseDone {
+		t.Fatalf("expected phase done to be saved, got %s", saved.Certificates.Phase)
+	}
+}
