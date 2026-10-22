@@ -1022,9 +1022,9 @@ func TestRegenerateFailedCandidateListingNeverResends(t *testing.T) {
 }
 
 // A request that never reached CredHub, or that CredHub turned away for
-// its token, made no new version, so the task pauses with the leaf back
-// at not_sent and sends it again on resume. The instance does not fail,
-// and the message does not say that CredHub refused the regeneration.
+// its token or for a missing permission, made no new version, so the task
+// pauses with the leaf back at not_sent and sends it again on resume. The
+// instance does not fail with the message of a refused regeneration.
 func TestRegenerateCredHubOutagePausesForRetry(t *testing.T) {
 	t.Parallel()
 
@@ -1042,6 +1042,11 @@ func TestRegenerateCredHubOutagePausesForRetry(t *testing.T) {
 			name:    "the token could not be fetched",
 			err:     errors.New("CredHub regenerate: fetching a UAA token: 503 Service Unavailable"),
 			message: "Blacksmith could not reach CredHub to regenerate redis_crt",
+		},
+		{
+			name:    "CredHub forbade the regenerate",
+			err:     &credhub.APIError{Op: "regenerate", Status: http.StatusForbidden},
+			message: "CredHub refused to regenerate redis_crt because Blacksmith's client lacks permission",
 		},
 		{
 			name:    "CredHub did not accept the token",
@@ -1072,7 +1077,7 @@ func TestRegenerateCredHubOutagePausesForRetry(t *testing.T) {
 				t.Fatalf("expected the task paused and the instance resumable, got %s and %s", task.Status, inst.Status)
 			}
 
-			if !strings.Contains(inst.Error, tc.message) || !strings.Contains(inst.Error, "made no new version") || strings.Contains(inst.Error, "CredHub refused") {
+			if !strings.Contains(inst.Error, tc.message) || !strings.Contains(inst.Error, "made no new version") || strings.Contains(inst.Error, "so it made no new version: ") {
 				t.Fatalf("expected an accurate message, got %q", inst.Error)
 			}
 

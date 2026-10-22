@@ -206,12 +206,14 @@ func (m *Manager) sendRegenerate(ctx context.Context, api CredHubAPI, task *Upgr
 
 // certainRegenerateFailure handles a regenerate request that certainly
 // made no new version, with the variable already back at not_sent. A 4xx
-// answer other than 401 is CredHub refusing this regeneration, which
-// fails the instance. Any other certain failure means the request never
-// reached CredHub, because the connection or the token could not be had,
-// or CredHub turned the token away. Spec 8.6 and 8.10 don't classify
-// those, and the next attempt may well succeed, so the task pauses and
-// the variable is sent again when it resumes.
+// answer other than 401 and 403 is CredHub refusing this regeneration,
+// which fails the instance. A 403 is a missing permission or ACL on
+// Blacksmith's client, which an operator can grant. Any other certain
+// failure means the request never reached CredHub, because the
+// connection or the token could not be had, or CredHub turned the token
+// away. Spec 8.6 and 8.10 don't classify those, and the next attempt may
+// well succeed, so the task pauses and the variable is sent again when it
+// resumes.
 func (m *Manager) certainRegenerateFailure(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, short string, err error) (bool, error) {
 	var answered *credhub.APIError
 
@@ -219,6 +221,9 @@ func (m *Manager) certainRegenerateFailure(ctx context.Context, task *UpgradeTas
 	case errors.As(err, &answered) && answered.Status == http.StatusUnauthorized:
 		return m.pauseWith(ctx, task, inst, apierr.New(http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable,
 			fmt.Sprintf("CredHub did not accept Blacksmith's token when asked to regenerate %s, so it made no new version. Resume once Blacksmith's CredHub client is authorized: %v", short, err)))
+	case errors.As(err, &answered) && answered.Status == http.StatusForbidden:
+		return m.pauseWith(ctx, task, inst, apierr.New(http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable,
+			fmt.Sprintf("CredHub refused to regenerate %s because Blacksmith's client lacks permission, so it made no new version. Check the CredHub permissions of Blacksmith's client on %s, then resume: %v", short, short, err)))
 	case errors.As(err, &answered):
 		return true, m.failRotation(ctx, task, inst,
 			fmt.Sprintf("CredHub refused to regenerate %s, so it made no new version: %v", short, err))
