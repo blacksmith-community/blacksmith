@@ -51,6 +51,7 @@ type Config struct {
 	Shareable    bool               `yaml:"shareable"`
 	Forges       ForgesConfig       `yaml:"forges"`
 	CredHub      CredHubConfig      `yaml:"credhub"`
+	Certificates CertificatesConfig `yaml:"certificates"`
 }
 
 // Sweep modes for the CredHub orphan sweep.
