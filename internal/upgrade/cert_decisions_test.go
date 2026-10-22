@@ -919,3 +919,32 @@ func TestResolveVerifyFails(t *testing.T) {
 	expectReleased(t, manager)
 	waitUntil(t, "the task to finish", func() bool { return current(t, manager).Status == TaskStatusFailed })
 }
+
+// While the director still runs the instance's deploy task, verify and
+// failed answer deployment_locked and the instance keeps waiting, and
+// abandon, the operator's override, still goes ahead.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestResolveWhileDeployRuns(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.load(env.awaitingOutcome())
+	env.director.runTask(true)
+
+	for _, action := range []string{"verify", "failed"} {
+		err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: action})
+		expectAPIError(t, err, http.StatusConflict, apierr.CodeDeploymentLocked)
+	}
+
+	expectStillAwaiting(t, manager, InstanceStatusOutcomeUnknown, DecisionResolveDeployOutcome)
+
+	if lists := env.director.listCalls(); lists != 0 {
+		t.Fatalf("expected no verification while the deploy runs, got %d variable lists", lists)
+	}
+
+	err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "abandon"})
+	if err != nil {
+		t.Fatalf("abandon: %v", err)
+	}
+
+	expectReleased(t, manager)
+}

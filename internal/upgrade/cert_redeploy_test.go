@@ -202,6 +202,33 @@ type redeployDirector struct {
 	// nothing and no error.
 	nameless bool
 	empty    bool
+
+	// taskState is the state GetTask reports, and done when it is empty.
+	taskState string
+}
+
+func (d *redeployDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	state := d.taskState
+	if state == "" {
+		state = boshTaskDone
+	}
+
+	return &bosh.Task{ID: taskID, State: state, Deployment: waitDeployment}, nil
+}
+
+// runTask makes GetTask report the director task as running, or as done
+// when running is false.
+func (d *redeployDirector) runTask(running bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.taskState = boshTaskDone
+	if running {
+		d.taskState = waitStateRunning
+	}
 }
 
 func (d *redeployDirector) GetInfo(context.Context) (*bosh.Info, error) {

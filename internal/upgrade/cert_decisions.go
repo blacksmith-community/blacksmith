@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 
 	"github.com/google/uuid"
@@ -360,7 +361,9 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 // ResolveDeployOutcome answers a resolve_deploy_outcome decision. Verify
 // runs the redeploy's verification now and settles the instance by its
 // result. Failed fails the instance and frees it. Abandon leaves the
-// outcome unknown for good, closes the instance, and frees it. It works on
+// outcome unknown for good, closes the instance, and frees it. Verify and
+// failed first check that the director has ended the instance's deploy
+// task, and answer deployment_locked while it runs. It works on
 // a cancelled task too, so a cancelled task never holds an instance with
 // nothing following it, and it needs no switch, since it writes nothing to
 // CredHub or the director.
@@ -398,6 +401,29 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	}
 
 	since := inst.Certificates.Pending.Since
+
+	// Verify and failed need the deploy to have ended, and abandon is the
+	// operator's override, so it goes ahead while the director still runs
+	// the deploy.
+	if req.Action != actionAbandon {
+		taskID, deployment := recordedDeployTask(inst), inst.DeploymentName
+
+		m.mu.Unlock()
+
+		err = m.deployTaskEnded(taskID, deployment)
+		if err != nil {
+			return err
+		}
+
+		m.mu.Lock()
+
+		err = sameDecisionLocked(task, inst, DecisionResolveDeployOutcome, "", since)
+		if err != nil {
+			m.mu.Unlock()
+
+			return err
+		}
+	}
 
 	var (
 		ok      bool
@@ -452,6 +478,63 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	m.resumeAfterDecision(ctx, task, req.Action != actionAbandon && !ok)
 
 	return nil
+}
+
+// recordedDeployTask returns the BOSH task ID of the instance's deploy,
+// from the task it follows or else from its deploy's recorded end, or 0
+// when it has neither. The caller holds mu.
+func recordedDeployTask(inst *InstanceUpgrade) int {
+	if taskID := followedTaskID(inst); taskID > 0 {
+		return taskID
+	}
+
+	if inst.Certificates != nil && inst.Certificates.Deploy != nil {
+		return inst.Certificates.Deploy.BOSHTaskID
+	}
+
+	return 0
+}
+
+// deployTaskEnded asks the director whether the instance's deploy task
+// has ended, under the manager's context, before a resolve settles the
+// instance by its outcome. A task that still runs answers 409
+// deployment_locked, and a task the director can't report on answers 500,
+// and either way the instance keeps waiting for the decision. An instance
+// with no recorded task has nothing to wait for.
+func (m *Manager) deployTaskEnded(taskID int, deployment string) error {
+	if taskID <= 0 {
+		return nil
+	}
+
+	boshTask, err := directorCall(m.ctx, func(c context.Context) (*bosh.Task, error) {
+		return m.director.GetTask(c, taskID)
+	})
+	if err != nil || boshTask == nil {
+		if err == nil {
+			err = errors.New("the director reported no task")
+		}
+
+		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
+			fmt.Sprintf("Blacksmith could not read director task %d of deployment %s, so the instance still waits for this decision: %v", taskID, deployment, err))
+	}
+
+	if directorTaskRunning(boshTask.State) {
+		return apierr.New(http.StatusConflict, apierr.CodeDeploymentLocked,
+			fmt.Sprintf("The director is still running task %d on deployment %s, so its outcome is not known yet. Wait for it to end, or abandon the instance.", taskID, deployment))
+	}
+
+	return nil
+}
+
+// directorTaskRunning reports whether a director task in the state given
+// has not ended.
+func directorTaskRunning(state string) bool {
+	switch state {
+	case "queued", "processing", "cancelling":
+		return true
+	default:
+		return false
+	}
 }
 
 // verifyNow runs a resolve's verification of the instance's deploy under
