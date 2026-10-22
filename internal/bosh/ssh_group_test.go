@@ -254,7 +254,7 @@ func TestDialSSHHostRefusesNoSession(t *testing.T) {
 	_, director, _ := newSSHAdapter(t, nil)
 
 	client, err := director.DialSSHHost(t.Context(), nil, sshconn.Host{Address: loopbackHost})
-	if err == nil || client != nil {
-		t.Errorf("DialSSHHost with no session returned %v and %v, want an error", client, err)
+	if !errors.Is(err, bosh.ErrSSHSessionMissing) || client != nil {
+		t.Errorf("DialSSHHost with no session returned %v and %v, want bosh.ErrSSHSessionMissing", client, err)
 	}
 }
