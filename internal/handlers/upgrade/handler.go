@@ -258,8 +258,8 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeCreateError answers a failed CreateTask. A request that names no
-// instance, no valid target, or a release version the director lacks is
-// a bad request. An instance another upgrade holds is a conflict, and a
+// instance, no valid target, a release version the director lacks, or a
+// kind this endpoint does not create is a bad request. An instance another upgrade holds is a conflict, and a
 // manager still loading the stored upgrades is not ready yet, so a client
 // can tell those from a failure.
 func writeCreateError(writer http.ResponseWriter, err error) {
@@ -268,13 +268,15 @@ func writeCreateError(writer http.ResponseWriter, err error) {
 		errors.Is(err, upgrade.ErrNoUpgradeTarget),
 		errors.Is(err, upgrade.ErrInvalidStemcell),
 		errors.Is(err, upgrade.ErrInvalidRelease),
-		errors.Is(err, upgrade.ErrReleaseNotOnDirector):
+		errors.Is(err, upgrade.ErrReleaseNotOnDirector),
+		errors.Is(err, upgrade.ErrInvalidTaskKind),
+		errors.Is(err, upgrade.ErrCertificateTaskKind):
 		response.WriteError(writer, http.StatusBadRequest, err.Error())
 	case errors.Is(err, upgrade.ErrInstanceBusy):
 		// The guard's error names the operation that holds the instance.
 		apierr.Write(writer, apierr.Wrap(http.StatusConflict, apierr.CodeInstanceBusy, err), http.StatusConflict)
 	case errors.Is(err, upgrade.ErrTasksLoading):
-		response.WriteError(writer, http.StatusServiceUnavailable, err.Error())
+		apierr.Write(writer, apierr.Wrap(http.StatusServiceUnavailable, apierr.CodeTasksLoading, err), http.StatusServiceUnavailable)
 	default:
 		response.HandleJSON(writer, nil, err)
 	}

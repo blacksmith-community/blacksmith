@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
 	upgradehandler "blacksmith/internal/handlers/upgrade"
@@ -98,6 +99,14 @@ func createCases() map[string]createCase {
 		"a version the director lacks": {
 			body:   `{"instance_ids":["i-1"],"target_releases":[{"name":"redis-forge","version":"9.9.10"}]}`,
 			status: http.StatusBadRequest, says: "redis-forge/9.9.10", listings: 1,
+		},
+		"a certificate task": {
+			body:   `{"kind":"certificates","instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,
+			status: http.StatusBadRequest, says: "CreateCertificateTask",
+		},
+		"an unknown kind": {
+			body:   `{"kind":"reboot","instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,
+			status: http.StatusBadRequest, says: "invalid task kind",
 		},
 		"a stemcell alone": {
 			body:   `{"instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,
@@ -279,4 +288,13 @@ func TestCreateTaskAnswersWhileLoadingWithServiceUnavailable(t *testing.T) {
 
 	recorder := postUpgrade(t, handler, `{"instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`)
 	expectError(t, recorder, http.StatusServiceUnavailable, "still loading")
+
+	var answer struct {
+		Code string `json:"code"`
+	}
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &answer)
+	if err != nil || answer.Code != apierr.CodeTasksLoading {
+		t.Fatalf("expected the code %s, got %s", apierr.CodeTasksLoading, recorder.Body.String())
+	}
 }
