@@ -247,7 +247,7 @@ func (m *Manager) PreviewUpgrade(ctx context.Context, req CreateTaskRequest) (*U
 	// which a director too old to accept it would ignore and so roll the
 	// patch back. A request with no diverged instance never asks.
 	if len(preview.Diverged) > 0 {
-		_, err = m.rotationDirector(ctx)
+		err = m.upgradeDirector(ctx, preview.Diverged[0].InstanceID)
 		if err != nil {
 			return nil, err
 		}
@@ -364,6 +364,25 @@ func (m *Manager) divergenceOfRetrying(ctx context.Context, instanceID string) (
 	}
 
 	return false, err
+}
+
+// upgradeDirector checks that the director can deploy the latest
+// certificates of the diverged instance, which its upgrade does with
+// force_latest_variables. A director too old for that answers 403
+// director_unsupported, worded for the upgrade.
+func (m *Manager) upgradeDirector(ctx context.Context, instanceID string) error {
+	_, unsupported, err := m.latestVariablesDirector(ctx)
+	if err != nil {
+		return err
+	}
+
+	if unsupported != "" {
+		return apierr.New(http.StatusForbidden, apierr.CodeDirectorUnsupported,
+			fmt.Sprintf("This upgrade would deploy the latest certificates for instance %s, and the BOSH director can't do that, because %s. Leave the instance out of the upgrade, or update the director first.",
+				instanceID, unsupported))
+	}
+
+	return nil
 }
 
 // divergenceSummary returns one reference for the whole record and the
@@ -584,16 +603,23 @@ func (m *Manager) divergedDeployOptions(ctx, persistCtx context.Context, task *U
 		return bosh.DeployOptions{}, false
 	}
 
-	_, err = m.rotationDirector(ctx)
+	err = m.upgradeDirector(ctx, instance.InstanceID)
 	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
 		m.returnToPending(persistCtx, task, instance, err)
 
 		return bosh.DeployOptions{}, false
 	}
 
+	var refusal *apierr.Error
+	if errors.As(err, &refusal) && refusal.Code == apierr.CodeDirectorUnsupported {
+		m.failInstance(persistCtx, task, instance, refusal.Message)
+
+		return bosh.DeployOptions{}, false
+	}
+
 	if err != nil {
 		m.failInstance(persistCtx, task, instance,
-			fmt.Sprintf("The BOSH director can't deploy this instance's latest variables, so Blacksmith did not deploy it: %v", err))
+			fmt.Sprintf("Blacksmith could not check that the BOSH director can deploy this instance's latest certificates, so it did not deploy it: %v", err))
 
 		return bosh.DeployOptions{}, false
 	}

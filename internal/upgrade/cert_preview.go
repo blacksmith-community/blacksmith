@@ -368,21 +368,43 @@ func (m *Manager) rotationDirector(ctx context.Context) (string, error) {
 		return "", apierr.New(http.StatusForbidden, apierr.CodeDirectorUnsupported, "Blacksmith has no BOSH director, so it can't rotate certificates.")
 	}
 
+	name, unsupported, err := m.latestVariablesDirector(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if unsupported != "" {
+		return "", apierr.New(http.StatusForbidden, apierr.CodeDirectorUnsupported, "Certificates can't be rotated, because "+unsupported+".")
+	}
+
+	return name, nil
+}
+
+// latestVariablesDirector asks the director for its name and checks that
+// its version accepts force_latest_variables. When it does not, it returns
+// the reason to show operators and no error, so each caller words the
+// refusal for what it was about to do. A director that can't be asked
+// returns an API error.
+func (m *Manager) latestVariablesDirector(ctx context.Context) (string, string, error) {
+	if m.director == nil {
+		return "", "Blacksmith has no BOSH director", nil
+	}
+
 	info, err := directorCall(ctx, m.director.GetInfo)
 	if err != nil {
-		return "", apierr.New(http.StatusInternalServerError, apierr.CodeInternal, fmt.Sprintf("The BOSH director did not report its version: %v", err))
+		return "", "", apierr.New(http.StatusInternalServerError, apierr.CodeInternal, fmt.Sprintf("The BOSH director did not report its version: %v", err))
 	}
 
 	if info == nil || info.Name == "" {
-		return "", apierr.New(http.StatusInternalServerError, apierr.CodeInternal, "The BOSH director did not report its name.")
+		return "", "", apierr.New(http.StatusInternalServerError, apierr.CodeInternal, "The BOSH director did not report its name.")
 	}
 
 	supported, reason := bosh.ForceLatestVariablesSupported(info.Version)
 	if !supported {
-		return "", apierr.New(http.StatusForbidden, apierr.CodeDirectorUnsupported, "Certificates can't be rotated, because "+reason+".")
+		return "", reason, nil
 	}
 
-	return info.Name, nil
+	return info.Name, "", nil
 }
 
 // previewTTL is how long a preview lives, from the certificate settings.

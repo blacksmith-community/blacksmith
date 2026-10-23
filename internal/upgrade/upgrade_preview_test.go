@@ -1014,32 +1014,97 @@ func TestUpgradeAnswers503WhenDivergenceUnreadable(t *testing.T) {
 //
 //nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
 func TestCreateUpgradeWithBadInstanceIDFailsOnlyThatInstance(t *testing.T) {
-	const badID = "a/b"
+	for _, badID := range []string{"a/b", ""} {
+		without := newDivergedEnv(t, false)
 
-	without := newDivergedEnv(t, false)
+		want, wantErr := without.manager.CreateTask(context.Background(), upgradeRequest(badID))
 
-	want, err := without.manager.CreateTask(context.Background(), upgradeRequest(badID))
-	if err != nil {
-		t.Fatalf("CreateTask without a divergence store: %v", err)
+		env := newDivergedEnv(t, true)
+
+		got, err := env.manager.CreateTask(context.Background(), upgradeRequest(badID))
+
+		// An empty ID is refused before any divergence read, as it always
+		// was, so the create fails the same way with or without a store.
+		if wantErr != nil {
+			if err == nil || err.Error() != wantErr.Error() {
+				t.Fatalf("%q: expected the create to fail with %v as it does without a store, got %v", badID, wantErr, err)
+			}
+
+			env.expectNothingCreated(t)
+
+			continue
+		}
+
+		if err != nil {
+			t.Fatalf("%q: CreateTask: %v", badID, err)
+		}
+
+		if got.Instances[0].Status != InstanceStatusFailed || got.Instances[0].Status != want.Instances[0].Status ||
+			got.Instances[0].Error != want.Instances[0].Error {
+			t.Fatalf("%q: expected the instance to fail as it does without a store (%s %q), got %s %q", badID,
+				want.Instances[0].Status, want.Instances[0].Error, got.Instances[0].Status, got.Instances[0].Error)
+		}
+
+		preview := env.preview(t, upgradeRequest(badID))
+		if len(preview.Diverged) != 0 {
+			t.Fatalf("%q: expected no diverged instance, got %+v", badID, preview.Diverged)
+		}
 	}
+}
 
+// A bad ID beside a clean instance fails only itself, and the clean
+// instance still deploys.
+//
+//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+func TestUpgradeWithBadInstanceIDStillDeploysCleanInstance(t *testing.T) {
 	env := newDivergedEnv(t, true)
 
-	got, err := env.manager.CreateTask(context.Background(), upgradeRequest(badID))
+	task, err := env.manager.CreateTask(context.Background(), upgradeRequest("a/b", waitInstanceID))
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	if got.Instances[0].Status != InstanceStatusFailed || got.Instances[0].Status != want.Instances[0].Status ||
-		got.Instances[0].Error != want.Instances[0].Error {
-		t.Fatalf("expected the instance to fail as it does without a store (%s %q), got %s %q",
-			want.Instances[0].Status, want.Instances[0].Error, got.Instances[0].Status, got.Instances[0].Error)
+	select {
+	case <-env.director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the clean instance never deployed")
 	}
 
-	preview := env.preview(t, upgradeRequest(badID))
-	if len(preview.Diverged) != 0 {
-		t.Fatalf("expected no diverged instance, got %+v", preview.Diverged)
+	if options := env.director.options(); len(options) != 0 {
+		t.Fatalf("expected a plain deploy, got %+v", options)
 	}
+
+	env.director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskDone}
+
+	saved := eventuallySaved(t, env.vault, task.ID, func(saved UpgradeTask) bool { return saved.Status == TaskStatusCompleted })
+
+	statuses := map[string]InstanceStatus{}
+	for _, inst := range saved.Instances {
+		statuses[inst.InstanceID] = inst.Status
+	}
+
+	if statuses["a/b"] != InstanceStatusFailed || statuses[waitInstanceID] != InstanceStatusSuccess {
+		t.Fatalf("expected a/b failed and %s succeeded, got %v", waitInstanceID, statuses)
+	}
+
+	if deploys := env.director.deploys.Load(); deploys != 1 {
+		t.Fatalf("expected one deploy, got %d", deploys)
+	}
+}
+
+// upgradeDirectorRefusal is the refusal an upgrade gives when the director
+// at version can't deploy the latest certificates of instanceID.
+func upgradeDirectorRefusal(t *testing.T, instanceID, version string) string {
+	t.Helper()
+
+	supported, reason := bosh.ForceLatestVariablesSupported(version)
+	if supported {
+		t.Fatalf("expected director %s to be too old", version)
+	}
+
+	return "This upgrade would deploy the latest certificates for instance " + instanceID +
+		", and the BOSH director can't do that, because " + reason +
+		". Leave the instance out of the upgrade, or update the director first."
 }
 
 func TestUpgradePreviewChecksDirectorOnlyWhenDiverged(t *testing.T) {
@@ -1059,6 +1124,18 @@ func TestUpgradePreviewChecksDirectorOnlyWhenDiverged(t *testing.T) {
 
 	_, err := env.manager.PreviewUpgrade(context.Background(), upgradeRequest(waitInstanceID, divergedInstance2))
 	expectAPIError(t, err, http.StatusForbidden, apierr.CodeDirectorUnsupported)
+
+	if want := upgradeDirectorRefusal(t, waitInstanceID, "278.0.0"); err.Error() != want {
+		t.Fatalf("expected %q, got %q", want, err.Error())
+	}
+
+	// Rotation keeps its own wording.
+	_, err = env.manager.rotationDirector(context.Background())
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeDirectorUnsupported)
+
+	if !strings.HasPrefix(err.Error(), "Certificates can't be rotated, because the director version 278.0.0 ") {
+		t.Fatalf("expected the rotation wording, got %q", err.Error())
+	}
 }
 
 //nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
@@ -1090,8 +1167,8 @@ func TestUpgradeOfDivergedInstanceChecksDirector(t *testing.T) {
 		return saved.Instances[0].Status == InstanceStatusFailed
 	})
 
-	if message := saved.Instances[0].Error; !strings.Contains(message, "278.0.0") {
-		t.Fatalf("expected a failure naming the director version, got %q", message)
+	if message, want := saved.Instances[0].Error, upgradeDirectorRefusal(t, waitInstanceID, "278.0.0"); message != want {
+		t.Fatalf("expected %q, got %q", want, message)
 	}
 
 	if deploys := env.director.deploys.Load(); deploys != 0 {
