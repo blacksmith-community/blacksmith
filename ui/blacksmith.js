@@ -5612,6 +5612,83 @@
   // What one certificate instance shows under its name: the phase, each
   // variable's old and new serial and expiry with its checks, and the
   // decision it waits on or the remediation for a failure.
+  // A failed instance offers a remediation. So does a patch that stopped
+  // part way, because some VM then holds a patched file that BOSH does not
+  // record.
+  const needsRemediation = (task, instance) => {
+    if (instance.status === 'failed') return true;
+    const patch = task.certificates && task.certificates.mode === 'patch';
+    if (!patch || !['cancelled', 'outcome_unknown'].includes(instance.status)) return false;
+    const vms = instance.certificates && Array.isArray(instance.certificates.vms) ? instance.certificates.vms : [];
+    return vms.some((vm) => vm && !['planned', 'staged', 'backed_up', 'rolled_back', 'reverted'].includes(vm.phase));
+  };
+
+  const humanize = (value) => String(value || 'unknown').replace(/_/g, ' ');
+
+  // The expandable list of VMs under a certificate instance. Each VM is a
+  // details element with a stable keep key, so the open ones stay open
+  // when the panel redraws on a poll.
+  const buildVmList = (task, instance, rotation) => {
+    const vms = Array.isArray(rotation.vms) ? rotation.vms.filter(Boolean) : [];
+    if (vms.length === 0) return null;
+    const list = rotateEl('div', 'cert-task-vms');
+    list.setAttribute('role', 'group');
+    list.setAttribute('aria-label', 'VMs of this instance');
+    vms.forEach((vm, position) => {
+      const name = String(vm.vm || vm.cid || `${vm.group || 'vm'}/${vm.index === undefined ? position : vm.index}`);
+      const details = document.createElement('details');
+      details.className = 'cert-task-vm';
+      details.dataset.keepKey = `vm:${task.id}:${instance.instance_id}:${name}`;
+      const summary = document.createElement('summary');
+      summary.appendChild(rotateEl('span', 'cert-task-vm-name', name));
+      summary.appendChild(rotateEl('span', 'cert-task-vm-phase', humanize(vm.phase)));
+      details.appendChild(summary);
+
+      const files = Array.isArray(vm.files) ? vm.files.filter(Boolean) : [];
+      if (files.length > 0) {
+        const ul = rotateEl('ul', 'cert-task-vm-files');
+        files.forEach((file) => {
+          ul.appendChild(rotateEl('li', null, `${file.path || 'file'}, ${humanize(file.role)}, ${humanize(file.state)}`));
+        });
+        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Files'));
+        details.appendChild(ul);
+      }
+      const processes = Array.isArray(vm.processes) ? vm.processes.filter(Boolean) : [];
+      if (processes.length > 0) {
+        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Processes'));
+        const ul = rotateEl('ul', 'cert-task-vm-processes');
+        processes.forEach((process) => {
+          const label = typeof process === 'string' ? process : [process.name, process.state].filter(Boolean).join(', ');
+          ul.appendChild(rotateEl('li', null, String(label)));
+        });
+        details.appendChild(ul);
+      }
+      const targets = Array.isArray(vm.targets) ? vm.targets.filter(Boolean) : [];
+      if (targets.length > 0) {
+        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Verification'));
+        const ul = rotateEl('ul', 'cert-task-vm-targets');
+        targets.forEach((target) => {
+          const result = target.ok ? 'passed' : 'failed';
+          const where = [target.variable, target.port ? `port ${target.port}` : ''].filter(Boolean).join(' ');
+          ul.appendChild(rotateEl('li', null, `${where || 'target'} by ${humanize(target.method)}, ${result}${target.detail ? `. ${target.detail}` : ''}`));
+        });
+        details.appendChild(ul);
+      }
+      if (vm.gate_after) {
+        const gate = vm.gate_after;
+        const text = typeof gate === 'string' ? gate : [gate.ok === true ? 'passed' : (gate.ok === false ? 'failed' : ''), gate.detail].filter(Boolean).join('. ');
+        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Health gate'));
+        details.appendChild(rotateEl('p', 'cert-task-vm-gate', String(text || 'recorded')));
+      }
+      if (vm.error) {
+        const err = rotateEl('p', 'cert-task-vm-error', String(vm.error));
+        details.appendChild(err);
+      }
+      list.appendChild(details);
+    });
+    return list;
+  };
+
   const buildCertificateInstance = (task, instance, error) => {
     const wrap = rotateEl('div', 'cert-task-instance');
     const rotation = instance.certificates;
@@ -5632,6 +5709,8 @@
         });
         wrap.appendChild(list);
       }
+      const vmList = buildVmList(task, instance, rotation);
+      if (vmList) wrap.appendChild(vmList);
     }
     const panel = buildDecisionPanel(task, instance);
     if (panel) wrap.appendChild(panel);
@@ -5643,7 +5722,7 @@
       box.dataset.keepKey = `decision-error:${box.dataset.decisionError}`;
       wrap.appendChild(box);
     }
-    if (instance.status === 'failed') wrap.appendChild(buildRemediation(task, instance));
+    if (needsRemediation(task, instance)) wrap.appendChild(buildRemediation(task, instance));
     return wrap;
   };
 
@@ -18884,6 +18963,75 @@
       Array.from(rotationWatches.keys()).forEach((instanceId) => { checkRotationWatch(instanceId); });
     }
 
+    // Which VMs hold which certificate, read from the probe observations of
+    // the diverged certificates. A locator reads group/index:port, and the
+    // part before the colon names the VM. The instance endpoint does not
+    // return the divergence record itself, so this is what we can show.
+    const divergenceHolders = (diverged) => {
+      const holders = new Map();
+      diverged.forEach((cert) => {
+        (Array.isArray(cert.observations) ? cert.observations : []).forEach((obs) => {
+          if (!obs || obs.source !== 'probe' || obs.state === 'failed' || obs.state === 'stale') return;
+          if (obs.matches !== 'latest' && obs.matches !== 'deployed') return;
+          const vm = String(obs.locator || 'a listener').split(':')[0];
+          if (!holders.has(vm)) holders.set(vm, new Set());
+          holders.get(vm).add(obs.matches);
+        });
+      });
+      return Array.from(holders.entries()).map(([vm, kinds]) => {
+        const text = kinds.has('latest') && kinds.has('deployed')
+          ? 'holds both the patched and the old certificate'
+          : (kinds.has('latest') ? 'holds the patched certificate' : 'holds the old certificate');
+        return `${vm} ${text}`;
+      });
+    };
+
+    // The banner an unconverged or reverted instance shows on its Overview.
+    const divergenceBanner = (certs, instanceId, instanceName, rotateHost, container, reload) => {
+      const diverged = certs.filter((cert) => cert && cert.divergence
+        && (cert.divergence.state === 'unconverged' || cert.divergence.state === 'reverted'));
+      if (diverged.length === 0) return null;
+      const reverted = diverged.some((cert) => cert.divergence.state === 'reverted');
+      const box = notice('warn', 'status');
+      box.classList.add('cert-ov-divergence');
+      box.id = `cert-ov-divergence-${String(instanceId).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+      const text = el('div', 'cert-notice-text');
+      text.appendChild(el('strong', null, reverted ? 'Some VMs went back to the old certificate' : 'BOSH has not converged this instance'));
+      const since = diverged.map((cert) => timeText(cert.divergence.since)).filter(Boolean)[0];
+      text.appendChild(el('p', 'cert-ov-divergence-lead', reverted
+        ? 'After a patch, at least one VM returned to the certificate BOSH holds on record.'
+        : `We patched the certificates in place${since ? ` at ${since}` : ''}, and BOSH still records the old ones.`));
+      const holders = divergenceHolders(diverged);
+      if (holders.length > 0) {
+        const list = el('ul', 'cert-ov-divergence-vms');
+        holders.forEach((line) => list.appendChild(el('li', null, line)));
+        text.appendChild(list);
+      } else {
+        text.appendChild(el('p', 'cert-muted', 'We could not read which VMs hold which version. Run a scan with listener probes on to see them.'));
+      }
+      text.appendChild(el('p', 'cert-ov-divergence-risk', 'A recreate or a resurrection restores the old certificate until the instance converges.'));
+      box.appendChild(text);
+      const converge = button('cert-action-btn cert-ov-converge', 'Converge now');
+      converge.addEventListener('click', async () => {
+        if (converge.getAttribute('aria-disabled') === 'true') return;
+        converge.setAttribute('aria-disabled', 'true');
+        try {
+          await window.blacksmithRotate.previewAndCreate({
+            mode: 'converge',
+            selections: [{ instance_id: instanceId, variables: [] }],
+            origin: 'instance-banner',
+            container: rotateHost,
+            onCreated: (task) => { watchRotation(container, instanceId, task && task.id, reload); }
+          });
+        } finally {
+          converge.removeAttribute('aria-disabled');
+        }
+        if (converge.isConnected) converge.focus({ preventScroll: true });
+      });
+      box.appendChild(converge);
+      return box;
+    };
+
     const watchRotation = (container, instanceId, taskId, reload) => {
       if (!taskId) return;
       dropRotationWatch(instanceId);
@@ -18971,6 +19119,9 @@
         warn.appendChild(retry);
         nodes.push(warn);
       }
+
+      const banner = divergenceBanner(certs, instanceId, String(instanceName), rotateHost, container, reload);
+      if (banner) nodes.push(banner);
 
       if (certs.length === 0) {
         nodes.push(el('p', 'cert-muted', 'This instance has no certificates in the inventory.'));

@@ -13521,3 +13521,20 @@ span.config-type.resurrection {
 .cert-rotate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .cert-rotate-selected { margin-left: auto; }
 .cert-rotate-selected-note { font-size: 0.85em; }
+
+/* Divergence banner on an instance Overview. */
+.cert-ov-divergence { align-items: flex-start; gap: 0.75rem; }
+.cert-ov-divergence .cert-notice-text { flex: 1 1 auto; min-width: 0; }
+.cert-ov-divergence p { margin: 0.25rem 0 0; }
+.cert-ov-divergence-vms { margin: 0.25rem 0 0; padding-left: 1.25rem; }
+
+/* Expandable VM list in a certificate task. */
+.cert-task-vms { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem; }
+.cert-task-vm { border: 1px solid var(--border-primary); border-radius: 4px; padding: 0.25rem 0.5rem; }
+.cert-task-vm summary { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; cursor: pointer; }
+.cert-task-vm-name { font-weight: 600; }
+.cert-task-vm-phase { color: var(--text-secondary); font-size: 0.85em; }
+.cert-task-vm-label { margin-top: 0.4rem; font-weight: 600; font-size: 0.85em; }
+.cert-task-vm ul { margin: 0.15rem 0 0; padding-left: 1.25rem; }
+.cert-task-vm-gate, .cert-task-vm-error { margin: 0.15rem 0 0; }
+.cert-task-vm-error { color: var(--cert-critical); }
