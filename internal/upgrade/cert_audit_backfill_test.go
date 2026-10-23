@@ -77,7 +77,7 @@ func TestAuditBackfillsASettleLostToACrash(t *testing.T) {
 	waitUntil(t, "the rebuilt records", func() bool { return first.auditIdle() && puts.count() >= 2 })
 
 	settled := trail.find(t, AuditInstanceSettled)
-	if settled.ID != auditID(certTaskID, waitInstanceID, AuditInstanceSettled, "") || settled.Actor != "alice" || settled.From != "10.0.0.5:4000" {
+	if settled.ID != auditID(certTaskID, waitInstanceID, AuditInstanceSettled, string(InstanceStatusSuccess)) || settled.Actor != "alice" || settled.From != "10.0.0.5:4000" {
 		t.Fatalf("unexpected rebuilt settle record: %+v", settled)
 	}
 
@@ -301,5 +301,51 @@ func TestAuditReplayWritesNoNewDecisionRecord(t *testing.T) {
 
 	if count != 1 {
 		t.Fatalf("expected one abandoned record for the replayed request, got %v", trail.events())
+	}
+}
+
+// A settle record that landed before a crash, ahead of the save that held
+// the instance's outcome, does not hide the outcome the reloaded task has.
+// The settle ID names the outcome, so a different outcome gets its own
+// record. The record is queued when the instance settles in memory, not
+// after the settling save is confirmed, so this is how the case is covered.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditSettleWithAnotherOutcomeGetsItsOwnRecord(t *testing.T) {
+	env := newRedeployEnv(t)
+	trail := env.watchAudit()
+
+	task := env.task()
+	task.Instances[0].Status = InstanceStatusRunning
+
+	first := env.load(task)
+	first.mu.Lock()
+	live := first.tasks[certTaskID]
+	first.mu.Unlock()
+
+	first.settleCertificateInstance(live, &live.Instances[0], false, "refused")
+	trail.waitFor(t, AuditInstanceSettled)
+	waitUntil(t, "the audit queue", first.auditIdle)
+	first.Stop()
+
+	// The settling save never landed. The task Vault holds settles as a
+	// success after the restart.
+	storeCertificateTask(t, env.vault.waitVault, env.settledTask())
+
+	second := env.newManager()
+	second.Start()
+	waitForLoad(t, second)
+	waitUntil(t, "the rebuilt records", func() bool { return second.auditIdle() && len(trail.all()) >= 3 })
+
+	var outcomes []string
+
+	for _, rec := range trail.all() {
+		if rec.Event == AuditInstanceSettled {
+			outcomes = append(outcomes, rec.Outcome)
+		}
+	}
+
+	if strings.Join(outcomes, ",") != "failed,success" {
+		t.Fatalf("expected a record for each outcome, got %v", outcomes)
 	}
 }

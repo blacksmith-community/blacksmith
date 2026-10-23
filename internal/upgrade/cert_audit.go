@@ -152,20 +152,23 @@ func (m *Manager) writeAudit(ctx context.Context, rec AuditRecord) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
 	defer cancel()
 
-	err := m.vault.Put(ctx, certificateAuditVaultPath+"/"+rec.ID, rec)
-	if err != nil {
-		return fmt.Errorf("writing the record: %w", err)
-	}
-
 	var index map[string]interface{}
 
-	_, err = m.vault.Get(ctx, certificateAuditVaultPath, &index)
+	_, err := m.vault.Get(ctx, certificateAuditVaultPath, &index)
 	if err != nil {
 		return fmt.Errorf("reading the index: %w", err)
 	}
 
+	// An ID the index names was written whole, and a record is never
+	// rewritten. A body that landed without its index entry is written
+	// again, which finishes the earlier try.
 	if _, named := index[rec.ID]; named {
 		return nil
+	}
+
+	err = m.vault.Put(ctx, certificateAuditVaultPath+"/"+rec.ID, rec)
+	if err != nil {
+		return fmt.Errorf("writing the record: %w", err)
 	}
 
 	// A copy keeps every ID the index already names, and adds this one.
@@ -411,6 +414,10 @@ func (m *Manager) enqueueAuditOnceLocked(rec AuditRecord) {
 func (m *Manager) settleRecordLocked(task *UpgradeTask, inst *InstanceUpgrade) AuditRecord {
 	rec := m.auditRecordLocked(task, inst, AuditInstanceSettled)
 	rec.Outcome = string(inst.Status)
+
+	// The ID names the outcome, so a record that landed before a crash
+	// never hides a different outcome the reloaded instance settles with.
+	rec.ID = auditID(task.ID, inst.InstanceID, AuditInstanceSettled, rec.Outcome)
 
 	if inst.Certificates != nil {
 		for _, journal := range inst.Certificates.VMs {

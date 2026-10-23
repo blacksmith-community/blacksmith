@@ -685,3 +685,27 @@ func TestAuditStartSkipsACancelledTask(t *testing.T) {
 	manager.startProcessing(&started)
 	trail.waitFor(t, AuditTaskStarted)
 }
+
+// A record the index already names is never written again, so its body
+// stays as it was first saved.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditNeverRewritesAnIndexedRecord(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.newManager()
+
+	first := AuditRecord{ID: "kept", At: validateNow.Add(10 * time.Minute), Event: AuditSkipped, TaskID: certTaskID}
+	manager.audit(context.Background(), first)
+
+	later := first
+	later.At = validateNow
+
+	manager.audit(context.Background(), later)
+
+	var stored AuditRecord
+
+	found, err := env.vault.Get(context.Background(), certificateAuditVaultPath+"/kept", &stored)
+	if err != nil || !found || !stored.At.Equal(first.At) {
+		t.Fatalf("expected the first body kept, got %+v (found %v, %v)", stored, found, err)
+	}
+}
