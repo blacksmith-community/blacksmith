@@ -270,7 +270,11 @@ func TestAuditHoldsNoPEM(t *testing.T) {
 
 	ctx := audit.WithActor(context.Background(), audit.Actor{Username: "bob\n" + key, RemoteAddr: "10.0.0.9:5000"})
 
-	manager.auditDecision(ctx, certTaskID, inst, DecisionApproveChangedEffects, actionSkip, pem)
+	manager.mu.Lock()
+	recordDecisionLocked(inst, "skip-1", "digest", manager.decisionAuditLocked(ctx, DecisionApproveChangedEffects, actionSkip, pem))
+	manager.auditDecisionLocked(manager.tasks[certTaskID], inst)
+	manager.mu.Unlock()
+
 	manager.settleCertificateInstance(manager.tasks[certTaskID], inst, true, "")
 	trail.waitFor(t, AuditInstanceSettled)
 	waitUntil(t, "the audit records", manager.auditIdle)

@@ -46,6 +46,11 @@ func (r *InstanceRotation) Clone() *InstanceRotation {
 	copied.Deploy = r.Deploy.Clone()
 	copied.Pending = r.Pending.Clone()
 
+	if r.Decision != nil {
+		decision := *r.Decision
+		copied.Decision = &decision
+	}
+
 	return &copied
 }
 

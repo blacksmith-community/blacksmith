@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 
@@ -202,16 +203,16 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 
 	if req.Action == actionSkip {
 		now := m.certNowLocked()
+		decision := m.decisionAuditLocked(ctx, DecisionApproveChangedEffects, actionSkip, "")
 
 		err = m.applyConfirmedLocked(ctx, task, inst, func(task *UpgradeTask, inst *InstanceUpgrade) {
 			skipInstanceLocked(task, inst, now)
-			recordDecisionLocked(inst, req.ClientRequestID, digest)
+			recordDecisionLocked(inst, req.ClientRequestID, digest, decision)
 		})
 		if err != nil {
 			return err
 		}
 
-		m.auditDecision(ctx, task.ID, inst, DecisionApproveChangedEffects, actionSkip, "")
 		m.resumeAfterDecision(ctx, task, false)
 
 		return nil
@@ -230,11 +231,10 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 	inst.Certificates.Pending = nil
 	inst.Status = InstanceStatusRunning
 	inst.Error = ""
-	recordDecisionLocked(inst, req.ClientRequestID, digest)
+	recordDecisionLocked(inst, req.ClientRequestID, digest, m.decisionAuditLocked(ctx, DecisionApproveChangedEffects, "approve", "preview "+preview.ID))
 
+	m.auditDecisionLocked(task, inst)
 	m.mu.Unlock()
-
-	m.auditDecision(ctx, task.ID, inst, DecisionApproveChangedEffects, "approve", "preview "+preview.ID)
 
 	return m.saveDecision(ctx, task, false)
 }
@@ -294,16 +294,16 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 
 	if req.Action == actionAbandon {
 		now := m.certNowLocked()
+		decision := m.decisionAuditLocked(ctx, DecisionReconcileRegeneration, actionAbandon, "variable "+req.Variable)
 
 		err = m.applyConfirmedLocked(ctx, task, inst, func(task *UpgradeTask, inst *InstanceUpgrade) {
 			abandonRegenerationLocked(task, inst, now)
-			recordDecisionLocked(inst, req.ClientRequestID, digest)
+			recordDecisionLocked(inst, req.ClientRequestID, digest, decision)
 		})
 		if err != nil {
 			return err
 		}
 
-		m.auditDecision(ctx, task.ID, inst, DecisionReconcileRegeneration, actionAbandon, "variable "+req.Variable)
 		m.resumeAfterDecision(ctx, task, true)
 
 		return nil
@@ -351,11 +351,10 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 	inst.Certificates.Pending = nil
 	inst.Status = InstanceStatusRunning
 	inst.Error = ""
-	recordDecisionLocked(inst, req.ClientRequestID, digest)
+	recordDecisionLocked(inst, req.ClientRequestID, digest, m.decisionAuditLocked(ctx, DecisionReconcileRegeneration, actionAdopt, "variable "+req.Variable+" version "+req.VersionID))
 
+	m.auditDecisionLocked(task, inst)
 	m.mu.Unlock()
-
-	m.auditDecision(ctx, task.ID, inst, DecisionReconcileRegeneration, actionAdopt, "variable "+req.Variable+" version "+req.VersionID)
 
 	return m.saveDecision(ctx, task, false)
 }
@@ -462,6 +461,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	}
 
 	now := m.certNowLocked()
+	decision := m.decisionAuditLocked(ctx, DecisionResolveDeployOutcome, req.Action, detail)
 
 	err = m.applyConfirmedLocked(ctx, task, inst, func(task *UpgradeTask, inst *InstanceUpgrade) {
 		if req.Action == actionAbandon {
@@ -470,13 +470,12 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 			settleOutcomeLocked(task, inst, ok, message, now)
 		}
 
-		recordDecisionLocked(inst, req.ClientRequestID, digest)
+		recordDecisionLocked(inst, req.ClientRequestID, digest, decision)
 	})
 	if err != nil {
 		return err
 	}
 
-	m.auditDecision(ctx, task.ID, inst, DecisionResolveDeployOutcome, req.Action, detail)
 	m.resumeAfterDecision(ctx, task, req.Action != actionAbandon && !ok)
 
 	return nil
@@ -764,8 +763,12 @@ func capitalFirst(text string) string {
 }
 
 // recordDecisionLocked records the request ID and digest of the decision
-// applied, so a repeat of it applies once. The caller holds mu.
-func recordDecisionLocked(inst *InstanceUpgrade, requestID, digest string) {
+// applied, so a repeat of it applies once, and the decision's audit
+// details, so the record is rebuilt after a crash. The caller holds mu.
+func recordDecisionLocked(inst *InstanceUpgrade, requestID, digest string, decision DecisionAudit) {
+	decision.Outcome = string(inst.Status)
+	inst.Certificates.Decision = &decision
+
 	if requestID == "" {
 		return
 	}
@@ -964,6 +967,10 @@ func (m *Manager) applyConfirmedLocked(ctx context.Context, task *UpgradeTask, i
 	// nothing else answers a decision, so the instance still waits for it.
 	apply(task, inst)
 	task.Revision = max(task.Revision, draft.Revision)
+
+	// The decision is recorded before the settle it causes.
+	m.auditDecisionLocked(task, inst)
+
 	rescan := m.endCertificateInstanceLocked(task, inst) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	m.mu.Unlock()
@@ -1105,12 +1112,11 @@ func anyPendingLocked(task *UpgradeTask) bool {
 	return slices.ContainsFunc(task.Instances, func(inst InstanceUpgrade) bool { return inst.Status == InstanceStatusPending })
 }
 
-// auditDecision queues the audit record of an operator's decision. It
-// names the task, the instance, the decision, and the choice, who decided
-// and from where, and never a certificate or key. The record's event is
-// the choice: adopted, abandoned, approved, skipped, or, for a resolution
-// that settled the instance, verified or marked_failed.
-func (m *Manager) auditDecision(ctx context.Context, taskID string, inst *InstanceUpgrade, kind, choice, detail string) {
+// decisionAuditLocked builds the audit details of a decision from the
+// request's actor and the time now. The choice names the event, which is
+// adopted, abandoned, approved, skipped, or, for a resolution that settled
+// the instance, verified or marked_failed. The caller holds mu.
+func (m *Manager) decisionAuditLocked(ctx context.Context, kind, choice, detail string) DecisionAudit {
 	var event string
 
 	switch choice {
@@ -1127,10 +1133,15 @@ func (m *Manager) auditDecision(ctx context.Context, taskID string, inst *Instan
 	case actionFailed:
 		event = AuditMarkedFailed
 	default:
-		m.logger.Error("audit=certificate-rotation task=%s decision=%s has no event for the choice %q", taskID, kind, choice)
-
-		return
+		m.logger.Error("audit=certificate-rotation decision=%s has no event for the choice %q", kind, choice)
 	}
 
-	m.auditDecisionRecord(ctx, taskID, inst, event, kind+": "+strings.TrimSpace(choice+" "+detail))
+	decision := DecisionAudit{Event: event, Detail: kind + ": " + strings.TrimSpace(choice+" "+detail), At: m.certNowLocked()}
+
+	if actor, found := audit.ActorFrom(ctx); found {
+		decision.Actor = actor.Username
+		decision.From = actor.From()
+	}
+
+	return decision
 }

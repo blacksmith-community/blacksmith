@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-
-	"blacksmith/internal/audit"
 )
 
 // certificateAuditVaultPath is the index of the audit records, and each
@@ -323,8 +322,13 @@ func (m *Manager) auditIdle() bool {
 // recorded. inst may be nil for an event of the task as a whole. The
 // caller holds mu.
 func (m *Manager) auditRecordLocked(task *UpgradeTask, inst *InstanceUpgrade, event string) AuditRecord {
+	instanceID := ""
+	if inst != nil {
+		instanceID = inst.InstanceID
+	}
+
 	rec := AuditRecord{
-		ID:     uuid.New().String(),
+		ID:     auditID(task.ID, instanceID, event, ""),
 		At:     m.certNowLocked(),
 		Event:  event,
 		TaskID: task.ID,
@@ -375,6 +379,54 @@ func (m *Manager) auditRecordLocked(task *UpgradeTask, inst *InstanceUpgrade, ev
 	return rec
 }
 
+// auditNamespace is the fixed namespace of the audit record IDs.
+var auditNamespace = uuid.MustParse("6f1c2a52-8d0e-4b6e-9a43-0c7b1d5e2f90")
+
+// auditID derives a record's ID from what it records, so the record of
+// one event has the same ID however many times it is built. A settle is
+// keyed by the task, the instance, and the event, a start by the task and
+// the event, and a decision also by its request ID.
+func auditID(taskID, instanceID, event, requestID string) string {
+	return uuid.NewSHA1(auditNamespace, []byte(strings.Join([]string{taskID, instanceID, event, requestID}, "/"))).String()
+}
+
+// enqueueAuditOnceLocked queues the record unless one with its ID was
+// queued or found in the index already. The caller holds mu.
+func (m *Manager) enqueueAuditOnceLocked(rec AuditRecord) {
+	if m.audited[rec.ID] {
+		return
+	}
+
+	if m.audited == nil {
+		m.audited = make(map[string]bool)
+	}
+
+	m.audited[rec.ID] = true
+
+	m.enqueueAuditLocked(rec)
+}
+
+// settleRecordLocked builds the instance_settled record of a settled
+// instance from what the task holds. The caller holds mu.
+func (m *Manager) settleRecordLocked(task *UpgradeTask, inst *InstanceUpgrade) AuditRecord {
+	rec := m.auditRecordLocked(task, inst, AuditInstanceSettled)
+	rec.Outcome = string(inst.Status)
+
+	if inst.Certificates != nil {
+		for _, journal := range inst.Certificates.VMs {
+			rec.VMs = append(rec.VMs, AuditVM{Group: journal.Group, Index: journal.Index, Phase: string(journal.Phase)})
+		}
+	}
+
+	// Without a divergence store nothing is confirmed cleared.
+	if convergesLocked(task, inst) && m.deps.Divergence != nil {
+		cleared := inst.Status == InstanceStatusSuccess
+		rec.DivergenceCleared = &cleared
+	}
+
+	return rec
+}
+
 // auditSettledLocked queues an instance_settled record for each instance
 // of the certificate task that has settled and has none yet. An instance
 // that still waits for a decision has not settled. The caller holds mu.
@@ -385,86 +437,151 @@ func (m *Manager) auditSettledLocked(task *UpgradeTask) {
 			continue
 		}
 
-		key := task.ID + "/" + inst.InstanceID
-		if m.audited[key] {
-			continue
-		}
-
-		if m.audited == nil {
-			m.audited = make(map[string]bool)
-		}
-
-		m.audited[key] = true
-
-		rec := m.auditRecordLocked(task, inst, AuditInstanceSettled)
-		rec.Outcome = string(inst.Status)
-
-		if inst.Certificates != nil {
-			for _, journal := range inst.Certificates.VMs {
-				rec.VMs = append(rec.VMs, AuditVM{Group: journal.Group, Index: journal.Index, Phase: string(journal.Phase)})
-			}
-		}
-
-		// Without a divergence store nothing is confirmed cleared.
-		if convergesLocked(task, inst) && m.deps.Divergence != nil {
-			cleared := inst.Status == InstanceStatusSuccess
-			rec.DivergenceCleared = &cleared
-		}
-
-		m.enqueueAuditLocked(rec)
+		m.enqueueAuditOnceLocked(m.settleRecordLocked(task, inst))
 	}
 }
 
-// markAuditedLocked notes that every settled instance of a loaded task was
-// recorded before the restart, so only an instance that settles later
-// gets a record. The caller holds mu.
-func (m *Manager) markAuditedLocked(task *UpgradeTask) {
-	if task.KindOrDefault() != TaskKindCertificates {
-		return
+// decisionRecordLocked builds the record of the instance's latest decision
+// from the details saved with it, or reports false when it has none. The
+// caller holds mu.
+func (m *Manager) decisionRecordLocked(task *UpgradeTask, inst *InstanceUpgrade) (AuditRecord, bool) {
+	if inst.Certificates == nil || inst.Certificates.Decision == nil || inst.Certificates.Decision.Event == "" {
+		return AuditRecord{}, false
 	}
 
-	for i := range task.Instances {
-		inst := &task.Instances[i]
-		if !inst.Status.settled() || waitsForDecision(inst) {
-			continue
-		}
+	decision := inst.Certificates.Decision
 
-		if m.audited == nil {
-			m.audited = make(map[string]bool)
-		}
+	rec := m.auditRecordLocked(task, inst, decision.Event)
+	rec.ID = auditID(task.ID, inst.InstanceID, decision.Event, inst.Certificates.DecisionRequestID)
+	rec.At = decision.At
+	rec.Detail = decision.Detail
+	rec.Outcome = decision.Outcome
 
-		m.audited[task.ID+"/"+inst.InstanceID] = true
+	if decision.Actor != "" || decision.From != "" {
+		rec.Actor = decision.Actor
+		rec.From = decision.From
 	}
+
+	return rec, true
 }
 
-// auditStartLocked queues the task_started record. The caller holds mu.
-func (m *Manager) auditStartLocked(task *UpgradeTask) {
-	rec := m.auditRecordLocked(task, nil, AuditTaskStarted)
-	rec.Outcome = "started"
-	rec.Detail = fmt.Sprintf("%d instances", len(task.Instances))
-
-	m.enqueueAuditLocked(rec)
-}
-
-// auditDecisionRecord queues the record of an operator's decision on an
-// instance, with the actor and address of the request that made it.
-func (m *Manager) auditDecisionRecord(ctx context.Context, taskID string, inst *InstanceUpgrade, event, detail string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	task, ok := m.tasks[taskID]
+// auditDecisionLocked queues the record of the decision just applied to
+// the instance, with the operator and address of the request. The caller
+// holds mu.
+func (m *Manager) auditDecisionLocked(task *UpgradeTask, inst *InstanceUpgrade) {
+	rec, ok := m.decisionRecordLocked(task, inst)
 	if !ok {
 		return
 	}
 
-	rec := m.auditRecordLocked(task, inst, event)
-	rec.Detail = detail
-	rec.Outcome = string(inst.Status)
+	m.enqueueAuditOnceLocked(rec)
+}
 
-	if actor, found := audit.ActorFrom(ctx); found {
-		rec.Actor = actor.Username
-		rec.From = actor.From()
+// startRecordLocked builds the task_started record. The caller holds mu.
+func (m *Manager) startRecordLocked(task *UpgradeTask) AuditRecord {
+	rec := m.auditRecordLocked(task, nil, AuditTaskStarted)
+	rec.Outcome = "started"
+	rec.Detail = fmt.Sprintf("%d instances", len(task.Instances))
+
+	return rec
+}
+
+// auditStartLocked queues the task_started record. The caller holds mu.
+func (m *Manager) auditStartLocked(task *UpgradeTask) {
+	m.enqueueAuditOnceLocked(m.startRecordLocked(task))
+}
+
+// backfillAudit writes the audit records that the loaded certificate tasks
+// lack, rebuilt from what the tasks persisted, so a crash between a settle
+// and its audit write loses nothing. It reads the audit index once. A
+// record's ID comes from what it records, so a record that is in the index
+// is not written again, and a second load writes nothing new. A record
+// carries the time its event persisted: the start, the decision, or the
+// instance's completion. This covers the instances that settle while the
+// tasks load, such as those of a task whose creation was never confirmed.
+// It reports false when Stop ended the read of the index.
+func (m *Manager) backfillAudit(loaded []*UpgradeTask) bool {
+	var certificateTasks []*UpgradeTask
+
+	for _, task := range loaded {
+		if task.KindOrDefault() == TaskKindCertificates {
+			certificateTasks = append(certificateTasks, task)
+		}
 	}
 
-	m.enqueueAuditLocked(rec) //nolint:contextcheck // the write outlives the request, so it runs on the manager's lifecycle context
+	if len(certificateTasks) == 0 {
+		return true
+	}
+
+	var index map[string]interface{}
+
+	_, ok := m.readWithRetry("the certificate audit index from Vault", func(ctx context.Context) (bool, error) {
+		index = nil
+
+		return m.vault.Get(ctx, certificateAuditVaultPath, &index)
+	})
+	if !ok {
+		return false
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id := range index {
+		if m.audited == nil {
+			m.audited = make(map[string]bool)
+		}
+
+		m.audited[id] = true
+	}
+
+	for _, task := range certificateTasks {
+		m.backfillTaskLocked(task)
+	}
+
+	return true
+}
+
+// backfillTaskLocked queues the records of one loaded task that are not
+// in the index, in the order the events happened. The caller holds mu.
+func (m *Manager) backfillTaskLocked(task *UpgradeTask) {
+	if task.StartedAt != nil && !neverStarted(task) {
+		rec := m.startRecordLocked(task)
+		rec.At = *task.StartedAt
+
+		m.enqueueAuditOnceLocked(rec)
+	}
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+
+		if rec, ok := m.decisionRecordLocked(task, inst); ok {
+			m.enqueueAuditOnceLocked(rec)
+		}
+
+		if !inst.Status.settled() || waitsForDecision(inst) {
+			continue
+		}
+
+		rec := m.settleRecordLocked(task, inst)
+
+		switch {
+		case inst.CompletedAt != nil:
+			rec.At = *inst.CompletedAt
+		case task.CompletedAt != nil:
+			rec.At = *task.CompletedAt
+		}
+
+		m.enqueueAuditOnceLocked(rec)
+	}
+}
+
+// neverStarted reports whether the task was cancelled before any of its
+// instances started, so it never got a start record.
+func neverStarted(task *UpgradeTask) bool {
+	if task.Status != TaskStatusCancelled {
+		return false
+	}
+
+	return !slices.ContainsFunc(task.Instances, func(inst InstanceUpgrade) bool { return inst.StartedAt != nil })
 }

@@ -130,6 +130,22 @@ type InstanceRotation struct {
 	// of its body, so a repeat of it applies once.
 	DecisionRequestID string `json:"decision_request_id,omitempty"`
 	DecisionDigest    string `json:"decision_digest,omitempty"`
+	// Decision is what the audit record of that decision says, saved with
+	// the decision itself so a record lost to a crash is rebuilt with the
+	// operator who decided.
+	Decision *DecisionAudit `json:"decision_audit,omitempty"`
+}
+
+// DecisionAudit is the part of a decision's audit record that only the
+// request knows. It holds the event, the operator's choice, who decided and
+// from where, and when, and never a certificate or key.
+type DecisionAudit struct {
+	Event   string    `json:"event"`
+	Detail  string    `json:"detail,omitempty"`
+	Actor   string    `json:"actor,omitempty"`
+	From    string    `json:"from,omitempty"`
+	Outcome string    `json:"outcome,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 // DeployOutcome is how the BOSH task of a rotation's deploy ended. A done
