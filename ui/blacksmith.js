@@ -5643,9 +5643,16 @@
   // A failed instance offers a remediation. So does a patch that stopped
   // part way, because some VM then holds a patched file that BOSH does not
   // record.
+  // A redeploy that failed before CredHub made a new version leaves nothing
+  // for a second redeploy to pick up, so it offers no remediation.
+  const hasUndeployedVersion = (instance) => {
+    const variables = instance.certificates && Array.isArray(instance.certificates.variables) ? instance.certificates.variables : [];
+    return variables.some((variable) => variable && variable.new_serial && variable.new_serial !== variable.old_serial);
+  };
+
   const needsRemediation = (task, instance) => {
-    if (instance.status === 'failed') return true;
     const patch = task.certificates && task.certificates.mode === 'patch';
+    if (instance.status === 'failed') return patch || hasUndeployedVersion(instance);
     if (!patch || !['cancelled', 'outcome_unknown'].includes(instance.status)) return false;
     const vms = instance.certificates && Array.isArray(instance.certificates.vms) ? instance.certificates.vms : [];
     return vms.some((vm) => vm && !['planned', 'staged', 'backed_up', 'rolled_back', 'reverted'].includes(vm.phase));

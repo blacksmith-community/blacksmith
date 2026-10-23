@@ -92,7 +92,7 @@ t('partly patched instances', async () => {
   ok(rem.length===1&&rem[0].textContent==='Converge this instance'&&!rem[0].disabled,'partly patched cancelled instance offers Converge this instance');
   T.renderTaskDetail(mkTask({status:'cancelled'},{status:'cancelled',certificates:{phase:'patch',variables:[],vms:[vm('web/0','staged')]}}));
   ok(panel().querySelectorAll('[data-decision-action="remediate"]').length===0,'cancelled instance with nothing swapped offers no remediation');
-  T.renderTaskDetail(mkTask({certificates:{mode:'redeploy'}},{status:'failed'}));
+  T.renderTaskDetail(mkTask({certificates:{mode:'redeploy'}},{status:'failed',certificates:{phase:'deploy',variables:[{name:'/x/a',old_serial:'01',new_serial:'02'}]}}));
   ok(panel().querySelector('[data-decision-action="remediate"]').textContent==='Redeploy this instance','redeploy failure offers Redeploy this instance');
 
   ok(alerts.length===0,'no alerts');
