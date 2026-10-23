@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
@@ -34,6 +35,9 @@ type createVault struct {
 	fail   func(n int) bool
 	land   func(n int) bool
 	blind  bool
+	// landed holds the body of each record write that stored, by number,
+	// so a test can check one write after later ones replace it.
+	landed map[int][]byte
 }
 
 func (v *createVault) Put(ctx context.Context, path string, data interface{}) error {
@@ -43,8 +47,9 @@ func (v *createVault) Put(ctx context.Context, path string, data interface{}) er
 
 	v.script.Lock()
 	v.writes++
-	refused := v.fail != nil && v.fail(v.writes)
-	unacknowledged := v.land != nil && v.land(v.writes)
+	number := v.writes
+	refused := v.fail != nil && v.fail(number)
+	unacknowledged := v.land != nil && v.land(number)
 	v.script.Unlock()
 
 	if refused {
@@ -52,6 +57,10 @@ func (v *createVault) Put(ctx context.Context, path string, data interface{}) er
 	}
 
 	err := v.waitVault.Put(ctx, path, data)
+	if err == nil {
+		v.keep(number, data)
+	}
+
 	if err == nil && unacknowledged {
 		return errAnswerLost
 	}
@@ -69,6 +78,45 @@ func (v *createVault) Get(ctx context.Context, path string, result interface{}) 
 	}
 
 	return v.waitVault.Get(ctx, path, result)
+}
+
+// keep records the body of a record write that stored.
+func (v *createVault) keep(number int, data interface{}) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+
+	v.script.Lock()
+	defer v.script.Unlock()
+
+	if v.landed == nil {
+		v.landed = make(map[int][]byte)
+	}
+
+	v.landed[number] = body
+}
+
+// landedRecord returns the record that the numbered write stored, or false
+// when that write stored nothing.
+func (v *createVault) landedRecord(t *testing.T, number int) (UpgradeTask, bool) {
+	t.Helper()
+
+	v.script.Lock()
+	body, ok := v.landed[number]
+	v.script.Unlock()
+
+	var task UpgradeTask
+	if !ok {
+		return task, false
+	}
+
+	err := json.Unmarshal(body, &task)
+	if err != nil {
+		t.Fatalf("decoding record write %d: %v", number, err)
+	}
+
+	return task, true
 }
 
 // landUnacknowledged sets the rule that picks the record writes that store
@@ -224,9 +272,12 @@ func TestCreateCertificateTaskCopiesApproval(t *testing.T) {
 
 	expectCertificateHolder(t, env.manager, waitInstanceID, task.ID)
 
+	// The worker may already have started the task and saved it running,
+	// so either status shows the create's record, as long as it is
+	// confirmed.
 	stored, ok := vault.storedRecord(t, certificateTasksVaultPath+"/"+task.ID)
-	if !ok || !stored.CreationConfirmed || stored.Status != TaskStatusPending {
-		t.Fatalf("expected a confirmed pending record, got %+v (stored %v)", stored, ok)
+	if !ok || !stored.CreationConfirmed || (stored.Status != TaskStatusPending && stored.Status != TaskStatusRunning) {
+		t.Fatalf("expected a confirmed pending or running record, got %+v (stored %v)", stored, ok)
 	}
 }
 
@@ -592,9 +643,11 @@ func TestCreateConfirmedSaveLandsUnacknowledged(t *testing.T) {
 	_, _, err := env.manager.CreateCertificateTask(context.Background(), createRequest(preview.ID))
 	taskID := expectUnconfirmedCreate(t, env, err)
 
-	stored, ok := vault.storedRecord(t, certificateTasksVaultPath+"/"+taskID)
-	if !ok || !stored.CreationConfirmed || stored.Status != TaskStatusPending {
-		t.Fatalf("expected the confirmed record to have landed, got %+v (stored %v)", stored, ok)
+	// The failed-record loop starts writing at once, so the stored value
+	// may already be its record. The second write is the confirmed one.
+	landed, ok := vault.landedRecord(t, 2)
+	if !ok || landed.ID != taskID || !landed.CreationConfirmed || landed.Status != TaskStatusPending {
+		t.Fatalf("expected the confirmed record to have landed, got %+v (stored %v)", landed, ok)
 	}
 
 	time.Sleep(50 * time.Millisecond)
