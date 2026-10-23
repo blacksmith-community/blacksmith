@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -865,4 +866,101 @@ func TestDivergenceFailureBeforeWriteIsDefinite(t *testing.T) {
 	if err := NewDivergenceStore(indexLanded, nil).Update(ctx, divInstance, add); err != nil {
 		t.Errorf("an index write that landed returned %v", err)
 	}
+}
+
+func TestDivergenceAmbiguousDelete(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	path := divergenceRecordPath(divInstance)
+	drop := func(*Divergence) (*Divergence, error) { return nil, nil }
+
+	seed := func(t *testing.T) (*divVault, *DivergenceStore) {
+		t.Helper()
+
+		v := newDivVault()
+		store := NewDivergenceStore(v, nil)
+
+		if err := store.Update(ctx, divInstance, func(*Divergence) (*Divergence, error) { return divRecord(), nil }); err != nil {
+			t.Fatal(err)
+		}
+
+		return v, store
+	}
+
+	t.Run("landed", func(t *testing.T) {
+		t.Parallel()
+
+		v, store := seed(t)
+		v.deleteFail = func(string) (bool, error) { return true, errors.New("connection reset after the delete") }
+		gen := store.Generation()
+
+		if err := store.Update(ctx, divInstance, drop); err != nil {
+			t.Fatalf("a delete that landed returned %v", err)
+		}
+
+		if store.Generation() != gen+1 {
+			t.Errorf("a delete that landed left the generation at %d, want %d", store.Generation(), gen+1)
+		}
+
+		if _, kept := v.docs[path]; kept {
+			t.Error("the record is still stored")
+		}
+	})
+
+	t.Run("not landed", func(t *testing.T) {
+		t.Parallel()
+
+		v, store := seed(t)
+		v.deleteFail = func(string) (bool, error) { return false, errors.New("permission denied") }
+		gen := store.Generation()
+
+		err := store.Update(ctx, divInstance, drop)
+		if !errors.Is(err, ErrSaveUnconfirmed) {
+			t.Fatalf("a delete that did not land returned %v, want ErrSaveUnconfirmed", err)
+		}
+
+		if store.Generation() != gen {
+			t.Errorf("a delete that did not land moved the generation to %d", store.Generation())
+		}
+
+		if _, found, err := store.Get(ctx, divInstance); err != nil || !found {
+			t.Errorf("the record is gone after a delete that did not land (found %v, %v)", found, err)
+		}
+
+		list, err := store.List(ctx)
+		if err != nil || len(list) != 1 {
+			t.Errorf("the index lost the kept record: %+v, %v", list, err)
+		}
+	})
+
+	t.Run("read back fails", func(t *testing.T) {
+		t.Parallel()
+
+		v, store := seed(t)
+
+		var deleted atomic.Bool
+
+		v.deleteFail = func(string) (bool, error) {
+			deleted.Store(true)
+
+			return false, errors.New("timeout")
+		}
+		v.getFail = func(string) error {
+			if deleted.Load() {
+				return errors.New("vault sealed")
+			}
+
+			return nil
+		}
+		gen := store.Generation()
+
+		if err := store.Update(ctx, divInstance, drop); !errors.Is(err, ErrSaveUnconfirmed) {
+			t.Fatalf("a delete whose read-back failed returned %v, want ErrSaveUnconfirmed", err)
+		}
+
+		if store.Generation() != gen {
+			t.Errorf("an unconfirmed delete moved the generation to %d", store.Generation())
+		}
+	})
 }
