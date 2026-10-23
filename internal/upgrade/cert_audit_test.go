@@ -591,6 +591,13 @@ func TestAuditCutsOnlyThePEMBlock(t *testing.T) {
 		t.Fatalf("expected only the block cut, got %q", rec.Reason)
 	}
 
+	for _, truncated := range []string{"-----BEGIN RSA PRIVATE KEY\nMIIE", "-----BEGIN CERTIFICATE----\nMIIB", "-----BEGIN\nMIIB"} {
+		got := sanitizeAudit(AuditRecord{Reason: "CHG-7 " + truncated})
+		if got.Reason != "CHG-7 "+auditRedacted {
+			t.Fatalf("expected a truncated header cut to the end, got %q", got.Reason)
+		}
+	}
+
 	open := sanitizeAudit(AuditRecord{Reason: "CHG-9 oops -----BEGIN RSA PRIVATE KEY-----\nMIIE"})
 	if open.Reason != "CHG-9 oops "+auditRedacted {
 		t.Fatalf("expected an unfinished block cut to the end, got %q", open.Reason)

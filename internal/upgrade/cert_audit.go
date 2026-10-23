@@ -237,11 +237,20 @@ func sanitizeAudit(rec AuditRecord) AuditRecord {
 func auditText(s string) string {
 	s = pemBlock.ReplaceAllString(s, auditRedacted)
 
+	// Armour that is cut short, or whose header is malformed, matched no
+	// block. Any BEGIN marker left is cut with everything after it.
+	if at := strings.Index(s, pemMarker); at >= 0 {
+		s = s[:at] + auditRedacted
+	}
+
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
 }
 
 // pemBlock matches a PEM block, from its BEGIN line to its END line, or to
 // the end of the text when the block is unfinished.
+// pemMarker starts every PEM block.
+const pemMarker = "-----BEGIN"
+
 var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)`)
 
 // enqueueAuditLocked queues the record to be written in the background, in
