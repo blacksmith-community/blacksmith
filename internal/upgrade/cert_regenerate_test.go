@@ -775,8 +775,8 @@ func expectReconcile(t *testing.T, env *regenEnv, requests int) {
 		t.Fatalf("expected a reconcile decision for the leaf, got %+v", pending)
 	}
 
-	if len(pending.Candidates) != 1 {
-		t.Fatalf("expected one candidate, got %+v", pending.Candidates)
+	if len(pending.Candidates) != 1 || pending.CandidatesCheckedAt == nil {
+		t.Fatalf("expected one candidate and the time of its check, got %+v at %v", pending.Candidates, pending.CandidatesCheckedAt)
 	}
 
 	candidate := pending.Candidates[0]

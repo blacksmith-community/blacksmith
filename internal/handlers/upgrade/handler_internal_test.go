@@ -318,6 +318,10 @@ func (d *decisionTasks) ResolveDeployOutcome(_ context.Context, taskID, instance
 	return d.record("resolve "+taskID+" "+instanceID, req)
 }
 
+func (d *decisionTasks) RefreshCandidates(_ context.Context, taskID, instanceID string) error {
+	return d.record("candidates "+taskID+" "+instanceID, nil)
+}
+
 func (d *decisionTasks) RepreviewForDecision(_ context.Context, taskID, instanceID string) (*upgrade.Preview, error) {
 	err := d.record("preview "+taskID+" "+instanceID, nil)
 	if err != nil {
@@ -346,7 +350,8 @@ func postDecision(t *testing.T, handler *Handler, path, body string) (int, map[s
 }
 
 // Each decision route reaches its manager call with the decoded body and
-// answers with the task, and the re-preview answers with the preview.
+// answers with the task, the candidate refresh takes no body and answers
+// with the task, and the re-preview answers with the preview.
 func TestDecisionRoutes(t *testing.T) {
 	t.Parallel()
 
@@ -374,6 +379,12 @@ func TestDecisionRoutes(t *testing.T) {
 			`{"action":"verify"}`,
 			"resolve t1 i1",
 			upgrade.ResolveRequest{Action: "verify"},
+		},
+		{
+			"/b/upgrade/tasks/t1/instances/i1/candidates",
+			"",
+			"candidates t1 i1",
+			nil,
 		},
 	}
 
@@ -407,7 +418,7 @@ func TestDecisionRoutesAnswerErrors(t *testing.T) {
 	tasks := &decisionTasks{err: apierr.New(http.StatusConflict, apierr.CodeNotAwaitingDecision, "The instance waits for no decision.")}
 	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: tasks}
 
-	for _, action := range []string{"reconcile", "approve", "resolve", "preview"} {
+	for _, action := range []string{"reconcile", "approve", "resolve", "preview", "candidates"} {
 		status, answer := postDecision(t, handler, "/b/upgrade/tasks/t1/instances/i1/"+action, `{}`)
 		if status != http.StatusConflict || answer["code"] != apierr.CodeNotAwaitingDecision || answer["success"] != false ||
 			answer["error"] != "The instance waits for no decision." {

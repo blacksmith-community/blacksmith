@@ -359,6 +359,88 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 	return m.saveDecision(ctx, task, false)
 }
 
+// RefreshCandidates lists again, for a reconcile_regeneration decision,
+// every version of its variable that is not in the baseline, checks each
+// as the runner does, and stores them on the decision with the time of
+// the check. A decision loaded after a crash has none on record, and a
+// regeneration can finish after the first listing, so this is how an
+// operator finds a version to adopt. It only reads CredHub and writes
+// nothing there or to the director, so it needs no switch, and it works
+// on a cancelled task, whose operator can still abandon. A decision that
+// changed while CredHub was read answers 409 and stores nothing.
+func (m *Manager) RefreshCandidates(ctx context.Context, taskID, instanceID string) error {
+	err := m.decisionsReady()
+	if err != nil {
+		return err
+	}
+
+	unlock := m.lockRequest(decisionLockKey(taskID, instanceID))
+	defer unlock()
+
+	m.mu.RLock()
+
+	task, inst, err := m.decisionInstanceLocked(taskID, instanceID)
+	if err == nil {
+		err = pendingDecisionLocked(inst, DecisionReconcileRegeneration)
+	}
+
+	if err == nil {
+		err = reconcilesVariableLocked(inst, inst.Certificates.Pending.Variable)
+	}
+
+	if err != nil {
+		m.mu.RUnlock()
+
+		return err
+	}
+
+	since := inst.Certificates.Pending.Since
+	variable, _ := variableNamed(inst, inst.Certificates.Pending.Variable)
+
+	m.mu.RUnlock()
+
+	err = m.credhubReady()
+	if err != nil {
+		return err
+	}
+
+	candidates, err := m.listCandidates(ctx, m.certDeps().CredHub, variable)
+	if err != nil {
+		return credhubUnavailable("the check of the candidate versions", err)
+	}
+
+	m.mu.Lock()
+
+	err = pendingDecisionLocked(inst, DecisionReconcileRegeneration)
+	if err == nil && (!inst.Certificates.Pending.Since.Equal(since) || inst.Certificates.Pending.Variable != variable.Name) {
+		err = apierr.New(http.StatusConflict, apierr.CodeNotAwaitingDecision,
+			fmt.Sprintf("Instance %s now waits for another decision, so read the task again.", inst.InstanceID))
+	}
+
+	if err != nil {
+		m.mu.Unlock()
+
+		return err
+	}
+
+	now := m.certNowLocked()
+	inst.Certificates.Pending.Candidates = candidates
+	inst.Certificates.Pending.CandidatesCheckedAt = &now
+	task.Revision++
+
+	m.mu.Unlock()
+
+	// The candidates are a record of a read, which the next refresh or
+	// adoption makes again, so a save that fails is logged and the
+	// refresh still answers with what it found.
+	err = m.persistTask(context.WithoutCancel(ctx), task)
+	if err != nil {
+		m.logger.Error("Failed to save the candidates of instance %s of certificate task %s: %v", instanceID, taskID, err)
+	}
+
+	return nil
+}
+
 // ResolveDeployOutcome answers a resolve_deploy_outcome decision. Verify
 // runs the redeploy's verification now and settles the instance by its
 // result. Failed fails the instance and frees it. Abandon leaves the

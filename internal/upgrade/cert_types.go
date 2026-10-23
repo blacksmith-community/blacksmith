@@ -216,6 +216,11 @@ type PendingDecision struct {
 	Kind       string      `json:"kind"`
 	Variable   string      `json:"variable,omitempty"`
 	Candidates []Candidate `json:"candidates,omitempty"`
+	// CandidatesCheckedAt is when Candidates were last listed from
+	// CredHub. It is nil for a decision whose candidates were never
+	// listed, as one loaded after a crash, so a reader can tell "not
+	// checked yet" from "CredHub holds none".
+	CandidatesCheckedAt *time.Time `json:"candidates_checked_at,omitempty"`
 	// Changes holds a readable sentence for each effect that differs.
 	Changes []string  `json:"changes,omitempty"`
 	Since   time.Time `json:"since"`

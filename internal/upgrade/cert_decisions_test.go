@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/credhub"
 	"blacksmith/internal/mutation"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
@@ -1127,4 +1128,97 @@ func TestResolveAfterDeployTaskPurged(t *testing.T) {
 			expectStillAwaiting(t, manager, InstanceStatusOutcomeUnknown, DecisionResolveDeployOutcome)
 		})
 	}
+}
+
+// A candidate refresh lists the versions CredHub holds now, checks each,
+// and stores them on the decision with the time of the check, so a
+// decision loaded after a crash, which has no candidates on record, can
+// show what CredHub holds. It sends no regenerate request, deploys
+// nothing, and the instance keeps waiting.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRefreshCandidatesStoresChecked(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.load(env.awaitingReconcile(nil))
+
+	if pending := current(t, manager).Instances[0].Certificates.Pending; pending.CandidatesCheckedAt != nil {
+		t.Fatalf("expected a loaded decision not checked yet, got %v", pending.CandidatesCheckedAt)
+	}
+
+	err := manager.RefreshCandidates(context.Background(), certTaskID, waitInstanceID)
+	if err != nil {
+		t.Fatalf("RefreshCandidates: %v", err)
+	}
+
+	pending := current(t, manager).Instances[0].Certificates.Pending
+	if len(pending.Candidates) != 0 || pending.CandidatesCheckedAt == nil || !pending.CandidatesCheckedAt.Equal(validateNow) {
+		t.Fatalf("expected no candidates checked at %v, got %+v at %v", validateNow, pending.Candidates, pending.CandidatesCheckedAt)
+	}
+
+	env.madeNewVersion()
+
+	err = manager.RefreshCandidates(context.Background(), certTaskID, waitInstanceID)
+	if err != nil {
+		t.Fatalf("RefreshCandidates: %v", err)
+	}
+
+	pending = current(t, manager).Instances[0].Certificates.Pending
+	if len(pending.Candidates) != 1 || pending.Candidates[0].VersionID != "v2" || !pending.Candidates[0].Valid || pending.CandidatesCheckedAt == nil {
+		t.Fatalf("expected v2 as a valid candidate, got %+v", pending.Candidates)
+	}
+
+	saved := env.vault.lastRecord(t).Instances[0].Certificates.Pending
+	if saved == nil || len(saved.Candidates) != 1 || saved.CandidatesCheckedAt == nil {
+		t.Fatalf("expected the checked candidates saved, got %+v", saved)
+	}
+
+	expectStillAwaiting(t, manager, StatusAwaitingDecision, DecisionReconcileRegeneration)
+
+	if env.credhub.regenerateCount() != 0 || len(env.director.deploys()) != 0 {
+		t.Fatalf("expected no regenerate request and no deploy, got %d and %d", env.credhub.regenerateCount(), len(env.director.deploys()))
+	}
+
+	err = manager.ReconcileRegeneration(context.Background(), certTaskID, waitInstanceID, ReconcileRequest{
+		Variable: regenLeaf, Action: "adopt", VersionID: "v2",
+	})
+	if err != nil {
+		t.Fatalf("adopting the refreshed candidate: %v", err)
+	}
+
+	eventuallyInstance(t, manager, InstanceStatusSuccess)
+}
+
+// A candidate refresh needs an instance that waits for a reconcile
+// decision, and a CredHub that answers. A refusal changes nothing.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRefreshCandidatesRefusals(t *testing.T) {
+	t.Run("no such instance", func(t *testing.T) {
+		env := newRedeployEnv(t)
+		manager := env.load(env.awaitingReconcile(nil))
+
+		err := manager.RefreshCandidates(context.Background(), certTaskID, "no-such-instance")
+		expectAPIError(t, err, http.StatusNotFound, apierr.CodeInstanceNotFound)
+	})
+
+	t.Run("another decision", func(t *testing.T) {
+		env := newRedeployEnv(t)
+		manager := env.load(env.awaitingApproval())
+
+		err := manager.RefreshCandidates(context.Background(), certTaskID, waitInstanceID)
+		expectAPIError(t, err, http.StatusConflict, apierr.CodeNotAwaitingDecision)
+	})
+
+	t.Run("CredHub down", func(t *testing.T) {
+		env := newRedeployEnv(t)
+		manager := env.load(env.awaitingReconcile(nil))
+		env.credhub.failVersionsOf(regenLeaf, &credhub.APIError{Op: "versions", Status: http.StatusServiceUnavailable})
+
+		err := manager.RefreshCandidates(context.Background(), certTaskID, waitInstanceID)
+		expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable)
+
+		if pending := current(t, manager).Instances[0].Certificates.Pending; pending.CandidatesCheckedAt != nil {
+			t.Fatalf("expected the decision still not checked, got %v", pending.CandidatesCheckedAt)
+		}
+	})
 }

@@ -285,14 +285,16 @@ func (m *Manager) reconcileRegeneration(ctx context.Context, api CredHubAPI, tas
 	}
 
 	m.mu.Lock()
+	now := m.certNowLocked()
 	inst.Status = StatusAwaitingDecision
 	inst.CompletedAt = nil
 	inst.Error = why + " Blacksmith won't send the CredHub request again. Adopt a candidate version that passed every check, or abandon the regeneration."
 	inst.Certificates.Pending = &PendingDecision{
-		Kind:       DecisionReconcileRegeneration,
-		Variable:   variable.Name,
-		Candidates: candidates,
-		Since:      m.certNowLocked(),
+		Kind:                DecisionReconcileRegeneration,
+		Variable:            variable.Name,
+		Candidates:          candidates,
+		CandidatesCheckedAt: &now,
+		Since:               now,
 	}
 	pauseForDecisionLocked(task)
 	m.mu.Unlock()

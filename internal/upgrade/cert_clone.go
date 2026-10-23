@@ -84,6 +84,11 @@ func (d *PendingDecision) Clone() *PendingDecision {
 	copied.Candidates = cloneEach(d.Candidates, Candidate.Clone)
 	copied.Changes = slices.Clone(d.Changes)
 
+	if d.CandidatesCheckedAt != nil {
+		checked := *d.CandidatesCheckedAt
+		copied.CandidatesCheckedAt = &checked
+	}
+
 	return &copied
 }
 

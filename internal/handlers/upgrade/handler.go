@@ -38,6 +38,7 @@ type taskManager interface {
 	ResumeTask(ctx context.Context, taskID string) error
 	CancelTask(ctx context.Context, taskID string) error
 	RepreviewForDecision(ctx context.Context, taskID, instanceID string) (*upgrade.Preview, error)
+	RefreshCandidates(ctx context.Context, taskID, instanceID string) error
 	ReconcileRegeneration(ctx context.Context, taskID, instanceID string, req upgrade.ReconcileRequest) error
 	ApproveChangedEffects(ctx context.Context, taskID, instanceID string, req upgrade.ApproveRequest) error
 	ResolveDeployOutcome(ctx context.Context, taskID, instanceID string, req upgrade.ResolveRequest) error
@@ -193,6 +194,8 @@ const (
 	decisionApprove   = "approve"
 	decisionPreview   = "preview"
 	decisionResolve   = "resolve"
+	// decisionCandidates lists a reconcile decision's candidates again.
+	decisionCandidates = "candidates"
 )
 
 // decisionRoute splits /tasks/{id}/instances/{instance-id}/{action} into
@@ -209,7 +212,7 @@ func decisionRoute(path string) (string, string, string, bool) {
 	}
 
 	switch parts[3] {
-	case decisionReconcile, decisionApprove, decisionPreview, decisionResolve:
+	case decisionReconcile, decisionApprove, decisionPreview, decisionResolve, decisionCandidates:
 		return parts[0], parts[2], parts[3], true
 	default:
 		return "", "", "", false
@@ -217,9 +220,11 @@ func decisionRoute(path string) (string, string, string, bool) {
 }
 
 // Decide handles POST /b/upgrade/tasks/{id}/instances/{instance-id}/
-// reconcile, approve, resolve, and preview. A decision answers 200 with
-// the task as it stands after it, and preview answers 200 with the bound
-// preview. An error answers with its own status and code.
+// reconcile, approve, resolve, candidates, and preview. A decision answers
+// 200 with the task as it stands after it, candidates takes no body and
+// answers 200 with the task once the decision's candidates are listed
+// again, and preview answers 200 with the bound preview. An error answers
+// with its own status and code.
 func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanceID, action string) {
 	h.logger.Info("Decision %s on instance %s of task %s", action, instanceID, taskID)
 
@@ -237,9 +242,17 @@ func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanc
 		return
 	}
 
-	body, err := readDecision(w, r)
-	if err == nil {
-		err = h.decide(r.Context(), taskID, instanceID, action, body)
+	var err error
+
+	if action == decisionCandidates {
+		err = h.tasks.RefreshCandidates(r.Context(), taskID, instanceID)
+	} else {
+		var body []byte
+
+		body, err = readDecision(w, r)
+		if err == nil {
+			err = h.decide(r.Context(), taskID, instanceID, action, body)
+		}
 	}
 
 	if err != nil {
