@@ -17,7 +17,10 @@ const (
 	directorInfoTimeout = 10 * time.Second
 	directorInfoBackoff = 30 * time.Second
 	settingsLoadTimeout = 15 * time.Second
-	credhubProbeSegment = "blacksmith-credhub-probe"
+	// divergenceListBackoff is how long the service keeps the records it has
+	// after a failed read before it reads them again.
+	divergenceListBackoff = 30 * time.Second
+	credhubProbeSegment   = "blacksmith-credhub-probe"
 )
 
 // credhubFinder is the one CredHub call the capability probe makes.
@@ -59,7 +62,21 @@ type Service struct {
 	log     logger.Logger
 
 	// aggregate is a seam so a test can count rebuilds.
-	aggregate func([]InstanceScan, Settings, Capabilities, time.Time) *Fleet
+	aggregate func([]InstanceScan, Settings, Capabilities, map[string]*Divergence, time.Time) *Fleet
+
+	// divergence is nil when the broker has no Vault. divMu guards the
+	// records read from it. divLoad counts the successful reads, so the
+	// fleet is rebuilt after each one, and divGen is the store's generation
+	// when the last one began. It is separate from mu, so a slow Vault never
+	// holds up a caller that needs mu.
+	divergence  *DivergenceStore
+	divMu       sync.Mutex
+	divRecords  map[string]*Divergence
+	divGen      uint64
+	divLoad     uint64
+	divLoaded   bool
+	divFailedAt time.Time
+	divFetching bool
 
 	mu         sync.Mutex
 	fleet      *Fleet
@@ -67,6 +84,7 @@ type Service struct {
 	builtGen   uint64
 	builtSet   Settings
 	builtCapV  uint64
+	builtDivV  uint64
 	hasBuilt   bool
 	capVersion uint64
 
@@ -162,8 +180,26 @@ func NewService(deps ServiceDeps) *Service {
 	s.scanner = NewScanner(deps.Scanner)
 	s.sched = NewScheduler(s.scanner, s.cache, deps.List, s.brokerSources, s.store.Current, deps.Now, deps.After)
 
+	if deps.Scanner.Vault != nil {
+		s.divergence = NewDivergenceStore(deps.Scanner.Vault, deps.Now)
+
+		// As with the scanner, only a real client goes into the interface,
+		// so a broker without CredHub reconciles nothing instead of calling
+		// through a nil pointer.
+		var versions VersionLookup
+		if deps.CredHubClient != nil {
+			versions = deps.CredHubClient
+		}
+
+		s.sched.SetReconciler(s.divergence, versions)
+	}
+
 	return s
 }
+
+// Divergence returns the store of divergence records, or nil when the
+// broker has no Vault.
+func (s *Service) Divergence() *DivergenceStore { return s.divergence }
 
 // CredHubState reports whether CredHub is usable now, with a fixed reason
 // when it is not.
@@ -296,25 +332,27 @@ func (s *Service) Item(id string) (ItemDetail, bool) {
 }
 
 // current returns the fleet, rebuilding it only when the cache, the
-// settings, or the capabilities changed since the last build. The director
+// settings, the capabilities, or the divergence records changed since the
+// last build. The director
 // is asked outside every lock.
 func (s *Service) current() (*Fleet, Settings, Capabilities) {
 	set := s.store.Current()
 	gen := s.cache.Generation()
 	info := s.directorInfo()
+	div, divV := s.divergenceRecords()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	caps := s.capabilitiesLocked(set, info)
 
-	if s.hasBuilt && s.builtGen == gen && s.builtSet == set && s.builtCapV == s.capVersion && s.caps == caps {
+	if s.hasBuilt && s.builtGen == gen && s.builtSet == set && s.builtCapV == s.capVersion && s.caps == caps && s.builtDivV == divV {
 		return s.fleet, set, s.caps
 	}
 
-	s.fleet = s.aggregate(s.cache.Snapshot(), set, caps, s.deps.Now())
+	s.fleet = s.aggregate(s.cache.Snapshot(), set, caps, div, s.deps.Now())
 	s.caps = caps
-	s.builtGen, s.builtSet, s.builtCapV, s.hasBuilt = gen, set, s.capVersion, true
+	s.builtGen, s.builtSet, s.builtCapV, s.builtDivV, s.hasBuilt = gen, set, s.capVersion, divV, true
 
 	s.rescanBrokerLocked()
 
@@ -465,4 +503,61 @@ func (s *Service) rescanBrokerLocked() {
 	s.sentCA = name
 
 	go func() { _, _ = s.sched.ScanInstanceNow(context.Background(), BrokerScanID) }()
+}
+
+// divergenceRecords returns the divergence records by instance ID, and a
+// number that changes each time they are read again. They are read again
+// only when the store's generation moved since the last read. A failed read
+// keeps the records from the last good one and waits 30 seconds before it
+// tries again. One caller at a time reads Vault, and any other caller gets
+// the records already held. No lock of the service is held during the read.
+func (s *Service) divergenceRecords() (map[string]*Divergence, uint64) {
+	if s.divergence == nil {
+		return nil, 0
+	}
+
+	gen := s.divergence.Generation()
+	now := s.deps.Now()
+
+	s.divMu.Lock()
+
+	current := s.divLoaded && s.divGen == gen
+	backingOff := !s.divFailedAt.IsZero() && now.Sub(s.divFailedAt) < divergenceListBackoff
+
+	if current || backingOff || s.divFetching {
+		records, load := s.divRecords, s.divLoad
+		s.divMu.Unlock()
+
+		return records, load
+	}
+
+	s.divFetching = true
+	s.divMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), divergenceTimeout)
+	defer cancel()
+
+	list, err := s.divergence.List(ctx)
+
+	s.divMu.Lock()
+	defer s.divMu.Unlock()
+
+	s.divFetching = false
+
+	if err != nil {
+		s.divFailedAt = now
+		s.log.Errorf("certificate divergence records could not be read, so the inventory shows the last ones read: %v", err)
+
+		return s.divRecords, s.divLoad
+	}
+
+	records := make(map[string]*Divergence, len(list))
+	for _, d := range list {
+		records[d.InstanceID] = d
+	}
+
+	s.divRecords, s.divGen, s.divLoaded, s.divFailedAt = records, gen, true, time.Time{}
+	s.divLoad++
+
+	return records, s.divLoad
 }

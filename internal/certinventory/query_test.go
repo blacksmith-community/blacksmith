@@ -248,7 +248,7 @@ func TestBuildResponseHasNoPEM(t *testing.T) {
 	t.Parallel()
 
 	scans, _ := sharedCAFleet(t)
-	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
+	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, nil, fleetNow)
 
 	raw, err := json.Marshal(BuildResponse(fleet, Filter{}, DefaultSettings(), fleetCaps, ScanState{}, fleetNow))
 	if err != nil {
@@ -267,7 +267,7 @@ func TestBuildResponseFirstScanFailed(t *testing.T) {
 
 	state := ScanState{State: ScanFailed}
 
-	for _, fleet := range []*Fleet{nil, Aggregate(nil, DefaultSettings(), fleetCaps, fleetNow)} {
+	for _, fleet := range []*Fleet{nil, Aggregate(nil, DefaultSettings(), fleetCaps, nil, fleetNow)} {
 		resp := BuildResponse(fleet, Filter{}, DefaultSettings(), fleetCaps, state, fleetNow)
 		if resp.Certificates == nil || len(resp.Certificates) != 0 || resp.Summary != (Summary{}) || len(resp.Scan.Errors) == 0 {
 			t.Errorf("first-scan failure gave %+v", resp)
@@ -279,7 +279,7 @@ func TestBuildResponseFirstScanFailed(t *testing.T) {
 	leaf := issue(t, issueSpec{cn: "x", serial: 2})
 	ok.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i1/crt", Owner: instOwner("i1"), Deployed: leaf.cert}}
 
-	resp := BuildResponse(Aggregate([]InstanceScan{ok}, DefaultSettings(), fleetCaps, fleetNow), Filter{}, DefaultSettings(), fleetCaps, state, fleetNow)
+	resp := BuildResponse(Aggregate([]InstanceScan{ok}, DefaultSettings(), fleetCaps, nil, fleetNow), Filter{}, DefaultSettings(), fleetCaps, state, fleetNow)
 	if len(resp.Certificates) != 1 {
 		t.Errorf("a failed run after a good one dropped the certificates")
 	}

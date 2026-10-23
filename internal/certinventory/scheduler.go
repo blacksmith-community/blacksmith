@@ -118,6 +118,11 @@ type Scheduler struct {
 
 	locksMu sync.Mutex
 	locks   map[string]chan struct{}
+
+	// divergence and versions, guarded by mu, reconcile the divergence
+	// records after each instance scan. Either may be nil.
+	divergence *DivergenceStore
+	versions   VersionLookup
 }
 
 // fleetRun is one fleet scan. Its fields other than id, done, and subset
@@ -404,16 +409,57 @@ func (s *Scheduler) tryScan(ctx context.Context, job scanJob) (bool, bool) {
 		return false, false
 	}
 
+	scan, stored := s.scanHeld(ctx, job, lock)
+	if !stored {
+		return false, false
+	}
+
+	s.reconcile(ctx, scan)
+
+	return scan.Err == "", true
+}
+
+// scanHeld runs the job while the caller holds the instance's lock, stores
+// the scan unless ctx ended, and releases the lock. It reports whether the
+// scan was stored.
+func (s *Scheduler) scanHeld(ctx context.Context, job scanJob, lock chan struct{}) (InstanceScan, bool) {
 	defer func() { <-lock }()
 
 	scan := job.run(ctx)
 	if ctx.Err() != nil {
-		return false, false
+		return scan, false
 	}
 
 	s.store(scan)
 
-	return scan.Err == "", true
+	return scan, true
+}
+
+// SetReconciler gives the scheduler the divergence store and the CredHub
+// reader that reconciliation uses. The service calls it once, before
+// Start. A nil store turns reconciliation off, and a nil versions leaves
+// every record as it is.
+func (s *Scheduler) SetReconciler(store *DivergenceStore, versions VersionLookup) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.divergence, s.versions = store, versions
+}
+
+// reconcile updates the instance's divergence record from a stored scan.
+// It runs after the scan released the instance's lock, so a scan and a
+// patch runner writing the record never wait on each other. A failure
+// leaves the record as it was, and the next scan tries again.
+func (s *Scheduler) reconcile(ctx context.Context, scan InstanceScan) {
+	s.mu.Lock()
+	store, versions := s.divergence, s.versions
+	s.mu.Unlock()
+
+	if store == nil {
+		return
+	}
+
+	_ = store.ReconcileScan(ctx, scan, versions)
 }
 
 // ScanInstanceNow scans one instance at once, waiting for its lock if a
@@ -468,14 +514,12 @@ func (s *Scheduler) ScanInstanceNow(ctx context.Context, id string) (InstanceSca
 		return InstanceScan{}, ctx.Err()
 	}
 
-	defer func() { <-lock }()
-
-	scan := job.run(ctx)
-	if err := ctx.Err(); err != nil {
-		return scan, err
+	scan, stored := s.scanHeld(ctx, *job, lock)
+	if !stored {
+		return scan, ctx.Err()
 	}
 
-	s.store(scan)
+	s.reconcile(ctx, scan)
 
 	entry, ok := s.cache.Get(id)
 	if !ok {

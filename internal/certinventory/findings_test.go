@@ -317,8 +317,16 @@ func TestFindingServedMismatch(t *testing.T) {
 	certs[0].Divergence = &DivergenceRef{State: DivergenceUnconverged}
 	ApplyFindings(certs, FindingInput{Reps: reps})
 
+	if !hasFinding(certs[0], FindingServedMismatch) {
+		t.Error("a divergence record alone hid served_mismatch on a listener it does not list")
+	}
+
+	certs, reps = build()
+	certs[0].Divergence = &DivergenceRef{State: DivergenceUnconverged}
+	ApplyFindings(certs, FindingInput{Reps: reps, DivergedListeners: map[string]bool{certs[0].ID + "|10.0.0.1:6379": true}})
+
 	if hasFinding(certs[0], FindingServedMismatch) {
-		t.Error("served_mismatch raised although a divergence record explains it")
+		t.Error("served_mismatch raised on a listener whose VM the divergence record lists")
 	}
 }
 

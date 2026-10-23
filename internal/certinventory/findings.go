@@ -22,6 +22,8 @@ const (
 	FindingServedMismatch     = "served_mismatch"
 	FindingDeployPending      = "deploy_pending"
 	FindingProbeFailed        = "probe_failed"
+	FindingUnconverged        = "unconverged"
+	FindingPatchReverted      = "patch_reverted"
 
 	servicesCAVariable = "blacksmith_services_ca"
 	timeLayoutDate     = "2006-01-02"
@@ -46,13 +48,18 @@ type FindingInput struct {
 	ServicesCADrift bool
 	// Expected maps a certificate ID to its expected listener count.
 	Expected map[string]int
-	Now      time.Time
+	// DivergedListeners holds "<certificate ID>|<locator>" for each probed
+	// listener on a VM that a divergence entry for the certificate lists.
+	// Such a listener serves the patched version on purpose, so it raises
+	// no served_mismatch.
+	DivergedListeners map[string]bool
+	Now               time.Time
 }
 
 // ApplyFindings fills Findings and Coverage on every certificate. It raises
-// every finding in spec 7.7 except patch_reverted and unconverged. A
-// certificate with no entry in Reps gets none of the findings that need
-// x509 data.
+// every finding in spec 7.7, and it raises unconverged and patch_reverted
+// from the Divergence field, which the caller sets first. A certificate
+// with no entry in Reps gets none of the findings that need x509 data.
 func ApplyFindings(certs []Certificate, in FindingInput) {
 	for i := range certs {
 		c := &certs[i]
@@ -138,7 +145,11 @@ func findingsOf(c *Certificate, rep *x509.Certificate, in FindingInput) []Findin
 		out = append(out, sanFindings(c, rep, in)...)
 	}
 
-	out = append(out, servedFindings(c)...)
+	out = append(out, servedFindings(c, in)...)
+
+	if f := divergenceFinding(c); f != nil {
+		out = append(out, *f)
+	}
 
 	if rep != nil {
 		out = append(out, WeaknessFindings(rep)...)
@@ -320,14 +331,21 @@ func servesTLS(c *x509.Certificate) bool {
 	return false
 }
 
-func servedFindings(c *Certificate) []Finding {
-	if c.Versions == nil || c.Divergence != nil {
+// servedFindings raises served_mismatch for each probed listener that serves
+// a certificate other than the deployed one, except a listener on a VM that
+// the certificate's divergence entry lists.
+func servedFindings(c *Certificate, in FindingInput) []Finding {
+	if c.Versions == nil {
 		return nil
 	}
 
 	var out []Finding
 
 	for _, o := range c.Observations {
+		if in.DivergedListeners[c.ID+"|"+o.Locator] {
+			continue
+		}
+
 		if o.Source == SourceProbe && o.State != StateFailed && o.Matches == MatchOther {
 			out = append(out, Finding{
 				Code: FindingServedMismatch, Severity: SeverityWarning,
@@ -379,4 +397,29 @@ func sortedKeys(m map[string]*x509.Certificate) []string {
 	sort.Strings(keys)
 
 	return keys
+}
+
+// divergenceFinding raises unconverged while a patch waits for BOSH to
+// deploy its version, and patch_reverted once a VM went back to an older
+// version.
+func divergenceFinding(c *Certificate) *Finding {
+	d := c.Divergence
+	if d == nil {
+		return nil
+	}
+
+	switch d.State {
+	case DivergenceUnconverged:
+		return &Finding{
+			Code: FindingUnconverged, Severity: SeverityWarning,
+			Message: fmt.Sprintf("Task %s patched this certificate on the VMs, but BOSH does not yet record the patched version as deployed.", d.TaskID),
+		}
+	case DivergenceReverted:
+		return &Finding{
+			Code: FindingPatchReverted, Severity: SeverityError,
+			Message: fmt.Sprintf("A VM went back to an older version of the certificate that task %s patched.", d.TaskID),
+		}
+	}
+
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -70,10 +71,10 @@ func TestServiceRebuildsFleetOnlyOnChange(t *testing.T) {
 
 	var builds atomic.Int32
 
-	svc.aggregate = func(scans []InstanceScan, s Settings, caps Capabilities, now time.Time) *Fleet {
+	svc.aggregate = func(scans []InstanceScan, s Settings, caps Capabilities, div map[string]*Divergence, now time.Time) *Fleet {
 		builds.Add(1)
 
-		return Aggregate(scans, s, caps, now)
+		return Aggregate(scans, s, caps, div, now)
 	}
 
 	ctx := context.Background()
@@ -349,5 +350,118 @@ func TestCredHubStateIsExported(t *testing.T) {
 	state, _ := svc.CredHubState()
 	if state != credhub.StateNotConfigured {
 		t.Fatalf("state = %q, want not_configured for a service with no CredHub client", state)
+	}
+}
+
+func TestServiceRebuildsOnDivergenceChange(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(ServiceDeps{
+		Scanner:          ScannerDeps{Director: &fakeDirector{manifest: "name: d\n"}, Vault: newDivVault(), DirectorName: testDirector},
+		List:             func(context.Context) ([]InstanceRef, error) { return nil, nil },
+		InventoryEnabled: true,
+		Now:              func() time.Time { return fleetNow },
+	})
+
+	var (
+		builds atomic.Int32
+		seen   atomic.Pointer[map[string]*Divergence]
+	)
+
+	svc.aggregate = func(scans []InstanceScan, s Settings, caps Capabilities, div map[string]*Divergence, now time.Time) *Fleet {
+		builds.Add(1)
+		seen.Store(&div)
+
+		return Aggregate(scans, s, caps, div, now)
+	}
+
+	ctx := context.Background()
+	svc.Response(ctx, Filter{})
+	svc.Response(ctx, Filter{})
+
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("two reads built %d times, want 1", got)
+	}
+
+	store := svc.Divergence()
+	if store == nil {
+		t.Fatal("a service with Vault has no divergence store")
+	}
+
+	before := store.Generation()
+
+	if err := store.Update(ctx, divInstance, func(*Divergence) (*Divergence, error) { return divRecord(), nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	if store.Generation() <= before {
+		t.Fatalf("a confirmed update left the generation at %d", store.Generation())
+	}
+
+	svc.Response(ctx, Filter{})
+
+	if got := builds.Load(); got != 2 {
+		t.Fatalf("a divergence change gave %d builds, want 2", got)
+	}
+
+	if div := *seen.Load(); div[divInstance] == nil || div[divInstance].entry(divVariable) == nil {
+		t.Errorf("the rebuild did not get the new record: %+v", div)
+	}
+
+	svc.Response(ctx, Filter{})
+
+	if got := builds.Load(); got != 2 {
+		t.Errorf("an unchanged store gave %d builds, want 2", got)
+	}
+}
+
+func TestServiceNilCredHubVersionLookupStaysNil(t *testing.T) {
+	t.Parallel()
+
+	served := issue(t, issueSpec{cn: "rabbitmq.bosh", serial: 7})
+	port := serveTLS(t, served)
+
+	dir := &fakeDirector{
+		manifest: rabbitManifest(port),
+		vars:     []bosh.Variable{{ID: "v1", Name: "/ws-bosh/rabbitmq-1/rabbitmq_crt"}},
+		vms:      []bosh.VM{{CID: "vm-0", Job: "standalone", Index: 0, IPs: []string{"127.0.0.1"}}},
+	}
+
+	svc := NewService(ServiceDeps{
+		Scanner:          ScannerDeps{Director: dir, Vault: newDivVault(), Prober: Prober{Timeout: 2 * time.Second}, DirectorName: testDirector},
+		List:             func(context.Context) ([]InstanceRef, error) { return []InstanceRef{testRef("rabbitmq-1")}, nil },
+		InventoryEnabled: true,
+	})
+
+	svc.sched.mu.Lock()
+	versions := svc.sched.versions
+	svc.sched.mu.Unlock()
+
+	if versions != nil {
+		t.Fatal("a missing CredHub client became a typed-nil VersionLookup")
+	}
+
+	ctx := context.Background()
+	store := svc.Divergence()
+
+	err := store.Update(ctx, testInstanceID, func(*Divergence) (*Divergence, error) {
+		return &Divergence{Variables: []DivergentVariable{{
+			Name: "/ws-bosh/rabbitmq-1/rabbitmq_crt", BOSHVersionID: "v0", AppliedVersionID: "v1", TaskID: "task-1",
+			State: DivergenceUnconverged, VMs: map[string]DivergentVM{"vm-0": {State: DivergentVMApplied}},
+		}}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before, _, _ := store.Get(ctx, testInstanceID)
+
+	if _, err := svc.ScanInstance(ctx, testInstanceID); err != nil {
+		t.Fatal(err)
+	}
+
+	after, found, err := store.Get(ctx, testInstanceID)
+	if err != nil || !found || !reflect.DeepEqual(before, after) {
+		t.Errorf("a scan without CredHub changed the record: %+v, %v, %v", after, found, err)
 	}
 }

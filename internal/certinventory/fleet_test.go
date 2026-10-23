@@ -70,7 +70,7 @@ func TestFleetGroupsSharedCAAcrossScans(t *testing.T) {
 	t.Parallel()
 
 	scans, _ := sharedCAFleet(t)
-	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
+	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, nil, fleetNow)
 
 	certs := fleet.Certificates()
 	if len(certs) != 1 {
@@ -101,7 +101,7 @@ func TestFleetStampsCredHubObservedAt(t *testing.T) {
 	t.Parallel()
 
 	scans, _ := sharedCAFleet(t)
-	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
+	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, nil, fleetNow)
 
 	credhubSeen := 0
 
@@ -134,7 +134,7 @@ func TestFleetStaleScanMarksCredHubObservation(t *testing.T) {
 	s.Err = "scan timed out after 60s"
 	s.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i1/redis_crt", Owner: instOwner("i1"), Deployed: leaf.cert}}
 
-	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()[0]
 
 	obs := c.Observations[0]
 	if obs.State != StateStale || !obs.ObservedAt.Equal(old) {
@@ -159,7 +159,7 @@ func TestFleetMergesCredHubNameAcrossScans(t *testing.T) {
 	b.Material.CredHub = []CredHubCert{{Name: name, Owner: instOwner("b"), Deployed: newCert.cert, Versions: Versions{DeployedVersionID: "v2", LatestVersionID: "v2"}}}
 
 	for _, order := range [][]InstanceScan{{a, b}, {b, a}} {
-		certs := Aggregate(order, DefaultSettings(), fleetCaps, fleetNow).Certificates()
+		certs := Aggregate(order, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()
 		if len(certs) != 1 {
 			t.Fatalf("got %d certificates, want 1", len(certs))
 		}
@@ -193,7 +193,7 @@ func TestFleetIDsStableAcrossScanOrder(t *testing.T) {
 	}
 
 	render := func(in []InstanceScan) string {
-		resp := BuildResponse(Aggregate(in, DefaultSettings(), fleetCaps, fleetNow), Filter{}, DefaultSettings(), fleetCaps, ScanState{}, fleetNow)
+		resp := BuildResponse(Aggregate(in, DefaultSettings(), fleetCaps, nil, fleetNow), Filter{}, DefaultSettings(), fleetCaps, ScanState{}, fleetNow)
 
 		raw, err := json.Marshal(resp)
 		if err != nil {
@@ -221,7 +221,7 @@ func TestFleetItemServesPublicPEM(t *testing.T) {
 	t.Parallel()
 
 	scans, ca := sharedCAFleet(t)
-	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
+	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, nil, fleetNow)
 
 	detail, ok := fleet.Item(fleet.Certificates()[0].ID)
 	if !ok {
@@ -250,8 +250,8 @@ func TestFleetRemovingOneInstance(t *testing.T) {
 	t.Parallel()
 
 	scans, _ := sharedCAFleet(t)
-	full := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
-	less := Aggregate(scans[1:], DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	full := Aggregate(scans, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()[0]
+	less := Aggregate(scans[1:], DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()[0]
 
 	if less.AffectedInstances != 39 || less.ID != full.ID {
 		t.Errorf("affected %d, id %q, want 39 and %q", less.AffectedInstances, less.ID, full.ID)
@@ -268,7 +268,7 @@ func TestFleetDeployPendingFinding(t *testing.T) {
 		Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"},
 	}}
 
-	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()[0]
 	if !hasFinding(c, FindingDeployPending) {
 		t.Fatalf("no deploy_pending in %+v", c.Findings)
 	}
@@ -301,7 +301,7 @@ func TestFleetCoverageFromExpectedListeners(t *testing.T) {
 	}
 	s.Material.Raw = append(s.Material.Raw, failed)
 
-	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()[0]
 	if c.Coverage.ExpectedListeners != 3 || c.Coverage.ObservedListeners != 2 || c.Coverage.FailedListeners != 1 {
 		t.Errorf("coverage %+v, want expected 3, observed 2, failed 1", c.Coverage)
 	}
@@ -329,7 +329,7 @@ func TestFleetFindingsSeeRepresentatives(t *testing.T) {
 		rawObs(SourceManifest, instOwner("i1"), "instance_groups[0].properties.crt", leaf),
 	}
 
-	fleet := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow)
+	fleet := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, nil, fleetNow)
 	c := findCert(t, fleet.Certificates(), "sha256:"+Fingerprint(leaf))
 
 	for _, code := range []string{FindingWeakKey, FindingIssuerExpiresFirst} {
@@ -350,14 +350,14 @@ func TestFleetRotatabilityUsesOwningInstance(t *testing.T) {
 	caps := fleetCaps
 	caps.PatchEnabled = true
 
-	c := Aggregate([]InstanceScan{s}, DefaultSettings(), caps, fleetNow).Certificates()[0]
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), caps, nil, fleetNow).Certificates()[0]
 	if !c.Rotation.Allowed || !reflect.DeepEqual(c.Rotation.Modes, []string{ModeRedeploy}) {
 		t.Fatalf("rotation %+v, want redeploy only on a three-VM instance with no gate", c.Rotation)
 	}
 
 	s.HealthGate = "redis-cluster"
 
-	c = Aggregate([]InstanceScan{s}, DefaultSettings(), caps, fleetNow).Certificates()[0]
+	c = Aggregate([]InstanceScan{s}, DefaultSettings(), caps, nil, fleetNow).Certificates()[0]
 	if !reflect.DeepEqual(c.Rotation.Modes, []string{ModeRedeploy, ModePatch}) {
 		t.Fatalf("rotation %+v, want patch with a gate", c.Rotation)
 	}
@@ -371,7 +371,7 @@ func TestFleetExpiryAndAttention(t *testing.T) {
 	s := fleetScan("i1", time.Now())
 	s.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i1/crt", Owner: instOwner("i1"), Deployed: soon.cert}}
 
-	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, time.Now()).Certificates()[0]
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, nil, time.Now()).Certificates()[0]
 	if c.Expiry != ExpiryCritical || c.DaysLeft == nil || *c.DaysLeft != 3 || !c.Attention {
 		t.Errorf("expiry %q days %v attention %v, want critical, 3, true", c.Expiry, c.DaysLeft, c.Attention)
 	}
@@ -379,7 +379,7 @@ func TestFleetExpiryAndAttention(t *testing.T) {
 	unread := fleetScan("i2", time.Now())
 	unread.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i2/crt", Owner: instOwner("i2"), Err: "CredHub not configured"}}
 
-	c = Aggregate([]InstanceScan{unread}, DefaultSettings(), fleetCaps, time.Now()).Certificates()[0]
+	c = Aggregate([]InstanceScan{unread}, DefaultSettings(), fleetCaps, nil, time.Now()).Certificates()[0]
 	if c.Expiry != ExpiryUnknown || c.ExpiryReason != "CredHub not configured" {
 		t.Errorf("expiry %q reason %q, want unknown with the read error", c.Expiry, c.ExpiryReason)
 	}
@@ -400,7 +400,7 @@ func TestFleetCredHubTieGoesToLowestInstanceID(t *testing.T) {
 
 	// The order of the input must not matter either.
 	for _, scans := range [][]InstanceScan{{a, b}, {b, a}} {
-		certs := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow).Certificates()
+		certs := Aggregate(scans, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()
 		if len(certs) != 1 {
 			t.Fatalf("got %d certificates, want 1", len(certs))
 		}
@@ -425,7 +425,7 @@ func TestFleetStaleScanMarksRawObservations(t *testing.T) {
 	stale.Stale = true
 	stale.Material.Raw = []RawObservation{rawObs(SourceManifest, instOwner("i1"), "instance_groups[0].properties.crt", leaf.cert)}
 
-	certs := Aggregate([]InstanceScan{stale}, DefaultSettings(), fleetCaps, fleetNow).Certificates()
+	certs := Aggregate([]InstanceScan{stale}, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()
 	if len(certs) != 1 {
 		t.Fatalf("got %d certificates, want 1", len(certs))
 	}
@@ -443,7 +443,7 @@ func TestFleetStaleScanMarksRawObservations(t *testing.T) {
 	fresh := fleetScan("i2", fleetNow.Add(-time.Minute))
 	fresh.Material.Raw = []RawObservation{rawObs(SourceManifest, instOwner("i2"), "instance_groups[0].properties.crt", leaf.cert)}
 
-	merged := Aggregate([]InstanceScan{stale, fresh}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	merged := Aggregate([]InstanceScan{stale, fresh}, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()[0]
 
 	counts := map[string]int{}
 	for _, o := range merged.Observations {
@@ -452,5 +452,157 @@ func TestFleetStaleScanMarksRawObservations(t *testing.T) {
 
 	if counts[StateStale] != 1 || counts[StateOK] != 1 {
 		t.Errorf("states after merging a stale and a fresh scan = %v, want one stale and one ok", counts)
+	}
+}
+
+func TestFleetDivergenceFields(t *testing.T) {
+	t.Parallel()
+
+	const (
+		pending  = "/ws-bosh/redis-i1/pending_crt"
+		reverted = "/ws-bosh/redis-i1/reverted_crt"
+	)
+
+	since := fleetNow.Add(-2 * time.Hour)
+	owner := instOwner("i1")
+	s := fleetScan("i1", fleetNow)
+
+	for n, name := range []string{pending, reverted} {
+		leaf := issue(t, issueSpec{cn: lastSegment(name), serial: int64(10 + n)})
+		s.Material.CredHub = append(s.Material.CredHub, CredHubCert{Name: name, Owner: owner, Deployed: leaf.cert,
+			Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"}})
+	}
+
+	div := map[string]*Divergence{"i1": {InstanceID: "i1", Revision: 4, Variables: []DivergentVariable{
+		{Name: pending, BOSHVersionID: "v1", AppliedVersionID: "v2", TaskID: "task-7", Since: since, State: DivergenceUnconverged,
+			VMs: map[string]DivergentVM{"vm-a": {State: DivergentVMApplied}}},
+		{Name: reverted, BOSHVersionID: "v1", AppliedVersionID: "v2", TaskID: "task-8", Since: since, State: DivergenceUnconverged,
+			VMs: map[string]DivergentVM{"vm-a": {State: DivergentVMApplied}, "vm-b": {State: DivergentVMReverted}}},
+	}}}
+
+	fleet := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, div, fleetNow)
+
+	byName := map[string]Certificate{}
+	for _, c := range fleet.Certificates() {
+		byName[c.Key] = c
+	}
+
+	p, r := byName[pending], byName[reverted]
+
+	if p.Divergence == nil || *p.Divergence != (DivergenceRef{State: DivergenceUnconverged, TaskID: "task-7", Since: since}) {
+		t.Errorf("pending divergence %+v", p.Divergence)
+	}
+
+	if !hasFinding(p, FindingUnconverged) || hasFinding(p, FindingPatchReverted) {
+		t.Errorf("pending findings %+v", p.Findings)
+	}
+
+	if r.Divergence == nil || r.Divergence.State != DivergenceReverted || r.Divergence.TaskID != "task-8" {
+		t.Errorf("reverted divergence %+v", r.Divergence)
+	}
+
+	if !hasFinding(r, FindingPatchReverted) {
+		t.Errorf("reverted findings %+v", r.Findings)
+	}
+
+	for _, f := range append(append([]Finding(nil), p.Findings...), r.Findings...) {
+		switch f.Code {
+		case FindingUnconverged:
+			if f.Severity != SeverityWarning {
+				t.Errorf("unconverged severity %q", f.Severity)
+			}
+		case FindingPatchReverted:
+			if f.Severity != SeverityError {
+				t.Errorf("patch_reverted severity %q", f.Severity)
+			}
+		}
+	}
+
+	if !p.Attention || !r.Attention {
+		t.Errorf("attention %v and %v, want both", p.Attention, r.Attention)
+	}
+
+	resp := BuildResponse(fleet, Filter{}, DefaultSettings(), fleetCaps, ScanState{}, fleetNow)
+
+	// Summarize counts the unconverged state only, so the reverted
+	// certificate counts as needing attention and not as unconverged.
+	if resp.Summary.Unconverged != 1 || resp.Summary.NeedsAttention != 2 {
+		t.Errorf("summary %+v", resp.Summary)
+	}
+
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n := strings.Count(string(raw), `"divergence":`); n != 2 {
+		t.Errorf("the response carries %d divergence fields, want 2", n)
+	}
+
+	if !strings.Contains(string(raw), `"unconverged":1`) {
+		t.Errorf("the response summary lacks the unconverged count: %s", raw)
+	}
+
+	if c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, nil, fleetNow).Certificates()[0]; c.Divergence != nil || hasFinding(c, FindingUnconverged) {
+		t.Errorf("a fleet without records gave %+v", c)
+	}
+}
+
+func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
+	t.Parallel()
+
+	const name = "/ws-bosh/redis-i1/redis_crt"
+
+	deployed := issue(t, issueSpec{cn: "redis", serial: 1})
+	patched := issue(t, issueSpec{cn: "redis", serial: 2})
+	stranger := issue(t, issueSpec{cn: "stranger", serial: 3})
+	owner := instOwner("i1")
+	listener := &Listener{Group: "redis", Job: "redis", Variable: "redis_crt", Port: 6379, Name: "tls"}
+
+	s := fleetScan("i1", fleetNow)
+	s.VMs = []bosh.VM{
+		{CID: "vm-a", Job: "redis", Index: 0, IPs: []string{"10.0.0.1"}},
+		{CID: "vm-b", Job: "redis", Index: 1, IPs: []string{"10.0.0.2"}},
+	}
+	s.Material.CredHub = []CredHubCert{{Name: name, Owner: owner, Deployed: deployed.cert,
+		Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"}}}
+	s.Material.Expected = []ExpectedListener{{Key: name, Locator: "redis/0:6379"}, {Key: name, Locator: "redis/1:6379"}}
+
+	for _, served := range []struct {
+		locator string
+		cert    issued
+	}{{"redis/0 10.0.0.1:6379", patched}, {"redis/1 10.0.0.2:6379", stranger}} {
+		r := rawObs(SourceProbe, owner, served.locator, served.cert.cert)
+		r.Listener = listener
+		s.Material.Raw = append(s.Material.Raw, r)
+	}
+
+	div := map[string]*Divergence{"i1": {InstanceID: "i1", Variables: []DivergentVariable{{
+		Name: name, BOSHVersionID: "v1", AppliedVersionID: "v2", TaskID: "task-7", State: DivergenceUnconverged,
+		VMs: map[string]DivergentVM{"vm-a": {State: DivergentVMApplied}},
+	}}}}
+
+	var c Certificate
+
+	for _, cert := range Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, div, fleetNow).Certificates() {
+		if cert.Key == name {
+			c = cert
+		}
+	}
+
+	var mismatched []string
+
+	for _, f := range c.Findings {
+		if f.Code == FindingServedMismatch {
+			mismatched = append(mismatched, f.Message)
+		}
+	}
+
+	if len(mismatched) != 1 || !strings.Contains(mismatched[0], "10.0.0.2") {
+		t.Fatalf("served_mismatch findings %q, want one for the VM the record does not list", mismatched)
+	}
+
+	if !hasFinding(c, FindingUnconverged) {
+		t.Errorf("no unconverged finding in %+v", c.Findings)
 	}
 }

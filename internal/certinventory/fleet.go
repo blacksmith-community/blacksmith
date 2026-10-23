@@ -71,9 +71,11 @@ type credEntry struct {
 // certificate that keeps the versions from the newest scan and lists every
 // owner. All raw observations go through Group together, so a certificate
 // shared by many instances is one certificate. Findings, coverage, expiry,
-// health, attention, and rotatability are applied last. The result does not
-// depend on the order of scans.
-func Aggregate(scans []InstanceScan, s Settings, caps Capabilities, now time.Time) *Fleet {
+// health, attention, and rotatability are applied last. div maps an instance
+// ID to its divergence record, and each certificate a record names gets its
+// Divergence field from it before the findings. A nil div means there are
+// none. The result does not depend on the order of scans.
+func Aggregate(scans []InstanceScan, s Settings, caps Capabilities, div map[string]*Divergence, now time.Time) *Fleet {
 	ordered := slices.Clone(scans)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Ref.ID < ordered[j].Ref.ID })
 
@@ -156,14 +158,17 @@ func Aggregate(scans []InstanceScan, s Settings, caps Capabilities, now time.Tim
 		}
 	}
 
+	diverged := fleet.applyDivergence(div, byInstance)
+
 	ApplyFindings(fleet.certs, FindingInput{
-		CAs:             cas,
-		Reps:            reps,
-		Hosts:           hosts,
-		PinnedFailures:  pinned,
-		ServicesCADrift: drift,
-		Expected:        expected,
-		Now:             now,
+		CAs:               cas,
+		Reps:              reps,
+		Hosts:             hosts,
+		PinnedFailures:    pinned,
+		ServicesCADrift:   drift,
+		Expected:          expected,
+		DivergedListeners: diverged,
+		Now:               now,
 	})
 
 	for i := range fleet.certs {
@@ -361,4 +366,73 @@ func owningInstance(c *Certificate, scans map[string]*InstanceScan) (int, string
 	}
 
 	return len(scan.VMs), scan.HealthGate
+}
+
+// applyDivergence sets the Divergence field of each certificate whose
+// CredHub name has an entry in the record of one of its owning instances.
+// When several owners have one, a reverted entry wins. It returns the
+// probed listeners that the entries explain, keyed as
+// FindingInput.DivergedListeners describes: each probe observation of the
+// certificate whose locator names an IP of a VM that the entry lists.
+func (f *Fleet) applyDivergence(div map[string]*Divergence, scans map[string]*InstanceScan) map[string]bool {
+	if len(div) == 0 {
+		return nil
+	}
+
+	diverged := map[string]bool{}
+
+	for i := range f.certs {
+		c := &f.certs[i]
+		if c.Key == "" {
+			continue
+		}
+
+		for _, owner := range c.Owners {
+			rec := div[owner.InstanceID]
+			if owner.InstanceID == "" || rec == nil {
+				continue
+			}
+
+			ref := DivergenceRefOf(rec, c.Key)
+			if ref == nil {
+				continue
+			}
+
+			if c.Divergence == nil || (ref.State == DivergenceReverted && c.Divergence.State != DivergenceReverted) {
+				c.Divergence = ref
+			}
+
+			markDivergedListeners(diverged, c, rec.entry(c.Key), scans[owner.InstanceID])
+		}
+	}
+
+	return diverged
+}
+
+// markDivergedListeners adds each probe observation of c whose locator
+// names an IP of a VM the entry lists.
+func markDivergedListeners(diverged map[string]bool, c *Certificate, e *DivergentVariable, scan *InstanceScan) {
+	if e == nil || scan == nil {
+		return
+	}
+
+	ips := map[string]bool{}
+
+	for _, vm := range scan.VMs {
+		if _, listed := e.VMs[vm.CID]; !listed || vm.CID == "" {
+			continue
+		}
+
+		for _, ip := range vm.IPs {
+			if ip != "" {
+				ips[ip] = true
+			}
+		}
+	}
+
+	for _, o := range c.Observations {
+		if o.Source == SourceProbe && ips[locatorIP(o.Locator)] {
+			diverged[c.ID+"|"+o.Locator] = true
+		}
+	}
 }

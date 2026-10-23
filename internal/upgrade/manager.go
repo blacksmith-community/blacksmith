@@ -1206,6 +1206,10 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// The deploy may have converged or undone a patch, so a diverged
+	// instance is scanned again once it settles.
+	defer m.rescanDivergedLocked(instance.InstanceID)
+
 	// Deferred calls run in reverse, so the settled instance is released
 	// before the lock is.
 	defer m.releaseUnheldLocked(task)
@@ -1245,6 +1249,40 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 		task.FailedCount++
 		m.logger.Error("Update failed for %s: BOSH task %d ended in state %s: %s", instance.DeploymentName, finished.ID, finished.State, finished.Result)
 	}
+}
+
+// rescanDivergedLocked starts a background scan of the instance when a
+// divergence record exists for it, so reconciliation sees what its deploy
+// did. Without a store or a scanner it does nothing. The caller holds mu,
+// which is what lets it add to the WaitGroup while Stop may be running.
+func (m *Manager) rescanDivergedLocked(instanceID string) {
+	store, scan := m.deps.Divergence, m.deps.ScanInstance
+	if store == nil || scan == nil || instanceID == "" || m.ctx.Err() != nil {
+		return
+	}
+
+	ctx := m.ctx
+
+	m.wg.Add(1)
+
+	go func() {
+		defer m.wg.Done()
+
+		_, found, err := store.Get(ctx, instanceID)
+		if err != nil {
+			m.logger.Error("Failed to read the divergence record of %s after its deploy: %v", instanceID, err)
+
+			return
+		}
+
+		if !found {
+			return
+		}
+
+		if _, err := scan(ctx, instanceID); err != nil && ctx.Err() == nil {
+			m.logger.Error("Failed to rescan diverged instance %s after its deploy: %v", instanceID, err)
+		}
+	}()
 }
 
 // skipPendingInstances marks every instance of a cancelled upgrade that

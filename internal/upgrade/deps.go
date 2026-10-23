@@ -51,6 +51,10 @@ type Deps struct {
 	// Prober reads the leaf certificate each listener serves, which a
 	// redeploy checks once the deploy is done.
 	Prober certinventory.Prober
+	// Divergence holds the records of patches BOSH does not know about. It
+	// is nil when the broker has no Vault, and then no settled deploy asks
+	// for a rescan.
+	Divergence *certinventory.DivergenceStore
 }
 
 // Configure gives the manager the dependencies its certificate tasks use. It

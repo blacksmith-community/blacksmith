@@ -111,6 +111,7 @@ func configureManager(manager *upgrade.Manager, deps Dependencies) {
 	if deps.Certificates != nil {
 		d.ScanInstance = deps.Certificates.ScanInstance
 		d.Settings = deps.Certificates.Settings
+		d.Divergence = deps.Certificates.Divergence()
 
 		if d.CredHubState == nil {
 			d.CredHubState = deps.Certificates.CredHubState
