@@ -213,8 +213,8 @@ func decideOpen(phase VMPhase, tally liveTally) (ResumeAction, string, bool) {
 		return ResumeContinueBackups, "No file was changed, so the patch keeps its backups, makes any missing ones, and continues to the first replacement.", true
 	case phase == VMPhaseSwapping && tally.allOld() && everyBackup:
 		return ResumeCompleteForward, "The swap stopped before any file changed and every backup is present, so the replacements are completed forward.", true
-	case phase == VMPhaseSwapping && tally.mixed():
-		return ResumeCompleteForward, "The swap stopped part way, so the remaining replacements are completed forward.", true
+	case phase == VMPhaseSwapping && tally.mixed() && everyBackup:
+		return ResumeCompleteForward, "The swap stopped part way and every backup is present, so the remaining replacements are completed forward.", true
 	case (phase == VMPhaseSwapping || phase == VMPhaseSwapped) && tally.allNew():
 		return ResumeRestartForward, "Every file holds the new content, so the touched processes restart and the patch continues.", true
 	case (phase == VMPhaseRestarted || phase == VMPhaseVerified) && tally.allNew():

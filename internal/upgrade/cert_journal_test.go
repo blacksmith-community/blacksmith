@@ -254,6 +254,8 @@ func guardRows() []resumeCase {
 		{"rolled back with an empty cleanup", resumeJournal(upgrade.VMPhaseRolledBack, ""), live(journalCID, bothOld(), bothBackups()), upgrade.ResumeCleanup},
 		{"swapping with a replacing file still old", replacingJournal(), live(journalCID, bothOld(), bothBackups()), upgrade.ResumeCompleteForward},
 		{"swapping with a backup missing", resumeJournal(upgrade.VMPhaseSwapping, ""), live(journalCID, bothOld(), oneBackup()), upgrade.ResumeUnrecovered},
+		{"swapping with a mix and a backup missing", resumeJournal(upgrade.VMPhaseSwapping, ""), live(journalCID, oldThenNew(), oneBackup()), upgrade.ResumeUnrecovered},
+		{"swapping with a mix and no backups", resumeJournal(upgrade.VMPhaseSwapping, ""), live(journalCID, oldThenNew(), noBackups()), upgrade.ResumeUnrecovered},
 		{"staged with a file already new", resumeJournal(upgrade.VMPhaseStaged, ""), live(journalCID, oldThenNew(), noBackups()), upgrade.ResumeUnrecovered},
 		{"swapped with a file old", resumeJournal(upgrade.VMPhaseSwapped, ""), live(journalCID, oldThenNew(), bothBackups()), upgrade.ResumeUnrecovered},
 		{"a file missing on the VM", resumeJournal(upgrade.VMPhaseSwapping, ""), live(journalCID, missingB(), bothBackups()), upgrade.ResumeUnrecovered},
