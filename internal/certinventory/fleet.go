@@ -373,7 +373,8 @@ func owningInstance(c *Certificate, scans map[string]*InstanceScan) (int, string
 // When several owners have one, a reverted entry wins. It returns the
 // probed listeners that the entries explain, keyed as
 // FindingInput.DivergedListeners describes: each probe observation of the
-// certificate whose locator names an IP of a VM that the entry lists.
+// certificate that serves the entry's applied version from an IP of a VM
+// that the entry lists.
 func (f *Fleet) applyDivergence(div map[string]*Divergence, scans map[string]*InstanceScan) map[string]bool {
 	if len(div) == 0 {
 		return nil
@@ -409,10 +410,12 @@ func (f *Fleet) applyDivergence(div map[string]*Divergence, scans map[string]*In
 	return diverged
 }
 
-// markDivergedListeners adds each probe observation of c whose locator
-// names an IP of a VM the entry lists.
+// markDivergedListeners adds each probe observation of c that serves the
+// entry's applied version and whose locator names an IP of a VM the entry
+// lists. A listed VM serving any other certificate is still a mismatch,
+// and an entry with no applied fingerprint explains no listener.
 func markDivergedListeners(diverged map[string]bool, c *Certificate, e *DivergentVariable, scan *InstanceScan) {
-	if e == nil || scan == nil {
+	if e == nil || scan == nil || e.AppliedFingerprint == "" {
 		return
 	}
 
@@ -431,7 +434,7 @@ func markDivergedListeners(diverged map[string]bool, c *Certificate, e *Divergen
 	}
 
 	for _, o := range c.Observations {
-		if o.Source == SourceProbe && ips[locatorIP(o.Locator)] {
+		if o.Source == SourceProbe && o.Fingerprint == e.AppliedFingerprint && ips[locatorIP(o.Locator)] {
 			diverged[c.ID+"|"+o.Locator] = true
 		}
 	}

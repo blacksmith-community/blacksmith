@@ -1347,3 +1347,23 @@ func TestReconcileConvergeRecreatedVMsAreNotReverted(t *testing.T) {
 		t.Error("a converged record with recreated VMs was kept")
 	}
 }
+
+func TestReconcileScanFillsAppliedFingerprint(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	certs := divVersions(t, "v6", "v7")
+	store := divSlotted(t)
+
+	scan := divScan(divScanStart, map[string]string{divVariable: "v6"},
+		map[string]*issued{"vm-a": ptr(certs["v7"]), "vm-b": ptr(certs["v7"])})
+
+	if err := store.ReconcileScan(ctx, scan, ReconcileSources{Versions: divCredHub(certs, "v6", "v7")}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, _ := store.Get(ctx, divInstance)
+	if e := got.entry(divVariable); e == nil || e.AppliedFingerprint != Fingerprint(certs["v7"].cert) {
+		t.Errorf("the entry's applied fingerprint is not v7's: %+v", e)
+	}
+}

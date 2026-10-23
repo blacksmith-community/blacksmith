@@ -548,14 +548,14 @@ func TestFleetDivergenceFields(t *testing.T) {
 	}
 }
 
-func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
-	t.Parallel()
+// divergedMismatches aggregates one redis instance whose redis/0 and
+// redis/1 serve servedA and servedB, with a divergence entry that lists
+// only vm-a, and returns the certificate's served_mismatch messages.
+func divergedMismatches(t *testing.T, deployed, servedA, servedB issued, appliedFingerprint string) []string {
+	t.Helper()
 
 	const name = "/ws-bosh/redis-i1/redis_crt"
 
-	deployed := issue(t, issueSpec{cn: "redis", serial: 1})
-	patched := issue(t, issueSpec{cn: "redis", serial: 2})
-	stranger := issue(t, issueSpec{cn: "stranger", serial: 3})
 	owner := instOwner("i1")
 	listener := &Listener{Group: "redis", Job: "redis", Variable: "redis_crt", Port: 6379, Name: "tls"}
 
@@ -571,14 +571,15 @@ func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
 	for _, served := range []struct {
 		locator string
 		cert    issued
-	}{{"redis/0 10.0.0.1:6379", patched}, {"redis/1 10.0.0.2:6379", stranger}} {
+	}{{"redis/0 10.0.0.1:6379", servedA}, {"redis/1 10.0.0.2:6379", servedB}} {
 		r := rawObs(SourceProbe, owner, served.locator, served.cert.cert)
 		r.Listener = listener
 		s.Material.Raw = append(s.Material.Raw, r)
 	}
 
 	div := map[string]*Divergence{"i1": {InstanceID: "i1", Variables: []DivergentVariable{{
-		Name: name, BOSHVersionID: "v1", AppliedVersionID: "v2", TaskID: "task-7", State: DivergenceUnconverged,
+		Name: name, BOSHVersionID: "v1", AppliedVersionID: "v2", AppliedFingerprint: appliedFingerprint,
+		TaskID: "task-7", State: DivergenceUnconverged,
 		VMs: map[string]DivergentVM{"vm-a": {State: DivergentVMApplied}},
 	}}}}
 
@@ -590,6 +591,10 @@ func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
 		}
 	}
 
+	if !hasFinding(c, FindingUnconverged) {
+		t.Errorf("no unconverged finding in %+v", c.Findings)
+	}
+
 	var mismatched []string
 
 	for _, f := range c.Findings {
@@ -598,11 +603,32 @@ func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
 		}
 	}
 
-	if len(mismatched) != 1 || !strings.Contains(mismatched[0], "10.0.0.2") {
-		t.Fatalf("served_mismatch findings %q, want one for the VM the record does not list", mismatched)
+	return mismatched
+}
+
+func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
+	t.Parallel()
+
+	deployed := issue(t, issueSpec{cn: "redis", serial: 1})
+	patched := issue(t, issueSpec{cn: "redis", serial: 2})
+	stranger := issue(t, issueSpec{cn: "stranger", serial: 3})
+
+	got := divergedMismatches(t, deployed, patched, stranger, Fingerprint(patched.cert))
+	if len(got) != 1 || !strings.Contains(got[0], "10.0.0.2") {
+		t.Fatalf("served_mismatch findings %q, want one for the VM the record does not list", got)
 	}
 
-	if !hasFinding(c, FindingUnconverged) {
-		t.Errorf("no unconverged finding in %+v", c.Findings)
+	// A listed VM that serves neither the deployed nor the applied
+	// certificate is still a mismatch.
+	got = divergedMismatches(t, deployed, stranger, deployed, Fingerprint(patched.cert))
+	if len(got) != 1 || !strings.Contains(got[0], "10.0.0.1") {
+		t.Errorf("served_mismatch findings %q, want one for the listed VM serving a third certificate", got)
+	}
+
+	// Without the applied fingerprint, nothing shows the listed VM serves
+	// the patch, so its mismatch stays.
+	got = divergedMismatches(t, deployed, patched, deployed, "")
+	if len(got) != 1 || !strings.Contains(got[0], "10.0.0.1") {
+		t.Errorf("served_mismatch findings %q, want the listed VM's with no applied fingerprint", got)
 	}
 }

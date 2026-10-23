@@ -60,14 +60,18 @@ type Divergence struct {
 // DivergentVariable is one patched variable. Name is the variable's
 // absolute CredHub name, the same name a certificate's Key carries.
 type DivergentVariable struct {
-	Name             string                 `json:"name"`
-	BOSHVersionID    string                 `json:"bosh_version_id"`    // what BOSH records as deployed
-	AppliedVersionID string                 `json:"applied_version_id"` // what the patch wrote
-	VMs              map[string]DivergentVM `json:"vms"`                // keyed by VM CID
-	TaskID           string                 `json:"task_id"`
-	Since            time.Time              `json:"since"`
-	State            string                 `json:"state"` // "unconverged", "reverted", "converging"
-	UpdatedAt        time.Time              `json:"updated_at"`
+	Name             string `json:"name"`
+	BOSHVersionID    string `json:"bosh_version_id"`    // what BOSH records as deployed
+	AppliedVersionID string `json:"applied_version_id"` // what the patch wrote
+	// AppliedFingerprint is the public fingerprint of the applied
+	// version's leaf. A listener on a listed VM that serves it raises no
+	// served_mismatch.
+	AppliedFingerprint string                 `json:"applied_fingerprint,omitempty"`
+	VMs                map[string]DivergentVM `json:"vms"` // keyed by VM CID
+	TaskID             string                 `json:"task_id"`
+	Since              time.Time              `json:"since"`
+	State              string                 `json:"state"` // "unconverged", "reverted", "converging"
+	UpdatedAt          time.Time              `json:"updated_at"`
 }
 
 // DivergentVM is what one VM holds of a patched variable. Group and Index
@@ -915,8 +919,27 @@ func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, 
 			return d, nil
 		}
 
-		return Reconcile(d, in), nil
+		return fillAppliedFingerprints(Reconcile(d, in), in), nil
 	})
+}
+
+// fillAppliedFingerprints gives each entry that lacks one the fingerprint
+// of its applied version, when the scan's CredHub reads found it. A
+// version's certificate never changes, so this holds for an entry that
+// changed after the scan began too.
+func fillAppliedFingerprints(d *Divergence, in ReconcileInput) *Divergence {
+	if d == nil {
+		return nil
+	}
+
+	for i := range d.Variables {
+		v := &d.Variables[i]
+		if v.AppliedFingerprint == "" {
+			v.AppliedFingerprint = in.VersionFingerprint[v.AppliedVersionID]
+		}
+	}
+
+	return d
 }
 
 // newerScan reports whether a scan that began at start is newer than the

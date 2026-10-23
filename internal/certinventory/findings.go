@@ -49,9 +49,9 @@ type FindingInput struct {
 	// Expected maps a certificate ID to its expected listener count.
 	Expected map[string]int
 	// DivergedListeners holds "<certificate ID>|<locator>" for each probed
-	// listener on a VM that a divergence entry for the certificate lists.
-	// Such a listener serves the patched version on purpose, so it raises
-	// no served_mismatch.
+	// listener on a VM that a divergence entry for the certificate lists
+	// and that serves the entry's applied version. Such a listener serves
+	// the patched version on purpose, so it raises no served_mismatch.
 	DivergedListeners map[string]bool
 	Now               time.Time
 }
