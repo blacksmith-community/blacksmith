@@ -74,6 +74,13 @@ func switches(rotation, patch bool) config.CertificatesConfig {
 	}
 }
 
+// inventoryOff turns the inventory switch off in a set of switches.
+func inventoryOff(certs config.CertificatesConfig) config.CertificatesConfig {
+	certs.Inventory = config.CertificateSwitch{Enabled: boolPtr(false)}
+
+	return certs
+}
+
 func TestCertWritesAllowed(t *testing.T) {
 	t.Parallel()
 
@@ -84,6 +91,9 @@ func TestCertWritesAllowed(t *testing.T) {
 		mode     RotationMode
 		code     string
 	}{
+		{name: "inventory off", switches: inventoryOff(switches(true, true)), credhub: stubCredHub{}, mode: RotationModePatch, code: apierr.CodeInventoryDisabled},
+		{name: "inventory off refuses converge too", switches: inventoryOff(switches(true, false)), credhub: stubCredHub{}, mode: RotationModeConverge, code: apierr.CodeInventoryDisabled},
+		{name: "inventory off comes before rotation off", switches: inventoryOff(switches(false, false)), credhub: stubCredHub{}, mode: RotationModeRedeploy, code: apierr.CodeInventoryDisabled},
 		{name: "rotation off", switches: switches(false, false), credhub: stubCredHub{}, mode: RotationModeRedeploy, code: apierr.CodeRotationDisabled},
 		{name: "patch needs its own switch", switches: switches(true, false), credhub: stubCredHub{}, mode: RotationModePatch, code: apierr.CodePatchDisabled},
 		{name: "converge needs only rotation", switches: switches(true, false), credhub: stubCredHub{}, mode: RotationModeConverge},
@@ -156,5 +166,21 @@ func TestCertWritesAllowedWithoutConfigureRefuses(t *testing.T) {
 	var apiErr *apierr.Error
 	if got := manager.certWritesAllowed(RotationModeRedeploy); !errors.As(got, &apiErr) || apiErr.Code != apierr.CodeRotationDisabled {
 		t.Fatalf("an unconfigured manager must refuse writes, got %v", got)
+	}
+}
+
+// A task paused by the inventory switch shows a message naming it, and
+// the refusal is one that pauses rather than fails.
+func TestWritesRefusedInventoryOff(t *testing.T) {
+	t.Parallel()
+
+	err := writesAllowed(Deps{CredHub: stubCredHub{}, Switches: func() config.CertificatesConfig { return inventoryOff(switches(true, true)) }}, RotationModeRedeploy)
+	if !isWritesRefused(err) {
+		t.Fatalf("isWritesRefused(%v) = false, want true", err)
+	}
+
+	var apiErr *apierr.Error
+	if paused := writesRefused(err); !errors.As(paused, &apiErr) || apiErr.Code != apierr.CodeInventoryDisabled || apiErr.Message != inventoryOffMessage {
+		t.Fatalf("writesRefused = %v, want the inventory-off message", paused)
 	}
 }

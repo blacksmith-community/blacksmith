@@ -637,6 +637,25 @@ func TestDecisionWithRotationOff(t *testing.T) {
 	}
 }
 
+// With the inventory off, a decision that lets the task write is refused
+// even though rotation is on.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestDecisionWithInventoryOff(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.madeNewVersion()
+
+	manager := env.load(env.awaitingReconcile([]Candidate{{VersionID: "v2", CreatedAt: regenLater, Valid: true}}))
+	env.setInventoryOff()
+
+	err := manager.ReconcileRegeneration(context.Background(), certTaskID, waitInstanceID, ReconcileRequest{
+		Variable: regenLeaf, Action: "adopt", VersionID: "v2",
+	})
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeInventoryDisabled)
+
+	expectStillAwaiting(t, manager, StatusAwaitingDecision, DecisionReconcileRegeneration)
+}
+
 // Resolving with verify checks the deploy now, and a deploy that shows
 // the new certificates completes the instance and the task.
 //

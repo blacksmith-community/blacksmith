@@ -536,6 +536,14 @@ func (e *redeployEnv) setSwitches(rotation bool) {
 	e.switches = switches(rotation, false)
 }
 
+// setInventoryOff turns the inventory switch off and leaves rotation on.
+func (e *redeployEnv) setInventoryOff() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.switches = inventoryOff(switches(true, false))
+}
+
 // scan is the inventory's scan of the instance, which shows v1 deployed
 // on its one VM.
 func (e *redeployEnv) scan(ctx context.Context, instanceID string) (certinventory.InstanceScan, error) {
@@ -1944,6 +1952,38 @@ func TestCertificateResumeRefusedWithRotationOff(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden || apiErr.Code != apierr.CodeRotationDisabled {
 		t.Fatalf("expected a 403 rotation_disabled refusal, got %v", err)
 	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	task := current(t, manager)
+	if task.Status != TaskStatusPaused || !task.Paused {
+		t.Fatalf("expected the task to stay paused, got %s", task.Status)
+	}
+
+	if saved := env.stored(); saved.Status != TaskStatusPaused {
+		t.Fatalf("expected the saved task to stay paused, got %s", saved.Status)
+	}
+
+	if count := env.credhub.regenerateCount(); count != 0 {
+		t.Fatalf("expected no regenerate, got %d", count)
+	}
+}
+
+// A resume with the inventory off is refused with inventory_disabled even
+// though rotation is on, and the task stays paused with nothing changed.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateResumeRefusedWithInventoryOff(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	manager := env.load(env.task())
+
+	waitUntil(t, "the task to load paused", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	env.setInventoryOff()
+
+	err := manager.ResumeTask(context.Background(), certTaskID)
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeInventoryDisabled)
 
 	time.Sleep(100 * time.Millisecond)
 

@@ -27,6 +27,12 @@ const (
 	rotationOffMessage = "Rotation is off on this broker, so this task paused before changing anything. " +
 		"Turn certificates.rotation.enabled back on and resume, or cancel the task."
 
+	// inventoryOffMessage is what a certificate task shows when it pauses
+	// because the certificate inventory was turned off after it was
+	// created.
+	inventoryOffMessage = "Certificate inventory is off on this broker, so this task paused before changing anything more. " +
+		"Turn certificates.inventory.enabled back on and resume, or cancel the task."
+
 	// patchOffMessage is what a patch task shows when it pauses because
 	// patch in place was turned off after it was created.
 	patchOffMessage = "Patch in place is off on this broker, so this task paused before changing anything more on the VMs. " +
@@ -619,6 +625,8 @@ func writesRefused(err error) error {
 	}
 
 	switch apiErr.Code {
+	case apierr.CodeInventoryDisabled:
+		return apierr.New(apiErr.Status, apiErr.Code, inventoryOffMessage)
 	case apierr.CodeRotationDisabled:
 		return apierr.New(apiErr.Status, apiErr.Code, rotationOffMessage)
 	case apierr.CodePatchDisabled:
@@ -637,7 +645,7 @@ func isWritesRefused(err error) bool {
 	}
 
 	switch apiErr.Code {
-	case apierr.CodeRotationDisabled, apierr.CodePatchDisabled, apierr.CodeCredHubNotConfigured:
+	case apierr.CodeInventoryDisabled, apierr.CodeRotationDisabled, apierr.CodePatchDisabled, apierr.CodeCredHubNotConfigured:
 		return true
 	default:
 		return false

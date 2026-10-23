@@ -138,6 +138,10 @@ func writesAllowed(deps Deps, mode RotationMode) error {
 		switches = deps.Switches()
 	}
 
+	if !switches.InventoryEnabled() {
+		return apierr.New(http.StatusForbidden, apierr.CodeInventoryDisabled, "Certificate inventory is turned off. Set certificates.inventory.enabled to true to allow certificate changes.")
+	}
+
 	if !switches.RotationEnabled() {
 		return apierr.New(http.StatusForbidden, apierr.CodeRotationDisabled, "Certificate rotation is turned off. Set certificates.rotation.enabled to true to allow it.")
 	}
