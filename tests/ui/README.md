@@ -3,6 +3,21 @@
 Run the pure navigation checks with `bun test tests/ui/navigation.test.js`.
 No JavaScript dependencies or build step are required.
 
+The certificate screens have their own suites under `tests/ui/certificates/`, and `bun test tests/ui/` runs them along with the navigation checks.
+These suites load `ui/blacksmith.js` and `ui/index.html` into jsdom, replace `fetch` with scripted answers, and drive the real page code, so they need jsdom even though this repository does not depend on it.
+We resolve jsdom with a normal import first and then from the `JSDOM_PATH` environment variable, so either of these works.
+
+```sh
+bun add --no-save jsdom
+JSDOM_PATH=/path/to/node_modules/jsdom bun test tests/ui/
+```
+
+When neither source works, the certificate suites skip and print one message that says how to provide jsdom, and the navigation checks still run.
+The first option installs jsdom without touching `package.json`, so we never commit it.
+Every suite shares `tests/ui/certificates/harness.js`, which reads the page code through relative paths, and `tests/ui/certificates/support.js` finds jsdom and collects the named checks.
+A suite reports every failed check by name at the end, so one failing test can list several broken behaviors.
+Most suites also assert that no script error or `alert`, `confirm`, or `prompt` call happened, which keeps the rendering and dialog rules enforced.
+
 For browser regression checks, start a static server from the repository:
 
 ```sh
