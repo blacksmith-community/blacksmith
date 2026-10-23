@@ -126,7 +126,7 @@ t('decision panels', async () => {
     return g0;
   };
   const g=await errCase('deployment_locked',409,'deployment_locked','xyz still running','Try again when its task finishes');
-  await errCase('invalid_request',400,'invalid_request','bad action','Refresh the task');
+  await errCase('invalid_request',400,'invalid_request','bad action','Check what you sent');
   const gb=calls.filter(c=>/GET .*tasks\/task-1$/.test(c)).length;
   await errCase('not_awaiting_decision',409,'not_awaiting_decision','moved on','any more');
   await sleep(60);

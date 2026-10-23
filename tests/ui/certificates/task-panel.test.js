@@ -21,9 +21,16 @@ t('task panel and API errors', async () => {
     [503,{success:false,error:'tasks are loading',code:'tasks_loading'},'tasks_loading','tasks are loading','still loading'],
     [409,{success:false,error:'director busy',code:'deployment_locked'},'deployment_locked','director busy','director is still working'],
     [409,{success:false,error:'nope',code:'not_awaiting_decision'},'not_awaiting_decision','nope','not waiting for a decision'],
-    [403,{success:false,error:'Rotation is off.',code:'rotation_disabled'},'rotation_disabled','Rotation is off.',null],
-    [403,{success:false,error:'Patch is off.',code:'patch_disabled'},'patch_disabled','Patch is off.',null],
+    [403,{success:false,error:'Rotation is off.',code:'rotation_disabled'},'rotation_disabled','Rotation is off.','certificate_rotation'],
+    [403,{success:false,error:'Patch is off.',code:'patch_disabled'},'patch_disabled','Patch is off.','certificate_patch_in_place'],
     [400,{success:false,error:'bad body',code:'invalid_request'},'invalid_request','bad body','did not accept that request'],
+    [503,{success:false,error:'vault down',code:'vault_unavailable'},'vault_unavailable','vault down','try again'],
+    [503,{success:false,error:'credhub down',code:'credhub_unavailable'},'credhub_unavailable','credhub down','try again'],
+    [409,{success:false,error:'ca moved',code:'signing_ca_changed'},'signing_ca_changed','ca moved','runbook'],
+    [409,{success:false,error:'reused',code:'request_id_conflict'},'request_id_conflict','reused','fresh one'],
+    [403,{success:false,error:'no credhub',code:'credhub_not_configured'},'credhub_not_configured','no credhub','runbook'],
+    [409,{success:false,error:'no gate',code:'no_health_gate'},'no_health_gate','no gate','Redeploy'],
+    [404,{success:false,error:'gone',code:'instance_not_found'},'instance_not_found','gone','Refresh the page'],
   ];
   for(const [st,body,code,msg,adv] of cases){
     const e=await T.readApiError(mk(st,body)); const t=T.apiErrorText(e);

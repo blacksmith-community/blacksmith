@@ -5025,8 +5025,24 @@
     instance_busy: 'Another operation holds this instance. Wait for it to finish, then try again.',
     credhub_unavailable: 'CredHub did not answer. Check its connection, then try again.',
     vault_unavailable: 'Vault did not answer. Check its connection, then try again.',
-    invalid_request: 'The broker did not accept that request. Refresh the task, then try again.',
-    empty_preview: 'Nothing was changed, so choose Preview again to ask for a fresh one.'
+    invalid_request: 'The broker did not accept that request. Check what you sent, then try again.',
+    empty_preview: 'Nothing was changed, so choose Preview again to ask for a fresh one.',
+    internal_error: 'The broker hit an unexpected problem. Try again, and look in the broker log if it keeps happening.',
+    rotation_disabled: 'Rotation is switched off on this broker. An operator turns it on with the certificate_rotation kit parameter.',
+    patch_disabled: 'Patching in place is switched off on this broker. An operator turns it on with the certificate_patch_in_place kit parameter, and rotation has to be on as well.',
+    credhub_not_configured: 'This broker has no CredHub connection. The broker Overview has a runbook that shows how to enable it.',
+    director_unsupported: 'This director cannot do what the operation needs, and nothing was changed.',
+    signing_ca_changed: 'The CA that would sign the new certificate is not the one that signed the deployed one. The broker Overview has a runbook for CA renewal.',
+    request_id_conflict: 'That request ID was already used for a different request. Preview again to start a fresh one.',
+    upgrade_preview_required: 'Preview the upgrade again before you start it.',
+    preview_expired: 'That preview has expired. Preview again, then start the operation.',
+    no_health_gate: 'Patching in place needs a health check that this service lacks. Redeploy the instance instead.',
+    vms_not_running: 'Patching in place needs every VM running. Start the VMs or redeploy the instance.',
+    patch_unsupported: 'This instance cannot be patched in place. Redeploy it instead.',
+    candidate_invalid: 'That version is not a candidate for this certificate. Refresh the task to see the current candidates.',
+    approval_mismatch: 'What you approved does not match what the broker is holding. Refresh the task, then decide again.',
+    not_rotatable: 'This certificate cannot be rotated by the broker. Open the certificate to see why.',
+    instance_not_found: 'The broker does not know that instance. Refresh the page to see the current instances.'
   };
 
   // The text to show for an API error: its message, and the advice for its
