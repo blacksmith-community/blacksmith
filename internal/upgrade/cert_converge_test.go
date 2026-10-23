@@ -492,6 +492,38 @@ func TestConvergeReconcileFailureKeepsRecord(t *testing.T) {
 	expectUnconfirmedConverge(t, env, manager, settled)
 }
 
+// A converge deploy that BOSH fails fails the instance, keeps the
+// divergence record, since nothing converged, and frees the instance.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestConvergeDeployFailureKeepsRecord(t *testing.T) {
+	env := newConvergeEnv(t)
+	env.diverge()
+	env.director.finish = func(_ context.Context, taskID int) (*bosh.Task, error) {
+		return &bosh.Task{ID: taskID, State: boshTaskError, Result: "compilation failed"}, nil
+	}
+
+	manager := env.newManager()
+	task := env.task()
+
+	if !env.run(manager, &task) {
+		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+	}
+
+	inst := current(t, manager).Instances[0]
+
+	failed := fmt.Sprintf("BOSH task %d ended in state %s: compilation failed.", redeployTaskID, boshTaskError)
+	if inst.Status != InstanceStatusFailed || !strings.HasPrefix(inst.Error, failed) {
+		t.Fatalf("expected the instance failed with %q, got %s: %q", failed, inst.Status, inst.Error)
+	}
+
+	if !env.diverged() {
+		t.Fatal("expected the divergence record to stay after the failed converge deploy")
+	}
+
+	expectReleased(t, manager)
+}
+
 // A converge keeps the guard through the reconciliation that follows its
 // deploy, so nothing else may change the instance until the record is
 // reconciled.
