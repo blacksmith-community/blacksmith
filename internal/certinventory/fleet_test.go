@@ -489,7 +489,7 @@ func TestFleetDivergenceFields(t *testing.T) {
 
 	p, r := byName[pending], byName[reverted]
 
-	if p.Divergence == nil || *p.Divergence != (DivergenceRef{State: DivergenceUnconverged, TaskID: "task-7", Since: since}) {
+	if p.Divergence == nil || !reflect.DeepEqual(*p.Divergence, DivergenceRef{State: DivergenceUnconverged, TaskID: "task-7", Since: since}) {
 		t.Errorf("pending divergence %+v", p.Divergence)
 	}
 

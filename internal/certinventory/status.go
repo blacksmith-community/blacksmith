@@ -112,6 +112,10 @@ func Summarize(certs []Certificate) Summary {
 			s.Unconverged++
 		}
 
+		if c.Divergence != nil && c.Divergence.State == DivergenceReverted {
+			s.Reverted++
+		}
+
 		if c.Coverage.Stale {
 			s.Stale++
 		}

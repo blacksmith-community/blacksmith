@@ -174,7 +174,35 @@ func DivergenceRefOf(d *Divergence, variable string) *DivergenceRef {
 		}
 	}
 
-	return &DivergenceRef{State: state, TaskID: e.TaskID, Since: e.Since}
+	return &DivergenceRef{State: state, TaskID: e.TaskID, Since: e.Since, VMs: divergentVMRefs(e.VMs)}
+}
+
+// divergentVMRefs lists the VMs of an entry by slot, sorted by group and
+// then index. A VM without a group cannot be named, so it is left out.
+func divergentVMRefs(vms map[string]DivergentVM) []DivergentVMRef {
+	var out []DivergentVMRef
+
+	for _, vm := range vms {
+		if vm.Group == "" {
+			continue
+		}
+
+		out = append(out, DivergentVMRef{Group: vm.Group, Index: vm.Index, State: vm.State})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Group != out[j].Group {
+			return out[i].Group < out[j].Group
+		}
+
+		if out[i].Index != out[j].Index {
+			return out[i].Index < out[j].Index
+		}
+
+		return out[i].State < out[j].State
+	})
+
+	return out
 }
 
 // VersionLookup is what reconciliation reads from CredHub: each version's

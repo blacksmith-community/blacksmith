@@ -175,6 +175,16 @@ type DivergenceRef struct {
 	State  string    `json:"state"` // "unconverged", "reverted"
 	TaskID string    `json:"task_id"`
 	Since  time.Time `json:"since"`
+	// VMs says what each VM holds of the variable, sorted by group and
+	// index. It carries no CID, address, path, or fingerprint.
+	VMs []DivergentVMRef `json:"vms,omitempty"`
+}
+
+// DivergentVMRef is one VM of a divergence record, named by its slot.
+type DivergentVMRef struct {
+	Group string `json:"group"`
+	Index int    `json:"index"`
+	State string `json:"state"` // "applied", "old", "reverted", or "unknown"
 }
 
 // Summary counts certificates by status.
@@ -189,6 +199,7 @@ type Summary struct {
 	HealthErrors       int `json:"health_errors"`
 	NeedsAttention     int `json:"needs_attention"`
 	Unconverged        int `json:"unconverged"`
+	Reverted           int `json:"reverted"`
 	Stale              int `json:"stale"`
 	IncompleteCoverage int `json:"incomplete_coverage"`
 }

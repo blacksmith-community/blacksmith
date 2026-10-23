@@ -1714,3 +1714,49 @@ func TestReconcileScanConfirmedSkips(t *testing.T) {
 		}
 	})
 }
+
+func TestDivergenceRefOfListsVMsSortedWithoutIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	record := &Divergence{Variables: []DivergentVariable{{
+		Name:  divVariable,
+		State: DivergenceUnconverged,
+		VMs: map[string]DivergentVM{
+			"cid-c": {State: DivergentVMOld, Group: "web", Index: 10},
+			"cid-a": {State: DivergentVMApplied, Group: "web", Index: 2},
+			"cid-b": {State: DivergentVMUnknown, Group: "api", Index: 5},
+			"cid-d": {State: DivergentVMReverted, Group: "web", Index: 0},
+			"cid-e": {State: DivergentVMApplied},
+		},
+	}}}
+
+	ref := DivergenceRefOf(record, divVariable)
+	if ref == nil {
+		t.Fatal("no ref")
+	}
+
+	want := []DivergentVMRef{
+		{Group: "api", Index: 5, State: DivergentVMUnknown},
+		{Group: "web", Index: 0, State: DivergentVMReverted},
+		{Group: "web", Index: 2, State: DivergentVMApplied},
+		{Group: "web", Index: 10, State: DivergentVMOld},
+	}
+
+	if !reflect.DeepEqual(ref.VMs, want) {
+		t.Fatalf("vms %+v, want %+v", ref.VMs, want)
+	}
+
+	raw, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(raw), "cid-") {
+		t.Errorf("the ref exposes a CID: %s", raw)
+	}
+
+	empty := DivergenceRefOf(&Divergence{Variables: []DivergentVariable{{Name: divVariable}}}, divVariable)
+	if empty == nil || empty.VMs != nil {
+		t.Errorf("an entry with no VMs gave %+v", empty)
+	}
+}

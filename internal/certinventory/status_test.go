@@ -161,13 +161,15 @@ func TestSummarizeCounts(t *testing.T) {
 			Divergence: &DivergenceRef{State: "unconverged"}},
 		{Expiry: ExpiryOK, Health: HealthOK, Coverage: Coverage{Complete: true, Stale: true}},
 		{Expiry: ExpiryUnknown, Health: HealthUnknown, Coverage: Coverage{Complete: false}, Owners: owner("i3")},
+		{Expiry: ExpiryOK, Health: HealthOK, Coverage: ok, Owners: owner("i4"),
+			Divergence: &DivergenceRef{State: "reverted"}},
 	}
 
 	s := Summarize(certs)
 	want := Summary{
-		Certificates: 5, AffectedInstances: 3, Expired: 1, Critical: 1, Warning: 1,
-		ExpiryOK: 1, ExpiryUnknown: 1, HealthErrors: 1, NeedsAttention: 3,
-		Unconverged: 1, Stale: 1, IncompleteCoverage: 1,
+		Certificates: 6, AffectedInstances: 4, Expired: 1, Critical: 1, Warning: 1,
+		ExpiryOK: 2, ExpiryUnknown: 1, HealthErrors: 1, NeedsAttention: 4,
+		Unconverged: 1, Reverted: 1, Stale: 1, IncompleteCoverage: 1,
 	}
 
 	if s != want {
