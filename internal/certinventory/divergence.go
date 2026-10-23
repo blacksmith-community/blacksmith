@@ -35,9 +35,11 @@ const (
 const DivergenceConverging = "converging"
 
 const (
-	// divergenceTimeout bounds one Get, List, or Update, its read-back
-	// included.
-	divergenceTimeout = 10 * time.Second
+	// DivergenceTimeout bounds one Get, List, or Update, its read-back
+	// included. A caller that retries a read keeps all its attempts
+	// within it too.
+	DivergenceTimeout = 10 * time.Second
+	divergenceTimeout = DivergenceTimeout
 	// reconcileVersionLimit is how many of a variable's newest versions
 	// reconciliation reads.
 	reconcileVersionLimit = 20

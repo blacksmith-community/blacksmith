@@ -18,6 +18,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/credhub"
+	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/logger"
 )
 
@@ -166,6 +167,14 @@ type divergedEnv struct {
 func newDivergedEnv(t *testing.T, withDivergence bool) *divergedEnv {
 	t.Helper()
 
+	return newDivergedEnvWith(t, withDivergence, nil)
+}
+
+// newDivergedEnvWith builds the environment with the divergence store
+// reading through storeVault, when it is set, in place of the vault.
+func newDivergedEnvWith(t *testing.T, withDivergence bool, storeVault func(*waitVault) interfaces.Vault) *divergedEnv {
+	t.Helper()
+
 	env := &divergedEnv{
 		director: newDivergedDirector(),
 		vault:    newWaitVault(),
@@ -191,7 +200,12 @@ func newDivergedEnv(t *testing.T, withDivergence bool) *divergedEnv {
 	}
 
 	if withDivergence {
-		env.store = certinventory.NewDivergenceStore(env.vault, nil)
+		var backing interfaces.Vault = env.vault
+		if storeVault != nil {
+			backing = storeVault(env.vault)
+		}
+
+		env.store = certinventory.NewDivergenceStore(backing, nil)
 		deps.Divergence = env.store
 	}
 
@@ -800,4 +814,138 @@ func TestUpgradeStopsWhenDivergedAfterCreate(t *testing.T) {
 	close(env.director.getGate)
 
 	expectStoppedForApproval(t, env, task.ID)
+}
+
+// flakyDivergenceVault fails the next failures reads of a divergence
+// record, and counts every such read.
+type flakyDivergenceVault struct {
+	*waitVault
+
+	failures atomic.Int64
+	reads    atomic.Int64
+}
+
+func (v *flakyDivergenceVault) Get(ctx context.Context, path string, result interface{}) (bool, error) {
+	if strings.HasPrefix(path, "certificate-divergence/") {
+		v.reads.Add(1)
+
+		if v.failures.Add(-1) >= 0 {
+			return false, errVaultSealed
+		}
+	}
+
+	return v.waitVault.Get(ctx, path, result)
+}
+
+var errVaultSealed = errors.New("vault: 503 sealed")
+
+// newFlakyDivergedEnv builds the environment with a divergence store whose
+// reads fail while the returned vault has failures left.
+func newFlakyDivergedEnv(t *testing.T) (*divergedEnv, *flakyDivergenceVault) {
+	t.Helper()
+
+	var flaky *flakyDivergenceVault
+
+	env := newDivergedEnvWith(t, true, func(v *waitVault) interfaces.Vault {
+		flaky = &flakyDivergenceVault{waitVault: v}
+
+		return flaky
+	})
+
+	return env, flaky
+}
+
+// gateDeploymentRead makes the upgrade wait on its read of the deployment
+// until the returned function is called, and returns once the read began.
+func (e *divergedEnv) gateDeploymentRead(t *testing.T, create func()) func() {
+	t.Helper()
+
+	e.director.getGate = make(chan struct{})
+	e.director.getStarted = make(chan struct{})
+
+	create()
+
+	select {
+	case <-e.director.getStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never read its deployment")
+	}
+
+	return func() { close(e.director.getGate) }
+}
+
+//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+func TestUpgradeRetriesDivergenceRead(t *testing.T) {
+	env, flaky := newFlakyDivergedEnv(t)
+
+	var task *UpgradeTask
+
+	release := env.gateDeploymentRead(t, func() {
+		var err error
+
+		task, err = env.manager.CreateTask(context.Background(), upgradeRequest(waitInstanceID))
+		if err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+	})
+
+	// Vault fails twice, and the third read finds no record.
+	flaky.reads.Store(0)
+	flaky.failures.Store(2)
+	release()
+
+	select {
+	case <-env.director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never deployed after Vault recovered")
+	}
+
+	if reads := flaky.reads.Load(); reads != 3 {
+		t.Fatalf("expected three reads of the divergence record, got %d", reads)
+	}
+
+	if options := env.director.options(); len(options) != 0 {
+		t.Fatalf("expected a plain deploy, got %+v", options)
+	}
+
+	env.director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskDone}
+
+	eventuallySaved(t, env.vault, task.ID, func(saved UpgradeTask) bool { return saved.Status == TaskStatusCompleted })
+}
+
+//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+func TestUpgradeFailsClosedWhenDivergenceUnreadable(t *testing.T) {
+	env, flaky := newFlakyDivergedEnv(t)
+
+	var task *UpgradeTask
+
+	release := env.gateDeploymentRead(t, func() {
+		var err error
+
+		task, err = env.manager.CreateTask(context.Background(), upgradeRequest(waitInstanceID))
+		if err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+	})
+
+	flaky.reads.Store(0)
+	flaky.failures.Store(1000)
+	release()
+
+	saved := eventuallySaved(t, env.vault, task.ID, func(saved UpgradeTask) bool {
+		return saved.Instances[0].Status == InstanceStatusFailed
+	})
+
+	message := saved.Instances[0].Error
+	if !strings.Contains(message, "could not read") || !strings.Contains(message, "can be upgraded again") {
+		t.Fatalf("expected a failed read that can be retried, got %q", message)
+	}
+
+	if reads := flaky.reads.Load(); reads != 3 {
+		t.Fatalf("expected three reads of the divergence record, got %d", reads)
+	}
+
+	if deploys := env.director.deploys.Load(); deploys != 0 {
+		t.Fatalf("expected no deploy, got %d", deploys)
+	}
 }

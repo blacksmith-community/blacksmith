@@ -26,6 +26,13 @@ const (
 	// approvalDiffers is the failure of an instance whose deploy would
 	// apply changes the operator did not approve.
 	approvalDiffers = "This instance's additional changes differ from what was approved. Preview the upgrade again."
+	// divergenceReadAttempts is how many times the deploy of an upgrade
+	// reads an instance's divergence record before it gives up, all within
+	// certinventory.DivergenceTimeout.
+	divergenceReadAttempts = 3
+	// divergenceRetryDelay is the pause after the first failed read, and it
+	// doubles after each further one.
+	divergenceRetryDelay = 100 * time.Millisecond
 )
 
 // DivergedInstance is one instance of an upgrade that has certificates
@@ -294,6 +301,47 @@ func (m *Manager) divergenceOf(ctx context.Context, instanceID string) (*certinv
 	return record, found, nil
 }
 
+// divergenceOfRetrying reads the instance's divergence record as
+// divergenceOf does, but tries up to divergenceReadAttempts times within
+// certinventory.DivergenceTimeout, pausing between attempts, so a short
+// Vault outage does not fail an upgrade. It stops early when ctx ends.
+func (m *Manager) divergenceOfRetrying(ctx context.Context, instanceID string) (bool, error) {
+	budget, cancel := context.WithTimeout(ctx, certinventory.DivergenceTimeout)
+	defer cancel()
+
+	delay := divergenceRetryDelay
+
+	var err error
+
+	for attempt := 1; ; attempt++ {
+		var found bool
+
+		_, found, err = m.divergenceOf(budget, instanceID)
+		if err == nil {
+			return found, nil
+		}
+
+		if attempt == divergenceReadAttempts {
+			break
+		}
+
+		m.logger.Info("Reading the divergence record of instance %s failed on attempt %d, so Blacksmith tries again: %v", instanceID, attempt, err)
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-budget.Done():
+			timer.Stop()
+
+			return false, err
+		case <-timer.C:
+		}
+
+		delay *= 2
+	}
+
+	return false, err
+}
+
 // divergenceSummary returns one reference for the whole record and the
 // names of its variables, sorted. The reference is a reverted variable's
 // when the record has one, and otherwise the earliest variable's. A record
@@ -484,7 +532,7 @@ func (m *Manager) approvedAdditional(instance *InstanceUpgrade) []VersionPair {
 // Otherwise the instance fails and nothing is sent. It never changes the
 // divergence record. It reports whether the deploy may go on.
 func (m *Manager) divergedDeployOptions(ctx, persistCtx context.Context, task *UpgradeTask, instance *InstanceUpgrade) (bosh.DeployOptions, bool) {
-	_, found, err := m.divergenceOf(ctx, instance.InstanceID)
+	found, err := m.divergenceOfRetrying(ctx, instance.InstanceID)
 	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
 		m.returnToPending(persistCtx, task, instance, err)
 
@@ -493,7 +541,8 @@ func (m *Manager) divergedDeployOptions(ctx, persistCtx context.Context, task *U
 
 	if err != nil {
 		m.failInstance(persistCtx, task, instance,
-			fmt.Sprintf("The divergence record of this instance could not be read, so Blacksmith can't tell what its deploy would apply: %v", err))
+			fmt.Sprintf("Blacksmith could not read this instance's divergence record after %d attempts, so it did not deploy it. The instance can be upgraded again once the record can be read: %v",
+				divergenceReadAttempts, err))
 
 		return bosh.DeployOptions{}, false
 	}
