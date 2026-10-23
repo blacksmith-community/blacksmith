@@ -24660,15 +24660,49 @@
         view.refs.moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
 
-      view.refs.exportBtn.addEventListener('click', () => {
-        const open = view.refs.exportMenu.hidden;
+      const exportLinks = () => [view.refs.exportCsv, view.refs.exportJson].filter((link) => link.hasAttribute('href'));
+      const setExportOpen = (open, focusTarget) => {
         view.refs.exportMenu.hidden = !open;
         view.refs.exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (focusTarget === 'button') view.refs.exportBtn.focus();
+        else if (open && focusTarget === 'first') {
+          const links = exportLinks();
+          if (links.length) links[0].focus();
+        }
+      };
+      view.refs.exportBtn.addEventListener('click', () => {
+        const opening = view.refs.exportMenu.hidden;
+        setExportOpen(opening, opening ? 'first' : null);
       });
       view.refs.exportMenu.addEventListener('click', (event) => {
         if (event.target.closest && event.target.closest('[aria-disabled="true"], .cert-export-note')) return;
-        view.refs.exportMenu.hidden = true;
-        view.refs.exportBtn.setAttribute('aria-expanded', 'false');
+        setExportOpen(false, 'button');
+      });
+      const exportWrap = view.refs.exportBtn.parentElement;
+      exportWrap.addEventListener('keydown', (event) => {
+        if (view.refs.exportMenu.hidden) return;
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          setExportOpen(false, 'button');
+          return;
+        }
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        const links = exportLinks();
+        if (!links.length) return;
+        event.preventDefault();
+        const at = links.indexOf(document.activeElement);
+        const next = event.key === 'ArrowDown' ? (at + 1) % links.length : (at <= 0 ? links.length - 1 : at - 1);
+        links[next].focus();
+      });
+      exportWrap.addEventListener('focusout', (event) => {
+        if (view.refs.exportMenu.hidden || !event.relatedTarget) return;
+        if (exportWrap.contains(event.relatedTarget)) return;
+        setExportOpen(false, null);
+      });
+      document.addEventListener('click', (event) => {
+        if (view.refs.exportMenu.hidden || exportWrap.contains(event.target)) return;
+        setExportOpen(false, null);
       });
 
       document.addEventListener('keydown', (event) => {
