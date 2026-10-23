@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -526,4 +527,215 @@ func TestConvergeResumeAdoptsSavedDeploy(t *testing.T) {
 	}
 
 	expectReleased(t, manager)
+}
+
+// patchListenerPort is the port each patched VM's listener serves on in
+// the scan that follows a converge after a patch.
+const patchListenerPort = "6379"
+
+// convergedPatchScan returns the scan of a patched instance once BOSH
+// deploys what the director lists: every VM's listener serves the new
+// leaf, observed at the scan's start, a second after the patch.
+func (e *patchEnv) convergedPatchScan(ctx context.Context, instanceID string) (certinventory.InstanceScan, error) {
+	scan, err := e.patchScan(ctx, instanceID)
+	if err != nil {
+		return scan, err
+	}
+
+	e.director.mu.Lock()
+	deployed := e.director.deployed
+	e.director.mu.Unlock()
+
+	scannedAt := validateNow.Add(time.Second)
+	scan.ScannedAt, scan.LastSuccessAt = scannedAt, scannedAt
+	scan.Material.CredHub[0].Versions = certinventory.Versions{
+		CertificateID: convergeCertID, DeployedVersionID: deployed, LatestVersionID: "v2", SigningCA: regenCAName,
+	}
+
+	for _, machine := range scan.VMs {
+		scan.Material.Expected = append(scan.Material.Expected, certinventory.ExpectedListener{
+			Key: regenLeaf, Locator: fmt.Sprintf("%s/%d:%s", machine.Job, machine.Index, patchListenerPort),
+		})
+		scan.Material.Raw = append(scan.Material.Raw, certinventory.RawObservation{
+			Observation: certinventory.Observation{
+				Source:      certinventory.SourceProbe,
+				Locator:     fmt.Sprintf("%s/%d %s:%s", machine.Job, machine.Index, machine.IPs[0], patchListenerPort),
+				Fingerprint: certinventory.Fingerprint(e.newCert),
+				State:       certinventory.StateOK,
+				ObservedAt:  scannedAt,
+			},
+			Cert: e.newCert,
+		})
+	}
+
+	return scan, nil
+}
+
+// immediateManager returns the env's manager for a patch task with the
+// immediate converge policy, whose scans after the patch see every
+// listener serving the new leaf.
+func (e *patchEnv) immediateManager(task *UpgradeTask) *Manager {
+	e.t.Helper()
+
+	task.Certificates.Converge = ConvergeImmediate
+
+	manager := e.newManager()
+	deps := manager.Dependencies()
+	deps.ScanInstance = func(ctx context.Context, instanceID string) (certinventory.InstanceScan, error) {
+		if len(e.director.deploys()) == 0 {
+			return e.patchScan(ctx, instanceID)
+		}
+
+		return e.convergedPatchScan(ctx, instanceID)
+	}
+
+	err := manager.Configure(deps)
+	if err != nil {
+		e.t.Fatalf("Configure: %v", err)
+	}
+
+	return manager
+}
+
+// expectAllDone fails the test unless every VM's journal is done.
+func (e *patchEnv) expectAllDone(t *testing.T, manager *Manager) {
+	t.Helper()
+
+	for _, machine := range e.vms {
+		if journal := journalOf(t, manager, machine.name()); journal.Phase != VMPhaseDone {
+			t.Fatalf("expected %s done, got %s", machine.name(), journal.Phase)
+		}
+	}
+}
+
+// A patch task with the immediate policy deploys the director's manifest
+// with the latest variables once every VM is done, under the reservation
+// the patch held, reconciles the divergence record away, and only then
+// completes the instance.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchImmediateConverges(t *testing.T) {
+	env := newPatchEnv(t)
+	task := env.task()
+	manager := env.immediateManager(&task)
+
+	var (
+		heldDuringDeploy bool
+		cleanedFirst     bool
+	)
+
+	serve := env.director.onDone
+	env.director.onDone = func() {
+		holder, held := manager.Guard().Holder(waitInstanceID, waitDeployment)
+		heldDuringDeploy = held && holder.TaskID == certTaskID
+		cleanedFirst = slices.Contains(env.patchOps(len(env.vms)-1), opCleanup)
+
+		serve()
+	}
+
+	if !env.run(manager, &task) {
+		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+	}
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusSuccess || inst.Certificates.Phase != RotationPhaseDone || inst.Error != "" {
+		t.Fatalf("expected a clean success at phase done, got %s at %s: %q", inst.Status, inst.Certificates.Phase, inst.Error)
+	}
+
+	env.expectAllDone(t, manager)
+
+	deploys := env.director.deploys()
+	if len(deploys) != 1 || !deploys[0].opts.ForceLatestVariables || deploys[0].manifest != env.manifest {
+		t.Fatalf("expected one deploy of the unchanged manifest with the latest variables, got %+v", deploys)
+	}
+
+	if converge := inst.Certificates.Converge; converge == nil || converge.BOSHTaskID != redeployTaskID {
+		t.Fatalf("expected the converge record to keep the deploy's task, got %+v", converge)
+	}
+
+	if !cleanedFirst || !heldDuringDeploy {
+		t.Fatalf("expected the deploy after the last VM's cleanup with the instance still held, got cleaned=%v held=%v", cleanedFirst, heldDuringDeploy)
+	}
+
+	_, found, err := env.store.Get(context.Background(), waitInstanceID)
+	if err != nil || found {
+		t.Fatalf("expected the converge to clear the divergence record, got found=%v err=%v", found, err)
+	}
+
+	expectReleased(t, manager)
+}
+
+// A patch task with the pending policy settles the instance once every
+// VM is done, sends no deploy, and leaves the record unconverged for a
+// later converge.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchPendingLeavesUnconverged(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+	task.Certificates.Converge = ConvergePending
+
+	if !env.run(manager, &task) {
+		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+	}
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusSuccess || inst.Certificates.Phase != RotationPhaseDone {
+		t.Fatalf("expected a success at phase done, got %s at %s: %q", inst.Status, inst.Certificates.Phase, inst.Error)
+	}
+
+	if deploys := env.director.deploys(); len(deploys) != 0 {
+		t.Fatalf("expected no deploy, got %+v", deploys)
+	}
+
+	record, found, err := env.store.Get(context.Background(), waitInstanceID)
+	if err != nil || !found || len(record.Variables) != 1 || record.Variables[0].State != certinventory.DivergenceUnconverged {
+		t.Fatalf("expected the record to stay unconverged, got %+v found=%v err=%v", record, found, err)
+	}
+
+	expectReleased(t, manager)
+}
+
+// A patch whose VMs did not all reach done never converges, even with
+// the immediate policy: not when a rollback pauses the task, and not when
+// the next pass fails the instance over the rolled-back VM.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchPartialNeverConverges(t *testing.T) {
+	env := newPatchEnv(t)
+	env.gateFailsOn(1, nil)
+
+	task := env.task()
+	manager := env.immediateManager(&task)
+
+	env.run(manager, &task)
+
+	if got := current(t, manager); !got.Paused || got.Instances[0].Status.settled() {
+		t.Fatalf("expected a paused task with an open instance, got paused=%v %s", got.Paused, got.Instances[0].Status)
+	}
+
+	if deploys := env.director.deploys(); len(deploys) != 0 {
+		t.Fatalf("expected no deploy after the rollback, got %+v", deploys)
+	}
+
+	manager.mu.Lock()
+	task.Paused = false
+	manager.mu.Unlock()
+
+	manager.rotateInstancePatch(context.Background(), &task, &task.Instances[0], make(chan struct{}))
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusFailed {
+		t.Fatalf("expected the next pass to fail the instance over the rolled-back VM, got %s: %s", inst.Status, inst.Error)
+	}
+
+	if deploys := env.director.deploys(); len(deploys) != 0 {
+		t.Fatalf("expected no deploy, got %+v", deploys)
+	}
+
+	record, found, err := env.store.Get(context.Background(), waitInstanceID)
+	if err != nil || !found || record.Variables[0].State != certinventory.DivergenceUnconverged {
+		t.Fatalf("expected the record to stay unconverged, got %+v found=%v err=%v", record, found, err)
+	}
 }

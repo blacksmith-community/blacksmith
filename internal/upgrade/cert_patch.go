@@ -953,13 +953,13 @@ const cancelledBetweenVMs = "The task was cancelled between two VMs of the patch
 // sessions closed, so no command still under way reads a zeroed buffer.
 // An instance whose VMs a pass already began to patch resumes, as
 // resumePatch describes. It reports whether the instance settled.
-func (m *Manager) rotateInstancePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, _ <-chan struct{}) bool {
+func (m *Manager) rotateInstancePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
 	m.mu.RLock()
 	resume := inst.Certificates != nil && inst.Certificates.Phase == RotationPhasePatch
 	m.mu.RUnlock()
 
 	if resume {
-		return m.resumePatch(ctx, task, inst)
+		return m.resumePatch(ctx, task, inst, cancelCh)
 	}
 
 	pairs := make(map[string]*credhub.KeyPair)
@@ -1013,7 +1013,7 @@ func (m *Manager) rotateInstancePatch(ctx context.Context, task *UpgradeTask, in
 		return m.instanceSettled(inst)
 	}
 
-	return m.patchVMs(ctx, task, inst, sessions, pairs)
+	return m.patchVMs(ctx, task, inst, sessions, pairs, cancelCh)
 }
 
 // zeroPairs zeroes every key pair in the map.
@@ -1247,8 +1247,11 @@ func parsePrivateKey(data []byte) (crypto.PrivateKey, error) {
 
 // patchVMs patches the instance's VMs one at a time, in journal order. A
 // pause or a cancel takes effect only between two VMs. The gate runs once
-// before the first VM of a pass. It reports whether the instance settled.
-func (m *Manager) patchVMs(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, sessions *patchSessions, pairs map[string]*credhub.KeyPair) bool {
+// before the first VM of a pass. Once every VM is done, finishPatch ends
+// the instance as the task's converge policy says, and cancelCh cancels
+// the converge deploy that the immediate policy sends. It reports whether
+// the instance settled.
+func (m *Manager) patchVMs(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, sessions *patchSessions, pairs map[string]*credhub.KeyPair, cancelCh <-chan struct{}) bool {
 	m.setPhase(inst, RotationPhasePatch)
 
 	err := m.persistCertConfirmed(ctx, task)
@@ -1304,9 +1307,31 @@ func (m *Manager) patchVMs(ctx context.Context, task *UpgradeTask, inst *Instanc
 		}
 	}
 
+	return m.finishPatch(ctx, task, inst, cancelCh)
+}
+
+// finishPatch ends an instance whose VMs all reached done, as the task's
+// converge policy says. The immediate policy converges the instance on
+// the reservation the patch holds, so nothing else can deploy it between
+// the last VM and the converge deploy. The pending policy settles the
+// instance as a success and leaves its divergence record unconverged for
+// a later converge. Only a patch whose every VM is done reaches here, so
+// a partial patch never converges on its own. It reports whether the
+// instance settled.
+func (m *Manager) finishPatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
+	m.mu.RLock()
+	policy := taskConverge(task)
+	m.mu.RUnlock()
+
+	if policy == ConvergeImmediate {
+		m.logger.Info("Certificate task %s patched every VM of instance %s, so it converges the instance now", task.ID, inst.InstanceID)
+
+		return m.convergeInstance(ctx, task, inst, cancelCh)
+	}
+
 	m.settleCertificateInstance(task, inst, true, "") //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
-	err = m.persistCertConfirmed(ctx, task)
+	err := m.persistCertConfirmed(ctx, task)
 	if err != nil {
 		m.logger.Error("Certificate task %s: %v", task.ID, err)
 	}
@@ -2653,6 +2678,10 @@ type patchResume struct {
 	sessions *patchSessions
 	pairs    map[string]*credhub.KeyPair
 
+	// cancelCh cancels the converge deploy the immediate policy sends once
+	// the resume patched every VM.
+	cancelCh <-chan struct{}
+
 	// refused is the switches' refusal at the start, and cancelled whether
 	// the task was cancelled then.
 	refused   error
@@ -2683,7 +2712,7 @@ type patchResume struct {
 // interrupts. The VMs no pass touched yet are then patched as a live pass
 // does. Every key pair it read is zeroed after the sessions closed. It
 // reports whether the instance settled.
-func (m *Manager) resumePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
+func (m *Manager) resumePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
 	pairs := make(map[string]*credhub.KeyPair)
 	defer zeroPairs(pairs)
 
@@ -2691,7 +2720,7 @@ func (m *Manager) resumePatch(ctx context.Context, task *UpgradeTask, inst *Inst
 	defer sessions.close()
 
 	r := &patchResume{
-		m: m, ctx: ctx, task: task, inst: inst, sessions: sessions, pairs: pairs,
+		m: m, ctx: ctx, task: task, inst: inst, sessions: sessions, pairs: pairs, cancelCh: cancelCh,
 		refused:   m.certWritesAllowed(RotationModePatch),
 		cancelled: m.taskCancelled(task),
 	}
@@ -2764,7 +2793,7 @@ func (r *patchResume) patchRest() bool {
 		}
 	}
 
-	return m.patchVMs(r.ctx, r.task, r.inst, r.sessions, r.pairs)
+	return m.patchVMs(r.ctx, r.task, r.inst, r.sessions, r.pairs, r.cancelCh)
 }
 
 // rebuildDivergence makes sure the divergence record lists every open VM
@@ -3416,7 +3445,9 @@ func (m *Manager) resumeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade)
 
 	m.logger.Info("Certificate task %s is cancelled with a VM of instance %s part way through its swap, so it finishes that VM now", task.ID, inst.InstanceID)
 
-	m.resumePatch(m.ctx, task, inst)
+	// A cancelled task patches no VM a pass left untouched, so it never
+	// reaches the converge that a cancel channel would stop.
+	m.resumePatch(m.ctx, task, inst, nil)
 }
 
 // closeCancelledPatch marks unrecovered each VM of a cancelled task's
