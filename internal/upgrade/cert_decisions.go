@@ -1136,7 +1136,7 @@ func (m *Manager) decisionAuditLocked(ctx context.Context, kind, choice, detail 
 		m.logger.Error("audit=certificate-rotation decision=%s has no event for the choice %q", kind, choice)
 	}
 
-	decision := DecisionAudit{Event: event, Detail: kind + ": " + strings.TrimSpace(choice+" "+detail), At: m.certNowLocked()}
+	decision := DecisionAudit{ID: uuid.New().String(), Event: event, Detail: kind + ": " + strings.TrimSpace(choice+" "+detail), At: m.certNowLocked()}
 
 	if actor, found := audit.ActorFrom(ctx); found {
 		decision.Actor = actor.Username

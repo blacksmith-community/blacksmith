@@ -452,7 +452,14 @@ func (m *Manager) decisionRecordLocked(task *UpgradeTask, inst *InstanceUpgrade)
 	decision := inst.Certificates.Decision
 
 	rec := m.auditRecordLocked(task, inst, decision.Event)
-	rec.ID = auditID(task.ID, inst.InstanceID, decision.Event, inst.Certificates.DecisionRequestID)
+	// A decision saved before decisions carried an ID is keyed by its
+	// request ID.
+	key := decision.ID
+	if key == "" {
+		key = inst.Certificates.DecisionRequestID
+	}
+
+	rec.ID = auditID(task.ID, inst.InstanceID, decision.Event, key)
 	rec.At = decision.At
 	rec.Detail = decision.Detail
 	rec.Outcome = decision.Outcome

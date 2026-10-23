@@ -140,6 +140,10 @@ type InstanceRotation struct {
 // request knows. It holds the event, the operator's choice, who decided and
 // from where, and when, and never a certificate or key.
 type DecisionAudit struct {
+	// ID is minted when the decision is applied, and the decision's audit
+	// record is keyed on it, so every decision has a record of its own
+	// whether or not the client sent a request ID.
+	ID      string    `json:"id,omitempty"`
 	Event   string    `json:"event"`
 	Detail  string    `json:"detail,omitempty"`
 	Actor   string    `json:"actor,omitempty"`

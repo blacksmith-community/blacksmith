@@ -122,7 +122,7 @@ func TestAuditBackfillsADecisionWithItsOperator(t *testing.T) {
 	inst.Certificates.Phase = RotationPhaseDone
 	inst.Certificates.DecisionRequestID = "abandon-1"
 	inst.Certificates.Decision = &DecisionAudit{
-		Event: AuditAbandoned, Detail: "resolve_deploy_outcome: abandon", Actor: "carol", From: "10.0.0.7:1234 via 198.51.100.4",
+		ID: "decision-1", Event: AuditAbandoned, Detail: "resolve_deploy_outcome: abandon", Actor: "carol", From: "10.0.0.7:1234 via 198.51.100.4",
 		Outcome: string(InstanceStatusOutcomeUnknown), At: decided,
 	}
 
@@ -130,7 +130,7 @@ func TestAuditBackfillsADecisionWithItsOperator(t *testing.T) {
 	waitUntil(t, "the rebuilt records", func() bool { return manager.auditIdle() && len(trail.events()) >= 3 })
 
 	abandoned := trail.find(t, AuditAbandoned)
-	if abandoned.ID != auditID(certTaskID, waitInstanceID, AuditAbandoned, "abandon-1") || abandoned.Actor != "carol" ||
+	if abandoned.ID != auditID(certTaskID, waitInstanceID, AuditAbandoned, "decision-1") || abandoned.Actor != "carol" ||
 		abandoned.From != "10.0.0.7:1234 via 198.51.100.4" || !abandoned.At.Equal(decided) {
 		t.Fatalf("unexpected rebuilt decision record: %+v", abandoned)
 	}
@@ -179,7 +179,7 @@ func TestAuditBackfillsAfterAResolveWhoseWritesFailed(t *testing.T) {
 	waitUntil(t, "the rebuilt records", func() bool { return second.auditIdle() && len(trail.events()) >= 2 })
 
 	abandoned := trail.find(t, AuditAbandoned)
-	if abandoned.ID != auditID(certTaskID, waitInstanceID, AuditAbandoned, "abandon-1") || abandoned.Actor != "carol" || abandoned.From != "10.0.0.7:1234" {
+	if abandoned.ID == "" || abandoned.Actor != "carol" || abandoned.From != "10.0.0.7:1234" {
 		t.Fatalf("expected the operator on the rebuilt record, got %+v", abandoned)
 	}
 
@@ -230,5 +230,76 @@ func TestAuditResolveRecordsTheDecisionBeforeTheSettle(t *testing.T) {
 
 	if decided < 0 || settled < 0 || decided > settled {
 		t.Fatalf("expected the decision before the settle, got %v", events)
+	}
+}
+
+// Two decisions of one event on an instance, sent without request IDs, each
+// get their own record, and a replay of a decision that did carry an ID
+// writes none.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditGivesEveryDecisionItsOwnRecord(t *testing.T) {
+	env := newRedeployEnv(t)
+	trail := env.watchAudit()
+	manager := env.load(env.task())
+
+	ctx := audit.WithActor(context.Background(), audit.Actor{Username: "bob", RemoteAddr: "10.0.0.9:5000"})
+
+	manager.mu.Lock()
+	live := manager.tasks[certTaskID]
+	inst := &live.Instances[0]
+
+	for _, variable := range []string{"v1", "v2"} {
+		recordDecisionLocked(inst, "", "", manager.decisionAuditLocked(ctx, DecisionReconcileRegeneration, actionAdopt, "variable "+variable))
+		manager.auditDecisionLocked(live, inst)
+	}
+
+	manager.mu.Unlock()
+
+	waitUntil(t, "the audit queue", manager.auditIdle)
+
+	adopted := 0
+
+	for _, event := range trail.events() {
+		if event == AuditAdopted {
+			adopted++
+		}
+	}
+
+	if adopted != 2 {
+		t.Fatalf("expected two adopted records, got %v", trail.events())
+	}
+}
+
+// A replay of a resolve with the same client request ID applies nothing
+// new, so it writes no new record.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditReplayWritesNoNewDecisionRecord(t *testing.T) {
+	env := newRedeployEnv(t)
+	trail := env.watchAudit()
+	manager := env.load(env.awaitingOutcome())
+
+	ctx := audit.WithActor(context.Background(), audit.Actor{Username: "carol", RemoteAddr: "10.0.0.7:1234"})
+
+	for range 2 {
+		err := manager.ResolveDeployOutcome(ctx, certTaskID, waitInstanceID, ResolveRequest{Action: "abandon", ClientRequestID: "same"})
+		if err != nil {
+			t.Fatalf("ResolveDeployOutcome: %v", err)
+		}
+	}
+
+	waitUntil(t, "the audit queue", manager.auditIdle)
+
+	count := 0
+
+	for _, event := range trail.events() {
+		if event == AuditAbandoned {
+			count++
+		}
+	}
+
+	if count != 1 {
+		t.Fatalf("expected one abandoned record for the replayed request, got %v", trail.events())
 	}
 }
