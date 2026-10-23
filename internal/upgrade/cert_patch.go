@@ -1295,7 +1295,7 @@ func (m *Manager) patchVMs(ctx context.Context, task *UpgradeTask, inst *Instanc
 		}
 	}
 
-	m.settleCertificateInstance(task, inst, true, "")
+	m.settleCertificateInstance(task, inst, true, "") //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	err = m.persistCertConfirmed(ctx, task)
 	if err != nil {
