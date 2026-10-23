@@ -274,6 +274,14 @@ type Manager struct {
 	// pass runs once per instance however it ends.
 	cancelCleaned map[string]bool
 
+	// liveSwaps names each VM, keyed by liveSwapKey, that a pass in this
+	// process was let write to since the pass began. A VM whose swap began
+	// and that this process may write to finishes or rolls back its swap
+	// whatever the switches say. A VM whose swap began before a restart, or
+	// before the pass now resuming it, is not in it, so the switches stop
+	// it until a pass they allow writes to it.
+	liveSwaps map[string]bool
+
 	// patchGateWait is how long a patched VM's health gate may take to
 	// pass after its restart, and patchGateInterval the time between two
 	// runs of it. A test shortens both before Start.
@@ -336,6 +344,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 
 		cancelledResumeWait: cancelledResumeWaitDefault,
 		cancelCleaned:       make(map[string]bool),
+		liveSwaps:           make(map[string]bool),
 
 		patchGateWait:     patchGateWaitDefault,
 		patchGateInterval: patchGateIntervalDefault,

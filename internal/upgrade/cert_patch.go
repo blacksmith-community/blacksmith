@@ -1616,16 +1616,15 @@ func (r *vmRun) advance(phase VMPhase, step string) error {
 	return err
 }
 
-// mutate sends one command that changes the VM. Until the VM's first
-// replace is sent it checks the switches, and after that it doesn't. It
-// applies the intent to the journal and saves it for certain, and only
-// then sends the command. A refusal or an unconfirmed save sends nothing,
-// puts the journal back, and returns errVMStopped. Any other error is the
-// command's own.
+// mutate sends one command that changes the VM, once writesAllowed lets
+// it. It applies the intent to the journal and saves it for certain, and
+// only then sends the command. A refusal or an unconfirmed save sends
+// nothing, puts the journal back, and returns errVMStopped. Any other
+// error is the command's own.
 func (r *vmRun) mutate(step string, intent func(j *VMJournal), send func() (ssh.Result, error)) (ssh.Result, error) {
 	err := r.writesAllowed()
 	if err != nil {
-		r.manager.pauseWith(r.ctx, r.task, r.inst, writesRefused(err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+		r.manager.pauseWith(r.ctx, r.task, r.inst, r.refusal(err)) //nolint:errcheck,gosec // pauseWith logs and saves it
 
 		return ssh.Result{}, errVMStopped
 	}
@@ -1633,17 +1632,121 @@ func (r *vmRun) mutate(step string, intent func(j *VMJournal), send func() (ssh.
 	return r.commit(step, intent, send)
 }
 
-// writesAllowed checks the switches for a patch write to the VM, until
-// its first replace was sent. From then on the VM's swap completes, or it
-// rolls back, whatever the switches say, so turning patching off never
-// leaves a new certificate beside an old key or a VM swapped and not
-// restarted. The switches then stop the task before the next VM.
+// writesAllowed checks the switches for a patch write to the VM, and on a
+// pass they allow it notes the VM as live in this process. A live VM
+// whose swap began is not checked again: its swap completes, or it rolls
+// back, whatever the switches say, so turning patching off while a pass
+// swaps the VM never leaves a new certificate beside an old key or a VM
+// swapped and not restarted. The switches then stop the task before the
+// next VM. A VM whose swap began before a restart, or before the pass
+// now resuming it, is not live until the switches allow a write to it, so
+// with a switch off nothing more is done to it and the task pauses.
 func (r *vmRun) writesAllowed() error {
-	if r.swapBegun() {
+	key := liveSwapKey(r.task, r.inst, r.j)
+
+	if r.swapBegun() && r.manager.swapLive(key) {
 		return nil
 	}
 
-	return r.manager.certWritesAllowed(RotationModePatch)
+	err := r.manager.certWritesAllowed(RotationModePatch)
+	if err != nil {
+		return err
+	}
+
+	r.manager.markSwapLive(key)
+
+	return nil
+}
+
+// refusal gives a refusal from writesAllowed the message the paused task
+// shows. A VM whose swap or rollback began is named, with the ways to
+// restore it or finish it.
+func (r *vmRun) refusal(err error) error {
+	r.manager.mu.RLock()
+	vm, phase, begun := r.j.VM, r.j.Phase, journalSwapBegun(r.j)
+	r.manager.mu.RUnlock()
+
+	if !begun {
+		return writesRefused(err)
+	}
+
+	return swapOpenRefusal(err, vm, phase)
+}
+
+// liveSwapKey names a VM of an instance of a task in liveSwaps.
+func liveSwapKey(task *UpgradeTask, inst *InstanceUpgrade, j *VMJournal) string {
+	return task.ID + "/" + inst.InstanceID + "/" + j.VM
+}
+
+// swapLive reports whether a pass in this process was let write to the
+// VM the key names.
+func (m *Manager) swapLive(key string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.liveSwaps[key]
+}
+
+// markSwapLive notes that a pass in this process was let write to the VM
+// the key names.
+func (m *Manager) markSwapLive(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.liveSwaps[key] = true
+}
+
+// forgetLiveSwaps drops every VM of the instance from liveSwaps, so a pass
+// that resumes it checks the switches before it writes to any of them.
+func (m *Manager) forgetLiveSwaps(task *UpgradeTask, inst *InstanceUpgrade) {
+	prefix := task.ID + "/" + inst.InstanceID + "/"
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for key := range m.liveSwaps {
+		if strings.HasPrefix(key, prefix) {
+			delete(m.liveSwaps, key)
+		}
+	}
+}
+
+// swapOpenRefusal is the refusal a task shows when the switches stop it
+// with the VM part way through its swap, or its rollback when the phase
+// says so. It keeps the refusal's status and code, names the VM, warns
+// that the VM may hold a new certificate beside an old key, and says how
+// to restore it from BOSH state or finish it.
+func swapOpenRefusal(err error, vm string, phase VMPhase) error {
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+
+	var off, turnOn string
+
+	switch apiErr.Code {
+	case apierr.CodeInventoryDisabled:
+		off, turnOn = "Certificate inventory is off on this broker", "turn certificates.inventory.enabled back on and resume"
+	case apierr.CodeRotationDisabled:
+		off, turnOn = "Rotation is off on this broker", "turn certificates.rotation.enabled and certificates.patch_in_place.enabled back on and resume"
+	case apierr.CodePatchDisabled:
+		off, turnOn = "Patch in place is off on this broker", "turn certificates.patch_in_place.enabled back on and resume"
+	case apierr.CodeCredHubNotConfigured:
+		off, turnOn = "CredHub is not configured on this broker", "configure CredHub and resume"
+	default:
+		return writesRefused(err)
+	}
+
+	what := "swap"
+	if phase == VMPhaseRollingBack {
+		what = "rollback"
+	}
+
+	return apierr.New(apiErr.Status, apiErr.Code, fmt.Sprintf(
+		"%s, so this task paused without changing anything more on VM %s, whose certificate %s had begun. "+
+			"VM %s may hold a new certificate beside an old key, or files its processes have not loaded. "+
+			"Redeploy this instance, which restores the VM's files from BOSH state, or %s, which finishes the %s.",
+		off, vm, what, vm, turnOn, what))
 }
 
 // swapBegun reports whether a replace was sent to the VM, as
@@ -2054,7 +2157,7 @@ func (r *vmRun) diverge(pairs map[string]*credhub.KeyPair, state string) error {
 
 	err := r.writesAllowed()
 	if err != nil {
-		return r.pause(writesRefused(err))
+		return r.pause(r.refusal(err))
 	}
 
 	err = m.recordDivergence(r.ctx, r.task, r.inst, r.j, fingerprints(pairs), state)
@@ -2692,34 +2795,50 @@ func (r *vmRun) reach(phase VMPhase, step string) error {
 	return r.advance(phase, step)
 }
 
-// taskSwapOpenLocked reports whether any instance of the task has a VM
-// that is open and whose swap began. The caller holds mu.
-func taskSwapOpenLocked(task *UpgradeTask) bool {
+// taskSwapOpenLocked returns the name and phase of the first VM of the
+// task that is open and whose swap began, or "" when it has none. The
+// caller holds mu.
+func taskSwapOpenLocked(task *UpgradeTask) (string, VMPhase) {
 	for i := range task.Instances {
-		if swapOpenLocked(&task.Instances[i]) {
-			return true
+		if vm, phase := swapOpenLocked(&task.Instances[i]); vm != "" {
+			return vm, phase
 		}
 	}
 
-	return false
+	return "", ""
 }
 
-// swapOpenLocked reports whether the instance has a VM that is open and
-// whose swap began, which only a resume finishes or rolls back. The
-// caller holds mu.
-func swapOpenLocked(inst *InstanceUpgrade) bool {
+// swapOpenLocked returns the name and phase of the first VM of the
+// instance that is open and whose swap began, which only a resume
+// finishes or rolls back, or "" when it has none. The caller holds mu.
+func swapOpenLocked(inst *InstanceUpgrade) (string, VMPhase) {
 	if inst.Certificates == nil {
-		return false
+		return "", ""
 	}
 
 	for i := range inst.Certificates.VMs {
 		j := &inst.Certificates.VMs[i]
 		if !closedPhase(j.Phase) && journalSwapBegun(j) {
-			return true
+			return j.VM, j.Phase
 		}
 	}
 
-	return false
+	return "", ""
+}
+
+// resumeRefusal gives a refusal of the switches the message a resume of
+// the instance pauses with: the one that names its VM part way through a
+// swap or a rollback when it has one, and the switch's own otherwise.
+func (m *Manager) resumeRefusal(inst *InstanceUpgrade, err error) error {
+	m.mu.RLock()
+	vm, phase := swapOpenLocked(inst)
+	m.mu.RUnlock()
+
+	if vm == "" {
+		return writesRefused(err)
+	}
+
+	return swapOpenRefusal(err, vm, phase)
 }
 
 // patchResume is one resume of a patch instance whose VMs a pass already
@@ -2737,9 +2856,7 @@ type patchResume struct {
 	// the resume patched every VM.
 	cancelCh <-chan struct{}
 
-	// refused is the switches' refusal at the start, and cancelled whether
-	// the task was cancelled then.
-	refused   error
+	// cancelled is whether the task was cancelled at the start.
 	cancelled bool
 
 	// loaded and loadFailed record the one read of the new key pairs, and
@@ -2753,20 +2870,23 @@ type patchResume struct {
 }
 
 // resumePatch resumes an instance whose VMs a pass already began to
-// patch, after a restart, a pause, a panic, or a cancel. With the patch
-// switch off and no VM part way through its swap, it opens no SSH session,
-// changes no journal and not the divergence record, and pauses the task.
-// Otherwise it first puts every VM a replacement may have touched in the
-// divergence record, as unknown unless the record already lists it. It
-// then takes each VM in journal order: a closed VM whose cleanup is not
-// done is cleaned up, an open one is checked against the director and its
-// files with patch.sh check and handled as DecideResume says, through the
-// functions a live pass uses. A VM whose swap began finishes or rolls back
-// whatever the switches say. A cancelled task handles only such VMs and
-// those part way through a swap or a rollback, which a cancel never
-// interrupts. The VMs no pass touched yet are then patched as a live pass
-// does. Every key pair it read is zeroed after the sessions closed. It
-// reports whether the instance settled.
+// patch, after a restart, a pause, a panic, or a cancel. While the
+// switches refuse a patch write it opens no SSH session, changes no
+// journal and not the divergence record, and pauses the task, even for a
+// VM part way through its swap: the pause names that VM and says how to
+// restore it or finish it. A cancelled task is left for its caller to
+// hold instead. Otherwise it first puts every VM a replacement may have
+// touched in the divergence record, as unknown unless the record already
+// lists it. It then takes each VM in journal order: a closed VM whose
+// cleanup is not done is cleaned up, an open one is checked against the
+// director and its files with patch.sh check and handled as DecideResume
+// says, through the functions a live pass uses. Once the resume writes to
+// a VM whose swap began, the VM finishes or rolls back whatever the
+// switches say, as it does in a live pass. A cancelled task handles only
+// such VMs and those part way through a swap or a rollback, which a
+// cancel never interrupts. The VMs no pass touched yet are then patched
+// as a live pass does. Every key pair it read is zeroed after the sessions
+// closed. It reports whether the instance settled.
 func (m *Manager) resumePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
 	pairs := make(map[string]*credhub.KeyPair)
 	defer zeroPairs(pairs)
@@ -2776,21 +2896,19 @@ func (m *Manager) resumePatch(ctx context.Context, task *UpgradeTask, inst *Inst
 
 	r := &patchResume{
 		m: m, ctx: ctx, task: task, inst: inst, sessions: sessions, pairs: pairs, cancelCh: cancelCh,
-		refused:   m.certWritesAllowed(RotationModePatch),
 		cancelled: m.taskCancelled(task),
 	}
 
-	m.mu.RLock()
-	open := swapOpenLocked(inst)
-	m.mu.RUnlock()
-
-	if r.refused != nil && !open {
+	refused := m.certWritesAllowed(RotationModePatch)
+	if refused != nil {
 		if !r.cancelled {
-			m.pauseWith(ctx, task, inst, writesRefused(r.refused)) //nolint:errcheck,gosec // pauseWith logs and saves it
+			m.pauseWith(ctx, task, inst, m.resumeRefusal(inst, refused)) //nolint:errcheck,gosec // pauseWith logs and saves it
 		}
 
 		return m.instanceSettled(inst)
 	}
+
+	m.forgetLiveSwaps(task, inst)
 
 	if !r.cancelled {
 		m.markRotating(ctx, task, inst)
@@ -2961,7 +3079,7 @@ func (r *patchResume) resumeVM(j *VMJournal) bool {
 		return false
 	case closedPhase(phase):
 		return r.closeVM(j)
-	case fresh, !begun && (r.refused != nil || r.cancelled && !midVM(phase)):
+	case fresh, !begun && r.cancelled && !midVM(phase):
 		return false
 	default:
 		return r.openVM(j, begun)
@@ -2998,10 +3116,8 @@ func (r *patchResume) session(run *vmRun) error {
 // closeVM finishes a closed VM whose cleanup is not done. A rolled_back
 // VM whose cleanup a crash cut off is marked old in the divergence record,
 // cleaned up, and pauses the task as its rollback would have. Any other
-// closed VM is cleaned up and the resume goes on. With the switches
-// refusing, only the rolled_back VM's record and pause are done, and the
-// cleanups wait for a resume they allow. It reports whether the instance
-// stopped.
+// closed VM is cleaned up and the resume goes on. It reports whether the
+// instance stopped.
 func (r *patchResume) closeVM(j *VMJournal) bool {
 	m := r.m
 
@@ -3010,9 +3126,6 @@ func (r *patchResume) closeVM(j *VMJournal) bool {
 	m.mu.RUnlock()
 
 	rolledBack := phase == VMPhaseRolledBack && cleanup != CleanupFailed
-	if r.refused != nil && !rolledBack {
-		return false
-	}
 
 	run := &vmRun{manager: m, ctx: r.ctx, task: r.task, inst: r.inst, j: j}
 
@@ -3023,10 +3136,8 @@ func (r *patchResume) closeVM(j *VMJournal) bool {
 		}
 	}
 
-	if r.refused == nil {
-		if r.session(run) != nil || run.cleanup() != nil {
-			return true
-		}
+	if r.session(run) != nil || run.cleanup() != nil {
+		return true
 	}
 
 	if !rolledBack {
@@ -3626,9 +3737,9 @@ func cancelledVMOpenLocked(inst *InstanceUpgrade) bool {
 // after, up to maxVerifyBackoff, until no VM is open or
 // cancelledResumeWait passes. Only an unrecovered outcome of the resume
 // table closes a VM the resume could not finish. A VM still open at the
-// deadline, after a panic, or while patch in place is off with its swap
-// not begun stays as it is, its instance stays reserved, and the task
-// waits for a resume. A manager that is stopping leaves it for the next
+// deadline, after a panic, or while the switches refuse a patch write,
+// even with its swap begun, stays as it is, its instance stays reserved,
+// and the task waits for a resume. A manager that is stopping leaves it for the next
 // load.
 func (m *Manager) resumeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade) {
 	defer m.wg.Done()
@@ -3643,7 +3754,7 @@ func (m *Manager) resumeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade)
 		panicked := !m.resumeCancelledOnce(task, inst)
 
 		m.mu.RLock()
-		open, begun, last := cancelledVMOpenLocked(inst), swapOpenLocked(inst), inst.Error
+		open, last := cancelledVMOpenLocked(inst), inst.Error
 		m.mu.RUnlock()
 
 		if m.ctx.Err() != nil || !open {
@@ -3657,8 +3768,8 @@ func (m *Manager) resumeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade)
 			m.awaitCancelledResume(task, inst, "A panic stopped its resume.")
 
 			return
-		case refused != nil && !begun:
-			m.awaitCancelledResume(task, inst, refusalMessage(writesRefused(refused)))
+		case refused != nil:
+			m.awaitCancelledResume(task, inst, refusalMessage(m.resumeRefusal(inst, refused)))
 
 			return
 		case !time.Now().Add(backoff).Before(deadline):

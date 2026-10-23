@@ -1175,19 +1175,26 @@ func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst
 
 // certResumeAllowed refuses the resume of a paused certificate task while
 // the switches refuse its mode, with the reason a paused task shows. A
-// patch task with a VM part way through its swap always resumes, since
-// only the resume finishes or rolls back that VM, and the switches then
-// stop the task before its next VM. Any other task, and a task that is
-// not paused, is left to ResumeTask.
+// patch task with a VM part way through its swap is refused too, since a
+// resume must not write to that VM with a switch off, and the refusal
+// names the VM and says how to restore it or finish it. Any other task,
+// and a task that is not paused, is left to ResumeTask.
 func (m *Manager) certResumeAllowed(taskID string) error {
 	m.mu.RLock()
 	task, exists := m.tasks[taskID]
 	check := exists && task.KindOrDefault() == TaskKindCertificates && (task.Status == TaskStatusPaused || waitsCancelledLocked(task))
 
-	var mode RotationMode
+	var (
+		mode  RotationMode
+		vm    string
+		phase VMPhase
+	)
+
 	if check {
 		mode = certTaskMode(task)
-		check = mode != RotationModePatch || !taskSwapOpenLocked(task)
+		if mode == RotationModePatch {
+			vm, phase = taskSwapOpenLocked(task)
+		}
 	}
 
 	m.mu.RUnlock()
@@ -1197,13 +1204,17 @@ func (m *Manager) certResumeAllowed(taskID string) error {
 	}
 
 	err := m.certWritesAllowed(mode)
-	if err != nil {
-		m.logger.Info("Certificate task %s stays paused, because its writes are refused: %v", taskID, err)
-
-		return writesRefused(err)
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	m.logger.Info("Certificate task %s stays paused, because its writes are refused: %v", taskID, err)
+
+	if vm != "" {
+		return swapOpenRefusal(err, vm, phase)
+	}
+
+	return writesRefused(err)
 }
 
 // instanceFailed reports whether the instance failed.

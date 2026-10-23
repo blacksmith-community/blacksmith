@@ -495,7 +495,7 @@ func TestPatchResumeAtEveryBoundary(t *testing.T) {
 
 			opens := env.patch.openCount()
 			before := env.divergenceJSON(t)
-			mark := len(env.patch.recorded())
+			pair := env.pairState(0)
 
 			_, got := env.reload(t)
 
@@ -504,19 +504,12 @@ func TestPatchResumeAtEveryBoundary(t *testing.T) {
 			}
 
 			j := storedJournal(stored)
-			if !closedPhase(j.Phase) && !journalSwapBegun(&j) {
-				expectUnchangedWhileOff(t, env, got, stored, opens, before)
-			} else if b.rollback && !closedPhase(got.Instances[0].Certificates.VMs[0].Phase) {
-				t.Fatalf("expected VM 1 closed, got %s", got.Instances[0].Certificates.VMs[0].Phase)
+			expectUnchangedWhileOff(t, env, got, stored, opens, before, !closedPhase(j.Phase) && journalSwapBegun(&j))
+
+			if after := env.pairState(0); after != pair {
+				t.Fatalf("expected VM 1 to keep the %s pair the crash left, got %s", pair, after)
 			}
 
-			for i := 1; i < len(env.vms); i++ {
-				if ops := env.opsSince(mark, i); len(ops) != 0 {
-					t.Fatalf("expected nothing run on VM %d while patch in place is off, got %v", i+1, ops)
-				}
-			}
-
-			env.expectNoMix(t)
 			c.expectNoThird(t)
 		})
 	}
@@ -554,12 +547,21 @@ func resumeRecreated(t *testing.T, b resumeBoundary) {
 }
 
 // expectUnchangedWhileOff checks that a resume with patch in place off
-// paused with the patch-off message, opened no session, and left the
-// journal and the divergence record as the crash left them.
-func expectUnchangedWhileOff(t *testing.T, env *patchEnv, got, stored UpgradeTask, opens int, record string) {
+// paused with the patch-off message, or with the message that names VM 1
+// when its swap had begun, opened no session, ran nothing on any VM, and
+// left the journal and the divergence record as the crash left them.
+func expectUnchangedWhileOff(t *testing.T, env *patchEnv, got, stored UpgradeTask, opens int, record string, begun bool) {
 	t.Helper()
 
-	if msg := got.Instances[0].Error; msg != patchOffMessage {
+	msg := got.Instances[0].Error
+	if begun {
+		what := "swap"
+		if storedJournal(stored).Phase == VMPhaseRollingBack {
+			what = "rollback"
+		}
+
+		expectSwapOpenMessage(t, msg, env.vms[0].name(), "certificates.patch_in_place.enabled", what)
+	} else if msg != patchOffMessage {
 		t.Fatalf("expected the patch-off message, got %q", msg)
 	}
 
@@ -567,12 +569,37 @@ func expectUnchangedWhileOff(t *testing.T, env *patchEnv, got, stored UpgradeTas
 		t.Fatalf("expected no SSH session opened, got %d more", env.patch.openCount()-opens)
 	}
 
-	if want, have := journalSummary(stored, 0), journalSummary(got, 0); want != have {
-		t.Fatalf("expected VM 1's journal unchanged at %s, got %s", want, have)
+	for i := range got.Instances[0].Certificates.VMs {
+		if want, have := journalSummary(stored, i), journalSummary(got, i); want != have {
+			t.Fatalf("expected VM %d's journal unchanged at %s, got %s", i+1, want, have)
+		}
 	}
 
 	if after := env.divergenceJSON(t); after != record {
 		t.Fatalf("expected the divergence record unchanged, got %s, was %s", after, record)
+	}
+}
+
+// expectSwapOpenMessage fails the test unless the message names the VM
+// whose swap had begun, warns that it may hold a mismatched pair, and
+// gives both ways out: a redeploy, which restores the VM from BOSH state,
+// or the switch turned back on and a resume, which finishes what, the
+// swap or the rollback.
+func expectSwapOpenMessage(t *testing.T, msg, vm, switchName, what string) {
+	t.Helper()
+
+	for _, want := range []string{
+		"VM " + vm,
+		"new certificate beside an old key",
+		"Redeploy this instance",
+		"BOSH state",
+		switchName,
+		"back on and resume",
+		"finishes the " + what,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected the pause message to contain %q, got %q", want, msg)
+		}
 	}
 }
 
@@ -687,12 +714,14 @@ func TestPatchResumeFallThroughUnrecovered(t *testing.T) {
 	c.expectNoThird(t)
 }
 
-// With patch in place turned off before the resume, a VM whose swap had
-// not begun is left as it is: no session opens, the journal and the
-// divergence record stay as they were, the task pauses with the patch-off
-// message, and ResumeTask refuses with the same message. A VM whose swap
-// had begun is finished, since only that leaves no new certificate
-// beside an old key, and the task then pauses before the next VM.
+// With patch in place turned off before the resume, the resume changes
+// nothing, whether or not a VM's swap had begun: no session opens, the
+// journal and the divergence record stay as they were, and the task
+// pauses. A VM whose swap had not begun gives the patch-off message. A VM
+// whose swap had begun may hold a new certificate beside an old key, so
+// the message names it and says how to restore it or finish the swap.
+// ResumeTask refuses with the same message, and once patch in place is on
+// again a resume finishes the swap and the instance.
 //
 //nolint:paralleltest // the runner shares the manager's test seams
 func TestPatchResumeWithPatchOff(t *testing.T) {
@@ -705,7 +734,7 @@ func TestPatchResumeWithPatchOff(t *testing.T) {
 
 		second, got := env.reload(t)
 
-		expectUnchangedWhileOff(t, env, got, stored, opens, before)
+		expectUnchangedWhileOff(t, env, got, stored, opens, before, false)
 
 		err := second.ResumeTask(context.Background(), certTaskID)
 		if err == nil || err.Error() != patchOffMessage {
@@ -714,23 +743,106 @@ func TestPatchResumeWithPatchOff(t *testing.T) {
 	})
 
 	t.Run("after the first rename", func(t *testing.T) {
-		env, _, _ := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+		env, c, stored := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
 		env.setPatchSwitch(false)
 
-		mark := len(env.patch.recorded())
+		opens := env.patch.openCount()
+		before := env.divergenceJSON(t)
+		pair := env.pairState(0)
+
+		second, got := env.reload(t)
+
+		if !got.Paused {
+			t.Fatalf("expected the task paused, got %s", got.Status)
+		}
+
+		expectUnchangedWhileOff(t, env, got, stored, opens, before, true)
+
+		if after := env.pairState(0); after != pair {
+			t.Fatalf("expected VM 1 to keep the %s pair the crash left, got %s", pair, after)
+		}
+
+		err := second.ResumeTask(context.Background(), certTaskID)
+		if err == nil || err.Error() != got.Instances[0].Error {
+			t.Fatalf("expected ResumeTask to refuse with the pause message, got %v", err)
+		}
+
+		env.setPatchSwitch(true)
+
+		err = second.ResumeTask(context.Background(), certTaskID)
+		if err != nil {
+			t.Fatalf("ResumeTask: %v", err)
+		}
+
+		waitUntil(t, "the instance to settle", func() bool { return current(t, second).Instances[0].Status.settled() })
+
+		env.expectPatched(t, second, current(t, second))
+		c.expectNoThird(t)
+	})
+
+	t.Run("with rotation off after the first rename", func(t *testing.T) {
+		env, _, stored := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+
+		env.mu.Lock()
+		env.switches = switches(false, true)
+		env.mu.Unlock()
+
+		opens := env.patch.openCount()
+
 		_, got := env.reload(t)
 
-		inst := got.Instances[0]
-		if j := inst.Certificates.VMs[0]; j.Phase != VMPhaseDone || j.Cleanup != CleanupDone {
-			t.Fatalf("expected VM 1 finished, got %s %q", j.Phase, j.Cleanup)
+		if !got.Paused || env.patch.openCount() != opens {
+			t.Fatalf("expected the task paused with no session opened, got paused=%v and %d new sessions", got.Paused, env.patch.openCount()-opens)
 		}
 
-		if !got.Paused || inst.Error != patchOffMessage {
-			t.Fatalf("expected the task paused with the patch-off message, got paused=%v %q", got.Paused, inst.Error)
+		if want, have := journalSummary(stored, 0), journalSummary(got, 0); want != have {
+			t.Fatalf("expected VM 1's journal unchanged at %s, got %s", want, have)
 		}
 
-		if ops := env.opsSince(mark, 1); len(ops) != 0 {
-			t.Fatalf("expected nothing run on VM 2, got %v", ops)
+		expectSwapOpenMessage(t, got.Instances[0].Error, env.vms[0].name(), "certificates.rotation.enabled", "swap")
+	})
+
+	t.Run("turned off during the resume before its first write", func(t *testing.T) {
+		env, _, stored := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+		first := env.vms[0].name()
+		before := env.divergenceJSON(t)
+		pair := env.pairState(0)
+		mark := len(env.patch.recorded())
+
+		env.hook(func(call patchCall) (ssh.Result, error, bool) {
+			if call.vm == first && call.op == opCheck {
+				env.setPatchSwitch(false)
+			}
+
+			return ssh.Result{}, nil, false
+		})
+
+		_, got := env.reload(t)
+
+		if !got.Paused {
+			t.Fatalf("expected the task paused, got %s", got.Status)
+		}
+
+		expectSwapOpenMessage(t, got.Instances[0].Error, first, "certificates.patch_in_place.enabled", "swap")
+
+		for _, op := range env.opsSince(mark, 0) {
+			switch op {
+			case opSudoCheck, opCheck, opStageCheck:
+			default:
+				t.Fatalf("expected only checks run on VM 1, got %v", env.opsSince(mark, 0))
+			}
+		}
+
+		if after := env.pairState(0); after != pair {
+			t.Fatalf("expected VM 1 to keep the %s pair the crash left, got %s", pair, after)
+		}
+
+		if want, have := journalSummary(stored, 0), journalSummary(got, 0); want != have {
+			t.Fatalf("expected VM 1's journal unchanged at %s, got %s", want, have)
+		}
+
+		if after := env.divergenceJSON(t); after != before {
+			t.Fatalf("expected the divergence record unchanged, got %s, was %s", after, before)
 		}
 	})
 }
@@ -881,6 +993,53 @@ func TestPatchResumeCancelledTask(t *testing.T) {
 			c.expectNoThird(t)
 		})
 	}
+
+	t.Run("after the first rename with patch in place off", func(t *testing.T) {
+		env, c, stored := boundaryEnv(t, cases[0].b)
+		env.setPatchSwitch(false)
+
+		opens := env.patch.openCount()
+		before := env.divergenceJSON(t)
+		mark := len(env.patch.recorded())
+		second := env.startCancelled(t, stored, nil)
+
+		waitUntil(t, "the task to wait for a resume", func() bool { return current(t, second).Paused })
+
+		got := current(t, second)
+		if got.Status != TaskStatusCancelled {
+			t.Fatalf("expected the task to stay cancelled, got %s", got.Status)
+		}
+
+		expectSwapOpenMessage(t, got.Instances[0].Error, env.vms[0].name(), "certificates.patch_in_place.enabled", "swap")
+		expectHeldOpen(t, second)
+
+		if ops := env.opsSince(mark, 0); len(ops) != 0 || env.patch.openCount() != opens {
+			t.Fatalf("expected no session and nothing run on VM 1, got %v", ops)
+		}
+
+		if want, have := journalSummary(stored, 0), journalSummary(got, 0); want != have {
+			t.Fatalf("expected VM 1's journal unchanged at %s, got %s", want, have)
+		}
+
+		if after := env.divergenceJSON(t); after != before {
+			t.Fatalf("expected the divergence record unchanged, got %s, was %s", after, before)
+		}
+
+		err := second.ResumeTask(context.Background(), certTaskID)
+		if err == nil {
+			t.Fatal("expected a resume to be refused while patch in place is off")
+		}
+
+		env.setPatchSwitch(true)
+
+		err = second.ResumeTask(context.Background(), certTaskID)
+		if err != nil {
+			t.Fatalf("ResumeTask: %v", err)
+		}
+
+		env.expectCancelledFinished(t, second)
+		c.expectNoThird(t)
+	})
 
 	t.Run("swapping with patch in place off", func(t *testing.T) {
 		env, c, stored := boundaryEnv(t, swapping)
