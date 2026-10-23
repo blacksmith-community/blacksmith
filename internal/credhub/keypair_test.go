@@ -256,6 +256,8 @@ func TestDecodeKeyPairRejects(t *testing.T) {
 		"duplicate private_key":        `{"value":{"private_key":"MHcCAQEEIBase64Base64Base64Base64","certificate":"c","private_key":"k"}}`,
 		"duplicate certificate":        `{"value":{"certificate":"c","private_key":"k","certificate":"d"}}`,
 		"duplicate across values":      `{"value":{"certificate":"c","private_key":"k"},"value":{"certificate":"d","private_key":"e"}}`,
+		"repeated value":               `{"value":{"id":"x"},"value":{"certificate":"c","private_key":"k"}}`,
+		"repeated non-object value":    `{"value":{"certificate":"c","private_key":"k"},"value":null}`,
 		"17 KiB value":                 `{"value":{"certificate":"c","private_key":` + bigValue + `}}`,
 		"non-object value":             `{"value":"-----BEGIN EC PRIVATE KEY-----MHcCAQEEIBase64Base64Base64Base64"}`,
 		"non-object answer":            `["-----BEGIN EC PRIVATE KEY-----MHcCAQEEIBase64Base64Base64Base64"]`,

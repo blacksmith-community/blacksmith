@@ -148,6 +148,7 @@ const (
 	phraseTrailing   = "has data after the object"
 	phraseValueKind  = "has a value member that is not an object"
 	phraseNoValue    = "has no value member"
+	phraseRepeatVal  = "repeats value"
 	phraseRepeatCert = "repeats certificate"
 	phraseRepeatKey  = "repeats private_key"
 	phraseCertKind   = "has a certificate that is not a string"
@@ -254,6 +255,10 @@ func (d *keyPairDecoder) document() error {
 func (d *keyPairDecoder) topMember(kind memberKind, depth int) error {
 	if kind != memberValue {
 		return d.skip(depth)
+	}
+
+	if d.sawValue {
+		return d.fail(phraseRepeatVal)
 	}
 
 	if !d.at('{') {
