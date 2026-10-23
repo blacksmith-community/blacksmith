@@ -68,10 +68,19 @@ t('partly patched instances', async () => {
     ok(/web\/0 holds the patched certificate/.test(t)&&/web\/1 holds the old certificate/.test(t)&&/db\/2 went back to the old certificate/.test(t)&&/db\/3 is not known to hold either/.test(t),'banner lists VMs from the record, by state');
     ok(!/zzz/.test(t)&&host.querySelectorAll('.cert-ov-divergence img,.cert-ov-divergence script').length===0,'record wins over probes; hostile group and state inert'); }
   w.__routes.shift();
+  // an unknown state from the API shows no banner at all
   w.__routes.unshift([/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a'},scan:{},certificates:[dcert({divergence:{state:'converging',task_id:'t9',since:'2026-10-21T14:00:00Z'}})],capabilities:{rotation:{enabled:true}}})]);
   await T.CertOverview.mountInstance(host,'inst-a'); await sleep(60);
-  { const b=host.querySelector('.cert-ov-divergence'); ok(b&&/A converge is running/.test(b.textContent)&&!b.querySelector('.cert-ov-converge'),'converging state shows copy that a converge is running, no Converge now'); }
+  ok(!host.querySelector('.cert-ov-divergence'),'a state the API never sends draws no banner');
   w.__routes.shift();
+  // another task holds the instance: Converge now is off, with the holder as visible text
+  w.__routes.unshift([/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a'},scan:{},certificates:[dcert({divergence:{state:'unconverged',task_id:'t9',since:'2026-10-21T14:00:00Z'}})],capabilities:{rotation:{enabled:true}}})],
+    [/\/b\/upgrade\/tasks$/,(u,o,j)=>j(200,[{id:'tk',name:'Spring',kind:'certificates',status:'running'}])],
+    [/\/b\/upgrade\/tasks\/tk$/,(u,o,j)=>j(200,{id:'tk',name:'Spring',kind:'certificates',status:'running',instances:[{instance_id:'inst-a',status:'running'}]})]);
+  await T.CertOverview.mountInstance(host,'inst-a'); await sleep(80);
+  { const b=host.querySelector('.cert-ov-divergence'); const c=b&&b.querySelector('.cert-ov-converge'); const why=b&&b.querySelector('.cert-ov-converge-reason');
+    ok(c&&c.disabled&&why&&/^Busy: rotation "Spring"/.test(why.textContent)&&c.getAttribute('aria-describedby')===why.id,'Converge now is disabled while a task holds the instance, with the reason shown'); }
+  w.__routes.shift(); w.__routes.shift(); w.__routes.shift();
 
   // task detail VM list
   T.renderTaskDetail(mkTask());

@@ -19123,21 +19123,19 @@
     };
 
     // The banner an unconverged or reverted instance shows on its Overview.
-    const divergenceBanner = (certs, instanceId, instanceName, rotateHost, container, reload) => {
+    const divergenceBanner = (certs, instanceId, instanceName, rotateHost, container, reload, holder) => {
       const diverged = certs.filter((cert) => cert && cert.divergence
-        && ['unconverged', 'reverted', 'converging'].includes(cert.divergence.state));
+        && ['unconverged', 'reverted'].includes(cert.divergence.state));
       if (diverged.length === 0) return null;
       const reverted = diverged.some((cert) => cert.divergence.state === 'reverted');
-      const converging = !reverted && diverged.every((cert) => cert.divergence.state === 'converging');
       const box = notice('warn', 'status');
       box.classList.add('cert-ov-divergence');
       box.id = `cert-ov-divergence-${String(instanceId).replace(/[^A-Za-z0-9_-]/g, '_')}`;
       const text = el('div', 'cert-notice-text');
-      text.appendChild(el('strong', null, reverted ? 'Some VMs went back to the old certificate' : (converging ? 'A converge is running on this instance' : 'BOSH has not converged this instance')));
+      text.appendChild(el('strong', null, reverted ? 'Some VMs went back to the old certificate' : 'BOSH has not converged this instance'));
       const since = diverged.map((cert) => timeText(cert.divergence.since)).filter(Boolean)[0];
       text.appendChild(el('p', 'cert-ov-divergence-lead', reverted
         ? 'After a patch, at least one VM returned to the certificate BOSH holds on record.'
-        : converging ? 'A converge is deploying the patched certificates now, and the banner clears once BOSH records them.'
         : `We patched the certificates in place${since ? ` at ${since}` : ''}, and BOSH still records the old ones.`));
       const holders = divergenceHolders(diverged);
       if (holders.length > 0) {
@@ -19150,8 +19148,12 @@
       text.appendChild(el('p', 'cert-ov-divergence-risk', 'A recreate or a resurrection restores the old certificate until the instance converges.'));
       box.appendChild(text);
       const converge = button('cert-action-btn cert-ov-converge', 'Converge now');
+      // Another task holds the instance, so the broker would refuse the
+      // converge. The button says so in words instead of failing on a click.
+      const busyId = `${box.id}-busy`;
+      if (holder) converge.setAttribute('aria-describedby', busyId);
       converge.addEventListener('click', async () => {
-        if (converge.getAttribute('aria-disabled') === 'true') return;
+        if (holder || converge.getAttribute('aria-disabled') === 'true') return;
         converge.setAttribute('aria-disabled', 'true');
         try {
           await window.blacksmithRotate.previewAndCreate({
@@ -19166,7 +19168,13 @@
         }
         if (converge.isConnected) converge.focus({ preventScroll: true });
       });
-      if (!converging) box.appendChild(converge);
+      if (holder) converge.disabled = true;
+      box.appendChild(converge);
+      if (holder) {
+        const reason = el('p', 'cert-muted cert-ov-converge-reason', `Busy: ${holder}`);
+        reason.id = busyId;
+        box.appendChild(reason);
+      }
       return box;
     };
 
@@ -19258,7 +19266,7 @@
         nodes.push(warn);
       }
 
-      const banner = divergenceBanner(certs, instanceId, String(instanceName), rotateHost, container, reload);
+      const banner = divergenceBanner(certs, instanceId, String(instanceName), rotateHost, container, reload, holders.get(instanceId));
       if (banner) nodes.push(banner);
 
       if (certs.length === 0) {
