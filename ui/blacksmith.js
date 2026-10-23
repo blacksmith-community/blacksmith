@@ -5458,6 +5458,44 @@
     return sendDecision(task, instance, outcome.verb, { ...outcome.body, client_request_id: clientRequestId }, action, idKey);
   };
 
+  // Lists a reconcile decision's candidates again from CredHub. The broker
+  // only reads CredHub and records what it found, so this asks for no
+  // confirmation. A success draws the task the broker returned and says
+  // what it found, and a failure shows on the instance like a decision's.
+  const refreshCandidates = async (task, instance) => {
+    const key = decisionKey(task.id, instance.instance_id);
+    const current = decisionState.get(key);
+    if (current && current.busy) return false;
+    decisionState.set(key, { busy: true });
+    redrawTaskDetail(task.id);
+    try {
+      const url = `/b/upgrade/tasks/${encodeURIComponent(task.id)}/instances/${encodeURIComponent(instance.instance_id)}/candidates`;
+      const { body: updated } = await rotatePostJSON(url, {});
+      decisionState.delete(key);
+      let found = null;
+      if (updated && typeof updated === 'object' && updated.id === task.id) {
+        taskDetailCache.set(task.id, updated);
+        const fresh = (Array.isArray(updated.instances) ? updated.instances : []).find((i) => i && i.instance_id === instance.instance_id);
+        const pending = fresh && fresh.certificates && fresh.certificates.pending_decision;
+        if (pending) found = Array.isArray(pending.candidates) ? pending.candidates.length : 0;
+      }
+      if (found === 0) announce('We checked CredHub again. It holds no version that this request could have made.');
+      else if (found === 1) announce('We checked CredHub again and found 1 version.');
+      else if (found !== null) announce(`We checked CredHub again and found ${found} versions.`);
+      else announce('We checked CredHub again.');
+      redrawTaskDetail(task.id);
+      focusDecisionControl(key, 'candidates');
+      return true;
+    } catch (err) {
+      const text = apiErrorText(err);
+      decisionState.set(key, { error: { code: err && err.code ? err.code : '', text } });
+      announce(`We could not check CredHub again. ${text}`);
+      redrawTaskDetail(task.id);
+      focusDecisionTarget(key, 'error');
+      return false;
+    }
+  };
+
   const decisionButton = (task, instance, action, text, onClick, className) => {
     const key = decisionKey(task.id, instance.instance_id);
     const button = rotateEl('button', className || 'btn-secondary btn-sm', text);
@@ -5489,7 +5527,15 @@
     panel.appendChild(rotateEl('h5', 'cert-decision-title', `Did the regeneration of ${pending.variable || 'this certificate'} happen?`));
     panel.appendChild(rotateEl('p', 'cert-decision-text', 'The request to CredHub may or may not have made a new version. We list the versions it may have made, and we adopt one only if it passed its checks.'));
     const candidates = Array.isArray(pending.candidates) ? pending.candidates : [];
-    if (candidates.length === 0) panel.appendChild(rotateEl('p', 'cert-decision-text', 'CredHub holds no version that this request could have made.'));
+    const checkedAt = certTimeText(pending.candidates_checked_at);
+    if (!checkedAt) {
+      // A decision loaded after a restart has never listed its candidates,
+      // which is not the same as CredHub holding none.
+      panel.appendChild(rotateEl('p', 'cert-decision-text', 'We have not checked CredHub for the versions this request may have made yet. Choose Check CredHub again to list them.'));
+    } else {
+      if (candidates.length === 0) panel.appendChild(rotateEl('p', 'cert-decision-text', 'CredHub holds no version that this request could have made.'));
+      panel.appendChild(rotateEl('p', 'cert-decision-text', `We last checked CredHub at ${checkedAt}.`));
+    }
     candidates.forEach((candidate) => {
       const item = rotateEl('div', 'cert-candidate');
       item.appendChild(rotateEl('div', 'cert-candidate-head', `Version ${shortVersion(candidate.version_id)}`));
@@ -5519,6 +5565,9 @@
       panel.appendChild(item);
     });
     const actions = rotateEl('div', 'cert-decision-actions');
+    actions.appendChild(decisionButton(task, instance, 'candidates', 'Check CredHub again', () => {
+      refreshCandidates(task, instance);
+    }));
     actions.appendChild(decisionButton(task, instance, 'abandon', 'Abandon', () => {
       runDecision(task, instance, 'abandon', async () => {
         const answer = await showConfirmDialog({
