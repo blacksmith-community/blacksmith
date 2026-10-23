@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/certinventory"
@@ -797,21 +798,20 @@ func TestPatchResumeRefetchesStagedContent(t *testing.T) {
 // A cancelled task whose VM a crash left part way through its swap is
 // finished on the load, whether or not its first rename was sent, and its
 // instance then ends cancelled between VMs and is released. With patch
-// in place turned off, a VM whose first rename was not sent can't be
-// finished, so it ends unrecovered, its instance fails with the advice to
-// redeploy, and it is released with nothing replaced.
+// in place turned off, a VM whose first rename was not sent stays open
+// with nothing replaced, and the task waits for a resume, which finishes
+// the VM once patch in place is on again.
 //
 //nolint:paralleltest // the runner shares the manager's test seams
 func TestPatchResumeCancelledTask(t *testing.T) {
+	swapping := resumeBoundary{name: "the unknown divergence write", divergence: 1, afterSave: true}
+
 	cases := []struct {
-		name  string
-		b     resumeBoundary
-		off   bool
-		phase VMPhase
+		name string
+		b    resumeBoundary
 	}{
-		{name: "after the first rename", b: resumeBoundary{name: "the first rename", op: opReplace, nth: 1}, phase: VMPhaseDone},
-		{name: "swapping before the first rename", b: resumeBoundary{name: "the unknown divergence write", divergence: 1, afterSave: true}, phase: VMPhaseDone},
-		{name: "swapping with patch in place off", b: resumeBoundary{name: "the unknown divergence write", divergence: 1, afterSave: true}, off: true, phase: VMPhaseUnrecovered},
+		{name: "after the first rename", b: resumeBoundary{name: "the first rename", op: opReplace, nth: 1}},
+		{name: "swapping before the first rename", b: swapping},
 	}
 
 	for _, tc := range cases {
@@ -822,54 +822,229 @@ func TestPatchResumeCancelledTask(t *testing.T) {
 				t.Fatalf("expected the crash to leave VM 1 swapping, got %s", j.Phase)
 			}
 
-			stored.Status = TaskStatusCancelled
-			storeCertificateTask(t, env.vault.waitVault, stored)
+			second := env.startCancelled(t, stored, nil)
 
-			if tc.off {
-				env.setPatchSwitch(false)
-			}
-
-			mark := len(env.patch.recorded())
-
-			second := env.newManager()
-			second.Start()
-			waitForLoad(t, second)
-
-			waitUntil(t, "the instance to settle", func() bool { return current(t, second).Instances[0].Status.settled() })
-
-			got := current(t, second)
-			inst := got.Instances[0]
-
-			if j := inst.Certificates.VMs[0]; j.Phase != tc.phase {
-				t.Fatalf("expected VM 1 %s, got %s (%s)", tc.phase, j.Phase, j.Error)
-			}
-
-			if tc.off {
-				if inst.Status != InstanceStatusFailed || !strings.Contains(inst.Error, redeployToRepair) {
-					t.Fatalf("expected the instance failed with the redeploy advice, got %s %q", inst.Status, inst.Error)
-				}
-
-				if ops := env.opsSince(mark, 0); slices.Contains(ops, opReplace) {
-					t.Fatalf("expected nothing replaced with patch in place off, got %v", ops)
-				}
-			} else {
-				if j := inst.Certificates.VMs[0]; j.Cleanup != CleanupDone {
-					t.Fatalf("expected VM 1 clean, got %q", j.Cleanup)
-				}
-
-				if inst.Status != InstanceStatusCancelled || inst.Error != cancelledBetweenVMs {
-					t.Fatalf("expected the instance cancelled between VMs, got %s %q", inst.Status, inst.Error)
-				}
-			}
-
-			if j := inst.Certificates.VMs[1]; j.Phase != VMPhasePlanned {
-				t.Fatalf("expected VM 2 left planned, got %s", j.Phase)
-			}
-
-			expectReleased(t, second)
+			env.expectCancelledFinished(t, second)
 			c.expectNoThird(t)
 		})
 	}
+
+	t.Run("swapping with patch in place off", func(t *testing.T) {
+		env, c, stored := boundaryEnv(t, swapping)
+		env.setPatchSwitch(false)
+
+		mark := len(env.patch.recorded())
+		second := env.startCancelled(t, stored, nil)
+
+		waitUntil(t, "the task to wait for a resume", func() bool { return current(t, second).Paused })
+
+		got := current(t, second)
+		if got.Status != TaskStatusCancelled || !strings.Contains(got.Instances[0].Error, patchOffMessage) {
+			t.Fatalf("expected the cancelled task to wait with the patch-off message, got %s: %q", got.Status, got.Instances[0].Error)
+		}
+
+		expectHeldOpen(t, second)
+
+		if ops := env.opsSince(mark, 0); slices.Contains(ops, opReplace) {
+			t.Fatalf("expected nothing replaced with patch in place off, got %v", ops)
+		}
+
+		err := second.ResumeTask(context.Background(), certTaskID)
+		if err == nil {
+			t.Fatal("expected a resume to be refused while patch in place is off")
+		}
+
+		env.setPatchSwitch(true)
+
+		err = second.ResumeTask(context.Background(), certTaskID)
+		if err != nil {
+			t.Fatalf("ResumeTask: %v", err)
+		}
+
+		env.expectCancelledFinished(t, second)
+		c.expectNoThird(t)
+	})
+}
+
+// What a VM's certificate and key hold, as pairState names it.
+const (
+	pairOld   = "old"
+	pairNew   = "new"
+	pairMixed = "mixed"
+)
+
+// pairState names what VM vm holds: pairOld or pairNew when its
+// certificate and key are both the old or both the new pair, and
+// pairMixed otherwise.
+func (e *patchEnv) pairState(vm int) string {
+	v := e.vms[vm]
+
+	e.patch.mu.Lock()
+	cert, key := v.files[v.certPath()], v.files[v.keyPath()]
+	e.patch.mu.Unlock()
+
+	switch {
+	case cert == certpatch.NormalisedHash(e.oldPair.cert) && key == certpatch.NormalisedHash(e.oldPair.key):
+		return pairOld
+	case cert == certpatch.NormalisedHash(e.newPair.cert) && key == certpatch.NormalisedHash(e.newPair.key):
+		return pairNew
+	default:
+		return pairMixed
+	}
+}
+
+// expectNoMix fails the test unless every VM holds the old pair or the
+// new one, never a certificate of one with the key of the other.
+func (e *patchEnv) expectNoMix(t *testing.T) {
+	t.Helper()
+
+	for i := range e.vms {
+		if state := e.pairState(i); state == pairMixed {
+			t.Fatalf("expected VM %d to hold one whole pair, got a certificate and key of different pairs", i+1)
+		}
+	}
+}
+
+// startCancelled stores the crashed task as cancelled and starts a new
+// manager, which setup may change first, that loads it.
+func (e *patchEnv) startCancelled(t *testing.T, stored UpgradeTask, setup func(*Manager)) *Manager {
+	t.Helper()
+
+	stored.Status = TaskStatusCancelled
+	storeCertificateTask(t, e.vault.waitVault, stored)
+
+	second := e.newManager()
+	if setup != nil {
+		setup(second)
+	}
+
+	second.Start()
+	waitForLoad(t, second)
+
+	return second
+}
+
+// expectHeldOpen fails the test unless VM 1 is still part way through
+// its swap and the instance is still running and reserved.
+func expectHeldOpen(t *testing.T, manager *Manager) {
+	t.Helper()
+
+	inst := current(t, manager).Instances[0]
+	if j := inst.Certificates.VMs[0]; !midVM(j.Phase) || inst.Status != InstanceStatusRunning {
+		t.Fatalf("expected VM 1 left part way through its swap and the instance running, got %s and %s (%s)", j.Phase, inst.Status, inst.Error)
+	}
+
+	if _, held := manager.Guard().Holder(waitInstanceID, waitDeployment); !held {
+		t.Fatal("expected the instance to stay reserved while VM 1 is open")
+	}
+}
+
+// expectCancelledFinished fails the test unless VM 1 finished its swap
+// and holds the new pair, VM 2 was never started, the instance was
+// cancelled between VMs, and its reservation was freed.
+func (e *patchEnv) expectCancelledFinished(t *testing.T, manager *Manager) {
+	t.Helper()
+
+	waitUntil(t, "the instance to settle", func() bool { return current(t, manager).Instances[0].Status.settled() })
+
+	inst := current(t, manager).Instances[0]
+	if j := inst.Certificates.VMs[0]; j.Phase != VMPhaseDone || j.Cleanup != CleanupDone {
+		t.Fatalf("expected VM 1 done and clean, got %s %q (%s)", j.Phase, j.Cleanup, inst.Error)
+	}
+
+	if state := e.pairState(0); state != pairNew {
+		t.Fatalf("expected VM 1 to hold the new pair, got %s", state)
+	}
+
+	if j := inst.Certificates.VMs[1]; j.Phase != VMPhasePlanned {
+		t.Fatalf("expected VM 2 left planned, got %s", j.Phase)
+	}
+
+	if inst.Status != InstanceStatusCancelled || inst.Error != cancelledBetweenVMs {
+		t.Fatalf("expected the instance cancelled between VMs, got %s %q", inst.Status, inst.Error)
+	}
+
+	e.expectNoMix(t)
+	expectReleased(t, manager)
+}
+
+// A cancelled task resumes a VM left part way through its swap as a live
+// task does. A director that can't list the VMs, or that names no CID for
+// the VM, for a while leaves the VM open and the instance reserved, and
+// the resume tries again until the VM finishes.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeCancelledRetries(t *testing.T) {
+	afterRename := resumeBoundary{name: "the first rename", op: opReplace, nth: 1}
+	swapping := resumeBoundary{name: "the unknown divergence write", divergence: 1, afterSave: true}
+
+	listingDown := func(env *patchEnv) { env.dir.failVMListing(errListingDown) }
+	listingUp := func(env *patchEnv) { env.dir.failVMListing(nil) }
+	noCID := func(env *patchEnv) { env.dir.setCID(0, "") }
+	cidBack := func(env *patchEnv) { env.dir.setCID(0, patchCIDs[0]) }
+
+	cases := []struct {
+		name          string
+		b             resumeBoundary
+		fail, recover func(*patchEnv)
+	}{
+		{"the VM listing fails after the first rename", afterRename, listingDown, listingUp},
+		{"no CID after the first rename", afterRename, noCID, cidBack},
+		{"no CID before the first rename", swapping, noCID, cidBack},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, c, stored := boundaryEnv(t, tc.b)
+			tc.fail(env)
+
+			second := env.startCancelled(t, stored, nil)
+
+			waitUntil(t, "the resume to fail once", func() bool { return current(t, second).Instances[0].Error != "" })
+			expectHeldOpen(t, second)
+
+			tc.recover(env)
+
+			env.expectCancelledFinished(t, second)
+			c.expectNoThird(t)
+		})
+	}
+}
+
+// A cancelled task whose open VM could not be finished before the
+// instance's deadline leaves the VM open and the instance reserved, and
+// waits for a resume. A resume then finishes the VM.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeCancelledWaitsForResume(t *testing.T) {
+	env, c, stored := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+	env.dir.setCID(0, "")
+
+	second := env.startCancelled(t, stored, func(m *Manager) { m.cancelledResumeWait = 100 * time.Millisecond })
+
+	waitUntil(t, "the task to wait for a resume", func() bool { return current(t, second).Paused })
+
+	got := current(t, second)
+	if got.Status != TaskStatusCancelled || !strings.Contains(got.Instances[0].Error, "Resume the task") {
+		t.Fatalf("expected the cancelled task to wait for a resume, got %s: %q", got.Status, got.Instances[0].Error)
+	}
+
+	expectHeldOpen(t, second)
+
+	env.dir.setCID(0, patchCIDs[0])
+
+	err := second.ResumeTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	env.expectCancelledFinished(t, second)
+
+	if current(t, second).Paused {
+		t.Fatal("expected the resume to clear the wait")
+	}
+
+	c.expectNoThird(t)
 }
 
 // A panic while a VM is part way through its patch pauses the task with

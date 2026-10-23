@@ -253,6 +253,11 @@ type Manager struct {
 	// redeploy, which a test shortens before Start.
 	verifyInterval time.Duration
 
+	// cancelledResumeWait is how long a cancelled patch task keeps trying
+	// to finish a VM left part way through its swap before it waits for a
+	// resume, which a test shortens before Start.
+	cancelledResumeWait time.Duration
+
 	// patchGateWait is how long a patched VM's health gate may take to
 	// pass after its restart, and patchGateInterval the time between two
 	// runs of it. A test shortens both before Start.
@@ -312,6 +317,8 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		createRetry:    createRetryInterval,
 		createLocks:    make(map[string]*requestLock),
 		verifyInterval: verifyIntervalDefault,
+
+		cancelledResumeWait: cancelledResumeWaitDefault,
 
 		patchGateWait:     patchGateWaitDefault,
 		patchGateInterval: patchGateIntervalDefault,
@@ -1387,7 +1394,9 @@ func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 }
 
 // ResumeTask resumes a paused task. A certificate task resumes only when
-// the switches allow its mode to write, and a refusal leaves it paused.
+// the switches allow its mode to write, and a refusal leaves it paused. A
+// cancelled patch task that waits for a resume of a VM left part way
+// through its swap stays cancelled and resumes that VM.
 func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 	err := m.certResumeAllowed(taskID)
 	if err != nil {
@@ -1399,6 +1408,22 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 	if !exists {
 		m.mu.Unlock()
 		return ErrTaskNotFound
+	}
+
+	if waitsCancelledLocked(task) {
+		task.Paused = false
+		finish := m.resumeCancelledLocked(task) //nolint:contextcheck // the resume outlives the request, so it runs under the manager's context
+		m.logger.Info("Resumed the open VMs of cancelled task %s", taskID)
+		m.mu.Unlock()
+
+		err := m.persistTask(ctx, task)
+		if err != nil {
+			m.logger.Error("Failed to persist resumed state for task %s: %v", taskID, err)
+		}
+
+		finish()
+
+		return nil
 	}
 
 	if task.Status != TaskStatusPaused {

@@ -59,6 +59,12 @@ const (
 	// first and twice as long each time after, up to maxVerifyBackoff.
 	cancelledVerifyAttempts = 5
 	maxVerifyBackoff        = 2 * time.Minute
+
+	// cancelledResumeWaitDefault is how long a cancelled patch task keeps
+	// trying to finish a VM left part way through its swap, as resumes
+	// verifyInterval apart at first and twice as long each time after, up
+	// to maxVerifyBackoff, before it waits for a resume.
+	cancelledResumeWaitDefault = 15 * time.Minute
 )
 
 // errVerifyUnreadable marks a verification that could not read what it
@@ -1102,7 +1108,7 @@ func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst
 func (m *Manager) certResumeAllowed(taskID string) error {
 	m.mu.RLock()
 	task, exists := m.tasks[taskID]
-	check := exists && task.KindOrDefault() == TaskKindCertificates && task.Status == TaskStatusPaused
+	check := exists && task.KindOrDefault() == TaskKindCertificates && (task.Status == TaskStatusPaused || waitsCancelledLocked(task))
 
 	var mode RotationMode
 	if check {

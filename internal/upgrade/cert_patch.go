@@ -3387,16 +3387,17 @@ func openPatchVMLocked(task *UpgradeTask) (*InstanceUpgrade, string) {
 
 // resumeCancelledLocked starts the resume of each running instance of a
 // cancelled patch task with a VM part way through its swap or its
-// rollback, as patchCancelEnd finds, when nothing
-// processes or settles the task. A cancelled task is never resumed, so
-// without it such a VM would stay half swapped and its instance reserved
-// with nothing to follow it. Each instance counts as a settle of the
-// task, so nothing else ends it meanwhile, and the function it returns
-// starts the resumes, which the caller runs once it lets go of mu. A
-// manager that is stopping, or has no director, starts none, since the
-// next load does it. The caller holds mu.
+// rollback, as patchCancelEnd finds, when nothing processes or settles
+// the task and it does not wait for a resume. A cancel stops only new VMs
+// from starting, so such a VM is resumed as a live task's is, and without
+// it the VM would stay half swapped and its instance reserved with
+// nothing to follow it. Each instance counts as a settle of the task, so
+// nothing else ends it meanwhile, and the function it returns starts the
+// resumes, which the caller runs once it lets go of mu. A manager that is
+// stopping, or has no director, starts none, since the next load does
+// it. The caller holds mu.
 func (m *Manager) resumeCancelledLocked(task *UpgradeTask) func() {
-	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCertificates || certTaskMode(task) != RotationModePatch ||
+	if task.Status != TaskStatusCancelled || task.Paused || task.KindOrDefault() != TaskKindCertificates || certTaskMode(task) != RotationModePatch ||
 		!m.configured || m.director == nil || m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
 		return func() {}
 	}
@@ -3405,11 +3406,7 @@ func (m *Manager) resumeCancelledLocked(task *UpgradeTask) func() {
 
 	for i := range task.Instances {
 		inst := &task.Instances[i]
-		if inst.Status != InstanceStatusRunning {
-			continue
-		}
-
-		if _, _, end := patchCancelEnd(inst, cancelledUnchanged); !end {
+		if cancelledVMOpenLocked(inst) {
 			open = append(open, inst)
 		}
 	}
@@ -3428,72 +3425,153 @@ func (m *Manager) resumeCancelledLocked(task *UpgradeTask) func() {
 	}
 }
 
-// resumeCancelledPatch finishes or rolls back the VMs of one instance that
-// resumeCancelledLocked counted as a settle of its cancelled task, and
-// ends that settle. A VM it leaves open is closed unrecovered, so the end
-// of the settle ends the instance and frees it.
+// waitsCancelledLocked reports whether the task is a cancelled patch task
+// whose open VM waits for a resume, as awaitCancelledResume leaves it. The
+// caller holds mu.
+func waitsCancelledLocked(task *UpgradeTask) bool {
+	return task.Status == TaskStatusCancelled && task.Paused && task.KindOrDefault() == TaskKindCertificates &&
+		certTaskMode(task) == RotationModePatch
+}
+
+// cancelledVMOpenLocked reports whether a running instance of a cancelled
+// task has a VM part way through its swap or its rollback, which keeps
+// the instance open until a resume closes it. The caller holds mu.
+func cancelledVMOpenLocked(inst *InstanceUpgrade) bool {
+	if inst.Status != InstanceStatusRunning {
+		return false
+	}
+
+	_, _, end := patchCancelEnd(inst, cancelledUnchanged)
+
+	return !end
+}
+
+// resumeCancelledPatch resumes the VMs of one instance that
+// resumeCancelledLocked counted as a settle of its cancelled task, as a
+// live task's resume does, and ends that settle. A resume that leaves a
+// VM open, because a read failed or the resume table says to retry later,
+// runs again, verifyInterval apart at first and twice as long each time
+// after, up to maxVerifyBackoff, until no VM is open or
+// cancelledResumeWait passes. Only an unrecovered outcome of the resume
+// table closes a VM the resume could not finish. A VM still open at the
+// deadline, after a panic, or while patch in place is off with its swap
+// not begun stays as it is, its instance stays reserved, and the task
+// waits for a resume. A manager that is stopping leaves it for the next
+// load.
 func (m *Manager) resumeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade) {
 	defer m.wg.Done()
 	defer m.endSettling(loadedDeploy{task: task, instance: inst})
-	defer m.closeCancelledPatch(task, inst)
 
+	m.logger.Info("Certificate task %s is cancelled with a VM of instance %s part way through its swap, so it finishes that VM now", task.ID, inst.InstanceID)
+
+	deadline := time.Now().Add(m.cancelledResumeWait)
+	backoff := m.verifyInterval
+
+	for {
+		panicked := !m.resumeCancelledOnce(task, inst)
+
+		m.mu.RLock()
+		open, begun, last := cancelledVMOpenLocked(inst), swapOpenLocked(inst), inst.Error
+		m.mu.RUnlock()
+
+		if m.ctx.Err() != nil || !open {
+			return
+		}
+
+		refused := m.certWritesAllowed(RotationModePatch)
+
+		switch {
+		case panicked:
+			m.awaitCancelledResume(task, inst, "A panic stopped its resume.")
+
+			return
+		case refused != nil && !begun:
+			m.awaitCancelledResume(task, inst, refusalMessage(writesRefused(refused)))
+
+			return
+		case !time.Now().Add(backoff).Before(deadline):
+			m.awaitCancelledResume(task, inst, fmt.Sprintf("Blacksmith could not finish it within %v. The last attempt said: %s",
+				m.cancelledResumeWait, sentence(last)))
+
+			return
+		}
+
+		m.logger.Error("Certificate task %s is cancelled, so instance %s resumes its open VM again in %s: %s", task.ID, inst.InstanceID, backoff, last)
+
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		backoff = min(2*backoff, maxVerifyBackoff)
+	}
+}
+
+// resumeCancelledOnce runs one resume of a cancelled task's instance. It
+// reports whether the resume ran to its end, which it does not when it
+// panics, and it recovers from the panic.
+func (m *Manager) resumeCancelledOnce(task *UpgradeTask, inst *InstanceUpgrade) bool {
 	defer func() {
 		if r := recover(); r != nil {
 			m.logger.Error("PANIC while certificate task %s finished the VMs of instance %s: %v", task.ID, inst.InstanceID, r)
 		}
 	}()
 
-	m.logger.Info("Certificate task %s is cancelled with a VM of instance %s part way through its swap, so it finishes that VM now", task.ID, inst.InstanceID)
-
 	// A cancelled task patches no VM a pass left untouched, so it never
 	// reaches the converge that a cancel channel would stop.
 	m.resumePatch(m.ctx, task, inst, nil)
+
+	return true
 }
 
-// closeCancelledPatch marks unrecovered each VM of a cancelled task's
-// instance that the resume left part way through its swap or its
-// rollback, notes it as unknown in the divergence record, which already
-// lists it, and saves the task. A manager that is stopping leaves them
-// for the next load.
-func (m *Manager) closeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade) {
-	if m.ctx.Err() != nil {
-		return
+// sentence ends the text with a period unless it ends a sentence already.
+func sentence(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" || strings.HasSuffix(text, ".") {
+		return text
 	}
 
-	var marked []*VMJournal
+	return text + "."
+}
 
+// refusalMessage is the message of a refusal, without its code.
+func refusalMessage(err error) string {
+	var apiErr *apierr.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.Message
+	}
+
+	return err.Error()
+}
+
+// awaitCancelledResume leaves the open VM of a cancelled task's instance
+// as it is, with the instance reserved, and has the task wait for a
+// resume, saying why. The task stays cancelled.
+func (m *Manager) awaitCancelledResume(task *UpgradeTask, inst *InstanceUpgrade, why string) {
 	m.mu.Lock()
 
-	if inst.Status == InstanceStatusRunning && inst.Certificates != nil {
-		for i := range inst.Certificates.VMs {
-			j := &inst.Certificates.VMs[i]
-			if !midVM(j.Phase) {
-				continue
-			}
+	openVM := ""
 
-			j.Error = fmt.Sprintf("The task was cancelled, and Blacksmith could not finish or roll back VM %s. %s", j.VM, redeployToRepair)
-			if err := j.Advance(VMPhaseUnrecovered); err == nil {
-				marked = append(marked, j)
-			}
+	for _, j := range inst.Certificates.VMs {
+		if midVM(j.Phase) {
+			openVM = j.VM
+
+			break
 		}
 	}
+
+	task.Paused = true
+	inst.Error = fmt.Sprintf("The task was cancelled with VM %s part way through its swap or its rollback. %s "+
+		"The VM stays as it is and the instance stays reserved. Resume the task to finish the VM.", openVM, sentence(why))
+
+	message := inst.Error
 
 	m.mu.Unlock()
 
-	if len(marked) == 0 {
-		return
-	}
+	m.logger.Error("Certificate task %s waits for a resume: %s", task.ID, message)
 
-	ctx := context.WithoutCancel(m.ctx)
-
-	for _, j := range marked {
-		err := m.recordDivergence(ctx, task, inst, j, nil, certinventory.DivergentVMUnknown)
-		if err != nil {
-			m.logger.Error("Certificate task %s could not mark VM %s unknown in the divergence record: %v", task.ID, j.VM, err)
-		}
-	}
-
-	err := m.persistCertConfirmed(ctx, task)
+	err := m.persistCertConfirmed(context.WithoutCancel(m.ctx), task)
 	if err != nil {
 		m.logger.Error("Certificate task %s: %v", task.ID, err)
 	}
