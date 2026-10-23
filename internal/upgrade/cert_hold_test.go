@@ -171,3 +171,75 @@ func TestWaitingForNamesTheStoredTaskBetweenRetries(t *testing.T) {
 		t.Fatalf("expected no task to wait for another instance, got %+v", holder)
 	}
 }
+
+// idlePatchTask returns the test certificate task with its patch stopped
+// between VMs, its one VM in the phase given and no decision pending.
+func idlePatchTask(status TaskStatus, phase VMPhase) UpgradeTask {
+	task := patchingTask(status)
+	rotation := task.Instances[0].Certificates
+	rotation.Converge = nil
+	rotation.VMs[0].Phase = phase
+
+	return task
+}
+
+// A cancelled patch task stored with an instance that nothing follows
+// ends that instance at the load and frees it, whether its VM was never
+// swapped, rolled back, or done.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestLoadEndsAnIdleInstanceOfACancelledPatchTask(t *testing.T) {
+	for _, phase := range []VMPhase{VMPhasePlanned, VMPhaseBackedUp, VMPhaseRolledBack, VMPhaseDone} {
+		t.Run(string(phase), func(t *testing.T) {
+			vault := newWaitVault()
+			storeCertificateTask(t, vault, idlePatchTask(TaskStatusCancelled, phase))
+
+			manager := loadManager(t, newWaitDirector(), vault)
+
+			task := eventuallyInstance(t, manager, InstanceStatusCancelled)
+			if task.CancelledCount != 1 {
+				t.Fatalf("expected one cancelled instance, got %d", task.CancelledCount)
+			}
+
+			expectReleased(t, manager)
+		})
+	}
+}
+
+// Cancelling a loaded patch task whose VM was never swapped ends the
+// instance and frees it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCancelEndsAnUnswappedPatchInstance(t *testing.T) {
+	vault := newWaitVault()
+	storeCertificateTask(t, vault, idlePatchTask(TaskStatusRunning, VMPhaseBackedUp))
+
+	manager := loadManager(t, newWaitDirector(), vault)
+	expectHeld(t, manager)
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("cancelling the task: %v", err)
+	}
+
+	eventuallyInstance(t, manager, InstanceStatusCancelled)
+	expectReleased(t, manager)
+}
+
+// A cancelled patch task whose VM was left unrecovered fails the
+// instance with the advice to redeploy it, and frees it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestLoadFailsAnUnrecoveredInstanceOfACancelledPatchTask(t *testing.T) {
+	vault := newWaitVault()
+	storeCertificateTask(t, vault, idlePatchTask(TaskStatusCancelled, VMPhaseUnrecovered))
+
+	manager := loadManager(t, newWaitDirector(), vault)
+
+	task := eventuallyInstance(t, manager, InstanceStatusFailed)
+	if !strings.Contains(task.Instances[0].Error, redeployToRepair) {
+		t.Fatalf("expected the redeploy advice, got %q", task.Instances[0].Error)
+	}
+
+	expectReleased(t, manager)
+}

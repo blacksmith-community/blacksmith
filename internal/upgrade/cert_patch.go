@@ -1324,6 +1324,38 @@ func (m *Manager) stopBetweenVMs(ctx context.Context, task *UpgradeTask, inst *I
 	return paused
 }
 
+// patchCancelEnd is how an idle instance of a cancelled patch task ends,
+// given the message it ends with when no VM was patched. A VM that may
+// be part way through a swap or a rollback keeps the instance open, since
+// only the resume that checks its files can tell what it holds. A VM left
+// unrecovered or reverted fails the instance with the advice to redeploy
+// it. Otherwise the instance is cancelled, as it is between two VMs once
+// any VM was patched or rolled back. The caller holds mu.
+func patchCancelEnd(inst *InstanceUpgrade, untouched string) (InstanceStatus, string, bool) {
+	if inst.Certificates == nil {
+		return InstanceStatusCancelled, untouched, true
+	}
+
+	status, message := InstanceStatusCancelled, untouched
+
+	for _, j := range inst.Certificates.VMs {
+		switch j.Phase {
+		case VMPhaseSwapping, VMPhaseSwapped, VMPhaseRestarted, VMPhaseVerified, VMPhaseRollingBack:
+			return "", "", false
+		case VMPhaseUnrecovered, VMPhaseReverted:
+			status = InstanceStatusFailed
+			message = fmt.Sprintf("The task was cancelled with VM %s %s. %s", j.VM, j.Phase, redeployToRepair)
+		case VMPhaseDone, VMPhaseRolledBack:
+			if status != InstanceStatusFailed {
+				message = cancelledBetweenVMs
+			}
+		case VMPhasePlanned, VMPhaseStaged, VMPhaseBackedUp:
+		}
+	}
+
+	return status, message, true
+}
+
 // journalSession returns the session of the VM's instance group, opened
 // on every VM of the group the journals name.
 func (m *Manager) journalSession(ctx context.Context, sessions *patchSessions, inst *InstanceUpgrade, j *VMJournal) (PatchSession, error) {

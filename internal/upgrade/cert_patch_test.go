@@ -1253,3 +1253,34 @@ func TestPatchFinishAndRollbackShareSession(t *testing.T) {
 		}
 	}
 }
+
+// Cancelling a task that paused after a rollback ends its instance and
+// frees it, since nothing else follows the instance once its processor
+// stopped.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchCancelAfterRollbackPauseEndsInstance(t *testing.T) {
+	env := newPatchEnv(t)
+	env.gateFailsOn(1, nil)
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	if got := current(t, manager); !got.Paused {
+		t.Fatalf("expected the rollback to pause the task, got %s", got.Status)
+	}
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	got := eventuallyInstance(t, manager, InstanceStatusCancelled)
+	if got.Status != TaskStatusCancelled || got.Instances[0].Error != cancelledBetweenVMs {
+		t.Fatalf("expected a cancelled task whose instance ended between VMs, got %s %q", got.Status, got.Instances[0].Error)
+	}
+
+	expectReleased(t, manager)
+}

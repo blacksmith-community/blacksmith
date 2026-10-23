@@ -936,19 +936,23 @@ const (
 	cancelledUndeployed = "The task was cancelled before the deploy. " + deployPendingNote
 )
 
-// cancelIdleLocked ends each running instance of a cancelled redeploy
-// task that nothing processes or settles and that has nothing in flight:
-// no deploy task or context ID on record, and no regeneration whose
-// outcome is unknown. Such an instance would otherwise stay reserved with
-// nothing to follow it. It is marked cancelled, saying that its new
-// versions are deploy_pending when its regeneration started, and
-// released. An instance with a deploy or a regeneration in flight is left
-// to whatever follows it, or to the next load, which makes it wait for a
-// decision. A manager that is stopping ends nothing, since the next load
-// does it. It returns how many instances it ended. The caller holds mu.
+// cancelIdleLocked ends each running instance of a cancelled redeploy or
+// patch task that nothing processes or settles and that has nothing in
+// flight: no deploy task or context ID on record, and no regeneration
+// whose outcome is unknown. Such an instance would otherwise stay
+// reserved with nothing to follow it. It is marked cancelled, saying that
+// its new versions are deploy_pending when its regeneration started, and
+// released. A patch instance ends as patchCancelEnd says, and one whose
+// VM may be part way through a swap is left for the resume that checks
+// its files. An instance with a deploy or a regeneration in flight is
+// left to whatever follows it, or to the next load, which makes it wait
+// for a decision. A manager that is stopping ends nothing, since the next
+// load does it. It returns how many instances it ended. The caller holds
+// mu.
 func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
+	mode := certTaskMode(task)
 	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCertificates ||
-		certTaskMode(task) != RotationModeRedeploy || m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
+		(mode != RotationModeRedeploy && mode != RotationModePatch) || m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
 		return 0
 	}
 
@@ -960,16 +964,22 @@ func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
 			continue
 		}
 
-		message := cancelledUnchanged
-		if regenerationStartedLocked(inst) {
-			message = cancelledUndeployed
+		status, message, end := idleCancelEndLocked(inst, mode)
+		if !end {
+			continue
 		}
 
 		now := m.certNowLocked()
-		inst.Status = InstanceStatusCancelled
+		inst.Status = status
 		inst.CompletedAt = &now
 		inst.Error = message
-		task.CancelledCount++
+
+		if status == InstanceStatusFailed {
+			task.FailedCount++
+		} else {
+			task.CancelledCount++
+		}
+
 		ended++
 	}
 
@@ -978,6 +988,22 @@ func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
 	}
 
 	return ended
+}
+
+// idleCancelEndLocked is the status and message an idle instance of a
+// cancelled task ends with, and whether it ends at all. The caller holds
+// mu.
+func idleCancelEndLocked(inst *InstanceUpgrade, mode RotationMode) (InstanceStatus, string, bool) {
+	message := cancelledUnchanged
+	if regenerationStartedLocked(inst) {
+		message = cancelledUndeployed
+	}
+
+	if mode == RotationModePatch {
+		return patchCancelEnd(inst, message)
+	}
+
+	return InstanceStatusCancelled, message, true
 }
 
 // skipUnownedLocked skips the pending instances of a cancelled
