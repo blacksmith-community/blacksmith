@@ -5804,7 +5804,7 @@
             <div class="instance-deployment">${escapeHtml(instance.deployment_name || '')}</div>
             ${(instance.applied_releases || []).length ? `<div class="instance-releases">Applied: ${escapeHtml(instance.applied_releases.map(r => `${r.name}/${r.version}`).join(', '))}</div>` : ''}
             <div class="instance-actions">
-              ${boshTaskId ? `<button class="bosh-task-btn" onclick="showTaskDetails(${boshTaskId}, event)">BOSH Task: ${boshTaskId}</button>` : ''}
+              ${boshTaskId ? `<button type="button" class="bosh-task-btn" data-bosh-task-id="${boshTaskId}">BOSH Task: ${boshTaskId}</button>` : ''}
             </div>
             ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
             ${isCertificates ? `<div class="cert-task-host" data-cert-index="${index}"></div>` : ''}
@@ -5910,6 +5910,9 @@
     };
     tasksContainer.querySelectorAll('[data-task-action]').forEach((button) => {
       button.addEventListener('click', actions[button.dataset.taskAction]);
+    });
+    tasksContainer.querySelectorAll('[data-bosh-task-id]').forEach((button) => {
+      button.addEventListener('click', (event) => window.showTaskDetails(Number(button.dataset.boshTaskId), event));
     });
   };
 
@@ -6236,12 +6239,12 @@
     });
 
     if (!stemcellValue && targetReleases.length === 0) {
-      alert('Please choose at least one target: a stemcell and/or a release');
+      window.Feedback.warning('Choose at least one target, a stemcell or a release.', { toast: true });
       return;
     }
 
     if (selectedUpgradeInstances.size === 0) {
-      alert('Please select at least one instance to upgrade');
+      window.Feedback.warning('Select at least one instance to upgrade.', { toast: true });
       return;
     }
 

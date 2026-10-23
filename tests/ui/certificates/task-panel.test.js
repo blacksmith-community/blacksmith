@@ -58,7 +58,12 @@ t('task panel and API errors', async () => {
   T.renderTaskDetail(detail);
   ok(panel.querySelectorAll('img,script').length===0,'task detail: hostile strings render inert');
   ok(panel.textContent.includes(EVIL),'task detail: hostile text shown literally');
-  ok(panel.querySelectorAll('[onclick]').length===0||[...panel.querySelectorAll('[onclick]')].every(n=>/^showTaskDetails\(\d+, event\)$/.test(n.getAttribute('onclick'))),'task detail: only numeric bosh task onclick remains');
+  ok(panel.querySelectorAll('[onclick]').length===0&&[...panel.querySelectorAll('.bosh-task-btn')].every(n=>/^\d+$/.test(n.dataset.boshTaskId)),'task detail: no inline handlers, and the BOSH task button carries a numeric id');
+
+  { const shown=[]; w.showTaskDetails=(id,ev)=>{ shown.push(id); };
+    T.renderTaskDetail({...detail,instances:[{instance_id:'i9',instance_name:'nine',status:'failed',bosh_task_id:42}]});
+    const bb=panel.querySelector('.bosh-task-btn'); bb.click();
+    ok(bb&&bb.dataset.boshTaskId==='42'&&!bb.hasAttribute('onclick')&&shown.length===1&&shown[0]===42,'BOSH task button opens its task through a listener'); }
 
   // controls: refusal via Feedback, no alert
   const running={id:'t1',name:'job',kind:'upgrade',status:'running',total_count:1,completed_count:0,failed_count:0,created_at:'2026-10-22T10:00:00Z',instances:[{instance_id:'i1',status:'running'}]};

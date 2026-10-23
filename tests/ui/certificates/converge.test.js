@@ -24,6 +24,12 @@ t('converge preview and create', async () => {
   const run=async(n)=>{ T.selectedUpgradeInstances.clear(); T.selectedUpgradeInstances.add('inst-1'); const p=T.startUpgrade(); await waitDialog(); confirmBtn().click(); /* name prompt */ return p; };
   const div=(extra={})=>({instance_id:'inst-1',divergence:{state:'unconverged',task_id:'t1',since:'2026-10-21T14:00:00Z'},variables:['/s/a_crt'],additional:[{name:'/s/other_crt',deployed_version_id:'v1',latest_version_id:'v2'}],...extra});
 
+  // the upgrade start refuses without a target or an instance through Feedback, never alert
+  { T.selectedUpgradeInstances.clear(); const warned=[]; const warn=w.Feedback.warning; w.Feedback.warning=(m)=>{ warned.push(m); };
+    await T.startUpgrade();
+    w.Feedback.warning=warn;
+    ok(alerts.length===0&&warned.length===1&&/Select at least one instance/.test(warned[0]),'upgrade start with no instance warns through Feedback, not alert'); }
+
   // 1: no diverged instance -> no dialog beyond the name prompt, create at once
   let p=run(); await sleep(150);
   ok(!d.querySelector('#dialog-modal-overlay.active'),'empty diverged list opens no confirm dialog');
