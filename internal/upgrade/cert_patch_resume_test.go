@@ -1457,3 +1457,30 @@ func (e *patchEnv) expectFilesLeft(t *testing.T, manager *Manager) {
 		t.Fatalf("expected the instance cancelled with %q, got %s: %q", want, inst.Status, inst.Error)
 	}
 }
+
+// A resume that makes VM 1's missing backup reads the director again
+// before its first replace, and a BOSH task that started meanwhile
+// pauses the task with VM 1 backed up and every file old.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeRechecksBeforeSwap(t *testing.T) {
+	env, c, _ := boundaryEnv(t, resumeBoundary{name: "the first backup", op: opBackup, nth: 1, afterSave: true})
+	task, _, _, _ := directorTurns()
+
+	mark := len(env.patch.recorded())
+	env.turnOn(opBackup, 1, task)
+
+	_, got := env.reload(t)
+
+	if ops := env.opsSince(mark, 0); !slices.Contains(ops, opBackup) || slices.Contains(ops, opReplace) {
+		t.Fatalf("expected the missing backup made and no replace on VM 1, got %v", ops)
+	}
+
+	j := storedJournal(got)
+	if j.Phase != VMPhaseBackedUp || !got.Paused || !strings.Contains(got.Instances[0].Error, "BOSH task 41") {
+		t.Fatalf("expected VM 1 backed up and the task paused on BOSH task 41, got %s paused=%v %q", j.Phase, got.Paused, got.Instances[0].Error)
+	}
+
+	env.expectPairOn(t, env.oldPair, "old")
+	c.expectNoThird(t)
+}

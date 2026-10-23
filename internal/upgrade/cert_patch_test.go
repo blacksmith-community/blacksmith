@@ -1560,3 +1560,238 @@ func TestPatchResumeRechecksUnsentVariable(t *testing.T) {
 		t.Fatalf("expected no session to a VM, got %d", opens)
 	}
 }
+
+// setRunning makes the director list the tasks as running on the
+// deployment, or none.
+func (d *redisVMsDirector) setRunning(tasks ...bosh.Task) {
+	d.pmu.Lock()
+	defer d.pmu.Unlock()
+
+	d.running = tasks
+}
+
+// directorTurn is a change to the director the tests make while VM 1
+// runs a command.
+type directorTurn struct {
+	name   string
+	change func(env *patchEnv)
+	undo   func(env *patchEnv)
+}
+
+// directorTurns are the changes that must stop a VM before its swap or
+// its restart: a BOSH task that starts, a VM listing that fails, a VM
+// the director lists with no CID, and a VM recreated with a new CID.
+func directorTurns() (task, down, noCID, recreated directorTurn) {
+	task = directorTurn{
+		name:   "a BOSH task starts",
+		change: func(env *patchEnv) { env.dir.setRunning(bosh.Task{ID: 41}) },
+		undo:   func(env *patchEnv) { env.dir.setRunning() },
+	}
+	down = directorTurn{
+		name:   "the VM listing fails",
+		change: func(env *patchEnv) { env.dir.failVMListing(errListingDown) },
+		undo:   func(env *patchEnv) { env.dir.failVMListing(nil) },
+	}
+	noCID = directorTurn{
+		name:   "the director names no CID",
+		change: func(env *patchEnv) { env.dir.setCID(0, "") },
+		undo:   func(env *patchEnv) { env.dir.setCID(0, patchCIDs[0]) },
+	}
+	recreated = directorTurn{
+		name:   "the VM is recreated",
+		change: func(env *patchEnv) { env.dir.setCID(0, "vm-cid-new") },
+	}
+
+	return task, down, noCID, recreated
+}
+
+// turnOn makes the change to the director while VM 1 runs the nth op.
+func (e *patchEnv) turnOn(op string, nth int, turn directorTurn) {
+	first := e.vms[0].name()
+	seen := 0
+
+	e.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == first && call.op == op {
+			seen++
+			if seen == nth {
+				turn.change(e)
+			}
+		}
+
+		return ssh.Result{}, nil, false
+	})
+}
+
+// resumeToPatched undoes the turn, resumes the stored task in a new
+// manager, and checks that every VM ends patched.
+func (e *patchEnv) resumeToPatched(t *testing.T, turn directorTurn) {
+	t.Helper()
+
+	e.hook(func(patchCall) (ssh.Result, error, bool) { return ssh.Result{}, nil, false })
+	turn.undo(e)
+
+	second, got := e.reload(t)
+	if !got.Paused {
+		t.Fatalf("expected the reloaded task to stay paused, got %s", got.Status)
+	}
+
+	err := second.ResumeTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	waitUntil(t, "the instance to settle", func() bool { return current(t, second).Instances[0].Status.settled() })
+
+	e.expectPatched(t, second, current(t, second))
+}
+
+// expectPairOn checks which pair VM 1 holds.
+func (e *patchEnv) expectPairOn(t *testing.T, pair testPair, which string) {
+	t.Helper()
+
+	vm := e.vms[0]
+
+	e.patch.mu.Lock()
+	cert, key := vm.files[vm.certPath()], vm.files[vm.keyPath()]
+	e.patch.mu.Unlock()
+
+	if cert != certpatch.NormalisedHash(pair.cert) || key != certpatch.NormalisedHash(pair.key) {
+		t.Fatalf("expected VM 1 to hold the %s pair", which)
+	}
+}
+
+// The director is read again just before VM 1's first replace. A BOSH
+// task that started, a director that can't be read, or a VM it lists
+// with no CID pauses the task with VM 1 backed up and every file old, and
+// a resume then patches every VM. A VM recreated meanwhile ends reverted.
+// Nothing is replaced on VM 1 in any case.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRecheckBeforeSwap(t *testing.T) {
+	task, down, noCID, recreated := directorTurns()
+
+	for _, turn := range []directorTurn{task, down, noCID} {
+		t.Run(turn.name, func(t *testing.T) {
+			env := newPatchEnv(t)
+			manager := env.newManager()
+			run := env.task()
+
+			env.turnOn(opBackup, 2, turn)
+			env.run(manager, &run)
+
+			if ops := env.patchOps(0); slices.Contains(ops, opReplace) {
+				t.Fatalf("expected no replace on VM 1, got %v", ops)
+			}
+
+			got := current(t, manager)
+			j := got.Instances[0].Certificates.VMs[0]
+
+			if j.Phase != VMPhaseBackedUp || !got.Paused {
+				t.Fatalf("expected VM 1 backed up and the task paused, got %s paused=%v", j.Phase, got.Paused)
+			}
+
+			if turn.name == task.name && !strings.Contains(got.Instances[0].Error, "BOSH task 41") {
+				t.Fatalf("expected the pause to name BOSH task 41, got %q", got.Instances[0].Error)
+			}
+
+			if !strings.Contains(got.Instances[0].Error, "keeps the old certificate") {
+				t.Fatalf("expected the pause to say VM 1 keeps the old certificate, got %q", got.Instances[0].Error)
+			}
+
+			if state := env.vmState(t, patchCIDs[0]); state != "" {
+				t.Fatalf("expected VM 1 out of the divergence record, got %q", state)
+			}
+
+			env.expectPairOn(t, env.oldPair, "old")
+			env.resumeToPatched(t, turn)
+		})
+	}
+
+	t.Run(recreated.name, func(t *testing.T) {
+		env := newPatchEnv(t)
+		manager := env.newManager()
+		run := env.task()
+
+		env.turnOn(opBackup, 2, recreated)
+		env.run(manager, &run)
+
+		if ops := env.patchOps(0); slices.Contains(ops, opReplace) {
+			t.Fatalf("expected no replace on VM 1, got %v", ops)
+		}
+
+		got := current(t, manager)
+		if j := got.Instances[0].Certificates.VMs[0]; j.Phase != VMPhaseReverted || !got.Paused {
+			t.Fatalf("expected VM 1 reverted and the task paused, got %s paused=%v", j.Phase, got.Paused)
+		}
+	})
+}
+
+// The director is read again just before VM 1's processes restart. A
+// BOSH task that started, a director that can't be read, or a VM it
+// lists with no CID pauses the task with VM 1 swapped and holding the
+// whole new pair, and its processes are not restarted, so the restart
+// never races BOSH. A resume then patches every VM. A VM recreated
+// meanwhile ends reverted, and the divergence record no longer lists it
+// as applied.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRecheckBeforeRestart(t *testing.T) {
+	task, down, noCID, recreated := directorTurns()
+
+	for _, turn := range []directorTurn{task, down, noCID} {
+		t.Run(turn.name, func(t *testing.T) {
+			env := newPatchEnv(t)
+			manager := env.newManager()
+			run := env.task()
+
+			env.turnOn(opReplace, 2, turn)
+			env.run(manager, &run)
+
+			if ops := env.patchOps(0); slices.Contains(ops, opRestart) || slices.Contains(ops, opRestore) {
+				t.Fatalf("expected no restart or restore on VM 1, got %v", ops)
+			}
+
+			got := current(t, manager)
+			j := got.Instances[0].Certificates.VMs[0]
+
+			if j.Phase != VMPhaseSwapped || !got.Paused {
+				t.Fatalf("expected VM 1 swapped and the task paused, got %s paused=%v", j.Phase, got.Paused)
+			}
+
+			if turn.name == task.name && !strings.Contains(got.Instances[0].Error, "BOSH task 41") {
+				t.Fatalf("expected the pause to name BOSH task 41, got %q", got.Instances[0].Error)
+			}
+
+			if !strings.Contains(got.Instances[0].Error, "next restart") {
+				t.Fatalf("expected the pause to say the processes load the pair at their next restart, got %q", got.Instances[0].Error)
+			}
+
+			env.expectPairOn(t, env.newPair, "new")
+			env.resumeToPatched(t, turn)
+		})
+	}
+
+	t.Run(recreated.name, func(t *testing.T) {
+		env := newPatchEnv(t)
+		manager := env.newManager()
+		run := env.task()
+
+		env.turnOn(opReplace, 2, recreated)
+		env.run(manager, &run)
+
+		if ops := env.patchOps(0); slices.Contains(ops, opRestart) || slices.Contains(ops, opRestore) {
+			t.Fatalf("expected no restart or restore on VM 1, got %v", ops)
+		}
+
+		got := current(t, manager)
+		if j := got.Instances[0].Certificates.VMs[0]; j.Phase != VMPhaseReverted || !got.Paused {
+			t.Fatalf("expected VM 1 reverted and the task paused, got %s paused=%v", j.Phase, got.Paused)
+		}
+
+		// The record drops VM 1, or the whole record once no VM holds the
+		// new pair.
+		if state := env.vmState(t, patchCIDs[0]); state != "" && state != certinventory.DivergentVMReverted {
+			t.Fatalf("expected VM 1 reverted or gone in the divergence record, got %q", state)
+		}
+	})
+}

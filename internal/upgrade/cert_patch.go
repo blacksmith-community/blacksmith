@@ -1515,8 +1515,8 @@ func (m *Manager) gateBeforeVM(ctx context.Context, task *UpgradeTask, inst *Ins
 // patchVMForward takes one planned VM to swapped through sess, the
 // session of its group, and never opens one of its own. It re-checks the
 // director, the VM's CID, and its files, stages every new file, backs up
-// every file, records the VM in the divergence record, and replaces each
-// file. Every command that changes the VM is sent only once the switches
+// every file, reads the director again, records the VM in the divergence
+// record, and replaces each file. Every command that changes the VM is sent only once the switches
 // allow it and the journal's intent is saved for certain, and its result
 // is saved after it. It returns errVMStopped once it paused or failed the
 // task, and nil when the VM reached swapped.
@@ -1534,6 +1534,7 @@ func (m *Manager) patchVMForward(ctx context.Context, task *UpgradeTask, inst *I
 		run.recheck,
 		func() error { return run.stage(pairs) },
 		run.backup,
+		run.recheckBeforeSwap,
 		func() error { return run.diverge(pairs, certinventory.DivergentVMUnknown) },
 		func() error { return run.advance(VMPhaseSwapping, "replace the files on "+j.VM) },
 		run.replace,
@@ -1976,6 +1977,81 @@ func (r *vmRun) directorCID(outcome string) (string, error) {
 	return liveCID(vms, r.j), nil
 }
 
+// swapHeldOutcome and restartHeldOutcome say what became of a VM that
+// recheckDirector stopped before its first replace or before its restart.
+const (
+	swapHeldOutcome = "was not patched further and keeps the old certificate in every file, " +
+		"with its backups in place for a resume"
+	restartHeldOutcome = "was not restarted. Its files hold the whole new key pair, which its processes " +
+		"load at their next restart, and a resume restarts them"
+)
+
+// recheckBeforeSwap reads the director again just before the VM's first
+// replace, because staging, backups, and saves take long enough for BOSH
+// to start a task or recreate the VM after the first re-check. A VM whose
+// swap began is not checked again here, since it must finish its swap.
+func (r *vmRun) recheckBeforeSwap() error {
+	if r.swapBegun() {
+		return nil
+	}
+
+	return r.recheckDirector(swapHeldOutcome, false)
+}
+
+// recheckDirector reads the director again just before a step that
+// changes what the VM runs. A running BOSH task, a director that can't be
+// read, or a VM it lists with no CID pauses the task and leaves the VM in
+// its phase, which a resume picks up as its journal says, and the message
+// says the VM then outcome. Rolling back instead would write the VM's
+// files while BOSH acts on it, and the phase the VM keeps holds either
+// the whole old pair or the whole new one. A VM whose CID changed was
+// recreated with the old files and ends reverted. begun says whether the
+// divergence record may list the VM.
+func (r *vmRun) recheckDirector(outcome string, begun bool) error {
+	cid, err := r.directorCID(outcome)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case cid == "":
+		return r.pause(fmt.Errorf("The director names no CID for VM %s on deployment %s, so VM %s %s. Resume once the director lists it.",
+			r.j.VM, r.inst.DeploymentName, r.j.VM, outcome))
+	case cid != r.j.CID:
+		return r.recreated(fmt.Sprintf("The VM's CID changed while it was %s, so BOSH recreated it with the old files.", r.j.Phase), begun)
+	}
+
+	return nil
+}
+
+// recreated closes a VM that BOSH recreated, which holds the old files
+// again. It notes the VM in the divergence record when a replacement may
+// have reached it, and pauses the task.
+func (r *vmRun) recreated(why string, begun bool) error {
+	var refused error
+
+	r.change(func(j *VMJournal) {
+		j.Error = why
+		refused = j.Advance(VMPhaseReverted)
+	})
+
+	r.manager.logRefusedMove(r.task, r.j.VM, refused)
+
+	err := r.save("record that VM " + r.j.VM + " was recreated")
+	if err != nil {
+		return err
+	}
+
+	if begun {
+		err := r.manager.recordDivergence(r.ctx, r.task, r.inst, r.j, nil, certinventory.DivergentVMReverted)
+		if err != nil {
+			r.manager.logger.Error("Certificate task %s could not mark VM %s reverted in the divergence record: %v", r.task.ID, r.j.VM, err)
+		}
+	}
+
+	return r.pause(fmt.Errorf("VM %s was not patched further: %s", r.j.VM, why))
+}
+
 // pause pauses the task with the error and returns errVMStopped.
 func (r *vmRun) pause(err error) error {
 	if r.ctx.Err() == nil {
@@ -2382,8 +2458,15 @@ func (m *Manager) patchVMFinish(ctx context.Context, task *UpgradeTask, inst *In
 	return r.finish(leaves)
 }
 
-// finish takes a swapped VM to done, as patchVMFinish describes.
+// finish takes a swapped VM to done, as patchVMFinish describes. It
+// reads the director again first, so the restart never races a BOSH task
+// on the deployment or reaches a VM BOSH recreated.
 func (r *vmRun) finish(leaves map[string]leafFacts) error {
+	err := r.recheckDirector(restartHeldOutcome, true)
+	if err != nil {
+		return err
+	}
+
 	result, err := r.mutate("restart the processes on "+r.j.VM, nil, r.restart)
 
 	switch {
@@ -3210,7 +3293,7 @@ func (r *patchResume) act(run *vmRun, action ResumeAction, why string, live Live
 
 		return run.restoreAndClose()
 	case ResumeMarkReverted:
-		return r.reverted(run, why, begun)
+		return run.recreated(why, begun)
 	case ResumeRetryLater:
 		return run.pause(fmt.Errorf("VM %s was left as it was: %s", run.j.VM, why))
 	default:
@@ -3267,6 +3350,7 @@ func (r *patchResume) continueForward(run *vmRun) error {
 // through its replacements and on to done.
 func (r *patchResume) swapForward(run *vmRun) error {
 	for _, step := range []func() error{
+		run.recheckBeforeSwap,
 		func() error { return run.diverge(r.pairs, certinventory.DivergentVMUnknown) },
 		func() error { return run.reach(VMPhaseSwapping, "replace the files on "+run.j.VM) },
 		run.replace,
@@ -3407,34 +3491,6 @@ func (r *patchResume) restage(run *vmRun, need func(FileEntry) bool, fail func(w
 	}
 
 	return nil
-}
-
-// reverted closes a VM that BOSH recreated, which holds the old files
-// again. It notes the VM in the divergence record when a replacement may
-// have reached it, and pauses the task.
-func (r *patchResume) reverted(run *vmRun, why string, begun bool) error {
-	var refused error
-
-	run.change(func(j *VMJournal) {
-		j.Error = why
-		refused = j.Advance(VMPhaseReverted)
-	})
-
-	r.m.logRefusedMove(r.task, run.j.VM, refused)
-
-	err := run.save("record that VM " + run.j.VM + " was recreated")
-	if err != nil {
-		return err
-	}
-
-	if begun {
-		err := r.m.recordDivergence(r.ctx, r.task, r.inst, run.j, nil, certinventory.DivergentVMReverted)
-		if err != nil {
-			r.m.logger.Error("Certificate task %s could not mark VM %s reverted in the divergence record: %v", r.task.ID, run.j.VM, err)
-		}
-	}
-
-	return run.pause(fmt.Errorf("VM %s was not patched further: %s", run.j.VM, why))
 }
 
 // unrecovered leaves an open VM whose live state no resume rule covers
