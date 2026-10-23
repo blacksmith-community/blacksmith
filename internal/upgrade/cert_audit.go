@@ -66,6 +66,9 @@ type AuditRecord struct {
 	// DivergenceCleared is set on an instance a converge deploy settled,
 	// and says whether the divergence record was confirmed cleared.
 	DivergenceCleared *bool `json:"divergence_cleared,omitempty"`
+	// Rebuilt marks a record written again after a crash from what the
+	// task persisted. Its variable fields reflect the task at that time.
+	Rebuilt bool `json:"rebuilt,omitempty"`
 	// DeployFinishedAt is when the instance's last deploy ended on the
 	// director, as the record of that deploy has it.
 	DeployFinishedAt *time.Time `json:"deploy_finished_at,omitempty"`
@@ -318,7 +321,7 @@ func (m *Manager) dropPendingAudit() {
 	m.auditQ.running = false
 	m.auditQ.mu.Unlock()
 
-	m.logger.Error("audit=certificate-rotation %d queued records were not saved before shutdown, and the next start rebuilds them", dropped)
+	m.logger.Error("audit=certificate-rotation %d queued records were not saved before shutdown, and the next start rebuilds what the persisted tasks still hold", dropped)
 }
 
 // auditIdle reports whether every queued record has been written.
@@ -514,6 +517,13 @@ func (m *Manager) auditStartLocked(task *UpgradeTask) {
 	m.enqueueAuditOnceLocked(m.startRecordLocked(task))
 }
 
+// auditBackfillAttempts bounds the background tries of the backfill, and
+// auditBackfillMaxDelay bounds the wait between two of them.
+const (
+	auditBackfillAttempts = 12
+	auditBackfillMaxDelay = 30 * time.Second
+)
+
 // backfillAudit writes the audit records that the loaded certificate tasks
 // lack, rebuilt from what the tasks persisted, so a crash between a settle
 // and its audit write loses nothing. It reads the audit index once. A
@@ -522,44 +532,106 @@ func (m *Manager) auditStartLocked(task *UpgradeTask) {
 // carries the time its event persisted: the start, the decision, or the
 // instance's completion. This covers the instances that settle while the
 // tasks load, such as those of a task whose creation was never confirmed.
-// It reports false when Stop ended the read of the index.
-func (m *Manager) backfillAudit(loaded []*UpgradeTask) bool {
-	var certificateTasks []*UpgradeTask
+//
+// Each rebuilt record is marked rebuilt. A settled instance's rotation is
+// frozen, so a rebuilt settle record matches the live one. A rebuilt
+// decision record has its operator, choice, outcome, and time from the
+// decision, but its variables, approved effects, and deploy end reflect
+// the task at the rebuild, so they can be newer than the decision.
+//
+// A task keeps only its latest decision for each instance, so when several
+// decision records of one instance are lost together, only the last comes
+// back.
+//
+// An index that can't be read never holds up the load. The backfill logs
+// the failure and retries in the background, with a bounded backoff that
+// ends when the manager stops.
+func (m *Manager) backfillAudit(loaded []*UpgradeTask) {
+	var ids []string
 
 	for _, task := range loaded {
 		if task.KindOrDefault() == TaskKindCertificates {
-			certificateTasks = append(certificateTasks, task)
+			ids = append(ids, task.ID)
 		}
 	}
 
-	if len(certificateTasks) == 0 {
-		return true
+	if len(ids) == 0 || m.tryBackfill(ids) {
+		return
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Stop takes mu once before it waits, so a goroutine that joins the
+	// WaitGroup here does it before the wait, or never.
+	if m.ctx.Err() != nil {
+		return
+	}
+
+	m.wg.Add(1)
+
+	go func() {
+		defer m.wg.Done()
+
+		m.retryBackfill(ids)
+	}()
+}
+
+// retryBackfill tries the backfill again, with a doubling wait between the
+// tries, until it succeeds, the tries run out, or the manager stops.
+func (m *Manager) retryBackfill(ids []string) {
+	delay := m.auditRetry
+	if delay <= 0 {
+		delay = auditRetryDefault
+	}
+
+	for range auditBackfillAttempts {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+
+		if m.tryBackfill(ids) {
+			return
+		}
+
+		delay = min(delay*2, auditBackfillMaxDelay)
+	}
+
+	m.logger.Error("audit=certificate-rotation the audit index could not be read, so lost records of %d tasks were not rebuilt", len(ids))
+}
+
+// tryBackfill reads the audit index once and queues the missing records of
+// the tasks given. It reports false when the index could not be read.
+func (m *Manager) tryBackfill(ids []string) bool {
+	ctx, cancel := context.WithTimeout(m.ctx, auditWriteTimeout)
+	defer cancel()
 
 	var index map[string]interface{}
 
-	_, ok := m.readWithRetry("the certificate audit index from Vault", func(ctx context.Context) (bool, error) {
-		index = nil
+	_, err := m.vault.Get(ctx, certificateAuditVaultPath, &index)
+	if err != nil {
+		m.logger.Error("audit=certificate-rotation the audit index could not be read for the rebuild of lost records: %v", err)
 
-		return m.vault.Get(ctx, certificateAuditVaultPath, &index)
-	})
-	if !ok {
 		return false
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for id := range index {
-		if m.audited == nil {
-			m.audited = make(map[string]bool)
-		}
+	if m.audited == nil {
+		m.audited = make(map[string]bool)
+	}
 
+	for id := range index {
 		m.audited[id] = true
 	}
 
-	for _, task := range certificateTasks {
-		m.backfillTaskLocked(task)
+	for _, id := range ids {
+		if task, ok := m.tasks[id]; ok {
+			m.backfillTaskLocked(task)
+		}
 	}
 
 	return true
@@ -571,6 +643,7 @@ func (m *Manager) backfillTaskLocked(task *UpgradeTask) {
 	if task.StartedAt != nil && !neverStarted(task) {
 		rec := m.startRecordLocked(task)
 		rec.At = *task.StartedAt
+		rec.Rebuilt = true
 
 		m.enqueueAuditOnceLocked(rec)
 	}
@@ -579,6 +652,8 @@ func (m *Manager) backfillTaskLocked(task *UpgradeTask) {
 		inst := &task.Instances[i]
 
 		if rec, ok := m.decisionRecordLocked(task, inst); ok {
+			rec.Rebuilt = true
+
 			m.enqueueAuditOnceLocked(rec)
 		}
 
@@ -587,6 +662,7 @@ func (m *Manager) backfillTaskLocked(task *UpgradeTask) {
 		}
 
 		rec := m.settleRecordLocked(task, inst)
+		rec.Rebuilt = true
 
 		switch {
 		case inst.CompletedAt != nil:

@@ -151,7 +151,7 @@ func TestAuditOnStartSettleAndDecisions(t *testing.T) {
 	}
 
 	settled := trail.find(t, AuditInstanceSettled)
-	if settled.Outcome != string(InstanceStatusSuccess) || settled.InstanceID != waitInstanceID || settled.Actor != "alice" || settled.Reason != "CHG-1234" {
+	if settled.Rebuilt || settled.Outcome != string(InstanceStatusSuccess) || settled.InstanceID != waitInstanceID || settled.Actor != "alice" || settled.Reason != "CHG-1234" {
 		t.Fatalf("unexpected settle record: %+v", settled)
 	}
 

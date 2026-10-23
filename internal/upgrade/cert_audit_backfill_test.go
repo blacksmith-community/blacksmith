@@ -81,6 +81,10 @@ func TestAuditBackfillsASettleLostToACrash(t *testing.T) {
 		t.Fatalf("unexpected rebuilt settle record: %+v", settled)
 	}
 
+	if !settled.Rebuilt {
+		t.Fatalf("expected the rebuilt record marked, got %+v", settled)
+	}
+
 	if !settled.At.Equal(backfillCompleted) || settled.Outcome != string(InstanceStatusSuccess) {
 		t.Fatalf("expected the persisted completion time and outcome, got %+v", settled)
 	}
@@ -347,5 +351,94 @@ func TestAuditSettleWithAnotherOutcomeGetsItsOwnRecord(t *testing.T) {
 
 	if strings.Join(outcomes, ",") != "failed,success" {
 		t.Fatalf("expected a record for each outcome, got %v", outcomes)
+	}
+}
+
+// auditIndexVault refuses the first failures reads of the audit index.
+type auditIndexVault struct {
+	*waitVault
+
+	mu       sync.Mutex
+	failures int
+	reads    int
+}
+
+func (v *auditIndexVault) Get(ctx context.Context, path string, out interface{}) (bool, error) {
+	if path == certificateAuditVaultPath {
+		v.mu.Lock()
+		v.reads++
+		refuse := v.reads <= v.failures
+		v.mu.Unlock()
+
+		if refuse {
+			return false, errPutRefused
+		}
+	}
+
+	return v.waitVault.Get(ctx, path, out)
+}
+
+func (v *auditIndexVault) attempts() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	return v.reads
+}
+
+// An audit index that can't be read never holds up the load. The load
+// finishes, the backfill retries in the background, and the rebuilt
+// records are marked as rebuilt once the index reads.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditBackfillRetriesInTheBackgroundWithoutBlockingTheLoad(t *testing.T) {
+	env := newRedeployEnv(t)
+	trail := env.watchAudit()
+
+	storeCertificateTask(t, env.vault.waitVault, env.settledTask())
+
+	refusing := &auditIndexVault{waitVault: env.vault.waitVault, failures: 3}
+	manager := env.newManager()
+	manager.auditRetry = time.Millisecond
+	manager.vault = refusing
+	manager.Start()
+	waitForLoad(t, manager)
+
+	waitUntil(t, "the backfilled records", func() bool { return manager.auditIdle() && len(trail.events()) >= 2 })
+
+	for _, rec := range trail.all() {
+		if !rec.Rebuilt {
+			t.Fatalf("expected the %s record marked as rebuilt", rec.Event)
+		}
+	}
+}
+
+// An index that never reads leaves the load finished and Stop prompt.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditBackfillGivesUpAtShutdown(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	storeCertificateTask(t, env.vault.waitVault, env.settledTask())
+
+	refusing := &auditIndexVault{waitVault: env.vault.waitVault, failures: 1 << 20}
+	manager := env.newManager()
+	manager.auditRetry = time.Hour
+	manager.vault = refusing
+	manager.Start()
+	waitForLoad(t, manager)
+
+	waitUntil(t, "the first read", func() bool { return refusing.attempts() >= 1 })
+
+	stopped := make(chan struct{})
+
+	go func() {
+		manager.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop waited on the backfill's retries")
 	}
 }

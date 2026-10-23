@@ -2251,9 +2251,7 @@ func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 
 	// A record lost to a crash between a settle and its audit write is
 	// rebuilt now from what the tasks persisted.
-	if !m.backfillAudit(loaded) {
-		return nil, false
-	}
+	m.backfillAudit(loaded)
 
 	return loaded, true
 }
