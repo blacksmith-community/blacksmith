@@ -1229,7 +1229,7 @@ func idleCancelEndLocked(task *UpgradeTask, inst *InstanceUpgrade, mode Rotation
 		return InstanceStatusCancelled, message, true
 	}
 
-	status, message, end := patchCancelEnd(inst, message)
+	status, message, end := patchCancelEnd(inst, patchUntouchedLocked(task, inst))
 	if end && status == InstanceStatusCancelled && awaitsConvergeLocked(task, inst) {
 		message = cancelledUnconverged
 	}

@@ -938,6 +938,54 @@ var patchKinds = map[string]map[string]bool{
 // finish.
 const redeployToRepair = "Redeploy this instance, which renders its jobs from BOSH state and repairs the VM."
 
+// Messages of a patch instance that a cancel ends before its task
+// replaced the certificates on any VM.
+const (
+	cancelledUnpatched = "The task was cancelled before it replaced the certificates on any VM, so every VM keeps its old certificates."
+	// patchPendingNote tells the operator what became of the new versions
+	// that the task regenerated but wrote onto no VM.
+	patchPendingNote = "The new certificate versions remain in CredHub as deploy_pending, and a redeploy or another patch task applies them."
+	cleanedUpNote    = "Blacksmith removed the staged copies and backups from the VMs."
+	// filesLeftNote names the VMs that keep their staged copies and
+	// backups, and the directory that holds them.
+	filesLeftNote = "Blacksmith did not remove the staged copies and backups from %s, so they stay under %s until they are removed by hand."
+)
+
+// patchUntouchedLocked is the message of a cancelled patch instance whose
+// task replaced nothing on any VM. Once its regeneration started, it says
+// that the new versions wait in CredHub and what became of the staged
+// copies and backups on the VMs. The caller holds mu.
+func patchUntouchedLocked(task *UpgradeTask, inst *InstanceUpgrade) string {
+	if !regenerationStartedLocked(inst) {
+		return cancelledUnchanged
+	}
+
+	message := cancelledUnpatched + " " + patchPendingNote
+
+	var (
+		left    []string
+		cleaned bool
+	)
+
+	for _, j := range inst.Certificates.VMs {
+		switch j.Cleanup {
+		case CleanupDone:
+			cleaned = true
+		case CleanupPending, CleanupFailed:
+			left = append(left, "VM "+j.VM)
+		}
+	}
+
+	switch {
+	case len(left) > 0:
+		message += " " + fmt.Sprintf(filesLeftNote, strings.Join(left, ", "), patchWorkRoot+task.ID+"/")
+	case cleaned:
+		message += " " + cleanedUpNote
+	}
+
+	return message
+}
+
 // cancelledBetweenVMs is the message of an instance whose task was
 // cancelled between two VMs of a patch.
 const cancelledBetweenVMs = "The task was cancelled between two VMs of the patch. Any VM already patched keeps the new certificate, which the divergence record lists until the instance is redeployed."

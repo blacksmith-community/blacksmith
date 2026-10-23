@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -1159,6 +1160,15 @@ func TestPatchCancelledCleansUpClosedVMs(t *testing.T) {
 				t.Fatalf("expected VM 1 cleaned up, got cleanup %q with %d files left", j.Cleanup, env.workFiles(0))
 			}
 
+			want := cancelledBetweenVMs
+			if !closedPhase(j.Phase) {
+				want = cancelledUnpatched + " " + patchPendingNote + " " + cleanedUpNote
+			}
+
+			if inst := current(t, second).Instances[0]; inst.Status != InstanceStatusCancelled || inst.Error != want {
+				t.Fatalf("expected the instance cancelled with %q, got %s: %q", want, inst.Status, inst.Error)
+			}
+
 			if ops := env.filteredOpsSince(mark, 0); !slices.Equal(ops, []string{opCleanup}) {
 				t.Fatalf("expected only a cleanup on VM 1, got %v", ops)
 			}
@@ -1199,6 +1209,8 @@ func TestPatchCancelledCleanupNeverHolds(t *testing.T) {
 			t.Fatalf("expected VM 1's cleanup recorded as failed, got %q", j.Cleanup)
 		}
 
+		env.expectFilesLeft(t, second)
+
 		if ops := env.filteredOpsSince(mark, 0); !slices.Equal(ops, []string{opCleanup}) {
 			t.Fatalf("expected one cleanup tried on VM 1, got %v", ops)
 		}
@@ -1216,5 +1228,21 @@ func TestPatchCancelledCleanupNeverHolds(t *testing.T) {
 		if j.Cleanup != CleanupPending || env.patch.openCount() != opens {
 			t.Fatalf("expected no session and the cleanup left pending, got %d new sessions and cleanup %q", env.patch.openCount()-opens, j.Cleanup)
 		}
+
+		env.expectFilesLeft(t, second)
 	})
+}
+
+// expectFilesLeft fails the test unless the instance was cancelled with
+// nothing replaced and the note that VM 1 keeps its staged copies and
+// backups.
+func (e *patchEnv) expectFilesLeft(t *testing.T, manager *Manager) {
+	t.Helper()
+
+	want := cancelledUnpatched + " " + patchPendingNote + " " +
+		fmt.Sprintf(filesLeftNote, "VM "+e.vms[0].name(), patchWorkRoot+certTaskID+"/")
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusCancelled || inst.Error != want {
+		t.Fatalf("expected the instance cancelled with %q, got %s: %q", want, inst.Status, inst.Error)
+	}
 }
