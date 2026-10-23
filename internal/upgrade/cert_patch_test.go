@@ -1361,3 +1361,29 @@ func TestPatchLogsRefusedUnrecoveredMove(t *testing.T) {
 		t.Fatalf("expected the refused move logged, got %v", env.capture.all())
 	}
 }
+
+// A variable index outside the rotation stops the rotation rather than
+// reading a zero variable, so nothing reaches CredHub without a version.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchMissingVariableFailsClosed(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+
+	err := manager.reserveCertificateTask(&task)
+	if err != nil {
+		t.Fatalf("reserving the task: %v", err)
+	}
+
+	inst := &task.Instances[0]
+	missing := len(inst.Certificates.Variables)
+
+	if !manager.validatePair(context.Background(), env.pairs, &task, inst, missing, &credhub.KeyPair{}) {
+		t.Fatal("expected a missing variable to stop the rotation")
+	}
+
+	if got := current(t, manager).Instances[0]; got.Status != InstanceStatusFailed {
+		t.Fatalf("expected the instance to fail, got %s", got.Status)
+	}
+}

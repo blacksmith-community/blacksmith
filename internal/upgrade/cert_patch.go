@@ -1074,7 +1074,12 @@ func (m *Manager) readNewPairs(ctx context.Context, task *UpgradeTask, inst *Ins
 	m.mu.RUnlock()
 
 	for index := range count {
-		variable, _ := m.variableAt(inst, index)
+		variable, ok := m.patchVariable(inst, index)
+		if !ok {
+			m.failRotation(ctx, task, inst, errVariableMissing) //nolint:errcheck,gosec // failRotation logs and saves it
+
+			return true
+		}
 
 		pair, err := api.CertificateKeyPair(ctx, variable.NewVersionID)
 		if err != nil {
@@ -1121,10 +1126,33 @@ func (m *Manager) readNewPairs(ctx context.Context, task *UpgradeTask, inst *Ins
 	return false
 }
 
+// errVariableMissing is the message of an instance whose rotation lost a
+// variable the patch was reading.
+const errVariableMissing = "The rotation no longer lists a certificate the patch was reading, so nothing was patched."
+
+// patchVariable copies the rotation's variable at index, and reports false
+// when there is none, so a caller never reads a zero variable.
+func (m *Manager) patchVariable(inst *InstanceUpgrade, index int) (VariableRotation, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if inst.Certificates == nil || index < 0 || index >= len(inst.Certificates.Variables) {
+		return VariableRotation{}, false
+	}
+
+	return inst.Certificates.Variables[index].Clone(), true
+}
+
 // validatePair checks one variable's new key pair and records the checks
 // and the key's hash. It reports whether the rotation stopped.
 func (m *Manager) validatePair(ctx context.Context, api CredHubAPI, task *UpgradeTask, inst *InstanceUpgrade, index int, pair *credhub.KeyPair) bool {
-	variable, _ := m.variableAt(inst, index)
+	variable, ok := m.patchVariable(inst, index)
+	if !ok {
+		m.failRotation(ctx, task, inst, errVariableMissing) //nolint:errcheck,gosec // failRotation logs and saves it
+
+		return true
+	}
+
 	short := shortName(variable.Name)
 	step := "validate the new key pair of " + short
 
