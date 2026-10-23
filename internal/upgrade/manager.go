@@ -1982,16 +1982,19 @@ func (m *Manager) startProcessing(task *UpgradeTask) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if task.StartedAt == nil {
+	first := task.StartedAt == nil
+	if first {
 		task.StartedAt = &now
-
-		if task.KindOrDefault() == TaskKindCertificates {
-			m.auditStartLocked(task)
-		}
 	}
 
 	if task.Status != TaskStatusCancelled && task.Status != TaskStatusPaused {
 		task.Status = TaskStatusRunning
+	}
+
+	// A task cancelled while it waited never started, so it gets no start
+	// record.
+	if first && task.Status != TaskStatusCancelled && task.KindOrDefault() == TaskKindCertificates {
+		m.auditStartLocked(task)
 	}
 
 	return task.Status == TaskStatusCancelled

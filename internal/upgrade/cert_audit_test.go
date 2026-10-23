@@ -652,3 +652,32 @@ func TestAuditConvergeWithoutStoreClaimsNothing(t *testing.T) {
 		t.Fatalf("expected no divergence claim without a store, got %v", *got)
 	}
 }
+
+// A certificate task cancelled while it waited in the queue gets no
+// task_started record, and one that starts does.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditStartSkipsACancelledTask(t *testing.T) {
+	env := newRedeployEnv(t)
+	trail := env.watchAudit()
+	manager := env.newManager()
+
+	cancelled := env.task()
+	cancelled.Status = TaskStatusCancelled
+
+	if !manager.startProcessing(&cancelled) {
+		t.Fatal("expected startProcessing to report the cancel")
+	}
+
+	waitUntil(t, "the audit queue", manager.auditIdle)
+
+	if events := trail.events(); len(events) != 0 {
+		t.Fatalf("expected no record for a cancelled task, got %v", events)
+	}
+
+	started := env.task()
+	started.ID = "second-task"
+
+	manager.startProcessing(&started)
+	trail.waitFor(t, AuditTaskStarted)
+}
