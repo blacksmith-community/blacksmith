@@ -1,6 +1,7 @@
 package credhub_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -198,6 +199,46 @@ func TestCertificateVersionNeverRetainsKey(t *testing.T) {
 
 	if fake.paths[0] != "/api/v1/data/v1" {
 		t.Fatalf("unexpected path %v", fake.paths)
+	}
+}
+
+// TestCertificateVersionClearsAnswer shows that the answer, which carries
+// the private key, is read into one buffer sized before the read, and that
+// the buffer is all zeros once the call returns, whether the answer
+// decoded or not.
+func TestCertificateVersionClearsAnswer(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		body    string
+		decodes bool
+	}{
+		{"a whole answer", keyBearingAnswer, true},
+		{"an answer that is not an object", `{"value": "` + fakeKeyText + `"}`, false},
+		{"a cut answer", keyBearingAnswer[:strings.Index(keyBearingAnswer, "RSA")+5], false},
+	}
+
+	for _, row := range cases {
+		fake := newReadServer(t, answer(row.body))
+		client := fake.client(t)
+
+		var seen []byte
+
+		credhub.SetCertificateVersionBufferHook(client, func(buf []byte) { seen = buf })
+
+		got, err := client.CertificateVersion(t.Context(), "v1")
+		if row.decodes != (err == nil) || row.decodes != (got != nil) {
+			t.Fatalf("%s: got %+v, err = %v, want decoded %v", row.name, got, err, row.decodes)
+		}
+
+		if len(seen) != len(row.body) || cap(seen) != 64<<10+1 {
+			t.Fatalf("%s: the hook saw %d bytes in a buffer of %d, want the %d-byte answer in one buffer of %d", row.name, len(seen), cap(seen), len(row.body), 64<<10+1)
+		}
+
+		if !bytes.Equal(seen, make([]byte, len(seen))) {
+			t.Errorf("%s: the answer buffer still holds data after the call", row.name)
+		}
 	}
 }
 

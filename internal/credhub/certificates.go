@@ -178,7 +178,9 @@ func (c *Client) CredentialVersions(ctx context.Context, name string, limit int)
 }
 
 // CertificateVersion returns the certificate and the CA of one version, and
-// never its private key.
+// never its private key. CredHub's answer carries the key, so the call reads
+// it into one buffer sized before the read and clears that buffer before it
+// returns, whether the answer decoded or not.
 func (c *Client) CertificateVersion(ctx context.Context, versionID string) (*CertificatePublic, error) {
 	if versionID == "" {
 		return nil, ErrEmptyVersionID
@@ -190,7 +192,17 @@ func (c *Client) CertificateVersion(ctx context.Context, versionID string) (*Cer
 		path:         dataPath + "/" + url.PathEscape(versionID),
 		maxBody:      maxCertificateBody,
 		opaqueErrors: true,
+		oneBuffer:    true,
 	})
+
+	defer func() {
+		clear(body)
+
+		if c.bufferSeen != nil {
+			c.bufferSeen(body)
+		}
+	}()
+
 	if err != nil {
 		return nil, notFoundOn404(err, versionID)
 	}

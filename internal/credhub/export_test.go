@@ -54,3 +54,9 @@ func SetKeyPairBufferHook(client *Client, hook func([]byte)) {
 func DecodeKeyPair(body []byte) ([]byte, []byte, error) {
 	return decodeKeyPair(body)
 }
+
+// SetCertificateVersionBufferHook makes CertificateVersion hand its answer
+// buffer to hook after it has been cleared.
+func SetCertificateVersionBufferHook(client *Client, hook func([]byte)) {
+	client.bufferSeen = hook
+}
