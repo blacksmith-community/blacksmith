@@ -264,7 +264,7 @@ func TestCreateHandlerMapsCertificateErrors(t *testing.T) {
 	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: &certTasks{}}
 
 	status, answer := postCertificateTask(t, handler, `{"kind":"certificates","name":5}`)
-	if status != http.StatusBadRequest || answer["code"] != apierr.CodeNoSelections {
+	if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidRequest {
 		t.Fatalf("a body that does not decode: status %d, body %v", status, answer)
 	}
 }

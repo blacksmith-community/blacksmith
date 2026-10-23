@@ -327,6 +327,12 @@ func (h *Handler) CanHandle(path string) bool {
 // maxCreateBody bounds the body of a create request.
 const maxCreateBody = 1 << 20
 
+// writeInvalidRequest answers 400 invalid_request, as spec 9.4 has a body
+// that is unreadable, too large, or not valid JSON answer.
+func writeInvalidRequest(w http.ResponseWriter, message string) {
+	response.WriteErrorCode(w, http.StatusBadRequest, apierr.CodeInvalidRequest, message)
+}
+
 // CreateTask handles POST /b/upgrade/tasks, which creates an upgrade task,
 // or a certificate task when the body's kind is certificates.
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -335,7 +341,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
 	if err != nil {
 		h.logger.Error("Failed to read request body: %v", err)
-		response.WriteError(w, http.StatusBadRequest, "invalid upgrade request: "+err.Error())
+		writeInvalidRequest(w, "invalid upgrade request: "+err.Error())
 
 		return
 	}
@@ -347,7 +353,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(body, &kind)
 	if err != nil {
 		h.logger.Error("Failed to decode request body: %v", err)
-		response.WriteError(w, http.StatusBadRequest, "invalid upgrade request: "+err.Error())
+		writeInvalidRequest(w, "invalid upgrade request: "+err.Error())
 
 		return
 	}
@@ -363,7 +369,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(body, &req)
 	if err != nil {
 		h.logger.Error("Failed to decode request body: %v", err)
-		response.WriteError(w, http.StatusBadRequest, "invalid upgrade request: "+err.Error())
+		writeInvalidRequest(w, "invalid upgrade request: "+err.Error())
 
 		return
 	}
@@ -429,7 +435,7 @@ func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, 
 	err := json.Unmarshal(body, &req)
 	if err != nil {
 		h.logger.Error("Failed to decode certificate task request: %v", err)
-		response.WriteErrorCode(w, http.StatusBadRequest, apierr.CodeNoSelections, "invalid certificate task request: "+err.Error())
+		writeInvalidRequest(w, "invalid certificate task request: "+err.Error())
 
 		return
 	}

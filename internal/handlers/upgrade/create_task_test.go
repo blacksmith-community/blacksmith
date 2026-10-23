@@ -78,7 +78,15 @@ func createCases() map[string]createCase {
 	return map[string]createCase{
 		"a body that is not JSON": {
 			body:   `{"instance_ids":`,
-			status: http.StatusBadRequest, says: "invalid upgrade request",
+			status: http.StatusBadRequest, says: `"code":"invalid_request"`,
+		},
+		"a body that is too large": {
+			body:   `{"instance_ids":["` + strings.Repeat("i", 1<<20) + `"]}`,
+			status: http.StatusBadRequest, says: `"code":"invalid_request"`,
+		},
+		"a body that does not decode": {
+			body:   `{"instance_ids":"i-1","target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,
+			status: http.StatusBadRequest, says: `"code":"invalid_request"`,
 		},
 		"no instances": {
 			body:   `{"instance_ids":[],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,

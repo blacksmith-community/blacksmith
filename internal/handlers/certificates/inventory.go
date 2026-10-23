@@ -217,7 +217,7 @@ func (h *InventoryHandler) preview(w http.ResponseWriter, r *http.Request) {
 
 	err := json.NewDecoder(io.LimitReader(r.Body, maxInventoryBody)).Decode(&req)
 	if err != nil {
-		apierr.Write(w, apierr.New(http.StatusBadRequest, apierr.CodeNoSelections, badPreviewBodyMsg), http.StatusBadRequest)
+		apierr.Write(w, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest, badPreviewBodyMsg), http.StatusBadRequest)
 
 		return
 	}

@@ -92,7 +92,7 @@ func TestPreviewRouteMapsErrors(t *testing.T) {
 		},
 		{
 			name: "a body that is not JSON", enabled: true, body: "{", previewer: &fakePreviewer{},
-			status: http.StatusBadRequest, code: apierr.CodeNoSelections,
+			status: http.StatusBadRequest, code: apierr.CodeInvalidRequest,
 		},
 		{
 			name: "the inventory off", enabled: false, body: selection, previewer: &fakePreviewer{},
