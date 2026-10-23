@@ -1,6 +1,7 @@
 package certificates
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,8 @@ import (
 
 const (
 	inventoryPrefix    = "/b/certificates/"
+	formatCSV          = "csv"
+	formatJSON         = "json"
 	maxInventoryBody   = 64 << 10
 	scanStateRunning   = "running"
 	inventoryDisabled  = "Certificate inventory is off on this broker (certificates.inventory.enabled)."
@@ -109,7 +112,53 @@ func (h *InventoryHandler) inventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, http.StatusOK, h.svc.Response(r.Context(), filter))
+	format := r.URL.Query().Get("format")
+	if format != "" && format != formatCSV && format != formatJSON {
+		apierr.Write(w, apierr.New(http.StatusBadRequest, apierr.CodeInvalidFilter, "The format must be csv or json."), http.StatusBadRequest)
+
+		return
+	}
+
+	resp := h.svc.Response(r.Context(), filter)
+
+	if format == "" {
+		response.JSON(w, http.StatusOK, resp)
+
+		return
+	}
+
+	h.export(w, format, resp)
+}
+
+// export sends the filtered inventory as a download. The rows are the ones
+// the table would show for the same filter.
+func (h *InventoryHandler) export(w http.ResponseWriter, format string, resp certinventory.InventoryResponse) {
+	var buf bytes.Buffer
+
+	contentType := "text/csv; charset=utf-8"
+	write := func() error { return certinventory.WriteCSV(&buf, resp.Certificates) }
+
+	if format == formatJSON {
+		contentType = "application/json"
+		write = func() error { return certinventory.WriteJSON(&buf, resp) }
+	}
+
+	if err := write(); err != nil {
+		h.log.Errorf("certificate export failed: %v", err)
+		apierr.Write(w, apierr.New(http.StatusInternalServerError, apierr.CodeInternal, "The export could not be written."), http.StatusInternalServerError)
+
+		return
+	}
+
+	name := "certificates-" + time.Now().UTC().Format("20060102T150405Z") + "." + format
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.WriteHeader(http.StatusOK)
+
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		h.log.Errorf("certificate export write failed: %v", err)
+	}
 }
 
 func (h *InventoryHandler) item(w http.ResponseWriter, id string) {
