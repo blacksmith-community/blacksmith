@@ -37,6 +37,19 @@ const (
 // first check that failed. The switches come first. A converge selects no
 // variables, so it skips the variable and signing-CA checks.
 func (m *Manager) certPreflight(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) error {
+	sessions := m.newPatchSessions(inst.DeploymentName)
+	defer sessions.close()
+
+	_, err := m.certPreflightPlan(ctx, task, inst, sessions)
+
+	return err
+}
+
+// certPreflightPlan runs the preflight as certPreflight describes. In
+// patch mode it then runs discovery and the gate's pre-check through
+// sessions, which must find a consumer of every selected variable, and
+// returns the planned journals. Any other mode returns a nil plan.
+func (m *Manager) certPreflightPlan(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, sessions *patchSessions) (*patchPlan, error) {
 	view := m.viewRotation(task, inst)
 	mode, instanceID, deployment := view.mode, view.instanceID, view.deployment
 
@@ -47,34 +60,39 @@ func (m *Manager) certPreflight(ctx context.Context, task *UpgradeTask, inst *In
 
 	err := m.certWritesAllowed(mode)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = m.preflightGuard(task.ID, instanceID, deployment)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	directorName, err := m.rotationDirector(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = m.preflightNoDirectorTask(ctx, deployment)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = m.credhubReady()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if mode == RotationModeConverge || len(names) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	return m.preflightVariables(ctx, instanceID, deployment, directorName, names)
+	scan, err := m.preflightVariables(ctx, instanceID, deployment, directorName, names)
+	if err != nil || mode != RotationModePatch {
+		return nil, err
+	}
+
+	return m.preflightPatch(ctx, task, inst, directorName, scan, names, sessions)
 }
 
 // rotationView is a copy of what a certificate step reads from its task
@@ -155,10 +173,10 @@ func (m *Manager) preflightNoDirectorTask(ctx context.Context, deployment string
 // preview applies: it still exists in the deployment, it still lies under
 // the deployment's namespace, it is still a leaf, and the CA that would
 // sign a regenerated one verifies the deployed one.
-func (m *Manager) preflightVariables(ctx context.Context, instanceID, deployment, directorName string, names []string) error {
+func (m *Manager) preflightVariables(ctx context.Context, instanceID, deployment, directorName string, names []string) (certinventory.InstanceScan, error) {
 	d := m.certDeps()
 	if d.ScanInstance == nil {
-		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
+		return certinventory.InstanceScan{}, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			"Blacksmith is not set up to read certificates, so it can't check the selected ones.")
 	}
 
@@ -166,7 +184,7 @@ func (m *Manager) preflightVariables(ctx context.Context, instanceID, deployment
 		return m.director.ListVariables(c, deployment)
 	})
 	if err != nil {
-		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
+		return certinventory.InstanceScan{}, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			fmt.Sprintf("The director did not list the variables of deployment %s: %v", deployment, err))
 	}
 
@@ -174,13 +192,13 @@ func (m *Manager) preflightVariables(ctx context.Context, instanceID, deployment
 
 	switch {
 	case errors.Is(err, certinventory.ErrUnknownInstance):
-		return apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound,
+		return certinventory.InstanceScan{}, apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound,
 			"Blacksmith does not know this instance any more, so it may have been deleted.")
 	case err != nil:
-		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
+		return certinventory.InstanceScan{}, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			fmt.Sprintf("The instance %s could not be scanned: %v", instanceID, err))
 	case scan.Err != "":
-		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
+		return certinventory.InstanceScan{}, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			fmt.Sprintf("The instance %s could not be scanned: %s", instanceID, scan.Err))
 	}
 
@@ -192,15 +210,15 @@ func (m *Manager) preflightVariables(ctx context.Context, instanceID, deployment
 	for _, name := range names {
 		check := m.checkSelected(ctx, d.CredHub, purposePreflight, directorName, scan, deployed, name)
 		if check.failure != nil {
-			return check.failure
+			return certinventory.InstanceScan{}, check.failure
 		}
 
 		if check.blocked != nil {
-			return apierr.New(blockedStatus(check.blocked.Code), check.blocked.Code, check.blocked.Message)
+			return certinventory.InstanceScan{}, apierr.New(blockedStatus(check.blocked.Code), check.blocked.Code, check.blocked.Message)
 		}
 	}
 
-	return nil
+	return scan, nil
 }
 
 // blockedStatus is the HTTP status spec 9.4 gives a code a variable check

@@ -271,6 +271,9 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		// with the same timeout. RootCAs stays nil because Leaf never
 		// verifies the chain, and the redeploy compares fingerprints.
 		Prober: certinventory.Prober{Timeout: certinventory.DefaultProbeTimeout},
+		// Patch mode runs its scripts through one SSH user per instance
+		// group, on the same director as the rest of the task.
+		PatchRunner: upgrade.NewPatchRunner(director, deps.Logger),
 	})
 }
 

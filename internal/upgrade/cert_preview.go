@@ -537,6 +537,10 @@ func (m *Manager) previewDeployment(ctx context.Context, inst *PreviewInstance, 
 	}
 
 	inst.bindEffects(req, sel, detail.Manifest, variables, latest, scan)
+
+	if req.Mode == RotationModePatch && inst.Blocked == nil {
+		m.previewPatch(ctx, inst, directorName, scan)
+	}
 }
 
 // bindEffects fills in the selected latest versions, the additional

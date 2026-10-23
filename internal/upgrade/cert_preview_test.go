@@ -692,13 +692,9 @@ func TestPreviewBlocksLockedDeployment(t *testing.T) {
 func TestPreviewPatchBindsGateAndWarns(t *testing.T) {
 	t.Parallel()
 
-	env := newPreviewEnv(t)
+	env := newPatchPreviewEnv(t)
 
-	req := redeploy(previewInstance2)
-	req.Mode = RotationModePatch
-	req.Converge = ConvergePending
-
-	preview := previewOf(t, env, req)
+	preview := previewOf(t, env.previewEnv, patchPreview(previewInstance2))
 
 	inst := preview.Instances[0]
 	if inst.Blocked != nil || inst.Gate != "single-vm" || inst.Mode != RotationModePatch {

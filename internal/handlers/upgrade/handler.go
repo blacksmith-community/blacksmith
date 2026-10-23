@@ -68,6 +68,9 @@ type Dependencies struct {
 	// Prober reads the leaf certificate a listener serves, which a
 	// redeploy checks once its deploy is done.
 	Prober certinventory.Prober
+	// PatchRunner opens the SSH sessions patch mode runs its scripts
+	// through. It may be nil, and then no instance can be patched.
+	PatchRunner func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error)
 }
 
 // NewHandler creates a new upgrade handler. It applies the persisted
@@ -106,6 +109,7 @@ func configureManager(manager *upgrade.Manager, deps Dependencies) {
 		Switches:     deps.Switches,
 		Previews:     deps.Previews,
 		Prober:       deps.Prober,
+		PatchRunner:  deps.PatchRunner,
 	}
 
 	if deps.Certificates != nil {

@@ -55,6 +55,10 @@ type Deps struct {
 	// is nil when the broker has no Vault, and then no settled deploy asks
 	// for a rescan.
 	Divergence *certinventory.DivergenceStore
+	// PatchRunner opens one SSH session on the VMs of an instance group
+	// at the indices given, for patch mode. It is nil when the broker
+	// cannot open one, and then no instance can be patched.
+	PatchRunner func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error)
 }
 
 // Configure gives the manager the dependencies its certificate tasks use. It
