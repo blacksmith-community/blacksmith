@@ -766,6 +766,10 @@ func TestPatchResumeRefetchesStagedContent(t *testing.T) {
 
 		env.expectPatched(t, second, got)
 		c.expectNoThird(t)
+
+		// The resume zeroes its pairs as it returns, just after the
+		// instance settles.
+		waitUntil(t, "the resume to zero its pairs", env.pairs.allZeroed)
 		env.pairs.expectAllZeroed(t, "after the resume")
 	})
 

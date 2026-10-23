@@ -104,6 +104,22 @@ func (p *pairCredHub) CertificateKeyPair(ctx context.Context, versionID string) 
 	return handed, nil
 }
 
+// allZeroed reports whether every pair handed out is zero.
+func (p *pairCredHub) allZeroed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, pair := range p.handed {
+		for _, b := range append(slices.Clone(pair.Certificate), pair.PrivateKey...) {
+			if b != 0 {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
 // expectAllZeroed fails unless every pair handed out is zero.
 func (p *pairCredHub) expectAllZeroed(t *testing.T, at string) {
 	t.Helper()
