@@ -214,6 +214,9 @@ type redeployDirector struct {
 
 	// onGetDeployment runs on each GetDeployment call.
 	onGetDeployment func()
+
+	// deployErr, when set, is the error a deploy is refused with.
+	deployErr error
 }
 
 func (d *redeployDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
@@ -306,6 +309,10 @@ func (d *redeployDirector) UpdateDeploymentWithOptions(_ context.Context, name, 
 	defer d.mu.Unlock()
 
 	d.sent = append(d.sent, redeploySent{manifest: manifest, opts: opts})
+
+	if d.deployErr != nil {
+		return nil, d.deployErr
+	}
 
 	return &bosh.Task{ID: redeployTaskID, State: waitStateRunning, Deployment: name}, nil
 }

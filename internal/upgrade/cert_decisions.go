@@ -457,7 +457,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 			detail = "verification failed"
 		}
 	case actionFailed:
-		message = "The operator marked the deploy failed. " + deployPendingNote
+		message = "The operator marked the deploy failed. " + unappliedNoteLocked(task, inst)
 	}
 
 	now := m.certNowLocked()
@@ -923,7 +923,7 @@ func abandonRegenerationLocked(task *UpgradeTask, inst *InstanceUpgrade, now tim
 // final. The caller holds mu.
 func abandonOutcomeLocked(task *UpgradeTask, inst *InstanceUpgrade, now time.Time) {
 	inst.CompletedAt = &now
-	inst.Error = "The operator abandoned this deploy, so its outcome stays unknown. Check which certificates the deployment serves. " + deployPendingNote
+	inst.Error = "The operator abandoned this deploy, so its outcome stays unknown. Check which certificates the deployment serves. " + unappliedNoteLocked(task, inst)
 	task.UnknownCount++
 
 	closeRotationLocked(inst)

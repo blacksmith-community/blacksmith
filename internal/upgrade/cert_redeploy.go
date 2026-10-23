@@ -37,6 +37,11 @@ const (
 	deployPendingNote = "The new certificate versions remain in CredHub as deploy_pending, " +
 		"and a converge or another redeploy applies them."
 
+	// convergeUnappliedNote tells the operator what became of an instance
+	// when a converge deploy did not apply the latest versions.
+	convergeUnappliedNote = "The divergence record stays, and the instance stays unconverged " +
+		"until another converge task or a deploy with the latest variables brings BOSH in line."
+
 	// neverStartedMessage is what a loaded certificate task that changed
 	// nothing shows, since its creation may have been reported as failed.
 	neverStartedMessage = "Blacksmith restarted before this task changed anything, and it can't tell whether " +
@@ -1452,10 +1457,26 @@ func (m *Manager) rescan(scan func(ctx context.Context, instanceID string) (cert
 	}
 }
 
+// unappliedNoteLocked is the note an instance ends with when its deploy
+// did not apply the new versions: a redeploy's versions wait in CredHub
+// as deploy_pending, while a converge leaves the instance unconverged.
+// The caller holds mu for reading.
+func unappliedNoteLocked(task *UpgradeTask, inst *InstanceUpgrade) string {
+	if convergesLocked(task, inst) {
+		return convergeUnappliedNote
+	}
+
+	return deployPendingNote
+}
+
 // failCertificateDeploy fails an instance whose deploy the director did
-// not take, with the note that the new versions wait in CredHub.
+// not take, with the note unappliedNoteLocked gives.
 func (m *Manager) failCertificateDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, why string) {
-	m.settleCertificateInstance(task, inst, false, why+" "+deployPendingNote) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
+	m.mu.RLock()
+	note := unappliedNoteLocked(task, inst)
+	m.mu.RUnlock()
+
+	m.settleCertificateInstance(task, inst, false, why+" "+note) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	err := m.persistCertConfirmed(ctx, task)
 	if err != nil {

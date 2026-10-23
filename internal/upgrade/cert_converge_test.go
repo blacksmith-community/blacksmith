@@ -4,6 +4,7 @@ package upgrade
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -492,36 +493,126 @@ func TestConvergeReconcileFailureKeepsRecord(t *testing.T) {
 	expectUnconfirmedConverge(t, env, manager, settled)
 }
 
-// A converge deploy that BOSH fails fails the instance, keeps the
-// divergence record, since nothing converged, and frees the instance.
+// A converge deploy that BOSH fails or cancels, or that the director
+// refuses, fails the instance with a note about convergence rather than
+// about a redeploy, keeps the divergence record, since nothing converged,
+// and frees the instance.
 //
 //nolint:paralleltest // the runner shares the manager's test seams
 func TestConvergeDeployFailureKeepsRecord(t *testing.T) {
-	env := newConvergeEnv(t)
-	env.diverge()
-	env.director.finish = func(_ context.Context, taskID int) (*bosh.Task, error) {
-		return &bosh.Task{ID: taskID, State: boshTaskError, Result: "compilation failed"}, nil
+	cases := []struct {
+		name    string
+		state   string
+		refused error
+		message string
+	}{
+		{
+			name:    "the task fails",
+			state:   boshTaskError,
+			message: fmt.Sprintf("BOSH task %d ended in state %s: compilation failed. %s", redeployTaskID, boshTaskError, convergeUnappliedNote),
+		},
+		{
+			name:    "the task is cancelled",
+			state:   boshTaskCancelled,
+			message: fmt.Sprintf("BOSH task %d was cancelled. %s", redeployTaskID, convergeUnappliedNote),
+		},
+		{
+			name:    "the director refuses the deploy",
+			refused: errDirectorRefused,
+			message: fmt.Sprintf("The director did not take the deploy: %v. %s", errDirectorRefused, convergeUnappliedNote),
+		},
 	}
 
-	manager := env.newManager()
-	task := env.task()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newConvergeEnv(t)
+			env.diverge()
+			env.director.deployErr = tc.refused
+			env.director.finish = func(_ context.Context, taskID int) (*bosh.Task, error) {
+				return &bosh.Task{ID: taskID, State: tc.state, Result: "compilation failed"}, nil
+			}
 
-	if !env.run(manager, &task) {
-		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+			manager := env.newManager()
+			task := env.task()
+
+			if !env.run(manager, &task) {
+				t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+			}
+
+			if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusFailed || inst.Error != tc.message {
+				t.Fatalf("expected the instance failed with %q, got %s: %q", tc.message, inst.Status, inst.Error)
+			}
+
+			if !env.diverged() {
+				t.Fatal("expected the divergence record to stay after the failed converge deploy")
+			}
+
+			expectReleased(t, manager)
+		})
+	}
+}
+
+// errDirectorRefused is the error a director refuses a deploy with.
+var errDirectorRefused = errors.New("the director is down for maintenance")
+
+// awaitingConvergeOutcome returns a paused converge task whose converge
+// deploy ended but whose outcome waits for an operator's decision.
+func (e *convergeEnv) awaitingConvergeOutcome() UpgradeTask {
+	task := e.task()
+	task.Status = TaskStatusPaused
+	task.Paused = true
+
+	started := validateNow
+
+	inst := &task.Instances[0]
+	inst.Status = InstanceStatusOutcomeUnknown
+	inst.StartedAt = &started
+	inst.Error = "Blacksmith could not confirm the converge."
+	inst.Certificates.Phase = RotationPhaseConverge
+	inst.Certificates.Converge = &ConvergeDeploy{ContextID: loadedContextID, BOSHTaskID: redeployTaskID}
+	inst.Certificates.Deploy = &DeployOutcome{BOSHTaskID: redeployTaskID, State: boshTaskDone, FinishedAt: validateNow}
+	inst.Certificates.Pending = &PendingDecision{Kind: DecisionResolveDeployOutcome, Since: decisionSince}
+
+	return task
+}
+
+// An operator who marks a converge deploy failed, or abandons its
+// outcome, ends the instance with the note about convergence, and the
+// divergence record stays.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestResolveConvergeOutcomeKeepsRecord(t *testing.T) {
+	cases := []struct {
+		action  string
+		message string
+	}{
+		{action: "failed", message: "The operator marked the deploy failed. " + convergeUnappliedNote},
+		{action: "abandon", message: "The operator abandoned this deploy, so its outcome stays unknown. Check which certificates the deployment serves. " + convergeUnappliedNote},
 	}
 
-	inst := current(t, manager).Instances[0]
+	for _, tc := range cases {
+		t.Run(tc.action, func(t *testing.T) {
+			env := newConvergeEnv(t)
+			env.diverge()
 
-	failed := fmt.Sprintf("BOSH task %d ended in state %s: compilation failed.", redeployTaskID, boshTaskError)
-	if inst.Status != InstanceStatusFailed || !strings.HasPrefix(inst.Error, failed) {
-		t.Fatalf("expected the instance failed with %q, got %s: %q", failed, inst.Status, inst.Error)
+			manager := env.load(env.awaitingConvergeOutcome())
+
+			err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: tc.action})
+			if err != nil {
+				t.Fatalf("ResolveDeployOutcome: %v", err)
+			}
+
+			if inst := current(t, manager).Instances[0]; inst.Error != tc.message {
+				t.Fatalf("expected the instance to end with %q, got %s: %q", tc.message, inst.Status, inst.Error)
+			}
+
+			if !env.diverged() {
+				t.Fatal("expected the divergence record to stay")
+			}
+
+			expectReleased(t, manager)
+		})
 	}
-
-	if !env.diverged() {
-		t.Fatal("expected the divergence record to stay after the failed converge deploy")
-	}
-
-	expectReleased(t, manager)
 }
 
 // A converge keeps the guard through the reconciliation that follows its

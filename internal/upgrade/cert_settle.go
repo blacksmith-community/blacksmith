@@ -13,11 +13,10 @@ import (
 // running and reserved, with the outcome on its rotation, because the
 // instance succeeds only once the deployed variable versions and the
 // listeners show the new certificates, which the rotation's runner
-// checks next. A task that ended in any other state fails the instance,
-// and CredHub keeps the new versions, which a later redeploy or converge
-// applies. A wait that returned no task leaves the outcome unknown, so the
-// instance waits for a decision. The caller holds mu, and releases what
-// the task no longer holds.
+// checks next. A task that ended in any other state fails the instance
+// with the note unappliedNoteLocked gives. A wait that returned no task
+// leaves the outcome unknown, so the instance waits for a decision. The
+// caller holds mu, and releases what the task no longer holds.
 func (m *Manager) settleCertificateDeployLocked(task *UpgradeTask, instance *InstanceUpgrade, taskID int, finished *bosh.Task) {
 	if finished == nil {
 		m.awaitDeployDecisionLocked(task, instance,
@@ -56,13 +55,15 @@ func (m *Manager) settleCertificateDeployLocked(task *UpgradeTask, instance *Ins
 		return
 	}
 
+	note := unappliedNoteLocked(task, instance)
+
 	instance.CompletedAt = &now
 	instance.Status = InstanceStatusFailed
 	instance.Error = fmt.Sprintf("BOSH task %d ended in state %s: %s. %s",
-		taskID, finished.State, finished.Result, deployPendingNote)
+		taskID, finished.State, finished.Result, note)
 
 	if finished.State == boshTaskCancelled {
-		instance.Error = fmt.Sprintf("BOSH task %d was cancelled. %s", taskID, deployPendingNote)
+		instance.Error = fmt.Sprintf("BOSH task %d was cancelled. %s", taskID, note)
 	}
 
 	task.FailedCount++
