@@ -393,12 +393,17 @@ func stampChanges(cur, next *Divergence, now time.Time) {
 	}
 }
 
-// sameEntry compares two entries without their times of change.
+// sameEntry compares two entries without their times of change. Entries
+// that cannot be marshalled count as different, so a needed write is never
+// skipped.
 func sameEntry(a, b DivergentVariable) bool {
-	return bytes.Equal(entryJSON(a), entryJSON(b))
+	rawA, errA := entryJSON(a)
+	rawB, errB := entryJSON(b)
+
+	return errA == nil && errB == nil && bytes.Equal(rawA, rawB)
 }
 
-func entryJSON(v DivergentVariable) []byte {
+func entryJSON(v DivergentVariable) ([]byte, error) {
 	v = v.clone()
 	v.UpdatedAt = time.Time{}
 
@@ -407,23 +412,24 @@ func entryJSON(v DivergentVariable) []byte {
 		v.VMs[cid] = vm
 	}
 
-	raw, _ := json.Marshal(v)
-
-	return raw
+	return json.Marshal(v)
 }
 
 // sameRecord compares two records without their revisions and times of
-// change.
+// change. Records that cannot be marshalled count as different, so Update
+// writes and the write's own failure surfaces.
 func sameRecord(a, b *Divergence) bool {
-	strip := func(d *Divergence) []byte {
+	strip := func(d *Divergence) ([]byte, error) {
 		c := d.Clone()
 		c.Revision, c.UpdatedAt = 0, time.Time{}
-		raw, _ := json.Marshal(c)
 
-		return raw
+		return json.Marshal(c)
 	}
 
-	return bytes.Equal(strip(a), strip(b))
+	rawA, errA := strip(a)
+	rawB, errB := strip(b)
+
+	return errA == nil && errB == nil && bytes.Equal(rawA, rawB)
 }
 
 // write stores the record and confirms it as Update describes.

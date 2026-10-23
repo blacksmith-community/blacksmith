@@ -756,3 +756,23 @@ func TestScanRunsReconcile(t *testing.T) {
 		t.Error("a fleet scan of a converged instance kept its record")
 	}
 }
+
+func TestDivergenceUnmarshalableRecordsDiffer(t *testing.T) {
+	t.Parallel()
+
+	// A time past year 9999 cannot be marshalled, so neither record has a
+	// JSON form to compare. That must never read as equal.
+	far := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	a, b := divRecord(), divRecord()
+	a.Variables[0].Since, b.Variables[0].Since = far, far
+	b.Variables[0].AppliedVersionID = "v9"
+
+	if sameRecord(a, b) {
+		t.Error("two records that cannot be marshalled compared equal")
+	}
+
+	if sameEntry(a.Variables[0], b.Variables[0]) {
+		t.Error("two entries that cannot be marshalled compared equal")
+	}
+}
