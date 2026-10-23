@@ -11700,6 +11700,7 @@ span.config-type.resurrection {
   --health-warning: #a16207;
   --health-warning-fg: #78350f;
   --health-warning-bg: #fde68a;
+  --cert-control-border: #64748b;
 }
 
 [data-theme="dark"] {
@@ -11724,6 +11725,7 @@ span.config-type.resurrection {
   --health-warning: #facc15;
   --health-warning-fg: #fde68a;
   --health-warning-bg: #3b2a05;
+  --cert-control-border: #8394ad;
 }
 
 .cert-pill,
@@ -11997,7 +11999,7 @@ span.config-type.resurrection {
 .cert-action-btn,
 .cert-link-btn {
   padding: 6px 12px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--cert-control-border);
   border-radius: 6px;
   font-size: 13px;
   color: var(--text-primary);
@@ -12156,7 +12158,7 @@ span.config-type.resurrection {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--cert-control-border);
   border-left-width: 4px;
   border-radius: 6px;
   font-size: 13px;
@@ -12213,7 +12215,7 @@ span.config-type.resurrection {
 .cert-fleet select {
   min-width: 0;
   padding: 6px 8px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--cert-control-border);
   border-radius: 6px;
   font-size: 14px;
   color: var(--text-primary);
@@ -12461,9 +12463,28 @@ span.config-type.resurrection {
 @media (prefers-reduced-motion: reduce) {
   .cert-fleet *,
   .cert-fleet-drawer,
-  .cert-fleet-drawer * {
+  .cert-fleet-drawer *,
+  .modal-overlay,
+  .modal-overlay .modal,
+  .dialog-modal-overlay,
+  .dialog-modal-overlay .dialog-modal,
+  .dialog-modal-btn {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+/* The settings dialog takes focus the moment it opens, so its overlay
+   becomes visible at once and only the fade takes time. */
+.cert-settings-overlay.active {
+  transition: opacity 0.3s ease, visibility 0s;
+}
+
+/* On a very narrow screen the header's keyboard hint is dropped so the
+   page does not scroll sideways. */
+@media (max-width: 360px) {
+  #navigation-trigger kbd {
+    display: none;
   }
 }
 
@@ -12748,7 +12769,7 @@ span.config-type.resurrection {
 .cert-settings-field input[type="number"] {
   max-width: 180px;
   padding: 6px 8px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--cert-control-border);
   border-radius: 6px;
   font-size: 14px;
   color: var(--text-primary);
@@ -13162,7 +13183,7 @@ span.config-type.resurrection {
   gap: 6px;
   min-height: 28px;
   padding: 2px 10px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--cert-control-border);
   border-radius: 14px;
   background-color: var(--bg-primary);
   color: var(--text-primary);
@@ -13538,3 +13559,9 @@ span.config-type.resurrection {
 .cert-task-vm ul { margin: 0.15rem 0 0; padding-left: 1.25rem; }
 .cert-task-vm-gate, .cert-task-vm-error { margin: 0.15rem 0 0; }
 .cert-task-vm-error { color: var(--cert-critical); }
+
+.cert-row-why,
+.cert-group-why {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}

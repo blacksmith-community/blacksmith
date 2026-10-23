@@ -3439,22 +3439,25 @@
     const button = document.getElementById('rotate-preview');
     const summary = rotateSummary();
     if (upgradeOperation === 'rotate' && rotateModeControls) rotateModeControls.update();
+    // The reason the button is disabled goes in the selection line as
+    // well as the button's title, so it shows without hovering.
+    const rotation = rotateState.capabilities && rotateState.capabilities.rotation;
+    const count = upgradeOperation === 'converge' ? summary.instances : summary.pairs - summary.stale;
+    let blockedBy = '';
+    if (rotateState.loadState === 'disabled') blockedBy = 'The certificate inventory is turned off.';
+    else if (rotation && rotation.enabled === false) blockedBy = rotation.reason || 'Certificate rotation is turned off.';
+    else if (count <= 0) blockedBy = upgradeOperation === 'converge' ? 'Select at least one instance first.' : 'Select at least one certificate first.';
+    else if (upgradeOperation === 'rotate' && rotateState.mode === 'patch' && !rotateState.converge) blockedBy = 'Choose Leave unconverged or Converge right away first.';
     if (line) {
       let text = upgradeOperation === 'converge'
         ? `${pluralize(summary.instances, 'instance')} selected.`
         : `${pluralize(summary.pairs, 'certificate')} selected on ${pluralize(summary.instances, 'instance')}.`;
       if (summary.hidden > 0) text += ` ${summary.hidden} ${summary.hidden === 1 ? 'is' : 'are'} hidden by the filters.`;
       if (summary.stale > 0) text += ` ${summary.stale} no longer eligible.`;
+      if (blockedBy) text += ` ${blockedBy}`;
       line.textContent = text;
     }
     if (button) {
-      const rotation = rotateState.capabilities && rotateState.capabilities.rotation;
-      const count = upgradeOperation === 'converge' ? summary.instances : summary.pairs - summary.stale;
-      let blockedBy = '';
-      if (rotateState.loadState === 'disabled') blockedBy = 'The certificate inventory is turned off.';
-      else if (rotation && rotation.enabled === false) blockedBy = rotation.reason || 'Certificate rotation is turned off.';
-      else if (count <= 0) blockedBy = upgradeOperation === 'converge' ? 'Select at least one instance first.' : 'Select at least one certificate first.';
-      else if (upgradeOperation === 'rotate' && rotateState.mode === 'patch' && !rotateState.converge) blockedBy = 'Choose Leave unconverged or Converge right away first.';
       button.textContent = rotateState.busy ? 'Previewing...' : rotateFooterLabel();
       // A preview under way marks the button aria-disabled and leaves it
       // enabled, so it keeps focus and the confirm dialog can hand focus
@@ -5986,12 +5989,33 @@
     return fetchTasksInFlight;
   };
 
+  // The status each task had at the last poll, so a change can be said
+  // aloud. The first poll only records, so opening the tab announces
+  // nothing.
+  let announcedTaskStatuses = null;
+
+  const announceTaskStatusChanges = (tasks) => {
+    const next = new Map(tasks.map((task) => [task.id, String(task.status || '')]));
+    const previous = announcedTaskStatuses;
+    announcedTaskStatuses = next;
+    if (!previous) return;
+    const changed = tasks.filter((task) => previous.has(task.id) && previous.get(task.id) !== String(task.status || ''));
+    if (changed.length === 0) return;
+    const say = (task) => {
+      const name = task.name || task.target || (task.kind === 'certificates' ? 'Certificate task' : 'Upgrade task');
+      return `${name} is now ${String(task.status).replace(/_/g, ' ')}`;
+    };
+    const rest = changed.length - 1;
+    announce(`${say(changed[0])}${rest > 0 ? `, and ${rest} more ${rest === 1 ? 'task changed' : 'tasks changed'}` : ''}.`);
+  };
+
   const pollUpgradeTasks = async () => {
     try {
       const response = await fetch('/b/upgrade/tasks');
       if (!response.ok) throw await readApiError(response);
       const list = await response.json();
       upgradeTasks = Array.isArray(list) ? list : [];
+      announceTaskStatusChanges(upgradeTasks);
 
       // If we're viewing a task detail, refresh it
       if (selectedTaskId) {
@@ -23211,6 +23235,22 @@
       return seen.join(', ');
     };
 
+    // Why a row's checkbox is disabled. The toolbar already says so in
+    // words when rotation is off for the whole broker, so a row only adds
+    // its own line when rotation is on and this one row is blocked.
+    const rowBlockReason = (cert, pairs) => {
+      const reasons = (cert.rotation && cert.rotation.reasons) || [];
+      if (reasons.length > 0) return reasons.join(' ');
+      return pairs.length === 0 ? 'This certificate does not belong to a service instance.' : 'Rotation is not available.';
+    };
+
+    const rowReasonVisible = () => {
+      const rotation = (view.resp && view.resp.capabilities && view.resp.capabilities.rotation) || {};
+      return Boolean(rotation.enabled);
+    };
+
+    const rowReasonId = (cert) => `cert-why-${String(cert.id).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+
     const checkboxFor = (cert) => {
       const cell = el('td', 'cert-col-select');
       const pairs = instancePairs(cert);
@@ -23222,9 +23262,9 @@
       const allowed = Boolean(cert.rotation && cert.rotation.allowed) && pairs.length > 0;
       if (!allowed) {
         input.disabled = true;
-        const reasons = (cert.rotation && cert.rotation.reasons) || [];
-        const reason = reasons.length > 0 ? reasons.join(' ') : (pairs.length === 0 ? 'This certificate does not belong to a service instance.' : 'Rotation is not available.');
+        const reason = rowBlockReason(cert, pairs);
         input.setAttribute('title', reason);
+        if (rowReasonVisible()) input.setAttribute('aria-describedby', rowReasonId(cert));
       } else {
         input.checked = pairs.every(([id, name]) => pairSelected(id, name));
         input.addEventListener('click', (event) => event.stopPropagation());
@@ -23367,6 +23407,12 @@
       });
       certCell.appendChild(toggle);
       if (cert.variable && cert.common_name) certCell.appendChild(el('div', 'cert-subname', cert.common_name));
+      const rowPairs = instancePairs(cert);
+      if (!(cert.rotation && cert.rotation.allowed && rowPairs.length > 0) && rowReasonVisible()) {
+        const why = el('div', 'cert-subname cert-row-why', `Rotation unavailable. ${rowBlockReason(cert, rowPairs)}`);
+        why.id = rowReasonId(cert);
+        certCell.appendChild(why);
+      }
       tr.appendChild(certCell);
 
       const ownerCell = el('td', 'cert-col-owner', ownerSummary(cert));
@@ -23821,6 +23867,7 @@
         if (pairs.length === 0) {
           input.disabled = true;
           input.setAttribute('title', 'None of these certificates can be rotated yet.');
+          input.setAttribute('aria-describedby', `cert-group-why-${String(group.id).replace(/[^A-Za-z0-9_-]/g, '_')}`);
         } else {
           const ref = { input, pairs };
           view.groupChecks.push(ref);
@@ -23855,6 +23902,12 @@
       td.appendChild(CertView.expiryPill(worst.expiry, worst.days_left, worst.effective_not_after));
       td.appendChild(CertView.healthPill(worstHealth(group.certs).health));
       if (group.sub) td.appendChild(el('span', 'cert-subname cert-group-sub', group.sub));
+      const groupInput = selectCell.querySelector('input');
+      if (groupInput && groupInput.disabled) {
+        const why = el('span', 'cert-subname cert-group-why', 'None of these certificates can be rotated yet.');
+        why.id = groupInput.getAttribute('aria-describedby');
+        td.appendChild(why);
+      }
       tr.appendChild(td);
       return tr;
     };
