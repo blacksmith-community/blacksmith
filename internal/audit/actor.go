@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 )
 
 // maxForwardedFor bounds the stored X-Forwarded-For value.
@@ -76,7 +77,7 @@ func truncate(s string, limit int) string {
 	}
 
 	cut := limit
-	for cut > 0 && (s[cut]&0xC0) == 0x80 {
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 

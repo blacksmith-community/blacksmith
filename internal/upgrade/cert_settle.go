@@ -34,11 +34,20 @@ func (m *Manager) settleCertificateDeployLocked(task *UpgradeTask, instance *Ins
 	}
 
 	now := time.Now()
+
+	// A deploy finished from its record after a restart keeps the end time
+	// that record holds, which is when the director ended the task. The
+	// restart time would misstate it in the audit record.
+	finishedAt := now
+	if prior := instance.Certificates.Deploy; prior != nil && prior.BOSHTaskID == taskID && !prior.FinishedAt.IsZero() {
+		finishedAt = prior.FinishedAt
+	}
+
 	instance.Certificates.Deploy = &DeployOutcome{
 		BOSHTaskID: taskID,
 		State:      finished.State,
 		Result:     finished.Result,
-		FinishedAt: now,
+		FinishedAt: finishedAt,
 	}
 
 	if finished.State == boshTaskDone {

@@ -493,7 +493,7 @@ func TestSettlingDecisionReplay(t *testing.T) {
 		stored func(env *redeployEnv) UpgradeTask
 		decide func(manager *Manager) error
 		status InstanceStatus
-		choice string
+		event  string
 	}{
 		{
 			name:   "resolve verify",
@@ -502,7 +502,7 @@ func TestSettlingDecisionReplay(t *testing.T) {
 				return manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "verify", ClientRequestID: "replay-1"})
 			},
 			status: InstanceStatusSuccess,
-			choice: "verify",
+			event:  AuditVerified,
 		},
 		{
 			name:   "resolve failed",
@@ -511,7 +511,7 @@ func TestSettlingDecisionReplay(t *testing.T) {
 				return manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "failed", ClientRequestID: "replay-1"})
 			},
 			status: InstanceStatusFailed,
-			choice: "failed",
+			event:  AuditMarkedFailed,
 		},
 		{
 			name:   "resolve abandon",
@@ -520,7 +520,7 @@ func TestSettlingDecisionReplay(t *testing.T) {
 				return manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "abandon", ClientRequestID: "replay-1"})
 			},
 			status: InstanceStatusOutcomeUnknown,
-			choice: "abandon",
+			event:  AuditAbandoned,
 		},
 		{
 			name: "abandon regeneration",
@@ -535,7 +535,7 @@ func TestSettlingDecisionReplay(t *testing.T) {
 				})
 			},
 			status: InstanceStatusFailed,
-			choice: "abandon",
+			event:  AuditAbandoned,
 		},
 	}
 
@@ -560,9 +560,20 @@ func TestSettlingDecisionReplay(t *testing.T) {
 				t.Fatalf("expected the request ID recorded, got %q", got)
 			}
 
-			audits := env.logs.auditLines()
-			if len(audits) != 1 || !strings.Contains(audits[0], "audit=certificate-rotation event=decision") || !strings.Contains(audits[0], "choice="+tc.choice) {
-				t.Fatalf("expected one audit line for the %s decision, got %q", tc.choice, audits)
+			// The replay settles nothing and records nothing, so the
+			// decision has one record however often it is sent.
+			waitUntil(t, "the audit records", manager.auditIdle)
+
+			decisions := 0
+
+			for _, line := range env.logs.auditLines() {
+				if strings.Contains(line, "audit=certificate-rotation ") && strings.Contains(line, " event="+tc.event+" ") {
+					decisions++
+				}
+			}
+
+			if decisions != 1 {
+				t.Fatalf("expected one %s audit line, got %q", tc.event, env.logs.auditLines())
 			}
 
 			expectReleased(t, manager)

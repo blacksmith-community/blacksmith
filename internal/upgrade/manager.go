@@ -237,6 +237,15 @@ type Manager struct {
 	restoreWait  time.Duration
 	restoreRetry time.Duration
 
+	// auditQ holds the audit records waiting to be written, auditWrite
+	// serialises their writes to the audit index, auditRetry is the wait
+	// between two tries of a write, and audited, under mu, names each
+	// settled instance whose record is queued or written.
+	auditQ     auditQueue
+	auditWrite sync.Mutex
+	auditRetry time.Duration
+	audited    map[string]bool
+
 	// createRetry is createRetryInterval, which a test shortens before a
 	// create.
 	createRetry time.Duration
@@ -1975,6 +1984,10 @@ func (m *Manager) startProcessing(task *UpgradeTask) bool {
 
 	if task.StartedAt == nil {
 		task.StartedAt = &now
+
+		if task.KindOrDefault() == TaskKindCertificates {
+			m.auditStartLocked(task)
+		}
 	}
 
 	if task.Status != TaskStatusCancelled && task.Status != TaskStatusPaused {
@@ -2277,6 +2290,7 @@ func (m *Manager) loadIndex(kind TaskKind) ([]*UpgradeTask, bool) {
 
 		if !inMemory {
 			m.tasks[taskID] = task
+			m.markAuditedLocked(task)
 		}
 		m.mu.Unlock()
 
@@ -3529,6 +3543,10 @@ func (m *Manager) releaseAllLocked(taskID string) {
 // it no longer has to hold, which is where shouldHoldLocked turns false.
 // The caller holds mu.
 func (m *Manager) releaseUnheldLocked(task *UpgradeTask) {
+	if task.KindOrDefault() == TaskKindCertificates {
+		m.auditSettledLocked(task)
+	}
+
 	held := m.reservations[task.ID]
 	if len(held) == 0 {
 		return

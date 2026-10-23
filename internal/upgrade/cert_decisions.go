@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"blacksmith/internal/apierr"
@@ -210,7 +211,7 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 			return err
 		}
 
-		m.auditDecision(task.ID, inst, DecisionApproveChangedEffects, actionSkip, "")
+		m.auditDecision(ctx, task.ID, inst, DecisionApproveChangedEffects, actionSkip, "")
 		m.resumeAfterDecision(ctx, task, false)
 
 		return nil
@@ -233,7 +234,7 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 
 	m.mu.Unlock()
 
-	m.auditDecision(task.ID, inst, DecisionApproveChangedEffects, "approve", "preview "+preview.ID)
+	m.auditDecision(ctx, task.ID, inst, DecisionApproveChangedEffects, "approve", "preview "+preview.ID)
 
 	return m.saveDecision(ctx, task, false)
 }
@@ -302,7 +303,7 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 			return err
 		}
 
-		m.auditDecision(task.ID, inst, DecisionReconcileRegeneration, actionAbandon, "variable "+req.Variable)
+		m.auditDecision(ctx, task.ID, inst, DecisionReconcileRegeneration, actionAbandon, "variable "+req.Variable)
 		m.resumeAfterDecision(ctx, task, true)
 
 		return nil
@@ -354,7 +355,7 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 
 	m.mu.Unlock()
 
-	m.auditDecision(task.ID, inst, DecisionReconcileRegeneration, actionAdopt, "variable "+req.Variable+" version "+req.VersionID)
+	m.auditDecision(ctx, task.ID, inst, DecisionReconcileRegeneration, actionAdopt, "variable "+req.Variable+" version "+req.VersionID)
 
 	return m.saveDecision(ctx, task, false)
 }
@@ -475,7 +476,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 		return err
 	}
 
-	m.auditDecision(task.ID, inst, DecisionResolveDeployOutcome, req.Action, detail)
+	m.auditDecision(ctx, task.ID, inst, DecisionResolveDeployOutcome, req.Action, detail)
 	m.resumeAfterDecision(ctx, task, req.Action != actionAbandon && !ok)
 
 	return nil
@@ -1104,19 +1105,32 @@ func anyPendingLocked(task *UpgradeTask) bool {
 	return slices.ContainsFunc(task.Instances, func(inst InstanceUpgrade) bool { return inst.Status == InstanceStatusPending })
 }
 
-// auditDecision writes the structured log line of an operator's decision.
-// It names the task, the instance, the decision, and the choice, and never
-// a certificate or key.
-//
-// The certificate-audit record in Vault hooks in here once it exists, and
-// adds who acted and from where, which the request does not carry yet.
-func (m *Manager) auditDecision(taskID string, inst *InstanceUpgrade, kind, choice, detail string) {
-	m.mu.RLock()
+// auditDecision queues the audit record of an operator's decision. It
+// names the task, the instance, the decision, and the choice, who decided
+// and from where, and never a certificate or key. The record's event is
+// the choice: adopted, abandoned, approved, skipped, or, for a resolution
+// that settled the instance, verified or marked_failed.
+func (m *Manager) auditDecision(ctx context.Context, taskID string, inst *InstanceUpgrade, kind, choice, detail string) {
+	var event string
 
-	instanceID, deployment, status := inst.InstanceID, inst.DeploymentName, inst.Status
+	switch choice {
+	case actionAdopt:
+		event = AuditAdopted
+	case actionAbandon:
+		event = AuditAbandoned
+	case "approve":
+		event = AuditApproved
+	case actionSkip:
+		event = AuditSkipped
+	case actionVerify:
+		event = AuditVerified
+	case actionFailed:
+		event = AuditMarkedFailed
+	default:
+		m.logger.Error("audit=certificate-rotation task=%s decision=%s has no event for the choice %q", taskID, kind, choice)
 
-	m.mu.RUnlock()
+		return
+	}
 
-	m.logger.Info("audit=certificate-rotation event=decision task=%s instance=%s deployment=%s decision=%s choice=%s status=%s detail=%q",
-		taskID, instanceID, deployment, kind, choice, status, detail)
+	m.auditDecisionRecord(ctx, taskID, inst, event, kind+": "+strings.TrimSpace(choice+" "+detail))
 }
