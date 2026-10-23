@@ -267,6 +267,7 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		Certificates:          deps.Certificates,
 		Switches:              deps.Switches,
 		Previews:              upgrade.NewPreviewStore(time.Now),
+		UpgradePreviews:       upgrade.NewUpgradePreviewStore(time.Now),
 		// The redeploy probes listeners as the inventory scanner does,
 		// with the same timeout. RootCAs stays nil because Leaf never
 		// verifies the chain, and the redeploy compares fingerprints.

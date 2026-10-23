@@ -453,21 +453,12 @@ func (m *Manager) WaitingFor(instanceID, deployment string) (mutation.Holder, bo
 	return mutation.Holder{}, false
 }
 
-// CreateTask creates a new upgrade task.
+// CreateTask creates a new upgrade task. When a requested instance has a
+// divergence record, the request must name a live upgrade preview of the
+// same instances and targets, and the refusal comes before anything is
+// reserved or saved.
 func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*UpgradeTask, error) {
-	switch req.Kind {
-	case "", TaskKindUpgrade:
-	case TaskKindCertificates:
-		return nil, ErrCertificateTaskKind
-	default:
-		return nil, fmt.Errorf("%w: %q", ErrInvalidTaskKind, req.Kind)
-	}
-
-	if len(req.InstanceIDs) == 0 {
-		return nil, ErrNoInstances
-	}
-
-	err := validateTargets(req)
+	err := checkUpgradeRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -488,6 +479,13 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		return nil, err
 	}
 
+	// A diverged instance's deploy also applies its pending certificate
+	// variables, so the operator must have seen them in a preview.
+	approved, err := m.approvedDivergence(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
 	m.logger.Info("Creating upgrade task for %d instances to %s", len(req.InstanceIDs), req.DescribeTargets())
 
 	// Build instance list with deployment names
@@ -495,6 +493,8 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 	if err != nil {
 		return nil, fmt.Errorf("failed to build instance list: %w", err)
 	}
+
+	approveInstances(instances, approved)
 
 	task := &UpgradeTask{
 		ID:             uuid.New().String(),
@@ -808,6 +808,11 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	instance.AppliedReleases = applied
 	m.mu.Unlock()
 
+	opts, proceed := m.divergedDeployOptions(ctx, persistCtx, task, instance)
+	if !proceed {
+		return
+	}
+
 	// An upgrade's save of the context ID logs a failure and lets the
 	// deploy go.
 	save := func() error {
@@ -823,7 +828,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		return nil
 	}
 
-	m.deployWithContext(ctx, task, instance, newManifest, bosh.DeployOptions{}, save, cancelCh)
+	m.deployWithContext(ctx, task, instance, newManifest, opts, save, cancelCh)
 }
 
 // followDeployTask saves the deploy's task ID and waits for the task to
@@ -2916,6 +2921,7 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 			instance.StartedAt = copyTime(instance.StartedAt)
 			instance.CompletedAt = copyTime(instance.CompletedAt)
 			instance.Certificates = instance.Certificates.Clone()
+			instance.ApprovedAdditional = slices.Clone(instance.ApprovedAdditional)
 			copied.Instances[i] = instance
 		}
 	}

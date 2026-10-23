@@ -48,6 +48,10 @@ type Deps struct {
 	// Previews holds the rotation previews. Configure gives the manager a
 	// store of its own when it is nil.
 	Previews *PreviewStore
+	// UpgradePreviews holds the previews of upgrades that include a
+	// diverged instance. Configure gives the manager a store of its own
+	// when it is nil.
+	UpgradePreviews *UpgradePreviewStore
 	// Prober reads the leaf certificate each listener serves, which a
 	// redeploy checks once the deploy is done.
 	Prober certinventory.Prober
@@ -78,6 +82,10 @@ func (m *Manager) Configure(d Deps) error {
 
 	if d.Previews == nil {
 		d.Previews = NewPreviewStore(d.Now)
+	}
+
+	if d.UpgradePreviews == nil {
+		d.UpgradePreviews = NewUpgradePreviewStore(d.Now)
 	}
 
 	m.deps = d

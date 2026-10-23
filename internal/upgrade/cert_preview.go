@@ -604,16 +604,7 @@ func (inst *PreviewInstance) bindEffects(req PreviewRequest, sel Selection, mani
 		pairs = append(pairs, VersionPair{Name: variable.Name, DeployedVersionID: variable.DeployedVersionID, LatestVersionID: id})
 	}
 
-	for _, variable := range variables {
-		id, ok := latest[variable.Name]
-		if !ok || selected[variable.Name] || id == variable.ID {
-			continue
-		}
-
-		inst.Additional = append(inst.Additional, VersionPair{Name: variable.Name, DeployedVersionID: variable.ID, LatestVersionID: id})
-	}
-
-	sort.Slice(inst.Additional, func(i, j int) bool { return inst.Additional[i].Name < inst.Additional[j].Name })
+	inst.Additional = append(inst.Additional, differingPairs(variables, latest, selected)...)
 
 	cids := make([]string, 0, len(scan.VMs))
 

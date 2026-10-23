@@ -30,6 +30,7 @@ type Handler struct {
 // taskManager is the part of the upgrade manager that the handlers call.
 type taskManager interface {
 	CreateTask(ctx context.Context, req upgrade.CreateTaskRequest) (*upgrade.UpgradeTask, error)
+	PreviewUpgrade(ctx context.Context, req upgrade.CreateTaskRequest) (*upgrade.UpgradePreview, error)
 	CreateCertificateTask(ctx context.Context, req upgrade.CreateCertificateTaskRequest) (*upgrade.UpgradeTask, bool, error)
 	GetTask(taskID string) (*upgrade.UpgradeTask, error)
 	ListTasks() []*upgrade.UpgradeTask
@@ -65,6 +66,9 @@ type Dependencies struct {
 	// Previews holds the rotation previews. The manager keeps its own
 	// store when it is nil.
 	Previews *upgrade.PreviewStore
+	// UpgradePreviews holds the previews of upgrades that include a
+	// diverged instance. The manager keeps its own store when it is nil.
+	UpgradePreviews *upgrade.UpgradePreviewStore
 	// Prober reads the leaf certificate a listener serves, which a
 	// redeploy checks once its deploy is done.
 	Prober certinventory.Prober
@@ -104,12 +108,13 @@ func NewHandler(deps Dependencies) *Handler {
 // rotation runs without its checks.
 func configureManager(manager *upgrade.Manager, deps Dependencies) {
 	d := upgrade.Deps{
-		CredHub:      deps.CredHub,
-		CredHubState: deps.CredHubState,
-		Switches:     deps.Switches,
-		Previews:     deps.Previews,
-		Prober:       deps.Prober,
-		PatchRunner:  deps.PatchRunner,
+		CredHub:         deps.CredHub,
+		CredHubState:    deps.CredHubState,
+		Switches:        deps.Switches,
+		Previews:        deps.Previews,
+		UpgradePreviews: deps.UpgradePreviews,
+		Prober:          deps.Prober,
+		PatchRunner:     deps.PatchRunner,
 	}
 
 	if deps.Certificates != nil {
@@ -156,6 +161,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "/tasks" && r.Method == http.MethodPost:
 		h.CreateTask(w, r)
+	case path == "/preview" && r.Method == http.MethodPost:
+		h.PreviewUpgrade(w, r)
 	case path == "/tasks" && r.Method == http.MethodGet:
 		h.ListTasks(w, r)
 	case path == "/settings" && r.Method == http.MethodGet:
@@ -373,6 +380,43 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("Created upgrade task %s", task.ID)
 	response.HandleJSON(w, task, nil)
+}
+
+// PreviewUpgrade handles POST /b/upgrade/preview. It takes the body of an
+// upgrade create request and answers 200 with the upgrade preview, which
+// lists each diverged instance and what its deploy would apply. A failure
+// answers as a failed create does.
+func (h *Handler) PreviewUpgrade(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	if err != nil {
+		apierr.Write(w, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			"Blacksmith could not read the upgrade preview request: "+err.Error()), http.StatusBadRequest)
+
+		return
+	}
+
+	var req upgrade.CreateTaskRequest
+
+	err = json.Unmarshal(body, &req)
+	if err != nil {
+		apierr.Write(w, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			"The upgrade preview request is not valid JSON: "+err.Error()), http.StatusBadRequest)
+
+		return
+	}
+
+	h.logger.Info("Previewing an upgrade of %d instances, targets: %s", len(req.InstanceIDs), req.DescribeTargets())
+
+	preview, err := h.tasks.PreviewUpgrade(r.Context(), req)
+	if err != nil {
+		h.logger.Error("Failed to preview the upgrade: %v", err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	h.logger.Info("Upgrade preview %s lists %d diverged instances", preview.ID, len(preview.Diverged))
+	response.JSON(w, http.StatusOK, preview)
 }
 
 // createCertificateTask creates a certificate task from the preview the

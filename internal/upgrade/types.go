@@ -95,6 +95,14 @@ type InstanceUpgrade struct {
 	// Certificates is the instance's rotation record, and is set on a
 	// certificate task only.
 	Certificates *InstanceRotation `json:"certificates,omitempty"`
+	// ApprovedAdditional holds, for an instance that had a divergence
+	// record when its upgrade was created, the variables the upgrade
+	// preview showed its deploy would apply at their latest versions. It
+	// is nil for every other instance, and a non-nil empty list means the
+	// preview showed nothing besides the divergence. omitzero keeps that
+	// difference in the saved record while leaving the field out of an
+	// ordinary upgrade's record.
+	ApprovedAdditional []VersionPair `json:"approved_additional,omitzero"`
 }
 
 // UpgradeTask represents a batch upgrade task.
@@ -173,6 +181,10 @@ type CreateTaskRequest struct {
 	InstanceIDs    []string        `json:"instance_ids"`
 	TargetStemcell StemcellTarget  `json:"target_stemcell"`
 	TargetReleases []ReleaseTarget `json:"target_releases,omitempty"`
+	// UpgradePreviewID names the upgrade preview the operator confirmed.
+	// An upgrade that includes an instance with a divergence record needs
+	// one, and any other upgrade ignores it.
+	UpgradePreviewID string `json:"upgrade_preview_id,omitempty"`
 }
 
 // DescribeTargets names the request's targets for the log. A request that

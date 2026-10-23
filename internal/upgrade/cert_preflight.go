@@ -320,10 +320,19 @@ func (m *Manager) readEffects(ctx context.Context, deployment string) (effectsNo
 // differing returns each variable whose latest version differs from the
 // deployed one, leaving out the names in skip, sorted by name.
 func (e effectsNow) differing(skip map[string]bool) []VersionPair {
+	return differingPairs(e.variables, e.latest, skip)
+}
+
+// differingPairs returns each variable whose latest CredHub version
+// differs from its deployed one, leaving out the names in skip and any
+// variable CredHub does not know, sorted by name. These are the variables
+// a deploy with force_latest_variables applies, and a preview lists them
+// as the additional ones. It returns nil when none differs.
+func differingPairs(variables []bosh.Variable, latest map[string]string, skip map[string]bool) []VersionPair {
 	var pairs []VersionPair
 
-	for _, variable := range e.variables {
-		id, ok := e.latest[variable.Name]
+	for _, variable := range variables {
+		id, ok := latest[variable.Name]
 		if !ok || skip[variable.Name] || id == variable.ID {
 			continue
 		}
