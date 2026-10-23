@@ -1672,10 +1672,14 @@ func (r *vmRun) stopUnchanged(why string, finished bool) error {
 		return errVMStopped
 	}
 
+	var refused error
+
 	r.change(func(j *VMJournal) {
 		j.Error = message
-		_ = j.Advance(VMPhaseUnrecovered)
+		refused = j.Advance(VMPhaseUnrecovered)
 	})
+
+	r.manager.logRefusedMove(r.task, r.j.VM, refused)
 
 	r.manager.pauseWith(r.ctx, r.task, r.inst, errors.New(message)) //nolint:errcheck,gosec // pauseWith logs and saves it
 
@@ -1723,16 +1727,20 @@ func (r *vmRun) recheck() error {
 		return nil
 	}
 
+	var refused error
+
 	r.change(func(j *VMJournal) {
 		j.Error = why
 
 		switch action { //nolint:exhaustive // every other action leaves the VM where it is
 		case ResumeMarkReverted:
-			_ = j.Advance(VMPhaseReverted)
+			refused = j.Advance(VMPhaseReverted)
 		case ResumeUnrecovered:
-			_ = j.Advance(VMPhaseUnrecovered)
+			refused = j.Advance(VMPhaseUnrecovered)
 		}
 	})
+
+	r.manager.logRefusedMove(r.task, r.j.VM, refused)
 
 	return r.pause(fmt.Errorf("VM %s was not patched: %s", r.j.VM, why))
 }
@@ -2455,6 +2463,15 @@ func (r *vmRun) rolledBack() error {
 	return r.pause(fmt.Errorf("%s It holds its old certificate again. Any VM already patched keeps the new one, so resuming fails the instance, which then needs a redeploy", why))
 }
 
+// logRefusedMove logs a move the VM's journal refused, which leaves the
+// journal in its earlier phase beside an error that names the move. A
+// nil err logs nothing.
+func (m *Manager) logRefusedMove(task *UpgradeTask, vm string, err error) {
+	if err != nil {
+		m.logger.Error("Certificate task %s kept VM %s in its phase, because its journal refused the move: %v", task.ID, vm, err)
+	}
+}
+
 // unrecovered leaves a VM whose rollback did not finish unrecovered, with
 // its backups, and fails the instance.
 func (m *Manager) unrecovered(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, j *VMJournal, why string) error {
@@ -2466,8 +2483,10 @@ func (m *Manager) unrecovered(ctx context.Context, task *UpgradeTask, inst *Inst
 
 	m.mu.Lock()
 	j.Error = message
-	_ = j.Advance(VMPhaseUnrecovered)
+	refused := j.Advance(VMPhaseUnrecovered)
 	m.mu.Unlock()
+
+	m.logRefusedMove(task, j.VM, refused)
 
 	err := m.recordDivergence(ctx, task, inst, j, nil, certinventory.DivergentVMUnknown)
 	if err != nil {

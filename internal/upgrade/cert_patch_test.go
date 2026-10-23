@@ -1332,3 +1332,32 @@ func TestPatchCancelAfterRollbackPauseEndsInstance(t *testing.T) {
 
 	expectReleased(t, manager)
 }
+
+// A journal that refuses the move to unrecovered keeps its phase, and the
+// refusal is logged rather than dropped.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchLogsRefusedUnrecoveredMove(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	j := &task.Instances[0].Certificates.VMs[0]
+	if j.Phase != VMPhaseDone {
+		t.Fatalf("expected VM 1 done, got %s", j.Phase)
+	}
+
+	manager.unrecovered(context.Background(), &task, &task.Instances[0], j, "a test asked") //nolint:errcheck,gosec // the test reads the log
+
+	if j.Phase != VMPhaseDone {
+		t.Fatalf("expected the refused move to keep the phase, got %s", j.Phase)
+	}
+
+	if !slices.ContainsFunc(env.capture.all(), func(line string) bool {
+		return strings.Contains(line, "unrecovered") && strings.Contains(line, string(VMPhaseDone)+" to "+string(VMPhaseUnrecovered))
+	}) {
+		t.Fatalf("expected the refused move logged, got %v", env.capture.all())
+	}
+}
