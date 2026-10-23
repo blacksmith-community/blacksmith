@@ -983,7 +983,7 @@ func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *In
 		return unconfirmed("verify the deploy of "+inst.DeploymentName, err)
 	}
 
-	note, err := m.verifyDeploy(ctx, task, inst)
+	err = m.verifyDeploy(ctx, task, inst)
 
 	switch {
 	case ctx.Err() != nil:
@@ -997,7 +997,7 @@ func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *In
 		}
 	}
 
-	succeeded, message := err == nil, note
+	succeeded, message := err == nil, ""
 	if err != nil {
 		message = err.Error()
 	}
@@ -1432,17 +1432,11 @@ func (m *Manager) failCertificateDeploy(ctx context.Context, task *UpgradeTask, 
 	}
 }
 
-// convergeWaitsNote is the note a converged instance completes with
-// while its divergence record stays, since not every listener has been
-// seen serving the version BOSH now deploys.
-const convergeWaitsNote = "BOSH deployed the latest versions, and reconciliation is waiting for every listener to serve the new version " +
-	"before it clears the instance's divergence record."
-
 // verifyDeploy checks the instance's done deploy before the instance
-// settles, and returns the note a successful instance keeps. A converge
-// deploy is reconciled, as reconcileConverge describes, and any other
-// deploy is a redeploy, whose new versions verifyRedeploy checks.
-func (m *Manager) verifyDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) (string, error) {
+// settles. A converge deploy is reconciled, as reconcileConverge
+// describes, and any other deploy is a redeploy, whose new versions
+// verifyRedeploy checks.
+func (m *Manager) verifyDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) error {
 	m.mu.RLock()
 	converges := convergesLocked(task, inst)
 	m.mu.RUnlock()
@@ -1451,38 +1445,38 @@ func (m *Manager) verifyDeploy(ctx context.Context, task *UpgradeTask, inst *Ins
 		return m.reconcileConverge(ctx, inst)
 	}
 
-	return "", m.verifyRedeploy(ctx, inst)
+	return m.verifyRedeploy(ctx, inst)
 }
 
-// reconcileConverge reconciles the instance's divergence record with a
-// scan taken now, after its converge deploy, and returns the note the
-// instance completes with. A record that reconciliation clears leaves no
-// note, and one that stays, because not every listener was seen serving
-// the deployed version, leaves convergeWaitsNote. A broker with no
-// divergence store has no record to reconcile. A scan, reconciliation, or
-// read that fails could not read what it checks, so the instance stays
-// reserved and is reconciled again.
-func (m *Manager) reconcileConverge(ctx context.Context, inst *InstanceUpgrade) (string, error) {
+// reconcileConverge confirms that the instance's divergence record
+// cleared after its converge deploy. Up to verifyAttempts times,
+// verifyInterval apart, it scans the instance, reconciles the record with
+// the scan, and reads it. A record that a confirmed reconcile removed is
+// cleared. One that stays, because not every listener was seen serving the
+// deployed version, and a reconcile that was skipped or whose write
+// failed, are not, and when the attempts run out the converge fails with
+// a plain error: the deploy is done, the record stays, and the next scan
+// reconciles it again. A broker with no divergence store has no record. A
+// scan or read that fails could not read what it checks, so the instance
+// stays reserved and is reconciled again.
+func (m *Manager) reconcileConverge(ctx context.Context, inst *InstanceUpgrade) error {
 	deps := m.certDeps()
 	if deps.Divergence == nil {
-		return "", nil
+		return nil
 	}
 
 	m.mu.RLock()
 	instanceID := inst.InstanceID
+
+	var taskID int
+	if inst.Certificates != nil && inst.Certificates.Converge != nil {
+		taskID = inst.Certificates.Converge.BOSHTaskID
+	}
+
 	m.mu.RUnlock()
 
 	if deps.ScanInstance == nil {
-		return "", fmt.Errorf("%w: Blacksmith has no scanner to reconcile instance %s", errVerifyUnreadable, instanceID)
-	}
-
-	scan, err := deps.ScanInstance(ctx, instanceID)
-
-	switch {
-	case err != nil:
-		return "", fmt.Errorf("%w: instance %s could not be scanned after its converge deploy: %w", errVerifyUnreadable, instanceID, err)
-	case scan.Err != "":
-		return "", fmt.Errorf("%w: instance %s could not be scanned after its converge deploy: %s", errVerifyUnreadable, instanceID, scan.Err)
+		return fmt.Errorf("%w: Blacksmith has no scanner to reconcile instance %s", errVerifyUnreadable, instanceID)
 	}
 
 	sources := certinventory.ReconcileSources{Versions: deps.CredHub, Log: m.logger}
@@ -1490,21 +1484,59 @@ func (m *Manager) reconcileConverge(ctx context.Context, inst *InstanceUpgrade) 
 		sources.Tasks = lister
 	}
 
-	err = deps.Divergence.ReconcileScan(ctx, scan, sources)
+	var reason string
+
+	for attempt := 1; attempt <= verifyAttempts; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("the reconcile of instance %s stopped: %w", instanceID, ctx.Err())
+			case <-time.After(m.verifyInterval):
+			}
+		}
+
+		cleared, why, err := m.convergeCleared(ctx, deps, instanceID, sources)
+		if err != nil || cleared {
+			return err
+		}
+
+		reason = why
+	}
+
+	return fmt.Errorf("BOSH task %d finished the converge deploy, but Blacksmith could not confirm that the divergence record of instance %s cleared: %s. "+
+		"The record stays, and the next scan reconciles it again", taskID, instanceID, reason)
+}
+
+// convergeCleared makes one attempt to confirm that the instance's
+// divergence record cleared. It returns why the record is not known to
+// have cleared, or an error wrapping errVerifyUnreadable when the scan or
+// the read failed.
+func (m *Manager) convergeCleared(ctx context.Context, deps Deps, instanceID string, sources certinventory.ReconcileSources) (bool, string, error) {
+	scan, err := deps.ScanInstance(ctx, instanceID)
+
+	switch {
+	case err != nil:
+		return false, "", fmt.Errorf("%w: instance %s could not be scanned after its converge deploy: %w", errVerifyUnreadable, instanceID, err)
+	case scan.Err != "":
+		return false, "", fmt.Errorf("%w: instance %s could not be scanned after its converge deploy: %s", errVerifyUnreadable, instanceID, scan.Err)
+	}
+
+	err = deps.Divergence.ReconcileScanConfirmed(ctx, scan, sources)
 	if err != nil {
-		return "", fmt.Errorf("%w: the divergence record of instance %s could not be reconciled: %w", errVerifyUnreadable, instanceID, err)
+		//nolint:nilerr // A reconcile that did not land leaves the record unconfirmed, which is a reason, not a failed read.
+		return false, "its reconcile did not land (" + err.Error() + ")", nil
 	}
 
 	_, found, err := deps.Divergence.Get(ctx, instanceID)
-	if err != nil {
-		return "", fmt.Errorf("%w: the divergence record of instance %s could not be read: %w", errVerifyUnreadable, instanceID, err)
+
+	switch {
+	case err != nil:
+		return false, "", fmt.Errorf("%w: the divergence record of instance %s could not be read: %w", errVerifyUnreadable, instanceID, err)
+	case found:
+		return false, "not every listener has been seen serving the deployed version", nil
 	}
 
-	if found {
-		return convergeWaitsNote, nil
-	}
-
-	return "", nil
+	return true, "", nil
 }
 
 // verifyRedeploy checks that the deploy applied the new certificates. The

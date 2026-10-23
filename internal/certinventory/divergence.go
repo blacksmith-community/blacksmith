@@ -52,6 +52,10 @@ const (
 // Vault path of its own.
 var ErrInvalidInstanceID = errors.New("invalid instance ID for a divergence record")
 
+// ErrReconcileSkipped is returned by ReconcileScanConfirmed for a scan
+// that reconciliation does not read, so the record was not reconciled.
+var ErrReconcileSkipped = errors.New("the divergence record was not reconciled")
+
 // Divergence records, for one instance, each certificate variable that a
 // patch changed on the VMs while BOSH still records an older version as
 // deployed. Revision rises by one on every change, so a writer can tell its
@@ -216,10 +220,20 @@ type DivergenceStore struct {
 	generation atomic.Uint64
 
 	// scansMu guards reconciled, the start of the latest scan reconciled
-	// with each instance's record. It lives in memory, so it orders the
-	// scans of this broker process.
+	// with each instance's record, and outcomes, how the reconcile of that
+	// scan ended. It lives in memory, so it orders the scans of this broker
+	// process.
 	scansMu    sync.Mutex
 	reconciled map[string]time.Time
+	outcomes   map[string]*reconcileOutcome
+}
+
+// reconcileOutcome is how the reconcile that claimed a scan ended. done
+// closes once err is set.
+type reconcileOutcome struct {
+	at   time.Time
+	done chan struct{}
+	err  error
 }
 
 // NewDivergenceStore returns a store over v. A nil now means time.Now.
@@ -228,7 +242,10 @@ func NewDivergenceStore(v interfaces.Vault, now func() time.Time) *DivergenceSto
 		now = time.Now
 	}
 
-	return &DivergenceStore{vault: v, now: now, locks: map[string]*sync.Mutex{}, reconciled: map[string]time.Time{}}
+	return &DivergenceStore{
+		vault: v, now: now, locks: map[string]*sync.Mutex{},
+		reconciled: map[string]time.Time{}, outcomes: map[string]*reconcileOutcome{},
+	}
 }
 
 // Generation rises on every confirmed change, so a reader can rebuild what
@@ -917,30 +934,86 @@ func clears(v DivergentVariable, in ReconcileInput) bool {
 // a scan that began no later than the last one reconciled with the record
 // change nothing either.
 func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, src ReconcileSources) error {
-	if isNil(src.Versions) || scan.Err != "" || scan.ScannedAt.IsZero() || scan.Ref.ID == BrokerScanID {
+	if reconcileSkipReason(scan, src) != "" {
 		return nil
 	}
 
-	if !s.newerScan(scan.Ref.ID, scan.ScannedAt, false) {
-		return nil
+	_, err := s.reconcileScan(ctx, scan, src)
+
+	return err
+}
+
+// ReconcileScanConfirmed reconciles the instance's record with the scan
+// as ReconcileScan does, and returns nil only when the record is known to
+// have been reconciled with this scan or a newer one, or the instance has
+// no record. When another caller reconciled the scan, or a newer one,
+// first, it waits for that reconcile to end and returns its error. A scan
+// that ReconcileScan would not read returns ErrReconcileSkipped.
+func (s *DivergenceStore) ReconcileScanConfirmed(ctx context.Context, scan InstanceScan, src ReconcileSources) error {
+	if why := reconcileSkipReason(scan, src); why != "" {
+		return fmt.Errorf("%w: %s", ErrReconcileSkipped, why)
+	}
+
+	superseded, err := s.reconcileScan(ctx, scan, src)
+	if err != nil || !superseded {
+		return err
+	}
+
+	return s.awaitReconcile(ctx, scan.Ref.ID, scan.ScannedAt)
+}
+
+// reconcileSkipReason says why reconciliation does not read the scan, or
+// is empty when it does.
+func reconcileSkipReason(scan InstanceScan, src ReconcileSources) string {
+	switch {
+	case isNil(src.Versions):
+		return "Blacksmith has no CredHub to read the versions from"
+	case scan.Err != "":
+		return "the scan failed: " + scan.Err
+	case scan.ScannedAt.IsZero():
+		return "the scan has no start time"
+	case scan.Ref.ID == BrokerScanID:
+		return "the broker scan has no record"
+	}
+
+	return ""
+}
+
+// reconcileScan reconciles the record with a scan reconciliation reads.
+// It reports superseded when a scan that began no earlier was reconciled
+// first, so this one changed nothing. An instance without a record is
+// neither superseded nor an error.
+func (s *DivergenceStore) reconcileScan(ctx context.Context, scan InstanceScan, src ReconcileSources) (bool, error) {
+	if !s.newerScan(scan.Ref.ID, scan.ScannedAt) {
+		return true, nil
 	}
 
 	cur, found, err := s.Get(ctx, scan.Ref.ID)
 	if err != nil || !found {
-		return err
+		return false, err
 	}
 
 	in := reconcileInput(ctx, cur, scan, src)
 
-	return s.Update(ctx, scan.Ref.ID, func(d *Divergence) (*Divergence, error) {
+	var claimed *reconcileOutcome
+
+	err = s.Update(ctx, scan.Ref.ID, func(rec *Divergence) (*Divergence, error) {
 		// A newer scan reconciled while this one read CredHub, so this
 		// one's view is older than the record's.
-		if !s.newerScan(scan.Ref.ID, scan.ScannedAt, true) {
-			return d, nil
+		claimed = s.claimScan(scan.Ref.ID, scan.ScannedAt)
+		if claimed == nil {
+			return rec, nil
 		}
 
-		return fillAppliedFingerprints(Reconcile(d, in), in), nil
+		return fillAppliedFingerprints(Reconcile(rec, in), in), nil
 	})
+
+	if claimed != nil {
+		claimed.err = err
+		close(claimed.done)
+	}
+
+	return claimed == nil && err == nil, err
 }
 
 // fillAppliedFingerprints gives each entry that lacks one the fingerprint
@@ -963,23 +1036,53 @@ func fillAppliedFingerprints(d *Divergence, in ReconcileInput) *Divergence {
 }
 
 // newerScan reports whether a scan that began at start is newer than the
-// last one reconciled with the instance's record. With claim, a newer scan
-// becomes the last one, which Update's callback does under the instance's
-// lock, so two scans of one instance never both pass. A scan that claims
-// and then fails to write leaves the claim, and the next scan tries again.
-func (s *DivergenceStore) newerScan(instanceID string, start time.Time, claim bool) bool {
+// last one reconciled with the instance's record.
+func (s *DivergenceStore) newerScan(instanceID string, start time.Time) bool {
+	s.scansMu.Lock()
+	defer s.scansMu.Unlock()
+
+	last, ok := s.reconciled[instanceID]
+
+	return !ok || start.After(last)
+}
+
+// claimScan makes a scan newer than the last one reconciled the last one,
+// and returns the outcome its reconcile must finish, or nil when the scan
+// is not newer. Update's callback calls it under the instance's lock, so
+// two scans of one instance never both claim. A scan that claims and then
+// fails to write leaves the claim, and the next scan tries again.
+func (s *DivergenceStore) claimScan(instanceID string, start time.Time) *reconcileOutcome {
 	s.scansMu.Lock()
 	defer s.scansMu.Unlock()
 
 	if last, ok := s.reconciled[instanceID]; ok && !start.After(last) {
-		return false
+		return nil
 	}
 
-	if claim {
-		s.reconciled[instanceID] = start
+	s.reconciled[instanceID] = start
+	outcome := &reconcileOutcome{at: start, done: make(chan struct{})}
+	s.outcomes[instanceID] = outcome
+
+	return outcome
+}
+
+// awaitReconcile waits for the reconcile of the latest scan claimed for
+// the instance, which began no earlier than start, and returns its error.
+func (s *DivergenceStore) awaitReconcile(ctx context.Context, instanceID string, start time.Time) error {
+	s.scansMu.Lock()
+	outcome := s.outcomes[instanceID]
+	s.scansMu.Unlock()
+
+	if outcome == nil || outcome.at.Before(start) {
+		return fmt.Errorf("%w: no reconcile of a scan from %s on is known", ErrReconcileSkipped, start.Format(time.RFC3339))
 	}
 
-	return true
+	select {
+	case <-outcome.done:
+		return outcome.err
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for the reconcile of instance %s: %w", instanceID, ctx.Err())
+	}
 }
 
 // reconcileInput builds the input for the record from the scan and CredHub.

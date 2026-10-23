@@ -106,6 +106,8 @@ type divergenceVault struct {
 
 	mu   sync.Mutex
 	fail bool
+	// failDeletes makes each delete of a divergence record fail.
+	failDeletes bool
 	// afterPut, when set, sees the path of each divergence write once it
 	// is stored.
 	afterPut func(path string)
@@ -137,6 +139,14 @@ func (v *divergenceVault) Put(ctx context.Context, path string, data interface{}
 // Delete removes a divergence record, which the store does when no VM
 // holds anything new any more.
 func (v *divergenceVault) Delete(_ context.Context, path string) error {
+	v.mu.Lock()
+	failDeletes := v.failDeletes
+	v.mu.Unlock()
+
+	if failDeletes {
+		return errDivergenceDown
+	}
+
 	v.events.add("divergence-delete")
 
 	wait := v.base.waitVault

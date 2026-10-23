@@ -192,6 +192,9 @@ type redeployDirector struct {
 	finish   func(ctx context.Context, taskID int) (*bosh.Task, error)
 	applies  string
 	onDone   func()
+	// finished lists each deploy task whose wait ended, as the director's
+	// task list names it.
+	finished []bosh.Task
 
 	// listFails is how many ListVariables calls fail before one succeeds,
 	// and a negative count fails every call. lists counts the calls.
@@ -314,7 +317,12 @@ func (d *redeployDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.T
 	d.mu.Unlock()
 
 	if finish != nil {
-		return finish(ctx, taskID)
+		task, err := finish(ctx, taskID)
+		if task != nil {
+			d.listFinished(*task)
+		}
+
+		return task, err
 	}
 
 	d.mu.Lock()
@@ -328,7 +336,25 @@ func (d *redeployDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.T
 		onDone()
 	}
 
-	return &bosh.Task{ID: taskID, State: boshTaskDone, Deployment: waitDeployment}, nil
+	task := &bosh.Task{ID: taskID, State: boshTaskDone, Deployment: waitDeployment}
+	d.listFinished(*task)
+
+	return task, nil
+}
+
+// DeploymentTasks lists the deploy tasks whose wait ended, newest first.
+func (d *redeployDirector) DeploymentTasks(_ context.Context, _ string, limit int) ([]bosh.Task, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	tasks := slices.Clone(d.finished)
+	slices.Reverse(tasks)
+
+	if limit > 0 && len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+
+	return tasks, nil
 }
 
 func (d *redeployDirector) CancelTask(_ context.Context, taskID int) error {
@@ -338,6 +364,18 @@ func (d *redeployDirector) CancelTask(_ context.Context, taskID int) error {
 	d.cancels = append(d.cancels, taskID)
 
 	return nil
+}
+
+// listFinished adds a deploy task whose wait ended to the task list, as
+// ended at validateNow.
+func (d *redeployDirector) listFinished(task bosh.Task) {
+	ended := validateNow
+	task.Description = bosh.DeployTaskDescription
+	task.EndedAt = &ended
+
+	d.mu.Lock()
+	d.finished = append(d.finished, task)
+	d.mu.Unlock()
 }
 
 // failLists makes the next n ListVariables calls fail, or every call when

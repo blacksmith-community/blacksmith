@@ -1493,3 +1493,224 @@ func TestReconcileScanReadsTheLatestDeploy(t *testing.T) {
 		t.Error("a reconcile with no task reader cleared the record")
 	}
 }
+
+// confirmedClears is a scan in which the director deploys v7 and both VMs
+// serve it, so its reconciliation clears divSlotted's record, with the
+// sources that reconciliation reads and the same scan a minute later.
+func confirmedClears(t *testing.T) (InstanceScan, ReconcileSources, InstanceScan) {
+	t.Helper()
+
+	certs := divVersions(t, "v6", "v7")
+	scanAt := func(start time.Time) InstanceScan {
+		return divScan(start, map[string]string{divVariable: "v7"},
+			map[string]*issued{"vm-a": ptr(certs["v7"]), "vm-b": ptr(certs["v7"])})
+	}
+
+	return scanAt(divScanStart), ReconcileSources{Versions: divCredHub(certs, "v6", "v7")}, scanAt(divScanStart.Add(time.Minute))
+}
+
+// divFailingDeletes is divSlotted's record over a vault the test can make
+// fail, and returns both.
+func divFailingDeletes(t *testing.T) (*DivergenceStore, *divVault) {
+	t.Helper()
+
+	vault := newDivVault()
+	clock := &divClock{at: divScanStart.Add(-time.Hour)}
+	store := NewDivergenceStore(vault, clock.now)
+
+	err := store.Update(context.Background(), divInstance, func(*Divergence) (*Divergence, error) {
+		rec := divRecord()
+		rec.Variables[0].VMs = map[string]DivergentVM{
+			"vm-a": {State: DivergentVMApplied, Group: "redis", Index: 0},
+			"vm-b": {State: DivergentVMApplied, Group: "redis", Index: 1},
+		}
+
+		return rec, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return store, vault
+}
+
+var errDivDeleteDown = errors.New("vault refused the delete")
+
+// A confirmed reconcile of a scan another caller already reconciled
+// reports that caller's outcome. When the other caller's delete of the
+// record failed, the confirmed reconcile fails too and the record stays,
+// and when it landed, the confirmed reconcile succeeds.
+//
+//nolint:funlen // three short cases share the store and scan setup
+func TestReconcileScanConfirmedReportsTheClaimingOutcome(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	t.Run("the claiming write failed", func(t *testing.T) {
+		t.Parallel()
+
+		store, vault := divFailingDeletes(t)
+		scan, src, _ := confirmedClears(t)
+
+		vault.mu.Lock()
+		vault.deleteFail = func(string) (bool, error) { return false, errDivDeleteDown }
+		vault.mu.Unlock()
+
+		if err := store.ReconcileScan(ctx, scan, src); err == nil {
+			t.Fatal("expected the claiming reconcile's delete to fail")
+		}
+
+		vault.mu.Lock()
+		vault.deleteFail = nil
+		vault.mu.Unlock()
+
+		err := store.ReconcileScanConfirmed(ctx, scan, src)
+		if !errors.Is(err, errDivDeleteDown) {
+			t.Fatalf("expected the claiming reconcile's failure, got %v", err)
+		}
+
+		if _, found, _ := store.Get(ctx, divInstance); !found {
+			t.Fatal("expected the record to stay")
+		}
+	})
+
+	t.Run("the claiming write landed", func(t *testing.T) {
+		t.Parallel()
+
+		store, _ := divFailingDeletes(t)
+		scan, src, _ := confirmedClears(t)
+
+		if err := store.ReconcileScan(ctx, scan, src); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := store.ReconcileScanConfirmed(ctx, scan, src); err != nil {
+			t.Fatalf("expected the landed reconcile to confirm, got %v", err)
+		}
+
+		if _, found, _ := store.Get(ctx, divInstance); found {
+			t.Fatal("expected the record cleared")
+		}
+	})
+
+	t.Run("its own write", func(t *testing.T) {
+		t.Parallel()
+
+		store, vault := divFailingDeletes(t)
+		scan, src, later := confirmedClears(t)
+
+		vault.mu.Lock()
+		vault.deleteFail = func(string) (bool, error) { return false, errDivDeleteDown }
+		vault.mu.Unlock()
+
+		if err := store.ReconcileScanConfirmed(ctx, scan, src); !errors.Is(err, errDivDeleteDown) {
+			t.Fatalf("expected its own failed delete, got %v", err)
+		}
+
+		vault.mu.Lock()
+		vault.deleteFail = nil
+		vault.mu.Unlock()
+
+		if err := store.ReconcileScanConfirmed(ctx, later, src); err != nil {
+			t.Fatalf("expected a later scan to reconcile, got %v", err)
+		}
+
+		if _, found, _ := store.Get(ctx, divInstance); found {
+			t.Fatal("expected the record cleared")
+		}
+	})
+}
+
+// A confirmed reconcile that finds another caller's reconcile of the same
+// scan still writing waits for that write and reports how it ended.
+func TestReconcileScanConfirmedWaitsForTheClaimingWrite(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, vault := divFailingDeletes(t)
+	scan, src, _ := confirmedClears(t)
+
+	entered, release := make(chan struct{}), make(chan struct{})
+
+	vault.mu.Lock()
+	vault.deleteFail = func(string) (bool, error) {
+		close(entered)
+		<-release
+
+		return false, errDivDeleteDown
+	}
+	vault.mu.Unlock()
+
+	go func() { _ = store.ReconcileScan(ctx, scan, src) }()
+
+	<-entered
+
+	confirmed := make(chan error, 1)
+
+	go func() { confirmed <- store.ReconcileScanConfirmed(ctx, scan, src) }()
+
+	select {
+	case err := <-confirmed:
+		t.Fatalf("expected the confirmed reconcile to wait for the claiming write, got %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case err := <-confirmed:
+		if !errors.Is(err, errDivDeleteDown) {
+			t.Fatalf("expected the claiming write's failure, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the confirmed reconcile never returned")
+	}
+}
+
+// A confirmed reconcile of a scan that reconciliation never reads reports
+// ErrReconcileSkipped, and one of an instance without a record succeeds.
+func TestReconcileScanConfirmedSkips(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		edit func(*InstanceScan, *ReconcileSources)
+	}{
+		{"no CredHub", func(_ *InstanceScan, src *ReconcileSources) { src.Versions = nil }},
+		{"a failed scan", func(scan *InstanceScan, _ *ReconcileSources) { scan.Err = "the director is down" }},
+		{"no scan start", func(scan *InstanceScan, _ *ReconcileSources) { scan.ScannedAt = time.Time{} }},
+		{"the broker scan", func(scan *InstanceScan, _ *ReconcileSources) { scan.Ref.ID = BrokerScanID }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			store, _ := divFailingDeletes(t)
+			scan, src, _ := confirmedClears(t)
+			tc.edit(&scan, &src)
+
+			if err := store.ReconcileScanConfirmed(ctx, scan, src); !errors.Is(err, ErrReconcileSkipped) {
+				t.Fatalf("expected ErrReconcileSkipped, got %v", err)
+			}
+
+			if _, found, _ := store.Get(ctx, divInstance); !found {
+				t.Fatal("expected the record to stay")
+			}
+		})
+	}
+
+	t.Run("no record", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewDivergenceStore(newDivVault(), nil)
+		scan, src, _ := confirmedClears(t)
+
+		if err := store.ReconcileScanConfirmed(ctx, scan, src); err != nil {
+			t.Fatalf("expected an instance without a record to confirm, got %v", err)
+		}
+	})
+}

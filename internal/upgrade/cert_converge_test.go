@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,11 +28,17 @@ type convergeEnv struct {
 	*redeployEnv
 
 	store *certinventory.DivergenceStore
+	dv    *divergenceVault
 
 	mu    sync.Mutex
 	scans int
 	// hidden makes the listener's probe fail, so no scan observes it.
 	hidden bool
+	// listenerless gives the scan no expected listener and no probe.
+	listenerless bool
+	// reconcileFirst reconciles each scan with the record before the scan
+	// returns, as the inventory's scheduler does.
+	reconcileFirst bool
 	// gate, when set, runs at the start of each scan.
 	gate func()
 }
@@ -54,11 +61,11 @@ func newConvergeEnv(t *testing.T) *convergeEnv {
 	base.madeNewVersion()
 	base.listener.serve(base.newLeaf, base.newKey)
 
+	dv := &divergenceVault{Vault: base.vault, base: base.vault, events: &eventLog{}}
 	env := &convergeEnv{
 		redeployEnv: base,
-		store: certinventory.NewDivergenceStore(
-			&divergenceVault{Vault: base.vault, base: base.vault, events: &eventLog{}},
-			func() time.Time { return divergedBefore }),
+		dv:          dv,
+		store:       certinventory.NewDivergenceStore(dv, func() time.Time { return divergedBefore }),
 	}
 
 	base.divergence = env.store
@@ -109,11 +116,11 @@ func (e *convergeEnv) scanCount() int {
 // scan scans the instance as it stands: the version the director deploys
 // and, unless the listener is hidden, the leaf it serves, observed at the
 // scan's start. Each scan begins a second after the one before.
-func (e *convergeEnv) scan(_ context.Context, instanceID string) (certinventory.InstanceScan, error) {
+func (e *convergeEnv) scan(ctx context.Context, instanceID string) (certinventory.InstanceScan, error) {
 	e.mu.Lock()
 	e.scans++
 	scannedAt := validateNow.Add(time.Duration(e.scans) * time.Second)
-	hidden, gate := e.hidden, e.gate
+	hidden, listenerless, first, gate := e.hidden, e.listenerless, e.reconcileFirst, e.gate
 	e.mu.Unlock()
 
 	if gate != nil {
@@ -143,6 +150,18 @@ func (e *convergeEnv) scan(_ context.Context, instanceID string) (certinventory.
 			SigningCAs: map[string]*x509.Certificate{regenCAName: e.ca.cert},
 			Expected:   []certinventory.ExpectedListener{{Key: regenLeaf, Locator: fmt.Sprintf("redis/0:%d", port)}},
 		},
+	}
+
+	if listenerless {
+		scan.Material.Expected = nil
+		hidden = true
+	}
+
+	if first {
+		defer func() {
+			// The scheduler logs a failed reconcile and returns the scan.
+			_ = e.store.ReconcileScan(ctx, scan, certinventory.ReconcileSources{Versions: e.credhub, Tasks: e.director})
+		}()
 	}
 
 	if !hidden {
@@ -358,15 +377,55 @@ func TestConvergeClearsDivergence(t *testing.T) {
 	expectReleased(t, manager)
 }
 
-// A converge whose deploy is done, but whose listener no scan observes
-// yet, keeps the divergence record and completes the instance with the
-// note that reconciliation waits for every listener.
+// expectUnconfirmedConverge fails the test unless the converge failed with
+// the note that its deploy finished but the record's clearing was not
+// confirmed, the record stays, and the guard is freed.
+func expectUnconfirmedConverge(t *testing.T, env *convergeEnv, manager *Manager, settled bool) {
+	t.Helper()
+
+	inst := current(t, manager).Instances[0]
+	if !settled || inst.Status != InstanceStatusFailed || !strings.Contains(inst.Error, "could not confirm") ||
+		!strings.Contains(inst.Error, strconv.Itoa(redeployTaskID)) {
+		t.Fatalf("expected a failure that names the finished deploy and the unconfirmed record, got settled=%v %s: %q",
+			settled, inst.Status, inst.Error)
+	}
+
+	if !env.diverged() {
+		t.Fatal("expected the divergence record to stay")
+	}
+
+	expectReleased(t, manager)
+}
+
+// A converge whose deploy is done, but whose listener no scan observes,
+// can't confirm that the divergence record cleared. The instance fails
+// with the note that the deploy finished, the record stays, and the guard
+// is freed.
 //
 //nolint:paralleltest // the runner shares the manager's test seams
-func TestConvergeKeepsRecordUntilListenersServe(t *testing.T) {
+func TestConvergeUnconfirmedWhileListenerUnseen(t *testing.T) {
 	env := newConvergeEnv(t)
 	env.diverge()
 	env.hidden = true
+
+	manager := env.newManager()
+	task := env.task()
+
+	expectUnconfirmedConverge(t, env, manager, env.run(manager, &task))
+
+	if scans := env.scanCount(); scans < verifyAttempts {
+		t.Fatalf("expected %d scans before the converge gave up, got %d", verifyAttempts, scans)
+	}
+}
+
+// A converge of a variable no listener serves clears the record once the
+// director lists its deploy as done after the patch.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestConvergeClearsWithoutListeners(t *testing.T) {
+	env := newConvergeEnv(t)
+	env.diverge()
+	env.listenerless = true
 
 	manager := env.newManager()
 	task := env.task()
@@ -376,15 +435,61 @@ func TestConvergeKeepsRecordUntilListenersServe(t *testing.T) {
 	}
 
 	inst := current(t, manager).Instances[0]
-	if inst.Status != InstanceStatusSuccess || !strings.Contains(inst.Error, "every listener") {
-		t.Fatalf("expected a success that names the wait for every listener, got %s: %q", inst.Status, inst.Error)
-	}
-
-	if !env.diverged() {
-		t.Fatal("expected the divergence record to stay until a scan observes the listener")
+	if inst.Status != InstanceStatusSuccess || inst.Error != "" || env.diverged() {
+		t.Fatalf("expected a clean success with the record cleared, got %s: %q (diverged %v)", inst.Status, inst.Error, env.diverged())
 	}
 
 	expectReleased(t, manager)
+}
+
+// A scan that reconciles the record before the converge does, as the
+// inventory's scheduler does, counts once its write is confirmed.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestConvergeConfirmsTheScannersReconcile(t *testing.T) {
+	env := newConvergeEnv(t)
+	env.diverge()
+	env.reconcileFirst = true
+
+	manager := env.newManager()
+	task := env.task()
+
+	if !env.run(manager, &task) {
+		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+	}
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusSuccess || inst.Error != "" || env.diverged() {
+		t.Fatalf("expected a clean success with the record cleared, got %s: %q (diverged %v)", inst.Status, inst.Error, env.diverged())
+	}
+
+	expectReleased(t, manager)
+}
+
+// A scan that reconciles the record before the converge does, but whose
+// write of the cleared record fails, never counts as a success. The
+// converge fails with the note that its deploy finished, and the record
+// stays.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestConvergeReconcileFailureKeepsRecord(t *testing.T) {
+	env := newConvergeEnv(t)
+	env.diverge()
+	env.reconcileFirst = true
+
+	env.dv.mu.Lock()
+	env.dv.failDeletes = true
+	env.dv.mu.Unlock()
+
+	manager := env.newManager()
+	task := env.task()
+	settled := env.run(manager, &task)
+
+	env.dv.mu.Lock()
+	env.dv.failDeletes = false
+	env.dv.mu.Unlock()
+
+	expectUnconfirmedConverge(t, env, manager, settled)
 }
 
 // A converge keeps the guard through the reconciliation that follows its
