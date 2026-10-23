@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -381,11 +382,12 @@ func TestGateRefusesUnknownGate(t *testing.T) {
 	}
 }
 
-// fakeDiagnostics logs each call with the settings it saw and prints the
-// status fixture that sits beside it.
+// fakeDiagnostics logs each call, with the user it ran as and the
+// settings it saw, in its home directory, and prints the status fixture
+// that sits beside it.
 const fakeDiagnostics = `#!/bin/sh
 dir=${0%/*}
-echo "$1 HOME=$HOME NODE=$RABBITMQ_NODENAME LONG=$RABBITMQ_USE_LONGNAME" >> "$dir/calls.log"
+echo "$1 UID=$(id -u) GID=$(id -g) HOME=$HOME NODE=$RABBITMQ_NODENAME LONG=$RABBITMQ_USE_LONGNAME" >> "$HOME/calls.log"
 case "$1" in
 check_running)
 	echo "Checking if RabbitMQ is running on node $RABBITMQ_NODENAME ..."
@@ -399,31 +401,53 @@ cluster_status)
 esac
 `
 
-func TestGateRabbitMQ(t *testing.T) {
-	t.Parallel()
+// newRabbitTree makes a root with the diagnostics, the status fixture,
+// the job's env file holding pass, and vcap's home, which vcap owns. The
+// root and the fixture are opened to other users, because the gate runs
+// the diagnostics as vcap.
+func newRabbitTree(t *testing.T, node, pass string) *vmTree {
+	t.Helper()
 	requireRoot(t)
-
-	const (
-		sbin = "/var/vcap/packages/rabbitmq/sbin"
-		node = "rabbit@q0.rabbitmq.default.rabbitmq-1.bosh"
-		pass = "rabbit-admin-pass"
-	)
 
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	for _, dir := range []string{filepath.Dir(root), root} {
+		err := os.Chmod(dir, 0o755) //nolint:gosec // vcap must reach the fake diagnostics
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	tree := &vmTree{root: root}
-	tree.mkdir(t, sbin)
+	tree.mkdir(t, rabbitSbin)
 	tree.mkdir(t, "/var/vcap/jobs/rabbitmq")
 	tree.mkdir(t, "/home/vcap")
-	tree.writeMode(t, sbin+"/rabbitmq-diagnostics", fakeDiagnostics, 0o755)
-	tree.write(t, sbin+"/status.json", string(readRabbitFixture(t)))
+	tree.giveToVCAP(t, "/home/vcap")
+	tree.writeMode(t, rabbitSbin+"/rabbitmq-diagnostics", fakeDiagnostics, 0o755)
+	tree.writeMode(t, rabbitSbin+"/status.json", string(readRabbitFixture(t)), 0o644)
 	tree.write(t, "/var/vcap/jobs/rabbitmq/env", "#!/bin/bash\n"+
 		"export HOME=\"${HOME:-/home/vcap}\"\n"+
 		"export RABBITMQ_ADMIN_PASS=\""+pass+"\"\n"+
 		"export RABBITMQ_NODENAME=\""+node+"\"\n")
+
+	return tree
+}
+
+// rabbitSbin is where the RabbitMQ package installs its tools.
+const rabbitSbin = "/var/vcap/packages/rabbitmq/sbin"
+
+func TestGateRabbitMQ(t *testing.T) {
+	t.Parallel()
+
+	const (
+		node = "rabbit@q0.rabbitmq.default.rabbitmq-1.bosh"
+		pass = "rabbit-admin-pass"
+	)
+
+	tree := newRabbitTree(t, node, pass)
 
 	out, code := runScript(t, tree.root, nil, "gate", "rabbitmq-cluster")
 	if code != 0 {
@@ -434,15 +458,60 @@ func TestGateRabbitMQ(t *testing.T) {
 		t.Error("the gate printed a password from the job's env file")
 	}
 
-	err = certscripts.ParseRabbitGate([]byte(out))
+	err := certscripts.ParseRabbitGate([]byte(out))
 	if err != nil {
 		t.Errorf("ParseRabbitGate: %v\noutput:\n%s", err, out)
 	}
 
-	calls := readLog(t, tree.at(sbin+"/calls.log"))
-	settings := " HOME=" + tree.at("/home/vcap") + " NODE=" + node + " LONG=true\n"
+	calls := readLog(t, tree.at("/home/vcap/calls.log"))
+	settings := " UID=" + strconv.Itoa(vcapUID) + " GID=" + strconv.Itoa(vcapUID) +
+		" HOME=" + tree.at("/home/vcap") + " NODE=" + node + " LONG=true\n"
 
 	if want := "check_running" + settings + "cluster_status" + settings; calls != want {
 		t.Errorf("calls = %q, want %q", calls, want)
 	}
+}
+
+// TestGateRabbitMQRefusesRootHome shows that the gate never runs the
+// diagnostics as root, so a vcap home that root owns, or a symlink in its
+// place, stops the gate before any call.
+func TestGateRabbitMQRefusesRootHome(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a home root owns", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newRabbitTree(t, "rabbit@q0", "x")
+
+		err := os.Lchown(tree.at("/home/vcap"), 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, code := runScript(t, tree.root, nil, "gate", "rabbitmq-cluster"); code != 1 {
+			t.Errorf("gate with a root home exited %d, want 1", code)
+		}
+
+		if tree.exists(t, "/home/vcap/calls.log") {
+			t.Error("the gate ran the diagnostics")
+		}
+	})
+
+	t.Run("a symlinked home", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newRabbitTree(t, "rabbit@q0", "x")
+		tree.mkdir(t, "/home/other")
+		tree.giveToVCAP(t, "/home/other")
+		tree.replace(t, "/home/vcap")
+		symlink(t, tree.at("/home/other"), tree.at("/home/vcap"))
+
+		if _, code := runScript(t, tree.root, nil, "gate", "rabbitmq-cluster"); code != 1 {
+			t.Errorf("gate with a symlinked home exited %d, want 1", code)
+		}
+
+		if tree.exists(t, "/home/other/calls.log") {
+			t.Error("the gate ran the diagnostics")
+		}
+	})
 }

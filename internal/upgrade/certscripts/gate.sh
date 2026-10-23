@@ -12,7 +12,7 @@
 # it is never printed.
 #
 # For RabbitMQ it runs rabbitmq-diagnostics check_running and
-# cluster_status, and prints
+# cluster_status as vcap, and prints
 #
 #   check_running exit=<n>
 #   cluster_status exit=<n>
@@ -112,16 +112,26 @@ _gt_redis() {
 	done <<< "$out"
 }
 
-# _gt_rabbitmq runs the RabbitMQ checks as root, with the node name from
-# the job's env file and the Erlang cookie in vcap's home.
+# _gt_rabbitmq runs the RabbitMQ checks as vcap, never as root, with the
+# node name from the job's env file and the Erlang cookie in vcap's home.
+# The user is the owner of vcap's home, which pre-start gives to vcap
+# along with the cookie, so the gate stops when root owns that home or a
+# symlink stands in its place. setpriv keeps the environment set here.
 _gt_rabbitmq() {
-	local root diag env line node='' running status code
+	local root diag env home owner uid gid line node='' running status code
 
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 	diag=$root/var/vcap/packages/rabbitmq/sbin/rabbitmq-diagnostics
 	env=$root/var/vcap/jobs/rabbitmq/env
+	home=$root/home/vcap
 
 	[ -f "$diag" ] && [ -x "$diag" ] && [ -f "$env" ] || return 1
+	[ -d "$home" ] && [ ! -L "$home" ] || return 1
+
+	owner=$(stat -c '%u %g' -- "$home") || return 1
+	uid=${owner% *}
+	gid=${owner#* }
+	[[ $uid =~ ^[1-9][0-9]*$ ]] && [[ $gid =~ ^[1-9][0-9]*$ ]] || return 1
 
 	while IFS= read -r line || [ -n "$line" ]; do
 		line=${line%$'\r'}
@@ -134,17 +144,19 @@ _gt_rabbitmq() {
 	[ -n "$node" ] || return 1
 
 	(
-		export HOME=$root/home/vcap RABBITMQ_NODENAME=$node RABBITMQ_USE_LONGNAME=true
+		export HOME=$home RABBITMQ_NODENAME=$node RABBITMQ_USE_LONGNAME=true
 		export PATH=$root/var/vcap/packages/erlang/bin:$root/var/vcap/packages/rabbitmq/sbin:$PATH
 
 		if [ -f "$root/var/vcap/jobs/rabbitmq/config/erl_inetrc" ]; then
 			export ERL_INETRC=$root/var/vcap/jobs/rabbitmq/config/erl_inetrc
 		fi
 
-		timeout 60 "$diag" check_running > /dev/null 2>&1
+		timeout 60 setpriv --reuid="$uid" --regid="$gid" --clear-groups -- \
+			"$diag" check_running > /dev/null 2>&1
 		running=$?
 
-		status=$(timeout 60 "$diag" cluster_status --formatter json 2> /dev/null)
+		status=$(timeout 60 setpriv --reuid="$uid" --regid="$gid" --clear-groups -- \
+			"$diag" cluster_status --formatter json 2> /dev/null)
 		code=$?
 
 		printf 'check_running exit=%d\ncluster_status exit=%d\n%s\n' "$running" "$code" "$status"
