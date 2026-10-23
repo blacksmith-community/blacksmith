@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -184,7 +185,7 @@ func (e *verifyEnv) journal(port int) *VMJournal {
 			{Path: "/var/vcap/data/jobs/redis/abc/config/tls/redis.crt", Job: certJob, Role: FileRoleCertificate, Variable: regenLeaf},
 			{Path: "/var/vcap/data/jobs/redis/abc/config/tls/redis.key", Job: certJob, Role: FileRoleKey, Variable: regenLeaf},
 		},
-		Targets: []TargetResult{{Variable: regenLeaf, Port: port}},
+		Targets: []TargetResult{{Variable: regenLeaf, Port: port, ServerName: verifyServerName}},
 	}
 }
 
@@ -420,32 +421,93 @@ func (d *listedDirector) GetDeploymentVMs(context.Context, string) ([]bosh.VM, e
 	return append([]bosh.VM(nil), d.vms...), nil
 }
 
-// With no new version to read the common name from, the checks send no
-// server name, because the fingerprint decides the result either way.
-func TestVerifyTargetsWithoutServerName(t *testing.T) {
+// The checks send the server name the caller put on the target, and they
+// never read CredHub, whose version answer carries the private key.
+func TestVerifyTargetsUseTheTargetsServerName(t *testing.T) {
 	t.Parallel()
 
-	env := newVerifyEnv(t)
-	env.inst.Certificates.Variables[0].NewVersionID = "v9"
+	const name = "redis-0.service.internal"
 
+	env := newVerifyEnv(t)
 	listener := startSNIListener(t, env.newLeaf, env.newKey)
 
-	got := onlyResult(t, env.verify(env.journal(listener.port()), (&fakeVerifyRun{}).run))
+	journal := env.journal(listener.port())
+	journal.Targets[0].ServerName = name
+
+	got := onlyResult(t, env.verify(journal, (&fakeVerifyRun{}).run))
 	if got.Method != verifyMethodProbe || !got.OK {
 		t.Fatalf("expected a passing probe, got %+v", got)
 	}
 
-	if names := listener.serverNames(); len(names) != 1 || names[0] != "" {
-		t.Fatalf("expected one handshake with no server name, got %q", names)
+	if names := listener.serverNames(); len(names) != 1 || names[0] != name {
+		t.Fatalf("expected one handshake naming %s, got %q", name, names)
 	}
 
 	run := &fakeVerifyRun{result: ssh.Result{Stdout: []byte("fingerprint=" + env.newFP + "\n")}}
 	port := closedPort(t)
 
-	got = onlyResult(t, env.verify(env.journal(port), run.run))
-	if !got.OK || !reflect.DeepEqual(run.recorded(), [][]string{{verifyScript, strconv.Itoa(port), ""}}) {
-		t.Fatalf("expected the fallback with an empty server name, got %+v and %q", got, run.recorded())
+	journal = env.journal(port)
+	journal.Targets[0].ServerName = name
+
+	got = onlyResult(t, env.verify(journal, run.run))
+	if !got.OK || !reflect.DeepEqual(run.recorded(), [][]string{{verifyScript, strconv.Itoa(port), name}}) {
+		t.Fatalf("expected the fallback with the target's server name, got %+v and %q", got, run.recorded())
 	}
+
+	if reads := env.credhub.readList(); len(reads) != 0 {
+		t.Fatalf("verification read CredHub versions %q", reads)
+	}
+}
+
+// A target with no server name, or one verify.sh would refuse, gets no
+// SNI, because the fingerprint decides the result either way. The new
+// version's common name is never read in its place.
+func TestVerifyTargetsWithoutServerName(t *testing.T) {
+	t.Parallel()
+
+	for label, name := range map[string]string{"no name": "", "a wildcard": "*.ws.example", "an option": "-connect"} {
+		t.Run(label, func(t *testing.T) {
+			t.Parallel()
+
+			env := newVerifyEnv(t)
+			listener := startSNIListener(t, env.newLeaf, env.newKey)
+
+			journal := env.journal(listener.port())
+			journal.Targets[0].ServerName = name
+
+			got := onlyResult(t, env.verify(journal, (&fakeVerifyRun{}).run))
+			if got.Method != verifyMethodProbe || !got.OK {
+				t.Fatalf("expected a passing probe, got %+v", got)
+			}
+
+			if names := listener.serverNames(); len(names) != 1 || names[0] != "" {
+				t.Fatalf("expected one handshake with no server name, got %q", names)
+			}
+
+			run := &fakeVerifyRun{result: ssh.Result{Stdout: []byte("fingerprint=" + env.newFP + "\n")}}
+			port := closedPort(t)
+
+			journal = env.journal(port)
+			journal.Targets[0].ServerName = name
+
+			got = onlyResult(t, env.verify(journal, run.run))
+			if !got.OK || !reflect.DeepEqual(run.recorded(), [][]string{{verifyScript, strconv.Itoa(port), ""}}) {
+				t.Fatalf("expected the fallback with an empty server name, got %+v and %q", got, run.recorded())
+			}
+
+			if reads := env.credhub.readList(); len(reads) != 0 {
+				t.Fatalf("verification read CredHub versions %q", reads)
+			}
+		})
+	}
+}
+
+// readList returns the version IDs the fake has served so far.
+func (f *regenCredHub) readList() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.reads)
 }
 
 // A variable with no fingerprint to compare against never passes.

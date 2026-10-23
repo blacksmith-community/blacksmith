@@ -318,6 +318,10 @@ type TargetResult struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 	OK          bool   `json:"ok"`
 	Detail      string `json:"detail,omitempty"`
+	// ServerName is the name the checks send for SNI. The caller sets it
+	// from the validated new certificate before each verification, and it
+	// is never saved, so the journal holds no certificate content.
+	ServerName string `json:"-"`
 }
 
 // certificateTarget describes a certificate task for the task list, such

@@ -39,10 +39,16 @@ var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // verifyTargets checks that every listener the journal names for the VM
 // serves the new certificate of its variable. It probes each listener
-// from the broker, sending the certificate's common name for SNI, and
-// when the broker cannot reach the listener it runs verify.sh on the VM
-// through run, which reads the listener over 127.0.0.1. newFingerprint
-// maps each variable to the lowercase hex SHA-256 of its new leaf's DER.
+// from the broker, sending the target's ServerName for SNI, and when the
+// broker cannot reach the listener it runs verify.sh on the VM through
+// run, which reads the listener over 127.0.0.1. newFingerprint maps each
+// variable to the lowercase hex SHA-256 of its new leaf's DER.
+//
+// The caller sets each target's ServerName from the new certificate it
+// already validated, so verification never reads CredHub, whose version
+// answer carries the private key. A target with no name, or a name
+// verify.sh would refuse, gets no SNI, and the fingerprint still decides
+// the result.
 //
 // A variable the journal's files hold but no target names gets a result
 // with method none, which passes, because nothing outside the VM can see
@@ -57,13 +63,6 @@ func (m *Manager) verifyTargets(ctx context.Context, inst *InstanceUpgrade, jour
 	cid := journal.CID
 	targets := slices.Clone(journal.Targets)
 	files := slices.Clone(journal.Files)
-	versions := make(map[string]string)
-
-	if inst.Certificates != nil {
-		for _, variable := range inst.Certificates.Variables {
-			versions[variable.Name] = variable.NewVersionID
-		}
-	}
 
 	m.mu.RUnlock()
 
@@ -71,7 +70,6 @@ func (m *Manager) verifyTargets(ctx context.Context, inst *InstanceUpgrade, jour
 		manager: m,
 		address: m.vmAddress(ctx, deployment, cid),
 		run:     run,
-		names:   make(map[string]string),
 	}
 
 	var results []TargetResult
@@ -84,8 +82,7 @@ func (m *Manager) verifyTargets(ctx context.Context, inst *InstanceUpgrade, jour
 		}
 
 		listened[target.Variable] = true
-		name := check.serverName(ctx, target.Variable, versions[target.Variable])
-		results = append(results, check.verify(ctx, target, name, newFingerprint[target.Variable]))
+		results = append(results, check.verify(ctx, target, newFingerprint[target.Variable]))
 	}
 
 	for _, file := range files {
@@ -124,36 +121,6 @@ type targetCheck struct {
 	manager *Manager
 	address string
 	run     func(op string, args ...string) (ssh.Result, error)
-	// names caches each variable's server name.
-	names map[string]string
-}
-
-// serverName returns the common name of the variable's new certificate
-// when it is a name verify.sh accepts, or "" for no SNI. The fingerprint
-// decides the result either way, so a name that cannot be read only
-// means the handshake carries none.
-func (c *targetCheck) serverName(ctx context.Context, variable, versionID string) string {
-	if name, ok := c.names[variable]; ok {
-		return name
-	}
-
-	name := ""
-
-	api := c.manager.certDeps().CredHub
-	if api != nil && versionID != "" {
-		readCtx, cancel := context.WithTimeout(ctx, certinventory.CredHubCallTimeout)
-		public, err := api.CertificateVersion(readCtx, versionID)
-
-		cancel()
-
-		if cert := firstCertificate(public); err == nil && cert != nil {
-			name = validServerName(cert.Subject.CommonName)
-		}
-	}
-
-	c.names[variable] = name
-
-	return name
 }
 
 // validServerName returns name when verify.sh accepts it, or "".
@@ -167,8 +134,9 @@ func validServerName(name string) string {
 
 // verify checks one listener, from the broker first and from the VM when
 // the broker cannot reach it.
-func (c *targetCheck) verify(ctx context.Context, target TargetResult, name, want string) TargetResult {
-	result := TargetResult{Variable: target.Variable, Port: target.Port}
+func (c *targetCheck) verify(ctx context.Context, target TargetResult, want string) TargetResult {
+	name := validServerName(target.ServerName)
+	result := TargetResult{Variable: target.Variable, Port: target.Port, ServerName: target.ServerName}
 
 	reached := false
 
