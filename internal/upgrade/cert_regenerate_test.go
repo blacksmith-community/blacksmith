@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -575,6 +576,84 @@ func TestRegenerateNotSentWhenRotationTurnedOff(t *testing.T) {
 
 	if state := firstVariable(env.vault.lastRecord(t)).RegenerateState; state != RegenerateNotSent {
 		t.Fatalf("expected the saved variable back at not_sent, got %s", state)
+	}
+}
+
+// Rotation turned off while the baseline was being saved stops the
+// request before the record ever announces it as sending, so no restart
+// can mistake it for a request whose outcome is unknown.
+func TestRegenerateRotationOffBeforeSendingSave(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	env.vault.onSaved = func(task UpgradeTask) {
+		if variable := firstVariable(task); variable.RegenerateState == RegenerateNotSent && len(variable.Baseline) > 0 {
+			env.setSwitches(false, false)
+		}
+	}
+
+	stop, err := env.run()
+	if !stop {
+		t.Fatal("expected the step to stop")
+	}
+
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeRotationDisabled)
+
+	if n := env.credhub.regenerateCount(); n != 0 {
+		t.Fatalf("expected no regenerate request, got %d", n)
+	}
+
+	for _, event := range env.log.list() {
+		if strings.HasPrefix(event, "save:"+RegenerateSending) {
+			t.Fatalf("expected no save of sending, got %v", env.log.list())
+		}
+	}
+
+	if task := env.current(); task.Status != TaskStatusPaused || firstVariable(task).RegenerateState != RegenerateNotSent {
+		t.Fatalf("expected the task paused with the variable not sent, got %s and %s", task.Status, firstVariable(task).RegenerateState)
+	}
+}
+
+// When rotation is turned off after the sending save and the save that
+// puts the variable back at not_sent can't be confirmed, Vault may still
+// hold sending. The variable is not sent in memory, and the instance's
+// message tells the operator that a restart may ask to reconcile a
+// request that never went out.
+func TestRegenerateRefusedAfterSendingUnsavedReset(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+
+	var sent atomic.Bool
+
+	env.vault.onSaved = func(task UpgradeTask) {
+		if firstVariable(task).RegenerateState == RegenerateSending {
+			sent.Store(true)
+			env.setSwitches(false, false)
+		}
+	}
+
+	env.vault.refuse = func(UpgradeTask) bool { return sent.Load() }
+
+	stop, err := env.run()
+	if !stop {
+		t.Fatal("expected the step to stop")
+	}
+
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeRotationDisabled)
+
+	if n := env.credhub.regenerateCount(); n != 0 {
+		t.Fatalf("expected no regenerate request, got %d", n)
+	}
+
+	task := env.current()
+	if task.Status != TaskStatusPaused || firstVariable(task).RegenerateState != RegenerateNotSent {
+		t.Fatalf("expected the task paused with the variable not sent, got %s and %s", task.Status, firstVariable(task).RegenerateState)
+	}
+
+	message := task.Instances[0].Error
+	if !strings.Contains(message, "Certificate rotation is turned off") || !strings.Contains(message, "never sent the request to regenerate redis_crt") {
+		t.Fatalf("expected the switch's message and the unsaved reset, got %q", message)
 	}
 }
 

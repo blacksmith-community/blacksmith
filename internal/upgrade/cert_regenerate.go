@@ -160,6 +160,14 @@ func (m *Manager) sendRegenerate(ctx context.Context, api CredHubAPI, task *Upgr
 		return true, err
 	}
 
+	// The switches are read before the record announces the request, so
+	// rotation turned off by now pauses the task with the variable plainly
+	// not sent.
+	err = m.certWritesAllowed(m.rotationMode(task))
+	if err != nil {
+		return m.pauseWith(ctx, task, inst, err)
+	}
+
 	m.changeVariable(inst, index, func(v *VariableRotation) { v.RegenerateState = RegenerateSending })
 
 	err = m.persistCertConfirmed(ctx, task)
@@ -174,9 +182,7 @@ func (m *Manager) sendRegenerate(ctx context.Context, api CredHubAPI, task *Upgr
 	// off while the save was under way still stops the request.
 	err = m.certWritesAllowed(m.rotationMode(task))
 	if err != nil {
-		m.changeVariable(inst, index, func(v *VariableRotation) { v.RegenerateState = RegenerateNotSent })
-
-		return m.pauseWith(ctx, task, inst, err)
+		return m.pauseUnsent(ctx, task, inst, index, err)
 	}
 
 	result, err := api.Regenerate(ctx, variable.CertificateID)
@@ -517,9 +523,47 @@ func (m *Manager) pauseForCredHub(ctx context.Context, task *UpgradeTask, inst *
 		fmt.Sprintf("CredHub did not answer a read Blacksmith needs, so it did not %s. Resume once CredHub answers: %v", step, cause)))
 }
 
+// pauseUnsent pauses the task after the switches refused a regenerate
+// request that the saved record already announced as sending. The
+// variable goes back to not_sent, and the pause saves that state with a
+// confirmed save, so a restart finds the variable not sent rather than a
+// request whose outcome it can't tell. When the save can't be confirmed,
+// Vault may still hold sending, and the instance's message says what a
+// restart would then ask and that nothing went out. The next confirmed
+// save of the task stores not_sent. It returns the refusal.
+func (m *Manager) pauseUnsent(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, index int, refusal error) (bool, error) {
+	m.changeVariable(inst, index, func(v *VariableRotation) { v.RegenerateState = RegenerateNotSent })
+
+	if m.pauseSaved(ctx, task, inst, refusal) == nil {
+		return true, refusal
+	}
+
+	variable, _ := m.variableAt(inst, index)
+	short := shortName(variable.Name)
+	note := fmt.Sprintf("Blacksmith never sent the request to regenerate %s, but it could not confirm that it saved this, "+
+		"so a restart before its next save asks you to reconcile %s. CredHub made no new version of it, so there is no candidate to adopt.", short, short)
+
+	m.mu.Lock()
+	inst.Error += " " + note
+	m.mu.Unlock()
+
+	m.logger.Error("Certificate task %s: %s", task.ID, note)
+
+	return true, refusal
+}
+
 // pauseWith pauses the task with the error's message on the instance,
 // saves the record as well as it can, and returns the error.
 func (m *Manager) pauseWith(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, err error) (bool, error) {
+	m.pauseSaved(ctx, task, inst, err) //nolint:errcheck,gosec // pauseSaved logs a failed save
+
+	return true, err
+}
+
+// pauseSaved pauses the task with the error's message on the instance,
+// saves the record with a confirmed save, and returns the save's error,
+// which it logs.
+func (m *Manager) pauseSaved(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, err error) error {
 	message := err.Error()
 
 	var apiErr *apierr.Error
@@ -540,11 +584,12 @@ func (m *Manager) pauseWith(ctx context.Context, task *UpgradeTask, inst *Instan
 
 	m.logger.Error("Certificate task %s paused: %s", task.ID, message)
 
-	if saveErr := m.persistCertConfirmed(ctx, task); saveErr != nil {
+	saveErr := m.persistCertConfirmed(ctx, task)
+	if saveErr != nil {
 		m.logger.Error("Certificate task %s: %v", task.ID, saveErr)
 	}
 
-	return true, err
+	return saveErr
 }
 
 // failRotation fails the instance with the message, releases what the
