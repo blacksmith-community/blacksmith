@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -196,9 +197,9 @@ func auditVariableNames(variables []AuditVariable) string {
 	return strings.Join(names, ",")
 }
 
-// sanitizeAudit replaces any text field that holds PEM armour, so even a
-// reason an operator pasted a certificate into never reaches Vault or the
-// log. Line breaks are dropped from the free-text fields, so a value can't
+// sanitizeAudit cuts any PEM block out of a text field and keeps the text
+// around it, so even a reason an operator pasted a certificate into never
+// reaches Vault or the log. Line breaks are dropped from the free-text fields, so a value can't
 // forge a second log line.
 func sanitizeAudit(rec AuditRecord) AuditRecord {
 	rec.Actor = auditText(rec.Actor)
@@ -216,12 +217,14 @@ func sanitizeAudit(rec AuditRecord) AuditRecord {
 }
 
 func auditText(s string) string {
-	if strings.Contains(s, "-----BEGIN") || strings.Contains(s, "PRIVATE KEY") {
-		return auditRedacted
-	}
+	s = pemBlock.ReplaceAllString(s, auditRedacted)
 
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
 }
+
+// pemBlock matches a PEM block, from its BEGIN line to its END line, or to
+// the end of the text when the block is unfinished.
+var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)`)
 
 // enqueueAuditLocked queues the record to be written in the background, in
 // the order records were queued. The caller holds mu, which is what lets

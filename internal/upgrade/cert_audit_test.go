@@ -295,7 +295,7 @@ func TestAuditHoldsNoPEM(t *testing.T) {
 	}
 
 	settled := trail.find(t, AuditInstanceSettled)
-	if settled.Reason != auditRedacted || settled.Variables[0].OldSerial != "01ab" || settled.Variables[0].OldCertSHA256 != "f00d" {
+	if settled.Reason != "renew "+auditRedacted || settled.Variables[0].OldSerial != "01ab" || settled.Variables[0].OldCertSHA256 != "f00d" {
 		t.Fatalf("expected the reason redacted and the serial and fingerprint kept, got %+v", settled)
 	}
 }
@@ -569,5 +569,23 @@ func TestAuditConvergeRunReportsDivergenceCleared(t *testing.T) {
 	failed := failTrail.find(t, AuditInstanceSettled)
 	if failed.Outcome != string(InstanceStatusFailed) || failed.DivergenceCleared == nil || *failed.DivergenceCleared {
 		t.Fatalf("expected a failed converge with the divergence not cleared, got %+v", failed)
+	}
+}
+
+// A reason with a pasted PEM block keeps the text around the block, and
+// loses only the block.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditCutsOnlyThePEMBlock(t *testing.T) {
+	block := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+	rec := sanitizeAudit(AuditRecord{Reason: "CHG-1234 renew " + block + " per ops"})
+
+	if rec.Reason != "CHG-1234 renew "+auditRedacted+" per ops" {
+		t.Fatalf("expected only the block cut, got %q", rec.Reason)
+	}
+
+	open := sanitizeAudit(AuditRecord{Reason: "CHG-9 oops -----BEGIN RSA PRIVATE KEY-----\nMIIE"})
+	if open.Reason != "CHG-9 oops "+auditRedacted {
+		t.Fatalf("expected an unfinished block cut to the end, got %q", open.Reason)
 	}
 }
