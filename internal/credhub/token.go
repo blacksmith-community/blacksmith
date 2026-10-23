@@ -407,7 +407,9 @@ func scrubbed(err error, credential string) error {
 }
 
 // pinnedHTTPClient builds an HTTP client that trusts only caCert, requires
-// TLS 1.2 or newer, never follows a redirect, and bounds each request.
+// TLS 1.2 or newer, never follows a redirect, and bounds each request. It
+// never asks for a compressed answer, because a decompressor would hold
+// a key's bytes in buffers the caller cannot clear.
 func pinnedHTTPClient(caCert string) (*http.Client, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM([]byte(caCert)) {
@@ -419,6 +421,7 @@ func pinnedHTTPClient(caCert string) (*http.Client, error) {
 		TLSClientConfig:     &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout: requestTimeout,
 		ForceAttemptHTTP2:   true,
+		DisableCompression:  true,
 	}
 
 	return &http.Client{

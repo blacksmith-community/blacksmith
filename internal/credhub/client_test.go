@@ -156,6 +156,39 @@ func TestClientFindByPath(t *testing.T) {
 	}
 }
 
+// The client never asks for a compressed answer, because a decompressor
+// would hold a key's bytes in buffers the client cannot clear.
+func TestClientAsksForNoCompression(t *testing.T) {
+	t.Parallel()
+
+	var (
+		lock      sync.Mutex
+		encodings []string
+	)
+
+	fake := newFakeCredHub(t, func(_ int, request *http.Request) (int, string) {
+		lock.Lock()
+		defer lock.Unlock()
+
+		encodings = append(encodings, request.Header.Get("Accept-Encoding"))
+
+		return http.StatusOK, emptyFind
+	})
+	client := newTestClient(t, fake, &fakeTokens{})
+
+	_, err := client.FindByPath(context.Background(), labPrefix)
+	if err != nil {
+		t.Fatalf("FindByPath: %v", err)
+	}
+
+	lock.Lock()
+	defer lock.Unlock()
+
+	if len(encodings) != 1 || encodings[0] != "" {
+		t.Fatalf("expected one request with no Accept-Encoding, got %q", encodings)
+	}
+}
+
 func TestClientFindByPathEmpty(t *testing.T) {
 	t.Parallel()
 
