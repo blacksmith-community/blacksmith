@@ -179,6 +179,13 @@ func replacingJournal() *upgrade.VMJournal {
 	return journal
 }
 
+func noCIDJournal() *upgrade.VMJournal {
+	journal := resumeJournal(upgrade.VMPhaseSwapping, "")
+	journal.CID = ""
+
+	return journal
+}
+
 func sameHashJournal() *upgrade.VMJournal {
 	journal := resumeJournal(upgrade.VMPhaseStaged, "")
 	journal.Files[1].NewHash = journal.Files[1].OldHash
@@ -259,7 +266,12 @@ func guardRows() []resumeCase {
 		{"staged with a file already new", resumeJournal(upgrade.VMPhaseStaged, ""), live(journalCID, oldThenNew(), noBackups()), upgrade.ResumeUnrecovered},
 		{"swapped with a file old", resumeJournal(upgrade.VMPhaseSwapped, ""), live(journalCID, oldThenNew(), bothBackups()), upgrade.ResumeUnrecovered},
 		{"a file missing on the VM", resumeJournal(upgrade.VMPhaseSwapping, ""), live(journalCID, missingB(), bothBackups()), upgrade.ResumeUnrecovered},
-		{"the director reports no CID", resumeJournal(upgrade.VMPhaseStaged, ""), live("", bothOld(), noBackups()), upgrade.ResumeMarkReverted},
+		{"the director reports no CID", resumeJournal(upgrade.VMPhaseStaged, ""), live("", bothOld(), noBackups()), upgrade.ResumeRetryLater},
+		{"a verified VM the director reports no CID for", resumeJournal(upgrade.VMPhaseVerified, ""), live("", bothNew(), bothBackups()), upgrade.ResumeRetryLater},
+		{"a half-swapped VM the director reports no CID for", resumeJournal(upgrade.VMPhaseSwapping, ""), live("", oldThenNew(), bothBackups()), upgrade.ResumeRetryLater},
+		{"a journal with no CID", noCIDJournal(), live(journalCID, bothOld(), bothBackups()), upgrade.ResumeUnrecovered},
+		{"a journal and a director with no CID", noCIDJournal(), live("", bothOld(), bothBackups()), upgrade.ResumeUnrecovered},
+		{"a closed VM the director reports no CID for", resumeJournal(upgrade.VMPhaseDone, upgrade.CleanupDone), live("", bothNew(), bothBackups()), upgrade.ResumeNothing},
 		{"a recreate outranks a stray hash", resumeJournal(upgrade.VMPhaseVerified, ""), live(recreated, strayLive(), driftBackups()), upgrade.ResumeMarkReverted},
 		{"a journal with no files", &upgrade.VMJournal{CID: journalCID, Phase: upgrade.VMPhasePlanned}, live(journalCID, nil, nil), upgrade.ResumeUnrecovered},
 		{"a file whose old and new hashes match", sameHashJournal(), live(journalCID, bothOld(), noBackups()), upgrade.ResumeUnrecovered},
@@ -309,12 +321,14 @@ func TestDecideResumeActionsHaveLegalMoves(t *testing.T) {
 		upgrade.ResumeRestoreAll:      {upgrade.VMPhaseRolledBack, upgrade.VMPhaseUnrecovered},
 		upgrade.ResumeCompleteRestore: {upgrade.VMPhaseRolledBack, upgrade.VMPhaseUnrecovered},
 		upgrade.ResumeRestartRollback: {upgrade.VMPhaseRolledBack, upgrade.VMPhaseUnrecovered},
+		upgrade.ResumeRetryLater:      openPhases(),
 	}
 
 	lives := []upgrade.LiveState{
 		live(journalCID, bothOld(), noBackups()), live(journalCID, bothOld(), oneBackup()),
 		live(journalCID, bothOld(), bothBackups()), live(journalCID, oldThenNew(), bothBackups()),
 		live(journalCID, bothNew(), bothBackups()), live(recreated, bothNew(), bothBackups()),
+		live("", bothNew(), bothBackups()),
 	}
 
 	for _, phase := range openPhases() {

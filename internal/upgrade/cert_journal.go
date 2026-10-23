@@ -79,7 +79,8 @@ func (j *VMJournal) Advance(target VMPhase) error {
 // LiveState is what a resume finds on the VM. FileHashes is keyed by
 // FileEntry.Path and BackupHashes by FileEntry.BackupPath, the path the
 // patch script's check names when a backup drifts. A file or backup that
-// is missing has no key.
+// is missing has no key. An empty CID means the director's answer did
+// not name the VM, so its identity is unknown rather than changed.
 type LiveState struct {
 	CID          string
 	FileHashes   map[string]string
@@ -92,6 +93,7 @@ type ResumeAction string
 // The resume actions.
 const (
 	ResumeMarkReverted    ResumeAction = "mark_reverted"
+	ResumeRetryLater      ResumeAction = "retry_later"
 	ResumeUnrecovered     ResumeAction = "unrecovered"
 	ResumeContinueStaging ResumeAction = "continue_staging"
 	ResumeContinueBackups ResumeAction = "continue_backups"
@@ -157,8 +159,11 @@ func (t liveTally) mixed() bool  { return t.old > 0 && t.new > 0 && t.old+t.new 
 // DecideResume picks what a resume does with one VM from its journal and
 // what the VM holds now. The rows are checked in order and the first that
 // matches wins. A combination no row names leaves an open VM unrecovered,
-// so a resume never guesses a forward step. The string explains the
-// choice in one sentence for the task record, and it never carries a hash.
+// so a resume never guesses a forward step. Only a different, non-empty
+// CID marks a VM reverted. A director answer with no CID leaves the VM in
+// its phase for a later resume, and a journal with no CID matches nothing
+// and leaves it unrecovered. The string explains the choice in one
+// sentence for the task record, and it never carries a hash.
 func DecideResume(journal *VMJournal, live LiveState) (ResumeAction, string) {
 	if journal == nil {
 		return ResumeUnrecovered, "There is no journal for this VM, so nothing about its files is known."
@@ -170,6 +175,14 @@ func DecideResume(journal *VMJournal, live LiveState) (ResumeAction, string) {
 		}
 
 		return ResumeNothing, fmt.Sprintf("The VM is %s and has nothing left to do.", journal.Phase)
+	}
+
+	if journal.CID == "" {
+		return ResumeUnrecovered, fmt.Sprintf("The journal names no CID for the VM, so a VM left %s cannot be matched to the one the director reports.", journal.Phase)
+	}
+
+	if live.CID == "" {
+		return ResumeRetryLater, fmt.Sprintf("The director did not name the VM's CID, so the VM stays %s until a later resume can confirm which VM it is.", journal.Phase)
 	}
 
 	if live.CID != journal.CID {
