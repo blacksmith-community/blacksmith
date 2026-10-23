@@ -6120,6 +6120,27 @@
   };
 
   // Start upgrade for selected instances
+  // The lines of the dialog that lists the unconverged instances an upgrade
+  // would take along. Each is a label and a value, shown as text.
+  const buildUpgradeDivergedDetails = (diverged) => {
+    const details = [];
+    diverged.forEach((item) => {
+      const name = String(item.instance_id || 'instance');
+      const state = item.divergence && item.divergence.state ? String(item.divergence.state) : 'unconverged';
+      const since = item.divergence && item.divergence.since ? ` since ${item.divergence.since}` : '';
+      details.push({ label: name, value: `${state}${since}` });
+      const variables = Array.isArray(item.variables) ? item.variables.map(String) : [];
+      if (variables.length > 0) details.push({ label: `Patched variables on ${name}`, value: variables.join('; ') });
+      const extra = Array.isArray(item.additional) ? item.additional.filter(Boolean) : [];
+      if (extra.length > 0) {
+        details.push({ label: `Also changes on ${name}`, value: extra.map((pair) => String(pair.name)).join('; ') });
+      } else {
+        details.push({ label: `Also changes on ${name}`, value: 'No other variable.' });
+      }
+    });
+    return details;
+  };
+
   const startUpgrade = async () => {
     const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
     const releaseSelect = document.getElementById('upgrade-release-filter');
@@ -6185,45 +6206,78 @@
         upgradeButton.textContent = 'Starting...';
       }
 
-      const response = await fetch('/b/upgrade/tasks', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      });
+      // An instance that a patch left unconverged takes the whole deploy,
+      // so we ask the broker what this upgrade would change on such
+      // instances, show it, and send the preview ID back with the create.
+      // A create that answers with a stale or missing preview sends us
+      // round again, and a few rounds are all we try.
+      let note = '';
+      for (let round = 0; round < 3; round++) {
+        let preview;
+        try {
+          preview = (await rotatePostJSON('/b/upgrade/preview', requestBody)).body;
+        } catch (err) {
+          window.Feedback.error(`The upgrade was not started, because the preview failed. ${apiErrorText(err)}`, { toast: true });
+          return;
+        }
 
-      if (response.ok) {
-        const task = await response.json();
-        console.log('Upgrade task created:', task.id);
+        const diverged = Array.isArray(preview && preview.diverged) ? preview.diverged.filter(Boolean) : [];
+        const createBody = { ...requestBody };
+        if (diverged.length > 0) {
+          const answer = await showConfirmDialog({
+            title: 'Upgrade instances that are not converged?',
+            message: `${note ? `${note} ` : ''}A patch left ${diverged.length === 1 ? 'this instance' : 'these instances'} unconverged, so the upgrade deploys the latest certificates along with its own changes. Review them, then confirm.`,
+            details: buildUpgradeDivergedDetails(diverged),
+            confirmText: 'Upgrade',
+            cancelText: 'Cancel',
+            danger: true
+          });
+          if (!answer || (answer !== true && !answer.confirmed)) return;
+          createBody.upgrade_preview_id = preview.id;
+        }
 
-        // Clear selection
-        selectedUpgradeInstances.clear();
-        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
-          const checkbox = item.querySelector('input[type="checkbox"]');
-          if (checkbox) checkbox.checked = false;
-          item.classList.remove('selected');
+        const response = await fetch('/b/upgrade/tasks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(createBody)
         });
-        updateUpgradeButton();
 
-        // Refresh task list and select new task
-        await fetchUpgradeTasks();
-        selectUpgradeTask(task.id);
-      } else {
+        if (response.ok) {
+          const task = await response.json();
+          console.log('Upgrade task created:', task.id);
+
+          // Clear selection
+          selectedUpgradeInstances.clear();
+          document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+            const checkbox = item.querySelector('input[type="checkbox"]');
+            if (checkbox) checkbox.checked = false;
+            item.classList.remove('selected');
+          });
+          updateUpgradeButton();
+
+          // Refresh task list and select new task
+          await fetchUpgradeTasks();
+          selectUpgradeTask(task.id);
+          return;
+        }
+
         // The broker answers with JSON that names the reason, such as an
         // instance another upgrade holds, or upgrades still loading.
-        const body = await response.text();
-        let message = body;
-        try {
-          message = JSON.parse(body).error || body;
-        } catch (parseError) {
-          // A body that is not JSON is shown as it is.
+        const err = await readApiError(response);
+        const stale = (err.status === 409 && err.code === 'upgrade_preview_required') ||
+          err.status === 410 || err.code === 'preview_expired';
+        if (stale && round < 2) {
+          note = PREVIEW_EXPIRED_NOTE;
+          continue;
         }
-        alert(`Failed to start upgrade: ${message}`);
+        window.Feedback.error(`Failed to start upgrade: ${apiErrorText(err)}`, { toast: true });
+        return;
       }
     } catch (err) {
       console.error('Failed to start upgrade:', err);
-      alert(`Failed to start upgrade: ${err.message}`);
+      window.Feedback.error(`Failed to start upgrade: ${err.message}`, { toast: true });
     } finally {
       updateUpgradeButton();
     }
