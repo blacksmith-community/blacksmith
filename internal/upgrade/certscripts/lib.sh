@@ -8,6 +8,8 @@
 # one of these codes.
 #
 #   0   success
+#   1   any other failure, after which the state is unknown, so the broker
+#       runs check before it goes on
 #   2   a usage error
 #   10  drift, meaning a hash that is neither the old one nor the new one
 #   11  an existing backup with the wrong hash

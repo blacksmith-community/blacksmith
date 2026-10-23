@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -696,6 +697,43 @@ func TestScriptJoinsLib(t *testing.T) {
 		if body != lib+readSource(t, name) {
 			t.Errorf("Script(%s) is not lib.sh followed by the script", name)
 		}
+	}
+}
+
+// TestExitTableMatchesGo shows that the table of exit codes in lib.sh's
+// header lists exactly the codes that have Go constants.
+func TestExitTableMatchesGo(t *testing.T) {
+	t.Parallel()
+
+	want := []int{
+		certscripts.ExitOK, certscripts.ExitUnknown, certscripts.ExitUsage, certscripts.ExitDrift,
+		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused,
+	}
+
+	row := regexp.MustCompile(`^#   ([0-9]+) +[a-z]`)
+
+	var got []int
+
+	for _, line := range strings.Split(readSource(t, libScript), "\n") {
+		if !strings.HasPrefix(line, "#") {
+			break
+		}
+
+		match := row.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+
+		code, err := strconv.Atoi(match[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		got = append(got, code)
+	}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("lib.sh's table lists the codes %v, want %v", got, want)
 	}
 }
 

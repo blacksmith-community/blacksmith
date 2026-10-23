@@ -29,9 +29,12 @@ const libName = "lib"
 // patchScript is the script that changes files on a VM, staging included.
 const patchScript = "patch"
 
-// The exit codes every script uses, which lib.sh lists as well.
+// The exit codes every script uses, which lib.sh lists as well. ExitUnknown
+// is any other failure, after which the broker treats the VM's state as
+// unknown and runs check before it goes on.
 const (
 	ExitOK      = 0
+	ExitUnknown = 1
 	ExitUsage   = 2
 	ExitDrift   = 10
 	ExitBackup  = 11
