@@ -831,8 +831,8 @@ func TestPatchResumeCancelledAtEveryBoundary(t *testing.T) {
 				t.Fatalf("expected VM 1 at %s to hold the %s pair, got %s", j.Phase, want, got)
 			}
 
-			if (j.Cleanup != "" && j.Cleanup != CleanupDone) || env.workFiles(0) != 0 {
-				t.Fatalf("expected VM 1 cleaned up, got cleanup %q with %d files left", j.Cleanup, env.workFiles(0))
+			if (j.Cleanup != "" && j.Cleanup != CleanupDone) || env.workFiles() != 0 {
+				t.Fatalf("expected VM 1 cleaned up, got cleanup %q with %d files left", j.Cleanup, env.workFiles())
 			}
 
 			for i := 1; i < len(env.vms); i++ {
@@ -1144,19 +1144,19 @@ func cancelledWithFiles(t *testing.T, b resumeBoundary) (*patchEnv, *crasher, Up
 
 	env, c, stored := boundaryEnv(t, b)
 
-	if j := storedJournal(stored); midVM(j.Phase) || j.Cleanup != CleanupPending || env.workFiles(0) == 0 {
-		t.Fatalf("expected VM 1 left with its files and its cleanup pending, got %s with cleanup %q and %d files", j.Phase, j.Cleanup, env.workFiles(0))
+	if j := storedJournal(stored); midVM(j.Phase) || j.Cleanup != CleanupPending || env.workFiles() == 0 {
+		t.Fatalf("expected VM 1 left with its files and its cleanup pending, got %s with cleanup %q and %d files", j.Phase, j.Cleanup, env.workFiles())
 	}
 
 	return env, c, stored
 }
 
-// workFiles counts the staged copies and backups on the VM.
-func (e *patchEnv) workFiles(vm int) int {
+// workFiles counts the staged copies and backups on VM 1.
+func (e *patchEnv) workFiles() int {
 	e.patch.mu.Lock()
 	defer e.patch.mu.Unlock()
 
-	return len(e.vms[vm].staged) + len(e.vms[vm].backups)
+	return len(e.vms[0].staged) + len(e.vms[0].backups)
 }
 
 // filteredOpsSince lists the patch.sh operations run on the VM from the
@@ -1208,8 +1208,8 @@ func TestPatchCancelledCleansUpClosedVMs(t *testing.T) {
 			second := env.startCancelled(t, stored, nil)
 			j := expectCancelledSettled(t, env, c, second, stored)
 
-			if j.Cleanup != CleanupDone || env.workFiles(0) != 0 {
-				t.Fatalf("expected VM 1 cleaned up, got cleanup %q with %d files left", j.Cleanup, env.workFiles(0))
+			if j.Cleanup != CleanupDone || env.workFiles() != 0 {
+				t.Fatalf("expected VM 1 cleaned up, got cleanup %q with %d files left", j.Cleanup, env.workFiles())
 			}
 
 			want := cancelledBetweenVMs

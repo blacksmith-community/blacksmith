@@ -586,8 +586,8 @@ func TestResolveConvergeOutcomeKeepsRecord(t *testing.T) {
 		action  string
 		message string
 	}{
-		{action: "failed", message: "The operator marked the deploy failed. " + convergeUnappliedNote},
-		{action: "abandon", message: "The operator abandoned this deploy, so its outcome stays unknown. Check which certificates the deployment serves. " + convergeUnappliedNote},
+		{action: actionFailed, message: "The operator marked the deploy failed. " + convergeUnappliedNote},
+		{action: actionAbandon, message: "The operator abandoned this deploy, so its outcome stays unknown. Check which certificates the deployment serves. " + convergeUnappliedNote},
 	}
 
 	for _, tc := range cases {

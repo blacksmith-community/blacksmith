@@ -124,10 +124,10 @@ func (m *Manager) certWritesAllowedLocked(mode RotationMode) error {
 
 // writesAllowed says whether the switches and the CredHub client of the
 // dependencies let a certificate task in this mode change anything now.
-func writesAllowed(d Deps, mode RotationMode) error {
+func writesAllowed(deps Deps, mode RotationMode) error {
 	var switches config.CertificatesConfig
-	if d.Switches != nil {
-		switches = d.Switches()
+	if deps.Switches != nil {
+		switches = deps.Switches()
 	}
 
 	if !switches.RotationEnabled() {
@@ -138,7 +138,7 @@ func writesAllowed(d Deps, mode RotationMode) error {
 		return apierr.New(http.StatusForbidden, apierr.CodePatchDisabled, "Patching certificates in place is turned off. Set certificates.patch_in_place.enabled to true to allow it.")
 	}
 
-	if d.CredHub == nil {
+	if deps.CredHub == nil {
 		return apierr.New(http.StatusForbidden, apierr.CodeCredHubNotConfigured, "CredHub is not configured, so certificates can't be regenerated.")
 	}
 
