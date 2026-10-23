@@ -122,6 +122,11 @@ t('patch in place controls', async () => {
   w.blacksmithRotate.openInstanceDialog(host2,{instanceId:'i2',certs:dc.slice(0,1),capabilities:{patch_in_place:{enabled:false,reason:EVIL}}});
   ok(host2.querySelector('#rotate-dialog-i2-patch').disabled&&host2.querySelector('#rotate-dialog-i2-patch-reason').textContent.includes(EVIL)&&host2.querySelectorAll('img,script').length===0,'dialog: switch-off reason shown as inert text');
 
+  // a broker that does not report the capability is treated as closed
+  const host3=d.createElement('div'); d.body.appendChild(host3);
+  w.blacksmithRotate.openInstanceDialog(host3,{instanceId:'i3',certs:dc.slice(0,1),capabilities:{}});
+  ok(host3.querySelector('#rotate-dialog-i3-patch').disabled,'dialog: patch stays off when the capability is missing');
+
   // vault_unavailable advice
   ok(/Vault did not answer/.test(T.apiErrorText({code:'vault_unavailable',message:'x'})||''),'vault_unavailable advice');
   ok(alerts.length===0,'no alerts: '+alerts.join('|'));

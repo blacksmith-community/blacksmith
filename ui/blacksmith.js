@@ -4285,8 +4285,9 @@
     // Patch is open when the switch is on and every picked certificate lists
     // patch among its modes.
     const dialogPatchBlock = () => {
+      // A broker that doesn't report the capability is treated as closed.
       const patch = options.capabilities && options.capabilities.patch_in_place;
-      if (patch && patch.enabled !== true) return patchOffText(patch.reason);
+      if (!patch || patch.enabled !== true) return patchOffText(patch && patch.reason);
       for (const cert of certs) {
         if (!chosen.has(String(cert.key))) continue;
         if (!Array.isArray(cert.modes) || !cert.modes.includes('patch')) {
@@ -19107,7 +19108,7 @@
           (Array.isArray(cert.observations) ? cert.observations : []).forEach((obs) => {
             if (!obs || obs.source !== 'probe' || obs.state === 'failed' || obs.state === 'stale') return;
             if (obs.matches !== 'latest' && obs.matches !== 'deployed') return;
-            const name = String(obs.locator || 'a listener').split(' ')[0];
+            const name = obs.locator ? String(obs.locator).split(' ')[0] : 'A listener';
             add(name, obs.matches === 'latest' ? 'applied' : 'old');
           });
         });

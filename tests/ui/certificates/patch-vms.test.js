@@ -15,7 +15,7 @@ const mkTask=(over={},inst={})=>({id:'task-1',name:'N',kind:'certificates',statu
 t('partly patched instances', async () => {
   const env=boot(); const {w,d,errors,alerts,calls}=env; const T=w.__T;
   let divergent=true;
-  const certs=()=>[dcert({divergence:divergent?{state:'unconverged',task_id:'t9',since:'2026-10-21T14:00:00Z'}:undefined,observations:[probe('web/0 10.0.0.5:6379','latest'),probe(EV2+'/1 [fe80::1]:6379','deployed'),probe('web/3 port 6379','latest'),probe('web/2 10.0.0.7:6379','latest','failed')]})];
+  const certs=()=>[dcert({divergence:divergent?{state:'unconverged',task_id:'t9',since:'2026-10-21T14:00:00Z'}:undefined,observations:[probe('web/0 10.0.0.5:6379','latest'),probe(EV2+'/1 [fe80::1]:6379','deployed'),probe('web/3 port 6379','latest'),probe('web/2 10.0.0.7:6379','latest','failed'),probe('','latest')]})];
   w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
     ['/b/certificates/inventory',(u,o,j)=>j(200,{certificates:certs(),capabilities:{rotation:{enabled:true},patch_in_place:{enabled:true}}})],
     [/certificates\/instances\/inst-a$/,(u,o,j)=>j(200,{instance:{id:'inst-a',name:'a'},scan:{},certificates:certs(),capabilities:{rotation:{enabled:true},patch_in_place:{enabled:true}}})],
@@ -38,6 +38,7 @@ t('partly patched instances', async () => {
   ok(/web\/0 holds the patched certificate/.test(bt),'banner names the VM that holds the patched version');
   ok(bt.includes(EV2+'/1 holds the old certificate')&&ban.querySelectorAll('img,script').length===0,'banner names the VM with the old version; hostile locator inert');
   ok(!/web\/2/.test(bt),'failed probe not counted as a holder');
+  ok(/A listener holds the patched certificate/.test(bt),'a probe without a locator reads as a listener, not as the letter a');
   ok(/web\/0 holds the patched certificate/.test(bt)&&!/10\.0\.0\.5/.test(bt)&&!/\[fe80/.test(bt)&&/web\/3 holds the patched certificate/.test(bt)&&!/port 6379/.test(bt),'probe fallback parses the real locator format: IPv4, bracketed IPv6, no address');
   ok(/recreate or a resurrection restores the old certificate/.test(bt),'banner says a recreate or resurrection restores the old certificate');
   const cn=ban.querySelector('.cert-ov-converge');
