@@ -31,6 +31,10 @@ func (stubCredHub) Regenerate(context.Context, string) (*credhub.RegenerateResul
 	return nil, nil //nolint:nilnil // a stub that is never called
 }
 
+func (stubCredHub) CertificateKeyPair(context.Context, string) (*credhub.KeyPair, error) {
+	return nil, nil //nolint:nilnil // a stub that is never called
+}
+
 func TestConfigureAfterStartFails(t *testing.T) {
 	t.Parallel()
 

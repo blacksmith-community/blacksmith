@@ -81,8 +81,10 @@ func (e *APIError) Error() string {
 // Client is a CredHub client that can find credential names under a path,
 // delete one credential by its exact name, read certificate metadata,
 // version lists, and the public half of a certificate, and regenerate one
-// certificate by its ID. It has no way to read a secret value or a private
-// key, to set or generate a credential, or to change a permission.
+// certificate by its ID. CertificateKeyPair, which patch mode alone uses,
+// is its only read of a private key. It has no way to read any other
+// secret value, to set or generate a credential, or to change a
+// permission.
 type Client struct {
 	baseURL    string
 	tokens     tokenProvider
@@ -104,6 +106,11 @@ type request struct {
 	// opaqueErrors drops all of CredHub's error text from a failure. Every
 	// call that can carry a secret value sets it.
 	opaqueErrors bool
+	// oneBuffer reads the answer into one buffer of maxBody+1 bytes that
+	// is allocated before the read, so no smaller buffer that a growing
+	// read would drop is left holding part of a key. It suits a small
+	// maxBody only.
+	oneBuffer bool
 }
 
 type findResponse struct {
@@ -289,7 +296,7 @@ func (c *Client) attempt(ctx context.Context, req request, token string) ([]byte
 
 	// One byte past the limit shows that the answer was longer, which a
 	// plain LimitReader would hide by cutting it short.
-	body, err := io.ReadAll(io.LimitReader(response.Body, req.maxBody+1))
+	body, err := readAnswer(response.Body, req)
 	if err != nil {
 		clear(body)
 
@@ -303,6 +310,23 @@ func (c *Client) attempt(ctx context.Context, req request, token string) ([]byte
 	}
 
 	return body, nil
+}
+
+// readAnswer reads at most req.maxBody+1 bytes of an answer. With
+// req.oneBuffer it reads them into a buffer allocated once at that size.
+func readAnswer(body io.Reader, req request) ([]byte, error) {
+	if !req.oneBuffer {
+		return io.ReadAll(io.LimitReader(body, req.maxBody+1)) //nolint:wrapcheck // attempt wraps it
+	}
+
+	buf := make([]byte, req.maxBody+1)
+
+	n, err := io.ReadFull(body, buf)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		err = nil
+	}
+
+	return buf[:n], err //nolint:wrapcheck // attempt wraps it
 }
 
 // failure turns a non-2xx answer into an APIError. For an opaque request it

@@ -23,6 +23,10 @@ type CredHubAPI interface {
 	CredentialVersions(ctx context.Context, name string, limit int) ([]credhub.CredentialVersion, error)
 	CertificateVersion(ctx context.Context, versionID string) (*credhub.CertificatePublic, error)
 	Regenerate(ctx context.Context, certificateID string) (*credhub.RegenerateResult, error)
+	// CertificateKeyPair reads a version's certificate and private key.
+	// Only patch mode calls it, and the caller zeroes the pair when it is
+	// done with it.
+	CertificateKeyPair(ctx context.Context, versionID string) (*credhub.KeyPair, error)
 }
 
 var _ CredHubAPI = (*credhub.Client)(nil)

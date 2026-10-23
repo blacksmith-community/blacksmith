@@ -43,3 +43,14 @@ func RegenerateRequestForTest(ctx context.Context, client *Client, certificateID
 
 	return request, err
 }
+
+// SetKeyPairBufferHook makes CertificateKeyPair hand its answer buffer to
+// hook after it has been cleared.
+func SetKeyPairBufferHook(client *Client, hook func([]byte)) {
+	client.bufferSeen = hook
+}
+
+// DecodeKeyPair exposes decodeKeyPair to package credhub_test.
+func DecodeKeyPair(body []byte) ([]byte, []byte, error) {
+	return decodeKeyPair(body)
+}

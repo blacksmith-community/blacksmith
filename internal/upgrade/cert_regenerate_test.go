@@ -233,6 +233,19 @@ func (f *regenCredHub) Regenerate(_ context.Context, certificateID string) (*cre
 	return answer(certificateID)
 }
 
+// CertificateKeyPair records the read as "pair:<version>" and finds no
+// pair, because no regeneration test reads a private key.
+func (f *regenCredHub) CertificateKeyPair(ctx context.Context, versionID string) (*credhub.KeyPair, error) {
+	f.log.add("pair:" + versionID)
+
+	err := ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("read pair %s: %w", versionID, err)
+	}
+
+	return nil, fmt.Errorf("%w: %q", credhub.ErrNotFound, versionID)
+}
+
 // addVersion stores cert as a version of the named credential.
 func (f *regenCredHub) addVersion(name, versionID string, createdAt time.Time, cert *x509.Certificate) {
 	f.mu.Lock()

@@ -454,9 +454,10 @@ func TestClientMethodsAreReadsDeleteAndRegenerateOnly(t *testing.T) {
 		methods = append(methods, clientType.Method(i).Name)
 	}
 
-	// Delete and Regenerate are the only writes. The other methods read
-	// names, metadata, and the public half of a certificate.
-	want := []string{"CertificateMetadata", "CertificateVersion", "CredentialVersions", "Delete", "FindByPath", "Regenerate"}
+	// Delete and Regenerate are the only writes. CertificateKeyPair is the
+	// only read of a private key, which patch mode needs. The other
+	// methods read names, metadata, and the public half of a certificate.
+	want := []string{"CertificateKeyPair", "CertificateMetadata", "CertificateVersion", "CredentialVersions", "Delete", "FindByPath", "Regenerate"}
 	if !slices.Equal(methods, want) {
 		t.Fatalf("Client methods = %q, want only %q", methods, want)
 	}
