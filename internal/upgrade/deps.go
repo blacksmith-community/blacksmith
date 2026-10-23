@@ -113,8 +113,18 @@ func (m *Manager) certDeps() Deps {
 // is already running does not call it, because stopping that would hide a
 // deploy that is under way. A manager that was never configured refuses.
 func (m *Manager) certWritesAllowed(mode RotationMode) error {
-	d := m.certDeps()
+	return writesAllowed(m.certDeps(), mode)
+}
 
+// certWritesAllowedLocked is certWritesAllowed for a caller that holds
+// mu.
+func (m *Manager) certWritesAllowedLocked(mode RotationMode) error {
+	return writesAllowed(m.deps, mode)
+}
+
+// writesAllowed says whether the switches and the CredHub client of the
+// dependencies let a certificate task in this mode change anything now.
+func writesAllowed(d Deps, mode RotationMode) error {
 	var switches config.CertificatesConfig
 	if d.Switches != nil {
 		switches = d.Switches()

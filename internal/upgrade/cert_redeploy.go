@@ -1166,7 +1166,8 @@ const (
 // its new versions are deploy_pending when its regeneration started, and
 // released. A patch instance ends as patchCancelEnd says, and one whose
 // VM may be part way through a swap is left for the resume that checks
-// its files. An instance with a deploy or a regeneration in flight is
+// its files, as one whose VMs still hold files to clean up is left for
+// its cleanup pass. An instance with a deploy or a regeneration in flight is
 // left to whatever follows it, or to the next load, which makes it wait
 // for a decision. A manager that is stopping ends nothing, since the next
 // load does it. It returns how many instances it ended. The caller holds
@@ -1183,7 +1184,8 @@ func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
 
 	for i := range task.Instances {
 		inst := &task.Instances[i]
-		if inst.Status != InstanceStatusRunning || followedTaskID(inst) > 0 || followedContextID(inst) != "" || regenerationUncertainLocked(inst) {
+		if inst.Status != InstanceStatusRunning || followedTaskID(inst) > 0 || followedContextID(inst) != "" || regenerationUncertainLocked(inst) ||
+			m.cancelledCleanupDueLocked(task, inst) {
 			continue
 		}
 

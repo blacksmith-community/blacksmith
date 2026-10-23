@@ -258,6 +258,11 @@ type Manager struct {
 	// resume, which a test shortens before Start.
 	cancelledResumeWait time.Duration
 
+	// cancelCleaned names each instance of a cancelled patch task whose
+	// cleanup pass this manager started, keyed by cleanupKey, so the
+	// pass runs once per instance however it ends.
+	cancelCleaned map[string]bool
+
 	// patchGateWait is how long a patched VM's health gate may take to
 	// pass after its restart, and patchGateInterval the time between two
 	// runs of it. A test shortens both before Start.
@@ -319,6 +324,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		verifyInterval: verifyIntervalDefault,
 
 		cancelledResumeWait: cancelledResumeWaitDefault,
+		cancelCleaned:       make(map[string]bool),
 
 		patchGateWait:     patchGateWaitDefault,
 		patchGateInterval: patchGateIntervalDefault,

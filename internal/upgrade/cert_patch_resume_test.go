@@ -1071,3 +1071,150 @@ func TestPatchResumeAfterPanicPauses(t *testing.T) {
 		t.Fatalf("expected the advice to resume, got %q", msg)
 	}
 }
+
+// cancelledCleanupBoundaries are the boundaries that leave VM 1 closed,
+// or not yet swapping, with its staging and backup files still on it and
+// its cleanup pending.
+func cancelledCleanupBoundaries() []resumeBoundary {
+	return []resumeBoundary{
+		{name: "VM 1 staged", op: opStage, nth: 2, afterSave: true},
+		{name: "VM 1 backed up", op: opBackup, nth: 2, afterSave: true},
+		{name: "VM 1 done", saved: "done:"},
+		{name: "VM 1 rolled back", rollback: true, saved: "rolled_back:"},
+	}
+}
+
+// cancelledWithFiles crashes at the boundary and checks that VM 1 was
+// left holding staged or backed-up files with its cleanup pending.
+func cancelledWithFiles(t *testing.T, b resumeBoundary) (*patchEnv, *crasher, UpgradeTask) {
+	t.Helper()
+
+	env, c, stored := boundaryEnv(t, b)
+
+	if j := storedJournal(stored); midVM(j.Phase) || j.Cleanup != CleanupPending || env.workFiles(0) == 0 {
+		t.Fatalf("expected VM 1 left with its files and its cleanup pending, got %s with cleanup %q and %d files", j.Phase, j.Cleanup, env.workFiles(0))
+	}
+
+	return env, c, stored
+}
+
+// workFiles counts the staged copies and backups on the VM.
+func (e *patchEnv) workFiles(vm int) int {
+	e.patch.mu.Lock()
+	defer e.patch.mu.Unlock()
+
+	return len(e.vms[vm].staged) + len(e.vms[vm].backups)
+}
+
+// filteredOpsSince lists the patch.sh operations run on the VM from the
+// recorded call at mark on.
+func (e *patchEnv) filteredOpsSince(mark, vm int) []string {
+	var ops []string
+
+	for _, op := range e.opsSince(mark, vm) {
+		switch op {
+		case opCheck, opPrepare, opStage, opStageCheck, opBackup, opReplace, opRestore, opRestart, opCleanup:
+			ops = append(ops, op)
+		}
+	}
+
+	return ops
+}
+
+// expectCancelledSettled waits until the instance of the cancelled task
+// settles, and fails the test unless VM 1 kept its phase, no VM holds a
+// mixed pair, no file held a third hash, and the instance was freed.
+func expectCancelledSettled(t *testing.T, env *patchEnv, c *crasher, manager *Manager, stored UpgradeTask) VMJournal {
+	t.Helper()
+
+	waitUntil(t, "the instance to settle", func() bool { return current(t, manager).Instances[0].Status.settled() })
+
+	j := current(t, manager).Instances[0].Certificates.VMs[0]
+	if want := storedJournal(stored).Phase; j.Phase != want {
+		t.Fatalf("expected VM 1 to stay %s, got %s", want, j.Phase)
+	}
+
+	env.expectNoMix(t)
+	c.expectNoThird(t)
+	expectReleased(t, manager)
+
+	return j
+}
+
+// A cancelled task removes the staging and backup files from a VM that
+// it left closed or not yet swapping, the staged new private key among
+// them, before it ends the instance. Nothing else runs on any VM.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchCancelledCleansUpClosedVMs(t *testing.T) {
+	for _, b := range cancelledCleanupBoundaries() {
+		t.Run(b.name, func(t *testing.T) {
+			env, c, stored := cancelledWithFiles(t, b)
+			mark := len(env.patch.recorded())
+
+			second := env.startCancelled(t, stored, nil)
+			j := expectCancelledSettled(t, env, c, second, stored)
+
+			if j.Cleanup != CleanupDone || env.workFiles(0) != 0 {
+				t.Fatalf("expected VM 1 cleaned up, got cleanup %q with %d files left", j.Cleanup, env.workFiles(0))
+			}
+
+			if ops := env.filteredOpsSince(mark, 0); !slices.Equal(ops, []string{opCleanup}) {
+				t.Fatalf("expected only a cleanup on VM 1, got %v", ops)
+			}
+
+			for i := 1; i < len(env.vms); i++ {
+				if ops := env.filteredOpsSince(mark, i); len(ops) != 0 {
+					t.Fatalf("expected nothing run on VM %d, got %v", i+1, ops)
+				}
+			}
+		})
+	}
+}
+
+// A cancelled task whose cleanup fails, or that may not clean up because
+// patch in place is off, still ends the instance and frees it. The
+// cleanup is tried once and recorded as failed, or not tried at all.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchCancelledCleanupNeverHolds(t *testing.T) {
+	b := cancelledCleanupBoundaries()[0]
+
+	t.Run("the cleanup fails", func(t *testing.T) {
+		env, c, stored := cancelledWithFiles(t, b)
+		mark := len(env.patch.recorded())
+
+		env.hook(func(call patchCall) (ssh.Result, error, bool) {
+			if call.op == opCleanup {
+				return exitResult(1), nil, true
+			}
+
+			return ssh.Result{}, nil, false
+		})
+
+		second := env.startCancelled(t, stored, nil)
+		j := expectCancelledSettled(t, env, c, second, stored)
+
+		if j.Cleanup != CleanupFailed {
+			t.Fatalf("expected VM 1's cleanup recorded as failed, got %q", j.Cleanup)
+		}
+
+		if ops := env.filteredOpsSince(mark, 0); !slices.Equal(ops, []string{opCleanup}) {
+			t.Fatalf("expected one cleanup tried on VM 1, got %v", ops)
+		}
+	})
+
+	t.Run("patch in place is off", func(t *testing.T) {
+		env, c, stored := cancelledWithFiles(t, b)
+		env.setPatchSwitch(false)
+
+		opens := env.patch.openCount()
+
+		second := env.startCancelled(t, stored, nil)
+		j := expectCancelledSettled(t, env, c, second, stored)
+
+		if j.Cleanup != CleanupPending || env.patch.openCount() != opens {
+			t.Fatalf("expected no session and the cleanup left pending, got %d new sessions and cleanup %q", env.patch.openCount()-opens, j.Cleanup)
+		}
+	})
+}

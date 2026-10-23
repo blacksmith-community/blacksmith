@@ -3402,27 +3402,144 @@ func (m *Manager) resumeCancelledLocked(task *UpgradeTask) func() {
 		return func() {}
 	}
 
-	var open []*InstanceUpgrade
+	var open, clean []*InstanceUpgrade
 
 	for i := range task.Instances {
 		inst := &task.Instances[i]
-		if cancelledVMOpenLocked(inst) {
+
+		switch {
+		case cancelledVMOpenLocked(inst):
 			open = append(open, inst)
+		case m.cancelledCleanupDueLocked(task, inst):
+			m.cancelCleaned[cleanupKey(task, inst)] = true
+			clean = append(clean, inst)
 		}
 	}
 
-	if len(open) == 0 {
+	if len(open)+len(clean) == 0 {
 		return func() {}
 	}
 
-	m.settling[task.ID] += len(open)
-	m.wg.Add(len(open))
+	m.settling[task.ID] += len(open) + len(clean)
+	m.wg.Add(len(open) + len(clean))
 
 	return func() {
 		for _, inst := range open {
 			go m.resumeCancelledPatch(task, inst)
 		}
+
+		for _, inst := range clean {
+			go m.cleanupCancelledPatch(task, inst)
+		}
 	}
+}
+
+// cleanupKey names an instance of a task in cancelCleaned.
+func cleanupKey(task *UpgradeTask, inst *InstanceUpgrade) string {
+	return task.ID + "/" + inst.InstanceID
+}
+
+// cancelledCleanupDueLocked reports whether a running instance of a
+// cancelled patch task, with no VM part way through its swap, has a VM
+// whose staging and backup files still need removing, and whether this
+// manager can remove them now: it has a director, patch in place is on,
+// and it has not run the instance's cleanup pass yet. Each pass runs
+// once, so a cleanup that fails is recorded and never holds the instance.
+// The caller holds mu.
+func (m *Manager) cancelledCleanupDueLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
+	if task.Status != TaskStatusCancelled || certTaskMode(task) != RotationModePatch || inst.Status != InstanceStatusRunning ||
+		inst.Certificates == nil || !m.configured || m.director == nil || m.ctx.Err() != nil || m.cancelCleaned[cleanupKey(task, inst)] {
+		return false
+	}
+
+	if cancelledVMOpenLocked(inst) || !slices.ContainsFunc(inst.Certificates.VMs, cleanupDue) {
+		return false
+	}
+
+	return m.certWritesAllowedLocked(RotationModePatch) == nil
+}
+
+// cleanupDue reports whether a VM a cancelled task leaves as it is still
+// holds the task's staging and backup files: its cleanup is pending or
+// failed, and it is neither part way through its swap nor recreated.
+func cleanupDue(j VMJournal) bool {
+	return (j.Cleanup == CleanupPending || j.Cleanup == CleanupFailed) && !midVM(j.Phase) && j.Phase != VMPhaseReverted
+}
+
+// cleanupCancelledPatch removes the task's staging and backup files from
+// each VM of a cancelled task's instance that still holds them, as spec
+// step 8 has a later pass do. Nothing else changes on the VMs. A
+// rolled-back VM is marked old in the divergence record first, as the
+// resume of one does. A VM whose session can't be opened, or whose
+// cleanup fails, has its cleanup recorded as failed. The instance ends
+// once the pass is over, however the cleanups went.
+func (m *Manager) cleanupCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade) {
+	defer m.wg.Done()
+	defer m.endSettling(loadedDeploy{task: task, instance: inst})
+
+	defer func() {
+		if r := recover(); r != nil {
+			m.logger.Error("PANIC while certificate task %s cleaned up the VMs of instance %s: %v", task.ID, inst.InstanceID, r)
+		}
+	}()
+
+	m.logger.Info("Certificate task %s is cancelled, so it removes its staging and backup files from the VMs of instance %s", task.ID, inst.InstanceID)
+
+	sessions := m.newPatchSessions(inst.DeploymentName)
+	defer sessions.close()
+
+	m.mu.RLock()
+	count := len(inst.Certificates.VMs)
+	m.mu.RUnlock()
+
+	for i := range count {
+		j := &inst.Certificates.VMs[i]
+
+		m.mu.RLock()
+		due, rolledBack := cleanupDue(*j), j.Phase == VMPhaseRolledBack
+		m.mu.RUnlock()
+
+		if !due {
+			continue
+		}
+
+		if m.cleanupCancelledVM(sessions, task, inst, j, rolledBack) != nil {
+			return
+		}
+	}
+}
+
+// cleanupCancelledVM runs the cleanup on one VM of a cancelled task. It
+// returns an error only when the manager stops or a save is not
+// confirmed, which ends the pass.
+func (m *Manager) cleanupCancelledVM(sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, j *VMJournal, rolledBack bool) error {
+	run := &vmRun{manager: m, ctx: m.ctx, task: task, inst: inst, j: j}
+
+	if rolledBack {
+		err := m.recordDivergence(m.ctx, task, inst, j, nil, certinventory.DivergentVMOld)
+		if err != nil {
+			m.logger.Error("Certificate task %s could not mark VM %s old in the divergence record: %v", task.ID, j.VM, err)
+		}
+	}
+
+	sess, err := m.journalSession(m.ctx, sessions, inst, j)
+	if err == nil {
+		run.sess = sess
+		run.host, err = journalHost(sess, j)
+	}
+
+	if err != nil {
+		if m.ctx.Err() != nil {
+			return errVMStopped
+		}
+
+		m.logger.Error("Certificate task %s could not open an SSH session on VM %s, so its staging and backup files stay: %v", task.ID, j.VM, err)
+		run.change(func(j *VMJournal) { j.Cleanup = CleanupFailed })
+
+		return run.save("record the failed cleanup of " + j.VM)
+	}
+
+	return run.cleanup()
 }
 
 // waitsCancelledLocked reports whether the task is a cancelled patch task
