@@ -6342,6 +6342,8 @@
       clearInterval(upgradeTasksRefreshInterval);
       upgradeTasksRefreshInterval = null;
     }
+    // Resuming starts from a fresh record, so stale changes are never said aloud.
+    announcedTaskStatuses = null;
   };
 
   // Service detail rendering functions
@@ -22689,7 +22691,7 @@
             <button type="button" class="execute-btn" id="cert-scan-btn">Scan now</button>
             <button type="button" class="cert-action-btn" id="cert-settings-btn" aria-haspopup="dialog">Settings</button>
             <div class="cert-export">
-              <button type="button" class="cert-action-btn" id="cert-export-btn" aria-haspopup="true" aria-expanded="false" aria-controls="cert-export-menu">Export</button>
+              <button type="button" class="cert-action-btn" id="cert-export-btn" aria-expanded="false" aria-controls="cert-export-menu">Export</button>
               <div class="cert-export-menu" id="cert-export-menu" hidden>
                 <p class="cert-export-note" id="cert-export-note" hidden></p>
                 <a class="cert-export-link" id="cert-export-csv" download>Download CSV</a>
@@ -23867,7 +23869,7 @@
         if (pairs.length === 0) {
           input.disabled = true;
           input.setAttribute('title', 'None of these certificates can be rotated yet.');
-          input.setAttribute('aria-describedby', `cert-group-why-${String(group.id).replace(/[^A-Za-z0-9_-]/g, '_')}`);
+          if (rowReasonVisible()) input.setAttribute('aria-describedby', `cert-group-why-${String(group.id).replace(/[^A-Za-z0-9_-]/g, '_')}`);
         } else {
           const ref = { input, pairs };
           view.groupChecks.push(ref);
@@ -23903,7 +23905,7 @@
       td.appendChild(CertView.healthPill(worstHealth(group.certs).health));
       if (group.sub) td.appendChild(el('span', 'cert-subname cert-group-sub', group.sub));
       const groupInput = selectCell.querySelector('input');
-      if (groupInput && groupInput.disabled) {
+      if (groupInput && groupInput.disabled && rowReasonVisible()) {
         const why = el('span', 'cert-subname cert-group-why', 'None of these certificates can be rotated yet.');
         why.id = groupInput.getAttribute('aria-describedby');
         td.appendChild(why);
