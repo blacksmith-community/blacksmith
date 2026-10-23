@@ -5311,21 +5311,39 @@
   const decisionRequestIds = new Map();
   const decisionKey = (taskId, instanceId) => `${taskId}|${instanceId}`;
 
-  // A day such as 2026-10-21 for a time from the broker. Go's zero time and
-  // a missing time both read as nothing.
-  // A time as "2026-10-21 14:00 UTC", or an empty string when it is not a time.
-  const certTimeText = (value) => {
-    if (!value) return '';
+  // The date formatters every certificate screen shares. Go's zero time and
+  // a missing time both read as nothing, so none of them prints a made-up
+  // date for a time the broker never set.
+  const CERT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  const certDate = (value) => {
+    if (!value) return null;
     const date = new Date(value);
-    if (Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971) return '';
-    return `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC`;
+    return Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971 ? null : date;
   };
 
+  // A time as "2026-10-21 14:00 UTC", or an empty string when it is not a time.
+  const certTimeText = (value) => {
+    const date = certDate(value);
+    return date ? `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC` : '';
+  };
+
+  // A day such as 2026-10-21.
   const certDay = (value) => {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971) return '';
-    return date.toISOString().slice(0, 10);
+    const date = certDate(value);
+    return date ? date.toISOString().slice(0, 10) : '';
+  };
+
+  // A day such as "21 Oct 2026".
+  const certDayText = (value) => {
+    const date = certDate(value);
+    return date ? `${date.getUTCDate()} ${CERT_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}` : '';
+  };
+
+  // A time of day such as "14:00 UTC".
+  const certClockText = (value) => {
+    const date = certDate(value);
+    return date ? `${date.toISOString().slice(11, 16)} UTC` : '';
   };
 
   const confirmedAnswer = (answer) => answer === true || Boolean(answer && answer.confirmed);
@@ -18752,8 +18770,6 @@
     const el = CertView.el;
 
     const KIT_MANUAL_URL = 'https://github.com/genesis-community/blacksmith-genesis-kit/blob/main/MANUAL.md';
-    const ROTATION_WAIT_TEXT = 'Rotation arrives with certificates.rotation.enabled';
-    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const SCAN_POLL_MS = 1500;
     const SCAN_POLL_LIMIT = 40;
 
@@ -18763,24 +18779,8 @@
       return node;
     };
 
-    const pad = (n) => String(n).padStart(2, '0');
-
-    const validDate = (value) => {
-      if (!value) return null;
-      const date = new Date(value);
-      // The API sends Go's zero time for a scan that never ran.
-      return Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971 ? null : date;
-    };
-
-    const dayText = (value) => {
-      const date = validDate(value);
-      return date ? `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}` : '';
-    };
-
-    const timeText = (value) => {
-      const date = validDate(value);
-      return date ? `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC` : '';
-    };
+    const dayText = certDayText;
+    const timeText = certTimeText;
 
     // A JSON request that never throws. It resolves to the status and the
     // parsed body, or to status 0 when the network failed.
@@ -19445,7 +19445,7 @@
       if (opts.announceDone) announce('Rescan finished.');
     };
 
-    return { mountInstance, mountBroker, loadManifest, brokerLabel, ROTATION_WAIT_TEXT };
+    return { mountInstance, mountBroker, loadManifest, brokerLabel };
   })();
 
   // Certificate Inspector Modal functionality
@@ -22462,7 +22462,6 @@
       'deploy_pending', 'probe_failed'
     ];
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const ROTATION_WAIT_TEXT = 'Rotation arrives with certificates.rotation.enabled';
     const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const DAY_MS = 86400000;
     const TIMELINE_WEEKS = 13;
@@ -22619,19 +22618,8 @@
     // ----- small helpers -----
 
     const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-    const pad = (n) => String(n).padStart(2, '0');
-
-    const clock = (value) => {
-      const d = new Date(value);
-      if (!value || Number.isNaN(d.getTime())) return '';
-      return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
-    };
-
-    const shortDate = (value) => {
-      const d = new Date(value);
-      if (!value || Number.isNaN(d.getTime())) return 'Unknown';
-      return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
-    };
+    const clock = certClockText;
+    const shortDate = (value) => certDayText(value) || 'Unknown';
 
     const isActive = () => Boolean(view.root && view.root.classList.contains('active'));
 
