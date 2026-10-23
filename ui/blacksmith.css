@@ -13318,6 +13318,47 @@ span.config-type.resurrection {
   flex: 1 1 100%;
 }
 
+#upgrade .rotate-mode-note,
+.cert-rotate-dialog .rotate-mode-note {
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+.rotate-mode-reason[hidden],
+.rotate-converge[hidden] {
+  display: none;
+}
+
+.rotate-converge {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 6px 0 0 12px;
+  border: 0;
+  border-left: 2px solid var(--border-primary);
+  min-width: 0;
+}
+
+.rotate-converge legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+.rotate-converge-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 6px;
+  align-items: start;
+}
+
+.rotate-converge-hint {
+  grid-column: 2;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
 #upgrade .rotate-result:not(:empty) {
   padding: 0.75em 1em;
   border-bottom: 1px solid var(--border-primary);

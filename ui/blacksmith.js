@@ -2918,6 +2918,9 @@
     thresholdApplied: false,
     imported: false,
     mode: 'redeploy',
+    // What a patch does afterwards, "pending" or "immediate". It has no
+    // default, so the operator must choose.
+    converge: '',
     name: '',
     reason: '',
     busy: false,
@@ -2997,7 +3000,11 @@
           daysLeft: typeof cert.days_left === 'number' ? cert.days_left : null,
           expiry: String(cert.effective_not_after || cert.expiry || ''),
           eligible,
-          reason
+          reason,
+          // The broker lists patch among the modes only when the certificate
+          // can take it, and says why not in the reasons of an eligible one.
+          modes: Array.isArray(rotation.modes) ? rotation.modes.map(String) : [],
+          patchReason: eligible && Array.isArray(rotation.reasons) ? rotation.reasons.join(' ') : ''
         });
         const state = cert.divergence && cert.divergence.state;
         if (state === 'unconverged' || state === 'reverted') entry.divergent = true;
@@ -3431,6 +3438,7 @@
     const line = document.getElementById('rotate-selection-line');
     const button = document.getElementById('rotate-preview');
     const summary = rotateSummary();
+    if (upgradeOperation === 'rotate' && rotateModeControls) rotateModeControls.update();
     if (line) {
       let text = upgradeOperation === 'converge'
         ? `${pluralize(summary.instances, 'instance')} selected.`
@@ -3446,6 +3454,7 @@
       if (rotateState.loadState === 'disabled') blockedBy = 'The certificate inventory is turned off.';
       else if (rotation && rotation.enabled === false) blockedBy = rotation.reason || 'Certificate rotation is turned off.';
       else if (count <= 0) blockedBy = upgradeOperation === 'converge' ? 'Select at least one instance first.' : 'Select at least one certificate first.';
+      else if (upgradeOperation === 'rotate' && rotateState.mode === 'patch' && !rotateState.converge) blockedBy = 'Choose Leave unconverged or Converge right away first.';
       button.textContent = rotateState.busy ? 'Previewing...' : rotateFooterLabel();
       // A preview under way marks the button aria-disabled and leaves it
       // enabled, so it keeps focus and the confirm dialog can hand focus
@@ -3531,7 +3540,129 @@
     if (Date.now() - rotateState.lastLoad > INVENTORY_REFRESH_MS) loadRotateInventory({ silent: true });
   };
 
+  // The Mode choice that Batch Operations and the instance rotate dialog
+  // share. The caller owns the state object, which holds mode and converge,
+  // and blockReason() returns the sentence that disables Patch, or an empty
+  // string when Patch is allowed. Patch shows its temporary-repair note
+  // beside it, and choosing it reveals the converge choice with neither
+  // option selected. Every id starts with the prefix, and the prefix starts
+  // with rotate-.
+  const buildModeControls = (ctx) => {
+    const p = ctx.prefix;
+    const group = rotateEl('fieldset', 'rotate-mode');
+    group.id = p;
+    group.appendChild(rotateEl('legend', '', 'Mode'));
+    const radios = {};
+    [['redeploy', 'Redeploy'], ['patch', 'Patch in place']].forEach(([value, text]) => {
+      const label = rotateEl('label', 'rotate-mode-option');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = ctx.name;
+      radio.id = `${p}-${value}`;
+      radio.value = value;
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        ctx.state.mode = value;
+        if (value !== 'patch') ctx.state.converge = '';
+        update();
+        ctx.onChange();
+      });
+      radios[value] = radio;
+      label.appendChild(radio);
+      label.appendChild(rotateEl('span', '', text));
+      if (value === 'patch') {
+        const note = rotateEl('span', 'rotate-mode-note', PATCH_NOTE);
+        note.id = `${p}-patch-note`;
+        label.appendChild(note);
+        radio.setAttribute('aria-describedby', `${p}-patch-note ${p}-patch-reason`);
+      }
+      group.appendChild(label);
+    });
+    const reason = rotateEl('p', 'rotate-op-hint rotate-mode-reason');
+    reason.id = `${p}-patch-reason`;
+    reason.hidden = true;
+    group.appendChild(reason);
+
+    const converge = rotateEl('fieldset', 'rotate-converge');
+    converge.id = `${p}-converge`;
+    converge.appendChild(rotateEl('legend', '', 'After patching'));
+    const choices = {};
+    [
+      ['pending', 'Leave unconverged', 'The instance stays flagged as unconverged until a converge runs. A recreate or resurrection restores the old certificate until then.'],
+      ['immediate', 'Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
+    ].forEach(([value, text, consequence]) => {
+      const label = rotateEl('label', 'rotate-converge-option');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `${ctx.name}-converge`;
+      radio.id = `${p}-converge-${value}`;
+      radio.value = value;
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        ctx.state.converge = value;
+        ctx.onChange();
+      });
+      const hint = rotateEl('span', 'rotate-converge-hint', consequence);
+      hint.id = `${p}-converge-${value}-hint`;
+      radio.setAttribute('aria-describedby', hint.id);
+      choices[value] = radio;
+      label.appendChild(radio);
+      label.appendChild(rotateEl('span', '', text));
+      label.appendChild(hint);
+      converge.appendChild(label);
+    });
+    group.appendChild(converge);
+
+    // Brings the controls in line with the state and with what Patch allows
+    // now. A Patch that turned unavailable falls back to Redeploy.
+    function update() {
+      const block = ctx.blockReason();
+      radios.patch.disabled = Boolean(block);
+      reason.hidden = !block;
+      reason.textContent = block;
+      if (block && ctx.state.mode === 'patch') {
+        ctx.state.mode = 'redeploy';
+        ctx.state.converge = '';
+      }
+      const patch = ctx.state.mode === 'patch';
+      radios.redeploy.checked = !patch;
+      radios.patch.checked = patch;
+      converge.hidden = !patch;
+      choices.pending.checked = patch && ctx.state.converge === 'pending';
+      choices.immediate.checked = patch && ctx.state.converge === 'immediate';
+    }
+    update();
+    return { root: group, update };
+  };
+
+  // Whether Patch is closed for the certificates picked in Batch Operations,
+  // and the sentence that says why. An empty string means it is open.
+  const batchPatchBlock = () => {
+    if (rotateState.loadState !== 'ready') return 'Patch in place is available once the certificate inventory has loaded.';
+    const patch = rotateState.capabilities && rotateState.capabilities.patch_in_place;
+    if (!patch || patch.enabled !== true) return patchOffText(patch && patch.reason);
+    for (const [instanceId, name] of rotatePairs()) {
+      const entry = rotateState.byInstance.get(instanceId);
+      const cert = entry && entry.certs.find((c) => c.key === name);
+      if (cert && cert.eligible && !cert.modes.includes('patch')) {
+        const label = (entry && entry.name) || instanceId;
+        return `${label}: ${cert.patchReason || 'Patch in place is not available for this certificate.'}`;
+      }
+    }
+    return '';
+  };
+
+  const patchOffText = (reason) => {
+    const text = String(reason || '').trim();
+    if (!text) return PATCH_UNAVAILABLE_REASON;
+    return `${PATCH_UNAVAILABLE_REASON} ${/[.!?]$/.test(text) ? text : `${text}.`}`;
+  };
+
+  // The Mode controls of Batch Operations, or null while another operation shows.
+  let rotateModeControls = null;
+
   const buildRotateOptions = (container) => {
+    rotateModeControls = null;
     const pane = rotateEl('div', 'rotate-pane');
     pane.dataset.pane = 'rotate-options';
     pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS[upgradeOperation]));
@@ -3554,32 +3685,14 @@
     pane.appendChild(bulk);
 
     if (upgradeOperation === 'rotate') {
-      const modeGroup = rotateEl('fieldset', 'rotate-mode');
-      modeGroup.id = 'rotate-mode';
-      modeGroup.appendChild(rotateEl('legend', '', 'Mode'));
-      [['redeploy', 'Redeploy'], ['patch', 'Patch in place']].forEach(([value, text]) => {
-        const label = rotateEl('label', 'rotate-mode-option');
-        const radio = document.createElement('input');
-        radio.type = 'radio';
-        radio.name = 'rotate-mode';
-        radio.id = `rotate-mode-${value}`;
-        radio.value = value;
-        radio.checked = value === rotateState.mode;
-        if (value === 'patch') {
-          radio.disabled = true;
-          radio.checked = false;
-          radio.setAttribute('aria-describedby', 'rotate-mode-patch-reason');
-        } else {
-          radio.addEventListener('change', () => { if (radio.checked) rotateState.mode = value; });
-        }
-        label.appendChild(radio);
-        label.appendChild(rotateEl('span', '', text));
-        modeGroup.appendChild(label);
+      rotateModeControls = buildModeControls({
+        prefix: 'rotate-mode',
+        name: 'rotate-mode',
+        state: rotateState,
+        blockReason: batchPatchBlock,
+        onChange: updateOperationFooter
       });
-      const patchReason = rotateEl('p', 'rotate-op-hint', PATCH_UNAVAILABLE_REASON);
-      patchReason.id = 'rotate-mode-patch-reason';
-      modeGroup.appendChild(patchReason);
-      pane.appendChild(modeGroup);
+      pane.appendChild(rotateModeControls.root);
 
       const row = rotateEl('div', 'filter-row rotate-threshold-row');
       const label = rotateEl('label', '', 'Expiring within');
@@ -3809,19 +3922,11 @@
       radio.id = `rotate-op-${mode}`;
       radio.value = mode;
       radio.checked = mode === upgradeOperation;
-      if (mode === 'converge') {
-        radio.disabled = true;
-        radio.checked = false;
-        radio.setAttribute('aria-describedby', 'rotate-op-converge-reason');
-      }
       radio.addEventListener('change', () => { if (radio.checked) requestOperation(mode); });
       label.appendChild(radio);
       label.appendChild(rotateEl('span', '', OPERATION_LABELS[mode]));
       fieldset.appendChild(label);
     });
-    const convergeReason = rotateEl('p', 'rotate-op-hint', CONVERGE_UNAVAILABLE_REASON);
-    convergeReason.id = 'rotate-op-converge-reason';
-    fieldset.appendChild(convergeReason);
     main.insertBefore(fieldset, top);
   };
 
@@ -3837,8 +3942,10 @@
     patch: 'Patch in place',
     converge: 'Converge'
   };
-  const CONVERGE_UNAVAILABLE_REASON = 'Converge is not available yet, because the runner does not verify and settle a converge deploy.';
-  const PATCH_UNAVAILABLE_REASON = 'Patching in place is not available yet, so a rotation redeploys the instance.';
+  const PATCH_WARNING = 'Temporary repair. BOSH can restore the old certificate until this instance converges, for example when it recreates or resurrects a VM.';
+  const PATCH_PREREQUISITE = 'Before you patch, make sure nobody runs director commands against the instance while the patch runs.';
+  const PATCH_NOTE = 'Temporary repair: BOSH can restore the old certificate';
+  const PATCH_UNAVAILABLE_REASON = 'Patch in place is not available.';
 
   // The text to show for an error from the preview or the create request.
   // It is the server's message, with advice for the codes that have some.
@@ -3883,7 +3990,13 @@
       const name = instance.instance_name || instance.instance_id;
       details.push({ label: `Excluded: ${name}`, value: instance.blocked.message || instance.blocked.code || 'It cannot take part.' });
     });
+    if (mode === 'patch') {
+      details.push(`Warning: ${PATCH_WARNING}`);
+      details.push(PATCH_PREREQUISITE);
+    }
     (Array.isArray(preview && preview.warnings) ? preview.warnings : []).forEach((warning) => {
+      // The server repeats the temporary-repair warning, which we show once.
+      if (mode === 'patch' && /temporary repair/i.test(String(warning))) return;
       details.push(`Warning: ${warning}`);
     });
     return details;
@@ -3990,13 +4103,14 @@
       const clientRequestId = newClientRequestId();
       const converge = mode === 'converge';
       const answer = await showConfirmDialog({
-        title: converge ? 'Converge these instances?' : 'Rotate these certificates?',
+        title: converge ? 'Converge these instances?' : (mode === 'patch' ? 'Patch these certificates in place?' : 'Rotate these certificates?'),
         message: `${note ? `${note} ` : ''}Review what we are about to change, then confirm.`,
         details: buildPreviewDetails(preview, mode),
-        confirmText: converge ? 'Converge' : 'Rotate',
+        confirmText: converge ? 'Converge' : (mode === 'patch' ? 'Patch' : 'Rotate'),
         cancelText: 'Cancel',
         danger: true,
-        requireText: included.length > ROTATE_TYPED_THRESHOLD ? ROTATE_CONFIRM_WORD : undefined
+        // A patch always asks for the typed word, because it is a temporary repair.
+        requireText: mode === 'patch' || included.length > ROTATE_TYPED_THRESHOLD ? ROTATE_CONFIRM_WORD : undefined
       });
       if (!answer || (answer !== true && !answer.confirmed)) return { ok: false, cancelled: true };
 
@@ -4162,27 +4276,30 @@
     });
     form.appendChild(list);
 
-    const modes = rotateEl('fieldset', 'cert-rotate-mode');
-    modes.appendChild(rotateEl('legend', '', 'Mode'));
-    [['redeploy', 'Redeploy'], ['patch', 'Patch in place']].forEach(([value, text]) => {
-      const label = rotateEl('label', 'rotate-mode-option');
-      const radio = document.createElement('input');
-      radio.type = 'radio';
-      radio.name = `cert-rotate-mode-${instanceId}`;
-      radio.value = value;
-      radio.checked = value === 'redeploy';
-      if (value === 'patch') {
-        radio.disabled = true;
-        radio.setAttribute('aria-describedby', `cert-rotate-patch-${instanceId.replace(/[^A-Za-z0-9_-]/g, '_')}`);
+    const dialogSid = instanceId.replace(/[^A-Za-z0-9_-]/g, '_');
+    const dialogState = { mode: 'redeploy', converge: '' };
+    // Patch is open when the switch is on and every picked certificate lists
+    // patch among its modes.
+    const dialogPatchBlock = () => {
+      const patch = options.capabilities && options.capabilities.patch_in_place;
+      if (patch && patch.enabled !== true) return patchOffText(patch.reason);
+      for (const cert of certs) {
+        if (!chosen.has(String(cert.key))) continue;
+        if (!Array.isArray(cert.modes) || !cert.modes.includes('patch')) {
+          return `${cert.variable || cert.key}: ${cert.patchReason || 'Patch in place is not available for this certificate.'}`;
+        }
       }
-      label.appendChild(radio);
-      label.appendChild(rotateEl('span', '', text));
-      modes.appendChild(label);
+      return '';
+    };
+    const modeControls = buildModeControls({
+      prefix: `rotate-dialog-${dialogSid}`,
+      name: `rotate-dialog-mode-${dialogSid}`,
+      state: dialogState,
+      blockReason: dialogPatchBlock,
+      onChange: () => sync()
     });
-    const patchNote = rotateEl('p', 'cert-rotate-note', PATCH_UNAVAILABLE_REASON);
-    patchNote.id = `cert-rotate-patch-${instanceId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
-    modes.appendChild(patchNote);
-    form.appendChild(modes);
+    modeControls.root.classList.add('cert-rotate-mode');
+    form.appendChild(modeControls.root);
 
     const reasonRow = rotateEl('div', 'cert-rotate-reason');
     const reasonLabel = rotateEl('label', '', 'Reason');
@@ -4209,9 +4326,12 @@
 
     let busy = false;
     const sync = () => {
+      modeControls.update();
       const none = chosen.size === 0;
-      preview.disabled = none;
-      hint.textContent = none ? 'Select at least one certificate to preview a rotation.' : '';
+      const undecided = dialogState.mode === 'patch' && !dialogState.converge;
+      preview.disabled = none || undecided;
+      hint.textContent = none ? 'Select at least one certificate to preview a rotation.'
+        : (undecided ? 'Choose Leave unconverged or Converge right away first.' : '');
     };
     sync();
 
@@ -4232,7 +4352,7 @@
     });
 
     preview.addEventListener('click', async () => {
-      if (busy || chosen.size === 0) return;
+      if (busy || chosen.size === 0 || preview.disabled) return;
       busy = true;
       remember();
       preview.setAttribute('aria-disabled', 'true');
@@ -4240,7 +4360,8 @@
       let result = null;
       try {
         result = await previewAndCreate({
-          mode: 'redeploy',
+          mode: dialogState.mode,
+          converge: dialogState.mode === 'patch' ? dialogState.converge : undefined,
           selections: [{ instance_id: instanceId, variables: Array.from(chosen) }],
           reason: reasonInput.value,
           origin: options.origin || 'instance',
@@ -4308,6 +4429,7 @@
     try {
       await previewAndCreate({
         mode: converge ? 'converge' : rotateState.mode,
+        converge: !converge && rotateState.mode === 'patch' ? rotateState.converge : undefined,
         selections: Array.from(grouped.entries()).map(([instanceId, names]) => ({ instance_id: instanceId, variables: Array.from(names) })),
         name: rotateState.name,
         reason: rotateState.reason,
@@ -4898,6 +5020,7 @@
     not_awaiting_decision: 'That instance is not waiting for a decision any more. Refresh the task to see where it stands.',
     instance_busy: 'Another operation holds this instance. Wait for it to finish, then try again.',
     credhub_unavailable: 'CredHub did not answer. Check its connection, then try again.',
+    vault_unavailable: 'Vault did not answer. Check its connection, then try again.',
     invalid_request: 'The broker did not accept that request. Refresh the task, then try again.',
     empty_preview: 'Nothing was changed, so choose Preview again to ask for a fresh one.'
   };
@@ -5461,10 +5584,11 @@
     const wrap = rotateEl('div', 'cert-remediation');
     const button = rotateEl('button', 'btn-secondary btn-sm', label);
     button.type = 'button';
-    button.disabled = true;
     const noteId = `cert-remediate-note-${key.replace(/[^A-Za-z0-9_-]/g, '_')}`;
     button.setAttribute('aria-describedby', noteId);
-    const note = rotateEl('p', 'cert-muted cert-remediation-note', CONVERGE_UNAVAILABLE_REASON);
+    const note = rotateEl('p', 'cert-muted cert-remediation-note', patch
+      ? 'This deploys the unchanged manifest with the latest variables, so BOSH records the versions the VMs already hold.'
+      : 'This deploys the unchanged manifest with the latest variables, so the instance picks up the versions CredHub already holds.');
     note.id = noteId;
     button.dataset.decisionAction = 'remediate';
     button.dataset.decisionKey = key;
@@ -18803,7 +18927,8 @@
           window.blacksmithRotate.openInstanceDialog(rotateHost, {
             instanceId,
             instanceName: String(instanceName),
-            certs: rotatable.map((cert) => ({ key: cert.key, variable: cert.variable || cert.key, daysLeft: cert.days_left, expiry: cert.expiry })),
+            certs: rotatable.map((cert) => ({ key: cert.key, variable: cert.variable || cert.key, daysLeft: cert.days_left, expiry: cert.expiry, modes: cert.rotation.modes || [], patchReason: (cert.rotation.reasons || []).join(' ') })),
+            capabilities: res.ok && res.body ? res.body.capabilities : null,
             origin: 'instance',
             opener,
             onCreated: (task) => { watchRotation(container, instanceId, task && task.id, reload); }
@@ -23655,7 +23780,7 @@
       window.blacksmithRotate.openInstanceDialog(d.rotateHost, {
         instanceId,
         instanceName: ownerLabel(owner),
-        certs: [{ key, variable: certName(cert), daysLeft: cert.days_left, expiry: cert.expiry }],
+        certs: [{ key, variable: certName(cert), daysLeft: cert.days_left, expiry: cert.expiry, modes: (cert.rotation && cert.rotation.modes) || [], patchReason: ((cert.rotation && cert.rotation.reasons) || []).join(' ') }],
         preselect: new Set([key]),
         origin: 'drawer',
         opener,
