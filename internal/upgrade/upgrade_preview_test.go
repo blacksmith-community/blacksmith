@@ -271,7 +271,14 @@ func (e *divergedEnv) advance(d time.Duration) {
 func (e *divergedEnv) diverge(t *testing.T) {
 	t.Helper()
 
-	instanceID, deployment := waitInstanceID, waitDeployment
+	e.recordDivergence(t, waitInstanceID, waitDeployment)
+	e.credhub.setLatest(divergedLeaf(waitDeployment), "v2")
+}
+
+// recordDivergence records that a patch wrote v2 of the deployment's leaf
+// while BOSH still deploys v1.
+func (e *divergedEnv) recordDivergence(t *testing.T, instanceID, deployment string) {
+	t.Helper()
 
 	err := e.store.Update(context.Background(), instanceID, func(*certinventory.Divergence) (*certinventory.Divergence, error) {
 		return &certinventory.Divergence{InstanceID: instanceID, Variables: []certinventory.DivergentVariable{{
@@ -283,8 +290,6 @@ func (e *divergedEnv) diverge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recording the divergence of %s: %v", instanceID, err)
 	}
-
-	e.credhub.setLatest(divergedLeaf(deployment), "v2")
 }
 
 func upgradeRequest(instanceIDs ...string) CreateTaskRequest {
@@ -1081,5 +1086,29 @@ func TestUpgradeOfDivergedInstanceChecksDirector(t *testing.T) {
 
 	if deploys := env.director.deploys.Load(); deploys != 0 {
 		t.Fatalf("expected no deploy, got %d", deploys)
+	}
+}
+
+func TestUpgradePreviewOfVanishedDivergedInstance(t *testing.T) {
+	t.Parallel()
+
+	env := newDivergedEnv(t, true)
+
+	// gone-1 has no instance data left, and nodeploy-1 names no deployment.
+	env.recordDivergence(t, "gone-1", "redis-gone-1")
+	env.recordDivergence(t, "nodeploy-1", "redis-nodeploy-1")
+
+	err := env.vault.Put(context.Background(), "nodeploy-1", map[string]string{"instance_name": "redis"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []string{"gone-1", "nodeploy-1"} {
+		_, err := env.manager.PreviewUpgrade(context.Background(), upgradeRequest(waitInstanceID, id))
+		expectAPIError(t, err, http.StatusNotFound, apierr.CodeInstanceNotFound)
+
+		if !strings.Contains(err.Error(), id) {
+			t.Fatalf("expected the error to name %s, got %v", id, err)
+		}
 	}
 }

@@ -34,6 +34,9 @@ const (
 	// divergenceRetryDelay is the pause after the first failed read, and it
 	// doubles after each further one.
 	divergenceRetryDelay = 100 * time.Millisecond
+	// instanceNotInVault is the failure of an instance whose data Vault
+	// does not hold.
+	instanceNotInVault = "instance not found in vault"
 )
 
 // DivergedInstance is one instance of an upgrade that has certificates
@@ -276,9 +279,14 @@ func (m *Manager) previewDiverged(ctx context.Context, instanceID string) (Diver
 	}
 
 	instance := instances[0]
-	if instance.Status == InstanceStatusFailed || instance.DeploymentName == "" {
-		return DivergedInstance{}, false, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
-			fmt.Sprintf("Blacksmith could not find the deployment of instance %s, so it can't list what its upgrade would deploy: %s", instanceID, instance.Error))
+
+	switch {
+	case instance.Error == instanceNotInVault || (instance.Status != InstanceStatusFailed && instance.DeploymentName == ""):
+		return DivergedInstance{}, false, apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound,
+			fmt.Sprintf("Instance %s has a divergence record but Blacksmith no longer holds its deployment, so leave it out of the upgrade.", instanceID))
+	case instance.Status == InstanceStatusFailed:
+		return DivergedInstance{}, false, apierr.New(http.StatusServiceUnavailable, apierr.CodeVaultUnavailable,
+			fmt.Sprintf("Blacksmith could not read instance %s, so try the preview again shortly: %s", instanceID, instance.Error))
 	}
 
 	additional, err := m.currentAdditional(ctx, instance.DeploymentName, purposeUpgradePreview)

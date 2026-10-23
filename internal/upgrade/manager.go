@@ -588,7 +588,7 @@ func (m *Manager) buildInstanceList(ctx context.Context, instanceIDs []string) (
 			instance.Status = InstanceStatusFailed
 		} else if !exists {
 			m.logger.Error("Instance %s not found in vault", instanceID)
-			instance.Error = "instance not found in vault"
+			instance.Error = instanceNotInVault
 			instance.Status = InstanceStatusFailed
 		} else {
 			// Extract deployment name and other info
