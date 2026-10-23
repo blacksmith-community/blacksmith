@@ -558,6 +558,13 @@ func (in ReconcileInput) fresh(o ObservedLeaf) bool {
 	return !o.At.IsZero() && !o.At.Before(in.ScanStartedAt) && o.Fingerprint != ""
 }
 
+// notBeforeScan reports whether a change at t may have happened after the
+// scan read what it read. A change stamped at the scan's own start counts,
+// since the scan cannot be shown to have seen it.
+func (in ReconcileInput) notBeforeScan(t time.Time) bool {
+	return !t.Before(in.ScanStartedAt)
+}
+
 // created returns a version's creation time, and false when it is unknown.
 func (in ReconcileInput) created(id string) (time.Time, bool) {
 	t, ok := in.VersionCreated[id]
@@ -594,7 +601,7 @@ func Reconcile(d *Divergence, in ReconcileInput) *Divergence {
 	kept := make([]DivergentVariable, 0, len(out.Variables))
 
 	for _, v := range out.Variables {
-		if v.UpdatedAt.After(in.ScanStartedAt) {
+		if in.notBeforeScan(v.UpdatedAt) {
 			kept = append(kept, v)
 
 			continue
@@ -627,7 +634,7 @@ func markReverted(v *DivergentVariable, in ReconcileInput, byFingerprint map[str
 	}
 
 	for cid, vm := range v.VMs {
-		if vm.State != DivergentVMApplied || vm.UpdatedAt.After(in.ScanStartedAt) {
+		if vm.State != DivergentVMApplied || in.notBeforeScan(vm.UpdatedAt) {
 			continue
 		}
 
@@ -677,7 +684,7 @@ func olderThan(ids []string, applied time.Time, in ReconcileInput) bool {
 // scan may not have seen that change.
 func clears(v DivergentVariable, in ReconcileInput) bool {
 	for _, vm := range v.VMs {
-		if vm.UpdatedAt.After(in.ScanStartedAt) {
+		if in.notBeforeScan(vm.UpdatedAt) {
 			return false
 		}
 	}

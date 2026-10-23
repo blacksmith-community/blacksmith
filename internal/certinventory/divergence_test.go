@@ -776,3 +776,47 @@ func TestDivergenceUnmarshalableRecordsDiffer(t *testing.T) {
 		t.Error("two entries that cannot be marshalled compared equal")
 	}
 }
+
+func TestReconcileTreatsScanStartAsAfter(t *testing.T) {
+	t.Parallel()
+
+	t.Run("entry stamped at the scan's start", func(t *testing.T) {
+		t.Parallel()
+
+		in, _ := divInput(t, "v7", map[string]string{"vm-a": "v7", "vm-b": "v7"})
+		rec := divRecord()
+		rec.Variables[0].UpdatedAt = divScanStart
+
+		if got := Reconcile(rec, in); !reflect.DeepEqual(got, rec) {
+			t.Fatalf("an entry stamped at the scan's start was reconciled: %+v", got)
+		}
+	})
+
+	t.Run("VM stamped at the scan's start", func(t *testing.T) {
+		t.Parallel()
+
+		in, _ := divInput(t, "v6", map[string]string{"vm-a": "v6"})
+		rec := divRecord()
+		vm := rec.Variables[0].VMs["vm-a"]
+		vm.UpdatedAt = divScanStart
+		rec.Variables[0].VMs["vm-a"] = vm
+
+		if got := Reconcile(rec, in); !reflect.DeepEqual(got, rec) {
+			t.Fatalf("a VM stamped at the scan's start was reconciled: %+v", got)
+		}
+	})
+
+	t.Run("converged entry with a VM stamped at the scan's start", func(t *testing.T) {
+		t.Parallel()
+
+		in, _ := divInput(t, "v7", map[string]string{"vm-a": "v7", "vm-b": "v7"})
+		rec := divRecord()
+		vm := rec.Variables[0].VMs["vm-b"]
+		vm.UpdatedAt = divScanStart
+		rec.Variables[0].VMs["vm-b"] = vm
+
+		if got := Reconcile(rec, in); !reflect.DeepEqual(got, rec) {
+			t.Fatalf("an entry with a VM stamped at the scan's start was cleared: %+v", got)
+		}
+	})
+}
