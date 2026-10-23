@@ -185,6 +185,12 @@ type DivergenceStore struct {
 	indexMu sync.Mutex
 
 	generation atomic.Uint64
+
+	// scansMu guards reconciled, the start of the latest scan reconciled
+	// with each instance's record. It lives in memory, so it orders the
+	// scans of this broker process.
+	scansMu    sync.Mutex
+	reconciled map[string]time.Time
 }
 
 // NewDivergenceStore returns a store over v. A nil now means time.Now.
@@ -193,7 +199,7 @@ func NewDivergenceStore(v interfaces.Vault, now func() time.Time) *DivergenceSto
 		now = time.Now
 	}
 
-	return &DivergenceStore{vault: v, now: now, locks: map[string]*sync.Mutex{}}
+	return &DivergenceStore{vault: v, now: now, locks: map[string]*sync.Mutex{}, reconciled: map[string]time.Time{}}
 }
 
 // Generation rises on every confirmed change, so a reader can rebuild what
@@ -748,10 +754,15 @@ func clears(v DivergentVariable, in ReconcileInput) bool {
 // Reconcile then runs inside Update against the record as it stands, so a
 // change the runner made after the scan began survives. With a nil
 // versions it changes nothing, because every comparison needs a creation
-// time. A failed scan, the broker scan, and an instance without a record
+// time. A failed scan, the broker scan, an instance without a record, and
+// a scan that began no later than the last one reconciled with the record
 // change nothing either.
 func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, src ReconcileSources) error {
 	if isNil(src.Versions) || scan.Err != "" || scan.ScannedAt.IsZero() || scan.Ref.ID == BrokerScanID {
+		return nil
+	}
+
+	if !s.newerScan(scan.Ref.ID, scan.ScannedAt, false) {
 		return nil
 	}
 
@@ -763,8 +774,34 @@ func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, 
 	in := reconcileInput(ctx, cur, scan, src)
 
 	return s.Update(ctx, scan.Ref.ID, func(d *Divergence) (*Divergence, error) {
+		// A newer scan reconciled while this one read CredHub, so this
+		// one's view is older than the record's.
+		if !s.newerScan(scan.Ref.ID, scan.ScannedAt, true) {
+			return d, nil
+		}
+
 		return Reconcile(d, in), nil
 	})
+}
+
+// newerScan reports whether a scan that began at start is newer than the
+// last one reconciled with the instance's record. With claim, a newer scan
+// becomes the last one, which Update's callback does under the instance's
+// lock, so two scans of one instance never both pass. A scan that claims
+// and then fails to write leaves the claim, and the next scan tries again.
+func (s *DivergenceStore) newerScan(instanceID string, start time.Time, claim bool) bool {
+	s.scansMu.Lock()
+	defer s.scansMu.Unlock()
+
+	if last, ok := s.reconciled[instanceID]; ok && !start.After(last) {
+		return false
+	}
+
+	if claim {
+		s.reconciled[instanceID] = start
+	}
+
+	return true
 }
 
 // reconcileInput builds the input for the record from the scan and CredHub.

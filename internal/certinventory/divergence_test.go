@@ -1110,3 +1110,61 @@ func TestReconcileLogsFailures(t *testing.T) {
 		}
 	})
 }
+
+func TestReconcileSkipsScanOlderThanLastReconciled(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	certs := divVersions(t, "v6", "v7")
+	src := ReconcileSources{Versions: divCredHub(certs, "v6", "v7")}
+	clock := &divClock{at: divScanStart.Add(-time.Hour)}
+	store := NewDivergenceStore(newDivVault(), clock.now)
+
+	err := store.Update(ctx, divInstance, func(*Divergence) (*Divergence, error) {
+		rec := divRecord()
+		rec.Variables[0].UpdatedAt = time.Time{}
+
+		return rec, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The older scan saw vm-a serve v6 and the newer one saw both VMs
+	// serve v7. The newer one reconciles first.
+	older := divScan(divScanStart, map[string]string{divVariable: "v6"},
+		map[string]*issued{"vm-a": ptr(certs["v6"]), "vm-b": ptr(certs["v7"])})
+	newer := divScan(divScanStart.Add(time.Minute), map[string]string{divVariable: "v6"},
+		map[string]*issued{"vm-a": ptr(certs["v7"]), "vm-b": ptr(certs["v7"])})
+
+	clock.set(divScanStart.Add(90 * time.Second))
+
+	if err := store.ReconcileScan(ctx, newer, src); err != nil {
+		t.Fatal(err)
+	}
+
+	before, _, _ := store.Get(ctx, divInstance)
+	gen := store.Generation()
+
+	if err := store.ReconcileScan(ctx, older, src); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, _ := store.Get(ctx, divInstance)
+	if !reflect.DeepEqual(got, before) || store.Generation() != gen {
+		t.Errorf("an older scan changed the record after a newer one:\nbefore %+v\nafter  %+v", before, got)
+	}
+
+	// A scan newer than the last one still reconciles.
+	latest := divScan(divScanStart.Add(2*time.Minute), map[string]string{divVariable: "v6"},
+		map[string]*issued{"vm-a": ptr(certs["v6"]), "vm-b": ptr(certs["v7"])})
+
+	if err := store.ReconcileScan(ctx, latest, src); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, _ = store.Get(ctx, divInstance)
+	if got.entry(divVariable).VMs["vm-a"].State != DivergentVMReverted {
+		t.Errorf("a newer scan did not reconcile: %+v", got.entry(divVariable))
+	}
+}
