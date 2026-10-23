@@ -398,6 +398,11 @@ type redeployEnv struct {
 	// settings, when set, is the manager's certificate settings.
 	settings func() certinventory.Settings
 
+	// divergence, when set, is the manager's divergence store, and
+	// scanWith, when set, answers the manager's scans in place of scan.
+	divergence *certinventory.DivergenceStore
+	scanWith   func(ctx context.Context, instanceID string) (certinventory.InstanceScan, error)
+
 	mu       sync.Mutex
 	switches config.CertificatesConfig
 	scans    []string
@@ -484,10 +489,15 @@ func (e *redeployEnv) setSwitches(rotation bool) {
 
 // scan is the inventory's scan of the instance, which shows v1 deployed
 // on its one VM.
-func (e *redeployEnv) scan(_ context.Context, instanceID string) (certinventory.InstanceScan, error) {
+func (e *redeployEnv) scan(ctx context.Context, instanceID string) (certinventory.InstanceScan, error) {
 	e.mu.Lock()
 	e.scans = append(e.scans, instanceID)
+	scanWith := e.scanWith
 	e.mu.Unlock()
+
+	if scanWith != nil {
+		return scanWith(ctx, instanceID)
+	}
 
 	return certinventory.InstanceScan{
 		Ref: certinventory.InstanceRef{ID: instanceID, Deployment: waitDeployment},
@@ -577,6 +587,7 @@ func (e *redeployEnv) newManager() *Manager {
 		ScanInstance: e.scan,
 		Prober:       certinventory.Prober{Timeout: 2 * time.Second},
 		Settings:     e.settings,
+		Divergence:   e.divergence,
 	})
 	if err != nil {
 		e.t.Fatalf("Configure: %v", err)

@@ -541,6 +541,46 @@ func (m *Manager) previewDeployment(ctx context.Context, inst *PreviewInstance, 
 	if req.Mode == RotationModePatch && inst.Blocked == nil {
 		m.previewPatch(ctx, inst, directorName, scan)
 	}
+
+	if req.Mode == RotationModeConverge && inst.Blocked == nil {
+		m.previewConverge(ctx, inst, scan)
+	}
+}
+
+// previewConverge blocks the converge of an instance that nothing waits
+// on. A converge lists an instance with a divergence record, and one with
+// a certificate whose latest version differs from its deployed one, which
+// the inventory reports as deploy_pending. The variables the converge
+// deploys are already bound as the additional ones. A record that can't
+// be read fails the preview, since it can't tell whether the instance
+// diverged.
+func (m *Manager) previewConverge(ctx context.Context, inst *PreviewInstance, scan certinventory.InstanceScan) {
+	certificates := make(map[string]bool, len(scan.Material.CredHub))
+	for _, cert := range scan.Material.CredHub {
+		certificates[cert.Name] = true
+	}
+
+	for _, pair := range inst.Additional {
+		if certificates[pair.Name] {
+			return
+		}
+	}
+
+	if store := m.certDeps().Divergence; store != nil {
+		_, found, err := store.Get(ctx, scan.Ref.ID)
+		if err != nil {
+			inst.failure = internalPreviewError(fmt.Sprintf("The divergence record of instance %s could not be read: %v", scan.Ref.ID, err))
+
+			return
+		}
+
+		if found {
+			return
+		}
+	}
+
+	*inst = inst.block(apierr.CodeNotRotatable,
+		"Nothing on this instance waits for a converge: it has no divergence record, and every certificate is deployed at its latest version.")
 }
 
 // bindEffects fills in the selected latest versions, the additional

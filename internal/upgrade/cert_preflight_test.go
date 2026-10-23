@@ -52,6 +52,9 @@ func newPreflightEnv(t *testing.T, mode RotationMode) *preflightEnv {
 	req := redeploy(waitInstanceID)
 	if mode == RotationModeConverge {
 		req = PreviewRequest{Mode: RotationModeConverge, Selections: []Selection{{InstanceID: waitInstanceID}}}
+
+		// A converge lists only an instance with something to deploy.
+		env.credhub.setLatest(previewLeaf(waitDeployment), "v2")
 	}
 
 	preview := previewOf(t, env, req)

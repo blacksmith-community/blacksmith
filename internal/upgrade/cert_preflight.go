@@ -58,27 +58,7 @@ func (m *Manager) certPreflightPlan(ctx context.Context, task *UpgradeTask, inst
 		names = append(names, variable.Name)
 	}
 
-	err := m.certWritesAllowed(mode)
-	if err != nil {
-		return nil, err
-	}
-
-	err = m.preflightGuard(task.ID, instanceID, deployment)
-	if err != nil {
-		return nil, err
-	}
-
-	directorName, err := m.rotationDirector(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	err = m.preflightNoDirectorTask(ctx, deployment)
-	if err != nil {
-		return nil, err
-	}
-
-	err = m.credhubReady()
+	directorName, err := m.preflightCommon(ctx, mode, task.ID, instanceID, deployment)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +73,50 @@ func (m *Manager) certPreflightPlan(ctx context.Context, task *UpgradeTask, inst
 	}
 
 	return m.preflightPatch(ctx, task, inst, directorName, scan, names, sessions)
+}
+
+// convergePreflight runs the converge subset of the preflight on the
+// instance, whatever the task's mode: the switches as a converge needs
+// them, the guard, the director, the director's tasks on the deployment,
+// and CredHub. A converge regenerates nothing, so it checks no variable.
+// It changes nothing.
+func (m *Manager) convergePreflight(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) error {
+	view := m.viewRotation(task, inst)
+
+	_, err := m.preflightCommon(ctx, RotationModeConverge, task.ID, view.instanceID, view.deployment)
+
+	return err
+}
+
+// preflightCommon runs the checks every mode's preflight shares, in the
+// order spec 8.4 lists them, and returns the director's name.
+func (m *Manager) preflightCommon(ctx context.Context, mode RotationMode, taskID, instanceID, deployment string) (string, error) {
+	err := m.certWritesAllowed(mode)
+	if err != nil {
+		return "", err
+	}
+
+	err = m.preflightGuard(taskID, instanceID, deployment)
+	if err != nil {
+		return "", err
+	}
+
+	directorName, err := m.rotationDirector(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	err = m.preflightNoDirectorTask(ctx, deployment)
+	if err != nil {
+		return "", err
+	}
+
+	err = m.credhubReady()
+	if err != nil {
+		return "", err
+	}
+
+	return directorName, nil
 }
 
 // rotationView is a copy of what a certificate step reads from its task

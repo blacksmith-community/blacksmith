@@ -2491,10 +2491,10 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) (
 			}
 
 			// The outcome of this deploy's task is already on record. A
-			// redeploy the manager runs follows the task again so it is
-			// verified, even in a cancelled task, and otherwise the
-			// rotation's runner takes it from there.
-			if deployEnded(instance, taskID) && (!m.configured || certTaskMode(task) != RotationModeRedeploy) {
+			// redeploy or converge the manager runs follows the task again
+			// so it is verified or reconciled, even in a cancelled task,
+			// and otherwise the rotation's runner takes it from there.
+			if deployEnded(instance, taskID) && !m.verifiesDeployLocked(task, instance) {
 				continue
 			}
 		}
@@ -3382,9 +3382,22 @@ func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) boo
 }
 
 // taskHolder describes the task to whoever finds its instances busy. A
-// certificate task holds its instances as a certificate rotation, and any
-// other task as an upgrade.
+// converge task holds its instances as a converge, any other certificate
+// task as a certificate rotation, and any other task as an upgrade.
 func taskHolder(task *UpgradeTask) mutation.Holder {
+	if task.KindOrDefault() == TaskKindCertificates && certTaskMode(task) == RotationModeConverge {
+		description := "converge task " + task.ID
+		if task.Name != "" {
+			description = fmt.Sprintf("converge %q", task.Name)
+		}
+
+		return mutation.Holder{
+			Kind:        mutation.KindConverge,
+			TaskID:      task.ID,
+			Description: description,
+		}
+	}
+
 	if task.KindOrDefault() == TaskKindCertificates {
 		description := "certificate rotation task " + task.ID
 		if task.Name != "" {
@@ -3555,10 +3568,11 @@ func (m *Manager) restoreReservationsLocked(task *UpgradeTask) bool {
 	return changed
 }
 
-// heldByTask reports whether the holder is an upgrade or a certificate
-// task, the two kinds the manager holds instances for.
+// heldByTask reports whether the holder is an upgrade, a certificate
+// rotation, or a converge task, the kinds the manager holds instances
+// for.
 func heldByTask(holder mutation.Holder) bool {
-	return holder.Kind == mutation.KindUpgrade || holder.Kind == mutation.KindCertificates
+	return holder.Kind == mutation.KindUpgrade || holder.Kind == mutation.KindCertificates || holder.Kind == mutation.KindConverge
 }
 
 // failReservedLocked fails a loaded task's instance that another task

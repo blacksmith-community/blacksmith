@@ -67,24 +67,49 @@ var errVerifyUnreadable = errors.New("the verification could not read what it ch
 
 // runsCertificatesLocked reports whether the manager runs this task as a
 // certificate rotation. Only a configured manager does, and only a
-// redeploy or a patch, since converge has no runner yet. The caller
-// holds mu.
+// redeploy, a patch, or a converge. The caller holds mu.
 func (m *Manager) runsCertificatesLocked(task *UpgradeTask) bool {
 	mode := certTaskMode(task)
 
 	return task.KindOrDefault() == TaskKindCertificates && m.configured &&
-		(mode == RotationModeRedeploy || mode == RotationModePatch)
+		(mode == RotationModeRedeploy || mode == RotationModePatch || mode == RotationModeConverge)
 }
 
-// rotateInstance runs the rotation of the task's mode on the instance.
-func (m *Manager) rotateInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) {
-	if m.rotationMode(task) == RotationModePatch {
-		m.rotateInstancePatch(ctx, task, inst, cancelCh)
-
-		return
+// convergesLocked reports whether the instance's next deploy is a
+// converge: the task is a converge task, or the instance reached phase
+// converge, as a patch with the immediate policy does once its last VM
+// is done. The caller holds mu for reading.
+func convergesLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
+	if certTaskMode(task) == RotationModeConverge {
+		return true
 	}
 
-	m.rotateInstanceRedeploy(ctx, task, inst, cancelCh)
+	return inst.Certificates != nil && inst.Certificates.Phase == RotationPhaseConverge
+}
+
+// verifiesDeployLocked reports whether the manager checks the instance's
+// done deploy before it settles the instance: a redeploy's deploy, whose
+// new versions it verifies, and a converge deploy, which it reconciles.
+// The caller holds mu for reading.
+func (m *Manager) verifiesDeployLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
+	return m.configured && (certTaskMode(task) == RotationModeRedeploy || convergesLocked(task, inst))
+}
+
+// rotateInstance runs the rotation of the task's mode on the instance,
+// and reports whether the instance settled.
+func (m *Manager) rotateInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
+	m.mu.RLock()
+	mode, converges := certTaskMode(task), convergesLocked(task, inst)
+	m.mu.RUnlock()
+
+	switch {
+	case converges:
+		return m.convergeInstance(ctx, task, inst, cancelCh)
+	case mode == RotationModePatch:
+		return m.rotateInstancePatch(ctx, task, inst, cancelCh)
+	default:
+		return m.rotateInstanceRedeploy(ctx, task, inst, cancelCh)
+	}
 }
 
 // processCertificateInstance takes one instance of a certificate task
@@ -402,6 +427,168 @@ func (m *Manager) redeployFromMutation(ctx context.Context, task *UpgradeTask, i
 	return m.instanceSettled(inst)
 }
 
+// convergeInstance brings BOSH in line with the versions CredHub holds by
+// deploying the instance's unchanged manifest with the latest variables.
+// It regenerates nothing. It checks the switches as a converge needs them,
+// runs the converge subset of the preflight and the BeforeConverge
+// re-check, saves phase converge for certain, and sends the director's
+// own manifest with force_latest_variables, through the same send and
+// follow an upgrade uses. The context ID and the BOSH task ID go on the
+// rotation's converge record, each saved for certain, so a restart
+// follows the deploy rather than sending it again. The instance stays
+// reserved until the deploy's reconciliation settles it, as
+// verifyAndSettle describes. It reports whether the instance settled.
+func (m *Manager) convergeInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
+	if m.refuseConverge(ctx, task, inst) {
+		return m.instanceSettled(inst)
+	}
+
+	cancelled := m.cancelledBeforeConverge(task)
+
+	if m.stopIfCancelled(ctx, task, inst, cancelled) {
+		return true
+	}
+
+	m.markRotating(ctx, task, inst)
+
+	err := m.convergePreflight(ctx, task, inst)
+	if err != nil {
+		m.convergePreflightFailed(ctx, task, inst, err)
+
+		return m.instanceSettled(inst)
+	}
+
+	// A task cancelled by now ends the instance rather than stopping it
+	// for an approval.
+	if m.stopIfCancelled(ctx, task, inst, cancelled) {
+		return true
+	}
+
+	if m.stopForChanges(ctx, task, inst, BeforeConverge) {
+		return m.instanceSettled(inst)
+	}
+
+	if m.stopIfCancelled(ctx, task, inst, cancelled) {
+		return true
+	}
+
+	if m.refuseConverge(ctx, task, inst) {
+		return m.instanceSettled(inst)
+	}
+
+	return m.sendConverge(ctx, task, inst, cancelled, cancelCh)
+}
+
+// sendConverge saves phase converge for certain and sends the converge
+// deploy of the director's own manifest, as convergeInstance describes.
+// It reports whether the instance settled.
+func (m *Manager) sendConverge(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelled string, cancelCh <-chan struct{}) bool {
+	view := m.viewRotation(task, inst)
+
+	m.mu.Lock()
+
+	if inst.Certificates == nil {
+		inst.Certificates = &InstanceRotation{}
+	}
+
+	inst.Certificates.Phase = RotationPhaseConverge
+	if inst.Certificates.Converge == nil {
+		inst.Certificates.Converge = &ConvergeDeploy{}
+	}
+
+	m.mu.Unlock()
+
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.pauseUnconfirmed(task, inst, "start the converge deploy of "+view.deployment)
+
+		return false
+	}
+
+	detail, err := directorCall(ctx, func(c context.Context) (*bosh.DeploymentDetail, error) {
+		return m.director.GetDeployment(c, view.deployment)
+	})
+
+	switch {
+	case ctx.Err() != nil:
+		return false
+	case err != nil:
+		m.pauseWith(ctx, task, inst, apierr.New(http.StatusInternalServerError, apierr.CodeInternal, //nolint:errcheck,gosec // pauseWith logs and saves it
+			fmt.Sprintf("The director did not return deployment %s, so the converge deploy was not sent. Resume to try again: %v", view.deployment, err)))
+
+		return false
+	case detail == nil:
+		m.pauseWith(ctx, task, inst, apierr.New(http.StatusInternalServerError, apierr.CodeInternal, //nolint:errcheck,gosec // pauseWith logs and saves it
+			fmt.Sprintf("The director returned no manifest for deployment %s, so the converge deploy was not sent. Resume to try again.", view.deployment)))
+
+		return false
+	case manifestDigest(detail.Manifest) != view.approved.ManifestDigest:
+		m.awaitNewApproval(ctx, task, inst, []string{"The manifest changed since the preview."}, cancelled)
+
+		return false
+	}
+
+	save := func() error { return m.persistCertConfirmed(ctx, task) }
+
+	if !m.deployWithContext(ctx, task, inst, detail.Manifest, bosh.DeployOptions{ForceLatestVariables: true}, save, cancelCh) {
+		m.pauseUnconfirmed(task, inst, "send the converge deploy of "+view.deployment)
+
+		return false
+	}
+
+	return m.instanceSettled(inst)
+}
+
+// refuseConverge checks the switches as a converge needs them, which is
+// the rotation switch alone whatever the task's mode, and pauses the task
+// with the reason when they refuse. It reports whether it paused.
+func (m *Manager) refuseConverge(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
+	err := m.certWritesAllowed(RotationModeConverge)
+	if err == nil {
+		return false
+	}
+
+	m.pauseWith(ctx, task, inst, writesRefused(err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+	return true
+}
+
+// cancelledBeforeConverge is the message of an instance whose task was
+// cancelled before its converge deploy was sent. A converge task changed
+// nothing by then, while a patch task already patched the VMs.
+func (m *Manager) cancelledBeforeConverge(task *UpgradeTask) string {
+	if m.rotationMode(task) == RotationModeConverge {
+		return cancelledUnchanged
+	}
+
+	return cancelledUnconverged
+}
+
+// convergePreflightFailed stops a converge after its preflight failed. A
+// refusal by the switches pauses the task, as preflightFailed does, and
+// any other failure fails the instance, since no converge deploy was
+// sent.
+func (m *Manager) convergePreflightFailed(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, err error) {
+	if ctx.Err() != nil || isWritesRefused(err) {
+		m.preflightFailed(ctx, task, inst, err)
+
+		return
+	}
+
+	message := err.Error()
+
+	var apiErr *apierr.Error
+	if errors.As(err, &apiErr) {
+		message = apiErr.Message
+	}
+
+	if m.rotationMode(task) != RotationModeConverge {
+		message += " " + patchedUnconverged
+	}
+
+	m.failRotation(ctx, task, inst, "The converge preflight failed, so no converge deploy was sent: "+message) //nolint:errcheck,gosec // failRotation logs and saves it
+}
+
 // refuseWrites checks the switches before a step that writes, and pauses
 // the task with the reason when they refuse. It reports whether it paused.
 func (m *Manager) refuseWrites(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
@@ -686,20 +873,21 @@ func (m *Manager) cancelInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade,
 }
 
 // certAfterDeploy is the certificate finisher. It records how the deploy's
-// BOSH task ended, as settleCertificateDeploy does. A redeploy whose task
-// is done is then verified and settled, as verifyAndSettle describes,
-// while the instance stays running and reserved.
+// BOSH task ended, as settleCertificateDeploy does. A redeploy or converge
+// whose task is done is then verified or reconciled and settled, as
+// verifyAndSettle describes, while the instance stays running and
+// reserved.
 func (m *Manager) certAfterDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, taskID int, finished *bosh.Task) {
 	m.settleCertificateDeploy(task, inst, taskID, finished)
 
 	m.mu.Lock()
 
-	redeploy := finished != nil && m.configured && certTaskMode(task) == RotationModeRedeploy
-	verify := redeploy && finished.State == boshTaskDone && inst.Status == InstanceStatusRunning
+	verifies := finished != nil && m.verifiesDeployLocked(task, inst)
+	verify := verifies && finished.State == boshTaskDone && inst.Status == InstanceStatusRunning
 
-	// A redeploy whose BOSH task failed closes as one the director
-	// rejected does, at phase done and scanned again.
-	failed := redeploy && finished.State != boshTaskDone && inst.Status == InstanceStatusFailed
+	// A redeploy or converge whose BOSH task failed closes as one the
+	// director rejected does, at phase done and scanned again.
+	failed := verifies && finished.State != boshTaskDone && inst.Status == InstanceStatusFailed
 
 	rescan := func() {}
 	if failed {
@@ -779,8 +967,8 @@ type verifyFailure struct {
 	pause func(ctx context.Context)
 }
 
-// verifyAttempt makes one attempt to verify a done redeploy and settle the
-// instance. It returns nil once the instance settles or ctx ends, and a
+// verifyAttempt makes one attempt to verify a done redeploy, or to
+// reconcile a done converge, and settle the instance. It returns nil once the instance settles or ctx ends, and a
 // failure when a read or a confirmed save did not succeed.
 func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) *verifyFailure {
 	unconfirmed := func(step string, err error) *verifyFailure {
@@ -795,7 +983,7 @@ func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *In
 		return unconfirmed("verify the deploy of "+inst.DeploymentName, err)
 	}
 
-	err = m.verifyRedeploy(ctx, inst)
+	note, err := m.verifyDeploy(ctx, task, inst)
 
 	switch {
 	case ctx.Err() != nil:
@@ -809,7 +997,7 @@ func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *In
 		}
 	}
 
-	ok, message := err == nil, ""
+	succeeded, message := err == nil, note
 	if err != nil {
 		message = err.Error()
 	}
@@ -823,7 +1011,7 @@ func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *In
 		return unconfirmed("finish instance "+inst.InstanceID+" after its verification", err)
 	}
 
-	m.settleCertificateInstance(task, inst, ok, message) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
+	m.settleCertificateInstance(task, inst, succeeded, message) //nolint:contextcheck // The follow-up scan runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	err = m.persistCertConfirmed(ctx, task)
 	if err != nil {
@@ -950,6 +1138,13 @@ func (m *Manager) instanceFailed(inst *InstanceUpgrade) bool {
 const (
 	cancelledUnchanged  = "The task was cancelled before the rotation changed anything."
 	cancelledUndeployed = "The task was cancelled before the deploy. " + deployPendingNote
+	// cancelledUnconverged ends a patched instance whose task was
+	// cancelled before its converge deploy.
+	cancelledUnconverged = "The task was cancelled before the converge deploy. " + patchedUnconverged
+	// patchedUnconverged says what a patched instance holds when no
+	// converge deploy followed its patch.
+	patchedUnconverged = "The patched VMs keep the new certificates, and BOSH still records the old versions, " +
+		"so the instance stays unconverged until a converge task or a deploy with the latest variables brings BOSH in line."
 )
 
 // cancelIdleLocked ends each running instance of a cancelled redeploy or
@@ -968,7 +1163,8 @@ const (
 func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
 	mode := certTaskMode(task)
 	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCertificates ||
-		(mode != RotationModeRedeploy && mode != RotationModePatch) || m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
+		(mode != RotationModeRedeploy && mode != RotationModePatch && mode != RotationModeConverge) ||
+		m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
 		return 0
 	}
 
@@ -1167,7 +1363,7 @@ func settleOutcomeLocked(task *UpgradeTask, inst *InstanceUpgrade, ok bool, mess
 
 		if ok {
 			inst.Status = InstanceStatusSuccess
-			inst.Error = ""
+			inst.Error = message
 			task.CompletedCount++
 		} else {
 			inst.Status = InstanceStatusFailed
@@ -1234,6 +1430,81 @@ func (m *Manager) failCertificateDeploy(ctx context.Context, task *UpgradeTask, 
 	if err != nil {
 		m.logger.Error("Certificate task %s: %v", task.ID, err)
 	}
+}
+
+// convergeWaitsNote is the note a converged instance completes with
+// while its divergence record stays, since not every listener has been
+// seen serving the version BOSH now deploys.
+const convergeWaitsNote = "BOSH deployed the latest versions, and reconciliation is waiting for every listener to serve the new version " +
+	"before it clears the instance's divergence record."
+
+// verifyDeploy checks the instance's done deploy before the instance
+// settles, and returns the note a successful instance keeps. A converge
+// deploy is reconciled, as reconcileConverge describes, and any other
+// deploy is a redeploy, whose new versions verifyRedeploy checks.
+func (m *Manager) verifyDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) (string, error) {
+	m.mu.RLock()
+	converges := convergesLocked(task, inst)
+	m.mu.RUnlock()
+
+	if converges {
+		return m.reconcileConverge(ctx, inst)
+	}
+
+	return "", m.verifyRedeploy(ctx, inst)
+}
+
+// reconcileConverge reconciles the instance's divergence record with a
+// scan taken now, after its converge deploy, and returns the note the
+// instance completes with. A record that reconciliation clears leaves no
+// note, and one that stays, because not every listener was seen serving
+// the deployed version, leaves convergeWaitsNote. A broker with no
+// divergence store has no record to reconcile. A scan, reconciliation, or
+// read that fails could not read what it checks, so the instance stays
+// reserved and is reconciled again.
+func (m *Manager) reconcileConverge(ctx context.Context, inst *InstanceUpgrade) (string, error) {
+	deps := m.certDeps()
+	if deps.Divergence == nil {
+		return "", nil
+	}
+
+	m.mu.RLock()
+	instanceID := inst.InstanceID
+	m.mu.RUnlock()
+
+	if deps.ScanInstance == nil {
+		return "", fmt.Errorf("%w: Blacksmith has no scanner to reconcile instance %s", errVerifyUnreadable, instanceID)
+	}
+
+	scan, err := deps.ScanInstance(ctx, instanceID)
+
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%w: instance %s could not be scanned after its converge deploy: %w", errVerifyUnreadable, instanceID, err)
+	case scan.Err != "":
+		return "", fmt.Errorf("%w: instance %s could not be scanned after its converge deploy: %s", errVerifyUnreadable, instanceID, scan.Err)
+	}
+
+	sources := certinventory.ReconcileSources{Versions: deps.CredHub, Log: m.logger}
+	if lister, ok := m.director.(bosh.DeploymentTaskLister); ok {
+		sources.Tasks = lister
+	}
+
+	err = deps.Divergence.ReconcileScan(ctx, scan, sources)
+	if err != nil {
+		return "", fmt.Errorf("%w: the divergence record of instance %s could not be reconciled: %w", errVerifyUnreadable, instanceID, err)
+	}
+
+	_, found, err := deps.Divergence.Get(ctx, instanceID)
+	if err != nil {
+		return "", fmt.Errorf("%w: the divergence record of instance %s could not be read: %w", errVerifyUnreadable, instanceID, err)
+	}
+
+	if found {
+		return convergeWaitsNote, nil
+	}
+
+	return "", nil
 }
 
 // verifyRedeploy checks that the deploy applied the new certificates. The

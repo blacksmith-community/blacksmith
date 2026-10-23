@@ -436,7 +436,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	case actionVerify:
 		m.mu.Unlock()
 
-		verifyErr := m.verifyNow(inst) //nolint:contextcheck // The verification runs on the manager's lifecycle context, so a finished request never cancels it.
+		note, verifyErr := m.verifyNow(task, inst) //nolint:contextcheck // The verification runs on the manager's lifecycle context, so a finished request never cancels it.
 		if errors.Is(verifyErr, errVerifyUnreadable) {
 			return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 				"Blacksmith could not verify the deploy now, so the instance still waits for this decision: "+verifyErr.Error())
@@ -451,7 +451,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 			return err
 		}
 
-		ok = verifyErr == nil
+		ok, message = verifyErr == nil, note
 		if !ok {
 			message = verifyErr.Error()
 			detail = "verification failed"
@@ -557,18 +557,20 @@ func directorTaskRunning(state string) bool {
 
 // verifyNow runs a resolve's verification of the instance's deploy under
 // the manager's context and its own deadline, so a client that goes away
-// does not fail the instance. A verification that ctx's end cut short
-// could not read what it checks, so the instance keeps waiting.
-func (m *Manager) verifyNow(inst *InstanceUpgrade) error {
+// does not fail the instance. A converge deploy is reconciled, as
+// verifyDeploy describes, and the note a successful instance keeps is
+// returned. A verification that ctx's end cut short could not read what
+// it checks, so the instance keeps waiting.
+func (m *Manager) verifyNow(task *UpgradeTask, inst *InstanceUpgrade) (string, error) {
 	ctx, cancel := context.WithTimeout(m.ctx, resolveVerifyTimeout)
 	defer cancel()
 
-	err := m.verifyRedeploy(ctx, inst)
+	note, err := m.verifyDeploy(ctx, task, inst)
 	if err != nil && ctx.Err() != nil && !errors.Is(err, errVerifyUnreadable) {
-		return fmt.Errorf("%w: the verification did not finish within %v: %w", errVerifyUnreadable, resolveVerifyTimeout, err)
+		return "", fmt.Errorf("%w: the verification did not finish within %v: %w", errVerifyUnreadable, resolveVerifyTimeout, err)
 	}
 
-	return err
+	return note, err
 }
 
 // decisionsReady turns a decision away until the loader has put every
