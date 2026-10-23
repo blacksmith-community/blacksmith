@@ -99,10 +99,11 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeInternal, "internal_error"},
 		{apierr.CodeTasksLoading, "tasks_loading"},
 		{apierr.CodeCredHubUnavailable, "credhub_unavailable"},
+		{apierr.CodeVaultUnavailable, "vault_unavailable"},
 	}
 
-	if len(table) != 30 {
-		t.Fatalf("table has %d codes, want 30", len(table))
+	if len(table) != 31 {
+		t.Fatalf("table has %d codes, want 31", len(table))
 	}
 
 	for _, row := range table {

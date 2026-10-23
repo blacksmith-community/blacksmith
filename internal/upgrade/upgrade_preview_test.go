@@ -949,3 +949,50 @@ func TestUpgradeFailsClosedWhenDivergenceUnreadable(t *testing.T) {
 		t.Fatalf("expected no deploy, got %d", deploys)
 	}
 }
+
+//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+func TestUpgradeAnswers503WhenDivergenceUnreadable(t *testing.T) {
+	env, flaky := newFlakyDivergedEnv(t)
+	flaky.failures.Store(1000)
+
+	_, err := env.manager.PreviewUpgrade(context.Background(), upgradeRequest(waitInstanceID, divergedInstance2))
+	expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeVaultUnavailable)
+
+	_, err = env.manager.CreateTask(context.Background(), upgradeRequest(waitInstanceID, divergedInstance2))
+	expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeVaultUnavailable)
+
+	env.expectNothingCreated(t)
+}
+
+// An ID that can't name a divergence record has none, so the upgrade
+// treats it as it always has and fails only that instance.
+//
+//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+func TestCreateUpgradeWithBadInstanceIDFailsOnlyThatInstance(t *testing.T) {
+	const badID = "a/b"
+
+	without := newDivergedEnv(t, false)
+
+	want, err := without.manager.CreateTask(context.Background(), upgradeRequest(badID))
+	if err != nil {
+		t.Fatalf("CreateTask without a divergence store: %v", err)
+	}
+
+	env := newDivergedEnv(t, true)
+
+	got, err := env.manager.CreateTask(context.Background(), upgradeRequest(badID))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	if got.Instances[0].Status != InstanceStatusFailed || got.Instances[0].Status != want.Instances[0].Status ||
+		got.Instances[0].Error != want.Instances[0].Error {
+		t.Fatalf("expected the instance to fail as it does without a store (%s %q), got %s %q",
+			want.Instances[0].Status, want.Instances[0].Error, got.Instances[0].Status, got.Instances[0].Error)
+	}
+
+	preview := env.preview(t, upgradeRequest(badID))
+	if len(preview.Diverged) != 0 {
+		t.Fatalf("expected no diverged instance, got %+v", preview.Diverged)
+	}
+}

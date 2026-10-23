@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -250,8 +251,8 @@ func (m *Manager) PreviewUpgrade(ctx context.Context, req CreateTaskRequest) (*U
 func (m *Manager) previewDiverged(ctx context.Context, instanceID string) (DivergedInstance, bool, error) {
 	record, found, err := m.divergenceOf(ctx, instanceID)
 	if err != nil {
-		return DivergedInstance{}, false, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
-			fmt.Sprintf("The divergence record of instance %s could not be read: %v", instanceID, err))
+		return DivergedInstance{}, false, apierr.New(http.StatusServiceUnavailable, apierr.CodeVaultUnavailable,
+			fmt.Sprintf("The divergence record of instance %s could not be read, so try the preview again shortly: %v", instanceID, err))
 	}
 
 	if !found {
@@ -286,7 +287,8 @@ func (m *Manager) previewDiverged(ctx context.Context, instanceID string) (Diver
 }
 
 // divergenceOf reads the instance's divergence record. Without a store
-// no instance has one.
+// no instance has one, and neither does an ID that can't name a record,
+// so an upgrade fails such an instance as it always has.
 func (m *Manager) divergenceOf(ctx context.Context, instanceID string) (*certinventory.Divergence, bool, error) {
 	store := m.certDeps().Divergence
 	if store == nil {
@@ -294,6 +296,10 @@ func (m *Manager) divergenceOf(ctx context.Context, instanceID string) (*certinv
 	}
 
 	record, found, err := store.Get(ctx, instanceID)
+	if errors.Is(err, certinventory.ErrInvalidInstanceID) {
+		return nil, false, nil
+	}
+
 	if err != nil {
 		return nil, false, fmt.Errorf("reading the divergence record of %s: %w", instanceID, err)
 	}
@@ -428,8 +434,8 @@ func (m *Manager) approvedDivergence(ctx context.Context, req CreateTaskRequest)
 	for _, id := range uniqueIDs(req.InstanceIDs) {
 		_, found, err := m.divergenceOf(ctx, id)
 		if err != nil {
-			return nil, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
-				fmt.Sprintf("The divergence record of instance %s could not be read, so Blacksmith can't tell whether the upgrade needs a preview: %v", id, err))
+			return nil, apierr.New(http.StatusServiceUnavailable, apierr.CodeVaultUnavailable,
+				fmt.Sprintf("The divergence record of instance %s could not be read, so Blacksmith can't tell whether the upgrade needs a preview. Try the upgrade again shortly: %v", id, err))
 		}
 
 		if found {
