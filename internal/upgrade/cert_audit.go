@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -183,9 +184,18 @@ func (m *Manager) writeAudit(ctx context.Context, rec AuditRecord) error {
 }
 
 // logAudit writes the record's structured log line.
+// The line ends with the whole sanitised record as one JSON value, so the
+// log alone says what changed if Vault never takes the record. JSON escapes
+// line breaks, so the line stays a single line.
 func (m *Manager) logAudit(rec AuditRecord) {
-	m.logger.Info("audit=certificate-rotation id=%s event=%s task=%s instance=%s mode=%s actor=%q from=%q reason=%q outcome=%q detail=%q variables=%s",
-		rec.ID, rec.Event, rec.TaskID, rec.InstanceID, rec.Mode, rec.Actor, rec.From, rec.Reason, rec.Outcome, rec.Detail, auditVariableNames(rec.Variables))
+	encoded := "{}"
+
+	if raw, err := json.Marshal(rec); err == nil {
+		encoded = string(raw)
+	}
+
+	m.logger.Info("audit=certificate-rotation id=%s event=%s task=%s instance=%s mode=%s actor=%q from=%q reason=%q outcome=%q detail=%q variables=%s record=%s",
+		rec.ID, rec.Event, rec.TaskID, rec.InstanceID, rec.Mode, rec.Actor, rec.From, rec.Reason, rec.Outcome, rec.Detail, auditVariableNames(rec.Variables), encoded)
 }
 
 func auditVariableNames(variables []AuditVariable) string {

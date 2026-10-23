@@ -228,6 +228,7 @@ func TestAuditLogLine(t *testing.T) {
 	manager.audit(context.Background(), AuditRecord{
 		ID: "r1", At: validateNow, Event: AuditApproved, TaskID: certTaskID, InstanceID: waitInstanceID,
 		Actor: "alice", From: "10.0.0.5:4000", Reason: "CHG-1234 leaf renewal", Mode: RotationModeRedeploy,
+		Variables: []AuditVariable{{Name: "/p/crt", OldSerial: "01ab", NewSerial: "02cd", OldVersionID: "v-old", NewVersionID: "v-new"}},
 	})
 
 	lines := env.logs.auditLines()
@@ -235,7 +236,7 @@ func TestAuditLogLine(t *testing.T) {
 		t.Fatalf("expected one audit line, got %q", lines)
 	}
 
-	for _, want := range []string{"audit=certificate-rotation", "event=approved", `reason="CHG-1234 leaf renewal"`, `actor="alice"`, "task=" + certTaskID} {
+	for _, want := range []string{"audit=certificate-rotation", "event=approved", `reason="CHG-1234 leaf renewal"`, `actor="alice"`, "task=" + certTaskID, `"old_serial":"01ab"`, `"new_version_id":"v-new"`} {
 		if !strings.Contains(lines[0], want) {
 			t.Fatalf("the line lacks %q: %s", want, lines[0])
 		}
