@@ -296,6 +296,17 @@ type Stemcell struct {
 // match on the description is only the fallback.
 const DeployTaskDescription = "create deployment"
 
+// DeploymentTaskLister lists a deployment's recent tasks. It is not part
+// of Director, so a caller asks for it with a type assertion.
+type DeploymentTaskLister interface {
+	DeploymentTasks(ctx context.Context, deployment string, limit int) ([]Task, error)
+}
+
+var (
+	_ DeploymentTaskLister = (*DirectorAdapter)(nil)
+	_ DeploymentTaskLister = (*PooledDirector)(nil)
+)
+
 // Task represents a BOSH task.
 type Task struct {
 	ID          int        `json:"id"`

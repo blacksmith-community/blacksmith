@@ -363,6 +363,22 @@ func (p *PooledDirector) FindRunningTaskForDeployment(ctx context.Context, deplo
 	return p.director.FindRunningTaskForDeployment(ctx, deploymentName)
 }
 
+// DeploymentTasks passes the call to the wrapped director when it lists a
+// deployment's tasks - no pooling for read operations.
+func (p *PooledDirector) DeploymentTasks(ctx context.Context, deployment string, limit int) ([]Task, error) {
+	lister, ok := p.director.(DeploymentTaskLister)
+	if !ok {
+		return nil, ErrDeploymentTasksUnsupported
+	}
+
+	tasks, err := lister.DeploymentTasks(ctx, deployment, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list the recent tasks of deployment %s: %w", deployment, err)
+	}
+
+	return tasks, nil
+}
+
 // FindRunningTasksForDeployment implements Director interface - no pooling for read operations.
 func (p *PooledDirector) FindRunningTasksForDeployment(ctx context.Context, deploymentName string) ([]Task, error) {
 	tasks, err := p.director.FindRunningTasksForDeployment(ctx, deploymentName)

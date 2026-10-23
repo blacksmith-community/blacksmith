@@ -72,7 +72,13 @@ var (
 	ErrDeploymentNotFound = errors.New("deployment not found")
 	// ErrEmptyContextID is returned by FindTaskByContextID for an empty
 	// context ID, which the director would take as no filter at all.
-	ErrEmptyContextID                 = errors.New("the context ID to look tasks up by is empty")
+	ErrEmptyContextID = errors.New("the context ID to look tasks up by is empty")
+	// ErrEmptyDeploymentName is returned by DeploymentTasks for an empty
+	// deployment name, which the director would take as no filter at all.
+	ErrEmptyDeploymentName = errors.New("the deployment to list tasks of is empty")
+	// ErrDeploymentTasksUnsupported is returned by a wrapper whose
+	// director cannot list a deployment's tasks.
+	ErrDeploymentTasksUnsupported     = errors.New("the director cannot list a deployment's tasks")
 	ErrTaskCannotBeCancelled          = errors.New("task is in invalid state and cannot be cancelled")
 	ErrNoCloudConfigFound             = errors.New("no cloud config found")
 	ErrInvalidConfigIDFormat          = errors.New("invalid config ID format")
@@ -2157,6 +2163,21 @@ func (d *DirectorAdapter) FindRunningTasksForDeployment(ctx context.Context, dep
 	d.log.Debugf("Found %d running tasks for deployment %s", len(running), deploymentName)
 
 	return running, nil
+}
+
+// DeploymentTasks returns up to limit of the deployment's most recent
+// tasks in every state, newest first. A finished task carries its end
+// time. An empty deployment name is refused, since the director would list
+// every deployment's tasks.
+func (d *DirectorAdapter) DeploymentTasks(ctx context.Context, deployment string, limit int) (_ []Task, err error) {
+	defer d.explainContext(ctx, "DeploymentTasks", &err)
+
+	if deployment == "" {
+		return nil, ErrEmptyDeploymentName
+	}
+
+	return d.listTasks(ctx, "list the recent tasks of deployment "+deployment,
+		&boshapi.TaskListOptions{Deployment: deployment, Limit: limit, Verbose: 1})
 }
 
 // FindTaskByContextID returns the newest task the director recorded with the
