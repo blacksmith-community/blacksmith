@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 )
 
 const (
@@ -151,6 +152,7 @@ func (m *Manager) CreateCertificateTask(ctx context.Context, req CreateCertifica
 	}
 
 	task := m.newCertificateTask(req, digest, preview)
+	stampActor(ctx, task)
 	if len(task.Instances) == 0 {
 		return nil, false, apierr.New(http.StatusBadRequest, apierr.CodeNoSelections, "Every instance in the preview is blocked, so there is nothing to rotate.")
 	}
@@ -462,4 +464,17 @@ func (m *Manager) failLoadedOrphans(loaded []*UpgradeTask) []*UpgradeTask {
 	}
 
 	return kept
+}
+
+// stampActor records who created the task and where the request came from,
+// both read from the request context on the server side. With no actor in
+// the context, as when a test calls the manager directly, both stay empty.
+func stampActor(ctx context.Context, task *UpgradeTask) {
+	actor, ok := audit.ActorFrom(ctx)
+	if !ok {
+		return
+	}
+
+	task.CreatedBy = actor.Username
+	task.CreatedFrom = actor.From()
 }

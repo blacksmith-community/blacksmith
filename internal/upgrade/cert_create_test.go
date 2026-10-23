@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/mutation"
 )
 
@@ -765,5 +766,30 @@ func TestLoadOrphanCreationNeverRuns(t *testing.T) {
 	saved, ok := vault.storedRecord(t, certificateTasksVaultPath+"/"+certTaskID)
 	if !ok || saved.Status != TaskStatusFailed || saved.Instances[0].Status != InstanceStatusFailed {
 		t.Fatalf("expected the failed status saved, got %+v", saved)
+	}
+}
+
+// A task created under a context with an actor records who made it and
+// where from, and one created without an actor records neither.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCreateCertificateTaskRecordsActor(t *testing.T) {
+	env, _ := createEnv(t)
+	preview := previewOf(t, env, redeploy(waitInstanceID))
+
+	ctx := audit.WithActor(context.Background(), audit.Actor{Username: "admin", RemoteAddr: "10.0.0.5:4000", ForwardedFor: "203.0.113.9"})
+
+	task, _, err := env.manager.CreateCertificateTask(ctx, createRequest(preview.ID))
+	if err != nil {
+		t.Fatalf("CreateCertificateTask: %v", err)
+	}
+
+	if task.CreatedBy != "admin" || task.CreatedFrom != "10.0.0.5:4000 via 203.0.113.9" {
+		t.Fatalf("expected the actor recorded, got by %q from %q", task.CreatedBy, task.CreatedFrom)
+	}
+
+	live := taskCopy(t, env.manager, task.ID)
+	if live.CreatedBy != "admin" || live.CreatedFrom != task.CreatedFrom {
+		t.Fatalf("the stored task lost the actor: %+v", live)
 	}
 }

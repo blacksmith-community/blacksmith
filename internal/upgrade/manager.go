@@ -508,6 +508,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		FailedCount:    0,
 		CreatedAt:      time.Now(),
 	}
+	stampActor(ctx, task)
 
 	// The reservations and the store share one critical section, so the
 	// upgrade is never seen without the instances it holds. The guard

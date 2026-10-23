@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"blacksmith/internal/audit"
 	"blacksmith/pkg/logger"
 )
 
@@ -35,6 +36,10 @@ func (api API) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 		return
 	}
+
+	// The actor is for the audit record only. The forwarded-for address
+	// is whatever the client sent, so no decision may rest on it.
+	req = req.WithContext(audit.WithActor(req.Context(), audit.ActorFromRequest(req, username)))
 
 	api.routeRequest(writer, req, username)
 }

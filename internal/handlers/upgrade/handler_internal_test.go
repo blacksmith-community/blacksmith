@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
+	"blacksmith/internal/broker"
 	"blacksmith/internal/mutation"
 	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/logger"
@@ -447,5 +449,53 @@ func TestResumeRefusalKeepsItsCode(t *testing.T) {
 	status, body := serve(t, http.MethodPost, "/b/upgrade/tasks/x/resume", err)
 	if status != http.StatusForbidden || body["code"] != apierr.CodeRotationDisabled || body["error"] != "Rotation is off on this broker." {
 		t.Fatalf("status %d, body %v", status, body)
+	}
+}
+
+// actorTasks is a certTasks that stamps each task the way the manager
+// does, from the actor in the request's context.
+type actorTasks struct {
+	certTasks
+}
+
+func (a *actorTasks) CreateCertificateTask(ctx context.Context, req upgrade.CreateCertificateTaskRequest) (*upgrade.UpgradeTask, bool, error) {
+	task, existing, err := a.certTasks.CreateCertificateTask(ctx, req)
+	if task != nil {
+		if actor, ok := audit.ActorFrom(ctx); ok {
+			task.CreatedBy, task.CreatedFrom = actor.Username, actor.From()
+		}
+	}
+
+	return task, existing, err
+}
+
+func TestCreateHandlerSetsCreatedFromFromActor(t *testing.T) {
+	t.Parallel()
+
+	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: &actorTasks{certTasks: certTasks{createdFrom: "spoofed"}}}
+
+	body := strings.Replace(certificateCreateBody, `"reason"`, `"created_from":"spoofed","reason"`, 1)
+
+	// The broker's middleware puts the actor in the context before the
+	// handler runs.
+	api := broker.API{Username: "admin", Password: "pw", Internal: handler, Primary: broker.NullHandler{}}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/upgrade/tasks", strings.NewReader(body))
+	req.SetBasicAuth("admin", "pw")
+	req.RemoteAddr = "10.0.0.5:4000"
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+
+	rec := httptest.NewRecorder()
+	api.ServeHTTP(rec, req)
+
+	var answer map[string]interface{}
+
+	err := json.Unmarshal(rec.Body.Bytes(), &answer)
+	if err != nil || rec.Code != http.StatusCreated {
+		t.Fatalf("status %d, body %s, err %v", rec.Code, rec.Body.String(), err)
+	}
+
+	if answer["created_from"] != "10.0.0.5:4000 via 203.0.113.9" || answer["created_by"] != "admin" {
+		t.Fatalf("expected the actor's origin, got %v", answer)
 	}
 }
