@@ -770,6 +770,95 @@ func TestPatchImmediateConverges(t *testing.T) {
 	expectReleased(t, manager)
 }
 
+// pauseBeforeConverge runs an immediate patch whose converge deploy
+// finds no manifest once the converge saved its phase, so the task pauses
+// at phase converge with every VM done and no converge deploy sent.
+func (e *patchEnv) pauseBeforeConverge(t *testing.T) (*Manager, UpgradeTask) {
+	t.Helper()
+
+	task := e.task()
+	manager := e.immediateManager(&task)
+
+	e.director.mu.Lock()
+	e.director.onGetDeployment = func() {
+		manager.mu.RLock()
+		converging := task.Instances[0].Certificates.Phase == RotationPhaseConverge
+		manager.mu.RUnlock()
+
+		if converging {
+			e.director.empty = true
+		}
+	}
+	e.director.mu.Unlock()
+
+	e.run(manager, &task)
+
+	got := current(t, manager)
+	if inst := got.Instances[0]; !got.Paused || inst.Status != InstanceStatusRunning || inst.Certificates.Phase != RotationPhaseConverge {
+		t.Fatalf("expected the task paused at phase converge, got paused=%v %s at %s: %q", got.Paused, inst.Status, inst.Certificates.Phase, inst.Error)
+	}
+
+	e.expectAllDone(t, manager)
+
+	return manager, got
+}
+
+// expectCancelledUnconverged fails the test unless the instance ended
+// cancelled before its converge deploy, with no deploy sent, the record
+// kept, and the instance freed.
+func (e *patchEnv) expectCancelledUnconverged(t *testing.T, manager *Manager) {
+	t.Helper()
+
+	got := eventuallyInstance(t, manager, InstanceStatusCancelled)
+	if inst := got.Instances[0]; got.Status != TaskStatusCancelled || inst.Error != cancelledUnconverged {
+		t.Fatalf("expected the instance cancelled before its converge deploy, got %s: %q", got.Status, inst.Error)
+	}
+
+	if deploys := e.director.deploys(); len(deploys) != 0 {
+		t.Fatalf("expected no converge deploy, got %+v", deploys)
+	}
+
+	_, found, err := e.store.Get(context.Background(), waitInstanceID)
+	if err != nil || !found {
+		t.Fatalf("expected the divergence record kept, got found=%v err=%v", found, err)
+	}
+
+	expectReleased(t, manager)
+}
+
+// A patch task with the immediate policy that is cancelled while it waits
+// before its converge deploy, every VM done, ends its instance as the
+// live path does when the cancel comes before the deploy: patched and
+// unconverged.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchCancelledIdleBeforeConverge(t *testing.T) {
+	t.Run("at phase converge", func(t *testing.T) {
+		env := newPatchEnv(t)
+		manager, _ := env.pauseBeforeConverge(t)
+
+		err := manager.CancelTask(context.Background(), certTaskID)
+		if err != nil {
+			t.Fatalf("CancelTask: %v", err)
+		}
+
+		env.expectCancelledUnconverged(t, manager)
+	})
+
+	t.Run("before phase converge", func(t *testing.T) {
+		env := newPatchEnv(t)
+		_, stored := env.pauseBeforeConverge(t)
+
+		// The converge was refused before it saved its phase, so the
+		// instance is still at phase patch with every VM done.
+		stored.Instances[0].Certificates.Phase = RotationPhasePatch
+		stored.Instances[0].Certificates.Converge = nil
+		stored.Paused = false
+
+		env.expectCancelledUnconverged(t, env.startCancelled(t, stored, nil))
+	})
+}
+
 // A patch task with the pending policy settles the instance once every
 // VM is done, sends no deploy, and leaves the record unconverged for a
 // later converge.

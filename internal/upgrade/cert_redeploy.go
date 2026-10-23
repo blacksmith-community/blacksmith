@@ -1182,7 +1182,7 @@ func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
 			continue
 		}
 
-		status, message, end := idleCancelEndLocked(inst, mode)
+		status, message, end := idleCancelEndLocked(task, inst, mode)
 		if !end {
 			continue
 		}
@@ -1209,19 +1209,44 @@ func (m *Manager) cancelIdleLocked(task *UpgradeTask) int {
 }
 
 // idleCancelEndLocked is the status and message an idle instance of a
-// cancelled task ends with, and whether it ends at all. The caller holds
-// mu.
-func idleCancelEndLocked(inst *InstanceUpgrade, mode RotationMode) (InstanceStatus, string, bool) {
+// cancelled task ends with, and whether it ends at all. A patch instance
+// that was only waiting for its converge deploy ends as the live path
+// ends it when the cancel comes before that deploy. The caller holds mu.
+func idleCancelEndLocked(task *UpgradeTask, inst *InstanceUpgrade, mode RotationMode) (InstanceStatus, string, bool) {
 	message := cancelledUnchanged
 	if regenerationStartedLocked(inst) {
 		message = cancelledUndeployed
 	}
 
-	if mode == RotationModePatch {
-		return patchCancelEnd(inst, message)
+	if mode != RotationModePatch {
+		return InstanceStatusCancelled, message, true
 	}
 
-	return InstanceStatusCancelled, message, true
+	status, message, end := patchCancelEnd(inst, message)
+	if end && status == InstanceStatusCancelled && awaitsConvergeLocked(task, inst) {
+		message = cancelledUnconverged
+	}
+
+	return status, message, end
+}
+
+// awaitsConvergeLocked reports whether a patch instance waits only for
+// its converge deploy: every VM is done, and the instance reached phase
+// converge or its task converges as soon as the VMs are patched. The
+// caller holds mu for reading.
+func awaitsConvergeLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
+	rotation := inst.Certificates
+	if rotation == nil || len(rotation.VMs) == 0 {
+		return false
+	}
+
+	for _, j := range rotation.VMs {
+		if j.Phase != VMPhaseDone {
+			return false
+		}
+	}
+
+	return rotation.Phase == RotationPhaseConverge || taskConverge(task) == ConvergeImmediate
 }
 
 // skipUnownedLocked skips the pending instances of a cancelled
