@@ -139,7 +139,9 @@ type UpgradeTask struct {
 	// RequestDigest is the SHA-256 of the create request's body without
 	// its client request ID.
 	RequestDigest string `json:"request_digest,omitempty"`
-	// CreatedFrom names where the task was created, such as "ui".
+	// CreatedFrom is the address the create request came from, as
+	// "<remote>" or "<remote> via <forwarded-for>". The forwarded-for part
+	// is what the client reported, so it is for the record only.
 	CreatedFrom string `json:"created_from,omitempty"`
 	// Revision counts the task's confirmed saves.
 	Revision uint64 `json:"revision,omitempty"`

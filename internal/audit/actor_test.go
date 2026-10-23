@@ -69,3 +69,16 @@ func TestActorContextRoundTrip(t *testing.T) {
 		t.Fatalf("got %+v, %v", got, ok)
 	}
 }
+
+func TestActorJoinsEveryForwardedForHeader(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/x", nil)
+	req.RemoteAddr = "10.0.0.5:4000"
+	req.Header.Add("X-Forwarded-For", "203.0.113.9")
+	req.Header.Add("X-Forwarded-For", "198.51.100.2, 192.0.2.7")
+
+	if got := audit.ActorFromRequest(req, "admin").ForwardedFor; got != "203.0.113.9, 198.51.100.2, 192.0.2.7" {
+		t.Fatalf("expected every header line kept, got %q", got)
+	}
+}

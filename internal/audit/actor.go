@@ -39,13 +39,14 @@ func ActorFrom(ctx context.Context) (Actor, bool) {
 }
 
 // ActorFromRequest builds the actor of an authenticated request. The
-// forwarded-for value is cleaned of control characters, so it can't break
-// a log line, and cut to 256 bytes.
+// forwarded-for value joins every header line a proxy chain added, and is
+// cleaned of control characters, so it can't break a log line, and cut to
+// 256 bytes.
 func ActorFromRequest(req *http.Request, username string) Actor {
 	return Actor{
 		Username:     username,
 		RemoteAddr:   req.RemoteAddr,
-		ForwardedFor: truncate(clean(req.Header.Get("X-Forwarded-For")), maxForwardedFor),
+		ForwardedFor: truncate(clean(strings.Join(req.Header.Values("X-Forwarded-For"), ", ")), maxForwardedFor),
 	}
 }
 
