@@ -191,7 +191,7 @@ func NewService(deps ServiceDeps) *Service {
 			versions = deps.CredHubClient
 		}
 
-		s.sched.SetReconciler(s.divergence, versions)
+		s.sched.SetReconciler(s.divergence, ReconcileSources{Versions: versions, Log: s.log})
 	}
 
 	return s

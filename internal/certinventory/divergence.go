@@ -15,6 +15,7 @@ import (
 
 	"blacksmith/internal/credhub"
 	"blacksmith/internal/interfaces"
+	"blacksmith/pkg/logger"
 )
 
 // Vault paths of the divergence records. The index document lists every
@@ -152,6 +153,21 @@ type VersionLookup interface {
 }
 
 var _ VersionLookup = (*credhub.Client)(nil)
+
+// ReconcileSources is what reconciliation reads beyond the scan. A nil
+// Versions reconciles nothing, and a nil Log logs nothing.
+type ReconcileSources struct {
+	Versions VersionLookup
+	Log      logger.Logger
+}
+
+func (src ReconcileSources) log() logger.Logger {
+	if isNil(src.Log) {
+		return logger.NewNoOpLogger()
+	}
+
+	return src.Log
+}
 
 // DivergenceStore keeps the divergence records in Vault. Every change goes
 // through Update, which holds the instance's lock across its read, change,
@@ -734,8 +750,8 @@ func clears(v DivergentVariable, in ReconcileInput) bool {
 // versions it changes nothing, because every comparison needs a creation
 // time. A failed scan, the broker scan, and an instance without a record
 // change nothing either.
-func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, versions VersionLookup) error {
-	if isNil(versions) || scan.Err != "" || scan.ScannedAt.IsZero() || scan.Ref.ID == BrokerScanID {
+func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, src ReconcileSources) error {
+	if isNil(src.Versions) || scan.Err != "" || scan.ScannedAt.IsZero() || scan.Ref.ID == BrokerScanID {
 		return nil
 	}
 
@@ -744,7 +760,7 @@ func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, 
 		return err
 	}
 
-	in := reconcileInput(ctx, cur, scan, versions)
+	in := reconcileInput(ctx, cur, scan, src)
 
 	return s.Update(ctx, scan.Ref.ID, func(d *Divergence) (*Divergence, error) {
 		return Reconcile(d, in), nil
@@ -752,7 +768,7 @@ func (s *DivergenceStore) ReconcileScan(ctx context.Context, scan InstanceScan, 
 }
 
 // reconcileInput builds the input for the record from the scan and CredHub.
-func reconcileInput(ctx context.Context, d *Divergence, scan InstanceScan, versions VersionLookup) ReconcileInput {
+func reconcileInput(ctx context.Context, d *Divergence, scan InstanceScan, src ReconcileSources) ReconcileInput {
 	in := ReconcileInput{
 		ScanStartedAt:      scan.ScannedAt,
 		Deployed:           map[string]string{},
@@ -775,7 +791,7 @@ func reconcileInput(ctx context.Context, d *Divergence, scan InstanceScan, versi
 	}
 
 	for _, v := range d.Variables {
-		readVersions(ctx, v, &in, versions)
+		readVersions(ctx, v, &in, src.Versions, src.log())
 	}
 
 	return in
@@ -784,12 +800,16 @@ func reconcileInput(ctx context.Context, d *Divergence, scan InstanceScan, versi
 // readVersions fills the creation times of the variable's newest versions,
 // and the fingerprints of the versions reconciliation compares against:
 // the applied and the deployed version, and then older versions, newest
-// first, only until every version an applied VM served is named.
-func readVersions(ctx context.Context, v DivergentVariable, in *ReconcileInput, versions VersionLookup) {
+// first, only until every version an applied VM served is named. A failed
+// read is logged with the variable or version it was for and leaves that
+// time or fingerprint unknown, which keeps the entry as it is.
+func readVersions(ctx context.Context, v DivergentVariable, in *ReconcileInput, versions VersionLookup, log logger.Logger) {
 	list, err := within(ctx, CredHubCallTimeout, func(c context.Context) ([]credhub.CredentialVersion, error) {
 		return versions.CredentialVersions(c, v.Name, reconcileVersionLimit)
 	})
-	if err == nil {
+	if err != nil {
+		log.Warnf("certificate divergence: the CredHub versions of %s could not be read, so its record stays as it is: %v", v.Name, err)
+	} else {
 		for _, cv := range list {
 			if cv.ID != "" && !cv.CreatedAt.IsZero() {
 				in.VersionCreated[cv.ID] = cv.CreatedAt
@@ -805,7 +825,13 @@ func readVersions(ctx context.Context, v DivergentVariable, in *ReconcileInput, 
 		pub, err := within(ctx, CredHubCallTimeout, func(c context.Context) (*credhub.CertificatePublic, error) {
 			return versions.CertificateVersion(c, id)
 		})
-		if err != nil || pub == nil {
+		if err != nil {
+			log.Warnf("certificate divergence: CredHub version %s of %s could not be read: %v", id, v.Name, err)
+
+			return
+		}
+
+		if pub == nil {
 			return
 		}
 

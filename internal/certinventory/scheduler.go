@@ -119,10 +119,11 @@ type Scheduler struct {
 	locksMu sync.Mutex
 	locks   map[string]chan struct{}
 
-	// divergence and versions, guarded by mu, reconcile the divergence
-	// records after each instance scan. Either may be nil.
+	// divergence and sources, guarded by mu, reconcile the divergence
+	// records after each instance scan. A nil divergence reconciles
+	// nothing.
 	divergence *DivergenceStore
-	versions   VersionLookup
+	sources    ReconcileSources
 }
 
 // fleetRun is one fleet scan. Its fields other than id, done, and subset
@@ -435,15 +436,15 @@ func (s *Scheduler) scanHeld(ctx context.Context, job scanJob, lock chan struct{
 	return scan, true
 }
 
-// SetReconciler gives the scheduler the divergence store and the CredHub
-// reader that reconciliation uses. The service calls it once, before
-// Start. A nil store turns reconciliation off, and a nil versions leaves
-// every record as it is.
-func (s *Scheduler) SetReconciler(store *DivergenceStore, versions VersionLookup) {
+// SetReconciler gives the scheduler the divergence store and the sources
+// that reconciliation reads. The service calls it once, before Start. A
+// nil store turns reconciliation off, and a nil src.Versions leaves every
+// record as it is.
+func (s *Scheduler) SetReconciler(store *DivergenceStore, src ReconcileSources) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.divergence, s.versions = store, versions
+	s.divergence, s.sources = store, src
 }
 
 // reconcile updates the instance's divergence record from a stored scan.
@@ -452,14 +453,16 @@ func (s *Scheduler) SetReconciler(store *DivergenceStore, versions VersionLookup
 // leaves the record as it was, and the next scan tries again.
 func (s *Scheduler) reconcile(ctx context.Context, scan InstanceScan) {
 	s.mu.Lock()
-	store, versions := s.divergence, s.versions
+	store, src := s.divergence, s.sources
 	s.mu.Unlock()
 
 	if store == nil {
 		return
 	}
 
-	_ = store.ReconcileScan(ctx, scan, versions)
+	if err := store.ReconcileScan(ctx, scan, src); err != nil {
+		src.log().Errorf("certificate divergence: the record of instance %s could not be reconciled with its scan, so it stays as it was until the next scan: %v", scan.Ref.ID, err)
+	}
 }
 
 // ScanInstanceNow scans one instance at once, waiting for its lock if a

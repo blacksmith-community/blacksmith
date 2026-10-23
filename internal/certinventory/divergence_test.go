@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/credhub"
 	"blacksmith/internal/interfaces"
+	"blacksmith/pkg/logger"
 )
 
 const (
@@ -522,7 +524,7 @@ func TestDivergenceStaleScanCannotDelete(t *testing.T) {
 
 	clock.set(divScanStart.Add(2 * time.Second))
 
-	if err := store.ReconcileScan(ctx, scan, divCredHub(certs, "v6", "v7")); err != nil {
+	if err := store.ReconcileScan(ctx, scan, ReconcileSources{Versions: divCredHub(certs, "v6", "v7")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -740,7 +742,7 @@ func TestScanRunsReconcile(t *testing.T) {
 	var cache Cache
 
 	s := newTestScheduler(t, sc, &cache, staticLister("i1", "i2"), nil, settingsWith(4, 60))
-	s.SetReconciler(store, divCredHub(certs, "v6", "v7"))
+	s.SetReconciler(store, ReconcileSources{Versions: divCredHub(certs, "v6", "v7")})
 
 	if _, err := s.ScanInstanceNow(ctx, "i1"); err != nil {
 		t.Fatal(err)
@@ -961,6 +963,150 @@ func TestDivergenceAmbiguousDelete(t *testing.T) {
 
 		if store.Generation() != gen {
 			t.Errorf("an unconfirmed delete moved the generation to %d", store.Generation())
+		}
+	})
+}
+
+// recLogger records the warnings and errors logged through it.
+type recLogger struct {
+	logger.Logger
+
+	mu    sync.Mutex
+	lines []string
+}
+
+func newRecLogger() *recLogger { return &recLogger{Logger: logger.NewNoOpLogger()} }
+
+func (l *recLogger) add(format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *recLogger) Errorf(format string, args ...interface{}) { l.add(format, args...) }
+func (l *recLogger) Warnf(format string, args ...interface{})  { l.add(format, args...) }
+
+// logged returns the recorded lines that hold every one of parts.
+func (l *recLogger) logged(parts ...string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var out []string
+
+	for _, line := range l.lines {
+		all := true
+
+		for _, p := range parts {
+			all = all && strings.Contains(line, p)
+		}
+
+		if all {
+			out = append(out, line)
+		}
+	}
+
+	return out
+}
+
+func TestReconcileLogsFailures(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	certs := divVersions(t, "v6", "v7")
+
+	seeded := func(t *testing.T) (*divVault, *DivergenceStore) {
+		t.Helper()
+
+		v := newDivVault()
+		store := NewDivergenceStore(v, nil)
+
+		err := store.Update(ctx, divInstance, func(*Divergence) (*Divergence, error) {
+			rec := divRecord()
+			rec.Variables[0].UpdatedAt = time.Time{}
+
+			return rec, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return v, store
+	}
+
+	scanner := func() *fakeScanner {
+		sc := newFakeScanner()
+		sc.result = func(ref InstanceRef, _ int) InstanceScan {
+			scan := divScan(time.Now(), map[string]string{divVariable: "v7"},
+				map[string]*issued{"vm-a": ptr(certs["v7"]), "vm-b": ptr(certs["v7"])})
+			scan.Ref = ref
+
+			return scan
+		}
+
+		return sc
+	}
+
+	t.Run("write fails", func(t *testing.T) {
+		t.Parallel()
+
+		v, store := seeded(t)
+		v.putFail = func(path string) (bool, error) {
+			if path == divergenceRecordPath(divInstance) {
+				return false, errors.New("permission denied")
+			}
+
+			return true, nil
+		}
+		v.deleteFail = func(string) (bool, error) { return false, errors.New("permission denied") }
+
+		log := newRecLogger()
+
+		var cache Cache
+
+		s := newTestScheduler(t, scanner(), &cache, staticLister(divInstance), nil, settingsWith(4, 60))
+		s.SetReconciler(store, ReconcileSources{Versions: divCredHub(certs, "v6", "v7"), Log: log})
+
+		if _, err := s.ScanInstanceNow(ctx, divInstance); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := log.logged(divInstance, "permission denied"); len(got) == 0 {
+			t.Errorf("the failed reconcile was not logged with its instance: %q", log.lines)
+		}
+
+		if _, found, _ := store.Get(ctx, divInstance); !found {
+			t.Error("a failed reconcile lost the record")
+		}
+	})
+
+	t.Run("credhub fails", func(t *testing.T) {
+		t.Parallel()
+
+		_, store := seeded(t)
+		ch := divCredHub(certs, "v6", "v7")
+		ch.err = errors.New("CredHub unreachable")
+		log := newRecLogger()
+
+		var cache Cache
+
+		s := newTestScheduler(t, scanner(), &cache, staticLister(divInstance), nil, settingsWith(4, 60))
+		s.SetReconciler(store, ReconcileSources{Versions: ch, Log: log})
+
+		if _, err := s.ScanInstanceNow(ctx, divInstance); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := log.logged(divVariable, "CredHub unreachable"); len(got) == 0 {
+			t.Errorf("the failed version read was not logged with its variable: %q", log.lines)
+		}
+
+		if got := log.logged("v7", "CredHub unreachable"); len(got) == 0 {
+			t.Errorf("the failed certificate read was not logged with its version: %q", log.lines)
+		}
+
+		if _, found, _ := store.Get(ctx, divInstance); !found {
+			t.Error("a reconcile without CredHub answers cleared the record")
 		}
 	})
 }

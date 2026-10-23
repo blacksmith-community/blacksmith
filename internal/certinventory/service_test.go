@@ -434,7 +434,7 @@ func TestServiceNilCredHubVersionLookupStaysNil(t *testing.T) {
 	})
 
 	svc.sched.mu.Lock()
-	versions := svc.sched.versions
+	versions := svc.sched.sources.Versions
 	svc.sched.mu.Unlock()
 
 	if versions != nil {
