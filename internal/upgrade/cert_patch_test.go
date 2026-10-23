@@ -1230,6 +1230,47 @@ func TestPatchUnrecoveredWhenRestoreFails(t *testing.T) {
 	}
 }
 
+// A failed cleanup's log says which certificate the VM serves. A VM that
+// finished keeps the new certificate, and a VM that rolled back keeps its
+// original one.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchFailedCleanupLogNamesTheCertificate(t *testing.T) {
+	env := newPatchEnv(t)
+	env.gateFailsOn(1, func(call patchCall) (ssh.Result, error, bool) {
+		if call.op == opCleanup {
+			return exitResult(1), nil, true
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	done, rolledBack := env.vms[0].name(), env.vms[1].name()
+
+	if journal := journalOf(t, manager, rolledBack); journal.Phase != VMPhaseRolledBack || journal.Cleanup != CleanupFailed {
+		t.Fatalf("expected VM 2 rolled back with a failed cleanup, got %s %q", journal.Phase, journal.Cleanup)
+	}
+
+	logged := func(vm, says string) bool {
+		return slices.ContainsFunc(env.capture.all(), func(line string) bool {
+			return strings.Contains(line, "could not clean up VM "+vm) && strings.Contains(line, says)
+		})
+	}
+
+	if !logged(done, "keeps the new certificate") {
+		t.Fatalf("expected the finished VM's failed cleanup to name the new certificate, got %v", env.capture.all())
+	}
+
+	if !logged(rolledBack, "keeps its original certificate") || logged(rolledBack, "new certificate") {
+		t.Fatalf("expected the rolled-back VM's failed cleanup to name its original certificate, got %v", env.capture.all())
+	}
+}
+
 // A cleanup that fails marks the journal and leaves the VM done.
 //
 //nolint:paralleltest // the runner shares the manager's test seams

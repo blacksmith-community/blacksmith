@@ -2440,8 +2440,9 @@ func (r *vmRun) gateAfter() error {
 	}
 }
 
-// cleanup removes the task's files from a VM that is done. A cleanup
-// that fails is recorded and leaves the VM done.
+// cleanup removes the task's files from a VM that is done or rolled back.
+// A cleanup that fails is recorded, leaves the VM's phase as it was, and
+// is logged with the certificate the VM serves.
 func (r *vmRun) cleanup() error {
 	args := r.cleanupArgs()
 
@@ -2455,7 +2456,16 @@ func (r *vmRun) cleanup() error {
 			return errVMStopped
 		}
 
-		r.manager.logger.Error("Certificate task %s could not clean up VM %s, which keeps the new certificate", r.task.ID, r.j.VM)
+		r.manager.mu.RLock()
+		serves := "the new certificate"
+
+		if r.j.Phase == VMPhaseRolledBack {
+			serves = "its original certificate"
+		}
+
+		r.manager.mu.RUnlock()
+
+		r.manager.logger.Error("Certificate task %s could not clean up VM %s, which keeps %s", r.task.ID, r.j.VM, serves)
 	}
 
 	r.change(func(j *VMJournal) { j.Cleanup = state })
