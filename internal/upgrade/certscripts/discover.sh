@@ -95,15 +95,25 @@ _dc_path() {
 	fi
 }
 
+# _dc_regular <file> succeeds when the file is a regular file and not a
+# symlink. find listed it as one, but it can change before it is read,
+# and the reads below would follow a symlink.
+_dc_regular() {
+	[ -f "$1" ] && [ ! -L "$1" ]
+}
+
 # _dc_file <root> <job> <jobdir> <file> reports one regular file under a
-# job's resolved directory. It reads the caller's wanted array.
+# job's resolved directory. It reads the caller's wanted array. It checks
+# the file with _dc_regular right before each read, and a file that is
+# no longer a regular file fails discovery.
 _dc_file() {
 	local root=$1 job=$2 jobdir=$3 file=$4 path size hash info owner mode rootdirs=no
 
 	path=${file#"$root"}
+	_dc_regular "$file" || return 1
 	size=$(stat -c %s -- "$file") || return 1
 
-	if [ "$size" -le "$DC_MAX_SIZE" ] && hash=$(norm_hash "$file") && [ -n "${wanted[$hash]:-}" ]; then
+	if [ "$size" -le "$DC_MAX_SIZE" ] && _dc_regular "$file" && hash=$(norm_hash "$file") && [ -n "${wanted[$hash]:-}" ]; then
 		info=$(stat -c '%U:%G %a' -- "$file") || return 1
 		owner=$(_dc_word "${info% *}" "$DC_OWNER_RE")
 		mode=$(printf '%04o' "$((8#${info#* }))")
@@ -118,9 +128,11 @@ _dc_file() {
 		return 0
 	fi
 
+	_dc_regular "$file" || return 1
 	grep -qa -e '-----BEGIN ' -- "$file" || return 0
 
 	local hashes
+	_dc_regular "$file" || return 1
 	hashes=$(awk "$DC_BLOCKS_AWK" "$file" | cut -d ' ' -f 1 | sort -u) || return 1
 
 	for hash in $hashes; do

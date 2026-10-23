@@ -122,6 +122,85 @@ func runScript(t *testing.T, root string, env []string, name, operation string, 
 	return stdout.String(), exit.ExitCode()
 }
 
+// runDiscoverFile runs discover.sh's _dc_file on file in the tree, with
+// hash wanted, and returns its output and exit code. find lists only
+// regular files, so a file that changes after find has listed it is the
+// only way _dc_file sees anything else, and the test calls _dc_file on
+// such a file directly. It runs lib.sh and discover.sh without the
+// dispatch at the end of discover.sh, and then the one call.
+func runDiscoverFile(t *testing.T, tree *vmTree, file, hash string) (string, int) {
+	t.Helper()
+
+	body, _, found := strings.Cut(readSource(t, "discover"), "\ncase ${1:-} in\n")
+	if !found {
+		t.Fatal("discover.sh no longer ends with its dispatch")
+	}
+
+	driver := `declare -A wanted=(["$1"]=1); _dc_file "$CERTPATCH_ROOT" valkey "$2" "$CERTPATCH_ROOT$3"` + "\n"
+	argv := []string{"-s", "--", hash, pinnedJobDir, file}
+
+	var stdout, stderr bytes.Buffer
+
+	cmd := exec.CommandContext(t.Context(), "/bin/bash", argv...) //nolint:gosec // the script under test
+	cmd.Env = []string{"CERTPATCH_ROOT=" + tree.root}
+	cmd.Stdin = strings.NewReader(readSource(t, libScript) + body + "\n" + driver)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err == nil {
+		return stdout.String(), 0
+	}
+
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("running _dc_file: %v", err)
+	}
+
+	t.Logf("_dc_file exited %d; stderr: %s", exit.ExitCode(), stderr.String())
+
+	return stdout.String(), exit.ExitCode()
+}
+
+// TestDiscoverReadsOnlyRegularFiles shows that discovery checks a file is
+// still a regular file, and not a symlink, right before it reads it, so
+// a file swapped for a symlink after find listed it fails discovery
+// instead of being read through the link.
+func TestDiscoverReadsOnlyRegularFiles(t *testing.T) {
+	t.Parallel()
+
+	tree := newPinnedTree(t, pinnedTarget, pinnedJobDir)
+	tree.mkdir(t, "/etc")
+	tree.write(t, "/etc/bundle.pem", "preamble\n-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+
+	if out, code := runDiscoverFile(t, tree, pinnedTarget, textHash(oldText)); code != 0 || !strings.HasPrefix(out, "match ") {
+		t.Fatalf("_dc_file on a regular file printed %q and exited %d, want a match and 0", out, code)
+	}
+
+	for name, target := range map[string]string{
+		"a whole-file match": pinnedTarget,
+		"an embedded block":  "/etc/bundle.pem",
+	} {
+		link := targetDir + "/link.pem"
+		tree.replace(t, link)
+		symlink(t, tree.at(target), tree.at(link))
+
+		hash := textHash(oldText)
+		if target != pinnedTarget {
+			hash = textHash("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+		}
+
+		out, code := runDiscoverFile(t, tree, link, hash)
+		if code != 1 {
+			t.Errorf("%s through a symlink: _dc_file exited %d, want 1", name, code)
+		}
+
+		if out != "" {
+			t.Errorf("%s through a symlink: _dc_file printed %q, want nothing", name, out)
+		}
+	}
+}
+
 // newDiscoverTree copies testdata/vm under a fresh root owned by root,
 // points /var/vcap/jobs/valkey and /var/vcap/jobs/bpm at their resolved
 // directories, and writes the certificate, with CRLF endings, and its
