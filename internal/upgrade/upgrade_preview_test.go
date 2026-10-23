@@ -122,13 +122,6 @@ func (d *divergedDirector) GetInfo(context.Context) (*bosh.Info, error) {
 	return &bosh.Info{Name: "ws-bosh", Version: d.version}, nil
 }
 
-func (d *divergedDirector) setVersion(version string) {
-	d.varMu.Lock()
-	defer d.varMu.Unlock()
-
-	d.version = version
-}
-
 func (d *divergedDirector) GetReleases(context.Context) ([]bosh.Release, error) {
 	d.varMu.Lock()
 	defer d.varMu.Unlock()
@@ -164,6 +157,13 @@ func (d *divergedDirector) UpdateDeploymentWithOptions(ctx context.Context, name
 	d.deploys.Add(1)
 
 	return d.waitDirector.UpdateDeploymentWithOptions(ctx, name, manifest, opts)
+}
+
+func (d *divergedDirector) setVersion(version string) {
+	d.varMu.Lock()
+	defer d.varMu.Unlock()
+
+	d.version = version
 }
 
 func (d *divergedDirector) options() []bosh.DeployOptions {
@@ -437,7 +437,7 @@ func TestUpgradePreviewValidatesLikeCreate(t *testing.T) {
 		"a release named twice": {req: CreateTaskRequest{InstanceIDs: []string{waitInstanceID}, TargetReleases: []ReleaseTarget{{Name: "a", Version: "1"}, {Name: "a", Version: "2"}}}, want: ErrInvalidRelease},
 	} {
 		_, err := env.manager.PreviewUpgrade(context.Background(), test.req)
-		if err == nil || !strings.Contains(err.Error(), test.want.Error()) {
+		if !errors.Is(err, test.want) {
 			t.Errorf("%s: expected %v, got %v", name, test.want, err)
 		}
 	}
@@ -457,6 +457,7 @@ func TestCreateUpgradeRequiresPreviewWhenDiverged(t *testing.T) {
 //nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
 func TestCreateUpgradeRejectsMismatchedPreview(t *testing.T) {
 	env := newDivergedEnv(t, true)
+	env.director.releases = []bosh.Release{{Name: "redis-forge", ReleaseVersions: []bosh.ReleaseVersion{{Version: "9.9.8"}, {Version: "9.9.9"}}}}
 
 	// A preview taken before the instance diverged bound nothing for it.
 	before := env.preview(t, upgradeRequest(waitInstanceID))
@@ -470,6 +471,10 @@ func TestCreateUpgradeRejectsMismatchedPreview(t *testing.T) {
 
 	withRelease := upgradeRequest(waitInstanceID)
 	withRelease.TargetReleases = []ReleaseTarget{{Name: "redis-forge", Version: "9.9.9"}}
+	releasePreview := env.preview(t, withRelease)
+
+	otherRelease := upgradeRequest(waitInstanceID)
+	otherRelease.TargetReleases = []ReleaseTarget{{Name: "redis-forge", Version: "9.9.8"}}
 
 	for name, test := range map[string]struct {
 		req CreateTaskRequest
@@ -478,6 +483,8 @@ func TestCreateUpgradeRejectsMismatchedPreview(t *testing.T) {
 		"another instance set":            {req: upgradeRequest(waitInstanceID, divergedInstance2), id: preview.ID},
 		"another stemcell":                {req: otherStemcell, id: preview.ID},
 		"a preview from before the patch": {req: upgradeRequest(waitInstanceID), id: before.ID},
+		"another release version":         {req: otherRelease, id: releasePreview.ID},
+		"no release target":               {req: upgradeRequest(waitInstanceID), id: releasePreview.ID},
 	} {
 		test.req.UpgradePreviewID = test.id
 
@@ -489,11 +496,6 @@ func TestCreateUpgradeRejectsMismatchedPreview(t *testing.T) {
 		}
 
 		env.expectNothingCreated(t)
-	}
-
-	// Release targets are compared too, once the director holds them.
-	if got := upgradeTargets(withRelease); slices.Equal(got, preview.Targets) {
-		t.Fatalf("expected release targets to change the targets, got %v", got)
 	}
 }
 
@@ -813,16 +815,24 @@ func TestUpgradeStopsWhenEffectsGrew(t *testing.T) {
 
 	preview := env.preview(t, upgradeRequest(waitInstanceID))
 
-	// The password gains a version the preview did not list.
-	env.credhub.setLatest(divergedPassword(waitDeployment), "p2")
-
 	req := upgradeRequest(waitInstanceID)
 	req.UpgradePreviewID = preview.ID
 
-	task, err := env.manager.CreateTask(context.Background(), req)
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
+	var task *UpgradeTask
+
+	release := env.gateDeploymentRead(t, func() {
+		var err error
+
+		task, err = env.manager.CreateTask(context.Background(), req)
+		if err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+	})
+
+	// After the create, the password gains a version the preview did not
+	// list.
+	env.credhub.setLatest(divergedPassword(waitDeployment), "p2")
+	release()
 
 	expectStoppedForApproval(t, env, task.ID)
 }
@@ -1111,4 +1121,100 @@ func TestUpgradePreviewOfVanishedDivergedInstance(t *testing.T) {
 			t.Fatalf("expected the error to name %s, got %v", id, err)
 		}
 	}
+}
+
+//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+func TestCreateUpgradeApprovesOnlyDivergedInstances(t *testing.T) {
+	env := newDivergedEnv(t, true)
+	env.diverge(t)
+
+	preview := env.preview(t, upgradeRequest(waitInstanceID, divergedInstance2))
+
+	req := upgradeRequest(waitInstanceID, divergedInstance2)
+	req.UpgradePreviewID = preview.ID
+
+	task, err := env.manager.CreateTask(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	want := []VersionPair{{Name: divergedLeaf(waitDeployment), DeployedVersionID: "v1", LatestVersionID: "v2"}}
+
+	for name, instances := range map[string][]InstanceUpgrade{
+		"created": task.Instances,
+		"saved":   env.vault.savedTask(t, task.ID).Instances,
+	} {
+		if len(instances) != 2 {
+			t.Fatalf("%s: expected two instances, got %+v", name, instances)
+		}
+
+		for _, inst := range instances {
+			switch inst.InstanceID {
+			case waitInstanceID:
+				if !reflect.DeepEqual(inst.ApprovedAdditional, want) {
+					t.Errorf("%s: expected the diverged instance's approval %+v, got %+v", name, want, inst.ApprovedAdditional)
+				}
+			case divergedInstance2:
+				if inst.ApprovedAdditional != nil {
+					t.Errorf("%s: expected no approval on the clean instance, got %+v", name, inst.ApprovedAdditional)
+				}
+			default:
+				t.Errorf("%s: unexpected instance %s", name, inst.InstanceID)
+			}
+		}
+	}
+}
+
+// A converge or reconciliation can clear the record between the create
+// and the deploy, and the instance then deploys as any upgrade does.
+//
+//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+func TestUpgradeDeploysPlainWhenRecordClearedAfterCreate(t *testing.T) {
+	env := newDivergedEnv(t, true)
+	env.diverge(t)
+
+	preview := env.preview(t, upgradeRequest(waitInstanceID))
+
+	req := upgradeRequest(waitInstanceID)
+	req.UpgradePreviewID = preview.ID
+
+	var task *UpgradeTask
+
+	release := env.gateDeploymentRead(t, func() {
+		var err error
+
+		task, err = env.manager.CreateTask(context.Background(), req)
+		if err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+	})
+
+	env.vault.mu.Lock()
+	delete(env.vault.saved, "certificate-divergence/"+waitInstanceID)
+	env.vault.mu.Unlock()
+
+	_, found, err := env.store.Get(context.Background(), waitInstanceID)
+	if err != nil || found {
+		t.Fatalf("expected the record to be gone, got found %t and %v", found, err)
+	}
+
+	release()
+
+	select {
+	case <-env.director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never waited on its deploy")
+	}
+
+	if options := env.director.options(); len(options) != 0 {
+		t.Fatalf("expected a plain deploy, got %+v", options)
+	}
+
+	if deploys := env.director.deploys.Load(); deploys != 1 {
+		t.Fatalf("expected one deploy, got %d", deploys)
+	}
+
+	env.director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskDone}
+
+	eventuallySaved(t, env.vault, task.ID, func(saved UpgradeTask) bool { return saved.Status == TaskStatusCompleted })
 }
