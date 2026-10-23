@@ -1,0 +1,894 @@
+package upgrade
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"blacksmith/internal/bosh/ssh"
+	"blacksmith/internal/certinventory"
+	"blacksmith/internal/certpatch"
+	"blacksmith/internal/upgrade/certscripts"
+)
+
+// crashSentinel is what a simulated crash panics with.
+type crashSentinel struct{}
+
+// errListingDown is what the director answers while its VM listing fails.
+var errListingDown = errors.New("the director's VM listing is down")
+
+// resumeBoundary is one point at which the first run of a patch crashes
+// on VM 1: after the nth run of op on it, after the nth write of the
+// divergence record, or at the first save whose summary of VM 1's journal
+// starts with saved. With afterSave the crash comes at the first save
+// after that run or write instead.
+type resumeBoundary struct {
+	name       string
+	rollback   bool
+	op         string
+	nth        int
+	divergence int
+	saved      string
+	afterSave  bool
+}
+
+// resumeBoundaries lists every boundary of the forward pass, its finish,
+// and its rollback on VM 1. Each command that changes the VM and each
+// divergence write crashes once before the save that follows it and once
+// after.
+func resumeBoundaries() []resumeBoundary {
+	var out []resumeBoundary
+
+	both := func(b resumeBoundary) {
+		before, after := b, b
+		before.name = "after " + b.name + " before its save"
+		after.name = "after " + b.name + " and its save"
+		after.afterSave = true
+		out = append(out, before, after)
+	}
+
+	both(resumeBoundary{name: "prepare", op: opPrepare, nth: 1})
+	both(resumeBoundary{name: "stage 1", op: opStage, nth: 1})
+	both(resumeBoundary{name: "stage 2", op: opStage, nth: 2})
+	both(resumeBoundary{name: "backup 1", op: opBackup, nth: 1})
+	both(resumeBoundary{name: "the last backup", op: opBackup, nth: 2})
+	both(resumeBoundary{name: "the unknown divergence write", divergence: 1})
+	out = append(out, resumeBoundary{name: "replacing saved before the rename", saved: "swapping:replacing,"})
+	both(resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+	both(resumeBoundary{name: "the last rename", op: opReplace, nth: 2})
+	both(resumeBoundary{name: "the applied divergence write", divergence: 2})
+	both(resumeBoundary{name: "the restart", op: opRestart, nth: 1})
+	// The gate runs on VM 1 at discovery, before the pass, and after the
+	// restart, which is the third run.
+	both(resumeBoundary{name: "the gate after the restart", op: certscripts.GateRedisCluster, nth: 3})
+	out = append(out, resumeBoundary{name: "done saved before cleanup", saved: "done:"})
+	both(resumeBoundary{name: "cleanup", op: opCleanup, nth: 1})
+
+	out = append(out, resumeBoundary{name: "rolling_back saved before any restore", rollback: true, saved: "rolling_back:replaced,replaced"})
+	both(resumeBoundary{name: "restore 1", rollback: true, op: opRestore, nth: 1})
+	both(resumeBoundary{name: "the last restore", rollback: true, op: opRestore, nth: 2})
+	both(resumeBoundary{name: "the rollback restart", rollback: true, op: opRestart, nth: 2})
+	both(resumeBoundary{name: "the rollback cleanup", rollback: true, op: opCleanup, nth: 1})
+
+	return out
+}
+
+// crasher crashes the first run of a patch at one boundary, and watches
+// every file of every VM for a hash that is neither the old nor the new
+// one.
+type crasher struct {
+	env *patchEnv
+	b   resumeBoundary
+	vm  string
+
+	mu      sync.Mutex
+	armed   bool
+	seen    int
+	writes  int
+	pending bool
+	fired   bool
+	third   string
+}
+
+// crashAt arms a crash at the boundary for the next run.
+func crashAt(env *patchEnv, b resumeBoundary) *crasher {
+	c := &crasher{env: env, b: b, vm: env.vms[0].name(), armed: true}
+
+	env.wrapSession = func(sess PatchSession) PatchSession { return &crashSession{PatchSession: sess, c: c} }
+
+	keep := env.vault.onSaved
+	env.vault.onSaved = func(task UpgradeTask) {
+		keep(task)
+		c.saved(task)
+	}
+
+	env.divVault.mu.Lock()
+	env.divVault.afterPut = func(string) { c.wrote() }
+	env.divVault.mu.Unlock()
+
+	return c
+}
+
+// fire crashes. The caller holds mu, which fire lets go of.
+func (c *crasher) fire() {
+	c.armed = false
+	c.fired = true
+	c.mu.Unlock()
+
+	panic(crashSentinel{})
+}
+
+// ran sees each command once the VM ran it.
+func (c *crasher) ran(vm, op string) {
+	c.checkThird()
+
+	c.mu.Lock()
+
+	if !c.armed || vm != c.vm || op != c.b.op {
+		c.mu.Unlock()
+
+		return
+	}
+
+	c.seen++
+
+	switch {
+	case c.seen != c.b.nth:
+	case c.b.afterSave:
+		c.pending = true
+	default:
+		c.fire()
+	}
+
+	c.mu.Unlock()
+}
+
+// wrote sees each write of the divergence record once it is stored.
+func (c *crasher) wrote() {
+	c.mu.Lock()
+
+	if !c.armed || c.b.divergence == 0 {
+		c.mu.Unlock()
+
+		return
+	}
+
+	c.writes++
+
+	switch {
+	case c.writes != c.b.divergence:
+	case c.b.afterSave:
+		c.pending = true
+	default:
+		c.fire()
+	}
+
+	c.mu.Unlock()
+}
+
+// saved sees each save of the task once it is stored.
+func (c *crasher) saved(task UpgradeTask) {
+	c.mu.Lock()
+
+	if c.armed && (c.pending || (c.b.saved != "" && strings.HasPrefix(journalSummary(task, 0), c.b.saved))) {
+		c.fire()
+	}
+
+	c.mu.Unlock()
+}
+
+// checkThird records the first file that holds a third hash.
+func (c *crasher) checkThird() {
+	allowed := map[string]bool{
+		certpatch.NormalisedHash(c.env.oldPair.cert): true,
+		certpatch.NormalisedHash(c.env.oldPair.key):  true,
+		certpatch.NormalisedHash(c.env.newPair.cert): true,
+		certpatch.NormalisedHash(c.env.newPair.key):  true,
+	}
+
+	c.env.patch.mu.Lock()
+
+	third := ""
+
+	for _, vm := range c.env.vms {
+		for path, hash := range vm.files {
+			if !allowed[hash] && third == "" {
+				third = vm.name() + ":" + path
+			}
+		}
+	}
+
+	c.env.patch.mu.Unlock()
+
+	if third != "" {
+		c.mu.Lock()
+		if c.third == "" {
+			c.third = third
+		}
+		c.mu.Unlock()
+	}
+}
+
+// expectNoThird fails when any file held a third hash.
+func (c *crasher) expectNoThird(t *testing.T) {
+	t.Helper()
+
+	c.checkThird()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.third != "" {
+		t.Fatalf("expected every file to hold the old or the new content, but %s held neither", c.third)
+	}
+}
+
+// crashSession tells the crasher of each command its session ran.
+type crashSession struct {
+	PatchSession
+
+	c *crasher
+}
+
+func (s *crashSession) Run(ctx context.Context, vm int, op string, args []string, stdin io.Reader) (ssh.Result, error) {
+	hosts := s.VMs()
+	result, err := s.PatchSession.Run(ctx, vm, op, args, stdin)
+
+	if vm >= 0 && vm < len(hosts) {
+		s.c.ran(hosts[vm].Job+"/"+hosts[vm].IndexOrID, op)
+	}
+
+	return result, err
+}
+
+// crashRun runs the patch in a first manager until the boundary crashes
+// it, and returns the task as the vault holds it then. The first manager
+// is left as the crash left it.
+func (c *crasher) crashRun(t *testing.T) UpgradeTask {
+	t.Helper()
+
+	first := c.env.newManager()
+	task := c.env.task()
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if _, ok := r.(crashSentinel); !ok {
+					panic(r)
+				}
+			}
+		}()
+
+		c.env.run(first, &task)
+	}()
+
+	c.mu.Lock()
+	fired := c.fired
+	c.mu.Unlock()
+
+	if !fired {
+		t.Fatalf("the run never reached the boundary %q", c.b.name)
+	}
+
+	return c.env.stored()
+}
+
+// reload starts a new manager that loads the stored task and waits until
+// its resume stops: the instance settled, waits for a decision, or the
+// task paused.
+func (e *patchEnv) reload(t *testing.T) (*Manager, UpgradeTask) {
+	t.Helper()
+
+	second := e.newManager()
+	second.Start()
+	waitForLoad(t, second)
+
+	return second, waitResumed(t, second)
+}
+
+// waitResumed waits until the resume of the test instance stops.
+func waitResumed(t *testing.T, manager *Manager) UpgradeTask {
+	t.Helper()
+
+	waitUntil(t, "the resume to stop", func() bool {
+		got := current(t, manager)
+		inst := got.Instances[0]
+
+		return got.Paused || inst.Status.settled() || waitsForDecision(&inst)
+	})
+
+	return current(t, manager)
+}
+
+// opsSince lists the operations run on the VM from the recorded call at
+// mark on.
+func (e *patchEnv) opsSince(mark, vm int) []string {
+	var ops []string
+
+	for _, call := range e.patch.recorded()[mark:] {
+		if call.vm == e.vms[vm].name() {
+			ops = append(ops, call.op)
+		}
+	}
+
+	return ops
+}
+
+// storedJournal is VM 1's journal in a stored task.
+func storedJournal(task UpgradeTask) VMJournal {
+	return task.Instances[0].Certificates.VMs[0]
+}
+
+// divergenceJSON is the stored divergence record as JSON, or "none".
+func (e *patchEnv) divergenceJSON(t *testing.T) string {
+	t.Helper()
+
+	record, found, err := e.store.Get(context.Background(), waitInstanceID)
+	if err != nil {
+		t.Fatalf("reading the divergence record: %v", err)
+	}
+
+	if !found {
+		return "none"
+	}
+
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("encoding the divergence record: %v", err)
+	}
+
+	return string(raw)
+}
+
+// vmState is the VM's state in the divergence record, or "" when the
+// record does not list it.
+func (e *patchEnv) vmState(t *testing.T, cid string) string {
+	t.Helper()
+
+	record, _, err := e.store.Get(context.Background(), waitInstanceID)
+	if err != nil {
+		t.Fatalf("reading the divergence record: %v", err)
+	}
+
+	if record == nil || len(record.Variables) == 0 {
+		return ""
+	}
+
+	return record.Variables[0].VMs[cid].State
+}
+
+// expectPatched checks that every VM is done and clean, holds the new
+// pair, and is applied in the divergence record, and that the instance
+// succeeded and was released.
+func (e *patchEnv) expectPatched(t *testing.T, manager *Manager, got UpgradeTask) {
+	t.Helper()
+
+	inst := got.Instances[0]
+	if inst.Status != InstanceStatusSuccess {
+		t.Fatalf("expected the instance to succeed, got %s: %s", inst.Status, inst.Error)
+	}
+
+	for i, vm := range e.vms {
+		j := inst.Certificates.VMs[i]
+		if j.Phase != VMPhaseDone || j.Cleanup != CleanupDone {
+			t.Fatalf("expected VM %d done and clean, got %s %q", i+1, j.Phase, j.Cleanup)
+		}
+
+		e.patch.mu.Lock()
+		cert, key := vm.files[vm.certPath()], vm.files[vm.keyPath()]
+		e.patch.mu.Unlock()
+
+		if cert != certpatch.NormalisedHash(e.newPair.cert) || key != certpatch.NormalisedHash(e.newPair.key) {
+			t.Fatalf("expected VM %d to hold the new pair", i+1)
+		}
+
+		if state := e.vmState(t, patchCIDs[i]); state != certinventory.DivergentVMApplied {
+			t.Fatalf("expected VM %d applied in the divergence record, got %q", i+1, state)
+		}
+	}
+
+	expectReleased(t, manager)
+}
+
+// expectRolledBack checks that VM 1 is rolled back and clean, holds the
+// old pair, is old or gone from the divergence record, and that nothing
+// was staged or replaced on it since mark and nothing at all ran on the
+// other VMs.
+func (e *patchEnv) expectRolledBack(t *testing.T, got UpgradeTask, mark int) {
+	t.Helper()
+
+	inst := got.Instances[0]
+	j := inst.Certificates.VMs[0]
+
+	if j.Phase != VMPhaseRolledBack || j.Cleanup != CleanupDone {
+		t.Fatalf("expected VM 1 rolled back and clean, got %s %q (%s)", j.Phase, j.Cleanup, inst.Error)
+	}
+
+	if inst.Status == InstanceStatusSuccess {
+		t.Fatal("expected the rolled back instance not to succeed")
+	}
+
+	vm := e.vms[0]
+
+	e.patch.mu.Lock()
+	cert, key := vm.files[vm.certPath()], vm.files[vm.keyPath()]
+	e.patch.mu.Unlock()
+
+	if cert != certpatch.NormalisedHash(e.oldPair.cert) || key != certpatch.NormalisedHash(e.oldPair.key) {
+		t.Fatal("expected VM 1 to hold the old pair again")
+	}
+
+	if state := e.vmState(t, patchCIDs[0]); state != "" && state != certinventory.DivergentVMOld {
+		t.Fatalf("expected VM 1 old in the divergence record, got %q", state)
+	}
+
+	ops := e.opsSince(mark, 0)
+	if slices.Contains(ops, opReplace) || slices.Contains(ops, opStage) {
+		t.Fatalf("expected no stage or replace on VM 1 after the crash, got %v", ops)
+	}
+
+	for i := 1; i < len(e.vms); i++ {
+		if ops := e.opsSince(mark, i); len(ops) != 0 {
+			t.Fatalf("expected nothing run on VM %d after the crash, got %v", i+1, ops)
+		}
+	}
+}
+
+// boundaryEnv is a patch environment for the boundary, crashed there.
+func boundaryEnv(t *testing.T, b resumeBoundary) (*patchEnv, *crasher, UpgradeTask) {
+	t.Helper()
+
+	env := newPatchEnv(t)
+	if b.rollback {
+		env.gateFailsOn(0, nil)
+	}
+
+	c := crashAt(env, b)
+
+	return env, c, c.crashRun(t)
+}
+
+// A crash at each boundary of a VM's patch, before and after the save
+// that follows its command, resumes in a new manager to the one end the
+// boundary has. A forward boundary ends with every VM done and the
+// instance patched, and a rollback boundary ends with VM 1 rolled back
+// and nothing replaced again. A VM recreated meanwhile ends reverted
+// with the task paused, and patch in place turned off meanwhile changes
+// nothing on a VM whose swap had not begun. No file ever holds a third
+// hash.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeAtEveryBoundary(t *testing.T) {
+	for _, b := range resumeBoundaries() {
+		t.Run(b.name, func(t *testing.T) {
+			env, c, stored := boundaryEnv(t, b)
+			mark := len(env.patch.recorded())
+
+			second, got := env.reload(t)
+
+			if b.rollback {
+				env.expectRolledBack(t, got, mark)
+			} else {
+				env.expectPatched(t, second, got)
+			}
+
+			c.expectNoThird(t)
+
+			if b.op == opBackup && b.nth == 2 {
+				expectBackupsReused(t, env, stored, mark)
+			}
+		})
+
+		t.Run(b.name+" with the VM recreated", func(t *testing.T) { resumeRecreated(t, b) })
+
+		t.Run(b.name+" with patch in place turned off", func(t *testing.T) {
+			env, c, stored := boundaryEnv(t, b)
+			env.setPatchSwitch(false)
+
+			opens := env.patch.openCount()
+			before := env.divergenceJSON(t)
+			mark := len(env.patch.recorded())
+
+			_, got := env.reload(t)
+
+			if !got.Paused {
+				t.Fatalf("expected the task paused, got %s", got.Status)
+			}
+
+			j := storedJournal(stored)
+			if !closedPhase(j.Phase) && !journalSwapBegun(&j) {
+				expectUnchangedWhileOff(t, env, got, stored, opens, before)
+			} else if b.rollback && !closedPhase(got.Instances[0].Certificates.VMs[0].Phase) {
+				t.Fatalf("expected VM 1 closed, got %s", got.Instances[0].Certificates.VMs[0].Phase)
+			}
+
+			for i := 1; i < len(env.vms); i++ {
+				if ops := env.opsSince(mark, i); len(ops) != 0 {
+					t.Fatalf("expected nothing run on VM %d while patch in place is off, got %v", i+1, ops)
+				}
+			}
+
+			c.expectNoThird(t)
+		})
+	}
+}
+
+// resumeRecreated crashes at the boundary, has BOSH recreate VM 1, and
+// checks that a VM the crash left open ends reverted with the task paused
+// and nothing run on it.
+func resumeRecreated(t *testing.T, b resumeBoundary) {
+	t.Helper()
+
+	env, c, stored := boundaryEnv(t, b)
+	env.dir.setCID(0, "vm-cid-new")
+
+	mark := len(env.patch.recorded())
+	_, got := env.reload(t)
+
+	if closedPhase(storedJournal(stored).Phase) {
+		// A closed VM has no CID to check, so it ends as it would.
+		return
+	}
+
+	j := got.Instances[0].Certificates.VMs[0]
+	if j.Phase != VMPhaseReverted || !got.Paused {
+		t.Fatalf("expected VM 1 reverted and the task paused, got %s paused=%v (%s)", j.Phase, got.Paused, got.Instances[0].Error)
+	}
+
+	for _, op := range env.opsSince(mark, 0) {
+		if op != opSudoCheck {
+			t.Fatalf("expected nothing run on a recreated VM, got %v", env.opsSince(mark, 0))
+		}
+	}
+
+	c.expectNoThird(t)
+}
+
+// expectUnchangedWhileOff checks that a resume with patch in place off
+// paused with the patch-off message, opened no session, and left the
+// journal and the divergence record as the crash left them.
+func expectUnchangedWhileOff(t *testing.T, env *patchEnv, got, stored UpgradeTask, opens int, record string) {
+	t.Helper()
+
+	if msg := got.Instances[0].Error; msg != patchOffMessage {
+		t.Fatalf("expected the patch-off message, got %q", msg)
+	}
+
+	if env.patch.openCount() != opens {
+		t.Fatalf("expected no SSH session opened, got %d more", env.patch.openCount()-opens)
+	}
+
+	if want, have := journalSummary(stored, 0), journalSummary(got, 0); want != have {
+		t.Fatalf("expected VM 1's journal unchanged at %s, got %s", want, have)
+	}
+
+	if after := env.divergenceJSON(t); after != record {
+		t.Fatalf("expected the divergence record unchanged, got %s, was %s", after, record)
+	}
+}
+
+// expectBackupsReused checks that the resume made no backup of VM 1 that
+// the crash had not already made.
+func expectBackupsReused(t *testing.T, env *patchEnv, stored UpgradeTask, mark int) {
+	t.Helper()
+
+	backups := 0
+
+	for _, call := range env.patch.recorded()[mark:] {
+		if call.vm == env.vms[0].name() && call.op == opBackup {
+			backups++
+		}
+	}
+
+	if backups == 0 {
+		t.Fatal("expected the resume to back up VM 1 again, which reuses each backup")
+	}
+
+	for _, file := range storedJournal(stored).Files {
+		if file.BackupPath == "" {
+			t.Fatalf("expected each file to name its backup, got %+v", file)
+		}
+	}
+
+	if got := env.events.all(); slices.ContainsFunc(got, func(event string) bool { return strings.Contains(event, "drift") }) {
+		t.Fatalf("expected no backup to drift, got %v", got)
+	}
+}
+
+// A crash after the first rename whose divergence record is lost is
+// listed in the record again, as unknown, before anything else is done,
+// even when the director can't be read. The resume that follows applies
+// it.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeRebuildsDivergence(t *testing.T) {
+	env, c, _ := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+
+	err := env.store.Update(context.Background(), waitInstanceID, func(*certinventory.Divergence) (*certinventory.Divergence, error) {
+		return nil, nil //nolint:nilnil // a nil record deletes it
+	})
+	if err != nil {
+		t.Fatalf("dropping the divergence record: %v", err)
+	}
+
+	if state := env.vmState(t, patchCIDs[0]); state != "" {
+		t.Fatalf("expected no divergence record, got VM 1 %q", state)
+	}
+
+	env.dir.failVMListing(errListingDown)
+
+	second, got := env.reload(t)
+
+	if !got.Paused {
+		t.Fatalf("expected the task paused while the director can't list the VMs, got %s", got.Status)
+	}
+
+	if state := env.vmState(t, patchCIDs[0]); state != certinventory.DivergentVMUnknown {
+		t.Fatalf("expected VM 1 unknown in the rebuilt record, got %q", state)
+	}
+
+	env.dir.failVMListing(nil)
+
+	err = second.ResumeTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	waitUntil(t, "the instance to settle", func() bool { return current(t, second).Instances[0].Status.settled() })
+
+	env.expectPatched(t, second, current(t, second))
+	c.expectNoThird(t)
+}
+
+// A VM whose live state matches no row, here a backup removed by hand
+// while it was swapping, ends unrecovered with the task paused, and
+// nothing is replaced or restored on it.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeFallThroughUnrecovered(t *testing.T) {
+	env, c, stored := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1, afterSave: true})
+
+	backup := storedJournal(stored).Files[1].BackupPath
+
+	env.patch.mu.Lock()
+	delete(env.vms[0].backups, backup)
+	env.patch.mu.Unlock()
+
+	mark := len(env.patch.recorded())
+	_, got := env.reload(t)
+
+	j := got.Instances[0].Certificates.VMs[0]
+	if j.Phase != VMPhaseUnrecovered || !got.Paused {
+		t.Fatalf("expected VM 1 unrecovered and the task paused, got %s paused=%v", j.Phase, got.Paused)
+	}
+
+	if !strings.Contains(got.Instances[0].Error, redeployToRepair) {
+		t.Fatalf("expected the redeploy advice, got %q", got.Instances[0].Error)
+	}
+
+	ops := env.opsSince(mark, 0)
+	if slices.Contains(ops, opReplace) || slices.Contains(ops, opRestore) || slices.Contains(ops, opStage) {
+		t.Fatalf("expected nothing replaced, restored, or staged on VM 1, got %v", ops)
+	}
+
+	if state := env.vmState(t, patchCIDs[0]); state != certinventory.DivergentVMUnknown {
+		t.Fatalf("expected VM 1 unknown in the divergence record, got %q", state)
+	}
+
+	c.expectNoThird(t)
+}
+
+// With patch in place turned off before the resume, a VM whose swap had
+// not begun is left as it is: no session opens, the journal and the
+// divergence record stay as they were, the task pauses with the patch-off
+// message, and ResumeTask refuses with the same message. A VM whose swap
+// had begun is finished, since only that leaves no new certificate
+// beside an old key, and the task then pauses before the next VM.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeWithPatchOff(t *testing.T) {
+	t.Run("before the swap", func(t *testing.T) {
+		env, _, stored := boundaryEnv(t, resumeBoundary{name: "the last backup", op: opBackup, nth: 2})
+		env.setPatchSwitch(false)
+
+		opens := env.patch.openCount()
+		before := env.divergenceJSON(t)
+
+		second, got := env.reload(t)
+
+		expectUnchangedWhileOff(t, env, got, stored, opens, before)
+
+		err := second.ResumeTask(context.Background(), certTaskID)
+		if err == nil || err.Error() != patchOffMessage {
+			t.Fatalf("expected ResumeTask to refuse with the patch-off message, got %v", err)
+		}
+	})
+
+	t.Run("after the first rename", func(t *testing.T) {
+		env, _, _ := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+		env.setPatchSwitch(false)
+
+		mark := len(env.patch.recorded())
+		_, got := env.reload(t)
+
+		inst := got.Instances[0]
+		if j := inst.Certificates.VMs[0]; j.Phase != VMPhaseDone || j.Cleanup != CleanupDone {
+			t.Fatalf("expected VM 1 finished, got %s %q", j.Phase, j.Cleanup)
+		}
+
+		if !got.Paused || inst.Error != patchOffMessage {
+			t.Fatalf("expected the task paused with the patch-off message, got paused=%v %q", got.Paused, inst.Error)
+		}
+
+		if ops := env.opsSince(mark, 1); len(ops) != 0 {
+			t.Fatalf("expected nothing run on VM 2, got %v", ops)
+		}
+	})
+}
+
+// A resume whose staged copies are gone reads the key pair again by its
+// saved version, checks it against the saved hashes, and stages it
+// again. A pair that does not match is never staged, and a VM with a file
+// already replaced rolls back.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeRefetchesStagedContent(t *testing.T) {
+	t.Run("matching pair", func(t *testing.T) {
+		env, c, _ := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+
+		env.patch.mu.Lock()
+		clear(env.vms[0].staged)
+		env.patch.mu.Unlock()
+
+		env.pairs.mu.Lock()
+		reads := len(env.pairs.reads)
+		env.pairs.mu.Unlock()
+
+		mark := len(env.patch.recorded())
+		second, got := env.reload(t)
+
+		env.pairs.mu.Lock()
+		again := slices.Contains(env.pairs.reads[reads:], "v2")
+		env.pairs.mu.Unlock()
+
+		if !again {
+			t.Fatal("expected the resume to read version v2 again")
+		}
+
+		if ops := env.opsSince(mark, 0); !slices.Contains(ops, opStage) {
+			t.Fatalf("expected the missing copy staged again, got %v", ops)
+		}
+
+		env.expectPatched(t, second, got)
+		c.expectNoThird(t)
+		env.pairs.expectAllZeroed(t, "after the resume")
+	})
+
+	t.Run("pair that does not match", func(t *testing.T) {
+		env, c, _ := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+
+		env.patch.mu.Lock()
+		clear(env.vms[0].staged)
+		env.patch.mu.Unlock()
+
+		env.pairs.set("v2", env.oldPair)
+
+		mark := len(env.patch.recorded())
+		_, got := env.reload(t)
+
+		if ops := env.opsSince(mark, 0); slices.Contains(ops, opStage) || slices.Contains(ops, opReplace) {
+			t.Fatalf("expected nothing staged or replaced from the wrong pair, got %v", ops)
+		}
+
+		env.expectRolledBack(t, got, mark)
+		c.expectNoThird(t)
+	})
+}
+
+// A cancelled task whose VM a crash left part way through its swap is
+// finished on the load, whether or not its first rename was sent, and its
+// instance then ends cancelled between VMs and is released. With patch
+// in place turned off, a VM whose first rename was not sent can't be
+// finished, so it ends unrecovered, its instance fails with the advice to
+// redeploy, and it is released with nothing replaced.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeCancelledTask(t *testing.T) {
+	cases := []struct {
+		name  string
+		b     resumeBoundary
+		off   bool
+		phase VMPhase
+	}{
+		{name: "after the first rename", b: resumeBoundary{name: "the first rename", op: opReplace, nth: 1}, phase: VMPhaseDone},
+		{name: "swapping before the first rename", b: resumeBoundary{name: "the unknown divergence write", divergence: 1, afterSave: true}, phase: VMPhaseDone},
+		{name: "swapping with patch in place off", b: resumeBoundary{name: "the unknown divergence write", divergence: 1, afterSave: true}, off: true, phase: VMPhaseUnrecovered},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, c, stored := boundaryEnv(t, tc.b)
+
+			if j := storedJournal(stored); j.Phase != VMPhaseSwapping {
+				t.Fatalf("expected the crash to leave VM 1 swapping, got %s", j.Phase)
+			}
+
+			stored.Status = TaskStatusCancelled
+			storeCertificateTask(t, env.vault.waitVault, stored)
+
+			if tc.off {
+				env.setPatchSwitch(false)
+			}
+
+			mark := len(env.patch.recorded())
+
+			second := env.newManager()
+			second.Start()
+			waitForLoad(t, second)
+
+			waitUntil(t, "the instance to settle", func() bool { return current(t, second).Instances[0].Status.settled() })
+
+			got := current(t, second)
+			inst := got.Instances[0]
+
+			if j := inst.Certificates.VMs[0]; j.Phase != tc.phase {
+				t.Fatalf("expected VM 1 %s, got %s (%s)", tc.phase, j.Phase, j.Error)
+			}
+
+			if tc.off {
+				if inst.Status != InstanceStatusFailed || !strings.Contains(inst.Error, redeployToRepair) {
+					t.Fatalf("expected the instance failed with the redeploy advice, got %s %q", inst.Status, inst.Error)
+				}
+
+				if ops := env.opsSince(mark, 0); slices.Contains(ops, opReplace) {
+					t.Fatalf("expected nothing replaced with patch in place off, got %v", ops)
+				}
+			} else {
+				if j := inst.Certificates.VMs[0]; j.Cleanup != CleanupDone {
+					t.Fatalf("expected VM 1 clean, got %q", j.Cleanup)
+				}
+
+				if inst.Status != InstanceStatusCancelled || inst.Error != cancelledBetweenVMs {
+					t.Fatalf("expected the instance cancelled between VMs, got %s %q", inst.Status, inst.Error)
+				}
+			}
+
+			if j := inst.Certificates.VMs[1]; j.Phase != VMPhasePlanned {
+				t.Fatalf("expected VM 2 left planned, got %s", j.Phase)
+			}
+
+			expectReleased(t, second)
+			c.expectNoThird(t)
+		})
+	}
+}
+
+// A panic while a VM is part way through its patch pauses the task with
+// advice to resume, rather than failing it, so the resume that checks the
+// VM's files can finish or roll it back.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeAfterPanicPauses(t *testing.T) {
+	env, _, stored := boundaryEnv(t, resumeBoundary{name: "the first rename", op: opReplace, nth: 1})
+
+	manager := env.newManager()
+
+	func() {
+		defer manager.recoverTask(context.Background(), &stored)
+
+		panic("a test panic")
+	}()
+
+	if stored.Status != TaskStatusPaused || !stored.Paused {
+		t.Fatalf("expected the task paused, got %s paused=%v", stored.Status, stored.Paused)
+	}
+
+	if msg := stored.Instances[0].Error; !strings.Contains(msg, "Resume to check its files") {
+		t.Fatalf("expected the advice to resume, got %q", msg)
+	}
+}

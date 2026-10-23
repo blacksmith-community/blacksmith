@@ -1482,7 +1482,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 
 	ended := m.cancelIdleLocked(task)
 	skipped := m.skipUnownedLocked(task)
-	verify := m.verifyCancelledLocked(task) //nolint:contextcheck // Resuming the task runs on the manager's lifecycle context, so a finished request never cancels it.
+	settle := m.settleCancelledLocked(task) //nolint:contextcheck // Resuming the task runs on the manager's lifecycle context, so a finished request never cancels it.
 
 	// No deploy of a pending instance is sent once the upgrade is
 	// cancelled, so those are free now, and a running one stays held while
@@ -1498,7 +1498,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 		m.logger.Info("Skipped %d pending instances of cancelled certificate task %s", skipped, taskID)
 	}
 
-	verify()
+	settle()
 
 	for _, deploy := range running {
 		m.cancelDeployTask(ctx, deploy.instanceID, deploy.boshTaskID)
@@ -1644,8 +1644,11 @@ func (m *Manager) runTask(task *UpgradeTask) {
 		m.mu.Lock()
 		delete(m.owned, task.ID)
 		ended := m.cancelIdleLocked(task)
+		finish := m.resumeCancelledLocked(task)
 		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
+
+		finish()
 
 		if ended > 0 {
 			m.logger.Info("Cancelled %d idle instances of certificate task %s once its processor stopped", ended, task.ID)
@@ -1768,7 +1771,10 @@ func (m *Manager) processTask(task *UpgradeTask, cancelCh <-chan struct{}) {
 }
 
 // recoverTask fails an upgrade whose processing panicked, so the panic
-// never crashes the broker. processTask defers it.
+// never crashes the broker. processTask defers it. A patch task with a VM
+// part way through its patch pauses instead, so the resume that checks
+// the VM's files finishes or rolls it back, and a cancelled one stays
+// cancelled, for the resume that finishes its VMs.
 func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 	r := recover()
 	if r == nil {
@@ -1779,9 +1785,21 @@ func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 
 	m.mu.Lock()
 
-	task.Status = TaskStatusFailed
-	completedAt := time.Now()
-	task.CompletedAt = &completedAt
+	inst, vm := openPatchVMLocked(task)
+
+	switch {
+	case inst != nil && task.Status == TaskStatusCancelled:
+	case inst != nil:
+		task.Status = TaskStatusPaused
+		task.Paused = true
+		inst.Error = fmt.Sprintf("Blacksmith stopped part way through the patch of VM %s because of an internal error. "+
+			"Resume to check its files and finish or roll it back.", vm)
+	default:
+		task.Status = TaskStatusFailed
+		completedAt := time.Now()
+		task.CompletedAt = &completedAt
+	}
+
 	m.releaseUnheldLocked(task)
 
 	m.mu.Unlock()
@@ -2064,11 +2082,16 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	}
 
 	skipped, ended := 0, 0
+	finish := func() {}
+
 	if settled && task.Status == TaskStatusCancelled {
 		skipped = m.skipPendingLocked(task)
 		ended = m.cancelIdleLocked(task)
+		finish = m.resumeCancelledLocked(task)
 	}
 	m.mu.Unlock()
+
+	finish()
 
 	if ended > 0 {
 		m.logger.Info("Cancelled %d idle instances of certificate task %s", ended, task.ID)

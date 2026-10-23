@@ -359,9 +359,21 @@ func (f *fakePatch) answer(vm *fakeVM, op string, args []string, input []byte) s
 			"cluster_slots_pfail:0", "cluster_slots_fail:0", "cluster_known_nodes:"+nodes, "cluster_size:"+nodes)
 	case "verify":
 		return okResult("fingerprint=" + f.fingerprint)
-	case "prepare", "cleanup":
-		return okResult("ok path=/var/vcap/data/certpatch/" + arg(0))
+	case "prepare":
+		return okResult("ok path=" + patchWorkRoot + arg(0))
+	case "cleanup":
+		// The task's work directory goes, with every staged copy and
+		// backup in it.
+		dropUnder(vm.staged, patchWorkRoot+arg(0)+"/")
+		dropUnder(vm.backups, patchWorkRoot+arg(0)+"/")
+
+		return okResult("ok path=" + patchWorkRoot + arg(0))
 	case "stage":
+		// Staging refuses a name that already exists.
+		if _, exists := vm.staged[arg(1)]; exists {
+			return exitResult(certscripts.ExitRefused)
+		}
+
 		script, _ := certscripts.Script("patch")
 		vm.staged[arg(1)] = certpatch.NormalisedHash(input[min(len(script), len(input)):])
 
@@ -389,6 +401,15 @@ func (f *fakePatch) answer(vm *fakeVM, op string, args []string, input []byte) s
 
 		return okResult("ok path=" + arg(2) + " state=" + state + " backup=old")
 	case "backup":
+		// A backup already made is kept when it holds the old content.
+		if backup, exists := vm.backups[arg(4)]; exists {
+			if backup != arg(3) {
+				return exitResult(certscripts.ExitBackup, "drift path="+arg(4))
+			}
+
+			return okResult("ok path=" + arg(4) + " action=exists")
+		}
+
 		if vm.files[arg(2)] != arg(3) {
 			return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
 		}
@@ -412,18 +433,22 @@ func (f *fakePatch) answer(vm *fakeVM, op string, args []string, input []byte) s
 
 		return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
 	case "restore":
+		// A file that holds the old content again needs no backup.
+		switch vm.files[arg(2)] {
+		case arg(4):
+			return okResult("ok path=" + arg(2) + " state=old action=unchanged")
+		case arg(5):
+		default:
+			return exitResult(certscripts.ExitDrift, "unrecovered path="+arg(2))
+		}
+
 		if vm.backups[arg(3)] != arg(4) {
 			return exitResult(certscripts.ExitBackup, "unrecovered path="+arg(2))
 		}
 
-		action := "unchanged"
-		if vm.files[arg(2)] != arg(4) {
-			action = "restored"
-		}
-
 		vm.files[arg(2)] = arg(4)
 
-		return okResult("ok path=" + arg(2) + " state=old action=" + action)
+		return okResult("ok path=" + arg(2) + " state=old action=restored")
 	case "restart":
 		lines := make([]string, 0, len(args))
 		for _, process := range args[1:] {
@@ -434,6 +459,15 @@ func (f *fakePatch) answer(vm *fakeVM, op string, args []string, input []byte) s
 	}
 
 	return exitResult(certscripts.ExitUsage)
+}
+
+// dropUnder deletes every path under the prefix.
+func dropUnder(paths map[string]string, prefix string) {
+	for path := range paths {
+		if strings.HasPrefix(path, prefix) {
+			delete(paths, path)
+		}
+	}
 }
 
 // discover prints what discover.sh would for the VM's files that hold one

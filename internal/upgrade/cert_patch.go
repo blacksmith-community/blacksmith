@@ -951,8 +951,17 @@ const cancelledBetweenVMs = "The task was cancelled between two VMs of the patch
 // per instance group, which it opens once and closes when the instance
 // ends. Every key pair it read is zeroed on every way out, after the
 // sessions closed, so no command still under way reads a zeroed buffer.
-// It reports whether the instance settled.
+// An instance whose VMs a pass already began to patch resumes, as
+// resumePatch describes. It reports whether the instance settled.
 func (m *Manager) rotateInstancePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, _ <-chan struct{}) bool {
+	m.mu.RLock()
+	resume := inst.Certificates != nil && inst.Certificates.Phase == RotationPhasePatch
+	m.mu.RUnlock()
+
+	if resume {
+		return m.resumePatch(ctx, task, inst)
+	}
+
 	pairs := make(map[string]*credhub.KeyPair)
 	defer zeroPairs(pairs)
 
@@ -1355,7 +1364,8 @@ func (m *Manager) stopBetweenVMs(ctx context.Context, task *UpgradeTask, inst *I
 // patchCancelEnd is how an idle instance of a cancelled patch task ends,
 // given the message it ends with when no VM was patched. A VM that may
 // be part way through a swap or a rollback keeps the instance open, since
-// only the resume that checks its files can tell what it holds. A VM left
+// only the resume that checks its files can tell what it holds, and the
+// resume finishes it. A VM left
 // unrecovered or reverted fails the instance with the advice to redeploy
 // it. Otherwise the instance is cancelled, as it is between two VMs once
 // any VM was patched or rolled back. The caller holds mu.
@@ -1566,19 +1576,26 @@ func (r *vmRun) writesAllowed() error {
 	return r.manager.certWritesAllowed(RotationModePatch)
 }
 
-// swapBegun reports whether a replace was sent to the VM, as its journal
-// shows by a file that is or was replaced or a phase after swapping.
+// swapBegun reports whether a replace was sent to the VM, as
+// journalSwapBegun reads its journal.
 func (r *vmRun) swapBegun() bool {
 	r.manager.mu.RLock()
 	defer r.manager.mu.RUnlock()
 
-	switch r.j.Phase {
+	return journalSwapBegun(r.j)
+}
+
+// journalSwapBegun reports whether a replace may have been sent to the
+// VM, as its journal shows by a file that is or was being replaced or a
+// phase after swapping. The caller holds mu, or owns the journal.
+func journalSwapBegun(j *VMJournal) bool {
+	switch j.Phase {
 	case VMPhaseSwapped, VMPhaseRestarted, VMPhaseVerified, VMPhaseDone, VMPhaseRollingBack, VMPhaseRolledBack:
 		return true
 	case VMPhasePlanned, VMPhaseStaged, VMPhaseBackedUp, VMPhaseSwapping, VMPhaseUnrecovered, VMPhaseReverted:
 	}
 
-	return slices.ContainsFunc(r.j.Files, func(file FileEntry) bool {
+	return slices.ContainsFunc(j.Files, func(file FileEntry) bool {
 		return file.State != FileStatePlanned && file.State != FileStateBackedUp && file.State != ""
 	})
 }
@@ -1719,29 +1736,12 @@ func (r *vmRun) stopUnchanged(why string, finished bool) error {
 // content, before anything is sent to it. A VM that changed is handled as
 // DecideResume says, and the task pauses.
 func (r *vmRun) recheck() error {
-	m := r.manager
-	deployment := r.inst.DeploymentName
-
-	running, err := directorCall(r.ctx, func(c context.Context) ([]bosh.Task, error) {
-		return m.director.FindRunningTasksForDeployment(c, deployment)
-	})
-
-	switch {
-	case err != nil:
-		return r.pause(fmt.Errorf("The director did not list the running tasks of %s, so VM %s was not patched: %w", deployment, r.j.VM, err))
-	case len(running) > 0:
-		return r.pause(apierr.New(http.StatusConflict, apierr.CodeDeploymentLocked,
-			fmt.Sprintf("BOSH task %d is running on deployment %s, so VM %s was not patched. Resume once it ends.", running[0].ID, deployment, r.j.VM)))
-	}
-
-	vms, err := directorCall(r.ctx, func(c context.Context) ([]bosh.VM, error) {
-		return m.director.GetDeploymentVMs(c, deployment)
-	})
+	cid, err := r.directorCID("was not patched")
 	if err != nil {
-		return r.pause(fmt.Errorf("The director did not list the VMs of %s, so VM %s was not patched: %w", deployment, r.j.VM, err))
+		return err
 	}
 
-	live := LiveState{CID: liveCID(vms, r.j), FileHashes: map[string]string{}, BackupHashes: map[string]string{}}
+	live := LiveState{CID: cid, FileHashes: map[string]string{}, BackupHashes: map[string]string{}}
 
 	if live.CID == r.j.CID {
 		err = r.checkFiles(&live)
@@ -1771,6 +1771,36 @@ func (r *vmRun) recheck() error {
 	r.manager.logRefusedMove(r.task, r.j.VM, refused)
 
 	return r.pause(fmt.Errorf("VM %s was not patched: %s", r.j.VM, why))
+}
+
+// directorCID makes sure no BOSH task runs on the VM's deployment and
+// returns the CID the director lists for the VM, or "" when it lists
+// none. A read that fails, or a running task, pauses the task with a
+// message that says the VM then outcome, and returns errVMStopped.
+func (r *vmRun) directorCID(outcome string) (string, error) {
+	m := r.manager
+	deployment := r.inst.DeploymentName
+
+	running, err := directorCall(r.ctx, func(c context.Context) ([]bosh.Task, error) {
+		return m.director.FindRunningTasksForDeployment(c, deployment)
+	})
+
+	switch {
+	case err != nil:
+		return "", r.pause(fmt.Errorf("The director did not list the running tasks of %s, so VM %s %s: %w", deployment, r.j.VM, outcome, err))
+	case len(running) > 0:
+		return "", r.pause(apierr.New(http.StatusConflict, apierr.CodeDeploymentLocked,
+			fmt.Sprintf("BOSH task %d is running on deployment %s, so VM %s %s. Resume once it ends.", running[0].ID, deployment, r.j.VM, outcome)))
+	}
+
+	vms, err := directorCall(r.ctx, func(c context.Context) ([]bosh.VM, error) {
+		return m.director.GetDeploymentVMs(c, deployment)
+	})
+	if err != nil {
+		return "", r.pause(fmt.Errorf("The director did not list the VMs of %s, so VM %s %s: %w", deployment, r.j.VM, outcome, err))
+	}
+
+	return liveCID(vms, r.j), nil
 }
 
 // pause pauses the task with the error and returns errVMStopped.
@@ -1845,7 +1875,7 @@ func (r *vmRun) stage(pairs map[string]*credhub.KeyPair) error {
 	files := r.files()
 
 	for n, file := range files {
-		err := r.stageFile(n, file, pairs)
+		err := r.stageFile(n, file, pairs, r.stopUnchanged)
 		if err != nil {
 			return err
 		}
@@ -1862,7 +1892,7 @@ func (r *vmRun) stage(pairs map[string]*credhub.KeyPair) error {
 		}
 	}
 
-	return r.advance(VMPhaseStaged, "back up the files on "+r.j.VM)
+	return r.reach(VMPhaseStaged, "back up the files on "+r.j.VM)
 }
 
 // isOK reports whether a result exited 0 with only ok lines.
@@ -1873,18 +1903,19 @@ func isOK(result ssh.Result) bool {
 }
 
 // stageFile streams one file's new content to staging path n. The content
-// travels only on stdin, after patch.sh itself.
-func (r *vmRun) stageFile(n int, file FileEntry, pairs map[string]*credhub.KeyPair) error {
+// travels only on stdin, after patch.sh itself. A failure stops the VM
+// through fail, which gets why and whether the command finished.
+func (r *vmRun) stageFile(n int, file FileEntry, pairs map[string]*credhub.KeyPair, fail func(why string, finished bool) error) error {
 	staged := workPath(r.task.ID, "s", n)
 
 	_, err := certscripts.StageCommand(staged, r.task.ID)
 	if err != nil {
-		return r.stopUnchanged(fmt.Sprintf("the staging path of %s was refused: %v", file.Path, err), false)
+		return fail(fmt.Sprintf("the staging path of %s was refused: %v", file.Path, err), false)
 	}
 
 	pair := pairs[file.Variable]
 	if pair == nil {
-		return r.stopUnchanged("there is no new key pair for "+shortName(file.Variable), false)
+		return fail("there is no new key pair for "+shortName(file.Variable), false)
 	}
 
 	content := pair.Certificate
@@ -1908,9 +1939,9 @@ func (r *vmRun) stageFile(n int, file FileEntry, pairs map[string]*credhub.KeyPa
 	case errors.Is(err, errVMStopped):
 		return err
 	case err != nil:
-		return r.stopUnchanged("the staging of "+file.Path+" did not finish", false)
+		return fail("the staging of "+file.Path+" did not finish", false)
 	case !isOK(result):
-		return r.stopUnchanged(exitMeaning(opStage, result), true)
+		return fail(exitMeaning(opStage, result), true)
 	}
 
 	return nil
@@ -1941,7 +1972,7 @@ func (r *vmRun) backup() error {
 		}
 	}
 
-	return r.advance(VMPhaseBackedUp, "record the divergence of "+r.j.VM)
+	return r.reach(VMPhaseBackedUp, "record the divergence of "+r.j.VM)
 }
 
 // diverge writes this VM's state for each variable it holds to the
@@ -2175,12 +2206,17 @@ func (m *Manager) patchVMFinish(ctx context.Context, task *UpgradeTask, inst *In
 
 	r := vmRun{manager: m, ctx: ctx, task: task, inst: inst, j: j, sess: sess, host: host}
 
-	result, err := r.mutate("restart the processes on "+j.VM, nil, r.restart)
+	return r.finish(leaves)
+}
+
+// finish takes a swapped VM to done, as patchVMFinish describes.
+func (r *vmRun) finish(leaves map[string]leafFacts) error {
+	result, err := r.mutate("restart the processes on "+r.j.VM, nil, r.restart)
 
 	switch {
 	case errors.Is(err, errVMStopped):
 		return err
-	case ctx.Err() != nil:
+	case r.ctx.Err() != nil:
 		return errVMStopped
 	case err != nil:
 		return r.rollback("the restart did not finish in time")
@@ -2188,13 +2224,20 @@ func (m *Manager) patchVMFinish(ctx context.Context, task *UpgradeTask, inst *In
 		return r.rollback(exitMeaning(opRestart, result))
 	}
 
-	err = r.advance(VMPhaseRestarted, "verify the listeners on "+j.VM)
+	err = r.reach(VMPhaseRestarted, "verify the listeners on "+r.j.VM)
 	if err != nil {
 		return err
 	}
 
+	return r.finishVerify(leaves)
+}
+
+// finishVerify takes a restarted VM to done. It verifies each listener,
+// runs the health gate, saves done, and cleans up, and it rolls the VM
+// back when a check fails.
+func (r *vmRun) finishVerify(leaves map[string]leafFacts) error {
 	failed := r.verify(leaves)
-	if ctx.Err() != nil {
+	if r.ctx.Err() != nil {
 		return errVMStopped
 	}
 
@@ -2202,21 +2245,21 @@ func (m *Manager) patchVMFinish(ctx context.Context, task *UpgradeTask, inst *In
 		return r.rollback(failed)
 	}
 
-	err = r.advance(VMPhaseVerified, "run the health gate on "+j.VM)
+	err := r.reach(VMPhaseVerified, "run the health gate on "+r.j.VM)
 	if err != nil {
 		return err
 	}
 
 	err = r.gateAfter()
-	if ctx.Err() != nil {
+	if r.ctx.Err() != nil {
 		return errVMStopped
 	}
 
 	if err != nil {
-		return r.rollback(fmt.Sprintf("the health gate did not pass within %s: %v", m.patchGateWait, err))
+		return r.rollback(fmt.Sprintf("the health gate did not pass within %s: %v", r.manager.patchGateWait, err))
 	}
 
-	err = r.advance(VMPhaseDone, "clean up "+j.VM)
+	err = r.advance(VMPhaseDone, "clean up "+r.j.VM)
 	if err != nil {
 		return err
 	}
@@ -2392,13 +2435,22 @@ func (m *Manager) rollbackVM(ctx context.Context, task *UpgradeTask, inst *Insta
 		return err
 	}
 
+	return r.restoreAndClose()
+}
+
+// restoreAndClose restores every file a replacement touched, restarts
+// the processes, runs the gate, and closes the VM rolled_back, or leaves
+// it unrecovered, as rollbackVM describes. The VM is rolling_back.
+func (r *vmRun) restoreAndClose() error {
+	m, ctx, j := r.manager, r.ctx, r.j
+
 	failed, err := r.restoreAll()
 	if err != nil {
 		return err
 	}
 
 	if failed != "" {
-		return m.unrecovered(ctx, task, inst, j, failed)
+		return m.unrecovered(ctx, r.task, r.inst, j, failed)
 	}
 
 	result, err := r.commit("restart the processes on "+j.VM+" after the restore", nil, r.restart)
@@ -2409,9 +2461,9 @@ func (m *Manager) rollbackVM(ctx context.Context, task *UpgradeTask, inst *Insta
 	case ctx.Err() != nil:
 		return errVMStopped
 	case err != nil:
-		return m.unrecovered(ctx, task, inst, j, "the restart after the restore did not finish in time")
+		return m.unrecovered(ctx, r.task, r.inst, j, "the restart after the restore did not finish in time")
 	case !r.restarted(result):
-		return m.unrecovered(ctx, task, inst, j, "the restart after the restore failed: "+exitMeaning(opRestart, result))
+		return m.unrecovered(ctx, r.task, r.inst, j, "the restart after the restore failed: "+exitMeaning(opRestart, result))
 	}
 
 	err = r.gateAfter()
@@ -2420,17 +2472,19 @@ func (m *Manager) rollbackVM(ctx context.Context, task *UpgradeTask, inst *Insta
 	}
 
 	if err != nil {
-		return m.unrecovered(ctx, task, inst, j, fmt.Sprintf("the health gate did not pass after the restore: %v", err))
+		return m.unrecovered(ctx, r.task, r.inst, j, fmt.Sprintf("the health gate did not pass after the restore: %v", err))
 	}
 
 	return r.rolledBack()
 }
 
-// restoreAll restores every file a replacement touched, in order. It
-// returns why a restore failed, or "" when all came back.
+// restoreAll restores every file a replacement or an earlier restore
+// touched, in order. A file that already holds the old content is left as
+// it is by patch.sh. It returns why a restore failed, or "" when all came
+// back.
 func (r *vmRun) restoreAll() (string, error) {
 	for n, file := range r.files() {
-		if file.State != FileStateReplaced && file.State != FileStateReplacing {
+		if file.State != FileStateReplaced && file.State != FileStateReplacing && file.State != FileStateRestoring {
 			continue
 		}
 
@@ -2488,7 +2542,13 @@ func (r *vmRun) rolledBack() error {
 		return err
 	}
 
-	return r.pause(fmt.Errorf("%s It holds its old certificate again. Any VM already patched keeps the new one, so resuming fails the instance, which then needs a redeploy", why))
+	return r.pause(rolledBackPause(why))
+}
+
+// rolledBackPause is the error a task pauses with once a VM rolled back,
+// given why it rolled back.
+func rolledBackPause(why string) error {
+	return fmt.Errorf("%s It holds its old certificate again. Any VM already patched keeps the new one, so resuming fails the instance, which then needs a redeploy", why)
 }
 
 // logRefusedMove logs a move the VM's journal refused, which leaves the
@@ -2524,4 +2584,886 @@ func (m *Manager) unrecovered(ctx context.Context, task *UpgradeTask, inst *Inst
 	m.failRotation(ctx, task, inst, message) //nolint:errcheck,gosec // failRotation logs and saves it
 
 	return errVMStopped
+}
+
+// forwardRank orders the phases of a VM's forward pass.
+var forwardRank = map[VMPhase]int{
+	VMPhasePlanned:   0,
+	VMPhaseStaged:    1,
+	VMPhaseBackedUp:  2,
+	VMPhaseSwapping:  3,
+	VMPhaseSwapped:   4,
+	VMPhaseRestarted: 5,
+	VMPhaseVerified:  6,
+	VMPhaseDone:      7,
+}
+
+// reach advances the journal to a phase of the forward pass, as advance
+// does, unless it is already there or past it, as a resumed VM can be.
+func (r *vmRun) reach(phase VMPhase, step string) error {
+	r.manager.mu.RLock()
+	current, known := forwardRank[r.j.Phase]
+	r.manager.mu.RUnlock()
+
+	if known && current >= forwardRank[phase] {
+		return nil
+	}
+
+	return r.advance(phase, step)
+}
+
+// taskSwapOpenLocked reports whether any instance of the task has a VM
+// that is open and whose swap began. The caller holds mu.
+func taskSwapOpenLocked(task *UpgradeTask) bool {
+	for i := range task.Instances {
+		if swapOpenLocked(&task.Instances[i]) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// swapOpenLocked reports whether the instance has a VM that is open and
+// whose swap began, which only a resume finishes or rolls back. The
+// caller holds mu.
+func swapOpenLocked(inst *InstanceUpgrade) bool {
+	if inst.Certificates == nil {
+		return false
+	}
+
+	for i := range inst.Certificates.VMs {
+		j := &inst.Certificates.VMs[i]
+		if !closedPhase(j.Phase) && journalSwapBegun(j) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// patchResume is one resume of a patch instance whose VMs a pass already
+// began to patch.
+type patchResume struct {
+	m *Manager
+	//nolint:containedctx // a resume lives as long as this context
+	ctx      context.Context
+	task     *UpgradeTask
+	inst     *InstanceUpgrade
+	sessions *patchSessions
+	pairs    map[string]*credhub.KeyPair
+
+	// refused is the switches' refusal at the start, and cancelled whether
+	// the task was cancelled then.
+	refused   error
+	cancelled bool
+
+	// loaded and loadFailed record the one read of the new key pairs, and
+	// loadWhy why it failed.
+	loaded, loadFailed bool
+	loadWhy            string
+
+	// gated and rechecked record that the gate and the BeforeMutation
+	// re-check ran in this resume.
+	gated, rechecked bool
+}
+
+// resumePatch resumes an instance whose VMs a pass already began to
+// patch, after a restart, a pause, a panic, or a cancel. With the patch
+// switch off and no VM part way through its swap, it opens no SSH session,
+// changes no journal and not the divergence record, and pauses the task.
+// Otherwise it first puts every VM a replacement may have touched in the
+// divergence record, as unknown unless the record already lists it. It
+// then takes each VM in journal order: a closed VM whose cleanup is not
+// done is cleaned up, an open one is checked against the director and its
+// files with patch.sh check and handled as DecideResume says, through the
+// functions a live pass uses. A VM whose swap began finishes or rolls back
+// whatever the switches say. A cancelled task handles only such VMs and
+// those part way through a swap or a rollback, which a cancel never
+// interrupts. The VMs no pass touched yet are then patched as a live pass
+// does. Every key pair it read is zeroed after the sessions closed. It
+// reports whether the instance settled.
+func (m *Manager) resumePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
+	pairs := make(map[string]*credhub.KeyPair)
+	defer zeroPairs(pairs)
+
+	sessions := m.newPatchSessions(inst.DeploymentName)
+	defer sessions.close()
+
+	r := &patchResume{
+		m: m, ctx: ctx, task: task, inst: inst, sessions: sessions, pairs: pairs,
+		refused:   m.certWritesAllowed(RotationModePatch),
+		cancelled: m.taskCancelled(task),
+	}
+
+	m.mu.RLock()
+	open := swapOpenLocked(inst)
+	m.mu.RUnlock()
+
+	if r.refused != nil && !open {
+		if !r.cancelled {
+			m.pauseWith(ctx, task, inst, writesRefused(r.refused)) //nolint:errcheck,gosec // pauseWith logs and saves it
+		}
+
+		return m.instanceSettled(inst)
+	}
+
+	if !r.cancelled {
+		m.markRotating(ctx, task, inst)
+	}
+
+	if r.rebuildDivergence() {
+		return m.instanceSettled(inst)
+	}
+
+	m.mu.RLock()
+	count := len(inst.Certificates.VMs)
+	m.mu.RUnlock()
+
+	for i := range count {
+		if r.resumeVM(&inst.Certificates.VMs[i]) {
+			return m.instanceSettled(inst)
+		}
+	}
+
+	return r.patchRest()
+}
+
+// patchRest patches the VMs no pass touched yet, once every VM the
+// resume found open is closed. A cancelled task leaves them as they are,
+// and switches that refuse pause the task first.
+func (r *patchResume) patchRest() bool {
+	m := r.m
+
+	if r.cancelled {
+		return m.instanceSettled(r.inst)
+	}
+
+	err := m.certWritesAllowed(RotationModePatch)
+	if err != nil {
+		m.pauseWith(r.ctx, r.task, r.inst, writesRefused(err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+		return m.instanceSettled(r.inst)
+	}
+
+	m.mu.RLock()
+
+	untouchedLeft := slices.ContainsFunc(r.inst.Certificates.VMs, func(j VMJournal) bool { return untouched(&j) })
+
+	m.mu.RUnlock()
+
+	if untouchedLeft {
+		if !r.loadPairs() {
+			m.pauseWith(r.ctx, r.task, r.inst, errors.New(r.loadWhy)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+			return m.instanceSettled(r.inst)
+		}
+
+		if !r.rechecked && m.stopForChanges(r.ctx, r.task, r.inst, BeforeMutation) {
+			return m.instanceSettled(r.inst)
+		}
+	}
+
+	return m.patchVMs(r.ctx, r.task, r.inst, r.sessions, r.pairs)
+}
+
+// rebuildDivergence makes sure the divergence record lists every open VM
+// a replacement may have touched, setting each it does not list as
+// applied or unknown to unknown. It reports whether the task paused.
+func (r *patchResume) rebuildDivergence() bool {
+	m := r.m
+
+	m.mu.RLock()
+
+	var touched []int
+
+	for i := range r.inst.Certificates.VMs {
+		j := &r.inst.Certificates.VMs[i]
+		if !closedPhase(j.Phase) && slices.ContainsFunc(j.Files, replacementTouched) {
+			touched = append(touched, i)
+		}
+	}
+
+	m.mu.RUnlock()
+
+	if len(touched) == 0 {
+		return false
+	}
+
+	store := m.certDeps().Divergence
+	if store == nil {
+		m.pauseWith(r.ctx, r.task, r.inst, errNoDivergenceStore) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+		return true
+	}
+
+	record, _, err := store.Get(r.ctx, r.inst.InstanceID)
+	if err != nil {
+		m.pauseWith(r.ctx, r.task, r.inst, fmt.Errorf("The divergence record could not be read, so the resume changed nothing: %w", err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+		return true
+	}
+
+	for _, i := range touched {
+		j := &r.inst.Certificates.VMs[i]
+		if r.listed(record, j) {
+			continue
+		}
+
+		var prints map[string]string
+		if r.loadPairs() {
+			prints = fingerprints(r.pairs)
+		}
+
+		err := m.recordDivergence(r.ctx, r.task, r.inst, j, prints, certinventory.DivergentVMUnknown)
+		if err != nil {
+			m.pauseWith(r.ctx, r.task, r.inst, fmt.Errorf("The divergence record of VM %s could not be saved, so the resume changed nothing: %w", j.VM, err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+			return true
+		}
+	}
+
+	return false
+}
+
+// replacementTouched reports whether a replacement may have changed the
+// file.
+func replacementTouched(file FileEntry) bool {
+	switch file.State {
+	case FileStateReplacing, FileStateReplaced, FileStateRestoring, FileStateRestored:
+		return true
+	default:
+		return false
+	}
+}
+
+// listed reports whether the record lists the VM as applied or unknown
+// for every variable its files hold.
+func (r *patchResume) listed(record *certinventory.Divergence, j *VMJournal) bool {
+	if record == nil {
+		return false
+	}
+
+	r.m.mu.RLock()
+	cid := j.CID
+	files := slices.Clone(j.Files)
+	r.m.mu.RUnlock()
+
+	for _, file := range files {
+		entry := slices.IndexFunc(record.Variables, func(v certinventory.DivergentVariable) bool { return v.Name == file.Variable })
+		if entry < 0 {
+			return false
+		}
+
+		state := record.Variables[entry].VMs[cid].State
+		if state != certinventory.DivergentVMApplied && state != certinventory.DivergentVMUnknown {
+			return false
+		}
+	}
+
+	return true
+}
+
+// resumeVM takes one VM as resumePatch describes. It reports whether the
+// instance stopped.
+func (r *patchResume) resumeVM(j *VMJournal) bool {
+	r.m.mu.RLock()
+	phase, cleanup := j.Phase, j.Cleanup
+	begun, fresh := journalSwapBegun(j), untouched(j)
+	r.m.mu.RUnlock()
+
+	switch {
+	case phase == VMPhaseReverted, closedPhase(phase) && cleanup == CleanupDone:
+		return false
+	case closedPhase(phase):
+		return r.closeVM(j)
+	case fresh, !begun && (r.refused != nil || r.cancelled && !midVM(phase)):
+		return false
+	default:
+		return r.openVM(j, begun)
+	}
+}
+
+// midVM reports whether a VM in the phase is part way through its swap
+// or its rollback, which a cancel never interrupts.
+func midVM(phase VMPhase) bool {
+	switch phase {
+	case VMPhaseSwapping, VMPhaseSwapped, VMPhaseRestarted, VMPhaseVerified, VMPhaseRollingBack:
+		return true
+	default:
+		return false
+	}
+}
+
+// session opens the session of the VM's group and finds the VM in it. A
+// failure pauses the task and returns errVMStopped.
+func (r *patchResume) session(run *vmRun) error {
+	sess, err := r.m.journalSession(r.ctx, r.sessions, r.inst, run.j)
+	if err == nil {
+		run.sess = sess
+		run.host, err = journalHost(sess, run.j)
+	}
+
+	if err != nil {
+		return run.pause(fmt.Errorf("Blacksmith could not open an SSH session on %s, so the resume left it as it was: %w", run.j.VM, err))
+	}
+
+	return nil
+}
+
+// closeVM finishes a closed VM whose cleanup is not done. A rolled_back
+// VM whose cleanup a crash cut off is marked old in the divergence record,
+// cleaned up, and pauses the task as its rollback would have. Any other
+// closed VM is cleaned up and the resume goes on. With the switches
+// refusing, only the rolled_back VM's record and pause are done, and the
+// cleanups wait for a resume they allow. It reports whether the instance
+// stopped.
+func (r *patchResume) closeVM(j *VMJournal) bool {
+	m := r.m
+
+	m.mu.RLock()
+	phase, cleanup, why := j.Phase, j.Cleanup, j.Error
+	m.mu.RUnlock()
+
+	rolledBack := phase == VMPhaseRolledBack && cleanup != CleanupFailed
+	if r.refused != nil && !rolledBack {
+		return false
+	}
+
+	run := &vmRun{manager: m, ctx: r.ctx, task: r.task, inst: r.inst, j: j}
+
+	if rolledBack {
+		err := m.recordDivergence(r.ctx, r.task, r.inst, j, nil, certinventory.DivergentVMOld)
+		if err != nil {
+			m.logger.Error("Certificate task %s could not mark VM %s old in the divergence record: %v", r.task.ID, j.VM, err)
+		}
+	}
+
+	if r.refused == nil {
+		if r.session(run) != nil || run.cleanup() != nil {
+			return true
+		}
+	}
+
+	if !rolledBack {
+		return false
+	}
+
+	if why == "" {
+		why = fmt.Sprintf("VM %s was rolled back.", j.VM)
+	}
+
+	run.pause(rolledBackPause(why)) //nolint:errcheck,gosec // pause logs and saves it
+
+	return true
+}
+
+// openVM reads what an open VM holds and runs the action DecideResume
+// picks for it. It reports whether the instance stopped.
+func (r *patchResume) openVM(j *VMJournal, begun bool) bool {
+	run := &vmRun{manager: r.m, ctx: r.ctx, task: r.task, inst: r.inst, j: j}
+
+	cid, err := run.directorCID("was left as it was")
+	if err != nil {
+		return true
+	}
+
+	live := LiveState{CID: cid, FileHashes: map[string]string{}, BackupHashes: map[string]string{}}
+
+	r.m.mu.RLock()
+	journalCID := j.CID
+	r.m.mu.RUnlock()
+
+	if cid != "" && cid == journalCID {
+		if r.session(run) != nil || run.checkFiles(&live) != nil {
+			return true
+		}
+	}
+
+	r.m.mu.RLock()
+	action, why := DecideResume(j, live)
+	r.m.mu.RUnlock()
+
+	r.m.logger.Info("Certificate task %s resumes VM %s with %s: %s", r.task.ID, j.VM, action, why)
+
+	return r.act(run, action, why, live, begun) != nil
+}
+
+// act runs one resume action on the VM. It returns nil when the VM is
+// closed and the resume goes on, and errVMStopped once the task paused
+// or the instance stopped.
+func (r *patchResume) act(run *vmRun, action ResumeAction, why string, live LiveState, begun bool) error {
+	switch action { //nolint:exhaustive // the default case closes every other action unrecovered
+	case ResumeContinueStaging, ResumeContinueBackups:
+		return r.continueForward(run)
+	case ResumeCompleteForward:
+		return r.completeForward(run, live, begun)
+	case ResumeRestartForward:
+		return r.restartForward(run, begun)
+	case ResumeVerifyAgain:
+		if !r.loadPairs() {
+			return run.rollback("the new key pair could not be read again: " + r.loadWhy)
+		}
+
+		return run.finishVerify(leavesOf(r.pairs))
+	case ResumeRestoreAll, ResumeCompleteRestore, ResumeRestartRollback:
+		run.change(func(j *VMJournal) {
+			if j.Error == "" {
+				j.Error = fmt.Sprintf("VM %s was rolled back because a resume found its rollback unfinished.", j.VM)
+			}
+		})
+
+		return run.restoreAndClose()
+	case ResumeMarkReverted:
+		return r.reverted(run, why, begun)
+	case ResumeRetryLater:
+		return run.pause(fmt.Errorf("VM %s was left as it was: %s", run.j.VM, why))
+	default:
+		return r.unrecovered(run, why, begun)
+	}
+}
+
+// continueForward takes a VM whose files all hold the old content from
+// staging to done, as a live pass does. It runs the gate and the
+// BeforeMutation re-check first, once per resume, reads the new key pairs
+// again, and stages again only the copies that are gone or wrong. Its
+// backups are reused.
+func (r *patchResume) continueForward(run *vmRun) error {
+	if !r.gated {
+		r.gated = true
+
+		r.m.mu.RLock()
+		gate := r.inst.Certificates.Gate
+		vmCount := len(r.inst.Certificates.Approved.VMCIDs)
+		r.m.mu.RUnlock()
+
+		if r.m.gateBeforeVM(r.ctx, r.task, r.inst, run.j, run.sess, gate, vmCount) {
+			return errVMStopped
+		}
+	}
+
+	if !r.rechecked {
+		r.rechecked = true
+
+		if r.m.stopForChanges(r.ctx, r.task, r.inst, BeforeMutation) {
+			return errVMStopped
+		}
+	}
+
+	if !r.loadPairs() {
+		return run.pause(fmt.Errorf("VM %s was left as it was: %s", run.j.VM, r.loadWhy))
+	}
+
+	for _, step := range []func() error{
+		func() error { return r.restage(run, nil, run.stopUnchanged) },
+		func() error { return run.reach(VMPhaseStaged, "back up the files on "+run.j.VM) },
+		run.backup,
+	} {
+		err := step()
+		if err != nil {
+			return err
+		}
+	}
+
+	return r.swapForward(run)
+}
+
+// swapForward takes a backed-up VM, or one whose swap a crash cut off,
+// through its replacements and on to done.
+func (r *patchResume) swapForward(run *vmRun) error {
+	for _, step := range []func() error{
+		func() error { return run.diverge(r.pairs, certinventory.DivergentVMUnknown) },
+		func() error { return run.reach(VMPhaseSwapping, "replace the files on "+run.j.VM) },
+		run.replace,
+		func() error { return run.diverge(r.pairs, certinventory.DivergentVMApplied) },
+		func() error { return run.reach(VMPhaseSwapped, "restart the processes on "+run.j.VM) },
+	} {
+		err := step()
+		if err != nil {
+			return err
+		}
+	}
+
+	return run.finish(leavesOf(r.pairs))
+}
+
+// completeForward completes the replacements of a VM whose swap a crash
+// cut off, with every backup in place. It stages again each copy a file
+// that still holds the old content needs, when the copy is gone. A VM
+// whose swap began rolls back when the key pairs can't be read again or
+// staged, and one whose swap had not begun stops unchanged.
+func (r *patchResume) completeForward(run *vmRun, live LiveState, begun bool) error {
+	fail := func(why string, finished bool) error {
+		if begun {
+			return run.rollback(why)
+		}
+
+		return run.stopUnchanged(why, finished)
+	}
+
+	if !r.loadPairs() {
+		return fail("the new key pair could not be read again: "+r.loadWhy, true)
+	}
+
+	old := func(file FileEntry) bool { return live.FileHashes[file.Path] == file.OldHash }
+
+	err := r.restage(run, old, fail)
+	if err != nil {
+		return err
+	}
+
+	return r.swapForward(run)
+}
+
+// restartForward finishes a VM whose files all hold the new content. Each
+// file is marked replaced, so a rollback restores it, and the VM restarts
+// and goes on to done.
+func (r *patchResume) restartForward(run *vmRun, begun bool) error {
+	if !r.loadPairs() {
+		if begun {
+			return run.rollback("the new key pair could not be read again: " + r.loadWhy)
+		}
+
+		return run.pause(fmt.Errorf("VM %s was left as it was: %s", run.j.VM, r.loadWhy))
+	}
+
+	run.change(func(j *VMJournal) {
+		for n := range j.Files {
+			j.Files[n].State = FileStateReplaced
+		}
+	})
+
+	err := run.save("go on with the restart of " + run.j.VM)
+	if err != nil {
+		return err
+	}
+
+	err = run.diverge(r.pairs, certinventory.DivergentVMApplied)
+	if err != nil {
+		return err
+	}
+
+	err = run.reach(VMPhaseSwapped, "restart the processes on "+run.j.VM)
+	if err != nil {
+		return err
+	}
+
+	return run.finish(leavesOf(r.pairs))
+}
+
+// restage prepares the work directory and stages again each file that
+// needs, for which need says so (every file when need is nil), and whose
+// staged copy is gone or wrong. A failure stops the VM through fail.
+func (r *patchResume) restage(run *vmRun, need func(FileEntry) bool, fail func(why string, finished bool) error) error {
+	files := run.files()
+
+	var missing []int
+
+	for n, file := range files {
+		if need != nil && !need(file) {
+			continue
+		}
+
+		result, err := run.script(opStageCheck, workPath(r.task.ID, "s", n), file.NewHash)
+
+		switch {
+		case err != nil && r.ctx.Err() != nil:
+			return errVMStopped
+		case err != nil:
+			return fail("the check of a staged copy did not finish", false)
+		case !isOK(result):
+			missing = append(missing, n)
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	result, err := run.mutate("prepare VM "+run.j.VM, func(j *VMJournal) { j.Cleanup = CleanupPending }, func() (ssh.Result, error) {
+		return run.script(opPrepare)
+	})
+
+	switch {
+	case errors.Is(err, errVMStopped):
+		return err
+	case err != nil:
+		return fail("the work directory was not made, because the command did not finish", false)
+	case !isOK(result):
+		return fail(exitMeaning(opPrepare, result), true)
+	}
+
+	for _, n := range missing {
+		file := files[n]
+
+		err := run.stageFile(n, file, r.pairs, fail)
+		if err != nil {
+			return err
+		}
+
+		result, err := run.script(opStageCheck, workPath(r.task.ID, "s", n), file.NewHash)
+
+		switch {
+		case err != nil:
+			return fail("the check of a staged copy did not finish", false)
+		case !isOK(result):
+			return fail("the staged copy of "+file.Path+" does not hold the new content: "+exitMeaning(opStageCheck, result), true)
+		}
+	}
+
+	return nil
+}
+
+// reverted closes a VM that BOSH recreated, which holds the old files
+// again. It notes the VM in the divergence record when a replacement may
+// have reached it, and pauses the task.
+func (r *patchResume) reverted(run *vmRun, why string, begun bool) error {
+	var refused error
+
+	run.change(func(j *VMJournal) {
+		j.Error = why
+		refused = j.Advance(VMPhaseReverted)
+	})
+
+	r.m.logRefusedMove(r.task, run.j.VM, refused)
+
+	err := run.save("record that VM " + run.j.VM + " was recreated")
+	if err != nil {
+		return err
+	}
+
+	if begun {
+		err := r.m.recordDivergence(r.ctx, r.task, r.inst, run.j, nil, certinventory.DivergentVMReverted)
+		if err != nil {
+			r.m.logger.Error("Certificate task %s could not mark VM %s reverted in the divergence record: %v", r.task.ID, run.j.VM, err)
+		}
+	}
+
+	return run.pause(fmt.Errorf("VM %s was not patched further: %s", run.j.VM, why))
+}
+
+// unrecovered leaves an open VM whose live state no resume rule covers
+// unrecovered, notes it as unknown in the divergence record when a
+// replacement may have reached it, and pauses the task. Nothing on the VM
+// is overwritten.
+func (r *patchResume) unrecovered(run *vmRun, why string, begun bool) error {
+	message := fmt.Sprintf("VM %s was left unrecovered: %s %s", run.j.VM, why, redeployToRepair)
+
+	var refused error
+
+	run.change(func(j *VMJournal) {
+		j.Error = message
+		refused = j.Advance(VMPhaseUnrecovered)
+	})
+
+	r.m.logRefusedMove(r.task, run.j.VM, refused)
+
+	err := run.save("record that VM " + run.j.VM + " is unrecovered")
+	if err != nil {
+		return err
+	}
+
+	if begun {
+		err := r.m.recordDivergence(r.ctx, r.task, r.inst, run.j, nil, certinventory.DivergentVMUnknown)
+		if err != nil {
+			r.m.logger.Error("Certificate task %s could not mark VM %s unknown in the divergence record: %v", r.task.ID, run.j.VM, err)
+		}
+	}
+
+	return run.pause(errors.New(message))
+}
+
+// loadPairs reads the key pair of each variable's new version from
+// CredHub once per resume, and checks its certificate and key against
+// the hashes the regeneration saved. A pair that does not match is never
+// used. It reports whether every pair was read and matched, and on a
+// failure loadWhy says why, with no hash or key in it.
+func (r *patchResume) loadPairs() bool {
+	switch {
+	case r.loaded:
+		return true
+	case r.loadFailed:
+		return false
+	}
+
+	r.loadFailed = true
+
+	api := r.m.certDeps().CredHub
+	if api == nil {
+		r.loadWhy = "CredHub is not configured, so the new key pairs can't be read again."
+
+		return false
+	}
+
+	r.m.mu.RLock()
+
+	variables := make([]VariableRotation, 0, len(r.inst.Certificates.Variables))
+	for _, v := range r.inst.Certificates.Variables {
+		variables = append(variables, v.Clone())
+	}
+
+	r.m.mu.RUnlock()
+
+	for _, v := range variables {
+		pair, err := api.CertificateKeyPair(r.ctx, v.NewVersionID)
+		if err != nil {
+			r.loadWhy = fmt.Sprintf("CredHub did not answer the read of version %s of %s: %v", v.NewVersionID, shortName(v.Name), err)
+
+			return false
+		}
+
+		if old := r.pairs[v.Name]; old != nil {
+			old.Zero()
+		}
+
+		r.pairs[v.Name] = pair
+
+		if v.NewCertHash == "" || v.NewKeyHash == "" ||
+			certpatch.NormalisedHash(pair.Certificate) != v.NewCertHash || certpatch.NormalisedHash(pair.PrivateKey) != v.NewKeyHash {
+			r.loadWhy = fmt.Sprintf("CredHub answered version %s of %s with a key pair other than the one Blacksmith validated.", v.NewVersionID, shortName(v.Name))
+
+			return false
+		}
+	}
+
+	r.loaded, r.loadFailed = true, false
+
+	return true
+}
+
+// openPatchVMLocked finds the first running instance of a patch task with
+// a VM that a pass touched and left open, and names that VM. It returns
+// nil for any other task. The caller holds mu.
+func openPatchVMLocked(task *UpgradeTask) (*InstanceUpgrade, string) {
+	if task.KindOrDefault() != TaskKindCertificates || certTaskMode(task) != RotationModePatch {
+		return nil, ""
+	}
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status != InstanceStatusRunning || inst.Certificates == nil {
+			continue
+		}
+
+		for n := range inst.Certificates.VMs {
+			j := &inst.Certificates.VMs[n]
+			if !closedPhase(j.Phase) && !untouched(j) {
+				return inst, j.VM
+			}
+		}
+	}
+
+	return nil, ""
+}
+
+// resumeCancelledLocked starts the resume of each running instance of a
+// cancelled patch task with a VM part way through its swap or its
+// rollback, as patchCancelEnd finds, when nothing
+// processes or settles the task. A cancelled task is never resumed, so
+// without it such a VM would stay half swapped and its instance reserved
+// with nothing to follow it. Each instance counts as a settle of the
+// task, so nothing else ends it meanwhile, and the function it returns
+// starts the resumes, which the caller runs once it lets go of mu. A
+// manager that is stopping, or has no director, starts none, since the
+// next load does it. The caller holds mu.
+func (m *Manager) resumeCancelledLocked(task *UpgradeTask) func() {
+	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCertificates || certTaskMode(task) != RotationModePatch ||
+		!m.configured || m.director == nil || m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
+		return func() {}
+	}
+
+	var open []*InstanceUpgrade
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status != InstanceStatusRunning {
+			continue
+		}
+
+		if _, _, end := patchCancelEnd(inst, cancelledUnchanged); !end {
+			open = append(open, inst)
+		}
+	}
+
+	if len(open) == 0 {
+		return func() {}
+	}
+
+	m.settling[task.ID] += len(open)
+	m.wg.Add(len(open))
+
+	return func() {
+		for _, inst := range open {
+			go m.resumeCancelledPatch(task, inst)
+		}
+	}
+}
+
+// resumeCancelledPatch finishes or rolls back the VMs of one instance that
+// resumeCancelledLocked counted as a settle of its cancelled task, and
+// ends that settle. A VM it leaves open is closed unrecovered, so the end
+// of the settle ends the instance and frees it.
+func (m *Manager) resumeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade) {
+	defer m.wg.Done()
+	defer m.endSettling(loadedDeploy{task: task, instance: inst})
+	defer m.closeCancelledPatch(task, inst)
+
+	defer func() {
+		if r := recover(); r != nil {
+			m.logger.Error("PANIC while certificate task %s finished the VMs of instance %s: %v", task.ID, inst.InstanceID, r)
+		}
+	}()
+
+	m.logger.Info("Certificate task %s is cancelled with a VM of instance %s part way through its swap, so it finishes that VM now", task.ID, inst.InstanceID)
+
+	m.resumePatch(m.ctx, task, inst)
+}
+
+// closeCancelledPatch marks unrecovered each VM of a cancelled task's
+// instance that the resume left part way through its swap or its
+// rollback, notes it as unknown in the divergence record, which already
+// lists it, and saves the task. A manager that is stopping leaves them
+// for the next load.
+func (m *Manager) closeCancelledPatch(task *UpgradeTask, inst *InstanceUpgrade) {
+	if m.ctx.Err() != nil {
+		return
+	}
+
+	var marked []*VMJournal
+
+	m.mu.Lock()
+
+	if inst.Status == InstanceStatusRunning && inst.Certificates != nil {
+		for i := range inst.Certificates.VMs {
+			j := &inst.Certificates.VMs[i]
+			if !midVM(j.Phase) {
+				continue
+			}
+
+			j.Error = fmt.Sprintf("The task was cancelled, and Blacksmith could not finish or roll back VM %s. %s", j.VM, redeployToRepair)
+			if err := j.Advance(VMPhaseUnrecovered); err == nil {
+				marked = append(marked, j)
+			}
+		}
+	}
+
+	m.mu.Unlock()
+
+	if len(marked) == 0 {
+		return
+	}
+
+	ctx := context.WithoutCancel(m.ctx)
+
+	for _, j := range marked {
+		err := m.recordDivergence(ctx, task, inst, j, nil, certinventory.DivergentVMUnknown)
+		if err != nil {
+			m.logger.Error("Certificate task %s could not mark VM %s unknown in the divergence record: %v", task.ID, j.VM, err)
+		}
+	}
+
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.logger.Error("Certificate task %s: %v", task.ID, err)
+	}
 }

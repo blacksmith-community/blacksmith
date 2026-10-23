@@ -27,6 +27,11 @@ const (
 	rotationOffMessage = "Rotation is off on this broker, so this task paused before changing anything. " +
 		"Turn certificates.rotation.enabled back on and resume, or cancel the task."
 
+	// patchOffMessage is what a patch task shows when it pauses because
+	// patch in place was turned off after it was created.
+	patchOffMessage = "Patch in place is off on this broker, so this task paused before changing anything more on the VMs. " +
+		"Redeploy this instance, which renders its jobs from BOSH state, or turn certificates.patch_in_place.enabled back on and resume."
+
 	// deployPendingNote tells the operator what became of the new
 	// versions when a redeploy did not apply them.
 	deployPendingNote = "The new certificate versions remain in CredHub as deploy_pending, " +
@@ -414,11 +419,18 @@ func (m *Manager) refuseWrites(ctx context.Context, task *UpgradeTask, inst *Ins
 // paused task shows.
 func writesRefused(err error) error {
 	var apiErr *apierr.Error
-	if errors.As(err, &apiErr) && apiErr.Code == apierr.CodeRotationDisabled {
-		return apierr.New(apiErr.Status, apiErr.Code, rotationOffMessage)
+	if !errors.As(err, &apiErr) {
+		return err
 	}
 
-	return err
+	switch apiErr.Code {
+	case apierr.CodeRotationDisabled:
+		return apierr.New(apiErr.Status, apiErr.Code, rotationOffMessage)
+	case apierr.CodePatchDisabled:
+		return apierr.New(apiErr.Status, apiErr.Code, patchOffMessage)
+	default:
+		return err
+	}
 }
 
 // isWritesRefused reports whether a preflight error is one of the
@@ -894,8 +906,11 @@ func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst
 }
 
 // certResumeAllowed refuses the resume of a paused certificate task while
-// the switches refuse its mode, with the reason a paused task shows. Any
-// other task, and a task that is not paused, is left to ResumeTask.
+// the switches refuse its mode, with the reason a paused task shows. A
+// patch task with a VM part way through its swap always resumes, since
+// only the resume finishes or rolls back that VM, and the switches then
+// stop the task before its next VM. Any other task, and a task that is
+// not paused, is left to ResumeTask.
 func (m *Manager) certResumeAllowed(taskID string) error {
 	m.mu.RLock()
 	task, exists := m.tasks[taskID]
@@ -904,6 +919,7 @@ func (m *Manager) certResumeAllowed(taskID string) error {
 	var mode RotationMode
 	if check {
 		mode = certTaskMode(task)
+		check = mode != RotationModePatch || !taskSwapOpenLocked(task)
 	}
 
 	m.mu.RUnlock()
@@ -1069,6 +1085,22 @@ func (m *Manager) verifyCancelledLocked(task *UpgradeTask) func() {
 		for _, inst := range verify {
 			go m.verifyCancelled(task, inst)
 		}
+	}
+}
+
+// settleCancelledLocked starts what follows the instances of a cancelled
+// certificate task that nothing processes or settles: the verification of
+// each done deploy, as verifyCancelledLocked does, and the resume of each
+// patch left part way through a VM, as resumeCancelledLocked does. The
+// function it returns starts them, and the caller runs it once it lets go
+// of mu. The caller holds mu.
+func (m *Manager) settleCancelledLocked(task *UpgradeTask) func() {
+	verify := m.verifyCancelledLocked(task)
+	finish := m.resumeCancelledLocked(task)
+
+	return func() {
+		verify()
+		finish()
 	}
 }
 

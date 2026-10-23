@@ -37,13 +37,28 @@ type redisVMsDirector struct {
 	pmu     sync.Mutex
 	vms     []bosh.VM
 	running []bosh.Task
+	// failVMs, when set, is what a listing of the VMs answers.
+	failVMs error
 }
 
 func (d *redisVMsDirector) GetDeploymentVMs(context.Context, string) ([]bosh.VM, error) {
 	d.pmu.Lock()
 	defer d.pmu.Unlock()
 
+	if d.failVMs != nil {
+		return nil, d.failVMs
+	}
+
 	return slices.Clone(d.vms), nil
+}
+
+// failVMListing makes each listing of the VMs fail with err, or succeed
+// again with nil.
+func (d *redisVMsDirector) failVMListing(err error) {
+	d.pmu.Lock()
+	defer d.pmu.Unlock()
+
+	d.failVMs = err
 }
 
 func (d *redisVMsDirector) FindRunningTasksForDeployment(context.Context, string) ([]bosh.Task, error) {
@@ -91,22 +106,32 @@ type divergenceVault struct {
 
 	mu   sync.Mutex
 	fail bool
+	// afterPut, when set, sees the path of each divergence write once it
+	// is stored.
+	afterPut func(path string)
 }
 
 func (v *divergenceVault) Put(ctx context.Context, path string, data interface{}) error {
-	if strings.HasPrefix(path, "certificate-divergence") {
-		v.mu.Lock()
-		fail := v.fail
-		v.mu.Unlock()
-
-		if fail {
-			return errDivergenceDown
-		}
-
-		v.events.add("divergence")
+	if !strings.HasPrefix(path, "certificate-divergence") {
+		return v.Vault.Put(ctx, path, data)
 	}
 
-	return v.Vault.Put(ctx, path, data)
+	v.mu.Lock()
+	fail, after := v.fail, v.afterPut
+	v.mu.Unlock()
+
+	if fail {
+		return errDivergenceDown
+	}
+
+	v.events.add("divergence")
+
+	err := v.Vault.Put(ctx, path, data)
+	if err == nil && after != nil {
+		after(path)
+	}
+
+	return err
 }
 
 // Delete removes a divergence record, which the store does when no VM
