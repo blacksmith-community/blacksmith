@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -121,19 +122,60 @@ func commonNameCheck(oldCert, newCert *x509.Certificate) Check {
 	return pass(CheckCommonName, "The common name is unchanged.")
 }
 
-// sanSet returns the sorted DNS names and the sorted IP strings together.
+// sanSet returns the certificate's SANs as a sorted, de-duplicated set of
+// typed entries such as "DNS a.example" or "IP 10.0.0.1". The type prefix
+// keeps a SAN of one kind from matching a SAN of another kind with the
+// same text. Each value is normalised the way its kind compares: DNS names
+// ignore case and a trailing dot, IP addresses compare by value, URIs
+// ignore the case of the scheme and host, and email addresses ignore the
+// case of the domain.
 func sanSet(cert *x509.Certificate) []string {
-	dns := slices.Clone(cert.DNSNames)
-	slices.Sort(dns)
+	set := make([]string, 0, len(cert.DNSNames)+len(cert.IPAddresses)+len(cert.URIs)+len(cert.EmailAddresses))
 
-	ips := make([]string, 0, len(cert.IPAddresses))
-	for _, ip := range cert.IPAddresses {
-		ips = append(ips, ip.String())
+	for _, name := range cert.DNSNames {
+		set = append(set, "DNS "+strings.TrimSuffix(strings.ToLower(name), "."))
 	}
 
-	slices.Sort(ips)
+	for _, ip := range cert.IPAddresses {
+		set = append(set, "IP "+ip.String())
+	}
 
-	return append(dns, ips...)
+	for _, uri := range cert.URIs {
+		set = append(set, "URI "+normaliseURI(uri))
+	}
+
+	for _, email := range cert.EmailAddresses {
+		set = append(set, "email "+normaliseEmail(email))
+	}
+
+	slices.Sort(set)
+
+	return slices.Compact(set)
+}
+
+// normaliseURI lowercases the scheme and host of a URI SAN and leaves the
+// rest, which is case-sensitive, as it is.
+func normaliseURI(uri *url.URL) string {
+	if uri == nil {
+		return ""
+	}
+
+	norm := *uri
+	norm.Scheme = strings.ToLower(norm.Scheme)
+	norm.Host = strings.ToLower(norm.Host)
+
+	return norm.String()
+}
+
+// normaliseEmail lowercases the domain of an email SAN. The local part is
+// case-sensitive, so it stays as it is.
+func normaliseEmail(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 {
+		return email
+	}
+
+	return email[:at] + "@" + strings.ToLower(email[at+1:])
 }
 
 func sanCheck(oldCert, newCert *x509.Certificate) Check {

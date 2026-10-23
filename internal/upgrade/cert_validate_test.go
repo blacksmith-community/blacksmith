@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,8 @@ type certSpec struct {
 	cn        string
 	dns       []string
 	ips       []net.IP
+	uris      []*url.URL
+	emails    []string
 	usages    []x509.ExtKeyUsage
 	isCA      bool
 	notBefore time.Time
@@ -75,6 +78,8 @@ func (ca testCA) issue(t *testing.T, spec certSpec) (*x509.Certificate, *ecdsa.P
 		Subject:               pkix.Name{CommonName: spec.cn},
 		DNSNames:              spec.dns,
 		IPAddresses:           spec.ips,
+		URIs:                  spec.uris,
+		EmailAddresses:        spec.emails,
 		ExtKeyUsage:           spec.usages,
 		NotBefore:             spec.notBefore,
 		NotAfter:              spec.notAfter,
@@ -230,5 +235,150 @@ func TestValidateNewMissingCertificateIsAParseFailure(t *testing.T) {
 		if len(checks) != 1 || checks[0].Name != CheckParse || checks[0].Passed {
 			t.Errorf("%s: checks = %+v, want one failed parse check", name, checks)
 		}
+	}
+}
+
+// mustURL parses a URI SAN for a test certificate.
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+
+	return u
+}
+
+// The SAN check compares typed, normalised sets of DNS, IP, URI, and
+// email SANs, so a SAN of one type never stands in for another with the
+// same text, and a SAN of any type that is added or dropped fails.
+func TestSANCheckTypedSets(t *testing.T) {
+	t.Parallel()
+
+	ca := newTestCA(t, "signing-ca")
+
+	spiffe := "spiffe://ws.example/orders"
+
+	tests := []struct {
+		name       string
+		old, new   func(*certSpec)
+		pass       bool
+		detailHas  []string
+		detailMiss string
+	}{
+		{
+			name: "same SANs in another order",
+			old: func(s *certSpec) {
+				s.dns = []string{"a.ws.example", "b.ws.example"}
+				s.ips = []net.IP{net.ParseIP("10.0.0.1"), net.ParseIP("10.0.0.2")}
+			},
+			new: func(s *certSpec) {
+				s.dns = []string{"b.ws.example", "a.ws.example"}
+				s.ips = []net.IP{net.ParseIP("10.0.0.2"), net.ParseIP("10.0.0.1")}
+			},
+			pass: true,
+		},
+		{
+			name: "DNS names differ only in case and a trailing dot",
+			old:  func(s *certSpec) { s.dns = []string{"Orders.WS.example"} },
+			new:  func(s *certSpec) { s.dns = []string{"orders.ws.example."} },
+			pass: true,
+		},
+		{
+			name: "IPv4 and its IPv4-in-IPv6 form",
+			old:  func(s *certSpec) { s.ips = []net.IP{net.ParseIP("10.0.0.5").To4()} },
+			new:  func(s *certSpec) { s.ips = []net.IP{net.ParseIP("::ffff:10.0.0.5")} },
+			pass: true,
+		},
+		{
+			name: "an IP SAN replaced by a DNS SAN with the same text",
+			old: func(s *certSpec) {
+				s.dns = nil
+				s.ips = []net.IP{net.ParseIP("10.0.0.1")}
+			},
+			new: func(s *certSpec) {
+				s.dns = []string{"10.0.0.1"}
+				s.ips = nil
+			},
+			detailHas: []string{"adds DNS 10.0.0.1", "drops IP 10.0.0.1"},
+		},
+		{
+			name:      "a dropped URI SAN",
+			old:       func(s *certSpec) { s.uris = []*url.URL{mustURL(t, spiffe)} },
+			new:       func(s *certSpec) { s.uris = nil },
+			detailHas: []string{"drops URI " + spiffe},
+		},
+		{
+			name:      "an added URI SAN",
+			old:       func(s *certSpec) { s.uris = nil },
+			new:       func(s *certSpec) { s.uris = []*url.URL{mustURL(t, spiffe)} },
+			detailHas: []string{"adds URI " + spiffe},
+		},
+		{
+			name:      "a changed URI path",
+			old:       func(s *certSpec) { s.uris = []*url.URL{mustURL(t, spiffe)} },
+			new:       func(s *certSpec) { s.uris = []*url.URL{mustURL(t, spiffe+"-v2")} },
+			detailHas: []string{"adds URI " + spiffe + "-v2", "drops URI " + spiffe},
+		},
+		{
+			name: "URI scheme and host differ only in case",
+			old:  func(s *certSpec) { s.uris = []*url.URL{mustURL(t, "SPIFFE://WS.example/orders")} },
+			new:  func(s *certSpec) { s.uris = []*url.URL{mustURL(t, spiffe)} },
+			pass: true,
+		},
+		{
+			name:      "a dropped email SAN",
+			old:       func(s *certSpec) { s.emails = []string{"ops@ws.example"} },
+			new:       func(s *certSpec) { s.emails = nil },
+			detailHas: []string{"drops email ops@ws.example"},
+		},
+		{
+			name: "an email domain that differs only in case",
+			old:  func(s *certSpec) { s.emails = []string{"ops@WS.example"} },
+			new:  func(s *certSpec) { s.emails = []string{"ops@ws.example"} },
+			pass: true,
+		},
+		{
+			name:      "an email local part that differs in case",
+			old:       func(s *certSpec) { s.emails = []string{"Ops@ws.example"} },
+			new:       func(s *certSpec) { s.emails = []string{"ops@ws.example"} },
+			detailHas: []string{"adds email ops@ws.example", "drops email Ops@ws.example"},
+		},
+		{
+			name:      "an email SAN replaced by a DNS SAN with the same text",
+			old:       func(s *certSpec) { s.emails = []string{"ops@ws.example"} },
+			new:       func(s *certSpec) { s.dns = append(s.dns, "ops@ws.example") },
+			detailHas: []string{"adds DNS ops@ws.example", "drops email ops@ws.example"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			oldSpec, newSpec := baseSpec(), baseSpec()
+			newSpec.notAfter = validateNow.Add(365 * 24 * time.Hour)
+			test.old(&oldSpec)
+			test.new(&newSpec)
+
+			oldCert, _ := ca.issue(t, oldSpec)
+			newCert, _ := ca.issue(t, newSpec)
+
+			got, ok := findCheck(ValidateNew(oldCert, newCert, ca.cert, nil, validateNow), CheckSANs)
+			if !ok {
+				t.Fatal("expected a SAN check")
+			}
+
+			if got.Passed != test.pass {
+				t.Fatalf("SAN check passed = %v, want %v (%s)", got.Passed, test.pass, got.Detail)
+			}
+
+			for _, want := range test.detailHas {
+				if !strings.Contains(got.Detail, want) {
+					t.Errorf("detail %q should contain %q", got.Detail, want)
+				}
+			}
+		})
 	}
 }
