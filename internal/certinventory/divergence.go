@@ -302,8 +302,11 @@ func (s *DivergenceStore) readIndex(ctx context.Context) (map[string]interface{}
 // with the same content as the stored record writes nothing. Otherwise the
 // record is written with Revision one higher. A write that returns an
 // error may still have landed, so the record is read back, and the write
-// counts only when the stored revision is the one written. Every failure to
-// read, write, or confirm wraps ErrSaveUnconfirmed.
+// counts only when the stored revision is the one written. A failure to
+// write or confirm the record, or to confirm its delete, wraps
+// ErrSaveUnconfirmed. A failure before the record's write or delete was
+// attempted, such as the first read or the index update, leaves the stored
+// record as it was, so it is returned as a definite error.
 func (s *DivergenceStore) Update(ctx context.Context, instanceID string, fn func(cur *Divergence) (*Divergence, error)) error {
 	if err := validInstanceID(instanceID); err != nil {
 		return err
@@ -320,7 +323,7 @@ func (s *DivergenceStore) Update(ctx context.Context, instanceID string, fn func
 
 	cur, found, err := s.read(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSaveUnconfirmed, err)
+		return fmt.Errorf("the divergence record of %s was not changed: %w", instanceID, err)
 	}
 
 	next, err := fn(cur.Clone())
@@ -479,14 +482,15 @@ func (s *DivergenceStore) remove(ctx context.Context, instanceID string) error {
 
 // addToIndex makes sure the index names the instance before its record is
 // written, so List never misses a record that landed. An index that cannot
-// be read is never overwritten.
+// be read is never overwritten. The record has not been written when it
+// fails, so every failure is definite.
 func (s *DivergenceStore) addToIndex(ctx context.Context, instanceID string) error {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 
 	index, _, err := s.readIndex(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSaveUnconfirmed, err)
+		return fmt.Errorf("the divergence record of %s was not written: %w", instanceID, err)
 	}
 
 	if _, named := index[instanceID]; named {
@@ -502,11 +506,11 @@ func (s *DivergenceStore) addToIndex(ctx context.Context, instanceID string) err
 
 	back, _, err := s.readIndex(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: the write of %s failed (%w) and reading it back failed: %w", ErrSaveUnconfirmed, divergenceVaultPath, writeErr, err)
+		return fmt.Errorf("the divergence record of %s was not written: the write of %s failed (%w) and reading it back failed: %w", instanceID, divergenceVaultPath, writeErr, err)
 	}
 
 	if _, named := back[instanceID]; !named {
-		return fmt.Errorf("%w: %s does not name instance %s: %w", ErrSaveUnconfirmed, divergenceVaultPath, instanceID, writeErr)
+		return fmt.Errorf("the divergence record of %s was not written: %s does not name it: %w", instanceID, divergenceVaultPath, writeErr)
 	}
 
 	return nil

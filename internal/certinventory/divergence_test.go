@@ -820,3 +820,49 @@ func TestReconcileTreatsScanStartAsAfter(t *testing.T) {
 		}
 	})
 }
+
+func TestDivergenceFailureBeforeWriteIsDefinite(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	add := func(*Divergence) (*Divergence, error) { return divRecord(), nil }
+
+	unreadable := newDivVault()
+	unreadable.getFail = func(string) error { return errors.New("vault sealed") }
+
+	err := NewDivergenceStore(unreadable, nil).Update(ctx, divInstance, add)
+	if err == nil || errors.Is(err, ErrSaveUnconfirmed) {
+		t.Errorf("a failed first read returned %v, want a definite error", err)
+	}
+
+	noIndex := newDivVault()
+	noIndex.putFail = func(path string) (bool, error) {
+		if path == divergenceVaultPath {
+			return false, errors.New("permission denied")
+		}
+
+		return true, nil
+	}
+
+	err = NewDivergenceStore(noIndex, nil).Update(ctx, divInstance, add)
+	if err == nil || errors.Is(err, ErrSaveUnconfirmed) {
+		t.Errorf("a failed index write returned %v, want a definite error", err)
+	}
+
+	if _, stored := noIndex.docs[divergenceRecordPath(divInstance)]; stored {
+		t.Error("the record was written although the index was not")
+	}
+
+	indexLanded := newDivVault()
+	indexLanded.putFail = func(path string) (bool, error) {
+		if path == divergenceVaultPath {
+			return true, errors.New("connection reset after the write")
+		}
+
+		return true, nil
+	}
+
+	if err := NewDivergenceStore(indexLanded, nil).Update(ctx, divInstance, add); err != nil {
+		t.Errorf("an index write that landed returned %v", err)
+	}
+}
