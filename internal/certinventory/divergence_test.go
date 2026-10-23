@@ -1224,3 +1224,126 @@ func TestDivergenceTouchedVMIsStamped(t *testing.T) {
 		t.Errorf("a scan from before the reapply marked vm-a %s", vm.State)
 	}
 }
+
+// divSlotted stores divRecord with each VM entry placed in its instance
+// group and index, as the runner records them, and returns the store.
+func divSlotted(t *testing.T) *DivergenceStore {
+	t.Helper()
+
+	clock := &divClock{at: divScanStart.Add(-time.Hour)}
+	store := NewDivergenceStore(newDivVault(), clock.now)
+
+	err := store.Update(context.Background(), divInstance, func(*Divergence) (*Divergence, error) {
+		rec := divRecord()
+		rec.Variables[0].VMs = map[string]DivergentVM{
+			"vm-a": {State: DivergentVMApplied, Group: "redis", Index: 0},
+			"vm-b": {State: DivergentVMApplied, Group: "redis", Index: 1},
+		}
+
+		return rec, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return store
+}
+
+func TestReconcileResurrectedVMOnOldVersionIsReverted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	certs := divVersions(t, "v6", "v7")
+	store := divSlotted(t)
+
+	// The resurrector replaced redis/0 while BOSH still deploys v6, so
+	// the new VM came up with the old certificate.
+	scan := divScan(divScanStart, map[string]string{divVariable: "v6"},
+		map[string]*issued{"vm-a": ptr(certs["v6"]), "vm-b": ptr(certs["v7"])})
+	scan.VMs[0].CID = "vm-a2"
+
+	if err := store.ReconcileScan(ctx, scan, ReconcileSources{Versions: divCredHub(certs, "v6", "v7")}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, _ := store.Get(ctx, divInstance)
+	e := got.entry(divVariable)
+
+	if e == nil {
+		t.Fatal("the entry was cleared")
+	}
+
+	if _, old := e.VMs["vm-a"]; old {
+		t.Errorf("the replaced VM is still tracked: %+v", e.VMs)
+	}
+
+	if vm := e.VMs["vm-a2"]; vm.State != DivergentVMReverted || vm.Group != "redis" || vm.Index != 0 {
+		t.Errorf("the replacement VM is %+v, want reverted in redis/0", vm)
+	}
+
+	if e.VMs["vm-b"].State != DivergentVMApplied {
+		t.Errorf("the untouched VM is %+v", e.VMs["vm-b"])
+	}
+
+	if ref := DivergenceRefOf(got, divVariable); ref == nil || ref.State != DivergenceReverted {
+		t.Errorf("the certificate field is %+v, want reverted", ref)
+	}
+}
+
+func TestReconcileConvergeRecreatedVMsAreNotReverted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	certs := divVersions(t, "v6", "v7")
+	src := ReconcileSources{Versions: divCredHub(certs, "v6", "v7")}
+
+	// The converge deploy recreated both VMs on v7, and the scan reached
+	// only redis/0.
+	store := divSlotted(t)
+	scan := divScan(divScanStart, map[string]string{divVariable: "v7"},
+		map[string]*issued{"vm-a": ptr(certs["v7"])})
+	scan.VMs[0].CID, scan.VMs[1].CID = "vm-a2", "vm-b2"
+
+	if err := store.ReconcileScan(ctx, scan, src); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, _ := store.Get(ctx, divInstance)
+	e := got.entry(divVariable)
+
+	if e == nil {
+		t.Fatal("the entry cleared with redis/1 unseen")
+	}
+
+	want := map[string]DivergentVM{
+		"vm-a2": {State: DivergentVMApplied, Group: "redis", Index: 0},
+		"vm-b2": {State: DivergentVMApplied, Group: "redis", Index: 1},
+	}
+
+	for cid, vm := range e.VMs {
+		vm.UpdatedAt = time.Time{}
+		e.VMs[cid] = vm
+	}
+
+	if !reflect.DeepEqual(e.VMs, want) {
+		t.Errorf("the recreated VMs are %+v, want %+v", e.VMs, want)
+	}
+
+	if ref := DivergenceRefOf(got, divVariable); ref == nil || ref.State != DivergenceUnconverged {
+		t.Errorf("the certificate field is %+v, want unconverged", ref)
+	}
+
+	// Once both recreated VMs serve v7, the entry clears.
+	store = divSlotted(t)
+	scan = divScan(divScanStart, map[string]string{divVariable: "v7"},
+		map[string]*issued{"vm-a": ptr(certs["v7"]), "vm-b": ptr(certs["v7"])})
+	scan.VMs[0].CID, scan.VMs[1].CID = "vm-a2", "vm-b2"
+
+	if err := store.ReconcileScan(ctx, scan, src); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, found, _ := store.Get(ctx, divInstance); found {
+		t.Error("a converged record with recreated VMs was kept")
+	}
+}

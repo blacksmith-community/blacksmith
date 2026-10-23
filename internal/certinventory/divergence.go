@@ -70,9 +70,14 @@ type DivergentVariable struct {
 	UpdatedAt        time.Time              `json:"updated_at"`
 }
 
-// DivergentVM is what one VM holds of a patched variable.
+// DivergentVM is what one VM holds of a patched variable. Group and Index
+// place the VM in its deployment, so reconciliation can follow the slot
+// when BOSH replaces the VM under a new CID. An entry without a Group is
+// never followed.
 type DivergentVM struct {
 	State     string    `json:"state"` // "applied", "old", "reverted", or "unknown"
+	Group     string    `json:"group,omitempty"`
+	Index     int       `json:"index,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -589,11 +594,18 @@ type ObservedLeaf struct {
 // fingerprint and the CredHub creation time of each version read.
 type ReconcileInput struct {
 	ScanStartedAt      time.Time
+	VMs                map[string]ScanVM // the scan's VMs by CID
 	Deployed           map[string]string
 	Expected           map[string][]ExpectedListener
 	Observed           map[string]ObservedLeaf
 	VersionFingerprint map[string]string
 	VersionCreated     map[string]time.Time
+}
+
+// ScanVM is where a VM that a scan listed sits in its deployment.
+type ScanVM struct {
+	Group string
+	Index int
 }
 
 // fresh reports whether the scan itself saw the observation.
@@ -624,6 +636,8 @@ func (in ReconcileInput) created(id string) (time.Time, bool) {
 // version that CredHub created before the applied one. An entry clears
 // when BOSH records the applied version, or one CredHub created later, as
 // deployed, and every expected listener served that version in this scan.
+// A VM entry whose VM BOSH replaced moves to the VM now in its instance
+// group and index first, as followReplaced describes.
 // An entry with no expected listener clears on the deployed version alone.
 // Version IDs are never compared for order, so a missing creation time
 // keeps the entry as it is.
@@ -650,6 +664,7 @@ func Reconcile(d *Divergence, in ReconcileInput) *Divergence {
 			continue
 		}
 
+		followReplaced(&v, in)
 		markReverted(&v, in, byFingerprint)
 
 		if clears(v, in) {
@@ -666,6 +681,117 @@ func Reconcile(d *Divergence, in ReconcileInput) *Divergence {
 	out.Variables = kept
 
 	return out
+}
+
+// Relations of the version BOSH deploys to the applied one.
+const (
+	deployedUnknown = iota
+	deployedOld
+	deployedCurrent
+)
+
+// deployedRelation says whether BOSH deploys the version the patch moved
+// away from, or one CredHub created before the applied one, or else the
+// applied version or one CredHub created after it. Version IDs are never
+// compared for order, so a missing creation time leaves it unknown.
+func deployedRelation(v DivergentVariable, in ReconcileInput) int {
+	deployed := in.Deployed[v.Name]
+
+	switch {
+	case deployed == "" || v.AppliedVersionID == "":
+		return deployedUnknown
+	case deployed == v.AppliedVersionID:
+		return deployedCurrent
+	case deployed == v.BOSHVersionID:
+		return deployedOld
+	}
+
+	dt, okD := in.created(deployed)
+	at, okA := in.created(v.AppliedVersionID)
+
+	switch {
+	case !okD || !okA:
+		return deployedUnknown
+	case dt.Before(at):
+		return deployedOld
+	case dt.After(at):
+		return deployedCurrent
+	}
+
+	return deployedUnknown
+}
+
+// followReplaced moves each VM entry whose VM the scan no longer lists to
+// the VM that now holds its instance group and index. BOSH built that VM
+// from the deployed version, so while BOSH deploys the old version a VM
+// the patch had reached comes back reverted, and once BOSH deploys the
+// applied version or a later one the new VM holds it. A VM entry with no
+// group, one that changed after the scan began, a slot the scan left
+// empty, or a deployed version of unknown age stays as it is.
+func followReplaced(v *DivergentVariable, in ReconcileInput) {
+	if len(in.VMs) == 0 {
+		return
+	}
+
+	relation := deployedRelation(*v, in)
+	if relation == deployedUnknown {
+		return
+	}
+
+	// A slot two listed VMs claim is ambiguous and maps to no VM.
+	bySlot := map[ScanVM]string{}
+	for cid, slot := range in.VMs {
+		if _, claimed := bySlot[slot]; claimed {
+			bySlot[slot] = ""
+
+			continue
+		}
+
+		bySlot[slot] = cid
+	}
+
+	cids := make([]string, 0, len(v.VMs))
+	for cid := range v.VMs {
+		cids = append(cids, cid)
+	}
+
+	sort.Strings(cids)
+
+	for _, cid := range cids {
+		vm := v.VMs[cid]
+		if vm.Group == "" || in.notBeforeScan(vm.UpdatedAt) {
+			continue
+		}
+
+		if _, listed := in.VMs[cid]; listed {
+			continue
+		}
+
+		next := bySlot[ScanVM{Group: vm.Group, Index: vm.Index}]
+		if next == "" {
+			continue
+		}
+
+		if _, tracked := v.VMs[next]; tracked {
+			continue
+		}
+
+		state := DivergentVMApplied
+
+		if relation == deployedOld {
+			state = vm.State
+			if state == DivergentVMApplied {
+				state = DivergentVMReverted
+			}
+		}
+
+		delete(v.VMs, cid)
+		v.VMs[next] = DivergentVM{State: state, Group: vm.Group, Index: vm.Index}
+
+		if state == DivergentVMReverted && (v.State == DivergenceUnconverged || v.State == "") {
+			v.State = DivergenceReverted
+		}
+	}
 }
 
 // markReverted marks each applied VM of the entry that served an older
@@ -732,19 +858,11 @@ func clears(v DivergentVariable, in ReconcileInput) bool {
 		}
 	}
 
-	deployed := in.Deployed[v.Name]
-	if deployed == "" || v.AppliedVersionID == "" {
+	if deployedRelation(v, in) != deployedCurrent {
 		return false
 	}
 
-	if deployed != v.AppliedVersionID {
-		dt, okD := in.created(deployed)
-		at, okA := in.created(v.AppliedVersionID)
-
-		if !okD || !okA || !dt.After(at) {
-			return false
-		}
-	}
+	deployed := in.Deployed[v.Name]
 
 	listeners := in.Expected[v.Name]
 	if len(listeners) == 0 {
@@ -825,11 +943,18 @@ func (s *DivergenceStore) newerScan(instanceID string, start time.Time, claim bo
 func reconcileInput(ctx context.Context, d *Divergence, scan InstanceScan, src ReconcileSources) ReconcileInput {
 	in := ReconcileInput{
 		ScanStartedAt:      scan.ScannedAt,
+		VMs:                map[string]ScanVM{},
 		Deployed:           map[string]string{},
 		Expected:           map[string][]ExpectedListener{},
 		Observed:           observedLeaves(scan),
 		VersionFingerprint: map[string]string{},
 		VersionCreated:     map[string]time.Time{},
+	}
+
+	for _, vm := range scan.VMs {
+		if vm.CID != "" && vm.Job != "" {
+			in.VMs[vm.CID] = ScanVM{Group: vm.Job, Index: vm.Index}
+		}
 	}
 
 	for _, ch := range scan.Material.CredHub {
