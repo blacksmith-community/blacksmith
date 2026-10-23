@@ -86,6 +86,10 @@ t('fleet views and drawer', async () => {
   ok(bad(d)===0 && dr.querySelectorAll('img,script,[onerror]').length===0,'no injected (drawer)');
   ok(dr.textContent.includes('"><img src=x'),'hostile text shown literally in drawer');
   ok(dr.textContent.includes('sha256 8f2e1c0a'),'observation fingerprint shown');
+  { const rot=dr.querySelector('.cert-drawer-rotate'); const note=d.getElementById('cert-drawer-rotate-note');
+    ok(!!rot && rot.disabled,'drawer Rotate is disabled while rotation is off');
+    ok(!!note && dr.contains(note) && note.textContent.trim().length>0 && !note.hidden,'disabled drawer Rotate shows its reason as visible text: '+(note&&note.textContent));
+    ok(!!rot && rot.getAttribute('aria-describedby')==='cert-drawer-rotate-note','disabled drawer Rotate is described by its note'); }
   ok(!dr.querySelector('.cert-runbook'),'no runbook for a leaf');
   ok(w.blacksmithSurfaces.size()===1,'drawer registered as surface');
   ok(d.querySelector('tr[data-cert-id="c2"]').classList.contains('cert-row--open'),'row marked open');
