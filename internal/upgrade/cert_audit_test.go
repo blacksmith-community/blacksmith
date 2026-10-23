@@ -590,3 +590,37 @@ func TestAuditCutsOnlyThePEMBlock(t *testing.T) {
 		t.Fatalf("expected an unfinished block cut to the end, got %q", open.Reason)
 	}
 }
+
+// A Vault that refuses every write never holds up a shutdown. The writer
+// stops retrying once the manager is stopping, and the records it dropped
+// come back from the persisted tasks at the next load.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditStopsRetryingAtShutdown(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.newManager()
+	manager.auditRetry = time.Hour
+
+	refusing := &auditFlakyVault{waitVault: env.vault.waitVault, failures: 1000}
+	manager.vault = refusing
+
+	manager.mu.Lock()
+	manager.enqueueAuditLocked(AuditRecord{ID: "slow1", At: validateNow, Event: AuditSkipped, TaskID: certTaskID})
+	manager.enqueueAuditLocked(AuditRecord{ID: "slow2", At: validateNow, Event: AuditSkipped, TaskID: certTaskID})
+	manager.mu.Unlock()
+
+	waitUntil(t, "the first try", func() bool { return refusing.attempts() >= 1 })
+
+	stopped := make(chan struct{})
+
+	go func() {
+		manager.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop waited on the audit writer's retries")
+	}
+}

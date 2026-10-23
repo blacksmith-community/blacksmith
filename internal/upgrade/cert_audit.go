@@ -107,7 +107,7 @@ type auditQueue struct {
 // has an ID removed or rewritten. A failed try is repeated, up to three
 // tries in all, and a record that never lands is logged as an error. A
 // failure never fails the rotation.
-func (m *Manager) audit(ctx context.Context, rec AuditRecord) {
+func (m *Manager) audit(ctx context.Context, rec AuditRecord) bool {
 	rec = sanitizeAudit(rec)
 
 	m.logAudit(rec)
@@ -125,21 +125,27 @@ func (m *Manager) audit(ctx context.Context, rec AuditRecord) {
 	for attempt := 1; attempt <= auditAttempts; attempt++ {
 		err = m.writeAudit(ctx, rec)
 		if err == nil {
-			return
+			return true
 		}
 
 		m.logger.Error("audit=certificate-rotation record=%s event=%s could not be saved on try %d of %d: %v", rec.ID, rec.Event, attempt, auditAttempts, err)
 
+		// Once the manager is stopping, a failed first try is the last. The
+		// record comes back from the persisted task at the next load.
 		if attempt < auditAttempts {
 			select {
 			case <-ctx.Done():
-				return
+				attempt = auditAttempts
+			case <-m.ctx.Done():
+				attempt = auditAttempts
 			case <-time.After(retry):
 			}
 		}
 	}
 
 	m.logger.Error("audit=certificate-rotation record=%s event=%s task=%s was never saved to Vault: %v", rec.ID, rec.Event, rec.TaskID, err)
+
+	return false
 }
 
 // writeAudit makes one try at saving the record and its index entry.
@@ -282,8 +288,26 @@ func (m *Manager) drainAudit() {
 		m.auditQ.pending = m.auditQ.pending[1:]
 		m.auditQ.mu.Unlock()
 
-		m.audit(context.WithoutCancel(m.ctx), rec)
+		saved := m.audit(context.WithoutCancel(m.ctx), rec)
+		if !saved && m.ctx.Err() != nil {
+			m.dropPendingAudit()
+
+			return
+		}
 	}
+}
+
+// dropPendingAudit gives up the records still queued while the manager
+// stops with a Vault that refuses them. The next load writes them again
+// from the persisted tasks.
+func (m *Manager) dropPendingAudit() {
+	m.auditQ.mu.Lock()
+	dropped := len(m.auditQ.pending)
+	m.auditQ.pending = nil
+	m.auditQ.running = false
+	m.auditQ.mu.Unlock()
+
+	m.logger.Error("audit=certificate-rotation %d queued records were not saved before shutdown, and the next start rebuilds them", dropped)
 }
 
 // auditIdle reports whether every queued record has been written.
