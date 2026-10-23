@@ -465,3 +465,38 @@ func TestServiceNilCredHubVersionLookupStaysNil(t *testing.T) {
 		t.Errorf("a scan without CredHub changed the record: %+v, %v, %v", after, found, err)
 	}
 }
+
+// taskDirector is a fakeDirector that also lists a deployment's tasks.
+type taskDirector struct {
+	*fakeDirector
+	divTasks
+}
+
+func TestServiceReconcilesWithTheDirectorsTasks(t *testing.T) {
+	t.Parallel()
+
+	sources := func(dir DirectorReader) ReconcileSources {
+		svc := NewService(ServiceDeps{
+			Scanner:          ScannerDeps{Director: dir, Vault: newDivVault(), DirectorName: testDirector},
+			List:             func(context.Context) ([]InstanceRef, error) { return nil, nil },
+			InventoryEnabled: true,
+		})
+
+		svc.sched.mu.Lock()
+		defer svc.sched.mu.Unlock()
+
+		return svc.sched.sources
+	}
+
+	if src := sources(&taskDirector{fakeDirector: &fakeDirector{}}); src.Tasks == nil {
+		t.Error("a director that lists a deployment's tasks was not handed to reconciliation")
+	}
+
+	if src := sources(&fakeDirector{}); src.Tasks != nil {
+		t.Errorf("a director without the call became task reader %T", src.Tasks)
+	}
+
+	if src := sources(nil); src.Tasks != nil {
+		t.Errorf("a missing director became task reader %T", src.Tasks)
+	}
+}

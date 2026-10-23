@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/credhub"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/logger"
@@ -40,6 +41,11 @@ const (
 	// reconcileVersionLimit is how many of a variable's newest versions
 	// reconciliation reads.
 	reconcileVersionLimit = 20
+	// reconcileTaskLimit is how many of a deployment's newest tasks
+	// reconciliation reads to find its latest deploy.
+	reconcileTaskLimit = 50
+	// taskStateDone is the state of a BOSH task that succeeded.
+	taskStateDone = "done"
 )
 
 // ErrInvalidInstanceID is returned for an instance ID that cannot name a
@@ -176,9 +182,11 @@ type VersionLookup interface {
 var _ VersionLookup = (*credhub.Client)(nil)
 
 // ReconcileSources is what reconciliation reads beyond the scan. A nil
-// Versions reconciles nothing, and a nil Log logs nothing.
+// Versions reconciles nothing, a nil Tasks never clears an entry that has
+// no expected listener, and a nil Log logs nothing.
 type ReconcileSources struct {
 	Versions VersionLookup
+	Tasks    bosh.DeploymentTaskLister
 	Log      logger.Logger
 }
 
@@ -604,12 +612,22 @@ type ReconcileInput struct {
 	Observed           map[string]ObservedLeaf
 	VersionFingerprint map[string]string
 	VersionCreated     map[string]time.Time
+	LastDeploy         *bosh.Task // the deployment's latest deploy task
 }
 
 // ScanVM is where a VM that a scan listed sits in its deployment.
 type ScanVM struct {
 	Group string
 	Index int
+}
+
+// deployFinishedAfter reports whether the deployment's latest deploy task
+// succeeded and ended after t. An unknown task or a zero t is not evidence
+// of a deploy.
+func (in ReconcileInput) deployFinishedAfter(t time.Time) bool {
+	d := in.LastDeploy
+
+	return d != nil && !t.IsZero() && d.State == taskStateDone && d.EndedAt != nil && d.EndedAt.After(t)
 }
 
 // fresh reports whether the scan itself saw the observation.
@@ -642,7 +660,9 @@ func (in ReconcileInput) created(id string) (time.Time, bool) {
 // deployed, and every expected listener served that version in this scan.
 // A VM entry whose VM BOSH replaced moves to the VM now in its instance
 // group and index first, as followReplaced describes.
-// An entry with no expected listener clears on the deployed version alone.
+// An entry with no expected listener, whose leaf no probe can show, clears
+// only when, as well, the deployment's latest deploy task succeeded and
+// ended after the patch.
 // Version IDs are never compared for order, so a missing creation time
 // keeps the entry as it is.
 func Reconcile(d *Divergence, in ReconcileInput) *Divergence {
@@ -870,7 +890,7 @@ func clears(v DivergentVariable, in ReconcileInput) bool {
 
 	listeners := in.Expected[v.Name]
 	if len(listeners) == 0 {
-		return true
+		return in.deployFinishedAfter(v.Since)
 	}
 
 	want := in.VersionFingerprint[deployed]
@@ -996,7 +1016,46 @@ func reconcileInput(ctx context.Context, d *Divergence, scan InstanceScan, src R
 		readVersions(ctx, v, &in, src.Versions, src.log())
 	}
 
+	in.LastDeploy = latestDeploy(ctx, scan.Ref.Deployment, src)
+
 	return in
+}
+
+// latestDeploy returns the deployment's newest deploy task among its
+// newest tasks, or nil when none is listed or the list cannot be read. A
+// failed read is logged with the deployment's name.
+func latestDeploy(ctx context.Context, deployment string, src ReconcileSources) *bosh.Task {
+	if isNil(src.Tasks) || deployment == "" {
+		return nil
+	}
+
+	tasks, err := within(ctx, DirectorCallTimeout, func(c context.Context) ([]bosh.Task, error) {
+		return src.Tasks.DeploymentTasks(c, deployment, reconcileTaskLimit)
+	})
+	if err != nil {
+		src.log().Warnf("certificate divergence: the BOSH tasks of deployment %s could not be read, so its entries without listeners stay: %v", deployment, err)
+
+		return nil
+	}
+
+	var latest *bosh.Task
+
+	for i := range tasks {
+		t := tasks[i]
+		if t.Description != bosh.DeployTaskDescription {
+			continue
+		}
+
+		if t.Deployment != "" && t.Deployment != deployment {
+			continue
+		}
+
+		if latest == nil || t.ID > latest.ID {
+			latest = &t
+		}
+	}
+
+	return latest
 }
 
 // readVersions fills the creation times of the variable's newest versions,

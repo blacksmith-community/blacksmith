@@ -191,7 +191,15 @@ func NewService(deps ServiceDeps) *Service {
 			versions = deps.CredHubClient
 		}
 
-		s.sched.SetReconciler(s.divergence, ReconcileSources{Versions: versions, Log: s.log})
+		// The director lists a deployment's tasks only when it can, as the
+		// broker's pooled director does, and an entry without listeners
+		// never clears without it.
+		var tasks bosh.DeploymentTaskLister
+		if lister, ok := deps.Scanner.Director.(bosh.DeploymentTaskLister); ok && !isNil(lister) {
+			tasks = lister
+		}
+
+		s.sched.SetReconciler(s.divergence, ReconcileSources{Versions: versions, Tasks: tasks, Log: s.log})
 	}
 
 	return s

@@ -373,6 +373,7 @@ func TestReconcileOpaqueVersionIDs(t *testing.T) {
 	}
 
 	in.VersionCreated = map[string]time.Time{"zz-1": divScanStart.Add(-2 * time.Hour), "aa-2": divScanStart.Add(-time.Hour)}
+	in.LastDeploy = divDeploy("done", divScanStart.Add(-time.Minute))
 
 	if got := Reconcile(rec, in); got != nil {
 		t.Fatalf("a newer aa-2 did not clear the record: %+v", got)
@@ -1365,5 +1366,130 @@ func TestReconcileScanFillsAppliedFingerprint(t *testing.T) {
 	got, _, _ := store.Get(ctx, divInstance)
 	if e := got.entry(divVariable); e == nil || e.AppliedFingerprint != Fingerprint(certs["v7"].cert) {
 		t.Errorf("the entry's applied fingerprint is not v7's: %+v", e)
+	}
+}
+
+// divDeploy is a deploy task of the instance's deployment in state, which
+// ended at ended when it is not zero.
+func divDeploy(state string, ended time.Time) *bosh.Task {
+	task := &bosh.Task{ID: 90, State: state, Description: bosh.DeployTaskDescription, Deployment: "redis-i1"}
+	if !ended.IsZero() {
+		task.EndedAt = &ended
+	}
+
+	return task
+}
+
+func TestReconcileWithoutListenersNeedsAFinishedDeploy(t *testing.T) {
+	t.Parallel()
+
+	since := divRecord().Variables[0].Since
+	after := since.Add(10 * time.Minute)
+
+	cases := []struct {
+		name     string
+		deployed string
+		deploy   *bosh.Task
+		clears   bool
+	}{
+		{"no deploy task known", "v7", nil, false},
+		{"deploy finished before the patch", "v7", divDeploy("done", since.Add(-time.Minute)), false},
+		{"deploy failed after the patch", "v7", divDeploy("error", after), false},
+		{"deploy still running", "v7", divDeploy("processing", time.Time{}), false},
+		{"old version still deployed", "v6", divDeploy("done", after), false},
+		{"deploy finished after the patch", "v7", divDeploy("done", after), true},
+		{"later version deployed after the patch", "v9", divDeploy("done", after), true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			in, _ := divInput(t, tc.deployed, nil)
+			in.Expected = map[string][]ExpectedListener{}
+			in.LastDeploy = tc.deploy
+
+			got := Reconcile(divRecord(), in)
+			if cleared := got == nil; cleared != tc.clears {
+				t.Errorf("cleared %v, want %v: %+v", cleared, tc.clears, got)
+			}
+		})
+	}
+}
+
+// divTasks lists one deployment's tasks and records what it was asked.
+type divTasks struct {
+	mu    sync.Mutex
+	asked []string
+	tasks []bosh.Task
+	err   error
+}
+
+func (d *divTasks) DeploymentTasks(_ context.Context, deployment string, _ int) ([]bosh.Task, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.asked = append(d.asked, deployment)
+
+	return d.tasks, d.err
+}
+
+func TestReconcileScanReadsTheLatestDeploy(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	certs := divVersions(t, "v6", "v7")
+	since := divRecord().Variables[0].Since
+	ended := since.Add(10 * time.Minute)
+	failed := since.Add(20 * time.Minute)
+
+	run := func(t *testing.T, tasks *divTasks) (*Divergence, bool) {
+		t.Helper()
+
+		store := divSlotted(t)
+		scan := divScan(divScanStart, map[string]string{divVariable: "v7"}, nil)
+		scan.Ref.Deployment = "redis-i1"
+		scan.Material.Expected = nil
+
+		src := ReconcileSources{Versions: divCredHub(certs, "v6", "v7"), Tasks: tasks}
+		if err := store.ReconcileScan(ctx, scan, src); err != nil {
+			t.Fatal(err)
+		}
+
+		got, found, _ := store.Get(ctx, divInstance)
+
+		return got, found
+	}
+
+	deployed := &divTasks{tasks: []bosh.Task{
+		{ID: 12, State: "done", Description: "run errand smoke-tests", EndedAt: &failed},
+		{ID: 11, State: "done", Description: bosh.DeployTaskDescription, EndedAt: &ended},
+	}}
+
+	if got, found := run(t, deployed); found {
+		t.Errorf("a deploy that finished after the patch kept the record: %+v", got)
+	}
+
+	if len(deployed.asked) != 1 || deployed.asked[0] != "redis-i1" {
+		t.Errorf("the tasks of %q were read, want redis-i1 once", deployed.asked)
+	}
+
+	// The latest deploy is the one that counts, even when an earlier one
+	// succeeded.
+	redeployFailed := &divTasks{tasks: []bosh.Task{
+		{ID: 11, State: "done", Description: bosh.DeployTaskDescription, EndedAt: &ended},
+		{ID: 13, State: "error", Description: bosh.DeployTaskDescription, EndedAt: &failed},
+	}}
+
+	if _, found := run(t, redeployFailed); !found {
+		t.Error("a failed latest deploy cleared the record")
+	}
+
+	if _, found := run(t, &divTasks{err: errors.New("director unreachable")}); !found {
+		t.Error("an unreadable task list cleared the record")
+	}
+
+	if _, found := run(t, nil); !found {
+		t.Error("a reconcile with no task reader cleared the record")
 	}
 }
