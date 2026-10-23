@@ -3623,6 +3623,7 @@
       if (block && ctx.state.mode === 'patch') {
         ctx.state.mode = 'redeploy';
         ctx.state.converge = '';
+        announce(`Patch in place is not available, so the mode is back to Redeploy. ${block}`);
       }
       const patch = ctx.state.mode === 'patch';
       radios.redeploy.checked = !patch;
@@ -5293,6 +5294,14 @@
 
   // A day such as 2026-10-21 for a time from the broker. Go's zero time and
   // a missing time both read as nothing.
+  // A time as "2026-10-21 14:00 UTC", or an empty string when it is not a time.
+  const certTimeText = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971) return '';
+    return `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC`;
+  };
+
   const certDay = (value) => {
     if (!value) return '';
     const date = new Date(value);
@@ -6125,9 +6134,12 @@
   const buildUpgradeDivergedDetails = (diverged) => {
     const details = [];
     diverged.forEach((item) => {
-      const name = String(item.instance_id || 'instance');
+      const id = String(item.instance_id || 'instance');
+      const known = window.serviceInstances && window.serviceInstances[id];
+      const name = known && known.instance_name ? `${known.instance_name} (${id})` : id;
       const state = item.divergence && item.divergence.state ? String(item.divergence.state) : 'unconverged';
-      const since = item.divergence && item.divergence.since ? ` since ${item.divergence.since}` : '';
+      const when = item.divergence && item.divergence.since ? certTimeText(item.divergence.since) : '';
+      const since = when ? ` since ${when}` : '';
       details.push({ label: name, value: `${state}${since}` });
       const variables = Array.isArray(item.variables) ? item.variables.map(String) : [];
       if (variables.length > 0) details.push({ label: `Patched variables on ${name}`, value: variables.join('; ') });
@@ -19022,38 +19034,61 @@
     // part before the colon names the VM. The instance endpoint does not
     // return the divergence record itself, so this is what we can show.
     const divergenceHolders = (diverged) => {
-      const holders = new Map();
+      // The record lists its VMs by slot, which is what we prefer.
+      const held = new Map();
+      const add = (name, kind) => {
+        if (!held.has(name)) held.set(name, new Set());
+        held.get(name).add(kind);
+      };
       diverged.forEach((cert) => {
-        (Array.isArray(cert.observations) ? cert.observations : []).forEach((obs) => {
-          if (!obs || obs.source !== 'probe' || obs.state === 'failed' || obs.state === 'stale') return;
-          if (obs.matches !== 'latest' && obs.matches !== 'deployed') return;
-          const vm = String(obs.locator || 'a listener').split(':')[0];
-          if (!holders.has(vm)) holders.set(vm, new Set());
-          holders.get(vm).add(obs.matches);
+        const vms = cert.divergence && Array.isArray(cert.divergence.vms) ? cert.divergence.vms : [];
+        vms.forEach((vm) => {
+          if (vm && vm.group) add(`${vm.group}/${vm.index === undefined ? 0 : vm.index}`, String(vm.state || 'unknown'));
         });
       });
-      return Array.from(holders.entries()).map(([vm, kinds]) => {
-        const text = kinds.has('latest') && kinds.has('deployed')
-          ? 'holds both the patched and the old certificate'
-          : (kinds.has('latest') ? 'holds the patched certificate' : 'holds the old certificate');
-        return `${vm} ${text}`;
+      if (held.size === 0) {
+        // An older record has no VM list, so we read the probe observations.
+        // A locator reads "<group>/<index> <ip>:<port>" or
+        // "<group>/<index> port <port>", and the VM is the part before the
+        // first space.
+        diverged.forEach((cert) => {
+          (Array.isArray(cert.observations) ? cert.observations : []).forEach((obs) => {
+            if (!obs || obs.source !== 'probe' || obs.state === 'failed' || obs.state === 'stale') return;
+            if (obs.matches !== 'latest' && obs.matches !== 'deployed') return;
+            const name = String(obs.locator || 'a listener').split(' ')[0];
+            add(name, obs.matches === 'latest' ? 'applied' : 'old');
+          });
+        });
+      }
+      const TEXT = {
+        applied: 'holds the patched certificate',
+        old: 'holds the old certificate',
+        reverted: 'went back to the old certificate',
+        unknown: 'is not known to hold either certificate'
+      };
+      return Array.from(held.entries()).map(([name, kinds]) => {
+        const list = Array.from(kinds);
+        const text = list.length > 1 ? 'holds more than one version of the certificates' : (TEXT[list[0]] || TEXT.unknown);
+        return `${name} ${text}`;
       });
     };
 
     // The banner an unconverged or reverted instance shows on its Overview.
     const divergenceBanner = (certs, instanceId, instanceName, rotateHost, container, reload) => {
       const diverged = certs.filter((cert) => cert && cert.divergence
-        && (cert.divergence.state === 'unconverged' || cert.divergence.state === 'reverted'));
+        && ['unconverged', 'reverted', 'converging'].includes(cert.divergence.state));
       if (diverged.length === 0) return null;
       const reverted = diverged.some((cert) => cert.divergence.state === 'reverted');
+      const converging = !reverted && diverged.every((cert) => cert.divergence.state === 'converging');
       const box = notice('warn', 'status');
       box.classList.add('cert-ov-divergence');
       box.id = `cert-ov-divergence-${String(instanceId).replace(/[^A-Za-z0-9_-]/g, '_')}`;
       const text = el('div', 'cert-notice-text');
-      text.appendChild(el('strong', null, reverted ? 'Some VMs went back to the old certificate' : 'BOSH has not converged this instance'));
+      text.appendChild(el('strong', null, reverted ? 'Some VMs went back to the old certificate' : (converging ? 'A converge is running on this instance' : 'BOSH has not converged this instance')));
       const since = diverged.map((cert) => timeText(cert.divergence.since)).filter(Boolean)[0];
       text.appendChild(el('p', 'cert-ov-divergence-lead', reverted
         ? 'After a patch, at least one VM returned to the certificate BOSH holds on record.'
+        : converging ? 'A converge is deploying the patched certificates now, and the banner clears once BOSH records them.'
         : `We patched the certificates in place${since ? ` at ${since}` : ''}, and BOSH still records the old ones.`));
       const holders = divergenceHolders(diverged);
       if (holders.length > 0) {
@@ -19082,7 +19117,7 @@
         }
         if (converge.isConnected) converge.focus({ preventScroll: true });
       });
-      box.appendChild(converge);
+      if (!converging) box.appendChild(converge);
       return box;
     };
 
@@ -22428,10 +22463,12 @@
     // The three attention toggles combine with OR, but the server ANDs
     // different query parameters. When two or more are pressed we send
     // one request per toggle, with every other filter held constant.
+    const DIVERGENCE_FINDINGS = ['unconverged', 'patch_reverted'];
     const ATTENTION_TOGGLES = [
       { pressed: (f) => Boolean(f.attention), clear: (f) => { f.attention = false; }, set: (f) => { f.attention = true; } },
       { pressed: (f) => f.health.includes('error'), clear: (f) => { f.health = f.health.filter((v) => v !== 'error'); }, set: (f) => { f.health = f.health.concat('error'); } },
-      { pressed: (f) => f.finding.includes('unconverged'), clear: (f) => { f.finding = f.finding.filter((v) => v !== 'unconverged'); }, set: (f) => { f.finding = f.finding.concat('unconverged'); } }
+      // The Unconverged toggle stands for both findings of a divergence record.
+      { pressed: (f) => f.finding.includes('unconverged'), clear: (f) => { f.finding = f.finding.filter((v) => !DIVERGENCE_FINDINGS.includes(v)); }, set: (f) => { f.finding = f.finding.filter((v) => !DIVERGENCE_FINDINGS.includes(v)).concat(DIVERGENCE_FINDINGS); } }
     ];
 
     const attentionPressedCount = (f) => ATTENTION_TOGGLES.filter((t) => t.pressed(f)).length;
@@ -22926,7 +22963,10 @@
       attention: [
         { label: 'Needs attention', tone: 'critical', count: (s) => s.needs_attention, pressed: () => state.attention, toggle: () => { state.attention = !state.attention; } },
         { label: 'Health errors', tone: 'critical', count: (s) => s.health_errors, pressed: () => state.health.includes('error'), toggle: () => toggleValue('health', 'error') },
-        { label: 'Unconverged', tone: 'warning', count: (s) => s.unconverged, pressed: () => state.finding.includes('unconverged'), toggle: () => toggleValue('finding', 'unconverged') }
+        { label: 'Unconverged', tone: 'warning', count: (s) => (Number(s.unconverged) || 0) + (Number(s.reverted) || 0), pressed: () => state.finding.includes('unconverged'), toggle: () => {
+          const toggle = ATTENTION_TOGGLES[2];
+          if (toggle.pressed(state)) toggle.clear(state); else toggle.set(state);
+        } }
       ],
       expiry: [
         { label: 'Expired', tone: 'expired', count: (s) => s.expired, pressed: () => state.expiry.includes('expired'), toggle: () => toggleValue('expiry', 'expired') },
