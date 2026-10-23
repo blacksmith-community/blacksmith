@@ -502,6 +502,30 @@ func TestVerifyTargetsWithoutServerName(t *testing.T) {
 	}
 }
 
+// A target with no valid port fails, and its variable never becomes an
+// unverified consumer that passes.
+func TestVerifyTargetsWithoutPort(t *testing.T) {
+	t.Parallel()
+
+	for _, port := range []int{0, -1, 65536} {
+		t.Run(strconv.Itoa(port), func(t *testing.T) {
+			t.Parallel()
+
+			env := newVerifyEnv(t)
+			run := &fakeVerifyRun{result: ssh.Result{Stdout: []byte("fingerprint=" + env.newFP + "\n")}}
+
+			got := onlyResult(t, env.verify(env.journal(port), run.run))
+			if got.Variable != regenLeaf || got.OK || got.Fingerprint != "" || got.Detail == "" {
+				t.Fatalf("expected a failed target with a reason, got %+v", got)
+			}
+
+			if calls := run.recorded(); len(calls) != 0 {
+				t.Fatalf("a target with no port ran a check on the VM: %q", calls)
+			}
+		})
+	}
+}
+
 // readList returns the version IDs the fake has served so far.
 func (f *regenCredHub) readList() []string {
 	f.mu.Lock()

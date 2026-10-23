@@ -34,6 +34,9 @@ const unverifiedDetail = "applied, not externally verified"
 // and it holds no wildcard, which no client sends.
 var serverNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$`)
 
+// maxPort is the highest TCP port.
+const maxPort = 65535
+
 // fingerprintPattern is the shape of a fingerprint verify.sh prints.
 var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -52,7 +55,8 @@ var fingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 //
 // A variable the journal's files hold but no target names gets a result
 // with method none, which passes, because nothing outside the VM can see
-// it. Results keep the order of the targets, then the order of the files.
+// it. A target with no valid port fails with method none, and its
+// variable never gets the passing result. Results keep the order of the targets, then the order of the files.
 //
 // verifyTargets only reads, so a resume can call it again. It reads the
 // instance and the journal under mu, so the caller must not hold mu.
@@ -77,11 +81,17 @@ func (m *Manager) verifyTargets(ctx context.Context, inst *InstanceUpgrade, jour
 	listened := make(map[string]bool)
 
 	for _, target := range targets {
-		if target.Port <= 0 {
+		listened[target.Variable] = true
+
+		if target.Port <= 0 || target.Port > maxPort {
+			results = append(results, TargetResult{
+				Variable: target.Variable, Port: target.Port, Method: verifyMethodNone, ServerName: target.ServerName,
+				Detail: "The target names no valid port, so its listener can't be checked.",
+			})
+
 			continue
 		}
 
-		listened[target.Variable] = true
 		results = append(results, check.verify(ctx, target, newFingerprint[target.Variable]))
 	}
 
