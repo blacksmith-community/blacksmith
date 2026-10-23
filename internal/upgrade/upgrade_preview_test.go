@@ -102,12 +102,38 @@ type divergedDirector struct {
 
 	varMu     sync.Mutex
 	variables map[string][]bosh.Variable
+	version   string
+	releases  []bosh.Release
 
-	deploys atomic.Int64
+	deploys   atomic.Int64
+	infoCalls atomic.Int64
 }
 
 func newDivergedDirector() *divergedDirector {
-	return &divergedDirector{waitDirector: newWaitDirector(), variables: make(map[string][]bosh.Variable)}
+	return &divergedDirector{waitDirector: newWaitDirector(), variables: make(map[string][]bosh.Variable), version: "282.0.0"}
+}
+
+func (d *divergedDirector) GetInfo(context.Context) (*bosh.Info, error) {
+	d.infoCalls.Add(1)
+
+	d.varMu.Lock()
+	defer d.varMu.Unlock()
+
+	return &bosh.Info{Name: "ws-bosh", Version: d.version}, nil
+}
+
+func (d *divergedDirector) setVersion(version string) {
+	d.varMu.Lock()
+	defer d.varMu.Unlock()
+
+	d.version = version
+}
+
+func (d *divergedDirector) GetReleases(context.Context) ([]bosh.Release, error) {
+	d.varMu.Lock()
+	defer d.varMu.Unlock()
+
+	return slices.Clone(d.releases), nil
 }
 
 func (d *divergedDirector) GetDeployment(ctx context.Context, name string) (*bosh.DeploymentDetail, error) {
@@ -652,6 +678,10 @@ func TestCreateUpgradeCleanUnchanged(t *testing.T) {
 	if calls := env.credhub.calls.Load(); calls != 0 {
 		t.Fatalf("expected no CredHub request, got %d", calls)
 	}
+
+	if calls := env.director.infoCalls.Load(); calls != 0 {
+		t.Fatalf("expected no director version check, got %d", calls)
+	}
 }
 
 //nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
@@ -994,5 +1024,62 @@ func TestCreateUpgradeWithBadInstanceIDFailsOnlyThatInstance(t *testing.T) {
 	preview := env.preview(t, upgradeRequest(badID))
 	if len(preview.Diverged) != 0 {
 		t.Fatalf("expected no diverged instance, got %+v", preview.Diverged)
+	}
+}
+
+func TestUpgradePreviewChecksDirectorOnlyWhenDiverged(t *testing.T) {
+	t.Parallel()
+
+	env := newDivergedEnv(t, true)
+	env.director.setVersion("278.0.0")
+
+	// A clean request never asks the director for its version.
+	env.preview(t, upgradeRequest(waitInstanceID, divergedInstance2))
+
+	if calls := env.director.infoCalls.Load(); calls != 0 {
+		t.Fatalf("expected no director version check, got %d", calls)
+	}
+
+	env.diverge(t)
+
+	_, err := env.manager.PreviewUpgrade(context.Background(), upgradeRequest(waitInstanceID, divergedInstance2))
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeDirectorUnsupported)
+}
+
+//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+func TestUpgradeOfDivergedInstanceChecksDirector(t *testing.T) {
+	env := newDivergedEnv(t, true)
+	env.diverge(t)
+
+	preview := env.preview(t, upgradeRequest(waitInstanceID))
+
+	req := upgradeRequest(waitInstanceID)
+	req.UpgradePreviewID = preview.ID
+
+	var task *UpgradeTask
+
+	release := env.gateDeploymentRead(t, func() {
+		var err error
+
+		task, err = env.manager.CreateTask(context.Background(), req)
+		if err != nil {
+			t.Fatalf("CreateTask: %v", err)
+		}
+	})
+
+	// The director was replaced by one that ignores latest variables.
+	env.director.setVersion("278.0.0")
+	release()
+
+	saved := eventuallySaved(t, env.vault, task.ID, func(saved UpgradeTask) bool {
+		return saved.Instances[0].Status == InstanceStatusFailed
+	})
+
+	if message := saved.Instances[0].Error; !strings.Contains(message, "278.0.0") {
+		t.Fatalf("expected a failure naming the director version, got %q", message)
+	}
+
+	if deploys := env.director.deploys.Load(); deploys != 0 {
+		t.Fatalf("expected no deploy, got %d", deploys)
 	}
 }

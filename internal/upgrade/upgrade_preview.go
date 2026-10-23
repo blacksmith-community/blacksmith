@@ -240,6 +240,16 @@ func (m *Manager) PreviewUpgrade(ctx context.Context, req CreateTaskRequest) (*U
 		preview.boundAdditional[id] = slices.Clone(diverged.Additional)
 	}
 
+	// A diverged instance's upgrade deploys with force_latest_variables,
+	// which a director too old to accept it would ignore and so roll the
+	// patch back. A request with no diverged instance never asks.
+	if len(preview.Diverged) > 0 {
+		_, err = m.rotationDirector(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	d.UpgradePreviews.Put(preview, m.previewTTL())
 
 	return preview, nil
@@ -534,7 +544,8 @@ func (m *Manager) approvedAdditional(instance *InstanceUpgrade) []VersionPair {
 // deploys as any upgrade does. One with a record deploys with
 // force_latest_variables, so its patched certificates converge, but only
 // when its upgrade was created from a preview that listed it and the
-// variables the deploy would apply now are among those the preview listed.
+// variables the deploy would apply now are among those the preview listed,
+// and the director still accepts force_latest_variables.
 // Otherwise the instance fails and nothing is sent. It never changes the
 // divergence record. It reports whether the deploy may go on.
 func (m *Manager) divergedDeployOptions(ctx, persistCtx context.Context, task *UpgradeTask, instance *InstanceUpgrade) (bosh.DeployOptions, bool) {
@@ -561,6 +572,20 @@ func (m *Manager) divergedDeployOptions(ctx, persistCtx context.Context, task *U
 	if approved == nil {
 		m.logger.Info("Instance %s of task %s has a divergence record that its upgrade's preview did not list", instance.InstanceID, task.ID)
 		m.failInstance(persistCtx, task, instance, approvalDiffers)
+
+		return bosh.DeployOptions{}, false
+	}
+
+	_, err = m.rotationDirector(ctx)
+	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
+		m.returnToPending(persistCtx, task, instance, err)
+
+		return bosh.DeployOptions{}, false
+	}
+
+	if err != nil {
+		m.failInstance(persistCtx, task, instance,
+			fmt.Sprintf("The BOSH director can't deploy this instance's latest variables, so Blacksmith did not deploy it: %v", err))
 
 		return bosh.DeployOptions{}, false
 	}
