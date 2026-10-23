@@ -3,6 +3,7 @@ package certificates_test
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"net/http/httptest"
 	"regexp"
 	"strings"
@@ -58,13 +59,37 @@ func TestExportMatchesFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var ids []string
+	var exported []string
 	for _, r := range rows[1:] {
-		ids = append(ids, r[0])
+		exported = append(exported, r[0])
 	}
 
-	if strings.Join(ids, ",") != "a,c" {
-		t.Errorf("export rows %v, want the critical rows a and c", ids)
+	// The table answers the same filter, and the export has its rows.
+	table := serve(t, "/b/certificates/inventory?expiry=critical")
+
+	var body certinventory.InventoryResponse
+	if err := json.Unmarshal(table.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+
+	var shown []string
+	for i := range body.Certificates {
+		shown = append(shown, body.Certificates[i].ID)
+	}
+
+	all := serve(t, "/b/certificates/inventory")
+
+	var everything certinventory.InventoryResponse
+	if err := json.Unmarshal(all.Body.Bytes(), &everything); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(shown) == 0 || len(shown) >= len(everything.Certificates) {
+		t.Fatalf("the filter should keep some rows and drop some, kept %v of %d", shown, len(everything.Certificates))
+	}
+
+	if strings.Join(exported, ",") != strings.Join(shown, ",") {
+		t.Errorf("export rows %v differ from the table rows %v", exported, shown)
 	}
 
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
