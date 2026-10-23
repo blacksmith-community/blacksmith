@@ -1508,13 +1508,14 @@ func (r *vmRun) advance(phase VMPhase, step string) error {
 	return err
 }
 
-// mutate sends one command that changes the VM. It checks the switches,
-// applies the intent to the journal, and saves it for certain, and only
+// mutate sends one command that changes the VM. Until the VM's first
+// replace is sent it checks the switches, and after that it doesn't. It
+// applies the intent to the journal and saves it for certain, and only
 // then sends the command. A refusal or an unconfirmed save sends nothing,
 // puts the journal back, and returns errVMStopped. Any other error is the
 // command's own.
 func (r *vmRun) mutate(step string, intent func(j *VMJournal), send func() (ssh.Result, error)) (ssh.Result, error) {
-	err := r.manager.certWritesAllowed(RotationModePatch)
+	err := r.writesAllowed()
 	if err != nil {
 		r.manager.pauseWith(r.ctx, r.task, r.inst, writesRefused(err)) //nolint:errcheck,gosec // pauseWith logs and saves it
 
@@ -1522,6 +1523,36 @@ func (r *vmRun) mutate(step string, intent func(j *VMJournal), send func() (ssh.
 	}
 
 	return r.commit(step, intent, send)
+}
+
+// writesAllowed checks the switches for a patch write to the VM, until
+// its first replace was sent. From then on the VM's swap completes, or it
+// rolls back, whatever the switches say, so turning patching off never
+// leaves a new certificate beside an old key or a VM swapped and not
+// restarted. The switches then stop the task before the next VM.
+func (r *vmRun) writesAllowed() error {
+	if r.swapBegun() {
+		return nil
+	}
+
+	return r.manager.certWritesAllowed(RotationModePatch)
+}
+
+// swapBegun reports whether a replace was sent to the VM, as its journal
+// shows by a file that is or was replaced or a phase after swapping.
+func (r *vmRun) swapBegun() bool {
+	r.manager.mu.RLock()
+	defer r.manager.mu.RUnlock()
+
+	switch r.j.Phase {
+	case VMPhaseSwapped, VMPhaseRestarted, VMPhaseVerified, VMPhaseDone, VMPhaseRollingBack, VMPhaseRolledBack:
+		return true
+	case VMPhasePlanned, VMPhaseStaged, VMPhaseBackedUp, VMPhaseSwapping, VMPhaseUnrecovered, VMPhaseReverted:
+	}
+
+	return slices.ContainsFunc(r.j.Files, func(file FileEntry) bool {
+		return file.State != FileStatePlanned && file.State != FileStateBackedUp && file.State != ""
+	})
 }
 
 // commit applies the intent to the journal and saves it for certain, and
@@ -1878,12 +1909,13 @@ func (r *vmRun) backup() error {
 }
 
 // diverge writes this VM's state for each variable it holds to the
-// divergence record, and waits until the write is confirmed. With no
-// store, or a write that is not confirmed, the task pauses.
+// divergence record, and waits until the write is confirmed. It checks
+// the switches as mutate does. With no store, or a write that is not
+// confirmed, the task pauses.
 func (r *vmRun) diverge(pairs map[string]*credhub.KeyPair, state string) error {
 	m := r.manager
 
-	err := m.certWritesAllowed(RotationModePatch)
+	err := r.writesAllowed()
 	if err != nil {
 		return r.pause(writesRefused(err))
 	}

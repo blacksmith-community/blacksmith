@@ -618,6 +618,54 @@ func TestPatchStopsWhenPatchTurnedOff(t *testing.T) {
 	}
 }
 
+// Once a VM's first file is replaced, turning patching off no longer
+// stops that VM: its swap finishes, it restarts, verifies, passes the
+// gate, and is cleaned up, so it never holds a new certificate beside an
+// old key. The next VM is not touched.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchSwitchOffMidSwapFinishesVM(t *testing.T) {
+	for _, after := range []int{1, 2} {
+		t.Run(fmt.Sprintf("after replace %d", after), func(t *testing.T) {
+			env := newPatchEnv(t)
+			manager := env.newManager()
+			task := env.task()
+			first := env.vms[0].name()
+			replaces := 0
+
+			env.hook(func(call patchCall) (ssh.Result, error, bool) {
+				if call.vm == first && call.op == opReplace {
+					replaces++
+					if replaces == after {
+						env.setPatchSwitch(false)
+					}
+				}
+
+				return ssh.Result{}, nil, false
+			})
+
+			env.run(manager, &task)
+
+			vm := env.vms[0]
+			if vm.files[vm.certPath()] != certpatch.NormalisedHash(env.newPair.cert) || vm.files[vm.keyPath()] != certpatch.NormalisedHash(env.newPair.key) {
+				t.Fatal("expected VM 1 to hold the new pair")
+			}
+
+			if j := journalOf(t, manager, first); j.Phase != VMPhaseDone || j.Cleanup != CleanupDone {
+				t.Fatalf("expected VM 1 done and cleaned up, got %s %q", j.Phase, j.Cleanup)
+			}
+
+			if ops := env.patchOps(1); slices.Contains(ops, opPrepare) {
+				t.Fatalf("expected nothing changed on VM 2, got %v", ops)
+			}
+
+			if got := current(t, manager); !got.Paused {
+				t.Fatalf("expected the task to pause before VM 2, got %s", got.Status)
+			}
+		})
+	}
+}
+
 // The private key reaches the VM only on stdin, and never a command line,
 // a log line, or a saved record.
 //
