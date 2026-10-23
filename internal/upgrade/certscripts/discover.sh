@@ -128,6 +128,9 @@ _dc_file() {
 		return 0
 	fi
 
+	# Patching covers PEM blocks only, and a copy in another form that
+	# this misses still holds the old certificate, which the verification
+	# probe then catches.
 	_dc_regular "$file" || return 1
 	grep -qa -e '-----BEGIN ' -- "$file" || return 0
 
