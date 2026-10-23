@@ -609,7 +609,8 @@ func writeCreateError(writer http.ResponseWriter, err error) {
 // writeTaskActionError answers a failed pause, resume, or cancel. An error
 // that carries its own status and code answers with them, an unknown task
 // is not found, a task whose state does not allow the action is a
-// conflict, and anything else is an internal error.
+// conflict, a manager still loading the stored tasks is not ready yet, and
+// anything else is an internal error.
 func writeTaskActionError(w http.ResponseWriter, err error) {
 	var apiErr *apierr.Error
 
@@ -622,6 +623,8 @@ func writeTaskActionError(w http.ResponseWriter, err error) {
 		response.WriteErrorCode(w, http.StatusNotFound, apierr.CodeInstanceNotFound, err.Error())
 	case errors.Is(err, upgrade.ErrTaskNotRunning), errors.Is(err, upgrade.ErrTaskNotPaused):
 		response.WriteErrorCode(w, http.StatusConflict, apierr.CodeInvalidTaskState, err.Error())
+	case errors.Is(err, upgrade.ErrTasksLoading):
+		apierr.Write(w, apierr.Wrap(http.StatusServiceUnavailable, apierr.CodeTasksLoading, err), http.StatusServiceUnavailable)
 	default:
 		response.WriteErrorCode(w, http.StatusInternalServerError, apierr.CodeInternal, err.Error())
 	}

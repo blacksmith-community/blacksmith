@@ -575,12 +575,7 @@ func (m *Manager) verifyNow(task *UpgradeTask, inst *InstanceUpgrade) error {
 // decisionsReady turns a decision away until the loader has put every
 // stored task in m.tasks, since until then the task may be missing.
 func (m *Manager) decisionsReady() error {
-	select {
-	case <-m.loaded:
-		return nil
-	default:
-		return apierr.Wrap(http.StatusServiceUnavailable, apierr.CodeTasksLoading, ErrTasksLoading)
-	}
+	return m.tasksReady()
 }
 
 // decisionMode is the mode of the task, whose switches a decision checks

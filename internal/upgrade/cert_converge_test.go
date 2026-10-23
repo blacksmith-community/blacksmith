@@ -959,6 +959,7 @@ func TestPatchCancelledIdleBeforeConverge(t *testing.T) {
 	t.Run("at phase converge", func(t *testing.T) {
 		env := newPatchEnv(t)
 		manager, _ := env.pauseBeforeConverge(t)
+		skipLoad(manager)
 
 		err := manager.CancelTask(context.Background(), certTaskID)
 		if err != nil {

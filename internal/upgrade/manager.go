@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
@@ -1371,11 +1373,29 @@ func (m *Manager) GetTaskWithRunningInstance(instanceID string) (*UpgradeTask, *
 	return nil, nil
 }
 
+// tasksReady turns a task action away with 503 tasks_loading until the
+// loader has settled every stored task. Until then the loader may still
+// settle, reserve, or queue the very task the action names, and the two
+// would race.
+func (m *Manager) tasksReady() error {
+	select {
+	case <-m.loaded:
+		return nil
+	default:
+		return apierr.Wrap(http.StatusServiceUnavailable, apierr.CodeTasksLoading, ErrTasksLoading)
+	}
+}
+
 // PauseTask pauses a running task. Current instance continues, but next instances won't start.
 // A certificate redeploy's running deploy and its verification finish
 // before the pause holds the task, since the processor waits only
-// between instances.
+// between instances. It is turned away while the stored tasks load.
 func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
+	err := m.tasksReady()
+	if err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 
 	task, exists := m.tasks[taskID]
@@ -1402,7 +1422,7 @@ func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 	m.logger.Info("Paused task %s", taskID)
 
 	// Persist the paused state
-	err := m.writeSnapshot(ctx, paused)
+	err = m.writeSnapshot(ctx, paused)
 	if err != nil {
 		m.logger.Error("Failed to persist paused state for task %s: %v", taskID, err)
 	}
@@ -1417,9 +1437,15 @@ func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 // ResumeTask resumes a paused task. A certificate task resumes only when
 // the switches allow its mode to write, and a refusal leaves it paused. A
 // cancelled patch task that waits for a resume of a VM left part way
-// through its swap stays cancelled and resumes that VM.
+// through its swap stays cancelled and resumes that VM. It is turned away
+// while the stored tasks load.
 func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
-	err := m.certResumeAllowed(taskID)
+	err := m.tasksReady()
+	if err != nil {
+		return err
+	}
+
+	err = m.certResumeAllowed(taskID)
 	if err != nil {
 		return err
 	}
@@ -1490,8 +1516,13 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 // task, is verified now. A running instance of a certificate redeploy that
 // nothing follows and that has nothing in flight is cancelled here, or by
 // its processor once it stops, so none stays reserved with nothing
-// following it.
+// following it. It is turned away while the stored tasks load.
 func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
+	err := m.tasksReady()
+	if err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	task, exists := m.tasks[taskID]
 	if !exists {

@@ -65,6 +65,7 @@ func TestTaskActionErrorsMapSentinels(t *testing.T) {
 		{"wrapped not found", fmt.Errorf("x: %w", upgrade.ErrTaskNotFound), http.StatusNotFound, "instance_not_found"},
 		{"not running", upgrade.ErrTaskNotRunning, http.StatusConflict, "invalid_task_state"},
 		{"not paused", upgrade.ErrTaskNotPaused, http.StatusConflict, "invalid_task_state"},
+		{"loading", upgrade.ErrTasksLoading, http.StatusServiceUnavailable, "tasks_loading"},
 		{"other", errors.New(`task "x" broke`), http.StatusInternalServerError, "internal_error"},
 	}
 

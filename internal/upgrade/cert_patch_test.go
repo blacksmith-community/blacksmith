@@ -1267,6 +1267,7 @@ func TestPatchCleanupFailureKeepsDone(t *testing.T) {
 func TestPatchPauseBetweenVMsOnly(t *testing.T) {
 	env := newPatchEnv(t)
 	manager := env.newManager()
+	skipLoad(manager)
 	task := env.task()
 	name := env.vms[0].name()
 
@@ -1347,6 +1348,7 @@ func TestPatchCancelAfterRollbackPauseEndsInstance(t *testing.T) {
 	env.gateFailsOn(1, nil)
 
 	manager := env.newManager()
+	skipLoad(manager)
 	task := env.task()
 
 	env.run(manager, &task)
