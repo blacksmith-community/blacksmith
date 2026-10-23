@@ -86,6 +86,7 @@ func (l *eventLog) all() []string {
 type divergenceVault struct {
 	interfaces.Vault
 
+	base   *regenVault
 	events *eventLog
 
 	mu   sync.Mutex
@@ -106,6 +107,19 @@ func (v *divergenceVault) Put(ctx context.Context, path string, data interface{}
 	}
 
 	return v.Vault.Put(ctx, path, data)
+}
+
+// Delete removes a divergence record, which the store does when no VM
+// holds anything new any more.
+func (v *divergenceVault) Delete(_ context.Context, path string) error {
+	v.events.add("divergence-delete")
+
+	wait := v.base.waitVault
+	wait.mu.Lock()
+	delete(wait.saved, path)
+	wait.mu.Unlock()
+
+	return nil
 }
 
 func (v *divergenceVault) failWrites() {
@@ -224,7 +238,7 @@ func newPatchEnv(t *testing.T) *patchEnv {
 			certpatch.NormalisedHash(oldPair.cert), certpatch.NormalisedHash(oldPair.key)))
 	}
 
-	env.divVault = &divergenceVault{Vault: base.vault, events: env.events}
+	env.divVault = &divergenceVault{Vault: base.vault, base: base.vault, events: env.events}
 	env.store = certinventory.NewDivergenceStore(env.divVault, func() time.Time { return validateNow })
 	env.capture = &captureLogger{redeployLogger: base.logs}
 
@@ -317,6 +331,8 @@ func (e *patchEnv) newManager() *Manager {
 	}
 
 	manager.verifyInterval = 20 * time.Millisecond
+	manager.patchGateWait = 100 * time.Millisecond
+	manager.patchGateInterval = 10 * time.Millisecond
 
 	return manager
 }
@@ -349,7 +365,7 @@ func (e *patchEnv) patchOps(vm int) []string {
 
 	for _, op := range e.patch.ops(e.vms[vm].name()) {
 		switch op {
-		case opCheck, opPrepare, opStage, opStageCheck, opBackup, opReplace, "restore", "restart", "cleanup":
+		case opCheck, opPrepare, opStage, opStageCheck, opBackup, opReplace, opRestore, opRestart, opCleanup:
 			ops = append(ops, op)
 		}
 	}
@@ -885,6 +901,355 @@ func TestPatchOneSessionPerGroup(t *testing.T) {
 	for _, call := range env.patch.recorded() {
 		if call.session != 1 {
 			t.Fatalf("expected every command on session 1, got %+v", call)
+		}
+	}
+}
+
+// afterDiscovery lists the operations run on the VM after its discovery
+// and the gate discovery runs, which are the gate, verify.sh, and
+// patch.sh operations of the patch.
+func (e *patchEnv) afterDiscovery(vm int) []string {
+	ops := e.patch.ops(e.vms[vm].name())
+
+	last := -1
+
+	for i, op := range ops {
+		if op == opDiscover {
+			last = i
+		}
+	}
+
+	ops = ops[last+1:]
+	if len(ops) > 0 && ops[0] == certscripts.GateRedisCluster {
+		ops = ops[1:]
+	}
+
+	return ops
+}
+
+// gateFailsOn makes the health gate fail on the VM from its first restart
+// until a file is restored on it.
+func (e *patchEnv) gateFailsOn(vm int, also func(call patchCall) (ssh.Result, error, bool)) {
+	name := e.vms[vm].name()
+	restarted, restored := false, false
+
+	e.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == name {
+			switch call.op {
+			case opRestart:
+				restarted = true
+			case opRestore:
+				restored = true
+			case certscripts.GateRedisCluster:
+				if restarted && !restored {
+					return exitResult(1), nil, true
+				}
+			}
+		}
+
+		if also != nil {
+			return also(call)
+		}
+
+		return ssh.Result{}, nil, false
+	})
+}
+
+// finishOps is what the finish of a patch runs on one VM after its
+// replacements.
+var finishOps = []string{opRestart, verifyScript, certscripts.GateRedisCluster, opCleanup}
+
+// Each VM is patched in turn: forward, restart, verify, gate, and cleanup.
+// Every VM ends done and applied in the divergence record.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchHappyPathOrder(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+
+	if !env.run(manager, &task) {
+		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+	}
+
+	for i := range env.vms {
+		want := slices.Concat(forwardOps, finishOps)
+		if i == 0 {
+			want = slices.Concat([]string{certscripts.GateRedisCluster}, want)
+		}
+
+		if got := env.afterDiscovery(i); !slices.Equal(got, want) {
+			t.Fatalf("VM %d: expected %v, got %v", i, want, got)
+		}
+
+		journal := journalOf(t, manager, env.vms[i].name())
+		if journal.Phase != VMPhaseDone || journal.Cleanup != CleanupDone || journal.GateAfter != "passed" {
+			t.Fatalf("VM %d: expected done and clean with the gate passed, got %s %q %q", i, journal.Phase, journal.Cleanup, journal.GateAfter)
+		}
+
+		if len(journal.Targets) == 0 || !journal.Targets[0].OK {
+			t.Fatalf("VM %d: expected a passing target, got %+v", i, journal.Targets)
+		}
+	}
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusSuccess {
+		t.Fatalf("expected the instance to succeed, got %s: %s", inst.Status, inst.Error)
+	}
+
+	record, found, err := env.store.Get(context.Background(), waitInstanceID)
+	if err != nil || !found || len(record.Variables) != 1 {
+		t.Fatalf("expected one divergent variable, got %+v found=%v err=%v", record, found, err)
+	}
+
+	for _, cid := range patchCIDs {
+		if state := record.Variables[0].VMs[cid].State; state != certinventory.DivergentVMApplied {
+			t.Fatalf("expected %s applied, got %q", cid, state)
+		}
+	}
+}
+
+// A gate that fails after VM 2's restart restores both its files,
+// restarts it, and runs the gate again. VM 2 ends rolled back and old in
+// the record, VM 1 stays done and applied, and the task pauses.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRollbackOnGateFailure(t *testing.T) {
+	env := newPatchEnv(t)
+	env.gateFailsOn(1, nil)
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	ops := env.afterDiscovery(1)
+	first := slices.Index(ops, opRestore)
+
+	if first < 0 || !slices.Equal(ops[first:], []string{opRestore, opRestore, opRestart, certscripts.GateRedisCluster, opCleanup}) {
+		t.Fatalf("expected restore twice, a restart, the gate, and cleanup, got %v", ops)
+	}
+
+	vm := env.vms[1]
+	if vm.files[vm.certPath()] != certpatch.NormalisedHash(env.oldPair.cert) || vm.files[vm.keyPath()] != certpatch.NormalisedHash(env.oldPair.key) {
+		t.Fatal("expected VM 2 to hold the old pair again")
+	}
+
+	second := journalOf(t, manager, vm.name())
+	if second.Phase != VMPhaseRolledBack || second.Files[0].State != FileStateRestored || second.Files[1].State != FileStateRestored {
+		t.Fatalf("expected VM 2 rolled back with both files restored, got %s %+v", second.Phase, second.Files)
+	}
+
+	if first := journalOf(t, manager, env.vms[0].name()); first.Phase != VMPhaseDone {
+		t.Fatalf("expected VM 1 to stay done, got %s", first.Phase)
+	}
+
+	if ops := env.afterDiscovery(2); len(ops) != 0 {
+		t.Fatalf("expected nothing run on VM 3, got %v", ops)
+	}
+
+	got := current(t, manager)
+	if !got.Paused || got.Instances[0].Status.settled() {
+		t.Fatalf("expected a paused task with an open instance, got paused=%v %s", got.Paused, got.Instances[0].Status)
+	}
+
+	env.expectRolledBackRecord(t)
+}
+
+// expectRolledBackRecord checks that the divergence record shows VM 1
+// on the new certificate, VM 2 back on the old one, and the applied
+// fingerprint kept.
+func (e *patchEnv) expectRolledBackRecord(t *testing.T) {
+	t.Helper()
+
+	record, _, err := e.store.Get(context.Background(), waitInstanceID)
+	if err != nil || record == nil {
+		t.Fatalf("expected a divergence record, got %v", err)
+	}
+
+	vms := record.Variables[0].VMs
+	if vms[patchCIDs[0]].State != certinventory.DivergentVMApplied || vms[patchCIDs[1]].State != certinventory.DivergentVMOld {
+		t.Fatalf("expected VM 1 applied and VM 2 old, got %+v", vms)
+	}
+
+	if record.Variables[0].AppliedFingerprint != certinventory.Fingerprint(e.newCert) {
+		t.Fatal("expected the rollback to keep the applied fingerprint")
+	}
+}
+
+// Once a rollback starts, nothing on that VM is staged or replaced again.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRollbackNeverReplaces(t *testing.T) {
+	env := newPatchEnv(t)
+	env.patch.fingerprint = certinventory.Fingerprint(env.oldLeaf)
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	ops := env.patchOps(0)
+	first := slices.Index(ops, opRestore)
+
+	if first < 0 {
+		t.Fatalf("expected a failed verification to roll VM 1 back, got %v", ops)
+	}
+
+	for _, op := range ops[first:] {
+		if op == opStage || op == opReplace || op == opPrepare || op == opBackup {
+			t.Fatalf("expected no stage or replace after the rollback started, got %v", ops)
+		}
+	}
+
+	journal := journalOf(t, manager, env.vms[0].name())
+	if journal.Phase != VMPhaseRolledBack || !strings.Contains(journal.Error, "different certificate") {
+		t.Fatalf("expected VM 1 rolled back for its verification, got %s %q", journal.Phase, journal.Error)
+	}
+}
+
+// A restore that fails leaves the VM unrecovered with its backups, and
+// fails the instance with the redeploy advice.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchUnrecoveredWhenRestoreFails(t *testing.T) {
+	env := newPatchEnv(t)
+	env.gateFailsOn(0, func(call patchCall) (ssh.Result, error, bool) {
+		if call.op == opRestore {
+			return exitResult(certscripts.ExitDrift, "unrecovered path="+call.args[2]), nil, true
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	journal := journalOf(t, manager, env.vms[0].name())
+	if journal.Phase != VMPhaseUnrecovered {
+		t.Fatalf("expected VM 1 unrecovered, got %s", journal.Phase)
+	}
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusFailed || !strings.Contains(inst.Error, redeployToRepair) {
+		t.Fatalf("expected a failed instance with the redeploy advice, got %s %q", inst.Status, inst.Error)
+	}
+
+	ops := env.patchOps(0)
+	if slices.Contains(ops[slices.Index(ops, opRestore):], opCleanup) {
+		t.Fatalf("expected the backups kept, got %v", ops)
+	}
+
+	if len(env.vms[0].backups) != 2 {
+		t.Fatalf("expected both backups on the VM, got %d", len(env.vms[0].backups))
+	}
+}
+
+// A cleanup that fails marks the journal and leaves the VM done.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchCleanupFailureKeepsDone(t *testing.T) {
+	env := newPatchEnv(t)
+	name := env.vms[0].name()
+
+	env.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == name && call.op == opCleanup {
+			return exitResult(1), nil, true
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	journal := journalOf(t, manager, name)
+	if journal.Phase != VMPhaseDone || journal.Cleanup != CleanupFailed {
+		t.Fatalf("expected VM 1 done with a failed cleanup, got %s %q", journal.Phase, journal.Cleanup)
+	}
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusSuccess {
+		t.Fatalf("expected the instance to succeed, got %s: %s", inst.Status, inst.Error)
+	}
+}
+
+// A pause asked for during VM 1's restart lets VM 1 finish, and the task
+// pauses before VM 2 starts.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchPauseBetweenVMsOnly(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+	name := env.vms[0].name()
+
+	env.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == name && call.op == opRestart {
+			err := manager.PauseTask(context.Background(), certTaskID)
+			if err != nil {
+				t.Errorf("pausing the task: %v", err)
+			}
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	if env.run(manager, &task) {
+		t.Fatal("expected the instance to stay open")
+	}
+
+	journal := journalOf(t, manager, name)
+	if journal.Phase != VMPhaseDone || journal.Cleanup != CleanupDone {
+		t.Fatalf("expected VM 1 done and clean before the pause, got %s %q", journal.Phase, journal.Cleanup)
+	}
+
+	if ops := env.afterDiscovery(1); len(ops) != 0 {
+		t.Fatalf("expected nothing run on VM 2, got %v", ops)
+	}
+
+	if second := journalOf(t, manager, env.vms[1].name()); second.Phase != VMPhasePlanned {
+		t.Fatalf("expected VM 2 still planned, got %s", second.Phase)
+	}
+
+	if !current(t, manager).Paused {
+		t.Fatal("expected the task to pause")
+	}
+}
+
+// The forward, finish, and rollback commands of every VM go through the
+// one session the instance opened.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchFinishAndRollbackShareSession(t *testing.T) {
+	env := newPatchEnv(t)
+	env.gateFailsOn(1, nil)
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	if env.patch.openCount() != 1 || env.patch.closeCount() != 1 {
+		t.Fatalf("expected one session opened and closed, got %d and %d", env.patch.openCount(), env.patch.closeCount())
+	}
+
+	seen := make(map[string]bool)
+
+	for _, call := range env.patch.recorded() {
+		if call.session != 1 {
+			t.Fatalf("expected every command on session 1, got %+v", call)
+		}
+
+		seen[call.op] = true
+	}
+
+	for _, op := range []string{opReplace, opRestart, verifyScript, opRestore, opCleanup} {
+		if !seen[op] {
+			t.Fatalf("expected %s on the session, saw %v", op, seen)
 		}
 	}
 }

@@ -252,6 +252,12 @@ type Manager struct {
 	// verifyInterval is the time between the probes of a listener after a
 	// redeploy, which a test shortens before Start.
 	verifyInterval time.Duration
+
+	// patchGateWait is how long a patched VM's health gate may take to
+	// pass after its restart, and patchGateInterval the time between two
+	// runs of it. A test shortens both before Start.
+	patchGateWait     time.Duration
+	patchGateInterval time.Duration
 }
 
 // waitingReservation is an instance of a loaded task that waits for
@@ -306,6 +312,9 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		createRetry:    createRetryInterval,
 		createLocks:    make(map[string]*requestLock),
 		verifyInterval: verifyIntervalDefault,
+
+		patchGateWait:     patchGateWaitDefault,
+		patchGateInterval: patchGateIntervalDefault,
 	}
 
 	m.certFinisher = m
