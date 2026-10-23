@@ -633,6 +633,69 @@ func TestCleanupRemovesTaskDir(t *testing.T) {
 	}
 }
 
+// TestCleanupRemovesTempFiles shows that cleanup removes the temporary
+// files an interrupted replace or restore of this task left beside each
+// target it names, and nothing else. A temporary file's name carries the
+// task ID, so another task's file stays, and a symlink with the name of
+// one is neither followed nor removed.
+func TestCleanupRemovesTempFiles(t *testing.T) {
+	t.Parallel()
+
+	tree := newPatchTree(t)
+	tree.mkdir(t, "/etc")
+	tree.write(t, "/etc/keep", "keep\n")
+
+	ours := targetDir + "/.certpatch." + testTaskID + ".Ab3dE6gH9j"
+	theirs := targetDir + "/.certpatch." + otherTaskID + ".Ab3dE6gH9j"
+	link := targetDir + "/.certpatch." + testTaskID + ".link"
+
+	tree.write(t, ours, newText)
+	tree.write(t, theirs, newText)
+	symlink(t, tree.at("/etc/keep"), tree.at(link))
+
+	out, code := tree.patch(t, "cleanup", testTaskID, pinnedJobDir, pinnedTarget)
+	if code != 0 {
+		t.Fatalf("cleanup exited %d, want 0", code)
+	}
+
+	wantOutput(t, out, "ok path="+patchTask+"\n")
+
+	if tree.exists(t, ours) {
+		t.Error("cleanup left this task's temporary file")
+	}
+
+	if !tree.exists(t, theirs) {
+		t.Error("cleanup removed another task's temporary file")
+	}
+
+	if !tree.exists(t, link) {
+		t.Error("cleanup removed a symlink")
+	}
+
+	tree.assert(t, "/etc/keep", "keep\n")
+	tree.assert(t, pinnedTarget, oldText)
+
+	if tree.exists(t, patchTask) {
+		t.Error("cleanup left the task directory")
+	}
+
+	// A target that fails its checks stops cleanup before it removes
+	// anything.
+	tree.write(t, ours, newText)
+
+	if _, code := tree.patch(t, "cleanup", testTaskID, pinnedJobDir, "/etc/keep"); code != refusedExit {
+		t.Errorf("cleanup beside a refused target exited %d, want 13", code)
+	}
+
+	if !tree.exists(t, ours) {
+		t.Error("a refused cleanup removed a temporary file")
+	}
+
+	if _, code := tree.patch(t, "cleanup", testTaskID, pinnedJobDir); code != usageExit {
+		t.Errorf("cleanup with a job directory and no path exited %d, want 2", code)
+	}
+}
+
 func TestCleanupRefusesOtherPaths(t *testing.T) {
 	t.Parallel()
 

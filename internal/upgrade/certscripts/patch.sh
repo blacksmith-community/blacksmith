@@ -9,7 +9,7 @@
 #   replace <task> <jobdir> <path> <staged> <old> <new>
 #   restore <task> <jobdir> <path> <backup> <old> <new>
 #   restart <task> <process>...
-#   cleanup <task>
+#   cleanup <task> [<jobdir> <path>]...
 #
 # <path> is a pinned target under <jobdir>, which discovery recorded.
 # <staged> is the task's staging path s/<n> and <backup> its backup path
@@ -28,7 +28,9 @@
 #
 # Every write goes to a new temporary file that is synced and then
 # renamed over its target, so a target always holds either its whole old
-# content or its whole new content.
+# content or its whole new content. A temporary file beside a target is
+# named .certpatch.<task>.<random>, so cleanup can find what an
+# interrupted operation of the task left there.
 
 # The temporary file that the EXIT trap removes when an operation stops
 # before its rename.
@@ -82,19 +84,19 @@ _pt_sync() {
 	sync -- "$@"
 }
 
-# _pt_swap <source> <full> <want> writes the content of source over the
-# target full through a temporary file in the target's directory. The
-# new file takes the target's owner, group, and mode, and must hash to
-# want before the rename.
+# _pt_swap <task> <source> <full> <want> writes the content of source
+# over the target full through a temporary file in the target's
+# directory, named for the task. The new file takes the target's owner,
+# group, and mode, and must hash to want before the rename.
 _pt_swap() {
-	local source=$1 full=$2 want=$3 dir info owner mode
+	local task=$1 source=$2 full=$3 want=$4 dir info owner mode
 
 	dir=${full%/*}
 	info=$(stat -c '%u:%g %a' -- "$full") || return 1
 	owner=${info% *}
 	mode=${info#* }
 
-	_PT_TMP=$(mktemp -- "$dir/.certpatch.XXXXXXXXXX") || return 1
+	_PT_TMP=$(mktemp -- "$dir/.certpatch.$task.XXXXXXXXXX") || return 1
 	cat -- "$source" > "$_PT_TMP" || return 1
 	chown -- "$owner" "$_PT_TMP" || return 1
 	chmod -- "$mode" "$_PT_TMP" || return 1
@@ -279,7 +281,7 @@ replace() {
 		return "$EXIT_DRIFT"
 	fi
 
-	_pt_swap "$root$staged" "$full" "$new" || return 1
+	_pt_swap "$task" "$root$staged" "$full" "$new" || return 1
 
 	printf 'ok path=%s state=new action=replaced\n' "$path"
 }
@@ -315,7 +317,7 @@ restore() {
 		return "$EXIT_BACKUP"
 	fi
 
-	_pt_swap "$root$backup" "$full" "$old" || return 1
+	_pt_swap "$task" "$root$backup" "$full" "$old" || return 1
 
 	printf 'ok path=%s state=old action=restored\n' "$path"
 }
@@ -435,15 +437,39 @@ restart() {
 	printf 'ok name=%s\n' "$@"
 }
 
-# cleanup removes the task's directory after valid_work accepts its s
-# and b directories. A task directory that is already gone is cleaned.
+# cleanup removes the task's temporary files beside each target it is
+# given, and then the task's directory after valid_work accepts its s and
+# b directories. Each target is checked with valid_pinned before anything
+# is removed, and only regular files named for the task are removed, so a
+# symlink is never followed. A task directory that is already gone is
+# cleaned.
 cleanup() {
-	_pt_args 1 "$#" || return
+	[ "$#" -ge 1 ] && [ $(($# % 2)) -eq 1 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return
 
-	local task=$1 root dir
+	local task=$1 root dir file
+	local -a dirs=()
+
+	shift
+
+	while [ "$#" -gt 0 ]; do
+		valid_pinned "$2" "$1" || return
+		dirs+=("${2%/*}")
+		shift 2
+	done
 
 	root=$(_cp_root) || return "$EXIT_REFUSED"
+
+	for dir in "${dirs[@]}"; do
+		for file in "$root$dir/.certpatch.$task."*; do
+			if [ -f "$file" ] && [ ! -L "$file" ]; then
+				rm -f -- "$file" || return 1
+			fi
+		done
+
+		_pt_sync "$root$dir" || return 1
+	done
+
 	dir=$root$CP_WORK_ROOT/$task
 
 	if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then
