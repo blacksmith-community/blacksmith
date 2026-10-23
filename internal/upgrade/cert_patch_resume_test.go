@@ -479,6 +479,7 @@ func TestPatchResumeAtEveryBoundary(t *testing.T) {
 				env.expectPatched(t, second, got)
 			}
 
+			env.expectNoMix(t)
 			c.expectNoThird(t)
 
 			if b.op == opBackup && b.nth == 2 {
@@ -515,6 +516,7 @@ func TestPatchResumeAtEveryBoundary(t *testing.T) {
 				}
 			}
 
+			env.expectNoMix(t)
 			c.expectNoThird(t)
 		})
 	}
@@ -794,6 +796,56 @@ func TestPatchResumeRefetchesStagedContent(t *testing.T) {
 		env.expectRolledBack(t, got, mark)
 		c.expectNoThird(t)
 	})
+}
+
+// A cancelled task that a crash stopped at any boundary of VM 1 ends its
+// instance and frees it on the load. VM 1 ends closed with one whole
+// pair, the new one only when it ends done, the cleanup of every VM that
+// had files is done, and nothing runs on any other VM.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeCancelledAtEveryBoundary(t *testing.T) {
+	for _, b := range resumeBoundaries() {
+		t.Run(b.name, func(t *testing.T) {
+			env, c, stored := boundaryEnv(t, b)
+			mark := len(env.patch.recorded())
+
+			second := env.startCancelled(t, stored, nil)
+
+			waitUntil(t, "the instance to settle", func() bool { return current(t, second).Instances[0].Status.settled() })
+
+			inst := current(t, second).Instances[0]
+			j := inst.Certificates.VMs[0]
+
+			ended := []VMPhase{VMPhaseDone, VMPhaseRolledBack, VMPhasePlanned, VMPhaseStaged, VMPhaseBackedUp}
+			if inst.Status != InstanceStatusCancelled || !slices.Contains(ended, j.Phase) {
+				t.Fatalf("expected the instance cancelled with VM 1 closed or never swapped, got %s with VM 1 %s: %q", inst.Status, j.Phase, inst.Error)
+			}
+
+			want := pairOld
+			if j.Phase == VMPhaseDone {
+				want = pairNew
+			}
+
+			if got := env.pairState(0); got != want {
+				t.Fatalf("expected VM 1 at %s to hold the %s pair, got %s", j.Phase, want, got)
+			}
+
+			if (j.Cleanup != "" && j.Cleanup != CleanupDone) || env.workFiles(0) != 0 {
+				t.Fatalf("expected VM 1 cleaned up, got cleanup %q with %d files left", j.Cleanup, env.workFiles(0))
+			}
+
+			for i := 1; i < len(env.vms); i++ {
+				if ops := env.filteredOpsSince(mark, i); len(ops) != 0 {
+					t.Fatalf("expected nothing run on VM %d, got %v", i+1, ops)
+				}
+			}
+
+			env.expectNoMix(t)
+			c.expectNoThird(t)
+			expectReleased(t, second)
+		})
+	}
 }
 
 // A cancelled task whose VM a crash left part way through its swap is
