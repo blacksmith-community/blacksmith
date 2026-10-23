@@ -217,6 +217,10 @@ type redeployDirector struct {
 
 	// deployErr, when set, is the error a deploy is refused with.
 	deployErr error
+
+	// extra lists the deployment's variables besides the leaf, which
+	// ListVariables names after it.
+	extra []bosh.Variable
 }
 
 func (d *redeployDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
@@ -285,7 +289,7 @@ func (d *redeployDirector) ListVariables(context.Context, string) ([]bosh.Variab
 		return nil, errors.New("director 503")
 	}
 
-	return []bosh.Variable{{ID: d.deployed, Name: regenLeaf}}, nil
+	return append([]bosh.Variable{{ID: d.deployed, Name: regenLeaf}}, d.extra...), nil
 }
 
 func (d *redeployDirector) GetDeploymentVMs(context.Context, string) ([]bosh.VM, error) {
@@ -2367,5 +2371,166 @@ func TestCertificateCancelSkipsUndeployedPending(t *testing.T) {
 				t.Fatalf("expected no deploy, got %d", sent)
 			}
 		})
+	}
+}
+
+// halfRegenerated makes the task's instance select a second leaf as well,
+// deployed and latest at w1, and records the first leaf as regenerated to
+// v2 while the second is not sent yet, as a task paused between the two
+// requests leaves them. CredHub holds v2 and w1.
+func (e *redeployEnv) halfRegenerated(t *testing.T, task *UpgradeTask) {
+	t.Helper()
+
+	second, _ := e.ca.issue(t, baseSpec())
+
+	e.credhub.mu.Lock()
+	e.credhub.meta[regenLeaf2] = credhub.CertificateMeta{
+		ID: "cert-2", Name: regenLeaf2, SignedBy: regenCAName,
+		Versions: []credhub.CertificateVersionMeta{{ID: "w1", ExpiryDate: second.NotAfter}},
+	}
+	e.credhub.mu.Unlock()
+	e.credhub.addVersion(regenLeaf2, "w1", regenCreated, second)
+
+	e.director.mu.Lock()
+	e.director.extra = []bosh.Variable{{ID: "w1", Name: regenLeaf2}}
+	e.director.mu.Unlock()
+
+	e.madeNewVersion()
+
+	rotation := task.Instances[0].Certificates
+	rotation.Phase = RotationPhaseRegenerate
+	rotation.Approved.Selected = append(rotation.Approved.Selected,
+		VersionPair{Name: regenLeaf2, DeployedVersionID: "w1", LatestVersionID: "w1"})
+
+	first := &rotation.Variables[0]
+	first.Baseline = []string{"v1"}
+	first.RegenerateState = RegenerateConfirmed
+	first.NewVersionID = "v2"
+
+	rotation.Variables = append(rotation.Variables,
+		VariableRotation{Name: regenLeaf2, CertificateID: "cert-2", OldVersionID: "w1", RegenerateState: RegenerateNotSent})
+}
+
+// expectChangedEffects checks that the instance waits for approval of
+// changed effects, and that the changes name the version given.
+func expectChangedEffects(t *testing.T, manager *Manager, version string) {
+	t.Helper()
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != StatusAwaitingDecision || inst.Certificates.Pending == nil || inst.Certificates.Pending.Kind != DecisionApproveChangedEffects {
+		t.Fatalf("expected the instance to await approve_changed_effects, got %s with %+v: %s", inst.Status, inst.Certificates.Pending, inst.Error)
+	}
+
+	if changes := strings.Join(inst.Certificates.Pending.Changes, " "); !strings.Contains(changes, version) {
+		t.Fatalf("expected the changes to name %s, got %q", version, changes)
+	}
+}
+
+// A task that resumes with a variable it has not sent yet re-checks that
+// variable against the approval first. A version made outside the task
+// while it was paused stops the instance for a new approval, and the
+// task regenerates nothing over it.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestRedeployResumeRechecksUnsentVariable(t *testing.T) {
+	env := newRedeployEnv(t)
+	task := env.task()
+	env.halfRegenerated(t, &task)
+
+	outside, _ := env.ca.issue(t, baseSpec())
+	env.credhub.addVersion(regenLeaf2, "w2", validateNow, outside)
+
+	manager := env.newManager()
+
+	if env.directRun(manager, &task) {
+		t.Fatal("expected the instance not to settle")
+	}
+
+	expectChangedEffects(t, manager, "w2")
+
+	if n := env.credhub.regenerateCount(); n != 0 {
+		t.Fatalf("expected no regenerate request, got %d", n)
+	}
+
+	if deploys := env.director.deploys(); len(deploys) != 0 {
+		t.Fatalf("expected no deploy, got %d", len(deploys))
+	}
+
+	expectHeld(t, manager)
+}
+
+// The re-check on resume does not mistake the task's own new version for
+// a change: with nothing changed outside the task, it regenerates the
+// variable it has not sent yet, deploys, and completes the instance.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestRedeployResumeRegeneratesUnsentVariable(t *testing.T) {
+	env := newRedeployEnv(t)
+	task := env.task()
+	env.halfRegenerated(t, &task)
+
+	spec := baseSpec()
+	spec.notAfter = validateNow.Add(365 * 24 * time.Hour)
+	renewed, _ := env.ca.issue(t, spec)
+
+	env.credhub.answer(func(certificateID string) (*credhub.RegenerateResult, error) {
+		if certificateID != "cert-2" {
+			return nil, &credhub.APIError{Status: http.StatusBadRequest}
+		}
+
+		env.credhub.addVersion(regenLeaf2, "w2", regenLater, renewed)
+
+		return &credhub.RegenerateResult{VersionID: "w2", Name: regenLeaf2}, nil
+	})
+
+	applied := env.director.onDone
+	env.director.onDone = func() {
+		applied()
+
+		env.director.mu.Lock()
+		env.director.extra = []bosh.Variable{{ID: "w2", Name: regenLeaf2}}
+		env.director.mu.Unlock()
+	}
+
+	manager := env.newManager()
+
+	if !env.directRun(manager, &task) {
+		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+	}
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusSuccess {
+		t.Fatalf("expected a completed instance, got %s: %s", inst.Status, inst.Error)
+	}
+
+	if n := env.credhub.regenerateCount(); n != 1 {
+		t.Fatalf("expected one regenerate request, for the unsent variable, got %d", n)
+	}
+}
+
+// A cancelled task whose instance already regenerated one of its
+// variables ends the instance saying that the new versions wait in
+// CredHub, not that nothing changed.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestRedeployCancelledAfterPartialRegeneration(t *testing.T) {
+	env := newRedeployEnv(t)
+	task := env.task()
+	env.halfRegenerated(t, &task)
+	task.Status = TaskStatusCancelled
+
+	manager := env.newManager()
+
+	if !env.directRun(manager, &task) {
+		t.Fatal("expected the cancelled instance to settle")
+	}
+
+	inst := current(t, manager).Instances[0]
+	if inst.Status != InstanceStatusCancelled || inst.Error != cancelledUndeployed {
+		t.Fatalf("expected the instance cancelled with its versions deploy_pending, got %s: %q", inst.Status, inst.Error)
+	}
+
+	if n := env.credhub.regenerateCount(); n != 0 {
+		t.Fatalf("expected no regenerate request, got %d", n)
 	}
 }

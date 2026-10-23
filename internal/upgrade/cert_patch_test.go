@@ -1486,3 +1486,34 @@ func TestPatchUntouchedJournalsResumeAsUntouched(t *testing.T) {
 		t.Fatal("expected journals saved before the first command to the VM")
 	}
 }
+
+// A patch task that resumes with a variable it has not sent yet re-checks
+// that variable against the approval first. A version made outside the
+// task while it was paused stops the instance for a new approval, and the
+// task neither regenerates nor opens a session to any VM.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeRechecksUnsentVariable(t *testing.T) {
+	env := newPatchEnv(t)
+	task := env.task()
+	env.halfRegenerated(t, &task)
+
+	outside, _ := env.ca.issue(t, baseSpec())
+	env.credhub.addVersion(regenLeaf2, "w2", validateNow, outside)
+
+	manager := env.newManager()
+
+	if env.run(manager, &task) {
+		t.Fatal("expected the instance not to settle")
+	}
+
+	expectChangedEffects(t, manager, "w2")
+
+	if n := env.credhub.regenerateCount(); n != 0 {
+		t.Fatalf("expected no regenerate request, got %d", n)
+	}
+
+	if opens := env.patch.openCount(); opens != 0 {
+		t.Fatalf("expected no session to a VM, got %d", opens)
+	}
+}

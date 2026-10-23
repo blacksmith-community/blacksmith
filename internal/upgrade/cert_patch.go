@@ -992,8 +992,9 @@ const cancelledBetweenVMs = "The task was cancelled between two VMs of the patch
 
 // rotateInstancePatch rotates the instance's selected certificates by
 // writing the new versions onto its VMs. It runs the preflight, which
-// discovers every VM's consumers, and the BeforeRegenerate re-check,
-// unless the regeneration already started, regenerates the variables,
+// discovers every VM's consumers, unless the regeneration already started,
+// and the BeforeRegenerate re-check while any selected variable is still
+// not sent, regenerates the variables,
 // reads and validates each new key pair, and runs the BeforeMutation
 // re-check. It then patches the VMs one at a time through one SSH session
 // per instance group, which it opens once and closes when the instance
@@ -1020,7 +1021,7 @@ func (m *Manager) rotateInstancePatch(ctx context.Context, task *UpgradeTask, in
 		return m.instanceSettled(inst)
 	}
 
-	if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
+	if m.stopIfCancelled(ctx, task, inst, m.regenerateCancelled(task, inst)) {
 		return true
 	}
 
@@ -1034,14 +1035,10 @@ func (m *Manager) rotateInstancePatch(ctx context.Context, task *UpgradeTask, in
 		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
 			return true
 		}
+	}
 
-		if m.stopForChanges(ctx, task, inst, BeforeRegenerate) {
-			return m.instanceSettled(inst)
-		}
-
-		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
-			return true
-		}
+	if stop, settled := m.recheckBeforeRegenerate(ctx, task, inst); stop {
+		return settled
 	}
 
 	stop, err := m.regenerateVariables(ctx, task, inst)

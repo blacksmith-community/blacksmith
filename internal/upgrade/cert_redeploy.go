@@ -314,17 +314,18 @@ func (m *Manager) reservationWaits(task *UpgradeTask, inst *InstanceUpgrade) boo
 }
 
 // rotateInstanceRedeploy rotates the instance's selected certificates by
-// redeploying it. It runs the preflight and the BeforeRegenerate re-check,
-// unless the regeneration already started, regenerates the variables, and
-// goes on to the deploy as redeployFromMutation describes. Each step that
-// writes checks the switches first, and with rotation off the task pauses
-// before it changes anything. It reports whether the instance settled.
+// redeploying it. It runs the preflight unless the regeneration already
+// started, and the BeforeRegenerate re-check while any selected variable
+// is still not sent, regenerates the variables, and goes on to the deploy
+// as redeployFromMutation describes. Each step that writes checks the
+// switches first, and with rotation off the task pauses before it changes
+// anything. It reports whether the instance settled.
 func (m *Manager) rotateInstanceRedeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
 	if m.refuseWrites(ctx, task, inst) {
 		return m.instanceSettled(inst)
 	}
 
-	if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
+	if m.stopIfCancelled(ctx, task, inst, m.regenerateCancelled(task, inst)) {
 		return true
 	}
 
@@ -340,14 +341,10 @@ func (m *Manager) rotateInstanceRedeploy(ctx context.Context, task *UpgradeTask,
 		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
 			return true
 		}
+	}
 
-		if m.stopForChanges(ctx, task, inst, BeforeRegenerate) {
-			return m.instanceSettled(inst)
-		}
-
-		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
-			return true
-		}
+	if stop, settled := m.recheckBeforeRegenerate(ctx, task, inst); stop {
+		return settled
 	}
 
 	stop, err := m.regenerateVariables(ctx, task, inst)
@@ -705,6 +702,70 @@ func regenerationStartedLocked(inst *InstanceUpgrade) bool {
 	return false
 }
 
+// unsentRemainLocked reports whether any selected variable of the
+// instance is still not sent, so a regenerate request may yet go out for
+// it. The caller holds mu.
+func unsentRemainLocked(inst *InstanceUpgrade) bool {
+	if inst.Certificates == nil {
+		return false
+	}
+
+	for _, variable := range inst.Certificates.Variables {
+		if variable.RegenerateState == RegenerateNotSent && variable.NewVersionID == "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// recheckBeforeRegenerate runs the BeforeRegenerate re-check before the
+// first regenerate request, and again on a resume while any selected
+// variable is still not sent, because something may have changed it while
+// the task waited. The re-check compares a variable the task already
+// regenerated with its own new version, so only a change made outside the
+// task stops the rotation. A task cancelled by then ends the instance. It
+// reports whether the rotation stopped, and if so whether the instance
+// settled.
+func (m *Manager) recheckBeforeRegenerate(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) (bool, bool) {
+	m.mu.RLock()
+	needed := !regenerationStartedLocked(inst) || unsentRemainLocked(inst)
+	m.mu.RUnlock()
+
+	if !needed {
+		return false, false
+	}
+
+	if m.stopForChanges(ctx, task, inst, BeforeRegenerate) {
+		return true, m.instanceSettled(inst)
+	}
+
+	if m.stopIfCancelled(ctx, task, inst, m.regenerateCancelled(task, inst)) {
+		return true, true
+	}
+
+	return false, false
+}
+
+// regenerateCancelled is the message of an instance whose task was
+// cancelled before its next regenerate request. Before any variable was
+// regenerated, nothing changed. After that, the new versions wait in
+// CredHub, as a redeploy or a patch instance that a cancel ends before its
+// deploy or its first replace says.
+func (m *Manager) regenerateCancelled(task *UpgradeTask, inst *InstanceUpgrade) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	switch {
+	case !regenerationStartedLocked(inst):
+		return cancelledUnchanged
+	case certTaskMode(task) == RotationModePatch:
+		return patchUntouchedLocked(task, inst)
+	default:
+		return cancelledUndeployed
+	}
+}
+
 // instanceSettled reports whether the instance reached a final outcome.
 func (m *Manager) instanceSettled(inst *InstanceUpgrade) bool {
 	m.mu.RLock()
@@ -790,7 +851,7 @@ func (m *Manager) stopForChanges(ctx context.Context, task *UpgradeTask, inst *I
 
 	cancelled := cancelledUndeployed
 	if at == BeforeRegenerate {
-		cancelled = cancelledUnchanged
+		cancelled = m.regenerateCancelled(task, inst)
 	}
 
 	m.awaitNewApproval(ctx, task, inst, changes, cancelled)
