@@ -189,6 +189,10 @@ func DecideResume(journal *VMJournal, live LiveState) (ResumeAction, string) {
 		return ResumeMarkReverted, fmt.Sprintf("The VM's CID changed while it was %s, so BOSH recreated it with the old files.", journal.Phase)
 	}
 
+	if untouched(journal) && everyFileOld(journal, live) {
+		return ResumeContinueStaging, "No command that changes the VM was sent and every file holds its old content, so the VM is untouched and its patch starts again from staging."
+	}
+
 	tally := tallyLive(journal, live)
 
 	if tally.drifted != "" {
@@ -204,6 +208,40 @@ func DecideResume(journal *VMJournal, live LiveState) (ResumeAction, string) {
 	}
 
 	return ResumeUnrecovered, fmt.Sprintf("The VM was %s with %d of %d files new and %d backups present, which no resume rule covers.", journal.Phase, tally.new, tally.files, tally.backups)
+}
+
+// untouched reports whether the journal shows that no command that changes
+// the VM was sent: it is planned, its work directory was never prepared,
+// and no file moved on from planned. Preflight and regeneration save such
+// journals before the new hashes are known.
+func untouched(journal *VMJournal) bool {
+	if journal.Phase != VMPhasePlanned || journal.Cleanup != "" || len(journal.Files) == 0 {
+		return false
+	}
+
+	for _, file := range journal.Files {
+		if file.State != "" && file.State != FileStatePlanned {
+			return false
+		}
+	}
+
+	return true
+}
+
+// everyFileOld reports whether every file of the journal holds its old
+// content on the VM and none has a backup, judged by the old hash alone.
+func everyFileOld(journal *VMJournal, live LiveState) bool {
+	for _, file := range journal.Files {
+		if hash, ok := live.FileHashes[file.Path]; !ok || file.OldHash == "" || hash != file.OldHash {
+			return false
+		}
+
+		if _, ok := live.BackupHashes[file.BackupPath]; ok && file.BackupPath != "" {
+			return false
+		}
+	}
+
+	return true
 }
 
 // decideOpen applies the rows for an open phase whose files all hold the

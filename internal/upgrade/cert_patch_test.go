@@ -1387,3 +1387,67 @@ func TestPatchMissingVariableFailsClosed(t *testing.T) {
 		t.Fatalf("expected the instance to fail, got %s", got.Status)
 	}
 }
+
+// Every journal the patch saves before its first command to a VM, from
+// preflight and regeneration onwards, resumes as untouched against a VM
+// that still holds its old files, never as unrecovered.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchUntouchedJournalsResumeAsUntouched(t *testing.T) {
+	env := newPatchEnv(t)
+
+	var (
+		smu   sync.Mutex
+		saved []VMJournal
+	)
+
+	keep := env.vault.onSaved
+	env.vault.onSaved = func(task UpgradeTask) {
+		keep(task)
+
+		if len(task.Instances) == 0 || task.Instances[0].Certificates == nil || len(task.Instances[0].Certificates.VMs) == 0 {
+			return
+		}
+
+		smu.Lock()
+		saved = append(saved, copyJournal(task.Instances[0].Certificates.VMs[0]))
+		smu.Unlock()
+	}
+
+	manager := env.newManager()
+	task := env.task()
+
+	env.run(manager, &task)
+
+	old := map[string]string{
+		FileRoleCertificate: certpatch.NormalisedHash(env.oldPair.cert),
+		FileRoleKey:         certpatch.NormalisedHash(env.oldPair.key),
+	}
+
+	smu.Lock()
+	defer smu.Unlock()
+
+	untouched := 0
+
+	for i := range saved {
+		j := saved[i]
+		if j.Phase != VMPhasePlanned || j.Cleanup != "" {
+			continue
+		}
+
+		untouched++
+
+		live := LiveState{CID: j.CID, FileHashes: map[string]string{}, BackupHashes: map[string]string{}}
+		for _, file := range j.Files {
+			live.FileHashes[file.Path] = old[file.Role]
+		}
+
+		if action, why := DecideResume(&j, live); action != ResumeContinueStaging {
+			t.Fatalf("expected save %d of an untouched VM to resume from staging, got %s (%s)", i, action, why)
+		}
+	}
+
+	if untouched == 0 {
+		t.Fatal("expected journals saved before the first command to the VM")
+	}
+}

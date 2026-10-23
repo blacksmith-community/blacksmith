@@ -193,6 +193,19 @@ func sameHashJournal() *upgrade.VMJournal {
 	return journal
 }
 
+// untouchedJournal is a journal saved before the patch sent anything to
+// the VM, as preflight and regeneration save it: planned, with no new
+// hashes yet and no cleanup to do.
+func untouchedJournal() *upgrade.VMJournal {
+	journal := resumeJournal(upgrade.VMPhasePlanned, "")
+	for i := range journal.Files {
+		journal.Files[i].NewHash = ""
+		journal.Files[i].State = upgrade.FileStatePlanned
+	}
+
+	return journal
+}
+
 // Shorthands for the live hashes of the two files and their backups.
 func bothOld() map[string]string    { return map[string]string{pathA: oldA, pathB: oldB} }
 func bothNew() map[string]string    { return map[string]string{pathA: newA, pathB: newB} }
@@ -276,6 +289,9 @@ func guardRows() []resumeCase {
 		{"a journal with no files", &upgrade.VMJournal{CID: journalCID, Phase: upgrade.VMPhasePlanned}, live(journalCID, nil, nil), upgrade.ResumeUnrecovered},
 		{"a file whose old and new hashes match", sameHashJournal(), live(journalCID, bothOld(), noBackups()), upgrade.ResumeUnrecovered},
 		{"an unknown phase", resumeJournal("melting", ""), live(journalCID, bothOld(), noBackups()), upgrade.ResumeUnrecovered},
+		{"untouched before the new hashes are known", untouchedJournal(), live(journalCID, bothOld(), noBackups()), upgrade.ResumeContinueStaging},
+		{"untouched with a file drifted", untouchedJournal(), live(journalCID, strayLive(), noBackups()), upgrade.ResumeUnrecovered},
+		{"untouched on a recreated VM", untouchedJournal(), live(recreated, bothOld(), noBackups()), upgrade.ResumeMarkReverted},
 	}
 }
 
