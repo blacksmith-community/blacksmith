@@ -62,10 +62,24 @@ var errVerifyUnreadable = errors.New("the verification could not read what it ch
 
 // runsCertificatesLocked reports whether the manager runs this task as a
 // certificate rotation. Only a configured manager does, and only a
-// redeploy, since the other modes have no runner yet. The caller holds mu.
+// redeploy or a patch, since converge has no runner yet. The caller
+// holds mu.
 func (m *Manager) runsCertificatesLocked(task *UpgradeTask) bool {
+	mode := certTaskMode(task)
+
 	return task.KindOrDefault() == TaskKindCertificates && m.configured &&
-		certTaskMode(task) == RotationModeRedeploy
+		(mode == RotationModeRedeploy || mode == RotationModePatch)
+}
+
+// rotateInstance runs the rotation of the task's mode on the instance.
+func (m *Manager) rotateInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) {
+	if m.rotationMode(task) == RotationModePatch {
+		m.rotateInstancePatch(ctx, task, inst, cancelCh)
+
+		return
+	}
+
+	m.rotateInstanceRedeploy(ctx, task, inst, cancelCh)
 }
 
 // processCertificateInstance takes one instance of a certificate task
@@ -135,7 +149,7 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 		case stepMutation:
 			m.redeployFromMutation(ctx, task, inst, cancelCh)
 		case stepRotate:
-			m.rotateInstanceRedeploy(ctx, task, inst, cancelCh)
+			m.rotateInstance(ctx, task, inst, cancelCh)
 		}
 
 		if ctx.Err() != nil {
@@ -514,10 +528,19 @@ func (m *Manager) preflightStops(ctx context.Context, task *UpgradeTask, inst *I
 	m.setPhase(inst, RotationPhasePreflight)
 
 	err := m.certPreflight(ctx, task, inst)
-
-	switch {
-	case err == nil:
+	if err == nil {
 		return false
+	}
+
+	return m.preflightFailed(ctx, task, inst, err)
+}
+
+// preflightFailed stops the rotation after a preflight error. A refusal
+// by the switches pauses the task, and any other failure fails the
+// instance, which changed nothing yet. It reports true, unless the
+// manager is stopping, when it records nothing.
+func (m *Manager) preflightFailed(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, err error) bool {
+	switch {
 	case ctx.Err() != nil:
 		return true
 	case isWritesRefused(err):

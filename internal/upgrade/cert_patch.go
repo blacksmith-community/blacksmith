@@ -1,7 +1,11 @@
 package upgrade
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +25,7 @@ import (
 	"blacksmith/internal/bosh/sshconn"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/certpatch"
+	"blacksmith/internal/credhub"
 	"blacksmith/internal/upgrade/certscripts"
 	"blacksmith/pkg/logger"
 )
@@ -851,6 +856,9 @@ type patchPlan struct {
 	consumers []Consumer
 	gate      string
 	vms       int
+	// oldKeys maps each selected variable to the normalised hash of its
+	// deployed private key.
+	oldKeys map[string]string
 }
 
 // preflightPatch is the patch part of the preflight. It checks every VM
@@ -888,5 +896,1106 @@ func (m *Manager) preflightPatch(ctx context.Context, task *UpgradeTask, inst *I
 		return nil, err
 	}
 
-	return &patchPlan{journals: journals, consumers: consumers, gate: gate, vms: len(scan.VMs)}, nil
+	return &patchPlan{journals: journals, consumers: consumers, gate: gate, vms: len(scan.VMs), oldKeys: oldKey}, nil
+}
+
+// The script that changes files on a VM, and the operations the executor
+// runs through it.
+const (
+	patchScript  = "patch"
+	opPrepare    = "prepare"
+	opStage      = "stage"
+	opCheck      = "check"
+	opStageCheck = "stagecheck"
+	opBackup     = "backup"
+	opReplace    = "replace"
+)
+
+// errVMStopped marks a step on a VM that already paused or failed the
+// task and saved why, so the caller stops the instance as it stands.
+var errVMStopped = errors.New("the patch stopped on this VM")
+
+// errKeyUnreadable is the only error a private key's parse returns, so no
+// parser's message about the key's bytes travels further.
+var errKeyUnreadable = errors.New("the private key could not be parsed")
+
+// patchKinds is every kind of line patch.sh prints, with the keys each
+// kind may carry.
+var patchKinds = map[string]map[string]bool{
+	"ok":          {"path": true, "state": true, "backup": true, "action": true, "name": true},
+	"drift":       {"path": true, "name": true},
+	"unrecovered": {"path": true},
+}
+
+// cancelledBetweenVMs is the message of an instance whose task was
+// cancelled between two VMs of a patch.
+const cancelledBetweenVMs = "The task was cancelled between two VMs of the patch. Any VM already patched keeps the new certificate, which the divergence record lists until the instance is redeployed."
+
+// rotateInstancePatch rotates the instance's selected certificates by
+// writing the new versions onto its VMs. It runs the preflight, which
+// discovers every VM's consumers, and the BeforeRegenerate re-check,
+// unless the regeneration already started, regenerates the variables,
+// reads and validates each new key pair, and runs the BeforeMutation
+// re-check. It then patches the VMs one at a time through one SSH session
+// per instance group, which it opens once and closes when the instance
+// ends. Every key pair it read is zeroed on every way out, after the
+// sessions closed, so no command still under way reads a zeroed buffer.
+// It reports whether the instance settled.
+func (m *Manager) rotateInstancePatch(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, _ <-chan struct{}) bool {
+	pairs := make(map[string]*credhub.KeyPair)
+	defer zeroPairs(pairs)
+
+	sessions := m.newPatchSessions(inst.DeploymentName)
+	defer sessions.close()
+
+	if m.refuseWrites(ctx, task, inst) {
+		return m.instanceSettled(inst)
+	}
+
+	if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
+		return true
+	}
+
+	m.markRotating(ctx, task, inst)
+
+	if !m.regenerationStarted(inst) {
+		if m.patchPreflightStops(ctx, task, inst, sessions) {
+			return m.instanceSettled(inst)
+		}
+
+		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
+			return true
+		}
+
+		if m.stopForChanges(ctx, task, inst, BeforeRegenerate) {
+			return m.instanceSettled(inst)
+		}
+
+		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
+			return true
+		}
+	}
+
+	stop, err := m.regenerateVariables(ctx, task, inst)
+	if err != nil {
+		m.logger.Error("Certificate task %s stopped regenerating instance %s: %v", task.ID, inst.InstanceID, err)
+	}
+
+	if stop || err != nil {
+		return m.instanceSettled(inst)
+	}
+
+	if m.readNewPairs(ctx, task, inst, pairs) {
+		return m.instanceSettled(inst)
+	}
+
+	if m.stopForChanges(ctx, task, inst, BeforeMutation) {
+		return m.instanceSettled(inst)
+	}
+
+	return m.patchVMs(ctx, task, inst, sessions, pairs)
+}
+
+// zeroPairs zeroes every key pair in the map.
+func zeroPairs(pairs map[string]*credhub.KeyPair) {
+	for _, pair := range pairs {
+		pair.Zero()
+	}
+}
+
+// patchPreflightStops runs the preflight with the instance's sessions and
+// saves the journals it planned, with the gate and the old key hashes,
+// before anything regenerates. It reports whether the rotation stopped.
+func (m *Manager) patchPreflightStops(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, sessions *patchSessions) bool {
+	m.setPhase(inst, RotationPhasePreflight)
+
+	plan, err := m.certPreflightPlan(ctx, task, inst, sessions)
+	if err != nil {
+		return m.preflightFailed(ctx, task, inst, err)
+	}
+
+	if plan == nil || len(plan.journals) == 0 {
+		m.failRotation(ctx, task, inst, "The preflight found no VM to patch, so nothing changed.") //nolint:errcheck,gosec // failRotation logs and saves it
+
+		return true
+	}
+
+	m.mu.Lock()
+
+	inst.Certificates.Phase = RotationPhaseDiscover
+	inst.Certificates.VMs = plan.journals
+	inst.Certificates.Gate = plan.gate
+
+	for i := range inst.Certificates.Variables {
+		v := &inst.Certificates.Variables[i]
+		v.OldKeyHash = plan.oldKeys[v.Name]
+	}
+
+	m.mu.Unlock()
+
+	err = m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.pauseUnconfirmed(task, inst, "regenerate the certificates")
+
+		return true
+	}
+
+	return false
+}
+
+// readNewPairs reads the key pair of each variable's new version into
+// pairs, checks that its certificate is the one the regeneration
+// validated, and validates it again with its private key, so key_match
+// runs. It records the new key hash and each file's new hash, and reports
+// whether the rotation stopped. Each pair goes into pairs the moment it is
+// read, so the caller zeroes it on every path.
+func (m *Manager) readNewPairs(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, pairs map[string]*credhub.KeyPair) bool {
+	api := m.certDeps().CredHub
+	if api == nil {
+		m.pauseWith(ctx, task, inst, apierr.New(http.StatusForbidden, apierr.CodeCredHubNotConfigured, //nolint:errcheck,gosec // pauseWith logs and saves it
+			"CredHub is not configured, so the new certificates can't be read."))
+
+		return true
+	}
+
+	m.mu.RLock()
+	count := len(inst.Certificates.Variables)
+	m.mu.RUnlock()
+
+	for index := range count {
+		variable, _ := m.variableAt(inst, index)
+
+		pair, err := api.CertificateKeyPair(ctx, variable.NewVersionID)
+		if err != nil {
+			m.pauseForCredHub(ctx, task, inst, "read the new key pair of "+shortName(variable.Name), err) //nolint:errcheck,gosec // pauseForCredHub logs and saves it
+
+			return true
+		}
+
+		pairs[variable.Name] = pair
+
+		if m.validatePair(ctx, api, task, inst, index, pair) {
+			return true
+		}
+	}
+
+	m.mu.Lock()
+
+	hashes := make(map[string][2]string, count)
+	for _, v := range inst.Certificates.Variables {
+		hashes[v.Name] = [2]string{v.NewCertHash, v.NewKeyHash}
+	}
+
+	for i := range inst.Certificates.VMs {
+		files := inst.Certificates.VMs[i].Files
+		for n := range files {
+			pick := 0
+			if files[n].Role == FileRoleKey {
+				pick = 1
+			}
+
+			files[n].NewHash = hashes[files[n].Variable][pick]
+		}
+	}
+
+	m.mu.Unlock()
+
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.pauseUnconfirmed(task, inst, "patch the VMs")
+
+		return true
+	}
+
+	return false
+}
+
+// validatePair checks one variable's new key pair and records the checks
+// and the key's hash. It reports whether the rotation stopped.
+func (m *Manager) validatePair(ctx context.Context, api CredHubAPI, task *UpgradeTask, inst *InstanceUpgrade, index int, pair *credhub.KeyPair) bool {
+	variable, _ := m.variableAt(inst, index)
+	short := shortName(variable.Name)
+	step := "validate the new key pair of " + short
+
+	if certpatch.NormalisedHash(pair.Certificate) != variable.NewCertHash {
+		m.failRotation(ctx, task, inst, fmt.Sprintf( //nolint:errcheck,gosec // failRotation logs and saves it
+			"CredHub answered version %s of %s with a certificate other than the one Blacksmith validated, so nothing was patched.", variable.NewVersionID, short))
+
+		return true
+	}
+
+	key, err := parsePrivateKey(pair.PrivateKey)
+	if err != nil {
+		m.failRotation(ctx, task, inst, fmt.Sprintf( //nolint:errcheck,gosec // failRotation logs and saves it
+			"The private key of version %s of %s could not be parsed, so nothing was patched.", variable.NewVersionID, short))
+
+		return true
+	}
+
+	oldPublic, err := api.CertificateVersion(ctx, variable.OldVersionID)
+	if err != nil {
+		m.pauseForCredHub(ctx, task, inst, step, err) //nolint:errcheck,gosec // pauseForCredHub logs and saves it
+
+		return true
+	}
+
+	newPublic, err := api.CertificateVersion(ctx, variable.NewVersionID)
+	if err != nil {
+		m.pauseForCredHub(ctx, task, inst, step, err) //nolint:errcheck,gosec // pauseForCredHub logs and saves it
+
+		return true
+	}
+
+	signingCA, err := m.signingCA(ctx, api, variable.Name, newPublic)
+	if err != nil {
+		m.pauseForCredHub(ctx, task, inst, step, err) //nolint:errcheck,gosec // pauseForCredHub logs and saves it
+
+		return true
+	}
+
+	checks := ValidateNew(firstCertificate(oldPublic), parseFirst(string(pair.Certificate)), signingCA, key, m.certNow())
+
+	m.changeVariable(inst, index, func(v *VariableRotation) {
+		v.Validation = checks
+		v.NewKeyHash = certpatch.NormalisedHash(pair.PrivateKey)
+	})
+
+	if !AllPassed(checks) {
+		m.failRotation(ctx, task, inst, fmt.Sprintf( //nolint:errcheck,gosec // failRotation logs and saves it
+			"The new key pair failed validation: version %s of %s %s. CredHub keeps the new version, which is not patched onto any VM.",
+			variable.NewVersionID, short, failedChecks(checks)))
+
+		return true
+	}
+
+	return false
+}
+
+// parsePrivateKey parses the first PEM block of a private key as PKCS #8,
+// PKCS #1, or SEC 1. It clears the decoded block before it returns, and
+// its only error is errKeyUnreadable.
+func parsePrivateKey(data []byte) (crypto.PrivateKey, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errKeyUnreadable
+	}
+
+	defer clear(block.Bytes)
+
+	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+
+	return nil, errKeyUnreadable
+}
+
+// patchVMs patches the instance's VMs one at a time, in journal order. A
+// pause or a cancel takes effect only between two VMs. The gate runs once
+// before the first VM of a pass. It reports whether the instance settled.
+func (m *Manager) patchVMs(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, sessions *patchSessions, pairs map[string]*credhub.KeyPair) bool {
+	m.setPhase(inst, RotationPhasePatch)
+
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.pauseUnconfirmed(task, inst, "patch the VMs")
+
+		return m.instanceSettled(inst)
+	}
+
+	m.mu.RLock()
+	count := len(inst.Certificates.VMs)
+	gate := inst.Certificates.Gate
+	vmCount := len(inst.Certificates.Approved.VMCIDs)
+	m.mu.RUnlock()
+
+	gated := false
+
+	for i := range count {
+		j := &inst.Certificates.VMs[i]
+
+		if done, stop := m.vmClosed(ctx, task, inst, j); stop {
+			return m.instanceSettled(inst)
+		} else if done {
+			continue
+		}
+
+		if m.stopBetweenVMs(ctx, task, inst) {
+			return m.instanceSettled(inst)
+		}
+
+		sess, err := m.journalSession(ctx, sessions, inst, j)
+		if err != nil {
+			m.pauseWith(ctx, task, inst, fmt.Errorf("Blacksmith could not open an SSH session on %s, so it was not patched: %w", j.VM, err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+			return m.instanceSettled(inst)
+		}
+
+		if !gated {
+			if m.gateBeforeVM(ctx, task, inst, j, sess, gate, vmCount) {
+				return m.instanceSettled(inst)
+			}
+
+			gated = true
+		}
+
+		if m.patchVMForward(ctx, task, inst, j, pairs, sess) != nil {
+			return m.instanceSettled(inst)
+		}
+
+		m.failRotation(ctx, task, inst, fmt.Sprintf( //nolint:errcheck,gosec // failRotation logs and saves it
+			"VM %s holds the new certificate files, but restart not yet supported, so its processes still serve the old ones. Redeploy this instance, which renders its jobs from BOSH state and repairs the VM.", j.VM))
+
+		return true
+	}
+
+	m.settleCertificateInstance(task, inst, true, "")
+
+	err = m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.logger.Error("Certificate task %s: %v", task.ID, err)
+	}
+
+	return true
+}
+
+// vmClosed reads the VM's phase before a pass reaches it. A VM that is
+// done needs nothing more. A VM another pass left unrecovered or reverted
+// fails the instance, and one left part way pauses the task until the
+// resume that checks its files. It reports whether the VM is done and
+// whether the instance stopped.
+func (m *Manager) vmClosed(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, j *VMJournal) (bool, bool) {
+	m.mu.RLock()
+	phase, cleanup, name := j.Phase, j.Cleanup, j.VM
+	m.mu.RUnlock()
+
+	switch {
+	case phase == VMPhaseDone:
+		return true, false
+	case phase == VMPhaseUnrecovered || phase == VMPhaseReverted:
+		m.failRotation(ctx, task, inst, fmt.Sprintf( //nolint:errcheck,gosec // failRotation logs and saves it
+			"VM %s is %s. Redeploy this instance, which renders its jobs from BOSH state and repairs the VM.", name, phase))
+
+		return false, true
+	case phase != VMPhasePlanned || cleanup != "":
+		m.pauseWith(ctx, task, inst, fmt.Errorf( //nolint:errcheck,gosec // pauseWith logs and saves it
+			"VM %s was left %s by an earlier pass, so it waits for the resume that checks its files.", name, phase))
+
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// stopBetweenVMs ends a cancelled task's instance, or leaves a paused
+// task's instance as it stands, before the next VM. It reports whether it
+// stopped.
+func (m *Manager) stopBetweenVMs(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
+	if m.stopIfCancelled(ctx, task, inst, cancelledBetweenVMs) {
+		return true
+	}
+
+	m.mu.RLock()
+	paused := task.Paused
+	m.mu.RUnlock()
+
+	return paused
+}
+
+// journalSession returns the session of the VM's instance group, opened
+// on every VM of the group the journals name.
+func (m *Manager) journalSession(ctx context.Context, sessions *patchSessions, inst *InstanceUpgrade, j *VMJournal) (PatchSession, error) {
+	m.mu.RLock()
+
+	group := j.Group
+
+	var indices []int
+
+	for _, journal := range inst.Certificates.VMs {
+		if journal.Group == group {
+			indices = append(indices, journal.Index)
+		}
+	}
+
+	m.mu.RUnlock()
+
+	sort.Ints(indices)
+
+	return sessions.group(ctx, group, indices)
+}
+
+// journalHost finds the journal's VM in the session.
+func journalHost(sess PatchSession, j *VMJournal) (int, error) {
+	return hostIndex(sess, j.Group, strings.TrimPrefix(j.VM, j.Group+"/"))
+}
+
+// gateBeforeVM runs the gate on the VM before any VM of the pass is
+// changed. It reports whether the task paused.
+func (m *Manager) gateBeforeVM(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, j *VMJournal, sess PatchSession, gate string, vmCount int) bool {
+	host, err := journalHost(sess, j)
+	if err == nil {
+		err = m.runGate(ctx, sess, host, gate, vmCount)
+	}
+
+	if err == nil {
+		return false
+	}
+
+	if ctx.Err() != nil {
+		return true
+	}
+
+	m.pauseWith(ctx, task, inst, fmt.Errorf("The health gate did not pass before the patch, so no VM was changed: %w", err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+	return true
+}
+
+// patchVMForward takes one planned VM to swapped through sess, the
+// session of its group, and never opens one of its own. It re-checks the
+// director, the VM's CID, and its files, stages every new file, backs up
+// every file, records the VM in the divergence record, and replaces each
+// file. Every command that changes the VM is sent only once the switches
+// allow it and the journal's intent is saved for certain, and its result
+// is saved after it. It returns errVMStopped once it paused or failed the
+// task, and nil when the VM reached swapped.
+func (m *Manager) patchVMForward(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, j *VMJournal, pairs map[string]*credhub.KeyPair, sess PatchSession) error {
+	host, err := journalHost(sess, j)
+	if err != nil {
+		m.failRotation(ctx, task, inst, fmt.Sprintf("VM %s was not patched: %v", j.VM, err)) //nolint:errcheck,gosec // failRotation logs and saves it
+
+		return errVMStopped
+	}
+
+	run := vmRun{manager: m, ctx: ctx, task: task, inst: inst, j: j, sess: sess, host: host}
+
+	for _, step := range []func() error{
+		run.recheck,
+		func() error { return run.stage(pairs) },
+		run.backup,
+		func() error { return run.diverge(pairs, certinventory.DivergentVMUnknown) },
+		func() error { return run.advance(VMPhaseSwapping, "replace the files on "+j.VM) },
+		run.replace,
+		func() error { return run.diverge(pairs, certinventory.DivergentVMApplied) },
+		func() error { return run.advance(VMPhaseSwapped, "restart the processes on "+j.VM) },
+	} {
+		err := step()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// vmRun is one pass of the executor over one VM.
+type vmRun struct {
+	manager *Manager
+	//nolint:containedctx // a pass over one VM lives as long as this context
+	ctx  context.Context
+	task *UpgradeTask
+	inst *InstanceUpgrade
+	j    *VMJournal
+	sess PatchSession
+	host int
+}
+
+// change applies a change to the journal under mu.
+func (r *vmRun) change(change func(j *VMJournal)) {
+	r.manager.mu.Lock()
+	defer r.manager.mu.Unlock()
+
+	change(r.j)
+}
+
+// files copies the journal's files.
+func (r *vmRun) files() []FileEntry {
+	r.manager.mu.RLock()
+	defer r.manager.mu.RUnlock()
+
+	return slices.Clone(r.j.Files)
+}
+
+// save saves the task for certain. An unconfirmed save pauses the task,
+// which then does not step, and returns errVMStopped.
+func (r *vmRun) save(step string) error {
+	err := r.manager.persistCertConfirmed(r.ctx, r.task)
+	if err != nil {
+		r.manager.pauseUnconfirmed(r.task, r.inst, step)
+
+		return errVMStopped
+	}
+
+	return nil
+}
+
+// advance moves the journal to the phase and saves it for certain before
+// the next step's side effect. An unconfirmed save puts the phase back.
+func (r *vmRun) advance(phase VMPhase, step string) error {
+	var before VMPhase
+
+	var err error
+
+	r.change(func(j *VMJournal) {
+		before = j.Phase
+		err = j.Advance(phase)
+	})
+
+	if err != nil {
+		r.manager.failRotation(r.ctx, r.task, r.inst, fmt.Sprintf("VM %s could not move on: %v", r.j.VM, err)) //nolint:errcheck,gosec // failRotation logs and saves it
+
+		return errVMStopped
+	}
+
+	err = r.save(step)
+	if err != nil {
+		r.change(func(j *VMJournal) { j.Phase = before })
+	}
+
+	return err
+}
+
+// mutate sends one command that changes the VM. It checks the switches,
+// applies the intent to the journal, and saves it for certain, and only
+// then sends the command. A refusal or an unconfirmed save sends nothing,
+// puts the journal back, and returns errVMStopped. Any other error is the
+// command's own.
+func (r *vmRun) mutate(step string, intent func(j *VMJournal), send func() (ssh.Result, error)) (ssh.Result, error) {
+	err := r.manager.certWritesAllowed(RotationModePatch)
+	if err != nil {
+		r.manager.pauseWith(r.ctx, r.task, r.inst, writesRefused(err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+		return ssh.Result{}, errVMStopped
+	}
+
+	r.manager.mu.RLock()
+	before := copyJournal(*r.j)
+	r.manager.mu.RUnlock()
+
+	if intent != nil {
+		r.change(intent)
+	}
+
+	err = r.save(step)
+	if err != nil {
+		r.change(func(j *VMJournal) { *j = before })
+
+		return ssh.Result{}, err
+	}
+
+	return send()
+}
+
+// copyJournal copies a journal with its slices and map.
+func copyJournal(j VMJournal) VMJournal {
+	j.Files = slices.Clone(j.Files)
+	j.Processes = slices.Clone(j.Processes)
+	j.Targets = slices.Clone(j.Targets)
+
+	dirs := make(map[string]string, len(j.JobDirs))
+	for job, dir := range j.JobDirs {
+		dirs[job] = dir
+	}
+
+	j.JobDirs = dirs
+
+	return j
+}
+
+// script runs one patch.sh operation on the VM under the operation's
+// timeout.
+func (r *vmRun) script(op string, args ...string) (ssh.Result, error) {
+	return runScript(r.ctx, r.sess, r.host, patchScript, op, append([]string{r.task.ID}, args...)...)
+}
+
+// okLines returns the lines of a result that exited 0 and printed only ok
+// lines, and false for any other result.
+func okLines(result ssh.Result) ([]map[string]string, bool) {
+	if result.ExitCode != certscripts.ExitOK || result.Truncated {
+		return nil, false
+	}
+
+	records, err := certscripts.ParseRecords(result.Stdout, patchKinds)
+	if err != nil || len(records) == 0 {
+		return nil, false
+	}
+
+	lines := make([]map[string]string, 0, len(records))
+
+	for _, record := range records {
+		if record.Kind != "ok" {
+			return nil, false
+		}
+
+		lines = append(lines, record.Fields)
+	}
+
+	return lines, true
+}
+
+// exitMeaning says in words why a script exited as it did. It never
+// repeats the script's output.
+func exitMeaning(op string, result ssh.Result) string {
+	switch result.ExitCode {
+	case certscripts.ExitOK:
+		return fmt.Sprintf("patch.sh %s printed an answer outside its contract", op)
+	case certscripts.ExitDrift:
+		return fmt.Sprintf("patch.sh %s found a file that changed under it", op)
+	case certscripts.ExitBackup:
+		return fmt.Sprintf("patch.sh %s found a backup that no longer holds the old content", op)
+	case certscripts.ExitRestart:
+		return fmt.Sprintf("patch.sh %s could not restart every process with a new pid", op)
+	case certscripts.ExitRefused:
+		return fmt.Sprintf("patch.sh %s refused a path or directory that failed its safety checks", op)
+	default:
+		return fmt.Sprintf("patch.sh %s exited %d", op, result.ExitCode)
+	}
+}
+
+// jobDir is the job directory of the file's job.
+func (r *vmRun) jobDir(file FileEntry) string {
+	r.manager.mu.RLock()
+	defer r.manager.mu.RUnlock()
+
+	return r.j.JobDirs[file.Job]
+}
+
+// stopUnchanged stops the VM after a failure before any of its files was
+// replaced, so every file still holds the old content. A command that did
+// not finish fails the instance. A command that refused or found drift
+// leaves the VM unrecovered and pauses the task, so an operator can look
+// at it. It returns errVMStopped.
+func (r *vmRun) stopUnchanged(why string, finished bool) error {
+	if r.ctx.Err() != nil {
+		return errVMStopped
+	}
+
+	message := fmt.Sprintf("VM %s was not patched, and every file on it keeps the old certificate: %s.", r.j.VM, why)
+
+	if !finished {
+		r.change(func(j *VMJournal) { j.Error = message })
+		r.manager.failRotation(r.ctx, r.task, r.inst, message) //nolint:errcheck,gosec // failRotation logs and saves it
+
+		return errVMStopped
+	}
+
+	r.change(func(j *VMJournal) {
+		j.Error = message
+		_ = j.Advance(VMPhaseUnrecovered)
+	})
+
+	r.manager.pauseWith(r.ctx, r.task, r.inst, errors.New(message)) //nolint:errcheck,gosec // pauseWith logs and saves it
+
+	return errVMStopped
+}
+
+// recheck makes sure the VM is still the one discovery planned for, with
+// no BOSH task running on its deployment and every file holding the old
+// content, before anything is sent to it. A VM that changed is handled as
+// DecideResume says, and the task pauses.
+func (r *vmRun) recheck() error {
+	m := r.manager
+	deployment := r.inst.DeploymentName
+
+	running, err := directorCall(r.ctx, func(c context.Context) ([]bosh.Task, error) {
+		return m.director.FindRunningTasksForDeployment(c, deployment)
+	})
+
+	switch {
+	case err != nil:
+		return r.pause(fmt.Errorf("The director did not list the running tasks of %s, so VM %s was not patched: %w", deployment, r.j.VM, err))
+	case len(running) > 0:
+		return r.pause(apierr.New(http.StatusConflict, apierr.CodeDeploymentLocked,
+			fmt.Sprintf("BOSH task %d is running on deployment %s, so VM %s was not patched. Resume once it ends.", running[0].ID, deployment, r.j.VM)))
+	}
+
+	vms, err := directorCall(r.ctx, func(c context.Context) ([]bosh.VM, error) {
+		return m.director.GetDeploymentVMs(c, deployment)
+	})
+	if err != nil {
+		return r.pause(fmt.Errorf("The director did not list the VMs of %s, so VM %s was not patched: %w", deployment, r.j.VM, err))
+	}
+
+	live := LiveState{CID: liveCID(vms, r.j), FileHashes: map[string]string{}, BackupHashes: map[string]string{}}
+
+	if live.CID == r.j.CID {
+		err = r.checkFiles(&live)
+		if err != nil {
+			return err
+		}
+	}
+
+	action, why := DecideResume(r.j, live)
+	if action == ResumeContinueStaging {
+		return nil
+	}
+
+	r.change(func(j *VMJournal) {
+		j.Error = why
+
+		switch action { //nolint:exhaustive // every other action leaves the VM where it is
+		case ResumeMarkReverted:
+			_ = j.Advance(VMPhaseReverted)
+		case ResumeUnrecovered:
+			_ = j.Advance(VMPhaseUnrecovered)
+		}
+	})
+
+	return r.pause(fmt.Errorf("VM %s was not patched: %s", r.j.VM, why))
+}
+
+// pause pauses the task with the error and returns errVMStopped.
+func (r *vmRun) pause(err error) error {
+	if r.ctx.Err() == nil {
+		r.manager.pauseWith(r.ctx, r.task, r.inst, err) //nolint:errcheck,gosec // pauseWith logs and saves it
+	}
+
+	return errVMStopped
+}
+
+// liveCID returns the CID the director lists for the journal's VM, found
+// by instance group and index, or "" when it lists none.
+func liveCID(vms []bosh.VM, j *VMJournal) string {
+	for _, vm := range vms {
+		if vm.Job == j.Group && vm.Index == j.Index {
+			return vm.CID
+		}
+	}
+
+	return ""
+}
+
+// checkFiles runs patch.sh check on every file and records what it found
+// in live, as hashes DecideResume compares with the journal's.
+func (r *vmRun) checkFiles(live *LiveState) error {
+	for _, file := range r.files() {
+		result, err := r.script(opCheck, r.jobDir(file), file.Path, file.OldHash, file.NewHash, file.BackupPath)
+		if err != nil {
+			return r.pause(fmt.Errorf("The check of %s on VM %s did not finish, so the VM was not patched: %w", file.Path, r.j.VM, err))
+		}
+
+		lines, ok := okLines(result)
+
+		switch {
+		case ok && len(lines) == 1 && lines[0]["path"] == file.Path:
+			live.FileHashes[file.Path] = map[string]string{"old": file.OldHash, "new": file.NewHash}[lines[0]["state"]]
+			if lines[0]["backup"] == "old" {
+				live.BackupHashes[file.BackupPath] = file.OldHash
+			}
+		case result.ExitCode == certscripts.ExitDrift:
+			live.FileHashes[file.Path] = "drift"
+		case result.ExitCode == certscripts.ExitBackup:
+			live.BackupHashes[file.BackupPath] = "drift"
+		default:
+			return r.pause(fmt.Errorf("VM %s was not patched: %s", r.j.VM, exitMeaning(opCheck, result)))
+		}
+	}
+
+	return nil
+}
+
+// stage makes the task's private work directory, streams each new file
+// to its staging path over stdin, checks every staged copy, and advances
+// to staged.
+func (r *vmRun) stage(pairs map[string]*credhub.KeyPair) error {
+	result, err := r.mutate("prepare VM "+r.j.VM, func(j *VMJournal) { j.Cleanup = CleanupPending }, func() (ssh.Result, error) {
+		return r.script(opPrepare)
+	})
+
+	switch {
+	case errors.Is(err, errVMStopped):
+		return err
+	case err != nil:
+		return r.stopUnchanged("the work directory was not made, because the command did not finish", false)
+	}
+
+	if _, ok := okLines(result); !ok {
+		return r.stopUnchanged(exitMeaning(opPrepare, result), true)
+	}
+
+	files := r.files()
+
+	for n, file := range files {
+		err := r.stageFile(n, file, pairs)
+		if err != nil {
+			return err
+		}
+	}
+
+	for n, file := range files {
+		result, err := r.script(opStageCheck, workPath(r.task.ID, "s", n), file.NewHash)
+
+		switch {
+		case err != nil:
+			return r.stopUnchanged("the check of a staged copy did not finish", false)
+		case !isOK(result):
+			return r.stopUnchanged("the staged copy of "+file.Path+" does not hold the new content: "+exitMeaning(opStageCheck, result), true)
+		}
+	}
+
+	return r.advance(VMPhaseStaged, "back up the files on "+r.j.VM)
+}
+
+// isOK reports whether a result exited 0 with only ok lines.
+func isOK(result ssh.Result) bool {
+	_, ok := okLines(result)
+
+	return ok
+}
+
+// stageFile streams one file's new content to staging path n. The content
+// travels only on stdin, after patch.sh itself.
+func (r *vmRun) stageFile(n int, file FileEntry, pairs map[string]*credhub.KeyPair) error {
+	staged := workPath(r.task.ID, "s", n)
+
+	_, err := certscripts.StageCommand(staged, r.task.ID)
+	if err != nil {
+		return r.stopUnchanged(fmt.Sprintf("the staging path of %s was refused: %v", file.Path, err), false)
+	}
+
+	pair := pairs[file.Variable]
+	if pair == nil {
+		return r.stopUnchanged("there is no new key pair for "+shortName(file.Variable), false)
+	}
+
+	content := pair.Certificate
+	if file.Role == FileRoleKey {
+		content = pair.PrivateKey
+	}
+
+	result, err := r.mutate("stage "+file.Path+" on "+r.j.VM, nil, func() (ssh.Result, error) {
+		input, err := certscripts.StageInput(bytes.NewReader(content))
+		if err != nil {
+			return ssh.Result{}, err
+		}
+
+		ctx, cancel := context.WithTimeout(r.ctx, patchCommandTimeout)
+		defer cancel()
+
+		return r.sess.Run(ctx, r.host, opStage, []string{r.task.ID, staged}, input)
+	})
+
+	switch {
+	case errors.Is(err, errVMStopped):
+		return err
+	case err != nil:
+		return r.stopUnchanged("the staging of "+file.Path+" did not finish", false)
+	case !isOK(result):
+		return r.stopUnchanged(exitMeaning(opStage, result), true)
+	}
+
+	return nil
+}
+
+// backup backs up every file before any is replaced, and advances to
+// backed_up.
+func (r *vmRun) backup() error {
+	for n, file := range r.files() {
+		result, err := r.mutate("back up "+file.Path+" on "+r.j.VM, nil, func() (ssh.Result, error) {
+			return r.script(opBackup, r.jobDir(file), file.Path, file.OldHash, file.BackupPath)
+		})
+
+		switch {
+		case errors.Is(err, errVMStopped):
+			return err
+		case err != nil:
+			return r.stopUnchanged("the backup of "+file.Path+" did not finish", false)
+		case !isOK(result):
+			return r.stopUnchanged(exitMeaning(opBackup, result), true)
+		}
+
+		r.change(func(j *VMJournal) { j.Files[n].State = FileStateBackedUp })
+
+		err = r.save("go on after backing up " + file.Path)
+		if err != nil {
+			return err
+		}
+	}
+
+	return r.advance(VMPhaseBackedUp, "record the divergence of "+r.j.VM)
+}
+
+// diverge writes this VM's state for each variable it holds to the
+// divergence record, and waits until the write is confirmed. With no
+// store, or a write that is not confirmed, the task pauses.
+func (r *vmRun) diverge(pairs map[string]*credhub.KeyPair, state string) error {
+	m := r.manager
+
+	err := m.certWritesAllowed(RotationModePatch)
+	if err != nil {
+		return r.pause(writesRefused(err))
+	}
+
+	err = m.recordDivergence(r.ctx, r.task, r.inst, r.j, fingerprints(pairs), state)
+	if err != nil {
+		return r.pause(fmt.Errorf("The divergence record of VM %s could not be saved, so the patch stopped there: %w", r.j.VM, err))
+	}
+
+	return nil
+}
+
+// fingerprints maps each variable to its new leaf's fingerprint.
+func fingerprints(pairs map[string]*credhub.KeyPair) map[string]string {
+	out := make(map[string]string, len(pairs))
+
+	for name, pair := range pairs {
+		if leaf := parseFirst(string(pair.Certificate)); leaf != nil {
+			out[name] = certinventory.Fingerprint(leaf)
+		}
+	}
+
+	return out
+}
+
+// errNoDivergenceStore is the error a patch gets when the broker has no
+// divergence store.
+var errNoDivergenceStore = errors.New("Blacksmith has no divergence store") //nolint:staticcheck // the message names the product
+
+// recordDivergence sets the VM's state for every variable its files hold.
+// An entry gets the versions and the task when it is written, and keeps
+// the time it began. Setting a VM old drops an entry that no VM holds
+// anything new of any more, and the record when it has no entry left.
+func (m *Manager) recordDivergence(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, j *VMJournal, prints map[string]string, state string) error {
+	store := m.certDeps().Divergence
+	if store == nil {
+		return errNoDivergenceStore
+	}
+
+	m.mu.RLock()
+
+	cid, group, index := j.CID, j.Group, j.Index
+	held := make(map[string]bool)
+
+	for _, file := range j.Files {
+		held[file.Variable] = true
+	}
+
+	var variables []VariableRotation
+
+	for _, v := range inst.Certificates.Variables {
+		if held[v.Name] {
+			variables = append(variables, v.Clone())
+		}
+	}
+
+	m.mu.RUnlock()
+
+	now := m.certNow()
+
+	return store.Update(ctx, inst.InstanceID, func(cur *certinventory.Divergence) (*certinventory.Divergence, error) {
+		if cur == nil {
+			cur = &certinventory.Divergence{InstanceID: inst.InstanceID}
+		}
+
+		for _, v := range variables {
+			entry := divergenceEntry(cur, v.Name)
+			entry.BOSHVersionID = v.OldVersionID
+			entry.AppliedVersionID = v.NewVersionID
+			entry.AppliedFingerprint = prints[v.Name]
+			entry.TaskID = task.ID
+			entry.State = certinventory.DivergenceUnconverged
+
+			if entry.Since.IsZero() {
+				entry.Since = now
+			}
+
+			entry.SetVM(cid, state)
+
+			vm := entry.VMs[cid]
+			vm.Group = group
+			vm.Index = index
+			entry.VMs[cid] = vm
+		}
+
+		return pruneDivergence(cur), nil
+	})
+}
+
+// divergenceEntry returns the record's entry for the variable, adding it
+// when there is none.
+func divergenceEntry(d *certinventory.Divergence, name string) *certinventory.DivergentVariable {
+	for i := range d.Variables {
+		if d.Variables[i].Name == name {
+			return &d.Variables[i]
+		}
+	}
+
+	d.Variables = append(d.Variables, certinventory.DivergentVariable{Name: name})
+
+	return &d.Variables[len(d.Variables)-1]
+}
+
+// pruneDivergence drops each entry no VM holds anything new of, and
+// returns nil for a record with no entry left.
+func pruneDivergence(d *certinventory.Divergence) *certinventory.Divergence {
+	kept := d.Variables[:0]
+
+	for _, entry := range d.Variables {
+		for _, vm := range entry.VMs {
+			if vm.State == certinventory.DivergentVMApplied || vm.State == certinventory.DivergentVMUnknown {
+				kept = append(kept, entry)
+
+				break
+			}
+		}
+	}
+
+	d.Variables = kept
+
+	if len(kept) == 0 {
+		return nil
+	}
+
+	return d
+}
+
+// replace replaces each file with its staged copy. Each file is marked
+// replacing and saved before its command, and replaced and saved after.
+func (r *vmRun) replace() error {
+	for n, file := range r.files() {
+		result, err := r.mutate("replace "+file.Path+" on "+r.j.VM, func(j *VMJournal) { j.Files[n].State = FileStateReplacing }, func() (ssh.Result, error) {
+			return r.script(opReplace, r.jobDir(file), file.Path, workPath(r.task.ID, "s", n), file.OldHash, file.NewHash)
+		})
+
+		switch {
+		case errors.Is(err, errVMStopped):
+			return err
+		case err != nil:
+			return r.replaceFailed("the replacement of " + file.Path + " did not finish")
+		}
+
+		lines, ok := okLines(result)
+		if !ok || len(lines) != 1 || lines[0]["state"] != "new" {
+			return r.replaceFailed(exitMeaning(opReplace, result))
+		}
+
+		r.change(func(j *VMJournal) { j.Files[n].State = FileStateReplaced })
+
+		err = r.save("go on after replacing " + file.Path)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// replaceFailed stops the VM after a replacement failed, when a file may
+// hold the new content. The VM stays swapping, and the task pauses until
+// the resume that checks its files.
+func (r *vmRun) replaceFailed(why string) error {
+	if r.ctx.Err() != nil {
+		return errVMStopped
+	}
+
+	message := fmt.Sprintf("VM %s stopped part way through its replacements: %s.", r.j.VM, why)
+	r.change(func(j *VMJournal) { j.Error = message })
+
+	return r.pause(errors.New(message))
 }
