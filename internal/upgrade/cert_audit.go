@@ -405,7 +405,8 @@ func (m *Manager) auditSettledLocked(task *UpgradeTask) {
 			}
 		}
 
-		if convergesLocked(task, inst) {
+		// Without a divergence store nothing is confirmed cleared.
+		if convergesLocked(task, inst) && m.deps.Divergence != nil {
 			cleared := inst.Status == InstanceStatusSuccess
 			rec.DivergenceCleared = &cleared
 		}

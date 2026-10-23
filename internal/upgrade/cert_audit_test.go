@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"blacksmith/internal/audit"
+	"blacksmith/internal/certinventory"
 	"blacksmith/internal/credhub"
 )
 
@@ -415,6 +416,7 @@ func TestAuditPatchRecordNamesVMsByGroupAndIndex(t *testing.T) {
 func TestAuditConvergeRecordSaysIfDivergenceCleared(t *testing.T) {
 	for _, ok := range []bool{true, false} {
 		env := newRedeployEnv(t)
+		env.divergence = certinventory.NewDivergenceStore(newWaitVault(), func() time.Time { return validateNow })
 		trail := env.watchAudit()
 
 		task := env.task()
@@ -622,5 +624,31 @@ func TestAuditStopsRetryingAtShutdown(t *testing.T) {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Stop waited on the audit writer's retries")
+	}
+}
+
+// A broker with no divergence store confirms nothing, so a converge
+// record says nothing about a divergence being cleared.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestAuditConvergeWithoutStoreClaimsNothing(t *testing.T) {
+	env := newRedeployEnv(t)
+	trail := env.watchAudit()
+
+	task := env.task()
+	task.Certificates.Mode = RotationModeConverge
+	task.Instances[0].Status = InstanceStatusRunning
+	task.Instances[0].Certificates.Phase = RotationPhaseConverge
+
+	manager := env.load(task)
+	manager.mu.Lock()
+	live := manager.tasks[certTaskID]
+	manager.mu.Unlock()
+
+	manager.settleCertificateInstance(live, &live.Instances[0], true, "")
+	trail.waitFor(t, AuditInstanceSettled)
+
+	if got := trail.find(t, AuditInstanceSettled).DivergenceCleared; got != nil {
+		t.Fatalf("expected no divergence claim without a store, got %v", *got)
 	}
 }
