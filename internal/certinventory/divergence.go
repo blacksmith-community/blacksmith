@@ -76,6 +76,18 @@ type DivergentVM struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// SetVM records what a VM holds of the variable as a fresh change. It
+// clears the VM entry's time of change, so Update stamps it even when the
+// state is the one already stored, such as a VM that a patch applied
+// again.
+func (v *DivergentVariable) SetVM(cid, state string) {
+	if v.VMs == nil {
+		v.VMs = map[string]DivergentVM{}
+	}
+
+	v.VMs[cid] = DivergentVM{State: state}
+}
+
 // Clone returns a deep copy of d.
 func (d *Divergence) Clone() *Divergence {
 	if d == nil {
@@ -320,7 +332,9 @@ func (s *DivergenceStore) readIndex(ctx context.Context) (map[string]interface{}
 // delete it. An error from fn is returned as it is and nothing is written.
 //
 // Every entry and VM entry that fn changed gets the time of the change as
-// its UpdatedAt, so a scan that began earlier leaves it alone. A result
+// its UpdatedAt, so a scan that began earlier leaves it alone. One whose
+// UpdatedAt fn changed counts as changed even when nothing else did, so
+// a runner that writes a VM's state again, through SetVM, stamps it. A result
 // with the same content as the stored record writes nothing. Otherwise the
 // record is written with Revision one higher. A write that returns an
 // error may still have landed, so the record is read back, and the write
@@ -391,14 +405,17 @@ func (s *DivergenceStore) Update(ctx context.Context, instanceID string, fn func
 	return nil
 }
 
-// stampChanges gives every entry of next that differs from cur, and every
-// VM entry whose state differs, the time of this change.
+// stampChanges gives the time of this change to every entry of next that
+// differs from cur, and to every VM entry whose state differs. An entry or
+// VM entry whose own time of change differs from the stored one, such as
+// one SetVM wrote, counts as changed too, so a write that keeps a state
+// still tells a scan that began earlier to leave it alone.
 func stampChanges(cur, next *Divergence, now time.Time) {
 	for i := range next.Variables {
 		v := &next.Variables[i]
 		prev := cur.entry(v.Name)
 
-		if prev == nil || !sameEntry(*prev, *v) {
+		if prev == nil || !prev.UpdatedAt.Equal(v.UpdatedAt) || !sameEntry(*prev, *v) {
 			v.UpdatedAt = now
 		}
 
@@ -410,7 +427,7 @@ func stampChanges(cur, next *Divergence, now time.Time) {
 				before, ok = prev.VMs[cid]
 			}
 
-			if !ok || before.State != vm.State {
+			if !ok || before.State != vm.State || !before.UpdatedAt.Equal(vm.UpdatedAt) {
 				vm.UpdatedAt = now
 				v.VMs[cid] = vm
 			}

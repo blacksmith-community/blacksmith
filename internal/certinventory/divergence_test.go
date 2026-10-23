@@ -1168,3 +1168,59 @@ func TestReconcileSkipsScanOlderThanLastReconciled(t *testing.T) {
 		t.Errorf("a newer scan did not reconcile: %+v", got.entry(divVariable))
 	}
 }
+
+func TestDivergenceTouchedVMIsStamped(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	clock := &divClock{at: divScanStart.Add(-time.Hour)}
+	store := NewDivergenceStore(newDivVault(), clock.now)
+	certs := divVersions(t, "v6", "v7")
+
+	if err := store.Update(ctx, divInstance, func(*Divergence) (*Divergence, error) { return divRecord(), nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	// The scan begins, and the runner then applies v7 to vm-a again. The
+	// state stays applied, but the write is a change the scan never saw.
+	scan := divScan(divScanStart, map[string]string{divVariable: "v6"},
+		map[string]*issued{"vm-a": ptr(certs["v6"]), "vm-b": ptr(certs["v7"])})
+
+	touchedAt := divScanStart.Add(time.Second)
+	clock.set(touchedAt)
+
+	gen := store.Generation()
+
+	err := store.Update(ctx, divInstance, func(cur *Divergence) (*Divergence, error) {
+		cur.entry(divVariable).SetVM("vm-a", DivergentVMApplied)
+
+		return cur, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, _ := store.Get(ctx, divInstance)
+	if vm := got.entry(divVariable).VMs["vm-a"]; !vm.UpdatedAt.Equal(touchedAt) {
+		t.Errorf("an applied to applied write left the VM stamped %v, want %v", vm.UpdatedAt, touchedAt)
+	}
+
+	if vm := got.entry(divVariable).VMs["vm-b"]; vm.UpdatedAt.Equal(touchedAt) {
+		t.Error("a VM the write did not touch was stamped")
+	}
+
+	if store.Generation() != gen+1 {
+		t.Errorf("an applied to applied write did not land: generation %d, want %d", store.Generation(), gen+1)
+	}
+
+	clock.set(divScanStart.Add(2 * time.Second))
+
+	if err := store.ReconcileScan(ctx, scan, ReconcileSources{Versions: divCredHub(certs, "v6", "v7")}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, _ = store.Get(ctx, divInstance)
+	if vm := got.entry(divVariable).VMs["vm-a"]; vm.State != DivergentVMApplied {
+		t.Errorf("a scan from before the reapply marked vm-a %s", vm.State)
+	}
+}
