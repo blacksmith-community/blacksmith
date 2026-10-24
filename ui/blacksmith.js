@@ -23535,6 +23535,11 @@
       return box;
     };
 
+    // The markup each notice was built from. A notice compares against this
+    // and not against its live markup, so the reader opening a section
+    // never counts as a change.
+    const noticeSnapshots = new WeakMap();
+
     const renderNotices = () => {
       const holder = view.refs.notices;
       const resp = view.resp;
@@ -23561,8 +23566,12 @@
           patchHorizon(prev, node);
           return prev;
         }
-        return prev.outerHTML === node.outerHTML ? prev : node;
+        const snapshot = node.outerHTML;
+        if (noticeSnapshots.get(prev) === snapshot) return prev;
+        noticeSnapshots.set(node, snapshot);
+        return node;
       });
+      nodes.forEach((node) => { if (!noticeSnapshots.has(node)) noticeSnapshots.set(node, node.outerHTML); });
       if (kept.length !== previous.length || kept.some((node, i) => node !== previous[i])) {
         holder.replaceChildren(...kept);
       }

@@ -243,3 +243,27 @@ t('a poll with unchanged data leaves the band, its focus, and its status line in
   ok(d.activeElement === horizonBtn(d, 30), 'focus follows the rebuilt button');
   expect(failures).toEqual([]);
 }, 60000);
+
+t('a quiet poll leaves the other notices, their open state, and their focus alone', async () => {
+  const { ok, failures } = checks();
+  const env = await boot();
+  env.server.certs = [cert('a', 3), cert('b', 20)];
+  env.server.caps.credhub = { state: 'not_configured' };
+  env.server.scan = Object.assign({}, env.server.scan, { errors: [{ instance_id: 'i1', error: 'timed out', last_success_at: iso(now - 3600e3) }] });
+  await env.w.blacksmithNav.switchTab('certificates');
+  await sleep(150);
+  const { d, w } = env;
+  const help = d.querySelector('#cert-fleet-notices details');
+  const show = Array.from(d.querySelectorAll('#cert-fleet-notices button')).find((b) => /Show them/.test(b.textContent));
+  ok(!!help && !!show, 'the CredHub help and the Show them button render');
+  const helpBox = help.closest('.cert-notice');
+  const showBox = show.closest('.cert-notice');
+  help.open = true;
+  show.focus();
+  await w.blacksmithCerts.refresh({ silent: true });
+  await sleep(150);
+  ok(d.querySelector('#cert-fleet-notices details') === help && help.open === true, 'the opened help section stays open and is the same node');
+  ok(help.closest('.cert-notice') === helpBox && show.closest('.cert-notice') === showBox && d.contains(show), 'the notice elements are the same');
+  ok(d.activeElement === show, 'focus stays on Show them');
+  expect(failures).toEqual([]);
+}, 60000);
