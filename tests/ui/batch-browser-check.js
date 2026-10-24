@@ -1,5 +1,5 @@
 // Run with playwright-cli run-code --filename=tests/ui/batch-browser-check.js.
-// Serve ui on 4199. All backend traffic is mocked; no infrastructure is changed.
+// Serve ui on 4201. All backend traffic is mocked; no infrastructure is changed.
 async (page) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -31,7 +31,7 @@ async (page) => {
   });
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.setViewportSize({width:1440,height:900});
-  await page.goto('http://127.0.0.1:4199');
+  await page.goto('http://127.0.0.1:4201');
   await page.locator('[data-tab="upgrade"]').click();
   await page.locator('#batch-search').waitFor();
   await page.locator('#rotate-op-rotate').check();
@@ -54,7 +54,8 @@ async (page) => {
   await page.locator('#batch-select-matching').click();
   check((await page.locator('#batch-selection-summary').textContent()).includes('53 instances selected'), 'all matching adds exact scope');
   await page.locator('#rotate-preview').click();
-  await page.locator('.batch-review-dialog').waitFor();
+  await page.locator('#dialog-modal-overlay.active .batch-review-dialog').waitFor();
+  await page.locator('[data-dialog-role="cancel"]').waitFor({state:'visible'});
   check(await page.locator('.rotate-preview-card').count() === 50, 'bounded review');
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-review.png'});
   await page.locator('[data-dialog-role="cancel"]').click();
@@ -67,7 +68,8 @@ async (page) => {
   check(await noNestedScroll(), 'no mobile nested scrollers');
   check(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
   await page.locator('#rotate-preview').click();
-  await page.locator('.batch-review-dialog').waitFor();
+  await page.locator('#dialog-modal-overlay.active .batch-review-dialog').waitFor();
+  await page.locator('[data-dialog-role="cancel"]').waitFor({state:'visible'});
   check(await page.locator('[data-dialog-role="cancel"]').isVisible(), 'review back action visible on mobile');
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-review-mobile.png'});
   await page.locator('[data-dialog-role="cancel"]').click();

@@ -21,19 +21,19 @@ Most suites also assert that no script error or `alert`, `confirm`, or `prompt` 
 For browser regression checks, start a static server from the repository:
 
 ```sh
-python3 -m http.server 4199 --directory ui
+python3 -m http.server 4201 --directory ui
 ```
 
 In another terminal, from the same directory, use Playwright CLI:
 
 ```sh
-playwright-cli -s=console-check open http://127.0.0.1:4199
+playwright-cli -s=console-check open http://127.0.0.1:4201
 playwright-cli -s=console-check run-code --filename=tests/ui/browser-check.js
 ```
 
 The browser script intercepts catalog and broker endpoints with synthetic
 data. It rejects and records every non-GET broker request. Do not substitute
-a live deployment URL. A successful result reports 37 checks and zero writes.
+a live deployment URL. A successful result reports 64 checks and zero writes.
 Screenshots are written under `output/playwright/` relative to the browser
 session's starting directory. Use a new session name if another session was
 started from a different repository.
@@ -44,3 +44,29 @@ cancelled and stale async responses, literal rendering of hostile labels,
 exclusion of credentials, missing destinations, terminal and confirmation
 conflicts, manifest and broker sub-screens, release-only upgrades, and narrow
 layouts in both themes. No live upgrade, SSH session or CF mutation is run.
+
+
+The forge checks cover all 11 broker and 8 instance sections, with 1,003
+instances and at most 50 instance rows mounted. `forge-console.test.js` checks
+Oat-only assets, hostile labels, visibility state, platform metadata, and
+contrast ratios (7:1 primary reading text, 4.5:1 muted/action text, 3:1 controls).
+Run `tests/ui/batch-browser-check.js` in the same CLI session for the populated
+batch workflow, selection persistence, and mobile review.
+
+For the accessibility sweep, run `browser-check.js` first to install its fixtures.
+Install `axe-core` in a temporary directory, then inject its local script (replace
+the absolute path below) before running the audit:
+
+```sh
+playwright-cli -s=console-check run-code 'async (page) => { await page.addScriptTag({path:"/absolute/path/node_modules/axe-core/axe.min.js"}); }'
+playwright-cli -s=console-check run-code --filename=tests/ui/accessibility-browser-check.js
+```
+
+The audit checks all broker/instance sections in both themes using WCAG A/AA
+rules. It fails with the affected selectors. Automated checks supplement visual,
+keyboard, mobile, and lab checks; they do not certify full WCAG conformance.
+
+After `batch-browser-check.js`, preload axe-core again (the page reload clears
+it) and run `tests/ui/populated-accessibility-browser-check.js` to audit the
+populated batch/certificate views in both themes and viewport sizes, plus
+the mobile confirmation dialog.

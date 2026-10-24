@@ -24,7 +24,7 @@
     sshButtons.forEach(button => {
       if (!sshTerminalConfig.enabled) {
         button.disabled = true;
-        button.classList.add('opacity-50', 'cursor-not-allowed');
+        button.classList.add('is-busy');
         button.title = sshTerminalConfig.message || 'SSH Terminal is disabled in configuration';
         // Mark as processed to avoid re-adding listeners
         if (!button.dataset.sshDisabled) {
@@ -41,7 +41,7 @@
         }
       } else {
         button.disabled = false;
-        button.classList.remove('opacity-50', 'cursor-not-allowed');
+        button.classList.remove('is-busy');
         // Restore onclick if it was removed
         if (button.dataset.sshDisabled === 'true') {
           if (button._preventClickHandler) {
@@ -85,6 +85,8 @@
   };
 
   const setTheme = (theme) => {
+    document.documentElement.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+    document.querySelector('meta[name=\"theme-color\"]')?.setAttribute('content', theme === 'dark' ? '#171b20' : '#f5f2ec');
     if (theme === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
       updateThemeToggle('light');
@@ -95,6 +97,7 @@
   };
 
   const updateThemeToggle = (nextTheme) => {
+    document.getElementById('themeToggle')?.setAttribute('aria-label', `Switch to ${nextTheme} theme`);
     const themeText = document.getElementById('themeText');
     const sunIcon = document.querySelector('.sun-icon');
     const moonIcon = document.querySelector('.moon-icon');
@@ -278,6 +281,16 @@
     return extras;
   };
 
+  // Keep controls behind a modal out of the focus and accessibility trees.
+  // Restore only attributes we changed, including when a modal opens over a surface.
+  const isolateDialog = (overlay) => {
+    const changed = [...document.body.children].filter(node =>
+      !node.contains(overlay) && !node.hasAttribute('inert') &&
+      !node.matches('script, style, #blacksmith-live-region'));
+    changed.forEach(node => node.setAttribute('inert', ''));
+    return () => changed.forEach(node => node.removeAttribute('inert'));
+  };
+
   // Show a confirm dialog. It resolves true or false for callers that pass
   // none of details, requireText, and requireChoice. Otherwise it resolves
   // {confirmed: true, text, choice}, or false when the operator cancels.
@@ -375,6 +388,7 @@
 
       // Show modal
       overlay.classList.add('active');
+      const restoreBackground = isolateDialog(overlay);
 
       // A body dialog opens on its title, so the warnings stay in view and
       // the typed-word field scrolls into view only when the operator tabs to it.
@@ -383,6 +397,7 @@
       // Cleanup function
       function cleanup() {
         overlay.classList.remove('active');
+        restoreBackground();
         cancelBtn.removeEventListener('click', handleCancel);
         confirmBtn.removeEventListener('click', trySubmit);
         overlay.removeEventListener('click', handleOverlayClick);
@@ -557,10 +572,12 @@
 
       // Show modal
       overlay.classList.add('active');
+      const restoreBackground = isolateDialog(overlay);
 
       // Cleanup function
       const cleanup = () => {
         overlay.classList.remove('active');
+        restoreBackground();
         cancelBtn.removeEventListener('click', handleCancel);
         confirmBtn.removeEventListener('click', handleConfirm);
         overlay.removeEventListener('click', handleOverlayClick);
@@ -1899,9 +1916,9 @@
           <tr>
             <td class="vm-instance">
               ${instanceName !== '-' ? `
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                <span class="copy-wrapper">
                   <span>${instanceName}</span>
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${instanceName}')"
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
                           title="Copy to clipboard">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
@@ -1912,9 +1929,9 @@
             <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
             <td class="vm-az">
               ${vm.az && vm.az !== '-' ? `
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                <span class="copy-wrapper">
                   <span>${vm.az}</span>
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${vm.az}')"
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
                           title="Copy to clipboard">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
@@ -1923,9 +1940,9 @@
             </td>
             <td class="vm-type">
               ${vmType !== '-' ? `
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                <span class="copy-wrapper">
                   <span>${vmType}</span>
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${vmType}')"
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
                           title="Copy to clipboard">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
@@ -2222,109 +2239,88 @@
   };
 
   // Template rendering functions
+  const ENTITY_SECTIONS = {
+    blacksmith: [
+      ['Overview', [['details', 'Overview']]],
+      ['Operate', [['vms', 'Virtual machines'], ['tasks', 'Tasks'], ['events', 'Events'], ['blacksmith-logs', 'Logs'], ['certificates', 'Certificates']]],
+      ['Configure', [['plans', 'Service plans'], ['broker', 'Broker connections'], ['configs', 'BOSH configs'], ['config', 'Blacksmith settings'], ['manifest', 'Manifest']]]
+    ],
+    instance: [
+      ['Overview', [['details', 'Overview']]],
+      ['Operate', [['vms', 'Virtual machines'], ['events', 'Events'], ['instance-logs', 'Logs'], ['certificates', 'Certificates']]],
+      ['Connect', [['credentials', 'Credentials'], ['testing', 'Connection tests']]],
+      ['Inspect', [['manifest', 'Manifest']]]
+    ]
+  };
+
+  const renderEntityNavigation = (kind) => {
+    const groups = ENTITY_SECTIONS[kind];
+    const options = groups.map(([label, entries]) => `<optgroup label="${label}">${entries.map(([id, name]) => `<option value="${id}">${name}</option>`).join('')}</optgroup>`).join('');
+    return `<label class="entity-section-picker">View section<select class="entity-section-select" aria-label="View section">${options}</select></label>
+      <nav class="detail-tabs entity-navigation" aria-label="${kind === 'instance' ? 'Instance' : 'Blacksmith'} sections">
+      ${groups.map(([label, entries]) => `<div class="entity-section-group" role="presentation"><p class="entity-group-label" aria-hidden="true">${label}</p>${entries.map(([id, name]) => `<button type="button" class="detail-tab ghost ${id === 'details' ? 'active' : ''}" data-tab="${id}">${name}</button>`).join('')}</div>`).join('')}</nav>`;
+  };
+
+  const entityCopy = (value, label) => `<button type="button" class="entity-copy ghost small" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}">Copy</button>`;
+  const entityFacts = (pairs) => `<dl class="entity-facts">${pairs.map(([label,value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value ?? 'Not reported'))}${value ? entityCopy(value,label) : ''}</dd></div>`).join('')}</dl>`;
+  const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(label.toLowerCase())} →</span></button>`;
+  const entityMetadata = (pairs, title = 'Technical details') => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span>${escapeHtml(typeof value === 'object' ? JSON.stringify(value,null,2) : String(value ?? 'Not reported'))}</span>${entityCopy(typeof value === 'object' ? JSON.stringify(value,null,2) : value,label)}</span></td></tr>`).join('')}</tbody></table></details>`;
+
+  const renderBlacksmithOverview = (data, creds = {}) => {
+    const instances = Object.values(data.instances || {}).filter(instance => instance && !instance.deleted);
+    const plans = Object.keys(data.plans || {}).length;
+    const attention = instances.filter(instance => instance.vm_status && instance.vm_status !== 'running').length;
+    const facts = [['Deployment',data.deployment || 'blacksmith'],['Environment',data.env || 'Not reported']];
+    const technical = [['BOSH DNS',data.boshDNS || 'Not reported']];
+    for (const [service, fields] of Object.entries({BOSH:['address','username','network'],Vault:['address'],Broker:['username','port','bind_ip']})) {
+      fields.forEach(key => { if (creds[service]?.[key] !== undefined) technical.push([`${service} ${key.replaceAll('_',' ')}`,creds[service][key]]); });
+    }
+    return `<section class="entity-overview" aria-label="Blacksmith overview">
+      <p class="entity-intro">Manage the broker and its service fleet. Inspect health, activity, and configuration using the sections alongside.</p>
+      <div class="entity-metrics">${entityMetric(instances.length,'Service instances','instances')}${entityMetric(plans,'Service plans','plans')}${entityMetric(attention,'Instances with VM alerts','instances')}</div>
+      <p class="entity-status-note">${instances.length} active instance${instances.length === 1 ? '' : 's'}. VM exceptions reflect reported status; missing status is not a health check.</p>
+      <article class="card entity-context"><h3>Deployment context</h3>${entityFacts(facts)}</article>
+      ${entityMetadata(technical,'Connection and technical details')}
+    </section>`;
+  };
+
+  const renderEntityShell = (kind, title, context) => `<header class="service-detail-header entity-header"><div><p class="entity-eyebrow">${kind === 'instance' ? 'Service instance' : 'Blacksmith broker'}</p><h2>${escapeHtml(title)}</h2><p class="entity-context-line">${escapeHtml(context)}</p></div>${kind === 'instance' ? '<button type="button" class="outline entity-back">All instances</button>' : ''}</header>
+    <div class="entity-workspace">${renderEntityNavigation(kind)}<section class="entity-main"><div class="entity-section-toolbar"><h3 class="entity-current-title">Overview</h3><span class="entity-read-hint">Snapshot · reload to update</span></div><div class="detail-content" aria-label="Overview"><div class="loading" role="status">Loading…</div></div></section></div>`;
+
+  document.addEventListener('click', async (event) => {
+    const copy = event.target.closest('[data-entity-copy]');
+    if (copy) {
+      try { await navigator.clipboard.writeText(copy.dataset.entityCopy); announce('Copied to clipboard'); }
+      catch (_) { announce('Clipboard unavailable. Select the value to copy it.'); }
+      return;
+    }
+    const jump = event.target.closest('[data-entity-section]');
+    if (jump) {
+      if (jump.dataset.entitySection === 'instances') {
+        await window.blacksmithNav.switchTab('services');
+        document.querySelector('.tab-button[data-tab="services"]')?.focus();
+        return;
+      }
+      const root = jump.closest('#blacksmith, .service-detail');
+      const target = Array.from(root?.querySelectorAll('.detail-tab') || []).find(tab => tab.dataset.tab === jump.dataset.entitySection);
+      target?.click();
+      (target?.getClientRects().length ? target : root?.querySelector('.entity-section-select'))?.focus();
+    }
+    if (event.target.closest('.entity-back')) {
+      document.getElementById('services')?.classList.remove('instance-open');
+      window.revealServiceInstance?.(window.currentInstanceInfo?.id);
+      document.querySelector('#services .service-item.active')?.focus();
+    }
+  });
+  document.addEventListener('change', (event) => {
+    if (!event.target.matches('.entity-section-select')) return;
+    const root = event.target.closest('.entity-workspace');
+    Array.from(root.querySelectorAll('.detail-tab')).find(tab => tab.dataset.tab === event.target.value)?.click();
+  });
+
   const renderBlacksmithTemplate = (data) => {
-    const deploymentName = data.deployment || 'blacksmith';
-    const environment = data.env || 'Unknown';
-    const totalInstances = data.instances ? Object.keys(data.instances).length : 0;
-    const totalPlans = data.plans ? Object.keys(data.plans).length : 0;
-    const status = 'Running';
-
-    // Store the details table content for the Details tab
-    window.blacksmithDetailsContent = `
-      <table class="service-info-table w-full bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-200px)] overflow-y-auto">
-        <tbody>
-          <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Deployment</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                <span>${deploymentName}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${deploymentName}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Environment</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                <span>${environment}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${environment}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Total Service Instances</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                <span>${totalInstances}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${totalInstances}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Total Plans</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                <span>${totalPlans}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${totalPlans}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Status</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span>${status}</span>
-            </td>
-          </tr>
-          ${data.boshDNS ? `
-          <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">BOSH DNS</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                <span>${data.boshDNS}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${data.boshDNS}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-              </span>
-            </td>
-          </tr>
-          ` : ''}
-        </tbody>
-      </table>
-    `;
-
-    return `
-      <div class="service-detail-header">
-      </div>
-      <div class="detail-tabs">
-        <button class="detail-tab active" data-tab="details">Details</button>
-        <button class="detail-tab" data-tab="plans">Plans</button>
-        <button class="detail-tab" data-tab="broker">Broker</button>
-        <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
-        <button class="detail-tab" data-tab="vms">VMs</button>
-        <button class="detail-tab" data-tab="events">Events</button>
-        <button class="detail-tab" data-tab="tasks">Tasks</button>
-        <button class="detail-tab" data-tab="configs">Bosh Configs</button>
-        <button class="detail-tab" data-tab="certificates">Certificates</button>
-        <button class="detail-tab" data-tab="manifest">Manifest</button>
-        <button class="detail-tab" data-tab="config">Blacksmith Configuration</button>
-      </div>
-      <div class="detail-content">
-        <div class="loading">Loading...</div>
-      </div>
-    `;
+    window.blacksmithDetailsContent = renderBlacksmithOverview(data);
+    return renderEntityShell('blacksmith',data.deployment || 'Blacksmith', data.env || 'Environment not reported');
   };
 
   const renderPlansTemplate = (data) => {
@@ -2372,19 +2368,19 @@
 
     // Build the plan details table
     const detailsTable = `
-      <table class="plan-details-table w-full bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700">
-        <thead class="bg-gray-50 dark:bg-gray-800">
+      <table class="plan-details-table">
+        <thead>
           <tr>
-            <th colspan="2" class="px-4 py-3 text-center font-bold text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-800 border-b-2 border-gray-200 dark:border-gray-600 text-sm uppercase tracking-wider">Plan Information</th>
+            <th colspan="2">Plan Information</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Service</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+            <td class="info-key">Service</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
                 <span>${service?.name || service?.id || 'unknown'}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${service?.name || service?.id || 'unknown'}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${service?.name || service?.id || 'unknown'}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -2392,11 +2388,11 @@
             </td>
           </tr>
           <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Plan</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+            <td class="info-key">Plan</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
                 <span>${plan?.name || plan?.id || 'unknown'}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${plan?.name || plan?.id || 'unknown'}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${plan?.name || plan?.id || 'unknown'}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -2404,16 +2400,16 @@
             </td>
           </tr>
           <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Description</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">${plan.description || '-'}</td>
+            <td class="info-key">Description</td>
+            <td class="info-value">${plan.description || '-'}</td>
           </tr>
           <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Current Instances</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">${plan.blacksmith.instances}</td>
+            <td class="info-key">Current Instances</td>
+            <td class="info-value">${plan.blacksmith.instances}</td>
           </tr>
           <tr>
-            <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Instance Limit</td>
-            <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">${plan.blacksmith.limit > 0 ? plan.blacksmith.limit : plan.blacksmith.limit == 0 ? 'Unlimited' : 'Not Set'}</td>
+            <td class="info-key">Instance Limit</td>
+            <td class="info-value">${plan.blacksmith.limit > 0 ? plan.blacksmith.limit : plan.blacksmith.limit == 0 ? 'Unlimited' : 'Not Set'}</td>
           </tr>
         </tbody>
       </table>
@@ -2428,24 +2424,24 @@
     let vmsTable = '';
     if (plan.vms && plan.vms.length > 0) {
       vmsTable = `
-        <table class="plan-vms-table w-full bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700">
-          <thead class="bg-gray-50 dark:bg-gray-800">
+        <table class="plan-vms-table">
+          <thead>
             <tr>
-              <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">VM Name</th>
-              <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Count</th>
-              <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Type</th>
-              <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Persistent Disk</th>
-              <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Properties</th>
+              <th>VM Name</th>
+              <th>Count</th>
+              <th>Type</th>
+              <th>Persistent Disk</th>
+              <th>Properties</th>
             </tr>
           </thead>
           <tbody>
             ${plan.vms.map(vm => `
-              <tr class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-150">
-                <td class="px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-medium text-sm">${vm.name || '-'}</td>
-                <td class="px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm">${vm.instances || 1}</td>
-                <td class="px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm">${vm.vm_type || '-'}</td>
-                <td class="px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm">${vm.persistent_disk_type || '-'}</td>
-                <td class="px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-xs max-w-xs overflow-hidden text-ellipsis">${vm.properties ? JSON.stringify(vm.properties, null, 2) : '-'}</td>
+              <tr>
+                <td>${vm.name || '-'}</td>
+                <td>${vm.instances || 1}</td>
+                <td>${vm.vm_type || '-'}</td>
+                <td>${vm.persistent_disk_type || '-'}</td>
+                <td>${vm.properties ? JSON.stringify(vm.properties, null, 2) : '-'}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -2502,7 +2498,7 @@
     });
 
     const serviceOptions = Array.from(services).sort().map(s =>
-      `<option value="${s}">${s}</option>`
+      `<option value="${escapeAttribute(String(s))}">${escapeAttribute(String(s))}</option>`
     ).join('');
 
     // Only show filter if we have catalog data and services
@@ -2510,6 +2506,7 @@
 
     const filterSection = `
       <div class="services-filter-section">
+        <label for="instance-search">Find an instance</label><input id="instance-search" type="search" placeholder="Name, ID, service, or plan" autocomplete="off">
         ${showFilter ? `
         <div class="filter-row">
           <label for="service-filter">Service:</label>
@@ -2526,7 +2523,7 @@
         </div>` : `
         <div class="filter-row">
           <label>Service Filter:</label>
-          <span style="color: #666; font-style: italic;">Catalog data not available</span>
+          <span class="catalog-unavailable">Catalog data not available</span>
         </div>`}
         <div class="filter-row">
           <label class="checkbox-label">
@@ -2539,14 +2536,14 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
             <span>Refresh</span>
           </button>
-          <button id="copy-deployment-names" class="copy-deployment-names-btn" title="Copy Service Instance Deployment Names">
+          <button id="copy-deployment-names" class="copy-deployment-names-btn" title="Copy deployment names for all matching instances">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             <span>Deployments</span>
           </button>
-          ${showFilter ? '<button id="clear-filters" class="clear-filters-btn">Clear</button>' : ''}
+          <button id="clear-filters" class="clear-filters-btn">Clear filters</button>
         </div>
         <div class="filter-status">
-          <span id="filter-count">Showing ${instancesList.length} of ${instancesList.length} instances</span>
+          <span id="filter-count" role="status" aria-live="polite">Showing ${instancesList.length} of ${instancesList.length} instances</span>
         </div>
       </div>
     `;
@@ -2558,9 +2555,9 @@
         // shares the unresponsive badge style.
         const vmStatusClass = details.vm_status === 'unresponsive agent' ? 'unresponsive' : details.vm_status;
         const vmStatusHtml = details.vm_status ? `
-            <div class="vm-status-badge vm-status-${vmStatusClass}" title="VM Status: ${details.vm_status}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}" onclick="selectInstance('${id}', 'vms')">
+            <div class="vm-status-badge vm-status-${escapeAttribute(String(vmStatusClass || 'unknown').replace(/[^a-z-]/g,''))}" title="VM Status: ${escapeAttribute(String(details.vm_status))}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}">
               <span class="vm-status-icon"></span>
-              <span class="vm-status-text">${details.vm_status}</span>
+              <span class="vm-status-text">${escapeAttribute(String(details.vm_status))}</span>
               ${details.vm_count ? `<span class="vm-count">${details.vm_healthy || 0}/${details.vm_count}</span>` : ''}
             </div>
           ` : '';
@@ -2576,7 +2573,7 @@
           ` : '';
 
         const deletionStatusHtml = isDeleting ? `
-            <div class="deletion-status-badge" title="Delete requested at ${details.delete_requested_at || details.deprovision_requested_at || 'Unknown'}">
+            <div class="deletion-status-badge" title="Delete requested at ${escapeAttribute(String(details.delete_requested_at || details.deprovision_requested_at || 'Unknown'))}">
               <span class="deletion-status-icon"></span>
               <span class="deletion-status-text">Deleting...</span>
             </div>
@@ -2588,11 +2585,11 @@
         const displayServiceName = serviceName || details.service_id;
 
         return `
-            <div class="service-item ${isDeleting ? 'deleting' : ''} ${isDeleted ? 'deleted' : ''}" data-instance-id="${id}" data-service="${serviceName}" data-plan="${details.plan?.name || ''}" data-deleted="${isDeleted}">
-              <div class="service-id">${id}</div>
-              ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
+            <div class="service-item ${isDeleting ? 'deleting' : ''} ${isDeleted ? 'deleted' : ''}" data-instance-id="${escapeAttribute(String(id))}" data-service="${escapeAttribute(String(serviceName))}" data-plan="${escapeAttribute(String(details.plan?.name || ''))}" data-deleted="${isDeleted}">
+              <div class="service-id">${escapeAttribute(String(id))}</div>
+              ${details.instance_name ? `<div class="service-instance-name">${escapeAttribute(String(details.instance_name))}</div>` : ''}
               <div class="service-meta">
-                ${displayServiceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${formatCreatedTimestamp(details)}
+                ${escapeAttribute(String(displayServiceName))} / ${escapeAttribute(String(details.plan?.name || details.plan_id || 'unknown'))} @ ${formatCreatedTimestamp(details)}
               </div>
               ${deletedStatusHtml}
               ${deletionStatusHtml}
@@ -2605,6 +2602,7 @@
       <div class="services-list">
         <h2>Service Instances</h2>
         ${filterSection}
+        <nav class="instance-pagination" aria-label="Instance pages"><button id="instance-prev" class="outline small">Previous</button><span id="instance-page"></span><button id="instance-next" class="outline small">Next</button></nav>
         <div class="services-items-container">
           ${listHtml}
         </div>
@@ -2953,14 +2951,14 @@
   // Render upgrade instance list
   const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor, releaseFloor) => {
     if (!instances || Object.keys(instances).length === 0) {
-      return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
+      return '<div class="no-instances">No service instances available.</div>';
     }
 
     const { rows: filteredInstances, serviceIdToName, serviceReleaseOf } =
       filterUpgradeInstances(instances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
 
     if (filteredInstances.length === 0) {
-      return '<div class="no-instances p-4 text-center text-gray-500">No instances match the current filters.</div>';
+      return '<div class="no-instances">No instances match the current filters.</div>';
     }
 
     const pageRows = batchPageRows(filteredInstances);
@@ -5648,7 +5646,7 @@
 
     if (upgradeTasks.length === 0) {
       rerenderTaskPanel(tasksContainer, 'list', () => {
-        tasksContainer.innerHTML = '<div class="no-tasks p-4 text-center text-gray-500">No upgrade tasks yet. Select instances and click Upgrade to start.</div>';
+        tasksContainer.innerHTML = '<div class="no-tasks">No upgrade tasks yet. Select instances and click Upgrade to start.</div>';
       });
       return;
     }
@@ -6974,231 +6972,20 @@
 
   // Service detail rendering functions
   const renderServiceDetail = (id, details, vaultData) => {
-    // vaultData now contains merged data from both secret/{instance-id} and secret/{instance-id}/metadata
-
-    // Use deployment name from vault data if available, otherwise construct it
-    const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${id}`;
-
-    // Build the vertical table content for the Details tab
-    let tableRows = [];
-
-    if (vaultData) {
-      // Define the order and labels for known fields
-      const fieldOrder = [
-        { key: 'instance_id', label: 'Instance ID' },
-        { key: 'instance_name', label: 'Instance Name' },
-        { key: 'service_id', label: 'Service' },
-        { key: 'plan_id', label: 'Plan' },
-        { key: 'organization_name', label: 'Organization' },
-        { key: 'organization_guid', label: 'Organization GUID' },
-        { key: 'space_name', label: 'Space' },
-        { key: 'space_guid', label: 'Space GUID' },
-        { key: 'platform', label: 'Platform' },
-        { key: 'requested_at', label: 'Requested At' },
-        { key: 'delete_requested_at', label: 'Delete Requested At' },
-        { key: 'deprovision_requested_at', label: 'Deprovision Requested At' }
-      ];
-
-      // Add rows for known fields in order
-      fieldOrder.forEach(field => {
-        if (vaultData[field.key] !== undefined) {
-          let value = vaultData[field.key];
-          console.log(`Field ${field.key}: ${value}`); // Debug logging
-          // Format different value types
-          if (typeof value === 'object' && value !== null) {
-            // Convert objects to JSON string
-            value = JSON.stringify(value, null, 2);
-          } else if ((field.key === 'requested_at' || field.key === 'delete_requested_at' || field.key === 'deprovision_requested_at') && value) {
-            // Format timestamp fields
-            value = formatTimestamp(value);
-          }
-          tableRows.push(`
-            <tr>
-              <td class="info-key" style="font-size: 16px;">
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                  <span>${field.label}</span>
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${field.key}')"
-                          title="Copy key name">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                </span>
-              </td>
-              <td class="info-value" style="font-size: 16px;">
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                  <span>${value || '-'}</span>
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
-                          title="Copy ${field.label}">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                </span>
-              </td>
-            </tr>
-          `);
-        }
-      });
-
-      // Add any additional fields not in the predefined order (except context, deployment_name, and large fields)
-      Object.keys(vaultData).forEach(key => {
-        if (key !== 'context' && key !== 'bosh_properties' && key !== 'bosh_manifest' &&
-          key !== 'bosh_vms' && key !== 'history' && key !== 'bosh_releases' && key !== 'bosh_stemcells' &&
-          key !== 'manifest' &&
-          !fieldOrder.find(f => f.key === key)) {
-          let value = vaultData[key];
-
-          // Format different value types
-          if (typeof value === 'object' && value !== null) {
-            // Convert objects to JSON string
-            value = JSON.stringify(value, null, 2);
-          } else if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
-            // Format timestamp fields (detect ISO 8601 format)
-            value = new Date(value).toLocaleString();
-          }
-
-          tableRows.push(`
-            <tr>
-              <td class="info-key" style="font-size: 16px;">
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                  <span>${key}</span>
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${key}')"
-                          title="Copy key name">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                </span>
-              </td>
-              <td class="info-value" style="font-size: 16px;">
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                  <span>${value || '-'}</span>
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
-                          title="Copy value">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                </span>
-              </td>
-            </tr>
-          `);
-        }
-      });
-    } else {
-      // If no vault data, show basic info from details
-      const createdAt = formatCreatedTimestamp(details);
-      tableRows = [
-        `<tr>
-          <td class="info-key" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, 'instance_id')"
-                      title="Copy key name">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>Instance ID</span>
-            </span>
-          </td>
-          <td class="info-value" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')"
-                      title="Copy Instance ID">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${id}</span>
-            </span>
-          </td>
-        </tr>`,
-        `<tr>
-          <td class="info-key" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, 'service_id')"
-                      title="Copy key name">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>Service</span>
-            </span>
-          </td>
-          <td class="info-value" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')"
-                      title="Copy Service">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${details.service_id}</span>
-            </span>
-          </td>
-        </tr>`,
-        `<tr>
-          <td class="info-key" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, 'plan_id')"
-                      title="Copy key name">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>Plan</span>
-            </span>
-          </td>
-          <td class="info-value" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan?.name || details.plan_id || 'unknown'}')"
-                      title="Copy Plan">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${details.plan?.name || details.plan_id || 'unknown'}</span>
-            </span>
-          </td>
-        </tr>`,
-        `<tr>
-          <td class="info-key" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, 'created_at')"
-                      title="Copy key name">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>Created At</span>
-            </span>
-          </td>
-          <td class="info-value" style="font-size: 16px;">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')"
-                      title="Copy Created At">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${createdAt}</span>
-            </span>
-          </td>
-        </tr>`
-      ];
-    }
-
-    // Store the details content for the Details tab
+    const metadata = vaultData || {instance_id:id,service_id:details.service_id,plan_id:details.plan?.name || details.plan_id,created_at:formatCreatedTimestamp(details)};
+    const name = metadata.instance_name || details.instance_name || id;
+    const deployment = metadata.deployment_name || details.deployment_name || `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${id}`;
+    const status = details.deleted ? 'Deleted' : (details.vm_status || 'Not reported');
+    const skip = new Set(['context','bosh_properties','bosh_manifest','bosh_vms','history','bosh_releases','bosh_stemcells','manifest']);
+    const pairs = Object.entries(metadata).filter(([key]) => !skip.has(key)).map(([key,value]) => [key.replaceAll('_',' '),value]);
     window.serviceInstanceDetailsContent = window.serviceInstanceDetailsContent || {};
-    window.serviceInstanceDetailsContent[id] = `
-      <table class="service-info-table w-full bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-200px)] overflow-y-auto">
-        <tbody>
-          ${tableRows.join('')}
-        </tbody>
-      </table>
-    `;
-
-    return `
-      <div class="service-detail-header">
-        <h3 class="deployment-name">
-          <button class="copy-btn-inline deployment-name-copy" onclick="window.copyValue(event, '${deploymentName.replace(/'/g, "\\'")}')"
-                  title="Copy deployment name to clipboard">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          </button>
-          ${deploymentName}
-        </h3>
-      </div>
-      <div class="detail-tabs">
-        <button class="detail-tab active" data-tab="details">Details</button>
-        <button class="detail-tab" data-tab="events">Events</button>
-        <button class="detail-tab" data-tab="vms">VMs</button>
-        <button class="detail-tab" data-tab="manifest">Manifest</button>
-        <button class="detail-tab" data-tab="certificates">Certificates</button>
-        <button class="detail-tab" data-tab="credentials">Credentials</button>
-        <button class="detail-tab" data-tab="instance-logs">Logs</button>
-        <button class="detail-tab" data-tab="testing">Testing</button>
-      </div>
-      <div class="detail-content">
-        <div class="loading">Loading...</div>
-      </div>
-    `;
+    window.serviceInstanceDetailsContent[id] = `<section class="entity-overview" aria-label="Instance overview">
+      <div class="entity-metrics">${entityMetric(status,'VM status','vms')}${entityMetric(details.vm_count ?? 'Not reported','Virtual machines','vms')}${entityMetric(details.plan?.name || details.plan_id || 'Not reported','Plan','manifest')}</div>
+      <article class="card entity-context"><h3>Instance context</h3>${entityFacts([['Name',name],['Service',details.service_id],['Deployment',deployment],['Instance ID',id],['Organization',metadata.organization_name],['Space',metadata.space_name]])}</article>
+      <p class="entity-status-note">Use Certificates for expiry and trust, or Events and Logs to investigate changes.</p>
+      ${entityMetadata(pairs,'Instance metadata')}
+    </section>`;
+    return renderEntityShell('instance',name,`${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'}`);
   };
 
   // Format credentials as table from JSON
@@ -7209,7 +6996,7 @@
 
     let html = '<div class="credentials-container">';
     html += `
-      <table class="credentials-table w-full bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700">
+      <table class="credentials-table">
         <thead>
           <tr>
             <th>Property</th>
@@ -7238,8 +7025,8 @@
             <tr>
               <td class="cred-key">${key}</td>
               <td class="cred-value">
-                <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                  <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
                           title="Copy to clipboard">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
@@ -7265,8 +7052,8 @@
           <tr>
             <td class="cred-key">${section}</td>
             <td class="cred-value">
-              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -8631,7 +8418,7 @@
           </div>
           <div class="filter-group">
             <label>Type:</label>
-            <select id="task-type-filter">
+            <select id="task-type-filter" aria-label="Task type">
               <option value="recent">Recent</option>
               <option value="current">Current</option>
               <option value="all">All</option>
@@ -8639,7 +8426,7 @@
           </div>
           <div class="filter-group">
             <label>Filter by:</label>
-            <select id="task-filter">
+            <select id="task-filter" aria-label="Task state">
               <option value="blacksmith">blacksmith</option>
             </select>
           </div>
@@ -9818,9 +9605,9 @@
                 </td>
                 <td class="vm-instance">
                   ${instanceName !== '-' ? `
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                    <span class="copy-wrapper">
                       <span>${instanceName}</span>
-                      <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${instanceName}')"
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
                               title="Copy to clipboard">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
@@ -9831,9 +9618,9 @@
                 <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
                 <td class="vm-az">
                   ${vm.az && vm.az !== '-' ? `
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                    <span class="copy-wrapper">
                       <span>${vm.az}</span>
-                      <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${vm.az}')"
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
                               title="Copy to clipboard">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
@@ -9842,9 +9629,9 @@
                 </td>
                 <td class="vm-type">
                   ${vmType !== '-' ? `
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                    <span class="copy-wrapper">
                       <span>${vmType}</span>
-                      <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${vmType}')"
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
                               title="Copy to clipboard">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
@@ -9855,9 +9642,9 @@
                 <td class="vm-bootstrap">${bootstrap}</td>
                 <td class="vm-ips">
                   ${ips !== '-' ? `
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                    <span class="copy-wrapper">
                       <span>${ips}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${ips}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -9867,9 +9654,9 @@
                 <td class="vm-dns">${dns}</td>
                 <td class="vm-cid">
                   ${vm.vm_cid ? `
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                    <span class="copy-wrapper">
                       <span>${vm.vm_cid}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${vm.vm_cid}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.vm_cid}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -9878,9 +9665,9 @@
                 </td>
                 <td class="vm-agent-id">
                   ${agentId !== '-' ? `
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                    <span class="copy-wrapper">
                       <span>${agentId}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${agentId}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${agentId}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -9890,9 +9677,9 @@
                 <td class="vm-created-at">${vmCreatedAt}</td>
                 <td class="vm-disk-cids">
                   ${diskCids !== '-' ? `
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                    <span class="copy-wrapper">
                       <span>${diskCids}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${diskCids}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${diskCids}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -12745,8 +12532,8 @@
                 <tr>
                   <td>Director UUID</td>
                   <td>
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                      <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${directorUuid.replace(/'/g, "\\'")}')"
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${directorUuid.replace(/'/g, "\\'")}')"
                               title="Copy to clipboard">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
@@ -12757,8 +12544,8 @@
                 <tr>
                   <td>Name</td>
                   <td>
-                    <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                      <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(parsed.name || 'Not specified').replace(/'/g, "\\'")}')"
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${(parsed.name || 'Not specified').replace(/'/g, "\\'")}')"
                               title="Copy to clipboard">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
@@ -12800,9 +12587,9 @@
                           <tr>
                             <td>Instances</td>
                             <td>
-                              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                              <span class="copy-wrapper">
                                 <span>${ig.instances || 1}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${ig.instances || 1}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ig.instances || 1}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -12812,8 +12599,8 @@
                           <tr>
                             <td>AZs</td>
                             <td>
-                              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${((ig.azs || []).join(', ') || 'None').replace(/'/g, "\\'")}')"
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.azs || []).join(', ') || 'None').replace(/'/g, "\\'")}')"
                                         title="Copy to clipboard">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
@@ -12824,8 +12611,8 @@
                           <tr>
                             <td>Networks</td>
                             <td>
-                              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${((ig.networks || []).map(n => n.name || n).join(', ') || 'None').replace(/'/g, "\\'")}')"
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.networks || []).map(n => n.name || n).join(', ') || 'None').replace(/'/g, "\\'")}')"
                                         title="Copy to clipboard">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
@@ -12836,8 +12623,8 @@
                           <tr>
                             <td>VM Type</td>
                             <td>
-                              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(ig.vm_type || 'Not specified').replace(/'/g, "\\'")}')"
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.vm_type || 'Not specified').replace(/'/g, "\\'")}')"
                                         title="Copy to clipboard">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
@@ -12848,8 +12635,8 @@
                           <tr>
                             <td>Persistent Disk Type</td>
                             <td>
-                              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(ig.persistent_disk_type || 'None').replace(/'/g, "\\'")}')"
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.persistent_disk_type || 'None').replace(/'/g, "\\'")}')"
                                         title="Copy to clipboard">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
@@ -12860,8 +12647,8 @@
                           <tr>
                             <td>Stemcell</td>
                             <td>
-                              <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(ig.stemcell || 'default').replace(/'/g, "\\'")}')"
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.stemcell || 'default').replace(/'/g, "\\'")}')"
                                         title="Copy to clipboard">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
@@ -12904,8 +12691,8 @@
                                       <tr>
                                         <td>Release</td>
                                         <td>
-                                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                                            <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(job.release || 'Not specified').replace(/'/g, "\\'")}')"
+                                          <span class="copy-wrapper">
+                                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${(job.release || 'Not specified').replace(/'/g, "\\'")}')"
                                                     title="Copy to clipboard">
                                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                             </button>
@@ -12920,8 +12707,8 @@
                                         <tr>
                                           <td><code>${key}</code></td>
                                           <td>
-                                            <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                                              <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${copyValue.replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+                                            <span class="copy-wrapper">
+                                              <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
                                                       title="Copy to clipboard">
                                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                               </button>
@@ -12963,8 +12750,8 @@
                 ${releases.map(release => `
                   <tr>
                     <td>
-                      <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${release.name.replace(/'/g, "\\'")}')"
+                      <span class="copy-wrapper">
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.name.replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -12972,9 +12759,9 @@
                       </span>
                     </td>
                     <td>
-                      <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                      <span class="copy-wrapper">
                         <span>${release.version || 'latest'}</span>
-                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(release.version || 'latest').replace(/'/g, "\\'")}')"
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(release.version || 'latest').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -12982,9 +12769,9 @@
                     </td>
                     <td>
                       ${release.url ? `
-                        <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                        <span class="copy-wrapper">
                           <a href="${release.url}" target="_blank" style="word-break: break-all;">${release.url}</a>
-                          <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${release.url.replace(/'/g, "\\'")}')"
+                          <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.url.replace(/'/g, "\\'")}')"
                                   title="Copy URL">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
@@ -12993,8 +12780,8 @@
                     </td>
                     <td>
                       ${release.sha1 && release.sha1 !== 'N/A' ? `
-                        <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                          <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${release.sha1.replace(/'/g, "\\'")}')"
+                        <span class="copy-wrapper">
+                          <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.sha1.replace(/'/g, "\\'")}')"
                                   title="Copy SHA1">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
@@ -13024,27 +12811,27 @@
                 ${stemcells.map(stemcell => `
                   <tr>
                     <td>
-                      <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                      <span class="copy-wrapper">
                         <span>${stemcell.alias || 'default'}</span>
-                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(stemcell.alias || 'default').replace(/'/g, "\\'")}')"
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.alias || 'default').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                       </span>
                     </td>
                     <td>
-                      <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                      <span class="copy-wrapper">
                         <span>${stemcell.os || 'Not specified'}</span>
-                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(stemcell.os || 'Not specified').replace(/'/g, "\\'")}')"
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.os || 'Not specified').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                       </span>
                     </td>
                     <td>
-                      <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
+                      <span class="copy-wrapper">
                         <span>${stemcell.version || 'latest'}</span>
-                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${String(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${String(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -14297,8 +14084,7 @@
         // One awaited selection path for pointer, keyboard and quick navigation.
         let instanceSelectionSequence = 0;
         window.navigateToInstance = async (instanceId, signal) => {
-          const item = [...document.querySelectorAll('#services .service-item')]
-            .find(element => element.dataset.instanceId === instanceId);
+          const item = window.serviceInstanceElements?.get(instanceId);
           const details = window.serviceInstances?.[instanceId];
           if (!item || !details) return false;
           const selection = ++instanceSelectionSequence;
@@ -14330,22 +14116,25 @@
             }
           }
 
-          if (signal?.aborted || selection !== instanceSelectionSequence || !item.isConnected) return false;
+          if (signal?.aborted || selection !== instanceSelectionSequence || window.serviceInstanceElements?.get(instanceId) !== item) return false;
+          window.revealServiceInstance?.(instanceId);
 
           // Store current instance info globally for log selection
           window.currentInstanceInfo = {
             id: instanceId,
+            name: vaultData?.instance_name || details.instance_name || instanceId,
             service: details.service_id,
             plan: details.plan?.name
           };
 
           // Update active state
-          document.querySelectorAll('#services .service-item').forEach(i => i.classList.remove('active'));
+          window.serviceInstanceElements.forEach(i => i.classList.remove('active'));
           item.classList.add('active');
 
           // Render detail view with vault data
           const detailContainer = document.querySelector('#services .service-detail');
           detailContainer.innerHTML = renderServiceDetail(instanceId, details, vaultData);
+          servicesPanel.classList.add('instance-open');
 
           // Load initial tab content (details)
           loadDetailTab(instanceId, 'details');
@@ -14355,6 +14144,7 @@
           return true;
         };
         const setupServiceHandlers = () => {
+          window.serviceInstanceElements = new Map([...document.querySelectorAll('#services .service-item')].map(item => [item.dataset.instanceId,item]));
           document.querySelectorAll('#services .service-item').forEach(item => {
             item.addEventListener('click', () => window.navigateToInstance(item.dataset.instanceId));
           });
@@ -14371,36 +14161,57 @@
           const refreshServicesBtn = document.getElementById('refresh-services');
           const filterCount = document.getElementById('filter-count');
 
-          // Apply filters function - works even without dropdown filters
-          const applyFilters = () => {
-            const selectedService = serviceFilter ? serviceFilter.value : '';
-            const selectedPlan = planFilter ? planFilter.value : '';
-            const hideDeleted = hideDeletedFilter ? hideDeletedFilter.checked : false;
-            const allItems = document.querySelectorAll('#services .service-item');
-            let visibleCount = 0;
-
-            allItems.forEach(item => {
-              const itemService = item.dataset.service;
-              const itemPlan = item.dataset.plan;
-              const isDeleted = item.dataset.deleted === 'true';
-
-              const matchesService = !selectedService || itemService === selectedService;
-              const matchesPlan = !selectedPlan || itemPlan === selectedPlan;
-              const matchesDeletedFilter = !hideDeleted || !isDeleted;
-
-              if (matchesService && matchesPlan && matchesDeletedFilter) {
-                item.style.display = '';
-                visibleCount++;
-              } else {
-                item.style.display = 'none';
-              }
-            });
-
-            // Update count
-            if (filterCount) {
-              filterCount.textContent = `Showing ${visibleCount} of ${allItems.length} instances`;
+          const search = document.getElementById('instance-search');
+          const itemsContainer = servicesPanel.querySelector('.services-items-container');
+          const previous = document.getElementById('instance-prev');
+          const next = document.getElementById('instance-next');
+          const pageLabel = document.getElementById('instance-page');
+          const allItems = [...window.serviceInstanceElements.values()];
+          let page = 0, matching = [];
+          const applyFilters = (requestedPage = 0) => {
+            const query = (search.value || '').trim().toLocaleLowerCase();
+            matching = allItems.filter(item =>
+              (!serviceFilter?.value || item.dataset.service === serviceFilter.value) &&
+              (!planFilter?.value || item.dataset.plan === planFilter.value) &&
+              (!hideDeletedFilter?.checked || item.dataset.deleted !== 'true') &&
+              (!query || item.textContent.toLocaleLowerCase().includes(query)));
+            page = Math.min(Math.max(0, requestedPage), Math.max(0, Math.ceil(matching.length / 50) - 1));
+            const visible = matching.slice(page * 50, (page + 1) * 50);
+            itemsContainer.replaceChildren(...visible);
+            if (!visible.length) {
+              const empty = document.createElement('p');
+              empty.className = 'no-data'; empty.textContent = 'No instances match these filters.';
+              itemsContainer.append(empty);
             }
+            itemsContainer.scrollTop = 0;
+            previous.disabled = page === 0;
+            next.disabled = (page + 1) * 50 >= matching.length;
+            pageLabel.textContent = `${page + 1} / ${Math.max(1, Math.ceil(matching.length / 50))}`;
+            filterCount.textContent = `${matching.length} matching · ${allItems.length} total`;
           };
+          search.addEventListener('input', () => applyFilters());
+          previous.addEventListener('click', () => applyFilters(page - 1));
+          next.addEventListener('click', () => applyFilters(page + 1));
+          window.revealServiceInstance = id => {
+            const target = window.serviceInstanceElements.get(id);
+            if (!matching.includes(target)) {
+              search.value = '';
+              if (serviceFilter) serviceFilter.value = '';
+              if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
+              if (target?.dataset.deleted === 'true' && hideDeletedFilter) hideDeletedFilter.checked = false;
+              applyFilters();
+            }
+            const index = matching.indexOf(target);
+            if (index >= 0 && !target.isConnected) applyFilters(Math.floor(index / 50));
+          };
+          clearFiltersBtn?.addEventListener('click', () => {
+            search.value = '';
+            if (serviceFilter) serviceFilter.value = '';
+            if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
+            if (hideDeletedFilter) hideDeletedFilter.checked = true;
+            applyFilters();
+          });
+          applyFilters();
 
           // Hide deleted checkbox change handler - always set up if available
           if (hideDeletedFilter) {
@@ -14415,8 +14226,7 @@
               e.preventDefault();
 
               // Get all visible service items
-              const visibleItems = Array.from(document.querySelectorAll('#services .service-item'))
-                .filter(item => item.style.display !== 'none');
+              const visibleItems = matching;
 
               // Extract deployment names - try to get actual deployment names from manifests
               const deploymentNames = [];
@@ -14779,24 +14589,6 @@
             applyFilters();
           });
 
-          // Clear filters button
-          if (clearFiltersBtn) {
-            clearFiltersBtn.addEventListener('click', () => {
-              if (serviceFilter) {
-                serviceFilter.value = '';
-              }
-              if (planFilter) {
-                planFilter.value = '';
-                planFilter.disabled = true;
-                planFilter.innerHTML = '<option value="">All Plans</option>';
-              }
-              if (hideDeletedFilter) {
-                hideDeletedFilter.checked = false;
-              }
-              applyFilters();
-            });
-          }
-
           // Apply filters on initial load (to respect default checkbox state)
           applyFilters();
         };
@@ -14921,207 +14713,15 @@
         contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
         try {
-          // Handle the Details tab
+          // Summary first, connection details on demand. Never infer health from an API response.
           if (tabType === 'details') {
-            // Fetch credentials and merge with details
+            let creds = {};
             try {
               const response = await fetch('/b/blacksmith/credentials');
-              if (request !== blacksmithRequestSequence) return;
-              if (response.ok) {
-                const creds = await response.json();
-                if (request !== blacksmithRequestSequence) return;
-
-                // Create details content with credentials
-                const data = window.blacksmithData || {};
-                const deploymentName = data.deployment || 'blacksmith';
-                const environment = data.env || 'Unknown';
-                const totalInstances = data.instances ? Object.keys(data.instances).length : 0;
-                const totalPlans = data.plans ? Object.keys(data.plans).length : 0;
-                const status = 'Running';
-
-                contentContainer.innerHTML = `
-                  <table class="service-info-table w-full bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-200px)] overflow-y-auto">
-                    <tbody>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Deployment</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${deploymentName}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${deploymentName}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Environment</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${environment}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${environment}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Total Service Instances</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${totalInstances}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${totalInstances}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Total Plans</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${totalPlans}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${totalPlans}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Status</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span>${status}</span>
-                        </td>
-                      </tr>
-                      ${data.boshDNS ? `
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">BOSH DNS</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${data.boshDNS}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${data.boshDNS}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      ` : ''}
-                      <tr>
-                        <td colspan="2" class="info-section-header">BOSH Configuration</td>
-                      </tr>
-                      ${creds.BOSH ? `
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">BOSH Address</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${creds.BOSH.address}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${creds.BOSH.address}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">BOSH Username</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${creds.BOSH.username}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${creds.BOSH.username}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">BOSH Network</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${creds.BOSH.network}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${creds.BOSH.network}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      ` : ''}
-                      <tr>
-                        <td colspan="2" class="info-section-header">Vault Configuration</td>
-                      </tr>
-                      ${creds.Vault ? `
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Vault Address</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${creds.Vault.address}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${creds.Vault.address}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      ` : ''}
-                      <tr>
-                        <td colspan="2" class="info-section-header">Broker Configuration</td>
-                      </tr>
-                      ${creds.Broker ? `
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Broker Username</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${creds.Broker.username}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${creds.Broker.username}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Broker Port</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${creds.Broker.port}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${creds.Broker.port}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td class="info-key px-4 py-3 font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700 text-sm uppercase tracking-wide whitespace-nowrap">Broker Bind IP</td>
-                        <td class="info-value px-4 py-3 text-gray-900 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 font-mono text-sm whitespace-nowrap">
-                          <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
-                            <span>${creds.Broker.bind_ip}</span>
-                <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${creds.Broker.bind_ip}')"
-                        title="Copy to clipboard">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                          </span>
-                        </td>
-                      </tr>
-                      ` : ''}
-                    </tbody>
-                  </table>
-                `;
-              } else {
-                // Fallback to original details content if credentials can't be fetched
-                contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
-              }
-            } catch (error) {
-              if (request !== blacksmithRequestSequence) return;
-              console.error('Failed to load credentials:', error);
-              // Fallback to original details content
-              contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
-            }
+              if (response.ok) creds = await response.json();
+            } catch (_) { /* Basic context remains available when connection details cannot load. */ }
+            if (request !== blacksmithRequestSequence) return;
+            contentContainer.innerHTML = renderBlacksmithOverview(window.blacksmithData || {}, creds);
             return;
           }
 
@@ -16167,9 +15767,9 @@
 
     // Show the modal
     modal.style.display = 'flex';
-    modal.classList.remove('hidden'); // Remove hidden class
-    modal.classList.remove('opacity-0'); // Remove opacity-0 Tailwind class
-    modal.classList.remove('invisible'); // Remove invisible Tailwind class
+    modal.classList.remove('is-hidden'); // Remove hidden class
+    modal.classList.remove('is-transparent'); // Remove opacity-0 state class
+    modal.classList.remove('is-invisible'); // Remove invisible state class
     modal.classList.add('active');
     modal.removeAttribute('inert'); // Remove inert attribute to make interactive
     modal.setAttribute('aria-hidden', 'false');
@@ -16246,7 +15846,7 @@
       }
       const diffPlaceholder = document.getElementById('diff-placeholder');
       if (diffPlaceholder) {
-        diffPlaceholder.classList.remove('hidden');
+        diffPlaceholder.classList.remove('is-hidden');
         diffPlaceholder.textContent = 'Select versions from the dropdown above to view configuration changes.';
       }
 
@@ -16369,9 +15969,9 @@
     const modal = document.getElementById('config-details-modal');
     if (modal) {
       modal.classList.remove('active');
-      modal.classList.add('hidden'); // Add back hidden class
-      modal.classList.add('opacity-0'); // Add back opacity-0 Tailwind class
-      modal.classList.add('invisible'); // Add back invisible Tailwind class
+      modal.classList.add('is-hidden'); // Add back hidden class
+      modal.classList.add('is-transparent'); // Add back opacity-0 state class
+      modal.classList.add('is-invisible'); // Add back invisible state class
       modal.style.display = 'none';
       modal.style.zIndex = ''; // Reset z-index
       modal.setAttribute('inert', ''); // Add back inert attribute
@@ -16484,7 +16084,7 @@
             diffOutput.innerHTML = '';
           }
           if (placeholder) {
-            placeholder.classList.remove('hidden');
+            placeholder.classList.remove('is-hidden');
           }
         }
       });
@@ -16500,7 +16100,7 @@
     if (!window.currentConfigInfo || !window.currentConfigInfo.versions || window.currentConfigInfo.versions.length < 2) {
       if (placeholder) {
         placeholder.textContent = 'At least 2 versions are required for diff comparison.';
-        placeholder.classList.remove('hidden');
+        placeholder.classList.remove('is-hidden');
       }
       if (selector) {
         selector.innerHTML = '<option value="">No versions available</option>';
@@ -16515,7 +16115,7 @@
       diffOutput.innerHTML = '';
     }
     if (placeholder) {
-      placeholder.classList.remove('hidden');
+      placeholder.classList.remove('is-hidden');
     }
 
     // Populate dropdown with version pairs
@@ -16552,7 +16152,7 @@
     // Show loading state
     diffOutput.innerHTML = 'Loading diff...';
     diffOutput.classList.add('active');
-    if (placeholder) placeholder.classList.add('hidden');
+    if (placeholder) placeholder.classList.add('is-hidden');
 
     try {
       // Fetch diff from API
@@ -18195,7 +17795,7 @@
                   </div>
                 </td>
                 <td class="endpoint-dropdown-cell">
-                  <select id="cf-endpoint-select" class="cf-endpoint-dropdown">
+                  <select id="cf-endpoint-select" aria-label="Cloud Foundry endpoint" class="cf-endpoint-dropdown">
                     <option value="">Loading endpoints...</option>
                   </select>
                 </td>
@@ -20312,6 +19912,7 @@
       }
 
       // Show modal
+      modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
       modal.style.display = 'block';
       modal.setAttribute('aria-hidden', 'false');
 
@@ -20535,6 +20136,7 @@
       `;
 
       // Show modal
+      modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
       modal.style.display = 'block';
       modal.setAttribute('aria-hidden', 'false');
 
@@ -21966,7 +21568,7 @@
       const modal = document.getElementById('terminal-modal');
       if (modal) {
         modal.style.display = 'flex';
-        modal.classList.remove('hidden', 'opacity-0', 'invisible');
+        modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
         modal.classList.add('active');
         modal.setAttribute('aria-hidden', 'false');
         // Ensure modal is interactive: remove inert if present
@@ -22244,14 +21846,14 @@
     createTab(sessionKey, context) {
       const tabsContainer = document.getElementById('terminal-tabs');
       const tab = document.createElement('button');
-      tab.className = `terminal-tab px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-0 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 transition-colors duration-200 flex items-center gap-2 whitespace-nowrap text-sm ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
+      tab.className = `terminal-tab ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
       tab.id = `tab-${sessionKey}`;
 
       // Use instance_name for tab display if available
       const tabDisplayName = context.instanceName || context.deploymentName;
 
       tab.innerHTML = `
-        <svg class="terminal-tab-icon w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="terminal-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
           <line x1="8" y1="21" x2="16" y2="21"></line>
           <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -22273,7 +21875,7 @@
       const modal = document.getElementById('terminal-modal');
       if (modal) {
         modal.style.display = 'flex';
-        modal.classList.remove('hidden', 'opacity-0', 'invisible');
+        modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
         modal.classList.add('active');
         modal.setAttribute('aria-hidden', 'false');
         if (modal.hasAttribute('inert')) {
@@ -22366,12 +21968,12 @@
                 try { active.blur(); } catch (_) { }
               }
               modal.classList.remove('active');
-              modal.classList.add('opacity-0', 'invisible');
+              modal.classList.add('is-transparent', 'is-invisible');
               modal.setAttribute('aria-hidden', 'true');
               modal.setAttribute('inert', '');
               setTimeout(() => {
                 modal.style.display = 'none';
-                modal.classList.add('hidden');
+                modal.classList.add('is-hidden');
               }, 300);
             }
           }
@@ -22389,12 +21991,12 @@
       const modal = document.getElementById('terminal-modal');
       if (modal) {
         modal.classList.remove('active');
-        modal.classList.add('opacity-0', 'invisible');
+        modal.classList.add('is-transparent', 'is-invisible');
         modal.setAttribute('aria-hidden', 'true');
         modal.setAttribute('inert', '');
         setTimeout(() => {
           modal.style.display = 'none';
-          modal.classList.add('hidden');
+          modal.classList.add('is-hidden');
         }, 300);
       }
 
@@ -22438,12 +22040,12 @@
           try { active.blur(); } catch (_) { }
         }
         modal.classList.remove('active');
-        modal.classList.add('opacity-0', 'invisible');
+        modal.classList.add('is-transparent', 'is-invisible');
         modal.setAttribute('aria-hidden', 'true');
         modal.setAttribute('inert', '');
         setTimeout(() => {
           modal.style.display = 'none';
-          modal.classList.add('hidden');
+          modal.classList.add('is-hidden');
         }, 300);
       }
     },
@@ -22453,7 +22055,7 @@
       const modal = document.getElementById('terminal-modal');
       if (modal && this.sessions.size > 0) {
         modal.style.display = 'flex';
-        modal.classList.remove('hidden', 'opacity-0', 'invisible');
+        modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
         modal.setAttribute('aria-hidden', 'false');
         if (modal.hasAttribute('inert')) {
           modal.removeAttribute('inert');
@@ -22481,9 +22083,9 @@
         // Create minimized tabs for each session
         this.sessions.forEach((session, sessionKey) => {
           const tab = document.createElement('div');
-          tab.className = `minimized-terminal-tab bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded px-3 py-1 text-xs cursor-pointer transition-colors duration-200 flex items-center gap-2 hover:bg-gray-200 dark:hover:bg-gray-600 ${sessionKey === this.activeSession ? 'active bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-500' : ''}`;
+          tab.className = `minimized-terminal-tab rounded ${sessionKey === this.activeSession ? 'active ' : ''}`;
           tab.innerHTML = `
-            <svg class="minimized-terminal-icon w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="minimized-terminal-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
               <line x1="8" y1="21" x2="16" y2="21"></line>
               <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -23332,7 +22934,7 @@
           <div class="cert-chips" id="cert-chips" aria-label="Active filters"></div>
           <div class="cert-selection-line" id="cert-selection-line"></div>
           <div class="cert-groupby" id="cert-groupby"></div>
-          <div class="cert-table-wrap" id="cert-table-wrap" tabindex="-1">
+          <div class="cert-table-wrap" id="cert-table-wrap" tabindex="0" role="region" aria-label="Certificate table">
             <table class="cert-table" id="cert-table">
               <caption class="visually-hidden">Certificates in the fleet</caption>
               <thead id="cert-thead"></thead>

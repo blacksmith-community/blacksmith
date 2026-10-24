@@ -2,11 +2,11 @@
 (function (root) {
   'use strict';
   const instanceSections = [
-    ['details', 'Details'], ['events', 'Events'], ['vms', 'VMs'],
+    ['details', 'Overview'], ['events', 'Events'], ['vms', 'Virtual machines'],
     ['manifest', 'Manifest'], ['certificates', 'Certificates'],
-    ['credentials', 'Credentials'], ['instance-logs', 'Logs'], ['testing', 'Testing']
+    ['credentials', 'Credentials'], ['instance-logs', 'Logs'], ['testing', 'Connection tests']
   ];
-  const aliases = { upgrade: 'upgrade releases stemcells jobs', configs: 'bosh configuration', config: 'settings configuration', vms: 'virtual machines ssh terminal', details: 'overview' };
+  const aliases = { upgrade: 'upgrade releases stemcells jobs', configs: 'bosh configuration', config: 'settings configuration', vms: 'vms virtual machines ssh terminal', details: 'details overview context', testing: 'testing connection tests' };
   function destinations(screens, instances, catalog) {
     const entries = [];
     for (const screen of screens) {
@@ -159,7 +159,7 @@
         if (!target || target.disabled) throw new Error('This screen is not available yet. Please try again.');
         close(false);
         target.click();
-        target.focus();
+        (target.getClientRects().length ? target : target.closest('.entity-workspace')?.querySelector('.entity-section-select'))?.focus();
         updateContext();
       } catch (error) {
         status.textContent = error.message;
@@ -205,15 +205,38 @@
       const panel = document.querySelector('.tab-panel.active');
       if (!panel) return;
       const main = mainButton(panel.id)?.textContent.trim() || 'Blacksmith';
-      const section = panel.querySelector('.detail-tab.active')?.textContent.trim();
-      const instance = panel.id === 'services' ? root.currentInstanceInfo?.id : '';
+      const detailVisible = panel.id !== 'services' || panel.classList.contains('instance-open');
+      const section = detailVisible ? panel.querySelector('.detail-tab.active')?.textContent.trim() : '';
+      const instance = panel.id === 'services' && detailVisible ? (root.currentInstanceInfo?.name || root.currentInstanceInfo?.id) : '';
       document.getElementById('console-title').textContent = [main, instance, section].filter(Boolean).join(' / ');
       document.querySelectorAll('.detail-tabs').forEach(group => {
         group.setAttribute('role', 'tablist');
+        group.setAttribute('aria-orientation', group.classList.contains('entity-navigation') ? 'vertical' : 'horizontal');
         group.setAttribute('aria-label', group.closest('#services') ? 'Instance sections' : 'Blacksmith sections');
         group.querySelectorAll('.detail-tab').forEach(tab => {
           tab.setAttribute('role', 'tab');
-          tab.setAttribute('aria-selected', String(tab.classList.contains('active')));
+          const selected = tab.classList.contains('active');
+          tab.setAttribute('aria-selected', String(selected));
+          tab.tabIndex = selected ? 0 : -1;
+          const entity = group.closest('#blacksmith, .service-detail');
+          const content = entity?.querySelector('.detail-content');
+          tab.id ||= `${group.closest('#services') ? 'instance' : 'broker'}-section-${tab.dataset.tab}`;
+          if (content) {
+            content.id ||= `${group.closest('#services') ? 'instance' : 'broker'}-section-content`;
+            tab.setAttribute('aria-controls', content.id);
+            if (selected) {
+              content.setAttribute('role', 'tabpanel');
+              content.setAttribute('aria-labelledby', tab.id);
+              content.removeAttribute('aria-label');
+              content.tabIndex = 0;
+              const heading = entity.querySelector('.entity-current-title');
+              if (heading && heading.textContent !== tab.textContent) heading.textContent = tab.textContent;
+              const select = entity.querySelector('.entity-section-select');
+              if (select) select.value = tab.dataset.tab;
+              const hint = entity.querySelector('.entity-read-hint');
+              if (hint) hint.hidden = tab.dataset.tab !== 'details';
+            }
+          }
         });
       });
       document.querySelectorAll('.service-item, .plan-item, .endpoint-item').forEach(item => {
@@ -223,16 +246,16 @@
       });
     }
     document.addEventListener('click', event => {
-      if (event.target.closest('.tab-button, .detail-tab, .service-item')) queueMicrotask(updateContext);
+      if (event.target.closest('.tab-button, .detail-tab, .service-item, .entity-back')) queueMicrotask(updateContext);
     });
     document.addEventListener('keydown', event => {
       const item = event.target.closest('.service-item, .plan-item, .endpoint-item');
       if (item && event.target === item && ['Enter', ' '].includes(event.key)) { event.preventDefault(); item.click(); }
       const tab = event.target.closest('.tab-button, .detail-tab');
-      if (tab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
-        const siblings = [...tab.parentElement.querySelectorAll('button')];
+      if (tab && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+        const siblings = [...(tab.closest('.detail-tabs') || tab.parentElement).querySelectorAll('.detail-tab, .tab-button')];
         let index = siblings.indexOf(tab);
-        index = event.key === 'Home' ? 0 : event.key === 'End' ? siblings.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + siblings.length) % siblings.length;
+        index = event.key === 'Home' ? 0 : event.key === 'End' ? siblings.length - 1 : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + siblings.length) % siblings.length;
         event.preventDefault(); siblings[index].focus(); siblings[index].click();
       }
     });

@@ -2,7 +2,7 @@
 
 These files are the unmodified `oat.min.css`, `oat.min.js`, and `LICENSE` from the npm package `@knadh/oat` at version 1.0.0, published 2026-10-18. Oat's home page is https://oat.ink, and it is MIT licensed.
 
-No page loads these files yet. They are pinned here so the console can adopt Oat without fetching anything at build or run time.
+The console loads these files from `index.html`; `forge-theme.css` supplies the application theme. They are pinned here so the console can adopt Oat without fetching anything at build or run time.
 
 | File | SHA-256 |
 |------|---------|

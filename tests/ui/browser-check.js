@@ -1,5 +1,5 @@
 // Run with playwright-cli run-code --filename=tests/ui/browser-check.js
-// Start `python3 -m http.server 4199 --directory ui` first. All API calls are fixtures.
+// Start `python3 -m http.server 4201 --directory ui` first. All API calls are fixtures.
 async (page) => {
   const checks = [];
   const errors = [];
@@ -7,7 +7,7 @@ async (page) => {
   let delayCredentials = false;
   const check = (condition, message) => { if (!condition) throw new Error(message); checks.push(message); };
   const catalog = { services: [{ id: 'valkey', name: 'valkey', description: 'Managed cache', plans: [{ id: 'small', name: 'small', description: 'Single node cache' }] }] };
-  const instances = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`cache-${i + 1}`, {
+  const instances = Object.fromEntries(Array.from({ length: 1003 }, (_, i) => [`cache-${i + 1}`, {
     service_id: 'valkey', plan_id: 'small', instance_name: `Application cache ${i + 1}`,
     created_at: '2026-10-20T10:00:00Z', stemcell: 'ubuntu-jammy/1.80', deployment_name: `small-cache-${i + 1}`,
     vm_status: 'running', vm_count: 1, vm_healthy: 1
@@ -39,8 +39,21 @@ async (page) => {
   });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('http://127.0.0.1:4199');
-  await page.locator('#blacksmith .service-info-table').waitFor();
+  await page.goto('http://127.0.0.1:4201');
+  await page.locator('#blacksmith .entity-overview').waitFor();
+  await page.locator('.tab-button[data-tab="services"]').click();
+  check(await page.locator('#services .service-item').count() === 50, 'Only 50 of 1003 instances are mounted');
+  await page.locator('#instance-next').click();
+  check(await page.locator('#services .service-item').first().getAttribute('data-instance-id') === 'cache-51', 'Next instance page advances');
+  await page.locator('#instance-search').fill('Application cache 1003');
+  check(await page.locator('#services .service-item').count() === 1, 'Instance search covers the full fleet');
+  await page.locator('#clear-filters').click();
+  await page.locator('.tab-button[data-tab="blacksmith"]').click();
+  for (const id of ['vms','tasks','events','blacksmith-logs','certificates','plans','broker','configs','config','manifest','details']) {
+    await page.locator(`#blacksmith .detail-tab[data-tab="${id}"]`).click();
+    await page.waitForFunction(() => !document.querySelector('#blacksmith .detail-content > .loading'));
+    check(await page.locator('#blacksmith .detail-content').isVisible(), `Broker ${id} renders with Oat alone`);
+  }
   const dialog = page.locator('#navigation-dialog');
   const input = page.locator('#navigation-search');
   const isOpen = () => dialog.evaluate(el => el.open);
@@ -65,6 +78,12 @@ async (page) => {
   await page.keyboard.press('Escape');
   check(!(await isOpen()), 'Escape closes navigation');
   check(await page.locator('#navigation-trigger').evaluate(el => el === document.activeElement), 'Dismissal restores trigger focus');
+  await palette('cache-1003 events');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !document.getElementById('navigation-dialog').open);
+  check(await page.locator('#services .service-item.active').getAttribute('data-instance-id') === 'cache-1003', 'Navigation reveals an instance outside the mounted page');
+  await page.locator('#instance-search').fill('cache-1');
+  await page.locator('#clear-filters').click();
   await palette('cache-1 events');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !document.getElementById('navigation-dialog').open);
@@ -74,6 +93,11 @@ async (page) => {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.currentInstanceInfo.id === 'cache-3');
   check(await page.locator('#services .service-item.active').getAttribute('data-instance-id') === 'cache-3', 'Instance rows support keyboard activation');
+  for (const id of ['details','vms','events','instance-logs','certificates','credentials','testing','manifest']) {
+    await page.locator(`#services .detail-tab[data-tab="${id}"]`).click();
+    await page.waitForFunction(() => !document.querySelector('#services .detail-content > .loading'));
+    check(await page.locator('#services .detail-content').isVisible(), `Instance ${id} renders with Oat alone`);
+  }
   await palette('cache-2 events');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Escape');
@@ -144,8 +168,8 @@ async (page) => {
     await page.evaluate(theme => { document.documentElement.setAttribute('data-theme', theme); }, theme);
     await page.locator('.tab-button[data-tab="blacksmith"]').click();
     await page.locator('#blacksmith .detail-tab[data-tab="details"]').click();
-    await page.locator('#blacksmith .info-value').first().waitFor();
-    const colors = await page.locator('#blacksmith .info-value').first().evaluate(el => ({ color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor }));
+    await page.locator('#blacksmith .entity-metric').first().waitFor();
+    const colors = await page.locator('#blacksmith .entity-metric').first().evaluate(el => ({ color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor }));
     check(colors.color !== colors.background, `${theme} details have distinct foreground/background`);
     await page.screenshot({ path: `output/playwright/console-${theme}.png` });
     await palette('certificates');
@@ -156,6 +180,7 @@ async (page) => {
   for (const screen of ['blacksmith', 'services', 'upgrade']) {
     await page.locator(`.tab-button[data-tab="${screen}"]`).click();
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${screen} does not overflow narrow viewport`);
+    if (screen === 'services') { await page.locator('.entity-back').click(); }
     if (screen === 'services') check(await page.locator('#services .services-items-container').evaluate(el => Math.min(el.getBoundingClientRect().bottom, el.parentElement.getBoundingClientRect().bottom) - el.getBoundingClientRect().top >= 120), 'Mobile instance list retains usable scrolling space');
     await page.screenshot({ path: `output/playwright/mobile-${screen}.png` });
   }
@@ -163,9 +188,23 @@ async (page) => {
   check(await page.locator('#upgrade-start').isVisible(), 'Upgrade action remains reachable on narrow screens');
   await page.locator('#upgrade-release-filter').scrollIntoViewIfNeeded();
   check(await page.locator('#upgrade-release-filter').isVisible(), 'Release target remains reachable on narrow screens');
-  await palette('cache-12');
+  await palette('cache-1003');
   check(await page.locator('#navigation-results [role=option]').count() === 8, 'Full index searchable beyond initial result cap');
   await page.keyboard.press('Escape');
+  await palette('cache-1003 events');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !document.getElementById('navigation-dialog').open);
+  check(await page.locator('#services .entity-section-select').evaluate(el => el === document.activeElement), 'Mobile navigation focuses the visible section picker');
+  await page.locator('#services .entity-section-select').selectOption('details');
+  check(await page.locator('#services .entity-overview').isVisible(), 'Mobile picker opens overview');
+  await page.screenshot({path:'output/playwright/mobile-instance.png'});
+  await page.locator('.entity-back').click();
+  check(await page.locator('#console-title').textContent() === 'Service Instances', 'Returning to the list clears stale instance context');
+  await page.setViewportSize({width:640,height:400});
+  await page.locator('.tab-button[data-tab="blacksmith"]').click();
+  await page.evaluate(()=>document.documentElement.style.fontSize='200%');
+  check(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth), 'Enlarged text and narrow reflow do not overflow the viewport');
+  await page.evaluate(()=>document.documentElement.style.fontSize='');
   await page.setViewportSize({ width: 1280, height: 800 });
   check(errors.length === 0, `No uncaught browser errors: ${errors.join('; ')}`);
   return { passed: checks.length, checks, writes };

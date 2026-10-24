@@ -1,0 +1,140 @@
+const { test, expect } = require('bun:test');
+const fs = require('fs');
+const path = require('path');
+const { main: {boot} } = require('./certificates/harness.js');
+const { JSDOM } = require('./certificates/support.js');
+const ui = path.resolve(__dirname, '../../ui');
+const t = JSDOM ? test : test.skip;
+
+t('broker overview distinguishes known context from unverified health', () => {
+  const {w,d} = boot();
+  try {
+    const data = {deployment:'lab <img src=x>',env:'Forge lab',instances:{a:{},b:{deleted:true}},plans:{small:{}}};
+    const host=d.createElement('div');
+    host.innerHTML=w.__T.renderBlacksmithOverview(data);
+    expect(host.querySelectorAll('.entity-metric')).toHaveLength(3);
+    expect(host.textContent).toContain('1 active instance');
+    expect(host.textContent).not.toContain('Running');
+    expect(host.querySelector('img')).toBeNull();
+    expect(host.textContent).toContain('lab <img src=x>');
+    expect(host.querySelector('details').open).toBe(false);
+  } finally { w.close(); }
+});
+
+t('Blacksmith and instance navigation retain all destinations in named groups', () => {
+  const {w,d}=boot();
+  try {
+    const broker=d.createElement('div');broker.innerHTML=w.__T.renderBlacksmithTemplate({});
+    const instance=d.createElement('div');instance.innerHTML=w.__T.renderServiceDetail('id-1',{service_id:'valkey',plan_id:'cluster'},null);
+    expect(broker.querySelectorAll('.detail-tab')).toHaveLength(11);
+    expect(instance.querySelectorAll('.detail-tab')).toHaveLength(8);
+    for (const host of [broker,instance]) {
+      expect(host.querySelector('.entity-section-group')).not.toBeNull();
+      expect(host.querySelector('[data-tab="details"]').textContent).toBe('Overview');
+      expect(host.querySelector('.entity-section-select').getAttribute('aria-label')).toBe('View section');
+      expect(host.querySelector('.service-detail-header h2')).not.toBeNull();
+    }
+    const overview=d.createElement('div');overview.innerHTML=w.serviceInstanceDetailsContent['id-1'];
+    expect(overview.textContent).toContain('Not reported');
+    expect(overview.querySelector('details').open).toBe(false);
+    expect(overview.textContent).toContain('cluster');
+  } finally { w.close(); }
+});
+
+t('explicit light and dark choices control the Oat color scheme', () => {
+  const {w,d}=boot();
+  try {
+    w.__T.setTheme('light');
+    expect(d.documentElement.style.colorScheme).toBe('light');
+    w.__T.setTheme('dark');
+    expect(d.documentElement.style.colorScheme).toBe('dark');
+    expect(d.getElementById('themeToggle').getAttribute('aria-label')).toBe('Switch to light theme');
+  } finally { w.close(); }
+});
+
+test('the complete UI loads vendored Oat without Tailwind assets or utility variants', () => {
+  const html=fs.readFileSync(path.join(ui,'index.html'),'utf8');
+  expect(html).toContain('/vendor/oat/oat.min.css');
+  expect(html).toContain('/vendor/oat/oat.min.js');
+  expect(html).not.toMatch(/tailwind/i);
+  expect(fs.existsSync(path.join(ui,'tailwind.css'))).toBe(false);
+  expect(fs.existsSync(path.join(ui,'tailwind.min.js'))).toBe(false);
+  for(const name of ['index.html','blacksmith.js','navigation.js']) {
+    expect(fs.readFileSync(path.join(ui,name),'utf8')).not.toMatch(/(?:dark:|hover:|focus:)(?:bg-|text-|border-|ring-|outline-)/);
+  }
+});
+
+const luminance=hex=>{
+  const rgb=hex.replace('#','').match(/../g).map(s=>parseInt(s,16)/255).map(v=>v<=0.04045?v/12.92:((v+.055)/1.055)**2.4);
+  return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];
+};
+const contrast=(a,b)=>(Math.max(luminance(a),luminance(b))+.05)/(Math.min(luminance(a),luminance(b))+.05);
+test('forge reading and control palettes meet contrast targets in both themes',()=>{
+  const css=fs.readFileSync(path.join(ui,'forge-theme.css'),'utf8');
+  for(const selector of [':root','[data-theme="dark"]']) {
+    const block=css.slice(css.indexOf(selector)).match(/\{([^}]+)\}/)[1];
+    const vars=Object.fromEntries([...block.matchAll(/--([\w-]+):\s*(#[\da-f]{6})/gi)].map(m=>[m[1],m[2]]));
+    for(const bg of ['background','card','secondary']) {
+      expect(contrast(vars.foreground,vars[bg])).toBeGreaterThanOrEqual(7);
+      expect(contrast(vars['muted-foreground'],vars[bg])).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrast(vars.primary,vars['primary-foreground'])).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(vars.ring,vars.background)).toBeGreaterThanOrEqual(3);
+    expect(contrast(vars.input,vars.card)).toBeGreaterThanOrEqual(3);
+  }
+});
+
+ test('install metadata provides matching platform icons without caching live state', () => {
+ const manifest=JSON.parse(fs.readFileSync(path.join(ui,'manifest.webmanifest'),'utf8'));
+ expect(manifest.name).toBe('Blacksmith Management Console');
+ expect(manifest.start_url).toBe('/');
+ for (const size of ['192x192','512x512']) {
+   expect(manifest.icons.some(i=>i.sizes===size && i.purpose==='any')).toBe(true);
+   expect(manifest.icons.some(i=>i.sizes===size && i.purpose==='maskable')).toBe(true);
+ }
+ for (const icon of manifest.icons) expect(fs.existsSync(path.join(ui,icon.src))).toBe(true);
+ const html=fs.readFileSync(path.join(ui,'index.html'),'utf8');
+ expect(html).toContain('rel="apple-touch-icon"');
+ expect(html).toContain('rel="manifest"');
+});
+
+t('instance list escapes operator-controlled labels', () => {
+ const {w,d}=boot();
+ try {
+ const host=d.createElement('div');
+ host.innerHTML=w.__T.renderServicesTemplate({'hostile"id':{service_id:'<img src=x>',instance_name:'<img src=x>',plan_id:'small',vm_status:'<img src=x>'}});
+ expect(host.querySelector('img')).toBeNull();
+ expect(host.querySelector('.service-item').dataset.instanceId).toBe('hostile"id');
+ expect(host.querySelector('#instance-search')).not.toBeNull();
+ expect(host.querySelector('#instance-next')).not.toBeNull();
+ } finally {w.close();}
+});
+
+t('registration dialog can open after visibility utility migration',()=>{
+ const {w,d}=boot();
+ try {
+ w.__T.CFRegistrationManager.showRegistrationModal();
+ const modal=d.getElementById('registration-modal');
+ expect(modal.classList.contains('is-hidden')).toBe(false);
+ expect(modal.classList.contains('is-transparent')).toBe(false);
+ expect(modal.classList.contains('is-invisible')).toBe(false);
+ expect(modal.getAttribute('aria-hidden')).toBe('false');
+ w.__T.CFRegistrationManager.hideRegistrationModal();
+ expect(modal.style.display).toBe('none');
+ } finally {w.close();}
+});
+
+t('confirmation isolates the background and restores prior inert state',async()=>{
+ const {w,d}=boot();
+ try {
+ await new Promise(resolve=>setTimeout(resolve,50));
+ const main=d.querySelector('main'); const header=d.querySelector('body > header');
+ header.setAttribute('inert','');
+ const result=w.__T.showConfirmDialog({title:'Review',message:'Confirm this change'});
+ expect(main.hasAttribute('inert')).toBe(true);
+ d.querySelector('[data-dialog-role="cancel"]').click();
+ expect(await result).toBe(false);
+ expect(main.hasAttribute('inert')).toBe(false);
+ expect(header.hasAttribute('inert')).toBe(true);
+ }finally{w.close();}
+});

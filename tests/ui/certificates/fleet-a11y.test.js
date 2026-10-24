@@ -27,7 +27,7 @@ t('fleet accessibility and announcements', async () => {
   // group header with nothing rotatable
   // persistence: focus, expand, scroll
   const c1=rows().find(r=>r.dataset.certId==='c1'); const box=c1.querySelector('input[type=checkbox]'); box.focus();
-  const wrap=d.getElementById('cert-table-wrap'); let st=0; Object.defineProperty(wrap,'scrollTop',{configurable:true,get:()=>st,set:(v)=>{st=v;}}); st=77;
+  const wrap=d.getElementById('cert-table-wrap'); ok(wrap.tabIndex===0,'table scroll region is keyboard focusable'); let st=0; Object.defineProperty(wrap,'scrollTop',{configurable:true,get:()=>st,set:(v)=>{st=v;}}); st=77;
   const ex=rows().find(r=>r.dataset.certId==='c3').querySelector('.cert-expand-btn'); ex.click(); await sleep(20);
   ok(d.querySelector('[data-cert-detail-for="c3"]'),'row expands');
   const c1b=rows().find(r=>r.dataset.certId==='c1').querySelector('input[type=checkbox]'); c1b.focus();
