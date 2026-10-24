@@ -79,3 +79,74 @@ t('inline copy buttons keep their icon and copy through copyValue', async () => 
     expect(button.querySelector(POLYLINE)).not.toBeNull();
   } finally { w.close(); }
 });
+
+const fs = require('fs');
+const path = require('path');
+const ui = path.resolve(__dirname, '../../ui');
+
+t('every copy button in the markup uses the one icon and has a name', () => {
+  const files = ['blacksmith.js', 'index.html'].map((f) => fs.readFileSync(path.join(ui, f), 'utf8'));
+  const buttons = [];
+  files.forEach((src) => {
+    const re = /<button\b[^>]*?(?:class="[^"]*\b(?:copy-btn-logs|copy-btn-manifest|copy-btn)\b[^"]*"|id="copy-config-content"|id="copy-deployment-names")[^>]*>[\s\S]*?<\/button>/g;
+    let m;
+    while ((m = re.exec(src))) buttons.push(m[0]);
+  });
+  expect(buttons.length).toBeGreaterThan(15);
+  buttons.forEach((markup) => {
+    const open = markup.split(/>\s*(?:<svg|\$\{COPY_ICON_SVG)/)[0];
+    expect(open).toMatch(/aria-label="[^"]+"/);
+    if (markup.includes('${COPY_ICON_SVG}')) return;
+    expect(markup).toContain('<rect x="9" y="9" width="13" height="13" rx="2" ry="2">');
+    expect(markup).toContain('stroke="currentColor"');
+    expect(markup).toContain('aria-hidden="true"');
+    expect(markup).not.toMatch(/<svg[^>]*aria-label=/);
+  });
+});
+
+t('table, manifest, and certificate copy buttons keep their label and swap to the check', async () => {
+  const { w, d } = boot();
+  try {
+    const copied = [];
+    w.navigator.clipboard = { writeText: (v) => { copied.push(v); return Promise.resolve(); } };
+    const host = mount(d, '<table class="demo-table"><thead><tr><th>Name</th></tr></thead><tbody><tr><td>alpha</td></tr></tbody></table>'
+      + '<button class="copy-btn-logs" aria-label="Copy filtered table rows">' + '<svg stroke="currentColor"></svg></button>');
+    const logs = host.querySelector('button');
+    await w.copyTableRowsAsText('.demo-table', { currentTarget: logs, preventDefault() {}, stopPropagation() {} });
+    expect(copied).toEqual(['Name\nalpha']);
+    expect(logs.classList.contains('copied')).toBe(true);
+    expect(logs.querySelector(POLYLINE)).not.toBeNull();
+    expect(logs.getAttribute('aria-label')).toBe('Copy filtered table rows');
+
+    // A button with a visible label keeps it beside the icon.
+    const labeled = mount(d, '<button class="copy-btn-logs" aria-label="Copy table"><svg stroke="currentColor"></svg><span>Table</span></button>').querySelector('button');
+    await w.copyTableRowsAsText('.demo-table', { currentTarget: labeled, preventDefault() {}, stopPropagation() {} });
+    expect(labeled.querySelector(POLYLINE)).not.toBeNull();
+    expect(labeled.querySelector('span').textContent).toBe('Copied!');
+  } finally { w.close(); }
+});
+
+t('the certificate copy button draws the shared icon and swaps to the check', async () => {
+  const { instance } = require('./certificates/harness.js');
+  const env = instance.boot();
+  const { w, d } = env;
+  const copied = [];
+  w.navigator.clipboard = { writeText: (v) => { copied.push(v); return Promise.resolve(); } };
+  const labeled = w.__T.CertView.copyButton('Copy command: openssl x509', 'openssl x509', 'Copy');
+  const iconOnly = w.__T.CertView.copyButton('Copy subject', 'CN=demo');
+  d.body.appendChild(labeled);
+  d.body.appendChild(iconOnly);
+  [labeled, iconOnly].forEach((b) => {
+    expect(b.querySelector('svg rect')).not.toBeNull();
+    expect(b.querySelector('svg').getAttribute('stroke')).toBe('currentColor');
+    expect(b.getAttribute('aria-label')).toMatch(/^Copy/);
+  });
+  expect(iconOnly.textContent.trim()).toBe('');
+  expect(labeled.textContent.trim()).toBe('Copy');
+  iconOnly.click();
+  await sleep(120);
+  expect(copied).toEqual(['CN=demo']);
+  expect(iconOnly.classList.contains('copied')).toBe(true);
+  expect(iconOnly.querySelector(POLYLINE)).not.toBeNull();
+  w.close();
+});

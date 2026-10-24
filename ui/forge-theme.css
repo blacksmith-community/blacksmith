@@ -111,11 +111,12 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .entity-facts dt { font-size: .75rem; color: var(--muted-foreground); }
 .entity-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 .entity-facts .entity-copy { margin-left: 8px; }
-/* One icon button for every copy control, drawn in currentColor. */
-button.copy-btn-inline.copy-btn-inline { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); cursor: pointer; vertical-align: middle; }
-button.copy-btn-inline.copy-btn-inline:hover { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
-button.copy-btn-inline.copy-btn-inline.copied { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
-button.copy-btn-inline.copy-btn-inline svg { width: 14px; height: 14px; }
+/* One icon button for every copy control, drawn in currentColor. The id in
+   the list lifts the whole selector above the older per-view rules. */
+button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-width: 28px; height: 28px; min-height: 28px; padding: 0 6px; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; vertical-align: middle; }
+button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
+button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content).copied { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
+button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) svg { width: 14px; height: 14px; }
 .entity-technical { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; }
 .entity-technical > summary { padding: 14px 16px; cursor: pointer; font-weight: 600; }
 .entity-technical .service-info-table { margin: 0; table-layout: fixed; min-width: 0 !important; }
