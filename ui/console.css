@@ -61,7 +61,6 @@ body > footer { font-size: 12px; }
 .main-content .plan-details-table th { background: var(--bg-tertiary); }
 #services .services-list { background: var(--bg-sidebar); flex: 0 0 320px; min-width: 0; }
 #services .service-detail { min-width: 0; }
-#services .services-list h2 { font-size: 16px; padding: 16px; }
 #services .services-filter-section { border-radius: 0; padding: 14px 16px; }
 #services .filter-buttons { flex-wrap: wrap; }
 #services .service-item { padding: 14px 16px; border-left: 3px solid transparent; color: var(--text-primary); }
@@ -118,7 +117,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, input:focu
   .main-content .tab-button { padding: 10px 6px; font-size: 12px; }
   #services.tab-panel.active { flex-direction: column; overflow: auto; }
   #services .services-list { flex: none; width: 100%; max-width: none; max-height: none; overflow: visible; }
-  #services .services-list h2, #services .services-filter-section { position: static; }
+  #services .services-filter-section { position: static; }
   #services .services-items-container { max-height: 240px; }
   #services .service-detail { flex: none; width: 100%; min-height: 360px; overflow: visible; }
   #services .detail-content { min-height: 220px; max-height: 65dvh; overflow: auto; }
@@ -132,7 +131,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, input:focu
   #navigation-dialog { margin-top: 5dvh; max-height: 90dvh; padding: 16px; }
 }
 @media (max-height: 700px) {
-  #services .services-list h2, #services .services-filter-section { position: static; }
+  #services .services-filter-section { position: static; }
 }
 @media (prefers-reduced-motion: reduce) {
   .main-content *, #navigation-dialog *, body { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

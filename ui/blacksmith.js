@@ -2284,7 +2284,9 @@
     </section>`;
   };
 
-  const renderEntityShell = (kind, title, context) => `<header class="service-detail-header entity-header"><div><p class="entity-eyebrow">${kind === 'instance' ? 'Service instance' : 'Blacksmith broker'}</p><h2>${escapeHtml(title)}</h2><p class="entity-context-line">${escapeHtml(context)}</p></div>${kind === 'instance' ? '<button type="button" class="outline entity-back">All instances</button>' : ''}</header>
+  // The broker header is a single heading; an instance header adds its
+  // kind above the name and its service and plan below it.
+  const renderEntityShell = (kind, title, context) => `<header class="service-detail-header entity-header"><div>${kind === 'instance' ? `<p class="entity-eyebrow">Service instance</p><h2>${escapeHtml(title)}</h2><p class="entity-context-line">${escapeHtml(context)}</p>` : `<h2>${escapeHtml(title)}</h2>`}</div>${kind === 'instance' ? '<button type="button" class="outline entity-back">All instances</button>' : ''}</header>
     <div class="entity-workspace">${renderEntityNavigation(kind)}<section class="entity-main"><div class="entity-section-toolbar"><h3 class="entity-current-title">Overview</h3><span class="entity-read-hint">Snapshot · reload to update</span></div><div class="detail-content" aria-label="Overview"><div class="loading" role="status">Loading…</div></div></section></div>`;
 
   document.addEventListener('click', async (event) => {
@@ -2320,7 +2322,8 @@
 
   const renderBlacksmithTemplate = (data) => {
     window.blacksmithDetailsContent = renderBlacksmithOverview(data);
-    return renderEntityShell('blacksmith',data.deployment || 'Blacksmith', data.env || 'Environment not reported');
+    const path = [data.env, data.deployment].filter(Boolean).join(' > ');
+    return renderEntityShell('blacksmith', path || 'Blacksmith');
   };
 
   const renderPlansTemplate = (data) => {
@@ -2599,8 +2602,7 @@
       }).join('');
 
     return `
-      <div class="services-list">
-        <h2>Service Instances</h2>
+      <div class="services-list" role="region" aria-label="Service instances">
         ${filterSection}
         <nav class="instance-pagination" aria-label="Instance pages"><button id="instance-prev" class="outline small">Previous</button><span id="instance-page"></span><button id="instance-next" class="outline small">Next</button></nav>
         <div class="services-items-container">

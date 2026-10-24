@@ -145,3 +145,34 @@ test('the tabs sit at the top with the page title kept for assistive tech', () =
   expect(html).not.toContain('console-heading');
   expect(html).toMatch(/<h1 id="console-title" class="visually-hidden">Blacksmith<\/h1>\s*<!-- Tab navigation -->/);
 });
+
+t('the broker header is one line of environment and deployment', () => {
+  const {w,d}=boot();
+  try {
+    const host=d.createElement('div');
+    host.innerHTML=w.__T.renderBlacksmithTemplate({env:'ocfp-lab-wayneeseguin-ocf',deployment:'ocfp-lab-wayneeseguin-ocf-blacksmith'});
+    const header=host.querySelector('.entity-header');
+    expect(header.querySelector('h2').textContent).toBe('ocfp-lab-wayneeseguin-ocf > ocfp-lab-wayneeseguin-ocf-blacksmith');
+    expect(header.querySelector('.entity-eyebrow')).toBeNull();
+    expect(header.querySelector('.entity-context-line')).toBeNull();
+    expect(header.textContent).not.toMatch(/blacksmith broker/i);
+    host.innerHTML=w.__T.renderBlacksmithTemplate({deployment:'only-deployment'});
+    expect(host.querySelector('.entity-header h2').textContent).toBe('only-deployment');
+    host.innerHTML=w.__T.renderBlacksmithTemplate({});
+    expect(host.querySelector('.entity-header h2').textContent).toBe('Blacksmith');
+    host.innerHTML=w.__T.renderServiceDetail('id-1',{service_id:'valkey',plan_id:'cluster'},null);
+    expect(host.querySelector('.entity-eyebrow').textContent).toBe('Service instance');
+    expect(host.querySelector('.entity-context-line')).not.toBeNull();
+  } finally { w.close(); }
+});
+
+test('the broker tab is named Blacksmith Broker and the instance list has no visible heading', () => {
+  const html = fs.readFileSync(path.join(ui, 'index.html'), 'utf8');
+  expect(html).toMatch(/data-tab="blacksmith"[^>]*>\s*Blacksmith Broker<\/button>/);
+  const js = fs.readFileSync(path.join(ui, 'blacksmith.js'), 'utf8');
+  expect(js).not.toContain('<h2>Service Instances</h2>');
+  expect(js).toContain('<div class="services-list" role="region" aria-label="Service instances">');
+  for (const css of ['blacksmith.css', 'console.css']) {
+    expect(fs.readFileSync(path.join(ui, css), 'utf8')).not.toContain('services-list h2');
+  }
+});

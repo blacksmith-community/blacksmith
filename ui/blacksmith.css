@@ -1138,26 +1138,13 @@ td a {
   flex-shrink: 0;
 }
 
-#services .services-list h2 {
-  padding: 1em;
-  margin: 0;
-  background-color: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-primary);
-  font-size: 14pt;
-  font-weight: bold;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  color: var(--text-primary);
-}
-
 /* Filter section styles */
 #services .services-filter-section {
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-primary);
   padding: 1em;
   position: sticky;
-  top: 53px;
+  top: 0;
   z-index: 9;
 }
 
