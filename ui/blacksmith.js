@@ -23039,7 +23039,7 @@
       <div class="cert-fleet" id="cert-fleet">
         <div class="cert-fleet-header">
           <div class="cert-fleet-heading">
-            <h2 class="cert-fleet-title" id="cert-fleet-title" tabindex="-1">Certificates</h2>
+            <h2 class="cert-fleet-title visually-hidden" id="cert-fleet-title" tabindex="-1">Certificates</h2>
             <p class="cert-fleet-summary" id="cert-fleet-summary"></p>
           </div>
           <div class="cert-fleet-actions" id="cert-fleet-actions">
