@@ -6031,7 +6031,7 @@
       item.appendChild(rotateEl('div', 'cert-candidate-head', `Version ${shortVersion(candidate.version_id)}`));
       const facts = [];
       if (certDay(candidate.created_at)) facts.push(`Created ${certDay(candidate.created_at)}`);
-      facts.push(`Serial ${candidate.serial || 'unknown'}`);
+      facts.push(`Serial ${displaySerial(candidate.serial) || 'unknown'}`);
       facts.push(`Expires ${certDay(candidate.not_after) || 'unknown'}`);
       item.appendChild(rotateEl('div', 'cert-candidate-facts', facts.join('. ')));
       item.appendChild(checkList(candidate.checks));
@@ -6208,9 +6208,44 @@
   // record.
   // A redeploy that failed before CredHub made a new version leaves nothing
   // for a second redeploy to pick up, so it offers no remediation.
+  // A serial is a hex number. Older records print it without the leading
+  // zero of a whole byte (39 digits for a 20 byte serial), and newer ones
+  // may print it padded, in upper case, or with colons. Two spellings of
+  // the same number must compare equal, so the comparison goes through
+  // normalizeSerial, and every place that shows a serial goes through
+  // displaySerial.
+  const serialDigits = (value) => {
+    const text = String(value === undefined || value === null ? '' : value).replace(/[\s:]/g, '');
+    return /^[0-9a-fA-F]+$/.test(text) ? text : '';
+  };
+
+  const normalizeSerial = (value) => {
+    const digits = serialDigits(value);
+    if (!digits) return '';
+    const trimmed = digits.toLowerCase().replace(/^0+/, '') || '0';
+    return trimmed.length % 2 === 0 ? trimmed : `0${trimmed}`;
+  };
+
+  // A value that is not hex is shown as it came, and an empty value stays
+  // empty so the caller can word it.
+  const displaySerial = (value) => {
+    const digits = serialDigits(value);
+    if (!digits) return value === undefined || value === null ? '' : String(value);
+    const upper = digits.toUpperCase();
+    return upper.length % 2 === 0 ? upper : `0${upper}`;
+  };
+
+  // Values that are not hex at all fall back to a plain string comparison.
+  const sameSerial = (a, b) => {
+    const left = normalizeSerial(a);
+    const right = normalizeSerial(b);
+    if (left && right) return left === right;
+    return String(a === undefined || a === null ? '' : a) === String(b === undefined || b === null ? '' : b);
+  };
+
   const hasUndeployedVersion = (instance) => {
     const variables = instance.certificates && Array.isArray(instance.certificates.variables) ? instance.certificates.variables : [];
-    return variables.some((variable) => variable && variable.new_serial && variable.new_serial !== variable.old_serial);
+    return variables.some((variable) => variable && variable.new_serial && !sameSerial(variable.new_serial, variable.old_serial));
   };
 
   const needsRemediation = (task, instance) => {
@@ -6299,7 +6334,7 @@
           if (!variable) return;
           const item = rotateEl('li', 'cert-task-variable');
           item.appendChild(rotateEl('strong', 'cert-task-variable-name', String(variable.name || '')));
-          item.appendChild(rotateEl('div', 'cert-task-variable-serial', `Serial: was ${variable.old_serial || 'unknown'}, now ${variable.new_serial || 'not made yet'}`));
+          item.appendChild(rotateEl('div', 'cert-task-variable-serial', `Serial: was ${displaySerial(variable.old_serial) || 'unknown'}, now ${displaySerial(variable.new_serial) || 'not made yet'}`));
           const [expiryWas, expiryNow] = certExpiryPair(variable.old_not_after, variable.new_not_after);
           item.appendChild(rotateEl('div', 'cert-task-variable-expiry', `Expires: was ${expiryWas || 'unknown'}, now ${expiryNow || 'not made yet'}`));
           if (variable.regenerate_state) item.appendChild(rotateEl('div', 'cert-task-variable-state', `Regeneration: ${String(variable.regenerate_state).replace(/_/g, ' ')}`));
@@ -19163,7 +19198,7 @@
       const raw = (value) => (value === undefined || value === null ? '' : String(value));
 
       body.appendChild(fieldRow('Version', na(cert.version), raw(cert.version)));
-      body.appendChild(fieldRow('Serial Number', na(cert.serialNumber), raw(cert.serialNumber)));
+      body.appendChild(fieldRow('Serial Number', na(displaySerial(cert.serialNumber)), raw(displaySerial(cert.serialNumber))));
       body.appendChild(fieldRow('Subject', formatName(cert.subject), formatName(cert.subject)));
       body.appendChild(fieldRow('Issuer', formatName(cert.issuer), formatName(cert.issuer)));
       body.appendChild(fieldRow('Valid From', formatDate(cert.notBefore), formatDate(cert.notBefore)));
