@@ -28,10 +28,14 @@
 # key, and names the openssl check a staged file and the file about to
 # replace a target must pass.
 #
-# The broker runs prepare, then stage, then the other operations, all on
-# one connection to the VM. prepare makes the task's directories through
-# make_work_dir, and stage runs valid_work on them before it writes, so
-# nothing is staged into a directory that is not private to root.
+# The broker runs check on every file first, then prepare, then stage,
+# then the other operations, all on one connection to the VM. check only
+# reads, and on a VM that no task has touched it runs before the task's
+# directories exist, so it accepts a backup path whose directories
+# prepare has not made yet through valid_work_unmade, and reports no
+# backup. prepare makes the task's directories through make_work_dir,
+# and stage and every later operation run valid_work on them, so nothing
+# is written to or read from a directory that is not private to root.
 #
 # stage reads the content that follows this script on stdin. The script
 # starts its operation from its last line, so bash has read every line
@@ -82,6 +86,13 @@ _pt_hashes() {
 _pt_work() {
 	[[ $1 == "$CP_WORK_ROOT/$2/$3/"* ]] || return "$EXIT_REFUSED"
 	valid_work "$1" "$2"
+}
+
+# _pt_work_unmade <path> <task> <kind> is _pt_work for check, which also
+# accepts a path whose directories prepare has not made yet.
+_pt_work_unmade() {
+	[[ $1 == "$CP_WORK_ROOT/$2/$3/"* ]] || return "$EXIT_REFUSED"
+	valid_work_unmade "$1" "$2"
 }
 
 # _pt_hash <file> prints the file's normalised hash, or nothing when it
@@ -238,6 +249,11 @@ _pt_pick() {
 	fi
 }
 
+# check reports whether the target holds the old or the new content and
+# whether its backup holds the old content, and changes nothing. The
+# broker sends it before prepare, so on a VM that no task has touched the
+# backup's directories do not exist yet, which means no backup does
+# either, and check reports none.
 check() {
 	local raw=no
 
@@ -261,7 +277,7 @@ check() {
 
 	_pt_pick "$raw"
 	valid_pinned "$path" "$jobdir" || return
-	_pt_work "$backup" "$task" b || return
+	_pt_work_unmade "$backup" "$task" b || return
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 
 	hash=$("$hashof" "$root$path")

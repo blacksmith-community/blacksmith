@@ -372,10 +372,39 @@ func TestWorkParityWithBash(t *testing.T) {
 		if got := libCheck(t, tree.root, "valid_work", shape.path, shape.task); got != want {
 			t.Errorf("valid_work %q %q exited %d, want %d", shape.path, shape.task, got, want)
 		}
+
+		if got := libCheck(t, tree.root, "valid_work_unmade", shape.path, shape.task); got != want {
+			t.Errorf("valid_work_unmade %q %q exited %d, want %d", shape.path, shape.task, got, want)
+		}
 	}
 
 	if accepted < 8 {
 		t.Errorf("the table has %d accepted work shapes, want at least 8", accepted)
+	}
+}
+
+// TestUnmadeWorkParityWithBash shows that on a VM where prepare has not
+// made the work directory, valid_work_unmade still refuses every path of
+// the wrong shape, accepts every path of the right one, and creates
+// nothing, while valid_work refuses them all.
+func TestUnmadeWorkParityWithBash(t *testing.T) {
+	t.Parallel()
+
+	tree := newVMTree(t)
+
+	for _, shape := range workCases() {
+		if got, want := libCheck(t, tree.root, "valid_work_unmade", shape.path, shape.task), shapeExit(shape.ok); got != want {
+			t.Errorf("valid_work_unmade %q %q exited %d, want %d", shape.path, shape.task, got, want)
+		}
+
+		if got := libCheck(t, tree.root, "valid_work", shape.path, shape.task); got != refusedExit {
+			t.Errorf("valid_work %q %q exited %d before make_work_dir, want 13", shape.path, shape.task, got)
+		}
+	}
+
+	_, err := os.Lstat(tree.at(workBase))
+	if err == nil {
+		t.Error("valid_work_unmade created the work directory")
 	}
 }
 
@@ -385,11 +414,12 @@ func TestValidatorsReportUsage(t *testing.T) {
 
 	root := t.TempDir()
 	wrong := map[string][][]string{
-		"valid_task":    {{}, {testTaskID, testTaskID}},
-		"valid_logical": {{}, {"/var/vcap/jobs/valkey/x", "/var/vcap/jobs/valkey/y"}},
-		"valid_pinned":  {{}, {pinnedTarget}, {pinnedTarget, pinnedJobDir, "x"}},
-		"valid_work":    {{}, {workBase + testTaskID + "/s/0"}, {workBase + testTaskID + "/s/0", testTaskID, "x"}},
-		"make_work_dir": {{}, {testTaskID, testTaskID}},
+		"valid_task":        {{}, {testTaskID, testTaskID}},
+		"valid_logical":     {{}, {"/var/vcap/jobs/valkey/x", "/var/vcap/jobs/valkey/y"}},
+		"valid_pinned":      {{}, {pinnedTarget}, {pinnedTarget, pinnedJobDir, "x"}},
+		"valid_work":        {{}, {workBase + testTaskID + "/s/0"}, {workBase + testTaskID + "/s/0", testTaskID, "x"}},
+		"valid_work_unmade": {{}, {workBase + testTaskID + "/b/0"}, {workBase + testTaskID + "/b/0", testTaskID, "x"}},
+		"make_work_dir":     {{}, {testTaskID, testTaskID}},
 	}
 
 	for function, calls := range wrong {

@@ -1816,3 +1816,74 @@ func TestPatchResumePaddedAtEveryBoundary(t *testing.T) {
 		})
 	}
 }
+
+// A task that paused because check refused on the first VM, before
+// prepare made its work directory, as patch.sh did on a VM no task had
+// touched, left every journal planned with nothing staged. A new broker
+// loads it paused, and its resume sends check to that VM again before
+// prepare, then patches every VM to done.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumeAfterRefusedFirstCheck(t *testing.T) {
+	env := newPatchEnv(t)
+	first := env.newManager()
+	task := env.task()
+	name := env.vms[0].name()
+
+	env.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == name && call.op == opCheck {
+			return exitResult(certscripts.ExitRefused), nil, true
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	env.run(first, &task)
+
+	stored := env.stored()
+	if !stored.Paused || !strings.Contains(stored.Instances[0].Error, "patch.sh check refused") {
+		t.Fatalf("expected the task paused by the refused check, got paused=%v %q", stored.Paused, stored.Instances[0].Error)
+	}
+
+	for i, j := range stored.Instances[0].Certificates.VMs {
+		if !untouched(&j) {
+			t.Fatalf("expected VM %d's journal planned with nothing prepared, got %s", i+1, journalSummary(stored, i))
+		}
+	}
+
+	for _, call := range env.patch.recorded() {
+		if call.op != opCheck && slices.Contains(forwardOps, call.op) {
+			t.Fatalf("expected nothing but check sent before the pause, got %s on %s", call.op, call.vm)
+		}
+	}
+
+	env.hook(func(patchCall) (ssh.Result, error, bool) { return ssh.Result{}, nil, false })
+
+	mark := len(env.patch.recorded())
+
+	second, got := env.reload(t)
+	if !got.Paused {
+		t.Fatalf("expected the loaded task to stay paused, got %s", got.Status)
+	}
+
+	err := second.ResumeTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	waitUntil(t, "the instance to settle", func() bool { return current(t, second).Instances[0].Status.settled() })
+
+	env.expectPatched(t, second, current(t, second))
+
+	var ops []string
+
+	for _, op := range env.opsSince(mark, 0) {
+		if slices.Contains(forwardOps, op) {
+			ops = append(ops, op)
+		}
+	}
+
+	if !slices.Equal(ops, forwardOps) {
+		t.Fatalf("expected the resume to run %v on VM 1, got %v", forwardOps, ops)
+	}
+}

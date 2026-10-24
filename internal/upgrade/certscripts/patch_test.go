@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,6 +22,7 @@ const (
 	newText     = "new\n"
 	thirdText   = "third\n"
 	patchTask   = workBase + testTaskID
+	workRoot    = "/var/vcap/data/certpatch"
 	stagePath   = patchTask + "/s/0"
 	backupPath  = patchTask + "/b/0"
 	targetDir   = pinnedJobDir + "/config"
@@ -375,6 +377,217 @@ func TestCheckReportsState(t *testing.T) {
 	}
 
 	wantOutput(t, out, "drift path="+backupPath+"\n")
+}
+
+// newFreshTree builds the tree newPatchTree does without running
+// prepare, so /var/vcap/data/certpatch does not exist, as on a VM that
+// no patch task has touched.
+func newFreshTree(t *testing.T) *vmTree {
+	t.Helper()
+
+	tree := newPinnedTree(t, pinnedTarget, pinnedJobDir)
+	tree.giveToVCAP(t, pinnedTarget)
+	tree.chmod(t, pinnedTarget, 0o640)
+
+	return tree
+}
+
+// checkRaw runs check with the raw hashes of oldText and newText, as the
+// broker sends it for a record with raw hashes.
+func (v *vmTree) checkRaw(t *testing.T) (string, int) {
+	t.Helper()
+
+	return v.patch(t, opCheck, testTaskID, pinnedJobDir, pinnedTarget, textHash(oldText), textHash(newText), backupPath,
+		certpatch.RawHash([]byte(oldText)), certpatch.RawHash([]byte(newText)))
+}
+
+// TestCheckOnFreshVM runs a first patch on a VM that no task has
+// touched, in the order the broker sends it. check comes before prepare
+// has made the work directory, so it must read the target, report no
+// backup, and create nothing. prepare, staging, the backup, and the
+// replace then run as they do on any VM, and check afterwards sees the
+// new content and the backup.
+func TestCheckOnFreshVM(t *testing.T) {
+	t.Parallel()
+
+	tree := newFreshTree(t)
+
+	for name, check := range map[string]func(*testing.T) (string, int){"normalised": tree.check, "raw": tree.checkRaw} {
+		out, code := check(t)
+		if code != 0 {
+			t.Fatalf("%s check before prepare exited %d, want 0", name, code)
+		}
+
+		wantOutput(t, out, "ok path="+pinnedTarget+" state=old backup=none\n")
+	}
+
+	if tree.exists(t, workBase) {
+		t.Fatal("check created the work directory")
+	}
+
+	if _, code := tree.patch(t, "prepare", testTaskID); code != 0 {
+		t.Fatalf("prepare exited %d, want 0", code)
+	}
+
+	if code := runStage(t, tree.root, stagePath, newText); code != 0 {
+		t.Fatalf("staging exited %d, want 0", code)
+	}
+
+	if _, code := tree.patch(t, "stagecheck", testTaskID, stagePath, textHash(newText)); code != 0 {
+		t.Fatalf("stagecheck exited %d, want 0", code)
+	}
+
+	out, code := tree.checkRaw(t)
+	if code != 0 {
+		t.Fatalf("check after prepare exited %d, want 0", code)
+	}
+
+	wantOutput(t, out, "ok path="+pinnedTarget+" state=old backup=none\n")
+
+	if _, code := tree.backup(t, oldText); code != 0 {
+		t.Fatalf("backup exited %d, want 0", code)
+	}
+
+	if _, code := tree.replaceTarget(t); code != 0 {
+		t.Fatalf("replace exited %d, want 0", code)
+	}
+
+	tree.assert(t, pinnedTarget, newText)
+
+	out, _ = tree.checkRaw(t)
+	wantOutput(t, out, "ok path="+pinnedTarget+" state=new backup=old\n")
+}
+
+// privateDirs makes each directory with mode 0700, as prepare would.
+func (v *vmTree) privateDirs(t *testing.T, dirs ...string) {
+	t.Helper()
+
+	for _, dir := range dirs {
+		v.mkdir(t, dir)
+		v.chmod(t, dir, 0o700)
+	}
+}
+
+// plantedDir makes a private directory with a private b directory
+// outside the work directory, and returns its full path.
+func (v *vmTree) plantedDir(t *testing.T) string {
+	t.Helper()
+	v.privateDirs(t, "/etc/planted", "/etc/planted/b")
+
+	return v.at("/etc/planted")
+}
+
+// TestCheckBeforePrepareRefusesPlantedDirs shows that check before
+// prepare still holds every directory that exists to what valid_work
+// requires. One that is open, another user's, or a symlink, or a
+// /var/vcap/data others can write, makes check refuse with nothing
+// printed and nothing created.
+func TestCheckBeforePrepareRefusesPlantedDirs(t *testing.T) {
+	t.Parallel()
+
+	plants := map[string]func(t *testing.T, tree *vmTree){
+		"an open /var/vcap/data": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.chmod(t, vcapData, 0o777)
+		},
+		"a certpatch directory with mode 0755": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.privateDirs(t, workRoot)
+			tree.chmod(t, workRoot, 0o755)
+		},
+		"a certpatch directory owned by vcap": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.privateDirs(t, workRoot)
+			tree.giveToVCAP(t, workRoot)
+		},
+		"a certpatch symlink": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			symlink(t, tree.plantedDir(t), tree.at(workRoot))
+		},
+		"a dangling certpatch symlink": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			symlink(t, tree.at("/etc/nowhere"), tree.at(workRoot))
+		},
+		"an open task directory": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.privateDirs(t, workRoot, patchTask)
+			tree.chmod(t, patchTask, 0o755)
+		},
+		"a task directory symlink": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.privateDirs(t, workRoot)
+			symlink(t, tree.plantedDir(t), tree.at(patchTask))
+		},
+		"an open backup directory": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.privateDirs(t, workRoot, patchTask, patchTask+"/b")
+			tree.chmod(t, patchTask+"/b", 0o755)
+		},
+		"a backup directory owned by vcap": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.privateDirs(t, workRoot, patchTask, patchTask+"/b")
+			tree.giveToVCAP(t, patchTask+"/b")
+		},
+		"a backup that is a symlink": func(t *testing.T, tree *vmTree) {
+			t.Helper()
+			tree.privateDirs(t, workRoot, patchTask, patchTask+"/b")
+			symlink(t, tree.at(pinnedTarget), tree.at(backupPath))
+		},
+	}
+
+	for name, plant := range plants {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newFreshTree(t)
+			plant(t, tree)
+
+			if out, code := tree.checkRaw(t); code != refusedExit || out != "" {
+				t.Errorf("check exited %d with %q, want 13 and no output", code, out)
+			}
+
+			if tree.exists(t, patchTask+"/s") {
+				t.Error("the refused check created the staging directory")
+			}
+		})
+	}
+}
+
+// TestCheckBeforePrepareAcceptsPartialDirs shows that a part of the work
+// directory that is not there yet means no backup can be there, so
+// check reports none, and it creates none of the parts that are
+// missing.
+func TestCheckBeforePrepareAcceptsPartialDirs(t *testing.T) {
+	t.Parallel()
+
+	layouts := map[string][]string{
+		"no certpatch directory":               nil,
+		"only the certpatch directory":         {workRoot},
+		"a task directory with no b directory": {workRoot, patchTask},
+		"an empty b directory":                 {workRoot, patchTask, patchTask + "/b"},
+	}
+
+	for name, dirs := range layouts {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newFreshTree(t)
+			tree.privateDirs(t, dirs...)
+
+			out, code := tree.checkRaw(t)
+			if code != 0 {
+				t.Fatalf("check exited %d, want 0", code)
+			}
+
+			wantOutput(t, out, "ok path="+pinnedTarget+" state=old backup=none\n")
+
+			for _, dir := range []string{workRoot, patchTask, patchTask + "/b"} {
+				if !slices.Contains(dirs, dir) && tree.exists(t, dir) {
+					t.Errorf("check created %s", dir)
+				}
+			}
+		})
+	}
 }
 
 func TestBackupIsImmutable(t *testing.T) {

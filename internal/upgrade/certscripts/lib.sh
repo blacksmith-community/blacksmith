@@ -247,8 +247,27 @@ valid_pinned() {
 # the path is a regular file and not a symlink.
 valid_work() {
 	[ "$#" -eq 2 ] || return "$EXIT_USAGE"
+	_cp_valid_work "$1" "$2" no
+}
 
-	local path=$1 task=$2 root tail full
+# valid_work_unmade <path> <task> accepts what valid_work accepts, and
+# also a path of the right shape whose directories prepare has not made
+# yet, so a read-only step can run before prepare. The directories from
+# / down to /var/vcap/data must still be secure, so only root can create
+# the certpatch directory or anything in it. Each of the certpatch
+# directory, the task's directory, and the s or b directory that exists
+# must be private to root and not a symlink, and the walk stops at the
+# first that does not exist, because nothing can be under it. A dangling
+# symlink exists for this purpose, and is refused.
+valid_work_unmade() {
+	[ "$#" -eq 2 ] || return "$EXIT_USAGE"
+	_cp_valid_work "$1" "$2" yes
+}
+
+# _cp_valid_work <path> <task> <unmade> is valid_work when unmade is no,
+# and valid_work_unmade when it is yes.
+_cp_valid_work() {
+	local path=$1 task=$2 unmade=$3 root tail full dir
 
 	valid_task "$task" || return "$EXIT_REFUSED"
 	[ "${#path}" -le "$CP_MAX_PATH" ] || return "$EXIT_REFUSED"
@@ -259,9 +278,14 @@ valid_work() {
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 
 	_cp_secure_chain "$root" /var/vcap/data || return "$EXIT_REFUSED"
-	_cp_private_dir "$root$CP_WORK_ROOT" || return "$EXIT_REFUSED"
-	_cp_private_dir "$root$CP_WORK_ROOT/$task" || return "$EXIT_REFUSED"
-	_cp_private_dir "$root$CP_WORK_ROOT/$task/${tail%%/*}" || return "$EXIT_REFUSED"
+
+	for dir in "$CP_WORK_ROOT" "$CP_WORK_ROOT/$task" "$CP_WORK_ROOT/$task/${tail%%/*}"; do
+		if [ "$unmade" = yes ] && [ ! -e "$root$dir" ] && [ ! -L "$root$dir" ]; then
+			return 0
+		fi
+
+		_cp_private_dir "$root$dir" || return "$EXIT_REFUSED"
+	done
 
 	full=$root$path
 
