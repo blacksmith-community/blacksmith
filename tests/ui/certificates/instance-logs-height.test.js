@@ -35,6 +35,6 @@ test('the VM tab row scrolls sideways and its tabs keep their width', () => {
   expect(css).toMatch(/@media \(max-width: 700px\) \{\s*\.instance-log-job-tab \{\s*padding:\s*10px 12px;/);
 });
 
-test('the stylesheet reference carries the logs cache-buster', () => {
-  expect(html).toContain('/blacksmith.css?v=20261024-logs');
+test('the stylesheet reference carries the current cache-buster', () => {
+  expect(html).toContain('/blacksmith.css?v=20261024-horizon');
 });
