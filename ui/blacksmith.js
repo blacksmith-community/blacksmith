@@ -2643,26 +2643,6 @@
   // Batch Operations Tab Functions
   // =====================================================
 
-  // The expiry horizons the Certificates tab counts and Batch Operations
-  // offers, and the rule that puts a certificate inside one. A certificate
-  // counts when its expiry falls after the anchor and on or before the
-  // anchor plus the horizon, so expired and unknown expiries never count.
-  const EXPIRY_HORIZONS = [
-    { days: 7, label: '1 week' },
-    { days: 14, label: '2 weeks' },
-    { days: 30, label: '30 days' },
-    { days: 60, label: '60 days' },
-    { days: 90, label: '90 days' },
-    { days: 180, label: '180 days' },
-    { days: 365, label: '1 year' }
-  ];
-  // Rotation also wants the certificates that have already expired, which
-  // most need replacing, so it asks for them with includeExpired.
-  const expiresWithinHorizon = (notAfter, days, anchor, includeExpired = false) => {
-    const t = Date.parse(notAfter);
-    return !Number.isNaN(t) && (includeExpired || t > anchor) && t <= anchor + days * 86400000;
-  };
-
   // Track if batch operations tab has been initialized
   let upgradeTabInitialized = false;
 
@@ -2733,7 +2713,11 @@
     const panel = document.getElementById('upgrade');
     if (!panel) return;
     panel.querySelector('#rotate-operation').hidden = step !== 0;
-    panel.querySelector('#batch-flow-options').hidden = step !== 1;
+    const optionsContext = panel.querySelector('#batch-flow-options');
+    const serviceRow = document.getElementById('upgrade-service-filter').closest('.filter-row');
+    const serviceHost = upgradeOperation === 'upgrade' ? optionsContext : panel.querySelector('.upgrade-services');
+    if (serviceRow.parentElement !== serviceHost) serviceHost.prepend(serviceRow);
+    optionsContext.hidden = step !== 1 || upgradeOperation !== 'upgrade';
     panel.querySelector('.upgrade-targets-panel').hidden = step !== 1;
     panel.querySelector('.upgrade-services-panel').hidden = step !== 2;
     panel.querySelector('.upgrade-instances').hidden = step !== 2;
@@ -2791,7 +2775,7 @@
     if (options.message) host.appendChild(rotateEl('p', 'batch-review-note', options.message));
     if (options.body) {
       const cards = options.body.querySelector('.rotate-preview-cards');
-      if (cards && cards.children.length > 3) {
+      if (cards && cards.children.length > 0) {
         const disclosure = rotateEl('details', 'batch-included-details');
         disclosure.appendChild(rotateEl('summary', '', 'Inspect included instances and certificates'));
         const scroll = cards.parentElement;
@@ -2812,9 +2796,13 @@
       const label = rotateEl('label', 'batch-job-name', 'Job name (optional)');
       const input = document.createElement('input'); input.id = 'batch-flow-job-name'; input.value = batchFlow.jobName; input.placeholder = 'Use the generated job name';
       input.addEventListener('input', () => { batchFlow.jobName = input.value; });
+      input.setAttribute('aria-describedby','batch-job-name-help');
       label.appendChild(input); host.appendChild(label);
+      const hint = rotateEl('p','batch-field-help','A short label to find this operation in Activity, for example “October service update”. Leave blank to use a generated name.');
+      hint.id='batch-job-name-help';host.appendChild(hint);
     }
     if (options.requireText) {
+      host.appendChild(rotateEl('h3','batch-review-section-title','Confirm this operation'));
       const label = rotateEl('label', 'batch-ack-label', `Type ${options.requireText} to confirm`);
       const input = document.createElement('input'); input.id = 'batch-flow-ack'; input.autocomplete = 'off'; input.spellcheck = false;
       input.addEventListener('input', updateBatchFlow); label.appendChild(input); host.appendChild(label);
@@ -3038,33 +3026,35 @@
   const renderUpgradeTargets = () => {
     return `
       <div class="upgrade-target-group">
-        <h3>Stemcell</h3>
+        <h3>Operating system (stemcell)</h3><p class="batch-field-help">Choose the OS image version to deploy. Keep current leaves it unchanged.</p>
         <div class="filter-row">
-          <label for="upgrade-stemcell-filter">Target:</label>
+          <label for="upgrade-stemcell-filter">Deploy version</label>
           <select id="upgrade-stemcell-filter">
             <option value="">— keep current —</option>
           </select>
         </div>
         <div class="filter-row">
-          <label for="upgrade-stemcell-floor">Min (floor):</label>
-          <select id="upgrade-stemcell-floor">
+          <label for="upgrade-stemcell-floor">Minimum current version</label>
+          <select id="upgrade-stemcell-floor" aria-describedby="upgrade-stemcell-floor-help">
             <option value="">No minimum</option>
           </select>
+          <p class="batch-field-help" id="upgrade-stemcell-floor-help">Include instances already running this version or newer. This filters the selection; it does not change the target version.</p>
         </div>
       </div>
       <div class="upgrade-target-group">
-        <h3>Releases</h3>
+        <h3>Service release</h3><p class="batch-field-help">Choose a service above to select its software release.</p>
         <div class="filter-row">
-          <label for="upgrade-release-filter">Target:</label>
+          <label for="upgrade-release-filter">Deploy version</label>
           <select id="upgrade-release-filter" disabled title="Select a single service to choose a release">
             <option value="">— keep current —</option>
           </select>
         </div>
         <div class="filter-row">
-          <label for="upgrade-release-floor">Min (floor):</label>
-          <select id="upgrade-release-floor" disabled title="Select a single service to filter by release">
+          <label for="upgrade-release-floor">Minimum current version</label>
+          <select id="upgrade-release-floor" aria-describedby="upgrade-release-floor-help" disabled title="Select a single service to filter by release">
             <option value="">No minimum</option>
           </select>
+          <p class="batch-field-help" id="upgrade-release-floor-help">Include instances already running this version or newer. Leave unset to include any current version.</p>
         </div>
         <details class="upgrade-advanced">
           <summary>Advanced — other releases</summary>
@@ -3221,10 +3211,9 @@
 
       return `
         <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${escapeAttribute(id)}" data-row-number="${rowNumber}" data-service-id="${escapeAttribute(details.service_id)}" data-plan-id="${escapeAttribute(details.plan?.id || details.plan_id || '')}" data-stemcell-os="${escapeAttribute(stemcellInfo?.os || '')}" data-stemcell-version="${escapeAttribute(stemcellInfo?.version || '')}"${holder ? ' data-held="true"' : ''}>
-          <span class="upgrade-instance-row-number">${rowNumber}</span>
           <label class="upgrade-instance-checkbox">
             <input type="checkbox" aria-label="Select ${escapeAttribute(details.name || details.instance_name || id)}" ${isSelected ? 'checked' : ''}${holder ? ' disabled' : ''} />
-            <span class="checkmark"></span>
+            <span class="batch-select-state" aria-hidden="true"><span class="select-off">Select</span><span class="select-on">Selected</span><span class="select-some">Some selected</span></span>
           </label>
           <div class="upgrade-instance-info">
             <div class="upgrade-instance-id">${escapeHtml(id)}</div>
@@ -3343,13 +3332,10 @@
     capabilities: null,
     warningDays: 30,
     criticalDays: 7,
-    // How the operator chooses instances, "instances" or "expiring". The
-    // expiring choice holds the window in days, or 0 before one is picked.
-    pick: 'instances',
-    horizon: 0,
-    // The pairs the window picks, as instance ID to a Set of variable names.
-    // They stay here so the Certificates tab's own selection is never touched.
-    derived: new Map(),
+    thresholdDays: 30,
+    thresholdTouched: false,
+    thresholdApplied: false,
+    imported: false,
     // Where a selection came from when another tab handed it over, such as
     // "certificates". It is empty for a selection made here.
     source: '',
@@ -3373,7 +3359,6 @@
   // The certificates chosen for rotation, as instance ID to a Set of full
   // variable names. The Certificates tab shares this Map.
   const rotateSelection = () => {
-    if (upgradeOperation === 'rotate' && rotateState.pick === 'expiring') return rotateState.derived;
     const shared = window.blacksmithCerts && window.blacksmithCerts.selection;
     return shared instanceof Map ? shared : rotateLocalSelection;
   };
@@ -3389,7 +3374,7 @@
   const rotateSetPair = (instanceId, name, on) => {
     const selection = rotateSelection();
     // A hand edit makes the selection the operator's own.
-    if (rotateState.pick !== 'expiring') rotateState.source = '';
+    rotateState.source = '';
     if (on) {
       if (!selection.has(instanceId)) selection.set(instanceId, new Set());
       selection.get(instanceId).add(name);
@@ -3602,41 +3587,20 @@
     });
   };
 
-  // The instances among the visible rows that have an eligible certificate
-  // expiring within the given days, with those certificates. A row another
-  // operation holds never matches.
-  const rotateExpiringMatches = (days, rows = rotateVisibleRows()) => {
-    const anchor = window.blacksmithCerts && window.blacksmithCerts.serverNow ? window.blacksmithCerts.serverNow() : Date.now();
-    const matches = [];
-    rows.forEach((row) => {
-      if (row.holder) return;
-      const certs = row.chips.filter((cert) => expiresWithinHorizon(cert.expiry, days, anchor, true));
-      if (certs.length > 0) matches.push({ row, certs });
-    });
-    return matches;
-  };
-
   // Selects the eligible certificates of the visible rows that expire within
   // the given days.
   const rotateSelectMatching = (days) => {
     let added = 0;
-    rotateExpiringMatches(days).forEach(({ row, certs }) => {
-      certs.forEach((cert) => {
-        if (!rotatePairSelected(row.id, cert.key)) {
+    rotateVisibleRows().forEach((row) => {
+      if (row.holder) return;
+      row.chips.forEach((cert) => {
+        if (cert.daysLeft !== null && cert.daysLeft <= days && !rotatePairSelected(row.id, cert.key)) {
           rotateSetPair(row.id, cert.key, true);
           added++;
         }
       });
     });
     return added;
-  };
-
-  // In the expiring choice the selection is the instances the window
-  // matches, so every redraw works it out again from the inventory.
-  const rotateSyncExpiring = () => {
-    if (upgradeOperation !== 'rotate' || rotateState.pick !== 'expiring') return;
-    rotateState.derived.clear();
-    if (rotateState.horizon > 0 && rotateState.loadState === 'ready') rotateSelectMatching(rotateState.horizon);
   };
 
   // Whether a selected pair can still be rotated. Until the inventory loads
@@ -3725,7 +3689,7 @@
     if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
   };
 
-  const rotateChip = (row, cert, derived = false) => {
+  const rotateChip = (row, cert) => {
     const on = rotatePairSelected(row.id, cert.key);
     const label = rotateInstanceLabel(row);
     const chip = rotateEl('button', 'rotate-chip');
@@ -3734,7 +3698,6 @@
     chip.setAttribute('aria-label', `Rotate ${cert.variable} on ${label}`);
     chip.dataset.keepKey = `chip:${row.id}:${cert.key}`;
     chip.dataset.variable = cert.key;
-    chip.disabled = derived;
     if (cert.daysLeft !== null) {
       if (cert.daysLeft < 0) chip.classList.add('is-expired');
       else if (cert.daysLeft <= rotateState.criticalDays) chip.classList.add('is-critical');
@@ -3753,100 +3716,6 @@
     return chip;
   };
 
-  // Switching how instances are chosen starts that choice from nothing, so
-  // the two never mix.
-  const setRotatePick = (pick) => {
-    if (rotateState.pick === pick) return;
-    rotateState.pick = pick;
-    rotateState.horizon = 0;
-    rotateState.source = '';
-    rotateState.derived.clear();
-    // Leaving either way drops the other's picks, including the shared ones.
-    const shared = window.blacksmithCerts && window.blacksmithCerts.selection;
-    (shared instanceof Map ? shared : rotateLocalSelection).clear();
-    batchWorkspace.page = 0;
-    batchWorkspace.selectedOnly = false;
-    rotateRefresh();
-  };
-
-  // The two ways to choose instances in rotate mode: pick them from the
-  // list, or take every instance with a certificate expiring within a
-  // window. It sits above the filters on the Instances step and is removed
-  // for the other operations.
-  const renderRotatePicker = () => {
-    const panel = document.querySelector('#upgrade .upgrade-services-panel');
-    if (!panel) return;
-    const active = upgradeOperation === 'rotate';
-    const expiring = active && rotateState.pick === 'expiring';
-    const actions = panel.querySelector('.upgrade-actions');
-    if (actions) actions.hidden = expiring;
-    let host = document.getElementById('batch-choose-by');
-    if (!active) { if (host) host.remove(); return; }
-    if (!host) {
-      host = rotateEl('div', 'batch-choose-by');
-      host.id = 'batch-choose-by';
-      const toggle = rotateEl('div', 'batch-pick-toggle');
-      toggle.setAttribute('role', 'group');
-      toggle.setAttribute('aria-label', 'How to choose instances');
-      [['instances', 'Specific instances'], ['expiring', 'Expiring within, expired included']].forEach(([value, text]) => {
-        const button = rotateEl('button', 'batch-pick-button', text);
-        button.type = 'button';
-        button.id = `batch-pick-${value}`;
-        button.addEventListener('click', () => setRotatePick(value));
-        toggle.appendChild(button);
-      });
-      const horizons = rotateEl('div', 'batch-horizons');
-      horizons.id = 'batch-horizons';
-      horizons.setAttribute('role', 'group');
-      horizons.setAttribute('aria-label', 'Expiring within, expired included');
-      const note = rotateEl('p', 'batch-pick-note');
-      note.id = 'batch-pick-note';
-      host.append(toggle, horizons, note);
-      panel.querySelector('.upgrade-services').before(host);
-    }
-    ['instances', 'expiring'].forEach((value) => {
-      host.querySelector(`#batch-pick-${value}`).setAttribute('aria-pressed', String(rotateState.pick === value));
-    });
-    const horizons = host.querySelector('#batch-horizons');
-    const note = host.querySelector('#batch-pick-note');
-    horizons.hidden = !expiring;
-    if (!expiring) {
-      note.textContent = 'Pick the instances to rotate from the list.';
-      return;
-    }
-    const ready = rotateState.loadState === 'ready';
-    const visibleRows = ready ? rotateVisibleRows() : [];
-    // The buttons are built once and updated in place, so a background
-    // refresh never drops the keyboard focus.
-    if (horizons.children.length !== EXPIRY_HORIZONS.length) {
-      horizons.replaceChildren();
-      EXPIRY_HORIZONS.forEach((h) => {
-        const button = rotateEl('button', 'batch-horizon-button', h.label);
-        button.type = 'button';
-        button.dataset.horizon = String(h.days);
-        button.appendChild(rotateEl('span', 'batch-horizon-count', ''));
-        button.addEventListener('click', () => {
-          rotateState.horizon = rotateState.horizon === h.days ? 0 : h.days;
-          batchWorkspace.page = 0;
-          rotateRefresh();
-        });
-        horizons.appendChild(button);
-      });
-    }
-    EXPIRY_HORIZONS.forEach((h) => {
-      const count = rotateExpiringMatches(h.days, visibleRows).length;
-      const button = horizons.querySelector(`[data-horizon="${h.days}"]`);
-      button.setAttribute('aria-pressed', String(rotateState.horizon === h.days));
-      button.setAttribute('aria-label', `${h.label}, ${pluralize(count, 'instance')}`);
-      button.querySelector('.batch-horizon-count').textContent = String(count);
-    });
-    const chosen = EXPIRY_HORIZONS.find((h) => h.days === rotateState.horizon);
-    const matched = chosen ? rotateExpiringMatches(chosen.days, visibleRows).length : 0;
-    note.textContent = !chosen
-      ? 'Choose a window. We select every instance that has a certificate expiring within it.'
-      : `${pluralize(matched, 'instance')} ${matched === 1 ? 'has' : 'have'} a certificate expiring within ${chosen.label}. The filters below narrow what matches.`;
-  };
-
   // The instance list in rotate and converge modes.
   const renderRotateInstances = () => {
     const container = document.querySelector('#upgrade .upgrade-instances');
@@ -3854,12 +3723,7 @@
     const focusKey = rotateFocusKey(container);
     const scrollTop = container.scrollTop;
     const converge = upgradeOperation === 'converge';
-    rotateSyncExpiring();
-    renderRotatePicker();
-    const expiring = upgradeOperation === 'rotate' && rotateState.pick === 'expiring';
-    const rows = expiring
-      ? (rotateState.horizon > 0 ? rotateExpiringMatches(rotateState.horizon).map((match) => match.row) : [])
-      : rotateVisibleRows();
+    const rows = rotateVisibleRows();
     container.textContent = '';
 
     if (!window.serviceInstances || Object.keys(window.serviceInstances).length === 0) {
@@ -3867,11 +3731,7 @@
       return;
     }
     if (rows.length === 0) {
-      const empty = expiring
-        ? (rotateState.horizon > 0
-          ? `No instance has a certificate expiring within ${EXPIRY_HORIZONS.find((h) => h.days === rotateState.horizon).label}.`
-          : 'Choose a window above to see the instances it matches.')
-        : converge && rotateState.loadState === 'ready'
+      const empty = converge && rotateState.loadState === 'ready'
         ? 'No instance is waiting for a deploy of its patched certificates.'
         : (converge && rotateState.loadState !== 'ready' ? 'Loading the certificate inventory...' : 'No instances match the current filters.');
       container.appendChild(rotateEl('div', 'no-instances p-4 text-center text-gray-500', empty));
@@ -3890,7 +3750,6 @@
       const rowOn = converge ? convergeSelected.has(row.id) : selectedChips.length > 0;
       if (rowOn) item.classList.add('selected');
 
-      item.appendChild(rotateEl('span', 'upgrade-instance-row-number', String(index + 1)));
       const label = rotateEl('label', 'upgrade-instance-checkbox');
       const input = document.createElement('input');
       input.type = 'checkbox';
@@ -3898,8 +3757,7 @@
       input.setAttribute('aria-label', converge
         ? `Converge ${rotateInstanceLabel(row)}`
         : `Rotate every certificate on ${rotateInstanceLabel(row)}`);
-      const derived = expiring;
-      const disabled = Boolean(row.holder) || (!converge && row.chips.length === 0) || derived;
+      const disabled = Boolean(row.holder) || (!converge && row.chips.length === 0);
       input.disabled = disabled;
       if (converge) {
         input.checked = convergeSelected.has(row.id);
@@ -3917,7 +3775,10 @@
         rotateRefresh();
       });
       label.appendChild(input);
-      label.appendChild(rotateEl('span', 'checkmark'));
+      const state = rotateEl('span','batch-select-state');
+      state.setAttribute('aria-hidden','true');
+      state.innerHTML = '<span class="select-off">Select</span><span class="select-on">Selected</span><span class="select-some">Some selected</span>';
+      label.appendChild(state);
       item.appendChild(label);
 
       const info = rotateEl('div', 'upgrade-instance-info');
@@ -3928,7 +3789,7 @@
         const chips = rotateEl('div', 'rotate-chips');
         chips.setAttribute('role', 'group');
         chips.setAttribute('aria-label', `Certificates on ${rotateInstanceLabel(row)}`);
-        row.chips.forEach((cert) => chips.appendChild(rotateChip(row, cert, derived)));
+        row.chips.forEach((cert) => chips.appendChild(rotateChip(row, cert)));
         info.appendChild(chips);
       }
       if (converge && !row.holder) {
@@ -4080,10 +3941,16 @@
       const settings = inventory.settings || {};
       if (settings.warning_days > 0) rotateState.warningDays = settings.warning_days;
       if (settings.critical_days > 0) rotateState.criticalDays = settings.critical_days;
+      if (!rotateState.thresholdTouched) {
+        rotateState.thresholdDays = rotateState.warningDays;
+        const field = document.getElementById('rotate-threshold');
+        if (field) field.value = String(rotateState.thresholdDays);
+      }
       rotateState.loadState = 'ready';
       rotateState.loadError = '';
       rotateState.refreshError = '';
       rotateState.lastLoad = Date.now();
+      applyDefaultThreshold();
       renderRotateNotice();
       rotateRefresh();
       return true;
@@ -4103,6 +3970,16 @@
     }
   };
 
+  // On entering rotate mode with nothing imported from the Certificates tab,
+  // selects the certificates that expire within the threshold. It runs once
+  // per entry, so a chip the operator clears stays clear.
+  const applyDefaultThreshold = () => {
+    if (upgradeOperation !== 'rotate' || rotateState.thresholdApplied || rotateState.loadState !== 'ready') return;
+    if (rotateVisibleRows().length === 0) return;
+    rotateState.thresholdApplied = true;
+    if (!rotateState.imported) rotateSelectMatching(rotateState.thresholdDays);
+  };
+
   // Redraws the inventory when the poll finds it stale.
   const maybeRefreshRotateInventory = () => {
     if (upgradeOperation === 'upgrade' || rotateState.loadState === 'loading' || !batchTabActive()) return;
@@ -4115,8 +3992,6 @@
     ['pending', 'Leave unconverged', 'The instance stays flagged as unconverged until a converge runs. A recreate or resurrection restores the old certificate until then.'],
     ['immediate', 'Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
   ];
-  const REDEPLOY_DESCRIPTION = 'Replaces each selected certificate with a new one. Each instance redeploys once for all of its selected certificates.';
-  const PATCH_DESCRIPTION = 'Temporary repair. We swap the certificate files over SSH, and BOSH can restore the old certificate until the instance converges.';
 
   // The Mode choice that Batch Operations and the instance rotate dialog
   // share. The caller owns the state object, which holds mode and converge,
@@ -4130,6 +4005,14 @@
     const group = rotateEl('fieldset', 'rotate-mode');
     group.id = p;
     group.appendChild(rotateEl('legend', '', 'Mode'));
+    const batchTabs = p === 'rotate-mode';
+    const tabs = {};
+    const tablist = rotateEl('div','batch-mode-tabs');
+    tablist.setAttribute('role','tablist');tablist.setAttribute('aria-label','Certificate rotation method');
+    const modePanel = rotateEl('section','batch-mode-panel');
+    modePanel.id = `${p}-panel`;modePanel.setAttribute('role','tabpanel');modePanel.tabIndex=0;
+    const modeDescription = rotateEl('div','batch-mode-description');modePanel.appendChild(modeDescription);
+    if (batchTabs) group.appendChild(tablist);
     const radios = {};
     [['redeploy', 'Redeploy'], ['patch', 'Patch in place']].forEach(([value, text]) => {
       const label = rotateEl('label', 'rotate-mode-option');
@@ -4153,6 +4036,20 @@
         note.id = `${p}-patch-note`;
         label.appendChild(note);
         radio.setAttribute('aria-describedby', `${p}-patch-note ${p}-patch-reason`);
+      }
+      if (batchTabs) {
+        label.hidden = true;
+        const tab = rotateEl('button','',text);tab.type='button';tab.id=`${p}-${value}-tab`;
+        tab.setAttribute('role','tab');tab.setAttribute('aria-controls',modePanel.id);
+        tab.addEventListener('click',()=>radio.click());
+        tab.addEventListener('keydown',event=>{
+          if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+          event.preventDefault();const available=Object.values(tabs).filter(item=>!item.disabled);
+          const index=available.indexOf(tab);
+          const next=event.key==='Home'?available[0]:event.key==='End'?available.at(-1):available[(index+(event.key==='ArrowRight'?1:-1)+available.length)%available.length];
+          next.focus();next.click();
+        });
+        tabs[value]=tab;tablist.appendChild(tab);
       }
       group.appendChild(label);
     });
@@ -4186,7 +4083,8 @@
       label.appendChild(hint);
       converge.appendChild(label);
     });
-    group.appendChild(converge);
+    if (batchTabs) {modePanel.appendChild(converge);group.appendChild(modePanel);}
+    else group.appendChild(converge);
 
     // Brings the controls in line with the state and with what Patch allows
     // now. A Patch that turned unavailable falls back to Redeploy.
@@ -4206,130 +4104,21 @@
       converge.hidden = !patch;
       choices.pending.checked = patch && ctx.state.converge === 'pending';
       choices.immediate.checked = patch && ctx.state.converge === 'immediate';
+      if (batchTabs) {
+        for (const [value,tab] of Object.entries(tabs)) {
+          const selected=radios[value].checked;tab.disabled=radios[value].disabled;
+          tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;
+        }
+        modePanel.setAttribute('aria-labelledby',`${p}-${patch?'patch':'redeploy'}-tab`);
+        modeDescription.replaceChildren(
+          rotateEl('h3','',patch?'Replace certificates on the existing VMs':'Rotate certificates and redeploy'),
+          rotateEl('p','',patch?'Updates certificate files in place and restarts affected jobs. Choose below when BOSH should deploy the updated certificates.':'Issues new certificates and deploys them through BOSH using the deployment update policy, including canaries and drains.'),
+          rotateEl('p','batch-field-help',patch?PATCH_NOTE:'VMs and jobs may restart. Review the affected instances before confirming.')
+        );
+      }
     }
     update();
     return { root: group, update };
-  };
-
-  // The Mode choice of Batch Operations, as the ARIA tabs pattern. It takes
-  // the same context as buildModeControls and returns the same pair. Each
-  // tab's panel starts with its description. A Patch tab that is closed
-  // stays in the list, says why beneath it, and cannot be chosen.
-  const buildModeTabs = (ctx) => {
-    const p = ctx.prefix;
-    const root = rotateEl('div', 'rotate-mode rotate-mode-tabs');
-    root.id = p;
-    const list = rotateEl('div', 'rotate-tablist');
-    list.setAttribute('role', 'tablist');
-    list.setAttribute('aria-label', 'Mode');
-    const tabs = {};
-    const panels = {};
-    const order = ['redeploy', 'patch'];
-    const reason = rotateEl('p', 'rotate-op-hint rotate-mode-reason');
-    reason.id = `${p}-patch-reason`;
-    reason.hidden = true;
-
-    order.forEach((value) => {
-      const tab = rotateEl('button', 'rotate-tab', value === 'patch' ? 'Patch in place' : 'Redeploy');
-      tab.type = 'button';
-      tab.id = `${p}-${value}`;
-      tab.dataset.mode = value;
-      tab.setAttribute('role', 'tab');
-      tab.setAttribute('aria-controls', `${p}-${value}-panel`);
-      if (value === 'patch') tab.setAttribute('aria-describedby', reason.id);
-      tab.addEventListener('click', () => choose(value));
-      tab.addEventListener('keydown', (event) => {
-        const at = order.indexOf(value);
-        const target = { ArrowRight: order[(at + 1) % order.length], ArrowLeft: order[(at + order.length - 1) % order.length], Home: order[0], End: order[order.length - 1] }[event.key];
-        if (!target) return;
-        event.preventDefault();
-        tabs[target].focus();
-        choose(target);
-      });
-      tabs[value] = tab;
-      list.appendChild(tab);
-
-      const panel = rotateEl('div', 'rotate-tabpanel');
-      panel.id = `${p}-${value}-panel`;
-      panel.setAttribute('role', 'tabpanel');
-      panel.setAttribute('aria-labelledby', tab.id);
-      const description = rotateEl('p', 'rotate-mode-description', value === 'patch' ? PATCH_DESCRIPTION : REDEPLOY_DESCRIPTION);
-      description.id = `${p}-${value}-description`;
-      panel.appendChild(description);
-      panels[value] = panel;
-    });
-    root.appendChild(list);
-
-    const converge = rotateEl('fieldset', 'rotate-converge rotate-converge-cards');
-    converge.id = `${p}-converge`;
-    converge.appendChild(rotateEl('legend', '', 'After patching'));
-    const lead = rotateEl('p', 'rotate-converge-lead', 'Choose one. A patch is a temporary repair until a deploy applies the new values for good.');
-    lead.id = `${p}-converge-lead`;
-    converge.setAttribute('aria-describedby', lead.id);
-    converge.appendChild(lead);
-    const choices = {};
-    CONVERGE_CHOICES.forEach(([value, text, consequence]) => {
-      const label = rotateEl('label', 'rotate-converge-option');
-      const radio = document.createElement('input');
-      radio.type = 'radio';
-      radio.name = `${ctx.name}-converge`;
-      radio.id = `${p}-converge-${value}`;
-      radio.value = value;
-      radio.addEventListener('change', () => {
-        if (!radio.checked) return;
-        ctx.state.converge = value;
-        ctx.onChange();
-      });
-      const hint = rotateEl('span', 'rotate-converge-hint', consequence);
-      hint.id = `${p}-converge-${value}-hint`;
-      radio.setAttribute('aria-describedby', hint.id);
-      choices[value] = radio;
-      const body = rotateEl('span', 'rotate-converge-body');
-      body.appendChild(rotateEl('span', 'rotate-converge-title', text));
-      body.appendChild(hint);
-      label.appendChild(radio);
-      label.appendChild(body);
-      converge.appendChild(label);
-    });
-    panels.patch.appendChild(converge);
-    order.forEach((value) => root.appendChild(panels[value]));
-    // The reason follows the description of the tab that is showing.
-    root.appendChild(reason);
-
-    function choose(value) {
-      if (value === 'patch' && ctx.blockReason()) return;
-      ctx.state.mode = value;
-      if (value !== 'patch') ctx.state.converge = '';
-      update();
-      ctx.onChange();
-    }
-
-    // Brings the tabs in line with the state and with what Patch allows
-    // now. A Patch that turned unavailable falls back to Redeploy.
-    function update() {
-      const block = ctx.blockReason();
-      reason.hidden = !block;
-      reason.textContent = block;
-      tabs.patch.setAttribute('aria-disabled', block ? 'true' : 'false');
-      tabs.patch.title = block;
-      if (block && ctx.state.mode === 'patch') {
-        ctx.state.mode = 'redeploy';
-        ctx.state.converge = '';
-        announce(`Patch in place is not available, so the mode is back to Redeploy. ${block}`);
-      }
-      const patch = ctx.state.mode === 'patch';
-      order.forEach((value) => {
-        const selected = (value === 'patch') === patch;
-        tabs[value].setAttribute('aria-selected', selected ? 'true' : 'false');
-        tabs[value].tabIndex = selected ? 0 : -1;
-        panels[value].hidden = !selected;
-      });
-      converge.hidden = !patch;
-      choices.pending.checked = patch && ctx.state.converge === 'pending';
-      choices.immediate.checked = patch && ctx.state.converge === 'immediate';
-    }
-    update();
-    return { root, update };
   };
 
   // Whether Patch is closed for the certificates picked in Batch Operations,
@@ -4362,7 +4151,7 @@
     rotateModeControls = null;
     const pane = rotateEl('div', 'rotate-pane');
     pane.dataset.pane = 'rotate-options';
-    if (OPERATION_HINTS[upgradeOperation]) pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS[upgradeOperation]));
+    pane.appendChild(rotateEl('p', 'rotate-op-hint', upgradeOperation === 'rotate' ? 'Choose how certificates will be applied. Select the affected instances in the next step.' : OPERATION_HINTS[upgradeOperation]));
     const notice = rotateEl('div', 'rotate-notice');
     notice.id = 'rotate-notice';
     notice.setAttribute('role', 'status');
@@ -4383,7 +4172,7 @@
     pane.appendChild(bulk);
 
     if (upgradeOperation === 'rotate') {
-      rotateModeControls = buildModeTabs({
+      rotateModeControls = buildModeControls({
         prefix: 'rotate-mode',
         name: 'rotate-mode',
         state: rotateState,
@@ -4391,37 +4180,78 @@
         onChange: updateOperationFooter
       });
       pane.appendChild(rotateModeControls.root);
+
+      const row = rotateEl('div', 'filter-row rotate-threshold-row');
+      const label = rotateEl('label', '', 'Expiring within');
+      label.setAttribute('for', 'rotate-threshold');
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.id = 'rotate-threshold';
+      input.min = '1';
+      input.value = String(rotateState.thresholdDays);
+      input.addEventListener('input', () => {
+        const value = parseInt(input.value, 10);
+        if (value > 0) { rotateState.thresholdDays = value; rotateState.thresholdTouched = true; }
+      });
+      const unit = rotateEl('span', 'rotate-threshold-unit', 'days');
+      const match = rotateEl('button', 'btn-secondary btn-sm', 'Select matching');
+      match.type = 'button';
+      match.id = 'rotate-select-matching';
+      match.addEventListener('click', () => {
+        const value = parseInt(input.value, 10);
+        if (!(value > 0)) {
+          window.Feedback.warning('Enter a number of days greater than zero.', { toast: true });
+          return;
+        }
+        rotateState.thresholdDays = value;
+        rotateState.thresholdTouched = true;
+        rotateSelectMatching(value);
+        rotateRefresh();
+      });
+      row.appendChild(label);
+      row.appendChild(input);
+      row.appendChild(unit);
+      row.appendChild(match);
+      const thresholdSection = rotateEl('section','batch-option-section');
+      thresholdSection.appendChild(rotateEl('h3','','Start with expiring certificates'));
+      thresholdSection.appendChild(rotateEl('p','batch-field-help','Select certificates due within this window. You can adjust the selection on the Instances step.'));
+      thresholdSection.appendChild(row);pane.appendChild(thresholdSection);
     }
 
-    // Each field says what to type and why. The broker names the job after
-    // the selection when the name is empty, shows the name in the job list,
-    // and records the reason with the job and in its audit log.
+    const nameRow = rotateEl('div', 'filter-row rotate-name-row');
+    const nameLabel = rotateEl('label', '', 'Job name');
+    nameLabel.setAttribute('for', 'rotate-name');
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.id = 'rotate-name';
+    nameInput.placeholder = 'e.g. October certificate renewal';
+    nameInput.setAttribute('aria-describedby','rotate-name-help');
+    nameInput.value = rotateState.name;
+    nameInput.addEventListener('input', () => { rotateState.name = nameInput.value; });
+    nameRow.appendChild(nameLabel);
+    nameRow.appendChild(nameInput);
+    nameRow.appendChild(rotateEl('p','batch-field-help',''));
+    nameRow.lastChild.id = 'rotate-name-help';
+    nameRow.lastChild.textContent = 'A short label to find this operation in Activity. Leave blank to use a generated name.';
     const metadata = rotateEl('details', 'batch-optional');
     metadata.appendChild(rotateEl('summary', '', 'Job name and reason (optional)'));
-    [
-      ['rotate-name', 'Job name', 'name', 'October cert rotation',
-        upgradeOperation === 'converge'
-          ? 'Shown in the batch job list so you can find this run later, such as "October converge". If you leave it empty, we name it after the instances.'
-          : 'Shown in the batch job list so you can find this run later, such as "October cert rotation". If you leave it empty, we name it after the certificates.'],
-      ['rotate-reason', 'Reason', 'reason', 'Change ticket or short reason',
-        'Recorded with the job and in the audit log, so anyone reviewing it later knows why. A change ticket number works well.']
-    ].forEach(([id, text, field, placeholder, hintText]) => {
-      const row = rotateEl('div', 'filter-row rotate-name-row');
-      const label = rotateEl('label', '', text);
-      label.setAttribute('for', id);
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.id = id;
-      input.placeholder = placeholder;
-      input.autocomplete = 'off';
-      input.value = rotateState[field];
-      const hint = rotateEl('p', 'rotate-field-hint', hintText);
-      hint.id = `${id}-hint`;
-      input.setAttribute('aria-describedby', hint.id);
-      input.addEventListener('input', () => { rotateState[field] = input.value; });
-      row.append(label, input, hint);
-      metadata.appendChild(row);
-    });
+    metadata.appendChild(nameRow);
+
+    const reasonRow = rotateEl('div', 'filter-row rotate-name-row');
+    const reasonLabel = rotateEl('label', '', 'Reason');
+    reasonLabel.setAttribute('for', 'rotate-reason');
+    const reasonInput = document.createElement('input');
+    reasonInput.type = 'text';
+    reasonInput.id = 'rotate-reason';
+    reasonInput.placeholder = 'e.g. Scheduled renewal — change CHG-1234';
+    reasonInput.setAttribute('aria-describedby','rotate-reason-help');
+    reasonInput.value = rotateState.reason;
+    reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
+    reasonRow.appendChild(reasonLabel);
+    reasonRow.appendChild(reasonInput);
+    const reasonHelp = rotateEl('p','batch-field-help','Explain why you are running this operation, such as a maintenance window, incident, or change ticket. Optional.');
+    reasonHelp.id = 'rotate-reason-help'; reasonRow.appendChild(reasonHelp);
+    metadata.appendChild(reasonRow);
     pane.appendChild(metadata);
     container.appendChild(pane);
     renderRotateNotice();
@@ -4518,18 +4348,21 @@
     }
 
     if (next === 'upgrade') {
-      renderRotatePicker();
       refreshUpgradeInstanceList();
       return;
     }
 
     buildRotateOptions(targets);
     buildRotateFooter(footer);
-    if (entering) rotateState.reviewOpen = false;
-    renderRotatePicker();
+    if (entering) {
+      rotateState.thresholdApplied = Boolean(batchFlow.drafts[next]);
+      rotateState.reviewOpen = false;
+      rotateState.imported = rotatePairs().length > 0;
+    }
     refreshUpgradeInstanceList();
     if (rotateState.loadState === 'ready') {
       if (entering) {
+        applyDefaultThreshold();
         rotateRefresh();
         loadRotateInventory({ silent: true });
       }
@@ -4787,6 +4620,18 @@
         ? `${pluralize(certCount, 'certificate')} plus ${pluralize(extraCount, 'additional variable')}`
         : pluralize(certCount, 'certificate'));
     }
+    if (opts.flowReview) {
+      summary.classList.add('batch-review-facts');
+      summary.replaceChildren();
+      const facts = [['Method',ROTATE_MODE_LABELS[mode] || mode],['Instances',included.length],['VMs',vms]];
+      if (mode !== 'converge') facts.push(['Certificates',certCount]);
+      if (extraCount) facts.push(['Additional variables',extraCount]);
+      for (const [label,value] of facts) {
+        const fact=rotateEl('span','batch-review-fact');
+        fact.append(rotateEl('span','batch-fact-label',label),rotateEl('strong','',String(value)));summary.appendChild(fact);
+      }
+      if (excludedLink) summary.appendChild(excludedLink);
+    }
     root.pinnedNode = summary;
     // Without a dialog to pin it, the summary leads the content.
     scroll.appendChild(summary);
@@ -4796,6 +4641,7 @@
     if (what && included.some((instance) => instance.gate)) {
       what += ` ${PREVIEW_GATE_CLAUSE}`;
     }
+    if (opts.flowReview) scroll.appendChild(rotateEl('h3','batch-review-section-title','What will happen'));
     if (what) scroll.appendChild(rotateEl('p', 'rotate-preview-what', what));
 
     // Warnings come first
@@ -5075,7 +4921,7 @@
         batchReview: origin === 'batch',
         title: converge ? 'Converge these instances?' : (mode === 'patch' ? 'Patch these certificates in place?' : 'Rotate these certificates?'),
         message: note,
-        body: buildPreviewBody(preview, mode, { converge: options.converge }),
+        body: buildPreviewBody(preview, mode, { converge: options.converge, flowReview: Boolean(options.confirmReview) }),
         describedBy: 'rotate-preview-summary',
         footnote: PREVIEW_TASK_NOTE,
         confirmText: PREVIEW_CONFIRM_TEXT[mode],
@@ -5365,15 +5211,8 @@
   const openBatchRotate = async () => {
     const switched = await window.blacksmithNav.switchTab('upgrade');
     if (switched === false) return false;
-    // The handover is a picked list, so it opens in the list and names where
-    // it came from. A window would work its own selection out again.
-    const shared = window.blacksmithCerts && window.blacksmithCerts.selection;
-    if (shared instanceof Map && [...shared.values()].some(names => names.size > 0)) {
-      rotateState.pick = 'instances';
-      rotateState.derived.clear();
-      rotateState.horizon = 0;
-      rotateState.source = 'certificates';
-    }
+    // The count names where a handed-over selection came from.
+    if (rotatePairs().length > 0) rotateState.source = 'certificates';
     renderOperation('rotate');
     if (batchFlow.installed) setBatchStep(2, false);
     rotateRefresh();
@@ -5436,9 +5275,6 @@
               if (chosen.size === 0) selection.delete(id);
             });
           }
-          // A window starts over after a create, so the same instances are
-          // not picked again until the operator chooses a window.
-          if (!converge && rotateState.pick === 'expiring') rotateState.horizon = 0;
           rotateState.source = '';
           rotateRefresh();
           setBatchView('activity');
@@ -5472,25 +5308,13 @@
     });
   };
 
-  const setUpgradeSelected = (instanceId, on) => {
-    if (on) selectedUpgradeInstances.add(instanceId); else selectedUpgradeInstances.delete(instanceId);
-    syncUpgradeRows();
-    updateUpgradeButton();
-  };
-
-  // Set up handlers for upgrade instance checkboxes. The box's own change
-  // event decides the selection, whether the click landed on the box or on
-  // its label, and a click elsewhere in the row flips it.
+  // Set up handlers for upgrade instance checkboxes
   const setupUpgradeInstanceHandlers = () => {
     document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
       const checkbox = item.querySelector('input[type="checkbox"]');
       const instanceId = item.dataset.instanceId;
 
-      checkbox.addEventListener('change', () => {
-        if (item.dataset.held) { syncUpgradeRows(); return; }
-        setUpgradeSelected(instanceId, checkbox.checked);
-      });
-
+      // Handle click on the entire item
       item.addEventListener('click', (e) => {
         // A row another operation holds cannot be picked, and a click on a
         // control inside the row belongs to that control.
@@ -5498,8 +5322,22 @@
           e.preventDefault();
           return;
         }
-        if (e.target.closest && e.target.closest('.rotate-chip, button, a, label, input')) return;
-        setUpgradeSelected(instanceId, !selectedUpgradeInstances.has(instanceId));
+        if (e.target.closest && e.target.closest('.rotate-chip, button, a')) return;
+        // Let the label activate its input once; handle the resulting input click.
+        if (e.target.type !== 'checkbox' && e.target.closest('label')) return;
+        if (e.target.type !== 'checkbox') {
+          checkbox.checked = !checkbox.checked;
+        }
+
+        if (checkbox.checked) {
+          selectedUpgradeInstances.add(instanceId);
+          item.classList.add('selected');
+        } else {
+          selectedUpgradeInstances.delete(instanceId);
+          item.classList.remove('selected');
+        }
+
+        updateUpgradeButton();
       });
     });
     syncUpgradeRows();
@@ -7285,10 +7123,16 @@
 
   const buildUpgradeFlowSummary = (ids, targets) => {
     const body = rotateEl('div', 'batch-upgrade-summary');
-    body.appendChild(rotateEl('p', '', `${pluralize(ids.length, 'instance')} will be upgraded.`));
+    const scope = rotateEl('div','batch-review-facts');
+    for (const [label,value] of [['Operation','Upgrade'],['Instances',String(ids.length)]]) {
+      const fact=rotateEl('div','batch-review-fact');fact.append(rotateEl('span','batch-fact-label',label),rotateEl('strong','',value));scope.appendChild(fact);
+    }
+    body.appendChild(scope);
+    body.appendChild(rotateEl('h3','batch-review-section-title','What will change'));
     const changes = rotateEl('ul');
     targets.forEach(target => changes.appendChild(rotateEl('li', '', target)));
     body.appendChild(changes);
+    body.appendChild(rotateEl('h3','batch-review-section-title','Deployment impact'));
     body.appendChild(rotateEl('p', '', 'BOSH applies the deployment update policy. VMs and jobs may restart during the upgrade.'));
     const details = rotateEl('details');
     details.appendChild(rotateEl('summary', '', 'Selected instances'));
@@ -23670,12 +23514,28 @@
       return `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
     };
 
+    const HORIZONS = [
+      { days: 7, label: '1 week' },
+      { days: 14, label: '2 weeks' },
+      { days: 30, label: '30 days' },
+      { days: 60, label: '60 days' },
+      { days: 90, label: '90 days' },
+      { days: 180, label: '180 days' },
+      { days: 365, label: '1 year' }
+    ];
+
     // Counts are cumulative. A certificate counts when its expiry falls
     // after the current server time and on or before that time plus the
     // horizon, so expired and unknown expiries never count.
     const horizonCounts = () => {
       const anchor = serverNow();
-      return EXPIRY_HORIZONS.map((h) => view.fleet.filter((cert) => expiresWithinHorizon(cert.effective_not_after, h.days, anchor)).length);
+      return HORIZONS.map((h) => {
+        const limit = anchor + h.days * DAY_MS;
+        return view.fleet.filter((cert) => {
+          const t = Date.parse(cert.effective_not_after);
+          return !Number.isNaN(t) && t > anchor && t <= limit;
+        }).length;
+      });
     };
 
     const coverageGaps = (resp) => {
@@ -23741,7 +23601,7 @@
       table.appendChild(el('caption', 'cert-horizon-caption', 'Certificates expiring within'));
       const head = el('tr');
       const row = el('tr');
-      EXPIRY_HORIZONS.forEach((h, i) => {
+      HORIZONS.forEach((h, i) => {
         const th = el('th', null, h.label);
         th.scope = 'col';
         head.appendChild(th);
@@ -25704,7 +25564,7 @@
       await refresh({ announce: false });
     };
 
-    return { state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer, serverNow };
+    return { state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
   })();
 
   window.blacksmithCerts = {
@@ -25712,8 +25572,7 @@
     toQuery: CertsFleet.toQuery,
     refresh: CertsFleet.refresh,
     selection: CertsFleet.selection,
-    closeDrawer: CertsFleet.closeDrawer,
-    serverNow: CertsFleet.serverNow
+    closeDrawer: CertsFleet.closeDrawer
   };
 
   const initCertificatesTab = () => CertsFleet.init();

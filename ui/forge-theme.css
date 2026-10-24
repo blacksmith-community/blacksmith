@@ -223,44 +223,6 @@ body > footer p { margin: 0; }
 #upgrade .batch-flow-footer button { min-height: 44px; }
 #upgrade .upgrade-main { flex: 1 0 auto; display: flex; flex-direction: column; }
 #upgrade .batch-flow-footer { margin-top: auto; }
-
-/* The job name and reason fields, with a readable width and a hint under each. */
-#upgrade .batch-optional .rotate-name-row { max-width: 560px; align-items: baseline; margin-top: 12px; }
-#upgrade .batch-optional .rotate-name-row label { flex: 0 0 6rem; min-width: 0; font-weight: 600; }
-#upgrade .batch-optional .rotate-name-row input[type="text"] { flex: 1 1 14rem; }
-#upgrade .rotate-field-hint { flex: 1 1 100%; margin: 0; color: var(--muted-foreground); font-size: .875rem; overflow-wrap: anywhere; }
-
-/* The two ways to choose instances in rotate mode. */
-#upgrade .batch-choose-by { padding: 16px 24px 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-#upgrade .batch-pick-toggle { display: inline-flex; flex-wrap: wrap; gap: 8px; }
-#upgrade .batch-pick-button, #upgrade .batch-horizon-button { padding: 8px 14px; border: 1px solid var(--input); border-radius: 6px; background: var(--card); color: var(--foreground); cursor: pointer; }
-#upgrade .batch-pick-button[aria-pressed="true"], #upgrade .batch-horizon-button[aria-pressed="true"] { border-color: var(--primary); background: var(--secondary); color: var(--primary); font-weight: 700; box-shadow: inset 0 0 0 1px var(--primary); }
-#upgrade .batch-horizons { display: flex; flex-wrap: wrap; gap: 8px; }
-#upgrade .batch-horizons[hidden] { display: none; }
-#upgrade .batch-horizon-count { margin-left: 8px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
-#upgrade .batch-pick-note { margin: 0; color: var(--muted-foreground); font-size: .875rem; max-width: 72ch; overflow-wrap: anywhere; }
-#upgrade .rotate-chip:disabled { cursor: default; }
-
-/* Mode tabs and the After patching cards inside the certificate options box. */
-#upgrade .rotate-mode-tabs { display: block; min-width: 0; }
-#upgrade .rotate-tablist { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
-#upgrade .rotate-tab { padding: 8px 16px; border: 0; border-bottom: 3px solid transparent; border-radius: 5px 5px 0 0; background: transparent; color: var(--muted-foreground); font-weight: 600; cursor: pointer; }
-#upgrade .rotate-tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); background: var(--secondary); }
-#upgrade .rotate-tab[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
-#upgrade .rotate-tabpanel { min-width: 0; }
-#upgrade .rotate-tabpanel[hidden] { display: none; }
-#upgrade .rotate-mode-description { margin: 0 0 12px; max-width: 72ch; color: var(--foreground); overflow-wrap: anywhere; }
-#upgrade .rotate-mode-tabs .rotate-mode-reason { margin: 0 0 12px; max-width: 72ch; overflow-wrap: anywhere; }
-#upgrade .rotate-converge-cards { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 0; padding: 0; border: 0; min-width: 0; }
-#upgrade .rotate-converge-cards legend { padding: 0; margin-bottom: 4px; font-weight: 700; }
-#upgrade .rotate-converge-lead { margin: 0 0 4px; color: var(--muted-foreground); font-size: .875rem; max-width: 72ch; }
-#upgrade .rotate-converge-cards .rotate-converge-option { display: grid; grid-template-columns: 24px minmax(0,1fr); gap: 10px; align-items: start; margin: 0; padding: 14px 16px; border: 2px solid var(--input); border-radius: 8px; background: var(--card); cursor: pointer; }
-#upgrade .rotate-converge-cards .rotate-converge-option:has(input:checked) { border-color: var(--primary); background: var(--secondary); }
-#upgrade .rotate-converge-cards .rotate-converge-option:focus-within { outline: 3px solid var(--ring); outline-offset: 2px; }
-#upgrade .rotate-converge-cards .rotate-converge-option input { margin: 2px 0 0; }
-#upgrade .rotate-converge-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-#upgrade .rotate-converge-title { font-weight: 600; }
-#upgrade .rotate-converge-cards .rotate-converge-hint { grid-column: auto; color: var(--muted-foreground); font-size: .875rem; overflow-wrap: anywhere; }
 #upgrade .batch-pagination { position: static; }
 #upgrade { scroll-padding-block: 75px 120px; }
 @media (max-width: 750px) {
@@ -288,3 +250,76 @@ body > footer p { margin: 0; }
 /* Keep action text readable in Oat's hover state as well as at rest. */
 #upgrade #batch-flow-next { background: var(--primary); color: var(--primary-foreground); }
 #upgrade #batch-flow-next[data-variant="danger"] { background: var(--danger); color: var(--danger-foreground); }
+
+/* Focused options: decisions first, explanatory text below each choice. */
+#upgrade .upgrade-targets-panel { padding: 24px; }
+#upgrade .upgrade-targets-panel > h3 { display: none; }
+#upgrade .upgrade-targets-panel :is(.rotate-pane,.upgrade-mode-pane) { display: grid; gap: 24px; }
+#upgrade .upgrade-mode-pane:not([hidden]) { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+#upgrade :is(.upgrade-target-group,.batch-option-section,.batch-optional) { padding: 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); min-width: 0; }
+#upgrade :is(.upgrade-target-group,.batch-option-section) h3 { font-size: 1.05rem; margin: 0 0 8px; }
+#upgrade .batch-field-help { font-size: .875rem; color: var(--muted-foreground); line-height: 1.6; margin: 8px 0 16px; max-width: 72ch; }
+#upgrade .upgrade-target-group .filter-row { display: grid; gap: 8px; margin-top: 18px; }
+#upgrade .filter-row label { font-weight: 600; text-align: left; }
+#upgrade .filter-row :is(input,select) { min-height: 44px; max-width: 100%; }
+#upgrade .rotate-mode { display: block; }
+#upgrade .rotate-mode > legend { margin-bottom: 12px; font-size: 1rem; }
+#upgrade .batch-mode-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+#upgrade .batch-mode-tabs button { border-radius: 8px 8px 0 0; background: transparent; color: var(--muted-foreground); border: 0; min-height: 48px; padding: 12px 20px; }
+#upgrade .batch-mode-tabs button[aria-selected="true"] { color: var(--primary); background: var(--card); box-shadow: inset 0 -3px var(--primary); font-weight: 700; }
+#upgrade .batch-mode-panel { padding: 24px; background: var(--card); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 10px 10px; }
+#upgrade .batch-mode-panel h3 { margin: 0 0 12px; font-size: 1.125rem; }
+#upgrade .batch-mode-panel p { max-width: 76ch; line-height: 1.65; }
+#upgrade .rotate-converge { display: grid; gap: 12px; margin-top: 24px; }
+#upgrade .upgrade-filters .rotate-converge-option { display: grid; grid-template-columns: 22px 1fr; gap: 6px 12px; padding: 16px; border: 1px solid var(--input); border-radius: 8px; align-items: start; }
+#upgrade .rotate-converge-option:has(input:checked) { background: var(--secondary); border-color: var(--primary); }
+#upgrade .rotate-converge-hint { grid-column: 2; margin: 0; line-height: 1.6; }
+#upgrade .rotate-threshold-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+#upgrade #rotate-threshold { width: 100px; }
+#upgrade .batch-optional summary { font-weight: 600; }
+#upgrade .rotate-name-row { display: grid; gap: 8px; margin-top: 24px; max-width: 640px; }
+#upgrade .rotate-name-row input { width: 100%; }
+#upgrade .rotate-name-row .batch-field-help { margin: 0; }
+/* Keep native checkbox semantics without the misleading decorative box. */
+#upgrade .upgrade-instance-checkbox { position: relative; flex-shrink: 0; margin: 0 16px 0 0; }
+#upgrade .upgrade-instance-checkbox input { position: absolute; width: 1px; height: 1px; padding: 0; clip-path: inset(50%); overflow: hidden; }
+#upgrade .batch-select-state { min-width: 104px; min-height: 44px; display: grid; place-items: center; border: 1px solid var(--input); border-radius: 8px; padding: 8px; background: var(--card); color: var(--foreground); font-size: .875rem; }
+#upgrade .batch-select-state :is(.select-on,.select-some) { display: none; }
+#upgrade input:checked + .batch-select-state .select-on, #upgrade input:indeterminate + .batch-select-state .select-some { display: inline; }
+#upgrade input:checked + .batch-select-state .select-off, #upgrade input:indeterminate + .batch-select-state :is(.select-off,.select-on) { display: none; }
+#upgrade input:is(:checked,:indeterminate) + .batch-select-state { color: var(--primary-foreground); background: var(--primary); border-color: var(--primary); font-weight: 600; }
+#upgrade input:focus-visible + .batch-select-state { outline: 3px solid var(--ring); outline-offset: 3px; }
+#upgrade input:disabled + .batch-select-state { color: var(--muted-foreground); background: var(--secondary); cursor: not-allowed; }
+#upgrade .upgrade-instance-item { padding: 16px; }
+#upgrade .upgrade-instance-item.selected { background: var(--secondary); }
+/* Review: scannable scope, impact, then optional detail and confirmation. */
+#upgrade .batch-review-facts { display: flex; flex-wrap: wrap; gap: 12px; padding: 0; border: 0; background: transparent; margin: 8px 0 28px; }
+#upgrade .batch-review-fact { display: grid; gap: 8px; min-width: 130px; flex: 1; padding: 16px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+#upgrade .batch-fact-label { color: var(--muted-foreground); font-size: .875rem; font-weight: 400; }
+#upgrade .batch-review-fact strong { font-size: 1.25rem; }
+#upgrade .batch-flow-review { max-width: 1120px; width: 100%; }
+#upgrade .batch-flow-review p { line-height: 1.7; max-width: 80ch; }
+#upgrade .batch-flow-review .batch-review-section-title { margin: 28px 0 12px; font-size: 1.05rem; }
+#upgrade .batch-flow-review :is(.rotate-preview-note,.rotate-preview-callout) { margin: 20px 0; padding: 16px; border-left: 3px solid var(--warning); background: var(--secondary); border-radius: 4px; }
+#upgrade .batch-flow-review .rotate-preview-cards { gap: 16px; }
+#upgrade .batch-flow-review .rotate-preview-card { padding: 16px; }
+@media (max-width: 750px) {
+ #upgrade .upgrade-mode-pane:not([hidden]) { display: grid; grid-template-columns: 1fr; }
+ #upgrade .upgrade-targets-panel { padding: 16px; }
+ #upgrade .batch-mode-panel { padding: 16px; }
+ #upgrade .batch-mode-tabs button { flex: 1; padding-inline: 12px; }
+ #upgrade .upgrade-instance-checkbox { margin-right: 12px; }
+ #upgrade .batch-select-state { min-width: 76px; }
+}
+
+#upgrade .upgrade-targets-panel { padding: 0; border: 0; background: transparent; max-width: 1072px; overflow: visible; }
+#upgrade .upgrade-targets-panel .upgrade-targets { background: transparent; overflow: visible; }
+#upgrade .rotate-pane > .rotate-op-hint { max-width: 76ch; line-height: 1.65; }
+#upgrade .batch-mode-panel:focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
+
+#upgrade button.outline:hover { background: var(--secondary); color: var(--secondary-foreground); }
+
+#upgrade .batch-flow-header { padding-top: 16px; }
+#upgrade .batch-steps { margin-bottom: 12px; }
+#upgrade .batch-review-fact { padding: 12px 16px; gap: 4px; }
+#upgrade .batch-flow-review .batch-review-section-title { margin-top: 20px; }

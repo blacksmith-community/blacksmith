@@ -56,7 +56,7 @@ async (page) => {
   await page.locator('#batch-select-matching').click();
   check((await page.locator('#batch-flow-context').textContent()).includes('53 instances selected'), 'all matching adds exact scope');
   await page.locator('#batch-flow-next').click();
-  await page.locator('#batch-flow-review h3').waitFor();
+  await page.locator('#batch-flow-review > h3').first().waitFor();
   await page.locator('#batch-flow-back').waitFor({state:'visible'});
   check(await page.locator('.rotate-preview-card').count() === 50, 'bounded review');
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-review.png'});
@@ -70,7 +70,7 @@ async (page) => {
   check(await noNestedScroll(), 'no mobile nested scrollers');
   check(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
   await page.locator('#batch-flow-next').click();
-  await page.locator('#batch-flow-review h3').waitFor();
+  await page.locator('#batch-flow-review > h3').first().waitFor();
   await page.locator('#batch-flow-back').waitFor({state:'visible'});
   check(await page.locator('#batch-flow-back').isVisible(), 'review back action visible on mobile');
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-review-mobile.png'});

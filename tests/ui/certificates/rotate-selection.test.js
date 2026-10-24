@@ -65,10 +65,9 @@ t('rotate selection on Batch Operations', async () => {
   ok(d.getElementById('rotate-preview')&&!visible(d.getElementById('rotate-preview')),'legacy action stays hidden behind step navigation');
   T.setBatchStep(1,false);
   ok(d.querySelector('.upgrade-targets-panel h2').textContent==='Certificate options','targets heading retitled');
-  ok(!d.getElementById('rotate-threshold')&&!d.getElementById('rotate-select-matching'),'the days field moved to the Instances step');
+  ok(visible(d.getElementById('rotate-threshold')),'threshold control visible');
   const sel=w.blacksmithCerts.selection;
-  ok(sel.size===0,'nothing is preselected'); sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter();
-  ok(sel.get('inst-valkey').has(K)&&!sel.get('inst-valkey').has(K2),'a chosen leaf lands on the shared selection');
+  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K)&&!sel.get('inst-valkey').has(K2),'default threshold preselects valkey leaf only, on the shared selection');
   const chipOf=(id,key)=>[...d.querySelectorAll('.rotate-row')].filter(r=>r.dataset.instanceId===id).flatMap(r=>[...r.querySelectorAll('.rotate-chip')]).find(c=>c.dataset.variable===key);
   const c1=chipOf('inst-valkey',K), c2=chipOf('inst-valkey',K2);
   ok(c1&&c1.getAttribute('aria-pressed')==='true'&&c2.getAttribute('aria-pressed')==='false','chips reflect selection via aria-pressed');
@@ -106,12 +105,9 @@ t('rotate selection on Batch Operations', async () => {
   ok(sel.get('inst-valkey').size===2&&sel.has(EVIL)&&!sel.has('inst-held')&&!sel.has('inst-pg'),'Select visible takes eligible chips, skips held and ineligible');
   d.getElementById('rotate-clear-visible').click();
   ok(sel.size===0,'Clear visible clears them');
-  d.getElementById('batch-pick-expiring').click(); d.querySelector('[data-horizon="365"]').click();
-  const dv=T.rotateState.derived;
-  ok(dv.get('inst-valkey').size===2&&dv.has(EVIL)&&!dv.has('inst-pg')&&!dv.has('inst-held')&&sel.size===0,'the 1 year window selects every expiring certificate and leaves the shared selection alone');
-  d.getElementById('batch-pick-instances').click(); ok(sel.size===0,'switching back to specific instances clears');
-  d.getElementById('rotate-select-visible').click();
-  ok(sel.get('inst-valkey').size===2,'Select this page takes both');
+  d.getElementById('rotate-threshold').value='400'; d.getElementById('rotate-threshold').dispatchEvent(new w.Event('input'));
+  d.getElementById('rotate-select-matching').click();
+  ok(sel.get('inst-valkey').size===2,'Select matching with 400 days selects both');
   const line=d.getElementById('rotate-selection-line').textContent;
   ok(/3 certificates selected on 2 instances/.test(line),'selection line counts: '+line);
   ok(d.getElementById('rotate-preview').textContent==='Preview rotation of 3 certificates on 2 instances','footer label');
@@ -166,7 +162,7 @@ t('rotate selection on Batch Operations', async () => {
   ok(d.querySelector('.upgrade-targets-panel h2').textContent==='Upgrade targets','heading restored without step numbers');
   // ids
   const ids=[...d.querySelectorAll('[id^="upgrade-advrel-"],[id^="upgrade-release-"]')].map(n=>n.id).sort();
-  ok(ids.join()==='upgrade-release-filter,upgrade-release-floor','advrel/release id query returns only pre-existing controls: '+ids);
+  ok(ids.join()==='upgrade-release-filter,upgrade-release-floor,upgrade-release-floor-help','advrel/release id query returns only pre-existing controls: '+ids);
   ok([...d.querySelectorAll('#upgrade [id^="rotate-"]')].length>0&&![...d.querySelectorAll('#upgrade [id]')].some(n=>/^rotate-/.test(n.id)===false&&false),'rotate ids exist');
   ok(alerts.length===0,'no alert/confirm/prompt: '+alerts.join('|'));
   ok(!errors.some(e=>/Reference|TypeError|LOAD/.test(e)),'no script errors: '+errors.join('|'));
