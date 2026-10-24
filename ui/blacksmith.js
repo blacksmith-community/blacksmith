@@ -1249,7 +1249,6 @@
       // Visual feedback
       const originalTitle = button.title;
       button.classList.add('copied');
-      flashCopyIcon(button);
       button.title = 'Copied!';
       announce('Copied');
       flashCopyIcon(button);
@@ -1943,7 +1942,7 @@
                 <span class="copy-wrapper">
                   <span>${instanceName}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
-                          title="Copy to clipboard" aria-label="Copy value">
+                          title="Copy to clipboard" aria-label="Copy instance name">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
                 </span>
@@ -1956,7 +1955,7 @@
                 <span class="copy-wrapper">
                   <span>${vm.az}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
-                          title="Copy to clipboard" aria-label="Copy value">
+                          title="Copy to clipboard" aria-label="Copy availability zone">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
                 </span>
@@ -1967,7 +1966,7 @@
                 <span class="copy-wrapper">
                   <span>${vmType}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
-                          title="Copy to clipboard" aria-label="Copy value">
+                          title="Copy to clipboard" aria-label="Copy VM type">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
                 </span>
@@ -2409,7 +2408,7 @@
               <span class="copy-wrapper">
                 <span>${service?.name || service?.id || 'unknown'}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${service?.name || service?.id || 'unknown'}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy service">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
               </span>
@@ -2421,7 +2420,7 @@
               <span class="copy-wrapper">
                 <span>${plan?.name || plan?.id || 'unknown'}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${plan?.name || plan?.id || 'unknown'}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy plan">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
               </span>
@@ -7273,7 +7272,7 @@
               <td class="cred-value">
                 <span class="copy-wrapper">
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
-                          title="Copy to clipboard" aria-label="Copy value">
+                          title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(key))}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
                   <span>${displayValue}</span>
@@ -7300,7 +7299,7 @@
             <td class="cred-value">
               <span class="copy-wrapper">
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(section))}">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
                 <span>${displayValue}</span>
@@ -7395,7 +7394,7 @@
             <span class="copy-wrapper">
               <span>${displayValue}</span>
               <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
-                      title="Copy to clipboard" aria-label="Copy value">
+                      title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(item.key))}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
             </span>
@@ -9856,7 +9855,7 @@
                     <span class="copy-wrapper">
                       <span>${instanceName}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
-                              title="Copy to clipboard" aria-label="Copy value">
+                              title="Copy to clipboard" aria-label="Copy instance name">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                     </span>
@@ -9869,7 +9868,7 @@
                     <span class="copy-wrapper">
                       <span>${vm.az}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
-                              title="Copy to clipboard" aria-label="Copy value">
+                              title="Copy to clipboard" aria-label="Copy availability zone">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                     </span>
@@ -9880,7 +9879,7 @@
                     <span class="copy-wrapper">
                       <span>${vmType}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
-                              title="Copy to clipboard" aria-label="Copy value">
+                              title="Copy to clipboard" aria-label="Copy VM type">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                     </span>
@@ -9893,7 +9892,7 @@
                     <span class="copy-wrapper">
                       <span>${ips}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy IP addresses">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
                     </span>
@@ -9905,7 +9904,7 @@
                     <span class="copy-wrapper">
                       <span>${vm.vm_cid}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.vm_cid}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy VM CID">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
                     </span>
@@ -9916,7 +9915,7 @@
                     <span class="copy-wrapper">
                       <span>${agentId}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${agentId}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy agent ID">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
                     </span>
@@ -9928,7 +9927,7 @@
                     <span class="copy-wrapper">
                       <span>${diskCids}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${diskCids}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy disk CIDs">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
                     </span>
@@ -12565,7 +12564,6 @@
       await navigator.clipboard.writeText(text);
       // Visual feedback
       button.classList.add('copied');
-      flashCopyIcon(button);
       const originalTitle = button.title;
       button.title = 'Copied!';
       flashCopyIcon(button);
@@ -12787,7 +12785,7 @@
                   <td>
                     <span class="copy-wrapper">
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${directorUuid.replace(/'/g, "\\'")}')"
-                              title="Copy to clipboard" aria-label="Copy value">
+                              title="Copy to clipboard" aria-label="Copy director UUID">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                       <code>${directorUuid}</code>
@@ -12799,7 +12797,7 @@
                   <td>
                     <span class="copy-wrapper">
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${(parsed.name || 'Not specified').replace(/'/g, "\\'")}')"
-                              title="Copy to clipboard" aria-label="Copy value">
+                              title="Copy to clipboard" aria-label="Copy manifest name">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                       <code>${parsed.name || 'Not specified'}</code>
@@ -12843,7 +12841,7 @@
                               <span class="copy-wrapper">
                                 <span>${ig.instances || 1}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${ig.instances || 1}')"
-                        title="Copy to clipboard" aria-label="Copy value">
+                        title="Copy to clipboard" aria-label="Copy instance count">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
                               </span>
@@ -12854,7 +12852,7 @@
                             <td>
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.azs || []).join(', ') || 'None').replace(/'/g, "\\'")}')"
-                                        title="Copy to clipboard" aria-label="Copy value">
+                                        title="Copy to clipboard" aria-label="Copy availability zones">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
                                 <span>${(ig.azs || []).join(', ') || 'None'}</span>
@@ -12866,7 +12864,7 @@
                             <td>
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.networks || []).map(n => n.name || n).join(', ') || 'None').replace(/'/g, "\\'")}')"
-                                        title="Copy to clipboard" aria-label="Copy value">
+                                        title="Copy to clipboard" aria-label="Copy networks">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
                                 <span>${(ig.networks || []).map(n => n.name || n).join(', ') || 'None'}</span>
@@ -12878,7 +12876,7 @@
                             <td>
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.vm_type || 'Not specified').replace(/'/g, "\\'")}')"
-                                        title="Copy to clipboard" aria-label="Copy value">
+                                        title="Copy to clipboard" aria-label="Copy VM type">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
                                 <span>${ig.vm_type || 'Not specified'}</span>
@@ -12890,7 +12888,7 @@
                             <td>
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.persistent_disk_type || 'None').replace(/'/g, "\\'")}')"
-                                        title="Copy to clipboard" aria-label="Copy value">
+                                        title="Copy to clipboard" aria-label="Copy persistent disk type">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
                                 <span>${ig.persistent_disk_type || 'None'}</span>
@@ -12902,7 +12900,7 @@
                             <td>
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.stemcell || 'default').replace(/'/g, "\\'")}')"
-                                        title="Copy to clipboard" aria-label="Copy value">
+                                        title="Copy to clipboard" aria-label="Copy stemcell">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
                                 <span>${ig.stemcell || 'default'}</span>
@@ -12946,7 +12944,7 @@
                                         <td>
                                           <span class="copy-wrapper">
                                             <button class="copy-btn-inline" onclick="window.copyValue(event, '${(job.release || 'Not specified').replace(/'/g, "\\'")}')"
-                                                    title="Copy to clipboard" aria-label="Copy value">
+                                                    title="Copy to clipboard" aria-label="Copy release">
                                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                             </button>
                                             <span>${job.release || 'Not specified'}</span>
@@ -12962,7 +12960,7 @@
                                           <td>
                                             <span class="copy-wrapper">
                                               <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
-                                                      title="Copy to clipboard" aria-label="Copy value">
+                                                      title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(key))}">
                                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                               </button>
                                               <span>${formatValue(value)}</span>
@@ -13005,7 +13003,7 @@
                     <td>
                       <span class="copy-wrapper">
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.name.replace(/'/g, "\\'")}')"
-                                title="Copy to clipboard" aria-label="Copy value">
+                                title="Copy to clipboard" aria-label="Copy release name">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                         <span>${release.name}</span>
@@ -13015,7 +13013,7 @@
                       <span class="copy-wrapper">
                         <span>${release.version || 'latest'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${(release.version || 'latest').replace(/'/g, "\\'")}')"
-                                title="Copy to clipboard" aria-label="Copy value">
+                                title="Copy to clipboard" aria-label="Copy release version">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                       </span>
@@ -13025,7 +13023,7 @@
                         <span class="copy-wrapper">
                           <a href="${release.url}" target="_blank" style="word-break: break-all;">${release.url}</a>
                           <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.url.replace(/'/g, "\\'")}')"
-                                  title="Copy URL" aria-label="Copy value">
+                                  title="Copy URL" aria-label="Copy release URL">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
                         </span>
@@ -13035,7 +13033,7 @@
                       ${release.sha1 && release.sha1 !== 'N/A' ? `
                         <span class="copy-wrapper">
                           <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.sha1.replace(/'/g, "\\'")}')"
-                                  title="Copy SHA1" aria-label="Copy value">
+                                  title="Copy SHA1" aria-label="Copy release SHA1">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
                           <code style="font-size: 0.8em;">${release.sha1}</code>
@@ -13067,7 +13065,7 @@
                       <span class="copy-wrapper">
                         <span>${stemcell.alias || 'default'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.alias || 'default').replace(/'/g, "\\'")}')"
-                                title="Copy to clipboard" aria-label="Copy value">
+                                title="Copy to clipboard" aria-label="Copy stemcell alias">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                       </span>
@@ -13076,7 +13074,7 @@
                       <span class="copy-wrapper">
                         <span>${stemcell.os || 'Not specified'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.os || 'Not specified').replace(/'/g, "\\'")}')"
-                                title="Copy to clipboard" aria-label="Copy value">
+                                title="Copy to clipboard" aria-label="Copy stemcell OS">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                       </span>
@@ -13085,7 +13083,7 @@
                       <span class="copy-wrapper">
                         <span>${stemcell.version || 'latest'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${String(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
-                                title="Copy to clipboard" aria-label="Copy value">
+                                title="Copy to clipboard" aria-label="Copy stemcell version">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                       </span>
@@ -17072,7 +17070,7 @@
             </div>
             <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
                     title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
           <div class="task-tab-scroll">

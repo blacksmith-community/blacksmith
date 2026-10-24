@@ -150,3 +150,24 @@ t('the certificate copy button draws the shared icon and swaps to the check', as
   expect(iconOnly.querySelector(POLYLINE)).not.toBeNull();
   w.close();
 });
+
+t('copy buttons are named for what they copy and share one icon path', () => {
+  const sources = ['blacksmith.js', 'index.html'].map((f) => fs.readFileSync(path.join(ui, f), 'utf8')).join('\n');
+  expect(sources).not.toContain('aria-label="Copy value"');
+  expect(sources).toContain('aria-label="Copy VM CID"');
+  expect(sources).toContain('aria-label="Copy release SHA1"');
+  const paths = new Set();
+  const re = /<rect x="9" y="9" width="13" height="13" rx="2" ry="2"><\/rect>\s*<path d="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(sources))) paths.add(m[1]);
+  expect(Array.from(paths)).toEqual(['M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1']);
+});
+
+t('a copy calls flashCopyIcon once per success path', () => {
+  const src = fs.readFileSync(path.join(ui, 'blacksmith.js'), 'utf8').split('\n');
+  src.forEach((line, i) => {
+    if (!/^\s*flashCopyIcon\(/.test(line)) return;
+    const near = src.slice(Math.max(0, i - 6), i).filter((l) => /^\s*flashCopyIcon\(/.test(l));
+    expect(near.length).toBe(0);
+  });
+});
