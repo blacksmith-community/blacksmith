@@ -5332,13 +5332,38 @@
     }
   };
 
-  // Set up handlers for upgrade instance checkboxes
+  // Draws every Upgrade row from the selection, so the highlight and the
+  // checkbox always say what the selection says. The checkbox is set
+  // through its property, because the checked attribute stops counting once
+  // a person has clicked the box.
+  const syncUpgradeRows = () => {
+    document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      const on = !item.dataset.held && selectedUpgradeInstances.has(item.dataset.instanceId);
+      item.classList.toggle('selected', on);
+      if (checkbox) checkbox.checked = on;
+    });
+  };
+
+  const setUpgradeSelected = (instanceId, on) => {
+    if (on) selectedUpgradeInstances.add(instanceId); else selectedUpgradeInstances.delete(instanceId);
+    syncUpgradeRows();
+    updateUpgradeButton();
+  };
+
+  // Set up handlers for upgrade instance checkboxes. The box's own change
+  // event decides the selection, whether the click landed on the box or on
+  // its label, and a click elsewhere in the row flips it.
   const setupUpgradeInstanceHandlers = () => {
     document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
       const checkbox = item.querySelector('input[type="checkbox"]');
       const instanceId = item.dataset.instanceId;
 
-      // Handle click on the entire item
+      checkbox.addEventListener('change', () => {
+        if (item.dataset.held) { syncUpgradeRows(); return; }
+        setUpgradeSelected(instanceId, checkbox.checked);
+      });
+
       item.addEventListener('click', (e) => {
         // A row another operation holds cannot be picked, and a click on a
         // control inside the row belongs to that control.
@@ -5346,22 +5371,11 @@
           e.preventDefault();
           return;
         }
-        if (e.target.closest && e.target.closest('.rotate-chip, button, a')) return;
-        if (e.target.type !== 'checkbox') {
-          checkbox.checked = !checkbox.checked;
-        }
-
-        if (checkbox.checked) {
-          selectedUpgradeInstances.add(instanceId);
-          item.classList.add('selected');
-        } else {
-          selectedUpgradeInstances.delete(instanceId);
-          item.classList.remove('selected');
-        }
-
-        updateUpgradeButton();
+        if (e.target.closest && e.target.closest('.rotate-chip, button, a, label, input')) return;
+        setUpgradeSelected(instanceId, !selectedUpgradeInstances.has(instanceId));
       });
     });
+    syncUpgradeRows();
   };
 
   // Initialize the upgrade tab
@@ -5652,12 +5666,9 @@
         document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
           // A row another operation holds shows its holder and stays out
           if (item.dataset.held) return;
-          const checkbox = item.querySelector('input[type="checkbox"]');
-          const instanceId = item.dataset.instanceId;
-          checkbox.checked = true;
-          selectedUpgradeInstances.add(instanceId);
-          item.classList.add('selected');
+          selectedUpgradeInstances.add(item.dataset.instanceId);
         });
+        syncUpgradeRows();
         updateUpgradeButton();
       });
     }
@@ -5671,11 +5682,6 @@
           rotateRefresh();
           return;
         }
-        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
-          const checkbox = item.querySelector('input[type="checkbox"]');
-          checkbox.checked = false;
-          item.classList.remove('selected');
-        });
         selectedUpgradeInstances.clear();
         refreshUpgradeInstanceList();
       });
