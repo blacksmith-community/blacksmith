@@ -2673,7 +2673,7 @@ func (r *vmRun) cleanupArgs() []string {
 
 // rollback records why the VM rolls back and rolls it back.
 func (r *vmRun) rollback(why string) error {
-	r.change(func(j *VMJournal) { j.Error = fmt.Sprintf("VM %s was rolled back because %s.", j.VM, why) })
+	r.change(func(j *VMJournal) { j.Error = rollbackError(j.VM, why) })
 
 	return r.manager.rollbackVM(r.ctx, r.task, r.inst, r.j, r.sess)
 }
@@ -2704,21 +2704,54 @@ func (m *Manager) rollbackVM(ctx context.Context, task *UpgradeTask, inst *Insta
 	return r.restoreAndClose()
 }
 
-// rollbackHeldOutcome, rollbackMixedHeldOutcome, and
-// rollbackRestartHeldOutcome say what became of a rolling_back VM that
-// recheckDirector stopped before its first restore, when every file holds
-// the new content or when some may not, or before its restart.
-const (
-	rollbackHeldOutcome = "was not rolled back after its patch failed verification. " +
-		"Its files still hold the new certificate and key as a matching pair. " +
-		"Let the BOSH operation finish, then resume the task, which completes the rollback, or redeploy the instance"
-	rollbackMixedHeldOutcome = "was not rolled back after its patch failed. " +
-		"Some of its files may hold the new content and others the old, so its certificate and key may not match. " +
-		"Let the BOSH operation finish, then resume the task, which completes the rollback, or redeploy the instance"
-	rollbackRestartHeldOutcome = "was not restarted after its rollback. " +
-		"Its old certificate and key are restored on disk, its processes were not restarted, " +
-		"and a resume restarts them once the director is idle"
-)
+// rollbackRestartHeldOutcome says what became of a rolling_back VM that
+// recheckDirector stopped before its restart.
+const rollbackRestartHeldOutcome = "was not restarted after its rollback. " +
+	"Its old certificate and key are restored on disk, its processes were not restarted, " +
+	"and a resume restarts them once the director is idle"
+
+// rollbackHeldOutcome says what became of a rolling_back VM that
+// recheckDirector stopped before its first restore. It names cause, the
+// reason the rollback started, unless cause is empty, and says whether
+// every file holds the new content as a matching pair or, when mixed,
+// whether some may hold the old content beside the new.
+func rollbackHeldOutcome(cause string, mixed bool) string {
+	var out strings.Builder
+
+	out.WriteString("was not rolled back")
+
+	if cause != "" {
+		out.WriteString(". Its rollback started because " + cause)
+	}
+
+	if mixed {
+		out.WriteString(". Some of its files may hold the new content and others the old, so its certificate and key may not match")
+	} else {
+		out.WriteString(". Its files still hold the new certificate and key as a matching pair")
+	}
+
+	out.WriteString(". Let the BOSH operation finish, then resume the task, which completes the rollback, or redeploy the instance")
+
+	return out.String()
+}
+
+// rollbackError is the journal's error for a VM that rolls back because
+// of why.
+func rollbackError(vm, why string) string {
+	return fmt.Sprintf("VM %s was rolled back because %s.", vm, why)
+}
+
+// rollbackCause returns the reason the journal records for the VM's
+// rollback, as rollbackError wrote it, or "" when its error holds none in
+// that form. The caller holds mu, or owns the journal.
+func rollbackCause(j *VMJournal) string {
+	cause, ok := strings.CutPrefix(j.Error, fmt.Sprintf("VM %s was rolled back because ", j.VM))
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimRight(cause, ".")
+}
 
 // restoreAndClose restores every file a replacement touched, restarts
 // the processes, runs the gate, and closes the VM rolled_back, or leaves
@@ -2825,22 +2858,23 @@ func needsRestore(file FileEntry) bool {
 // rollback's first restore, because the restart, verification, and gate
 // that failed take long enough for BOSH to start a task or recreate the
 // VM. A VM with no file left to restore is not checked here, since the
-// check before its restart covers it. The pause says whether every file
-// still holds the new content, so the pair on disk matches, or whether a
-// file may hold the old content beside the new.
+// check before its restart covers it. The pause names the reason the
+// journal records for the rollback, and says whether every file still
+// holds the new content, so the pair on disk matches, or whether a file
+// may hold the old content beside the new.
 func (r *vmRun) recheckBeforeRestore() error {
 	files := r.files()
 	if !slices.ContainsFunc(files, needsRestore) {
 		return nil
 	}
 
-	outcome := rollbackHeldOutcome
+	mixed := slices.ContainsFunc(files, func(file FileEntry) bool { return file.State != FileStateReplaced })
 
-	if slices.ContainsFunc(files, func(file FileEntry) bool { return file.State != FileStateReplaced }) {
-		outcome = rollbackMixedHeldOutcome
-	}
+	r.manager.mu.RLock()
+	cause := rollbackCause(r.j)
+	r.manager.mu.RUnlock()
 
-	return r.recheckDirector(outcome, true)
+	return r.recheckDirector(rollbackHeldOutcome(cause, mixed), true)
 }
 
 // rolledBack closes a VM whose old files are back and whose gate passed.
@@ -3347,7 +3381,7 @@ func (r *patchResume) act(run *vmRun, action ResumeAction, why string, live Live
 	case ResumeRestoreAll, ResumeCompleteRestore, ResumeRestartRollback:
 		run.change(func(j *VMJournal) {
 			if j.Error == "" {
-				j.Error = fmt.Sprintf("VM %s was rolled back because a resume found its rollback unfinished.", j.VM)
+				j.Error = rollbackError(j.VM, "a resume found its rollback unfinished")
 			}
 		})
 

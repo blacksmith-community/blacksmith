@@ -1908,7 +1908,7 @@ func TestPatchRollbackRechecksBeforeRestore(t *testing.T) {
 			}
 
 			expectRollbackPaused(t, current(t, manager), FileStateReplaced, turn.name == task.name,
-				"matching pair", "failed verification", "redeploy the instance")
+				"matching pair", "rollback started because the check of", "different certificate", "redeploy the instance")
 
 			env.expectPairOn(t, env.newPair, "new")
 			env.resumeToRolledBack(t, turn)
@@ -1999,4 +1999,153 @@ func TestPatchRollbackRechecksBeforeRestart(t *testing.T) {
 			t.Fatalf("expected VM 1 reverted and the task paused, got %s paused=%v", j.Phase, got.Paused)
 		}
 	})
+}
+
+// taskTurn is the turn that starts BOSH task 41 on the deployment.
+func taskTurn() directorTurn {
+	task, _, _, _ := directorTurns() //nolint:dogsled // the other turns are not needed here
+
+	return task
+}
+
+// errRestartDown is what a restart answers when it does not finish.
+var errRestartDown = errors.New("the restart timed out")
+
+// failWithTurn makes VM 1 answer the nth op with result and err, and
+// makes the turn to the director as it does. Every other command runs
+// as the fake does.
+func (e *patchEnv) failWithTurn(op string, nth int, turn directorTurn, result ssh.Result, err error) {
+	first := e.vms[0].name()
+	seen := 0
+
+	e.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm != first || call.op != op {
+			return ssh.Result{}, nil, false
+		}
+
+		seen++
+		if seen != nth {
+			return ssh.Result{}, nil, false
+		}
+
+		turn.change(e)
+
+		return result, err, true
+	})
+}
+
+// The pause before a rollback's first restore names the reason the
+// journal records for the rollback: a failed verification, a restart
+// that did not finish, or a gate that did not pass.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRollbackPauseNamesCause(t *testing.T) {
+	task := taskTurn()
+
+	cases := []struct {
+		name  string
+		setup func(env *patchEnv)
+		cause string
+	}{
+		{
+			name: "verification fails",
+			setup: func(env *patchEnv) {
+				env.patch.fingerprint = certinventory.Fingerprint(env.oldLeaf)
+				env.turnOn(verifyScript, 1, task)
+			},
+			cause: "the check of",
+		},
+		{
+			name:  "the restart does not finish",
+			setup: func(env *patchEnv) { env.failWithTurn(opRestart, 1, task, ssh.Result{}, errRestartDown) },
+			cause: "the restart did not finish in time",
+		},
+		{
+			name: "the gate does not pass",
+			setup: func(env *patchEnv) {
+				env.gateFailsOn(0, func(call patchCall) (ssh.Result, error, bool) {
+					if call.vm == env.vms[0].name() && call.op == opRestart {
+						task.change(env)
+					}
+
+					return ssh.Result{}, nil, false
+				})
+			},
+			cause: "the health gate did not pass",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := newPatchEnv(t)
+			manager := env.newManager()
+			run := env.task()
+
+			testCase.setup(env)
+			env.run(manager, &run)
+
+			if ops := env.patchOps(0); slices.Contains(ops, opRestore) || countOp(ops, opRestart) != 1 {
+				t.Fatalf("expected no restore and only the forward restart on VM 1, got %v", ops)
+			}
+
+			expectRollbackPaused(t, current(t, manager), FileStateReplaced, true,
+				"matching pair", "rollback started because "+testCase.cause)
+		})
+	}
+}
+
+// A replacement that fails part way rolls VM 1 back with its certificate
+// new and its key old. The director turning busy before the first restore
+// pauses the task with nothing restored or restarted, the files' states
+// as their content is, and a message that says the pair on disk may not
+// match. A resume then completes the rollback.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRollbackAfterPartialReplacePauses(t *testing.T) {
+	task := taskTurn()
+
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	run := env.task()
+
+	env.failWithTurn(opReplace, 2, task, exitResult(1), nil)
+	env.run(manager, &run)
+
+	if ops := env.patchOps(0); slices.Contains(ops, opRestore) || slices.Contains(ops, opRestart) {
+		t.Fatalf("expected no restore or restart on VM 1, got %v", ops)
+	}
+
+	got := current(t, manager)
+	journal := got.Instances[0].Certificates.VMs[0]
+
+	if journal.Phase != VMPhaseRollingBack || !got.Paused {
+		t.Fatalf("expected VM 1 rolling back and the task paused, got %s paused=%v", journal.Phase, got.Paused)
+	}
+
+	if journal.Files[0].State != FileStateReplaced || journal.Files[1].State != FileStateReplacing {
+		t.Fatalf("expected VM 1's certificate replaced and its key replacing, got %+v", journal.Files)
+	}
+
+	msg := got.Instances[0].Error
+	for _, want := range []string{journal.VM, "BOSH task 41", "may not match", "rollback started because a replacement failed", "redeploy the instance"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected the pause to say %q, got %q", want, msg)
+		}
+	}
+
+	if strings.Contains(msg, "matching pair") {
+		t.Fatalf("expected the pause not to call the files a matching pair, got %q", msg)
+	}
+
+	vm := env.vms[0]
+
+	env.patch.mu.Lock()
+	cert, key := vm.files[vm.certPath()], vm.files[vm.keyPath()]
+	env.patch.mu.Unlock()
+
+	if cert != certpatch.NormalisedHash(env.newPair.cert) || key != certpatch.NormalisedHash(env.oldPair.key) {
+		t.Fatal("expected VM 1 to hold the new certificate beside the old key")
+	}
+
+	env.resumeToRolledBack(t, task)
 }
