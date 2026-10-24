@@ -17,7 +17,7 @@ async page => {
  }
  await page.locator('.tabs .tab-button[data-tab="upgrade"]').click();
  await page.locator('#batch-flow-next').click();
- await page.locator('#batch-flow-review h3').waitFor();
+ await page.locator('#batch-flow-review > h3').first().waitFor();
  const modalViolations=await page.evaluate(async()=>(await axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa','wcag22aa']}})).violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})));
  const screens=results.filter(r=>r.violations.length);
  if(screens.length || modalViolations.length) throw new Error(JSON.stringify({screens,modalViolations}));

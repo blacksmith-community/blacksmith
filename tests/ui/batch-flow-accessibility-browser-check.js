@@ -20,7 +20,7 @@ async page => {
    await next.click();
    await page.locator('#upgrade-select-all').click();
    await audit(mode,'instances',theme,width);
-   await next.click();await page.locator('#batch-flow-review h3').waitFor();
+   await next.click();await page.locator('#batch-flow-review > h3').first().waitFor();
    await audit(mode,'review',theme,width);
    await page.locator('#batch-flow-back').click();
   }

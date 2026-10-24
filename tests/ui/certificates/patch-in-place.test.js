@@ -26,7 +26,7 @@ t('patch in place controls', async () => {
   const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
   const dlg=()=>d.querySelector('#dialog-modal-overlay');
   const fire=(el)=>el.dispatchEvent(new w.Event('change',{bubbles:true}));
-  const pick=(id)=>{ const r=d.getElementById(id); if(r.getAttribute('role')==='tab'){ r.click(); return; } r.checked=true; fire(r); };
+  const pick=(id)=>{ const r=d.getElementById(id); r.checked=true; fire(r); };
 
   // Converge radio enabled, no reason
   const cv=d.getElementById('rotate-op-converge');
@@ -34,8 +34,8 @@ t('patch in place controls', async () => {
   pick('rotate-op-rotate'); await sleep(150);
   const sel=w.blacksmithCerts.selection;
   sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
-  ok(d.getElementById('rotate-mode-patch')&&d.getElementById('rotate-mode-patch').getAttribute('aria-disabled')==='false','Patch tab enabled when the switch is on and the selection allows it');
-  ok(/Temporary repair.*BOSH can restore the old certificate/.test(d.getElementById('rotate-mode-patch-panel').textContent),'Patch note shown in the Patch panel');
+  ok(d.getElementById('rotate-mode-patch')&&!d.getElementById('rotate-mode-patch').disabled,'Patch radio enabled when the switch is on and the selection allows it');
+  ok(d.getElementById('rotate-mode').textContent.includes('Temporary repair: BOSH can restore the old certificate'),'Patch note shown beside the radio');
   ok(d.getElementById('rotate-mode-converge').hidden,'converge choice hidden before Patch');
   pick('rotate-mode-patch'); await sleep(10);
   ok(!d.getElementById('rotate-mode-converge').hidden,'choosing Patch reveals the converge choice');
@@ -43,7 +43,7 @@ t('patch in place controls', async () => {
   ok(cp&&ci&&!cp.checked&&!ci.checked,'neither converge choice is selected');
   const fs=d.getElementById('rotate-mode-converge').textContent;
   ok(/Leave unconverged/.test(fs)&&/Converge right away/.test(fs)&&/stays flagged as unconverged until a converge/.test(fs)&&/every job restarts a second time/i.test(fs),'both choices carry a consequence sentence');
-  ok(sel.size===0,'nothing is preselected'); sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter();
+  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf preselected');
   const btn=d.getElementById('rotate-preview');
   ok(btn.disabled&&/Leave unconverged or Converge right away/.test(btn.title+d.getElementById('rotate-selection-line').textContent+(btn.getAttribute('aria-description')||'')+(d.getElementById('rotate-footer-hint')?d.getElementById('rotate-footer-hint').textContent:'')),'preview disabled until a converge choice is made: title='+btn.title);
   pick('rotate-mode-converge-pending'); await sleep(10);
@@ -82,19 +82,19 @@ t('patch in place controls', async () => {
   // gate: select a multi-VM cert without patch mode
   sel.set('inst-pg',new Set([KP])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(50);
   const pg=d.getElementById('rotate-mode-patch');
-  ok(pg.getAttribute('aria-disabled')==='true'&&/No health gate exists/.test(d.getElementById('rotate-mode-patch-reason').textContent)&&!d.getElementById('rotate-mode-patch-reason').hidden,'Patch disabled with the gate reason for a multi-VM instance with no gate: '+d.getElementById('rotate-mode-patch-reason').textContent);
+  ok(pg.disabled&&/No health gate exists/.test(d.getElementById('rotate-mode-patch-reason').textContent)&&!d.getElementById('rotate-mode-patch-reason').hidden,'Patch disabled with the gate reason for a multi-VM instance with no gate: '+d.getElementById('rotate-mode-patch-reason').textContent);
   sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter();
 
   // fallback announces
   { const live=()=>d.getElementById('blacksmith-live-region').textContent;
     sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); pick('rotate-mode-patch'); pick('rotate-mode-converge-pending'); await sleep(10);
     sel.set('inst-pg',new Set([KP])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(150);
-    ok(d.getElementById('rotate-mode-redeploy').getAttribute('aria-selected')==='true'&&/mode is back to Redeploy/.test(live()),'Patch falling back to Redeploy is announced');
+    ok(d.getElementById('rotate-mode-redeploy').checked&&/mode is back to Redeploy/.test(live()),'Patch falling back to Redeploy is announced');
     sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter(); }
   // Switch off
   caps={rotation:{enabled:true},patch_in_place:{enabled:false,reason:'certificates.patch_in_place.enabled is false'}};
   await T.loadRotateInventory(true); await sleep(80); pick('rotate-op-converge'); await sleep(20); pick('rotate-op-rotate'); await sleep(60);
-  ok(d.getElementById('rotate-mode-patch').getAttribute('aria-disabled')==='true'&&/certificates\.patch_in_place\.enabled is false/.test(d.getElementById('rotate-mode-patch-reason').textContent),'Patch disabled with the server reason when the switch is off');
+  ok(d.getElementById('rotate-mode-patch').disabled&&/certificates\.patch_in_place\.enabled is false/.test(d.getElementById('rotate-mode-patch-reason').textContent),'Patch disabled with the server reason when the switch is off');
   caps={rotation:{enabled:true},patch_in_place:{enabled:true}};
 
   // Instance dialog

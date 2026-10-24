@@ -80,3 +80,8 @@ After running it, inject axe-core again and run
 `batch-flow-accessibility-browser-check.js` for all three operations and four
 steps in light/dark themes at desktop/mobile sizes (48 combinations).
 All of these browser checks use only local, intercepted endpoints.
+
+The batch flow checks also cover mode-tab arrow keys, required patch follow-up,
+visible Select/Selected feedback, and removal of visual row ordinals.
+Job metadata helper text and single-toggle label behavior are covered by
+`batch-flow.test.js`.

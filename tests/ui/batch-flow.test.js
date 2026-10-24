@@ -59,3 +59,39 @@ t('instance selection retains access to certificate removal controls',async()=>{
  expect(edit.closest('.upgrade-footer')).toBeNull();
  }finally{w.close();}
 });
+
+t('selection labels toggle once and omit meaningless row numbers',async()=>{
+ const {w,d}=await setup();try{
+ const row=d.querySelector('.upgrade-instance-item');
+ expect(row.querySelector('.upgrade-instance-row-number')).toBeNull();
+ row.querySelector('label span').click();
+ expect(row.querySelector('input').checked).toBe(true);
+ expect(w.__T.selectedUpgradeInstances.has('cache')).toBe(true);
+ row.querySelector('label span').click();
+ expect(row.querySelector('input').checked).toBe(false);
+ }finally{w.close();}
+});
+t('operation metadata explains purpose and gives examples',async()=>{
+ const {w,d}=await setup();try{
+ await w.__T.requestOperation('rotate');
+ for(const id of ['rotate-name','rotate-reason']){
+ const input=d.getElementById(id);
+ expect(input.placeholder).not.toBe('Optional');
+ expect(d.getElementById(input.getAttribute('aria-describedby')).textContent.length).toBeGreaterThan(30);
+ }
+ }finally{w.close();}
+});
+
+t('mode tabs expose the selected method and support keyboard navigation',async()=>{
+ const {w,d}=await setup();try{
+ await w.__T.requestOperation('rotate');
+ const first=d.getElementById('rotate-mode-redeploy-tab');
+ expect(first.getAttribute('role')).toBe('tab');
+ expect(first.getAttribute('aria-selected')).toBe('true');
+ const panel=d.getElementById(first.getAttribute('aria-controls'));
+ expect(panel.getAttribute('aria-labelledby')).toBe(first.id);
+ expect(panel.textContent).toContain('canaries and drains');
+ first.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
+ expect(d.activeElement.getAttribute('role')).toBe('tab');
+ }finally{w.close();}
+});

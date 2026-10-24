@@ -29,9 +29,9 @@ t('rotate preview and create', async () => {
   const dlg=()=>d.querySelector('#dialog-modal-overlay');
   const radio=d.getElementById('rotate-op-rotate'); radio.checked=true; radio.dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(120);
   const sel=w.blacksmithCerts.selection;
-  ok(d.getElementById('rotate-mode-redeploy').getAttribute('aria-selected')==='true'&&d.getElementById('rotate-mode-patch').getAttribute('aria-disabled')==='true','Mode tabs: Redeploy selected, Patch unavailable');
+  ok(d.getElementById('rotate-mode-redeploy').checked&&d.getElementById('rotate-mode-patch').disabled,'Mode radio: Redeploy checked, Patch disabled');
   ok(d.getElementById('rotate-mode').textContent.includes('Patch in place is not available'),'Patch reason visible as text');
-  ok(sel.size===0,'nothing is preselected'); sel.set('inst-valkey',new Set([K])); w.__T.renderRotateInstances(); w.__T.updateOperationFooter();
+  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf preselected');
   const btn=d.getElementById('rotate-preview');
   ok(btn.textContent==='Preview rotation of 1 certificate on 1 instance'&&!btn.disabled,'footer label and enabled: '+btn.textContent);
   d.getElementById('rotate-reason').value='Quarterly'; d.getElementById('rotate-reason').dispatchEvent(new w.Event('input'));

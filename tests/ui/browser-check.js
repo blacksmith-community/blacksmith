@@ -161,7 +161,7 @@ async (page) => {
   await page.locator('#upgrade-select-all').click();
   check(await page.locator('#upgrade-start').isEnabled(), 'Release-only upgrade selection remains enabled');
   await page.locator('#batch-flow-next').click();
-  await page.locator('#batch-flow-review h3').waitFor();
+  await page.locator('#batch-flow-review > h3').first().waitFor();
   check(await page.locator('#batch-flow-review').isVisible(), 'Upgrade requires inline confirmation');
   await page.keyboard.press('Control+k');
   check(await isOpen(), 'Navigation remains available during inline review');
