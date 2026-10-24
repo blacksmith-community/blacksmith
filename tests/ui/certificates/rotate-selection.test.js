@@ -107,7 +107,8 @@ t('rotate selection on Batch Operations', async () => {
   d.getElementById('rotate-clear-visible').click();
   ok(sel.size===0,'Clear visible clears them');
   d.getElementById('batch-pick-expiring').click(); d.querySelector('[data-horizon="365"]').click();
-  ok(sel.get('inst-valkey').size===2&&sel.has(EVIL)&&!sel.has('inst-pg')&&!sel.has('inst-held'),'the 1 year window selects every expiring certificate');
+  const dv=T.rotateState.derived;
+  ok(dv.get('inst-valkey').size===2&&dv.has(EVIL)&&!dv.has('inst-pg')&&!dv.has('inst-held')&&sel.size===0,'the 1 year window selects every expiring certificate and leaves the shared selection alone');
   d.getElementById('batch-pick-instances').click(); ok(sel.size===0,'switching back to specific instances clears');
   d.getElementById('rotate-select-visible').click();
   ok(sel.get('inst-valkey').size===2,'Select this page takes both');

@@ -2656,9 +2656,11 @@
     { days: 180, label: '180 days' },
     { days: 365, label: '1 year' }
   ];
-  const expiresWithinHorizon = (notAfter, days, anchor) => {
+  // Rotation also wants the certificates that have already expired, which
+  // most need replacing, so it asks for them with includeExpired.
+  const expiresWithinHorizon = (notAfter, days, anchor, includeExpired = false) => {
     const t = Date.parse(notAfter);
-    return !Number.isNaN(t) && t > anchor && t <= anchor + days * 86400000;
+    return !Number.isNaN(t) && (includeExpired || t > anchor) && t <= anchor + days * 86400000;
   };
 
   // Track if batch operations tab has been initialized
@@ -2685,7 +2687,7 @@
   const batchWorkspace = { page: 0, search: '', eligibility: '', selectedOnly: false };
 
   // A single mounted draft: navigation changes visibility, never recreates inputs.
-  const batchFlow = { installed: false, step: 0, furthest: 0, revision: 0, review: null, loading: false, submitting: false, jobName: '', drafts: {}, restoring: false };
+  const batchFlow = { installed: false, step: 0, furthest: 0, revision: 0, review: null, loading: false, frozenCount: null, submitting: false, jobName: '', drafts: {}, restoring: false };
   const BATCH_STEPS = ['Operation', 'Options', 'Instances', 'Review'];
   const batchOptionIssue = () => {
     if (upgradeOperation === 'upgrade') {
@@ -2708,7 +2710,8 @@
   // Instances and Review steps show it, and the live region announces it.
   const batchSelectionText = (detailed) => {
     const selected = batchSelectedIds();
-    if (!selected.size) rotateState.source = '';
+    const frozen = !detailed && batchFlow.step === 3 && batchFlow.frozenCount != null ? batchFlow.frozenCount : null;
+    if (frozen !== null) return frozen ? `${pluralize(frozen, 'instance')} selected` : 'No instances selected';
     let text = selected.size ? `${pluralize(selected.size, 'instance')} selected` : 'No instances selected';
     if (upgradeOperation === 'rotate' && rotateState.source === 'certificates') text += ' from the Certificates tab';
     if (!detailed) return text;
@@ -2767,6 +2770,7 @@
     batchFlow.revision++;
     batchFlow.loading = false;
     batchFlow.step = step;
+    if (step !== 3) batchFlow.frozenCount = null;
     batchFlow.furthest = Math.max(batchFlow.furthest, step);
     updateBatchFlow();
     if (focus) {
@@ -2822,6 +2826,8 @@
   const runBatchReview = async () => {
     if (batchFlow.loading || batchFlow.submitting || batchInstanceIssue()) return;
     setBatchStep(3);
+    // The preview freezes the list, so the count stays with it.
+    batchFlow.frozenCount = batchSelectedIds().size;
     const revision = batchFlow.revision;
     batchFlow.loading = true;
     document.getElementById('batch-flow-review').replaceChildren(rotateEl('p','','Preparing the latest preview…'));
@@ -3339,6 +3345,9 @@
     // expiring choice holds the window in days, or 0 before one is picked.
     pick: 'instances',
     horizon: 0,
+    // The pairs the window picks, as instance ID to a Set of variable names.
+    // They stay here so the Certificates tab's own selection is never touched.
+    derived: new Map(),
     // Where a selection came from when another tab handed it over, such as
     // "certificates". It is empty for a selection made here.
     source: '',
@@ -3362,6 +3371,7 @@
   // The certificates chosen for rotation, as instance ID to a Set of full
   // variable names. The Certificates tab shares this Map.
   const rotateSelection = () => {
+    if (upgradeOperation === 'rotate' && rotateState.pick === 'expiring') return rotateState.derived;
     const shared = window.blacksmithCerts && window.blacksmithCerts.selection;
     return shared instanceof Map ? shared : rotateLocalSelection;
   };
@@ -3376,6 +3386,8 @@
 
   const rotateSetPair = (instanceId, name, on) => {
     const selection = rotateSelection();
+    // A hand edit makes the selection the operator's own.
+    if (rotateState.pick !== 'expiring') rotateState.source = '';
     if (on) {
       if (!selection.has(instanceId)) selection.set(instanceId, new Set());
       selection.get(instanceId).add(name);
@@ -3592,11 +3604,11 @@
   // expiring within the given days, with those certificates. A row another
   // operation holds never matches.
   const rotateExpiringMatches = (days, rows = rotateVisibleRows()) => {
-    const anchor = Date.now();
+    const anchor = window.blacksmithCerts && window.blacksmithCerts.serverNow ? window.blacksmithCerts.serverNow() : Date.now();
     const matches = [];
     rows.forEach((row) => {
       if (row.holder) return;
-      const certs = row.chips.filter((cert) => expiresWithinHorizon(cert.expiry, days, anchor));
+      const certs = row.chips.filter((cert) => expiresWithinHorizon(cert.expiry, days, anchor, true));
       if (certs.length > 0) matches.push({ row, certs });
     });
     return matches;
@@ -3621,7 +3633,7 @@
   // matches, so every redraw works it out again from the inventory.
   const rotateSyncExpiring = () => {
     if (upgradeOperation !== 'rotate' || rotateState.pick !== 'expiring') return;
-    rotateSelection().clear();
+    rotateState.derived.clear();
     if (rotateState.horizon > 0 && rotateState.loadState === 'ready') rotateSelectMatching(rotateState.horizon);
   };
 
@@ -3746,7 +3758,10 @@
     rotateState.pick = pick;
     rotateState.horizon = 0;
     rotateState.source = '';
-    rotateSelection().clear();
+    rotateState.derived.clear();
+    // Leaving either way drops the other's picks, including the shared ones.
+    const shared = window.blacksmithCerts && window.blacksmithCerts.selection;
+    (shared instanceof Map ? shared : rotateLocalSelection).clear();
     batchWorkspace.page = 0;
     batchWorkspace.selectedOnly = false;
     rotateRefresh();
@@ -3799,23 +3814,29 @@
     }
     const ready = rotateState.loadState === 'ready';
     const visibleRows = ready ? rotateVisibleRows() : [];
-    horizons.replaceChildren();
+    // The buttons are built once and updated in place, so a background
+    // refresh never drops the keyboard focus.
+    if (horizons.children.length !== EXPIRY_HORIZONS.length) {
+      horizons.replaceChildren();
+      EXPIRY_HORIZONS.forEach((h) => {
+        const button = rotateEl('button', 'batch-horizon-button', h.label);
+        button.type = 'button';
+        button.dataset.horizon = String(h.days);
+        button.appendChild(rotateEl('span', 'batch-horizon-count', ''));
+        button.addEventListener('click', () => {
+          rotateState.horizon = rotateState.horizon === h.days ? 0 : h.days;
+          batchWorkspace.page = 0;
+          rotateRefresh();
+        });
+        horizons.appendChild(button);
+      });
+    }
     EXPIRY_HORIZONS.forEach((h) => {
       const count = rotateExpiringMatches(h.days, visibleRows).length;
-      const pressed = rotateState.horizon === h.days;
-      const button = rotateEl('button', 'batch-horizon-button', h.label);
-      button.type = 'button';
-      button.dataset.horizon = String(h.days);
-      button.setAttribute('aria-pressed', String(pressed));
+      const button = horizons.querySelector(`[data-horizon="${h.days}"]`);
+      button.setAttribute('aria-pressed', String(rotateState.horizon === h.days));
       button.setAttribute('aria-label', `${h.label}, ${pluralize(count, 'instance')}`);
-      button.appendChild(rotateEl('span', 'batch-horizon-count', String(count)));
-      button.addEventListener('click', () => {
-        rotateState.horizon = pressed ? 0 : h.days;
-        batchWorkspace.page = 0;
-        rotateRefresh();
-        horizons.querySelector(`[data-horizon="${h.days}"]`)?.focus({ preventScroll: true });
-      });
-      horizons.appendChild(button);
+      button.querySelector('.batch-horizon-count').textContent = String(count);
     });
     const chosen = EXPIRY_HORIZONS.find((h) => h.days === rotateState.horizon);
     const matched = chosen ? rotateExpiringMatches(chosen.days, visibleRows).length : 0;
@@ -4236,7 +4257,6 @@
       panels[value] = panel;
     });
     root.appendChild(list);
-    root.appendChild(reason);
 
     const converge = rotateEl('fieldset', 'rotate-converge rotate-converge-cards');
     converge.id = `${p}-converge`;
@@ -4271,6 +4291,8 @@
     });
     panels.patch.appendChild(converge);
     order.forEach((value) => root.appendChild(panels[value]));
+    // The reason follows the description of the tab that is showing.
+    root.appendChild(reason);
 
     function choose(value) {
       if (value === 'patch' && ctx.blockReason()) return;
@@ -4521,7 +4543,7 @@
   };
 
   const clearSelectionFor = (mode) => {
-    if (mode === 'rotate') rotateSelection().clear();
+    if (mode === 'rotate') { rotateSelection().clear(); rotateState.source = ''; }
     else if (mode === 'converge') convergeSelected.clear();
     else selectedUpgradeInstances.clear();
   };
@@ -5410,6 +5432,10 @@
               if (chosen.size === 0) selection.delete(id);
             });
           }
+          // A window starts over after a create, so the same instances are
+          // not picked again until the operator chooses a window.
+          if (!converge && rotateState.pick === 'expiring') rotateState.horizon = 0;
+          rotateState.source = '';
           rotateRefresh();
           setBatchView('activity');
         }
@@ -25674,7 +25700,7 @@
       await refresh({ announce: false });
     };
 
-    return { state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
+    return { state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer, serverNow };
   })();
 
   window.blacksmithCerts = {
@@ -25682,7 +25708,8 @@
     toQuery: CertsFleet.toQuery,
     refresh: CertsFleet.refresh,
     selection: CertsFleet.selection,
-    closeDrawer: CertsFleet.closeDrawer
+    closeDrawer: CertsFleet.closeDrawer,
+    serverNow: CertsFleet.serverNow
   };
 
   const initCertificatesTab = () => CertsFleet.init();

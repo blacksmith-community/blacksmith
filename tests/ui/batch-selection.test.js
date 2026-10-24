@@ -58,20 +58,20 @@ t('Expiring within selects exactly the instances the window matches',async()=>{
  expect(T.rotateSelection().size).toBe(0);
  expect(rowIds(d)).toEqual([]);
  const press=(days)=>d.querySelector(`#batch-horizons [data-horizon="${days}"]`).click();
- press(7);expect(selected(T)).toEqual(['inst-a']);expect(rowIds(d)).toEqual(['inst-a']);
- expect(d.getElementById('batch-flow-context').textContent).toBe('1 instance selected');
- expect(d.getElementById('batch-pick-note').textContent).toContain('1 instance has a certificate expiring within 1 week');
- press(30);expect(selected(T)).toEqual(['inst-a','inst-b']);
- press(365);expect(selected(T)).toEqual(['inst-a','inst-b','inst-c']);
+ press(7);expect(selected(T)).toEqual(['inst-a','inst-e']);expect(rowIds(d)).toEqual(['inst-a','inst-e']);
+ expect(d.getElementById('batch-flow-context').textContent).toBe('2 instances selected');
+ expect(d.getElementById('batch-pick-note').textContent).toContain('2 instances have a certificate expiring within 1 week');
+ press(30);expect(selected(T)).toEqual(['inst-a','inst-b','inst-e']);
+ press(365);expect(selected(T)).toEqual(['inst-a','inst-b','inst-c','inst-e']);
  expect(d.querySelector('#batch-horizons [data-horizon="365"]').getAttribute('aria-pressed')).toBe('true');
  expect(d.querySelector('#batch-horizons [data-horizon="7"]').getAttribute('aria-pressed')).toBe('false');
- // expired and later-expiring certificates never match
- expect(selected(T)).not.toContain('inst-d');expect(selected(T)).not.toContain('inst-e');
- expect(d.querySelector('#batch-horizons [data-horizon="365"]').getAttribute('aria-label')).toBe('1 year, 3 instances');
+ // an expired certificate falls inside every window, and later ones do not
+ expect(selected(T)).not.toContain('inst-d');expect(selected(T)).toContain('inst-e');
+ expect(d.querySelector('#batch-horizons [data-horizon="365"]').getAttribute('aria-label')).toBe('1 year, 4 instances');
  // the matched list is read only
  d.querySelector('[data-instance-id="inst-a"] input').click();
  d.querySelector('[data-instance-id="inst-a"] .upgrade-instance-id').click();
- expect(selected(T)).toEqual(['inst-a','inst-b','inst-c']);
+ expect(selected(T)).toEqual(['inst-a','inst-b','inst-c','inst-e']);
  press(365);expect(T.rotateSelection().size).toBe(0);
  }finally{w.close();}
 });
@@ -85,7 +85,7 @@ t('the two ways of choosing clear each other',async()=>{
  expect(d.getElementById('batch-horizons').hidden).toBe(false);
  expect(d.querySelector('#upgrade .upgrade-actions').hidden).toBe(true);
  d.querySelector('#batch-horizons [data-horizon="30"]').click();
- expect(selected(T)).toEqual(['inst-a','inst-b']);
+ expect(selected(T)).toEqual(['inst-a','inst-b','inst-e']);
  d.getElementById('batch-pick-instances').click();
  expect(T.rotateSelection().size).toBe(0);
  expect(d.getElementById('batch-horizons').hidden).toBe(true);
@@ -100,14 +100,14 @@ t('the matched instances follow an inventory refresh',async()=>{
  T.setBatchStep(2,false);
  d.getElementById('batch-pick-expiring').click();
  d.querySelector('#batch-horizons [data-horizon="30"]').click();
- expect(selected(T)).toEqual(['inst-a','inst-b']);
+ expect(selected(T)).toEqual(['inst-a','inst-b','inst-e']);
  setInventory({certificates:[...certs,cert('/s/c_crt2','c2_crt',25,'inst-c','cache-c')]});
  await T.loadRotateInventory({silent:true});await sleep(20);
- expect(selected(T)).toEqual(['inst-a','inst-b','inst-c']);
- expect(d.getElementById('batch-flow-context').textContent).toBe('3 instances selected');
+ expect(selected(T)).toEqual(['inst-a','inst-b','inst-c','inst-e']);
+ expect(d.getElementById('batch-flow-context').textContent).toBe('4 instances selected');
  setInventory({certificates:certs.filter(c=>c.key!=='/s/a_crt')});
  await T.loadRotateInventory({silent:true});await sleep(20);
- expect(selected(T)).toEqual(['inst-b']);
+ expect(selected(T)).toEqual(['inst-b','inst-e']);
  }finally{w.close();}
 });
 t('the preview request carries the matched instances and their certificates',async()=>{
@@ -120,7 +120,7 @@ t('the preview request carries the matched instances and their certificates',asy
  const post=calls.filter(c=>c.startsWith('POST')&&c.includes('rotation/preview')).pop();
  expect(post).toBeTruthy();
  const body=JSON.parse(post.slice(post.indexOf(' {')+1));
- expect(body.selections.map(s=>s.instance_id).sort()).toEqual(['inst-a','inst-b']);
+ expect(body.selections.map(s=>s.instance_id).sort()).toEqual(['inst-a','inst-b','inst-e']);
  expect(body.selections.find(s=>s.instance_id==='inst-a').variables).toEqual(['/s/a_crt']);
  }finally{w.close();}
 });
