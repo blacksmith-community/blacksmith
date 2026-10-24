@@ -3788,7 +3788,7 @@
       const toggle = rotateEl('div', 'batch-pick-toggle');
       toggle.setAttribute('role', 'group');
       toggle.setAttribute('aria-label', 'How to choose instances');
-      [['instances', 'Specific instances'], ['expiring', 'Expiring within']].forEach(([value, text]) => {
+      [['instances', 'Specific instances'], ['expiring', 'Expiring within, expired included']].forEach(([value, text]) => {
         const button = rotateEl('button', 'batch-pick-button', text);
         button.type = 'button';
         button.id = `batch-pick-${value}`;
@@ -3798,7 +3798,7 @@
       const horizons = rotateEl('div', 'batch-horizons');
       horizons.id = 'batch-horizons';
       horizons.setAttribute('role', 'group');
-      horizons.setAttribute('aria-label', 'Expiring within');
+      horizons.setAttribute('aria-label', 'Expiring within, expired included');
       const note = rotateEl('p', 'batch-pick-note');
       note.id = 'batch-pick-note';
       host.append(toggle, horizons, note);
@@ -5367,8 +5367,10 @@
     if (switched === false) return false;
     // The handover is a picked list, so it opens in the list and names where
     // it came from. A window would work its own selection out again.
-    if (rotatePairs().length > 0) {
+    const shared = window.blacksmithCerts && window.blacksmithCerts.selection;
+    if (shared instanceof Map && [...shared.values()].some(names => names.size > 0)) {
       rotateState.pick = 'instances';
+      rotateState.derived.clear();
       rotateState.horizon = 0;
       rotateState.source = 'certificates';
     }

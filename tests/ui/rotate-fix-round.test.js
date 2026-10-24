@@ -113,3 +113,25 @@ t('rotate rows draw their boxes from the selection',async()=>{
  expect(d.querySelector('[data-instance-id="inst-b"]').classList.contains('selected')).toBe(true);
  }finally{w.close();}
 });
+t('a handover from the Certificates tab wins over an open Expiring within',async()=>{
+ const {w,d,T,sleep}=await setupRotate({certs});try{
+ T.setBatchStep(2,false);
+ d.getElementById('batch-pick-expiring').click();
+ expect(T.rotateState.pick).toBe('expiring');expect(T.rotateSelection().size).toBe(0);
+ const sel=w.blacksmithCerts.selection;
+ sel.set('inst-b',new Set(['/s/b_crt']));sel.set('inst-c',new Set(['/s/c_crt']));
+ expect(await w.blacksmithBatch.openRotate()).not.toBe(false);await sleep(100);
+ expect(T.rotateState.pick).toBe('instances');
+ expect(selected(T)).toEqual(['inst-b','inst-c']);
+ expect(d.getElementById('batch-flow-context').textContent).toBe('2 instances selected from the Certificates tab');
+ const box=(id)=>d.querySelector(`[data-instance-id="${id}"] input`);
+ expect(box('inst-b').checked).toBe(true);expect(box('inst-c').checked).toBe(true);expect(box('inst-a').checked).toBe(false);
+ }finally{w.close();}
+});
+t('the window picker says expired certificates are included',async()=>{
+ const {w,d,T}=await setupRotate({certs});try{
+ T.setBatchStep(2,false);
+ expect(d.getElementById('batch-pick-expiring').textContent).toContain('expired included');
+ expect(d.getElementById('batch-horizons').getAttribute('aria-label')).toContain('expired included');
+ }finally{w.close();}
+});

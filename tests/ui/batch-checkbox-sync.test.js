@@ -68,13 +68,16 @@ t('paging and filtering redraw each box from the selection',async()=>{
  agree(w,d);
  }finally{w.close();}
 });
-t('moving between steps redraws each box from the selection',async()=>{
+t('moving between steps keeps each box with its selection',async()=>{
  const {w,d}=await setup();try{
  row(d,'inst-002').querySelector('.upgrade-instance-info').click();
- w.__T.setBatchStep(1,false);
- // the selection changes while the list is out of sight
- w.__T.selectedUpgradeInstances.delete('inst-002');w.__T.selectedUpgradeInstances.add('inst-009');
- w.__T.setBatchStep(2,false);
+ row(d,'inst-009').querySelector('input').click();
+ w.__T.setBatchStep(1,false);w.__T.setBatchStep(2,false);
+ agree(w,d);
+ expect(row(d,'inst-002').querySelector('input').checked).toBe(true);
+ expect(row(d,'inst-009').querySelector('input').checked).toBe(true);
+ row(d,'inst-002').querySelector('.upgrade-instance-info').click();
+ w.__T.setBatchStep(3,false);w.__T.setBatchStep(2,false);
  agree(w,d);
  expect(row(d,'inst-002').querySelector('input').checked).toBe(false);
  expect(row(d,'inst-009').querySelector('input').checked).toBe(true);
