@@ -2877,7 +2877,7 @@
       const release = document.getElementById('upgrade-release-filter')?.value;
       optionsSummary.textContent = upgradeOperation === 'upgrade'
         ? `Upgrade options${target ? ` · ${target}` : ''}${release ? ` · release ${release}` : ''}`
-        : (upgradeOperation === 'rotate' ? `Certificate options · ${rotateState.mode === 'patch' ? 'Patch in place' : 'Redeploy'}` : 'Converge options');
+        : (upgradeOperation === 'rotate' ? 'Certificate options' : 'Converge options');
     }
   };
 
@@ -2969,7 +2969,7 @@
   const renderUpgradeServices = () => {
     return `
       <div class="filter-row">
-        <label for="upgrade-service-filter">Service:</label>
+        <label for="upgrade-service-filter">Service</label>
         <select id="upgrade-service-filter">
           <option value="">All Services</option>
         </select>
@@ -3285,7 +3285,6 @@
     converge: 'Converge'
   };
   const OPERATION_HINTS = {
-    rotate: 'Pick the certificates to replace. Each instance redeploys once for all of its selected certificates.',
     converge: 'Converge redeploys instances whose patched certificates BOSH has not picked up yet.'
   };
 
@@ -3956,6 +3955,15 @@
     if (Date.now() - rotateState.lastLoad > INVENTORY_REFRESH_MS) loadRotateInventory({ silent: true });
   };
 
+  // What a patch does afterwards, as the value the broker takes, the label,
+  // and what happens next.
+  const CONVERGE_CHOICES = [
+    ['pending', 'Leave unconverged', 'The instance stays flagged as unconverged until a converge runs. A recreate or resurrection restores the old certificate until then.'],
+    ['immediate', 'Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
+  ];
+  const REDEPLOY_DESCRIPTION = 'Replaces each selected certificate with a new one. Each instance redeploys once for all of its selected certificates.';
+  const PATCH_DESCRIPTION = 'Temporary repair. We swap the certificate files over SSH, and BOSH can restore the old certificate until the instance converges.';
+
   // The Mode choice that Batch Operations and the instance rotate dialog
   // share. The caller owns the state object, which holds mode and converge,
   // and blockReason() returns the sentence that disables Patch, or an empty
@@ -4003,10 +4011,7 @@
     converge.id = `${p}-converge`;
     converge.appendChild(rotateEl('legend', '', 'After patching'));
     const choices = {};
-    [
-      ['pending', 'Leave unconverged', 'The instance stays flagged as unconverged until a converge runs. A recreate or resurrection restores the old certificate until then.'],
-      ['immediate', 'Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
-    ].forEach(([value, text, consequence]) => {
+    CONVERGE_CHOICES.forEach(([value, text, consequence]) => {
       const label = rotateEl('label', 'rotate-converge-option');
       const radio = document.createElement('input');
       radio.type = 'radio';
@@ -4052,6 +4057,126 @@
     return { root: group, update };
   };
 
+  // The Mode choice of Batch Operations, as the ARIA tabs pattern. It takes
+  // the same context as buildModeControls and returns the same pair. Each
+  // tab's panel starts with its description. A Patch tab that is closed
+  // stays in the list, says why beneath it, and cannot be chosen.
+  const buildModeTabs = (ctx) => {
+    const p = ctx.prefix;
+    const root = rotateEl('div', 'rotate-mode rotate-mode-tabs');
+    root.id = p;
+    const list = rotateEl('div', 'rotate-tablist');
+    list.setAttribute('role', 'tablist');
+    list.setAttribute('aria-label', 'Mode');
+    const tabs = {};
+    const panels = {};
+    const order = ['redeploy', 'patch'];
+    const reason = rotateEl('p', 'rotate-op-hint rotate-mode-reason');
+    reason.id = `${p}-patch-reason`;
+    reason.hidden = true;
+
+    order.forEach((value) => {
+      const tab = rotateEl('button', 'rotate-tab', value === 'patch' ? 'Patch in place' : 'Redeploy');
+      tab.type = 'button';
+      tab.id = `${p}-${value}`;
+      tab.dataset.mode = value;
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-controls', `${p}-${value}-panel`);
+      if (value === 'patch') tab.setAttribute('aria-describedby', reason.id);
+      tab.addEventListener('click', () => choose(value));
+      tab.addEventListener('keydown', (event) => {
+        const at = order.indexOf(value);
+        const target = { ArrowRight: order[(at + 1) % order.length], ArrowLeft: order[(at + order.length - 1) % order.length], Home: order[0], End: order[order.length - 1] }[event.key];
+        if (!target) return;
+        event.preventDefault();
+        tabs[target].focus();
+        choose(target);
+      });
+      tabs[value] = tab;
+      list.appendChild(tab);
+
+      const panel = rotateEl('div', 'rotate-tabpanel');
+      panel.id = `${p}-${value}-panel`;
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', tab.id);
+      const description = rotateEl('p', 'rotate-mode-description', value === 'patch' ? PATCH_DESCRIPTION : REDEPLOY_DESCRIPTION);
+      description.id = `${p}-${value}-description`;
+      panel.appendChild(description);
+      panels[value] = panel;
+    });
+    root.appendChild(list);
+    root.appendChild(reason);
+
+    const converge = rotateEl('fieldset', 'rotate-converge rotate-converge-cards');
+    converge.id = `${p}-converge`;
+    converge.appendChild(rotateEl('legend', '', 'After patching'));
+    const lead = rotateEl('p', 'rotate-converge-lead', 'Choose one. A patch is a temporary repair until a deploy applies the new values for good.');
+    lead.id = `${p}-converge-lead`;
+    converge.setAttribute('aria-describedby', lead.id);
+    converge.appendChild(lead);
+    const choices = {};
+    CONVERGE_CHOICES.forEach(([value, text, consequence]) => {
+      const label = rotateEl('label', 'rotate-converge-option');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `${ctx.name}-converge`;
+      radio.id = `${p}-converge-${value}`;
+      radio.value = value;
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return;
+        ctx.state.converge = value;
+        ctx.onChange();
+      });
+      const hint = rotateEl('span', 'rotate-converge-hint', consequence);
+      hint.id = `${p}-converge-${value}-hint`;
+      radio.setAttribute('aria-describedby', hint.id);
+      choices[value] = radio;
+      const body = rotateEl('span', 'rotate-converge-body');
+      body.appendChild(rotateEl('span', 'rotate-converge-title', text));
+      body.appendChild(hint);
+      label.appendChild(radio);
+      label.appendChild(body);
+      converge.appendChild(label);
+    });
+    panels.patch.appendChild(converge);
+    order.forEach((value) => root.appendChild(panels[value]));
+
+    function choose(value) {
+      if (value === 'patch' && ctx.blockReason()) return;
+      ctx.state.mode = value;
+      if (value !== 'patch') ctx.state.converge = '';
+      update();
+      ctx.onChange();
+    }
+
+    // Brings the tabs in line with the state and with what Patch allows
+    // now. A Patch that turned unavailable falls back to Redeploy.
+    function update() {
+      const block = ctx.blockReason();
+      reason.hidden = !block;
+      reason.textContent = block;
+      tabs.patch.setAttribute('aria-disabled', block ? 'true' : 'false');
+      tabs.patch.title = block;
+      if (block && ctx.state.mode === 'patch') {
+        ctx.state.mode = 'redeploy';
+        ctx.state.converge = '';
+        announce(`Patch in place is not available, so the mode is back to Redeploy. ${block}`);
+      }
+      const patch = ctx.state.mode === 'patch';
+      order.forEach((value) => {
+        const selected = (value === 'patch') === patch;
+        tabs[value].setAttribute('aria-selected', selected ? 'true' : 'false');
+        tabs[value].tabIndex = selected ? 0 : -1;
+        panels[value].hidden = !selected;
+      });
+      converge.hidden = !patch;
+      choices.pending.checked = patch && ctx.state.converge === 'pending';
+      choices.immediate.checked = patch && ctx.state.converge === 'immediate';
+    }
+    update();
+    return { root, update };
+  };
+
   // Whether Patch is closed for the certificates picked in Batch Operations,
   // and the sentence that says why. An empty string means it is open.
   const batchPatchBlock = () => {
@@ -4082,7 +4207,7 @@
     rotateModeControls = null;
     const pane = rotateEl('div', 'rotate-pane');
     pane.dataset.pane = 'rotate-options';
-    pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS[upgradeOperation]));
+    if (OPERATION_HINTS[upgradeOperation]) pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS[upgradeOperation]));
     const notice = rotateEl('div', 'rotate-notice');
     notice.id = 'rotate-notice';
     notice.setAttribute('role', 'status');
@@ -4103,7 +4228,7 @@
     pane.appendChild(bulk);
 
     if (upgradeOperation === 'rotate') {
-      rotateModeControls = buildModeControls({
+      rotateModeControls = buildModeTabs({
         prefix: 'rotate-mode',
         name: 'rotate-mode',
         state: rotateState,

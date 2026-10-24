@@ -204,8 +204,9 @@ body > footer p { margin: 0; }
 #upgrade .rotate-operation-option.is-selected .batch-operation-selected { visibility: visible; }
 #upgrade .rotate-operation-option:focus-within { outline: 3px solid var(--ring); outline-offset: 3px; }
 #upgrade .batch-flow-options { padding: 20px 24px 0; }
-#upgrade .batch-flow-options .filter-row { max-width: 440px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
-#upgrade .batch-flow-options label { font-weight: 600; }
+#upgrade .batch-flow-options .filter-row { max-width: 560px; display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 12px; }
+#upgrade .batch-flow-options .filter-row label { flex: 0 0 auto; width: auto; min-width: 0; font-weight: 600; white-space: nowrap; }
+#upgrade .batch-flow-options .filter-row select { flex: 1 1 auto; width: auto; min-width: 0; }
 #upgrade .upgrade-targets-panel { margin: 20px 24px; padding: 20px; }
 #upgrade #batch-options-summary { margin: 0 0 16px; font-size: 1rem; }
 #upgrade .upgrade-targets-panel .upgrade-targets { padding: 0; }
@@ -221,9 +222,32 @@ body > footer p { margin: 0; }
 #upgrade .batch-flow-footer button { min-height: 44px; }
 #upgrade .upgrade-main { flex: 1 0 auto; display: flex; flex-direction: column; }
 #upgrade .batch-flow-footer { margin-top: auto; }
+
+/* Mode tabs and the After patching cards inside the certificate options box. */
+#upgrade .rotate-mode-tabs { display: block; min-width: 0; }
+#upgrade .rotate-tablist { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+#upgrade .rotate-tab { padding: 8px 16px; border: 0; border-bottom: 3px solid transparent; border-radius: 5px 5px 0 0; background: transparent; color: var(--muted-foreground); font-weight: 600; cursor: pointer; }
+#upgrade .rotate-tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); background: var(--secondary); }
+#upgrade .rotate-tab[aria-disabled="true"] { opacity: .6; cursor: not-allowed; }
+#upgrade .rotate-tabpanel { min-width: 0; }
+#upgrade .rotate-tabpanel[hidden] { display: none; }
+#upgrade .rotate-mode-description { margin: 0 0 12px; max-width: 72ch; color: var(--foreground); overflow-wrap: anywhere; }
+#upgrade .rotate-mode-tabs .rotate-mode-reason { margin: 0 0 12px; max-width: 72ch; overflow-wrap: anywhere; }
+#upgrade .rotate-converge-cards { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 0; padding: 0; border: 0; min-width: 0; }
+#upgrade .rotate-converge-cards legend { padding: 0; margin-bottom: 4px; font-weight: 700; }
+#upgrade .rotate-converge-lead { margin: 0 0 4px; color: var(--muted-foreground); font-size: .875rem; max-width: 72ch; }
+#upgrade .rotate-converge-cards .rotate-converge-option { display: grid; grid-template-columns: 24px minmax(0,1fr); gap: 10px; align-items: start; margin: 0; padding: 14px 16px; border: 2px solid var(--input); border-radius: 8px; background: var(--card); cursor: pointer; }
+#upgrade .rotate-converge-cards .rotate-converge-option:has(input:checked) { border-color: var(--primary); background: var(--secondary); }
+#upgrade .rotate-converge-cards .rotate-converge-option:focus-within { outline: 3px solid var(--ring); outline-offset: 2px; }
+#upgrade .rotate-converge-cards .rotate-converge-option input { margin: 2px 0 0; }
+#upgrade .rotate-converge-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+#upgrade .rotate-converge-title { font-weight: 600; }
+#upgrade .rotate-converge-cards .rotate-converge-hint { grid-column: auto; color: var(--muted-foreground); font-size: .875rem; overflow-wrap: anywhere; }
 #upgrade .batch-pagination { position: static; }
 #upgrade { scroll-padding-block: 75px 120px; }
 @media (max-width: 750px) {
+ #upgrade .batch-flow-options .filter-row { flex-wrap: wrap; }
+ #upgrade .batch-flow-options .filter-row select { flex-basis: 12rem; }
  #upgrade .rotate-operation { grid-template-columns: 1fr; }
  #upgrade .batch-flow-header, #upgrade .rotate-operation, #upgrade .batch-flow-review, #upgrade .batch-flow-footer { padding: 16px; }
  #upgrade .batch-flow-footer { align-items: stretch; flex-direction: column; gap: 12px; }
