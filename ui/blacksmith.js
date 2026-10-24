@@ -4369,33 +4369,35 @@
       pane.appendChild(rotateModeControls.root);
     }
 
-    const nameRow = rotateEl('div', 'filter-row rotate-name-row');
-    const nameLabel = rotateEl('label', '', 'Job name');
-    nameLabel.setAttribute('for', 'rotate-name');
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.id = 'rotate-name';
-    nameInput.placeholder = 'Optional';
-    nameInput.value = rotateState.name;
-    nameInput.addEventListener('input', () => { rotateState.name = nameInput.value; });
-    nameRow.appendChild(nameLabel);
-    nameRow.appendChild(nameInput);
+    // Each field says what to type and why. The broker names the job after
+    // the selection when the name is empty, shows the name in the job list,
+    // and records the reason with the job and in its audit log.
     const metadata = rotateEl('details', 'batch-optional');
     metadata.appendChild(rotateEl('summary', '', 'Job name and reason (optional)'));
-    metadata.appendChild(nameRow);
-
-    const reasonRow = rotateEl('div', 'filter-row rotate-name-row');
-    const reasonLabel = rotateEl('label', '', 'Reason');
-    reasonLabel.setAttribute('for', 'rotate-reason');
-    const reasonInput = document.createElement('input');
-    reasonInput.type = 'text';
-    reasonInput.id = 'rotate-reason';
-    reasonInput.placeholder = 'Optional';
-    reasonInput.value = rotateState.reason;
-    reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
-    reasonRow.appendChild(reasonLabel);
-    reasonRow.appendChild(reasonInput);
-    metadata.appendChild(reasonRow);
+    [
+      ['rotate-name', 'Job name', 'name', 'October cert rotation',
+        upgradeOperation === 'converge'
+          ? 'Shown in the batch job list so you can find this run later, such as "October converge". If you leave it empty, we name it after the instances.'
+          : 'Shown in the batch job list so you can find this run later, such as "October cert rotation". If you leave it empty, we name it after the certificates.'],
+      ['rotate-reason', 'Reason', 'reason', 'Change ticket or short reason',
+        'Recorded with the job and in the audit log, so anyone reviewing it later knows why. A change ticket number works well.']
+    ].forEach(([id, text, field, placeholder, hintText]) => {
+      const row = rotateEl('div', 'filter-row rotate-name-row');
+      const label = rotateEl('label', '', text);
+      label.setAttribute('for', id);
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = id;
+      input.placeholder = placeholder;
+      input.autocomplete = 'off';
+      input.value = rotateState[field];
+      const hint = rotateEl('p', 'rotate-field-hint', hintText);
+      hint.id = `${id}-hint`;
+      input.setAttribute('aria-describedby', hint.id);
+      input.addEventListener('input', () => { rotateState[field] = input.value; });
+      row.append(label, input, hint);
+      metadata.appendChild(row);
+    });
     pane.appendChild(metadata);
     container.appendChild(pane);
     renderRotateNotice();
