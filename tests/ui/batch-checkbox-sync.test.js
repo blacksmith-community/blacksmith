@@ -32,14 +32,15 @@ t('a click on the row body checks the box',async()=>{
  agree(w,d);expect(row(d,'inst-003').querySelector('input').checked).toBe(false);
  }finally{w.close();}
 });
-t('a click on the checkbox or its mark selects once',async()=>{
+t('a click on the checkbox selects once',async()=>{
  const {w,d}=await setup();try{
  row(d,'inst-004').querySelector('input').click();
  agree(w,d);expect(w.__T.selectedUpgradeInstances.has('inst-004')).toBe(true);
- row(d,'inst-004').querySelector('.checkmark').click();
+ row(d,'inst-004').querySelector('input').click();
  agree(w,d);expect(w.__T.selectedUpgradeInstances.has('inst-004')).toBe(false);
- row(d,'inst-005').querySelector('.checkmark').click();
+ row(d,'inst-005').querySelector('label').click();
  agree(w,d);expect(w.__T.selectedUpgradeInstances.has('inst-005')).toBe(true);
+ expect(row(d,'inst-005').querySelector('input').checked).toBe(true);
  expect(d.getElementById('batch-flow-context').textContent).toBe('1 instance selected');
  }finally{w.close();}
 });
@@ -67,13 +68,16 @@ t('paging and filtering redraw each box from the selection',async()=>{
  agree(w,d);
  }finally{w.close();}
 });
-t('moving between steps keeps the boxes in step',async()=>{
+t('moving between steps redraws each box from the selection',async()=>{
  const {w,d}=await setup();try{
  row(d,'inst-002').querySelector('.upgrade-instance-info').click();
- w.__T.setBatchStep(1,false);w.__T.setBatchStep(2,false);
- agree(w,d);expect(row(d,'inst-002').querySelector('input').checked).toBe(true);
- w.__T.setBatchStep(0,false);d.querySelector('[data-batch-step="2"]').disabled=false;w.__T.setBatchStep(2,false);
+ w.__T.setBatchStep(1,false);
+ // the selection changes while the list is out of sight
+ w.__T.selectedUpgradeInstances.delete('inst-002');w.__T.selectedUpgradeInstances.add('inst-009');
+ w.__T.setBatchStep(2,false);
  agree(w,d);
+ expect(row(d,'inst-002').querySelector('input').checked).toBe(false);
+ expect(row(d,'inst-009').querySelector('input').checked).toBe(true);
  }finally{w.close();}
 });
 t('a row another operation holds cannot be checked',async()=>{

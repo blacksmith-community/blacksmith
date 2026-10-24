@@ -2773,6 +2773,8 @@
     if (step !== 3) batchFlow.frozenCount = null;
     batchFlow.furthest = Math.max(batchFlow.furthest, step);
     updateBatchFlow();
+    // Coming back to the list, every row follows the selection as it stands.
+    if (step === 2 && upgradeOperation === 'upgrade') syncUpgradeRows();
     if (focus) {
       document.getElementById('upgrade').scrollTop = 0;
       document.getElementById('batch-flow-title').focus({preventScroll:true});
