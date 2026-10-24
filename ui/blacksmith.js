@@ -207,7 +207,12 @@
       return node;
     };
 
-    if (Array.isArray(options.details) && options.details.length > 0) {
+    // A caller-built node replaces the details rows. The caller builds it
+    // with textContent, so nothing from the server reaches innerHTML.
+    if (options.body && typeof options.body === 'object' && options.body.nodeType === 1) {
+      options.body.setAttribute('data-dialog-extra', 'true');
+      extras.nodes.push(options.body);
+    } else if (Array.isArray(options.details) && options.details.length > 0) {
       const list = make('ul', 'dialog-modal-details');
       options.details.forEach((detail) => {
         const item = make('li');
@@ -291,18 +296,31 @@
       const body = overlay.querySelector('.dialog-modal-body');
 
       const opener = document.activeElement;
-      const structured = Boolean(options.requireText || options.requireChoice ||
+      const structured = Boolean(options.requireText || options.requireChoice || options.body ||
         (Array.isArray(options.details) && options.details.length > 0));
 
       // Set content
       titleEl.textContent = options.title || 'Confirm';
-      messageEl.textContent = options.message || 'Are you sure?';
+      const hasBody = Boolean(options.body);
+      messageEl.textContent = options.message || (hasBody ? '' : 'Are you sure?');
+      messageEl.hidden = hasBody && !options.message;
+      // The description is the message, plus the caller's summary element.
+      dialog.setAttribute('aria-describedby', options.describedBy
+        ? `dialog-modal-message ${options.describedBy}` : 'dialog-modal-message');
       inputEl.style.display = 'none';
       inputEl.value = '';
 
       overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
       const extras = buildConfirmExtras(options);
       extras.nodes.forEach((node) => body.appendChild(node));
+      // A line above the buttons stays in view while the body scrolls.
+      if (options.footnote) {
+        const footnote = document.createElement('p');
+        footnote.className = 'dialog-modal-footnote';
+        footnote.setAttribute('data-dialog-extra', 'true');
+        footnote.textContent = String(options.footnote);
+        dialog.insertBefore(footnote, overlay.querySelector('.dialog-modal-footer'));
+      }
 
       // Set button text
       cancelBtn.textContent = options.cancelText || 'Cancel';
@@ -314,7 +332,8 @@
 
       // Set icon style
       iconEl.classList.remove('warning', 'info');
-      iconEl.classList.add(options.danger ? 'warning' : 'info');
+      iconEl.classList.add(options.icon === 'warning' || options.icon === 'info'
+        ? options.icon : (options.danger ? 'warning' : 'info'));
 
       let settled = false;
       const surface = { close: () => finish(false) };
@@ -450,7 +469,8 @@
       document.addEventListener('focusin', handleFocusIn);
 
       // Focus Cancel first, or the acknowledgement field when there is one
-      initialFocus().focus();
+      // preventScroll keeps the warnings in view when the body is long.
+      initialFocus().focus({ preventScroll: true });
     });
   };
 
@@ -474,6 +494,8 @@
       // Set content
       titleEl.textContent = options.title || 'Input';
       messageEl.textContent = options.message || 'Please enter a value:';
+      messageEl.hidden = false;
+      dialog.setAttribute('aria-describedby', 'dialog-modal-message');
       inputEl.style.display = 'block';
       inputEl.value = options.defaultValue || '';
       inputEl.placeholder = options.placeholder || '';
@@ -3955,56 +3977,217 @@
   // It is the server's message, with advice for the codes that have some.
   const rotateErrorText = (err) => apiErrorText(err);
 
-  // The lines of the confirmation dialog for a preview. Each is a string or
-  // a label and value, and the dialog shows them as text.
-  const buildPreviewDetails = (preview, mode) => {
+  const PREVIEW_WHAT = {
+    redeploy: 'BOSH rolls the VMs of each instance through its update block, with canaries and drains.',
+    patch: 'We swap the certificate files over SSH, and the affected processes restart under monit, one VM at a time.',
+    converge: 'A redeploy applies the patched values for good.'
+  };
+  const PREVIEW_GATE_CLAUSE = 'A failed health gate pauses the task.';
+  const PREVIEW_POLICY = {
+    pending: ['Leave unconverged', 'The instance stays flagged as unconverged until a converge runs. A recreate or resurrection restores the old certificate until then.'],
+    immediate: ['Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
+  };
+  const PREVIEW_NOT_NEAR_EXPIRY = 'Some selected certificates are not close to expiry. Continue if this rotation is intentional.';
+  const PREVIEW_COLLAPSE_AFTER = 3;
+
+  // The last segment of a CredHub path, such as valkey_cluster_crt.
+  const previewShortName = (name) => {
+    const text = String(name ?? '');
+    const parts = text.split('/').filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : text;
+  };
+
+  // The full path in small monospace text that wraps at the slashes. A
+  // <wbr> follows each slash, and the title carries the whole path.
+  const previewPathNode = (name) => {
+    const text = String(name ?? '');
+    const node = rotateEl('div', 'rotate-preview-path');
+    node.title = text;
+    text.split(/(?<=\/)/).forEach((part, index) => {
+      if (index > 0) node.appendChild(document.createElement('wbr'));
+      node.appendChild(document.createTextNode(part));
+    });
+    return node;
+  };
+
+  // The days-left badge, colored by the same thresholds as the chips and the
+  // inventory pills. A certificate beyond every threshold gets the neutral
+  // pill. It returns null when days_left is not a number.
+  const previewBadge = (daysLeft) => {
+    if (typeof daysLeft !== 'number' || !Number.isFinite(daysLeft)) return null;
+    let status = 'unknown';
+    let text = `${pluralize(daysLeft, 'day')}`;
+    if (daysLeft < 0) { status = 'expired'; text = 'Expired'; }
+    else if (daysLeft === 0) { status = 'critical'; text = 'Expires today'; }
+    else if (daysLeft <= rotateState.criticalDays) status = 'critical';
+    else if (daysLeft <= rotateState.warningDays) status = 'warning';
+    const badge = rotateEl('span', `cert-pill cert-pill--${status} rotate-preview-badge`, text);
+    badge.title = daysLeft < 0 ? 'Expired' : `${pluralize(daysLeft, 'day')} left`;
+    return badge;
+  };
+
+  const previewIsNearExpiry = (daysLeft) => typeof daysLeft === 'number' && Number.isFinite(daysLeft) && daysLeft <= rotateState.warningDays;
+
+  const previewCallout = (children) => {
+    const box = rotateEl('div', 'rotate-preview-callout');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'Warning');
+    children.forEach((child) => box.appendChild(child));
+    return box;
+  };
+
+  // One certificate row. An additional variable has no badge and says so.
+  const previewCertRow = (variable, additional) => {
+    const item = rotateEl('li', 'rotate-preview-cert');
+    const top = rotateEl('div', 'rotate-preview-cert-top');
+    top.appendChild(rotateEl('code', 'rotate-preview-cert-name', previewShortName(variable.name)));
+    if (additional) {
+      top.appendChild(rotateEl('span', 'rotate-preview-tag', 'Additional change'));
+    } else {
+      const badge = previewBadge(variable.days_left);
+      if (badge) top.appendChild(badge);
+    }
+    item.appendChild(top);
+    item.appendChild(previewPathNode(variable.name));
+    return item;
+  };
+
+  const previewCertList = (variables, additional, label) => {
+    const list = rotateEl('ul', 'rotate-preview-certs');
+    list.setAttribute('aria-label', label);
+    variables.forEach((variable) => list.appendChild(previewCertRow(variable, additional)));
+    return list;
+  };
+
+  // The body of the confirmation dialog for a preview, as a DOM node. Every
+  // value from the server reaches the node through textContent or setAttribute.
+  // The options are {converge} for the patch policy and {summaryId}.
+  const buildPreviewBody = (preview, mode, opts = {}) => {
     const instances = Array.isArray(preview && preview.instances) ? preview.instances : [];
     const included = instances.filter((instance) => instance && !instance.blocked);
     const excluded = instances.filter((instance) => instance && instance.blocked);
-    const details = [{ label: 'Mode', value: ROTATE_MODE_LABELS[mode] || String(mode) }];
-    details.push({
-      label: 'Instances',
-      value: excluded.length > 0
-        ? `${included.length} to change, ${excluded.length} excluded`
-        : String(included.length)
-    });
-    included.forEach((instance) => {
-      const name = instance.instance_name || instance.instance_id;
-      const where = [instance.service, instance.plan].filter(Boolean).join(' / ');
-      const facts = [pluralize(Number(instance.vms) || 0, 'VM')];
-      if (instance.gate) facts.push(`health gate ${instance.gate}`);
-      let value = facts.join(', ');
-      if (instance.impact) value += `. ${instance.impact}`;
-      details.push({ label: where ? `${name} (${where})` : String(name), value });
-      const selected = Array.isArray(instance.selected) ? instance.selected : [];
-      if (mode !== 'converge' && selected.length > 0) {
-        details.push({
-          label: `Rotates on ${name}`,
-          value: selected.map((variable) => (typeof variable.days_left === 'number'
-            ? `${variable.name} (${variable.days_left} days left)`
-            : String(variable.name))).join('; ')
-        });
-      }
-      const additional = Array.isArray(instance.additional) ? instance.additional : [];
-      if (additional.length > 0) {
-        details.push({ label: `Also changes on ${name}`, value: additional.map((pair) => String(pair.name)).join('; ') });
-      }
-    });
-    excluded.forEach((instance) => {
-      const name = instance.instance_name || instance.instance_id;
-      details.push({ label: `Excluded: ${name}`, value: instance.blocked.message || instance.blocked.code || 'It cannot take part.' });
-    });
-    if (mode === 'patch') {
-      details.push(`Warning: ${PATCH_WARNING}`);
-      details.push(PATCH_PREREQUISITE);
+    const selectedOf = (instance) => (mode !== 'converge' && Array.isArray(instance.selected) ? instance.selected : []);
+    const additionalOf = (instance) => (mode !== 'converge' && Array.isArray(instance.additional) ? instance.additional : []);
+    const root = rotateEl('div', 'rotate-preview');
+    const scroll = rotateEl('div', 'rotate-preview-scroll');
+    root.appendChild(scroll);
+
+    // Summary strip
+    const vms = included.reduce((sum, instance) => sum + (Number(instance.vms) || 0), 0);
+    const certCount = included.reduce((sum, instance) => sum + selectedOf(instance).length, 0);
+    const extraCount = included.reduce((sum, instance) => sum + additionalOf(instance).length, 0);
+    const facts = [ROTATE_MODE_LABELS[mode] || String(mode)];
+    facts.push(excluded.length > 0
+      ? `${included.length} to change, ${excluded.length} excluded`
+      : pluralize(included.length, 'instance'));
+    facts.push(pluralize(vms, 'VM'));
+    if (mode !== 'converge') {
+      facts.push(extraCount > 0
+        ? `${pluralize(certCount, 'certificate')} plus ${pluralize(extraCount, 'additional variable')}`
+        : pluralize(certCount, 'certificate'));
     }
-    (Array.isArray(preview && preview.warnings) ? preview.warnings : []).forEach((warning) => {
+    const summary = rotateEl('p', 'rotate-preview-summary', facts.join(' · '));
+    summary.id = opts.summaryId || 'rotate-preview-summary';
+    scroll.appendChild(summary);
+
+    // What the operation does
+    let what = PREVIEW_WHAT[mode] || '';
+    if (what && included.some((instance) => instance.gate)) {
+      what += ` ${PREVIEW_GATE_CLAUSE}`;
+    }
+    if (what) scroll.appendChild(rotateEl('p', 'rotate-preview-what', what));
+
+    // Warnings come first
+    if (mode === 'patch') {
+      const lines = [rotateEl('p', null, PATCH_WARNING), rotateEl('p', null, PATCH_PREREQUISITE)];
+      const policy = PREVIEW_POLICY[opts.converge];
+      if (policy) {
+        const line = rotateEl('p');
+        line.appendChild(rotateEl('strong', null, `${policy[0]}. `));
+        line.appendChild(document.createTextNode(policy[1]));
+        lines.push(line);
+      }
+      scroll.appendChild(previewCallout(lines));
+    }
+    const serverWarnings = (Array.isArray(preview && preview.warnings) ? preview.warnings : [])
       // The server repeats the temporary-repair warning, which we show once.
-      if (mode === 'patch' && /temporary repair/i.test(String(warning))) return;
-      details.push(`Warning: ${warning}`);
+      .filter((warning) => !(mode === 'patch' && /temporary repair/i.test(String(warning))));
+    if (serverWarnings.length > 0) {
+      scroll.appendChild(previewCallout(serverWarnings.map((warning) => rotateEl('p', null, String(warning)))));
+    }
+    const selectedAll = included.flatMap(selectedOf);
+    if (selectedAll.some((variable) => typeof variable.days_left === 'number' && !previewIsNearExpiry(variable.days_left))) {
+      scroll.appendChild(rotateEl('p', 'rotate-preview-note', PREVIEW_NOT_NEAR_EXPIRY));
+    }
+
+    // One card per included instance
+    const compact = included.length > PREVIEW_COLLAPSE_AFTER;
+    const cards = rotateEl('div', 'rotate-preview-cards');
+    if (compact) {
+      const toggle = rotateEl('button', 'rotate-preview-expand', 'Expand all');
+      toggle.type = 'button';
+      toggle.addEventListener('click', () => {
+        const open = toggle.textContent === 'Expand all';
+        cards.querySelectorAll('details').forEach((node) => { node.open = open; });
+        toggle.textContent = open ? 'Collapse all' : 'Expand all';
+      });
+      scroll.appendChild(toggle);
+    }
+    included.forEach((instance) => {
+      const name = String(instance.instance_name || instance.instance_id);
+      const where = [instance.service, instance.plan].filter(Boolean).join(' / ');
+      const selected = selectedOf(instance);
+      const extra = additionalOf(instance);
+      const vmText = pluralize(Number(instance.vms) || 0, 'VM');
+
+      const card = rotateEl(compact ? 'details' : 'section', 'rotate-preview-card');
+      const head = rotateEl(compact ? 'summary' : 'div', 'rotate-preview-card-head');
+      head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
+      if (where) head.appendChild(rotateEl('span', 'rotate-preview-where', where));
+      if (compact) {
+        if (mode !== 'converge') head.appendChild(rotateEl('span', 'rotate-preview-meta', pluralize(selected.length, 'certificate')));
+        const days = selected.map((variable) => variable.days_left).filter((value) => typeof value === 'number' && Number.isFinite(value));
+        const badge = days.length > 0 ? previewBadge(Math.min(...days)) : null;
+        head.appendChild(rotateEl('span', 'rotate-preview-meta', vmText));
+        if (badge) head.appendChild(badge);
+      } else {
+        head.appendChild(rotateEl('span', 'rotate-preview-meta', vmText));
+      }
+      if (instance.gate) head.appendChild(rotateEl('span', 'rotate-preview-meta', `health gate ${instance.gate}`));
+      card.appendChild(head);
+
+      const content = compact ? rotateEl('div', 'rotate-preview-card-body') : card;
+      if (instance.impact) content.appendChild(rotateEl('p', 'rotate-preview-impact', String(instance.impact)));
+      if (selected.length > 0) content.appendChild(previewCertList(selected, false, `Certificates that rotate on ${name}`));
+      if (extra.length > 0) {
+        content.appendChild(rotateEl('p', 'rotate-preview-subhead', 'Also changes'));
+        content.appendChild(previewCertList(extra, true, `Also changes on ${name}`));
+      }
+      if (compact) card.appendChild(content);
+      cards.appendChild(card);
     });
-    return details;
+    scroll.appendChild(cards);
+
+    // Excluded instances
+    if (excluded.length > 0) {
+      const section = rotateEl('section', 'rotate-preview-excluded');
+      section.appendChild(rotateEl('h4', 'rotate-preview-subhead', 'Will not change'));
+      const list = rotateEl('ul', 'rotate-preview-excluded-list');
+      excluded.forEach((instance) => {
+        const item = rotateEl('li');
+        item.appendChild(rotateEl('strong', null, String(instance.instance_name || instance.instance_id)));
+        item.appendChild(rotateEl('span', 'rotate-preview-reason', ` ${instance.blocked.message || instance.blocked.code || 'It cannot take part.'}`));
+        list.appendChild(item);
+      });
+      section.appendChild(list);
+      scroll.appendChild(section);
+    }
+    return root;
   };
+
+  // The confirm button label and the line above the buttons for a mode.
+  const PREVIEW_CONFIRM_TEXT = { redeploy: 'Rotate and redeploy', patch: 'Patch in place', converge: 'Start converge' };
+  const PREVIEW_TASK_NOTE = 'Confirming creates a task. Its progress shows in Batch Jobs.';
 
   // Where results show: the top of the Batch Jobs column.
   const rotateResultHost = () => {
@@ -4108,11 +4291,14 @@
       const converge = mode === 'converge';
       const answer = await showConfirmDialog({
         title: converge ? 'Converge these instances?' : (mode === 'patch' ? 'Patch these certificates in place?' : 'Rotate these certificates?'),
-        message: `${note ? `${note} ` : ''}Review what we are about to change, then confirm.`,
-        details: buildPreviewDetails(preview, mode),
-        confirmText: converge ? 'Converge' : (mode === 'patch' ? 'Patch' : 'Rotate'),
+        message: note,
+        body: buildPreviewBody(preview, mode, { converge: options.converge }),
+        describedBy: 'rotate-preview-summary',
+        footnote: PREVIEW_TASK_NOTE,
+        confirmText: PREVIEW_CONFIRM_TEXT[mode],
         cancelText: 'Cancel',
-        danger: true,
+        danger: mode === 'patch',
+        icon: 'warning',
         // A patch always asks for the typed word, because it is a temporary repair.
         requireText: mode === 'patch' || included.length > ROTATE_TYPED_THRESHOLD ? ROTATE_CONFIRM_WORD : undefined
       });
@@ -5609,11 +5795,16 @@
         }
         const answer = await showConfirmDialog({
           title: 'Approve the changed effects?',
-          message: 'Review what we are about to change, then approve it.',
-          details: buildPreviewDetails(preview, mode),
+          message: '',
+          body: buildPreviewBody(preview, mode, { converge: task.certificates && task.certificates.converge }),
+          describedBy: 'rotate-preview-summary',
+          footnote: 'Approving lets the task carry on with these effects.',
           confirmText: 'Approve changes',
           cancelText: 'Cancel',
-          danger: true
+          danger: mode === 'patch',
+          icon: 'warning',
+          // A patch is a temporary repair, so approving it asks for the word.
+          requireText: mode === 'patch' ? ROTATE_CONFIRM_WORD : undefined
         });
         return confirmedAnswer(answer)
           ? { verb: 'approve', body: { preview_id: preview.preview_id } }

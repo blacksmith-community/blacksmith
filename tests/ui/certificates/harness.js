@@ -20,7 +20,7 @@ const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const day=86400000, now=Date.now(), iso=(ms)=>new Date(ms).toISOString();
 const NAMES=['getInstanceStatusIcon','getInstanceStatusClass','taskDetailCache','decisionState','awaitingDecisionTaskIds','buildCertificateInstance','runDecision','holderDetails','upgradeTasks','buildDecisionPanel','buildRemediation','openRotateInstanceDialog','CertOverview','CertsFleet','readApiError','apiErrorText','renderUpgradeTaskList','renderTaskDetail','fetchUpgradeTasks','selectUpgradeTask','rerenderTaskPanel','renderPollStatus','initUpgradeTab','sendTaskControl',
  'renderOperation','renderRotateInstances','refreshUpgradeInstanceList','updateUpgradeButton','renderUpgradeInstances','setupUpgradeInstanceHandlers','loadRotateInventory','rotateEligibleChips','rotateState','selectedUpgradeInstances','computeUpgradeHolders','rotateSelectVisible','rotateClearVisible','rotateSelectMatching','renderRotateSelectionLine','rotateSelection','setUpgradeTasks','setServiceInstances','rotateReviewList',
- 'buildModeControls','selectedUpgradeInstances','updateOperationFooter','batchPatchBlock','startUpgrade','upgradeOperation','previewAndCreate','rotateErrorText','buildPreviewDetails','rotateFooterLabel','renderRotateTargets'];
+ 'buildModeControls','selectedUpgradeInstances','updateOperationFooter','batchPatchBlock','startUpgrade','upgradeOperation','previewAndCreate','rotateErrorText','buildPreviewBody','rotateFooterLabel','renderRotateTargets'];
 function boot(opts={}){
   const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;

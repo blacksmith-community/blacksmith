@@ -52,9 +52,12 @@ t('patch in place controls', async () => {
   ok(await waitDialog(),'confirm dialog opened');
   const pb=posts(/rotation\/preview/).pop();
   ok(pb.mode==='patch'&&pb.converge==='pending','preview body carries patch and converge: '+JSON.stringify(pb));
-  const txt=dlg().querySelector('.dialog-modal-details').textContent;
+  const txt=dlg().querySelector('.rotate-preview').textContent; const pbody=dlg().querySelector('.rotate-preview-scroll');
   ok(/Temporary repair/.test(txt)&&(txt.match(/Temporary repair/g)||[]).length===1,'temporary-repair warning shown once');
   ok(/nobody runs director commands against the instance while the patch runs/.test(txt),'prerequisite shown');
+  ok(pbody.querySelector('.rotate-preview-callout')===pbody.querySelector('.rotate-preview-callout')&&!!(pbody.querySelector('.rotate-preview-callout').compareDocumentPosition(pbody.querySelector('.rotate-preview-cards'))&4),'patch warnings sit above the instance list');
+  ok(/Leave unconverged/.test(txt)&&/flagged as unconverged/.test(txt),'chosen converge policy and its consequence');
+  ok(confirmBtn().textContent==='Patch in place'&&confirmBtn().classList.contains('dialog-modal-btn-danger'),'patch keeps the danger button');
   const ack=dlg().querySelector('.dialog-modal-ack-input');
   ok(!!ack,'patch confirm requires typing even for one instance'); confirmBtn().click(); await sleep(40);
   ok(posts(/"kind":"certificates"/).length===0&&dlg().classList.contains('active'),'confirm without the word creates nothing');

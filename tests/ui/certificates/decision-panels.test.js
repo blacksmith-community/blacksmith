@@ -95,6 +95,18 @@ t('decision panels', async () => {
   confirmBtn().click(); await sleep(80);
   post=lastPost(/\/approve( |$)/); b=bodyOf(post);
   ok(b.preview_id==='pv-new'&&UUID.test(b.client_request_id)&&!('action' in b),'approve body: preview_id and client_request_id');
+  // approving a patch preview asks for the typed word
+  { const patchTask=mkTask({certificates:{mode:'patch',preview_id:'pv'}}); T.renderTaskDetail(patchTask);
+    previewResp={status:200,body:{preview_id:'pv-patch',instances:[{instance_id:'i-app',instance_name:'app',vms:1,gate:'g',selected:[{name:'/s/a_crt',days_left:5}],additional:[],blocked:null,impact:'x'}],warnings:[]}};
+    const nA=posts().filter(c=>/\/approve( |$)/.test(c)).length;
+    btn(app,'preview').click(); await waitDialog();
+    const ackA=d.querySelector('#dialog-modal-overlay .dialog-modal-ack-input');
+    ok(!!ackA&&confirmBtn().classList.contains('dialog-modal-btn-danger'),'patch approve requires the typed word');
+    confirmBtn().click(); await sleep(40);
+    ok(posts().filter(c=>/\/approve( |$)/.test(c)).length===nA&&d.querySelector('#dialog-modal-overlay.active'),'patch approve without the word posts nothing');
+    ackA.value='rotate'; ackA.dispatchEvent(new w.Event('input',{bubbles:true})); confirmBtn().click(); await sleep(80);
+    ok(posts().filter(c=>/\/approve( |$)/.test(c)).length===nA+1,'patch approve posts after the word');
+    previewResp=null; }
   T.renderTaskDetail(mkTask());
   btn(app,'skip').click(); await waitDialog(); confirmBtn().click(); await sleep(80);
   b=bodyOf(lastPost(/\/approve( |$)/));
