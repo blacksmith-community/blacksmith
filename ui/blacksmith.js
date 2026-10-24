@@ -5613,6 +5613,20 @@
     return date ? date.toISOString().slice(0, 10) : '';
   };
 
+  // A minute such as 2026-10-21 09:14 UTC.
+  const certMinute = (value) => {
+    const date = certDate(value);
+    return date ? `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC` : '';
+  };
+
+  // Shows days, or minutes when both values fall on the same day so a change stays visible.
+  const certExpiryPair = (oldValue, newValue) => {
+    const oldDay = certDay(oldValue);
+    const newDay = certDay(newValue);
+    if (oldDay && oldDay === newDay) return [certMinute(oldValue), certMinute(newValue)];
+    return [oldDay, newDay];
+  };
+
   // A day such as "21 Oct 2026".
   const certDayText = (value) => {
     const date = certDate(value);
@@ -6088,7 +6102,8 @@
           const item = rotateEl('li', 'cert-task-variable');
           item.appendChild(rotateEl('strong', 'cert-task-variable-name', String(variable.name || '')));
           item.appendChild(rotateEl('div', 'cert-task-variable-serial', `Serial: was ${variable.old_serial || 'unknown'}, now ${variable.new_serial || 'not made yet'}`));
-          item.appendChild(rotateEl('div', 'cert-task-variable-expiry', `Expires: was ${certDay(variable.old_not_after) || 'unknown'}, now ${certDay(variable.new_not_after) || 'not made yet'}`));
+          const [expiryWas, expiryNow] = certExpiryPair(variable.old_not_after, variable.new_not_after);
+          item.appendChild(rotateEl('div', 'cert-task-variable-expiry', `Expires: was ${expiryWas || 'unknown'}, now ${expiryNow || 'not made yet'}`));
           if (variable.regenerate_state) item.appendChild(rotateEl('div', 'cert-task-variable-state', `Regeneration: ${String(variable.regenerate_state).replace(/_/g, ' ')}`));
           if (Array.isArray(variable.validation) && variable.validation.length > 0) item.appendChild(checkList(variable.validation));
           list.appendChild(item);
