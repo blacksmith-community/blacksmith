@@ -33,9 +33,18 @@ umask 077
 readonly EXIT_USAGE=2 EXIT_DRIFT=10 EXIT_BACKUP=11 EXIT_RESTART=12
 readonly EXIT_REFUSED=13
 
+# NORM_LEAD_AWK drops the leading blank lines and blanks for norm_hash.
+# It works line by line, so a large file costs one pass.
+# shellcheck disable=SC2016
+readonly NORM_LEAD_AWK='
+started { print; next }
+/[^ \t]/ { sub(/^[ \t]+/, ""); started = 1; print }
+'
+
 # norm_hash prints the lowercase hex SHA-256 of a file after the same
 # normalising that certpatch.NormalisedHash applies in the broker. It
-# removes every carriage return, strips trailing spaces and tabs from each
+# removes every carriage return, drops the spaces, tabs, and newlines
+# before the first other byte, strips trailing spaces and tabs from each
 # line, drops trailing newlines, and appends exactly one newline. A file
 # that cannot be read, or that holds a NUL byte, prints nothing and
 # returns 1, because the shell cannot carry a NUL through the steps below
@@ -54,10 +63,11 @@ norm_hash() {
 	kept=$(tr -d '\000' < "$file" | wc -c) || return 1
 	[ "$size" -eq "$kept" ] || return 1
 
-	# The command substitution drops the trailing newlines, and printf
-	# puts exactly one back. printf is a builtin, so the text never
-	# appears on a command line.
-	text=$(tr -d '\r' < "$file" | sed -e 's/[[:blank:]]*$//') || return 1
+	# awk drops the lines before the first one with anything but blanks,
+	# and the blanks that start that line. The command substitution drops
+	# the trailing newlines, and printf puts exactly one back. printf is a
+	# builtin, so the text never appears on a command line.
+	text=$(tr -d '\r' < "$file" | sed -e 's/[[:blank:]]*$//' | awk "$NORM_LEAD_AWK") || return 1
 	printf '%s\n' "$text" | sha256sum | cut -d ' ' -f 1
 }
 

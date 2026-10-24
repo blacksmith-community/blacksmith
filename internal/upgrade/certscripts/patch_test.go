@@ -919,3 +919,179 @@ func TestPatchRefusesBadArguments(t *testing.T) {
 		t.Error("a refused call wrote a backup")
 	}
 }
+
+// paddedTree builds a patch tree whose target holds the old certificate
+// as a job template renders it, with a blank line before the PEM and two
+// after it, and stages the new certificate as CredHub returns it. It
+// returns the old and new pairs and the target's original bytes.
+func paddedTree(t *testing.T) (*vmTree, pair, pair, string) {
+	t.Helper()
+
+	old := newPair(t, "old")
+	fresh := newPair(t, "new")
+	tree := newPatchTree(t)
+	original := "\n" + old.cert + "\n\n"
+
+	tree.write(t, pinnedTarget, original)
+	tree.stage(t, fresh.cert)
+
+	return tree, old, fresh, original
+}
+
+func (v *vmTree) replacePadded(t *testing.T, old, fresh pair) (string, int) {
+	t.Helper()
+
+	return v.patch(t, "replace", testTaskID, pinnedJobDir, pinnedTarget, stagePath, old.certHash(), fresh.certHash())
+}
+
+func (v *vmTree) checkPadded(t *testing.T, old, fresh pair) (string, int) {
+	t.Helper()
+
+	return v.patch(t, opCheck, testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), fresh.certHash(), backupPath)
+}
+
+// TestReplaceKeepsSurroundingWhitespace shows that replace writes the
+// target's own leading and trailing whitespace around the new PEM, which
+// is what BOSH renders from the same template on the next deploy, and
+// that the bytes written hash to the new hash the journal records.
+func TestReplaceKeepsSurroundingWhitespace(t *testing.T) {
+	t.Parallel()
+
+	tree, old, fresh, original := paddedTree(t)
+
+	if _, code := tree.patch(t, "backup", testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), backupPath); code != 0 {
+		t.Fatalf("backup of a padded target exited %d, want 0", code)
+	}
+
+	tree.assert(t, backupPath, original)
+
+	out, code := tree.replacePadded(t, old, fresh)
+	if code != 0 {
+		t.Fatalf("replace of a padded target exited %d, want 0", code)
+	}
+
+	wantOutput(t, out, "ok path="+pinnedTarget+" state=new action=replaced\n")
+
+	written := "\n" + strings.TrimSpace(fresh.cert) + "\n\n\n"
+	tree.assert(t, pinnedTarget, written)
+	tree.assertOwnerMode(t, pinnedTarget, vcapUID, 0o640)
+	tree.assertOnlyTarget(t)
+
+	if got := libHash(t, tree.at(pinnedTarget)); got != fresh.certHash() {
+		t.Errorf("norm_hash of the written target = %s, want the new hash %s", got, fresh.certHash())
+	}
+
+	if certpatch.NormalisedHash([]byte(written)) != fresh.certHash() {
+		t.Error("NormalisedHash of the written bytes is not the new hash")
+	}
+
+	out, _ = tree.checkPadded(t, old, fresh)
+	wantOutput(t, out, "ok path="+pinnedTarget+" state=new backup=old\n")
+
+	// Rolling back puts the original bytes back exactly.
+	out, code = tree.patch(t, "restore", testTaskID, pinnedJobDir, pinnedTarget, backupPath, old.certHash(), fresh.certHash())
+	if code != 0 {
+		t.Fatalf("restore of a padded target exited %d, want 0", code)
+	}
+
+	wantOutput(t, out, "ok path="+pinnedTarget+" state=old action=restored\n")
+	tree.assert(t, pinnedTarget, original)
+	tree.assertOnlyTarget(t)
+}
+
+// TestReplaceStripsStagedWhitespace shows that whitespace around the
+// staged PEM never reaches the target, which gets the target's own.
+func TestReplaceStripsStagedWhitespace(t *testing.T) {
+	t.Parallel()
+
+	tree, old, fresh, _ := paddedTree(t)
+	tree.replace(t, stagePath)
+	tree.stage(t, "\r\n  "+fresh.cert+"\n\n\n")
+	tree.write(t, pinnedTarget, "\t"+strings.TrimSpace(old.cert))
+
+	if _, code := tree.replacePadded(t, old, fresh); code != 0 {
+		t.Fatalf("replace exited %d, want 0", code)
+	}
+
+	tree.assert(t, pinnedTarget, "\t"+strings.TrimSpace(fresh.cert))
+}
+
+// TestResumeMidSwapOfPaddedTarget shows that a task that stopped during
+// the swap of a padded target finds the target's state, finishes the
+// replacement with the whitespace kept, and can still roll back, whether
+// it stopped before or after the rename.
+func TestResumeMidSwapOfPaddedTarget(t *testing.T) {
+	t.Parallel()
+
+	leftover := targetDir + "/.certpatch." + testTaskID + ".Ab3dE6gH9j"
+
+	t.Run("before the rename", func(t *testing.T) {
+		t.Parallel()
+
+		tree, old, fresh, original := paddedTree(t)
+
+		if _, code := tree.patch(t, "backup", testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), backupPath); code != 0 {
+			t.Fatalf("backup exited %d, want 0", code)
+		}
+
+		// The swap wrote part of its temporary file and stopped.
+		tree.write(t, leftover, "\n"+fresh.cert[:20])
+
+		out, code := tree.checkPadded(t, old, fresh)
+		if code != 0 {
+			t.Fatalf("check after the stop exited %d, want 0", code)
+		}
+
+		wantOutput(t, out, "ok path="+pinnedTarget+" state=old backup=old\n")
+		tree.assert(t, pinnedTarget, original)
+
+		if _, code := tree.replacePadded(t, old, fresh); code != 0 {
+			t.Fatalf("the resumed replace exited %d, want 0", code)
+		}
+
+		tree.assert(t, pinnedTarget, "\n"+strings.TrimSpace(fresh.cert)+"\n\n\n")
+
+		if _, code := tree.patch(t, "cleanup", testTaskID, pinnedJobDir, pinnedTarget); code != 0 {
+			t.Fatalf("cleanup exited %d, want 0", code)
+		}
+
+		if tree.exists(t, leftover) {
+			t.Error("cleanup left the interrupted swap's temporary file")
+		}
+	})
+
+	t.Run("after the rename", func(t *testing.T) {
+		t.Parallel()
+
+		tree, old, fresh, original := paddedTree(t)
+
+		if _, code := tree.patch(t, "backup", testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), backupPath); code != 0 {
+			t.Fatalf("backup exited %d, want 0", code)
+		}
+
+		if _, code := tree.replacePadded(t, old, fresh); code != 0 {
+			t.Fatalf("replace exited %d, want 0", code)
+		}
+
+		written := "\n" + strings.TrimSpace(fresh.cert) + "\n\n\n"
+
+		// The journal never learned of the swap, so the task runs check
+		// and replace again.
+		out, _ := tree.checkPadded(t, old, fresh)
+		wantOutput(t, out, "ok path="+pinnedTarget+" state=new backup=old\n")
+
+		out, code := tree.replacePadded(t, old, fresh)
+		if code != 0 {
+			t.Fatalf("the resumed replace exited %d, want 0", code)
+		}
+
+		wantOutput(t, out, "ok path="+pinnedTarget+" state=new action=unchanged\n")
+		tree.assert(t, pinnedTarget, written)
+
+		if _, code := tree.patch(t, "restore", testTaskID, pinnedJobDir, pinnedTarget, backupPath, old.certHash(), fresh.certHash()); code != 0 {
+			t.Fatalf("restore exited %d, want 0", code)
+		}
+
+		tree.assert(t, pinnedTarget, original)
+	})
+}

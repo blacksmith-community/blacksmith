@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -436,6 +437,110 @@ func TestDiscoverReportsEmbedded(t *testing.T) {
 		if !reflect.DeepEqual(found.Embedded, want) {
 			t.Errorf("%s: Embedded = %+v, want %+v", name, found.Embedded, want)
 		}
+	}
+}
+
+// TestDiscoverMatchesPaddedFiles shows that a file holding the old PEM
+// with only whitespace around it, as a job template renders a blank line
+// before <%= p(...) %> and more after it, is a whole-file match that
+// patching can replace.
+func TestDiscoverMatchesPaddedFiles(t *testing.T) {
+	t.Parallel()
+
+	old := newPair(t, valkeyJob)
+	tree := newDiscoverTree(t, old)
+	tree.writeMode(t, valkeyCert, "\n"+old.cert+"\n\n", 0o644)
+	tree.write(t, valkeyKey, " \t\r\n"+old.key+"\r\n\t \n")
+
+	found := tree.discover(t, old.certHash(), old.keyHash())
+
+	if len(found.Embedded) != 0 {
+		t.Fatalf("Embedded = %+v, want none", found.Embedded)
+	}
+
+	want := []certscripts.Match{
+		{Job: valkeyJob, Path: valkeyCert, Hash: old.certHash(), Owner: "root:root", Mode: "0644", RootDirs: true},
+		{Job: valkeyJob, Path: valkeyKey, Hash: old.keyHash(), Owner: "nobody:nogroup", Mode: "0600", RootDirs: true},
+	}
+
+	if !reflect.DeepEqual(found.Matches, want) {
+		t.Errorf("Matches = %+v\nwant      %+v", found.Matches, want)
+	}
+
+	found.VM = testVM
+
+	_, err := certscripts.BuildConsumers(found,
+		map[string]string{testVariable: old.certHash()},
+		map[string]string{testVariable: old.keyHash()})
+	if err != nil {
+		t.Errorf("BuildConsumers refused a padded file: %v", err)
+	}
+}
+
+// TestDiscoverStillRefusesRealEmbedding shows that only whitespace around
+// the PEM is accepted. A file that holds anything else besides the old
+// PEM is embedded, and BuildConsumers refuses it with the usual message.
+func TestDiscoverStillRefusesRealEmbedding(t *testing.T) {
+	t.Parallel()
+
+	old := newPair(t, valkeyJob)
+	chain := newPair(t, "ca")
+	bundle := valkeyJobDir + "/config/bundle.pem"
+
+	cases := map[string]struct {
+		content string
+		hashes  []string
+	}{
+		"a certificate and a chain":   {"\n" + old.cert + chain.cert + "\n\n", []string{old.certHash()}},
+		"a certificate and a key":     {"\n" + old.cert + old.key + "\n", []string{old.certHash(), old.keyHash()}},
+		"text before the PEM":         {"# managed\n" + old.cert, []string{old.certHash()}},
+		"a character before the PEM":  {"\nx" + old.cert + "\n\n", []string{old.certHash()}},
+		"text after the PEM":          {"\n" + old.cert + "tls: on\n", []string{old.certHash()}},
+		"a vertical tab before a PEM": {"\v\n" + old.cert, []string{old.certHash()}},
+	}
+
+	for name, embedding := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newDiscoverTree(t, old)
+			tree.write(t, bundle, embedding.content)
+
+			found := tree.discover(t, old.certHash(), old.keyHash())
+
+			embedded := make([]string, 0, len(found.Embedded))
+
+			for _, match := range found.Embedded {
+				if match.Path != bundle {
+					t.Errorf("Embedded holds %s, want only %s", match.Path, bundle)
+				}
+
+				embedded = append(embedded, match.Hash)
+			}
+
+			want := append([]string(nil), embedding.hashes...)
+			sort.Strings(want)
+
+			if !reflect.DeepEqual(embedded, want) {
+				t.Errorf("embedded hashes = %v, want %v", embedded, want)
+			}
+
+			for _, match := range found.Matches {
+				if match.Path == bundle {
+					t.Errorf("%s is a whole-file match, want it embedded", bundle)
+				}
+			}
+
+			found.VM = testVM
+
+			_, err := certscripts.BuildConsumers(found,
+				map[string]string{testVariable: old.certHash()},
+				map[string]string{testVariable: old.keyHash()})
+			if !errors.Is(err, certscripts.ErrPatchUnsafe) ||
+				!strings.Contains(err.Error(), "is embedded in larger content in "+bundle+", which patching cannot replace") {
+				t.Errorf("BuildConsumers error = %v, want the embedded refusal for %s", err, bundle)
+			}
+		})
 	}
 }
 

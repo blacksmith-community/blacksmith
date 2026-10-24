@@ -84,12 +84,70 @@ _pt_sync() {
 	sync -- "$@"
 }
 
-# _pt_swap <task> <source> <full> <want> writes the content of source
-# over the target full through a temporary file in the target's
-# directory, named for the task. The new file takes the target's owner,
-# group, and mode, and must hash to want before the rename.
+# PT_WRAP_AWK reads od's decimal bytes of a target on stdin and the file
+# named by the source variable. It prints the spaces, tabs, carriage
+# returns, and newlines before the target's first other byte, then the
+# source's content without those around it, then the target's ones after
+# its last other byte. Only those four bytes are printed from the
+# target, so nothing else of it can reach the output, and the target is
+# read once. It exits 1 for a target that holds nothing else, or a
+# source it cannot read.
+# shellcheck disable=SC2016
+readonly PT_WRAP_AWK='
+{
+	for (i = 1; i <= NF; i++) {
+		c = $i + 0
+
+		if (c == 9 || c == 10 || c == 13 || c == 32) {
+			if (started) tail[ntail++] = c
+			else lead[nlead++] = c
+		} else {
+			started = 1
+			ntail = 0
+		}
+	}
+}
+
+END {
+	if (!started) exit 1
+
+	body = ""
+	lines = 0
+
+	while ((got = (getline line < source)) > 0) {
+		body = body (lines++ ? "\n" : "") line
+	}
+
+	if (got < 0) exit 1
+
+	sub(/^[ \t\r\n]+/, "", body)
+	sub(/[ \t\r\n]+$/, "", body)
+
+	for (i = 0; i < nlead; i++) printf "%c", lead[i]
+	printf "%s", body
+	for (i = 0; i < ntail; i++) printf "%c", tail[i]
+}
+'
+
+# _pt_wrap <target> <source> prints the content of source between the
+# whitespace that surrounds the content of target. A job template that
+# renders a blank line before a value and more after it then gets the
+# same blank lines around the new value, which is what BOSH renders from
+# the template on the next deploy. Every caller has checked both files
+# with norm_hash, so neither holds a NUL byte.
+_pt_wrap() {
+	od -An -v -tu1 -- "$1" | awk -v source="$2" "$PT_WRAP_AWK"
+}
+
+# _pt_swap <task> <source> <full> <want> [wrap] writes the content of
+# source over the target full through a temporary file in the target's
+# directory, named for the task. With wrap, the content of source goes
+# between the target's own leading and trailing whitespace, as _pt_wrap
+# prints it, and without it the file is copied as it is. The new file
+# takes the target's owner, group, and mode, and must hash to want
+# before the rename.
 _pt_swap() {
-	local task=$1 source=$2 full=$3 want=$4 dir info owner mode
+	local task=$1 source=$2 full=$3 want=$4 how=${5:-copy} dir info owner mode
 
 	dir=${full%/*}
 	info=$(stat -c '%u:%g %a' -- "$full") || return 1
@@ -97,7 +155,13 @@ _pt_swap() {
 	mode=${info#* }
 
 	_PT_TMP=$(mktemp -- "$dir/.certpatch.$task.XXXXXXXXXX") || return 1
-	cat -- "$source" > "$_PT_TMP" || return 1
+
+	if [ "$how" = wrap ]; then
+		_pt_wrap "$full" "$source" > "$_PT_TMP" || return 1
+	else
+		cat -- "$source" > "$_PT_TMP" || return 1
+	fi
+
 	chown -- "$owner" "$_PT_TMP" || return 1
 	chmod -- "$mode" "$_PT_TMP" || return 1
 	[ "$(_pt_hash "$_PT_TMP")" = "$want" ] || return 1
@@ -281,7 +345,7 @@ replace() {
 		return "$EXIT_DRIFT"
 	fi
 
-	_pt_swap "$task" "$root$staged" "$full" "$new" || return 1
+	_pt_swap "$task" "$root$staged" "$full" "$new" wrap || return 1
 
 	printf 'ok path=%s state=new action=replaced\n' "$path"
 }

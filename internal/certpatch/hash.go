@@ -8,10 +8,13 @@ import (
 )
 
 // NormalisedHash returns the lowercase hex SHA-256 of b after it has been
-// normalised, so a template's line endings or trailing whitespace cannot
-// hide a match. Normalising removes every carriage return, strips trailing
-// spaces and tabs from each line, drops trailing newlines, and appends
-// exactly one newline. The shell function on the VM applies the same rule.
+// normalised, so a template's line endings or the whitespace it puts
+// around a value cannot hide a match. Normalising removes every carriage
+// return, drops the spaces, tabs, and newlines before the first other
+// byte, strips trailing spaces and tabs from each line, drops trailing
+// newlines, and appends exactly one newline. A file that holds a PEM with
+// only whitespace around it therefore hashes the same as the bare PEM.
+// The shell function on the VM applies the same rule.
 func NormalisedHash(b []byte) string {
 	return normalisedHash(b, nil)
 }
@@ -19,8 +22,8 @@ func NormalisedHash(b []byte) string {
 // normalisedHash does the work in one buffer that it clears before it
 // returns, because the input can be a private key. seen, when set, receives
 // that buffer after it was cleared, so a test can check it.
-func normalisedHash(b []byte, seen func([]byte)) string {
-	out := make([]byte, 0, len(b)+1)
+func normalisedHash(input []byte, seen func([]byte)) string {
+	out := make([]byte, 0, len(input)+1)
 
 	defer func() {
 		out = out[:cap(out)]
@@ -33,16 +36,20 @@ func normalisedHash(b []byte, seen func([]byte)) string {
 	}()
 
 	lineStart := 0
+	started := false
 
-	for _, c := range b {
-		switch c {
-		case '\r':
-		case '\n':
+	for _, char := range input {
+		switch {
+		case char == '\r':
+		case !started && (char == ' ' || char == '\t' || char == '\n'):
+		case char == '\n':
 			out = trimLine(out, lineStart)
 			out = append(out, '\n')
 			lineStart = len(out)
 		default:
-			out = append(out, c)
+			started = true
+
+			out = append(out, char)
 		}
 	}
 
