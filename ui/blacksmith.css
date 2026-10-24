@@ -4306,6 +4306,19 @@ select[id*="connection-vhost"] {
   flex-shrink: 0;
 }
 
+/* The page-wide .warning callout rule (padding, border, background, margin)
+   also matched this icon, because the icon carries the warning class. The
+   padding ate the whole 24px box, so the glyph had no room to draw. */
+.dialog-modal-overlay .dialog-modal-icon {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  border-radius: 0;
+  font-size: inherit;
+}
+
 .dialog-modal-icon.warning {
   color: #f59e0b;
 }
