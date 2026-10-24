@@ -152,8 +152,6 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* Reset spacing only in the application shell, preserving Oat's document defaults elsewhere. */
 .main-content { padding-top: 0; }
-.console-heading h1 { margin: 0; }
-.console-heading p { margin-bottom: 0; }
 #blacksmith .entity-navigation, #services .entity-navigation { align-items: stretch; gap: 12px; }
 .entity-metric.card { margin: 0; }
 .entity-context.card { margin: 0 0 20px; }

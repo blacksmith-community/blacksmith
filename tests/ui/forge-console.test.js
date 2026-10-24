@@ -138,3 +138,10 @@ t('confirmation isolates the background and restores prior inert state',async()=
  expect(header.hasAttribute('inert')).toBe(true);
  }finally{w.close();}
 });
+
+test('the tabs sit at the top with the page title kept for assistive tech', () => {
+  const html = fs.readFileSync(path.join(ui, 'index.html'), 'utf8');
+  expect(html).not.toContain('Manage services, inspect deployments, and monitor batch operations.');
+  expect(html).not.toContain('console-heading');
+  expect(html).toMatch(/<h1 id="console-title" class="visually-hidden">Blacksmith<\/h1>\s*<!-- Tab navigation -->/);
+});
