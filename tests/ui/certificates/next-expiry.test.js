@@ -59,7 +59,9 @@ t('next expiry pill and the 90 day section', async () => {
   ok(d.getElementById('cert-fleet-timeline').hidden === true, '90 day section is absent when the soonest is past 90 days');
   ok(!/Nothing expires in the next 90 days/.test(d.getElementById('certificates').textContent), 'the duplicate line is gone');
 
-  // the 30 day banner is unchanged
-  ok(/^Nothing expires within 30 days\./.test((d.getElementById('cert-reassurance') || { textContent: '' }).textContent), '30 day banner kept');
+  // the horizon table replaces the old reassurance line
+  ok(!d.getElementById('cert-reassurance') && !/Nothing expires within/.test(d.getElementById('certificates').textContent), 'the old reassurance line is gone');
+  const counts = Array.from(d.querySelectorAll('#cert-horizon tbody td')).map((td) => td.textContent);
+  ok(counts.join(',') === '0,0,0,0,0,1,1', 'horizon counts for 100 and 400 days: ' + counts.join(','));
   expect(failures).toEqual([]);
 });

@@ -104,7 +104,7 @@ t('fleet rows and grouping', async () => {
   for(const [withObs,expect] of [[true,/1 listener did not answer/],[false,/3 listeners did not answer/]]){
     const b=await boot(); b.server.certs=calm(withObs); wrap(b.w,b.server);
     await b.w.blacksmithNav.switchTab('certificates'); await sleep(200);
-    const r=b.d.getElementById('cert-reassurance');
+    const r=b.d.querySelector('#cert-horizon .cert-horizon-gaps');
     ok(r&&expect.test(r.textContent),(withObs?'3 certs one locator':'no observations fallback')+': '+(r&&r.textContent));
   }
   expect(failures).toEqual([]);

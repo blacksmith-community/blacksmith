@@ -22887,6 +22887,7 @@
       attention: false,
       expires_after: '',
       expires_before: '',
+      expires_within: 0,
       q: ''
     });
 
@@ -22907,8 +22908,19 @@
         (f[field] || []).forEach((value) => params.append(field, value));
       });
       if (f.attention) params.set('attention', 'true');
-      if (f.expires_after) params.set('expires_after', f.expires_after);
-      if (f.expires_before) params.set('expires_before', f.expires_before);
+      let after = f.expires_after;
+      let before = f.expires_before;
+      // The horizon filter reads as a range that starts just after the
+      // anchor and ends at the horizon, and it intersects with any week
+      // range from the timeline.
+      if (f.expires_within > 0 && view.anchor) {
+        const lo = new Date(view.anchor + 1).toISOString();
+        const hi = new Date(view.anchor + f.expires_within * DAY_MS + 1).toISOString();
+        if (!after || Date.parse(after) < Date.parse(lo)) after = lo;
+        if (!before || Date.parse(before) > Date.parse(hi)) before = hi;
+      }
+      if (after) params.set('expires_after', after);
+      if (before) params.set('expires_before', before);
       if (f.q && String(f.q).trim()) params.set('q', String(f.q).trim());
       if (extra) {
         Object.keys(extra).forEach((key) => params.set(key, extra[key]));
@@ -23332,20 +23344,40 @@
       return box;
     };
 
-    // The reassurance line. It says nothing expires only when the scan
-    // covered everything, and otherwise says what it could and could not see.
+    // The expiry horizon table counts the certificates that expire within
+    // each horizon, and a short line under it says what the scan could not see.
     const joinPhrases = (phrases) => {
       if (phrases.length <= 1) return phrases.join('');
       if (phrases.length === 2) return `${phrases[0]} and ${phrases[1]}`;
       return `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
     };
 
-    const reassuranceNotice = (resp) => {
-      const s = resp.summary || {};
-      if ((s.certificates || 0) === 0) return null;
-      if ((s.expired || 0) + (s.critical || 0) + (s.warning || 0) > 0) return null;
+    const HORIZONS = [
+      { days: 7, label: '1 week' },
+      { days: 14, label: '2 weeks' },
+      { days: 30, label: '30 days' },
+      { days: 60, label: '60 days' },
+      { days: 90, label: '90 days' },
+      { days: 180, label: '180 days' },
+      { days: 365, label: '1 year' }
+    ];
 
-      const days = Number((resp.settings || {}).warning_days) || 30;
+    // Counts are cumulative. A certificate counts when its expiry falls
+    // after the anchor and on or before the anchor plus the horizon, so
+    // expired and unknown expiries never count.
+    const horizonCounts = () => {
+      const anchor = view.anchor || Date.now();
+      return HORIZONS.map((h) => {
+        const limit = anchor + h.days * DAY_MS;
+        return view.fleet.filter((cert) => {
+          const t = Date.parse(cert.effective_not_after);
+          return !Number.isNaN(t) && t > anchor && t <= limit;
+        }).length;
+      });
+    };
+
+    const coverageGaps = (resp) => {
+      const s = resp.summary || {};
       const credhub = ((resp.capabilities || {}).credhub || {}).state;
       const scanErrors = Array.isArray((resp.scan || {}).errors) ? resp.scan.errors.length : 0;
       // One dead listener shared by many certificates is one dead listener,
@@ -23371,14 +23403,51 @@
       if ((s.stale || 0) > 0) gaps.push(`${plural(s.stale, 'certificate')} ${s.stale === 1 ? 'is' : 'are'} showing stale data`);
       if (gaps.length === 0 && (s.incomplete_coverage || 0) > 0) gaps.push(`${plural(s.incomplete_coverage, 'certificate')} ${s.incomplete_coverage === 1 ? 'has' : 'have'} incomplete coverage`);
       if (credhub && credhub !== 'configured') gaps.push('CredHub is not available');
+      return gaps;
+    };
 
-      const box = el('div', 'cert-notice cert-notice--ok');
-      box.setAttribute('role', 'status');
-      box.id = 'cert-reassurance';
-      const text = gaps.length === 0
-        ? `Nothing expires within ${plural(days, 'day')}.`
-        : `Nothing we could observe expires within ${plural(days, 'day')}. ${joinPhrases(gaps)}.`;
-      box.appendChild(el('p', 'cert-notice-text', text));
+    const horizonNotice = (resp) => {
+      const s = resp.summary || {};
+      if ((s.certificates || 0) === 0) return null;
+
+      const counts = horizonCounts();
+      const box = el('div', 'cert-notice cert-notice--ok cert-horizon');
+      box.id = 'cert-horizon';
+
+      const table = el('table', 'cert-horizon-table');
+      table.appendChild(el('caption', 'cert-horizon-caption', 'Certificates expiring within'));
+      const head = el('tr');
+      const row = el('tr');
+      HORIZONS.forEach((h, i) => {
+        const th = el('th', null, h.label);
+        th.scope = 'col';
+        head.appendChild(th);
+        const td = el('td');
+        const n = counts[i];
+        if (n > 0) {
+          const pressed = state.expires_within === h.days;
+          const b = button('cert-horizon-btn', String(n));
+          b.dataset.horizon = String(h.days);
+          b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+          b.setAttribute('aria-label', `${plural(n, 'certificate')} ${n === 1 ? 'expires' : 'expire'} within ${h.label}. Show ${n === 1 ? 'it' : 'them'}.`);
+          b.addEventListener('click', () => {
+            state.expires_within = pressed ? 0 : h.days;
+            changed();
+          });
+          td.appendChild(b);
+        } else {
+          td.textContent = '0';
+        }
+        row.appendChild(td);
+      });
+      table.appendChild(el('thead', null)).appendChild(head);
+      table.appendChild(el('tbody', null)).appendChild(row);
+      box.appendChild(table);
+
+      const gaps = coverageGaps(resp);
+      if (gaps.length > 0) {
+        box.appendChild(el('p', 'cert-notice-text cert-horizon-gaps', `These counts cover what we could observe. ${joinPhrases(gaps)}.`));
+      }
       return box;
     };
 
@@ -23387,14 +23456,22 @@
       const resp = view.resp;
       const nodes = [];
       if (resp && view.mode === 'ready') {
-        [refreshErrorNotice(), credhubNotice(resp), directorNotice(resp), staleNotice(resp), reassuranceNotice(resp)].forEach((node) => {
+        [refreshErrorNotice(), credhubNotice(resp), directorNotice(resp), staleNotice(resp), horizonNotice(resp)].forEach((node) => {
           if (node) nodes.push(node);
         });
       } else {
         const failed = refreshErrorNotice();
         if (failed) nodes.push(failed);
       }
+      // The table is rebuilt on every render, so a pressed count hands its
+      // focus to the new button for the same horizon.
+      const active = document.activeElement;
+      const focusHorizon = active && holder.contains(active) ? active.dataset.horizon : null;
       holder.replaceChildren(...nodes);
+      if (focusHorizon) {
+        const again = holder.querySelector(`[data-horizon="${focusHorizon}"]`);
+        if (again) again.focus({ preventScroll: true });
+      }
     };
 
     // A strip button is a toggle. The two strips are built once, and each
@@ -23582,6 +23659,9 @@
           text: `expires ${from} to ${to}`,
           remove: () => { state.expires_after = ''; state.expires_before = ''; }
         });
+      }
+      if (state.expires_within > 0) {
+        chips.push({ text: `expires within ${plural(state.expires_within, 'day')}`, remove: () => { state.expires_within = 0; } });
       }
       if (state.q && state.q.trim()) {
         chips.push({ text: `search="${state.q.trim()}"`, remove: () => { state.q = ''; view.refs.search.value = ''; } });
@@ -24036,7 +24116,7 @@
     // put while a timeline button is pressed, so the pressed range keeps
     // meaning the same thing across refreshes.
     const updateAnchor = (resp) => {
-      if ((state.expires_after || state.expires_before) && view.anchor) return;
+      if ((state.expires_after || state.expires_before || state.expires_within) && view.anchor) return;
       const t = Date.parse(resp && resp.generated_at);
       view.anchor = Number.isNaN(t) ? Date.now() : t;
     };
@@ -24813,6 +24893,7 @@
       view.signature = '';
       refresh({ announce: true });
       if (view.built) {
+        renderNotices();
         renderChips();
         renderStrips();
         renderToolbar();

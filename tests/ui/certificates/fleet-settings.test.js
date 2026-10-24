@@ -11,11 +11,11 @@ const fire=(w,el,type)=>el.dispatchEvent(new w.Event(type,{bubbles:true,cancelab
 const submit=async(w,d)=>{ const f=d.querySelector('#cert-settings-modal form'); f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true})); await sleep(80); };
 const setv=(d,k,v)=>{ d.getElementById('cert-setting-'+k).value=String(v); };
 const text=(d,id)=>d.getElementById(id)?d.getElementById(id).textContent:'';
-t('fleet settings and reassurance', async () => {
+t('fleet settings and coverage line', async () => {
   let {w,d,server,log,errors}=await boot();
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
   // ---- reassurance with problems present ----
-  ok(!d.getElementById('cert-reassurance'),'no reassurance while expired/critical/warning exist');
+  ok(!d.getElementById('cert-reassurance'),'the old reassurance line is gone');
   // ---- settings modal ----
   const sb=d.getElementById('cert-settings-btn'); ok(!!sb && !sb.hidden,'Settings button');
   sb.focus(); sb.click(); await sleep(100);
@@ -94,36 +94,37 @@ t('fleet settings and reassurance', async () => {
   // A. complete coverage -> strong claim
   ({w,d,server}=await boot()); clean(server);
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  let r=d.getElementById('cert-reassurance');
-  ok(!!r && r.textContent==='Nothing expires within 30 days.','A strong claim: '+(r&&r.textContent));
+  let r=d.querySelector('#cert-horizon .cert-horizon-gaps');
+  ok(!!d.getElementById('cert-horizon') && !r,'A complete coverage shows no gap line: '+(r&&r.textContent));
+  ok(!/Nothing expires/.test(d.getElementById('certificates').textContent),'A no reassurance sentence');
   // B. unknown expiry + failed listener -> weak claim, exact sentence
   ({w,d,server}=await boot()); clean(server);
   server.certs.slice(0,4).forEach(c=>{ c.expiry='unknown'; delete c.days_left; c.effective_not_after=undefined; });
   server.certs[5].coverage.failed_listeners=1; server.certs[5].coverage.complete=false; server.certs[5].observations[1].state='failed';
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  r=d.getElementById('cert-reassurance');
-  ok(!!r && r.textContent==='Nothing we could observe expires within 30 days. 4 certificates have an unknown expiry and 1 listener did not answer.','B weak claim: '+(r&&r.textContent));
+  r=d.querySelector('#cert-horizon .cert-horizon-gaps');
+  ok(!!r && r.textContent==='These counts cover what we could observe. 4 certificates have an unknown expiry and 1 listener did not answer.','B gap line: '+(r&&r.textContent));
   ok(bad(d)===0,'no injected (reassurance B)');
   // C. CredHub absent -> never the strong claim
   ({w,d,server}=await boot()); clean(server); server.caps.credhub={state:'not_configured',reason:'none'};
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  r=d.getElementById('cert-reassurance');
-  ok(!!r && /^Nothing we could observe expires within 30 days\./.test(r.textContent) && !/^Nothing expires/.test(r.textContent) && /CredHub is not available/.test(r.textContent),'C CredHub absent: '+(r&&r.textContent));
+  r=d.querySelector('#cert-horizon .cert-horizon-gaps');
+  ok(!!r && /^These counts cover what we could observe\./.test(r.textContent) && /CredHub is not available/.test(r.textContent),'C CredHub absent: '+(r&&r.textContent));
   // D. stale instance -> weak
   ({w,d,server}=await boot()); clean(server); server.scan=Object.assign({},server.scan,{errors:[{instance_id:'i1',error:'x'+EVIL,last_success_at:new Date().toISOString()}]});
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  r=d.getElementById('cert-reassurance'); ok(!!r && /1 instance could not be scanned/.test(r.textContent) && /^Nothing we could observe/.test(r.textContent),'D stale -> weak: '+(r&&r.textContent));
+  r=d.querySelector('#cert-horizon .cert-horizon-gaps'); ok(!!r && /1 instance could not be scanned/.test(r.textContent) && /^These counts cover what we could observe/.test(r.textContent),'D unscanned instance: '+(r&&r.textContent));
   // E. first scan failed -> no line
   ({w,d,server}=await boot()); server.mode='first-failed';
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  ok(!d.getElementById('cert-reassurance') && !d.getElementById('cert-fleet-actions').offsetParent===false || !d.getElementById('cert-reassurance'),'E no reassurance on first-scan failure');
+  ok(!d.getElementById('cert-horizon'),'E no horizon table on first-scan failure');
   // F. disabled -> settings button hidden
   ({w,d,server}=await boot()); server.mode='disabled';
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  ok(d.getElementById('cert-fleet-actions').hidden && !d.getElementById('cert-reassurance'),'F disabled: actions (incl. Settings) hidden');
-  // G. custom warning window in the sentence
+  ok(d.getElementById('cert-fleet-actions').hidden && !d.getElementById('cert-horizon'),'F disabled: actions (incl. Settings) hidden');
+  // G. the configured warning window no longer appears in any sentence
   ({w,d,server}=await boot()); clean(server); server.settings.warning_days=45;
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
-  r=d.getElementById('cert-reassurance'); ok(!!r && r.textContent==='Nothing expires within 45 days.','G uses the configured window: '+(r&&r.textContent));
+  ok(!!d.getElementById('cert-horizon') && !/45 days/.test(d.getElementById('cert-fleet-notices').textContent),'G the table ignores the configured window');
   expect(failures).toEqual([]);
 }, 120000);

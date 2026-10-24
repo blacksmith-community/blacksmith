@@ -11988,6 +11988,7 @@ span.config-type.resurrection {
 .cert-action-btn:focus-visible,
 .cert-link-btn:focus-visible,
 .cert-strip-btn:focus-visible,
+.cert-horizon-btn:focus-visible,
 .cert-chip:focus-visible,
 .cert-expand-btn:focus-visible,
 .cert-fleet input:focus-visible,
@@ -12740,6 +12741,58 @@ span.config-type.resurrection {
 
 .cert-notice--ok {
   border-left-color: var(--cert-ok);
+}
+
+.cert-horizon {
+  padding: 6px 12px;
+}
+
+.cert-horizon-table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cert-horizon-caption {
+  padding: 0 0 2px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cert-horizon-table th,
+.cert-horizon-table td {
+  padding: 1px 14px 1px 0;
+  text-align: left;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.cert-horizon-table th {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cert-horizon-btn {
+  padding: 0 8px;
+  border: 1px solid var(--cert-control-border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+
+.cert-horizon-btn[aria-pressed="true"] {
+  border-color: var(--border-active);
+  font-weight: 700;
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-active);
+}
+
+.cert-horizon-gaps {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 13px;
 }
 
 .cert-settings-modal {
