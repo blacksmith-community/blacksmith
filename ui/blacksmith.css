@@ -12856,6 +12856,13 @@ span.config-type.resurrection {
   max-width: 560px;
 }
 
+/* The shared .modal-body has no padding of its own. These values match
+   .dialog-modal-body, .dialog-modal-header, and .dialog-modal-footer. */
+.cert-settings-modal .modal-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
 .cert-settings-form {
   display: flex;
   flex-direction: column;
@@ -12918,8 +12925,25 @@ span.config-type.resurrection {
 
 .cert-settings-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   justify-content: flex-end;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-primary);
+}
+
+@media (max-width: 480px) {
+  .cert-settings-modal .modal-header {
+    padding: 12px 14px;
+  }
+
+  .cert-settings-modal .modal-body {
+    padding: 12px 14px;
+  }
+
+  .cert-settings-actions {
+    padding-top: 12px;
+  }
 }
 
 /* ================================================================
