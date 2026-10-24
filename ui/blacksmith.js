@@ -15882,6 +15882,29 @@
     });
   };
 
+  // The version panel is built when its modal opens, so one delegated
+  // listener serves it. It copies the text the panel shows.
+  document.addEventListener('click', async (event) => {
+    const button = event.target.closest && event.target.closest('#copy-config-version-content');
+    if (!button) return;
+    const panel = document.getElementById('config-version-content');
+    const text = panel ? panel.textContent : '';
+    if (!text) {
+      announce('There is no config content to copy.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      button.classList.add('copied');
+      flashCopyIcon(button);
+      announce('Copied to clipboard');
+      setTimeout(() => button.classList.remove('copied'), 2000);
+    } catch (err) {
+      console.error('Failed to copy config version content:', err);
+      window.Feedback.error('Failed to copy to clipboard.', { toast: true });
+    }
+  });
+
   // Set up config copy functionality
   const setupConfigCopyFunctionality = () => {
     const copyButton = document.getElementById('copy-config-content');
