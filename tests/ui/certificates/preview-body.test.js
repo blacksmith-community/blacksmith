@@ -64,7 +64,12 @@ t('preview body layout', async () => {
   const row=n.querySelector('summary');
   ok(/1 expired, 1 additional/.test(row.textContent)&&!!row.querySelector('.rotate-preview-chevron')&&!!row.querySelector('.rotate-preview-row-badge .cert-pill'),'row: chevron, badge, exceptions');
   const lnk=n.querySelector('.rotate-preview-link'); ok(lnk&&/1 excluded/.test(lnk.textContent)&&n.pinnedNode===n.querySelector('.rotate-preview-summary'),'excluded count is a link and the summary is pinned');
-  lnk.click(); ok(true,'excluded link click does not throw');
+  d.body.appendChild(n);
+  const target=n.querySelector('#rotate-preview-excluded'); const scrolled=[];
+  target.scrollIntoView=function(){ scrolled.push(this); };
+  lnk.click();
+  ok(scrolled.length===1&&scrolled[0]===target&&d.activeElement===target,'excluded link scrolls to the section and focuses it');
+  n.remove();
 
   // converge: no certificate rows
   n=build({instances:[inst('a')],warnings:[]},'converge');
