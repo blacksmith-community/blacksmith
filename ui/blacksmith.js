@@ -23394,8 +23394,8 @@
     ];
 
     // Counts are cumulative. A certificate counts when its expiry falls
-    // after the anchor and on or before the anchor plus the horizon, so
-    // expired and unknown expiries never count.
+    // after the current server time and on or before that time plus the
+    // horizon, so expired and unknown expiries never count.
     const horizonCounts = () => {
       const anchor = serverNow();
       return HORIZONS.map((h) => {
@@ -23435,6 +23435,25 @@
       if (gaps.length === 0 && (s.incomplete_coverage || 0) > 0) gaps.push(`${plural(s.incomplete_coverage, 'certificate')} ${s.incomplete_coverage === 1 ? 'has' : 'have'} incomplete coverage`);
       if (credhub && credhub !== 'configured') gaps.push('CredHub is not available');
       return gaps;
+    };
+
+    // Brings the shown band up to date with a freshly built one. Only the
+    // cells and the gap line that differ are touched.
+    const patchHorizon = (shown, fresh) => {
+      shown.className = fresh.className;
+      const shownCells = shown.querySelectorAll('tbody td');
+      fresh.querySelectorAll('tbody td').forEach((cell, i) => {
+        if (shownCells[i] && shownCells[i].innerHTML !== cell.innerHTML) shownCells[i].replaceChildren(...cell.childNodes);
+      });
+      const shownGap = shown.querySelector('.cert-horizon-gaps');
+      const freshGap = fresh.querySelector('.cert-horizon-gaps');
+      if (shownGap && freshGap) {
+        if (shownGap.textContent !== freshGap.textContent) shownGap.textContent = freshGap.textContent;
+      } else if (shownGap) {
+        shownGap.remove();
+      } else if (freshGap) {
+        shown.appendChild(freshGap);
+      }
     };
 
     const horizonNotice = (resp) => {
@@ -23504,12 +23523,26 @@
         const failed = refreshErrorNotice();
         if (failed) nodes.push(failed);
       }
-      // The table is rebuilt on every render, so a pressed count hands its
-      // focus to the new button for the same horizon.
+      // A poll with unchanged data must leave the page as it is. A notice
+      // that reads the same is kept as the same element, and the horizon
+      // band is patched cell by cell, so scroll position, focus, and the
+      // status line survive.
       const active = document.activeElement;
       const focusHorizon = active && holder.contains(active) ? active.dataset.horizon : null;
-      holder.replaceChildren(...nodes);
-      if (focusHorizon) {
+      const previous = Array.from(holder.children);
+      const kept = nodes.map((node, i) => {
+        const prev = previous[i];
+        if (!prev) return node;
+        if (node.id === 'cert-horizon' && prev.id === 'cert-horizon') {
+          patchHorizon(prev, node);
+          return prev;
+        }
+        return prev.outerHTML === node.outerHTML ? prev : node;
+      });
+      if (kept.length !== previous.length || kept.some((node, i) => node !== previous[i])) {
+        holder.replaceChildren(...kept);
+      }
+      if (focusHorizon && !holder.contains(document.activeElement)) {
         const again = holder.querySelector(`[data-horizon="${focusHorizon}"]`);
         if (again) again.focus({ preventScroll: true });
       }

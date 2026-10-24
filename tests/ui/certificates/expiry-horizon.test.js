@@ -215,3 +215,31 @@ t('the pressed label, focus, accent, and narrow scrolling', async () => {
   ok(calm.d.getElementById('cert-horizon').classList.contains('cert-notice--ok'), 'a calm fleet keeps the green accent');
   expect(failures).toEqual([]);
 }, 60000);
+
+t('a poll with unchanged data leaves the band, its focus, and its status line in place', async () => {
+  const { ok, failures } = checks();
+  const { env } = await openFrozen([cert('a', 3), cert('b', 20), unknown('unk')]);
+  const { d, w } = env;
+  const scroll = d.querySelector('.cert-horizon-scroll');
+  const tbl = table(d);
+  const btn = horizonBtn(d, 30);
+  const gap = d.querySelector('.cert-horizon-gaps');
+  scroll.scrollLeft = 40;
+  scroll.focus();
+  ok(d.activeElement === scroll, 'the scroll region holds focus');
+  await w.blacksmithCerts.refresh({ silent: true });
+  await sleep(150);
+  ok(d.querySelector('.cert-horizon-scroll') === scroll && table(d) === tbl && horizonBtn(d, 30) === btn, 'the same nodes after a quiet poll');
+  ok(d.querySelector('.cert-horizon-gaps') === gap, 'the status line is not re-inserted');
+  ok(d.activeElement === scroll, 'focus stays on the scroll region');
+  ok(scroll.scrollLeft === 40, 'scroll position stays: ' + scroll.scrollLeft);
+
+  // Real changes still update, in place.
+  btn.focus();
+  env.server.certs = [cert('a', 3), cert('b', 20), cert('c', 25), unknown('unk')];
+  await w.blacksmithCerts.refresh({ silent: true });
+  await sleep(150);
+  ok(counts(d)[2] === '3' && d.querySelector('.cert-horizon-scroll') === scroll, 'a changed count patches the cell and keeps the region: ' + counts(d).join(','));
+  ok(d.activeElement === horizonBtn(d, 30), 'focus follows the rebuilt button');
+  expect(failures).toEqual([]);
+}, 60000);
