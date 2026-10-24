@@ -12613,6 +12613,11 @@ span.config-type.resurrection {
   overflow-x: auto;
 }
 
+.cert-timeline:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
 .cert-timeline-wrap--empty .cert-timeline {
   display: none;
 }

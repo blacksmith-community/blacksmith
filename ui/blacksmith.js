@@ -23982,8 +23982,9 @@
       holder.replaceChildren();
       holder.appendChild(el('h3', 'cert-timeline-title', 'Expiring in the next 90 days'));
       const row = el('div', 'cert-timeline');
-      row.setAttribute('role', 'group');
-      row.setAttribute('aria-label', 'Certificates by expiry week');
+      row.setAttribute('role', 'region');
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('aria-label', 'Expiry chart, scrolls sideways');
       view.refs.timelineButtons = [];
       for (let i = 0; i <= TIMELINE_WEEKS; i += 1) {
         const b = button('cert-tl-btn');
