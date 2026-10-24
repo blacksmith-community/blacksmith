@@ -853,6 +853,41 @@ func TestSchedulerAcceptsScannerInterface(t *testing.T) {
 	var _ instanceScanner = (*Scanner)(nil)
 }
 
+// TestKeepLastGoodStaleObservationShowsLatest checks that the stale CredHub
+// observation a failed rescan carries describes the latest version, like
+// the observation of a good scan.
+func TestKeepLastGoodStaleObservationShowsLatest(t *testing.T) {
+	t.Parallel()
+
+	deployed := issue(t, issueSpec{cn: "valkey", serial: 1})
+	latest := issue(t, issueSpec{cn: "valkey", serial: 2})
+	name := "/ws-bosh/svc-a/valkey_crt"
+	owner := Owner{Kind: OwnerInstance, InstanceID: "a"}
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+
+	prev := InstanceScan{ScannedAt: at, Material: ScanMaterial{CredHub: []CredHubCert{{
+		Name: name, Owner: owner, Deployed: deployed.cert, Latest: latest.cert,
+		Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"},
+	}}}}
+	next := ScanMaterial{CredHub: []CredHubCert{{Name: name, Owner: owner, Err: msgCredHubUnavailable}}}
+
+	got := keepLastGood(next, prev)
+
+	if len(got.Raw) != 1 {
+		t.Fatalf("got %d raw observations, want 1", len(got.Raw))
+	}
+
+	r := got.Raw[0]
+	if r.Source != SourceCredHub || r.State != StateStale || r.Error != "" || !r.ObservedAt.Equal(at) {
+		t.Errorf("stale observation %+v", r.Observation)
+	}
+
+	if r.VersionID != "v2" || r.Serial != latest.cert.SerialNumber.Text(16) ||
+		r.Fingerprint != Fingerprint(latest.cert) || r.Cert != latest.cert {
+		t.Errorf("stale observation version %q, serial %q, want the latest version", r.VersionID, r.Serial)
+	}
+}
+
 func TestRescanKeepsLastGoodCertificate(t *testing.T) {
 	t.Parallel()
 

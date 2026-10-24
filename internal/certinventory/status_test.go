@@ -147,6 +147,16 @@ func TestEffectiveNotAfterOtherSources(t *testing.T) {
 	if got := EffectiveNotAfter(&Certificate{}); got != nil {
 		t.Errorf("got %v, want nil", got)
 	}
+
+	// CredHub's undeployed latest version gives no expiry.
+	pending := &Certificate{Observations: []Observation{
+		{Source: SourceCredHub, Matches: MatchLatest, NotAfter: tp(b)},
+		{Source: SourceProbe, Matches: MatchOther, NotAfter: tp(a)},
+	}}
+
+	if got := EffectiveNotAfter(pending); got == nil || !got.Equal(a) {
+		t.Errorf("got %v, want %v", got, a)
+	}
 }
 
 func TestSummarizeCounts(t *testing.T) {

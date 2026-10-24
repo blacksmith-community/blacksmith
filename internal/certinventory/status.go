@@ -180,7 +180,8 @@ func EffectiveNotAfter(c *Certificate) *time.Time {
 	var earliest *time.Time
 
 	for _, o := range c.Observations {
-		if o.NotAfter == nil {
+		// A CredHub version that is not deployed runs nowhere yet.
+		if o.NotAfter == nil || (o.Source == SourceCredHub && o.Matches == MatchLatest) {
 			continue
 		}
 

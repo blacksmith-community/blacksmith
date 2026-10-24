@@ -127,6 +127,7 @@ type Observation struct {
 	Locator     string     `json:"locator"` // YAML path, vm/job ip:port, file path, or config key
 	Fingerprint string     `json:"sha256_fingerprint,omitempty"`
 	Serial      string     `json:"serial,omitempty"`
+	VersionID   string     `json:"version_id,omitempty"` // CredHub observations only
 	NotAfter    *time.Time `json:"not_after,omitempty"`
 	Matches     string     `json:"matches,omitempty"` // "deployed", "latest", "other"
 	State       string     `json:"state"`             // "ok", "stale", "failed"

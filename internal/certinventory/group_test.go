@@ -157,6 +157,70 @@ func TestGroupLatestVersionMatch(t *testing.T) {
 	}
 }
 
+func TestGroupCredHubObservationVersion(t *testing.T) {
+	t.Parallel()
+
+	deployed, latest := groupLeaf(t, "old", 1), groupLeaf(t, "new", 2)
+	owner := instOwner("i1")
+
+	rows := []struct {
+		name    string
+		ch      CredHubCert
+		cert    *x509.Certificate
+		id      string
+		matches string
+	}{
+		{name: "latest differs", ch: CredHubCert{Deployed: deployed, Latest: latest,
+			Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"}},
+			cert: latest, id: "v2", matches: MatchLatest},
+		{name: "latest is deployed", ch: CredHubCert{Deployed: deployed, Latest: deployed,
+			Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v1"}},
+			cert: deployed, id: "v1", matches: MatchDeployed},
+		{name: "latest not named", ch: CredHubCert{Deployed: deployed,
+			Versions: Versions{DeployedVersionID: "v1"}},
+			cert: deployed, id: "v1", matches: MatchDeployed},
+		// The deployed certificate never stands in for a latest version
+		// that could not be read.
+		{name: "latest not read", ch: CredHubCert{Deployed: deployed,
+			Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"}},
+			id: "v2"},
+		{name: "failed", ch: CredHubCert{Err: msgCredHubUnavailable,
+			Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"}}},
+	}
+
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			t.Parallel()
+
+			ch := r.ch
+			ch.Name, ch.Owner = "/d/dep/crt", owner
+
+			certs, _ := Group([]CredHubCert{ch}, nil)
+			if len(certs) != 1 || len(certs[0].Observations) != 1 {
+				t.Fatalf("got %+v, want one certificate with one observation", certs)
+			}
+
+			o := certs[0].Observations[0]
+			if o.VersionID != r.id || o.Matches != r.matches {
+				t.Errorf("version %q, matches %q, want %q, %q", o.VersionID, o.Matches, r.id, r.matches)
+			}
+
+			if r.cert == nil {
+				if o.Fingerprint != "" || o.Serial != "" || o.NotAfter != nil {
+					t.Errorf("observation carries a certificate: %+v", o)
+				}
+
+				return
+			}
+
+			if o.Fingerprint != Fingerprint(r.cert) || o.Serial != r.cert.SerialNumber.Text(16) ||
+				o.NotAfter == nil || !o.NotAfter.Equal(r.cert.NotAfter) {
+				t.Errorf("observation %+v does not describe %s", o, r.cert.Subject.CommonName)
+			}
+		})
+	}
+}
+
 func TestGroupUnmatchedProbeJoinsListenerVariable(t *testing.T) {
 	t.Parallel()
 

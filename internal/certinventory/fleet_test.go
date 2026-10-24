@@ -274,6 +274,119 @@ func TestFleetDeployPendingFinding(t *testing.T) {
 	}
 }
 
+// TestFleetCredHubObservationShowsLatest checks that the CredHub
+// observation describes CredHub's latest version, while the expiry,
+// findings, health, and summary still follow the deployed version, both
+// when the deployment runs the latest version and after a patch in place
+// that BOSH has not yet deployed.
+func TestFleetCredHubObservationShowsLatest(t *testing.T) {
+	t.Parallel()
+
+	const name = "/ws-bosh/valkey-i1/valkey_cluster_crt"
+
+	deployed := issue(t, issueSpec{cn: "valkey", serial: 0x1c4cf777, notAfter: 2000 * time.Hour})
+	latest := issue(t, issueSpec{cn: "valkey", serial: 0x29b11348, notAfter: 3000 * time.Hour})
+
+	rows := []struct {
+		name         string
+		latest       issued
+		latestID     string
+		notAfter     bool // whether the scan recorded DeployedNotAfter
+		divergence   bool
+		matches      string
+		findings     []string
+		health       Health
+		unconverged  int
+		attention    int
+		wantNotAfter time.Time
+	}{
+		{name: "converged", latest: deployed, latestID: "24528b18", notAfter: true,
+			matches: MatchDeployed, health: HealthOK},
+		{name: "patched", latest: latest, latestID: "ae5bcf1e", notAfter: true, divergence: true,
+			matches: MatchLatest, findings: []string{FindingUnconverged, FindingDeployPending},
+			health: HealthWarning, unconverged: 1, attention: 1},
+		{name: "patched without a deployed expiry", latest: latest, latestID: "ae5bcf1e", divergence: true,
+			matches: MatchLatest, findings: []string{FindingUnconverged, FindingDeployPending},
+			health: HealthWarning, unconverged: 1, attention: 1},
+	}
+
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := fleetScan("i1", fleetNow)
+			ch := CredHubCert{
+				Name: name, Owner: instOwner("i1"), Deployed: deployed.cert, Latest: r.latest.cert,
+				Versions: Versions{DeployedVersionID: "24528b18", LatestVersionID: r.latestID},
+			}
+
+			if r.notAfter {
+				dn, ln := deployed.cert.NotAfter, r.latest.cert.NotAfter
+				ch.Versions.DeployedNotAfter, ch.Versions.LatestNotAfter = &dn, &ln
+			}
+
+			s.Material.CredHub = []CredHubCert{ch}
+
+			var div map[string]*Divergence
+			if r.divergence {
+				div = map[string]*Divergence{"i1": {InstanceID: "i1", Revision: 1, Variables: []DivergentVariable{{
+					Name: name, BOSHVersionID: "24528b18", AppliedVersionID: r.latestID, TaskID: "task-1",
+					Since: fleetNow.Add(-time.Hour), State: DivergenceUnconverged,
+					VMs: map[string]DivergentVM{"vm-a": {State: DivergentVMApplied}},
+				}}}}
+			}
+
+			fleet := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, div, fleetNow)
+			c := fleet.Certificates()[0]
+
+			var obs []Observation
+
+			for _, o := range c.Observations {
+				if o.Source == SourceCredHub {
+					obs = append(obs, o)
+				}
+			}
+
+			if len(obs) != 1 {
+				t.Fatalf("got %d CredHub observations, want 1: %+v", len(obs), obs)
+			}
+
+			o := obs[0]
+			if o.VersionID != r.latestID || o.Serial != r.latest.cert.SerialNumber.Text(16) ||
+				o.Fingerprint != Fingerprint(r.latest.cert) || o.Matches != r.matches {
+				t.Errorf("CredHub observation version %q, serial %q, matches %q, want %q, %q, %q",
+					o.VersionID, o.Serial, o.Matches, r.latestID, r.latest.cert.SerialNumber.Text(16), r.matches)
+			}
+
+			if o.NotAfter == nil || !o.NotAfter.Equal(r.latest.cert.NotAfter) {
+				t.Errorf("CredHub observation not_after %v, want the latest version's %v", o.NotAfter, r.latest.cert.NotAfter)
+			}
+
+			var codes []string
+			for _, f := range c.Findings {
+				codes = append(codes, f.Code)
+			}
+
+			if !reflect.DeepEqual(codes, r.findings) {
+				t.Errorf("findings %v, want %v", codes, r.findings)
+			}
+
+			if c.Health != r.health {
+				t.Errorf("health %q, want %q", c.Health, r.health)
+			}
+
+			if c.EffectiveNotAfter == nil || !c.EffectiveNotAfter.Equal(deployed.cert.NotAfter) {
+				t.Errorf("effective expiry %v, want the deployed version's %v", c.EffectiveNotAfter, deployed.cert.NotAfter)
+			}
+
+			sum := BuildResponse(fleet, Filter{}, DefaultSettings(), fleetCaps, ScanState{}, fleetNow).Summary
+			if sum.Unconverged != r.unconverged || sum.NeedsAttention != r.attention || sum.ExpiryOK != 1 {
+				t.Errorf("summary %+v", sum)
+			}
+		})
+	}
+}
+
 func TestFleetCoverageFromExpectedListeners(t *testing.T) {
 	t.Parallel()
 

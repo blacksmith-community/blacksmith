@@ -192,6 +192,14 @@ func (g *group) build() (Certificate, *x509.Certificate) {
 
 	if g.credhub != nil {
 		v := g.credhub.Versions
+		// The effective expiry starts from DeployedNotAfter, and the
+		// CredHub observation describes the latest version, so the
+		// deployed certificate's expiry must be here.
+		if v.DeployedNotAfter == nil && g.credhub.Deployed != nil {
+			t := g.credhub.Deployed.NotAfter
+			v.DeployedNotAfter = &t
+		}
+
 		c.Versions = &v
 		c.Variable = lastSegment(g.credhub.Name)
 
@@ -250,20 +258,33 @@ func claim(m map[string]*group, fp string, g *group) {
 	}
 }
 
+// credhubObservation describes CredHub's latest version of ch. The deployed
+// version is in Versions, and the findings compare the two there.
 func credhubObservation(ch *CredHubCert) Observation {
+	cert, id := credhubVersion(ch)
+
+	return versionObservation(ch, cert, id)
+}
+
+// versionObservation is the CredHub observation of one version of ch.
+func versionObservation(ch *CredHubCert, cert *x509.Certificate, id string) Observation {
 	o := Observation{
 		Source:  SourceCredHub,
 		Owner:   ch.Owner,
 		Locator: ch.Name,
 		State:   StateOK,
-		Matches: MatchDeployed,
 	}
 
-	if ch.Deployed != nil {
-		t := ch.Deployed.NotAfter
-		o.Fingerprint = Fingerprint(ch.Deployed)
-		o.Serial = ch.Deployed.SerialNumber.Text(16)
+	if cert != nil {
+		t := cert.NotAfter
+		o.Fingerprint = Fingerprint(cert)
+		o.Serial = cert.SerialNumber.Text(16)
 		o.NotAfter = &t
+		o.Matches = matchKind(ch, o.Fingerprint)
+	}
+
+	if cert != nil || ch.Err == "" {
+		o.VersionID = id
 	}
 
 	if ch.Err != "" {
@@ -272,6 +293,23 @@ func credhubObservation(ch *CredHubCert) Observation {
 	}
 
 	return o
+}
+
+// credhubVersion returns CredHub's latest version of ch and its ID. The
+// deployed version stands in only when it is the latest or CredHub could not
+// name the latest. A latest version that was named but not read has an ID
+// and no certificate, so the deployed one never passes for it.
+func credhubVersion(ch *CredHubCert) (*x509.Certificate, string) {
+	v := ch.Versions
+
+	switch {
+	case ch.Latest != nil:
+		return ch.Latest, v.LatestVersionID
+	case v.LatestVersionID == "" || v.LatestVersionID == v.DeployedVersionID:
+		return ch.Deployed, v.DeployedVersionID
+	}
+
+	return nil, v.LatestVersionID
 }
 
 func matchKind(ch *CredHubCert, fp string) string {
