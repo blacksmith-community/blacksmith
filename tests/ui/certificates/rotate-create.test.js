@@ -40,12 +40,15 @@ t('rotate preview and create', async () => {
   ok(await waitDialog(),'confirm dialog opened');
   const pv=posts(/rotation\/preview/);
   ok(pv.length===1&&JSON.stringify(pv[0])===JSON.stringify({mode:'redeploy',selections:[{instance_id:'inst-valkey',variables:[K]}]}),'preview body: mode and selections, no converge: '+JSON.stringify(pv[0]));
-  const body=dlg().querySelector('.rotate-preview'); const txt=body.textContent;
+  const body=dlg().querySelector('.rotate-preview'); const txt=body.textContent+dlg().querySelector('.rotate-preview-summary').textContent;
   ok(/Redeploy · 1 to change, 1 excluded · 3 VMs/.test(txt),'summary strip: mode, counts, VMs: '+txt.slice(0,120));
-  ok(/3 VMs/.test(body.querySelector('.rotate-preview-card-head').textContent)&&/health gate valkey-cluster/.test(txt)&&/Restarts one VM at a time\./.test(txt),'card: VMs, gate, impact');
+  ok(/VMs: 3/.test(body.querySelector('.rotate-preview-card').textContent)&&/Health check after each VM: valkey-cluster/.test(txt)&&/Service \/ plan: valkey \/ small/.test(txt)&&/Restarts one VM at a time\./.test(txt),'card: VMs, gate, impact');
+  ok(d.activeElement===dlg().querySelector('.dialog-modal-title')&&dlg().querySelector('.dialog-modal-title').getAttribute('tabindex')==='-1','the dialog opens on its title');
+  ok(dlg().querySelector('.dialog-modal').firstElementChild.classList.contains('dialog-modal-header')&&dlg().querySelector('.dialog-modal-header + .rotate-preview-summary')&&!dlg().querySelector('.dialog-modal-body .rotate-preview-summary'),'summary sits above the scroller, outside the body');
+  ok(!!dlg().querySelector('.dialog-modal-body .dialog-modal-footnote-inline')&&!!dlg().querySelector('.dialog-modal-more'),'inline footnote and More below cue exist');
   ok(!/Review what we are about to change/.test(dlg().textContent),'generic sentence is gone');
   const rows=[...body.querySelectorAll('ul.rotate-preview-certs li')];
-  ok(rows.length===2&&rows[0].querySelector('code').textContent==='valkey_crt'&&/10 days/.test(rows[0].querySelector('.cert-pill').textContent),'selected row: short name and days-left badge');
+  ok(rows.length===2&&rows[0].querySelector('code').textContent==='valkey_crt'&&/10 days left/.test(rows[0].querySelector('.cert-pill').textContent),'selected row: short name and days-left badge');
   const pth=rows[0].querySelector('.rotate-preview-path');
   ok(pth.textContent===K&&pth.title===K&&pth.querySelectorAll('wbr').length===3,'full path wraps at slashes and carries a title');
   ok(rows[1].querySelector('code').textContent==='other_crt'&&!rows[1].querySelector('.cert-pill')&&/Additional change/.test(rows[1].textContent)&&/Also changes/.test(txt),'additional variable: label, no badge');
@@ -56,7 +59,7 @@ t('rotate preview and create', async () => {
   ok(/BOSH rolls the VMs/.test(txt)&&/failed health gate pauses the task/.test(txt),'what it does, with the gate clause');
   ok(confirmBtn().textContent==='Rotate and redeploy'&&confirmBtn().classList.contains('dialog-modal-btn-confirm')&&!confirmBtn().classList.contains('dialog-modal-btn-danger'),'redeploy confirm: named action, primary style');
   ok(/creates a task/.test(dlg().querySelector('.dialog-modal-footnote').textContent),'line above the buttons');
-  ok(dlg().querySelector('.dialog-modal-icon').classList.contains('warning')&&/rotate-preview-summary/.test(dlg().querySelector('.dialog-modal').getAttribute('aria-describedby')),'warning icon, described by the summary');
+  ok(dlg().querySelector('.dialog-modal-icon').classList.contains('dialog-modal-icon--warning')&&!dlg().querySelector('.dialog-modal-icon').classList.contains('warning')&&/rotate-preview-summary/.test(dlg().querySelector('.dialog-modal').getAttribute('aria-describedby')),'warning icon, described by the summary');
   ok(!!body.querySelector('ul.rotate-preview-certs[aria-label]'),'certificates are a labelled list');
   ok(!dlg().querySelector('.dialog-modal-ack-input'),'no typed confirmation for 1 instance');
   confirmBtn().click(); await sleep(80);

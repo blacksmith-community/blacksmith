@@ -4283,6 +4283,7 @@ select[id*="connection-vhost"] {
   width: 90vw;
   max-width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   display: flex;
   flex-direction: column;
   transform: scale(0.9) translateY(-20px);
@@ -4322,11 +4323,13 @@ select[id*="connection-vhost"] {
   font-size: inherit;
 }
 
-.dialog-modal-icon.warning {
+.dialog-modal-icon.warning,
+.dialog-modal-icon--warning {
   color: #f59e0b;
 }
 
-.dialog-modal-icon.info {
+.dialog-modal-icon.info,
+.dialog-modal-icon--info {
   color: #3b82f6;
 }
 
@@ -4339,8 +4342,59 @@ select[id*="connection-vhost"] {
 
 .dialog-modal-body {
   padding: 20px;
+  flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
+  overflow: auto;
+  position: relative;
+  /* Shadows that show only while content waits past that edge */
+  background:
+    linear-gradient(var(--bg-primary) 30%, transparent) top / 100% 28px local no-repeat,
+    linear-gradient(transparent, var(--bg-primary) 70%) bottom / 100% 28px local no-repeat,
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.28), transparent) top / 100% 10px scroll no-repeat,
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.28), transparent) bottom / 100% 10px scroll no-repeat,
+    var(--bg-primary);
+}
+
+.dialog-modal-more {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.dialog-modal-more-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.dialog-modal-more-pill.visible {
+  opacity: 1;
+}
+
+.dialog-modal-title:focus {
+  outline: none;
+}
+
+.dialog-modal-title:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.dialog-modal-footnote-inline {
+  display: none;
+  margin: 12px 0 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .dialog-modal-header,
@@ -13604,8 +13658,6 @@ span.config-type.resurrection {
 
 /* Rotation preview inside the confirm dialog */
 .rotate-preview-scroll {
-  max-height: 55vh;
-  overflow: auto;
   margin: 0 0 16px 0;
   font-size: 14px;
   color: var(--text-primary);
@@ -13613,8 +13665,33 @@ span.config-type.resurrection {
 }
 
 .rotate-preview-summary {
-  margin: 0 0 6px 0;
+  margin: 0;
+  padding: 10px 20px;
   font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
+  overflow-wrap: anywhere;
+}
+
+.rotate-preview-link {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.rotate-preview-link:focus-visible,
+.rotate-preview-expand:focus-visible,
+summary.rotate-preview-card-head:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
 }
 
 .rotate-preview-what,
@@ -13644,7 +13721,9 @@ span.config-type.resurrection {
 
 .rotate-preview-expand {
   margin: 0 0 8px 0;
-  padding: 2px 8px;
+  padding: 4px 12px;
+  min-height: 32px;
+  min-width: 32px;
   font-size: 13px;
   color: var(--text-primary);
   background: var(--bg-hover);
@@ -13676,11 +13755,70 @@ summary.rotate-preview-card-head {
   margin-top: 6px;
 }
 
-.rotate-preview-where,
+.rotate-preview-metarow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 2px 0 0 0;
+}
+
 .rotate-preview-meta,
 .rotate-preview-tag {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.rotate-preview-meta-label {
+  font-weight: 600;
+}
+
+.rotate-preview-exceptions {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Collapsed row: chevron, name, badge, then a second row of facts */
+.rotate-preview-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  list-style: none;
+}
+
+.rotate-preview-row::-webkit-details-marker {
+  display: none;
+}
+
+.rotate-preview-row .rotate-preview-name {
+  overflow-wrap: anywhere;
+}
+
+.rotate-preview-row-badge {
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.rotate-preview-row-meta {
+  grid-column: 2 / 4;
+  margin: 0;
+}
+
+.rotate-preview-name {
+  font-weight: 700;
+}
+
+.rotate-preview-chevron {
+  font-size: 14px;
+  line-height: 1;
+  display: inline-block;
+  transition: transform 0.1s ease;
+}
+
+details[open] > .rotate-preview-row .rotate-preview-chevron {
+  transform: rotate(90deg);
 }
 
 .rotate-preview-impact {
@@ -13728,7 +13866,7 @@ summary.rotate-preview-card-head {
 }
 
 .rotate-preview-path {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   overflow-wrap: break-word;
   word-break: normal;
@@ -13747,8 +13885,34 @@ summary.rotate-preview-card-head {
   color: var(--text-primary);
 }
 
-@media (max-width: 400px) {
+@media (max-width: 480px) {
   .dialog-modal-body {
-    padding: 14px;
+    padding: 12px 14px;
   }
+
+  .dialog-modal-header,
+  .dialog-modal-footer {
+    padding: 12px 14px;
+  }
+
+  .rotate-preview-summary {
+    padding: 8px 14px;
+  }
+
+  .dialog-modal-footnote {
+    display: none;
+  }
+
+  .dialog-modal-footnote-inline {
+    display: block;
+  }
+
+  .rotate-preview-card {
+    padding: 8px 10px;
+  }
+}
+
+.rotate-preview-callout strong,
+.rotate-preview-excluded strong {
+  font-weight: 700;
 }

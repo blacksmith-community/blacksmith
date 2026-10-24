@@ -176,10 +176,10 @@
       <div id="dialog-modal-overlay" class="dialog-modal-overlay">
         <div class="dialog-modal" role="dialog" aria-modal="true" aria-labelledby="dialog-modal-title" aria-describedby="dialog-modal-message" tabindex="-1">
           <div class="dialog-modal-header">
-            <svg class="dialog-modal-icon warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <svg class="dialog-modal-icon dialog-modal-icon--warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
               <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
             </svg>
-            <h3 class="dialog-modal-title" id="dialog-modal-title"></h3>
+            <h3 class="dialog-modal-title" id="dialog-modal-title" tabindex="-1"></h3>
           </div>
           <div class="dialog-modal-body">
             <p class="dialog-modal-message" id="dialog-modal-message"></p>
@@ -313,13 +313,46 @@
       overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
       const extras = buildConfirmExtras(options);
       extras.nodes.forEach((node) => body.appendChild(node));
-      // A line above the buttons stays in view while the body scrolls.
+      // A summary the caller marks as pinned stays above the scroller.
+      const pinned = options.body && options.body.pinnedNode;
+      if (pinned) {
+        pinned.setAttribute('data-dialog-extra', 'true');
+        dialog.insertBefore(pinned, body);
+      }
+      // The line above the buttons stays in view on wide screens. Under
+      // 480px it moves into the scrolling content to leave room.
       if (options.footnote) {
         const footnote = document.createElement('p');
         footnote.className = 'dialog-modal-footnote';
         footnote.setAttribute('data-dialog-extra', 'true');
         footnote.textContent = String(options.footnote);
         dialog.insertBefore(footnote, overlay.querySelector('.dialog-modal-footer'));
+        const inline = document.createElement('p');
+        inline.className = 'dialog-modal-footnote-inline';
+        inline.setAttribute('data-dialog-extra', 'true');
+        inline.textContent = String(options.footnote);
+        body.appendChild(inline);
+      }
+      // The More below cue shows while content waits past the bottom edge.
+      let moreCue = null;
+      const updateMore = () => {
+        if (!moreCue) return;
+        moreCue.classList.toggle('visible', body.scrollHeight - body.clientHeight - body.scrollTop > 4);
+      };
+      if (hasBody) {
+        const cueWrap = document.createElement('div');
+        cueWrap.className = 'dialog-modal-more';
+        cueWrap.setAttribute('data-dialog-extra', 'true');
+        cueWrap.setAttribute('aria-hidden', 'true');
+        moreCue = document.createElement('span');
+        moreCue.className = 'dialog-modal-more-pill';
+        moreCue.textContent = 'More below';
+        cueWrap.appendChild(moreCue);
+        body.appendChild(cueWrap);
+        body.onscroll = updateMore;
+        body.onclick = () => window.requestAnimationFrame(updateMore);
+        window.addEventListener('resize', updateMore);
+        body.scrollTop = 0;
       }
 
       // Set button text
@@ -331,9 +364,9 @@
       confirmBtn.classList.add(options.danger ? 'dialog-modal-btn-danger' : 'dialog-modal-btn-confirm');
 
       // Set icon style
-      iconEl.classList.remove('warning', 'info');
-      iconEl.classList.add(options.icon === 'warning' || options.icon === 'info'
-        ? options.icon : (options.danger ? 'warning' : 'info'));
+      iconEl.classList.remove('dialog-modal-icon--warning', 'dialog-modal-icon--info');
+      iconEl.classList.add(`dialog-modal-icon--${options.icon === 'warning' || options.icon === 'info'
+        ? options.icon : (options.danger ? 'warning' : 'info')}`);
 
       let settled = false;
       const surface = { close: () => finish(false) };
@@ -342,7 +375,9 @@
       // Show modal
       overlay.classList.add('active');
 
-      const initialFocus = () => (extras.ackInput || cancelBtn);
+      // A body dialog opens on its title, so the warnings stay in view and
+      // the typed-word field scrolls into view only when the operator tabs to it.
+      const initialFocus = () => (hasBody ? titleEl : (extras.ackInput || cancelBtn));
 
       // Cleanup function
       function cleanup() {
@@ -352,6 +387,9 @@
         overlay.removeEventListener('click', handleOverlayClick);
         document.removeEventListener('keydown', handleKeydown);
         document.removeEventListener('focusin', handleFocusIn);
+        window.removeEventListener('resize', updateMore);
+        body.onscroll = null;
+        body.onclick = null;
         overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
         window.blacksmithSurfaces.remove(surface);
         restoreFocus(opener);
@@ -432,7 +470,7 @@
           if (!inside) {
             e.preventDefault();
             (e.shiftKey ? last : first).focus();
-          } else if (e.shiftKey && (active === first || active === dialog)) {
+          } else if (e.shiftKey && (active === first || active === dialog || active === titleEl)) {
             e.preventDefault();
             last.focus();
           } else if (!e.shiftKey && active === last) {
@@ -471,6 +509,7 @@
       // Focus Cancel first, or the acknowledgement field when there is one
       // preventScroll keeps the warnings in view when the body is long.
       initialFocus().focus({ preventScroll: true });
+      window.requestAnimationFrame(updateMore);
     });
   };
 
@@ -509,8 +548,8 @@
       confirmBtn.classList.add('dialog-modal-btn-confirm');
 
       // Set icon to info
-      iconEl.classList.remove('warning');
-      iconEl.classList.add('info');
+      iconEl.classList.remove('dialog-modal-icon--warning', 'dialog-modal-icon--info');
+      iconEl.classList.add('dialog-modal-icon--info');
 
       const surface = { close: () => handleCancel() };
       window.blacksmithSurfaces.push(surface);
@@ -3984,7 +4023,7 @@
   };
   const PREVIEW_GATE_CLAUSE = 'A failed health gate pauses the task.';
   const PREVIEW_POLICY = {
-    pending: ['Leave unconverged', 'The instance stays flagged as unconverged until a converge runs. A recreate or resurrection restores the old certificate until then.'],
+    pending: ['Leave unconverged', 'The instance stays flagged as unconverged until a converge runs.'],
     immediate: ['Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
   };
   const PREVIEW_NOT_NEAR_EXPIRY = 'Some selected certificates are not close to expiry. Continue if this rotation is intentional.';
@@ -4012,21 +4051,35 @@
 
   // The days-left badge, colored by the same thresholds as the chips and the
   // inventory pills. A certificate beyond every threshold gets the neutral
-  // pill. It returns null when days_left is not a number.
+  // pill, and so does one with no number of days.
   const previewBadge = (daysLeft) => {
-    if (typeof daysLeft !== 'number' || !Number.isFinite(daysLeft)) return null;
+    if (typeof daysLeft !== 'number' || !Number.isFinite(daysLeft)) {
+      const unknown = rotateEl('span', 'cert-pill cert-pill--unknown rotate-preview-badge', 'Expiry unknown');
+      return unknown;
+    }
     let status = 'unknown';
-    let text = `${pluralize(daysLeft, 'day')}`;
+    let text = `${pluralize(daysLeft, 'day')} left`;
     if (daysLeft < 0) { status = 'expired'; text = 'Expired'; }
     else if (daysLeft === 0) { status = 'critical'; text = 'Expires today'; }
     else if (daysLeft <= rotateState.criticalDays) status = 'critical';
     else if (daysLeft <= rotateState.warningDays) status = 'warning';
-    const badge = rotateEl('span', `cert-pill cert-pill--${status} rotate-preview-badge`, text);
-    badge.title = daysLeft < 0 ? 'Expired' : `${pluralize(daysLeft, 'day')} left`;
-    return badge;
+    return rotateEl('span', `cert-pill cert-pill--${status} rotate-preview-badge`, text);
   };
 
-  const previewIsNearExpiry = (daysLeft) => typeof daysLeft === 'number' && Number.isFinite(daysLeft) && daysLeft <= rotateState.warningDays;
+  const previewIsNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+  const previewIsNearExpiry = (daysLeft) => previewIsNumber(daysLeft) && daysLeft <= rotateState.warningDays;
+
+  // Labeled facts, such as "VMs: 3". Each pair is [label, value].
+  const previewMeta = (pairs) => {
+    const row = rotateEl('span', 'rotate-preview-metarow');
+    pairs.forEach(([label, value]) => {
+      const item = rotateEl('span', 'rotate-preview-meta');
+      item.appendChild(rotateEl('span', 'rotate-preview-meta-label', `${label}: `));
+      item.appendChild(document.createTextNode(String(value)));
+      row.appendChild(item);
+    });
+    return row;
+  };
 
   const previewCallout = (children) => {
     const box = rotateEl('div', 'rotate-preview-callout');
@@ -4041,12 +4094,9 @@
     const item = rotateEl('li', 'rotate-preview-cert');
     const top = rotateEl('div', 'rotate-preview-cert-top');
     top.appendChild(rotateEl('code', 'rotate-preview-cert-name', previewShortName(variable.name)));
-    if (additional) {
-      top.appendChild(rotateEl('span', 'rotate-preview-tag', 'Additional change'));
-    } else {
-      const badge = previewBadge(variable.days_left);
-      if (badge) top.appendChild(badge);
-    }
+    top.appendChild(additional
+      ? rotateEl('span', 'rotate-preview-tag', 'Additional change')
+      : previewBadge(variable.days_left));
     item.appendChild(top);
     item.appendChild(previewPathNode(variable.name));
     return item;
@@ -4061,7 +4111,9 @@
 
   // The body of the confirmation dialog for a preview, as a DOM node. Every
   // value from the server reaches the node through textContent or setAttribute.
-  // The options are {converge} for the patch policy and {summaryId}.
+  // The options are {converge} for the patch policy and {summaryId}. The
+  // summary strip is also set as pinnedNode, which the dialog keeps above the
+  // scroller.
   const buildPreviewBody = (preview, mode, opts = {}) => {
     const instances = Array.isArray(preview && preview.instances) ? preview.instances : [];
     const included = instances.filter((instance) => instance && !instance.blocked);
@@ -4072,22 +4124,35 @@
     const scroll = rotateEl('div', 'rotate-preview-scroll');
     root.appendChild(scroll);
 
-    // Summary strip
+    // Summary strip, pinned above the scroller. The excluded count links to
+    // the excluded section.
     const vms = included.reduce((sum, instance) => sum + (Number(instance.vms) || 0), 0);
     const certCount = included.reduce((sum, instance) => sum + selectedOf(instance).length, 0);
     const extraCount = included.reduce((sum, instance) => sum + additionalOf(instance).length, 0);
-    const facts = [ROTATE_MODE_LABELS[mode] || String(mode)];
-    facts.push(excluded.length > 0
-      ? `${included.length} to change, ${excluded.length} excluded`
-      : pluralize(included.length, 'instance'));
-    facts.push(pluralize(vms, 'VM'));
+    const summary = rotateEl('p', 'rotate-preview-summary');
+    summary.id = opts.summaryId || 'rotate-preview-summary';
+    const addFact = (node) => {
+      if (summary.childNodes.length > 0) summary.appendChild(document.createTextNode(' · '));
+      summary.appendChild(typeof node === 'string' ? document.createTextNode(node) : node);
+    };
+    addFact(ROTATE_MODE_LABELS[mode] || String(mode));
+    let excludedLink = null;
+    if (excluded.length > 0) {
+      addFact(`${included.length} to change, `);
+      excludedLink = rotateEl('button', 'rotate-preview-link', `${excluded.length} excluded`);
+      excludedLink.type = 'button';
+      summary.appendChild(excludedLink);
+    } else {
+      addFact(pluralize(included.length, 'instance'));
+    }
+    addFact(pluralize(vms, 'VM'));
     if (mode !== 'converge') {
-      facts.push(extraCount > 0
+      addFact(extraCount > 0
         ? `${pluralize(certCount, 'certificate')} plus ${pluralize(extraCount, 'additional variable')}`
         : pluralize(certCount, 'certificate'));
     }
-    const summary = rotateEl('p', 'rotate-preview-summary', facts.join(' · '));
-    summary.id = opts.summaryId || 'rotate-preview-summary';
+    root.pinnedNode = summary;
+    // Without a dialog to pin it, the summary leads the content.
     scroll.appendChild(summary);
 
     // What the operation does
@@ -4099,14 +4164,16 @@
 
     // Warnings come first
     if (mode === 'patch') {
-      const lines = [rotateEl('p', null, PATCH_WARNING), rotateEl('p', null, PATCH_PREREQUISITE)];
+      const lines = [];
       const policy = PREVIEW_POLICY[opts.converge];
       if (policy) {
         const line = rotateEl('p');
-        line.appendChild(rotateEl('strong', null, `${policy[0]}. `));
+        line.appendChild(rotateEl('strong', null, `Follow-up: ${policy[0]}. `));
         line.appendChild(document.createTextNode(policy[1]));
         lines.push(line);
       }
+      lines.push(rotateEl('p', null, PATCH_WARNING));
+      lines.push(rotateEl('p', null, PATCH_PREREQUISITE));
       scroll.appendChild(previewCallout(lines));
     }
     const serverWarnings = (Array.isArray(preview && preview.warnings) ? preview.warnings : [])
@@ -4116,7 +4183,7 @@
       scroll.appendChild(previewCallout(serverWarnings.map((warning) => rotateEl('p', null, String(warning)))));
     }
     const selectedAll = included.flatMap(selectedOf);
-    if (selectedAll.some((variable) => typeof variable.days_left === 'number' && !previewIsNearExpiry(variable.days_left))) {
+    if (selectedAll.some((variable) => previewIsNumber(variable.days_left) && !previewIsNearExpiry(variable.days_left))) {
       scroll.appendChild(rotateEl('p', 'rotate-preview-note', PREVIEW_NOT_NEAR_EXPIRY));
     }
 
@@ -4138,32 +4205,51 @@
       const where = [instance.service, instance.plan].filter(Boolean).join(' / ');
       const selected = selectedOf(instance);
       const extra = additionalOf(instance);
-      const vmText = pluralize(Number(instance.vms) || 0, 'VM');
+      const meta = [];
+      if (where) meta.push(['Service / plan', where]);
+      meta.push(['VMs', Number(instance.vms) || 0]);
+      if (instance.gate) meta.push(['Health check after each VM', instance.gate]);
 
       const card = rotateEl(compact ? 'details' : 'section', 'rotate-preview-card');
-      const head = rotateEl(compact ? 'summary' : 'div', 'rotate-preview-card-head');
-      head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
-      if (where) head.appendChild(rotateEl('span', 'rotate-preview-where', where));
+      let content = card;
       if (compact) {
-        if (mode !== 'converge') head.appendChild(rotateEl('span', 'rotate-preview-meta', pluralize(selected.length, 'certificate')));
-        const days = selected.map((variable) => variable.days_left).filter((value) => typeof value === 'number' && Number.isFinite(value));
-        const badge = days.length > 0 ? previewBadge(Math.min(...days)) : null;
-        head.appendChild(rotateEl('span', 'rotate-preview-meta', vmText));
-        if (badge) head.appendChild(badge);
+        const head = rotateEl('summary', 'rotate-preview-card-head rotate-preview-row');
+        const chevron = rotateEl('span', 'rotate-preview-chevron', '▸');
+        chevron.setAttribute('aria-hidden', 'true');
+        head.appendChild(chevron);
+        head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
+        const days = selected.map((variable) => variable.days_left).filter(previewIsNumber);
+        const badgeHost = rotateEl('span', 'rotate-preview-row-badge');
+        if (selected.length > 0) badgeHost.appendChild(previewBadge(days.length > 0 ? Math.min(...days) : null));
+        head.appendChild(badgeHost);
+        const summaryMeta = [];
+        if (mode !== 'converge') summaryMeta.push(['Certificates', selected.length]);
+        summaryMeta.push(['VMs', Number(instance.vms) || 0]);
+        const expired = selected.filter((variable) => previewIsNumber(variable.days_left) && variable.days_left < 0).length;
+        const exceptions = [];
+        if (expired > 0) exceptions.push(`${expired} expired`);
+        if (extra.length > 0) exceptions.push(`${extra.length} additional`);
+        const metaRow = previewMeta(summaryMeta);
+        metaRow.classList.add('rotate-preview-row-meta');
+        if (exceptions.length > 0) metaRow.appendChild(rotateEl('span', 'rotate-preview-exceptions', exceptions.join(', ')));
+        head.appendChild(metaRow);
+        card.appendChild(head);
+        content = rotateEl('div', 'rotate-preview-card-body');
+        card.appendChild(content);
+        // The row already shows the VM count.
+        content.appendChild(previewMeta(meta.filter((pair) => pair[0] !== 'VMs')));
       } else {
-        head.appendChild(rotateEl('span', 'rotate-preview-meta', vmText));
+        const head = rotateEl('div', 'rotate-preview-card-head');
+        head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
+        card.appendChild(head);
+        card.appendChild(previewMeta(meta));
       }
-      if (instance.gate) head.appendChild(rotateEl('span', 'rotate-preview-meta', `health gate ${instance.gate}`));
-      card.appendChild(head);
-
-      const content = compact ? rotateEl('div', 'rotate-preview-card-body') : card;
       if (instance.impact) content.appendChild(rotateEl('p', 'rotate-preview-impact', String(instance.impact)));
       if (selected.length > 0) content.appendChild(previewCertList(selected, false, `Certificates that rotate on ${name}`));
       if (extra.length > 0) {
         content.appendChild(rotateEl('p', 'rotate-preview-subhead', 'Also changes'));
         content.appendChild(previewCertList(extra, true, `Also changes on ${name}`));
       }
-      if (compact) card.appendChild(content);
       cards.appendChild(card);
     });
     scroll.appendChild(cards);
@@ -4171,6 +4257,8 @@
     // Excluded instances
     if (excluded.length > 0) {
       const section = rotateEl('section', 'rotate-preview-excluded');
+      section.id = 'rotate-preview-excluded';
+      section.tabIndex = -1;
       section.appendChild(rotateEl('h4', 'rotate-preview-subhead', 'Will not change'));
       const list = rotateEl('ul', 'rotate-preview-excluded-list');
       excluded.forEach((instance) => {
@@ -4181,6 +4269,10 @@
       });
       section.appendChild(list);
       scroll.appendChild(section);
+      excludedLink.addEventListener('click', () => {
+        section.scrollIntoView({ block: 'nearest' });
+        section.focus({ preventScroll: true });
+      });
     }
     return root;
   };
@@ -5799,7 +5891,7 @@
           body: buildPreviewBody(preview, mode, { converge: task.certificates && task.certificates.converge }),
           describedBy: 'rotate-preview-summary',
           footnote: 'Approving lets the task carry on with these effects.',
-          confirmText: 'Approve changes',
+          confirmText: mode === 'patch' ? 'Approve and resume patch' : 'Approve changes',
           cancelText: 'Cancel',
           danger: mode === 'patch',
           icon: 'warning',
