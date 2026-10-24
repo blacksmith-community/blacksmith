@@ -1,6 +1,7 @@
 package upgrade
 
 import (
+	"bytes"
 	"strconv"
 	"time"
 )
@@ -325,10 +326,49 @@ type FileEntry struct {
 	Mode     string `json:"mode"`
 	OldHash  string `json:"old_sha256"`
 	NewHash  string `json:"new_sha256"`
+	// OldRawHash is the SHA-256 of the target's bytes as discovery read
+	// them, which its backup must keep too, and NewRawHash the SHA-256 of
+	// the exact bytes that replace them: Lead, the new PEM, and Tail. The
+	// normalised hashes find the files, and when a record has both raw
+	// hashes, the patch compares raw bytes everywhere else. A record from
+	// before raw hashes existed has neither and is patched by its
+	// normalised hashes.
+	OldRawHash string `json:"old_raw_sha256,omitempty"`
+	NewRawHash string `json:"new_raw_sha256,omitempty"`
+	// Lead is the blank lines before the target's PEM and Tail the
+	// whitespace after it, which the replacement keeps.
+	Lead string `json:"lead,omitempty"`
+	Tail string `json:"tail,omitempty"`
 	// BackupPath is /var/vcap/data/certpatch/<task id>/b/<n>.
 	BackupPath string `json:"backup_path"`
 	// State is one of the FileState constants.
 	State string `json:"state"`
+}
+
+// rawHashes reports whether the record holds both raw hashes, so the
+// patch compares the file's raw bytes rather than its normalised hash.
+func (f FileEntry) rawHashes() bool {
+	return f.OldRawHash != "" && f.NewRawHash != ""
+}
+
+// replacement returns the bytes that replace the file, from the new PEM
+// content. A record with raw hashes gets the target's Lead and Tail
+// around the PEM with its own leading newlines and trailing whitespace
+// removed, so the file keeps the layout BOSH renders, and its
+// normalised hash is still the PEM's. A record without them gets the PEM
+// as it is. The result is always a new buffer, because content can be a
+// private key, and the caller clears it.
+func (f FileEntry) replacement(content []byte) []byte {
+	if f.OldRawHash == "" {
+		return bytes.Clone(content)
+	}
+
+	pem := bytes.TrimRight(bytes.TrimLeft(content, "\r\n"), " \t\r\n")
+	out := make([]byte, 0, len(f.Lead)+len(pem)+len(f.Tail))
+	out = append(out, f.Lead...)
+	out = append(out, pem...)
+
+	return append(out, f.Tail...)
 }
 
 // TargetResult is the check of one listener after a patch.

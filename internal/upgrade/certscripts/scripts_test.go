@@ -102,6 +102,8 @@ func throwawayKey(t *testing.T, dir string, crlf bool) string {
 	return path
 }
 
+// TestNormalisedHashParityWithBash shows that bash and Go agree on the
+// normalised hash and the raw hash of every fixture.
 func TestNormalisedHashParityWithBash(t *testing.T) {
 	t.Parallel()
 	requireLinux(t)
@@ -137,6 +139,16 @@ func TestNormalisedHashParityWithBash(t *testing.T) {
 		want := certpatch.NormalisedHash(content)
 		if got := libHash(t, path); got != want {
 			t.Errorf("%s: bash norm_hash = %q, Go NormalisedHash = %q", filepath.Base(path), got, want)
+		}
+
+		//nolint:gosec // fixed program text; the path is a test fixture
+		raw, err := exec.CommandContext(t.Context(), "bash", "-c", `source lib.sh; raw_hash "$1"`, "_", path).Output()
+		if err != nil {
+			t.Fatalf("raw_hash on %s: %v", filepath.Base(path), err)
+		}
+
+		if got, want := strings.TrimSpace(string(raw)), certpatch.RawHash(content); got != want {
+			t.Errorf("%s: bash raw_hash = %q, Go RawHash = %q", filepath.Base(path), got, want)
 		}
 	}
 }
@@ -707,7 +719,7 @@ func TestExitTableMatchesGo(t *testing.T) {
 
 	want := []int{
 		certscripts.ExitOK, certscripts.ExitUnknown, certscripts.ExitUsage, certscripts.ExitDrift,
-		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused,
+		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused, certscripts.ExitInvalid,
 	}
 
 	row := regexp.MustCompile(`^#   ([0-9]+) +[a-z]`)
@@ -746,6 +758,7 @@ func TestExitCodesMatchLib(t *testing.T) {
 		"EXIT_BACKUP":  certscripts.ExitBackup,
 		"EXIT_RESTART": certscripts.ExitRestart,
 		"EXIT_REFUSED": certscripts.ExitRefused,
+		"EXIT_INVALID": certscripts.ExitInvalid,
 	}
 
 	if certscripts.ExitOK != 0 {
@@ -792,13 +805,13 @@ func TestExitCodesMatchLib(t *testing.T) {
 
 	// Sourcing lib.sh shows the values the scripts really see.
 	out, err := exec.CommandContext(t.Context(), "bash", "-c",
-		`source lib.sh; echo "$EXIT_USAGE $EXIT_DRIFT $EXIT_BACKUP $EXIT_RESTART $EXIT_REFUSED"`).Output()
+		`source lib.sh; echo "$EXIT_USAGE $EXIT_DRIFT $EXIT_BACKUP $EXIT_RESTART $EXIT_REFUSED $EXIT_INVALID"`).Output()
 	if err != nil {
 		t.Fatalf("sourcing lib.sh: %v", err)
 	}
 
-	sourced := fmt.Sprintf("%d %d %d %d %d\n", certscripts.ExitUsage, certscripts.ExitDrift,
-		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused)
+	sourced := fmt.Sprintf("%d %d %d %d %d %d\n", certscripts.ExitUsage, certscripts.ExitDrift,
+		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused, certscripts.ExitInvalid)
 	if string(out) != sourced {
 		t.Errorf("sourced exit codes = %q, want %q", out, sourced)
 	}

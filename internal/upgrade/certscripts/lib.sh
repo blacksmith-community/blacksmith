@@ -15,6 +15,7 @@
 #   11  an existing backup with the wrong hash
 #   12  a restart that timed out
 #   13  a path that a validator refused
+#   14  a new file that openssl cannot read as a certificate or a key
 
 set -u -o pipefail
 
@@ -31,20 +32,23 @@ umask 077
 # see the uses from here.
 # shellcheck disable=SC2034
 readonly EXIT_USAGE=2 EXIT_DRIFT=10 EXIT_BACKUP=11 EXIT_RESTART=12
-readonly EXIT_REFUSED=13
+# shellcheck disable=SC2034
+readonly EXIT_REFUSED=13 EXIT_INVALID=14
 
-# NORM_LEAD_AWK drops the leading blank lines and blanks for norm_hash.
-# It works line by line, so a large file costs one pass.
+# NORM_LEAD_AWK drops the empty lines before the first line that holds
+# anything, for norm_hash. A line of blanks holds something, so blanks
+# before a BEGIN marker still change the hash. It works line by line, so
+# a large file costs one pass.
 # shellcheck disable=SC2016
 readonly NORM_LEAD_AWK='
 started { print; next }
-/[^ \t]/ { sub(/^[ \t]+/, ""); started = 1; print }
+length($0) > 0 { started = 1; print }
 '
 
 # norm_hash prints the lowercase hex SHA-256 of a file after the same
 # normalising that certpatch.NormalisedHash applies in the broker. It
-# removes every carriage return, drops the spaces, tabs, and newlines
-# before the first other byte, strips trailing spaces and tabs from each
+# removes every carriage return, drops the newlines before the first
+# other byte, strips trailing spaces and tabs from each
 # line, drops trailing newlines, and appends exactly one newline. A file
 # that cannot be read, or that holds a NUL byte, prints nothing and
 # returns 1, because the shell cannot carry a NUL through the steps below
@@ -63,12 +67,23 @@ norm_hash() {
 	kept=$(tr -d '\000' < "$file" | wc -c) || return 1
 	[ "$size" -eq "$kept" ] || return 1
 
-	# awk drops the lines before the first one with anything but blanks,
-	# and the blanks that start that line. The command substitution drops
+	# awk drops the empty lines at the start, before sed strips blanks,
+	# so a line of blanks there is kept. The command substitution drops
 	# the trailing newlines, and printf puts exactly one back. printf is a
 	# builtin, so the text never appears on a command line.
-	text=$(tr -d '\r' < "$file" | sed -e 's/[[:blank:]]*$//' | awk "$NORM_LEAD_AWK") || return 1
+	text=$(tr -d '\r' < "$file" | awk "$NORM_LEAD_AWK" | sed -e 's/[[:blank:]]*$//') || return 1
 	printf '%s\n' "$text" | sha256sum | cut -d ' ' -f 1
+}
+
+# raw_hash prints the lowercase hex SHA-256 of a file's bytes exactly as
+# they are, as certpatch.RawHash does in the broker. Normalised hashes
+# find the files that hold a certificate, and raw hashes then pin the
+# exact bytes that discovery saw and that a replacement writes. Like
+# norm_hash, it follows symlinks, so every caller validates the path
+# first.
+raw_hash() {
+	[ -f "$1" ] && [ -r "$1" ] || return 1
+	sha256sum < "$1" | cut -d ' ' -f 1
 }
 
 # The path validators. Each one returns 0 when it accepts and 13 when it

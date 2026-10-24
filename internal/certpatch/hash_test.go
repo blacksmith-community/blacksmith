@@ -49,18 +49,23 @@ func TestNormalisedHashIgnoresSurroundingWhitespace(t *testing.T) {
 
 	for _, padded := range []string{
 		"\n" + pemText + "\n\n",
-		" \t\r\n\n" + pemText + "\r\n \t\n",
+		"\r\n\n" + pemText + "\r\n \t\n",
 		"\n\n" + strings.TrimSuffix(pemText, "\n"),
-		"  " + pemText,
 	} {
 		if got := certpatch.NormalisedHash([]byte(padded)); got != want {
 			t.Errorf("hash of %q = %s, want the hash of the bare PEM", padded, got)
 		}
 	}
 
-	// Anything that is not ASCII space, tab, CR, or LF still counts, and
-	// so does whitespace inside the PEM.
+	// Only whole blank lines may come before the PEM, because openssl
+	// and the jobs that read the file want the BEGIN marker at the start
+	// of its line. A space or tab before it, anything else that is not
+	// whitespace, and whitespace inside the PEM all still count.
 	for _, other := range []string{
+		" " + pemText,
+		"\t" + pemText,
+		" \t\r\n\n" + pemText,
+		"\n  " + pemText,
 		"x\n" + pemText,
 		"\v" + pemText,
 		"\f\n" + pemText,
@@ -84,5 +89,22 @@ func TestNormalisedHashOfWrittenBytes(t *testing.T) {
 
 	if certpatch.NormalisedHash([]byte(written)) != certpatch.NormalisedHash([]byte(newPEM)) {
 		t.Error("the written bytes do not hash to the new PEM's hash that the journal records")
+	}
+}
+
+// RawHash is the SHA-256 of the bytes as they are, so whitespace that
+// NormalisedHash ignores still changes it.
+func TestRawHash(t *testing.T) {
+	t.Parallel()
+
+	pemText := "-----BEGIN CERTIFICATE-----\nMIIB\nabcd\n-----END CERTIFICATE-----\n"
+	sum := sha256.Sum256([]byte(pemText))
+
+	if got := certpatch.RawHash([]byte(pemText)); got != hex.EncodeToString(sum[:]) {
+		t.Errorf("RawHash = %s, want the SHA-256 of the bytes", got)
+	}
+
+	if certpatch.RawHash([]byte("\n"+pemText)) == certpatch.RawHash([]byte(pemText)) {
+		t.Error("a leading newline must change the raw hash")
 	}
 }

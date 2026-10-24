@@ -676,6 +676,9 @@ func planJournal(scope patchScope, vm bosh.VM, disc *certscripts.Discovery, foun
 				Owner:      match.Owner,
 				Mode:       match.Mode,
 				OldHash:    file.hash,
+				OldRawHash: match.RawHash,
+				Lead:       match.Lead,
+				Tail:       match.Tail,
 				BackupPath: workPath(scope.taskID, "b", len(journal.Files)),
 				State:      FileStatePlanned,
 			})
@@ -1165,6 +1168,7 @@ func (m *Manager) readNewPairs(ctx context.Context, task *UpgradeTask, inst *Ins
 			}
 
 			files[n].NewHash = hashes[files[n].Variable][pick]
+			files[n].NewRawHash = newRawHash(files[n], pairs[files[n].Variable])
 		}
 	}
 
@@ -1178,6 +1182,25 @@ func (m *Manager) readNewPairs(ctx context.Context, task *UpgradeTask, inst *Ins
 	}
 
 	return false
+}
+
+// newRawHash is the raw hash of the bytes that replace the file, for a
+// record whose discovery gave the target's raw hash, and "" for one that
+// has none, which is then patched by normalised hashes alone.
+func newRawHash(file FileEntry, pair *credhub.KeyPair) string {
+	if file.OldRawHash == "" || pair == nil {
+		return ""
+	}
+
+	content := pair.Certificate
+	if file.Role == FileRoleKey {
+		content = pair.PrivateKey
+	}
+
+	replacement := file.replacement(content)
+	defer clear(replacement)
+
+	return certpatch.RawHash(replacement)
 }
 
 // errVariableMissing is the message of an instance whose rotation lost a
@@ -1859,9 +1882,29 @@ func exitMeaning(op string, result ssh.Result) string {
 		return fmt.Sprintf("patch.sh %s could not restart every process with a new pid", op)
 	case certscripts.ExitRefused:
 		return fmt.Sprintf("patch.sh %s refused a path or directory that failed its safety checks", op)
+	case certscripts.ExitInvalid:
+		return fmt.Sprintf("patch.sh %s found that openssl cannot read the new file as a certificate or a key", op)
 	default:
 		return fmt.Sprintf("patch.sh %s exited %d", op, result.ExitCode)
 	}
+}
+
+// withRaw appends raw to a patch.sh operation's arguments for a record
+// with raw hashes, and leaves them as they are for one without, which
+// patch.sh then checks by normalised hashes alone.
+func withRaw(file FileEntry, args []string, raw ...string) []string {
+	if !file.rawHashes() {
+		return args
+	}
+
+	return append(args, raw...)
+}
+
+// stageCheckArgs are the arguments of patch.sh stagecheck for staging
+// path n, with the raw hash and the role openssl checks the staged copy
+// as for a record with raw hashes.
+func stageCheckArgs(taskID string, n int, file FileEntry) []string {
+	return withRaw(file, []string{workPath(taskID, "s", n), file.NewHash}, file.NewRawHash, file.Role)
 }
 
 // jobDir is the job directory of the file's job.
@@ -2077,7 +2120,8 @@ func liveCID(vms []bosh.VM, j *VMJournal) string {
 // in live, as hashes DecideResume compares with the journal's.
 func (r *vmRun) checkFiles(live *LiveState) error {
 	for _, file := range r.files() {
-		result, err := r.script(opCheck, r.jobDir(file), file.Path, file.OldHash, file.NewHash, file.BackupPath)
+		result, err := r.script(opCheck, withRaw(file, []string{r.jobDir(file), file.Path, file.OldHash, file.NewHash, file.BackupPath},
+			file.OldRawHash, file.NewRawHash)...)
 		if err != nil {
 			return r.pause(fmt.Errorf("The check of %s on VM %s did not finish, so the VM was not patched: %w", file.Path, r.j.VM, err))
 		}
@@ -2131,7 +2175,7 @@ func (r *vmRun) stage(pairs map[string]*credhub.KeyPair) error {
 	}
 
 	for n, file := range files {
-		result, err := r.script(opStageCheck, workPath(r.task.ID, "s", n), file.NewHash)
+		result, err := r.script(opStageCheck, stageCheckArgs(r.task.ID, n, file)...)
 
 		switch {
 		case err != nil:
@@ -2172,6 +2216,13 @@ func (r *vmRun) stageFile(n int, file FileEntry, pairs map[string]*credhub.KeyPa
 		content = pair.PrivateKey
 	}
 
+	content = file.replacement(content)
+	defer clear(content)
+
+	if file.rawHashes() && certpatch.RawHash(content) != file.NewRawHash {
+		return fail("the new content of "+file.Path+" is not the content Blacksmith recorded", false)
+	}
+
 	result, err := r.mutate("stage "+file.Path+" on "+r.j.VM, nil, func() (ssh.Result, error) {
 		input, err := certscripts.StageInput(bytes.NewReader(content))
 		if err != nil {
@@ -2201,7 +2252,7 @@ func (r *vmRun) stageFile(n int, file FileEntry, pairs map[string]*credhub.KeyPa
 func (r *vmRun) backup() error {
 	for n, file := range r.files() {
 		result, err := r.mutate("back up "+file.Path+" on "+r.j.VM, nil, func() (ssh.Result, error) {
-			return r.script(opBackup, r.jobDir(file), file.Path, file.OldHash, file.BackupPath)
+			return r.script(opBackup, withRaw(file, []string{r.jobDir(file), file.Path, file.OldHash, file.BackupPath}, file.OldRawHash)...)
 		})
 
 		switch {
@@ -2368,7 +2419,8 @@ func pruneDivergence(d *certinventory.Divergence) *certinventory.Divergence {
 func (r *vmRun) replace() error {
 	for n, file := range r.files() {
 		result, err := r.mutate("replace "+file.Path+" on "+r.j.VM, func(j *VMJournal) { j.Files[n].State = FileStateReplacing }, func() (ssh.Result, error) {
-			return r.script(opReplace, r.jobDir(file), file.Path, workPath(r.task.ID, "s", n), file.OldHash, file.NewHash)
+			return r.script(opReplace, withRaw(file, []string{r.jobDir(file), file.Path, workPath(r.task.ID, "s", n), file.OldHash, file.NewHash},
+				file.OldRawHash, file.NewRawHash, file.Role)...)
 		})
 
 		switch {
@@ -2819,7 +2871,8 @@ func (r *vmRun) restoreAll() (string, error) {
 		}
 
 		result, err := r.commit("restore "+file.Path+" on "+r.j.VM, func(j *VMJournal) { j.Files[n].State = FileStateRestoring }, func() (ssh.Result, error) {
-			return r.script(opRestore, r.jobDir(file), file.Path, file.BackupPath, file.OldHash, file.NewHash)
+			return r.script(opRestore, withRaw(file, []string{r.jobDir(file), file.Path, file.BackupPath, file.OldHash, file.NewHash},
+				file.OldRawHash, file.NewRawHash)...)
 		})
 
 		switch {
@@ -3537,7 +3590,7 @@ func (r *patchResume) restage(run *vmRun, need func(FileEntry) bool, fail func(w
 			continue
 		}
 
-		result, err := run.script(opStageCheck, workPath(r.task.ID, "s", n), file.NewHash)
+		result, err := run.script(opStageCheck, stageCheckArgs(r.task.ID, n, file)...)
 
 		switch {
 		case err != nil && r.ctx.Err() != nil:
@@ -3574,7 +3627,7 @@ func (r *patchResume) restage(run *vmRun, need func(FileEntry) bool, fail func(w
 			return err
 		}
 
-		result, err := run.script(opStageCheck, workPath(r.task.ID, "s", n), file.NewHash)
+		result, err := run.script(opStageCheck, stageCheckArgs(r.task.ID, n, file)...)
 
 		switch {
 		case err != nil:

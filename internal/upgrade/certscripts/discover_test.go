@@ -314,9 +314,16 @@ func TestDiscoverFindsCertAndKey(t *testing.T) {
 		t.Errorf("JobDirs = %v, want %v", found.JobDirs, wantDirs)
 	}
 
+	crlf := strings.ReplaceAll(old.cert, "\n", "\r\n")
 	want := []certscripts.Match{
-		{Job: valkeyJob, Path: valkeyCert, Hash: old.certHash(), Owner: "root:root", Mode: "0644", RootDirs: true},
-		{Job: valkeyJob, Path: valkeyKey, Hash: old.keyHash(), Owner: "nobody:nogroup", Mode: "0600", RootDirs: true},
+		{
+			Job: valkeyJob, Path: valkeyCert, Hash: old.certHash(), RawHash: certpatch.RawHash([]byte(crlf)),
+			Tail: "\r\n", Owner: "root:root", Mode: "0644", RootDirs: true,
+		},
+		{
+			Job: valkeyJob, Path: valkeyKey, Hash: old.keyHash(), RawHash: certpatch.RawHash([]byte(old.key)),
+			Tail: "\n", Owner: "nobody:nogroup", Mode: "0600", RootDirs: true,
+		},
 	}
 
 	if !reflect.DeepEqual(found.Matches, want) {
@@ -441,16 +448,20 @@ func TestDiscoverReportsEmbedded(t *testing.T) {
 }
 
 // TestDiscoverMatchesPaddedFiles shows that a file holding the old PEM
-// with only whitespace around it, as a job template renders a blank line
-// before <%= p(...) %> and more after it, is a whole-file match that
-// patching can replace.
+// with blank lines before it and whitespace after it, as a job template
+// renders a blank line before <%= p(...) %> and more after it, is a
+// whole-file match that patching can replace. The match carries the
+// file's raw hash and the bytes around its PEM.
 func TestDiscoverMatchesPaddedFiles(t *testing.T) {
 	t.Parallel()
 
 	old := newPair(t, valkeyJob)
 	tree := newDiscoverTree(t, old)
-	tree.writeMode(t, valkeyCert, "\n"+old.cert+"\n\n", 0o644)
-	tree.write(t, valkeyKey, " \t\r\n"+old.key+"\r\n\t \n")
+	certBytes := "\n" + old.cert + "\n\n"
+	keyBytes := "\r\n\n" + old.key + "\r\n\t \n"
+
+	tree.writeMode(t, valkeyCert, certBytes, 0o644)
+	tree.write(t, valkeyKey, keyBytes)
 
 	found := tree.discover(t, old.certHash(), old.keyHash())
 
@@ -459,8 +470,14 @@ func TestDiscoverMatchesPaddedFiles(t *testing.T) {
 	}
 
 	want := []certscripts.Match{
-		{Job: valkeyJob, Path: valkeyCert, Hash: old.certHash(), Owner: "root:root", Mode: "0644", RootDirs: true},
-		{Job: valkeyJob, Path: valkeyKey, Hash: old.keyHash(), Owner: "nobody:nogroup", Mode: "0600", RootDirs: true},
+		{
+			Job: valkeyJob, Path: valkeyCert, Hash: old.certHash(), RawHash: certpatch.RawHash([]byte(certBytes)),
+			Lead: "\n", Tail: "\n\n\n", Owner: "root:root", Mode: "0644", RootDirs: true,
+		},
+		{
+			Job: valkeyJob, Path: valkeyKey, Hash: old.keyHash(), RawHash: certpatch.RawHash([]byte(keyBytes)),
+			Lead: "\r\n\n", Tail: "\n\r\n\t \n", Owner: "nobody:nogroup", Mode: "0600", RootDirs: true,
+		},
 	}
 
 	if !reflect.DeepEqual(found.Matches, want) {
@@ -477,9 +494,11 @@ func TestDiscoverMatchesPaddedFiles(t *testing.T) {
 	}
 }
 
-// TestDiscoverStillRefusesRealEmbedding shows that only whitespace around
-// the PEM is accepted. A file that holds anything else besides the old
-// PEM is embedded, and BuildConsumers refuses it with the usual message.
+// TestDiscoverStillRefusesRealEmbedding shows that only blank lines
+// before the PEM and whitespace after it are accepted. A file that holds
+// anything else besides the old PEM, a space or tab before its BEGIN
+// marker included, is embedded, and BuildConsumers refuses it with the
+// usual message.
 func TestDiscoverStillRefusesRealEmbedding(t *testing.T) {
 	t.Parallel()
 
@@ -497,6 +516,12 @@ func TestDiscoverStillRefusesRealEmbedding(t *testing.T) {
 		"a character before the PEM":  {"\nx" + old.cert + "\n\n", []string{old.certHash()}},
 		"text after the PEM":          {"\n" + old.cert + "tls: on\n", []string{old.certHash()}},
 		"a vertical tab before a PEM": {"\v\n" + old.cert, []string{old.certHash()}},
+		"a space before the BEGIN":    {" " + old.cert, []string{old.certHash()}},
+		"a tab before the BEGIN":      {"\n\t" + old.cert, []string{old.certHash()}},
+		"a blank line of spaces":      {"  \n" + old.cert, []string{old.certHash()}},
+		"a lone carriage return":      {"\r" + old.cert, []string{old.certHash()}},
+		"too many blank lines":        {strings.Repeat("\n", 33) + old.cert, []string{old.certHash()}},
+		"too much after the PEM":      {old.cert + strings.Repeat(" ", 64), []string{old.certHash()}},
 	}
 
 	for name, embedding := range cases {
@@ -577,12 +602,16 @@ func discoveryText(certHash, keyHash string) string {
 	return strings.Join([]string{
 		"jobdir job=valkey path=" + valkeyJobDir,
 		"jobdir job=bpm path=" + bpmJobDir,
-		"match job=valkey path=" + valkeyCert + " hash=" + certHash + " owner=root:root mode=0644 rootdirs=yes",
-		"match job=valkey path=" + valkeyKey + " hash=" + keyHash + " owner=vcap:vcap mode=0600 rootdirs=yes",
+		"match job=valkey path=" + valkeyCert + " hash=" + certHash + edges + " owner=root:root mode=0644 rootdirs=yes",
+		"match job=valkey path=" + valkeyKey + " hash=" + keyHash + edges + " owner=vcap:vcap mode=0600 rootdirs=yes",
 		"proc job=valkey name=valkey",
 		"proc job=bpm name=bpm",
 	}, "\n") + "\n"
 }
+
+// edges is the raw hash, lead, and tail of a match line in the Go-only
+// tests.
+const edges = " raw=" + hashD + " lead=- tail=n"
 
 const (
 	hashA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -621,15 +650,21 @@ func TestParseDiscoveryRejects(t *testing.T) {
 
 	good := discoveryText(hashA, hashB)
 	match := func(rest string) string { return "match job=valkey " + rest + "\n" }
-	fields := " hash=" + hashA + " owner=root:root mode=0644 rootdirs=yes"
+	fields := " hash=" + hashA + edges + " owner=root:root mode=0644 rootdirs=yes"
 
 	bad := map[string]string{
 		"match with no jobdir":      "match job=redis path=/var/vcap/data/jobs/redis/1/x.crt" + fields + "\n",
-		"match with a short hash":   match("path=" + valkeyCert + " hash=abc owner=root:root mode=0644 rootdirs=yes"),
-		"match with a bad mode":     match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=644 rootdirs=yes"),
-		"match with a bad rootdirs": match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=0644 rootdirs=maybe"),
-		"match with a bad owner":    match("path=" + valkeyCert + " hash=" + hashA + " owner=root mode=0644 rootdirs=yes"),
-		"match missing a field":     match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=0644"),
+		"match with a short hash":   match("path=" + valkeyCert + " hash=abc" + edges + " owner=root:root mode=0644 rootdirs=yes"),
+		"match with a bad mode":     match("path=" + valkeyCert + " hash=" + hashA + edges + " owner=root:root mode=644 rootdirs=yes"),
+		"match with a bad rootdirs": match("path=" + valkeyCert + " hash=" + hashA + edges + " owner=root:root mode=0644 rootdirs=maybe"),
+		"match with a bad owner":    match("path=" + valkeyCert + " hash=" + hashA + edges + " owner=root mode=0644 rootdirs=yes"),
+		"match missing a field":     match("path=" + valkeyCert + " hash=" + hashA + edges + " owner=root:root mode=0644"),
+		"match with no raw hash":    match("path=" + valkeyCert + " hash=" + hashA + " lead=- tail=n owner=root:root mode=0644 rootdirs=yes"),
+		"match with a short raw":    match("path=" + valkeyCert + " hash=" + hashA + " raw=abc lead=- tail=n owner=root:root mode=0644 rootdirs=yes"),
+		"match with a space lead":   match("path=" + valkeyCert + " hash=" + hashA + " raw=" + hashD + " lead=s tail=n owner=root:root mode=0644 rootdirs=yes"),
+		"match with a lone CR lead": match("path=" + valkeyCert + " hash=" + hashA + " raw=" + hashD + " lead=r tail=n owner=root:root mode=0644 rootdirs=yes"),
+		"match with an empty lead":  match("path=" + valkeyCert + " hash=" + hashA + " raw=" + hashD + " lead= tail=n owner=root:root mode=0644 rootdirs=yes"),
+		"match with a bad tail":     match("path=" + valkeyCert + " hash=" + hashA + " raw=" + hashD + " lead=n tail=x owner=root:root mode=0644 rootdirs=yes"),
 		"jobdir repeated":           "jobdir job=valkey path=" + valkeyJobDir + "\n",
 		"unknown kind":              "secret job=valkey\n",
 		"bare kind":                 "match\n",
@@ -664,7 +699,7 @@ func TestParseDiscoveryRefusesLayout(t *testing.T) {
 
 	good := discoveryText(hashA, hashB)
 	match := func(rest string) string { return "match job=valkey " + rest + "\n" }
-	fields := " hash=" + hashA + " owner=root:root mode=0644 rootdirs=yes"
+	fields := " hash=" + hashA + edges + " owner=root:root mode=0644 rootdirs=yes"
 
 	for name, row := range map[string]struct {
 		extra string
@@ -721,10 +756,10 @@ func TestBuildConsumers(t *testing.T) {
 	certs := map[string]string{testVariable: hashA, otherVariable: hashC}
 	keys := map[string]string{testVariable: hashB, otherVariable: hashD}
 	text := discoveryText(hashA, hashB) +
-		"match job=bpm path=" + bpmJobDir + "/b.crt hash=" + hashC + " owner=root:root mode=0644 rootdirs=yes\n" +
-		"match job=bpm path=" + bpmJobDir + "/b.key hash=" + hashD + " owner=root:root mode=0600 rootdirs=yes\n" +
-		"match job=bpm path=" + bpmJobDir + "/a.crt hash=" + hashC + " owner=root:root mode=0644 rootdirs=yes\n" +
-		"match job=bpm path=" + bpmJobDir + "/a.key hash=" + hashD + " owner=root:root mode=0600 rootdirs=yes\n"
+		"match job=bpm path=" + bpmJobDir + "/b.crt hash=" + hashC + edges + " owner=root:root mode=0644 rootdirs=yes\n" +
+		"match job=bpm path=" + bpmJobDir + "/b.key hash=" + hashD + edges + " owner=root:root mode=0600 rootdirs=yes\n" +
+		"match job=bpm path=" + bpmJobDir + "/a.crt hash=" + hashC + edges + " owner=root:root mode=0644 rootdirs=yes\n" +
+		"match job=bpm path=" + bpmJobDir + "/a.key hash=" + hashD + edges + " owner=root:root mode=0600 rootdirs=yes\n"
 
 	got, err := consumersFor(t, text, certs, keys)
 	if err != nil {
@@ -748,8 +783,8 @@ func TestBuildConsumersFailures(t *testing.T) {
 	certs := map[string]string{testVariable: hashA}
 	keys := map[string]string{testVariable: hashB}
 	jobdirs := "jobdir job=valkey path=" + valkeyJobDir + "\njobdir job=bpm path=" + bpmJobDir + "\n"
-	certLine := "match job=valkey path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=0644 rootdirs=yes\n"
-	keyLine := "match job=valkey path=" + valkeyKey + " hash=" + hashB + " owner=root:root mode=0600 rootdirs=yes\n"
+	certLine := "match job=valkey path=" + valkeyCert + " hash=" + hashA + edges + " owner=root:root mode=0644 rootdirs=yes\n"
+	keyLine := "match job=valkey path=" + valkeyKey + " hash=" + hashB + edges + " owner=root:root mode=0600 rootdirs=yes\n"
 
 	rows := []struct {
 		name  string
@@ -761,10 +796,10 @@ func TestBuildConsumersFailures(t *testing.T) {
 		{"certificate without key", jobdirs + certLine, certs, keys, []string{testVM, testVariable, "no key file"}},
 		{"key without certificate", jobdirs + keyLine, certs, keys, []string{testVM, testVariable, "no certificate file"}},
 		{"key in another job", jobdirs + certLine +
-			"match job=bpm path=" + bpmJobDir + "/k.key hash=" + hashB + " owner=root:root mode=0600 rootdirs=yes\n",
+			"match job=bpm path=" + bpmJobDir + "/k.key hash=" + hashB + edges + " owner=root:root mode=0600 rootdirs=yes\n",
 			certs, keys, []string{testVM, testVariable}},
 		{"two certificates and one key", jobdirs + certLine + keyLine +
-			"match job=valkey path=" + valkeyJobDir + "/copy.crt hash=" + hashA + " owner=root:root mode=0644 rootdirs=yes\n",
+			"match job=valkey path=" + valkeyJobDir + "/copy.crt hash=" + hashA + edges + " owner=root:root mode=0644 rootdirs=yes\n",
 			certs, keys, []string{testVM, testVariable}},
 		{"embedded", jobdirs + certLine + keyLine + "embedded job=valkey path=" + valkeyJobDir + "/bundle.pem hash=" + hashA + "\n",
 			certs, keys, []string{testVM, testVariable, valkeyJobDir + "/bundle.pem"}},
@@ -773,7 +808,7 @@ func TestBuildConsumersFailures(t *testing.T) {
 		{"rootdirs=no", jobdirs + strings.Replace(certLine, "rootdirs=yes", "rootdirs=no", 1) + keyLine,
 			certs, keys, []string{testVM, testVariable, valkeyCert}},
 		{"a hash nobody asked for", jobdirs + certLine + keyLine +
-			"match job=valkey path=" + valkeyJobDir + "/x.crt hash=" + hashC + " owner=root:root mode=0644 rootdirs=yes\n",
+			"match job=valkey path=" + valkeyJobDir + "/x.crt hash=" + hashC + edges + " owner=root:root mode=0644 rootdirs=yes\n",
 			certs, keys, []string{testVM}},
 		{"a variable without a key hash", jobdirs + certLine + keyLine,
 			certs, map[string]string{}, []string{testVariable}},

@@ -7,12 +7,19 @@
 # The script prints these lines, which ParseDiscovery reads.
 #
 #   jobdir job=<job> path=<resolved job directory>
-#   match job=<job> path=<pinned target> hash=<h> owner=<user:group> mode=<octal> rootdirs=<yes|no>
+#   match job=<job> path=<pinned target> hash=<h> raw=<r> lead=<l> tail=<t> owner=<user:group> mode=<octal> rootdirs=<yes|no>
 #   embedded job=<job> path=<file> hash=<h>
 #   proc job=<job> name=<process>
 #
 # A match is a regular file, not a symlink, under the job's resolved
-# directory whose whole normalised content has one of the hashes.
+# directory whose whole normalised content has one of the hashes. raw is
+# the SHA-256 of its bytes as they are. lead spells out the blank lines
+# before its first other byte and tail the whitespace after its last, one
+# letter a byte, n for a newline, r for a carriage return, s for a space,
+# and t for a tab, or - for none. Only whole blank lines, LF or CRLF, may
+# come before the PEM, so a file with anything else there, such as a
+# space before its BEGIN marker, or with more whitespace around it than
+# the patterns allow, is reported as embedded instead.
 # rootdirs=yes says that valid_pinned accepts the file, so every
 # directory from / down to it is root's and not writable by group or
 # other, and the file has a single link. An embedded line is a file that
@@ -75,6 +82,42 @@ function piece(s,   at) {
 }
 '
 
+# The forms of lead and tail that a match may have. ParseDiscovery
+# checks the same forms again in the broker.
+readonly DC_LEAD_RE='^(-|(rn|n){1,32})$'
+readonly DC_TAIL_RE='^(-|[nrst]{1,64})$'
+
+# DC_EDGES_AWK reads od's decimal bytes of a file and prints its lead and
+# its tail, in the letters above. It exits 1 for a file that holds only
+# carriage returns and newlines.
+# shellcheck disable=SC2016
+readonly DC_EDGES_AWK='
+{
+	for (i = 1; i <= NF; i++) {
+		c = $i + 0
+
+		if (!started) {
+			if (c == 10) { lead = lead "n"; continue }
+			if (c == 13) { lead = lead "r"; continue }
+			started = 1
+		}
+
+		if (c == 9) tail = tail "t"
+		else if (c == 10) tail = tail "n"
+		else if (c == 13) tail = tail "r"
+		else if (c == 32) tail = tail "s"
+		else tail = ""
+	}
+}
+
+END {
+	if (!started) exit 1
+	if (lead == "") lead = "-"
+	if (tail == "") tail = "-"
+	print lead, tail
+}
+'
+
 # _dc_word <value> <pattern> prints the value when it matches the
 # pattern, and ! when it does not.
 _dc_word() {
@@ -107,7 +150,7 @@ _dc_regular() {
 # the file with _dc_regular right before each read, and a file that is
 # no longer a regular file fails discovery.
 _dc_file() {
-	local root=$1 job=$2 jobdir=$3 file=$4 path size hash info owner mode rootdirs=no
+	local root=$1 job=$2 jobdir=$3 file=$4 path size hash raw edges lead tail info owner mode rootdirs=no
 
 	path=${file#"$root"}
 	_dc_regular "$file" || return 1
@@ -122,8 +165,19 @@ _dc_file() {
 			rootdirs=yes
 		fi
 
-		printf 'match job=%s path=%s hash=%s owner=%s mode=%s rootdirs=%s\n' \
-			"$job" "$(_dc_path "$path")" "$hash" "$owner" "$mode" "$rootdirs"
+		_dc_regular "$file" || return 1
+		raw=$(raw_hash "$file") || return 1
+		_dc_regular "$file" || return 1
+		edges=$(od -An -v -tu1 -- "$file" | awk "$DC_EDGES_AWK") || edges=
+		lead=${edges% *}
+		tail=${edges#* }
+
+		if [[ $lead =~ $DC_LEAD_RE ]] && [[ $tail =~ $DC_TAIL_RE ]]; then
+			printf 'match job=%s path=%s hash=%s raw=%s lead=%s tail=%s owner=%s mode=%s rootdirs=%s\n' \
+				"$job" "$(_dc_path "$path")" "$hash" "$raw" "$lead" "$tail" "$owner" "$mode" "$rootdirs"
+		else
+			printf 'embedded job=%s path=%s hash=%s\n' "$job" "$(_dc_path "$path")" "$hash"
+		fi
 
 		return 0
 	fi

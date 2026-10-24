@@ -142,7 +142,7 @@ func (p *pairCredHub) expectAllZeroed(t *testing.T, at string) {
 
 // fakeVM is one VM the fake patch session runs scripts on. Its files,
 // staged files, and backups map each path to the normalised hash of what
-// it holds.
+// it holds, and raws holds the raw hash of each, as rawOf reads it.
 type fakeVM struct {
 	deployment, group, id string
 	index                 int
@@ -150,8 +150,43 @@ type fakeVM struct {
 	files                 map[string]string
 	staged                map[string]string
 	backups               map[string]string
+	raws                  map[string]rawEntry
+	// lead and tail are what discovery prints for every match, in its
+	// letters. They default to - and n.
+	lead, tail string
 	// discovery, when set, is what discovery prints.
 	discovery string
+}
+
+// rawEntry is the raw hash of a fake path's bytes, which holds while the
+// path keeps the normalised hash norm.
+type rawEntry struct{ norm, raw string }
+
+// fakeRaw is the raw hash of a fake file that no operation wrote, such
+// as a target as the test set it up or changed it.
+func fakeRaw(norm string) string { return certpatch.RawHash([]byte("raw:" + norm)) }
+
+// rawOf returns the raw hash of path in norms, the files, staged, or
+// backups map: the one an operation recorded while the path still holds
+// what it wrote, and fakeRaw of its normalised hash otherwise.
+func (v *fakeVM) rawOf(norms map[string]string, path string) string {
+	norm, ok := norms[path]
+	if !ok {
+		return ""
+	}
+
+	if entry, ok := v.raws[path]; ok && entry.norm == norm {
+		return entry.raw
+	}
+
+	return fakeRaw(norm)
+}
+
+// put records that path in norms now holds content with the normalised
+// hash norm and the raw hash raw.
+func (v *fakeVM) put(norms map[string]string, path, norm, raw string) {
+	norms[path] = norm
+	v.raws[path] = rawEntry{norm: norm, raw: raw}
 }
 
 func (v *fakeVM) name() string { return v.group + "/" + v.id }
@@ -203,6 +238,9 @@ func (f *fakePatch) addVM(deployment, group, id string, index int, certHash, key
 		files:   make(map[string]string),
 		staged:  make(map[string]string),
 		backups: make(map[string]string),
+		raws:    make(map[string]rawEntry),
+		lead:    "-",
+		tail:    "n",
 	}
 	vm.files[vm.certPath()] = certHash
 	vm.files[vm.keyPath()] = keyHash
@@ -391,90 +429,149 @@ func (f *fakePatch) answer(vm *fakeVM, op string, args []string, input []byte) s
 		}
 
 		script, _ := certscripts.Script("patch")
-		vm.staged[arg(1)] = certpatch.NormalisedHash(input[min(len(script), len(input)):])
+		content := input[min(len(script), len(input)):]
+		vm.put(vm.staged, arg(1), certpatch.NormalisedHash(content), certpatch.RawHash(content))
 
 		return okResult("ok path=" + arg(1))
+	}
+
+	return f.answerFile(vm, op, args)
+}
+
+// answerFile runs one operation on the VM's files, by the raw hashes the
+// broker sent or, without them, by normalised hashes, as patch.sh does.
+// The caller holds mu.
+//
+//nolint:cyclop,funlen,gocognit // one case per operation keeps the fake readable
+func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ssh.Result {
+	arg := func(i int) string {
+		if i < len(args) {
+			return args[i]
+		}
+
+		return ""
+	}
+
+	// The argument counts without and with raw hashes, and where the
+	// raw hashes start.
+	counts := map[string][3]int{"check": {6, 8, 6}, "stagecheck": {3, 5, 3}, "backup": {5, 6, 5}, "replace": {6, 9, 6}, "restore": {6, 8, 6}}
+
+	count, known := counts[operation]
+	if !known {
+		return f.answerRest(fake, operation, args)
+	}
+
+	raw := len(args) == count[1]
+	if !raw && len(args) != count[0] {
+		return exitResult(certscripts.ExitUsage)
+	}
+
+	// hashOf is what the operation compares for path in norms, and want
+	// the hash it compares with, the raw one at i or the normalised one
+	// at n.
+	hashOf := func(norms map[string]string, path string) string {
+		if raw {
+			return fake.rawOf(norms, path)
+		}
+
+		return norms[path]
+	}
+	want := func(n, i int) string {
+		if raw {
+			return arg(count[2] + i)
+		}
+
+		return arg(n)
+	}
+
+	switch operation {
 	case "stagecheck":
-		if vm.staged[arg(1)] != arg(2) {
+		if fake.staged[arg(1)] != arg(2) || (raw && fake.rawOf(fake.staged, arg(1)) != arg(3)) {
 			return exitResult(certscripts.ExitDrift, "drift path="+arg(1))
 		}
 
 		return okResult("ok path=" + arg(1))
 	case "check":
-		state := map[string]string{arg(3): "old", arg(4): "new"}[vm.files[arg(2)]]
+		state := map[string]string{want(3, 0): "old", want(4, 1): "new"}[hashOf(fake.files, arg(2))]
 		if state == "" {
 			return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
 		}
 
-		backup, ok := vm.backups[arg(5)]
+		_, ok := fake.backups[arg(5)]
 
 		switch {
 		case !ok:
 			return okResult("ok path=" + arg(2) + " state=" + state + " backup=none")
-		case backup != arg(3):
+		case hashOf(fake.backups, arg(5)) != want(3, 0):
 			return exitResult(certscripts.ExitBackup, "drift path="+arg(5))
 		}
 
 		return okResult("ok path=" + arg(2) + " state=" + state + " backup=old")
 	case "backup":
 		// A backup already made is kept when it holds the old content.
-		if backup, exists := vm.backups[arg(4)]; exists {
-			if backup != arg(3) {
+		if _, exists := fake.backups[arg(4)]; exists {
+			if hashOf(fake.backups, arg(4)) != want(3, 0) {
 				return exitResult(certscripts.ExitBackup, "drift path="+arg(4))
 			}
 
 			return okResult("ok path=" + arg(4) + " action=exists")
 		}
 
-		if vm.files[arg(2)] != arg(3) {
+		if hashOf(fake.files, arg(2)) != want(3, 0) {
 			return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
 		}
 
-		vm.backups[arg(4)] = arg(3)
+		fake.put(fake.backups, arg(4), fake.files[arg(2)], fake.rawOf(fake.files, arg(2)))
 
 		return okResult("ok path=" + arg(4) + " action=created")
 	case "replace":
-		switch vm.files[arg(2)] {
-		case arg(5):
+		switch hashOf(fake.files, arg(2)) {
+		case want(5, 1):
 			return okResult("ok path=" + arg(2) + " state=new action=unchanged")
-		case arg(4):
-			if vm.staged[arg(3)] != arg(5) {
+		case want(4, 0):
+			if fake.staged[arg(3)] != arg(5) || (raw && fake.rawOf(fake.staged, arg(3)) != want(5, 1)) {
 				return exitResult(certscripts.ExitDrift, "drift path="+arg(3))
 			}
 
-			vm.files[arg(2)] = arg(5)
+			fake.put(fake.files, arg(2), fake.staged[arg(3)], fake.rawOf(fake.staged, arg(3)))
 
 			return okResult("ok path=" + arg(2) + " state=new action=replaced")
 		}
 
 		return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
-	case "restore":
-		// A file that holds the old content again needs no backup.
-		switch vm.files[arg(2)] {
-		case arg(4):
-			return okResult("ok path=" + arg(2) + " state=old action=unchanged")
-		case arg(5):
-		default:
-			return exitResult(certscripts.ExitDrift, "unrecovered path="+arg(2))
-		}
-
-		if vm.backups[arg(3)] != arg(4) {
-			return exitResult(certscripts.ExitBackup, "unrecovered path="+arg(2))
-		}
-
-		vm.files[arg(2)] = arg(4)
-
-		return okResult("ok path=" + arg(2) + " state=old action=restored")
-	case "restart":
-		lines := make([]string, 0, len(args))
-		for _, process := range args[1:] {
-			lines = append(lines, "ok name="+process)
-		}
-
-		return okResult(lines...)
 	}
 
-	return exitResult(certscripts.ExitUsage)
+	// restore. A file that holds the old content again needs no backup.
+	switch hashOf(fake.files, arg(2)) {
+	case want(4, 0):
+		return okResult("ok path=" + arg(2) + " state=old action=unchanged")
+	case want(5, 1):
+	default:
+		return exitResult(certscripts.ExitDrift, "unrecovered path="+arg(2))
+	}
+
+	if fake.backups[arg(3)] != arg(4) || hashOf(fake.backups, arg(3)) != want(4, 0) {
+		return exitResult(certscripts.ExitBackup, "unrecovered path="+arg(2))
+	}
+
+	fake.put(fake.files, arg(2), fake.backups[arg(3)], fake.rawOf(fake.backups, arg(3)))
+
+	return okResult("ok path=" + arg(2) + " state=old action=restored")
+}
+
+// answerRest runs the operations that are neither staging nor a file's,
+// which leaves restart.
+func (f *fakePatch) answerRest(_ *fakeVM, op string, args []string) ssh.Result {
+	if op != "restart" {
+		return exitResult(certscripts.ExitUsage)
+	}
+
+	lines := make([]string, 0, len(args))
+	for _, process := range args[1:] {
+		lines = append(lines, "ok name="+process)
+	}
+
+	return okResult(lines...)
 }
 
 // dropUnder deletes every path under the prefix.
@@ -504,7 +601,8 @@ func (f *fakePatch) discover(vm *fakeVM, hashes []string) string {
 
 	for _, path := range paths {
 		if slices.Contains(hashes, vm.files[path]) {
-			lines = append(lines, "match job=redis path="+path+" hash="+vm.files[path]+" owner=root:vcap mode=0640 rootdirs=yes")
+			lines = append(lines, "match job=redis path="+path+" hash="+vm.files[path]+" raw="+vm.rawOf(vm.files, path)+
+				" lead="+vm.lead+" tail="+vm.tail+" owner=root:vcap mode=0640 rootdirs=yes")
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -920,140 +921,410 @@ func TestPatchRefusesBadArguments(t *testing.T) {
 	}
 }
 
-// paddedTree builds a patch tree whose target holds the old certificate
-// as a job template renders it, with a blank line before the PEM and two
-// after it, and stages the new certificate as CredHub returns it. It
-// returns the old and new pairs and the target's original bytes.
-func paddedTree(t *testing.T) (*vmTree, pair, pair, string) {
-	t.Helper()
+// padded is a patch tree whose target holds the old certificate as a job
+// template renders it, with a blank line before the PEM and two after it,
+// and whose staged file holds the bytes the broker builds to replace it:
+// the target's lead and tail around the new PEM. The system's openssl is
+// in the tree, so the checks that run it work.
+type padded struct {
+	*vmTree
 
-	old := newPair(t, "old")
-	fresh := newPair(t, "new")
-	tree := newPatchTree(t)
-	original := "\n" + old.cert + "\n\n"
-
-	tree.write(t, pinnedTarget, original)
-	tree.stage(t, fresh.cert)
-
-	return tree, old, fresh, original
+	old, fresh pair
+	// original is the target's bytes as discovery read them, and written
+	// the bytes that replace them.
+	original, written string
 }
 
-func (v *vmTree) replacePadded(t *testing.T, old, fresh pair) (string, int) {
+func newPadded(t *testing.T) *padded {
 	t.Helper()
 
-	return v.patch(t, "replace", testTaskID, pinnedJobDir, pinnedTarget, stagePath, old.certHash(), fresh.certHash())
+	tree := &padded{vmTree: newPatchTree(t), old: newPair(t, "old"), fresh: newPair(t, "new")}
+	tree.original = "\n" + tree.old.cert + "\n\n"
+	tree.written = "\n" + strings.TrimSpace(tree.fresh.cert) + "\n\n\n"
+
+	tree.write(t, pinnedTarget, tree.original)
+	tree.stage(t, tree.written)
+	tree.withOpenSSL(t)
+
+	return tree
 }
 
-func (v *vmTree) checkPadded(t *testing.T, old, fresh pair) (string, int) {
+// withOpenSSL links the system's openssl into the tree, where the scripts
+// look for the stemcell's.
+func (v *vmTree) withOpenSSL(t *testing.T) {
 	t.Helper()
 
-	return v.patch(t, opCheck, testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), fresh.certHash(), backupPath)
+	openssl, err := exec.LookPath("openssl")
+	if err != nil {
+		t.Skip("openssl is not installed")
+	}
+
+	v.mkdir(t, "/usr/bin")
+	symlink(t, openssl, v.at("/usr/bin/openssl"))
 }
 
-// TestReplaceKeepsSurroundingWhitespace shows that replace writes the
-// target's own leading and trailing whitespace around the new PEM, which
-// is what BOSH renders from the same template on the next deploy, and
-// that the bytes written hash to the new hash the journal records.
+func rawHash(text string) string { return certpatch.RawHash([]byte(text)) }
+
+func (p *padded) oldRaw() string { return rawHash(p.original) }
+
+func (p *padded) newRaw() string { return rawHash(p.written) }
+
+func (p *padded) check(t *testing.T) (string, int) {
+	t.Helper()
+
+	return p.patch(t, opCheck, testTaskID, pinnedJobDir, pinnedTarget, p.old.certHash(), p.fresh.certHash(), backupPath,
+		p.oldRaw(), p.newRaw())
+}
+
+func (p *padded) stagecheck(t *testing.T, newHash, newRaw, role string) (string, int) {
+	t.Helper()
+
+	return p.patch(t, "stagecheck", testTaskID, stagePath, newHash, newRaw, role)
+}
+
+func (p *padded) backup(t *testing.T) (string, int) {
+	t.Helper()
+
+	return p.patch(t, "backup", testTaskID, pinnedJobDir, pinnedTarget, p.old.certHash(), backupPath, p.oldRaw())
+}
+
+func (p *padded) swap(t *testing.T, newHash, newRaw string) (string, int) {
+	t.Helper()
+
+	return p.patch(t, "replace", testTaskID, pinnedJobDir, pinnedTarget, stagePath, p.old.certHash(), newHash,
+		p.oldRaw(), newRaw, "certificate")
+}
+
+func (p *padded) restore(t *testing.T) (string, int) {
+	t.Helper()
+
+	return p.patch(t, "restore", testTaskID, pinnedJobDir, pinnedTarget, backupPath, p.old.certHash(), p.fresh.certHash(),
+		p.oldRaw(), p.newRaw())
+}
+
+// mustRun fails the test unless the operation exited 0.
+func mustRun(t *testing.T, name string, run func(*testing.T) (string, int)) string {
+	t.Helper()
+
+	out, code := run(t)
+	if code != 0 {
+		t.Fatalf("%s exited %d, want 0", name, code)
+	}
+
+	return out
+}
+
+// TestReplaceKeepsSurroundingWhitespace shows that a replacement writes
+// exactly the bytes the broker staged, the target's own blank lines and
+// trailing whitespace around the new PEM, which BOSH renders from the
+// same template on the next deploy, and that a rollback puts the
+// original bytes back.
 func TestReplaceKeepsSurroundingWhitespace(t *testing.T) {
 	t.Parallel()
 
-	tree, old, fresh, original := paddedTree(t)
+	tree := newPadded(t)
 
-	if _, code := tree.patch(t, "backup", testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), backupPath); code != 0 {
-		t.Fatalf("backup of a padded target exited %d, want 0", code)
-	}
+	mustRun(t, "stagecheck", func(t *testing.T) (string, int) {
+		t.Helper()
 
-	tree.assert(t, backupPath, original)
+		return tree.stagecheck(t, tree.fresh.certHash(), tree.newRaw(), "certificate")
+	})
+	mustRun(t, "backup", tree.backup)
+	tree.assert(t, backupPath, tree.original)
 
-	out, code := tree.replacePadded(t, old, fresh)
-	if code != 0 {
-		t.Fatalf("replace of a padded target exited %d, want 0", code)
-	}
+	out := mustRun(t, "replace", func(t *testing.T) (string, int) {
+		t.Helper()
 
+		return tree.swap(t, tree.fresh.certHash(), tree.newRaw())
+	})
 	wantOutput(t, out, "ok path="+pinnedTarget+" state=new action=replaced\n")
-
-	written := "\n" + strings.TrimSpace(fresh.cert) + "\n\n\n"
-	tree.assert(t, pinnedTarget, written)
+	tree.assert(t, pinnedTarget, tree.written)
 	tree.assertOwnerMode(t, pinnedTarget, vcapUID, 0o640)
 	tree.assertOnlyTarget(t)
 
-	if got := libHash(t, tree.at(pinnedTarget)); got != fresh.certHash() {
-		t.Errorf("norm_hash of the written target = %s, want the new hash %s", got, fresh.certHash())
+	if got := libHash(t, tree.at(pinnedTarget)); got != tree.fresh.certHash() {
+		t.Errorf("norm_hash of the written target = %s, want the new hash %s", got, tree.fresh.certHash())
 	}
 
-	if certpatch.NormalisedHash([]byte(written)) != fresh.certHash() {
-		t.Error("NormalisedHash of the written bytes is not the new hash")
-	}
-
-	out, _ = tree.checkPadded(t, old, fresh)
+	out, _ = tree.check(t)
 	wantOutput(t, out, "ok path="+pinnedTarget+" state=new backup=old\n")
 
-	// Rolling back puts the original bytes back exactly.
-	out, code = tree.patch(t, "restore", testTaskID, pinnedJobDir, pinnedTarget, backupPath, old.certHash(), fresh.certHash())
-	if code != 0 {
-		t.Fatalf("restore of a padded target exited %d, want 0", code)
-	}
-
+	out = mustRun(t, "restore", tree.restore)
 	wantOutput(t, out, "ok path="+pinnedTarget+" state=old action=restored\n")
-	tree.assert(t, pinnedTarget, original)
+	tree.assert(t, pinnedTarget, tree.original)
 	tree.assertOnlyTarget(t)
 }
 
-// TestReplaceStripsStagedWhitespace shows that whitespace around the
-// staged PEM never reaches the target, which gets the target's own.
-func TestReplaceStripsStagedWhitespace(t *testing.T) {
+// TestRawHashesCatchWhitespaceDrift shows that a target that gained only
+// a blank line after discovery read it is drift, which a normalised hash
+// alone would miss, so the patch never writes over bytes it did not see.
+func TestRawHashesCatchWhitespaceDrift(t *testing.T) {
 	t.Parallel()
 
-	tree, old, fresh, _ := paddedTree(t)
-	tree.replace(t, stagePath)
-	tree.stage(t, "\r\n  "+fresh.cert+"\n\n\n")
-	tree.write(t, pinnedTarget, "\t"+strings.TrimSpace(old.cert))
+	tree := newPadded(t)
+	tree.original = tree.old.cert
+	changed := "\n" + tree.old.cert
+	tree.write(t, pinnedTarget, changed)
 
-	if _, code := tree.replacePadded(t, old, fresh); code != 0 {
-		t.Fatalf("replace exited %d, want 0", code)
+	if libHash(t, tree.at(pinnedTarget)) != tree.old.certHash() {
+		t.Fatal("the changed target must keep the old normalised hash")
 	}
 
-	tree.assert(t, pinnedTarget, "\t"+strings.TrimSpace(fresh.cert))
+	for name, run := range map[string]func(*testing.T) (string, int){
+		opCheck:  tree.check,
+		"backup": tree.backup,
+		"replace": func(t *testing.T) (string, int) {
+			t.Helper()
+
+			return tree.swap(t, tree.fresh.certHash(), tree.newRaw())
+		},
+	} {
+		out, code := run(t)
+		if code != driftExit {
+			t.Errorf("%s of a target that changed after discovery exited %d, want %d", name, code, driftExit)
+		}
+
+		wantOutput(t, out, "drift path="+pinnedTarget+"\n")
+	}
+
+	tree.assert(t, pinnedTarget, changed)
+	tree.assertOnlyTarget(t)
+
+	if tree.exists(t, backupPath) {
+		t.Error("a target that drifted was backed up")
+	}
+}
+
+// TestRawHashesNeedTheOldPEMToo shows that a raw hash alone never makes
+// a target old. Discovery could read the raw bytes of a file that changed
+// after it was matched, so the target must also hold the old PEM, or the
+// patch would back up and replace a file that never held it.
+func TestRawHashesNeedTheOldPEMToo(t *testing.T) {
+	t.Parallel()
+
+	tree := newPadded(t)
+	other := newPair(t, "other")
+	tree.original = "\n" + other.cert + "\n\n"
+	tree.write(t, pinnedTarget, tree.original)
+
+	for name, run := range map[string]func(*testing.T) (string, int){
+		opCheck:  tree.check,
+		"backup": tree.backup,
+		"replace": func(t *testing.T) (string, int) {
+			t.Helper()
+
+			return tree.swap(t, tree.fresh.certHash(), tree.newRaw())
+		},
+	} {
+		if _, code := run(t); code != driftExit {
+			t.Errorf("%s of a target with the pinned bytes but another PEM exited %d, want %d", name, code, driftExit)
+		}
+	}
+
+	tree.assert(t, pinnedTarget, tree.original)
+
+	if tree.exists(t, backupPath) {
+		t.Error("a target that does not hold the old PEM was backed up")
+	}
+}
+
+// TestRawHashesRefuseStagedBytesThatDiffer shows that a staged file must
+// hold exactly the bytes the broker recorded, not just the same PEM.
+func TestRawHashesRefuseStagedBytesThatDiffer(t *testing.T) {
+	t.Parallel()
+
+	tree := newPadded(t)
+	tree.replace(t, stagePath)
+	tree.stage(t, tree.fresh.cert)
+
+	out, code := tree.stagecheck(t, tree.fresh.certHash(), tree.newRaw(), "certificate")
+	if code != driftExit {
+		t.Errorf("stagecheck of other bytes exited %d, want %d", code, driftExit)
+	}
+
+	wantOutput(t, out, "drift path="+stagePath+"\n")
+
+	out, code = tree.swap(t, tree.fresh.certHash(), tree.newRaw())
+	if code != driftExit {
+		t.Errorf("replace from other bytes exited %d, want %d", code, driftExit)
+	}
+
+	wantOutput(t, out, "drift path="+stagePath+"\n")
+	tree.assert(t, pinnedTarget, tree.original)
+	tree.assertOnlyTarget(t)
+}
+
+// TestRestoreRefusesTamperedBackup shows that a backup that changed by
+// one blank line is refused before it is copied, and the target keeps the
+// new content.
+func TestRestoreRefusesTamperedBackup(t *testing.T) {
+	t.Parallel()
+
+	tree := newPadded(t)
+	mustRun(t, "backup", tree.backup)
+	mustRun(t, "replace", func(t *testing.T) (string, int) {
+		t.Helper()
+
+		return tree.swap(t, tree.fresh.certHash(), tree.newRaw())
+	})
+
+	tree.write(t, backupPath, "\n"+tree.original)
+
+	out, code := tree.restore(t)
+	if code != backupExit {
+		t.Errorf("restore from a tampered backup exited %d, want %d", code, backupExit)
+	}
+
+	wantOutput(t, out, "unrecovered path="+pinnedTarget+"\n")
+	tree.assert(t, pinnedTarget, tree.written)
+	tree.assertOnlyTarget(t)
+
+	out, code = tree.check(t)
+	if code != backupExit {
+		t.Errorf("check of a tampered backup exited %d, want %d", code, backupExit)
+	}
+
+	wantOutput(t, out, "drift path="+backupPath+"\n")
+
+	if _, code := tree.backup(t); code != backupExit {
+		t.Errorf("backup over a tampered backup exited %d, want %d", code, backupExit)
+	}
+}
+
+// TestInvalidReplacementAbortsBeforeRename shows that a staged file that
+// openssl cannot read in its role stops stagecheck, and stops replace
+// before the rename, so the target keeps its bytes and no temporary file
+// is left. Without the stemcell's openssl nothing is replaced either.
+func TestInvalidReplacementAbortsBeforeRename(t *testing.T) {
+	t.Parallel()
+
+	const invalidExit = 14
+
+	invalid := "\n-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n\n\n"
+
+	t.Run("a certificate openssl cannot read", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newPadded(t)
+		tree.replace(t, stagePath)
+		tree.stage(t, invalid)
+
+		out, code := tree.stagecheck(t, textHash(invalid), rawHash(invalid), "certificate")
+		if code != invalidExit {
+			t.Errorf("stagecheck exited %d, want %d", code, invalidExit)
+		}
+
+		wantOutput(t, out, "drift path="+stagePath+"\n")
+
+		out, code = tree.swap(t, textHash(invalid), rawHash(invalid))
+		if code != invalidExit {
+			t.Errorf("replace exited %d, want %d", code, invalidExit)
+		}
+
+		wantOutput(t, out, "drift path="+stagePath+"\n")
+		tree.assert(t, pinnedTarget, tree.original)
+		tree.assertOnlyTarget(t)
+	})
+
+	t.Run("a certificate checked as a key", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newPadded(t)
+
+		if _, code := tree.stagecheck(t, tree.fresh.certHash(), tree.newRaw(), "key"); code != invalidExit {
+			t.Errorf("stagecheck of a certificate as a key exited %d, want %d", code, invalidExit)
+		}
+
+		tree.replace(t, stagePath)
+		key := "\n" + strings.TrimSpace(tree.fresh.key) + "\n"
+		tree.stage(t, key)
+
+		if _, code := tree.stagecheck(t, tree.fresh.keyHash(), rawHash(key), "key"); code != 0 {
+			t.Errorf("stagecheck of a key exited %d, want 0", code)
+		}
+	})
+}
+
+// TestReplacementNeedsOpenSSL shows that without the stemcell's openssl,
+// or with a role it does not know, nothing is checked and nothing is
+// replaced.
+func TestReplacementNeedsOpenSSL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no openssl", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newPadded(t)
+		tree.replace(t, "/usr/bin/openssl")
+
+		if _, code := tree.stagecheck(t, tree.fresh.certHash(), tree.newRaw(), "certificate"); code != 1 {
+			t.Errorf("stagecheck without openssl exited %d, want 1", code)
+		}
+
+		if _, code := tree.swap(t, tree.fresh.certHash(), tree.newRaw()); code != 1 {
+			t.Errorf("replace without openssl exited %d, want 1", code)
+		}
+
+		tree.assert(t, pinnedTarget, tree.original)
+		tree.assertOnlyTarget(t)
+	})
+
+	t.Run("an unknown role", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newPadded(t)
+
+		if _, code := tree.stagecheck(t, tree.fresh.certHash(), tree.newRaw(), "ca"); code != usageExit {
+			t.Errorf("stagecheck with an unknown role exited %d, want %d", code, usageExit)
+		}
+
+		if _, code := tree.patch(t, "replace", testTaskID, pinnedJobDir, pinnedTarget, stagePath, tree.old.certHash(),
+			tree.fresh.certHash(), tree.oldRaw(), tree.newRaw(), "ca"); code != usageExit {
+			t.Errorf("replace with an unknown role exited %d, want %d", code, usageExit)
+		}
+
+		tree.assert(t, pinnedTarget, tree.original)
+	})
 }
 
 // TestResumeMidSwapOfPaddedTarget shows that a task that stopped during
-// the swap of a padded target finds the target's state, finishes the
-// replacement with the whitespace kept, and can still roll back, whether
-// it stopped before or after the rename.
+// the swap of a padded target finds the target's state by its raw bytes,
+// finishes the replacement, and can still roll back, whether it stopped
+// before or after the rename.
 func TestResumeMidSwapOfPaddedTarget(t *testing.T) {
 	t.Parallel()
 
 	leftover := targetDir + "/.certpatch." + testTaskID + ".Ab3dE6gH9j"
+	replace := func(tree *padded) func(*testing.T) (string, int) {
+		return func(t *testing.T) (string, int) {
+			t.Helper()
+
+			return tree.swap(t, tree.fresh.certHash(), tree.newRaw())
+		}
+	}
 
 	t.Run("before the rename", func(t *testing.T) {
 		t.Parallel()
 
-		tree, old, fresh, original := paddedTree(t)
-
-		if _, code := tree.patch(t, "backup", testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), backupPath); code != 0 {
-			t.Fatalf("backup exited %d, want 0", code)
-		}
+		tree := newPadded(t)
+		mustRun(t, "backup", tree.backup)
 
 		// The swap wrote part of its temporary file and stopped.
-		tree.write(t, leftover, "\n"+fresh.cert[:20])
+		tree.write(t, leftover, "\n"+tree.fresh.cert[:20])
 
-		out, code := tree.checkPadded(t, old, fresh)
-		if code != 0 {
-			t.Fatalf("check after the stop exited %d, want 0", code)
-		}
-
+		out := mustRun(t, "check after the stop", tree.check)
 		wantOutput(t, out, "ok path="+pinnedTarget+" state=old backup=old\n")
-		tree.assert(t, pinnedTarget, original)
+		tree.assert(t, pinnedTarget, tree.original)
 
-		if _, code := tree.replacePadded(t, old, fresh); code != 0 {
-			t.Fatalf("the resumed replace exited %d, want 0", code)
-		}
+		out = mustRun(t, "the resumed replace", replace(tree))
+		wantOutput(t, out, "ok path="+pinnedTarget+" state=new action=replaced\n")
+		tree.assert(t, pinnedTarget, tree.written)
 
-		tree.assert(t, pinnedTarget, "\n"+strings.TrimSpace(fresh.cert)+"\n\n\n")
+		mustRun(t, "cleanup", func(t *testing.T) (string, int) {
+			t.Helper()
 
-		if _, code := tree.patch(t, "cleanup", testTaskID, pinnedJobDir, pinnedTarget); code != 0 {
-			t.Fatalf("cleanup exited %d, want 0", code)
-		}
+			return tree.patch(t, "cleanup", testTaskID, pinnedJobDir, pinnedTarget)
+		})
 
 		if tree.exists(t, leftover) {
 			t.Error("cleanup left the interrupted swap's temporary file")
@@ -1063,35 +1334,48 @@ func TestResumeMidSwapOfPaddedTarget(t *testing.T) {
 	t.Run("after the rename", func(t *testing.T) {
 		t.Parallel()
 
-		tree, old, fresh, original := paddedTree(t)
-
-		if _, code := tree.patch(t, "backup", testTaskID, pinnedJobDir, pinnedTarget, old.certHash(), backupPath); code != 0 {
-			t.Fatalf("backup exited %d, want 0", code)
-		}
-
-		if _, code := tree.replacePadded(t, old, fresh); code != 0 {
-			t.Fatalf("replace exited %d, want 0", code)
-		}
-
-		written := "\n" + strings.TrimSpace(fresh.cert) + "\n\n\n"
+		tree := newPadded(t)
+		mustRun(t, "backup", tree.backup)
+		mustRun(t, "replace", replace(tree))
 
 		// The journal never learned of the swap, so the task runs check
 		// and replace again.
-		out, _ := tree.checkPadded(t, old, fresh)
+		out := mustRun(t, "check after the stop", tree.check)
 		wantOutput(t, out, "ok path="+pinnedTarget+" state=new backup=old\n")
 
-		out, code := tree.replacePadded(t, old, fresh)
-		if code != 0 {
-			t.Fatalf("the resumed replace exited %d, want 0", code)
-		}
-
+		out = mustRun(t, "the resumed replace", replace(tree))
 		wantOutput(t, out, "ok path="+pinnedTarget+" state=new action=unchanged\n")
-		tree.assert(t, pinnedTarget, written)
+		tree.assert(t, pinnedTarget, tree.written)
 
-		if _, code := tree.patch(t, "restore", testTaskID, pinnedJobDir, pinnedTarget, backupPath, old.certHash(), fresh.certHash()); code != 0 {
-			t.Fatalf("restore exited %d, want 0", code)
-		}
+		mustRun(t, "restore", tree.restore)
+		tree.assert(t, pinnedTarget, tree.original)
+	})
+}
 
-		tree.assert(t, pinnedTarget, original)
+// TestResumeMidRestoreOfPaddedTarget shows that a rollback that stopped
+// after its rename finds the original bytes back and runs on.
+func TestResumeMidRestoreOfPaddedTarget(t *testing.T) {
+	t.Parallel()
+
+	t.Run("after the rename", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newPadded(t)
+		mustRun(t, "backup", tree.backup)
+		mustRun(t, "replace", func(t *testing.T) (string, int) {
+			t.Helper()
+
+			return tree.swap(t, tree.fresh.certHash(), tree.newRaw())
+		})
+		mustRun(t, "restore", tree.restore)
+
+		// The restore renamed the original back and stopped, so the
+		// rollback runs it again.
+		out := mustRun(t, "the resumed restore", tree.restore)
+		wantOutput(t, out, "ok path="+pinnedTarget+" state=old action=unchanged\n")
+		tree.assert(t, pinnedTarget, tree.original)
+
+		out = mustRun(t, "check", tree.check)
+		wantOutput(t, out, "ok path="+pinnedTarget+" state=old backup=old\n")
 	})
 }

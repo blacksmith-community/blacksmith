@@ -40,6 +40,9 @@ const (
 	ExitBackup  = 11
 	ExitRestart = 12
 	ExitRefused = 13
+	// ExitInvalid is a new file that openssl cannot read as a
+	// certificate or a key, found before it replaced anything.
+	ExitInvalid = 14
 )
 
 // invokeProgram runs the script that arrives on stdin as root. The

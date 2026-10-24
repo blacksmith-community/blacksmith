@@ -1,6 +1,7 @@
 package upgrade
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1483,4 +1484,335 @@ func TestPatchResumeRechecksBeforeSwap(t *testing.T) {
 
 	env.expectPairOn(t, env.oldPair, "old")
 	c.expectNoThird(t)
+}
+
+// rawArgCounts are the argument counts of each file operation of patch.sh
+// without raw hashes and with them.
+func rawArgCounts() map[string][2]int {
+	return map[string][2]int{
+		opCheck: {6, 8}, opStageCheck: {3, 5}, opBackup: {5, 6}, opReplace: {6, 9}, opRestore: {6, 8},
+	}
+}
+
+// padVMs has discovery report every file of every VM with a blank line
+// before its PEM and two after it, as a job template renders them.
+func (e *patchEnv) padVMs() {
+	e.patch.mu.Lock()
+	defer e.patch.mu.Unlock()
+
+	for _, fake := range e.vms {
+		fake.lead, fake.tail = "n", "nnn"
+	}
+}
+
+// padded is the bytes a patch writes for pem over a padded file.
+func padded(pem []byte) string {
+	return "\n" + strings.TrimSpace(string(pem)) + "\n\n\n"
+}
+
+// rawOfFile is the raw hash the fake holds for the VM's file.
+func (e *patchEnv) rawOfFile(index int, path string) string {
+	e.patch.mu.Lock()
+	defer e.patch.mu.Unlock()
+
+	return e.vms[index].rawOf(e.vms[index].files, path)
+}
+
+// expectPaddedPair fails unless every VM's files hold the raw bytes of
+// the pair, the new one written between the padding or the old one as
+// discovery read it.
+func (e *patchEnv) expectPaddedPair(t *testing.T, vms int, fresh bool) {
+	t.Helper()
+
+	for index := range vms {
+		fake := e.vms[index]
+
+		wantCert, wantKey := fakeRaw(certpatch.NormalisedHash(e.oldPair.cert)), fakeRaw(certpatch.NormalisedHash(e.oldPair.key))
+		if fresh {
+			wantCert, wantKey = certpatch.RawHash([]byte(padded(e.newPair.cert))), certpatch.RawHash([]byte(padded(e.newPair.key)))
+		}
+
+		if e.rawOfFile(index, fake.certPath()) != wantCert || e.rawOfFile(index, fake.keyPath()) != wantKey {
+			t.Fatalf("expected VM %d to hold the exact bytes of the %s pair", index+1, map[bool]string{true: "new", false: "old"}[fresh])
+		}
+	}
+}
+
+// A patch records the raw hash of each target as discovery read it and of
+// the exact bytes that replace it, sends both with every file operation,
+// stages the target's padding around the new PEM, and leaves each file
+// holding exactly those bytes.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRecordsAndSendsRawHashes(t *testing.T) {
+	env := newPatchEnv(t)
+	env.padVMs()
+
+	manager := env.newManager()
+	task := env.task()
+
+	if !env.run(manager, &task) {
+		t.Fatalf("expected the instance to settle, got %+v", current(t, manager).Instances[0])
+	}
+
+	if got := current(t, manager); got.Instances[0].Status != InstanceStatusSuccess {
+		t.Fatalf("expected the patch to succeed, got %s: %s", got.Instances[0].Status, got.Instances[0].Error)
+	}
+
+	for _, file := range journalOf(t, manager, env.vms[0].name()).Files {
+		content := env.newPair.cert
+		if file.Role == FileRoleKey {
+			content = env.newPair.key
+		}
+
+		if file.OldRawHash != fakeRaw(file.OldHash) || file.NewRawHash != certpatch.RawHash([]byte(padded(content))) ||
+			file.Lead != "\n" || file.Tail != "\n\n\n" {
+			t.Fatalf("expected %s to record its raw hashes and padding, got %+v", file.Path, file)
+		}
+	}
+
+	for _, call := range env.patch.recorded() {
+		if counts, ok := rawArgCounts()[call.op]; ok && len(call.args) != counts[1] {
+			t.Fatalf("expected %s on %s to carry raw hashes, got %d arguments", call.op, call.vm, len(call.args))
+		}
+	}
+
+	env.expectPaddedPair(t, len(env.vms), true)
+}
+
+// A staged copy that openssl cannot read in its role stops the VM before
+// anything on it changed, the way any failed check of a staged copy does,
+// and the error says why without repeating the script's output.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchStopsOnUnreadableNewFile(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+	name := env.vms[0].name()
+
+	env.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == name && call.op == opStageCheck {
+			return exitResult(certscripts.ExitInvalid, "drift path="+call.args[1]), nil, true
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	env.run(manager, &task)
+
+	for _, call := range env.patch.recorded() {
+		if call.op == opBackup || call.op == opReplace {
+			t.Fatalf("expected nothing backed up or replaced after the check failed, got %s on %s", call.op, call.vm)
+		}
+	}
+
+	if state := env.pairState(0); state != pairOld {
+		t.Fatalf("expected VM 1 to keep the old pair, got %s", state)
+	}
+
+	journal := journalOf(t, manager, name)
+	if journal.Phase != VMPhaseUnrecovered || !strings.Contains(journal.Error, "openssl cannot read the new file") {
+		t.Fatalf("expected VM 1 stopped with the openssl reason, got %s %q", journal.Phase, journal.Error)
+	}
+
+	if got := current(t, manager); !got.Paused || strings.Contains(got.Instances[0].Error, "drift path") {
+		t.Fatalf("expected a paused task whose error leaves out the output, got paused=%v %q", got.Paused, got.Instances[0].Error)
+	}
+}
+
+// A target that gains only a blank line after discovery read it keeps
+// its normalised hash, but its raw hash changes, so the patch finds the
+// drift before it backs the file up and replaces nothing.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchCatchesWhitespaceDrift(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+	target := env.vms[0]
+	certPath := target.certPath()
+
+	env.hook(func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == target.name() && call.op == opStageCheck {
+			env.patch.mu.Lock()
+			old := target.files[certPath]
+			target.raws[certPath] = rawEntry{norm: old, raw: certpatch.RawHash([]byte("\n" + string(env.oldPair.cert)))}
+			env.patch.mu.Unlock()
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	env.run(manager, &task)
+
+	for _, call := range env.patch.recorded() {
+		if call.op == opReplace {
+			t.Fatalf("expected no replace after the drift, got one on %s", call.vm)
+		}
+	}
+
+	journal := journalOf(t, manager, target.name())
+	if journal.Phase != VMPhaseUnrecovered || !strings.Contains(journal.Error, "changed under it") {
+		t.Fatalf("expected VM 1 stopped for drift, got %s %q", journal.Phase, journal.Error)
+	}
+
+	if got := env.rawOfFile(0, certPath); got != certpatch.RawHash([]byte("\n"+string(env.oldPair.cert))) {
+		t.Fatal("expected the drifted target to keep its bytes")
+	}
+}
+
+// A rollback whose backup changed by one blank line refuses to restore
+// from it, leaves the file holding the new content, and leaves the VM
+// unrecovered.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRollbackRefusesTamperedBackup(t *testing.T) {
+	env := newPatchEnv(t)
+	manager := env.newManager()
+	task := env.task()
+	target := env.vms[0]
+
+	env.gateFailsOn(0, func(call patchCall) (ssh.Result, error, bool) {
+		if call.vm == target.name() && call.op == opRestore {
+			env.patch.mu.Lock()
+			for path, norm := range target.backups {
+				target.raws[path] = rawEntry{norm: norm, raw: certpatch.RawHash([]byte("tampered"))}
+			}
+			env.patch.mu.Unlock()
+		}
+
+		return ssh.Result{}, nil, false
+	})
+
+	env.run(manager, &task)
+
+	journal := journalOf(t, manager, target.name())
+	if journal.Phase != VMPhaseUnrecovered {
+		t.Fatalf("expected VM 1 unrecovered, got %s %q", journal.Phase, journal.Error)
+	}
+
+	if state := env.pairState(0); state != pairNew {
+		t.Fatalf("expected VM 1 to keep the new pair rather than a tampered backup, got %s", state)
+	}
+}
+
+// A journal that a broker from before raw hashes saved has none, and its
+// resume patches by normalised hashes as that broker did, at every
+// boundary: each file operation goes without raw hashes, and the patch
+// ends as it would have.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumesLegacyJournal(t *testing.T) {
+	for _, boundary := range resumeBoundaries() {
+		t.Run(boundary.name, func(t *testing.T) {
+			env, crash, stored := boundaryEnv(t, boundary)
+
+			legacy := legacyRecord(t, stored)
+			storeCertificateTask(t, env.vault.waitVault, legacy)
+
+			mark := len(env.patch.recorded())
+			second, got := env.reload(t)
+
+			if boundary.rollback {
+				env.expectRolledBack(t, got, mark)
+			} else {
+				env.expectPatched(t, second, got)
+			}
+
+			env.expectNoMix(t)
+			crash.expectNoThird(t)
+
+			for _, call := range env.patch.recorded()[mark:] {
+				if counts, ok := rawArgCounts()[call.op]; ok && len(call.args) != counts[0] {
+					t.Fatalf("expected %s on %s without raw hashes, got %d arguments", call.op, call.vm, len(call.args))
+				}
+			}
+
+			for _, file := range storedJournal(env.stored()).Files {
+				if file.rawHashes() {
+					t.Fatalf("expected the resumed journal to stay without raw hashes, got %+v", file)
+				}
+			}
+		})
+	}
+}
+
+// legacyRecord is the task as a broker from before raw hashes would have
+// saved it, read back from JSON that has none of their keys.
+func legacyRecord(t *testing.T, task UpgradeTask) UpgradeTask {
+	t.Helper()
+
+	for index := range task.Instances {
+		if task.Instances[index].Certificates == nil {
+			continue
+		}
+
+		for vmIndex := range task.Instances[index].Certificates.VMs {
+			files := task.Instances[index].Certificates.VMs[vmIndex].Files
+			for n := range files {
+				files[n].OldRawHash, files[n].NewRawHash, files[n].Lead, files[n].Tail = "", "", "", ""
+			}
+		}
+	}
+
+	raw, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"old_raw_sha256", "new_raw_sha256", `"lead"`, `"tail"`} {
+		if bytes.Contains(raw, []byte(key)) {
+			t.Fatalf("expected the legacy record to have no %s key", key)
+		}
+	}
+
+	var legacy UpgradeTask
+
+	err = json.Unmarshal(raw, &legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return legacy
+}
+
+// A crash at each boundary of a patch of padded files resumes to the end
+// the boundary has, with each file holding exactly the bytes discovery
+// read or exactly the bytes the replacement wrote.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchResumePaddedAtEveryBoundary(t *testing.T) {
+	for _, boundary := range resumeBoundaries() {
+		t.Run(boundary.name, func(t *testing.T) {
+			env := newPatchEnv(t)
+			env.padVMs()
+
+			if boundary.rollback {
+				env.gateFailsOn(0, nil)
+			}
+
+			crash := crashAt(env, boundary)
+			stored := crash.crashRun(t)
+
+			for _, file := range storedJournal(stored).Files {
+				if !file.rawHashes() {
+					t.Fatalf("expected the crashed journal to hold raw hashes, got %+v", file)
+				}
+			}
+
+			mark := len(env.patch.recorded())
+			second, got := env.reload(t)
+
+			if boundary.rollback {
+				env.expectRolledBack(t, got, mark)
+				env.expectPaddedPair(t, 1, false)
+			} else {
+				env.expectPatched(t, second, got)
+				env.expectPaddedPair(t, len(env.vms), true)
+			}
+
+			crash.expectNoThird(t)
+		})
+	}
 }

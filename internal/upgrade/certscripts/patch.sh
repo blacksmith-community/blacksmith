@@ -3,11 +3,11 @@
 #
 #   prepare <task>
 #   stage <task> <staged>
-#   check <task> <jobdir> <path> <old> <new> <backup>
-#   stagecheck <task> <staged> <new>
-#   backup <task> <jobdir> <path> <old> <backup>
-#   replace <task> <jobdir> <path> <staged> <old> <new>
-#   restore <task> <jobdir> <path> <backup> <old> <new>
+#   check <task> <jobdir> <path> <old> <new> <backup> [<oldraw> <newraw>]
+#   stagecheck <task> <staged> <new> [<newraw> <role>]
+#   backup <task> <jobdir> <path> <old> <backup> [<oldraw>]
+#   replace <task> <jobdir> <path> <staged> <old> <new> [<oldraw> <newraw> <role>]
+#   restore <task> <jobdir> <path> <backup> <old> <new> [<oldraw> <newraw>]
 #   restart <task> <process>...
 #   cleanup <task> [<jobdir> <path>]...
 #
@@ -16,6 +16,17 @@
 # b/<n>. <old> and <new> are normalised hashes. Each operation prints
 # lines that start with ok, drift, or unrecovered and name the file or
 # process, and never prints file content.
+#
+# <oldraw> is the raw hash of the target as discovery read it, which is
+# also the raw hash its backup must keep, and <newraw> the raw hash of
+# the exact bytes the broker staged to replace it. When the broker sends
+# them, every comparison of a target, a staged file, or a backup checks
+# the raw hash as well as the normalised one, so a byte that changed
+# after discovery is drift even when it is only whitespace. A journal
+# written before raw hashes existed sends none, and the operations then
+# compare normalised hashes as they always did. <role> is certificate or
+# key, and names the openssl check a staged file and the file about to
+# replace a target must pass.
 #
 # The broker runs prepare, then stage, then the other operations, all on
 # one connection to the VM. prepare makes the task's directories through
@@ -84,70 +95,53 @@ _pt_sync() {
 	sync -- "$@"
 }
 
-# PT_WRAP_AWK reads od's decimal bytes of a target on stdin and the file
-# named by the source variable. It prints the spaces, tabs, carriage
-# returns, and newlines before the target's first other byte, then the
-# source's content without those around it, then the target's ones after
-# its last other byte. Only those four bytes are printed from the
-# target, so nothing else of it can reach the output, and the target is
-# read once. It exits 1 for a target that holds nothing else, or a
-# source it cannot read.
-# shellcheck disable=SC2016
-readonly PT_WRAP_AWK='
-{
-	for (i = 1; i <= NF; i++) {
-		c = $i + 0
-
-		if (c == 9 || c == 10 || c == 13 || c == 32) {
-			if (started) tail[ntail++] = c
-			else lead[nlead++] = c
-		} else {
-			started = 1
-			ntail = 0
-		}
-	}
+# _pt_raw <file> prints the file's raw hash, or nothing when it is
+# missing or cannot be read, which every caller reads as drift.
+_pt_raw() {
+	raw_hash "$1" 2> /dev/null || true
 }
 
-END {
-	if (!started) exit 1
+# _pt_valid <role> <file> succeeds when openssl reads the file as a
+# certificate, for the role certificate, or as a private key, for the
+# role key. openssl's output goes nowhere, so nothing of a key is ever
+# printed, and it never prompts, because stdin is empty and a pass
+# phrase is given as empty. It returns 14 when openssl refuses the file
+# and 1 when the stemcell's openssl is missing.
+_pt_valid() {
+	local role=$1 file=$2 root openssl
+	local -a args
 
-	body = ""
-	lines = 0
+	case $role in
+	certificate) args=(x509 -noout -in "$file") ;;
+	key) args=(pkey -noout -passin pass: -in "$file") ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
 
-	while ((got = (getline line < source)) > 0) {
-		body = body (lines++ ? "\n" : "") line
-	}
+	root=$(_cp_root) || return "$EXIT_REFUSED"
+	openssl=$root/usr/bin/openssl
+	[ -f "$openssl" ] && [ -x "$openssl" ] || return 1
 
-	if (got < 0) exit 1
-
-	sub(/^[ \t\r\n]+/, "", body)
-	sub(/[ \t\r\n]+$/, "", body)
-
-	for (i = 0; i < nlead; i++) printf "%c", lead[i]
-	printf "%s", body
-	for (i = 0; i < ntail; i++) printf "%c", tail[i]
-}
-'
-
-# _pt_wrap <target> <source> prints the content of source between the
-# whitespace that surrounds the content of target. A job template that
-# renders a blank line before a value and more after it then gets the
-# same blank lines around the new value, which is what BOSH renders from
-# the template on the next deploy. Every caller has checked both files
-# with norm_hash, so neither holds a NUL byte.
-_pt_wrap() {
-	od -An -v -tu1 -- "$1" | awk -v source="$2" "$PT_WRAP_AWK"
+	timeout 30 "$openssl" "${args[@]}" < /dev/null > /dev/null 2>&1 || return "$EXIT_INVALID"
 }
 
-# _pt_swap <task> <source> <full> <want> [wrap] writes the content of
-# source over the target full through a temporary file in the target's
-# directory, named for the task. With wrap, the content of source goes
-# between the target's own leading and trailing whitespace, as _pt_wrap
-# prints it, and without it the file is copied as it is. The new file
-# takes the target's owner, group, and mode, and must hash to want
-# before the rename.
+# _pt_role <role> accepts the two roles _pt_valid knows.
+_pt_role() {
+	case $1 in
+	certificate | key) return 0 ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
+}
+
+# _pt_swap <task> <source> <full> <want> [<wantraw> [<role>]] writes the
+# content of source over the target full through a temporary file in
+# the target's directory, named for the task. The new file takes the
+# target's owner, group, and mode, and before the rename it must hash to
+# want, have the raw hash wantraw when one is given, and pass _pt_valid
+# for role when one is given. After the rename the target must have the
+# raw hash wantraw. A temporary file that openssl refuses returns 14,
+# and the EXIT trap removes it, so the target keeps its content.
 _pt_swap() {
-	local task=$1 source=$2 full=$3 want=$4 how=${5:-copy} dir info owner mode
+	local task=$1 source=$2 full=$3 want=$4 wantraw=${5:-} role=${6:-} dir info owner mode status
 
 	dir=${full%/*}
 	info=$(stat -c '%u:%g %a' -- "$full") || return 1
@@ -155,20 +149,29 @@ _pt_swap() {
 	mode=${info#* }
 
 	_PT_TMP=$(mktemp -- "$dir/.certpatch.$task.XXXXXXXXXX") || return 1
-
-	if [ "$how" = wrap ]; then
-		_pt_wrap "$full" "$source" > "$_PT_TMP" || return 1
-	else
-		cat -- "$source" > "$_PT_TMP" || return 1
-	fi
-
+	cat -- "$source" > "$_PT_TMP" || return 1
 	chown -- "$owner" "$_PT_TMP" || return 1
 	chmod -- "$mode" "$_PT_TMP" || return 1
 	[ "$(_pt_hash "$_PT_TMP")" = "$want" ] || return 1
+
+	if [ -n "$wantraw" ]; then
+		[ "$(_pt_raw "$_PT_TMP")" = "$wantraw" ] || return 1
+	fi
+
+	if [ -n "$role" ]; then
+		_pt_valid "$role" "$_PT_TMP"
+		status=$?
+		[ "$status" -eq 0 ] || return "$status"
+	fi
+
 	_pt_sync "$_PT_TMP" || return 1
 	mv -f -T -- "$_PT_TMP" "$full" || return 1
 	_PT_TMP=
-	_pt_sync "$dir"
+	_pt_sync "$dir" || return 1
+
+	if [ -n "$wantraw" ]; then
+		[ "$(_pt_raw "$full")" = "$wantraw" ] || return 1
+	fi
 }
 
 prepare() {
@@ -213,18 +216,55 @@ stage() {
 	printf 'ok path=%s\n' "$staged"
 }
 
+# _pt_both <file> prints the file's normalised hash and its raw hash as
+# <norm>:<raw>. Matching both means the file holds exactly the bytes the
+# raw hash pins, and that those bytes hold the PEM the normalised hash
+# names, even when discovery read the file while it changed.
+# _pt_pick calls it by name, which shellcheck cannot see.
+# shellcheck disable=SC2329
+_pt_both() {
+	printf '%s:%s\n' "$(_pt_hash "$1")" "$(_pt_raw "$1")"
+}
+
+# _pt_pick <raw> sets hashof to the hash function an operation compares
+# with: _pt_both when the broker sent raw hashes, and _pt_hash otherwise.
+# The caller declares hashof local, and compares with <norm>:<raw> pairs
+# when the broker sent raw hashes.
+_pt_pick() {
+	if [ "$1" = yes ]; then
+		hashof=_pt_both
+	else
+		hashof=_pt_hash
+	fi
+}
+
 check() {
-	_pt_args 6 "$#" || return
+	local raw=no
+
+	case $# in
+	6) ;;
+	8) raw=yes ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
+
 	valid_task "$1" || return
 
-	local task=$1 jobdir=$2 path=$3 old=$4 new=$5 backup=$6 root hash state saved=none
+	local task=$1 jobdir=$2 path=$3 old=$4 new=$5 backup=$6 root hash state saved=none hashof
 
 	_pt_hashes "$old" "$new" || return
+
+	if [ "$raw" = yes ]; then
+		_pt_hashes "$7" "$8" || return
+		old=$old:$7
+		new=$new:$8
+	fi
+
+	_pt_pick "$raw"
 	valid_pinned "$path" "$jobdir" || return
 	_pt_work "$backup" "$task" b || return
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 
-	hash=$(_pt_hash "$root$path")
+	hash=$("$hashof" "$root$path")
 
 	case $hash in
 	"$old") state=old ;;
@@ -236,7 +276,7 @@ check() {
 	esac
 
 	if [ -e "$root$backup" ]; then
-		if [ "$(_pt_hash "$root$backup")" != "$old" ]; then
+		if [ "$("$hashof" "$root$backup")" != "$old" ]; then
 			printf 'drift path=%s\n' "$backup"
 			return "$EXIT_BACKUP"
 		fi
@@ -247,19 +287,46 @@ check() {
 	printf 'ok path=%s state=%s backup=%s\n' "$path" "$state" "$saved"
 }
 
+# stagecheck checks that the staged file holds the new content. With raw
+# hashes it must hold exactly the bytes the broker staged, and openssl
+# must read it in its role, so a file that would not load stops the
+# patch before anything on the VM changed.
 stagecheck() {
-	_pt_args 3 "$#" || return
+	local raw=no
+
+	case $# in
+	3) ;;
+	5) raw=yes ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
+
 	valid_task "$1" || return
 
-	local task=$1 staged=$2 new=$3 root
+	local task=$1 staged=$2 new=$3 root status
 
 	valid_hash "$new" || return
+
+	if [ "$raw" = yes ]; then
+		valid_hash "$4" || return
+		_pt_role "$5" || return
+	fi
+
 	_pt_work "$staged" "$task" s || return
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 
-	if [ "$(_pt_hash "$root$staged")" != "$new" ]; then
+	if [ "$(_pt_hash "$root$staged")" != "$new" ] || { [ "$raw" = yes ] && [ "$(_pt_raw "$root$staged")" != "$4" ]; }; then
 		printf 'drift path=%s\n' "$staged"
 		return "$EXIT_DRIFT"
+	fi
+
+	if [ "$raw" = yes ]; then
+		_pt_valid "$5" "$root$staged"
+		status=$?
+
+		if [ "$status" -ne 0 ]; then
+			printf 'drift path=%s\n' "$staged"
+			return "$status"
+		fi
 	fi
 
 	printf 'ok path=%s\n' "$staged"
@@ -267,14 +334,29 @@ stagecheck() {
 
 # backup copies the target to a temporary file in the task's b directory
 # and links it to the backup path. ln refuses a name that exists, so a
-# backup is written once and never changed.
+# backup is written once and never changed. With a raw hash, the target,
+# the copy, and a backup already made must all have it.
 backup() {
-	_pt_args 5 "$#" || return
+	local raw=no
+
+	case $# in
+	5) ;;
+	6) raw=yes ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
+
 	valid_task "$1" || return
 
-	local task=$1 jobdir=$2 path=$3 old=$4 backup=$5 root full saved
+	local task=$1 jobdir=$2 path=$3 old=$4 backup=$5 root full saved hashof
 
 	valid_hash "$old" || return
+
+	if [ "$raw" = yes ]; then
+		valid_hash "$6" || return
+		old=$old:$6
+	fi
+
+	_pt_pick "$raw"
 	valid_pinned "$path" "$jobdir" || return
 	_pt_work "$backup" "$task" b || return
 	root=$(_cp_root) || return "$EXIT_REFUSED"
@@ -283,7 +365,7 @@ backup() {
 	saved=$root$backup
 
 	if [ -e "$saved" ]; then
-		if [ "$(_pt_hash "$saved")" != "$old" ]; then
+		if [ "$("$hashof" "$saved")" != "$old" ]; then
 			printf 'drift path=%s\n' "$backup"
 			return "$EXIT_BACKUP"
 		fi
@@ -292,7 +374,7 @@ backup() {
 		return 0
 	fi
 
-	if [ "$(_pt_hash "$full")" != "$old" ]; then
+	if [ "$("$hashof" "$full")" != "$old" ]; then
 		printf 'drift path=%s\n' "$path"
 		return "$EXIT_DRIFT"
 	fi
@@ -302,7 +384,7 @@ backup() {
 
 	# The job can write the target while it is copied, so the copy is
 	# checked, not the target.
-	if [ "$(_pt_hash "$_PT_TMP")" != "$old" ]; then
+	if [ "$("$hashof" "$_PT_TMP")" != "$old" ]; then
 		printf 'drift path=%s\n' "$path"
 		return "$EXIT_DRIFT"
 	fi
@@ -316,55 +398,106 @@ backup() {
 	printf 'ok path=%s backup=%s action=created\n' "$path" "$backup"
 }
 
+# replace swaps the staged file in over a target that holds the old
+# content. With raw hashes, the target must still hold exactly the bytes
+# discovery read, the staged file exactly the bytes the broker staged,
+# and the file about to be renamed must pass openssl in its role.
 replace() {
-	_pt_args 6 "$#" || return
+	local raw=no
+
+	case $# in
+	6) ;;
+	9) raw=yes ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
+
 	valid_task "$1" || return
 
-	local task=$1 jobdir=$2 path=$3 staged=$4 old=$5 new=$6 root full hash
+	local task=$1 jobdir=$2 path=$3 staged=$4 old=$5 new=$6 root full hash hashof status
+	local oldraw='' newraw='' role=''
 
 	_pt_hashes "$old" "$new" || return
+
+	if [ "$raw" = yes ]; then
+		_pt_hashes "$7" "$8" || return
+		_pt_role "$9" || return
+		oldraw=$7
+		newraw=$8
+		role=$9
+	fi
+
+	_pt_pick "$raw"
 	valid_pinned "$path" "$jobdir" || return
 	_pt_work "$staged" "$task" s || return
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 
 	full=$root$path
-	hash=$(_pt_hash "$full")
+	hash=$("$hashof" "$full")
 
-	if [ "$hash" = "$new" ]; then
+	if [ "$hash" = "$new${newraw:+:$newraw}" ]; then
 		printf 'ok path=%s state=new action=unchanged\n' "$path"
 		return 0
 	fi
 
-	if [ "$hash" != "$old" ]; then
+	if [ "$hash" != "$old${oldraw:+:$oldraw}" ]; then
 		printf 'drift path=%s\n' "$path"
 		return "$EXIT_DRIFT"
 	fi
 
-	if [ "$(_pt_hash "$root$staged")" != "$new" ]; then
+	if [ "$(_pt_hash "$root$staged")" != "$new" ] || { [ "$raw" = yes ] && [ "$(_pt_raw "$root$staged")" != "$newraw" ]; }; then
 		printf 'drift path=%s\n' "$staged"
 		return "$EXIT_DRIFT"
 	fi
 
-	_pt_swap "$task" "$root$staged" "$full" "$new" wrap || return 1
+	_pt_swap "$task" "$root$staged" "$full" "$new" "$newraw" "$role"
+	status=$?
+
+	case $status in
+	0) ;;
+	"$EXIT_INVALID")
+		printf 'drift path=%s\n' "$staged"
+		return "$status"
+		;;
+	*) return 1 ;;
+	esac
 
 	printf 'ok path=%s state=new action=replaced\n' "$path"
 }
 
 # restore puts the backup's content back over a target that holds the
-# new content, and keeps the backup.
+# new content, and keeps the backup. With raw hashes, the target must
+# hold exactly the bytes the replacement wrote and the backup exactly
+# the bytes discovery read, so a backup changed by even one byte of
+# whitespace is refused.
 restore() {
-	_pt_args 6 "$#" || return
+	local raw=no
+
+	case $# in
+	6) ;;
+	8) raw=yes ;;
+	*) return "$EXIT_USAGE" ;;
+	esac
+
 	valid_task "$1" || return
 
-	local task=$1 jobdir=$2 path=$3 backup=$4 old=$5 new=$6 root full hash
+	local task=$1 jobdir=$2 path=$3 backup=$4 old=$5 new=$6 root full hash hashof oldraw=''
 
 	_pt_hashes "$old" "$new" || return
+
+	if [ "$raw" = yes ]; then
+		_pt_hashes "$7" "$8" || return
+		oldraw=$7
+		old=$old:$7
+		new=$new:$8
+	fi
+
+	_pt_pick "$raw"
 	valid_pinned "$path" "$jobdir" || return
 	_pt_work "$backup" "$task" b || return
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 
 	full=$root$path
-	hash=$(_pt_hash "$full")
+	hash=$("$hashof" "$full")
 
 	if [ "$hash" = "$old" ]; then
 		printf 'ok path=%s state=old action=unchanged\n' "$path"
@@ -376,12 +509,12 @@ restore() {
 		return "$EXIT_DRIFT"
 	fi
 
-	if [ "$(_pt_hash "$root$backup")" != "$old" ]; then
+	if [ "$("$hashof" "$root$backup")" != "$old" ]; then
 		printf 'unrecovered path=%s\n' "$path"
 		return "$EXIT_BACKUP"
 	fi
 
-	_pt_swap "$task" "$root$backup" "$full" "$old" || return 1
+	_pt_swap "$task" "$root$backup" "$full" "$5" "$oldraw" || return 1
 
 	printf 'ok path=%s state=old action=restored\n' "$path"
 }

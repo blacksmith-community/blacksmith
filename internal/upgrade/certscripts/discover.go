@@ -25,14 +25,21 @@ var ErrNoPasswordlessSudo = errors.New("passwordless sudo is not available for B
 var ErrPatchUnsafe = errors.New("certscripts: patch in place is not safe on this VM")
 
 // Match is one file that discovery found. For a whole-file match, Path is
-// a pinned target, Hash is the normalised hash of the whole file, and
-// Owner, Mode, and RootDirs describe it. For an embedded match, Path is
-// the file that holds the block and Hash is the block's hash, and the
-// other fields are empty.
+// a pinned target, Hash is the normalised hash of the whole file, and the
+// other fields describe it. For an embedded match, Path is the file that
+// holds the block and Hash is the block's hash, and the other fields are
+// empty.
 type Match struct {
-	Job   string
-	Path  string
-	Hash  string
+	Job  string
+	Path string
+	Hash string
+	// RawHash is the SHA-256 of the file's bytes as discovery read them.
+	RawHash string
+	// Lead is the blank lines before the PEM, as LF or CRLF bytes, and
+	// Tail the spaces, tabs, carriage returns, and newlines after it. A
+	// replacement keeps both, as BOSH would render them.
+	Lead  string
+	Tail  string
 	Owner string
 	Mode  string
 	// RootDirs says that every directory from / down to the file is
@@ -77,8 +84,11 @@ const (
 // discoveryKinds returns the keys each kind of discovery line holds.
 func discoveryKinds() map[string]map[string]bool {
 	return map[string]map[string]bool{
-		"jobdir":   {keyJob: true, keyPath: true},
-		"match":    {keyJob: true, keyPath: true, keyHash: true, "owner": true, "mode": true, "rootdirs": true},
+		"jobdir": {keyJob: true, keyPath: true},
+		"match": {
+			keyJob: true, keyPath: true, keyHash: true, "raw": true, "lead": true, "tail": true,
+			"owner": true, "mode": true, "rootdirs": true,
+		},
 		"embedded": {keyJob: true, keyPath: true, keyHash: true},
 		"proc":     {keyJob: true, "name": true},
 	}
@@ -91,7 +101,16 @@ var (
 	hashValue   = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	ownerValue  = regexp.MustCompile(`^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$`)
 	modeValue   = regexp.MustCompile(`^[0-7]{4}$`)
+	// leadValue and tailValue are the forms discover.sh prints, - for
+	// none or one letter a byte, and discover.sh checks the same forms.
+	leadValue = regexp.MustCompile(`^(-|(rn|n){1,32})$`)
+	tailValue = regexp.MustCompile(`^(-|[nrst]{1,64})$`)
 )
+
+// edgeBytes turns a lead or a tail from its letters into its bytes.
+func edgeBytes(letters string) string {
+	return strings.NewReplacer("-", "", "n", "\n", "r", "\r", "s", " ", "t", "\t").Replace(letters)
+}
 
 // The ways discovery output can fail its checks. None repeats the output.
 var (
@@ -104,6 +123,7 @@ var (
 	errOwner        = errors.New("the owner is malformed")
 	errMode         = errors.New("the mode is malformed")
 	errRootDirs     = errors.New("rootdirs is neither yes nor no")
+	errEdges        = errors.New("the whitespace around the file's PEM is malformed")
 	errProcess      = errors.New("the process name is malformed")
 )
 
@@ -252,8 +272,8 @@ func (d *Discovery) add(record Record) error {
 	return nil
 }
 
-// file reads a match line, with its owner, mode, and rootdirs when whole
-// is set, or an embedded line.
+// file reads a match line, with its raw hash, lead, tail, owner, mode,
+// and rootdirs when whole is set, or an embedded line.
 func (d *Discovery) file(pairs map[string]string, whole bool) (Match, error) {
 	values, err := fields(pairs, keyJob, keyPath, keyHash)
 	if err != nil {
@@ -280,11 +300,21 @@ func (d *Discovery) file(pairs map[string]string, whole bool) (Match, error) {
 		return match, nil
 	}
 
-	values, err = fields(pairs, "owner", "mode", "rootdirs")
+	values, err = fields(pairs, "raw", "lead", "tail", "owner", "mode", "rootdirs")
 	if err != nil {
 		return Match{}, err
 	}
 
+	switch {
+	case !hashValue.MatchString(values[0]):
+		return Match{}, errHash
+	case !leadValue.MatchString(values[1]), !tailValue.MatchString(values[2]):
+		return Match{}, errEdges
+	}
+
+	match.RawHash = values[0]
+	match.Lead, match.Tail = edgeBytes(values[1]), edgeBytes(values[2])
+	values = values[3:]
 	match.Owner, match.Mode = values[0], values[1]
 
 	switch {
