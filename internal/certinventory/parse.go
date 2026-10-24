@@ -22,18 +22,21 @@ const (
 
 // CertFacts holds what a certificate says about itself.
 type CertFacts struct {
-	CommonName     string    `json:"common_name,omitempty"`
-	Issuer         string    `json:"issuer,omitempty"`
-	SubjectKeyID   string    `json:"subject_key_id,omitempty"`
-	AuthorityKeyID string    `json:"authority_key_id,omitempty"`
-	DNSNames       []string  `json:"dns_names,omitempty"`
-	IPAddresses    []string  `json:"ip_addresses,omitempty"`
-	ExtKeyUsages   []string  `json:"ext_key_usages,omitempty"`
-	KeyAlgorithm   string    `json:"key_algorithm,omitempty"`
-	KeyBits        int       `json:"key_bits,omitempty"`
-	Serial         string    `json:"serial,omitempty"`
-	NotBefore      time.Time `json:"not_before"`
-	NotAfter       time.Time `json:"not_after"`
+	CommonName     string   `json:"common_name,omitempty"`
+	Issuer         string   `json:"issuer,omitempty"`
+	SubjectKeyID   string   `json:"subject_key_id,omitempty"`
+	AuthorityKeyID string   `json:"authority_key_id,omitempty"`
+	DNSNames       []string `json:"dns_names,omitempty"`
+	IPAddresses    []string `json:"ip_addresses,omitempty"`
+	ExtKeyUsages   []string `json:"ext_key_usages,omitempty"`
+	KeyAlgorithm   string   `json:"key_algorithm,omitempty"`
+	KeyBits        int      `json:"key_bits,omitempty"`
+	Serial         string   `json:"serial,omitempty"`
+	// SHA256Fingerprint is the fingerprint of this certificate, which the
+	// detail view shows and copies beside the serial and PEM.
+	SHA256Fingerprint string    `json:"sha256_fingerprint,omitempty"`
+	NotBefore         time.Time `json:"not_before"`
+	NotAfter          time.Time `json:"not_after"`
 }
 
 // ParsePEMCertificates returns every CERTIFICATE block in order. It skips
@@ -111,14 +114,15 @@ var extKeyUsageNames = map[x509.ExtKeyUsage]string{
 // Facts extracts the identifying fields of c.
 func Facts(c *x509.Certificate) CertFacts {
 	f := CertFacts{
-		CommonName:     c.Subject.CommonName,
-		Issuer:         c.Issuer.String(),
-		SubjectKeyID:   hex.EncodeToString(c.SubjectKeyId),
-		AuthorityKeyID: hex.EncodeToString(c.AuthorityKeyId),
-		DNSNames:       append([]string(nil), c.DNSNames...),
-		Serial:         c.SerialNumber.Text(16),
-		NotBefore:      c.NotBefore,
-		NotAfter:       c.NotAfter,
+		CommonName:        c.Subject.CommonName,
+		Issuer:            c.Issuer.String(),
+		SubjectKeyID:      hex.EncodeToString(c.SubjectKeyId),
+		AuthorityKeyID:    hex.EncodeToString(c.AuthorityKeyId),
+		DNSNames:          append([]string(nil), c.DNSNames...),
+		Serial:            c.SerialNumber.Text(16),
+		SHA256Fingerprint: Fingerprint(c),
+		NotBefore:         c.NotBefore,
+		NotAfter:          c.NotAfter,
 	}
 
 	for _, ip := range c.IPAddresses {

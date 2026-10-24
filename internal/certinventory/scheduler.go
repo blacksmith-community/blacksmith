@@ -673,9 +673,9 @@ func keepLastGood(m ScanMaterial, prev InstanceScan) ScanMaterial {
 		}
 
 		// The stale observation describes the latest version, as a good
-		// scan's does. When that version was never read, the deployed one
-		// keeps the observation in its certificate, since Group places a
-		// raw observation by its fingerprint.
+		// scan's does, and names its CredHub certificate so that Group
+		// keeps it there. When the latest version was never read, the
+		// deployed one stands in.
 		cert, id := credhubVersion(&last)
 		if cert == nil {
 			cert, id = last.Deployed, last.Versions.DeployedVersionID
@@ -685,7 +685,7 @@ func keepLastGood(m ScanMaterial, prev InstanceScan) ScanMaterial {
 		o := versionObservation(&last, cert, id)
 		o.State, o.ObservedAt = StateStale, at
 
-		m.Raw = append(m.Raw, RawObservation{Observation: o, Cert: cert})
+		m.Raw = append(m.Raw, RawObservation{Observation: o, Cert: cert, CredHub: last.Name})
 	}
 
 	if credhub != nil {

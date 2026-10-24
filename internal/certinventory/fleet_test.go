@@ -387,6 +387,96 @@ func TestFleetCredHubObservationShowsLatest(t *testing.T) {
 	}
 }
 
+// TestFleetItemFingerprintIsRepresentative checks that after a patch in
+// place the item's facts carry the fingerprint of the certificate whose PEM
+// and serial they show, which is the deployed version, and not the latest
+// version that the CredHub observation describes.
+func TestFleetItemFingerprintIsRepresentative(t *testing.T) {
+	t.Parallel()
+
+	deployed := issue(t, issueSpec{cn: "valkey", serial: 1})
+	latest := issue(t, issueSpec{cn: "valkey", serial: 2})
+
+	s := fleetScan("i1", fleetNow)
+	s.Material.CredHub = []CredHubCert{{
+		Name: "/ws-bosh/valkey-i1/valkey_crt", Owner: instOwner("i1"), Deployed: deployed.cert, Latest: latest.cert,
+		Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"},
+	}}
+
+	fleet := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, nil, fleetNow)
+
+	detail, ok := fleet.Item(fleet.Certificates()[0].ID)
+	if !ok {
+		t.Fatal("no item")
+	}
+
+	if detail.Facts.SHA256Fingerprint != Fingerprint(deployed.cert) || detail.Facts.Serial != deployed.cert.SerialNumber.Text(16) {
+		t.Errorf("facts fingerprint %q, serial %q, want the deployed version's", detail.Facts.SHA256Fingerprint, detail.Facts.Serial)
+	}
+}
+
+// TestFleetStaleCredHubObservationStaysWithItsCertificate checks that the
+// stale observation a failed rescan carries stays with the certificate it
+// was read for, even when its fingerprint is another certificate's
+// deployed version. Instance i1 deploys X with Y as its latest version,
+// and instance i2 deploys Y.
+func TestFleetStaleCredHubObservationStaysWithItsCertificate(t *testing.T) {
+	t.Parallel()
+
+	const (
+		nameA = "/ws-bosh/valkey-i1/valkey_crt"
+		nameB = "/ws-bosh/valkey-i2/valkey_crt"
+	)
+
+	x := issue(t, issueSpec{cn: "valkey", serial: 1})
+	y := issue(t, issueSpec{cn: "valkey", serial: 2})
+	good := fleetNow.Add(-time.Hour)
+
+	prev := fleetScan("i1", good)
+	prev.Material.CredHub = []CredHubCert{{
+		Name: nameA, Owner: instOwner("i1"), Deployed: x.cert, Latest: y.cert,
+		Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"},
+	}}
+
+	a := fleetScan("i1", fleetNow)
+	a.Material = keepLastGood(ScanMaterial{CredHub: []CredHubCert{{Name: nameA, Owner: instOwner("i1"), Err: msgCredHubUnavailable}}}, prev)
+
+	b := fleetScan("i2", fleetNow)
+	b.Material.CredHub = []CredHubCert{{
+		Name: nameB, Owner: instOwner("i2"), Deployed: y.cert, Latest: y.cert,
+		Versions: Versions{DeployedVersionID: "w1", LatestVersionID: "w1"},
+	}}
+
+	fleet := Aggregate([]InstanceScan{a, b}, DefaultSettings(), fleetCaps, nil, fleetNow)
+
+	byName := map[string]Certificate{}
+	for _, c := range fleet.Certificates() {
+		byName[c.Key] = c
+	}
+
+	stale := func(c Certificate) int {
+		n := 0
+
+		for _, o := range c.Observations {
+			if o.Source == SourceCredHub && o.State == StateStale {
+				n++
+			}
+		}
+
+		return n
+	}
+
+	certA, certB := byName[nameA], byName[nameB]
+
+	if stale(certA) != 1 || !certA.Coverage.Stale {
+		t.Errorf("i1's certificate has %d stale observations, coverage %+v, want 1 and stale", stale(certA), certA.Coverage)
+	}
+
+	if stale(certB) != 0 || certB.Coverage.Stale || len(certB.Owners) != 1 || certB.Owners[0].InstanceID != "i2" {
+		t.Errorf("i2's certificate took %d stale observations, owners %+v", stale(certB), certB.Owners)
+	}
+}
+
 func TestFleetCoverageFromExpectedListeners(t *testing.T) {
 	t.Parallel()
 

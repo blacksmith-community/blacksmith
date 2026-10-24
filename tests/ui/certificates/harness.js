@@ -192,7 +192,7 @@ async function boot(opts={}){
     }
     if(u.startsWith('/b/certificates/items/')){ if(server.itemFail) return json(500,{success:false,error:'item broke'+EVIL,code:'internal'});
       const id=decodeURIComponent(u.split('/').pop()); const c=server.certs.find(x=>x.id===id); if(!c) return json(404,{success:false,error:'none',code:'not_found'});
-      return json(200,Object.assign({},c,{pem:'-----BEGIN CERTIFICATE-----\n'+EVIL+'\n-----END CERTIFICATE-----',facts:{common_name:c.common_name,issuer:c.issuer,serial:'0a'+EVIL,not_before:iso(now-day),not_after:c.effective_not_after||iso(now),dns_names:[EVIL,'a.example'],ip_addresses:['10.0.0.1'],ext_key_usages:['serverAuth'],key_algorithm:'RSA',key_bits:2048,subject_key_id:c.subject_key_id,authority_key_id:c.authority_key_id}}));}
+      return json(200,Object.assign({},c,{pem:'-----BEGIN CERTIFICATE-----\n'+EVIL+'\n-----END CERTIFICATE-----',facts:Object.assign({common_name:c.common_name,issuer:c.issuer,serial:'0a'+EVIL,not_before:iso(now-day),not_after:c.effective_not_after||iso(now),dns_names:[EVIL,'a.example'],ip_addresses:['10.0.0.1'],ext_key_usages:['serverAuth'],key_algorithm:'RSA',key_bits:2048,subject_key_id:c.subject_key_id,authority_key_id:c.authority_key_id},server.itemFacts||{})}));}
     return Promise.resolve({ok:false,status:404,statusText:'nf',json:()=>Promise.resolve({}),text:()=>Promise.resolve('')});
   };
   await new Promise(r=>w.addEventListener('load',r,{once:w.document.readyState!=='complete'})||setTimeout(r,0));

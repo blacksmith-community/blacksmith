@@ -24186,8 +24186,10 @@
     // ----- drawer -----
 
     const toLegacy = (item) => {
+      // The fingerprint comes from the facts, which describe the same
+      // certificate as the serial, dates, and PEM. An observation can hold
+      // another version, such as CredHub's latest after a patch in place.
       const f = item.facts || {};
-      const observed = (item.observations || []).map((o) => o.sha256_fingerprint).find(Boolean) || '';
       return {
         version: f.version,
         serialNumber: f.serial,
@@ -24199,7 +24201,7 @@
         publicKey: { algorithm: f.key_algorithm, bits: f.key_bits },
         subjectAltNames: [].concat(f.dns_names || [], f.ip_addresses || []),
         extKeyUsage: f.ext_key_usages || [],
-        fingerprints: { sha256: observed },
+        fingerprints: { sha256: f.sha256_fingerprint || '' },
         pemEncoded: item.pem
       };
     };

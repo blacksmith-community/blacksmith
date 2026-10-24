@@ -35,11 +35,14 @@ type CredHubCert struct {
 
 // RawObservation is an observation before grouping, with the parsed
 // certificate it came from and the listener it was probed on, when it has
-// them. A failed probe has no Cert.
+// them. A failed probe has no Cert. CredHub names the CredHub certificate
+// the observation was read for, which it joins ahead of any fingerprint
+// match.
 type RawObservation struct {
 	Observation
 	Cert     *x509.Certificate
 	Listener *Listener
+	CredHub  string
 }
 
 // Group turns CredHub certificates and raw observations into logical
@@ -112,6 +115,19 @@ func Group(credhub []CredHubCert, raw []RawObservation) ([]Certificate, map[stri
 				t := r.Cert.NotAfter
 				obs.NotAfter = &t
 			}
+		}
+
+		// A fingerprint can be another certificate's deployed version, such
+		// as a carried CredHub observation of a latest version that some
+		// other instance deploys, so the CredHub name comes first.
+		if g, ok := groups[hashID("credhub:"+r.CredHub)]; ok && r.CredHub != "" && g.credhub != nil {
+			if obs.Fingerprint != "" {
+				obs.Matches = matchKind(g.credhub, obs.Fingerprint)
+			}
+
+			g.add(obs, r.Cert)
+
+			continue
 		}
 
 		if g, ok := byFP[obs.Fingerprint]; ok && obs.Fingerprint != "" {
