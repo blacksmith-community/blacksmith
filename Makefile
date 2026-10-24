@@ -15,7 +15,7 @@ GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unkno
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION ?= "dev/$(GIT_BRANCH)/$(GIT_SHA)"
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-LDFLAGS := -X main.Version="$(VERSION)" -X main.BuildTime="$(BUILD_TIME)" -X main.GitCommit="$(GIT_SHA)"
+LDFLAGS := -X main.version="$(VERSION)" -X main.buildTime="$(BUILD_TIME)" -X main.gitCommit="$(GIT_SHA)"
 BINARY_NAME := blacksmith
 GO_FILES := $(shell find . -name '*.go' -type f -not -path "./vendor/*")
 
