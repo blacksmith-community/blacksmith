@@ -60,7 +60,7 @@ t('next expiry pill and the 90 day section', async () => {
   ok(!/Nothing expires in the next 90 days/.test(d.getElementById('certificates').textContent), 'the duplicate line is gone');
 
   // the horizon table replaces the old reassurance line
-  ok(!d.getElementById('cert-reassurance') && !/Nothing expires within/.test(d.getElementById('certificates').textContent), 'the old reassurance line is gone');
+  ok(!!d.getElementById('cert-horizon') && !/Nothing expires within/.test(d.getElementById('certificates').textContent), 'the old reassurance line is gone');
   const counts = Array.from(d.querySelectorAll('#cert-horizon tbody td')).map((td) => td.textContent);
   ok(counts.join(',') === '0,0,0,0,0,1,1', 'horizon counts for 100 and 400 days: ' + counts.join(','));
   expect(failures).toEqual([]);

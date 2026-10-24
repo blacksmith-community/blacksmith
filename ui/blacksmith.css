@@ -12747,6 +12747,11 @@ span.config-type.resurrection {
   padding: 6px 12px;
 }
 
+.cert-horizon-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .cert-horizon-table {
   border-collapse: collapse;
   font-size: 13px;

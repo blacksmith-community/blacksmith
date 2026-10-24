@@ -22893,6 +22893,11 @@
 
     const state = newFilterState();
 
+    // Server time, advanced by the browser clock. Each response records the
+    // gap between its generated_at and the browser clock, so a tab that
+    // polls without new data still counts against the present.
+    const serverNow = () => Date.now() + ((view && view.clockOffset) || 0);
+
     // Shared with Batch Operations: instance ID -> Set of full variable names.
     const selection = new Map();
 
@@ -22911,11 +22916,12 @@
       let after = f.expires_after;
       let before = f.expires_before;
       // The horizon filter reads as a range that starts just after the
-      // anchor and ends at the horizon, and it intersects with any week
+      // current server time and ends at the horizon, and it intersects with any week
       // range from the timeline.
-      if (f.expires_within > 0 && view.anchor) {
-        const lo = new Date(view.anchor + 1).toISOString();
-        const hi = new Date(view.anchor + f.expires_within * DAY_MS + 1).toISOString();
+      if (f.expires_within > 0) {
+        const base = serverNow();
+        const lo = new Date(base + 1).toISOString();
+        const hi = new Date(base + f.expires_within * DAY_MS + 1).toISOString();
         if (!after || Date.parse(after) < Date.parse(lo)) after = lo;
         if (!before || Date.parse(before) > Date.parse(hi)) before = hi;
       }
@@ -23366,7 +23372,7 @@
     // after the anchor and on or before the anchor plus the horizon, so
     // expired and unknown expiries never count.
     const horizonCounts = () => {
-      const anchor = view.anchor || Date.now();
+      const anchor = serverNow();
       return HORIZONS.map((h) => {
         const limit = anchor + h.days * DAY_MS;
         return view.fleet.filter((cert) => {
@@ -23411,7 +23417,9 @@
       if ((s.certificates || 0) === 0) return null;
 
       const counts = horizonCounts();
-      const box = el('div', 'cert-notice cert-notice--ok cert-horizon');
+      // The accent follows the fleet, so it is never green beside red rows.
+      const tone = (s.expired || 0) + (s.critical || 0) > 0 ? 'error' : ((s.warning || 0) > 0 ? 'warn' : 'ok');
+      const box = el('div', `cert-notice cert-notice--${tone} cert-horizon`);
       box.id = 'cert-horizon';
 
       const table = el('table', 'cert-horizon-table');
@@ -23429,7 +23437,8 @@
           const b = button('cert-horizon-btn', String(n));
           b.dataset.horizon = String(h.days);
           b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
-          b.setAttribute('aria-label', `${plural(n, 'certificate')} ${n === 1 ? 'expires' : 'expire'} within ${h.label}. Show ${n === 1 ? 'it' : 'them'}.`);
+          const them = n === 1 ? 'it' : 'them';
+          b.setAttribute('aria-label', `${plural(n, 'certificate')} ${n === 1 ? 'expires' : 'expire'} within ${h.label}. ${pressed ? `Showing ${them}; press to clear.` : `Show ${them}.`}`);
           b.addEventListener('click', () => {
             state.expires_within = pressed ? 0 : h.days;
             changed();
@@ -23442,11 +23451,18 @@
       });
       table.appendChild(el('thead', null)).appendChild(head);
       table.appendChild(el('tbody', null)).appendChild(row);
-      box.appendChild(table);
+      const scroll = el('div', 'cert-horizon-scroll');
+      scroll.setAttribute('role', 'region');
+      scroll.setAttribute('tabindex', '0');
+      scroll.setAttribute('aria-label', 'Expiry horizons, scrolls sideways');
+      scroll.appendChild(table);
+      box.appendChild(scroll);
 
       const gaps = coverageGaps(resp);
       if (gaps.length > 0) {
-        box.appendChild(el('p', 'cert-notice-text cert-horizon-gaps', `These counts cover what we could observe. ${joinPhrases(gaps)}.`));
+        const gapLine = el('p', 'cert-notice-text cert-horizon-gaps', `These counts cover what we could observe. ${joinPhrases(gaps)}.`);
+        gapLine.setAttribute('role', 'status');
+        box.appendChild(gapLine);
       }
       return box;
     };
@@ -24116,7 +24132,7 @@
     // put while a timeline button is pressed, so the pressed range keeps
     // meaning the same thing across refreshes.
     const updateAnchor = (resp) => {
-      if ((state.expires_after || state.expires_before || state.expires_within) && view.anchor) return;
+      if ((state.expires_after || state.expires_before) && view.anchor) return;
       const t = Date.parse(resp && resp.generated_at);
       view.anchor = Number.isNaN(t) ? Date.now() : t;
     };
@@ -24867,8 +24883,14 @@
         const signature = signatureOf(resp, fleetCerts);
         const same = signature === view.signature && view.mode === 'ready' && !view.refreshError && !opts.announce;
         view.signature = signature;
+        const generated = Date.parse(resp.generated_at);
+        view.clockOffset = Number.isNaN(generated) ? 0 : generated - Date.now();
         if (!same) applyResponse(resp, fleetCerts);
-        else view.resp = resp;
+        else {
+          view.resp = resp;
+          // The band counts against the present, so it moves on every poll.
+          if (view.mode === 'ready') renderNotices();
+        }
 
         setBadge(resp.summary);
         announceProgress(resp);

@@ -123,10 +123,95 @@ t('the gap line appears only when there are gaps', async () => {
   let { d } = await open([cert('a', 3), cert('b', 20), unknown('unk')], 'not_configured');
   let line = d.querySelector('#cert-fleet-notices .cert-horizon-gaps');
   ok(!!line && line.textContent === 'These counts cover what we could observe. 1 certificate has an unknown expiry and CredHub is not available.', 'gap text: ' + (line && line.textContent));
-  ok(table(d).nextElementSibling === line, 'the line sits directly under the table');
+  ok(table(d).parentElement.nextElementSibling === line && line.getAttribute('role') === 'status', 'the line sits directly under the table and is a status');
 
   ({ d } = await open([cert('a', 3), cert('b', 20)]));
   ok(!d.querySelector('#cert-fleet-notices .cert-horizon-gaps'), 'no line without gaps');
   ok(!!table(d), 'the table still renders');
+  expect(failures).toEqual([]);
+}, 60000);
+
+// Freezes the browser clock and makes the fake server report the same time.
+const freeze = (env, at) => {
+  const clock = { at };
+  env.w.Date.now = () => clock.at;
+  const orig = env.w.fetch;
+  env.w.fetch = (u, o) => orig(u, o).then((res) => {
+    if (!String(u).startsWith('/b/certificates/inventory')) return res;
+    const json = res.json;
+    return Object.assign({}, res, { json: () => json().then((b) => Object.assign({}, b, { generated_at: iso(clock.at) })) });
+  });
+  return clock;
+};
+
+const openFrozen = async (certs) => {
+  const env = await boot();
+  const clock = freeze(env, now);
+  env.server.certs = certs;
+  env.server.caps.credhub = { state: 'configured' };
+  await env.w.blacksmithNav.switchTab('certificates');
+  await sleep(150);
+  return { env, clock };
+};
+
+const lastQuery = (env) => {
+  const url = env.log.filter((l) => /\/b\/certificates\/inventory\?/.test(l) && !/summary_only/.test(l)).pop();
+  return new URL(url.replace(/^GET /, ''), 'http://x').searchParams;
+};
+
+t('the counts follow the clock between polls', async () => {
+  const { ok, failures } = checks();
+  const { env, clock } = await openFrozen(spread());
+  const { d, w } = env;
+  ok(counts(d).join(',') === '2,3,4,5,6,7,8', 'at the start: ' + counts(d).join(','));
+  clock.at = now + 4 * day;
+  await w.blacksmithCerts.refresh({ silent: true });
+  await sleep(150);
+  ok(counts(d).join(',') === '2,2,3,4,5,6,7', 'four days later, with no new data, the expired certificate has left every count: ' + counts(d).join(','));
+  await press(horizonBtn(d, 30));
+  const q = lastQuery(env);
+  ok(q.get('expires_after') === iso(now + 4 * day + 1) && q.get('expires_before') === iso(now + 34 * day + 1), 'the click query uses the advanced time: ' + q.get('expires_after') + ' ' + q.get('expires_before'));
+  expect(failures).toEqual([]);
+}, 60000);
+
+t('a horizon after a timeline week intersects the two ranges', async () => {
+  const { ok, failures } = checks();
+  const { env } = await openFrozen(spread());
+  const { d } = env;
+  await press(d.querySelector('#cert-clear-filters, .cert-clear-btn'));
+  await press(d.querySelectorAll('#cert-fleet-timeline .cert-tl-btn')[1]);
+  let q = lastQuery(env);
+  ok(q.get('expires_after') === iso(now) && q.get('expires_before') === iso(now + 7 * day), 'week alone: ' + q.get('expires_after') + ' ' + q.get('expires_before'));
+  await press(horizonBtn(d, 30));
+  q = lastQuery(env);
+  ok(q.get('expires_after') === iso(now + 1), 'the later start wins: ' + q.get('expires_after'));
+  ok(q.get('expires_before') === iso(now + 7 * day), 'the earlier end wins: ' + q.get('expires_before'));
+  await press(horizonBtn(d, 30));
+  await press(horizonBtn(d, 7));
+  q = lastQuery(env);
+  ok(q.get('expires_before') === iso(now + 7 * day), 'a week range and 1 week end together on the boundary: ' + q.get('expires_before'));
+  await press(horizonBtn(d, 7));
+  await press(d.querySelector('.cert-clear-btn'));
+  await press(horizonBtn(d, 7));
+  q = lastQuery(env);
+  ok(q.get('expires_after') === iso(now + 1) && q.get('expires_before') === iso(now + 7 * day + 1), 'a boundary horizon alone keeps the plus one millisecond: ' + q.get('expires_after') + ' ' + q.get('expires_before'));
+  expect(failures).toEqual([]);
+}, 60000);
+
+t('the pressed label, focus, accent, and narrow scrolling', async () => {
+  const { ok, failures } = checks();
+  const { d } = await open(spread());
+  const box = d.getElementById('cert-horizon');
+  ok(box.classList.contains('cert-notice--error') && !box.classList.contains('cert-notice--ok'), 'the accent follows the fleet: ' + box.className);
+  ok(table(d).parentElement.classList.contains('cert-horizon-scroll'), 'the table scrolls inside its own box');
+  const b = horizonBtn(d, 14);
+  b.focus();
+  await press(b);
+  const again = horizonBtn(d, 14);
+  ok(again.getAttribute('aria-label') === '3 certificates expire within 2 weeks. Showing them; press to clear.', 'pressed label: ' + again.getAttribute('aria-label'));
+  ok(d.activeElement === again, 'focus stays on the rebuilt button');
+
+  const calm = await open([cert('a', 100), cert('b', 200)]);
+  ok(calm.d.getElementById('cert-horizon').classList.contains('cert-notice--ok'), 'a calm fleet keeps the green accent');
   expect(failures).toEqual([]);
 }, 60000);

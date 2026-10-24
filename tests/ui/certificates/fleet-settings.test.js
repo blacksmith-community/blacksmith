@@ -15,7 +15,7 @@ t('fleet settings and coverage line', async () => {
   let {w,d,server,log,errors}=await boot();
   await w.blacksmithNav.switchTab('certificates'); await sleep(120);
   // ---- reassurance with problems present ----
-  ok(!d.getElementById('cert-reassurance'),'the old reassurance line is gone');
+  ok(!!d.querySelector('#cert-horizon table') && !/Nothing expires/.test(d.getElementById('cert-fleet-notices').textContent),'the horizon table renders beside expired, critical, and warning rows');
   // ---- settings modal ----
   const sb=d.getElementById('cert-settings-btn'); ok(!!sb && !sb.hidden,'Settings button');
   sb.focus(); sb.click(); await sleep(100);
