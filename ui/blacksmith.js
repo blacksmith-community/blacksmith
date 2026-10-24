@@ -24031,6 +24031,11 @@
       holder.hidden = false;
       const buckets = timelineBuckets();
       view.buckets = buckets;
+      const nothingExpiring = buckets.every((b) => b.critical + b.warning + b.ok === 0)
+        && !state.expires_after && !state.expires_before;
+      holder.classList.toggle('cert-timeline-wrap--empty', nothingExpiring);
+      const heading = holder.querySelector('.cert-timeline-title');
+      if (heading) heading.textContent = nothingExpiring ? 'Nothing expires in the next 90 days.' : 'Expiring in the next 90 days';
       let max = 1;
       buckets.forEach((b) => { max = Math.max(max, b.critical + b.warning + b.ok); });
       buckets.forEach((bucket, i) => {

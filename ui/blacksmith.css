@@ -12046,7 +12046,7 @@ span.config-type.resurrection {
 
 #certificates.tab-panel.active {
   display: block !important;
-  padding: 16px;
+  padding: 10px 16px 12px;
 }
 
 .cert-fleet {
@@ -12063,18 +12063,18 @@ span.config-type.resurrection {
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px 12px;
+  margin-bottom: 8px;
 }
 
 .cert-fleet-title {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
 }
 
 .cert-fleet-summary {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font-size: 14px;
   color: var(--text-secondary);
 }
@@ -12169,7 +12169,7 @@ span.config-type.resurrection {
 }
 
 .cert-fleet-state {
-  margin: 16px 0;
+  margin: 8px 0;
 }
 
 .cert-state-panel {
@@ -12191,8 +12191,8 @@ span.config-type.resurrection {
 .cert-notices {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .cert-notice {
@@ -12232,22 +12232,29 @@ span.config-type.resurrection {
 
 .cert-strips {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
+  flex-flow: row wrap;
+  align-items: flex-start;
+  gap: 6px 8px;
+  margin-bottom: 8px;
 }
 
 .cert-strip {
   display: flex;
+  flex: 0 1 auto;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.cert-strip:empty {
+  display: none;
 }
 
 .cert-strip-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 3px 10px;
   border: 1px solid var(--cert-control-border);
   border-left-width: 4px;
   border-radius: 6px;
@@ -12280,8 +12287,8 @@ span.config-type.resurrection {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: 8px 12px;
+  margin-bottom: 6px;
 }
 
 .cert-field {
@@ -12583,20 +12590,31 @@ span.config-type.resurrection {
    ================================================================ */
 
 .cert-timeline-wrap {
-  margin-bottom: 12px;
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 2px 12px;
+  margin-bottom: 8px;
 }
 
 .cert-timeline-title {
-  margin: 0 0 6px;
-  font-size: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 
 .cert-timeline {
   display: flex;
-  gap: 4px;
+  flex: 1 1 620px;
+  gap: 3px;
+  min-width: 0;
   overflow-x: auto;
+}
+
+.cert-timeline-wrap--empty .cert-timeline {
+  display: none;
 }
 
 .cert-tl-btn {
@@ -12604,12 +12622,13 @@ span.config-type.resurrection {
   flex: 1 1 0;
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
-  min-width: 44px;
-  padding: 4px 2px;
+  gap: 1px;
+  min-width: 40px;
+  padding: 2px;
   border: 1px solid transparent;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.25;
   color: var(--text-primary);
   background: transparent;
   cursor: pointer;
@@ -12638,7 +12657,7 @@ span.config-type.resurrection {
 .cert-tl-bar {
   display: flex;
   flex-direction: column-reverse;
-  height: 48px;
+  height: 22px;
   border-bottom: 1px solid var(--border-primary);
 }
 
