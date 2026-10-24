@@ -1143,10 +1143,24 @@ func setupBOSHResources(ctx context.Context, config *config.Config, boshDirector
 
 func getUIHandler(config *config.Config) http.Handler {
 	if config.WebRoot != "" {
-		return http.FileServer(http.Dir(config.WebRoot))
+		return noCacheHTML(http.FileServer(http.Dir(config.WebRoot)))
 	}
 
 	return &broker.NullHandler{}
+}
+
+// noCacheHTML makes browsers revalidate the HTML document on every load.
+// The page carries the cache-busting stamps for its JS and CSS, so a stale
+// copy of it keeps operators on old assets after a deploy. The versioned
+// assets themselves are left alone.
+func noCacheHTML(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // newBroker builds the broker around the one mutation guard. The API reads
