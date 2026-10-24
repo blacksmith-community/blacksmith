@@ -13226,16 +13226,11 @@ span.config-type.resurrection {
   justify-content: flex-end;
 }
 
-#upgrade .rotate-threshold-row,
 #upgrade .rotate-name-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-
-#upgrade .rotate-threshold-row input[type="number"] {
-  width: 5em;
 }
 
 #upgrade .rotate-name-row input[type="text"] {

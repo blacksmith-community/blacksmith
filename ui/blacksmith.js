@@ -2643,6 +2643,24 @@
   // Batch Operations Tab Functions
   // =====================================================
 
+  // The expiry horizons the Certificates tab counts and Batch Operations
+  // offers, and the rule that puts a certificate inside one. A certificate
+  // counts when its expiry falls after the anchor and on or before the
+  // anchor plus the horizon, so expired and unknown expiries never count.
+  const EXPIRY_HORIZONS = [
+    { days: 7, label: '1 week' },
+    { days: 14, label: '2 weeks' },
+    { days: 30, label: '30 days' },
+    { days: 60, label: '60 days' },
+    { days: 90, label: '90 days' },
+    { days: 180, label: '180 days' },
+    { days: 365, label: '1 year' }
+  ];
+  const expiresWithinHorizon = (notAfter, days, anchor) => {
+    const t = Date.parse(notAfter);
+    return !Number.isNaN(t) && t > anchor && t <= anchor + days * 86400000;
+  };
+
   // Track if batch operations tab has been initialized
   let upgradeTabInitialized = false;
 
@@ -2690,7 +2708,9 @@
   // Instances and Review steps show it, and the live region announces it.
   const batchSelectionText = (detailed) => {
     const selected = batchSelectedIds();
+    if (!selected.size) rotateState.source = '';
     let text = selected.size ? `${pluralize(selected.size, 'instance')} selected` : 'No instances selected';
+    if (upgradeOperation === 'rotate' && rotateState.source === 'certificates') text += ' from the Certificates tab';
     if (!detailed) return text;
     const visibleIds = new Set(batchMatchingRows().map(([id]) => id));
     const hidden = Array.from(selected).filter((id) => !visibleIds.has(id)).length;
@@ -3315,10 +3335,13 @@
     capabilities: null,
     warningDays: 30,
     criticalDays: 7,
-    thresholdDays: 30,
-    thresholdTouched: false,
-    thresholdApplied: false,
-    imported: false,
+    // How the operator chooses instances, "instances" or "expiring". The
+    // expiring choice holds the window in days, or 0 before one is picked.
+    pick: 'instances',
+    horizon: 0,
+    // Where a selection came from when another tab handed it over, such as
+    // "certificates". It is empty for a selection made here.
+    source: '',
     mode: 'redeploy',
     // What a patch does afterwards, "pending" or "immediate". It has no
     // default, so the operator must choose.
@@ -3565,20 +3588,41 @@
     });
   };
 
+  // The instances among the visible rows that have an eligible certificate
+  // expiring within the given days, with those certificates. A row another
+  // operation holds never matches.
+  const rotateExpiringMatches = (days, rows = rotateVisibleRows()) => {
+    const anchor = Date.now();
+    const matches = [];
+    rows.forEach((row) => {
+      if (row.holder) return;
+      const certs = row.chips.filter((cert) => expiresWithinHorizon(cert.expiry, days, anchor));
+      if (certs.length > 0) matches.push({ row, certs });
+    });
+    return matches;
+  };
+
   // Selects the eligible certificates of the visible rows that expire within
   // the given days.
   const rotateSelectMatching = (days) => {
     let added = 0;
-    rotateVisibleRows().forEach((row) => {
-      if (row.holder) return;
-      row.chips.forEach((cert) => {
-        if (cert.daysLeft !== null && cert.daysLeft <= days && !rotatePairSelected(row.id, cert.key)) {
+    rotateExpiringMatches(days).forEach(({ row, certs }) => {
+      certs.forEach((cert) => {
+        if (!rotatePairSelected(row.id, cert.key)) {
           rotateSetPair(row.id, cert.key, true);
           added++;
         }
       });
     });
     return added;
+  };
+
+  // In the expiring choice the selection is the instances the window
+  // matches, so every redraw works it out again from the inventory.
+  const rotateSyncExpiring = () => {
+    if (upgradeOperation !== 'rotate' || rotateState.pick !== 'expiring') return;
+    rotateSelection().clear();
+    if (rotateState.horizon > 0 && rotateState.loadState === 'ready') rotateSelectMatching(rotateState.horizon);
   };
 
   // Whether a selected pair can still be rotated. Until the inventory loads
@@ -3667,7 +3711,7 @@
     if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
   };
 
-  const rotateChip = (row, cert) => {
+  const rotateChip = (row, cert, derived = false) => {
     const on = rotatePairSelected(row.id, cert.key);
     const label = rotateInstanceLabel(row);
     const chip = rotateEl('button', 'rotate-chip');
@@ -3676,6 +3720,7 @@
     chip.setAttribute('aria-label', `Rotate ${cert.variable} on ${label}`);
     chip.dataset.keepKey = `chip:${row.id}:${cert.key}`;
     chip.dataset.variable = cert.key;
+    chip.disabled = derived;
     if (cert.daysLeft !== null) {
       if (cert.daysLeft < 0) chip.classList.add('is-expired');
       else if (cert.daysLeft <= rotateState.criticalDays) chip.classList.add('is-critical');
@@ -3694,6 +3739,91 @@
     return chip;
   };
 
+  // Switching how instances are chosen starts that choice from nothing, so
+  // the two never mix.
+  const setRotatePick = (pick) => {
+    if (rotateState.pick === pick) return;
+    rotateState.pick = pick;
+    rotateState.horizon = 0;
+    rotateState.source = '';
+    rotateSelection().clear();
+    batchWorkspace.page = 0;
+    batchWorkspace.selectedOnly = false;
+    rotateRefresh();
+  };
+
+  // The two ways to choose instances in rotate mode: pick them from the
+  // list, or take every instance with a certificate expiring within a
+  // window. It sits above the filters on the Instances step and is removed
+  // for the other operations.
+  const renderRotatePicker = () => {
+    const panel = document.querySelector('#upgrade .upgrade-services-panel');
+    if (!panel) return;
+    const active = upgradeOperation === 'rotate';
+    const expiring = active && rotateState.pick === 'expiring';
+    const actions = panel.querySelector('.upgrade-actions');
+    if (actions) actions.hidden = expiring;
+    let host = document.getElementById('batch-choose-by');
+    if (!active) { if (host) host.remove(); return; }
+    if (!host) {
+      host = rotateEl('div', 'batch-choose-by');
+      host.id = 'batch-choose-by';
+      const toggle = rotateEl('div', 'batch-pick-toggle');
+      toggle.setAttribute('role', 'group');
+      toggle.setAttribute('aria-label', 'How to choose instances');
+      [['instances', 'Specific instances'], ['expiring', 'Expiring within']].forEach(([value, text]) => {
+        const button = rotateEl('button', 'batch-pick-button', text);
+        button.type = 'button';
+        button.id = `batch-pick-${value}`;
+        button.addEventListener('click', () => setRotatePick(value));
+        toggle.appendChild(button);
+      });
+      const horizons = rotateEl('div', 'batch-horizons');
+      horizons.id = 'batch-horizons';
+      horizons.setAttribute('role', 'group');
+      horizons.setAttribute('aria-label', 'Expiring within');
+      const note = rotateEl('p', 'batch-pick-note');
+      note.id = 'batch-pick-note';
+      host.append(toggle, horizons, note);
+      panel.querySelector('.upgrade-services').before(host);
+    }
+    ['instances', 'expiring'].forEach((value) => {
+      host.querySelector(`#batch-pick-${value}`).setAttribute('aria-pressed', String(rotateState.pick === value));
+    });
+    const horizons = host.querySelector('#batch-horizons');
+    const note = host.querySelector('#batch-pick-note');
+    horizons.hidden = !expiring;
+    if (!expiring) {
+      note.textContent = 'Pick the instances to rotate from the list.';
+      return;
+    }
+    const ready = rotateState.loadState === 'ready';
+    const visibleRows = ready ? rotateVisibleRows() : [];
+    horizons.replaceChildren();
+    EXPIRY_HORIZONS.forEach((h) => {
+      const count = rotateExpiringMatches(h.days, visibleRows).length;
+      const pressed = rotateState.horizon === h.days;
+      const button = rotateEl('button', 'batch-horizon-button', h.label);
+      button.type = 'button';
+      button.dataset.horizon = String(h.days);
+      button.setAttribute('aria-pressed', String(pressed));
+      button.setAttribute('aria-label', `${h.label}, ${pluralize(count, 'instance')}`);
+      button.appendChild(rotateEl('span', 'batch-horizon-count', String(count)));
+      button.addEventListener('click', () => {
+        rotateState.horizon = pressed ? 0 : h.days;
+        batchWorkspace.page = 0;
+        rotateRefresh();
+        horizons.querySelector(`[data-horizon="${h.days}"]`)?.focus({ preventScroll: true });
+      });
+      horizons.appendChild(button);
+    });
+    const chosen = EXPIRY_HORIZONS.find((h) => h.days === rotateState.horizon);
+    const matched = chosen ? rotateExpiringMatches(chosen.days, visibleRows).length : 0;
+    note.textContent = !chosen
+      ? 'Choose a window. We select every instance that has a certificate expiring within it.'
+      : `${pluralize(matched, 'instance')} ${matched === 1 ? 'has' : 'have'} a certificate expiring within ${chosen.label}. The filters below narrow what matches.`;
+  };
+
   // The instance list in rotate and converge modes.
   const renderRotateInstances = () => {
     const container = document.querySelector('#upgrade .upgrade-instances');
@@ -3701,7 +3831,12 @@
     const focusKey = rotateFocusKey(container);
     const scrollTop = container.scrollTop;
     const converge = upgradeOperation === 'converge';
-    const rows = rotateVisibleRows();
+    rotateSyncExpiring();
+    renderRotatePicker();
+    const expiring = upgradeOperation === 'rotate' && rotateState.pick === 'expiring';
+    const rows = expiring
+      ? (rotateState.horizon > 0 ? rotateExpiringMatches(rotateState.horizon).map((match) => match.row) : [])
+      : rotateVisibleRows();
     container.textContent = '';
 
     if (!window.serviceInstances || Object.keys(window.serviceInstances).length === 0) {
@@ -3709,7 +3844,11 @@
       return;
     }
     if (rows.length === 0) {
-      const empty = converge && rotateState.loadState === 'ready'
+      const empty = expiring
+        ? (rotateState.horizon > 0
+          ? `No instance has a certificate expiring within ${EXPIRY_HORIZONS.find((h) => h.days === rotateState.horizon).label}.`
+          : 'Choose a window above to see the instances it matches.')
+        : converge && rotateState.loadState === 'ready'
         ? 'No instance is waiting for a deploy of its patched certificates.'
         : (converge && rotateState.loadState !== 'ready' ? 'Loading the certificate inventory...' : 'No instances match the current filters.');
       container.appendChild(rotateEl('div', 'no-instances p-4 text-center text-gray-500', empty));
@@ -3736,7 +3875,8 @@
       input.setAttribute('aria-label', converge
         ? `Converge ${rotateInstanceLabel(row)}`
         : `Rotate every certificate on ${rotateInstanceLabel(row)}`);
-      const disabled = Boolean(row.holder) || (!converge && row.chips.length === 0);
+      const derived = expiring;
+      const disabled = Boolean(row.holder) || (!converge && row.chips.length === 0) || derived;
       input.disabled = disabled;
       if (converge) {
         input.checked = convergeSelected.has(row.id);
@@ -3765,7 +3905,7 @@
         const chips = rotateEl('div', 'rotate-chips');
         chips.setAttribute('role', 'group');
         chips.setAttribute('aria-label', `Certificates on ${rotateInstanceLabel(row)}`);
-        row.chips.forEach((cert) => chips.appendChild(rotateChip(row, cert)));
+        row.chips.forEach((cert) => chips.appendChild(rotateChip(row, cert, derived)));
         info.appendChild(chips);
       }
       if (converge && !row.holder) {
@@ -3917,16 +4057,10 @@
       const settings = inventory.settings || {};
       if (settings.warning_days > 0) rotateState.warningDays = settings.warning_days;
       if (settings.critical_days > 0) rotateState.criticalDays = settings.critical_days;
-      if (!rotateState.thresholdTouched) {
-        rotateState.thresholdDays = rotateState.warningDays;
-        const field = document.getElementById('rotate-threshold');
-        if (field) field.value = String(rotateState.thresholdDays);
-      }
       rotateState.loadState = 'ready';
       rotateState.loadError = '';
       rotateState.refreshError = '';
       rotateState.lastLoad = Date.now();
-      applyDefaultThreshold();
       renderRotateNotice();
       rotateRefresh();
       return true;
@@ -3944,16 +4078,6 @@
       rotateRefresh();
       return false;
     }
-  };
-
-  // On entering rotate mode with nothing imported from the Certificates tab,
-  // selects the certificates that expire within the threshold. It runs once
-  // per entry, so a chip the operator clears stays clear.
-  const applyDefaultThreshold = () => {
-    if (upgradeOperation !== 'rotate' || rotateState.thresholdApplied || rotateState.loadState !== 'ready') return;
-    if (rotateVisibleRows().length === 0) return;
-    rotateState.thresholdApplied = true;
-    if (!rotateState.imported) rotateSelectMatching(rotateState.thresholdDays);
   };
 
   // Redraws the inventory when the poll finds it stale.
@@ -4243,39 +4367,6 @@
         onChange: updateOperationFooter
       });
       pane.appendChild(rotateModeControls.root);
-
-      const row = rotateEl('div', 'filter-row rotate-threshold-row');
-      const label = rotateEl('label', '', 'Expiring within');
-      label.setAttribute('for', 'rotate-threshold');
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.id = 'rotate-threshold';
-      input.min = '1';
-      input.value = String(rotateState.thresholdDays);
-      input.addEventListener('input', () => {
-        const value = parseInt(input.value, 10);
-        if (value > 0) { rotateState.thresholdDays = value; rotateState.thresholdTouched = true; }
-      });
-      const unit = rotateEl('span', 'rotate-threshold-unit', 'days');
-      const match = rotateEl('button', 'btn-secondary btn-sm', 'Select matching');
-      match.type = 'button';
-      match.id = 'rotate-select-matching';
-      match.addEventListener('click', () => {
-        const value = parseInt(input.value, 10);
-        if (!(value > 0)) {
-          window.Feedback.warning('Enter a number of days greater than zero.', { toast: true });
-          return;
-        }
-        rotateState.thresholdDays = value;
-        rotateState.thresholdTouched = true;
-        rotateSelectMatching(value);
-        rotateRefresh();
-      });
-      row.appendChild(label);
-      row.appendChild(input);
-      row.appendChild(unit);
-      row.appendChild(match);
-      pane.appendChild(row);
     }
 
     const nameRow = rotateEl('div', 'filter-row rotate-name-row');
@@ -4401,21 +4492,18 @@
     }
 
     if (next === 'upgrade') {
+      renderRotatePicker();
       refreshUpgradeInstanceList();
       return;
     }
 
     buildRotateOptions(targets);
     buildRotateFooter(footer);
-    if (entering) {
-      rotateState.thresholdApplied = Boolean(batchFlow.drafts[next]);
-      rotateState.reviewOpen = false;
-      rotateState.imported = rotatePairs().length > 0;
-    }
+    if (entering) rotateState.reviewOpen = false;
+    renderRotatePicker();
     refreshUpgradeInstanceList();
     if (rotateState.loadState === 'ready') {
       if (entering) {
-        applyDefaultThreshold();
         rotateRefresh();
         loadRotateInventory({ silent: true });
       }
@@ -5251,6 +5339,13 @@
   const openBatchRotate = async () => {
     const switched = await window.blacksmithNav.switchTab('upgrade');
     if (switched === false) return false;
+    // The handover is a picked list, so it opens in the list and names where
+    // it came from. A window would work its own selection out again.
+    if (rotatePairs().length > 0) {
+      rotateState.pick = 'instances';
+      rotateState.horizon = 0;
+      rotateState.source = 'certificates';
+    }
     renderOperation('rotate');
     if (batchFlow.installed) setBatchStep(2, false);
     rotateRefresh();
@@ -23543,28 +23638,12 @@
       return `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
     };
 
-    const HORIZONS = [
-      { days: 7, label: '1 week' },
-      { days: 14, label: '2 weeks' },
-      { days: 30, label: '30 days' },
-      { days: 60, label: '60 days' },
-      { days: 90, label: '90 days' },
-      { days: 180, label: '180 days' },
-      { days: 365, label: '1 year' }
-    ];
-
     // Counts are cumulative. A certificate counts when its expiry falls
     // after the current server time and on or before that time plus the
     // horizon, so expired and unknown expiries never count.
     const horizonCounts = () => {
       const anchor = serverNow();
-      return HORIZONS.map((h) => {
-        const limit = anchor + h.days * DAY_MS;
-        return view.fleet.filter((cert) => {
-          const t = Date.parse(cert.effective_not_after);
-          return !Number.isNaN(t) && t > anchor && t <= limit;
-        }).length;
-      });
+      return EXPIRY_HORIZONS.map((h) => view.fleet.filter((cert) => expiresWithinHorizon(cert.effective_not_after, h.days, anchor)).length);
     };
 
     const coverageGaps = (resp) => {
@@ -23630,7 +23709,7 @@
       table.appendChild(el('caption', 'cert-horizon-caption', 'Certificates expiring within'));
       const head = el('tr');
       const row = el('tr');
-      HORIZONS.forEach((h, i) => {
+      EXPIRY_HORIZONS.forEach((h, i) => {
         const th = el('th', null, h.label);
         th.scope = 'col';
         head.appendChild(th);
