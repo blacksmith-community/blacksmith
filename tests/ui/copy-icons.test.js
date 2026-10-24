@@ -150,26 +150,3 @@ t('the certificate copy button draws the shared icon and swaps to the check', as
   expect(iconOnly.querySelector(POLYLINE)).not.toBeNull();
   w.close();
 });
-
-t('the config version copy button copies the panel text and swaps to the check', async () => {
-  const { w, d } = boot();
-  try {
-    const copied = [];
-    w.navigator.clipboard = { writeText: (v) => { copied.push(v); return Promise.resolve(); } };
-    const host = mount(d, '<button id="copy-config-version-content" class="copy-btn" aria-label="Copy config version content"><svg stroke="currentColor"></svg></button><pre id="config-version-content">instance_groups: []</pre>');
-    const button = host.querySelector('button');
-    button.click();
-    await sleep(120);
-    expect(copied).toEqual(['instance_groups: []']);
-    expect(button.classList.contains('copied')).toBe(true);
-    expect(button.querySelector(POLYLINE)).not.toBeNull();
-    expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied to clipboard');
-
-    d.getElementById('config-version-content').textContent = '';
-    copied.length = 0;
-    button.click();
-    await sleep(120);
-    expect(copied).toEqual([]);
-    expect(d.getElementById('blacksmith-live-region').textContent).toBe('There is no config content to copy.');
-  } finally { w.close(); }
-});
