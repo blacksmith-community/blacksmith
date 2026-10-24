@@ -12278,6 +12278,24 @@ span.config-type.resurrection {
   box-shadow: inset 0 0 0 1px var(--border-active);
 }
 
+.cert-strip-info {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid var(--cert-control-border);
+  border-left-width: 4px;
+  border-left-color: var(--border-active);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  cursor: default;
+}
+
+.cert-strip-info[hidden] {
+  display: none;
+}
+
 .cert-strip-count {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
@@ -12616,10 +12634,6 @@ span.config-type.resurrection {
 .cert-timeline:focus-visible {
   outline: 2px solid var(--border-active);
   outline-offset: 2px;
-}
-
-.cert-timeline-wrap--empty .cert-timeline {
-  display: none;
 }
 
 .cert-tl-btn {

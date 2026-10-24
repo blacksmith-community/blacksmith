@@ -23273,6 +23273,7 @@
         <div id="cert-fleet-main">
           <div id="cert-fleet-notices" class="cert-notices"></div>
           <div class="cert-strips" id="cert-strips">
+            <span class="cert-strip-info" id="cert-next-expiry"></span>
             <div class="cert-strip" id="cert-strip-attention" role="group" aria-label="Attention filters"></div>
             <div class="cert-strip" id="cert-strip-expiry" role="group" aria-label="Expiry filters"></div>
           </div>
@@ -23590,7 +23591,46 @@
       });
     };
 
+    // The next-expiry pill is information only. It is a plain span, so it
+    // is not a toggle, not focusable, and never looks pressed. It reads
+    // the whole fleet, so the figure does not change with the filters.
+    const utcDay = (ms) => Math.floor(ms / DAY_MS);
+
+    const nextExpiry = () => {
+      const resp = view.resp || {};
+      const anchor = Number.isNaN(Date.parse(resp.generated_at)) ? Date.now() : Date.parse(resp.generated_at);
+      const source = view.fleet.length > 0 ? view.fleet : (resp.certificates || []);
+      let soonest = null;
+      let soonestTime = Infinity;
+      source.forEach((cert) => {
+        const t = Date.parse(cert.effective_not_after);
+        if (Number.isNaN(t) || t < anchor || t >= soonestTime) return;
+        soonest = cert;
+        soonestTime = t;
+      });
+      if (!soonest) return { text: 'No upcoming expiries', title: 'No certificate has a future expiry date.' };
+      const days = utcDay(soonestTime) - utcDay(anchor);
+      const text = days <= 0 ? 'Next expiry today' : `Next expiry in ${plural(days, 'day')}`;
+      const owner = (soonest.owners || []).find((o) => o && o.instance_name);
+      const name = owner ? `${owner.instance_name}, ${certName(soonest)}` : certName(soonest);
+      return { text, title: `${name} expires on ${shortDate(soonest.effective_not_after)}.` };
+    };
+
+    const renderNextExpiry = () => {
+      const pill = view.refs.nextExpiry;
+      if (!pill) return;
+      if (view.mode !== 'ready') {
+        pill.hidden = true;
+        return;
+      }
+      const next = nextExpiry();
+      pill.hidden = false;
+      pill.textContent = next.text;
+      pill.title = next.title;
+    };
+
     const renderStrips = () => {
+      renderNextExpiry();
       const summary = (view.resp && view.resp.summary) || {};
       view.refs.stripButtons.forEach(({ def, b, count }) => {
         const n = Number(def.count(summary)) || 0;
@@ -24246,11 +24286,14 @@
       holder.hidden = false;
       const buckets = timelineBuckets();
       view.buckets = buckets;
-      const nothingExpiring = buckets.every((b) => b.critical + b.warning + b.ok === 0)
+      // With nothing due in the weeks ahead, the whole section goes away.
+      // A pressed bar keeps it visible so that the filter can be cleared.
+      const nothingExpiring = buckets.slice(1).every((b) => b.critical + b.warning + b.ok === 0)
         && !state.expires_after && !state.expires_before;
-      holder.classList.toggle('cert-timeline-wrap--empty', nothingExpiring);
-      const heading = holder.querySelector('.cert-timeline-title');
-      if (heading) heading.textContent = nothingExpiring ? 'Nothing expires in the next 90 days.' : 'Expiring in the next 90 days';
+      if (nothingExpiring) {
+        holder.hidden = true;
+        return;
+      }
       let max = 1;
       buckets.forEach((b) => { max = Math.max(max, b.critical + b.warning + b.ok); });
       buckets.forEach((bucket, i) => {
@@ -25232,6 +25275,7 @@
         notices: q('cert-fleet-notices'),
         stripAttention: q('cert-strip-attention'),
         stripExpiry: q('cert-strip-expiry'),
+        nextExpiry: q('cert-next-expiry'),
         timeline: q('cert-fleet-timeline'),
         search: q('cert-search'),
         service: q('cert-filter-service'),
