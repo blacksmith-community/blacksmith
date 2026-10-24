@@ -11,4 +11,6 @@ No page loads these files yet. They are pinned here so the console can adopt Oat
 
 The package tarball is https://registry.npmjs.org/@knadh/oat/-/oat-1.0.0.tgz, with npm integrity `sha512-8+ZoFS08UFVgcm8CZwW9ehELvELBxxaKFGE3S+n8nOTeUplIumwhe5ov66izL4peBOmiQU6cJ9zk5Z77Vh/nDQ==`.
 
-To update, download the new tarball, check its integrity against the registry, copy the same three files over these, and update the version, date, and checksums here.
+The GitHub release v1.0.0 at https://github.com/knadh/oat/releases has no attached build files, so we checked these against GitHub by rebuilding. The tag v1.0.0 points at commit 3b8d10eef03bc7db46dddb2ee8490d453280f02d. Running the tag's own `make css js` with esbuild 0.28.2 on a `git archive` of that commit produces `oat.min.css` and `oat.min.js` byte for byte identical to the files here. `LICENSE` matches the tag's copy, and the package's `css/` and `js/` sources match the tag's `src/css/` and `src/js/` exactly.
+
+To update, rebuild the new tag the same way, and confirm the npm package's files match the rebuild before copying the same three files over these. Then update the version, date, commit, and checksums here.
