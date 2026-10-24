@@ -346,9 +346,12 @@ table tbody {
   gap: 0;
   border-bottom: 2px solid var(--border-primary);
   background: var(--bg-tertiary);
+  overflow-x: auto;
 }
 
 .instance-log-job-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
   padding: 10px 20px;
   background: var(--bg-tertiary);
   border: none;
@@ -384,7 +387,9 @@ table tbody {
 }
 
 .instance-logs-content {
-  flex: 1;
+  flex: none;
+  height: 70dvh;
+  min-height: 320px;
   background: var(--bg-secondary);
   overflow: hidden;
   display: flex;
@@ -396,14 +401,17 @@ table tbody {
 .job-logs-container {
   display: flex;
   flex-direction: column;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: static;
+  height: 100%;
   padding: 20px;
   box-sizing: border-box;
   overflow: hidden;
+}
+
+@media (max-width: 700px) {
+  .instance-log-job-tab {
+    padding: 10px 12px;
+  }
 }
 
 /* Removed - now using .logs-controls-row .log-file-selector */
