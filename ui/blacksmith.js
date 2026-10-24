@@ -2640,6 +2640,178 @@
   const BATCH_PAGE_SIZE = 50;
   const batchWorkspace = { page: 0, search: '', eligibility: '', selectedOnly: false };
 
+  // A single mounted draft: navigation changes visibility, never recreates inputs.
+  const batchFlow = { installed: false, step: 0, furthest: 0, revision: 0, review: null, loading: false, submitting: false, jobName: '', drafts: {}, restoring: false };
+  const BATCH_STEPS = ['Operation', 'Options', 'Instances', 'Review'];
+  const batchOptionIssue = () => {
+    if (upgradeOperation === 'upgrade') {
+      const targets = document.querySelectorAll('#upgrade-stemcell-filter, #upgrade-release-filter, [id^="upgrade-advrel-"]');
+      return Array.from(targets).some(field => field.value) ? '' : 'Choose a stemcell or release target to continue.';
+    }
+    if (rotateState.loadState === 'disabled') return 'Certificate inventory is turned off.';
+    if (rotateState.loadState === 'error') return 'Certificate inventory could not load. Retry below to continue.';
+    if (rotateState.loadState !== 'ready') return 'Loading certificate inventory…';
+    if (upgradeOperation === 'rotate' && rotateState.mode === 'patch' && !rotateState.converge) return 'Choose what should happen after patching.';
+    return '';
+  };
+  const batchInstanceIssue = () => {
+    if (batchOptionIssue()) return batchOptionIssue();
+    if (upgradeOperation !== 'upgrade' && rotateState.busy && batchFlow.step !== 3) return 'Finishing the previous preview. Your changes are kept.';
+    const action = document.getElementById(upgradeOperation === 'upgrade' ? 'upgrade-start' : 'rotate-preview');
+    return !batchSelectedIds().size || action?.disabled ? (action?.title || 'Select at least one eligible instance to continue.') : '';
+  };
+  const updateBatchFlow = () => {
+    if (!batchFlow.installed) return;
+    const step = batchFlow.step;
+    const panel = document.getElementById('upgrade');
+    if (!panel) return;
+    panel.querySelector('#rotate-operation').hidden = step !== 0;
+    panel.querySelector('#batch-flow-options').hidden = step !== 1;
+    panel.querySelector('.upgrade-targets-panel').hidden = step !== 1;
+    panel.querySelector('.upgrade-services-panel').hidden = step !== 2;
+    panel.querySelector('.upgrade-instances').hidden = step !== 2;
+    panel.querySelector('#batch-selection-review').hidden = step !== 2;
+    panel.querySelector('.upgrade-footer').hidden = true;
+    document.getElementById('batch-flow-review').hidden = step !== 3;
+    const title = document.getElementById('batch-flow-title');
+    title.textContent = ['What would you like to do?', 'Configure the operation', 'Choose instances', 'Review and confirm'][step];
+    document.getElementById('batch-flow-context').textContent = `${OPERATION_LABELS[upgradeOperation]} · ${pluralize(batchSelectedIds().size, 'instance')} selected`;
+    document.getElementById('batch-flow-description').textContent = [
+      'Choose an operation. Nothing runs until you review and confirm.',
+      'Set the intended change before choosing the instances it should affect.',
+      'Search and filter the fleet. Your selection stays with you when you go back.',
+      'Check the scope and impact below. Go back to adjust any earlier choice.'
+    ][step];
+    document.querySelectorAll('[data-batch-step]').forEach(button => {
+      const index = Number(button.dataset.batchStep);
+      button.disabled = batchFlow.submitting || index > batchFlow.furthest || (index >= 2 && Boolean(batchOptionIssue())) || (index === 3 && Boolean(batchInstanceIssue()));
+      if (index === step) button.setAttribute('aria-current', 'step'); else button.removeAttribute('aria-current');
+    });
+    const back = document.getElementById('batch-flow-back');
+    back.hidden = step === 0; back.disabled = batchFlow.submitting;
+    const next = document.getElementById('batch-flow-next');
+    const issue = step === 1 ? batchOptionIssue() : step === 2 ? batchInstanceIssue() : '';
+    const review = batchFlow.review;
+    const needsWord = review?.options.requireText;
+    const acknowledged = !needsWord || document.getElementById('batch-flow-ack')?.value.trim() === String(needsWord);
+    next.textContent = batchFlow.submitting ? 'Starting…' : batchFlow.loading ? 'Preparing review…' : step === 3 ? (review?.options.confirmText || 'Refresh review') : ['Next: Options','Next: Instances','Review operation'][step];
+    next.disabled = batchFlow.submitting || batchFlow.loading || Boolean(issue) || (step === 3 && !acknowledged);
+    next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
+    const helpText = issue || (step === 3 && needsWord && !acknowledged ? `Type ${needsWord} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
+    const help = document.getElementById('batch-flow-help');
+    if (help.textContent !== helpText) help.textContent = helpText;
+    document.getElementById('batch-activity').disabled = batchFlow.submitting;
+    document.getElementById('batch-new').disabled = batchFlow.submitting;
+  };
+  const setBatchStep = (step, focus = true) => {
+    if (!batchFlow.installed || batchFlow.submitting) return;
+    if (batchFlow.review) { batchFlow.review.resolve(false); batchFlow.review = null; }
+    batchFlow.revision++;
+    batchFlow.loading = false;
+    batchFlow.step = step;
+    batchFlow.furthest = Math.max(batchFlow.furthest, step);
+    updateBatchFlow();
+    if (focus) {
+      document.getElementById('upgrade').scrollTop = 0;
+      document.getElementById('batch-flow-title').focus({preventScroll:true});
+    }
+  };
+  const showBatchReview = (options, revision) => {
+    if (revision !== batchFlow.revision || batchFlow.step !== 3) return Promise.resolve(false);
+    batchFlow.loading = false;
+    batchFlow.submitting = false;
+    const host = document.getElementById('batch-flow-review');
+    host.replaceChildren();
+    const title = rotateEl('h3', '', options.title);
+    host.appendChild(title);
+    if (options.message) host.appendChild(rotateEl('p', 'batch-review-note', options.message));
+    if (options.body) {
+      const cards = options.body.querySelector('.rotate-preview-cards');
+      if (cards && cards.children.length > 3) {
+        const disclosure = rotateEl('details', 'batch-included-details');
+        disclosure.appendChild(rotateEl('summary', '', 'Inspect included instances and certificates'));
+        const scroll = cards.parentElement;
+        const contents = Array.from(scroll.children).filter(node => node.matches('.rotate-preview-expand, .batch-pagination, .rotate-preview-cards'));
+        cards.before(disclosure); contents.forEach(node => disclosure.appendChild(node));
+      }
+      host.appendChild(options.body);
+    }
+    if (options.details?.length) {
+      const details = rotateEl('details', 'batch-review-details');
+      details.appendChild(rotateEl('summary', '', 'Additional certificate changes'));
+      options.details.forEach(item => {
+        const p = rotateEl('p'); p.append(rotateEl('strong','',item.label), document.createTextNode(`: ${item.value}`)); details.appendChild(p);
+      });
+      host.appendChild(details);
+    }
+    if (upgradeOperation === 'upgrade') {
+      const label = rotateEl('label', 'batch-job-name', 'Job name (optional)');
+      const input = document.createElement('input'); input.id = 'batch-flow-job-name'; input.value = batchFlow.jobName; input.placeholder = 'Use the generated job name';
+      input.addEventListener('input', () => { batchFlow.jobName = input.value; });
+      label.appendChild(input); host.appendChild(label);
+    }
+    if (options.requireText) {
+      const label = rotateEl('label', 'batch-ack-label', `Type ${options.requireText} to confirm`);
+      const input = document.createElement('input'); input.id = 'batch-flow-ack'; input.autocomplete = 'off'; input.spellcheck = false;
+      input.addEventListener('input', updateBatchFlow); label.appendChild(input); host.appendChild(label);
+    }
+    return new Promise(resolve => {
+      batchFlow.review = {options,resolve};
+      updateBatchFlow();
+      document.getElementById('batch-flow-title').focus({preventScroll:true});
+    });
+  };
+  const runBatchReview = async () => {
+    if (batchFlow.loading || batchFlow.submitting || batchInstanceIssue()) return;
+    setBatchStep(3);
+    const revision = batchFlow.revision;
+    batchFlow.loading = true;
+    document.getElementById('batch-flow-review').replaceChildren(rotateEl('p','','Preparing the latest preview…'));
+    updateBatchFlow();
+    try {
+      if (upgradeOperation === 'upgrade') await startUpgrade({flowReview:true});
+      else await startRotatePreview({flowReview:true});
+    } finally {
+      if (revision !== batchFlow.revision) return;
+      batchFlow.loading = false;
+      const submitted = batchFlow.submitting;
+      batchFlow.submitting = false;
+      if (submitted && batchFlow.step === 3) setBatchStep(2, false);
+      updateBatchFlow();
+    }
+  };
+  const installBatchFlow = () => {
+    const panel = document.getElementById('upgrade');
+    const main = panel.querySelector('.upgrade-main');
+    const header = rotateEl('div', 'batch-flow-header');
+    header.innerHTML = '<nav aria-label="Operation progress" class="batch-steps">' + BATCH_STEPS.map((name,index) => `<button type="button" class="ghost" data-batch-step="${index}">${name}</button>`).join('<span aria-hidden="true">›</span>') + '</nav><p id="batch-flow-context"></p><h2 id="batch-flow-title" tabindex="-1"></h2><p id="batch-flow-description"></p>';
+    main.prepend(header);
+    const options = rotateEl('div','batch-flow-options'); options.id = 'batch-flow-options';
+    // Release choices depend on service context, so choose it before targets.
+    options.appendChild(document.getElementById('upgrade-service-filter').closest('.filter-row'));
+    panel.querySelector('.upgrade-targets-panel').before(options);
+    const review = rotateEl('section','batch-flow-review'); review.id = 'batch-flow-review'; review.setAttribute('aria-label','Operation review');
+    main.appendChild(review);
+    const footer = rotateEl('div','batch-flow-footer');
+    footer.innerHTML = '<p id="batch-flow-help" role="status"></p><div><button id="batch-flow-back" type="button" class="outline">Back</button><button id="batch-flow-next" type="button" aria-describedby="batch-flow-help">Next: Options</button></div>';
+    main.appendChild(footer);
+    header.querySelectorAll('[data-batch-step]').forEach(button => button.addEventListener('click', () => {
+      const step = Number(button.dataset.batchStep); if (step === batchFlow.step) return;
+      if (step === 3) runBatchReview(); else setBatchStep(step);
+    }));
+    document.getElementById('batch-flow-back').addEventListener('click', () => setBatchStep(Math.max(0,batchFlow.step-1)));
+    document.getElementById('batch-flow-next').addEventListener('click', () => {
+      if (batchFlow.review) {
+        const review = batchFlow.review; batchFlow.review = null; batchFlow.submitting = true;
+        updateBatchFlow(); review.resolve({confirmed:true,text:document.getElementById('batch-flow-ack')?.value || ''});
+      } else if (batchFlow.step >= 2) runBatchReview(); else setBatchStep(batchFlow.step+1);
+    });
+    panel.addEventListener('change', () => queueMicrotask(updateBatchFlow));
+    new MutationObserver(updateBatchFlow).observe(panel.querySelector('.upgrade-footer'), {childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
+    batchFlow.installed = true;
+    syncOperationRadios(); setBatchStep(0,false);
+  };
+
   const batchSelectedIds = () => upgradeOperation === 'rotate'
     ? new Set(rotateSelection().keys())
     : (upgradeOperation === 'converge' ? convergeSelected : selectedUpgradeInstances);
@@ -4009,7 +4181,8 @@
     preview.id = 'rotate-preview';
     preview.disabled = true;
     preview.addEventListener('click', startRotatePreview);
-    actions.appendChild(reviewButton);
+    if (reviewHost) reviewHost.prepend(reviewButton);
+    else actions.appendChild(reviewButton);
     actions.appendChild(preview);
     pane.appendChild(actions);
     container.appendChild(pane);
@@ -4039,6 +4212,7 @@
   const syncOperationRadios = () => {
     document.querySelectorAll('#upgrade input[name="upgrade-operation"]').forEach((radio) => {
       radio.checked = radio.value === upgradeOperation;
+      radio.closest('label')?.classList.toggle('is-selected', radio.checked);
     });
   };
 
@@ -4065,7 +4239,7 @@
     setPaneMode(footer, next);
     syncOperationRadios();
     if (heading) {
-      heading.textContent = next === 'upgrade' ? '2. Choose targets' : (next === 'rotate' ? '2. Certificate options' : '2. Converge options');
+      heading.textContent = next === 'upgrade' ? 'Upgrade targets' : (next === 'rotate' ? 'Certificate options' : 'Converge options');
     }
 
     if (next === 'upgrade') {
@@ -4076,7 +4250,7 @@
     buildRotateOptions(targets);
     buildRotateFooter(footer);
     if (entering) {
-      rotateState.thresholdApplied = false;
+      rotateState.thresholdApplied = Boolean(batchFlow.drafts[next]);
       rotateState.reviewOpen = false;
       rotateState.imported = rotatePairs().length > 0;
     }
@@ -4104,29 +4278,33 @@
     else selectedUpgradeInstances.clear();
   };
 
-  // Switches the operation. A switch with something selected asks first,
-  // since the selection does not carry across operations.
+  // Each operation retains its selection while the operator explores alternatives.
   const requestOperation = async (mode) => {
     if (mode === upgradeOperation || !OPERATION_LABELS[mode]) {
       syncOperationRadios();
       return false;
     }
-    const count = selectionCountFor(upgradeOperation);
-    if (count > 0) {
-      const noun = upgradeOperation === 'rotate' ? pluralize(count, 'certificate') : pluralize(count, 'instance');
-      const confirmed = await showConfirmDialog({
-        title: `Switch to ${OPERATION_LABELS[mode]}?`,
-        message: `Your ${noun} selected for ${OPERATION_LABELS[upgradeOperation].toLowerCase()} will be cleared when we switch to ${OPERATION_LABELS[mode].toLowerCase()}.`,
-        confirmText: 'Switch and clear',
-        cancelText: 'Keep selection'
-      });
-      if (!confirmed) {
-        syncOperationRadios();
-        return false;
-      }
-      clearSelectionFor(upgradeOperation);
-    }
+    const fields = ['upgrade-service-filter','upgrade-plan-filter','upgrade-stemcell-filter','upgrade-release-filter','upgrade-stemcell-floor','upgrade-release-floor'];
+    const controls = [...fields, ...Array.from(document.querySelectorAll('[id^="upgrade-advrel-"]')).map(field=>field.id)];
+    batchFlow.drafts[upgradeOperation] = {
+      values:Object.fromEntries(controls.map(id=>[id,document.getElementById(id)?.value || ''])),
+      workspace:{...batchWorkspace},name:rotateState.name,reason:rotateState.reason
+    };
+    const draft = batchFlow.drafts[mode];
+    rotateState.name = draft?.name || ''; rotateState.reason = draft?.reason || '';
     renderOperation(mode);
+    batchFlow.restoring = true;
+    const service = document.getElementById('upgrade-service-filter');
+    if (service) { service.value = draft?.values['upgrade-service-filter'] || ''; service.dispatchEvent(new Event('change',{bubbles:true})); }
+    if (draft) Object.entries(draft.values).forEach(([id,value]) => {
+      const field = document.getElementById(id); if (field && id !== 'upgrade-service-filter') field.value = value;
+    });
+    Object.assign(batchWorkspace,draft?.workspace || {page:0,search:'',eligibility:'',selectedOnly:false});
+    document.getElementById('batch-search').value = batchWorkspace.search;
+    document.getElementById('batch-eligibility').value = batchWorkspace.eligibility;
+    batchFlow.restoring = false;
+    refreshUpgradeInstanceList();
+    if (batchFlow.installed) { batchFlow.furthest = 1; setBatchStep(0,false); }
     return true;
   };
 
@@ -4143,7 +4321,7 @@
 
     const fieldset = rotateEl('fieldset', 'rotate-operation');
     fieldset.id = 'rotate-operation';
-    fieldset.appendChild(rotateEl('legend', '', '1. Choose operation'));
+    fieldset.appendChild(rotateEl('legend', '', 'Operation'));
     Object.keys(OPERATION_LABELS).forEach((mode) => {
       const label = rotateEl('label', 'rotate-operation-option');
       const radio = document.createElement('input');
@@ -4154,10 +4332,13 @@
       radio.checked = mode === upgradeOperation;
       radio.addEventListener('change', () => { if (radio.checked) requestOperation(mode); });
       label.appendChild(radio);
-      label.appendChild(rotateEl('span', '', OPERATION_LABELS[mode]));
+      label.appendChild(rotateEl('strong', '', OPERATION_LABELS[mode]));
+      label.appendChild(rotateEl('span', 'batch-operation-description', {upgrade:'Update stemcells or service releases.',rotate:'Replace certificates using redeploy or patch in place.',converge:'Deploy current certificates to instances left unconverged.'}[mode]));
+      label.appendChild(rotateEl('span', 'batch-operation-selected', 'Selected'));
       fieldset.appendChild(label);
     });
     main.insertBefore(fieldset, top);
+    syncOperationRadios();
   };
 
   // =====================================================
@@ -4612,7 +4793,7 @@
       // One ID per opening of the dialog, which every retry of this create reuses.
       const clientRequestId = newClientRequestId();
       const converge = mode === 'converge';
-      const answer = await showConfirmDialog({
+      const answer = await (options.confirmReview || showConfirmDialog)({
         batchReview: origin === 'batch',
         title: converge ? 'Converge these instances?' : (mode === 'patch' ? 'Patch these certificates in place?' : 'Rotate these certificates?'),
         message: note,
@@ -4907,6 +5088,7 @@
     const switched = await window.blacksmithNav.switchTab('upgrade');
     if (switched === false) return false;
     renderOperation('rotate');
+    if (batchFlow.installed) setBatchStep(2, false);
     rotateRefresh();
     const radio = document.getElementById('rotate-op-rotate');
     if (radio && typeof radio.focus === 'function') radio.focus({ preventScroll: true });
@@ -4922,7 +5104,8 @@
   window.blacksmithBatch = { openRotate: openBatchRotate };
 
   // The footer button of rotate and converge mode.
-  const startRotatePreview = async () => {
+  const startRotatePreview = async ({flowReview = false} = {}) => {
+    const reviewRevision = batchFlow.revision;
     if (rotateState.busy || upgradeOperation === 'upgrade') return;
     const converge = upgradeOperation === 'converge';
     const grouped = new Map();
@@ -4949,6 +5132,7 @@
         name: rotateState.name,
         reason: rotateState.reason,
         origin: 'batch',
+        confirmReview: flowReview ? options => showBatchReview(options, reviewRevision) : undefined,
         onCreated: (task, included) => {
           // Clear only what the task took. An instance the preview left out
           // keeps its selection so the operator can see why and retry.
@@ -5032,6 +5216,7 @@
     targetsContainer.innerHTML = renderUpgradeTargets();
     installOperationSelector();
     installBatchWorkspace();
+    installBatchFlow();
 
     // Load stemcells from API
     try {
@@ -5248,8 +5433,9 @@
 
       // Add change handler for service filter
       serviceSelect.addEventListener('change', () => {
-        // Clear the selection, so a release target never reaches instances the new filter hides
-        selectedUpgradeInstances.clear();
+        // A changed upgrade service scope invalidates its selected release and instances.
+        // Restoring an existing draft must not discard that draft's selection.
+        if (upgradeOperation === 'upgrade' && !batchFlow.restoring) selectedUpgradeInstances.clear();
         updatePlanFilter(serviceSelect.value);
         populateReleaseFilter(serviceSelect.value, false);
         populateReleaseFloorFilter(serviceSelect.value, false);
@@ -6800,7 +6986,31 @@
     return details;
   };
 
-  const startUpgrade = async () => {
+  const buildUpgradeFlowSummary = (ids, targets) => {
+    const body = rotateEl('div', 'batch-upgrade-summary');
+    body.appendChild(rotateEl('p', '', `${pluralize(ids.length, 'instance')} will be upgraded.`));
+    const changes = rotateEl('ul');
+    targets.forEach(target => changes.appendChild(rotateEl('li', '', target)));
+    body.appendChild(changes);
+    body.appendChild(rotateEl('p', '', 'BOSH applies the deployment update policy. VMs and jobs may restart during the upgrade.'));
+    const details = rotateEl('details');
+    details.appendChild(rotateEl('summary', '', 'Selected instances'));
+    const list = rotateEl('ul');
+    const pager = rotateEl('nav','batch-pagination'); pager.setAttribute('aria-label','Review instance pages');
+    const previous = rotateEl('button','outline small','Previous');
+    const label = rotateEl('span'); const next = rotateEl('button','outline small','Next');
+    let page = 0;
+    const paint = () => {
+      list.replaceChildren(...ids.slice(page * BATCH_PAGE_SIZE,(page+1)*BATCH_PAGE_SIZE).map(id => rotateEl('li','',window.serviceInstances?.[id]?.instance_name ? `${window.serviceInstances[id].instance_name} (${id})` : id)));
+      label.textContent = `Page ${page+1} of ${Math.max(1,Math.ceil(ids.length/BATCH_PAGE_SIZE))}`;
+      previous.disabled = page === 0; next.disabled = (page+1)*BATCH_PAGE_SIZE >= ids.length;
+    };
+    previous.addEventListener('click',()=>{page--;paint();});next.addEventListener('click',()=>{page++;paint();});
+    pager.append(previous,label,next);details.append(pager,list);body.appendChild(details);paint();return body;
+  };
+
+  const startUpgrade = async ({flowReview = false} = {}) => {
+    const reviewRevision = batchFlow.revision;
     const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
     const releaseSelect = document.getElementById('upgrade-release-filter');
 
@@ -6834,7 +7044,7 @@
     if (stemcellValue) targetParts.push(`stemcell ${os}/${version}`);
     targetReleases.forEach(r => targetParts.push(`${r.name}/${r.version}`));
     const defaultName = `Upgrade to ${targetParts.join(' + ')}`;
-    const jobName = await showPromptDialog({
+    const jobName = flowReview ? (batchFlow.jobName || defaultName) : await showPromptDialog({
       title: 'Create Batch Job',
       message: `Enter a name for this batch job (${instanceIds.length} instance${instanceIds.length > 1 ? 's' : ''} selected):`,
       defaultValue: defaultName,
@@ -6882,17 +7092,20 @@
 
         const diverged = Array.isArray(preview && preview.diverged) ? preview.diverged.filter(Boolean) : [];
         const createBody = { ...requestBody };
-        if (diverged.length > 0) {
-          const answer = await showConfirmDialog({
-            title: 'Upgrade instances that are not converged?',
-            message: `${note ? `${note} ` : ''}A patch left ${diverged.length === 1 ? 'this instance' : 'these instances'} unconverged, so the upgrade deploys the latest certificates along with its own changes. Review them, then confirm.`,
+        if (diverged.length > 0 || flowReview) {
+          const body = flowReview ? buildUpgradeFlowSummary(instanceIds, targetParts) : undefined;
+          const answer = await (flowReview ? options => showBatchReview(options, reviewRevision) : showConfirmDialog)({
+            body,
+            title: diverged.length ? 'Upgrade instances that are not converged?' : 'Upgrade these instances?',
+            message: diverged.length ? `${note ? `${note} ` : ''}A patch left ${diverged.length === 1 ? 'this instance' : 'these instances'} unconverged, so the upgrade deploys the latest certificates along with its own changes. Review them, then confirm.` : note,
             details: buildUpgradeDivergedDetails(diverged),
             confirmText: 'Upgrade',
             cancelText: 'Cancel',
             danger: true
           });
           if (!answer || (answer !== true && !answer.confirmed)) return;
-          createBody.upgrade_preview_id = preview.id;
+          if (diverged.length) createBody.upgrade_preview_id = preview.id;
+          if (flowReview) createBody.name = batchFlow.jobName.trim() || defaultName;
         }
 
         const response = await fetch('/b/upgrade/tasks', {

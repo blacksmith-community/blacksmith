@@ -21,18 +21,18 @@ Most suites also assert that no script error or `alert`, `confirm`, or `prompt` 
 For browser regression checks, start a static server from the repository:
 
 ```sh
-python3 -m http.server 4201 --directory ui
+python3 -m http.server 4202 --directory ui
 ```
 
 In another terminal, from the same directory, use Playwright CLI:
 
 ```sh
-playwright-cli -s=console-check open http://127.0.0.1:4201
+playwright-cli -s=console-check open http://127.0.0.1:4202
 playwright-cli -s=console-check run-code --filename=tests/ui/browser-check.js
 ```
 
 The browser script intercepts catalog and broker endpoints with synthetic
-data. It rejects and records every non-GET broker request. Do not substitute
+data. It mocks the upgrade preview and rejects all other non-GET broker requests. Do not substitute
 a live deployment URL. A successful result reports 64 checks and zero writes.
 Screenshots are written under `output/playwright/` relative to the browser
 session's starting directory. Use a new session name if another session was
@@ -69,4 +69,14 @@ keyboard, mobile, and lab checks; they do not certify full WCAG conformance.
 After `batch-browser-check.js`, preload axe-core again (the page reload clears
 it) and run `tests/ui/populated-accessibility-browser-check.js` to audit the
 populated batch/certificate views in both themes and viewport sizes, plus
-the mobile confirmation dialog.
+the mobile inline review.
+
+Run `batch-flow-browser-check.js` for the focused Operation → Options →
+Instances → Review flow. Its fixture records two synthetic task creations
+(rotation and upgrade), verifies that no task starts before confirmation, and
+checks retained drafts, typed confirmation, and late preview cancellation.
+It uses 1,003 instances and writes screenshots of each major step.
+After running it, inject axe-core again and run
+`batch-flow-accessibility-browser-check.js` for all three operations and four
+steps in light/dark themes at desktop/mobile sizes (48 combinations).
+All of these browser checks use only local, intercepted endpoints.

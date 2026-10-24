@@ -1,5 +1,5 @@
 // Run with playwright-cli run-code --filename=tests/ui/batch-browser-check.js.
-// Serve ui on 4201. All backend traffic is mocked; no infrastructure is changed.
+// Serve ui on 4202. All backend traffic is mocked; no infrastructure is changed.
 async (page) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -31,13 +31,15 @@ async (page) => {
   });
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.setViewportSize({width:1440,height:900});
-  await page.goto('http://127.0.0.1:4201');
+  await page.goto('http://127.0.0.1:4202');
   await page.locator('[data-tab="upgrade"]').click();
-  await page.locator('#batch-search').waitFor();
+  await page.locator('#batch-flow-next').waitFor();
   await page.locator('#rotate-op-rotate').check();
+  await page.locator('#batch-flow-next').click();
+  await page.waitForFunction(()=>!document.getElementById('batch-flow-next').disabled);
+  await page.locator('#batch-flow-next').click();
   await page.locator('.rotate-chip').first().waitFor();
   check(await page.locator('#upgrade .upgrade-instance-item').count() === 50, 'bounded rotate page');
-  await page.locator('#batch-options-summary').click();
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-desktop.png'});
   const noNestedScroll = () => page.locator('#upgrade').evaluate(panel => {
     const selectors=['.upgrade-services','.upgrade-targets','.upgrade-instances','.upgrade-instances-list'];
@@ -53,12 +55,12 @@ async (page) => {
   check(await page.locator('#upgrade .upgrade-instance-item').count() === 3, 'search narrows fleet');
   await page.locator('#batch-select-matching').click();
   check((await page.locator('#batch-selection-summary').textContent()).includes('53 instances selected'), 'all matching adds exact scope');
-  await page.locator('#rotate-preview').click();
-  await page.locator('#dialog-modal-overlay.active .batch-review-dialog').waitFor();
-  await page.locator('[data-dialog-role="cancel"]').waitFor({state:'visible'});
+  await page.locator('#batch-flow-next').click();
+  await page.locator('#batch-flow-review h3').waitFor();
+  await page.locator('#batch-flow-back').waitFor({state:'visible'});
   check(await page.locator('.rotate-preview-card').count() === 50, 'bounded review');
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-review.png'});
-  await page.locator('[data-dialog-role="cancel"]').click();
+  await page.locator('#batch-flow-back').click();
   await page.locator('#batch-activity').click();
   check(!await page.locator('.upgrade-main').isVisible(), 'activity separated');
   await page.locator('#batch-new').click();
@@ -67,12 +69,12 @@ async (page) => {
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-mobile.png'});
   check(await noNestedScroll(), 'no mobile nested scrollers');
   check(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
-  await page.locator('#rotate-preview').click();
-  await page.locator('#dialog-modal-overlay.active .batch-review-dialog').waitFor();
-  await page.locator('[data-dialog-role="cancel"]').waitFor({state:'visible'});
-  check(await page.locator('[data-dialog-role="cancel"]').isVisible(), 'review back action visible on mobile');
+  await page.locator('#batch-flow-next').click();
+  await page.locator('#batch-flow-review h3').waitFor();
+  await page.locator('#batch-flow-back').waitFor({state:'visible'});
+  check(await page.locator('#batch-flow-back').isVisible(), 'review back action visible on mobile');
   await page.screenshot({animations:'disabled',path:'output/playwright/batch-review-mobile.png'});
-  await page.locator('[data-dialog-role="cancel"]').click();
+  await page.locator('#batch-flow-back').click();
   check(errors.length === 0, errors.join('\n'));
   return {rows:1003,pageSize:50,checks:'passed',errors};
 }

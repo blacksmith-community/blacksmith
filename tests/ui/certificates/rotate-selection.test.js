@@ -62,8 +62,9 @@ t('rotate selection on Batch Operations', async () => {
   ok(!d.querySelector('.dialog-modal-overlay.active,#dialog-modal-overlay.active'),'no dialog with empty selection');
   const startBtn=d.getElementById('upgrade-start');
   ok(startBtn.textContent==='Upgrade Selected (0)'&&!visible(startBtn),'#upgrade-start hidden, text unchanged');
-  ok(d.getElementById('rotate-preview')&&visible(d.getElementById('rotate-preview')),'rotate footer button visible');
-  ok(d.querySelector('.upgrade-targets-panel h2').textContent==='2. Certificate options','targets heading retitled');
+  ok(d.getElementById('rotate-preview')&&!visible(d.getElementById('rotate-preview')),'legacy action stays hidden behind step navigation');
+  T.setBatchStep(1,false);
+  ok(d.querySelector('.upgrade-targets-panel h2').textContent==='Certificate options','targets heading retitled');
   ok(visible(d.getElementById('rotate-threshold')),'threshold control visible');
   const sel=w.blacksmithCerts.selection;
   ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K)&&!sel.get('inst-valkey').has(K2),'default threshold preselects valkey leaf only, on the shared selection');
@@ -145,27 +146,20 @@ t('rotate selection on Batch Operations', async () => {
   ok(d.querySelectorAll('.rotate-chip').length===0,'converge rows have no chips');
   d.querySelector('[data-instance-id="inst-pg"] input').click(); await sleep(10);
   ok(d.getElementById('rotate-preview').textContent==='Preview converge of 1 instance','converge footer label: '+d.getElementById('rotate-preview').textContent);
-  // switch with selection asks
-  const confirmBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]');
-  const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
-  d.getElementById('rotate-op-upgrade').checked=true; d.getElementById('rotate-op-upgrade').dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(50);
-  ok(!!confirmBtn()&&d.getElementById('upgrade').dataset.operation==='converge','switch with a selection asks first');
-  cancelBtn().click(); await sleep(50);
-  ok(d.getElementById('upgrade').dataset.operation==='converge'&&d.getElementById('rotate-op-converge').checked&&!d.getElementById('rotate-op-upgrade').checked,'cancel keeps mode, selection and radios');
-  ok(d.getElementById('rotate-preview').textContent==='Preview converge of 1 instance','selection kept after cancel');
-  // rotate with selection -> upgrade
-  d.getElementById('rotate-op-rotate').checked=true; d.getElementById('rotate-op-rotate').dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(50);
-  ok(!!confirmBtn(),'converge->rotate asks too'); confirmBtn().click(); await sleep(80);
-  ok(d.getElementById('upgrade').dataset.operation==='rotate','rotate after confirm');
+  // Changing operation preserves each selection draft and does not ask to discard it.
+  await T.requestOperation('upgrade');
+  ok(d.getElementById('upgrade').dataset.operation==='upgrade','switches to upgrade without destructive confirmation');
+  await T.requestOperation('converge');
+  ok(d.getElementById('rotate-preview').textContent==='Preview converge of 1 instance','converge draft remains selected');
+  await T.requestOperation('rotate');
   sel.clear(); sel.set('inst-valkey',new Set([K]));
-  d.getElementById('rotate-op-upgrade').checked=true; d.getElementById('rotate-op-upgrade').dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(50);
-  ok(!!confirmBtn(),'rotate->upgrade with selection asks first');
-  confirmBtn().click(); await sleep(80);
-  ok(d.getElementById('upgrade').dataset.operation==='upgrade'&&sel.size===0,'upgrade after confirm, rotate selection cleared');
-  ok(visible(d.getElementById('upgrade-stemcell-filter'))&&visible(d.getElementById('upgrade-release-filter')),'targets panel shows upgrade controls again');
-  ok(visible(d.getElementById('upgrade-start'))&&d.getElementById('upgrade-start').textContent==='Upgrade Selected (0)','footer shows upgrade button again');
+  await T.requestOperation('upgrade');
+  ok(sel.get('inst-valkey').has(K),'rotate draft remains selected after changing operation');
+  T.setBatchStep(1,false);
+  ok(visible(d.getElementById('upgrade-stemcell-filter'))&&visible(d.getElementById('upgrade-release-filter')),'options step restores upgrade controls');
+  ok(!visible(d.getElementById('upgrade-start')),'legacy upgrade action remains hidden');
   ok(!d.getElementById('rotate-preview')&&!d.getElementById('rotate-threshold'),'rotate controls removed');
-  ok(d.querySelector('.upgrade-targets-panel h2').textContent==='2. Choose targets','heading restored');
+  ok(d.querySelector('.upgrade-targets-panel h2').textContent==='Upgrade targets','heading restored without step numbers');
   // ids
   const ids=[...d.querySelectorAll('[id^="upgrade-advrel-"],[id^="upgrade-release-"]')].map(n=>n.id).sort();
   ok(ids.join()==='upgrade-release-filter,upgrade-release-floor','advrel/release id query returns only pre-existing controls: '+ids);

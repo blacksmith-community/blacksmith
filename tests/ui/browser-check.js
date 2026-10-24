@@ -1,5 +1,5 @@
 // Run with playwright-cli run-code --filename=tests/ui/browser-check.js
-// Start `python3 -m http.server 4201 --directory ui` first. All API calls are fixtures.
+// Start `python3 -m http.server 4202 --directory ui` first. All API calls are fixtures.
 async (page) => {
   const checks = [];
   const errors = [];
@@ -17,6 +17,7 @@ async (page) => {
   await page.route('**/v2/catalog', route => route.fulfill({ json: catalog }));
   await page.route('**/b/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/b/upgrade/preview') return route.fulfill({json:{id:'preview',diverged:[]}});
     if (route.request().method() !== 'GET') {
       writes.push(path);
       return route.fulfill({ status: 403, json: { error: 'Writes blocked in UI test' } });
@@ -39,7 +40,7 @@ async (page) => {
   });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('http://127.0.0.1:4201');
+  await page.goto('http://127.0.0.1:4202');
   await page.locator('#blacksmith .entity-overview').waitFor();
   await page.locator('.tab-button[data-tab="services"]').click();
   check(await page.locator('#services .service-item').count() === 50, 'Only 50 of 1003 instances are mounted');
@@ -152,16 +153,20 @@ async (page) => {
   check(await page.locator('#blacksmith .manifest-tab-btn.active').textContent() === 'YAML', 'Palette reaches conditional manifest sub-screens');
   await palette('batch');
   await page.keyboard.press('Enter');
+  await page.locator('#batch-flow-next').click();
   await page.locator('#upgrade-service-filter').selectOption('valkey');
   await page.locator('#upgrade-release-filter option[value="1.3.0"]').waitFor({ state: 'attached' });
   await page.locator('#upgrade-release-filter').selectOption('1.3.0');
+  await page.locator('#batch-flow-next').click();
   await page.locator('#upgrade-select-all').click();
   check(await page.locator('#upgrade-start').isEnabled(), 'Release-only upgrade selection remains enabled');
-  await page.locator('#upgrade-start').click();
-  check(await page.locator('#dialog-modal-overlay.active').count() > 0, 'Upgrade still requires confirmation');
+  await page.locator('#batch-flow-next').click();
+  await page.locator('#batch-flow-review h3').waitFor();
+  check(await page.locator('#batch-flow-review').isVisible(), 'Upgrade requires inline confirmation');
   await page.keyboard.press('Control+k');
-  check(!(await isOpen()), 'Palette does not override confirmation dialog');
+  check(await isOpen(), 'Navigation remains available during inline review');
   await page.keyboard.press('Escape');
+  await page.locator('#batch-flow-back').click();
   check(writes.length === 0, 'Navigation and cancelled confirmation make no write requests');
 
   for (const theme of ['light', 'dark']) {
@@ -184,8 +189,9 @@ async (page) => {
     if (screen === 'services') check(await page.locator('#services .services-items-container').evaluate(el => Math.min(el.getBoundingClientRect().bottom, el.parentElement.getBoundingClientRect().bottom) - el.getBoundingClientRect().top >= 120), 'Mobile instance list retains usable scrolling space');
     await page.screenshot({ path: `output/playwright/mobile-${screen}.png` });
   }
-  await page.locator('#upgrade-start').scrollIntoViewIfNeeded();
-  check(await page.locator('#upgrade-start').isVisible(), 'Upgrade action remains reachable on narrow screens');
+  await page.locator('#batch-flow-next').scrollIntoViewIfNeeded();
+  check(await page.locator('#batch-flow-next').isVisible(), 'Next action remains reachable on narrow screens');
+  await page.locator('[data-batch-step="1"]').click();
   await page.locator('#upgrade-release-filter').scrollIntoViewIfNeeded();
   check(await page.locator('#upgrade-release-filter').isVisible(), 'Release target remains reachable on narrow screens');
   await palette('cache-1003');

@@ -109,18 +109,18 @@
 
         <div id="upgrade" class="tab-panel" role="tabpanel" aria-hidden="true">
           <nav class="batch-view-nav" aria-label="Batch operations views">
-            <button id="batch-new" class="btn-secondary" aria-pressed="true">New operation</button>
+            <button id="batch-new" class="btn-secondary" aria-pressed="true">New Operation</button>
             <button id="batch-activity" class="btn-secondary" aria-pressed="false">Activity</button>
           </nav>
           <div class="upgrade-main">
             <div class="upgrade-top">
-              <details class="upgrade-targets-panel" open>
-                <summary id="batch-options-summary">Upgrade options</summary>
-                <h2 class="sr-only">2. Choose targets</h2>
+              <section class="upgrade-targets-panel">
+                <h3 id="batch-options-summary">Upgrade options</h3>
+                <h2 class="sr-only">Upgrade targets</h2>
                 <div class="upgrade-targets upgrade-filters"></div>
-              </details>
+              </section>
               <div class="upgrade-services-panel">
-                <h2>2. Select instances</h2>
+                <h2>Filter instances</h2>
                 <div class="upgrade-services upgrade-filters">
                   <div class="loading">loading...</div>
                 </div>
