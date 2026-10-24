@@ -2704,11 +2704,37 @@ func (m *Manager) rollbackVM(ctx context.Context, task *UpgradeTask, inst *Insta
 	return r.restoreAndClose()
 }
 
+// rollbackHeldOutcome, rollbackMixedHeldOutcome, and
+// rollbackRestartHeldOutcome say what became of a rolling_back VM that
+// recheckDirector stopped before its first restore, when every file holds
+// the new content or when some may not, or before its restart.
+const (
+	rollbackHeldOutcome = "was not rolled back after its patch failed verification. " +
+		"Its files still hold the new certificate and key as a matching pair. " +
+		"Let the BOSH operation finish, then resume the task, which completes the rollback, or redeploy the instance"
+	rollbackMixedHeldOutcome = "was not rolled back after its patch failed. " +
+		"Some of its files may hold the new content and others the old, so its certificate and key may not match. " +
+		"Let the BOSH operation finish, then resume the task, which completes the rollback, or redeploy the instance"
+	rollbackRestartHeldOutcome = "was not restarted after its rollback. " +
+		"Its old certificate and key are restored on disk, its processes were not restarted, " +
+		"and a resume restarts them once the director is idle"
+)
+
 // restoreAndClose restores every file a replacement touched, restarts
 // the processes, runs the gate, and closes the VM rolled_back, or leaves
-// it unrecovered, as rollbackVM describes. The VM is rolling_back.
+// it unrecovered, as rollbackVM describes. The VM is rolling_back. It
+// reads the director again before the first restore and again before the
+// restart, so the rollback never writes files or restarts processes while
+// BOSH acts on the VM. A check that fails pauses the task with the VM
+// still rolling_back and each file in the state its content has, which a
+// resume completes as DecideResume says.
 func (r *vmRun) restoreAndClose() error {
 	m, ctx, j := r.manager, r.ctx, r.j
+
+	err := r.recheckBeforeRestore()
+	if err != nil {
+		return err
+	}
 
 	failed, err := r.restoreAll()
 	if err != nil {
@@ -2717,6 +2743,11 @@ func (r *vmRun) restoreAndClose() error {
 
 	if failed != "" {
 		return m.unrecovered(ctx, r.task, r.inst, j, failed)
+	}
+
+	err = r.recheckDirector(rollbackRestartHeldOutcome, true)
+	if err != nil {
+		return err
 	}
 
 	result, err := r.commit("restart the processes on "+j.VM+" after the restore", nil, r.restart)
@@ -2750,7 +2781,7 @@ func (r *vmRun) restoreAndClose() error {
 // back.
 func (r *vmRun) restoreAll() (string, error) {
 	for n, file := range r.files() {
-		if file.State != FileStateReplaced && file.State != FileStateReplacing && file.State != FileStateRestoring {
+		if !needsRestore(file) {
 			continue
 		}
 
@@ -2781,6 +2812,35 @@ func (r *vmRun) restoreAll() (string, error) {
 	}
 
 	return "", nil
+}
+
+// needsRestore reports whether restoreAll restores the file: a
+// replacement or an earlier restore touched it, and its restore is not
+// known to have finished.
+func needsRestore(file FileEntry) bool {
+	return file.State == FileStateReplaced || file.State == FileStateReplacing || file.State == FileStateRestoring
+}
+
+// recheckBeforeRestore reads the director again just before the
+// rollback's first restore, because the restart, verification, and gate
+// that failed take long enough for BOSH to start a task or recreate the
+// VM. A VM with no file left to restore is not checked here, since the
+// check before its restart covers it. The pause says whether every file
+// still holds the new content, so the pair on disk matches, or whether a
+// file may hold the old content beside the new.
+func (r *vmRun) recheckBeforeRestore() error {
+	files := r.files()
+	if !slices.ContainsFunc(files, needsRestore) {
+		return nil
+	}
+
+	outcome := rollbackHeldOutcome
+
+	if slices.ContainsFunc(files, func(file FileEntry) bool { return file.State != FileStateReplaced }) {
+		outcome = rollbackMixedHeldOutcome
+	}
+
+	return r.recheckDirector(outcome, true)
 }
 
 // rolledBack closes a VM whose old files are back and whose gate passed.

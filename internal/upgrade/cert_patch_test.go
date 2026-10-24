@@ -1795,3 +1795,208 @@ func TestPatchRecheckBeforeRestart(t *testing.T) {
 		}
 	})
 }
+
+// countOp is how many times op appears in ops.
+func countOp(ops []string, op string) int {
+	total := 0
+
+	for _, o := range ops {
+		if o == op {
+			total++
+		}
+	}
+
+	return total
+}
+
+// expectRollbackPaused checks that the task paused with VM 1 rolling
+// back and both its files in the state, and that the pause names VM 1,
+// BOSH task 41 when task is set, and each phrase.
+func expectRollbackPaused(t *testing.T, got UpgradeTask, state string, task bool, phrases ...string) {
+	t.Helper()
+
+	journal := got.Instances[0].Certificates.VMs[0]
+
+	if journal.Phase != VMPhaseRollingBack || !got.Paused {
+		t.Fatalf("expected VM 1 rolling back and the task paused, got %s paused=%v", journal.Phase, got.Paused)
+	}
+
+	if journal.Files[0].State != state || journal.Files[1].State != state {
+		t.Fatalf("expected both files of VM 1 %s, got %+v", state, journal.Files)
+	}
+
+	if task {
+		phrases = append(phrases, "BOSH task 41")
+	}
+
+	msg := got.Instances[0].Error
+	for _, want := range append(phrases, journal.VM) {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected the pause to say %q, got %q", want, msg)
+		}
+	}
+}
+
+// resumeToRolledBack undoes the turn, resumes the stored task in a new
+// manager, and checks that VM 1 finishes its rollback: its processes
+// restart on the old pair, its files are restored and cleaned up, it ends
+// rolled back, and the task pauses again. Nothing is replaced on it.
+func (e *patchEnv) resumeToRolledBack(t *testing.T, turn directorTurn) {
+	t.Helper()
+
+	e.hook(func(patchCall) (ssh.Result, error, bool) { return ssh.Result{}, nil, false })
+	turn.undo(e)
+
+	second, got := e.reload(t)
+	if !got.Paused {
+		t.Fatalf("expected the reloaded task to stay paused, got %s", got.Status)
+	}
+
+	mark := len(e.patch.recorded())
+
+	err := second.ResumeTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	waitUntil(t, "VM 1 to finish its rollback", func() bool {
+		got := current(t, second)
+		j := got.Instances[0].Certificates.VMs[0]
+
+		return got.Paused && j.Phase == VMPhaseRolledBack && j.Cleanup == CleanupDone
+	})
+
+	ops := e.opsSince(mark, 0)
+	if !slices.Contains(ops, opRestart) || slices.Contains(ops, opReplace) || slices.Contains(ops, opStage) {
+		t.Fatalf("expected the resume to restart VM 1 and never replace or stage on it, got %v", ops)
+	}
+
+	j := journalOf(t, second, e.vms[0].name())
+	if j.Files[0].State != FileStateRestored || j.Files[1].State != FileStateRestored {
+		t.Fatalf("expected both files of VM 1 restored, got %+v", j.Files)
+	}
+
+	e.expectPairOn(t, e.oldPair, "old")
+}
+
+// The director is read again just before a rollback restores VM 1's
+// first file. A BOSH task that started, a director that can't be read,
+// or a VM it lists with no CID pauses the task with VM 1 rolling back,
+// every file still replaced and holding the whole new pair, and nothing
+// restored or restarted, so the rollback never writes under BOSH. A
+// resume then completes the rollback. A VM recreated meanwhile ends
+// reverted.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRollbackRechecksBeforeRestore(t *testing.T) {
+	task, down, noCID, recreated := directorTurns()
+
+	for _, turn := range []directorTurn{task, down, noCID} {
+		t.Run(turn.name, func(t *testing.T) {
+			env := newPatchEnv(t)
+			env.patch.fingerprint = certinventory.Fingerprint(env.oldLeaf)
+
+			manager := env.newManager()
+			run := env.task()
+
+			env.turnOn(verifyScript, 1, turn)
+			env.run(manager, &run)
+
+			ops := env.patchOps(0)
+			if slices.Contains(ops, opRestore) || countOp(ops, opRestart) != 1 {
+				t.Fatalf("expected no restore and only the forward restart on VM 1, got %v", ops)
+			}
+
+			expectRollbackPaused(t, current(t, manager), FileStateReplaced, turn.name == task.name,
+				"matching pair", "failed verification", "redeploy the instance")
+
+			env.expectPairOn(t, env.newPair, "new")
+			env.resumeToRolledBack(t, turn)
+		})
+	}
+
+	t.Run(recreated.name, func(t *testing.T) {
+		env := newPatchEnv(t)
+		env.patch.fingerprint = certinventory.Fingerprint(env.oldLeaf)
+
+		manager := env.newManager()
+		run := env.task()
+
+		env.turnOn(verifyScript, 1, recreated)
+		env.run(manager, &run)
+
+		ops := env.patchOps(0)
+		if slices.Contains(ops, opRestore) || countOp(ops, opRestart) != 1 {
+			t.Fatalf("expected no restore and only the forward restart on VM 1, got %v", ops)
+		}
+
+		got := current(t, manager)
+		if j := got.Instances[0].Certificates.VMs[0]; j.Phase != VMPhaseReverted || !got.Paused {
+			t.Fatalf("expected VM 1 reverted and the task paused, got %s paused=%v", j.Phase, got.Paused)
+		}
+	})
+}
+
+// The director is read again after a rollback restores VM 1's files and
+// just before it restarts the processes. A BOSH task that started, a
+// director that can't be read, or a VM it lists with no CID pauses the
+// task with VM 1 rolling back, both files restored and holding the old
+// pair, and its processes not restarted. A resume then restarts them and
+// completes the rollback without restoring again. A VM recreated
+// meanwhile ends reverted with no restart.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestPatchRollbackRechecksBeforeRestart(t *testing.T) {
+	task, down, noCID, recreated := directorTurns()
+
+	for _, turn := range []directorTurn{task, down, noCID} {
+		t.Run(turn.name, func(t *testing.T) {
+			env := newPatchEnv(t)
+			env.patch.fingerprint = certinventory.Fingerprint(env.oldLeaf)
+
+			manager := env.newManager()
+			run := env.task()
+
+			env.turnOn(opRestore, 2, turn)
+			env.run(manager, &run)
+
+			ops := env.patchOps(0)
+			if countOp(ops, opRestore) != 2 || countOp(ops, opRestart) != 1 {
+				t.Fatalf("expected both restores and only the forward restart on VM 1, got %v", ops)
+			}
+
+			expectRollbackPaused(t, current(t, manager), FileStateRestored, turn.name == task.name,
+				"restored", "not restarted", "resume restarts them")
+
+			env.expectPairOn(t, env.oldPair, "old")
+
+			mark := len(env.patch.recorded())
+			env.resumeToRolledBack(t, turn)
+
+			if ops := env.opsSince(mark, 0); slices.Contains(ops, opRestore) {
+				t.Fatalf("expected the resume not to restore VM 1 again, got %v", ops)
+			}
+		})
+	}
+
+	t.Run(recreated.name, func(t *testing.T) {
+		env := newPatchEnv(t)
+		env.patch.fingerprint = certinventory.Fingerprint(env.oldLeaf)
+
+		manager := env.newManager()
+		run := env.task()
+
+		env.turnOn(opRestore, 2, recreated)
+		env.run(manager, &run)
+
+		ops := env.patchOps(0)
+		if countOp(ops, opRestore) != 2 || countOp(ops, opRestart) != 1 {
+			t.Fatalf("expected both restores and only the forward restart on VM 1, got %v", ops)
+		}
+
+		got := current(t, manager)
+		if j := got.Instances[0].Certificates.VMs[0]; j.Phase != VMPhaseReverted || !got.Paused {
+			t.Fatalf("expected VM 1 reverted and the task paused, got %s paused=%v", j.Phase, got.Paused)
+		}
+	})
+}
