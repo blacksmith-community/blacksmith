@@ -103,19 +103,25 @@
         </div>
 
         <div id="upgrade" class="tab-panel flex-1 flex flex-row" role="tabpanel" aria-hidden="true">
+          <nav class="batch-view-nav" aria-label="Batch operations views">
+            <button id="batch-new" class="btn-secondary" aria-pressed="true">New operation</button>
+            <button id="batch-activity" class="btn-secondary" aria-pressed="false">Activity</button>
+          </nav>
           <div class="upgrade-main">
             <div class="upgrade-top">
+              <details class="upgrade-targets-panel" open>
+                <summary id="batch-options-summary">Upgrade options</summary>
+                <h2 class="sr-only">2. Choose targets</h2>
+                <div class="upgrade-targets upgrade-filters"></div>
+              </details>
               <div class="upgrade-services-panel">
-                <h2>1. Select instances</h2>
+                <h2>2. Select instances</h2>
                 <div class="upgrade-services upgrade-filters">
                   <div class="loading p-4 text-center">loading...</div>
                 </div>
               </div>
-              <div class="upgrade-targets-panel">
-                <h2>2. Choose targets</h2>
-                <div class="upgrade-targets upgrade-filters"></div>
-              </div>
             </div>
+            <div id="batch-selection-review"></div>
             <div class="upgrade-instances">
             </div>
             <div class="upgrade-footer">
@@ -124,7 +130,16 @@
             </div>
           </div>
           <div class="upgrade-right-panel">
-            <h2>Batch Jobs</h2>
+            <h2>Activity</h2>
+            <details class="batch-execution-settings">
+              <summary>Execution settings</summary>
+              <div class="filter-row">
+                <label for="upgrade-max-batch-jobs">Concurrent batch jobs</label>
+                <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="Configured default">
+                <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
+              </div>
+              <p>Applies to all batch jobs. BOSH controls the VM rollout within each instance.</p>
+            </details>
             <div class="upgrade-tasks">
               <div class="no-tasks p-4 text-center text-gray-500">No batch jobs yet. Select instances and a target (stemcell and/or release), then click Upgrade to start.</div>
             </div>

@@ -300,6 +300,7 @@
         (Array.isArray(options.details) && options.details.length > 0));
 
       // Set content
+      dialog.classList.toggle('batch-review-dialog', Boolean(options.batchReview));
       titleEl.textContent = options.title || 'Confirm';
       const hasBody = Boolean(options.body);
       messageEl.textContent = options.message || (hasBody ? '' : 'Are you sure?');
@@ -2638,6 +2639,135 @@
     return 0;
   };
 
+  const BATCH_PAGE_SIZE = 50;
+  const batchWorkspace = { page: 0, search: '', eligibility: '', selectedOnly: false };
+
+  const batchSelectedIds = () => upgradeOperation === 'rotate'
+    ? new Set(rotateSelection().keys())
+    : (upgradeOperation === 'converge' ? convergeSelected : selectedUpgradeInstances);
+
+  const batchMatchingRows = () => {
+    if (upgradeOperation !== 'upgrade') return rotateVisibleRows().map((row) => [row.id, row.details]);
+    const f = currentUpgradeFilters();
+    return filterUpgradeInstances(window.serviceInstances || {}, f.service, f.plan, f.stemcellFloor, f.releaseFloor).rows;
+  };
+
+  const batchPageRows = (rows) => {
+    batchWorkspace.page = Math.max(0, Math.min(batchWorkspace.page, Math.ceil(rows.length / BATCH_PAGE_SIZE) - 1));
+    return rows.slice(batchWorkspace.page * BATCH_PAGE_SIZE, (batchWorkspace.page + 1) * BATCH_PAGE_SIZE);
+  };
+
+  const updateBatchWorkspace = () => {
+    const summary = document.getElementById('batch-selection-summary');
+    if (!summary) return;
+    const matching = batchMatchingRows();
+    const visibleIds = new Set(matching.map(([id]) => id));
+    const selected = batchSelectedIds();
+    const hidden = Array.from(selected).filter((id) => !visibleIds.has(id)).length;
+    summary.textContent = `${pluralize(selected.size, 'instance')} selected${hidden ? ` · ${hidden} hidden by filters` : ''}${batchWorkspace.selectedOnly ? ' · Viewing selection (filters paused)' : ''}`;
+    const all = document.getElementById('batch-select-matching');
+    if (all) {
+      all.textContent = `Select all ${matching.length.toLocaleString()} matching`;
+      all.disabled = matching.length === 0;
+    }
+    const view = document.getElementById('batch-view-selected');
+    if (view) {
+      view.textContent = batchWorkspace.selectedOnly ? 'Show all instances' : 'View selected';
+      view.setAttribute('aria-pressed', String(batchWorkspace.selectedOnly));
+    }
+    const optionsSummary = document.getElementById('batch-options-summary');
+    if (optionsSummary) {
+      const target = document.getElementById('upgrade-stemcell-filter')?.value;
+      const release = document.getElementById('upgrade-release-filter')?.value;
+      optionsSummary.textContent = upgradeOperation === 'upgrade'
+        ? `Upgrade options${target ? ` · ${target}` : ''}${release ? ` · release ${release}` : ''}`
+        : (upgradeOperation === 'rotate' ? `Certificate options · ${rotateState.mode === 'patch' ? 'Patch in place' : 'Redeploy'}` : 'Converge options');
+    }
+  };
+
+  const renderBatchPager = (container, total) => {
+    batchWorkspace.page = Math.max(0, Math.min(batchWorkspace.page, Math.ceil(total / BATCH_PAGE_SIZE) - 1));
+    const nav = rotateEl('nav', 'batch-pagination');
+    nav.setAttribute('aria-label', 'Instance pages');
+    const previous = rotateEl('button', 'btn-secondary btn-sm', 'Previous');
+    const next = rotateEl('button', 'btn-secondary btn-sm', 'Next');
+    previous.id = 'batch-previous'; next.id = 'batch-next';
+    previous.type = next.type = 'button';
+    previous.disabled = batchWorkspace.page === 0;
+    next.disabled = (batchWorkspace.page + 1) * BATCH_PAGE_SIZE >= total;
+    const label = rotateEl('span', '', `Page ${batchWorkspace.page + 1} of ${Math.max(1, Math.ceil(total / BATCH_PAGE_SIZE))} · ${total.toLocaleString()} instances`);
+    const go = (delta, id) => {
+      batchWorkspace.page += delta;
+      refreshUpgradeInstanceList();
+      const button = document.getElementById(id);
+      if (button && !button.disabled) button.focus({ preventScroll: true });
+      else document.querySelector('#upgrade .upgrade-instance-item input:not(:disabled)')?.focus({ preventScroll: true });
+      document.querySelector('#upgrade .upgrade-instances')?.scrollIntoView({ block: 'start' });
+    };
+    previous.addEventListener('click', () => go(-1, 'batch-previous'));
+    next.addEventListener('click', () => go(1, 'batch-next'));
+    nav.append(previous, label, next);
+    container.prepend(nav);
+  };
+
+  const setBatchView = (view) => {
+    const panel = document.getElementById('upgrade');
+    if (!panel) return;
+    const activity = view === 'activity';
+    panel.querySelector('.upgrade-main').hidden = activity;
+    panel.querySelector('.upgrade-right-panel').hidden = !activity;
+    document.getElementById('batch-new')?.setAttribute('aria-pressed', String(!activity));
+    document.getElementById('batch-activity')?.setAttribute('aria-pressed', String(activity));
+  };
+
+  const installBatchWorkspace = () => {
+    const panel = document.getElementById('upgrade');
+    document.getElementById('batch-new')?.addEventListener('click', () => setBatchView('new'));
+    document.getElementById('batch-activity')?.addEventListener('click', () => setBatchView('activity'));
+    setBatchView('new');
+    const search = document.getElementById('batch-search');
+    search.addEventListener('input', () => {
+      batchWorkspace.selectedOnly = false;
+      batchWorkspace.search = search.value.trim();
+      batchWorkspace.page = 0;
+      refreshUpgradeInstanceList();
+    });
+    document.getElementById('batch-eligibility').addEventListener('change', (event) => {
+      batchWorkspace.selectedOnly = false;
+      batchWorkspace.eligibility = event.target.value;
+      batchWorkspace.page = 0;
+      refreshUpgradeInstanceList();
+    });
+    panel.addEventListener('change', (event) => {
+      if (['upgrade-service-filter', 'upgrade-plan-filter', 'upgrade-stemcell-floor', 'upgrade-release-floor'].includes(event.target.id)) {
+        batchWorkspace.page = 0;
+        batchWorkspace.selectedOnly = false;
+      }
+    }, true);
+    document.getElementById('batch-view-selected').addEventListener('click', () => {
+      batchWorkspace.selectedOnly = !batchWorkspace.selectedOnly;
+      batchWorkspace.page = 0;
+      if (batchWorkspace.selectedOnly) {
+        batchWorkspace.search = ''; search.value = '';
+        batchWorkspace.eligibility = ''; document.getElementById('batch-eligibility').value = '';
+
+      }
+      refreshUpgradeInstanceList();
+    });
+    document.getElementById('batch-select-matching').addEventListener('click', () => {
+      if (upgradeOperation === 'upgrade') {
+        batchMatchingRows().forEach(([id]) => { if (!upgradeHolders.has(id)) selectedUpgradeInstances.add(id); });
+      } else {
+        rotateVisibleRows().forEach((row) => {
+          if (row.holder) return;
+          if (upgradeOperation === 'converge') convergeSelected.add(row.id);
+          else row.chips.forEach((cert) => rotateSetPair(row.id, cert.key, true));
+        });
+      }
+      refreshUpgradeInstanceList();
+    });
+  };
+
   // Render the upgrade tab filters
   // Left "Services" panel: filters + selection controls.
   const renderUpgradeServices = () => {
@@ -2654,24 +2784,21 @@
           <option value="">All Plans</option>
         </select>
       </div>
+      <div class="filter-row batch-search-row">
+        <label for="batch-search">Search</label>
+        <input id="batch-search" type="search" placeholder="Instance name or ID" autocomplete="off">
+      </div>
       <div class="filter-row">
-        <label for="upgrade-max-batch-jobs">Max Parallel Jobs:</label>
-        <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="Default" title="Maximum number of batch jobs that can run in parallel. Leave empty or 0 for the configured default.">
-        <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
+        <label for="batch-eligibility">Availability</label>
+        <select id="batch-eligibility"><option value="">All instances</option><option value="eligible">Eligible only</option><option value="blocked">Unavailable only</option></select>
       </div>
       <div class="upgrade-actions">
-        <button id="upgrade-select-all" class="btn-secondary">Select All</button>
-        <button id="upgrade-deselect-all" class="btn-secondary">Deselect All</button>
+        <button id="upgrade-select-all" class="btn-secondary">Select this page</button>
+        <button id="batch-select-matching" class="btn-secondary">Select all matching</button>
+        <button id="upgrade-deselect-all" class="btn-secondary">Clear selection</button>
+        <button id="batch-view-selected" class="btn-secondary" aria-pressed="false">View selected</button>
       </div>
-      <div class="upgrade-range-selection">
-        <label>Select Range:</label>
-        <div class="range-inputs">
-          <input type="number" id="upgrade-range-start" min="1" placeholder="Start" title="Start row number">
-          <span class="range-separator">to</span>
-          <input type="number" id="upgrade-range-end" min="1" placeholder="End" title="End row number">
-          <button id="upgrade-select-range" class="btn-primary">Select Range</button>
-        </div>
-      </div>
+      <p id="batch-selection-summary" role="status"></p>
     `;
   };
 
@@ -2780,6 +2907,15 @@
       // Skip deleted instances
       if (details.deleted) return false;
 
+      const query = batchWorkspace.search.toLowerCase();
+      const instanceName = rotateState.byInstance.get(id)?.name || details.name || details.instance_name || '';
+      if (!batchWorkspace.selectedOnly && query && !`${id} ${instanceName}`.toLowerCase().includes(query)) return false;
+      if (batchWorkspace.selectedOnly) return batchSelectedIds().has(id);
+      if (upgradeOperation === 'upgrade' && batchWorkspace.eligibility) {
+        const eligible = !upgradeHolders.has(id);
+        if ((batchWorkspace.eligibility === 'eligible') !== eligible) return false;
+      }
+
       // Apply service filter
       if (serviceFilter && details.service_id !== serviceFilter) return false;
 
@@ -2827,8 +2963,9 @@
       return '<div class="no-instances p-4 text-center text-gray-500">No instances match the current filters.</div>';
     }
 
-    const listHtml = filteredInstances.map(([id, details], index) => {
-      const rowNumber = index + 1;
+    const pageRows = batchPageRows(filteredInstances);
+    const listHtml = pageRows.map(([id, details], index) => {
+      const rowNumber = batchWorkspace.page * BATCH_PAGE_SIZE + index + 1;
       const serviceName = serviceIdToName[details.service_id] || details.service_id;
       const planName = details.plan?.name || details.plan_id || 'unknown';
       const holder = upgradeHolders.get(id) || '';
@@ -2855,7 +2992,7 @@
         <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${escapeAttribute(id)}" data-row-number="${rowNumber}" data-service-id="${escapeAttribute(details.service_id)}" data-plan-id="${escapeAttribute(details.plan?.id || details.plan_id || '')}" data-stemcell-os="${escapeAttribute(stemcellInfo?.os || '')}" data-stemcell-version="${escapeAttribute(stemcellInfo?.version || '')}"${holder ? ' data-held="true"' : ''}>
           <span class="upgrade-instance-row-number">${rowNumber}</span>
           <label class="upgrade-instance-checkbox">
-            <input type="checkbox" ${isSelected ? 'checked' : ''}${holder ? ' disabled' : ''} />
+            <input type="checkbox" aria-label="Select ${escapeAttribute(details.name || details.instance_name || id)}" ${isSelected ? 'checked' : ''}${holder ? ' disabled' : ''} />
             <span class="checkmark"></span>
           </label>
           <div class="upgrade-instance-info">
@@ -2874,7 +3011,7 @@
     }).join('');
 
     return `
-      <div class="upgrade-instance-count">${filteredInstances.length} instance${filteredInstances.length !== 1 ? 's' : ''} (rows 1-${filteredInstances.length})</div>
+      <div class="upgrade-instance-count">${filteredInstances.length} matching instances</div>
       <div class="upgrade-instances-list">${listHtml}</div>
     `;
   };
@@ -2890,6 +3027,7 @@
 
     if (!button) return;
 
+    updateBatchWorkspace();
     const count = selectedUpgradeInstances.size;
     const hasStemcell = stemcellSelect && stemcellSelect.value;
     const hasRelease = releaseSelect && releaseSelect.value;
@@ -2923,6 +3061,7 @@
     const focusedId = activeRow && instancesContainer.contains(activeRow) ? activeRow.dataset.instanceId : '';
 
     instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
+    renderBatchPager(instancesContainer, batchMatchingRows().length);
 
     // Set up checkbox handlers
     setupUpgradeInstanceHandlers();
@@ -2986,6 +3125,7 @@
     reason: '',
     busy: false,
     reviewOpen: false,
+    reviewPage: 0,
     lastLoad: 0,
     loadSeq: 0
   };
@@ -3156,7 +3296,7 @@
   // The rows the instance list shows in rotate or converge mode.
   const rotateVisibleRows = () => {
     const filters = currentUpgradeFilters();
-    const context = filterUpgradeInstances(window.serviceInstances, filters.service, filters.plan, filters.stemcellFloor, filters.releaseFloor);
+    const context = filterUpgradeInstances(window.serviceInstances || {}, filters.service, filters.plan, '', '');
     const rows = context.rows.map(([id, details]) => {
       const entry = rotateState.byInstance.get(id) || null;
       const chips = entry ? entry.certs.filter((cert) => cert.eligible) : [];
@@ -3187,14 +3327,19 @@
         planName: details.plan?.name || details.plan_id || 'unknown'
       };
     });
-    return upgradeOperation === 'converge' ? rows.filter((row) => row.entry && row.entry.divergent) : rows;
+    return rows.filter((row) => {
+      if (upgradeOperation === 'converge' && !(row.entry && row.entry.divergent)) return false;
+      if (batchWorkspace.selectedOnly || !batchWorkspace.eligibility) return true;
+      const eligible = !row.holder && (upgradeOperation === 'converge' || row.chips.length > 0);
+      return (batchWorkspace.eligibility === 'eligible') === eligible;
+    });
   };
 
   const rotateInstanceLabel = (row) => (row.entry && row.entry.name) || row.id;
 
   const rotateSelectVisible = () => {
     let added = 0;
-    rotateVisibleRows().forEach((row) => {
+    batchPageRows(rotateVisibleRows()).forEach((row) => {
       if (row.holder) return;
       if (upgradeOperation === 'converge') {
         if (!convergeSelected.has(row.id)) { convergeSelected.add(row.id); added++; }
@@ -3208,7 +3353,7 @@
   };
 
   const rotateClearVisible = () => {
-    rotateVisibleRows().forEach((row) => {
+    batchPageRows(rotateVisibleRows()).forEach((row) => {
       if (upgradeOperation === 'converge') {
         convergeSelected.delete(row.id);
         return;
@@ -3232,18 +3377,6 @@
       });
     });
     return added;
-  };
-
-  const rotateSelectRange = (start, end) => {
-    rotateVisibleRows().forEach((row, index) => {
-      const number = index + 1;
-      if (number < start || number > end || row.holder) return;
-      if (upgradeOperation === 'converge') {
-        convergeSelected.add(row.id);
-      } else {
-        row.chips.forEach((cert) => rotateSetPair(row.id, cert.key, true));
-      }
-    });
   };
 
   // Whether a selected pair can still be rotated. Until the inventory loads
@@ -3383,7 +3516,8 @@
 
     container.appendChild(rotateEl('div', 'upgrade-instance-count', `${pluralize(rows.length, 'instance')} (rows 1-${rows.length})`));
     const list = rotateEl('div', 'upgrade-instances-list');
-    rows.forEach((row, index) => {
+    batchPageRows(rows).forEach((row, pageIndex) => {
+      const index = batchWorkspace.page * BATCH_PAGE_SIZE + pageIndex;
       const item = rotateEl('div', 'upgrade-instance-item rotate-row');
       item.dataset.instanceId = row.id;
       item.dataset.rowNumber = String(index + 1);
@@ -3452,6 +3586,7 @@
       list.appendChild(item);
     });
     container.appendChild(list);
+    renderBatchPager(container, rows.length);
     container.scrollTop = scrollTop;
     rotateRestoreFocus(container, focusKey);
   };
@@ -3473,7 +3608,8 @@
       return;
     }
     const list = rotateEl('ul', 'rotate-review-items');
-    items.forEach((item) => {
+    rotateState.reviewPage = Math.max(0, Math.min(rotateState.reviewPage, Math.ceil(items.length / BATCH_PAGE_SIZE) - 1));
+    items.slice(rotateState.reviewPage * BATCH_PAGE_SIZE, (rotateState.reviewPage + 1) * BATCH_PAGE_SIZE).forEach((item) => {
       const entry = rotateState.byInstance.get(item.id);
       const instanceLabel = (entry && entry.name) || item.id;
       const li = rotateEl('li', item.stale ? 'rotate-review-item is-stale' : 'rotate-review-item');
@@ -3491,11 +3627,31 @@
       list.appendChild(li);
     });
     review.appendChild(list);
+    if (items.length > BATCH_PAGE_SIZE) {
+      const pager = rotateEl('nav', 'batch-pagination');
+      pager.setAttribute('aria-label', 'Selected certificates');
+      const previous = rotateEl('button', 'btn-secondary', 'Previous');
+      const next = rotateEl('button', 'btn-secondary', 'Next');
+      previous.type = next.type = 'button';
+      next.dataset.selectionNext = 'true';
+      previous.disabled = rotateState.reviewPage === 0;
+      next.disabled = (rotateState.reviewPage + 1) * BATCH_PAGE_SIZE >= items.length;
+      const go = (delta) => {
+        rotateState.reviewPage += delta;
+        renderRotateReview();
+        review.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
+      };
+      previous.addEventListener('click', () => go(-1));
+      next.addEventListener('click', () => go(1));
+      pager.append(previous, rotateEl('span', '', `Page ${rotateState.reviewPage + 1} of ${Math.ceil(items.length / BATCH_PAGE_SIZE)}`), next);
+      review.prepend(pager);
+    }
   };
 
   // The selection line and the footer button.
   const updateOperationFooter = () => {
     if (upgradeOperation === 'upgrade') return;
+    updateBatchWorkspace();
     const line = document.getElementById('rotate-selection-line');
     const button = document.getElementById('rotate-preview');
     const summary = rotateSummary();
@@ -3737,11 +3893,12 @@
     pane.appendChild(notice);
 
     const bulk = rotateEl('div', 'rotate-bulk');
-    const selectVisible = rotateEl('button', 'btn-secondary btn-sm', 'Select visible');
+    bulk.hidden = true;
+    const selectVisible = rotateEl('button', 'btn-secondary btn-sm', 'Select this page');
     selectVisible.type = 'button';
     selectVisible.id = 'rotate-select-visible';
     selectVisible.addEventListener('click', () => { rotateSelectVisible(); rotateRefresh(); });
-    const clearVisible = rotateEl('button', 'btn-secondary btn-sm', 'Clear visible');
+    const clearVisible = rotateEl('button', 'btn-secondary btn-sm', 'Clear this page');
     clearVisible.type = 'button';
     clearVisible.id = 'rotate-clear-visible';
     clearVisible.addEventListener('click', () => { rotateClearVisible(); rotateRefresh(); });
@@ -3804,7 +3961,9 @@
     nameInput.addEventListener('input', () => { rotateState.name = nameInput.value; });
     nameRow.appendChild(nameLabel);
     nameRow.appendChild(nameInput);
-    pane.appendChild(nameRow);
+    const metadata = rotateEl('details', 'batch-optional');
+    metadata.appendChild(rotateEl('summary', '', 'Job name and reason (optional)'));
+    metadata.appendChild(nameRow);
 
     const reasonRow = rotateEl('div', 'filter-row rotate-name-row');
     const reasonLabel = rotateEl('label', '', 'Reason');
@@ -3817,7 +3976,8 @@
     reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
     reasonRow.appendChild(reasonLabel);
     reasonRow.appendChild(reasonInput);
-    pane.appendChild(reasonRow);
+    metadata.appendChild(reasonRow);
+    pane.appendChild(metadata);
     container.appendChild(pane);
     renderRotateNotice();
   };
@@ -3832,9 +3992,11 @@
     const review = rotateEl('div', 'rotate-review-list');
     review.id = 'rotate-review-list';
     review.hidden = true;
-    pane.appendChild(review);
+    const reviewHost = document.getElementById('batch-selection-review');
+    if (reviewHost) { reviewHost.replaceChildren(review); }
+    else pane.appendChild(review);
     const actions = rotateEl('div', 'rotate-footer-actions');
-    const reviewButton = rotateEl('button', 'btn-secondary', 'Review selection');
+    const reviewButton = rotateEl('button', 'btn-secondary', 'Edit certificate selection');
     reviewButton.type = 'button';
     reviewButton.id = 'rotate-review';
     reviewButton.setAttribute('aria-controls', 'rotate-review-list');
@@ -3842,6 +4004,7 @@
     reviewButton.addEventListener('click', () => {
       rotateState.reviewOpen = !rotateState.reviewOpen;
       renderRotateReview();
+      if (rotateState.reviewOpen) review.scrollIntoView({ block: 'start' });
     });
     const preview = rotateEl('button', 'btn-primary');
     preview.type = 'button';
@@ -3891,9 +4054,13 @@
     const footer = panel.querySelector('.upgrade-footer');
     const heading = panel.querySelector('.upgrade-targets-panel h2');
     if (!targets || !footer) return;
+    setBatchView('new');
     const entering = next !== upgradeOperation;
     upgradeOperation = next;
+    batchWorkspace.page = 0;
+    batchWorkspace.selectedOnly = false;
     panel.dataset.operation = next;
+    document.getElementById('batch-selection-review')?.replaceChildren();
     wrapUpgradePane(targets);
     wrapUpgradePane(footer);
     setPaneMode(targets, next);
@@ -3978,7 +4145,7 @@
 
     const fieldset = rotateEl('fieldset', 'rotate-operation');
     fieldset.id = 'rotate-operation';
-    fieldset.appendChild(rotateEl('legend', '', 'Operation'));
+    fieldset.appendChild(rotateEl('legend', '', '1. Choose operation'));
     Object.keys(OPERATION_LABELS).forEach((mode) => {
       const label = rotateEl('label', 'rotate-operation-option');
       const radio = document.createElement('input');
@@ -4098,7 +4265,19 @@
       ? rotateEl('span', 'rotate-preview-tag', 'Additional change')
       : previewBadge(variable.days_left));
     item.appendChild(top);
-    item.appendChild(previewPathNode(variable.name));
+    const technical = rotateEl('details', 'rotate-preview-technical');
+    technical.appendChild(rotateEl('summary', '', 'Certificate path'));
+    technical.appendChild(previewPathNode(variable.name));
+    const copy = rotateEl('button', 'btn-secondary btn-sm', 'Copy path');
+    copy.type = 'button';
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(String(variable.name || ''));
+        copy.textContent = 'Copied';
+      } catch (_) { copy.textContent = 'Copy unavailable'; }
+    });
+    technical.appendChild(copy);
+    item.appendChild(technical);
     return item;
   };
 
@@ -4190,69 +4369,97 @@
     // One card per included instance
     const compact = included.length > PREVIEW_COLLAPSE_AFTER;
     const cards = rotateEl('div', 'rotate-preview-cards');
+    let expandPreviewCards = false;
     if (compact) {
       const toggle = rotateEl('button', 'rotate-preview-expand', 'Expand all');
       toggle.type = 'button';
       toggle.addEventListener('click', () => {
-        const open = toggle.textContent === 'Expand all';
-        cards.querySelectorAll('details').forEach((node) => { node.open = open; });
+        const open = !expandPreviewCards;
+        expandPreviewCards = open;
+        cards.querySelectorAll('details.rotate-preview-card').forEach((node) => { node.open = open; });
         toggle.textContent = open ? 'Collapse all' : 'Expand all';
       });
       scroll.appendChild(toggle);
     }
-    included.forEach((instance) => {
-      const name = String(instance.instance_name || instance.instance_id);
-      const where = [instance.service, instance.plan].filter(Boolean).join(' / ');
-      const selected = selectedOf(instance);
-      const extra = additionalOf(instance);
-      const meta = [];
-      if (where) meta.push(['Service / plan', where]);
-      meta.push(['VMs', Number(instance.vms) || 0]);
-      if (instance.gate) meta.push(['Health check after each VM', instance.gate]);
+    let previewPage = 0;
+    const renderCards = () => {
+      cards.textContent = '';
+      included.slice(previewPage * BATCH_PAGE_SIZE, (previewPage + 1) * BATCH_PAGE_SIZE).forEach((instance) => {
+        const name = String(instance.instance_name || instance.instance_id);
+        const where = [instance.service, instance.plan].filter(Boolean).join(' / ');
+        const selected = selectedOf(instance);
+        const extra = additionalOf(instance);
+        const meta = [];
+        if (where) meta.push(['Service / plan', where]);
+        meta.push(['VMs', Number(instance.vms) || 0]);
+        if (instance.gate) meta.push(['Health check after each VM', instance.gate]);
 
-      const card = rotateEl(compact ? 'details' : 'section', 'rotate-preview-card');
-      let content = card;
-      if (compact) {
-        const head = rotateEl('summary', 'rotate-preview-card-head rotate-preview-row');
-        const chevron = rotateEl('span', 'rotate-preview-chevron', '▸');
-        chevron.setAttribute('aria-hidden', 'true');
-        head.appendChild(chevron);
-        head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
-        const days = selected.map((variable) => variable.days_left).filter(previewIsNumber);
-        const badgeHost = rotateEl('span', 'rotate-preview-row-badge');
-        if (selected.length > 0) badgeHost.appendChild(previewBadge(days.length > 0 ? Math.min(...days) : null));
-        head.appendChild(badgeHost);
-        const summaryMeta = [];
-        if (mode !== 'converge') summaryMeta.push(['Certificates', selected.length]);
-        summaryMeta.push(['VMs', Number(instance.vms) || 0]);
-        const expired = selected.filter((variable) => previewIsNumber(variable.days_left) && variable.days_left < 0).length;
-        const exceptions = [];
-        if (expired > 0) exceptions.push(`${expired} expired`);
-        if (extra.length > 0) exceptions.push(`${extra.length} additional`);
-        const metaRow = previewMeta(summaryMeta);
-        metaRow.classList.add('rotate-preview-row-meta');
-        if (exceptions.length > 0) metaRow.appendChild(rotateEl('span', 'rotate-preview-exceptions', exceptions.join(', ')));
-        head.appendChild(metaRow);
-        card.appendChild(head);
-        content = rotateEl('div', 'rotate-preview-card-body');
-        card.appendChild(content);
-        // The row already shows the VM count.
-        content.appendChild(previewMeta(meta.filter((pair) => pair[0] !== 'VMs')));
-      } else {
-        const head = rotateEl('div', 'rotate-preview-card-head');
-        head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
-        card.appendChild(head);
-        card.appendChild(previewMeta(meta));
-      }
-      if (instance.impact) content.appendChild(rotateEl('p', 'rotate-preview-impact', String(instance.impact)));
-      if (selected.length > 0) content.appendChild(previewCertList(selected, false, `Certificates that rotate on ${name}`));
-      if (extra.length > 0) {
-        content.appendChild(rotateEl('p', 'rotate-preview-subhead', 'Also changes'));
-        content.appendChild(previewCertList(extra, true, `Also changes on ${name}`));
-      }
-      cards.appendChild(card);
-    });
+        const card = rotateEl(compact ? 'details' : 'section', 'rotate-preview-card');
+        let content = card;
+        if (compact) {
+          card.open = expandPreviewCards;
+          const head = rotateEl('summary', 'rotate-preview-card-head rotate-preview-row');
+          const chevron = rotateEl('span', 'rotate-preview-chevron', '▸');
+          chevron.setAttribute('aria-hidden', 'true');
+          head.appendChild(chevron);
+          head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
+          const days = selected.map((variable) => variable.days_left).filter(previewIsNumber);
+          const badgeHost = rotateEl('span', 'rotate-preview-row-badge');
+          if (selected.length > 0) badgeHost.appendChild(previewBadge(days.length > 0 ? Math.min(...days) : null));
+          head.appendChild(badgeHost);
+          const summaryMeta = [];
+          if (mode !== 'converge') summaryMeta.push(['Certificates', selected.length]);
+          summaryMeta.push(['VMs', Number(instance.vms) || 0]);
+          const expired = selected.filter((variable) => previewIsNumber(variable.days_left) && variable.days_left < 0).length;
+          const exceptions = [];
+          if (expired > 0) exceptions.push(`${expired} expired`);
+          if (extra.length > 0) exceptions.push(`${extra.length} additional`);
+          const metaRow = previewMeta(summaryMeta);
+          metaRow.classList.add('rotate-preview-row-meta');
+          if (exceptions.length > 0) metaRow.appendChild(rotateEl('span', 'rotate-preview-exceptions', exceptions.join(', ')));
+          head.appendChild(metaRow);
+          card.appendChild(head);
+          content = rotateEl('div', 'rotate-preview-card-body');
+          card.appendChild(content);
+          // The row already shows the VM count.
+          content.appendChild(previewMeta(meta.filter((pair) => pair[0] !== 'VMs')));
+        } else {
+          const head = rotateEl('div', 'rotate-preview-card-head');
+          head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
+          card.appendChild(head);
+          card.appendChild(previewMeta(meta));
+        }
+        if (instance.impact) content.appendChild(rotateEl('p', 'rotate-preview-impact', String(instance.impact)));
+        if (selected.length > 0) content.appendChild(previewCertList(selected, false, `Certificates that rotate on ${name}`));
+        if (extra.length > 0) {
+          content.appendChild(rotateEl('p', 'rotate-preview-subhead', 'Also changes'));
+          content.appendChild(previewCertList(extra, true, `Also changes on ${name}`));
+        }
+        cards.appendChild(card);
+      });
+    };
+    renderCards();
     scroll.appendChild(cards);
+    if (included.length > BATCH_PAGE_SIZE) {
+      const pager = rotateEl('nav', 'batch-pagination');
+      pager.setAttribute('aria-label', 'Review instances');
+      const previous = rotateEl('button', 'btn-secondary', 'Previous');
+      const next = rotateEl('button', 'btn-secondary', 'Next');
+      const label = rotateEl('span');
+      previous.type = next.type = 'button';
+      next.dataset.previewNext = 'true';
+      const update = () => {
+        previous.disabled = previewPage === 0;
+        next.disabled = (previewPage + 1) * BATCH_PAGE_SIZE >= included.length;
+        label.textContent = `Page ${previewPage + 1} of ${Math.ceil(included.length / BATCH_PAGE_SIZE)}`;
+        renderCards();
+      };
+      previous.addEventListener('click', () => { previewPage--; update(); });
+      next.addEventListener('click', () => { previewPage++; update(); });
+      pager.append(previous, label, next);
+      scroll.insertBefore(pager, cards);
+      update();
+    }
 
     // Excluded instances
     if (excluded.length > 0) {
@@ -4261,12 +4468,37 @@
       section.tabIndex = -1;
       section.appendChild(rotateEl('h4', 'rotate-preview-subhead', 'Will not change'));
       const list = rotateEl('ul', 'rotate-preview-excluded-list');
-      excluded.forEach((instance) => {
-        const item = rotateEl('li');
-        item.appendChild(rotateEl('strong', null, String(instance.instance_name || instance.instance_id)));
-        item.appendChild(rotateEl('span', 'rotate-preview-reason', ` ${instance.blocked.message || instance.blocked.code || 'It cannot take part.'}`));
-        list.appendChild(item);
-      });
+      let excludedPage = 0;
+      const renderExcluded = () => {
+        list.textContent = '';
+        excluded.slice(excludedPage * BATCH_PAGE_SIZE, (excludedPage + 1) * BATCH_PAGE_SIZE).forEach((instance) => {
+          const item = rotateEl('li');
+          item.appendChild(rotateEl('strong', null, String(instance.instance_name || instance.instance_id)));
+          item.appendChild(rotateEl('span', 'rotate-preview-reason', ` ${instance.blocked.message || instance.blocked.code || 'It cannot take part.'}`));
+          list.appendChild(item);
+        });
+      };
+      renderExcluded();
+      if (excluded.length > BATCH_PAGE_SIZE) {
+        const pager = rotateEl('nav', 'batch-pagination');
+        pager.setAttribute('aria-label', 'Excluded instances');
+        const previous = rotateEl('button', 'btn-secondary', 'Previous');
+        const next = rotateEl('button', 'btn-secondary', 'Next');
+        const label = rotateEl('span');
+        previous.type = next.type = 'button';
+        next.dataset.excludedNext = 'true';
+        const update = () => {
+          previous.disabled = excludedPage === 0;
+          next.disabled = (excludedPage + 1) * BATCH_PAGE_SIZE >= excluded.length;
+          label.textContent = `Page ${excludedPage + 1} of ${Math.ceil(excluded.length / BATCH_PAGE_SIZE)}`;
+          renderExcluded();
+        };
+        previous.addEventListener('click', () => { excludedPage--; update(); });
+        next.addEventListener('click', () => { excludedPage++; update(); });
+        pager.append(previous, label, next);
+        section.appendChild(pager);
+        update();
+      }
       section.appendChild(list);
       scroll.appendChild(section);
       excludedLink.addEventListener('click', () => {
@@ -4279,7 +4511,7 @@
 
   // The confirm button label and the line above the buttons for a mode.
   const PREVIEW_CONFIRM_TEXT = { redeploy: 'Rotate and redeploy', patch: 'Patch in place', converge: 'Start converge' };
-  const PREVIEW_TASK_NOTE = 'Confirming creates a task. Its progress shows in Batch Jobs.';
+  const PREVIEW_TASK_NOTE = 'Confirming creates a task. Follow its progress in Activity.';
 
   // Where results show: the top of the Batch Jobs column.
   const rotateResultHost = () => {
@@ -4332,6 +4564,7 @@
     const origin = String(options.origin || '');
     const host = options.container || rotateResultHost();
     const report = (title, error, retry) => {
+      if (origin === 'batch') setBatchView('activity');
       announce(`${title}. ${error}`);
       if (host) {
         const handle = window.blacksmithResultPanel(host, { title, error, retry });
@@ -4382,13 +4615,14 @@
       const clientRequestId = newClientRequestId();
       const converge = mode === 'converge';
       const answer = await showConfirmDialog({
+        batchReview: origin === 'batch',
         title: converge ? 'Converge these instances?' : (mode === 'patch' ? 'Patch these certificates in place?' : 'Rotate these certificates?'),
         message: note,
         body: buildPreviewBody(preview, mode, { converge: options.converge }),
         describedBy: 'rotate-preview-summary',
         footnote: PREVIEW_TASK_NOTE,
         confirmText: PREVIEW_CONFIRM_TEXT[mode],
-        cancelText: 'Cancel',
+        cancelText: origin === 'batch' ? 'Back to selection' : 'Cancel',
         danger: mode === 'patch',
         icon: 'warning',
         // A patch always asks for the typed word, because it is a temporary repair.
@@ -4734,6 +4968,7 @@
             });
           }
           rotateRefresh();
+          setBatchView('activity');
         }
       });
     } finally {
@@ -4798,6 +5033,7 @@
     servicesContainer.innerHTML = renderUpgradeServices();
     targetsContainer.innerHTML = renderUpgradeTargets();
     installOperationSelector();
+    installBatchWorkspace();
 
     // Load stemcells from API
     try {
@@ -5083,7 +5319,7 @@
     if (deselectAllBtn) {
       deselectAllBtn.addEventListener('click', () => {
         if (upgradeOperation !== 'upgrade') {
-          rotateClearVisible();
+          clearSelectionFor(upgradeOperation);
           rotateRefresh();
           return;
         }
@@ -5093,46 +5329,7 @@
           item.classList.remove('selected');
         });
         selectedUpgradeInstances.clear();
-        updateUpgradeButton();
-      });
-    }
-
-    // Set up Select Range button
-    const selectRangeBtn = document.getElementById('upgrade-select-range');
-    if (selectRangeBtn) {
-      selectRangeBtn.addEventListener('click', () => {
-        const startInput = document.getElementById('upgrade-range-start');
-        const endInput = document.getElementById('upgrade-range-end');
-        const start = parseInt(startInput?.value, 10);
-        const end = parseInt(endInput?.value, 10);
-
-        if (isNaN(start) || isNaN(end) || start < 1 || end < start) {
-          if (upgradeOperation !== 'upgrade') {
-            window.Feedback.warning('Enter a valid range. The start must be at least 1 and the end at least the start.', { toast: true });
-            return;
-          }
-          alert('Please enter a valid range (start must be >= 1 and end must be >= start).');
-          return;
-        }
-
-        if (upgradeOperation !== 'upgrade') {
-          rotateSelectRange(start, end);
-          rotateRefresh();
-          return;
-        }
-
-        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
-          const rowNumber = parseInt(item.dataset.rowNumber, 10);
-          if (rowNumber >= start && rowNumber <= end && !item.dataset.held) {
-            const checkbox = item.querySelector('input[type="checkbox"]');
-            const instanceId = item.dataset.instanceId;
-            checkbox.checked = true;
-            selectedUpgradeInstances.add(instanceId);
-            item.classList.add('selected');
-          }
-        });
-
-        updateUpgradeButton();
+        refreshUpgradeInstanceList();
       });
     }
 
@@ -5560,6 +5757,7 @@
   // are on screen. With throwOnError it rethrows a failure for a caller that
   // shows it, and otherwise it reports the failure through the feedback panel.
   const selectUpgradeTask = async (taskId, options = {}) => {
+    setBatchView('activity');
     selectedTaskId = taskId;
 
     // Update UI to show selected task
@@ -6688,6 +6886,7 @@
           // Refresh task list and select new task
           await fetchUpgradeTasks();
           selectUpgradeTask(task.id);
+          setBatchView('activity');
           return;
         }
 

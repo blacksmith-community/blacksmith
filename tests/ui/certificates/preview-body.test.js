@@ -29,7 +29,7 @@ t('preview body layout', async () => {
   ok(rows[0].querySelector('.rotate-preview-path').textContent===`/x/${HOSTILE}/crit_crt`&&n.querySelectorAll('img').length===0,'hostile path renders as text');
   ok(/not close to expiry/.test(n.textContent),'non-blocking note when a certificate is far from expiry');
   ok(/5 certificates plus 1 additional variable/.test(n.querySelector('.rotate-preview-summary').textContent),'summary counts certificates and additional variables: '+n.querySelector('.rotate-preview-summary').textContent);
-  ok(!n.querySelector('details'),'up to 3 instances are plain cards');
+  ok(!n.querySelector('details.rotate-preview-card'),'up to 3 instances are plain cards');
 
   // no note when everything is near expiry; VM total counts included only
   n=build({instances:[inst('a'),inst('b',{vms:4,blocked:{code:'x',message:'Held '+HOSTILE}})],warnings:[]},'redeploy');
@@ -39,7 +39,7 @@ t('preview body layout', async () => {
 
   // more than 3: compact rows and Expand all
   const many=build({instances:['a','b','c','d'].map((id,i)=>inst(id,{selected:[{name:`/p/${id}_crt`,days_left:10+i},{name:`/p/${id}2_crt`,days_left:3}]})),warnings:[]},'redeploy');
-  const ds=[...many.querySelectorAll('details')];
+  const ds=[...many.querySelectorAll('details.rotate-preview-card')];
   ok(ds.length===4&&ds.every(x=>!x.open),'collapsed rows past 3 instances');
   ok(/Certificates: 2/.test(ds[0].querySelector('summary').textContent)&&/VMs: 2/.test(ds[0].querySelector('summary').textContent)&&/3 days left/.test(ds[0].querySelector('summary').textContent),'summary row: count, VMs, earliest badge');
   ok(ds[0].querySelectorAll('.rotate-preview-path').length===2,'full paths live inside the expanded content');

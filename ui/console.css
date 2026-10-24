@@ -142,3 +142,185 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, input:focu
 @media (prefers-reduced-motion: reduce) {
   .main-content *, #navigation-dialog *, body { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+
+/* Batch workspace: one scrolling surface, full-width setup and activity. */
+#upgrade.active,
+#upgrade.tab-panel.active {
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+#upgrade [hidden] { display: none !important; }
+#upgrade .batch-view-nav {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  flex: 0 0 auto;
+}
+#upgrade .batch-view-nav [aria-pressed="true"] {
+  background: var(--rotate-pressed-bg);
+  border-color: var(--rotate-pressed-bg);
+  color: var(--rotate-pressed-text);
+}
+#upgrade .upgrade-main,
+#upgrade .upgrade-right-panel {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  overflow: visible;
+  border-right: 0;
+}
+#upgrade .upgrade-top {
+  display: flex;
+  flex-direction: column;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+}
+#upgrade .upgrade-services-panel,
+#upgrade .upgrade-targets-panel {
+  flex: none;
+  max-width: none;
+  width: auto;
+  overflow: visible;
+  border: 0;
+}
+#upgrade .upgrade-targets-panel {
+  margin: 0 20px 16px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+#upgrade .upgrade-targets-panel > summary {
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 600;
+}
+#upgrade .upgrade-services-panel .upgrade-services,
+#upgrade .upgrade-targets-panel .upgrade-targets,
+#upgrade .upgrade-instances,
+#upgrade .upgrade-instances-list,
+#upgrade .upgrade-tasks {
+  flex: none;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+#upgrade .upgrade-services {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 20px;
+  padding: 12px 20px;
+}
+#upgrade .upgrade-services .filter-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  margin: 0;
+  flex: 1 1 160px;
+}
+#upgrade .upgrade-services .filter-row label { min-width: 0; }
+#upgrade .upgrade-services input,
+#upgrade .upgrade-services select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--border-primary);
+  border-radius: 5px;
+  padding: 6px 10px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+#upgrade .upgrade-services .batch-search-row { flex: 2 1 260px; }
+#upgrade .upgrade-actions { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+#upgrade #batch-selection-summary { margin: 0; color: var(--text-secondary); font-size: 0.875rem; }
+#upgrade .upgrade-targets .upgrade-mode-pane { display: flex; flex-wrap: wrap; gap: 24px; }
+#upgrade .upgrade-target-group { flex: 1 1 280px; margin: 0; }
+#upgrade .rotate-operation { padding: 16px 20px; }
+#upgrade .rotate-operation legend { font-size: 1rem; font-weight: 600; }
+#upgrade .rotate-operation-option { min-height: 40px; }
+#upgrade .batch-optional { margin-top: 12px; }
+#upgrade .batch-optional > summary { cursor: pointer; padding: 8px 0; color: var(--text-secondary); }
+#upgrade .upgrade-instances { scroll-margin-top: 8px; }
+#upgrade .upgrade-instance-count { display: none; }
+.batch-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--bg-primary);
+  border-block: 1px solid var(--border-primary);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+#upgrade .batch-pagination { position: sticky; top: 0; z-index: 2; }
+#upgrade .upgrade-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: auto;
+  padding: 12px 20px;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-primary);
+  box-shadow: 0 -3px 12px rgb(0 0 0 / 5%);
+}
+#upgrade .upgrade-footer .upgrade-mode-pane { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+#upgrade .rotate-review-list { max-height: none; overflow: visible; }
+#upgrade .batch-execution-settings { padding: 12px 20px; }
+#upgrade .batch-execution-settings summary { cursor: pointer; }
+#upgrade .batch-execution-settings p { color: var(--text-secondary); font-size: 0.875rem; }
+#upgrade .upgrade-instance-item { padding: 10px 20px; }
+#upgrade .upgrade-instance-info { min-width: 0; }
+#upgrade .upgrade-instance-id { overflow-wrap: anywhere; }
+.rotate-preview-technical { margin-top: 4px; }
+.rotate-preview-technical > summary { cursor: pointer; color: var(--text-secondary); font-size: 0.8125rem; }
+.rotate-preview-technical .btn-secondary { margin-top: 6px; }
+.dialog-modal.batch-review-dialog {
+  width: min(1100px, calc(100vw - 32px));
+  max-width: 1100px;
+  max-height: calc(100dvh - 32px);
+}
+.dialog-modal.batch-review-dialog .dialog-modal-body { max-height: none; }
+#upgrade :is(button, input, select, summary):focus-visible,
+.rotate-preview-technical summary:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 3px;
+}
+@media (max-width: 640px) {
+  #upgrade .upgrade-targets-panel { margin: 0 12px 12px; }
+  #upgrade .upgrade-services, #upgrade .upgrade-footer { padding: 12px; }
+  #upgrade .upgrade-instance-item { padding: 10px 12px; flex-wrap: wrap; }
+  #upgrade .upgrade-instance-info { flex: 1 1 180px; }
+  #upgrade .upgrade-instance-stemcell-container, #upgrade .upgrade-instance-release-container { min-width: 0; }
+  #upgrade .rotate-footer-actions { flex-wrap: wrap; }
+  #upgrade .rotate-footer-actions button { white-space: normal; }
+  .dialog-modal.batch-review-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+}
+
+#upgrade .batch-view-nav button,
+.batch-pagination button {
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 6px 12px;
+  min-height: 34px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+#upgrade .batch-view-nav button[aria-pressed="true"] {
+  background: var(--rotate-pressed-bg);
+  border-color: var(--rotate-pressed-bg);
+  color: var(--rotate-pressed-text);
+}
+.batch-pagination button:disabled { opacity: .5; cursor: default; }
+
+#upgrade .batch-view-nav { position: sticky; top: 0; z-index: 4; }
+#upgrade .batch-pagination { top: 59px; }
