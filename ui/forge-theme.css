@@ -187,12 +187,13 @@ body > footer p { margin: 0; }
 
 /* Focused batch flow: one decision per view, a single scrolling surface. */
 #upgrade .batch-flow-header { padding: 20px 24px 8px; }
-#upgrade .batch-steps { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+#upgrade .batch-steps { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 #upgrade .batch-steps button { color: var(--muted-foreground); border-radius: 5px; padding: 6px 10px; }
 #upgrade .batch-steps button[aria-current="step"] { background: var(--secondary); color: var(--primary); font-weight: 700; box-shadow: inset 0 -3px var(--primary); }
-#upgrade #batch-flow-context { margin: 0 0 8px; color: var(--muted-foreground); font-size: .875rem; }
-#upgrade #batch-flow-title { padding: 0; margin: 0 0 8px; font-size: 1.375rem; }
-#upgrade #batch-flow-description { margin: 0; max-width: 72ch; color: var(--muted-foreground); }
+#upgrade .batch-flow-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+#upgrade .batch-flow-heading[hidden], #upgrade #batch-flow-context[hidden] { display: none; }
+#upgrade #batch-flow-title { padding: 0; margin: 0; font-size: 1.375rem; overflow-wrap: anywhere; }
+#upgrade #batch-flow-context { margin: 0; color: var(--muted-foreground); font-size: .875rem; }
 #upgrade .rotate-operation { padding: 20px 24px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
 #upgrade .rotate-operation legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 #upgrade .rotate-operation-option { display: grid; grid-template-columns: 24px 1fr; align-items: start; gap: 8px 10px; margin: 0; padding: 20px; background: var(--card); color: var(--foreground); border: 2px solid var(--input); border-radius: 8px; cursor: pointer; }

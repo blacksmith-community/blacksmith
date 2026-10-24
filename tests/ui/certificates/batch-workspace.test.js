@@ -21,6 +21,7 @@ async function fleet() {
   d.getElementById('upgrade').classList.add('active');
   await w.__T.initUpgradeTab();
   await sleep(30);
+  w.__T.setBatchStep(2, false);
   return env;
 }
 
@@ -39,7 +40,7 @@ t('batch selection is bounded and persists across pages and filters', async () =
     search.value = 'instance-100';
     search.dispatchEvent(new w.Event('input'));
     expect(rows()).toHaveLength(3);
-    expect(d.getElementById('batch-selection-summary').textContent).toContain('51 hidden by filters');
+    expect(d.getElementById('batch-flow-context').textContent).toContain('51 hidden by filters');
     d.getElementById('batch-select-matching').click();
     expect(w.__T.selectedUpgradeInstances.size).toBe(54);
     d.getElementById('batch-view-selected').click();
@@ -116,7 +117,7 @@ t('rotation page and matching selection skip unavailable instances', async () =>
     d.getElementById('batch-eligibility').value = 'blocked';
     d.getElementById('batch-eligibility').dispatchEvent(new w.Event('change'));
     expect(d.querySelectorAll('.rotate-row')).toHaveLength(1);
-    expect(d.getElementById('batch-selection-summary').textContent).toContain('1002 hidden by filters');
+    expect(d.getElementById('batch-flow-context').textContent).toContain('1002 hidden by filters');
     d.getElementById('upgrade-deselect-all').click();
     expect(selection.size).toBe(0);
   } finally { w.close(); }

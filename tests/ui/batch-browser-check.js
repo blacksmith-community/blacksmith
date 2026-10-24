@@ -50,11 +50,11 @@ async (page) => {
   check(await page.locator('.upgrade-instances').evaluate(e => getComputedStyle(e).maxHeight === 'none'), 'instance list has no height cap');
   await page.locator('#upgrade-select-all').click();
   await page.locator('#batch-next').click();
-  check((await page.locator('#batch-selection-summary').textContent()).includes('50 instances selected'), 'page keeps selection');
+  check((await page.locator('#batch-flow-context').textContent()).includes('50 instances selected'), 'page keeps selection');
   await page.locator('#batch-search').fill('cache-100');
   check(await page.locator('#upgrade .upgrade-instance-item').count() === 3, 'search narrows fleet');
   await page.locator('#batch-select-matching').click();
-  check((await page.locator('#batch-selection-summary').textContent()).includes('53 instances selected'), 'all matching adds exact scope');
+  check((await page.locator('#batch-flow-context').textContent()).includes('53 instances selected'), 'all matching adds exact scope');
   await page.locator('#batch-flow-next').click();
   await page.locator('#batch-flow-review h3').waitFor();
   await page.locator('#batch-flow-back').waitFor({state:'visible'});

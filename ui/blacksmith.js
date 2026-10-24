@@ -2686,6 +2686,24 @@
     const action = document.getElementById(upgradeOperation === 'upgrade' ? 'upgrade-start' : 'rotate-preview');
     return !batchSelectedIds().size || action?.disabled ? (action?.title || 'Select at least one eligible instance to continue.') : '';
   };
+  // The one selection count, on the right of the step header. Only the
+  // Instances and Review steps show it, and the live region announces it.
+  const batchSelectionText = (detailed) => {
+    const selected = batchSelectedIds();
+    let text = selected.size ? `${pluralize(selected.size, 'instance')} selected` : 'No instances selected';
+    if (!detailed) return text;
+    const visibleIds = new Set(batchMatchingRows().map(([id]) => id));
+    const hidden = Array.from(selected).filter((id) => !visibleIds.has(id)).length;
+    return `${text}${hidden ? ` · ${hidden} hidden by filters` : ''}${batchWorkspace.selectedOnly ? ' · Viewing selection (filters paused)' : ''}`;
+  };
+  const renderBatchCount = () => {
+    const node = document.getElementById('batch-flow-context');
+    if (!node) return;
+    const show = batchFlow.step >= 2;
+    node.hidden = !show;
+    const text = show ? batchSelectionText(batchFlow.step === 2) : '';
+    if (node.textContent !== text) node.textContent = text;
+  };
   const updateBatchFlow = () => {
     if (!batchFlow.installed) return;
     const step = batchFlow.step;
@@ -2699,15 +2717,9 @@
     panel.querySelector('#batch-selection-review').hidden = step !== 2;
     panel.querySelector('.upgrade-footer').hidden = true;
     document.getElementById('batch-flow-review').hidden = step !== 3;
-    const title = document.getElementById('batch-flow-title');
-    title.textContent = ['What would you like to do?', 'Configure the operation', 'Choose instances', 'Review and confirm'][step];
-    document.getElementById('batch-flow-context').textContent = `${OPERATION_LABELS[upgradeOperation]} · ${pluralize(batchSelectedIds().size, 'instance')} selected`;
-    document.getElementById('batch-flow-description').textContent = [
-      'Choose an operation. Nothing runs until you review and confirm.',
-      'Set the intended change before choosing the instances it should affect.',
-      'Search and filter the fleet. Your selection stays with you when you go back.',
-      'Check the scope and impact below. Go back to adjust any earlier choice.'
-    ][step];
+    const operation = OPERATION_LABELS[upgradeOperation];
+    document.getElementById('batch-flow-title').textContent = ['What would you like to do?', operation, `${operation}: choose instances`, `${operation}: review and confirm`][step];
+    renderBatchCount();
     document.querySelectorAll('[data-batch-step]').forEach(button => {
       const index = Number(button.dataset.batchStep);
       button.disabled = batchFlow.submitting || index > batchFlow.furthest || (index >= 2 && Boolean(batchOptionIssue())) || (index === 3 && Boolean(batchInstanceIssue()));
@@ -2810,7 +2822,7 @@
     const panel = document.getElementById('upgrade');
     const main = panel.querySelector('.upgrade-main');
     const header = rotateEl('div', 'batch-flow-header');
-    header.innerHTML = '<nav aria-label="Operation progress" class="batch-steps">' + BATCH_STEPS.map((name,index) => `<button type="button" class="ghost" data-batch-step="${index}">${name}</button>`).join('<span aria-hidden="true">›</span>') + '</nav><p id="batch-flow-context"></p><h2 id="batch-flow-title" tabindex="-1"></h2><p id="batch-flow-description"></p>';
+    header.innerHTML = '<nav aria-label="Operation progress" class="batch-steps">' + BATCH_STEPS.map((name,index) => `<button type="button" class="ghost" data-batch-step="${index}">${name}</button>`).join('<span aria-hidden="true">›</span>') + '</nav><div class="batch-flow-heading"><h2 id="batch-flow-title" tabindex="-1"></h2><p id="batch-flow-context" role="status" hidden></p></div>';
     main.prepend(header);
     const options = rotateEl('div','batch-flow-options'); options.id = 'batch-flow-options';
     // Release choices depend on service context, so choose it before targets.
@@ -2854,13 +2866,9 @@
   };
 
   const updateBatchWorkspace = () => {
-    const summary = document.getElementById('batch-selection-summary');
-    if (!summary) return;
+    if (!document.getElementById('batch-flow-context')) return;
     const matching = batchMatchingRows();
-    const visibleIds = new Set(matching.map(([id]) => id));
-    const selected = batchSelectedIds();
-    const hidden = Array.from(selected).filter((id) => !visibleIds.has(id)).length;
-    summary.textContent = `${pluralize(selected.size, 'instance')} selected${hidden ? ` · ${hidden} hidden by filters` : ''}${batchWorkspace.selectedOnly ? ' · Viewing selection (filters paused)' : ''}`;
+    renderBatchCount();
     const all = document.getElementById('batch-select-matching');
     if (all) {
       all.textContent = `Select all ${matching.length.toLocaleString()} matching`;
@@ -2994,7 +3002,6 @@
         <button id="upgrade-deselect-all" class="btn-secondary">Clear selection</button>
         <button id="batch-view-selected" class="btn-secondary" aria-pressed="false">View selected</button>
       </div>
-      <p id="batch-selection-summary" role="status"></p>
     `;
   };
 

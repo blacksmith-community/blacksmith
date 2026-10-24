@@ -232,7 +232,6 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, input:focu
 }
 #upgrade .upgrade-services .batch-search-row { flex: 2 1 260px; }
 #upgrade .upgrade-actions { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
-#upgrade #batch-selection-summary { margin: 0; color: var(--text-secondary); font-size: 0.875rem; }
 #upgrade .upgrade-targets .upgrade-mode-pane { display: flex; flex-wrap: wrap; gap: 24px; }
 #upgrade .upgrade-target-group { flex: 1 1 280px; margin: 0; }
 #upgrade .rotate-operation { padding: 16px 20px; }

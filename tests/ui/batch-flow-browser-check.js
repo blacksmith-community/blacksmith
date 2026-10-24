@@ -57,7 +57,7 @@ async (page) => {
   await page.locator('#batch-search').fill('Application cache 1002');
   await crumb(1).click();await next.click();
   check(await page.locator('#batch-search').inputValue()==='Application cache 1002','back preserves filters');
-  check((await page.locator('#batch-selection-summary').textContent()).includes('50'),'back preserves selection');
+  check((await page.locator('#batch-flow-context').textContent()).includes('50'),'back preserves selection');
   await page.locator('#batch-activity').click();await page.locator('#batch-new').click();
   check(await page.locator('.upgrade-instances').isVisible(),'Activity returns to current step');
   await next.click();await page.locator('#batch-flow-ack').waitFor();
