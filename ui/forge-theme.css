@@ -110,7 +110,12 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .entity-facts { margin: 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 24px; }
 .entity-facts dt { font-size: .75rem; color: var(--muted-foreground); }
 .entity-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
-.entity-copy { margin-left: 8px; font-size: .75rem; padding: 3px 6px; min-height: 28px; color: var(--primary); }
+.entity-facts .entity-copy { margin-left: 8px; }
+/* One icon button for every copy control, drawn in currentColor. */
+button.copy-btn-inline.copy-btn-inline { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); cursor: pointer; vertical-align: middle; }
+button.copy-btn-inline.copy-btn-inline:hover { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
+button.copy-btn-inline.copy-btn-inline.copied { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
+button.copy-btn-inline.copy-btn-inline svg { width: 14px; height: 14px; }
 .entity-technical { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; }
 .entity-technical > summary { padding: 14px 16px; cursor: pointer; font-weight: 600; }
 .entity-technical .service-info-table { margin: 0; table-layout: fixed; min-width: 0 !important; }

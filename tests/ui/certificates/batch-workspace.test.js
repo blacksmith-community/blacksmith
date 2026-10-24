@@ -78,7 +78,10 @@ t('review paginates the fleet and hides copyable technical paths', async () => {
     expect(body.querySelector('.rotate-preview-name').textContent).toBe('Cache 50');
     const path = body.querySelector('.rotate-preview-path');
     expect(path.closest('details').open).toBe(false);
-    expect(path.parentElement.querySelector('button').textContent).toBe('Copy path');
+    const copyPath = path.parentElement.querySelector('button');
+    expect(copyPath.getAttribute('aria-label')).toBe('Copy certificate path');
+    expect(copyPath.querySelector('svg')).not.toBeNull();
+    expect(copyPath.textContent.trim()).toBe('');
   } finally { w.close(); }
 });
 

@@ -55,7 +55,6 @@ body > footer { font-size: 12px; }
 /* Generated utility colors must follow the console's data-theme state. */
 .main-content .service-info-table td.info-key { background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; letter-spacing: .035em; }
 .main-content .service-info-table td.info-value { background: var(--bg-secondary); color: var(--text-primary); }
-.main-content .service-info-table .copy-btn-inline { color: var(--text-secondary); }
 .main-content .service-info-table { background: var(--bg-secondary); color: var(--text-primary); }
 .main-content .plan-details-table td, .main-content .plan-details-table th { color: var(--text-primary); background: var(--bg-secondary); border-color: var(--border-primary); }
 .main-content .plan-details-table th { background: var(--bg-tertiary); }

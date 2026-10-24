@@ -651,6 +651,20 @@
   // Navigation, live region, and tab group foundations
   // =================================================================
 
+  // The copy icon and its confirming check. Every icon-only copy button
+  // draws the same stroke icon in currentColor, and the theme colors it.
+  const COPY_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+  const CHECK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+  // Swaps an icon-only copy button to the check for a moment. A button
+  // that also carries text keeps its markup.
+  const flashCopyIcon = (button) => {
+    if (!button || button.children.length !== 1 || button.children[0].tagName.toLowerCase() !== 'svg' || button.textContent.trim() !== '') return;
+    const original = button.innerHTML;
+    button.innerHTML = CHECK_ICON_SVG;
+    setTimeout(() => { button.innerHTML = original; }, 2000);
+  };
+
   // Writes a message to the polite live region so assistive technology
   // announces it. The region is cleared first so a repeated message is
   // announced again.
@@ -1230,6 +1244,7 @@
       button.classList.add('copied');
       button.title = 'Copied!';
       announce('Copied');
+      flashCopyIcon(button);
       setTimeout(() => {
         button.classList.remove('copied');
         button.title = originalTitle;
@@ -2092,7 +2107,8 @@
     const button = document.createElement('button');
     button.className = className;
     button.title = 'Copy to clipboard';
-    button.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+    button.innerHTML = COPY_ICON_SVG;
+    button.setAttribute('aria-label', 'Copy to clipboard');
     button.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -2261,7 +2277,7 @@
       ${groups.map(([label, entries]) => `<div class="entity-section-group" role="presentation"><p class="entity-group-label" aria-hidden="true">${label}</p>${entries.map(([id, name]) => `<button type="button" class="detail-tab ghost ${id === 'details' ? 'active' : ''}" data-tab="${id}">${name}</button>`).join('')}</div>`).join('')}</nav>`;
   };
 
-  const entityCopy = (value, label) => `<button type="button" class="entity-copy ghost small" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}">Copy</button>`;
+  const entityCopy = (value, label) => `<button type="button" class="copy-btn-inline entity-copy" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}" title="Copy ${escapeAttribute(label)}">${COPY_ICON_SVG}</button>`;
   const entityFacts = (pairs) => `<dl class="entity-facts">${pairs.map(([label,value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value ?? 'Not reported'))}${value ? entityCopy(value,label) : ''}</dd></div>`).join('')}</dl>`;
   const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(label.toLowerCase())} →</span></button>`;
   const entityMetadata = (pairs, title = 'Technical details') => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span>${escapeHtml(typeof value === 'object' ? JSON.stringify(value,null,2) : String(value ?? 'Not reported'))}</span>${entityCopy(typeof value === 'object' ? JSON.stringify(value,null,2) : value,label)}</span></td></tr>`).join('')}</tbody></table></details>`;
@@ -2292,7 +2308,7 @@
   document.addEventListener('click', async (event) => {
     const copy = event.target.closest('[data-entity-copy]');
     if (copy) {
-      try { await navigator.clipboard.writeText(copy.dataset.entityCopy); announce('Copied to clipboard'); }
+      try { await navigator.clipboard.writeText(copy.dataset.entityCopy); announce('Copied to clipboard'); flashCopyIcon(copy); }
       catch (_) { announce('Clipboard unavailable. Select the value to copy it.'); }
       return;
     }
@@ -4449,13 +4465,19 @@
     const technical = rotateEl('details', 'rotate-preview-technical');
     technical.appendChild(rotateEl('summary', '', 'Certificate path'));
     technical.appendChild(previewPathNode(variable.name));
-    const copy = rotateEl('button', 'btn-secondary btn-sm', 'Copy path');
+    const copy = rotateEl('button', 'copy-btn-inline rotate-preview-copy', '');
     copy.type = 'button';
+    copy.innerHTML = COPY_ICON_SVG;
+    copy.setAttribute('aria-label', 'Copy certificate path');
+    copy.title = 'Copy certificate path';
     copy.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(String(variable.name || ''));
-        copy.textContent = 'Copied';
-      } catch (_) { copy.textContent = 'Copy unavailable'; }
+        copy.classList.add('copied');
+        announce('Copied to clipboard');
+        flashCopyIcon(copy);
+        setTimeout(() => copy.classList.remove('copied'), 2000);
+      } catch (_) { announce('Clipboard unavailable. Select the path to copy it.'); }
     });
     technical.appendChild(copy);
     item.appendChild(technical);
@@ -12534,6 +12556,7 @@
       button.classList.add('copied');
       const originalTitle = button.title;
       button.title = 'Copied!';
+      flashCopyIcon(button);
       setTimeout(() => {
         button.classList.remove('copied');
         button.title = originalTitle;
