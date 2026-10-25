@@ -3084,8 +3084,9 @@
         </div>
         <details class="upgrade-advanced">
           <summary>Advanced — other releases</summary>
+          <p class="batch-field-help">Each chosen release is upgraded only on instances whose deployment already uses it. Instances without it keep their current releases.</p>
           <div class="upgrade-advanced-releases">
-            <div class="upgrade-advanced-empty">Select a service to choose other releases.</div>
+            <div class="upgrade-advanced-empty">Loading the releases on the director...</div>
           </div>
         </details>
       </div>
@@ -5470,9 +5471,9 @@
       restoreChoice(floorSelect, previous);
     };
 
-    // Populate the "Advanced — other releases" pickers: one version dropdown per managed
-    // release the selected service's instances run, other than the service's own release
-    // (bpm, and rabbitmq's routing/etc.).
+    // Populate the "Advanced — other releases" pickers: one version dropdown per release
+    // uploaded to the director, whatever the Service filter says. When one service is
+    // chosen, its own release is left out, because the main picker already covers it.
     const populateAdvancedReleases = (serviceId, keep) => {
       const container = document.querySelector('#upgrade .upgrade-advanced-releases');
       if (!container) return;
@@ -5480,44 +5481,27 @@
       if (keep) {
         container.querySelectorAll('select').forEach(sel => { previous[sel.dataset.releaseName] = sel.value; });
       }
-      if (!serviceId) {
-        container.innerHTML = '<div class="upgrade-advanced-empty">Select a service to choose other releases.</div>';
-        updateUpgradeButton();
-        return;
-      }
-      // Union of the other managed release names across this service's instances.
-      const ownRelease = upgradeServiceRelease(serviceId);
-      const names = new Set();
-      Object.entries(window.serviceInstances || {}).forEach(([id, details]) => {
-        if (details.deleted || details.service_id !== serviceId) return;
-        upgradeInstanceReleases(id, details).forEach(rv => {
-          const name = (rv || '').split('/')[0];
-          if (name && name !== ownRelease) names.add(name);
-        });
+      const ownRelease = serviceId ? upgradeServiceRelease(serviceId) : '';
+      const relByName = {};
+      (window.upgradeDirectorReleases || []).forEach(r => {
+        if (r && r.name && r.name !== ownRelease) relByName[r.name] = r;
       });
-      if (names.size === 0) {
-        let message = 'No other releases for this service.';
-        if (window.upgradeDeploymentReleasesState === 'loading') message = 'Loading the releases this service runs...';
-        if (window.upgradeDeploymentReleasesState === 'failed') message = 'The releases this service runs could not be loaded.';
+      const names = Object.keys(relByName).sort();
+      if (names.length === 0) {
+        let message = 'The director has no other releases uploaded.';
+        if (window.upgradeDirectorReleasesState === 'loading') message = 'Loading the releases on the director...';
+        if (window.upgradeDirectorReleasesState === 'failed') message = 'The releases on the director could not be loaded.';
         container.innerHTML = `<div class="upgrade-advanced-empty">${message}</div>`;
         updateUpgradeButton();
         return;
       }
-      const relByName = {};
-      (window.upgradeDirectorReleases || []).forEach(r => { relByName[r.name] = r; });
-      container.innerHTML = Array.from(names).sort().map(name => {
+      container.innerHTML = names.map(name => {
         const rel = relByName[name];
-        const versions = (rel && rel.release_versions) ? rel.release_versions : [];
-        const opts = ['<option value="">— keep current —</option>']
+        const versions = rel.release_versions || [];
+        const opts = ['<option value="">Don\'t change</option>']
           .concat(versions.map(rv => `<option value="${escapeAttribute(rv.version)}">${escapeHtml(rv.version)}</option>`))
           .join('');
-        let disabled = '';
-        if (versions.length === 0) {
-          let reason = 'no uploaded versions on the director';
-          if (window.upgradeDirectorReleasesState === 'loading') reason = 'loading the director\'s releases';
-          if (window.upgradeDirectorReleasesState === 'failed') reason = 'the director\'s releases could not be loaded';
-          disabled = `disabled title="${escapeAttribute(reason)}"`;
-        }
+        const disabled = versions.length === 0 ? 'disabled title="no uploaded versions on the director"' : '';
         return `<div class="filter-row">
           <label for="upgrade-advrel-${escapeAttribute(name)}">${escapeHtml(name)}:</label>
           <select id="upgrade-advrel-${escapeAttribute(name)}" data-release-name="${escapeAttribute(name)}" ${disabled}>${opts}</select>
@@ -5577,7 +5561,7 @@
         updatePlanFilter(serviceSelect.value);
         populateReleaseFilter(serviceSelect.value, false);
         populateReleaseFloorFilter(serviceSelect.value, false);
-        populateAdvancedReleases(serviceSelect.value, false);
+        populateAdvancedReleases(serviceSelect.value, true);
         refreshUpgradeInstanceList();
       });
     }
@@ -7156,6 +7140,7 @@
 
     // Collect release targets: the service's own release + any "advanced" sidecar picks.
     const targetReleases = [];
+    // With All services there is no own release, so only the advanced picks go out.
     if (releaseValue && window.upgradeCurrentRelease) {
       targetReleases.push({ name: window.upgradeCurrentRelease, version: releaseValue });
     }
