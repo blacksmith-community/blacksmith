@@ -265,8 +265,9 @@ cleanup() {
 # deadline, an empty environment with fixed values, umask 022, stdin at
 # end of file, and the home of its user as its working directory. The
 # vcap command runs under setpriv, inside timeout, with no supplementary
-# groups. The wrapper exits with the code the command ended with, which
-# it also records in the exit file.
+# groups and no way to gain privileges through setuid programs. The
+# wrapper exits with the code the command ended with, which it also
+# records in the exit file.
 execute() {
 	[ "$#" -eq 4 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
@@ -318,7 +319,7 @@ execute() {
 	if [ "$user" = vcap ]; then
 		setpriv=$(_rc_tool setpriv) || return "$EXIT_REFUSED"
 		command -v -- "$setpriv" > /dev/null || return "$EXIT_REFUSED"
-		priv=("$setpriv" "--reuid=$uid" "--regid=$gid" --clear-groups --)
+		priv=("$setpriv" "--reuid=$uid" "--regid=$gid" --clear-groups --no-new-privs --)
 	fi
 
 	_rc_write "$dir/started" < /dev/null || return "$EXIT_REFUSED"

@@ -1821,7 +1821,7 @@ func TestRunExecVcapLaunchLine(t *testing.T) {
 	want := strings.Join([]string{
 		"-k", "10", "30",
 		tree.path("usr/bin/setpriv"),
-		fmt.Sprintf("--reuid=%d", uid), fmt.Sprintf("--regid=%d", gid), "--clear-groups", "--",
+		fmt.Sprintf("--reuid=%d", uid), fmt.Sprintf("--regid=%d", gid), "--clear-groups", "--no-new-privs", "--",
 		"env", "-i", "HOME=/home/vcap", "USER=vcap", "LOGNAME=vcap", "SHELL=/bin/bash",
 		"PATH=/var/vcap/bosh/bin:/usr/local/bin:/usr/bin:/bin",
 		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TMPDIR=/var/vcap/data/tmp",
@@ -2126,7 +2126,7 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 	tree.fakeGetent(t, vcapEntry(uid, gid, "/home/vcap"))
 
 	taskDir := tree.path(runOps, runTask)
-	command := fmt.Sprintf("id -u\nid -g\nid -G\ncat %[1]q\n(echo more >> %[1]q) 2> /dev/null || echo append-denied\nrm -rf %[2]q 2> /dev/null\n[ -e %[2]q ] && echo remove-denied\n", taskDir+"/cmd.sh", taskDir)
+	command := fmt.Sprintf("id -u\nid -g\nid -G\ngrep ^NoNewPrivs: /proc/self/status\ncat %[1]q\n(echo more >> %[1]q) 2> /dev/null || echo append-denied\nrm -rf %[2]q 2> /dev/null\n[ -e %[2]q ] && echo remove-denied\n", taskDir+"/cmd.sh", taskDir)
 
 	code, _ := tree.prepare(t, runTask, "vcap", []byte(command))
 	if code != 0 {
@@ -2138,7 +2138,7 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 		t.Fatalf("exit = %d; stderr %q", code, errOut)
 	}
 
-	want := fmt.Sprintf("%d\n%d\n%d\n%sappend-denied\nremove-denied\n", uid, gid, gid, command)
+	want := fmt.Sprintf("%d\n%d\n%d\nNoNewPrivs:\t1\n%sappend-denied\nremove-denied\n", uid, gid, gid, command)
 	if out != want {
 		t.Errorf("the command printed\n%s\nwant\n%s", out, want)
 	}
