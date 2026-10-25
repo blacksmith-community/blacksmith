@@ -432,3 +432,53 @@ body > footer p { margin: 0; }
 @media (pointer: coarse) {
  #services .filter-buttons button { flex-basis: 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
 }
+
+/* Activity: scan status first, expand operational evidence as needed. */
+#upgrade .task-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 1rem;
+}
+#upgrade .task-detail-summary .summary-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .25rem;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+#upgrade .task-detail-summary .label { width: auto; }
+#upgrade .task-detail-summary .value { overflow-wrap: anywhere; }
+#upgrade .result-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem 1rem;
+  padding: .75rem 1rem;
+}
+#upgrade .result-panel-title, #upgrade .result-panel-task { margin: 0; }
+#upgrade .result-panel-task { overflow-wrap: anywhere; }
+#upgrade .result-panel-actions { margin: 0 0 0 auto; }
+#upgrade .result-panel-error:not([hidden]) { flex-basis: 100%; }
+#upgrade .cert-task-vm { padding: 0; }
+#upgrade .cert-task-vm summary { padding: .65rem .85rem; gap: .5rem 1rem; }
+#upgrade .cert-task-vm-name { overflow-wrap: anywhere; min-width: 0; }
+#upgrade .cert-task-vm-phase, #upgrade .cert-task-vm-health {
+  font-size: .875rem;
+  color: var(--text-primary);
+}
+#upgrade .cert-task-vm-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: 1rem 1.5rem;
+  padding: .75rem .85rem 1rem;
+  border-top: 1px solid var(--border-primary);
+}
+#upgrade .cert-task-vm-section { min-width: 0; overflow-wrap: anywhere; }
+#upgrade .cert-task-vm-label { margin: 0 0 .5rem; font-size: .95rem; }
+#upgrade .cert-task-vm li { margin-block: .35rem; }
+#upgrade .cert-task-variables { padding-left: 1.25rem; }
+#upgrade .cert-task-variable { margin-block: .75rem; overflow-wrap: anywhere; }
+
+#upgrade .task-detail-summary .summary-row:not(:last-child) { border: 0; }

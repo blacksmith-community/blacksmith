@@ -6691,6 +6691,22 @@
         const err = rotateEl('p', 'cert-task-vm-error', String(vm.error));
         details.appendChild(err);
       }
+      const body = rotateEl('div', 'cert-task-vm-body');
+      let section;
+      [...details.children].filter(child => child !== summary).forEach(child => {
+        if (child.classList.contains('cert-task-vm-label') || !section) {
+          section = rotateEl('div', 'cert-task-vm-section');
+          body.appendChild(section);
+        }
+        section.appendChild(child);
+      });
+      details.appendChild(body);
+      if (vm.error) summary.appendChild(rotateEl('span', 'cert-task-vm-error', 'Needs attention'));
+      else if (vm.gate_after) {
+        const gate = vm.gate_after;
+        const label = typeof gate === 'string' ? gate : gate.ok === true ? 'passed' : gate.ok === false ? 'failed' : 'recorded';
+        summary.appendChild(rotateEl('span', 'cert-task-vm-health', `Health: ${label}`));
+      }
       list.appendChild(details);
     });
     return list;
@@ -6745,7 +6761,9 @@
     const instancesHtml = instances.map((instance, index) => {
       const statusIcon = getInstanceStatusIcon(instance.status);
       const statusClass = getInstanceStatusClass(instance.status);
-      const boshTaskId = Number(instance.bosh_task_id) || 0;
+      // Converge records its deploy separately from the instance's original task.
+      const boshTaskId = [instance.certificates?.converge?.bosh_task_id, instance.bosh_task_id, instance.certificates?.deploy_outcome?.bosh_task_id]
+        .map(Number).find(id => Number.isSafeInteger(id) && id > 0) || 0;
       const rowKey = decisionKey(task.id, instance.instance_id);
       const rowAttrs = isCertificates
         ? ` data-decision-row="${escapeAttribute(rowKey)}" data-keep-key="inst:${escapeAttribute(rowKey)}" tabindex="-1"`
@@ -6796,7 +6814,7 @@
       ? `
           <div class="summary-row">
             <span class="label">Mode:</span>
-            <span class="value">${escapeHtml(spec.mode || '')}</span>
+            <span class="value">${escapeHtml(({patch: 'Patch in place', redeploy: 'Redeploy', converge: 'Converge'})[spec.mode] || spec.mode || '')}</span>
           </div>
           ${spec.reason ? `
           <div class="summary-row">
@@ -6819,7 +6837,7 @@
       <div class="upgrade-task-detail">
         <div class="task-detail-header">
           <button type="button" class="back-to-list" data-task-action="back" data-keep-key="action:back">&#8592; Back to Jobs</button>
-          <h3>${escapeHtml(jobName)}</h3>
+          <h3 tabindex="-1" data-keep-key="task-heading">${escapeHtml(jobName)}</h3>
           ${controlButtonsHtml}
         </div>
         <div class="task-detail-summary">
@@ -7057,6 +7075,9 @@
     }
     try {
       await selectUpgradeTask(taskId, { throwOnError: true });
+      const heading = document.querySelector('#upgrade .task-detail-header h3');
+      heading?.focus({ preventScroll: true });
+      heading?.scrollIntoView?.({ block: 'nearest' });
     } catch (err) {
       throw new Error(`The task could not be opened. ${apiErrorText(err)}`);
     }
@@ -7082,6 +7103,7 @@
       return node;
     };
 
+    const opener = document.activeElement;
     container.textContent = '';
     const panel = make('section', 'result-panel');
     panel.setAttribute('role', 'region');
@@ -7122,7 +7144,7 @@
 
     const actions = make('div', 'result-panel-actions');
     if (taskId) {
-      const openBtn = make('button', 'btn-primary btn-sm result-panel-open', 'Open task');
+      const openBtn = make('button', 'btn-primary btn-sm result-panel-open', 'View batch job');
       openBtn.type = 'button';
       const openIt = async () => {
         errorBox.hidden = true;
@@ -7137,8 +7159,11 @@
     }
     const closeBtn = make('button', 'btn-secondary btn-sm result-panel-close', 'Close');
     closeBtn.type = 'button';
+    closeBtn.title = taskId ? 'Dismiss this notice. The job keeps running.' : 'Dismiss this notice';
     const close = () => {
       container.textContent = '';
+      const target = container.closest('#upgrade') ? document.getElementById('batch-activity') : opener;
+      if (target?.isConnected) target.focus();
       if (typeof options.onClose === 'function') options.onClose();
     };
     closeBtn.addEventListener('click', close);

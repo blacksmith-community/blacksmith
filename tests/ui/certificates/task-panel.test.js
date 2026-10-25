@@ -79,6 +79,18 @@ t('task panel and API errors', async () => {
   ok(alerts.length===0,'no window.alert/confirm/prompt used');
   w.__routes.unshift([/\/b\/upgrade\/tasks\/t1\/resume$/,(u,o,json)=>json(503,{success:false,error:'loading',code:'tasks_loading'})]);
   await w.resumeTask('t1'); ok(d.querySelector('.feedback-panel[data-feedback-context="upgrade-tasks"]').textContent.includes('try again in a few seconds')||d.querySelector('.feedback-panel[data-feedback-context="upgrade-tasks"]').textContent.includes('Try again in a few seconds'),'resume tasks_loading advice shown');
+
+  { const shown=[];w.showTaskDetails=id=>shown.push(id);
+    for (const certificates of [{mode:'patch',converge:{bosh_task_id:71}},{deploy_outcome:{bosh_task_id:72}}]) {
+      T.renderTaskDetail({...detail,instances:[{instance_id:'patch-i',status:'running',certificates}]});
+      const button=panel.querySelector('.bosh-task-btn');
+      ok(!!button,'certificate deployment exposes its BOSH task');
+      if(button)button.click();
+    }
+    ok(shown.join(',')==='71,72','nested BOSH task links use the existing task modal');
+    T.renderTaskDetail({...detail,instances:[{instance_id:'patch-only',status:'running',certificates:{phase:'patch'}}]});
+    ok(!panel.querySelector('.bosh-task-btn'),'SSH-only patch does not invent a BOSH task');
+  }
   // network failure
   w.__routes.unshift([/\/b\/upgrade\/tasks\/t1\/cancel$/,()=>Promise.reject(new Error('network down'))]);
   // cancel opens confirm dialog; auto confirm by clicking confirm
@@ -129,11 +141,13 @@ t('task panel and API errors', async () => {
   const rp=w.blacksmithResultPanel(rbox,{title:EVIL,taskId:EVIL});
   ok(rbox.querySelectorAll('img,script').length===0&&rbox.textContent.includes(EVIL),'result panel inert with hostile title and id');
   ok(rbox.querySelector('.result-panel-error').hidden,'no error shown at first');
+  ok(rbox.querySelector('.result-panel-open').textContent==='View batch job','batch navigation distinguished from BOSH logs');
   rbox.querySelector('.result-panel-open').click(); await sleep(40);
   ok(!rbox.querySelector('.result-panel-error').hidden&&/does not include/.test(rbox.querySelector('.result-panel-error-text').textContent)&&!rbox.querySelector('.result-panel-retry').hidden,'navigation failure shown with Retry');
   listBody=[{...running,id:EVIL}]; w.__routes.unshift([/\/b\/upgrade\/tasks\/.*$/,(u,o,json)=>json(200,{...running,id:EVIL})]);
   rbox.querySelector('.result-panel-retry').click(); await sleep(60);
   ok(rbox.querySelector('.result-panel-error').hidden&&T._getSelectedTask()===EVIL,'Retry reopens the task');
+  ok(d.activeElement===panel.querySelector('.task-detail-header h3'),'job navigation focuses job heading');
   const rp2=w.blacksmithResultPanel(rbox,{title:'Failed',error:'Preview failed',retry:()=>{ w.__retried=true; }});
   ok(!rbox.querySelector('.result-panel-error').hidden&&rbox.querySelector('.result-panel-error-text').textContent==='Preview failed','error option shows message');
   rbox.querySelector('.result-panel-retry').click(); ok(w.__retried===true,'retry callback runs');
