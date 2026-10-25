@@ -12,7 +12,7 @@
 # it.
 #
 #   prepare prints  staged bytes=<n> sha256=<hex>
-#   cleanup prints  cleanup started=<yes|no> exit=<code or -> killed=<yes|no>
+#   cleanup prints  cleanup started=<yes|no|-> exit=<code or -> killed=<yes|no>
 #
 # The directory of a task is root-owned with mode 0710 and the group of
 # the vcap account, inside runcmd, which is root-owned with mode 0711. A
@@ -26,7 +26,7 @@
 
 readonly RC_DATA=/var/vcap/data
 readonly RC_USER_RE='^(root|vcap)$'
-readonly RC_EXIT_RE='^[0-9]{1,3}$'
+readonly RC_EXIT_RE='^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
 
 # The directory that the EXIT trap removes when an operation stops before
 # it is done. prepare sets it while the directory is half made, and
@@ -118,9 +118,14 @@ _rc_check_file() {
 }
 
 # _rc_write <file> copies the rest of stdin to a file that must not
-# exist. noclobber makes the shell open it with O_EXCL, which fails on
-# any existing name and does not follow a symlink that is already there.
+# exist. Any existing name is refused first, a symlink included, because
+# the shell's noclobber check skips O_EXCL when the name leads to
+# something that is not a regular file, such as a FIFO or a device, and
+# would then follow the link. noclobber still closes the race between
+# that test and the open.
 _rc_write() {
+	[ ! -e "$1" ] && [ ! -L "$1" ] || return 1
+
 	(
 		set -C
 		cat > "$1"
@@ -148,6 +153,7 @@ prepare() {
 
 	if [ ! -e "$base" ] && [ ! -L "$base" ]; then
 		mkdir -m 0711 -- "$base" 2> /dev/null || return "$EXIT_REFUSED"
+		chmod -- 00711 "$base" || return 1
 	fi
 
 	_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
@@ -160,12 +166,13 @@ prepare() {
 	_RC_DROP=$dir
 
 	chgrp -- "$gid" "$dir" || return 1
-	chmod -- 0710 "$dir" || return 1
+	chmod -- 00710 "$dir" || return 1
 	_rc_check_dir "$dir" 0 "$gid" 710 || return "$EXIT_REFUSED"
 
-	_rc_write "$file" || return 1
+	_rc_write "$file" || return "$EXIT_REFUSED"
+	_rc_check_file "$file" 0 - 600 || return "$EXIT_REFUSED"
 	chgrp -- "$gid" "$file" || return 1
-	chmod -- 0640 "$file" || return 1
+	chmod -- 00640 "$file" || return 1
 	_rc_check_file "$file" 0 "$gid" 640 || return "$EXIT_REFUSED"
 
 	# Some wc builds pad the count with blanks, which arithmetic drops.
@@ -178,10 +185,12 @@ prepare() {
 
 # cleanup prints whether the command started and how it ended, and then
 # removes the task directory. started is yes when exec left its marker,
-# and exit is the code exec recorded, or - when there is none. A task
-# with no directory has nothing to report, so it prints nothing and
-# succeeds, which lets a repeated cleanup finish quietly. A directory
-# that is a symlink, or is not root's, is refused and never removed.
+# and exit is the code exec recorded, or - when there is none. It always
+# prints exactly one record. A task with no directory prints
+# started=- and succeeds, because the directory may be missing either
+# because prepare never arrived or because an earlier cleanup removed it,
+# and the caller must treat the outcome as unknown. A directory that is a
+# symlink, or is not root's, is refused and never removed.
 cleanup() {
 	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
@@ -195,6 +204,7 @@ cleanup() {
 	dir=$base/$task
 
 	if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then
+		printf 'cleanup started=- exit=- killed=no\n'
 		return 0
 	fi
 
@@ -229,12 +239,14 @@ _rc_main() {
 	esac
 }
 
-# This line must stay the last line of the script, on one line with
-# nothing after it. prepare reads the command from the stdin that follows
+# This line must stay the last line of the script, on one line, and end
+# with a newline. prepare reads the command from the stdin that follows
 # the script, and bash reads a script from stdin one line at a time. Bash
-# runs this line only after it has read all of it, and it has read every
-# line above by then, so the command is still unread when _rc_main starts
-# and is never parsed as shell. Were the call split over lines, bash could
-# read into the command. exit with no argument keeps the operation's
-# status, which the EXIT trap does not change.
+# runs this line only after it has read all of it, so the command is
+# still unread when _rc_main starts and is never parsed as shell. Were
+# the call and the exit on two lines, a successful cat would copy the
+# exit line into cmd.sh as part of the command. Were the final newline
+# missing, bash would glue the exit onto the first line of the command.
+# exit with no argument keeps the operation's status, which the EXIT trap
+# does not change.
 _rc_main "$@"; exit

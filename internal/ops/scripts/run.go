@@ -43,10 +43,48 @@ const (
 
 // runSeconds is one to four digits with no leading zero, because the
 // shell reads a leading zero as octal.
+var runSeconds = regexp.MustCompile(`^[1-9][0-9]{1,3}$`)
+
+// The values a cleanup record may carry. started is - when the task
+// directory was already gone, so nothing is known about the command.
 var (
-	runSeconds = regexp.MustCompile(`^[1-9][0-9]{1,3}$`)
-	runDigest  = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	cleanupYesNo = regexp.MustCompile(`^(yes|no)$`)
+	cleanupExit  = regexp.MustCompile(`^(-|[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
+	cleanupSeen  = regexp.MustCompile(`^(yes|no|-)$`)
 )
+
+// Cleanup is what the cleanup operation reports. Started is "yes", "no",
+// or "-" when the task directory was already gone, which leaves the
+// outcome unknown. Exit is the recorded exit code, or "-" when there is
+// none. Killed is "yes" or "no".
+type Cleanup struct {
+	Started string
+	Exit    string
+	Killed  string
+}
+
+// ParseCleanup reads the output of cleanup, which must be exactly one
+// cleanup record with a valid value in each field.
+func ParseCleanup(out []byte) (Cleanup, error) {
+	records, err := ParseRecords(out, RunKinds())
+	if err != nil {
+		return Cleanup{}, err
+	}
+
+	if len(records) != 1 || records[0].Kind != RecordCleanup {
+		return Cleanup{}, fmt.Errorf("%w: cleanup did not print exactly one cleanup record", ErrMalformedOutput)
+	}
+
+	fields := records[0].Fields
+	result := Cleanup{Started: fields["started"], Exit: fields["exit"], Killed: fields["killed"]}
+
+	if !cleanupSeen.MatchString(result.Started) || !cleanupExit.MatchString(result.Exit) ||
+		!cleanupYesNo.MatchString(result.Killed) {
+		return Cleanup{}, fmt.Errorf("%w: a cleanup field holds a value outside its set", ErrMalformedOutput)
+	}
+
+	return result, nil
+}
 
 // RunScript returns the text sent on stdin for the operations that carry
 // no command, which is lib.sh followed by run.sh.
@@ -92,7 +130,7 @@ func ValidRunSeconds(seconds string) error {
 
 // ValidRunDigest accepts only a lowercase hex SHA-256.
 func ValidRunDigest(digest string) error {
-	if !runDigest.MatchString(digest) {
+	if !hashValue.MatchString(digest) {
 		return fmt.Errorf("%w: the digest is not a lowercase hex SHA-256", ErrRefused)
 	}
 

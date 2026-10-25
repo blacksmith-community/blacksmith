@@ -289,6 +289,19 @@ func (r *runTree) snippet(t *testing.T, noRoot bool, text string) (int, string) 
 	return exit.ExitCode(), stdout.String()
 }
 
+// canaryCommand would leave a mark if the unread stdin ever ran.
+var canaryCommand = []byte(`touch "$CERTPATCH_ROOT/ran"` + "\n")
+
+// requireNoCanary fails the test when canaryCommand ran.
+func (r *runTree) requireNoCanary(t *testing.T) {
+	t.Helper()
+
+	_, err := os.Lstat(r.path("ran"))
+	if err == nil {
+		t.Error("the command on stdin ran")
+	}
+}
+
 // cmdFile is the path of a task's staged command.
 func (r *runTree) cmdFile(task string) string {
 	return r.path(runOps, task, "cmd.sh")
@@ -609,11 +622,13 @@ func TestPrepareRefusals(t *testing.T) {
 		tree := newRunTree(t)
 
 		for _, task := range []string{"", "../x", "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D", runTask + "x", "a b"} {
-			code, _ := tree.prepare(t, task, "vcap", []byte("true\n"))
+			code, _ := tree.prepare(t, task, "vcap", canaryCommand)
 			if code != scripts.ExitUsage {
 				t.Errorf("task %q exited %d, want %d", task, code, scripts.ExitUsage)
 			}
 		}
+
+		tree.requireNoCanary(t)
 
 		_, err := os.Lstat(tree.path(runOps))
 		if err == nil {
@@ -626,10 +641,12 @@ func TestPrepareRefusals(t *testing.T) {
 
 		tree := newRunTree(t)
 
-		code, _ := tree.prepare(t, runTask, "nobody", []byte("true\n"))
+		code, _ := tree.prepare(t, runTask, "nobody", canaryCommand)
 		if code != scripts.ExitUsage {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitUsage)
 		}
+
+		tree.requireNoCanary(t)
 	})
 
 	t.Run("a wrong argument count", func(t *testing.T) {
@@ -660,10 +677,7 @@ func TestPrepareRefusals(t *testing.T) {
 		tree := newRunTree(t)
 		tree.makeTask(t, runTask, map[string]string{"cmd.sh": "first\n"})
 
-		// A command that would leave a mark if the unread stdin ever ran.
-		command := []byte(`touch "$CERTPATCH_ROOT/ran"` + "\n")
-
-		code, out := tree.prepare(t, runTask, "vcap", command)
+		code, out := tree.prepare(t, runTask, "vcap", canaryCommand)
 		if code != scripts.ExitRefused {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
 		}
@@ -672,10 +686,7 @@ func TestPrepareRefusals(t *testing.T) {
 			t.Errorf("a refusal printed %q", out)
 		}
 
-		_, err := os.Lstat(tree.path("ran"))
-		if err == nil {
-			t.Error("the command on stdin ran")
-		}
+		tree.requireNoCanary(t)
 
 		got, err := os.ReadFile(tree.cmdFile(runTask))
 		if err != nil || string(got) != "first\n" {
@@ -745,6 +756,29 @@ func TestPrepareRefusals(t *testing.T) {
 		code, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
 		if code != scripts.ExitRefused {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
+		}
+	})
+
+	t.Run("a data directory others can write", func(t *testing.T) {
+		t.Parallel()
+
+		tree := newRunTree(t)
+
+		err := os.Chmod(tree.path("var/vcap/data"), 0o777) //nolint:gosec // the case under test
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		code, out := tree.prepare(t, runTask, "vcap", canaryCommand)
+		if code != scripts.ExitRefused || out != "" {
+			t.Errorf("exit = %d, output %q; want %d and none", code, out, scripts.ExitRefused)
+		}
+
+		tree.requireNoCanary(t)
+
+		_, err = os.Lstat(tree.path(runOps))
+		if err == nil {
+			t.Error("a refused chain left runcmd behind")
 		}
 	})
 
@@ -820,6 +854,8 @@ func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 		{"it started with no exit", map[string]string{"started": "", "pgid": "123\n"}, "cleanup started=yes exit=- killed=no\n"},
 		{"an exit file with junk", map[string]string{"started": "", "exit": "7; id\n"}, "cleanup started=yes exit=- killed=no\n"},
 		{"an exit file that is empty", map[string]string{"started": "", "exit": ""}, "cleanup started=yes exit=- killed=no\n"},
+		{"an exit of 255", map[string]string{"started": "", "exit": "255\n"}, "cleanup started=yes exit=255 killed=no\n"},
+		{"an exit of 256", map[string]string{"started": "", "exit": "256\n"}, "cleanup started=yes exit=- killed=no\n"},
 		{"an exit of four digits", map[string]string{"started": "", "exit": "1000\n"}, "cleanup started=yes exit=- killed=no\n"},
 	}
 
@@ -872,8 +908,13 @@ func TestCleanupGuards(t *testing.T) {
 		tree := newRunTree(t)
 
 		code, out := tree.cleanup(t, runTask)
-		if code != 0 || out != "" {
-			t.Errorf("exit = %d, output = %q; want a quiet success", code, out)
+		if code != 0 || out != "cleanup started=- exit=- killed=no\n" {
+			t.Errorf("exit = %d, output = %q; want the unknown record", code, out)
+		}
+
+		result, err := scripts.ParseCleanup([]byte(out))
+		if err != nil || result.Started != "-" {
+			t.Errorf("ParseCleanup = %+v, %v", result, err)
 		}
 	})
 
@@ -1029,5 +1070,132 @@ func TestRCVcapGIDComesFromTheFakeHome(t *testing.T) {
 	code, out := tree.snippet(t, false, "_rc_vcap_gid\n")
 	if code != 0 || out != strconv.Itoa(tree.gid) {
 		t.Errorf("_rc_vcap_gid = %q (exit %d), want %d", out, code, tree.gid)
+	}
+}
+
+func TestWriteRefusesSpecialFiles(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	fifo := tree.path("home/vcap/fifo")
+
+	err := syscall.Mkfifo(fifo, 0o600)
+	if err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+
+	for name, target := range map[string]string{
+		"a symlink to a FIFO":   fifo,
+		"a dangling symlink":    tree.path("home/vcap/missing"),
+		"a symlink to the root": tree.root,
+	} {
+		link := tree.path("var/vcap/data", strings.ReplaceAll(name, " ", "-"))
+
+		err := os.Symlink(target, link)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Without the refusal, the open of the FIFO blocks until the
+		// 20 second deadline of the run.
+		code, _ := tree.snippet(t, false, `echo "new" | _rc_write "`+link+`"`+"\n")
+		if code == 0 {
+			t.Errorf("%s: _rc_write succeeded", name)
+		}
+
+		_, err = os.Lstat(target)
+		if name == "a dangling symlink" && err == nil {
+			t.Errorf("%s: the target was created", name)
+		}
+	}
+
+	info := mustStat(t, fifo)
+	if info.Mode().Perm() != 0o600 || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Errorf("the FIFO is now %v", info.Mode())
+	}
+}
+
+func TestPrepareChecksTheFileBeforeChangingIt(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	victim := tree.path("home/vcap/victim")
+
+	err := os.WriteFile(victim, []byte("keep"), 0o644) //nolint:gosec // a test file
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// _rc_write is replaced by one that plants a symlink and reports
+	// success, as a write through a link would. prepare must refuse it
+	// before chgrp and chmod touch the victim.
+	text := "_rc_write() { ln -s " + victim + ` "$1"; }` + "\nprepare " + runTask + " vcap < /dev/null\n"
+
+	code, _ := tree.snippet(t, false, text)
+	if code != scripts.ExitRefused {
+		t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
+	}
+
+	if mustStat(t, victim).Mode().Perm() != 0o644 {
+		t.Error("prepare changed the mode of a file behind a symlink")
+	}
+}
+
+func TestPrepareClearsSetgidFromTheParent(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("macOS does not pass the setgid bit to new directories")
+	}
+
+	tree := newRunTree(t)
+
+	err := os.Chmod(tree.path("var/vcap/data"), 0o755|os.ModeSetgid)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+
+	for _, path := range []string{tree.path(runOps), tree.path(runOps, runTask)} {
+		if mustStat(t, path).Mode()&os.ModeSetgid != 0 {
+			t.Errorf("%s kept the setgid bit", path)
+		}
+	}
+}
+
+func TestParseCleanupChecksValues(t *testing.T) {
+	t.Parallel()
+
+	for _, ok := range []string{
+		"cleanup started=yes exit=7 killed=no\n",
+		"cleanup started=no exit=- killed=no\n",
+		"cleanup started=- exit=- killed=no\n",
+		"cleanup started=yes exit=255 killed=yes\n",
+	} {
+		_, err := scripts.ParseCleanup([]byte(ok))
+		if err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+
+	for _, bad := range []string{
+		"cleanup started=maybe exit=7 killed=no\n",
+		"cleanup started=yes exit=256 killed=no\n",
+		"cleanup started=yes exit=07 killed=no\n",
+		"cleanup started=yes exit=7 killed=-\n",
+		"cleanup started=yes exit=7 killed=no\ncleanup started=no exit=- killed=no\n",
+		"staged bytes=1 sha256=" + strings.Repeat("a", 64) + "\n",
+		"",
+	} {
+		_, err := scripts.ParseCleanup([]byte(bad))
+		if err == nil {
+			t.Errorf("%q parsed", bad)
+		}
 	}
 }
