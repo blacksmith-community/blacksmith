@@ -8232,6 +8232,7 @@
   // Builds the notice shown above the instance logs when the response left
   // files out or kept only part of them. Instance names and file paths come
   // from the director's log bundle, so they are escaped.
+  let logNoticeSequence = 0;
   const formatTruncatedNotice = (truncated) => {
     if (!truncated) return '';
 
@@ -8273,8 +8274,23 @@
       parts.push(`<p>The log bundle was cut short for ${names}, so later files in it were not read.</p>`);
     }
 
-    return `<div class="instance-logs-notice" role="status">${parts.join('')}</div>`;
+    const id = `log-notice-${++logNoticeSequence}`;
+    return `<button type="button" class="log-info-toggle" data-log-notice="${id}" aria-controls="${id}" aria-expanded="false" aria-label="Log collection details" title="Some logs are incomplete. Show collection details">ⓘ</button><div id="${id}" class="instance-logs-notice" hidden>${parts.join('')}</div>`;
   };
+
+  const mountLogNotice = container => {
+    const button = container.querySelector('.log-info-toggle');
+    const toolbar = container.querySelector('.table-controls-container, .logs-controls-row');
+    if (button && toolbar) toolbar.appendChild(button);
+  };
+  document.addEventListener('click', event => {
+    const button = event.target.closest('[data-log-notice]');
+    if (!button) return;
+    const notice = document.getElementById(button.dataset.logNotice);
+    if (!notice) return;
+    notice.hidden = !notice.hidden;
+    button.setAttribute('aria-expanded', String(!notice.hidden));
+  });
 
   const formatInstanceLogs = (logsData, truncated) => {
     if (!logsData || Object.keys(logsData).length === 0) {
@@ -8288,26 +8304,12 @@
     const jobsList = Object.keys(logsData);
     const firstJob = jobsList[0];
 
-    // Generate job tabs. A job key is <job>/<instance ID>, both from the
-    // director, so it is escaped and kept in data-job, where the one
-    // listener for the logs view reads it, and never placed in a script.
-    const jobTabs = jobsList.map((job, index) => `
-      <button class="instance-log-job-tab ${index === 0 ? 'active' : ''}"
-              data-job="${escapeAttribute(job)}"
-              data-instance-log="select-job">
-        ${escapeHtml(job)}
-      </button>
-    `).join('');
-
     // Generate initial content for first job
     const initialContent = formatJobLogContent(firstJob, logsData[firstJob]);
 
     return `
       <div class="instance-logs-wrapper">
         ${formatTruncatedNotice(truncated)}
-        <div class="instance-log-job-tabs">
-          ${jobTabs}
-        </div>
         <div class="instance-logs-content" id="instance-logs-content">
           ${initialContent}
         </div>
@@ -8317,19 +8319,23 @@
 
   // Helper function to format job log content with dropdown and content
   const formatJobLogContent = (jobKey, jobData) => {
+    const nodeSelector = `<select class="log-node-select" aria-label="Node" data-job="${escapeAttribute(jobKey)}" data-instance-log="select-job">
+                      ${Object.keys(window.instanceLogsData || {[jobKey]: jobData}).map(job => `<option value="${escapeAttribute(job)}"${job === jobKey ? ' selected' : ''}>${escapeHtml(job)}</option>`).join('')}
+                    </select>`;
+    const empty = message => `<div class="job-logs-container"><div class="table-controls-container">${nodeSelector}</div><div class="no-data">${message}</div></div>`;
     if (!jobData) {
-      return '<div class="no-data">No data available for this job</div>';
+      return empty('No data available for this node');
     }
 
     if (jobData.error) {
-      return `<div class="error">${escapeHtml(String(jobData.error))}</div>`;
+      return empty(escapeHtml(String(jobData.error)));
     }
 
     const files = jobData;
 
     // If no files available
     if (typeof files !== 'object' || Object.keys(files).length === 0) {
-      return '<div class="no-data">No log files available for this job</div>';
+      return empty('No log files available for this node');
     }
 
     // Create layout with dropdown selector and content
@@ -8405,12 +8411,13 @@
     return `
       <div class="job-logs-container">
                   <div class="table-controls-container">
+                    ${nodeSelector}
                     <div class="search-filter-container">
                       ${createSearchFilter(`instance-logs-table-${domKey}`, 'Search logs...')}
                     </div>
                     <div class="log-file-selector">
                       <select id="log-select-${domKey}"
-                              class="log-file-dropdown"
+                              class="log-file-dropdown" aria-label="Log file"
                               data-job="${jobAttribute}"
                               data-instance-log="select-file">
                         ${fileOptions}
@@ -8481,12 +8488,12 @@
 
     if (event.type === 'change') {
       if (action === 'select-file') window.selectLogFileForJob(job, control.value);
+      if (action === 'select-job') window.selectInstanceJob(control.value);
       return;
     }
 
     switch (action) {
       case 'select-job':
-        window.selectInstanceJob(job);
         break;
       case 'copy':
         window.copyInstanceLogs(job, { currentTarget: control });
@@ -8507,17 +8514,15 @@
     const logsData = window.instanceLogsData;
     if (!logsData || !logsData[job]) return;
 
-    // Update active tab
-    document.querySelectorAll('.instance-log-job-tab').forEach(tab => {
-      tab.classList.remove('active');
-    });
-    const selectedTab = document.querySelector(`.instance-log-job-tab[data-job="${CSS.escape(job)}"]`);
-    if (selectedTab) selectedTab.classList.add('active');
-
     // Update content area
     const contentArea = document.getElementById('instance-logs-content');
     if (contentArea) {
+      const wrapper = contentArea.closest('.instance-logs-wrapper');
+      const info = wrapper?.querySelector('.log-info-toggle');
+      if (info) wrapper.prepend(info);
       contentArea.innerHTML = formatJobLogContent(job, logsData[job]);
+      if (wrapper) mountLogNotice(wrapper);
+      contentArea.querySelector('.log-node-select')?.focus();
       // Re-initialize sorting and filtering for the new job table
       setTimeout(() => {
         const tableClass = `instance-logs-table-${instanceLogDomKey(job)}`;
@@ -9904,7 +9909,7 @@
             ${createSearchFilter('logs-table', 'Search logs...')}
           </div>
           <div class="log-file-selector">
-            <select id="blacksmith-log-select" class="log-file-dropdown" onchange="window.selectBlacksmithLogFile(this.value)">
+            <select id="blacksmith-log-select" aria-label="Log file" class="log-file-dropdown" onchange="window.selectBlacksmithLogFile(this.value)">
               ${logFileOptions}
             </select>
           </div>
@@ -15090,6 +15095,7 @@
           const content = await fetchServiceDetail(instanceId, tabType);
           if (request !== detailRequestSequence || !contentContainer.isConnected || window.currentInstanceInfo?.id !== instanceId) return;
           contentContainer.innerHTML = content;
+          mountLogNotice(contentContainer);
 
           // Initialize sorting and filtering for tables
           setTimeout(() => {
@@ -15242,6 +15248,7 @@
           const content = await fetchBlacksmithDetail(deploymentName, tabType);
           if (request !== blacksmithRequestSequence) return;
           contentContainer.innerHTML = content;
+          mountLogNotice(contentContainer);
 
           // Initialize sorting and filtering for tables
           setTimeout(() => {

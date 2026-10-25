@@ -536,3 +536,28 @@ body > footer p { margin: 0; }
 .job-logs-container .instance-logs-table { margin: 0; border-collapse: separate; border-spacing: 0; }
 .job-logs-container .instance-logs-table thead { position: sticky; top: 0; z-index: 2; background: var(--bg-tertiary); }
 .job-logs-container .instance-logs-table thead th { top: 0; background: var(--bg-tertiary); }
+
+/* Sidebar navigation already names the selected instance detail view. */
+.service-detail .entity-section-toolbar, #blacksmith .entity-section-toolbar { display: none; }
+.job-logs-container > .table-controls-container, .logs-controls-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
+  padding: .5rem .75rem;
+}
+.log-node-select { flex: 0 1 20rem; width: 20rem; min-width: 10rem; max-width: 100%; }
+.job-logs-container .search-filter-container, .logs-controls-row .search-filter-container { flex: 0 1 16rem; min-width: 10rem; }
+.job-logs-container .log-file-selector, .logs-controls-row .log-file-selector { flex: 0 1 22rem; min-width: 10rem; }
+.log-info-toggle { margin-left: auto; flex: 0 0 auto; min-width: 2.5rem; min-height: 2.5rem; padding: .25rem; font-size: 1.25rem; }
+.instance-logs-notice[hidden] { display: none; }
+@media (max-width: 640px) {
+  .log-node-select { flex-basis: 100%; width: 100%; }
+}
+
+@media (max-width: 640px) {
+  .job-logs-container > .table-controls-container, .logs-controls-row { flex-direction: row; align-items: center; }
+  .job-logs-container .search-filter-container, .job-logs-container .log-file-selector,
+  .logs-controls-row .search-filter-container, .logs-controls-row .log-file-selector { flex-basis: 100%; }
+}
+
+.job-logs-container > .table-controls-container > button, .logs-controls-row > button {
+  width: 2.5rem; min-width: 2.5rem; flex: 0 0 2.5rem;
+}
