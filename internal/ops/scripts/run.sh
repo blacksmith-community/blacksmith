@@ -275,18 +275,27 @@ execute() {
 	# process. timeout then fails its own setpgid as a session leader,
 	# which is harmless, because the group is already the one to signal.
 	# --wait keeps setsid from forking and returning at once, which would
-	# hide the exit status of the command.
+	# hide the exit status of the command. A pgid write or cd that fails
+	# after started ends with 125 and one fixed line, so it is not taken
+	# for a command that exited 1. The brace group sends the command's
+	# stderr through descriptor 3 and the shell's own job notice, such as
+	# "Killed", to /dev/null. A command that outlives the kill-after is
+	# killed together with timeout, and shows up as 137, not 124.
 	# shellcheck disable=SC2016
-	"$setsid" --wait /bin/bash -c 'set -C; echo $$ > "$1" || exit 1; cd -- "$2" || exit 1; umask 022; shift 2; exec "$@"' \
-		_ "$dir/pgid" "$home" \
-		"$timeout" -k 10 "$secs" \
-		env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash \
-		PATH=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-		LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/var/vcap/data/tmp \
-		/bin/bash -- "$file" < /dev/null
+	{
+		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$2" 2> /dev/null || nostart; umask 022; shift 2; exec "$@"' \
+			_ "$dir/pgid" "$home" \
+			"$timeout" -k 10 "$secs" \
+			env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash \
+			PATH=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+			LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/var/vcap/data/tmp \
+			/bin/bash -- "$file" < /dev/null 2>&3
+	} 3>&2 2> /dev/null
 	code=$?
 
-	printf '%s\n' "$code" | _rc_write "$dir/exit" || return 1
+	# A failed write of the exit file leaves the command's own code as
+	# the wrapper's, which the SSH status carries to the broker.
+	printf '%s\n' "$code" | _rc_write "$dir/exit" || true
 	return "$code"
 }
 

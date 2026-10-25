@@ -149,6 +149,10 @@ type runTree struct {
 
 	// env is added to the environment of every run of the script.
 	env []string
+
+	// setpgid starts the script as the leader of its own process group,
+	// which is how the broker's SSH session can leave it.
+	setpgid bool
 }
 
 func newRunTree(t *testing.T) *runTree {
@@ -206,6 +210,10 @@ func (r *runTree) run(t *testing.T, stdin io.Reader, args ...string) (int, strin
 	// A command that outlives the script, such as a sleep, would
 	// otherwise hold the output pipes open past the deadline.
 	cmd.WaitDelay = 2 * time.Second
+
+	if r.setpgid {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 
 	err := cmd.Run()
 	if ctx.Err() != nil {
@@ -1239,7 +1247,9 @@ func digestOf(command []byte) string {
 func (r *runTree) execRoot(t *testing.T, seconds, digest string) (int, string, string) {
 	t.Helper()
 
-	return r.run(t, stdinFor(t, nil), "exec", runTask, "root", seconds, digest)
+	// The bytes after the script stay unread, as the command's would on
+	// an SSH channel that is still open, and must never reach the command.
+	return r.run(t, stdinFor(t, []byte("trailing bytes\n")), "exec", runTask, "root", seconds, digest)
 }
 
 // stageAndExec stages command with prepare and runs it as root.
@@ -1378,14 +1388,15 @@ func TestRunExecRootTimeoutExits124(t *testing.T) {
 func TestRunExecRootRefusals(t *testing.T) {
 	t.Parallel()
 
-	command := []byte("touch \"$CERTPATCH_ROOT/ran\"\n")
+	// The canary path is part of the command text, because env -i
+	// removes every variable that could name it.
 
 	for _, tc := range []struct {
 		name   string
 		break_ func(t *testing.T, tree *runTree)
-		hash   string
+		hash   func(command []byte) string
 	}{
-		{"a digest that does not match", func(*testing.T, *runTree) {}, digestOf([]byte("other\n"))},
+		{"a digest that does not match", func(*testing.T, *runTree) {}, func([]byte) string { return digestOf([]byte("other\n")) }},
 		{"a file changed after prepare", func(t *testing.T, tree *runTree) {
 			t.Helper()
 
@@ -1393,7 +1404,7 @@ func TestRunExecRootRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		}, digestOf(command)},
+		}, digestOf},
 		{"a group-writable file", func(t *testing.T, tree *runTree) {
 			t.Helper()
 
@@ -1401,7 +1412,7 @@ func TestRunExecRootRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		}, digestOf(command)},
+		}, digestOf},
 		{"a symlinked file", func(t *testing.T, tree *runTree) {
 			t.Helper()
 
@@ -1414,7 +1425,7 @@ func TestRunExecRootRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		}, digestOf(command)},
+		}, digestOf},
 		{"a missing file", func(t *testing.T, tree *runTree) {
 			t.Helper()
 
@@ -1422,12 +1433,15 @@ func TestRunExecRootRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-		}, digestOf(command)},
+		}, digestOf},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			tree := newRunTree(t)
+			tree.linkRunTools(t)
+
+			command := canaryExec(tree)
 
 			code, _ := tree.prepare(t, runTask, "root", command)
 			if code != 0 {
@@ -1436,16 +1450,16 @@ func TestRunExecRootRefusals(t *testing.T) {
 
 			tc.break_(t, tree)
 
-			code, out, errOut := tree.execRoot(t, "30", tc.hash)
+			code, out, errOut := tree.execRoot(t, "30", tc.hash(command))
 			if code != scripts.ExitRefused {
 				t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
 			}
 
-			if out != "" || strings.Contains(errOut, "touch") || strings.Contains(errOut, tc.hash) {
+			if out != "" || strings.Contains(errOut, "touch") || strings.Contains(errOut, tc.hash(command)) {
 				t.Errorf("a refusal printed %q and %q", out, errOut)
 			}
 
-			tree.requireNoCanary(t)
+			tree.requireExecCanary(t, false)
 
 			for _, name := range []string{"started", "pgid", "exit"} {
 				_, err := os.Lstat(tree.path(runOps, runTask, name))
@@ -1455,6 +1469,27 @@ func TestRunExecRootRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunExecRootCanaryControl(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkRunTools(t)
+
+	command := canaryExec(tree)
+
+	code, _ := tree.prepare(t, runTask, "root", command)
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	code, _, errOut := tree.execRoot(t, "30", digestOf(command))
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr %q", code, errOut)
+	}
+
+	tree.requireExecCanary(t, true)
 }
 
 func TestRunExecRootUsageErrors(t *testing.T) {
@@ -1475,5 +1510,198 @@ func TestRunExecRootUsageErrors(t *testing.T) {
 		if code != scripts.ExitUsage {
 			t.Errorf("%v exited %d, want %d", args, code, scripts.ExitUsage)
 		}
+	}
+}
+
+// canaryExec is a command that leaves a mark at an absolute path.
+func canaryExec(r *runTree) []byte {
+	return []byte(fmt.Sprintf("touch %q\n", r.path("ran")))
+}
+
+// requireExecCanary fails unless the mark of canaryExec exists exactly
+// when want says it should.
+func (r *runTree) requireExecCanary(t *testing.T, want bool) {
+	t.Helper()
+
+	_, err := os.Lstat(r.path("ran"))
+	if (err == nil) != want {
+		t.Errorf("the canary exists = %v, want %v", err == nil, want)
+	}
+}
+
+func TestRunExecRootCommandLeadsItsOwnSessionAndGroup(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	code, _, errOut := tree.stageAndExec(t, `read -r _ _ _ _ pgrp sid _ < /proc/$$/stat
+echo "$pgrp $sid" >&2
+`)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr %q", code, errOut)
+	}
+
+	pgid := strings.TrimSpace(tree.taskFile(t, "pgid"))
+
+	if errOut != pgid+" "+pgid+"\n" {
+		t.Errorf("the command reported group and session %q, the pgid file holds %q", errOut, pgid)
+	}
+
+	if pgid == strconv.Itoa(syscall.Getpgrp()) {
+		t.Errorf("the command stayed in the test's process group %s", pgid)
+	}
+
+	stat, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fields after the parenthesised name are state, ppid, pgrp, session.
+	_, rest, _ := bytes.Cut(stat, []byte(") "))
+	fields := strings.Fields(string(rest))
+
+	if len(fields) < 4 || pgid == fields[3] {
+		t.Errorf("the command stayed in the test's session, fields %v", fields)
+	}
+}
+
+func TestRunExecRootWaitsWhenTheWrapperLeadsItsGroup(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.setpgid = true
+
+	code, _, errOut := tree.stageAndExec(t, "sleep 1\nexit 7\n")
+	if code != 7 {
+		t.Fatalf("exit = %d, want 7; stderr %q", code, errOut)
+	}
+
+	if got := tree.taskFile(t, "exit"); got != "7\n" {
+		t.Errorf("exit file holds %q", got)
+	}
+
+	pgid, err := strconv.Atoi(strings.TrimSpace(tree.taskFile(t, "pgid")))
+	if err != nil || pgid <= 1 {
+		t.Errorf("pgid file holds %q, %v", tree.taskFile(t, "pgid"), err)
+	}
+}
+
+func TestRunExecRootLaunchFailureExits125(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkRunTools(t)
+
+	command := canaryExec(tree)
+
+	code, _ := tree.prepare(t, runTask, "root", command)
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	err := os.WriteFile(tree.path(runOps, runTask, "pgid"), nil, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := tree.execRoot(t, "30", digestOf(command))
+	if code != 125 || out != "" || errOut != "run.sh: the command was not started\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+
+	tree.requireExecCanary(t, false)
+
+	if got := tree.taskFile(t, "exit"); got != "125\n" {
+		t.Errorf("exit file holds %q", got)
+	}
+}
+
+func TestRunExecRootKeepsTheCommandsCodeWhenTheExitFileFails(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkRunTools(t)
+
+	command := []byte("exit 5\n")
+
+	code, _ := tree.prepare(t, runTask, "root", command)
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	err := os.WriteFile(tree.path(runOps, runTask, "exit"), []byte("old\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, _ = tree.execRoot(t, "30", digestOf(command))
+	if code != 5 {
+		t.Errorf("exit = %d, want 5", code)
+	}
+}
+
+func TestRunExecRootKilledAfterTheDeadlineKeepsStderrClean(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	command := "echo err >&2\ntrap '' TERM\nsleep 30\n"
+	tree.linkRunTools(t)
+
+	code, _ := tree.prepare(t, runTask, "root", []byte(command))
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	code, _, errOut := tree.execRoot(t, "1", digestOf([]byte(command)))
+	if code != 137 || errOut != "err\n" {
+		t.Errorf("exit %d, stderr %q; want 137 and only the command's own line", code, errOut)
+	}
+}
+
+// TestRunExecRootLaunchesThroughSetsidWait plants a setsid that records its
+// first argument. Under the real wrapper setsid is never a group leader,
+// so losing --wait would not change the exit status the other tests see,
+// and the argument is the only place the loss shows.
+func TestRunExecRootLaunchesThroughSetsidWait(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkRunTools(t)
+
+	real, err := exec.LookPath("setsid")
+	if err != nil {
+		t.Skip("no setsid on this host")
+	}
+
+	plant := tree.path("usr/bin/setsid")
+
+	err = os.Remove(plant)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$1\" > %q\nexec %q \"$@\"\n", tree.path("setsid-first"), real)
+
+	err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	command := []byte("exit 3\n")
+
+	code, _ := tree.prepare(t, runTask, "root", command)
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	code, _, errOut := tree.execRoot(t, "30", digestOf(command))
+	if code != 3 {
+		t.Fatalf("exit = %d, want 3; stderr %q", code, errOut)
+	}
+
+	got, err := os.ReadFile(tree.path("setsid-first"))
+	if err != nil || string(got) != "--wait\n" {
+		t.Errorf("setsid was given %q first, %v; want --wait", got, err)
 	}
 }
