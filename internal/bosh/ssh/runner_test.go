@@ -574,6 +574,104 @@ const catProgram = "cat"
 // longBase64Run matches 40 or more base64 characters in a row.
 var longBase64Run = regexp.MustCompile(`[A-Za-z0-9+/]{40,}`)
 
+// A runner built with WithoutOutputLogging never logs what a command
+// printed, whether the run ends with a status, a non-zero status, a
+// cancelled context, or a dropped connection, and it still logs the exit
+// status, the byte counts, and the truncation flags.
+func TestRunnerWithoutOutputLoggingLogsNoOutput(t *testing.T) {
+	t.Parallel()
+
+	const (
+		secretOut = "hunter2"
+		secretErr = "s3cret"
+	)
+
+	cases := []struct {
+		name       string
+		exit       uint32
+		drop       bool
+		cancel     bool
+		wantStatus string
+		wantErr    error
+	}{
+		{name: "success", wantStatus: "exit status 0"},
+		{name: "non-zero exit", exit: 3, wantStatus: "exit status 3"},
+		{name: "cancelled context", cancel: true, wantErr: context.DeadlineExceeded},
+		{name: "dropped connection", drop: true, wantErr: boshssh.ErrNoExitStatus},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakeVM := startRunnerVM(t, func(_ string, channel ssh.Channel, stop <-chan struct{}) uint32 {
+				_, _ = io.WriteString(channel, secretOut)
+				_, _ = io.WriteString(channel.Stderr(), secretErr)
+
+				if tc.cancel {
+					<-stop
+				}
+
+				if tc.drop {
+					_ = channel.Close()
+				}
+
+				return tc.exit
+			})
+
+			log := &runnerLog{}
+			runner := boshssh.NewRunner(fakeVM.dial(t), log).WithoutOutputLogging()
+
+			ctx := t.Context()
+
+			if tc.cancel {
+				var cancel context.CancelFunc
+
+				ctx, cancel = context.WithTimeout(ctx, 300*time.Millisecond)
+				defer cancel()
+			}
+
+			// A limit of 4 keeps four bytes of each stream, so the flags are true.
+			result, err := runner.Run(ctx, catProgram, nil, nil, 4)
+			if tc.wantErr == nil && err != nil || tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Run returned %v, want %v", err, tc.wantErr)
+			}
+
+			if result.StdoutReceived != int64(len(secretOut)) || !result.StdoutTruncated {
+				t.Fatalf("Run received %d stdout bytes, truncated %v; the test does not test the counts",
+					result.StdoutReceived, result.StdoutTruncated)
+			}
+
+			lines := log.all()
+
+			for _, line := range lines {
+				if strings.Contains(line, "hunter2") || strings.Contains(line, "s3cret") ||
+					strings.Contains(line, "hunt") || strings.Contains(line, "s3cr") {
+					t.Errorf("the runner logged output in %q", line)
+				}
+			}
+
+			var summary string
+
+			for _, line := range lines {
+				if strings.Contains(line, "stdout 4 of 7 bytes") {
+					summary = line
+				}
+			}
+
+			if summary == "" {
+				t.Fatalf("no log line holds the counts; the log is %q", lines)
+			}
+
+			for _, want := range []string{"stderr 4 of 6 bytes", "stdout truncated true", "stderr truncated true", tc.wantStatus} {
+				if !strings.Contains(summary, want) {
+					t.Errorf("the line %q lacks %q", summary, want)
+				}
+			}
+		})
+	}
+}
+
 // A key that a command prints never reaches a log line, even when the
 // output limit cuts it so that neither marker survives in one stream.
 func TestRunnerLogsNoKeyMaterial(t *testing.T) {

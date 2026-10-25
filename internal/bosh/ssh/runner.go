@@ -77,6 +77,10 @@ type Runner struct {
 	client *ssh.Client
 	log    logger.Logger
 
+	// logOutput is true unless WithoutOutputLogging was called, and says
+	// whether a log line may hold the command's output.
+	logOutput bool
+
 	// done closes when the connection is closed.
 	done      chan struct{}
 	closed    atomic.Bool
@@ -95,7 +99,19 @@ func NewRunner(client *ssh.Client, log logger.Logger) *Runner {
 		log = logger.NewNoOpLogger()
 	}
 
-	return &Runner{client: client, log: log, done: make(chan struct{})}
+	return &Runner{client: client, log: log, logOutput: true, done: make(chan struct{})}
+}
+
+// WithoutOutputLogging makes the runner keep the command's stdout and
+// stderr out of every log line, even escaped by ForLog, and log only the
+// exit status, the byte counts, and the truncation flags. A caller that
+// runs commands an operator typed, which may print secrets, sets it. It
+// sets the field on r and returns r, because a Runner holds a connection
+// and a mutex that a copy would share. Call it before the first Run.
+func (r *Runner) WithoutOutputLogging() *Runner {
+	r.logOutput = false
+
+	return r
 }
 
 // Run runs program with args on the VM, sends stdin to it, and returns
@@ -155,7 +171,13 @@ func (r *Runner) Run(ctx context.Context, program string, args []string, stdin i
 
 	end, err := r.execute(ctx, session, command, shown)
 	if err != nil {
-		return snapshotResult(stdout, stderr, 0), err
+		result := snapshotResult(stdout, stderr, 0)
+
+		if !r.logOutput {
+			r.log.Debugf("%s ended without an exit status, %s", shown, countsForLog(result))
+		}
+
+		return result, err
 	}
 
 	return r.finish(shown, stdout, stderr, end)
@@ -362,14 +384,28 @@ func (r *Runner) execute(ctx context.Context, session *ssh.Session, command, sho
 }
 
 // finish turns what the session left behind into the run's result, and
-// logs it at debug level with each stream passed through ForLog.
+// logs it at debug level. The streams reach the log through ForLog, unless
+// the runner was built without output logging, and then the line holds
+// only the exit status, the byte counts, and the truncation flags.
 func (r *Runner) finish(shown string, stdout, stderr *boundedBuffer, end sessionEnd) (Result, error) {
 	result := snapshotResult(stdout, stderr, end.code)
 
-	r.log.Debugf("%s ended with exit status %d, truncated %t, stdout %s, stderr %s",
-		shown, result.ExitCode, result.Truncated, ForLog(result.Stdout), ForLog(result.Stderr))
+	if r.logOutput {
+		r.log.Debugf("%s ended with exit status %d, truncated %t, stdout %s, stderr %s",
+			shown, result.ExitCode, result.Truncated, ForLog(result.Stdout), ForLog(result.Stderr))
+	} else {
+		r.log.Debugf("%s ended with exit status %d, %s", shown, result.ExitCode, countsForLog(result))
+	}
 
 	return result, end.err
+}
+
+// countsForLog describes how much of each stream was kept and received,
+// and which streams were cut, without any of their bytes.
+func countsForLog(result Result) string {
+	return fmt.Sprintf("stdout %d of %d bytes, stderr %d of %d bytes, stdout truncated %t, stderr truncated %t",
+		len(result.Stdout), result.StdoutReceived, len(result.Stderr), result.StderrReceived,
+		result.StdoutTruncated, result.StderrTruncated)
 }
 
 // checkCommandLine refuses a program or an argument that carries text
