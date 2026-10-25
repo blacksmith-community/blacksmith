@@ -28,8 +28,9 @@
 readonly RC_DATA=/var/vcap/data
 readonly RC_USER_RE='^(root|vcap)$'
 readonly RC_SECS_RE='^[1-9][0-9]{0,5}$'
-# A user or group ID the script will pass to setpriv: canonical decimal, not
-# zero, and not 4294967295, which setpriv reads as "unchanged".
+# A user or group ID the script will pass to setpriv: a canonical decimal
+# that is not zero and is below 4294967295, which setpriv reads as
+# "unchanged". Larger values wrap around in setpriv, so they are refused.
 readonly RC_ID_RE='^[1-9][0-9]{0,9}$'
 readonly RC_EXIT_RE='^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
 
@@ -70,7 +71,7 @@ _rc_tool() {
 
 # _rc_id_ok <id> accepts a user or group ID that setpriv can take.
 _rc_id_ok() {
-	[[ $1 =~ $RC_ID_RE ]] && [ "$1" != 4294967295 ]
+	[[ $1 =~ $RC_ID_RE ]] && ((10#$1 < 4294967295))
 }
 
 # _rc_vcap_gid prints the group ID of the vcap account. In production it
@@ -94,9 +95,9 @@ _rc_vcap_gid() {
 
 # _rc_vcap_entry prints "uid gid home" for the vcap account from getent,
 # which the tests replace with a fake under the test root. It refuses an
-# entry with no vcap name, a uid or gid that is not a canonical number or is 0,
-# and a home that is not a plain absolute path, because the home goes
-# into the command's environment.
+# entry with no vcap name, a uid or gid that is not a canonical number or
+# is 0, and a home that is not a plain absolute path, because the home
+# goes into the command's environment.
 _rc_vcap_entry() {
 	local entry name uid gid home
 
