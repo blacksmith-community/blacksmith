@@ -12630,7 +12630,7 @@ span.config-type.resurrection {
   z-index: 9000;
   display: flex;
   flex-direction: column;
-  width: min(520px, 100vw);
+  width: min(max(50vw, 520px), 100vw);
   height: 100vh;
   border-left: 1px solid var(--border-primary);
   color: var(--text-primary);
