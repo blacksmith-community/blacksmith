@@ -143,3 +143,19 @@ t('release picker keeps drafts isolated until Apply and rejects stale versions',
  d.querySelector('[data-dialog-role="confirm"]').click();await pending;expect(original.value).toBe('1.5');
  }finally{w.close();}
 });
+
+t('quick navigation selects each operation and opens Options',async()=>{
+ const {w,d}=await setup();try{
+ w.blacksmithNav.switchTab=async()=>true;
+ for(const mode of ['upgrade','rotate','converge','upgrade']){
+  d.getElementById('batch-activity').click();
+  expect(await w.blacksmithBatch.openOperation(mode)).toBe(true);
+  expect(w.__T.batchFlow.step).toBe(1);
+  expect(d.getElementById('rotate-op-'+mode).checked).toBe(true);
+  expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');
+ }
+ w.blacksmithNav.switchTab=async()=>false;
+ expect(await w.blacksmithBatch.openOperation('rotate')).toBe(false);
+ expect(d.getElementById('rotate-op-upgrade').checked).toBe(true);
+ }finally{w.close();}
+});

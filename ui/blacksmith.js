@@ -5308,7 +5308,17 @@
     availability: rotateAvailability,
     readHolders: readHoldersOnce
   };
-  window.blacksmithBatch = { openRotate: openBatchRotate };
+  const openBatchOperation = async (mode, signal) => {
+    if (!OPERATION_LABELS[mode] || batchFlow.submitting || signal?.aborted) return false;
+    const switched = await window.blacksmithNav.switchTab('upgrade');
+    if (switched === false || signal?.aborted || batchFlow.submitting || !batchFlow.installed) return false;
+    await requestOperation(mode);
+    setBatchView('new');
+    setBatchStep(1, false);
+    document.getElementById('upgrade').scrollTop = 0;
+    return true;
+  };
+  window.blacksmithBatch = { openRotate: openBatchRotate, openOperation: openBatchOperation };
 
   // The footer button of rotate and converge mode.
   const startRotatePreview = async ({flowReview = false} = {}) => {

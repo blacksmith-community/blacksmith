@@ -28,6 +28,8 @@
         entries.push({ screen: 'services', instanceId: id, section, label, context, type: 'Instance', breadcrumb: `Service Instances > ${instance.instance_name || id} > ${label}`, detail: [id, instance.service_id, instance.deleted ? 'Deleted' : ''].filter(Boolean).join(' · '), keywords: aliases[section] });
       }
     }
+    [['upgrade', 'Upgrade'], ['converge', 'Converge'], ['rotate', 'Rotate certificates']].forEach(([operation, label]) =>
+      entries.push({ screen: 'upgrade', operation, label, type: 'Operation', context: 'Batch Operations', breadcrumb: 'Batch Operations > Options', keywords: operation }));
     ['light', 'dark', 'system'].forEach(theme => entries.push({ theme, label: theme[0].toUpperCase() + theme.slice(1), type: 'Theme', context: 'Appearance theme mode', breadcrumb: 'Appearance > Theme', detail: theme === 'system' ? 'Follow your device’s appearance setting' : '', keywords: 'theme appearance color mode' }));
     return entries;
   }
@@ -144,6 +146,18 @@
       const controller = new AbortController();
       navigationController = controller;
       try {
+        if (entry.operation) {
+          if (!root.blacksmithBatch?.openOperation) throw new Error('Batch Operations is still loading. Please try again.');
+          input.disabled = true;
+          status.textContent = 'Opening operation options…';
+          const opened = await root.blacksmithBatch.openOperation(entry.operation, controller.signal);
+          if (controller.signal.aborted || !dialog.open) return;
+          if (!opened) throw new Error('Cannot open this operation right now. Please try again.');
+          close(false);
+          document.getElementById('batch-flow-title')?.focus({ preventScroll: true });
+          updateContext();
+          return;
+        }
         if (entry.theme) {
           if (!root.blacksmithTheme) throw new Error('Theme controls are still loading. Please try again.');
           root.blacksmithTheme.setPreference(entry.theme);
