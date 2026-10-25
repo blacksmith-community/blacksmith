@@ -46,8 +46,8 @@ t('serials are padded to whole bytes and compared after normalizing', async () =
 
   const panel = d.querySelector('#upgrade .upgrade-tasks');
   T.renderTaskDetail(mkTask({ name: '/s/a_crt', old_serial: SHORT, new_serial: 'abc', old_not_after: '2029-10-24T09:14:00Z', new_not_after: '2029-10-25T09:14:00Z' }));
-  const line = panel.querySelector('.cert-task-variable-serial');
-  ok(!!line && line.textContent === `Serial: was ${LONG.toUpperCase()}, now 0ABC`, 'the task serial line shows padded serials: ' + (line && line.textContent));
+  const line = panel.querySelector('.cert-task-comparison tbody tr');
+  ok(!!line && [...line.querySelectorAll('td')].map(cell => cell.textContent).join(' | ') === `Serial | ${LONG.toUpperCase()} | 0ABC`, 'the task serial line shows padded serials: ' + (line && line.textContent));
   ok(alerts.length === 0, 'no window.alert/confirm/prompt used');
   expect(failures).toEqual([]);
 });

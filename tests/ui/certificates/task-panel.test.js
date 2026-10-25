@@ -62,6 +62,9 @@ t('task panel and API errors', async () => {
   T._setTasks([]);T.renderUpgradeTaskList();
   ok(/New Operation/.test(panel.textContent)&&!/No upgrade tasks/.test(panel.textContent),'empty activity applies to every operation');
 
+  T.renderTaskDetail({id:'readable',kind:'certificates',status:'completed',instances:[{instance_id:'i',certificates:{variables:[{name:'/lab/tls_crt',old_serial:'01',new_serial:'02',validation:[{name:'key_match',passed:true,detail:'Key matches'}]}]}}]});
+  ok(!!panel.querySelector('.cert-task-comparison th')&&/Previous/.test(panel.textContent)&&/New certificate/.test(panel.textContent),'certificate values have comparison columns');
+  ok(!!panel.querySelector('.cert-validation-details')&&!panel.querySelector('.cert-validation-details').open,'passing validation is summarized initially');
   // hostile detail
   const detail={id:EVIL,name:EVIL,kind:'certificates',status:EVIL,certificates:{mode:EVIL,reason:EVIL},total_count:1,completed_count:0,failed_count:1,created_at:EVIL,
     instances:[{instance_id:EVIL,instance_name:EVIL,deployment_name:EVIL,status:'failed',error:EVIL,bosh_task_id:'7"><img src=x onerror=alert(3)>'}]};
@@ -129,7 +132,11 @@ t('task panel and API errors', async () => {
   panel.querySelector('[data-task-action="cancel"]').focus();
   const before=d.activeElement;
   await T.fetchUpgradeTasks();
-  ok(d.activeElement!==before&&d.activeElement.dataset.keepKey==='action:cancel','focus returns to the same control after a re-render');
+  ok(d.activeElement===before&&before.isConnected,'unchanged poll retains the actual DOM and focus');
+  w.__routes.unshift([/\/b\/upgrade\/tasks\/t1$/,(u,o,json)=>json(200,{...running,name:'Changed job'})]);
+  await T.fetchUpgradeTasks();
+  ok(d.activeElement!==before&&d.activeElement.dataset.keepKey==='action:cancel'&&panel.textContent.includes('Changed job'),'changed poll updates content and restores focus');
+  w.__routes.shift();
   ok(panel.scrollTop===25&&panel.querySelector('.instances-list').scrollTop===40,'scroll position kept across re-render');
   // details open: synthetic markup only. The real task panel renders no details elements today, so this exercises the helper alone, not the render path.
   const c=d.createElement('div'); d.body.appendChild(c); c.dataset.view='v';

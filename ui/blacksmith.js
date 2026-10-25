@@ -6648,79 +6648,61 @@
   // The expandable list of VMs under a certificate instance. Each VM is a
   // details element with a stable keep key, so the open ones stay open
   // when the panel redraws on a poll.
+  const evidenceTable = (caption, headers, rows, className = '') => {
+    const table = rotateEl('table', `cert-evidence-table ${className}`);
+    table.dataset.sortable = 'false';
+    table.setAttribute('role', 'table');
+    table.appendChild(rotateEl('caption', null, caption));
+    const head = document.createElement('thead');
+    const heading = document.createElement('tr');
+    headers.forEach(label => { const th = rotateEl('th', null, label); th.scope = 'col'; heading.appendChild(th); });
+    head.appendChild(heading); table.appendChild(head);
+    const body = document.createElement('tbody');
+    rows.forEach(values => {
+      const row = document.createElement('tr');
+      values.forEach((value, index) => {
+        const cell = rotateEl('td', null, String(value ?? '—'));
+        cell.dataset.label = headers[index]; cell.setAttribute('role', 'cell');
+        row.appendChild(cell);
+      });
+      body.appendChild(row);
+    });
+    table.appendChild(body);
+    return table;
+  };
+
   const buildVmList = (task, instance, rotation) => {
     const vms = Array.isArray(rotation.vms) ? rotation.vms.filter(Boolean) : [];
-    if (vms.length === 0) return null;
+    if (!vms.length) return null;
     const list = rotateEl('div', 'cert-task-vms');
-    list.setAttribute('role', 'group');
-    list.setAttribute('aria-label', 'VMs of this instance');
+    list.setAttribute('role', 'group'); list.setAttribute('aria-label', 'VMs of this instance');
     vms.forEach((vm, position) => {
-      const name = String(vm.vm || vm.cid || `${vm.group || 'vm'}/${vm.index === undefined ? position : vm.index}`);
-      const details = document.createElement('details');
-      details.className = 'cert-task-vm';
+      const name = String(vm.vm || vm.cid || `${vm.group || 'vm'}/${vm.index ?? position}`);
+      const details = rotateEl('details', 'cert-task-vm');
       details.dataset.keepKey = `vm:${task.id}:${instance.instance_id}:${name}`;
       const summary = document.createElement('summary');
       summary.appendChild(rotateEl('span', 'cert-task-vm-name', name));
       summary.appendChild(rotateEl('span', 'cert-task-vm-phase', humanize(vm.phase)));
-      details.appendChild(summary);
-
-      const files = Array.isArray(vm.files) ? vm.files.filter(Boolean) : [];
-      if (files.length > 0) {
-        const ul = rotateEl('ul', 'cert-task-vm-files');
-        files.forEach((file) => {
-          ul.appendChild(rotateEl('li', null, `${file.path || 'file'}, ${humanize(file.role)}, ${humanize(file.state)}`));
-        });
-        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Files'));
-        details.appendChild(ul);
-      }
-      const processes = Array.isArray(vm.processes) ? vm.processes.filter(Boolean) : [];
-      if (processes.length > 0) {
-        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Processes'));
-        const ul = rotateEl('ul', 'cert-task-vm-processes');
-        processes.forEach((process) => {
-          const label = typeof process === 'string' ? process : [process.name, process.state].filter(Boolean).join(', ');
-          ul.appendChild(rotateEl('li', null, String(label)));
-        });
-        details.appendChild(ul);
-      }
-      const targets = Array.isArray(vm.targets) ? vm.targets.filter(Boolean) : [];
-      if (targets.length > 0) {
-        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Verification'));
-        const ul = rotateEl('ul', 'cert-task-vm-targets');
-        targets.forEach((target) => {
-          const result = target.ok ? 'passed' : 'failed';
-          const where = [target.variable, target.port ? `port ${target.port}` : ''].filter(Boolean).join(' ');
-          ul.appendChild(rotateEl('li', null, `${where || 'target'} by ${humanize(target.method)}, ${result}${target.detail ? `. ${target.detail}` : ''}`));
-        });
-        details.appendChild(ul);
-      }
-      if (vm.gate_after) {
-        const gate = vm.gate_after;
-        const text = typeof gate === 'string' ? gate : [gate.ok === true ? 'passed' : (gate.ok === false ? 'failed' : ''), gate.detail].filter(Boolean).join('. ');
-        details.appendChild(rotateEl('div', 'cert-task-vm-label', 'Health gate'));
-        details.appendChild(rotateEl('p', 'cert-task-vm-gate', String(text || 'recorded')));
-      }
-      if (vm.error) {
-        const err = rotateEl('p', 'cert-task-vm-error', String(vm.error));
-        details.appendChild(err);
-      }
-      const body = rotateEl('div', 'cert-task-vm-body');
-      let section;
-      [...details.children].filter(child => child !== summary).forEach(child => {
-        if (child.classList.contains('cert-task-vm-label') || !section) {
-          section = rotateEl('div', 'cert-task-vm-section');
-          body.appendChild(section);
-        }
-        section.appendChild(child);
-      });
-      details.appendChild(body);
+      const gate = vm.gate_after;
+      const gateText = typeof gate === 'string' ? gate : gate ? [gate.ok === true ? 'passed' : gate.ok === false ? 'failed' : 'recorded', gate.detail].filter(Boolean).join('. ') : '';
       if (vm.error) summary.appendChild(rotateEl('span', 'cert-task-vm-error', 'Needs attention'));
-      else if (vm.gate_after) {
-        const gate = vm.gate_after;
-        const label = typeof gate === 'string' ? gate : gate.ok === true ? 'passed' : gate.ok === false ? 'failed' : 'recorded';
-        summary.appendChild(rotateEl('span', 'cert-task-vm-health', `Health: ${label}`));
-      }
-      list.appendChild(details);
+      else if (gateText) summary.appendChild(rotateEl('span', 'cert-task-vm-health', `Health: ${gateText}`));
+      details.appendChild(summary);
+      const body = rotateEl('div', 'cert-task-vm-body');
+      const files = (Array.isArray(vm.files) ? vm.files : []).filter(Boolean);
+      if (files.length) body.appendChild(evidenceTable('Files', ['Path', 'Type', 'Result'], files.map(file => [file.path || 'file', humanize(file.role), humanize(file.state)])));
+      const processes = (Array.isArray(vm.processes) ? vm.processes : []).filter(Boolean);
+      if (processes.length) body.appendChild(evidenceTable('Processes', ['Process', 'State'], processes.map(process => typeof process === 'string' ? [process, 'Not reported'] : [process.name, process.state || 'Not reported'])));
+      const targets = (Array.isArray(vm.targets) ? vm.targets : []).filter(Boolean);
+      if (targets.length) body.appendChild(evidenceTable('Verification', ['Certificate / target', 'Method', 'Result', 'Details'], targets.map(target => [
+        [target.variable || 'target', target.port ? `port ${target.port}` : ''].filter(Boolean).join(' '),
+        target.method === 'none' ? 'No external probe' : humanize(target.method),
+        target.method === 'none' && target.ok ? 'Applied; not externally verified' : target.ok ? 'passed' : 'failed',
+        target.detail || '—'
+      ])));
+      if (gateText) body.appendChild(evidenceTable('Health gate', ['Result'], [[gateText]]));
+      if (vm.error) body.appendChild(rotateEl('p', 'cert-task-vm-error', String(vm.error)));
+      details.appendChild(body); list.appendChild(details);
     });
     return list;
   };
@@ -6732,16 +6714,27 @@
       wrap.appendChild(rotateEl('div', 'cert-task-phase', `Phase: ${rotation.phase || 'unknown'}`));
       const variables = Array.isArray(rotation.variables) ? rotation.variables : [];
       if (variables.length > 0) {
-        const list = rotateEl('ul', 'cert-task-variables');
+        const list = rotateEl('div', 'cert-task-variables');
         variables.forEach((variable) => {
           if (!variable) return;
-          const item = rotateEl('li', 'cert-task-variable');
+          const item = rotateEl('div', 'cert-task-variable');
           item.appendChild(rotateEl('strong', 'cert-task-variable-name', String(variable.name || '')));
-          item.appendChild(rotateEl('div', 'cert-task-variable-serial', `Serial: was ${displaySerial(variable.old_serial) || 'unknown'}, now ${displaySerial(variable.new_serial) || 'not made yet'}`));
           const [expiryWas, expiryNow] = certExpiryPair(variable.old_not_after, variable.new_not_after);
-          item.appendChild(rotateEl('div', 'cert-task-variable-expiry', `Expires: was ${expiryWas || 'unknown'}, now ${expiryNow || 'not made yet'}`));
-          if (variable.regenerate_state) item.appendChild(rotateEl('div', 'cert-task-variable-state', `Regeneration: ${String(variable.regenerate_state).replace(/_/g, ' ')}`));
-          if (Array.isArray(variable.validation) && variable.validation.length > 0) item.appendChild(checkList(variable.validation));
+          item.appendChild(evidenceTable('Certificate changes', ['Property', 'Previous', 'New certificate'], [
+            ['Serial', displaySerial(variable.old_serial) || 'Not recorded', displaySerial(variable.new_serial) || 'Pending'],
+            ['Expires', expiryWas || 'Not recorded', expiryNow || 'Pending']
+          ], 'cert-task-comparison'));
+          if (variable.regenerate_state) item.appendChild(rotateEl('p', 'cert-task-variable-state', `Regeneration: ${humanize(variable.regenerate_state)}`));
+          const checks = (Array.isArray(variable.validation) ? variable.validation : []).filter(Boolean);
+          if (checks.length) {
+            const failed = checks.filter(check => !check.passed).length;
+            const validation = rotateEl('details', 'cert-validation-details');
+            validation.dataset.keepKey = `validation:${task.id}:${instance.instance_id}:${variable.name}`;
+            validation.open = failed > 0;
+            validation.appendChild(rotateEl('summary', null, `Validation: ${checks.length - failed} passed${failed ? `, ${failed} failed` : ''}`));
+            validation.appendChild(evidenceTable('Validation checks', ['Check', 'Result', 'Details'], checks.map(check => [humanize(check.name), check.passed ? 'Passed' : 'Failed', check.detail || '—'])));
+            item.appendChild(validation);
+          }
           list.appendChild(item);
         });
         wrap.appendChild(list);
@@ -7056,8 +7049,12 @@
       if (selectedTaskId) {
         const selectedTask = upgradeTasks.find(t => t.id === selectedTaskId);
         if (selectedTask) {
-          // Fetch full details and re-render
-          renderTaskDetail(await loadUpgradeTask(selectedTaskId));
+          const taskId = selectedTaskId;
+          const detail = await loadUpgradeTask(taskId);
+          // Preserve DOM, selection and expanded evidence when nothing changed.
+          if (selectedTaskId === taskId && JSON.stringify(taskDetailCache.get(taskId)) !== JSON.stringify(detail)) {
+            renderTaskDetail(detail);
+          }
         }
       } else {
         renderUpgradeTaskList();

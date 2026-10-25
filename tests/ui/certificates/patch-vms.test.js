@@ -90,7 +90,8 @@ t('partly patched instances', async () => {
   ok(!!list&&dets.length===2&&dets.every(x=>x.dataset.keepKey&&!x.open),'two collapsed VM details with keep keys');
   ok(/done/.test(dets[0].querySelector('summary').textContent)&&/web\/0/.test(dets[0].querySelector('summary').textContent),'summary shows VM and phase');
   const t0=dets[0].textContent;
-  ok(/crt\.pem, certificate, swapped/.test(t0)&&/Processes/.test(t0)&&/x/.test(t0)&&/a_crt port 6379 by tls probe, passed/.test(t0)&&/Health gate/.test(t0)&&/passed/.test(t0),'details show files, processes, verification method and result, gate');
+  ok(dets[0].querySelectorAll('table').length>=3&&!dets[0].querySelector('ul'),'VM evidence uses tables instead of bullets');
+  ok(/crt\.pem/.test(t0)&&/certificate/.test(t0)&&/swapped/.test(t0)&&/Processes/.test(t0)&&/x/.test(t0)&&/a_crt/.test(t0)&&/6379/.test(t0)&&/tls probe/.test(t0)&&/Health gate/.test(t0)&&/passed/.test(t0),'details show files, processes, verification method and result, gate');
   ok(dets[1].textContent.includes(EVIL)&&panel().querySelectorAll('img,script').length===0,'hostile VM name, file, and error are inert text');
   dets[0].open=true;
   T.renderTaskDetail(mkTask({completed_count:0}));
