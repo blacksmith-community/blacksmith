@@ -9786,6 +9786,12 @@
     currentFile: '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log'
   };
 
+  const logPaginationRow = (loaded, total, hasMore) => {
+    const count = total == null ? `${loaded.toLocaleString()} lines` : `Showing ${loaded.toLocaleString()} of ${Number(total).toLocaleString()} lines`;
+    return `<div class="logs-pagination-row"><span class="logs-line-count" title="Line count">${count}</span>
+      ${hasMore ? '<button type="button" id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()"><span class="load-more-text">Click or scroll up to load older logs</span></button>' : ''}</div>`;
+  };
+
   const formatBlacksmithLogs = (logs, logFile = null, paginationData = null) => {
     if (!logs || logs === '') {
       return '<div class="no-data">No logs available</div>';
@@ -9831,17 +9837,7 @@
     // since we're providing our own in the controls row
     const logsTableHTML = renderLogsTable(logs, parsedLogs, false);
 
-    // Show line count info
-    const lineCountInfo = paginationData
-      ? `Showing ${parsedLogs.length.toLocaleString()} of ${paginationData.total_lines.toLocaleString()} lines`
-      : `${parsedLogs.length.toLocaleString()} lines`;
-
-    // Load more indicator (shown at the top when there are older logs)
-    const loadMoreHTML = (paginationData && paginationData.has_more)
-      ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
-           <span class="load-more-text">Click or scroll up to load older logs</span>
-         </div>`
-      : '';
+    const loadMoreHTML = logPaginationRow(parsedLogs.length, paginationData?.total_lines, paginationData?.has_more);
 
     return `
       <div class="logs-container">
@@ -9854,7 +9850,6 @@
               ${logFileOptions}
             </select>
           </div>
-          <span class="logs-line-count" title="Line count">${lineCountInfo}</span>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.logs-table', event)"
                   title="Copy filtered table rows" aria-label="Copy filtered table rows">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -13531,11 +13526,7 @@
       tableOriginalData.set('logs-table', parsedLogs);
 
       // Load more indicator
-      const loadMoreHTML = data.has_more
-        ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
-             <span class="load-more-text">Click or scroll up to load older logs</span>
-           </div>`
-        : '';
+      const loadMoreHTML = logPaginationRow(parsedLogs.length, data.total_lines, data.has_more);
 
       // Update line count display
       const lineCountEl = document.querySelector('.logs-line-count');
@@ -14089,11 +14080,7 @@
         tableOriginalData.set('logs-table', parsedLogs);  // Also store under table class name as fallback
 
         // Load more indicator
-        const loadMoreHTML = data.has_more
-          ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
-               <span class="load-more-text">Click or scroll up to load older logs</span>
-             </div>`
-          : '';
+        const loadMoreHTML = logPaginationRow(parsedLogs.length, data.total_lines, data.has_more);
 
         // Update line count display
         const lineCountEl = document.querySelector('.logs-line-count');
@@ -14213,6 +14200,7 @@
             loadMoreEl.style.opacity = '0.5';
             loadMoreEl.style.cursor = 'default';
             loadMoreEl.onclick = null;
+            loadMoreEl.disabled = true;
           }
         }
       }
