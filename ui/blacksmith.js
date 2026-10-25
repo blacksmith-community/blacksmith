@@ -18188,61 +18188,22 @@
   const renderBrokerTab = () => {
     return `
       <div class="broker-details-container">
-        <!-- CF Endpoint Selection Header Table -->
         <div class="broker-endpoint-header">
-          <table class="endpoint-selector-table">
-            <tbody>
-              <tr>
-                <td class="connection-status-cell">
-                  <div class="connection-status" id="connection-status">
-                    <span class="status-indicator" id="status-indicator"></span>
-                    <button class="btn btn-sm btn-secondary" id="connection-btn" onclick="CFEndpointManager.toggleConnection()">Connect</button>
-                  </div>
-                </td>
-                <td class="endpoint-dropdown-cell">
-                  <select id="cf-endpoint-select" aria-label="Cloud Foundry endpoint" class="cf-endpoint-dropdown">
-                    <option value="">Loading endpoints...</option>
-                  </select>
-                </td>
-                <td class="endpoint-controls">
-                  <button class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh Endpoints">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-                    </svg>
-                  </button>
-                  <button class="btn btn-icon btn-sm" onclick="showCFEndpointForm()" title="Add Endpoint">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M12 5v14M5 12h14"/>
-                    </svg>
-                  </button>
-                  <button class="btn btn-sm btn-primary" onclick="CFEndpointManager.showRegistrationModal()" title="Register Broker" id="register-btn" style="display: none; margin-left: 8px;">
-                    Register
-                  </button>
-                </td>
-                <td>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <label for="cf-endpoint-select">Endpoint:</label>
+          <select id="cf-endpoint-select" aria-label="Cloud Foundry endpoint" class="cf-endpoint-dropdown"><option value="">Loading endpoints...</option></select>
+          <div class="endpoint-controls">
+            <button type="button" class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh endpoints" aria-label="Refresh endpoints">↻</button>
+            <button type="button" class="btn btn-icon btn-sm" onclick="showCFEndpointForm()" title="Add Endpoint" aria-label="Add endpoint">+</button>
+            <button type="button" class="btn btn-sm btn-primary" onclick="CFEndpointManager.showRegistrationModal()" title="Register broker" id="register-btn" style="display: none;">Register</button>
+          </div>
+          <span id="broker-detail-username" class="broker-endpoint-user" hidden></span>
+          <div class="connection-status" id="connection-status">
+            <span class="status-indicator" id="status-indicator" aria-hidden="true"></span>
+            <span id="connection-status-text" role="status">Not connected</span>
+            <button type="button" class="btn btn-sm btn-secondary" id="connection-btn" onclick="CFEndpointManager.toggleConnection()" disabled>Connect</button>
+          </div>
         </div>
-
         <div class="feedback-panel" data-feedback-context="cf-endpoint" role="alert" aria-live="polite"></div>
-
-        <!-- Broker Details Table -->
-        <div class="broker-details-table-container" id="broker-details-table-container" style="display: none;">
-          <table class="broker-details-table">
-            <tbody>
-              <tr>
-                <td><strong>Name:</strong></td>
-                <td id="broker-detail-name">-</td>
-                <td><strong>Endpoint:</strong></td>
-                <td id="broker-detail-endpoint">-</td>
-                <td><strong>Username:</strong></td>
-                <td id="broker-detail-username">-</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
 
         <!-- CF Detail Tabs (matching Manifest styling) -->
         <div class="broker-tabs-nav">
@@ -18284,7 +18245,7 @@
             <div class="modal-content">
               <div class="modal-header">
                 <h3 id="cf-endpoint-modal-title">${endpoint ? 'Edit' : 'Add'} CF Endpoint</h3>
-                <button class="modal-close" onclick="hideCFEndpointForm()" aria-label="Close modal">&times;</button>
+                <button class="modal-close" aria-label="Close modal">&times;</button>
               </div>
             <div class="modal-body">
               <form id="cf-endpoint-form">
@@ -18321,6 +18282,9 @@
     const newModal = document.getElementById('cf-endpoint-modal');
     newModal.style.display = 'flex';
     newModal.setAttribute('aria-hidden', 'false');
+    document.getElementById('cf-endpoint-form').reset();
+    ModalManager.openModal(newModal);
+    document.getElementById('cf-endpoint-name').focus();
 
     // Pre-fill form if editing
     if (endpoint) {
@@ -18333,15 +18297,13 @@
   // Hide CF endpoint form
   const hideCFEndpointForm = () => {
     const modal = document.getElementById('cf-endpoint-modal');
-    if (modal) {
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
-    }
+    if (modal) { modal.setAttribute('aria-hidden', 'true'); ModalManager.closeModal(modal); }
   };
 
   // Save CF endpoint
   const saveCFEndpoint = async () => {
     const form = document.getElementById('cf-endpoint-form');
+    if (!form.reportValidity()) return;
     const formData = new FormData(form);
 
     const endpointData = {
@@ -21227,11 +21189,10 @@
         statusIndicator.className = 'status-indicator status-disconnected';
       }
 
-      // Hide broker details table
-      const detailsTableContainer = document.getElementById('broker-details-table-container');
-      if (detailsTableContainer) {
-        detailsTableContainer.style.display = 'none';
-      }
+      const statusText = document.getElementById('connection-status-text');
+      if (statusText) statusText.textContent = 'Not connected';
+      const username = document.getElementById('broker-detail-username');
+      if (username) { username.textContent = ''; username.hidden = true; }
 
       // Clear all detail panels
       document.querySelectorAll('.cf-detail-panel').forEach(panel => {
@@ -21325,20 +21286,11 @@
     // Load endpoint details
     loadEndpointDetails(endpointName) {
       const endpoint = this.endpoints[endpointName];
-      const detailsTableContainer = document.getElementById('broker-details-table-container');
-      const nameCell = document.getElementById('broker-detail-name');
-      const endpointCell = document.getElementById('broker-detail-endpoint');
-      const usernameCell = document.getElementById('broker-detail-username');
-
-      if (!detailsTableContainer || !nameCell || !endpointCell || !usernameCell) return;
-
-      // Show the details table
-      detailsTableContainer.style.display = 'block';
-
-      // Populate the table cells
-      nameCell.textContent = endpoint.name || endpointName;
-      endpointCell.innerHTML = `<a href="${endpoint.endpoint}" target="_blank">${endpoint.endpoint}</a>`;
-      usernameCell.textContent = endpoint.username;
+      const username = document.getElementById('broker-detail-username');
+      if (username) {
+        username.textContent = endpoint?.username ? `User: ${endpoint.username}` : '';
+        username.hidden = !endpoint?.username;
+      }
     },
 
     // Load content for specific tabs
@@ -21719,7 +21671,9 @@
 
       // Update button
       connectionBtn.textContent = connectionState.connected ? 'Disconnect' : 'Connect';
-      connectionBtn.disabled = connectionState.testing;
+      connectionBtn.disabled = !endpointName || connectionState.testing;
+      const text = document.getElementById('connection-status-text');
+      if (text) text.textContent = connectionState.testing ? 'Connecting…' : connectionState.connected ? 'Connected' : 'Not connected';
     },
 
     // Toggle connection status

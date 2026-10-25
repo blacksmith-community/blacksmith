@@ -619,3 +619,15 @@ body > footer p { margin: 0; }
 .compact-configs-controls .configs-action-buttons button { width: 36px; min-width: 36px; height: 36px; padding: 0; margin: 0; }
 .compact-configs-controls .configs-help { order: 3; cursor: help; }
 .configs-table-container { margin-top: 0; }
+
+/* Endpoint selection is a toolbar, not tabular data. */
+.broker-details-container .broker-endpoint-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem 0; margin: 0 0 .5rem; border: 0; background: transparent; }
+.broker-endpoint-header > label { margin: 0; font-weight: 600; }
+.broker-endpoint-header > select { flex: 1 1 22rem; width: auto; min-width: 12rem; }
+.broker-endpoint-header .endpoint-controls, .broker-endpoint-header .connection-status { display: flex; align-items: center; gap: .5rem; padding: 0; }
+.broker-endpoint-header .connection-status { margin-left: auto; }
+.broker-endpoint-header .broker-endpoint-user { font-size: .875rem; color: var(--text-secondary); }
+.broker-details-container .broker-tabs-nav { margin-top: 0; }
+#cf-endpoint-modal .modal { display: flex; }
+
+#cf-endpoint-modal.active { transition: opacity .2s ease, visibility 0s; }
