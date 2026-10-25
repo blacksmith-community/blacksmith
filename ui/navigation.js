@@ -30,7 +30,7 @@
     }
     [['upgrade', 'Upgrade'], ['converge', 'Converge'], ['rotate', 'Rotate certificates']].forEach(([operation, label]) =>
       entries.push({ screen: 'upgrade', operation, label, type: 'Operation', context: 'Batch Operations', breadcrumb: 'Batch Operations > Options', keywords: operation }));
-    ['light', 'dark', 'system'].forEach(theme => entries.push({ theme, label: theme[0].toUpperCase() + theme.slice(1), type: 'Theme', context: 'Appearance theme mode', breadcrumb: 'Appearance > Theme', detail: theme === 'system' ? 'Follow your device’s appearance setting' : '', keywords: 'theme appearance color mode' }));
+    [['light','Anvil Light'], ['dark','Anvil Dark'], ['high-contrast-light','High Contrast Light'], ['high-contrast-dark','High Contrast Dark'], ['system','System']].forEach(([theme,label]) => entries.push({ theme, label, type: 'Theme', context: 'Appearance theme mode', breadcrumb: 'Appearance > Theme', detail: theme === 'system' ? 'Follow your device’s appearance with Anvil' : '', keywords: 'theme appearance color mode' }));
     return entries;
   }
   function search(entries, query) {

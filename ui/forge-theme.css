@@ -745,3 +745,48 @@ body > footer p { margin: 0; }
 #blacksmith .deployment-manifest-workspace .manifest-header { position: static; display: flex; justify-content: flex-end; padding: 0 0 6px; }
 #blacksmith .deployment-manifest-workspace .copy-btn-manifest { width: 36px; height: 36px; padding: 6px; background: var(--card); color: var(--foreground); border-color: var(--border); }
 #blacksmith .deployment-manifest-workspace .manifest-container pre { padding: 12px; margin: 0; max-width: 100%; overflow: auto; white-space: pre; line-height: 1.5; }
+
+/* High Contrast themes retain the light/dark hooks used by older components. */
+:root[data-contrast="high"] {
+  --background: #ffffff; --foreground: #000000;
+  --card: #ffffff; --card-foreground: #000000;
+  --secondary: #eeeeee; --secondary-foreground: #000000;
+  --muted: #eeeeee; --muted-foreground: #242424;
+  --faint: #ffffff; --faint-foreground: #242424;
+  --primary: #003399; --primary-foreground: #ffffff;
+  --accent: #003399; --accent-foreground: #ffffff;
+  --danger: #990000; --danger-foreground: #ffffff;
+  --success: #005020; --success-foreground: #ffffff;
+  --warning: #604000; --warning-foreground: #ffffff;
+  --border: #595959; --input: #000000; --ring: #003399;
+}
+:root[data-contrast="high"][data-theme="dark"] {
+  --background: #000000; --foreground: #ffffff;
+  --card: #000000; --card-foreground: #ffffff;
+  --secondary: #1a1a1a; --secondary-foreground: #ffffff;
+  --muted: #1a1a1a; --muted-foreground: #eeeeee;
+  --faint: #000000; --faint-foreground: #eeeeee;
+  --primary: #66ddff; --primary-foreground: #000000;
+  --accent: #66ddff; --accent-foreground: #000000;
+  --danger: #ffb3b3; --danger-foreground: #000000;
+  --success: #99ffb3; --success-foreground: #000000;
+  --warning: #ffe066; --warning-foreground: #000000;
+  --border: #aaaaaa; --input: #ffffff; --ring: #66ddff;
+}
+:root[data-contrast="high"] body > header { background: #000; color: #fff; border-bottom: 1px solid #fff; }
+:root[data-contrast="high"] body > header :is(button, #logo, span) { color: #fff; }
+:root[data-contrast="high"] body > header button { border-color: #fff; }
+:root[data-contrast="high"] :is(.config-type-badge,.status-badge,.vm-status-badge,.level-badge,.task-kind-badge,.cert-pill,.cert-nav-badge) { background: var(--card) !important; color: var(--foreground) !important; border: 1px solid var(--foreground); }
+:root[data-contrast="high"] :is(a,.cert-link-btn) { text-decoration: underline; }
+:root[data-contrast="high"] :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
+:root[data-contrast="high"] body > header :focus-visible { outline-color: #fff; }
+:root[data-contrast="high"] .main-content .tab-button.active { border-bottom-width: 4px; font-weight: 700; }
+:root[data-contrast="high"] #navigation-results [aria-selected="true"] { outline: 2px solid var(--primary); outline-offset: -2px; }
+body > header > .wrap > div:last-child { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+body > header .theme-toggle { flex-shrink: 0; white-space: nowrap; }
+@media (max-width: 540px) {
+  body > header > .wrap { flex-wrap: wrap; gap: 8px; }
+  body > header > .wrap > div:last-child { flex: 1 1 100%; }
+}
+
+:root[data-contrast="high"] :is(body,button,input,select,textarea,a) { transition: none; }

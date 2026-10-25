@@ -30,7 +30,7 @@ t('Blacksmith and instance navigation retain all destinations in named groups', 
     expect(instance.querySelectorAll('.detail-tab')).toHaveLength(8);
     for (const host of [broker,instance]) {
       expect(host.querySelector('.entity-section-group')).not.toBeNull();
-      expect(host.querySelector('[data-tab="details"]').textContent).toBe('Overview');
+      expect(host.querySelector('[data-tab="details"]').textContent).toBe(host === broker ? 'Summary' : 'Overview');
       expect(host.querySelector('.entity-section-select').getAttribute('aria-label')).toBe('View section');
       expect(host.querySelector('.service-detail-header h2')).not.toBeNull();
     }
@@ -48,7 +48,7 @@ t('explicit light and dark choices control the Oat color scheme', () => {
     expect(d.documentElement.style.colorScheme).toBe('light');
     w.__T.setTheme('dark');
     expect(d.documentElement.style.colorScheme).toBe('dark');
-    expect(d.getElementById('themeToggle').getAttribute('aria-label')).toBe('Switch to light theme');
+    expect(d.getElementById('themeToggle').getAttribute('aria-label')).toBe('Switch to Anvil Light theme');
   } finally { w.close(); }
 });
 
@@ -175,4 +175,17 @@ test('the broker tab is named Blacksmith Broker and the instance list has no vis
   for (const css of ['blacksmith.css', 'console.css']) {
     expect(fs.readFileSync(path.join(ui, css), 'utf8')).not.toContain('services-list h2');
   }
+});
+
+test('high contrast palettes meet stronger text and visible boundary targets',()=>{
+ const css=fs.readFileSync(path.join(ui,'forge-theme.css'),'utf8');
+ for(const selector of [':root[data-contrast="high"] {',':root[data-contrast="high"][data-theme="dark"] {']){
+  const block=css.slice(css.indexOf(selector)).match(/\{([^}]+)\}/)[1];
+  const vars=Object.fromEntries([...block.matchAll(/--([\w-]+):\s*(#[\da-f]{6})/gi)].map(m=>[m[1],m[2]]));
+  for(const bg of ['background','card','secondary']){
+   for(const text of ['foreground','muted-foreground','primary']) expect(contrast(vars[text],vars[bg])).toBeGreaterThanOrEqual(7);
+   expect(contrast(vars.border,vars[bg])).toBeGreaterThanOrEqual(3);
+  }
+  for(const color of ['primary','danger','success','warning']) expect(contrast(vars[color],vars[color+'-foreground'])).toBeGreaterThanOrEqual(7);
+ }
 });

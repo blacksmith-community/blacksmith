@@ -19,3 +19,19 @@ test('theme actions persist explicit modes and restore system preference',()=>{
   expect(w.localStorage.getItem('theme')).toBeNull();
  } finally {w.close();}
 });
+
+test('high contrast themes retain dark styling and clear on return to Anvil',()=>{
+ const {main:{boot}}=require('./certificates/harness.js');const {w,d}=boot();
+ try{
+ for(const mode of ['high-contrast-dark','high-contrast-light']){
+  w.blacksmithTheme.setPreference(mode);
+  expect(d.documentElement.getAttribute('data-contrast')).toBe('high');
+  expect(d.documentElement.style.colorScheme).toBe(mode.endsWith('dark')?'dark':'light');
+  expect(w.localStorage.getItem('theme')).toBe(mode);
+ }
+ w.blacksmithTheme.setPreference('dark');
+ expect(d.documentElement.hasAttribute('data-contrast')).toBe(false);
+ expect(d.getElementById('themeText').textContent).toBe('Anvil Dark');
+ expect(d.getElementById('themeToggle').parentElement.lastElementChild.id).toBe('themeToggle');
+ }finally{w.close();}
+});

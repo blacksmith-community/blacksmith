@@ -99,44 +99,36 @@
     }
   };
 
-  const setTheme = (theme) => {
-    document.documentElement.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
-    document.querySelector('meta[name=\"theme-color\"]')?.setAttribute('content', theme === 'dark' ? '#171b20' : '#f5f2ec');
-    if (theme === 'dark') {
-      document.documentElement.setAttribute('data-theme', 'dark');
-      updateThemeToggle('light');
-    } else {
-      document.documentElement.removeAttribute('data-theme');
-      updateThemeToggle('dark');
-    }
+  const THEME_NAMES = {
+    light: 'Anvil Light', dark: 'Anvil Dark',
+    'high-contrast-light': 'High Contrast Light', 'high-contrast-dark': 'High Contrast Dark'
   };
-
-  const updateThemeToggle = (nextTheme) => {
-    document.getElementById('themeToggle')?.setAttribute('aria-label', `Switch to ${nextTheme} theme`);
-    const themeText = document.getElementById('themeText');
-    const sunIcon = document.querySelector('.sun-icon');
-    const moonIcon = document.querySelector('.moon-icon');
-
-    if (themeText) {
-      themeText.textContent = nextTheme === 'dark' ? 'Dark' : 'Light';
-    }
-
-    if (sunIcon && moonIcon) {
-      if (nextTheme === 'dark') {
-        // Currently in light mode, show moon icon for switching to dark
-        sunIcon.style.display = 'none';
-        moonIcon.style.display = 'block';
-      } else {
-        // Currently in dark mode, show sun icon for switching to light
-        sunIcon.style.display = 'block';
-        moonIcon.style.display = 'none';
-      }
-    }
+  const setTheme = (theme) => {
+    if (!THEME_NAMES[theme]) theme = 'light';
+    const dark = theme.endsWith('dark');
+    const highContrast = theme.startsWith('high-contrast-');
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    document.documentElement.toggleAttribute('data-contrast', highContrast);
+    if (highContrast) document.documentElement.setAttribute('data-contrast', 'high');
+    if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    const background = highContrast ? (dark ? '#000000' : '#ffffff') : (dark ? '#171b20' : '#f5f2ec');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', background);
+    const next = (highContrast ? 'high-contrast-' : '') + (dark ? 'light' : 'dark');
+    const button = document.getElementById('themeToggle');
+    button?.setAttribute('aria-label', 'Switch to ' + THEME_NAMES[next] + ' theme');
+    if (button) button.title = 'Switch light/dark within the current theme. Find all themes in Quick Navigation.';
+    const text = document.getElementById('themeText');
+    if (text) text.textContent = THEME_NAMES[theme];
+    const sun = document.querySelector('.sun-icon');
+    const moon = document.querySelector('.moon-icon');
+    if (sun) sun.style.display = dark ? 'block' : 'none';
+    if (moon) moon.style.display = dark ? 'none' : 'block';
   };
 
   window.blacksmithTheme = {
     setPreference(theme) {
-      if (!['light', 'dark', 'system'].includes(theme)) return;
+      if (!THEME_NAMES[theme] && theme !== 'system') return;
       if (theme === 'system') localStorage.removeItem('theme');
       else localStorage.setItem('theme', theme);
       setTheme(theme === 'system' ? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme);
@@ -144,12 +136,9 @@
   };
 
   const toggleTheme = () => {
-    const currentTheme = document.documentElement.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-
-    // Save preference
-    localStorage.setItem('theme', newTheme);
-    setTheme(newTheme);
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const highContrast = document.documentElement.getAttribute('data-contrast') === 'high';
+    window.blacksmithTheme.setPreference((highContrast ? 'high-contrast-' : '') + (dark ? 'light' : 'dark'));
   };
 
   // =================================================================
