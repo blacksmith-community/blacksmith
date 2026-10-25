@@ -124,6 +124,59 @@
         .some(el => el !== dialog && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none') ||
         document.activeElement?.closest('.xterm, #terminal-modal');
     }
+    const helpDialog = document.getElementById('keyboard-help-dialog');
+    const helpTrigger = document.getElementById('keyboard-help-trigger');
+    let helpOpener;
+    function showKeyboardHelp() {
+      if (!helpDialog || blocked()) return;
+      helpOpener = document.activeElement;
+      const content = helpDialog.querySelector('.keyboard-help-content');
+      content.replaceChildren();
+      const section = (title, rows) => {
+        const heading = document.createElement('h3'); heading.textContent = title;
+        const table = document.createElement('table');
+        const body = document.createElement('tbody');
+        rows.forEach(([keys, description]) => {
+          const row = document.createElement('tr');
+          const key = document.createElement('th'); key.scope = 'row';
+          const binding = document.createElement('kbd'); binding.textContent = keys; key.append(binding);
+          const text = document.createElement('td'); text.textContent = description;
+          row.append(key,text); body.append(row);
+        });
+        table.append(body); content.append(heading,table);
+      };
+      section('Global', [
+        [shortcut, 'Quick Navigation'],
+        [shortcut.replace('K', '/'), 'Keyboard shortcuts'],
+        ['Tab / Shift Tab', 'Move between controls'],
+        ['Enter / Space', 'Activate the focused control'],
+        ['Esc', 'Close the current dialog']
+      ]);
+      const panel = document.querySelector('.tab-panel.active');
+      const rows = [['Arrow keys / Home / End', 'Move between focused navigation tabs'],
+        ['Arrow keys', 'Choose radio, mode, or select options']];
+      const names = {'batch-new':'New Operation (keeps your draft)', 'batch-activity':'Activity',
+        'batch-flow-next':'Next step; on Review, focus confirmation', 'batch-flow-back':'Previous step',
+        'rotate-op-upgrade':'Upgrade options', 'rotate-op-rotate':'Rotate certificate options', 'rotate-op-converge':'Converge options'};
+      panel?.querySelectorAll('[aria-keyshortcuts]').forEach(control => {
+        if (!names[control.id] && (!control.getClientRects().length || control.disabled)) return;
+        rows.push([control.getAttribute('aria-keyshortcuts').replaceAll('Alt','Alt/Option'),
+          names[control.id] || control.getAttribute('aria-label') || control.getAttribute('placeholder') || control.textContent.trim()]);
+      });
+      section(document.getElementById('console-title').textContent || 'Current view', rows);
+      const note = document.createElement('p');
+      note.textContent = 'Batch shortcuts pause while typing or in a dialog. Final confirmation requires explicit activation.';
+      if (panel?.id === 'upgrade') content.append(note);
+      helpDialog.showModal();
+      helpDialog.querySelector('[data-close]').focus();
+    }
+    helpTrigger?.addEventListener('click', showKeyboardHelp);
+    helpDialog?.querySelector('[data-close]').addEventListener('click', () => helpDialog.close());
+    helpDialog?.addEventListener('close', () => { if (helpOpener?.isConnected) helpOpener.focus(); });
+    helpDialog?.addEventListener('click', event => { if (event.target === helpDialog) helpDialog.close(); });
+    helpTrigger?.setAttribute('aria-keyshortcuts', /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta+/' : 'Control+/');
+    trigger.setAttribute('aria-keyshortcuts', /Mac|iPhone|iPad/.test(navigator.platform) ? 'Meta+k' : 'Control+k');
+
     function open() {
       if (dialog.open || blocked()) return;
       previousFocus = document.activeElement;
@@ -212,6 +265,11 @@
     dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
     dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
     document.addEventListener('keydown', event => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey &&
+          (event.key === '/' || event.code === 'Slash') && !event.repeat && !event.isComposing) {
+        if (!blocked()) { event.preventDefault(); showKeyboardHelp(); }
+        return;
+      }
       if (dialog.open) {
         event.stopImmediatePropagation();
         if (event.key === 'Tab') {

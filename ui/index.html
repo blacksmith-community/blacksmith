@@ -14,7 +14,7 @@
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261024-rotate">
-  <link rel="stylesheet" href="/forge-theme.css?v=20261025-batch-keyboard">
+  <link rel="stylesheet" href="/forge-theme.css?v=20261025-keyboard-help">
   <script src="/vendor/oat/oat.min.js" defer></script>
 </head>
 
@@ -40,6 +40,7 @@
       </div>
       <div>
         <button type="button" id="navigation-trigger" aria-haspopup="dialog" aria-controls="navigation-dialog">Go to… <kbd>Ctrl K</kbd></button>
+        <button type="button" id="keyboard-help-trigger" aria-haspopup="dialog" aria-controls="keyboard-help-dialog" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (Ctrl/Cmd+/)">⌨</button>
         <span class="header-deployment"><span id="deployment-name"></span><button type="button" id="copy-header-deployment" class="copy-btn-inline" title="Copy deployment name" aria-label="Copy deployment name">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
         </button></span>
@@ -394,6 +395,10 @@
 
   <div id="blacksmith-live-region" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
+  <dialog id="keyboard-help-dialog" aria-labelledby="keyboard-help-title">
+    <div class="keyboard-help-heading"><h2 id="keyboard-help-title">Keyboard shortcuts</h2><button type="button" data-close aria-label="Close keyboard shortcuts">×</button></div>
+    <div class="keyboard-help-content"></div>
+  </dialog>
   <dialog id="navigation-dialog" aria-labelledby="navigation-title">
     <div class="navigation-heading"><h2 id="navigation-title">Quick Navigation</h2><button type="button" data-close aria-label="Close navigation" title="Close navigation (Esc)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
     <label class="visually-hidden" for="navigation-search">Search screens, instances, or themes</label>
@@ -404,7 +409,7 @@
   </dialog>
   <script type="text/javascript" src="/xterm.min.js"></script>
   <script type="text/javascript" src="/blacksmith.js?v=20261025-batch-keyboard"></script>
-  <script src="/navigation.js?v=20261025-batch-shortcuts"></script>
+  <script src="/navigation.js?v=20261025-keyboard-help"></script>
 </body>
 
 </html>
