@@ -561,3 +561,12 @@ body > footer p { margin: 0; }
 .job-logs-container > .table-controls-container > button, .logs-controls-row > button {
   width: 2.5rem; min-width: 2.5rem; flex: 0 0 2.5rem;
 }
+
+/* Keep PEM and other multiline credentials readable without changing their value. */
+.credentials-table .credential-value-layout { display: flex; align-items: flex-start; gap: .5rem; }
+.credentials-table .credential-value-text { flex: 1; min-width: 0; }
+.credentials-table .credential-multiline {
+  margin: 0; padding: .5rem; white-space: pre-wrap; overflow-wrap: anywhere;
+  word-break: normal; font: inherit; font-family: var(--font-mono, monospace); line-height: 1.5;
+}
+.credentials-table .credential-value-layout > button { flex: 0 0 auto; }

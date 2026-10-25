@@ -7446,87 +7446,20 @@
 
   // Format credentials as table from JSON
   const formatCredentials = (creds) => {
-    if (!creds || Object.keys(creds).length === 0) {
-      return '<div class="no-data">No credentials available</div>';
-    }
-
-    let html = '<div class="credentials-container">';
-    html += `
-      <table class="credentials-table">
-        <thead>
-          <tr>
-            <th>Property</th>
-            <th>Value</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
-
-    // Flatten all credentials into a single table
-    for (const [section, values] of Object.entries(creds)) {
-      if (typeof values === 'object' && values !== null && Object.keys(values).length > 0) {
-        // If section contains multiple key-value pairs, add each as a row
-        for (const [key, value] of Object.entries(values)) {
-          let displayValue;
-          if (value === null || value === undefined || value === '') {
-            displayValue = '<em>empty</em>';
-          } else if (typeof value === 'object') {
-            displayValue = `<code>${JSON.stringify(value, null, 2)}</code>`;
-          } else {
-            displayValue = `<code>${value}</code>`;
-          }
-
-          const copyValue = typeof value === 'object' ? JSON.stringify(value, null, 2) : (value || '');
-          html += `
-            <tr>
-              <td class="cred-key">${key}</td>
-              <td class="cred-value">
-                <span class="copy-wrapper">
-                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
-                          title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(key))}">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                  <span>${displayValue}</span>
-                </span>
-              </td>
-            </tr>
-          `;
-        }
-      } else {
-        // If section is a single value, use section name as key
-        let displayValue;
-        if (values === null || values === undefined || values === '') {
-          displayValue = '<em>empty</em>';
-        } else if (typeof values === 'object') {
-          displayValue = `<code>${JSON.stringify(values, null, 2)}</code>`;
-        } else {
-          displayValue = `<code>${values}</code>`;
-        }
-
-        const copyValue = typeof values === 'object' ? JSON.stringify(values, null, 2) : (values || '');
-        html += `
-          <tr>
-            <td class="cred-key">${section}</td>
-            <td class="cred-value">
-              <span class="copy-wrapper">
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
-                        title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(section))}">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-                <span>${displayValue}</span>
-              </span>
-            </td>
-          </tr>
-        `;
-      }
-    }
-
-    html += `
-        </tbody>
-      </table>
-    `;
-    html += '</div>';
-    return html;
+    if (!creds || Object.keys(creds).length === 0) return '<div class="no-data">No credentials available</div>';
+    const rows = Object.entries(creds).flatMap(([section, values]) =>
+      typeof values === 'object' && values !== null && Object.keys(values).length > 0
+        ? Object.entries(values) : [[section, values]]);
+    return `<div class="credentials-container"><table class="credentials-table">
+      <thead><tr><th>Property</th><th>Value</th></tr></thead><tbody>
+      ${rows.map(([key, value]) => {
+        const text = value == null ? '' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+        const display = text === '' ? '<em>empty</em>' : text.includes('\n')
+          ? `<pre class="credential-multiline">${escapeHtml(text)}</pre>` : `<code>${escapeHtml(text)}</code>`;
+        return `<tr><td class="cred-key">${escapeHtml(key)}</td><td class="cred-value">
+          <div class="credential-value-layout">${entityCopy(text, key)}<div class="credential-value-text">${display}</div></div>
+        </td></tr>`;
+      }).join('')}</tbody></table></div>`;
   };
 
   // Format config as a hierarchical table similar to credentials
