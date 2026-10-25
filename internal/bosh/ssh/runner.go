@@ -53,14 +53,19 @@ var (
 )
 
 // Result is what one command left behind. Stdout and Stderr each hold at
-// most the run's limit, and Truncated says that at least one of them was
-// cut. The streams may hold anything the VM printed, so they reach a log
+// most the run's limit. StdoutTruncated and StderrTruncated say which
+// stream was cut, and Truncated says that at least one of them was.
+// StdoutReceived and StderrReceived count every byte the command wrote to
+// each stream, whether it was kept or dropped. The streams may hold anything the VM printed, so they reach a log
 // line only through ForLog, and never reach an error, a stored record, or
 // an API response.
 type Result struct {
 	Stdout, Stderr []byte
 	ExitCode       int
 	Truncated      bool
+
+	StdoutTruncated, StderrTruncated bool
+	StdoutReceived, StderrReceived   int64
 }
 
 // Runner runs commands on one VM over a shared SSH connection, opening
@@ -150,7 +155,7 @@ func (r *Runner) Run(ctx context.Context, program string, args []string, stdin i
 
 	end, err := r.execute(ctx, session, command, shown)
 	if err != nil {
-		return Result{}, err
+		return snapshotResult(stdout, stderr, 0), err
 	}
 
 	return r.finish(shown, stdout, stderr, end)
@@ -359,12 +364,7 @@ func (r *Runner) execute(ctx context.Context, session *ssh.Session, command, sho
 // finish turns what the session left behind into the run's result, and
 // logs it at debug level with each stream passed through ForLog.
 func (r *Runner) finish(shown string, stdout, stderr *boundedBuffer, end sessionEnd) (Result, error) {
-	result := Result{
-		Stdout:    stdout.buf.Bytes(),
-		Stderr:    stderr.buf.Bytes(),
-		ExitCode:  end.code,
-		Truncated: stdout.cut || stderr.cut,
-	}
+	result := snapshotResult(stdout, stderr, end.code)
 
 	r.log.Debugf("%s ended with exit status %d, truncated %t, stdout %s, stderr %s",
 		shown, result.ExitCode, result.Truncated, ForLog(result.Stdout), ForLog(result.Stderr))
@@ -460,17 +460,45 @@ func (g *stdinGate) stop() {
 	g.stopped = true
 }
 
+// snapshotResult copies what the two buffers hold into a Result. It is
+// safe while the session still writes, because each buffer is read under
+// its own lock.
+func snapshotResult(stdout, stderr *boundedBuffer, code int) Result {
+	out, outReceived, outCut := stdout.snapshot()
+	errOut, errReceived, errCut := stderr.snapshot()
+
+	return Result{
+		Stdout:          out,
+		Stderr:          errOut,
+		ExitCode:        code,
+		Truncated:       outCut || errCut,
+		StdoutTruncated: outCut,
+		StderrTruncated: errCut,
+		StdoutReceived:  outReceived,
+		StderrReceived:  errReceived,
+	}
+}
+
 // boundedBuffer keeps the first limit bytes written to it and drops the
-// rest, and records that it dropped some. Every write reports success,
-// so the session keeps reading the stream and the command never blocks
-// on a full window.
+// rest, and records that it dropped some and how many bytes it was
+// offered in all. Every write reports success, so the session keeps
+// reading the stream and the command never blocks on a full window. The
+// session writes from its own goroutine while a caller may read, so a
+// lock guards every access.
 type boundedBuffer struct {
-	limit int64
-	buf   bytes.Buffer
-	cut   bool
+	limit    int64
+	mu       sync.Mutex
+	buf      bytes.Buffer
+	cut      bool
+	received int64
 }
 
 func (b *boundedBuffer) Write(chunk []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.received += int64(len(chunk))
+
 	room := b.limit - int64(b.buf.Len())
 
 	switch {
@@ -484,4 +512,13 @@ func (b *boundedBuffer) Write(chunk []byte) (int, error) {
 	}
 
 	return len(chunk), nil
+}
+
+// snapshot returns a copy of the kept bytes, the count of bytes offered,
+// and whether any were dropped.
+func (b *boundedBuffer) snapshot() ([]byte, int64, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return bytes.Clone(b.buf.Bytes()), b.received, b.cut
 }

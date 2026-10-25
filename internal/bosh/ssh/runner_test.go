@@ -334,6 +334,110 @@ func TestRunnerBoundsOutput(t *testing.T) {
 	}
 }
 
+// Each stream reports its own truncation and the number of bytes it was
+// offered, whether they were kept or dropped.
+func TestRunnerReportsTruncationPerStream(t *testing.T) {
+	t.Parallel()
+
+	const limit = 100
+
+	cases := []struct {
+		name                         string
+		stdoutLen, stderrLen         int
+		wantStdoutCut, wantStderrCut bool
+	}{
+		{name: "only stderr over the limit", stdoutLen: 10, stderrLen: 250, wantStderrCut: true},
+		{name: "only stdout over the limit", stdoutLen: 250, stderrLen: 10, wantStdoutCut: true},
+		{name: "both exactly at the limit", stdoutLen: limit, stderrLen: limit},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fakeVM := startRunnerVM(t, func(_ string, channel ssh.Channel, _ <-chan struct{}) uint32 {
+				_, _ = channel.Write(bytes.Repeat([]byte("o"), tc.stdoutLen))
+				_, _ = channel.Stderr().Write(bytes.Repeat([]byte("e"), tc.stderrLen))
+
+				return 0
+			})
+
+			runner := boshssh.NewRunner(fakeVM.dial(t), &runnerLog{})
+
+			result, err := runner.Run(t.Context(), catProgram, nil, nil, limit)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			if result.StdoutTruncated != tc.wantStdoutCut || result.StderrTruncated != tc.wantStderrCut {
+				t.Errorf("StdoutTruncated %v, StderrTruncated %v; want %v, %v",
+					result.StdoutTruncated, result.StderrTruncated, tc.wantStdoutCut, tc.wantStderrCut)
+			}
+
+			if want := tc.wantStdoutCut || tc.wantStderrCut; result.Truncated != want {
+				t.Errorf("Truncated %v, want %v", result.Truncated, want)
+			}
+
+			if result.StdoutReceived != int64(tc.stdoutLen) || result.StderrReceived != int64(tc.stderrLen) {
+				t.Errorf("received %d stdout bytes and %d stderr bytes; want %d and %d",
+					result.StdoutReceived, result.StderrReceived, tc.stdoutLen, tc.stderrLen)
+			}
+		})
+	}
+}
+
+// A run the context ends still returns what the command printed first.
+func TestRunnerReturnsPartialOutputOnDeadline(t *testing.T) {
+	t.Parallel()
+
+	fakeVM := startRunnerVM(t, func(_ string, channel ssh.Channel, stop <-chan struct{}) uint32 {
+		_, _ = io.WriteString(channel, "first line\n")
+
+		<-stop
+
+		return 0
+	})
+
+	runner := boshssh.NewRunner(fakeVM.dial(t), &runnerLog{})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+
+	result, err := runner.Run(ctx, "sleep", []string{"forever"}, nil, 0)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run returned %v, want context.DeadlineExceeded", err)
+	}
+
+	if string(result.Stdout) != "first line\n" || result.StdoutReceived != int64(len("first line\n")) {
+		t.Errorf("Run returned stdout %q, received %d; want the first line with its length", result.Stdout, result.StdoutReceived)
+	}
+}
+
+// A connection that drops after output, with no exit status, returns the
+// partial output with ErrNoExitStatus.
+func TestRunnerReturnsPartialOutputWithoutExitStatus(t *testing.T) {
+	t.Parallel()
+
+	fakeVM := startRunnerVM(t, func(_ string, channel ssh.Channel, _ <-chan struct{}) uint32 {
+		_, _ = io.WriteString(channel, "some output")
+		_, _ = io.WriteString(channel.Stderr(), "some warning")
+		_ = channel.Close()
+
+		return 0
+	})
+
+	runner := boshssh.NewRunner(fakeVM.dial(t), &runnerLog{})
+
+	result, err := runner.Run(t.Context(), catProgram, nil, nil, 0)
+	if !errors.Is(err, boshssh.ErrNoExitStatus) {
+		t.Fatalf("Run returned %v, want ErrNoExitStatus", err)
+	}
+
+	if string(result.Stdout) != "some output" || string(result.Stderr) != "some warning" {
+		t.Errorf("Run returned stdout %q, stderr %q; want the partial output", result.Stdout, result.Stderr)
+	}
+}
+
 // Key and certificate content travels only on stdin, so an argument or
 // program that carries it is refused before any session is opened.
 func TestRunnerRefusesContentInArgs(t *testing.T) {
