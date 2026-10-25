@@ -68,9 +68,11 @@ func (m *Manager) Close() error {
 }
 
 // otherServiceNames are the names of services that are known not to be
-// Redis, so a credentials name that holds one rules the instance out.
-var otherServiceNames = []string{
-	"rabbit", "amqp", "postgres", "mysql", "mariadb", "mongo", "kafka", "nats", "elasticsearch",
+// Redis, matched on the whole name. A name that holds rabbit or amqp also
+// rules the instance out.
+var otherServiceNames = map[string]bool{
+	"postgres": true, "postgresql": true, "mysql": true, "mariadb": true, "mongo": true,
+	"mongodb": true, "kafka": true, "nats": true, "elasticsearch": true,
 }
 
 // IsRedisInstance checks if the credentials indicate a Redis service.
@@ -92,12 +94,8 @@ func IsRedisInstance(creds common.Credentials) bool {
 			return true
 		}
 
-		for _, other := range otherServiceNames {
-			if strings.Contains(name, other) {
-				named = true
-
-				break
-			}
+		if otherServiceNames[name] || strings.Contains(name, "rabbit") || strings.Contains(name, "amqp") {
+			named = true
 		}
 	}
 

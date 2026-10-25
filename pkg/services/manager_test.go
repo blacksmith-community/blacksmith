@@ -123,9 +123,19 @@ func TestIsRedisInstance(t *testing.T) {
 				"host":         "db.example.com",
 				"port":         6379,
 				"password":     "secret",
-				"service_name": "postgres-orders",
+				"service_name": "postgresql",
 			},
 			expected: false,
+		},
+		{
+			name: "Redis named for a service it merely resembles is still Redis",
+			creds: common.Credentials{
+				"host":         "cache.example.com",
+				"port":         6379,
+				"password":     "secret",
+				"service_name": "kafka-dedupe-cache",
+			},
+			expected: true,
 		},
 		{
 			name: "Valkey service type is Redis family",

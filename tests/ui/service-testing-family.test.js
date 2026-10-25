@@ -115,8 +115,22 @@ t('an instance name that matches no service falls through to the guesses',async(
   expect(r.html).toContain('executeRedisTest');
   expect(r.w.currentTestingInstance.label).toBe('Redis');
  }finally{r.close();}
- const p=await screen({host:'h',password:'p',port:6379},{service_name:'postgres-orders'});
+ const p=await screen({host:'h',password:'p',port:6379},{service_name:'postgresql'});
  try{expect(p.html).toContain('Service testing not available for this service type');}finally{p.close();}
  const v=await screen(valkeyCreds,{service_name:'my-cache'});
  try{expect(v.w.currentTestingInstance.label).toBe('Valkey');}finally{v.close();}
+});
+
+t('the details service_name cannot override what the credentials show',async()=>{
+ const rmq=await screen({uri:'amqps://u:p@h:5671/v',host:'h',username:'u',password:'p',vhost:'v'},{service_name:'redis-notifier'});
+ try{
+  expect(rmq.html).toContain('executeRabbitMQTest');
+  expect(rmq.html).not.toContain('executeRedisTest');
+ }finally{rmq.close();}
+ const kafka=await screen({host:'h',password:'p',port:6379},{service_name:'kafka-dedupe-cache'});
+ try{expect(kafka.html).toContain('executeRedisTest');}finally{kafka.close();}
+ const v=await screen(valkeyCreds,{service_name:'postgres'});
+ try{expect(v.w.currentTestingInstance.label).toBe('Valkey');}finally{v.close();}
+ const exact=await screen({host:'h',password:'p',port:6379},{service_name:'postgres'});
+ try{expect(exact.html).toContain('Service testing not available for this service type');}finally{exact.close();}
 });

@@ -10147,28 +10147,36 @@
     { match: /rabbit|amqp/, type: 'rabbitmq', label: 'RabbitMQ' }
   ];
 
-  // Services the screen knows it does not support. A name that matches none
-  // of the families or of these may only be an instance name the operator
-  // chose, so it decides nothing.
-  const UNSUPPORTED_SERVICES = /postgres|mysql|mariadb|mongo|kafka|nats|elasticsearch/;
+  // Services the screen knows it does not support, matched on the whole name.
+  // A name that matches none of the families or of these may only be an
+  // instance name the operator chose, so it decides nothing.
+  const UNSUPPORTED_SERVICES = new Set(['postgres', 'postgresql', 'mysql', 'mariadb', 'mongo', 'mongodb', 'kafka', 'nats', 'elasticsearch']);
+  const EXACT_FAMILY_NAMES = { valkey: 0, redis: 1, rabbitmq: 2 };
 
-  const classifyServiceName = (value) => {
+  // The forges write service_type and the credentials' service_name, so those
+  // match a family by substring, as in "redis-forge". The details service_name
+  // can be a name the operator chose, so it counts only as the whole name.
+  const classifyServiceName = (value, exact = false) => {
     if (typeof value !== 'string') return null;
     const lower = value.trim().toLowerCase();
     if (!lower) return null;
-    const family = SERVICE_FAMILIES.find(f => f.match.test(lower));
+    const family = exact
+      ? (Object.prototype.hasOwnProperty.call(EXACT_FAMILY_NAMES, lower) ? SERVICE_FAMILIES[EXACT_FAMILY_NAMES[lower]] : null)
+      : SERVICE_FAMILIES.find(f => f.match.test(lower));
     if (family) return { type: family.type, label: family.label };
-    return UNSUPPORTED_SERVICES.test(lower) ? { type: null, label: null } : null;
+    return UNSUPPORTED_SERVICES.has(lower) ? { type: null, label: null } : null;
   };
 
   const detectServiceFamily = (creds, vaultData) => {
-    const named = [vaultData?.service_name, vaultData?.service_type, creds?.service_name, creds?.service_type]
-      .map(classifyServiceName)
-      .filter(Boolean);
-    if (named.length > 0) {
-      // A named service the screen does not support gets no screen, never a guess.
-      return named.find(n => n.type) || { type: null, label: null };
-    }
+    // The first field that classifies decides. A named service the screen does
+    // not support gets no screen, never a guess.
+    const named = [
+      classifyServiceName(creds?.service_type),
+      classifyServiceName(creds?.service_name),
+      classifyServiceName(vaultData?.service_type),
+      classifyServiceName(vaultData?.service_name, true)
+    ].find(Boolean);
+    if (named) return named;
 
     const scheme = typeof creds?.uri === 'string' ? creds.uri.split(':')[0].toLowerCase() : '';
     if (scheme === 'valkey' || scheme === 'valkeys') return { type: 'redis', label: 'Valkey' };
