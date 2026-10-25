@@ -24,6 +24,7 @@ func fakeSecrets() map[string]string {
 		"shield.password":                "fake-shield-password-0007",
 		"bosh.password":                  "fake-bosh-password-0008",
 		"credhub.client_secret":          "fake-credhub-client-secret-0009",
+		"commands.credential.key":        "test-command-key-value",
 		"bosh.ssh.websocket.placeholder": "",
 	}
 }
@@ -40,6 +41,7 @@ func createSecretConfig() *config.Config {
 		CredHub: config.CredHubConfig{URL: "https://credhub.local:8844", ClientID: "blacksmith_credhub", ClientSecret: secrets["credhub.client_secret"], DirectorName: "bosh"},
 	}
 	cfg.Broker.TLS.Key = secrets["broker.tls.key"]
+	cfg.Commands.Credential.Key = secrets["commands.credential.key"]
 	cfg.Broker.CF.BrokerUser = "cf-broker-user"
 	cfg.Broker.CF.BrokerPass = secrets["broker.cf.broker_pass"]
 	cfg.Broker.CF.APIs = map[string]config.CFAPIConfig{
