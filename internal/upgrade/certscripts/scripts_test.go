@@ -241,7 +241,7 @@ func TestCommandsPassTheRunnerCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	program, argv := certscripts.Invocation("patch", pinnedTarget, testTaskID, strings.Repeat("0123456789abcdef", 4))
+	program, argv := scripts.Invocation("patch", pinnedTarget, testTaskID, strings.Repeat("0123456789abcdef", 4))
 
 	for name, run := range map[string]func() error{
 		"staging": func() error {
@@ -513,7 +513,7 @@ func TestInvocation(t *testing.T) {
 
 	target := "/var/vcap/data/jobs/valkey/abc/config/server.crt"
 
-	program, argv := certscripts.Invocation("patch", target, testTaskID)
+	program, argv := scripts.Invocation("patch", target, testTaskID)
 	if program != "sudo -n /bin/bash -s --" {
 		t.Errorf("program = %q", program)
 	}
@@ -530,7 +530,7 @@ func TestParseLines(t *testing.T) {
 	allowed := map[string]bool{"path": true, "hash": true, "state": true}
 	out := []byte("path=/var/vcap/data/jobs/valkey/abc/x hash=abc123\n\nstate=ok\n")
 
-	got, err := certscripts.ParseLines(out, allowed)
+	got, err := scripts.ParseLines(out, allowed)
 	if err != nil {
 		t.Fatalf("ParseLines: %v", err)
 	}
@@ -543,7 +543,7 @@ func TestParseLines(t *testing.T) {
 		t.Errorf("parsed %v", got)
 	}
 
-	empty, err := certscripts.ParseLines(nil, allowed)
+	empty, err := scripts.ParseLines(nil, allowed)
 	if err != nil || len(empty) != 0 {
 		t.Errorf("empty output parsed as %v, %v", empty, err)
 	}
@@ -585,14 +585,14 @@ func TestParseLinesRejectsUnknownKeys(t *testing.T) {
 	}
 
 	for name, out := range bad {
-		got, err := certscripts.ParseLines([]byte(out), allowed)
+		got, err := scripts.ParseLines([]byte(out), allowed)
 		if err == nil {
 			t.Errorf("%s: ParseLines accepted %q as %v", name, out, got)
 
 			continue
 		}
 
-		if !errors.Is(err, certscripts.ErrMalformedOutput) {
+		if !errors.Is(err, scripts.ErrMalformedOutput) {
 			t.Errorf("%s: error %v is not ErrMalformedOutput", name, err)
 		}
 
@@ -736,8 +736,8 @@ func TestExitTableMatchesGo(t *testing.T) {
 	t.Parallel()
 
 	want := []int{
-		certscripts.ExitOK, certscripts.ExitUnknown, certscripts.ExitUsage, certscripts.ExitDrift,
-		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused, certscripts.ExitInvalid,
+		scripts.ExitOK, scripts.ExitUnknown, scripts.ExitUsage, scripts.ExitDrift,
+		scripts.ExitBackup, scripts.ExitRestart, scripts.ExitRefused, scripts.ExitInvalid,
 	}
 
 	row := regexp.MustCompile(`^#   ([0-9]+) +[a-z]`)
@@ -771,16 +771,16 @@ func TestExitCodesMatchLib(t *testing.T) {
 	t.Parallel()
 
 	want := map[string]int{
-		"EXIT_USAGE":   certscripts.ExitUsage,
-		"EXIT_DRIFT":   certscripts.ExitDrift,
-		"EXIT_BACKUP":  certscripts.ExitBackup,
-		"EXIT_RESTART": certscripts.ExitRestart,
-		"EXIT_REFUSED": certscripts.ExitRefused,
-		"EXIT_INVALID": certscripts.ExitInvalid,
+		"EXIT_USAGE":   scripts.ExitUsage,
+		"EXIT_DRIFT":   scripts.ExitDrift,
+		"EXIT_BACKUP":  scripts.ExitBackup,
+		"EXIT_RESTART": scripts.ExitRestart,
+		"EXIT_REFUSED": scripts.ExitRefused,
+		"EXIT_INVALID": scripts.ExitInvalid,
 	}
 
-	if certscripts.ExitOK != 0 {
-		t.Errorf("ExitOK = %d, want 0", certscripts.ExitOK)
+	if scripts.ExitOK != 0 {
+		t.Errorf("ExitOK = %d, want 0", scripts.ExitOK)
 	}
 
 	assignment := regexp.MustCompile(`\b(EXIT_[A-Z]+)=([0-9]+)\b`)
@@ -828,8 +828,8 @@ func TestExitCodesMatchLib(t *testing.T) {
 		t.Fatalf("sourcing lib.sh: %v", err)
 	}
 
-	sourced := fmt.Sprintf("%d %d %d %d %d %d\n", certscripts.ExitUsage, certscripts.ExitDrift,
-		certscripts.ExitBackup, certscripts.ExitRestart, certscripts.ExitRefused, certscripts.ExitInvalid)
+	sourced := fmt.Sprintf("%d %d %d %d %d %d\n", scripts.ExitUsage, scripts.ExitDrift,
+		scripts.ExitBackup, scripts.ExitRestart, scripts.ExitRefused, scripts.ExitInvalid)
 	if string(out) != sourced {
 		t.Errorf("sourced exit codes = %q, want %q", out, sourced)
 	}

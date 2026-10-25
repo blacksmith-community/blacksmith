@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 )
 
@@ -163,7 +164,7 @@ func TestVerifyPrintsLeafFingerprint(t *testing.T) {
 		t.Errorf("argv = %q, want %q", got, wantArgv)
 	}
 
-	lines, err := certscripts.ParseLines([]byte(out), map[string]bool{"fingerprint": true})
+	lines, err := scripts.ParseLines([]byte(out), map[string]bool{"fingerprint": true})
 	if err != nil || len(lines) != 1 || lines[0]["fingerprint"] != want {
 		t.Errorf("ParseLines = %v, %v", lines, err)
 	}

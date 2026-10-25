@@ -16,6 +16,7 @@ import (
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/certpatch"
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 )
 
@@ -1593,7 +1594,7 @@ func TestPatchStopsOnUnreadableNewFile(t *testing.T) {
 
 	env.hook(func(call patchCall) (ssh.Result, error, bool) {
 		if call.vm == name && call.op == opStageCheck {
-			return exitResult(certscripts.ExitInvalid, "drift path="+call.args[1]), nil, true
+			return exitResult(scripts.ExitInvalid, "drift path="+call.args[1]), nil, true
 		}
 
 		return ssh.Result{}, nil, false
@@ -1832,7 +1833,7 @@ func TestPatchResumeAfterRefusedFirstCheck(t *testing.T) {
 
 	env.hook(func(call patchCall) (ssh.Result, error, bool) {
 		if call.vm == name && call.op == opCheck {
-			return exitResult(certscripts.ExitRefused), nil, true
+			return exitResult(scripts.ExitRefused), nil, true
 		}
 
 		return ssh.Result{}, nil, false

@@ -26,6 +26,7 @@ import (
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/certpatch"
 	"blacksmith/internal/credhub"
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 	"blacksmith/pkg/logger"
 )
@@ -44,7 +45,7 @@ type PatchSession interface {
 }
 
 // opSudoCheck is the operation a PatchSession runs as the fixed
-// certscripts.SudoCheckCommand, with no arguments and no stdin, rather
+// scripts.SudoCheckCommand, with no arguments and no stdin, rather
 // than as a script.
 const opSudoCheck = "sudo-check"
 
@@ -130,9 +131,9 @@ func (s *sshPatchSession) Run(ctx context.Context, vm int, op string, args []str
 		return ssh.Result{}, err
 	}
 
-	program, argv := certscripts.Invocation(op, args...)
+	program, argv := scripts.Invocation(op, args...)
 	if op == opSudoCheck {
-		program, argv = certscripts.SudoCheckCommand, nil
+		program, argv = scripts.SudoCheckCommand, nil
 	}
 
 	result, err := runner.Run(ctx, program, argv, stdin, patchOutputLimit)
@@ -1846,11 +1847,11 @@ func (r *vmRun) script(op string, args ...string) (ssh.Result, error) {
 // okLines returns the lines of a result that exited 0 and printed only ok
 // lines, and false for any other result.
 func okLines(result ssh.Result) ([]map[string]string, bool) {
-	if result.ExitCode != certscripts.ExitOK || result.Truncated {
+	if result.ExitCode != scripts.ExitOK || result.Truncated {
 		return nil, false
 	}
 
-	records, err := certscripts.ParseRecords(result.Stdout, patchKinds)
+	records, err := scripts.ParseRecords(result.Stdout, patchKinds)
 	if err != nil || len(records) == 0 {
 		return nil, false
 	}
@@ -1872,17 +1873,17 @@ func okLines(result ssh.Result) ([]map[string]string, bool) {
 // repeats the script's output.
 func exitMeaning(op string, result ssh.Result) string {
 	switch result.ExitCode {
-	case certscripts.ExitOK:
+	case scripts.ExitOK:
 		return fmt.Sprintf("patch.sh %s printed an answer outside its contract", op)
-	case certscripts.ExitDrift:
+	case scripts.ExitDrift:
 		return fmt.Sprintf("patch.sh %s found a file that changed under it", op)
-	case certscripts.ExitBackup:
+	case scripts.ExitBackup:
 		return fmt.Sprintf("patch.sh %s found a backup that no longer holds the old content", op)
-	case certscripts.ExitRestart:
+	case scripts.ExitRestart:
 		return fmt.Sprintf("patch.sh %s could not restart every process with a new pid", op)
-	case certscripts.ExitRefused:
+	case scripts.ExitRefused:
 		return fmt.Sprintf("patch.sh %s refused a path or directory that failed its safety checks", op)
-	case certscripts.ExitInvalid:
+	case scripts.ExitInvalid:
 		return fmt.Sprintf("patch.sh %s found that openssl cannot read the new file as a certificate or a key", op)
 	default:
 		return fmt.Sprintf("patch.sh %s exited %d", op, result.ExitCode)
@@ -2134,9 +2135,9 @@ func (r *vmRun) checkFiles(live *LiveState) error {
 			if lines[0]["backup"] == "old" {
 				live.BackupHashes[file.BackupPath] = file.OldHash
 			}
-		case result.ExitCode == certscripts.ExitDrift:
+		case result.ExitCode == scripts.ExitDrift:
 			live.FileHashes[file.Path] = "drift"
-		case result.ExitCode == certscripts.ExitBackup:
+		case result.ExitCode == scripts.ExitBackup:
 			live.BackupHashes[file.BackupPath] = "drift"
 		default:
 			return r.pause(fmt.Errorf("VM %s was not patched: %s", r.j.VM, exitMeaning(opCheck, result)))

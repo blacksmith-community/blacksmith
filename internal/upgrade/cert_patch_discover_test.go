@@ -21,6 +21,7 @@ import (
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/certpatch"
 	"blacksmith/internal/credhub"
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 	"blacksmith/pkg/logger"
 )
@@ -350,9 +351,9 @@ func (s *fakeSession) Run(ctx context.Context, vm int, op string, args []string,
 		return ssh.Result{}, fmt.Errorf("no VM %d", vm)
 	}
 
-	program, argv := certscripts.Invocation(op, args...)
+	program, argv := scripts.Invocation(op, args...)
 	if op == opSudoCheck {
-		program, argv = certscripts.SudoCheckCommand, nil
+		program, argv = scripts.SudoCheckCommand, nil
 	}
 
 	call := patchCall{session: s.id, vm: s.vms[vm].name(), op: op, args: slices.Clone(args), line: ssh.Command(program, argv), stdin: len(input)}
@@ -425,7 +426,7 @@ func (f *fakePatch) answer(vm *fakeVM, op string, args []string, input []byte) s
 	case "stage":
 		// Staging refuses a name that already exists.
 		if _, exists := vm.staged[arg(1)]; exists {
-			return exitResult(certscripts.ExitRefused)
+			return exitResult(scripts.ExitRefused)
 		}
 
 		script, _ := certscripts.Script("patch")
@@ -463,7 +464,7 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 
 	raw := len(args) == count[1]
 	if !raw && len(args) != count[0] {
-		return exitResult(certscripts.ExitUsage)
+		return exitResult(scripts.ExitUsage)
 	}
 
 	// hashOf is what the operation compares for path in norms, and want
@@ -487,14 +488,14 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 	switch operation {
 	case "stagecheck":
 		if fake.staged[arg(1)] != arg(2) || (raw && fake.rawOf(fake.staged, arg(1)) != arg(3)) {
-			return exitResult(certscripts.ExitDrift, "drift path="+arg(1))
+			return exitResult(scripts.ExitDrift, "drift path="+arg(1))
 		}
 
 		return okResult("ok path=" + arg(1))
 	case "check":
 		state := map[string]string{want(3, 0): "old", want(4, 1): "new"}[hashOf(fake.files, arg(2))]
 		if state == "" {
-			return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
+			return exitResult(scripts.ExitDrift, "drift path="+arg(2))
 		}
 
 		_, ok := fake.backups[arg(5)]
@@ -503,7 +504,7 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 		case !ok:
 			return okResult("ok path=" + arg(2) + " state=" + state + " backup=none")
 		case hashOf(fake.backups, arg(5)) != want(3, 0):
-			return exitResult(certscripts.ExitBackup, "drift path="+arg(5))
+			return exitResult(scripts.ExitBackup, "drift path="+arg(5))
 		}
 
 		return okResult("ok path=" + arg(2) + " state=" + state + " backup=old")
@@ -511,14 +512,14 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 		// A backup already made is kept when it holds the old content.
 		if _, exists := fake.backups[arg(4)]; exists {
 			if hashOf(fake.backups, arg(4)) != want(3, 0) {
-				return exitResult(certscripts.ExitBackup, "drift path="+arg(4))
+				return exitResult(scripts.ExitBackup, "drift path="+arg(4))
 			}
 
 			return okResult("ok path=" + arg(4) + " action=exists")
 		}
 
 		if hashOf(fake.files, arg(2)) != want(3, 0) {
-			return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
+			return exitResult(scripts.ExitDrift, "drift path="+arg(2))
 		}
 
 		fake.put(fake.backups, arg(4), fake.files[arg(2)], fake.rawOf(fake.files, arg(2)))
@@ -530,7 +531,7 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 			return okResult("ok path=" + arg(2) + " state=new action=unchanged")
 		case want(4, 0):
 			if fake.staged[arg(3)] != arg(5) || (raw && fake.rawOf(fake.staged, arg(3)) != want(5, 1)) {
-				return exitResult(certscripts.ExitDrift, "drift path="+arg(3))
+				return exitResult(scripts.ExitDrift, "drift path="+arg(3))
 			}
 
 			fake.put(fake.files, arg(2), fake.staged[arg(3)], fake.rawOf(fake.staged, arg(3)))
@@ -538,7 +539,7 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 			return okResult("ok path=" + arg(2) + " state=new action=replaced")
 		}
 
-		return exitResult(certscripts.ExitDrift, "drift path="+arg(2))
+		return exitResult(scripts.ExitDrift, "drift path="+arg(2))
 	}
 
 	// restore. A file that holds the old content again needs no backup.
@@ -547,11 +548,11 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 		return okResult("ok path=" + arg(2) + " state=old action=unchanged")
 	case want(5, 1):
 	default:
-		return exitResult(certscripts.ExitDrift, "unrecovered path="+arg(2))
+		return exitResult(scripts.ExitDrift, "unrecovered path="+arg(2))
 	}
 
 	if fake.backups[arg(3)] != arg(4) || hashOf(fake.backups, arg(3)) != want(4, 0) {
-		return exitResult(certscripts.ExitBackup, "unrecovered path="+arg(2))
+		return exitResult(scripts.ExitBackup, "unrecovered path="+arg(2))
 	}
 
 	fake.put(fake.files, arg(2), fake.backups[arg(3)], fake.rawOf(fake.backups, arg(3)))
@@ -563,7 +564,7 @@ func (f *fakePatch) answerFile(fake *fakeVM, operation string, args []string) ss
 // which leaves restart.
 func (f *fakePatch) answerRest(_ *fakeVM, op string, args []string) ssh.Result {
 	if op != "restart" {
-		return exitResult(certscripts.ExitUsage)
+		return exitResult(scripts.ExitUsage)
 	}
 
 	lines := make([]string, 0, len(args))

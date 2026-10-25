@@ -18,6 +18,7 @@ import (
 	"blacksmith/internal/certpatch"
 	"blacksmith/internal/credhub"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 	"blacksmith/pkg/logger"
 )
@@ -500,7 +501,7 @@ func TestPatchNoReplaceBeforeAllBackups(t *testing.T) {
 
 		backups++
 		if backups == 2 {
-			return exitResult(certscripts.ExitDrift, "drift path="+call.args[2]), nil, true
+			return exitResult(scripts.ExitDrift, "drift path="+call.args[2]), nil, true
 		}
 
 		return ssh.Result{}, nil, false
@@ -868,7 +869,7 @@ func TestPatchZeroesKeyPairs(t *testing.T) {
 func (e *patchEnv) failOp(op string) {
 	e.hook(func(call patchCall) (ssh.Result, error, bool) {
 		if call.op == op {
-			return exitResult(certscripts.ExitDrift), nil, true
+			return exitResult(scripts.ExitDrift), nil, true
 		}
 
 		return ssh.Result{}, nil, false
@@ -1199,7 +1200,7 @@ func TestPatchUnrecoveredWhenRestoreFails(t *testing.T) {
 	env := newPatchEnv(t)
 	env.gateFailsOn(0, func(call patchCall) (ssh.Result, error, bool) {
 		if call.op == opRestore {
-			return exitResult(certscripts.ExitDrift, "unrecovered path="+call.args[2]), nil, true
+			return exitResult(scripts.ExitDrift, "unrecovered path="+call.args[2]), nil, true
 		}
 
 		return ssh.Result{}, nil, false

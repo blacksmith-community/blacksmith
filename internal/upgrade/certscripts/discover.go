@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"blacksmith/internal/ops/scripts"
 )
 
 // ErrNoPasswordlessSudo is the error a driver reports, before anything is
@@ -162,7 +164,7 @@ func lineError(line int, err error) error {
 			ErrPatchUnsafe, layout.job, line, layout.err)
 	}
 
-	return fmt.Errorf("%w: line %d: %w", ErrMalformedOutput, line, err)
+	return fmt.Errorf("%w: line %d: %w", scripts.ErrMalformedOutput, line, err)
 }
 
 // ParseDiscovery reads discover.sh output. It checks every line, and it
@@ -174,7 +176,7 @@ func lineError(line int, err error) error {
 // ErrMalformedOutput. Matches and embedded files come back sorted by job
 // and path.
 func ParseDiscovery(out []byte) (*Discovery, error) {
-	records, err := ParseRecords(out, discoveryKinds())
+	records, err := scripts.ParseRecords(out, discoveryKinds())
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +250,7 @@ func (d *Discovery) addJobDir(pairs map[string]string) error {
 	return nil
 }
 
-func (d *Discovery) add(record Record) error {
+func (d *Discovery) add(record scripts.Record) error {
 	switch record.Kind {
 	case "match":
 		match, err := d.file(record.Fields, true)

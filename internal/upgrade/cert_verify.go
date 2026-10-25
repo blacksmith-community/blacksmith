@@ -12,7 +12,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/certinventory"
-	"blacksmith/internal/upgrade/certscripts"
+	"blacksmith/internal/ops/scripts"
 )
 
 // The methods a TargetResult records.
@@ -206,7 +206,7 @@ func (c *targetCheck) readOnVM(port int, name string) (string, string) {
 		return "", "The broker could not reach the listener, and the check on the VM printed more than it should."
 	}
 
-	lines, err := certscripts.ParseLines(out.Stdout, map[string]bool{"fingerprint": true})
+	lines, err := scripts.ParseLines(out.Stdout, map[string]bool{"fingerprint": true})
 	if err != nil || len(lines) != 1 || !fingerprintPattern.MatchString(lines[0]["fingerprint"]) {
 		return "", "The broker could not reach the listener, and the check on the VM printed no single fingerprint."
 	}

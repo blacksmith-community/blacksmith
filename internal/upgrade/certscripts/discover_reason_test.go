@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 )
 
@@ -255,7 +256,7 @@ func TestParseDiscoveryRejectsBadReasons(t *testing.T) {
 			t.Errorf("%s: ParseDiscovery returned a result with its error", name)
 		}
 
-		if !errors.Is(err, certscripts.ErrMalformedOutput) {
+		if !errors.Is(err, scripts.ErrMalformedOutput) {
 			t.Errorf("%s: error %v is not ErrMalformedOutput", name, err)
 		}
 	}

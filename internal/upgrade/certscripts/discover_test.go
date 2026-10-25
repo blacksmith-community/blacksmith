@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"blacksmith/internal/certpatch"
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 )
 
@@ -684,7 +685,7 @@ func TestParseDiscoveryRejects(t *testing.T) {
 			t.Errorf("%s: ParseDiscovery returned a result with its error", name)
 		}
 
-		if !errors.Is(err, certscripts.ErrMalformedOutput) {
+		if !errors.Is(err, scripts.ErrMalformedOutput) {
 			t.Errorf("%s: error %v is not ErrMalformedOutput", name, err)
 		}
 	}
@@ -725,7 +726,7 @@ func TestParseDiscoveryRefusesLayout(t *testing.T) {
 			continue
 		}
 
-		if errors.Is(err, certscripts.ErrMalformedOutput) {
+		if errors.Is(err, scripts.ErrMalformedOutput) {
 			t.Errorf("%s: error %v is ErrMalformedOutput too", name, err)
 		}
 
@@ -942,8 +943,8 @@ func TestScriptDiscover(t *testing.T) {
 func TestSudoCheck(t *testing.T) {
 	t.Parallel()
 
-	if certscripts.SudoCheckCommand != "sudo -n true" {
-		t.Errorf("SudoCheckCommand = %q, want sudo -n true", certscripts.SudoCheckCommand)
+	if scripts.SudoCheckCommand != "sudo -n true" {
+		t.Errorf("SudoCheckCommand = %q, want sudo -n true", scripts.SudoCheckCommand)
 	}
 
 	if got := certscripts.ErrNoPasswordlessSudo.Error(); got != "passwordless sudo is not available for BOSH SSH users" {
