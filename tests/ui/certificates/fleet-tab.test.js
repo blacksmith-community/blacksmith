@@ -42,7 +42,8 @@ t('fleet tab', async () => {
   ok(/service=valkey/.test(w.blacksmithCerts.toQuery(w.blacksmithCerts.state)),'service query');
   // expand
   const ex=d.querySelector('.cert-expand-btn'); ex.click(); await sleep(10);
-  const det=d.querySelector('.cert-row-detail'); ok(!!det && det.querySelectorAll('.cert-obs').length===2,'expansion observations='+(det&&det.querySelectorAll('.cert-obs').length));
+  const det=d.querySelector('.cert-row-detail');
+  ok(!!det && det.querySelectorAll('.cert-probe-row').length===1 && !!det.querySelector('.cert-drawer-credhub'),'expanded CredHub details and listener observation');
   ok(d.querySelector('.cert-expand-btn[aria-expanded="true"]')!==null,'aria-expanded');
   ok(bad(d)===0,'no injected after expand');
   // search + / key
