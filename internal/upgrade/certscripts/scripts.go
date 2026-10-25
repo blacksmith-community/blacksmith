@@ -15,15 +15,16 @@ import (
 	"blacksmith/internal/ops/scripts"
 )
 
-// certFS holds lib.sh and every helper script beside it. The glob picks
-// up each script that is added to this directory, with no edit here.
+// certFS holds certlib.sh and every helper script beside it. The glob
+// picks up each script that is added to this directory, with no edit here.
 //
 //go:embed *.sh
 var certFS embed.FS
 
-// libName is the certificate package's library. It is joined in front of
-// every script and is never run on its own.
-const libName = "lib"
+// libName is the certificate package's library, which holds what only the
+// certificate scripts use. It is joined after the base library and in
+// front of every script, and is never run on its own.
+const libName = "certlib"
 
 // patchScript is the script that changes files on a VM, staging included.
 const patchScript = "patch"
@@ -56,16 +57,21 @@ var ErrMalformedOutput = scripts.ErrMalformedOutput
 type Record = scripts.Record
 
 // Script returns the text sent on stdin to run the named script, which is
-// lib.sh followed by <name>.sh. A name with no embedded script, and lib
-// itself, return an error that names the script and an empty string. A
-// caller treats that error as a programming fault and fails its step.
+// the base lib.sh, then certlib.sh, then <name>.sh. A name with no
+// embedded script, and lib and certlib themselves, return an error that
+// names the script and an empty string. A caller treats that error as a
+// programming fault and fails its step.
 func Script(name string) (string, error) {
-	lib, err := certFS.ReadFile(libName + ".sh")
-	if err != nil {
-		return "", fmt.Errorf("certscripts: the shared library is missing: %w", err)
+	if name == libName {
+		return "", fmt.Errorf("%w named %q", ErrUnknownScript, name)
 	}
 
-	text, err := scripts.Script(certFS, [][]byte{lib}, name)
+	lib, err := certFS.ReadFile(libName + ".sh")
+	if err != nil {
+		return "", fmt.Errorf("certscripts: the certificate library is missing: %w", err)
+	}
+
+	text, err := scripts.Script(certFS, [][]byte{scripts.Library(), lib}, name)
 	if err != nil {
 		return "", err
 	}
@@ -103,10 +109,10 @@ func StageCommand(path, taskID string) (string, error) {
 }
 
 // StageInput returns the stdin for the command StageCommand builds,
-// which is lib.sh and patch.sh followed by content. patch.sh starts its
-// operation from its last line, so bash has read the whole script before
-// the stage operation copies the rest of stdin, and content is never read
-// as shell.
+// which is both libraries and patch.sh followed by content. patch.sh
+// starts its operation from its last line, so bash has read the whole
+// script before the stage operation copies the rest of stdin, and content
+// is never read as shell.
 func StageInput(content io.Reader) (io.Reader, error) {
 	text, err := Script(patchScript)
 	if err != nil {

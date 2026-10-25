@@ -206,8 +206,8 @@ func TestScriptGate(t *testing.T) {
 		t.Fatalf("Script(gate): %v", err)
 	}
 
-	if body != readSource(t, libScript)+readSource(t, "gate") {
-		t.Error("Script(gate) is not lib.sh followed by gate.sh")
+	if body != libText(t)+readSource(t, "gate") {
+		t.Error("Script(gate) is not lib.sh, certlib.sh, then gate.sh")
 	}
 }
 

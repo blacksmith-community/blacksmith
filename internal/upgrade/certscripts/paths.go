@@ -15,7 +15,7 @@ var ErrPathRefused = errors.New("certscripts: path refused")
 // the VM's tools would truncate or refuse in some other way.
 const maxPathLength = 1024
 
-// The path patterns. lib.sh holds the same patterns for the checks the
+// The path patterns. certlib.sh holds the same patterns for the checks the
 // scripts run on the VM. The character classes leave out every shell
 // metacharacter and whitespace, and the segment check below refuses
 // empty, ".", and ".." segments, which the classes alone allow.

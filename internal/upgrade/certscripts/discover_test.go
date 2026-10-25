@@ -127,7 +127,7 @@ func runScript(t *testing.T, root string, env []string, name, operation string, 
 // hash wanted, and returns its output and exit code. find lists only
 // regular files, so a file that changes after find has listed it is the
 // only way _dc_file sees anything else, and the test calls _dc_file on
-// such a file directly. It runs lib.sh and discover.sh without the
+// such a file directly. It runs lib.sh, certlib.sh, and discover.sh without the
 // dispatch at the end of discover.sh, and then the one call.
 func runDiscoverFile(t *testing.T, tree *vmTree, file, hash string) (string, int) {
 	t.Helper()
@@ -144,7 +144,7 @@ func runDiscoverFile(t *testing.T, tree *vmTree, file, hash string) (string, int
 
 	cmd := exec.CommandContext(t.Context(), "/bin/bash", argv...) //nolint:gosec // the script under test
 	cmd.Env = []string{"CERTPATCH_ROOT=" + tree.root}
-	cmd.Stdin = strings.NewReader(readSource(t, libScript) + body + "\n" + driver)
+	cmd.Stdin = strings.NewReader(libText(t) + body + "\n" + driver)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -934,8 +934,8 @@ func TestScriptDiscover(t *testing.T) {
 		t.Fatalf("Script(discover): %v", err)
 	}
 
-	if body != readSource(t, libScript)+readSource(t, "discover") {
-		t.Error("Script(discover) is not lib.sh followed by discover.sh")
+	if body != libText(t)+readSource(t, "discover") {
+		t.Error("Script(discover) is not lib.sh, certlib.sh, then discover.sh")
 	}
 }
 

@@ -169,8 +169,8 @@ func TestScriptPatch(t *testing.T) {
 		t.Fatalf("Script(patch): %v", err)
 	}
 
-	if body != readSource(t, libScript)+readSource(t, "patch") {
-		t.Error("Script(patch) is not lib.sh followed by patch.sh")
+	if body != libText(t)+readSource(t, "patch") {
+		t.Error("Script(patch) is not lib.sh, certlib.sh, then patch.sh")
 	}
 }
 

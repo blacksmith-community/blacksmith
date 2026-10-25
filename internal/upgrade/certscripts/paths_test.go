@@ -253,19 +253,19 @@ func checkVerdict(t *testing.T, name, input string, ok bool, err error) {
 	}
 }
 
-// libCheck runs one lib.sh function with args and returns its exit code.
+// libCheck runs one library function with args and returns its exit code.
 func libCheck(t *testing.T, root string, function string, args ...string) int {
 	t.Helper()
 
 	return runLib(t, root, "", function+` "$@"`, args...)
 }
 
-// runLib runs body after lib.sh with args as $1 onward, stdin as its
+// runLib runs body after both libraries with args as $1 onward, stdin as its
 // input, and CERTPATCH_ROOT set to root, and returns the exit code.
 func runLib(t *testing.T, root, stdin, body string, args ...string) int {
 	t.Helper()
 
-	argv := append([]string{"-c", "source lib.sh\n" + body, "_"}, args...)
+	argv := append([]string{"-c", sourceLibs + body, "_"}, args...)
 
 	cmd := exec.CommandContext(t.Context(), "bash", argv...) //nolint:gosec // fixed test program text
 	cmd.Env = []string{"CERTPATCH_ROOT=" + root}

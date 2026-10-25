@@ -23,13 +23,29 @@ import (
 
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/certpatch"
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/internal/upgrade/certscripts"
 )
 
 const testTaskID = "0f1e2d3c-4b5a-4968-8776-655443322110"
 
-// libScript is the name of the shared library among the scripts.
-const libScript = "lib"
+// certLibScript is the name of the certificate-only library among the
+// scripts. It is joined in front of every script and is never run on its
+// own.
+const certLibScript = "certlib"
+
+// sourceLibs is the shell text that loads both libraries in the order
+// Script joins them. The base library lives in ops/scripts, so a test in
+// this directory reaches it by a relative path.
+const sourceLibs = "source ../../ops/scripts/lib.sh; source certlib.sh\n"
+
+// libText returns what Script puts in front of every script, which is the
+// base library followed by certlib.sh.
+func libText(t *testing.T) string {
+	t.Helper()
+
+	return string(scripts.Library()) + readSource(t, certLibScript)
+}
 
 // requireLinux skips a test that runs the helper scripts, because macOS
 // ships bash 3.2, BSD stat, and no sha256sum.
@@ -61,7 +77,7 @@ func libHash(t *testing.T, path string) string {
 // runNormHash runs the bash norm_hash on path from lib.sh.
 func runNormHash(ctx context.Context, path string) ([]byte, error) {
 	//nolint:gosec // fixed program text; the path is a test fixture
-	out, err := exec.CommandContext(ctx, "bash", "-c", `source lib.sh; norm_hash "$1"`, "_", path).Output()
+	out, err := exec.CommandContext(ctx, "bash", "-c", sourceLibs+`norm_hash "$1"`, "_", path).Output()
 	if err != nil {
 		return out, fmt.Errorf("norm_hash: %w", err)
 	}
@@ -142,7 +158,7 @@ func TestNormalisedHashParityWithBash(t *testing.T) {
 		}
 
 		//nolint:gosec // fixed program text; the path is a test fixture
-		raw, err := exec.CommandContext(t.Context(), "bash", "-c", `source lib.sh; raw_hash "$1"`, "_", path).Output()
+		raw, err := exec.CommandContext(t.Context(), "bash", "-c", sourceLibs+`raw_hash "$1"`, "_", path).Output()
 		if err != nil {
 			t.Fatalf("raw_hash on %s: %v", filepath.Base(path), err)
 		}
@@ -590,9 +606,9 @@ func TestParseLinesRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
-// scriptNames lists the scripts in this directory without their .sh
-// suffix. The embed pattern is *.sh in the same directory, so this is the
-// set of embedded files.
+// scriptNames lists the runnable scripts in this directory without their
+// .sh suffix, which leaves out certlib. The embed pattern is *.sh in the
+// same directory, so these and certlib are the embedded files.
 func scriptNames(t *testing.T) []string {
 	t.Helper()
 
@@ -603,7 +619,10 @@ func scriptNames(t *testing.T) []string {
 
 	names := make([]string, 0, len(paths))
 	for _, path := range paths {
-		names = append(names, strings.TrimSuffix(path, ".sh"))
+		name := strings.TrimSuffix(path, ".sh")
+		if name != certLibScript {
+			names = append(names, name)
+		}
 	}
 
 	return names
@@ -634,16 +653,16 @@ func TestScriptsContainNoTee(t *testing.T) {
 		t.Fatal("no scripts were found")
 	}
 
-	// Script returns lib.sh in front of every other script, so checking
-	// each joined text covers every embedded file, and lib.sh is checked
-	// from its source in case it is the only one so far.
-	texts := map[string]string{libScript: readSource(t, libScript)}
+	// Script returns both libraries in front of every other script, so
+	// checking each joined text covers every embedded file, and the
+	// libraries are checked from their sources in case no script exists
+	// yet.
+	texts := map[string]string{
+		"lib":         string(scripts.Library()),
+		certLibScript: readSource(t, certLibScript),
+	}
 
 	for _, name := range names {
-		if name == libScript {
-			continue
-		}
-
 		text, err := certscripts.Script(name)
 		if err != nil {
 			t.Fatalf("Script(%s): %v", name, err)
@@ -664,7 +683,7 @@ func TestScriptsContainNoTee(t *testing.T) {
 func TestScriptUnknownName(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"nope", "lib", "", "../lib", "lib.sh"} {
+	for _, name := range []string{"nope", "lib", "certlib", "", "../lib", "lib.sh"} {
 		body, err := certscripts.Script(name)
 		if err == nil {
 			t.Errorf("Script(%q) returned no error", name)
@@ -689,16 +708,15 @@ func TestScriptUnknownName(t *testing.T) {
 func TestScriptJoinsLib(t *testing.T) {
 	t.Parallel()
 
-	lib := readSource(t, libScript)
-	if !strings.HasSuffix(lib, "\n") {
-		t.Error("lib.sh does not end with a newline, so it would run into the next script")
+	for _, lib := range []string{string(scripts.Library()), readSource(t, certLibScript)} {
+		if !strings.HasSuffix(lib, "\n") {
+			t.Error("a library does not end with a newline, so it would run into the next script")
+		}
 	}
 
-	for _, name := range scriptNames(t) {
-		if name == libScript {
-			continue
-		}
+	lib := libText(t)
 
+	for _, name := range scriptNames(t) {
 		body, err := certscripts.Script(name)
 		if err != nil {
 			t.Errorf("Script(%s): %v", name, err)
@@ -707,7 +725,7 @@ func TestScriptJoinsLib(t *testing.T) {
 		}
 
 		if body != lib+readSource(t, name) {
-			t.Errorf("Script(%s) is not lib.sh followed by the script", name)
+			t.Errorf("Script(%s) is not lib.sh, certlib.sh, then the script", name)
 		}
 	}
 }
@@ -726,7 +744,7 @@ func TestExitTableMatchesGo(t *testing.T) {
 
 	var got []int
 
-	for _, line := range strings.Split(readSource(t, libScript), "\n") {
+	for _, line := range strings.Split(string(scripts.Library()), "\n") {
 		if !strings.HasPrefix(line, "#") {
 			break
 		}
@@ -768,7 +786,7 @@ func TestExitCodesMatchLib(t *testing.T) {
 	assignment := regexp.MustCompile(`\b(EXIT_[A-Z]+)=([0-9]+)\b`)
 	got := make(map[string]int)
 
-	for _, line := range strings.Split(readSource(t, libScript), "\n") {
+	for _, line := range strings.Split(string(scripts.Library()), "\n") {
 		if !strings.HasPrefix(line, "readonly ") {
 			continue
 		}
@@ -805,7 +823,7 @@ func TestExitCodesMatchLib(t *testing.T) {
 
 	// Sourcing lib.sh shows the values the scripts really see.
 	out, err := exec.CommandContext(t.Context(), "bash", "-c",
-		`source lib.sh; echo "$EXIT_USAGE $EXIT_DRIFT $EXIT_BACKUP $EXIT_RESTART $EXIT_REFUSED $EXIT_INVALID"`).Output()
+		sourceLibs+`echo "$EXIT_USAGE $EXIT_DRIFT $EXIT_BACKUP $EXIT_RESTART $EXIT_REFUSED $EXIT_INVALID"`).Output()
 	if err != nil {
 		t.Fatalf("sourcing lib.sh: %v", err)
 	}

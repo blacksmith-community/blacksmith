@@ -30,8 +30,8 @@ func TestScriptVerify(t *testing.T) {
 		t.Fatalf("Script(verify): %v", err)
 	}
 
-	if body != readSource(t, libScript)+readSource(t, "verify") {
-		t.Error("Script(verify) is not lib.sh followed by verify.sh")
+	if body != libText(t)+readSource(t, "verify") {
+		t.Error("Script(verify) is not lib.sh, certlib.sh, then verify.sh")
 	}
 }
 
