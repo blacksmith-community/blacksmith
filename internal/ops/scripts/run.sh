@@ -85,6 +85,26 @@ _rc_vcap_gid() {
 	printf '%s' "$gid"
 }
 
+# _rc_vcap_entry prints "uid gid home" for the vcap account from getent,
+# which the tests replace with a fake under the test root. It refuses an
+# entry with no vcap name, a uid or gid that is not a number, a uid or gid
+# of 0, and a home that is not a plain absolute path, because the home goes
+# into the command's environment.
+_rc_vcap_entry() {
+	local entry name uid gid home
+
+	entry=$("$(_rc_tool getent)" passwd vcap) || return 1
+	IFS=: read -r name _ uid gid _ home _ <<< "$entry"
+
+	[ "$name" = vcap ] || return 1
+	[[ $uid =~ ^[0-9]+$ ]] && [ "$uid" != 0 ] || return 1
+	[[ $gid =~ ^[0-9]+$ ]] && [ "$gid" != 0 ] || return 1
+	[[ $home =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+	[[ /$home/ != */../* ]] || return 1
+
+	printf '%s %s %s' "$uid" "$gid" "$home"
+}
+
 # _rc_match <info> <uid> <gid> <mode> compares the "uid gid mode" that
 # stat printed with what is expected. A "-" accepts any value.
 _rc_match() {
@@ -228,22 +248,28 @@ cleanup() {
 	_RC_DROP=
 }
 
-# execute runs the staged command as root. It checks again everything
-# prepare made, compares the digest of cmd.sh with the one the broker
-# measured, and refuses without leaving a started marker when anything is
-# off. The refusal never names the command or its digest. Only root is
-# accepted here. The command gets a new session, a deadline, an empty
-# environment with fixed values, umask 022, stdin at end of file, and the
-# root home as its working directory. The wrapper exits with the code the
+# execute runs the staged command as root or vcap. It checks again
+# everything prepare made, compares the digest of cmd.sh with the one the
+# broker measured, and refuses without leaving a started marker when
+# anything is off. The refusal never names the command or its digest. For
+# vcap it also refuses an account that getent does not know, one with uid
+# or gid 0, and a home that is missing, a symlink, or owned by anyone but
+# the uid and gid of the account. The command gets a new session, a
+# deadline, an empty environment with fixed values, umask 022, stdin at
+# end of file, and the home of its user as its working directory. The
+# vcap command runs under setpriv, inside timeout, with no supplementary
+# groups. The wrapper exits with the code the
 # command ended with, which it also records in the exit file.
 execute() {
 	[ "$#" -eq 4 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
-	[ "$2" = root ] || return "$EXIT_USAGE"
+	[[ $2 =~ $RC_USER_RE ]] || return "$EXIT_USAGE"
 	[[ $3 =~ $RC_SECS_RE ]] || return "$EXIT_USAGE"
 	valid_hash "$4" || return "$EXIT_USAGE"
 
-	local task=$1 secs=$3 want=$4 root gid base dir file home digest setsid timeout code
+	local task=$1 user=$2 secs=$3 want=$4 root gid base dir file home digest setsid timeout code
+	local uid entry homepath setpriv
+	local -a priv=()
 
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 	_cp_secure_chain "$root" "$RC_DATA" || return "$EXIT_REFUSED"
@@ -253,6 +279,14 @@ execute() {
 	dir=$base/$task
 	file=$dir/cmd.sh
 	home=$root/root
+	homepath=/root
+
+	if [ "$user" = vcap ]; then
+		entry=$(_rc_vcap_entry) || return "$EXIT_REFUSED"
+		IFS=' ' read -r uid gid homepath <<< "$entry"
+		home=$root$homepath
+		_rc_check_dir "$home" "$uid" "$gid" - || return "$EXIT_REFUSED"
+	fi
 
 	_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
 	_rc_check_dir "$dir" 0 "$gid" 710 || return "$EXIT_REFUSED"
@@ -267,6 +301,12 @@ execute() {
 	command -v -- "$setsid" > /dev/null || return "$EXIT_REFUSED"
 	command -v -- "$timeout" > /dev/null || return "$EXIT_REFUSED"
 
+	if [ "$user" = vcap ]; then
+		setpriv=$(_rc_tool setpriv) || return "$EXIT_REFUSED"
+		command -v -- "$setpriv" > /dev/null || return "$EXIT_REFUSED"
+		priv=("$setpriv" "--reuid=$uid" "--regid=$gid" --clear-groups --)
+	fi
+
 	_rc_write "$dir/started" < /dev/null || return "$EXIT_REFUSED"
 
 	# The pid that bash -c records is the process group ID only because
@@ -279,17 +319,18 @@ execute() {
 	# after started ends with 125 and one fixed line, so it is not taken
 	# for a command that exited 1. The brace group sends the command's
 	# stderr through descriptor 3 and the shell's own job notice, such as
-	# "Killed", to /dev/null. A command that outlives the kill-after is
+	# "Killed", to /dev/null. The launch closes descriptor 3 for everything
+	# it starts, so the command cannot write to the notice channel. A command that outlives the kill-after is
 	# killed together with timeout, and shows up as 137, not 124.
 	# shellcheck disable=SC2016
 	{
 		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$2" 2> /dev/null || nostart; umask 022; shift 2; exec "$@"' \
 			_ "$dir/pgid" "$home" \
-			"$timeout" -k 10 "$secs" \
-			env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash \
+			"$timeout" -k 10 "$secs" ${priv[@]+"${priv[@]}"} \
+			env -i HOME="$homepath" USER="$user" LOGNAME="$user" SHELL=/bin/bash \
 			PATH=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 			LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/var/vcap/data/tmp \
-			/bin/bash -- "$file" < /dev/null 2>&3
+			/bin/bash -- "$file" < /dev/null 2>&3 3>&-
 	} 3>&2 2> /dev/null
 	code=$?
 

@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1703,5 +1704,327 @@ func TestRunExecRootLaunchesThroughSetsidWait(t *testing.T) {
 	got, err := os.ReadFile(tree.path("setsid-first"))
 	if err != nil || string(got) != "--wait\n" {
 		t.Errorf("setsid was given %q first, %v; want --wait", got, err)
+	}
+}
+
+// vcapIDs are the uid and gid that the fake getent reports for vcap. As
+// root the fake home is handed to them, as newRunTree does for the group.
+func (r *runTree) vcapIDs() (int, int) {
+	if os.Geteuid() == 0 {
+		return vcapGID, vcapGID
+	}
+
+	return os.Getuid(), r.gid
+}
+
+// fakeGetent plants a getent that prints entry for the vcap account, or
+// nothing and exit 2 when entry is empty, as the real one does for a name
+// it does not know.
+func (r *runTree) fakeGetent(t *testing.T, entry string) {
+	t.Helper()
+
+	script := "#!/bin/sh\nexit 2\n"
+	if entry != "" {
+		script = fmt.Sprintf("#!/bin/sh\n[ \"$1 $2\" = 'passwd vcap' ] || exit 2\nprintf '%%s\\n' %q\n", entry)
+	}
+
+	err := os.WriteFile(r.path("usr/bin/getent"), []byte(script), 0o755) //nolint:gosec // a test tool
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// vcapEntry is a passwd line for vcap with the given numbers and home.
+func vcapEntry(uid, gid int, home string) string {
+	return fmt.Sprintf("vcap:x:%d:%d:vcap:%s:/bin/bash", uid, gid, home)
+}
+
+// fakeVcapTools plants the fakes that stand in for getent, setpriv, and
+// timeout. The timeout and setpriv fakes log their arguments the way
+// fakeCLI does, one per line, and setpriv also logs the directory it was
+// started in. Both then run what follows, so the command still runs.
+func (r *runTree) fakeVcapTools(t *testing.T, entry string) {
+	t.Helper()
+	r.linkRunTools(t)
+	r.fakeGetent(t, entry)
+
+	real, err := exec.LookPath("timeout")
+	if err != nil {
+		t.Skip("no timeout on this host")
+	}
+
+	for name, script := range map[string]string{
+		"timeout": fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nexec %q \"$@\"\n", r.path("timeout-args"), real),
+		"setpriv": fmt.Sprintf("#!/bin/sh\npwd -P > %q\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n", r.path("setpriv-pwd")),
+	} {
+		plant := r.path("usr/bin", name)
+
+		err := os.Remove(plant)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+
+		err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// execVcap runs exec as vcap for the staged task.
+func (r *runTree) execVcap(t *testing.T, seconds, digest string) (int, string, string) {
+	t.Helper()
+
+	return r.run(t, stdinFor(t, []byte("trailing bytes\n")), "exec", runTask, "vcap", seconds, digest)
+}
+
+// stageAndExecVcap stages command and runs it as vcap through the fakes.
+func (r *runTree) stageAndExecVcap(t *testing.T, command string) (int, string, string) {
+	t.Helper()
+
+	uid, gid := r.vcapIDs()
+	r.fakeVcapTools(t, vcapEntry(uid, gid, "/home/vcap"))
+
+	code, _ := r.prepare(t, runTask, "vcap", []byte(command))
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	return r.execVcap(t, "30", digestOf([]byte(command)))
+}
+
+func TestRunExecVcapLaunchLine(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	uid, gid := tree.vcapIDs()
+
+	code, out, errOut := tree.stageAndExecVcap(t, "echo out\nexit 4\n")
+	if code != 4 || out != "out\n" {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 4 and out", code, out, errOut)
+	}
+
+	got, err := os.ReadFile(tree.path("timeout-args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := strings.Join([]string{
+		"-k", "10", "30",
+		tree.path("usr/bin/setpriv"),
+		fmt.Sprintf("--reuid=%d", uid), fmt.Sprintf("--regid=%d", gid), "--clear-groups", "--",
+		"env", "-i", "HOME=/home/vcap", "USER=vcap", "LOGNAME=vcap", "SHELL=/bin/bash",
+		"PATH=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TMPDIR=/var/vcap/data/tmp",
+		"/bin/bash", "--", tree.cmdFile(runTask),
+	}, "\n") + "\n"
+	if string(got) != want {
+		t.Errorf("timeout was given\n%s\nwant\n%s", got, want)
+	}
+
+	pwd, err := os.ReadFile(tree.path("setpriv-pwd"))
+	if err != nil || strings.TrimSpace(string(pwd)) != tree.path("home/vcap") {
+		t.Errorf("setpriv started in %q, %v; want the vcap home", pwd, err)
+	}
+
+	if got := tree.taskFile(t, "exit"); got != "4\n" {
+		t.Errorf("exit file holds %q", got)
+	}
+}
+
+func TestRunExecVcapRefusals(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		entry func(uid, gid int) string
+		setup func(t *testing.T, tree *runTree)
+	}{
+		{"no vcap entry", func(int, int) string { return "" }, nil},
+		{"uid 0", func(_, gid int) string { return vcapEntry(0, gid, "/home/vcap") }, nil},
+		{"gid 0", func(uid, _ int) string { return vcapEntry(uid, 0, "/home/vcap") }, nil},
+		{"a uid that is not a number", func(_, gid int) string { return fmt.Sprintf("vcap:x:abc:%d:vcap:/home/vcap:/bin/bash", gid) }, nil},
+		{"a missing home", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/nobody") }, nil},
+		{"a home that is not a path", func(uid, gid int) string { return vcapEntry(uid, gid, "home/vcap") }, nil},
+		{"a home with dots", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/../root") }, nil},
+		{"a home owned by another uid", func(uid, gid int) string { return vcapEntry(uid+1, gid, "/home/vcap") }, nil},
+		{"a symlinked home", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/link") }, func(t *testing.T, tree *runTree) {
+			t.Helper()
+
+			err := os.Symlink(tree.path("home/vcap"), tree.path("home/link"))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newRunTree(t)
+			uid, gid := tree.vcapIDs()
+			command := canaryExec(tree)
+
+			tree.fakeVcapTools(t, vcapEntry(uid, gid, "/home/vcap"))
+
+			code, _ := tree.prepare(t, runTask, "vcap", command)
+			if code != 0 {
+				t.Fatalf("prepare exited %d", code)
+			}
+
+			tree.fakeGetent(t, tc.entry(uid, gid))
+
+			if tc.setup != nil {
+				tc.setup(t, tree)
+			}
+
+			code, out, errOut := tree.execVcap(t, "30", digestOf(command))
+			if code != scripts.ExitRefused {
+				t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
+			}
+
+			if out != "" || strings.Contains(errOut, "touch") || strings.Contains(errOut, digestOf(command)) {
+				t.Errorf("a refusal printed %q and %q", out, errOut)
+			}
+
+			tree.requireExecCanary(t, false)
+
+			for _, name := range []string{"started", "pgid", "exit"} {
+				_, err := os.Lstat(tree.path(runOps, runTask, name))
+				if err == nil {
+					t.Errorf("a refusal left %s behind", name)
+				}
+			}
+		})
+	}
+}
+
+func TestRunExecVcapCanaryControl(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	command := canaryExec(tree)
+
+	code, _, errOut := tree.stageAndExecVcap(t, string(command))
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr %q", code, errOut)
+	}
+
+	tree.requireExecCanary(t, true)
+}
+
+func TestRunExecRefusesOtherUsers(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	for _, user := range []string{"nobody", "VCAP", "vcap2", "root:vcap", ""} {
+		code, _, _ := tree.run(t, stdinFor(t, nil), "exec", runTask, user, "30", strings.Repeat("a", 64))
+		if code != scripts.ExitUsage {
+			t.Errorf("user %q exited %d, want %d", user, code, scripts.ExitUsage)
+		}
+	}
+}
+
+func TestRunExecCommandHasNoDescriptor3(t *testing.T) {
+	t.Parallel()
+
+	const command = "if { : >&3; } 2> /dev/null; then echo open; else echo closed; fi\n"
+
+	for _, user := range []string{"root", "vcap"} {
+		t.Run(user, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newRunTree(t)
+
+			var (
+				code   int
+				out    string
+				errOut string
+			)
+
+			if user == "root" {
+				code, out, errOut = tree.stageAndExec(t, command)
+			} else {
+				code, out, errOut = tree.stageAndExecVcap(t, command)
+			}
+
+			if code != 0 || out != "closed\n" || errOut != "" {
+				t.Errorf("exit %d, stdout %q, stderr %q; want descriptor 3 closed", code, out, errOut)
+			}
+		})
+	}
+}
+
+// TestRunExecVcapRealAccount runs a command as the real vcap account, so
+// it needs Linux, root, and that account. It checks the identity the
+// command has, that it can read cmd.sh through the 0711 and 0710
+// directories, and that it can neither append to cmd.sh nor remove the
+// task directory.
+func TestRunExecVcapRealAccount(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		t.Skip("the real vcap test needs Linux and root")
+	}
+
+	account, err := user.Lookup("vcap")
+	if err != nil {
+		t.Skipf("no vcap account on this host: %v", err)
+	}
+
+	uid, _ := strconv.Atoi(account.Uid)
+	gid, _ := strconv.Atoi(account.Gid)
+
+	tree := newRunTree(t)
+	tree.linkRunTools(t)
+
+	for _, tool := range []string{"getent", "setpriv"} {
+		path, lookErr := exec.LookPath(tool)
+		if lookErr != nil {
+			t.Skipf("no %s on this host", tool)
+		}
+
+		lookErr = os.Symlink(path, tree.path("usr/bin", tool))
+		if lookErr != nil {
+			t.Fatal(lookErr)
+		}
+	}
+
+	// The fake home stands in for the account's home, and the account must
+	// be able to walk down to cmd.sh from the top of the temporary tree.
+	home := tree.path("home/vcap")
+
+	err = os.Chown(home, uid, gid)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for dir := tree.root; dir != os.TempDir() && dir != "/"; dir = filepath.Dir(dir) {
+		err = os.Chmod(dir, 0o711) //nolint:gosec // a test tree the account must pass through
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The account's home in the passwd database is not under the fake
+	// root, so the fake getent reports the path as the script joins it.
+	tree.fakeGetent(t, vcapEntry(uid, gid, "/home/vcap"))
+
+	taskDir := tree.path(runOps, runTask)
+	command := fmt.Sprintf("id -u\nid -g\ncat %[1]q\n(echo more >> %[1]q) 2> /dev/null || echo append-denied\nrm -rf %[2]q 2> /dev/null\n[ -e %[2]q ] && echo remove-denied\n", taskDir+"/cmd.sh", taskDir)
+
+	code, _ := tree.prepare(t, runTask, "vcap", []byte(command))
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	code, out, errOut := tree.execVcap(t, "30", digestOf([]byte(command)))
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr %q", code, errOut)
+	}
+
+	want := fmt.Sprintf("%d\n%d\n%sappend-denied\nremove-denied\n", uid, gid, command)
+	if out != want {
+		t.Errorf("the command printed\n%s\nwant\n%s", out, want)
 	}
 }
