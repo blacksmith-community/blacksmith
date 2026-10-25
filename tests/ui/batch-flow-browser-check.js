@@ -92,6 +92,8 @@ async (page) => {
   await page.locator('#upgrade-stemcell-filter').selectOption('ubuntu-jammy/1.90');
   await next.click();await page.locator('#upgrade-select-all').click();await next.click();
   await page.locator('#batch-flow-job-name').waitFor();
+  check(await page.locator('.batch-flow-footer').evaluate(el=>el.getBoundingClientRect().height)<=64,'desktop action bar is compact');
+  await page.screenshot({path:'output/playwright/batch-upgrade-review.png'});
   check(creates.length===1,'upgrade waits for review confirmation');
   await page.locator('#batch-flow-job-name').fill('Lab rollout');
   await back.click();await next.click();await page.locator('#batch-flow-job-name').waitFor();

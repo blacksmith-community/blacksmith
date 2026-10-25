@@ -162,7 +162,7 @@ t('rotate selection on Batch Operations', async () => {
   ok(d.querySelector('.upgrade-targets-panel h2').textContent==='Upgrade targets','heading restored without step numbers');
   // ids
   const ids=[...d.querySelectorAll('[id^="upgrade-advrel-"],[id^="upgrade-release-"]')].map(n=>n.id).sort();
-  ok(ids.join()==='upgrade-release-filter,upgrade-release-floor,upgrade-release-floor-help','advrel/release id query returns only pre-existing controls: '+ids);
+  ok(ids.join()==='upgrade-release-filter,upgrade-release-floor','advrel/release id query returns only pre-existing controls: '+ids);
   ok([...d.querySelectorAll('#upgrade [id^="rotate-"]')].length>0&&![...d.querySelectorAll('#upgrade [id]')].some(n=>/^rotate-/.test(n.id)===false&&false),'rotate ids exist');
   ok(alerts.length===0,'no alert/confirm/prompt: '+alerts.join('|'));
   ok(!errors.some(e=>/Reference|TypeError|LOAD/.test(e)),'no script errors: '+errors.join('|'));

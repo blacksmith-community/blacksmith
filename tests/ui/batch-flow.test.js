@@ -95,3 +95,19 @@ t('mode tabs expose the selected method and support keyboard navigation',async()
  expect(d.activeElement.getAttribute('role')).toBe('tab');
  }finally{w.close();}
 });
+
+t('review presents a small selection without redundant cards or pagination',async()=>{
+ const {w,d}=await setup();try{
+ w.serviceInstances.cache.instance_name='Production cache';
+ const summary=w.__T.buildUpgradeFlowSummary(['cache'],['bpm/1.4.41']);
+ expect(summary.querySelector('.batch-pagination').hidden).toBe(true);
+ expect(summary.querySelector('.batch-review-fact')).toBeNull();
+ expect(summary.querySelector('.batch-instance-name').textContent).toBe('Production cache');
+ expect(summary.querySelector('.batch-instance-id').textContent).toBe('cache');
+ const large=w.__T.buildUpgradeFlowSummary(Array.from({length:51},(_,i)=>String(i)),['bpm/1']);
+ expect(large.querySelector('.batch-pagination').hidden).toBe(false);
+ expect(large.querySelectorAll('.batch-instance-name').length).toBe(50);
+ large.querySelector('.batch-pagination button:last-child').click();
+ expect(large.querySelectorAll('.batch-instance-name').length).toBe(1);
+ }finally{w.close();}
+});

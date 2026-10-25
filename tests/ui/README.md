@@ -85,3 +85,8 @@ The batch flow checks also cover mode-tab arrow keys, required patch follow-up,
 visible Select/Selected feedback, and removal of visual row ordinals.
 Job metadata helper text and single-toggle label behavior are covered by
 `batch-flow.test.js`.
+
+After `batch-flow-browser-check.js`, run `batch-review-browser-check.js` to
+verify the single-instance review at desktop and mobile sizes. It checks
+that pagination is hidden for a single page, text uses the available width,
+and the action bar stays compact while retaining 44px button targets.

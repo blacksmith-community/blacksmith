@@ -2744,7 +2744,7 @@
     renderBatchCount();
     document.querySelectorAll('[data-batch-step]').forEach(button => {
       const index = Number(button.dataset.batchStep);
-      button.disabled = batchFlow.submitting || index > batchFlow.furthest || (index >= 2 && Boolean(batchOptionIssue())) || (index === 3 && Boolean(batchInstanceIssue()));
+      button.disabled = batchFlow.submitting || (index !== step && (index > batchFlow.furthest || (index >= 2 && Boolean(batchOptionIssue())) || (index === 3 && Boolean(batchInstanceIssue()))));
       if (index === step) button.setAttribute('aria-current', 'step'); else button.removeAttribute('aria-current');
     });
     const back = document.getElementById('batch-flow-back');
@@ -2785,7 +2785,7 @@
     batchFlow.submitting = false;
     const host = document.getElementById('batch-flow-review');
     host.replaceChildren();
-    const title = rotateEl('h3', '', options.title);
+    const title = rotateEl('h3', 'batch-review-title', options.details?.length ? options.title : 'Change summary');
     host.appendChild(title);
     if (options.message) host.appendChild(rotateEl('p', 'batch-review-note', options.message));
     if (options.body) {
@@ -2813,7 +2813,7 @@
       input.addEventListener('input', () => { batchFlow.jobName = input.value; });
       input.setAttribute('aria-describedby','batch-job-name-help');
       label.appendChild(input); host.appendChild(label);
-      const hint = rotateEl('p','batch-field-help','A short label to find this operation in Activity, for example “October service update”. Leave blank to use a generated name.');
+      const hint = rotateEl('p','batch-field-help','Shown in Activity, e.g. “October service update”. Leave blank for an automatic name.');
       hint.id='batch-job-name-help';host.appendChild(hint);
     }
     if (options.requireText) {
@@ -3061,10 +3061,10 @@
         </div>
         <div class="filter-row">
           <label for="upgrade-stemcell-floor">Minimum current version</label>
-          <select id="upgrade-stemcell-floor" aria-describedby="upgrade-stemcell-floor-help">
+          <select id="upgrade-stemcell-floor" aria-describedby="batch-stemcell-floor-help">
             <option value="">No minimum</option>
           </select>
-          <p class="batch-field-help" id="upgrade-stemcell-floor-help">Include instances already running this version or newer. This filters the selection; it does not change the target version.</p>
+          <p class="batch-field-help" id="batch-stemcell-floor-help">Include instances already running this version or newer. This filters the selection; it does not change the target version.</p>
         </div>
       </div>
       <div class="upgrade-target-group">
@@ -3077,10 +3077,10 @@
         </div>
         <div class="filter-row">
           <label for="upgrade-release-floor">Minimum current version</label>
-          <select id="upgrade-release-floor" aria-describedby="upgrade-release-floor-help" disabled title="Select a single service to filter by release">
+          <select id="upgrade-release-floor" aria-describedby="batch-release-floor-help" disabled title="Select a single service to filter by release">
             <option value="">No minimum</option>
           </select>
-          <p class="batch-field-help" id="upgrade-release-floor-help">Include instances already running this version or newer. Leave unset to include any current version.</p>
+          <p class="batch-field-help" id="batch-release-floor-help">Include instances already running this version or newer. Leave unset to include any current version.</p>
         </div>
         <details class="upgrade-advanced">
           <summary>Advanced — other releases</summary>
@@ -7102,26 +7102,33 @@
 
   const buildUpgradeFlowSummary = (ids, targets) => {
     const body = rotateEl('div', 'batch-upgrade-summary');
-    const scope = rotateEl('div','batch-review-facts');
-    for (const [label,value] of [['Operation','Upgrade'],['Instances',String(ids.length)]]) {
-      const fact=rotateEl('div','batch-review-fact');fact.append(rotateEl('span','batch-fact-label',label),rotateEl('strong','',value));scope.appendChild(fact);
-    }
-    body.appendChild(scope);
-    body.appendChild(rotateEl('h3','batch-review-section-title','What will change'));
-    const changes = rotateEl('ul');
+    const changesSection = rotateEl('section','batch-review-changes');
+    changesSection.appendChild(rotateEl('h4','batch-review-section-title','What will change'));
+    const changes = rotateEl('ul','batch-change-list');
     targets.forEach(target => changes.appendChild(rotateEl('li', '', target)));
-    body.appendChild(changes);
-    body.appendChild(rotateEl('h3','batch-review-section-title','Deployment impact'));
-    body.appendChild(rotateEl('p', '', 'BOSH applies the deployment update policy. VMs and jobs may restart during the upgrade.'));
-    const details = rotateEl('details');
-    details.appendChild(rotateEl('summary', '', 'Selected instances'));
-    const list = rotateEl('ul');
+    changesSection.appendChild(changes);
+    const impact = rotateEl('div','batch-review-impact');
+    impact.appendChild(rotateEl('h4','batch-review-section-title','Deployment impact'));
+    impact.appendChild(rotateEl('p', '', 'BOSH applies the deployment update policy. VMs and jobs may restart during the upgrade.'));
+    changesSection.appendChild(impact);
+    body.appendChild(changesSection);
+    const details = rotateEl('details','batch-review-instances');
+    details.open = ids.length <= 3;
+    details.appendChild(rotateEl('summary', '', `Selected instances (${ids.length})`));
+    const list = rotateEl('ul','batch-review-instance-list');
     const pager = rotateEl('nav','batch-pagination'); pager.setAttribute('aria-label','Review instance pages');
+    pager.hidden = ids.length <= BATCH_PAGE_SIZE;
     const previous = rotateEl('button','outline small','Previous');
     const label = rotateEl('span'); const next = rotateEl('button','outline small','Next');
     let page = 0;
     const paint = () => {
-      list.replaceChildren(...ids.slice(page * BATCH_PAGE_SIZE,(page+1)*BATCH_PAGE_SIZE).map(id => rotateEl('li','',window.serviceInstances?.[id]?.instance_name ? `${window.serviceInstances[id].instance_name} (${id})` : id)));
+      list.replaceChildren(...ids.slice(page * BATCH_PAGE_SIZE,(page+1)*BATCH_PAGE_SIZE).map(id => {
+        const item = rotateEl('li');
+        const name = window.serviceInstances?.[id]?.instance_name || window.serviceInstances?.[id]?.name;
+        item.appendChild(rotateEl('span','batch-instance-name',name || id));
+        if (name && name !== id) item.appendChild(rotateEl('span','batch-instance-id',id));
+        return item;
+      }));
       label.textContent = `Page ${page+1} of ${Math.max(1,Math.ceil(ids.length/BATCH_PAGE_SIZE))}`;
       previous.disabled = page === 0; next.disabled = (page+1)*BATCH_PAGE_SIZE >= ids.length;
     };

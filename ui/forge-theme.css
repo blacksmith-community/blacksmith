@@ -339,3 +339,45 @@ body > footer p { margin: 0; }
  #upgrade .upgrade-instance-item.upgrade-instance-item :is(.upgrade-instance-service, .upgrade-instance-id, .upgrade-instance-name, .upgrade-instance-plan, .rotate-chips, .upgrade-instance-status, .upgrade-instance-stemcell-container, .upgrade-instance-release-container) { grid-column: 2; }
  #upgrade .upgrade-instance-item :is(.rotate-chips, .upgrade-instance-status, .upgrade-instance-name):empty { display: none; }
 }
+
+/* Review reads as a change summary, not a dashboard of repeated metrics. */
+#upgrade .batch-flow-review { max-width: 1200px; padding-block: 12px 20px; }
+#upgrade .batch-flow-review > .batch-review-title { margin: 0 0 16px; font-size: 1rem; }
+#upgrade .batch-upgrade-summary { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(280px,1fr); gap: 24px; align-items: start; }
+#upgrade .batch-flow-review .batch-review-section-title { margin: 0 0 8px; font-size: .9375rem; }
+#upgrade .batch-change-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+#upgrade .batch-change-list li { padding: 6px 10px; background: var(--secondary); border-radius: 5px; overflow-wrap: anywhere; }
+#upgrade .batch-review-impact { margin-top: 20px; }
+#upgrade .batch-review-impact p { margin: 0; }
+#upgrade .batch-review-instances { margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+#upgrade .batch-review-instances > summary { margin: 0; padding: 12px 16px; font-weight: 600; }
+#upgrade .batch-review-instance-list { list-style: none; padding: 0 16px 12px; margin: 0; }
+#upgrade .batch-review-instance-list li { display: grid; gap: 3px; padding: 10px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+#upgrade .batch-instance-name { font-weight: 600; }
+#upgrade .batch-instance-id { font-size: .8125rem; color: var(--muted-foreground); }
+#upgrade .batch-review-instances .batch-pagination { margin: 0 16px; padding: 8px 0; }
+#upgrade .batch-review-facts { gap: 12px 24px; margin: 0 0 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); max-width: none; }
+#upgrade .batch-review-fact { display: flex; align-items: baseline; gap: 8px; flex: 0 1 auto; min-width: 0; padding: 0; background: transparent; border: 0; border-radius: 0; }
+#upgrade .batch-review-fact strong { font-size: 1rem; }
+#upgrade .batch-flow-review p { line-height: 1.55; }
+#upgrade .batch-flow-review :is(.rotate-preview-note,.rotate-preview-callout) { margin: 14px 0; padding: 12px 14px; }
+#upgrade .batch-flow-review :is(.batch-job-name,.batch-ack-label) { margin-top: 20px; font-size: .875rem; }
+#upgrade #batch-job-name-help { margin: 6px 0 0; max-width: 64ch; font-size: .8125rem; }
+#upgrade .batch-flow-footer { padding: 8px 24px; gap: 8px 16px; flex-direction: row; flex-wrap: wrap; align-items: center; }
+#upgrade .batch-flow-footer p { flex: 1 1 130px; font-size: .8125rem; line-height: 1.4; }
+#upgrade .batch-flow-footer > div { gap: 8px; margin-left: auto; }
+#upgrade .batch-flow-footer button { min-height: 44px; padding-block: 8px; margin: 0; }
+@media (max-width: 750px) {
+ #upgrade .batch-upgrade-summary { grid-template-columns: minmax(0,1fr); gap: 16px; }
+ #upgrade .batch-flow-footer { padding: 8px 16px; }
+ #upgrade .batch-flow-footer > div { justify-content: flex-end; }
+}
+
+/* The review layout, not nested character limits, controls text wrapping. */
+#upgrade .batch-flow-review { max-width: none; }
+#upgrade .batch-flow-review :is(p,.batch-review-facts) { max-width: none; }
+#upgrade .batch-flow-review #batch-job-name-help { max-width: none; }
+#upgrade .batch-flow-review .rotate-preview-scroll { width: 100%; min-width: 0; }
+#upgrade .batch-flow-review .batch-review-note { white-space: normal; }
+
+#upgrade.tab-panel { padding-bottom: 0; }
