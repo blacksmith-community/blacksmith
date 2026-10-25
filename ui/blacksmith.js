@@ -5114,11 +5114,8 @@
     sync();
 
     const remember = () => { rotateDialogMemory.set(instanceId, new Set(chosen)); };
-    // The opener can be redrawn while the dialog is open, so a caller can
-    // supply findOpener to look for the live control or a stable fallback.
     const focusOpener = () => {
-      let target = options.opener;
-      if ((!target || !target.isConnected) && typeof options.findOpener === 'function') target = options.findOpener();
+      const target = options.opener;
       if (target && target.isConnected && typeof target.focus === 'function') target.focus({ preventScroll: true });
     };
 
@@ -5166,15 +5163,28 @@
 
   // Opens Batch Operations in rotate mode with the selection the
   // Certificates tab holds, which both tabs share.
-  const openBatchRotate = async () => {
+  // With pairs, it replaces the shared selection with them, and only once
+  // the switch has succeeded, so a refused switch leaves the selection alone.
+  const openBatchRotate = async (pairs) => {
     const switched = await window.blacksmithNav.switchTab('upgrade');
     if (switched === false) return false;
+    if (Array.isArray(pairs)) {
+      rotateSelection().clear();
+      pairs.forEach(([id, name]) => rotateSetPair(id, name, true));
+    }
     // The count names where a handed-over selection came from.
     const handedOver = rotatePairs().length > 0;
     if (handedOver) rotateState.source = 'certificates';
     renderOperation('rotate');
     if (handedOver) {
       // Every filter goes back to Any, so none can hide a handed-over instance.
+      const service = document.getElementById('upgrade-service-filter');
+      if (service && service.value !== '') {
+        service.value = '';
+        service.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const plan = document.getElementById('upgrade-plan-filter');
+      if (plan) plan.value = '';
       Object.assign(batchWorkspace, { page: 0, search: '', eligibility: '', expiring: 0, selectedOnly: false });
       ['batch-search', 'batch-eligibility', 'batch-expiring'].forEach((id) => {
         const field = document.getElementById(id);
@@ -24818,15 +24828,13 @@
 
     // Rotate in the details panel hands this certificate to the batch
     // operations flow, which owns the options, the review, and the preview.
-    function openDrawerRotate(d) {
+    async function openDrawerRotate(d) {
       const pairs = allowedPairs(d.item || d.cert);
       if (pairs.length === 0) return;
-      selection.clear();
-      pairs.forEach(([id, name]) => setPair(id, name, true));
+      if (await window.blacksmithBatch.openRotate(pairs) === false) return;
       renderSelectionLine();
       renderTable();
       syncRotateSelected();
-      window.blacksmithBatch.openRotate();
     }
 
     async function loadItem(d) {

@@ -289,6 +289,7 @@ body > footer p { margin: 0; }
 #upgrade input:checked + .batch-select-state .select-on, #upgrade input:indeterminate + .batch-select-state .select-some { display: inline; }
 #upgrade input:checked + .batch-select-state .select-off, #upgrade input:indeterminate + .batch-select-state :is(.select-off,.select-on) { display: none; }
 #upgrade input:is(:checked,:indeterminate) + .batch-select-state { color: var(--primary-foreground); background: var(--primary); border-color: var(--primary); font-weight: 600; }
+#upgrade .batch-select-state .select-some::before { content: "\2013\00a0"; }
 #upgrade input:focus-visible + .batch-select-state { outline: 3px solid var(--ring); outline-offset: 3px; }
 #upgrade input:disabled + .batch-select-state { color: var(--muted-foreground); background: var(--secondary); cursor: not-allowed; }
 #upgrade .upgrade-instance-item { padding: 16px; }
