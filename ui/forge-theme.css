@@ -630,4 +630,18 @@ body > footer p { margin: 0; }
 .broker-details-container .broker-tabs-nav { margin-top: 0; }
 #cf-endpoint-modal .modal { display: flex; }
 
+/* Keep workspace navigation flush with the main tabs. */
+#upgrade.tab-panel { padding-top: 0; }
+#upgrade .batch-execution-settings { margin: .5rem 1.25rem; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+#upgrade .batch-execution-settings > summary { display: flex; align-items: center; gap: .5rem; padding: .625rem .75rem; color: var(--foreground); font-weight: 600; }
+#upgrade .batch-execution-settings > summary svg { flex: 0 0 auto; }
+#upgrade .batch-execution-settings > summary::after { margin-left: auto; }
+#upgrade .batch-execution-settings > :not(summary) { margin: .75rem; }
+
+/* Legacy padding on every nested div compounds in these views. */
+#services .entity-main > .detail-content:has(.instance-logs-wrapper, .events-table-container, .vms-table-wrapper) { padding: 8px 16px 16px; }
+#services .detail-content :is(.instance-logs-wrapper, .instance-logs-content, .job-logs-container, .vms-table-wrapper, .vms-table-container, .events-table-container, .search-filter-container, .log-file-selector) { padding: 0; }
+#services .detail-content .table-controls-container { padding: 4px 0 8px; margin: 0; gap: 8px; }
+#services .detail-content .table-controls-container :is(input,select) { margin-top: 0; }
+
 #cf-endpoint-modal.active { transition: opacity .2s ease, visibility 0s; }
