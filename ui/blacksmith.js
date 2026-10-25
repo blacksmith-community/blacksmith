@@ -2433,14 +2433,10 @@
     // Build the plan details table
     const detailsTable = `
       <table class="plan-details-table">
-        <thead>
-          <tr>
-            <th colspan="2">Plan Information</th>
-          </tr>
-        </thead>
+        <caption class="visually-hidden">Plan information</caption>
         <tbody>
           <tr>
-            <td class="info-key">Service</td>
+            <th scope="row" class="info-key">Service</th>
             <td class="info-value">
               <span class="copy-wrapper">
                 <span>${service?.name || service?.id || 'unknown'}</span>
@@ -2452,7 +2448,7 @@
             </td>
           </tr>
           <tr>
-            <td class="info-key">Plan</td>
+            <th scope="row" class="info-key">Plan</th>
             <td class="info-value">
               <span class="copy-wrapper">
                 <span>${plan?.name || plan?.id || 'unknown'}</span>
@@ -2464,15 +2460,15 @@
             </td>
           </tr>
           <tr>
-            <td class="info-key">Description</td>
+            <th scope="row" class="info-key">Description</th>
             <td class="info-value">${plan.description || '-'}</td>
           </tr>
           <tr>
-            <td class="info-key">Current Instances</td>
+            <th scope="row" class="info-key">Current Instances</th>
             <td class="info-value">${plan.blacksmith.instances}</td>
           </tr>
           <tr>
-            <td class="info-key">Instance Limit</td>
+            <th scope="row" class="info-key">Instance Limit</th>
             <td class="info-value">${plan.blacksmith.limit > 0 ? plan.blacksmith.limit : plan.blacksmith.limit == 0 ? 'Unlimited' : 'Not Set'}</td>
           </tr>
         </tbody>
@@ -2514,11 +2510,11 @@
     }
 
     return `
-      <div class="service-detail-header">
+      <div class="service-detail-header plan-detail-header">
         <h2 class="deployment-name">${planName}</h2>
         ${tagsHtml}
       </div>
-      <div class="service-detail-content">
+      <div class="service-detail-content plan-detail-content">
         ${detailsTable}
         ${vmsTable ? '<h3>VM Configuration</h3>' + vmsTable : ''}
         ${service.description ? `<div class="service-description"><h3>Service Description</h3><p>${service.description}</p></div>` : ''}
@@ -8874,7 +8870,7 @@
             ${createSearchFilter(tableId, 'Search tasks...')}
           </div>
           <div class="filter-group">
-            <label>Type:</label>
+            <label for="task-type-filter">Type:</label>
             <select id="task-type-filter" aria-label="Task type">
               <option value="recent">Recent</option>
               <option value="current">Current</option>
@@ -8882,8 +8878,8 @@
             </select>
           </div>
           <div class="filter-group">
-            <label>Filter by:</label>
-            <select id="task-filter" aria-label="Task state">
+            <label for="task-filter">Scope:</label>
+            <select id="task-filter" aria-label="Task scope">
               <option value="blacksmith">blacksmith</option>
             </select>
           </div>
@@ -8899,8 +8895,8 @@
         </div>
         <div class="tasks-controls-row-2">
           <div class="filter-group">
-            <label>States:</label>
-            <div class="checkbox-group">
+            <span id="task-states-label">States:</span>
+            <div class="checkbox-group" role="group" aria-labelledby="task-states-label">
               <label><input type="checkbox" value="processing" checked> Processing</label>
               <label><input type="checkbox" value="queued" checked> Queued</label>
               <label><input type="checkbox" value="done" checked> Done</label>
@@ -9068,7 +9064,7 @@
             </div>
           </div>
         </div>
-        <span class="configs-help" title="An asterisk marks the active version. Select an ID to view all versions." aria-label="An asterisk marks the active version. Select an ID to view all versions." tabindex="0">ⓘ</span>
+        <span class="configs-help" title="An asterisk marks the active version. Select an ID to view all versions." aria-label="An asterisk marks the active version. Select an ID to view all versions." tabindex="0">* Active · select ID for versions</span>
       </div>
       <div class="configs-table-container">
         <table class="${tableId}">
@@ -15340,7 +15336,7 @@
   const renderCertificatesTab = () => {
     const tabGroupId = 'cert-main-tabs';
     return `
-      <div class="service-testing-container">
+      <div class="service-testing-container broker-certificates-workspace">
         <div class="manifest-details-container">
           <div class="manifest-tabs-nav" id="cert-main-tablist">
             <button class="manifest-tab-btn active" data-tab="overview" data-group="${tabGroupId}">Overview</button>
@@ -19999,6 +19995,11 @@
         row.appendChild(el('h4', 'cert-ov-title', 'Broker and platform certificates'));
         const actions = el('div', 'cert-ov-actions');
         const rescan = button('cert-action-btn cert-ov-rescan', 'Rescan');
+        rescan.textContent = '';
+        rescan.title = 'Rescan broker and platform certificates';
+        rescan.setAttribute('aria-label', rescan.title);
+        rescan.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3l1 3M4 12l1 3a8 8 0 0 0 13 3"/></svg>';
+
         rescan.disabled = busy;
         if (busy) rescan.setAttribute('aria-busy', 'true');
         rescan.addEventListener('click', async () => {

@@ -31,6 +31,8 @@ t('broker certificate overview', async () => {
   const ov=d.getElementById('cert-broker-overview');
   ok(/Reading the broker/.test(ov.textContent),'loading shown');
   await sleep(150);
+  expect(ov.querySelector('.cert-ov-rescan').getAttribute('aria-label')).toBe('Rescan broker and platform certificates');
+  expect(!!ov.querySelector('.cert-ov-rescan svg[aria-hidden="true"]')).toBe(true);
   const tabs=[...host.querySelectorAll('#cert-main-tablist [role=tab]')].map(t=>t.textContent);
   ok(tabs.join(',')==='Overview,Trusted,Config,Endpoint','sub-tabs: '+tabs);
   ok(host.querySelector('.manifest-tab-pane.active').dataset.tab==='overview','Overview default');

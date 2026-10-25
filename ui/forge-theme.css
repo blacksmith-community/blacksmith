@@ -689,3 +689,41 @@ body > footer p { margin: 0; }
 #keyboard-help-dialog :is(th,td) { padding: 8px; font-size: .8125rem; border-bottom: 1px solid var(--border); text-align: left; white-space: normal; overflow-wrap: anywhere; }
 #keyboard-help-dialog kbd { white-space: normal; }
 #keyboard-help-dialog p { font-size: .8125rem; margin: 0; }
+#blacksmith .compact-tasks-controls { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; padding: 0 0 8px; }
+#blacksmith .compact-tasks-controls :is(.tasks-controls-row-1,.tasks-controls-row-2) { display: contents; }
+#blacksmith .compact-tasks-controls .filter-group { flex-wrap: wrap; gap: 6px; margin: 0; }
+#blacksmith .compact-tasks-controls .search-filter-container { flex: 0 1 230px; min-width: 160px; max-width: 100%; }
+#blacksmith .compact-tasks-controls :is(input,select,label) { margin: 0; }
+#blacksmith .compact-tasks-controls select { min-height: 34px; padding: 4px 8px; max-width: 100%; }
+#blacksmith .compact-tasks-controls .tasks-action-buttons { order: 1; margin: 0 0 0 auto; }
+#blacksmith .compact-tasks-controls .checkbox-group { gap: 8px; }
+#blacksmith .compact-tasks-controls .checkbox-group input { appearance: auto; accent-color: var(--primary); }
+
+#blacksmith .broker-certificates-workspace { border: 0; border-radius: 0; padding: 0; margin: 0; height: auto; overflow: visible; }
+#blacksmith .broker-certificates-workspace .manifest-details-container { height: auto; margin: 0; }
+#blacksmith .broker-certificates-workspace .manifest-tab-content { border: 0; padding: 8px 0 0; }
+#blacksmith .broker-certificates-workspace .operation-content { border: 0; padding: 0; }
+#blacksmith .broker-certificates-workspace .cert-ov-bar { margin: 0 0 8px; padding: 0; }
+#blacksmith .broker-certificates-workspace .cert-ov-rescan { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 36px; padding: 6px; }
+
+#blacksmith .plan-detail { background: var(--card); min-width: 0; }
+#blacksmith .plan-detail-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 12px 16px; height: auto; background: var(--card); border-bottom: 1px solid var(--border); }
+#blacksmith .plan-detail-header h2 { margin: 0; padding: 0; color: var(--foreground); font-size: 1.125rem; font-weight: 600; }
+#blacksmith .plan-detail-header .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; }
+#blacksmith .plan-detail-header .tags li { margin: 0; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--secondary); color: var(--muted-foreground); font-family: inherit; font-size: .75rem; }
+#blacksmith .plan-detail-content { padding: 12px 16px; }
+#blacksmith .plan-details-table .info-key { width: 12rem; background: var(--secondary); font-weight: 500; white-space: normal; }
+#blacksmith .plan-details-table .info-value { font-family: inherit; }
+#blacksmith .plan-detail .service-description { margin-top: 16px; }
+#blacksmith .plan-detail .service-description h3 { margin: 0 0 8px; padding: 0; border: 0; font-size: .875rem; font-weight: 600; }
+#blacksmith .plan-detail .service-description p { margin: 0; font-size: .875rem; line-height: 1.5; color: var(--muted-foreground); }
+#blacksmith .plans-list h2 { font-size: .8125rem; padding: 10px 12px; }
+#blacksmith .plans-list .plan-item { padding: 10px 12px; }
+#blacksmith .plans-list .plan-name { font-family: inherit; font-size: .875rem; }
+
+#blacksmith .compact-configs-controls.table-controls-container { gap: 6px 12px; padding: 0 0 8px; margin: 0; }
+#blacksmith .compact-configs-controls :is(input,select) { margin-top: 0; }
+#blacksmith .compact-configs-controls .checkbox-group input { appearance: auto; accent-color: var(--primary); }
+#blacksmith .compact-configs-controls .configs-help { font-size: .75rem; color: var(--muted-foreground); cursor: default; }
+#blacksmith .configs-table :is(th,td) { padding: 5px 12px; }
+#blacksmith .configs-table .config-type-badge { padding: 2px 6px; line-height: 1.3; }
