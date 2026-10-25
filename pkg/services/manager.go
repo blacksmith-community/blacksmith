@@ -6,6 +6,7 @@ import (
 	"blacksmith/pkg/services/rabbitmq"
 	"blacksmith/pkg/services/redis"
 	"fmt"
+	"strings"
 )
 
 // Manager manages all service testing handlers.
@@ -67,12 +68,39 @@ func (m *Manager) Close() error {
 }
 
 // IsRedisInstance checks if the credentials indicate a Redis service.
+// Valkey belongs to the Redis family. A service the credentials name in
+// service_name or service_type decides on its own; the URI scheme, the
+// port, and the password shape only guess for instances that name nothing.
 func IsRedisInstance(creds common.Credentials) bool {
-	// Check for Redis-specific fields
-	if creds.GetString("uri") != "" {
-		uri := creds.GetString("uri")
+	named := false
 
-		return len(uri) > 8 && (uri[:8] == "redis://" || uri[:9] == "rediss://")
+	for _, key := range []string{"service_name", "service_type"} {
+		name := strings.ToLower(strings.TrimSpace(creds.GetString(key)))
+		if name == "" {
+			continue
+		}
+
+		if strings.Contains(name, "valkey") || strings.Contains(name, "redis") {
+			return true
+		}
+
+		named = true
+	}
+
+	if named {
+		return false
+	}
+
+	// Check for Redis-specific fields
+	if uri := creds.GetString("uri"); uri != "" {
+		scheme, _, _ := strings.Cut(uri, "://")
+
+		switch strings.ToLower(scheme) {
+		case "redis", "rediss", "valkey", "valkeys":
+			return true
+		default:
+			return false
+		}
 	}
 
 	// Check for typical Redis port

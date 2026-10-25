@@ -124,3 +124,38 @@ func TestNewCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestNewCredentialsReadsValkeyFields(t *testing.T) {
+	t.Parallel()
+
+	result, err := NewCredentials(common.Credentials{
+		"host":           "q-s0.standalone.valkey-service.example.bosh",
+		"port":           0,
+		"tls_port":       6379,
+		"username":       "default",
+		"password":       "secret123",
+		"ca_certificate": "-----BEGIN CERTIFICATE-----\n",
+		"service_type":   "valkey",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if result.Username != "default" {
+		t.Errorf("Username = %q, expected %q", result.Username, "default")
+	}
+
+	if result.CACertificate != "-----BEGIN CERTIFICATE-----\n" {
+		t.Errorf("CACertificate was not carried over")
+	}
+
+	// A TLS-only instance has no plain-text port, so the TLS port must not
+	// be mistaken for one.
+	if result.Port != 0 {
+		t.Errorf("Port = %d, expected 0 for a TLS-only instance", result.Port)
+	}
+
+	if result.TLSPort != 6379 {
+		t.Errorf("TLSPort = %d, expected 6379", result.TLSPort)
+	}
+}

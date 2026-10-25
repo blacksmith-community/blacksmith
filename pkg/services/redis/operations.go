@@ -39,9 +39,18 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 		return nil, fmt.Errorf("invalid credentials: %w", credsErr)
 	}
 
-	client, clientErr := h.clientManager.GetClient(ctx, "test", creds, opts.UseTLS)
+	// A connection test dials afresh rather than reuse a cached client, which
+	// could belong to another instance.
+	client, clientErr := h.clientManager.newClient(ctx, creds, opts.UseTLS)
 	if clientErr != nil {
 		return nil, fmt.Errorf("failed to get Redis client: %w", clientErr)
+	}
+
+	defer func() { _ = client.Close() }()
+
+	port := creds.Port
+	if opts.UseTLS && creds.TLSPort > 0 {
+		port = creds.TLSPort
 	}
 
 	// Test basic operations
@@ -74,7 +83,7 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 			"server_info":   serverInfo,
 			"connection": map[string]interface{}{
 				"host": creds.Host,
-				"port": creds.Port,
+				"port": port,
 				"tls":  opts.UseTLS,
 			},
 		},

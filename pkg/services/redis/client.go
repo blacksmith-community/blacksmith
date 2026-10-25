@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"sync"
 	"time"
@@ -31,15 +32,17 @@ func NewClientManager(ttl time.Duration) *ClientManager {
 	}
 }
 
+// Errors for connection settings the credentials cannot satisfy. None of
+// them carries a credential value.
+var (
+	ErrNoPlainTextPort  = common.NewServiceError("redis", "E002", "this instance accepts TLS connections only; choose TLS to connect", false)
+	ErrNoTLSEndpoint    = common.NewServiceError("redis", "E003", "this instance has no TLS port; choose Standard to connect", false)
+	ErrInvalidTLSURI    = common.NewServiceError("redis", "E011", "tls_uri in the credentials could not be parsed", false)
+	ErrInvalidCACertPEM = common.NewServiceError("redis", "E012", "ca_certificate in the credentials holds no PEM certificate", false)
+)
+
 // GetClient retrieves or creates a Redis client for the given instance.
 func (cm *ClientManager) GetClient(ctx context.Context, instanceID string, creds *Credentials, useTLS bool) (*redis.Client, error) {
-	return cm.GetClientWithTLSConfig(ctx, instanceID, creds, useTLS, false)
-}
-
-// GetClientWithTLSConfig retrieves or creates a Redis client with TLS verification control.
-//
-//nolint:funlen
-func (cm *ClientManager) GetClientWithTLSConfig(ctx context.Context, instanceID string, creds *Credentials, useTLS bool, skipTLSVerify bool) (*redis.Client, error) {
 	key := fmt.Sprintf("%s-%v", instanceID, useTLS)
 
 	cm.mu.RLock()
@@ -66,9 +69,26 @@ func (cm *ClientManager) GetClientWithTLSConfig(ctx context.Context, instanceID 
 		cm.mu.RUnlock()
 	}
 
-	// Create new client
+	client, err := cm.newClient(ctx, creds, useTLS)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache client
+	cm.mu.Lock()
+	cm.clients[key] = client
+	cm.mu.Unlock()
+
+	return client, nil
+}
+
+// clientOptions builds the client options for a plain-text or a TLS
+// connection. It never falls back from one to the other: Standard needs a
+// plain-text port and TLS needs a TLS port or tls_uri.
+func clientOptions(creds *Credentials, useTLS bool) (*redis.Options, error) {
 	opts := &redis.Options{
 		Addr:         fmt.Sprintf("%s:%d", creds.Host, creds.Port),
+		Username:     creds.Username,
 		Password:     creds.Password,
 		DB:           0,
 		DialTimeout:  DialTimeout,
@@ -79,50 +99,65 @@ func (cm *ClientManager) GetClientWithTLSConfig(ctx context.Context, instanceID 
 		MaxRetries:   DefaultMaxRetries,
 	}
 
-	// Configure TLS if requested and TLS port is available
-	if useTLS && creds.TLSPort > 0 {
+	if !useTLS {
+		if creds.Port <= 0 {
+			return nil, ErrNoPlainTextPort
+		}
+
+		return opts, nil
+	}
+
+	switch {
+	case creds.TLSPort > 0:
 		opts.Addr = fmt.Sprintf("%s:%d", creds.Host, creds.TLSPort)
-		opts.TLSConfig = &tls.Config{
-			InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Only skip verification when explicitly requested for development
-			ServerName:         creds.Host,
-			MinVersion:         tls.VersionTLS12,
-		}
-	} else if useTLS && creds.TLSURI != "" {
-		// Try to use TLS URI if available
+	case creds.TLSURI != "":
+		// The parse error is dropped because it repeats the URI, password
+		// included.
 		tlsOpts, err := redis.ParseURL(creds.TLSURI)
-		if err == nil {
-			opts = tlsOpts
-			opts.TLSConfig = &tls.Config{
-				InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Only skip verification when explicitly requested for development
-				ServerName:         creds.Host,
-				MinVersion:         tls.VersionTLS12,
-			}
+		if err != nil {
+			return nil, ErrInvalidTLSURI
 		}
+
+		opts = tlsOpts
+		if opts.Username == "" {
+			opts.Username = creds.Username
+		}
+	default:
+		return nil, ErrNoTLSEndpoint
 	}
 
-	client := redis.NewClient(opts)
-
-	// Test connection
-	pingCtx, cancel := context.WithTimeout(ctx, LongPingTimeout)
-	defer cancel()
-
-	err := client.Ping(pingCtx).Err()
+	tlsConfig, err := creds.tlsConfig()
 	if err != nil {
-		_ = client.Close()
-
-		return nil, common.NewRetryableError(
-			fmt.Errorf("redis connection failed: %w", err),
-			true,
-			HealthCheckInterval,
-		)
+		return nil, err
 	}
 
-	// Cache client
-	cm.mu.Lock()
-	cm.clients[key] = client
-	cm.mu.Unlock()
+	opts.TLSConfig = tlsConfig
 
-	return client, nil
+	return opts, nil
+}
+
+// tlsConfig verifies the server against the instance's own CA when the
+// credentials carry ca_certificate, and against the system roots when they
+// do not. The server name is the credentials' host, so an IP host has to
+// appear as an IP SAN in the server certificate.
+func (c *Credentials) tlsConfig() (*tls.Config, error) {
+	config := &tls.Config{
+		ServerName: c.Host,
+		MinVersion: tls.VersionTLS12,
+	}
+
+	if c.CACertificate == "" {
+		return config, nil
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(c.CACertificate)) {
+		return nil, ErrInvalidCACertPEM
+	}
+
+	config.RootCAs = pool
+
+	return config, nil
 }
 
 // CloseClient closes and removes a specific client.
@@ -197,4 +232,32 @@ func (cm *ClientManager) GetConnectionInfo() map[string]ConnectionInfo {
 	}
 
 	return info
+}
+
+// newClient creates an uncached Redis client and checks it with PING. The
+// caller is responsible for closing it.
+func (cm *ClientManager) newClient(ctx context.Context, creds *Credentials, useTLS bool) (*redis.Client, error) {
+	opts, err := clientOptions(creds, useTLS)
+	if err != nil {
+		return nil, err
+	}
+
+	client := redis.NewClient(opts)
+
+	// Test connection
+	pingCtx, cancel := context.WithTimeout(ctx, LongPingTimeout)
+	defer cancel()
+
+	err = client.Ping(pingCtx).Err()
+	if err != nil {
+		_ = client.Close()
+
+		return nil, common.NewRetryableError(
+			fmt.Errorf("redis connection failed: %w", err),
+			true,
+			HealthCheckInterval,
+		)
+	}
+
+	return client, nil
 }

@@ -12,9 +12,12 @@ type Credentials struct {
 	Hostname string `json:"hostname"`
 	Port     int    `json:"port"`
 	TLSPort  int    `json:"tls_port"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 	URI      string `json:"uri"`
 	TLSURI   string `json:"tls_uri"`
+	// CACertificate is the PEM CA the instance's TLS certificate chains to.
+	CACertificate string `json:"ca_certificate"`
 }
 
 // NewCredentials creates Redis credentials from Vault data.
@@ -24,9 +27,12 @@ func NewCredentials(vaultData common.Credentials) (*Credentials, error) {
 		Hostname: vaultData.GetString("hostname"),
 		Port:     vaultData.GetInt("port"),
 		TLSPort:  vaultData.GetInt("tls_port"),
+		Username: vaultData.GetString("username"),
 		Password: vaultData.GetString("password"),
 		URI:      vaultData.GetString("uri"),
 		TLSURI:   vaultData.GetString("tls_uri"),
+
+		CACertificate: vaultData.GetString("ca_certificate"),
 	}
 
 	// Use hostname as fallback for host
@@ -39,7 +45,9 @@ func NewCredentials(vaultData common.Credentials) (*Credentials, error) {
 		return nil, common.NewServiceError("redis", "E001", "missing host in credentials", false)
 	}
 
-	if creds.Port == 0 {
+	// A TLS-only instance writes port 0, and its TLS port is often 6379, so
+	// the default applies only when the credentials give no TLS endpoint.
+	if creds.Port == 0 && creds.TLSPort == 0 && creds.TLSURI == "" {
 		creds.Port = 6379 // Default Redis port
 	}
 

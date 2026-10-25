@@ -72,6 +72,73 @@ func TestIsRedisInstance(t *testing.T) {
 			},
 			expected: false,
 		},
+		{
+			// The shape the valkey forge writes for a TLS-only instance.
+			name: "Valkey named only in service_type, with username and no URI",
+			creds: common.Credentials{
+				"host":           "q-s0.standalone.valkey-service.example.bosh",
+				"port":           0,
+				"tls_port":       6379,
+				"username":       "default",
+				"password":       "secret",
+				"admin_password": "secret",
+				"ca_certificate": "-----BEGIN CERTIFICATE-----",
+				"service_type":   "valkey",
+			},
+			expected: true,
+		},
+		{
+			name: "Redis named in service_name, with username",
+			creds: common.Credentials{
+				"host":         "redis.example.com",
+				"username":     "admin",
+				"password":     "secret",
+				"service_name": "Redis",
+			},
+			expected: true,
+		},
+		{
+			name: "Named non-Redis service wins over the port guess",
+			creds: common.Credentials{
+				"host":         "generic.example.com",
+				"port":         6379,
+				"password":     "secret",
+				"service_type": "postgresql",
+			},
+			expected: false,
+		},
+		{
+			name: "Valkey URI",
+			creds: common.Credentials{
+				"uri": "valkey://default:password@host:6379",
+			},
+			expected: true,
+		},
+		{
+			name: "Valkey TLS URI",
+			creds: common.Credentials{
+				"uri": "valkeys://default:password@host:6379",
+			},
+			expected: true,
+		},
+		{
+			name: "Short Redis-like URI does not panic",
+			creds: common.Credentials{
+				"uri": "rediss:/",
+			},
+			expected: false,
+		},
+		{
+			name: "Not Redis - RabbitMQ instance",
+			creds: common.Credentials{
+				"host":     "rabbitmq.example.com",
+				"port":     5672,
+				"username": "admin",
+				"password": "secret",
+				"vhost":    "/service-instance-123",
+			},
+			expected: false,
+		},
 	}
 
 	for _, test := range tests {
@@ -156,6 +223,25 @@ func TestIsRabbitMQInstance(t *testing.T) {
 			name: "Not RabbitMQ - Redis URI",
 			creds: common.Credentials{
 				"uri": "redis://:pass@host:6379",
+			},
+			expected: false,
+		},
+		{
+			name: "Not RabbitMQ - Valkey instance with username",
+			creds: common.Credentials{
+				"host":         "q-s0.standalone.valkey-service.example.bosh",
+				"port":         0,
+				"tls_port":     6379,
+				"username":     "default",
+				"password":     "secret",
+				"service_type": "valkey",
+			},
+			expected: false,
+		},
+		{
+			name: "Not RabbitMQ - Valkey URI",
+			creds: common.Credentials{
+				"uri": "valkeys://default:pass@host:6379",
 			},
 			expected: false,
 		},
