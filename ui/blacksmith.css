@@ -11092,12 +11092,6 @@ span.config-type.resurrection {
   text-overflow: ellipsis;
 }
 
-#upgrade .upgrade-instance-meta {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  margin-top: 0.125rem;
-}
-
 #upgrade .upgrade-instance-stemcell-container {
   margin-left: auto;
   padding-left: 0.75rem;

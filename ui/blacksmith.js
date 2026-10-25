@@ -3794,11 +3794,10 @@
       const info = rotateEl('div', 'upgrade-instance-info');
       info.appendChild(rotateEl('span', 'upgrade-instance-service', row.serviceName));
       const idCell = rotateEl('div', 'upgrade-instance-id', row.id);
-      if (row.entry && row.entry.name && row.entry.name !== row.id) {
-        idCell.title = row.entry.name;
-        idCell.appendChild(rotateEl('span', 'upgrade-instance-name', row.entry.name));
-      }
+      idCell.title = row.id;
       info.appendChild(idCell);
+      const named = row.entry && row.entry.name && row.entry.name !== row.id;
+      info.appendChild(rotateEl('span', 'upgrade-instance-name', named ? row.entry.name : ''));
       info.appendChild(rotateEl('span', 'upgrade-instance-plan', row.planName));
       const chips = rotateEl('div', 'rotate-chips');
       if (!converge && row.chips.length > 0 && !row.holder) {
@@ -24789,26 +24788,30 @@
     // the CredHub details, the certificate details, and the probe results.
     // Each warning and each notice gets its own callout.
     const drawerCallouts = (cert) => {
+      const errors = [];
       const warnings = [];
       const notices = [];
-      (cert.findings || []).forEach((finding) => {
+      const findings = cert.findings || [];
+      findings.forEach((finding) => {
         const text = finding.message || finding.code || '';
         if (!text) return;
-        if (finding.severity === 'error' || finding.severity === 'warning') warnings.push(text);
+        if (finding.severity === 'error') errors.push(text);
+        else if (finding.severity === 'warning') warnings.push(text);
         else notices.push(text);
       });
-      if (cert.divergence) {
-        const since = shortDate(cert.divergence.since);
-        warnings.push(cert.divergence.state === 'reverted'
-          ? `A change to this certificate was reverted on some VMs, since ${since}.`
-          : `Some VMs still run an older copy of this certificate, since ${since}.`);
+      // The backend raises its own finding for a divergence. We only say it
+      // ourselves when that finding is missing.
+      if (cert.divergence && !findings.some((f) => f.code === 'unconverged' || f.code === 'patch_reverted')) {
+        const when = cert.divergence.since ? ` on ${shortDate(cert.divergence.since)}` : '';
+        if (cert.divergence.state === 'reverted') errors.push(`A VM went back to an older version of this certificate after we patched it${when}.`);
+        else warnings.push(`We patched this certificate in place${when}, and BOSH still records the old one.`);
       }
       if (cert.coverage && cert.coverage.stale) warnings.push('Some of what we know about this certificate comes from an older scan.');
       if (cert.expiry === 'unknown' && cert.expiry_reason) notices.push(`We cannot tell when this certificate expires. ${cert.expiry_reason}`);
       if (cert.rotation && !cert.rotation.allowed && (cert.rotation.reasons || []).length > 0) {
         notices.push(`This certificate cannot be rotated from here. ${cert.rotation.reasons.join(' ')}`);
       }
-      if (warnings.length + notices.length === 0) return null;
+      if (errors.length + warnings.length + notices.length === 0) return null;
 
       const section = el('section', 'cert-drawer-callouts');
       section.setAttribute('aria-label', 'Warnings and notices');
@@ -24818,6 +24821,7 @@
         box.appendChild(el('span', 'cert-callout-text', text));
         section.appendChild(box);
       };
+      errors.forEach((text) => add('warn', 'Error', text));
       warnings.forEach((text) => add('warn', 'Warning', text));
       notices.forEach((text) => add('info', 'Notice', text));
       return section;
@@ -24825,7 +24829,7 @@
 
     const credhubStateText = (obs) => {
       if (obs.state === 'failed') return obs.error ? `Failed, ${obs.error}` : 'Failed';
-      if (obs.state === 'stale') return 'Stale';
+      if (obs.state === 'stale') return obs.error ? `Stale, ${obs.error}` : 'Stale';
       return 'Read successfully';
     };
 
@@ -24846,8 +24850,6 @@
       const named = cert.key && !String(cert.key).startsWith('sha256:');
       const credhubObs = (cert.observations || []).filter((o) => o.source === 'credhub');
       const versions = cert.versions;
-      if (!named && credhubObs.length === 0 && !versions) return null;
-
       if (named) add('Credential name', cert.key, true);
       add('Kind', cert.kind);
       add('Read from', sourcesOf(cert));
@@ -24901,7 +24903,8 @@
       const wrap = el('div', 'cert-probe-wrap');
       const table = el('table', 'cert-details-table cert-probe-table');
       const head = el('tr');
-      ['Endpoint', 'Result', 'Matched', 'Expiry seen', 'Ran'].forEach((title) => {
+      const showPrint = probes.some((o) => o.sha256_fingerprint);
+      ['Endpoint', 'Result', 'Matched'].concat(showPrint ? ['SHA-256 fingerprint'] : [], ['Expiry seen', 'Ran']).forEach((title) => {
         const th = el('th', null, title);
         th.setAttribute('scope', 'col');
         head.appendChild(th);
@@ -24918,6 +24921,18 @@
         tr.appendChild(endpoint);
         tr.appendChild(el('td', obs.state === 'failed' ? 'cert-probe-failed' : null, probeResultText(obs)));
         tr.appendChild(el('td', null, obs.state === 'failed' ? 'Not compared' : matchText(obs.matches)));
+        if (showPrint) {
+          const print = el('td');
+          if (obs.sha256_fingerprint) {
+            const box = el('div', 'cert-field-value');
+            box.appendChild(el('span', 'cert-field-text', obs.sha256_fingerprint));
+            box.appendChild(CertView.copyButton(`Copy fingerprint ${obs.sha256_fingerprint}`, obs.sha256_fingerprint));
+            print.appendChild(box);
+          } else {
+            print.textContent = 'Not seen';
+          }
+          tr.appendChild(print);
+        }
         tr.appendChild(el('td', null, obs.not_after ? shortDate(obs.not_after) : 'Not seen'));
         tr.appendChild(el('td', null, obs.observed_at ? `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}` : 'Unknown'));
         body.appendChild(tr);
@@ -24939,6 +24954,7 @@
         { title: 'SHA-256 fingerprint', has: (o) => o.sha256_fingerprint, text: (o) => o.sha256_fingerprint, copy: (o) => o.sha256_fingerprint, label: 'fingerprint' },
         { title: 'Matches', has: (o) => o.matches, text: (o) => matchText(o.matches) },
         { title: 'Expires', has: (o) => o.not_after, text: (o) => shortDate(o.not_after) },
+        { title: 'Status', text: credhubStateText },
         { title: 'Last read', has: (o) => o.observed_at, text: (o) => `${shortDate(o.observed_at)} ${clock(o.observed_at)}` }
       ].filter((c) => !c.has || obs.some(c.has));
 

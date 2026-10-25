@@ -48,6 +48,11 @@ t('rotate rows drop the Select button, keep chips and checkbox, and toggle from 
  expect(r.querySelector('.upgrade-instance-service').textContent).toBe('svc1');
  expect(r.querySelector('.upgrade-instance-plan').textContent).toBe('small');
  expect(r.querySelector('.rotate-chips .rotate-chip')).not.toBeNull();
+ const named=r.querySelector('.upgrade-instance-name');
+ expect(named.textContent).toBe('cache-a');
+ expect(named.closest('.upgrade-instance-id')).toBeNull();
+ expect(r.querySelector('.upgrade-instance-id').textContent).toBe('inst-a');
+ expect(r.querySelector('.upgrade-instance-id').title).toBe('inst-a');
  r.querySelector('.upgrade-instance-id').click();
  // the row redraws from the selection, so read it again
  const now=row(d,'inst-a');
