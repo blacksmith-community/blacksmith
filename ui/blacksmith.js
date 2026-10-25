@@ -2885,6 +2885,43 @@
       updateBatchFlow();
     }
   };
+  const installBatchKeyboard = () => {
+    const panel = document.getElementById('upgrade');
+    const shortcuts = {'batch-new':'N','batch-activity':'A','batch-flow-next':'ArrowRight','batch-flow-back':'ArrowLeft',
+      'rotate-op-upgrade':'U','rotate-op-rotate':'R','rotate-op-converge':'C'};
+    Object.entries(shortcuts).forEach(([id,key]) => {
+      const control = document.getElementById(id);
+      control?.setAttribute('aria-keyshortcuts', 'Alt+Shift+' + key);
+    });
+    document.addEventListener('keydown', async event => {
+      if (!panel.classList.contains('active') || event.defaultPrevented || event.repeat || event.isComposing ||
+          !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || batchFlow.submitting) return;
+      if (event.target.closest('textarea, [contenteditable]:not([contenteditable="false"]), input:not([type="radio"]):not([type="checkbox"])')) return;
+      if (window.blacksmithSurfaces.top() || document.querySelector('dialog[open], .modal-overlay.active, .dialog-modal-overlay.active')) return;
+      const code = event.code || event.key;
+      if (!['KeyN','KeyA','KeyU','KeyR','KeyC','ArrowRight','ArrowLeft'].includes(code)) return;
+      event.preventDefault();
+      if (code === 'KeyA') {
+        setBatchView('activity');
+        document.getElementById('batch-activity').focus();
+      } else if (code === 'KeyN') {
+        setBatchView('new'); setBatchStep(0);
+        document.querySelector('#rotate-operation input:checked')?.focus();
+      } else if (['KeyU','KeyR','KeyC'].includes(code)) {
+        await requestOperation({KeyU:'upgrade',KeyR:'rotate',KeyC:'converge'}[code]);
+        setBatchView('new'); setBatchStep(1);
+      } else if (!panel.querySelector('.upgrade-main').hidden) {
+        // The forward shortcut navigates only; final submission requires
+        // explicit activation of the confirmation button.
+        if (code === 'ArrowRight' && batchFlow.step === 3) {
+          document.getElementById('batch-flow-next').focus(); return;
+        }
+        const button = document.getElementById(code === 'ArrowRight' ? 'batch-flow-next' : 'batch-flow-back');
+        if (!button.disabled && !button.hidden) button.click();
+      }
+    });
+  };
+
   const installBatchFlow = () => {
     const panel = document.getElementById('upgrade');
     const main = panel.querySelector('.upgrade-main');
@@ -2914,6 +2951,7 @@
     panel.addEventListener('change', () => queueMicrotask(updateBatchFlow));
     new MutationObserver(updateBatchFlow).observe(panel.querySelector('.upgrade-footer'), {childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
     batchFlow.installed = true;
+    installBatchKeyboard();
     syncOperationRadios(); setBatchStep(0,false);
   };
 
@@ -4134,7 +4172,7 @@
         tab.setAttribute('role','tab');tab.setAttribute('aria-controls',modePanel.id);
         tab.addEventListener('click',()=>radio.click());
         tab.addEventListener('keydown',event=>{
-          if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+          if (event.altKey || event.ctrlKey || event.metaKey || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
           event.preventDefault();const available=Object.values(tabs).filter(item=>!item.disabled);
           const index=available.indexOf(tab);
           const next=event.key==='Home'?available[0]:event.key==='End'?available.at(-1):available[(index+(event.key==='ArrowRight'?1:-1)+available.length)%available.length];

@@ -14,7 +14,7 @@
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261024-rotate">
-  <link rel="stylesheet" href="/forge-theme.css?v=20261025-quick-navigation">
+  <link rel="stylesheet" href="/forge-theme.css?v=20261025-batch-keyboard">
   <script src="/vendor/oat/oat.min.js" defer></script>
 </head>
 
@@ -113,6 +113,15 @@
           <nav class="batch-view-nav" aria-label="Batch operations views">
             <button id="batch-new" class="btn-secondary" aria-pressed="true">New Operation</button>
             <button id="batch-activity" class="btn-secondary" aria-pressed="false">Activity</button>
+            <details class="batch-keyboard-help">
+              <summary>Keyboard shortcuts</summary>
+              <div>
+                <p>On this screen, hold <kbd>Alt / Option</kbd> + <kbd>Shift</kbd> and press:</p>
+                <dl><dt>N</dt><dd>New Operation (keeps your draft)</dd><dt>A</dt><dd>Activity</dd><dt>U / R / C</dt><dd>Upgrade / Rotate / Converge options</dd><dt>→ / ←</dt><dd>Next / Back</dd></dl>
+                <p><kbd>Tab</kbd> / <kbd>Shift Tab</kbd> moves between controls. Arrow keys choose operations, modes, and select options. <kbd>Space</kbd> selects a checkbox; <kbd>Enter</kbd> activates a focused button.</p>
+                <p>Shortcuts pause in text fields and dialogs. On Review, Next focuses the confirmation button; press Enter to submit.</p>
+              </div>
+            </details>
           </nav>
           <div class="upgrade-main">
             <div class="upgrade-top">
@@ -394,7 +403,7 @@
     <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
   </dialog>
   <script type="text/javascript" src="/xterm.min.js"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261025-batch-shortcuts"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261025-batch-keyboard"></script>
   <script src="/navigation.js?v=20261025-batch-shortcuts"></script>
 </body>
 

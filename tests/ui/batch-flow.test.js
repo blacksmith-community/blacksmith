@@ -159,3 +159,25 @@ t('quick navigation selects each operation and opens Options',async()=>{
  expect(d.getElementById('rotate-op-upgrade').checked).toBe(true);
  }finally{w.close();}
 });
+
+t('batch shortcuts navigate views and steps without submitting or intercepting typing',async()=>{
+ const {w,d}=await setup();try{
+ const panel=d.getElementById('upgrade');panel.classList.add('active');
+ const key=(code,target=panel)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{code,key:code.replace('Key',''),altKey:true,shiftKey:true,bubbles:true,cancelable:true}));
+ key('KeyA');expect(d.getElementById('batch-activity').getAttribute('aria-pressed')).toBe('true');
+ key('KeyN');expect(w.__T.batchFlow.step).toBe(0);
+ const modal=d.createElement('dialog');modal.setAttribute('open','');d.body.append(modal);
+ key('KeyA');expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');modal.remove();
+ key('KeyR');await sleep(0);expect(d.getElementById('rotate-op-rotate').checked).toBe(true);expect(w.__T.batchFlow.step).toBe(1);
+ key('KeyU');await sleep(0);key('KeyN');
+
+ key('ArrowRight');expect(w.__T.batchFlow.step).toBe(1);
+ key('ArrowRight');expect(w.__T.batchFlow.step).toBe(1); // no target selected
+ key('ArrowLeft');expect(w.__T.batchFlow.step).toBe(0);
+ const input=d.getElementById('batch-search');
+ key('KeyA',input);expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');
+ w.__T.batchFlow.step=3;let clicked=0;d.getElementById('batch-flow-next').addEventListener('click',()=>clicked++);
+ key('ArrowRight');expect(clicked).toBe(0);
+ panel.classList.remove('active');key('KeyA');expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');
+ }finally{w.close();}
+});
