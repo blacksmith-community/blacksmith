@@ -2536,15 +2536,13 @@
         <label for="instance-search">Find an instance</label><input id="instance-search" type="search" placeholder="Name, ID, service, or plan" autocomplete="off">
         ${showFilter ? `
         <div class="filter-row">
-          <label for="service-filter">Service:</label>
-          <select id="service-filter" class="filter-select">
+          <select id="service-filter" class="filter-select" aria-label="Service">
             <option value="">All Services</option>
             ${serviceOptions}
           </select>
         </div>
         <div class="filter-row">
-          <label for="plan-filter">Plan:</label>
-          <select id="plan-filter" class="filter-select" disabled>
+          <select id="plan-filter" class="filter-select" aria-label="Plan" disabled>
             <option value="">All Plans</option>
           </select>
         </div>` : `
