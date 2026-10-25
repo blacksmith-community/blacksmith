@@ -12682,6 +12682,7 @@ span.config-type.resurrection {
 .cert-drawer-detail,
 .cert-drawer-credhub,
 .cert-drawer-probes,
+.cert-drawer-others,
 .cert-runbook {
   margin-top: 16px;
   padding-top: 8px;

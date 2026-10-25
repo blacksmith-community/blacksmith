@@ -24928,6 +24928,55 @@
       return section;
     };
 
+    // Observations from every source but CredHub and the probes, one row
+    // each. A column that no observation carries is left out.
+    const otherSources = (cert) => {
+      const obs = (cert.observations || []).filter((o) => o.source !== 'credhub' && o.source !== 'probe');
+      if (obs.length === 0) return null;
+      const columns = [
+        { title: 'Source', text: (o) => o.source || 'unknown' },
+        { title: 'Location', has: (o) => o.locator, text: (o) => o.locator, copy: (o) => o.locator, label: 'location' },
+        { title: 'SHA-256 fingerprint', has: (o) => o.sha256_fingerprint, text: (o) => o.sha256_fingerprint, copy: (o) => o.sha256_fingerprint, label: 'fingerprint' },
+        { title: 'Matches', has: (o) => o.matches, text: (o) => matchText(o.matches) },
+        { title: 'Expires', has: (o) => o.not_after, text: (o) => shortDate(o.not_after) },
+        { title: 'Last read', has: (o) => o.observed_at, text: (o) => `${shortDate(o.observed_at)} ${clock(o.observed_at)}` }
+      ].filter((c) => !c.has || obs.some(c.has));
+
+      const section = el('section', 'cert-drawer-others');
+      section.appendChild(el('h4', null, 'Other sources'));
+      const wrap = el('div', 'cert-probe-wrap');
+      const table = el('table', 'cert-details-table cert-probe-table cert-others-table');
+      const head = el('tr');
+      columns.forEach((c) => {
+        const th = el('th', null, c.title);
+        th.setAttribute('scope', 'col');
+        head.appendChild(th);
+      });
+      table.appendChild(el('thead')).appendChild(head);
+      const body = el('tbody');
+      obs.forEach((o) => {
+        const tr = el('tr', 'cert-others-row');
+        columns.forEach((c) => {
+          const td = el('td');
+          const value = c.has && !c.has(o) ? '' : c.text(o);
+          if (c.copy && c.copy(o)) {
+            const box = el('div', 'cert-field-value');
+            box.appendChild(el('span', 'cert-field-text', value));
+            box.appendChild(CertView.copyButton(`Copy ${c.label} ${c.copy(o)}`, c.copy(o)));
+            td.appendChild(box);
+          } else {
+            td.textContent = value;
+          }
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+      table.appendChild(body);
+      wrap.appendChild(table);
+      section.appendChild(wrap);
+      return section;
+    };
+
     const renderDrawerBody = () => {
       const d = view.drawer;
       const body = view.refs.drawerBody;
@@ -24996,6 +25045,8 @@
       nodes.push(detailBox);
 
       nodes.push(probeInformation(cert));
+      const others = otherSources(cert);
+      if (others) nodes.push(others);
 
       if (cert.kind === 'ca' || cert.kind === 'intermediate') nodes.push(caRunbook());
       else if ((cert.owners || []).some((o) => o.kind === 'broker')) nodes.push(brokerRunbook());

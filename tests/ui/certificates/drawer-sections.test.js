@@ -122,3 +122,40 @@ t('a single plain line replaces the probe table when no probes ran', async () =>
     expect(section.querySelector('p').textContent).toBe('No listener probes have run for this certificate.');
   } finally { w.close(); }
 });
+
+t('Other sources lists manifest and vault observations after Probe information', async () => {
+  const { w, dr, copied } = await openCert('c2', (c) => {
+    c.findings = [{ code: 'a', severity: 'warning', message: 'A warning.' }];
+    c.observations = [
+      { source: 'credhub', owner: { kind: 'instance' }, locator: '/x/y', state: 'ok', observed_at: iso(Date.now()) },
+      { source: 'probe', owner: { kind: 'instance' }, locator: '10.0.0.5:6379', state: 'ok', matches: 'deployed', observed_at: iso(Date.now()) },
+      { source: 'manifest', owner: { kind: 'instance' }, locator: 'instance_groups/0/properties/tls', sha256_fingerprint: 'fp-manifest', matches: 'deployed', state: 'ok', observed_at: iso(Date.now()) },
+      { source: 'vault', owner: { kind: 'instance' }, locator: 'secret/x/cert', state: 'ok', observed_at: iso(Date.now()) }
+    ];
+  });
+  try {
+    const section = dr.querySelector('.cert-drawer-others');
+    expect(heading(dr, 'Other sources')).toBeTruthy();
+    const rows = Array.from(section.querySelectorAll('tbody tr'));
+    expect(rows.map((r) => r.querySelector('td').textContent)).toEqual(['manifest', 'vault']);
+    expect(Array.from(section.querySelectorAll('thead th')).map((th) => th.textContent)).not.toContain('Expires');
+    const order = [dr.querySelector('.cert-drawer-actions'), dr.querySelector('.cert-drawer-callouts'), heading(dr, 'CredHub Details'), heading(dr, 'Certificate details'), heading(dr, 'Probe information'), heading(dr, 'Other sources')];
+    const spots = order.map((n) => position(dr, n));
+    expect(new Set(spots).size).toBe(6);
+    expect(spots).toEqual([...spots].sort((a, b) => a - b));
+    rows[0].querySelectorAll('.cert-copy-btn')[1].click(); await sleep(10);
+    expect(copied).toEqual(['fp-manifest']);
+  } finally { w.close(); }
+});
+
+t('Other sources is absent with only CredHub and probe observations', async () => {
+  const { w, dr } = await openCert('c2', (c) => {
+    c.observations = [
+      { source: 'credhub', owner: { kind: 'instance' }, locator: '/x/y', state: 'ok', observed_at: iso(Date.now()) },
+      { source: 'probe', owner: { kind: 'instance' }, locator: '10.0.0.5:6379', state: 'ok', observed_at: iso(Date.now()) }
+    ];
+  });
+  try {
+    expect(dr.querySelector('.cert-drawer-others')).toBeNull();
+  } finally { w.close(); }
+});
