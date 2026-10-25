@@ -52,6 +52,16 @@ t('task panel and API errors', async () => {
   ok(panel.querySelector('.upgrade-task-item').getAttribute('data-task-id')===EVIL,'task list: id attribute intact and not broken out');
   ok(!!panel.querySelector('.task-kind-badge'),'task list: certificates kind badge');
 
+  // Every operation uses readable status and complete outcome accounting.
+  T._setTasks([{id:'mixed',kind:'upgrade',status:'paused',total_count:4,completed_count:1,cancelled_count:1,skipped_count:1,unknown_count:1}]);
+  T.renderUpgradeTaskList();
+  ok(/Paused/.test(panel.textContent),'paused status is visible text');
+  ok(/1 cancelled/.test(panel.textContent)&&/1 skipped/.test(panel.textContent)&&/1 outcome unknown/.test(panel.textContent),'all settled outcomes appear on activity cards');
+  ok(!/undefined|NaN/.test(panel.textContent),'missing counters have safe defaults');
+  ok(panel.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')==='100','progress counts every settled outcome accessibly');
+  T._setTasks([]);T.renderUpgradeTaskList();
+  ok(/New Operation/.test(panel.textContent)&&!/No upgrade tasks/.test(panel.textContent),'empty activity applies to every operation');
+
   // hostile detail
   const detail={id:EVIL,name:EVIL,kind:'certificates',status:EVIL,certificates:{mode:EVIL,reason:EVIL},total_count:1,completed_count:0,failed_count:1,created_at:EVIL,
     instances:[{instance_id:EVIL,instance_name:EVIL,deployment_name:EVIL,status:'failed',error:EVIL,bosh_task_id:'7"><img src=x onerror=alert(3)>'}]};

@@ -5838,9 +5838,17 @@
   };
 
   // A batch job's progress in percent: every instance that has settled, whatever its outcome.
-  const upgradeTaskProgress = (task) => (task.total_count > 0
-    ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0) + (task.unknown_count || 0)) / task.total_count * 100)
-    : 0);
+  const activityCount = value => {
+    const count = Number(value);
+    return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+  };
+  const upgradeTaskProgress = task => {
+    const total = activityCount(task.total_count);
+    const settled = ['completed_count', 'failed_count', 'cancelled_count', 'skipped_count', 'unknown_count']
+      .reduce((sum, key) => sum + activityCount(task[key]), 0);
+    return total ? Math.min(100, Math.round(settled / total * 100)) : 0;
+  };
+  const activityStatus = status => String(status || 'unknown').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
   // ---- Errors, poll status, and re-render helpers for the task panel ----
 
@@ -6022,7 +6030,7 @@
 
     if (upgradeTasks.length === 0) {
       rerenderTaskPanel(tasksContainer, 'list', () => {
-        tasksContainer.innerHTML = '<div class="no-tasks">No upgrade tasks yet. Select instances and click Upgrade to start.</div>';
+        tasksContainer.innerHTML = '<div class="no-tasks">No batch jobs yet. Choose New Operation to upgrade, rotate certificates, or converge instances.</div>';
       });
       return;
     }
@@ -6032,7 +6040,7 @@
       const statusClass = getTaskStatusClass(task.status);
       const statusIcon = getTaskStatusIcon(task.status);
       const progress = upgradeTaskProgress(task);
-      const taskName = task.name || task.target || describeUpgradeTargets(task).label;
+      const taskName = task.name || task.target || (task.kind === 'certificates' ? 'Certificate operation' : `Upgrade to ${describeUpgradeTargets(task).label}`);
       const isCertificates = task.kind === 'certificates';
       const kindBadge = isCertificates
         ? '<span class="task-kind-badge task-kind-badge--certificates">Certificates</span>'
@@ -6051,16 +6059,18 @@
             <span class="upgrade-task-status">${statusIcon}</span>
             <span class="upgrade-task-name">${escapeHtml(taskName)}</span>
             ${kindBadge}
+            <span class="activity-status-label">${escapeHtml(activityStatus(task.status))}</span>
             ${awaitingBadge}
           </div>
           ${targetLine}
-          <div class="upgrade-task-progress">
+          <div class="upgrade-task-progress" role="progressbar" aria-label="Instances processed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
             <div class="upgrade-task-progress-bar" style="width: ${Number(progress) || 0}%"></div>
           </div>
           <div class="upgrade-task-stats">
-            <span class="success">${escapeHtml(String(task.completed_count))} done</span>
-            <span class="failed">${escapeHtml(String(task.failed_count))} failed</span>
-            <span class="total">${escapeHtml(String(task.total_count))} total</span>
+            <span class="success">${activityCount(task.completed_count)} succeeded</span>
+            <span class="failed">${activityCount(task.failed_count)} failed</span>
+            ${[['cancelled_count', 'cancelled'], ['skipped_count', 'skipped'], ['unknown_count', 'outcome unknown']].filter(([key]) => activityCount(task[key])).map(([key, label]) => `<span>${activityCount(task[key])} ${label}</span>`).join('')}
+            <span class="total">${activityCount(task.total_count)} instances</span>
           </div>
           <div class="upgrade-task-time">${escapeHtml(formatTaskTime(task.created_at))}</div>
         </div>
@@ -6141,6 +6151,9 @@
 
     try {
       renderTaskDetail(await loadUpgradeTask(taskId));
+      const heading = document.querySelector('#upgrade .task-detail-header h3');
+      heading?.focus({ preventScroll: true });
+      heading?.scrollIntoView?.({ block: 'nearest' });
       return true;
     } catch (err) {
       console.error('Failed to fetch task details:', err);
@@ -6823,12 +6836,12 @@
           </div>` : ''}`
       : `
           <div class="summary-row">
-            <span class="label">Target Stemcell:</span>
+            <span class="label">System:</span>
             <span class="value">${escapeHtml(targets.stemcell) || 'keep current'}</span>
           </div>
           ${targets.releases.length ? `
           <div class="summary-row">
-            <span class="label">Target Releases:</span>
+            <span class="label">Releases:</span>
             <span class="value">${escapeHtml(targets.releases.join(', '))}</span>
           </div>` : ''}`;
 
@@ -6923,8 +6936,13 @@
 
   // Go back to task list from detail view
   window.backToTaskList = () => {
+    const previousTaskId = selectedTaskId;
     selectedTaskId = null;
     renderUpgradeTaskList();
+    const previous = Array.from(document.querySelectorAll('#upgrade .upgrade-task-item'))
+      .find(item => item.dataset.taskId === previousTaskId);
+    previous?.focus({ preventScroll: true });
+    previous?.scrollIntoView?.({ block: 'nearest' });
   };
 
   // Sends pause, resume, or cancel for a task. A refusal comes back with an
@@ -7075,9 +7093,6 @@
     }
     try {
       await selectUpgradeTask(taskId, { throwOnError: true });
-      const heading = document.querySelector('#upgrade .task-detail-header h3');
-      heading?.focus({ preventScroll: true });
-      heading?.scrollIntoView?.({ block: 'nearest' });
     } catch (err) {
       throw new Error(`The task could not be opened. ${apiErrorText(err)}`);
     }

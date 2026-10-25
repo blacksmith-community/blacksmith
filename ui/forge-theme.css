@@ -482,3 +482,16 @@ body > footer p { margin: 0; }
 #upgrade .cert-task-variable { margin-block: .75rem; overflow-wrap: anywhere; }
 
 #upgrade .task-detail-summary .summary-row:not(:last-child) { border: 0; }
+
+/* Shared activity cards expose state without relying on icon or color. */
+#upgrade .upgrade-task-header { flex-wrap: wrap; gap: .5rem .75rem; }
+#upgrade .upgrade-task-name { min-width: 0; overflow-wrap: anywhere; }
+#upgrade .activity-status-label {
+  border: 1px solid var(--border-primary);
+  border-radius: .25rem;
+  padding: .125rem .5rem;
+  color: var(--text-primary);
+  font-size: .875rem;
+}
+#upgrade .upgrade-task-stats { flex-wrap: wrap; gap: .5rem 1rem; }
+#upgrade .upgrade-task-item:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
