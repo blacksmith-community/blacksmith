@@ -15852,7 +15852,9 @@
 
     // Show the modal
     modal.style.display = 'flex';
+    modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
     modal.classList.add('active');
+    modal.removeAttribute('inert');
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
 
@@ -15885,11 +15887,15 @@
       document.getElementById('config-content-text').textContent = config.content || 'No content available';
 
       // Populate metadata tab
-      document.getElementById('config-metadata-text').textContent = JSON.stringify(config.metadata, null, 2);
+      const metadataText = document.getElementById('config-metadata-text');
+      if (metadataText) metadataText.textContent = JSON.stringify(config.metadata, null, 2);
 
       // Hide loading and show content
       if (loadingDiv) loadingDiv.style.display = 'none';
-      if (contentDiv) contentDiv.style.display = 'block';
+      if (contentDiv) {
+        contentDiv.classList.remove('is-hidden');
+        contentDiv.style.display = 'block';
+      }
 
       // Set up modal tab switching for this config modal
       setupConfigModalTabs();
@@ -16216,7 +16222,10 @@
 
       // Hide loading and show content
       if (loadingDiv) loadingDiv.style.display = 'none';
-      if (contentDiv) contentDiv.style.display = 'block';
+      if (contentDiv) {
+        contentDiv.classList.remove('is-hidden');
+        contentDiv.style.display = 'block';
+      }
 
       // Set up copy functionality
       setupConfigVersionCopyFunctionality();
