@@ -2334,6 +2334,14 @@
     <div class="entity-workspace">${renderEntityNavigation(kind)}<section class="entity-main"><div class="entity-section-toolbar"><h3 class="entity-current-title">Overview</h3><span class="entity-read-hint">Snapshot · reload to update</span></div><div class="detail-content" aria-label="Overview"><div class="loading" role="status">Loading…</div></div></section></div>`;
 
   document.addEventListener('click', async (event) => {
+    const headerCopy = event.target.closest('#copy-header-deployment');
+    if (headerCopy) {
+      const name = document.getElementById('deployment-name')?.textContent;
+      if (!name) return;
+      try { await navigator.clipboard.writeText(name); announce('Deployment name copied'); flashCopyIcon(headerCopy); }
+      catch (_) { announce('Clipboard unavailable. Select the deployment name to copy it.'); }
+      return;
+    }
     const copy = event.target.closest('[data-entity-copy]');
     if (copy) {
       try { await navigator.clipboard.writeText(copy.dataset.entityCopy); announce('Copied to clipboard'); flashCopyIcon(copy); }

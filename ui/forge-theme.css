@@ -570,3 +570,8 @@ body > footer p { margin: 0; }
   word-break: normal; font: inherit; font-family: var(--font-mono, monospace); line-height: 1.5;
 }
 .credentials-table .credential-value-layout > button { flex: 0 0 auto; }
+
+.header-deployment { display: inline-flex; align-items: center; gap: .375rem; vertical-align: middle; }
+.header-deployment:has(#deployment-name:empty) { display: none; }
+#copy-header-deployment { color: inherit; opacity: 1; flex: 0 0 auto; min-width: 2rem; min-height: 2rem; }
+#copy-header-deployment:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }

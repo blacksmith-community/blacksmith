@@ -14,7 +14,7 @@
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261024-rotate">
-  <link rel="stylesheet" href="/forge-theme.css?v=20261025-credential-pem">
+  <link rel="stylesheet" href="/forge-theme.css?v=20261025-header-copy">
   <script src="/vendor/oat/oat.min.js" defer></script>
 </head>
 
@@ -40,7 +40,9 @@
       </div>
       <div>
         <button type="button" id="navigation-trigger" aria-haspopup="dialog" aria-controls="navigation-dialog">Go to… <kbd>Ctrl K</kbd></button>
-        <span id="deployment-name"></span>
+        <span class="header-deployment"><span id="deployment-name"></span><button type="button" id="copy-header-deployment" class="copy-btn-inline" title="Copy deployment name" aria-label="Copy deployment name">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        </button></span>
         <span id="ident"></span>
       </div>
     </div>
@@ -392,7 +394,7 @@
     <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
   </dialog>
   <script type="text/javascript" src="/xterm.min.js"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261025-credential-pem"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261025-header-copy"></script>
   <script src="/navigation.js?v=20261024-forge"></script>
 </body>
 
