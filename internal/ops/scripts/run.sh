@@ -3,6 +3,7 @@
 #
 #   prepare <task> <user>
 #   cleanup <task>
+#   exec <task> <user> <seconds> <sha256>
 #
 # <user> is root or vcap, the account the command will run as. prepare
 # reads the command from the stdin that follows this script and writes it
@@ -26,6 +27,7 @@
 
 readonly RC_DATA=/var/vcap/data
 readonly RC_USER_RE='^(root|vcap)$'
+readonly RC_SECS_RE='^[1-9][0-9]{0,5}$'
 readonly RC_EXIT_RE='^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
 
 # The directory that the EXIT trap removes when an operation stops before
@@ -226,6 +228,68 @@ cleanup() {
 	_RC_DROP=
 }
 
+# execute runs the staged command as root. It checks again everything
+# prepare made, compares the digest of cmd.sh with the one the broker
+# measured, and refuses without leaving a started marker when anything is
+# off. The refusal never names the command or its digest. Only root is
+# accepted here. The command gets a new session, a deadline, an empty
+# environment with fixed values, umask 022, stdin at end of file, and the
+# root home as its working directory. The wrapper exits with the code the
+# command ended with, which it also records in the exit file.
+execute() {
+	[ "$#" -eq 4 ] || return "$EXIT_USAGE"
+	valid_task "$1" || return "$EXIT_USAGE"
+	[ "$2" = root ] || return "$EXIT_USAGE"
+	[[ $3 =~ $RC_SECS_RE ]] || return "$EXIT_USAGE"
+	valid_hash "$4" || return "$EXIT_USAGE"
+
+	local task=$1 secs=$3 want=$4 root gid base dir file home digest setsid timeout code
+
+	root=$(_cp_root) || return "$EXIT_REFUSED"
+	_cp_secure_chain "$root" "$RC_DATA" || return "$EXIT_REFUSED"
+	gid=$(_rc_vcap_gid) || return "$EXIT_REFUSED"
+
+	base=$root$RC_DATA/runcmd
+	dir=$base/$task
+	file=$dir/cmd.sh
+	home=$root/root
+
+	_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
+	_rc_check_dir "$dir" 0 "$gid" 710 || return "$EXIT_REFUSED"
+	_rc_check_file "$file" 0 "$gid" 640 || return "$EXIT_REFUSED"
+	[ -d "$home" ] || return "$EXIT_REFUSED"
+
+	digest=$(raw_hash "$file") || return "$EXIT_REFUSED"
+	[ "$digest" = "$want" ] || return "$EXIT_REFUSED"
+
+	setsid=$(_rc_tool setsid) || return "$EXIT_REFUSED"
+	timeout=$(_rc_tool timeout) || return "$EXIT_REFUSED"
+	command -v -- "$setsid" > /dev/null || return "$EXIT_REFUSED"
+	command -v -- "$timeout" > /dev/null || return "$EXIT_REFUSED"
+
+	_rc_write "$dir/started" < /dev/null || return "$EXIT_REFUSED"
+
+	# The pid that bash -c records is the process group ID only because
+	# setsid makes that process a session leader, and a session leader's
+	# pid is its group ID. Keep the echo ahead of the exec in that same
+	# process. timeout then fails its own setpgid as a session leader,
+	# which is harmless, because the group is already the one to signal.
+	# --wait keeps setsid from forking and returning at once, which would
+	# hide the exit status of the command.
+	# shellcheck disable=SC2016
+	"$setsid" --wait /bin/bash -c 'set -C; echo $$ > "$1" || exit 1; cd -- "$2" || exit 1; umask 022; shift 2; exec "$@"' \
+		_ "$dir/pgid" "$home" \
+		"$timeout" -k 10 "$secs" \
+		env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash \
+		PATH=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+		LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/var/vcap/data/tmp \
+		/bin/bash -- "$file" < /dev/null
+	code=$?
+
+	printf '%s\n' "$code" | _rc_write "$dir/exit" || return 1
+	return "$code"
+}
+
 # _rc_main runs the operation that its first argument names.
 _rc_main() {
 	local operation=${1:-}
@@ -235,6 +299,7 @@ _rc_main() {
 	case $operation in
 	prepare) prepare "$@" ;;
 	cleanup) cleanup "$@" ;;
+	exec) execute "$@" ;;
 	*) return "$EXIT_USAGE" ;;
 	esac
 }
