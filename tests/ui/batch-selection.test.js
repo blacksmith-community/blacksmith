@@ -12,20 +12,24 @@ const certs=[
 const selected=(T)=>[...T.rotateSelection().keys()].sort();
 const next=(d)=>d.getElementById('batch-flow-next');
 
-t('rotation opens with the certificates inside the threshold selected',async()=>{
+t('rotation opens with nothing selected and no threshold on the Options step',async()=>{
  const {w,d,T,sleep}=await setupRotate({certs});try{
- // the threshold follows the warning window, and an expired certificate is inside it
- expect(d.getElementById('rotate-threshold').value).toBe('30');
- expect(selected(T)).toEqual(['inst-a','inst-b','inst-e']);
+ expect(d.getElementById('rotate-threshold')).toBeNull();
+ expect(d.getElementById('rotate-select-matching')).toBeNull();
+ expect(d.querySelector('#upgrade .upgrade-targets').textContent).not.toContain('Start with expiring certificates');
+ expect(selected(T)).toEqual([]);
  T.setBatchStep(2,false);
- expect(d.getElementById('batch-flow-context').textContent).toBe('3 instances selected');
- await sleep(5);expect(next(d).disabled).toBe(false);
- // the preselection runs once, so a cleared selection stays clear
- d.getElementById('upgrade-deselect-all').click();
+ expect(d.getElementById('batch-flow-context').textContent).toBe('No instances selected');
+ await sleep(5);expect(next(d).disabled).toBe(true);
+ // the operator picks, and a refresh keeps the pick
+ d.querySelector('[data-instance-id="inst-a"] .upgrade-instance-id').click();
  await T.loadRotateInventory({silent:true});await sleep(20);
+ expect(selected(T)).toEqual(['inst-a']);
+ expect(d.getElementById('batch-flow-context').textContent).toBe('1 instance selected');
+ d.getElementById('upgrade-deselect-all').click();
  expect(T.rotateSelection().size).toBe(0);
  expect(d.getElementById('batch-flow-context').textContent).toBe('No instances selected');
- expect(next(d).disabled).toBe(true);
+ await sleep(5);expect(next(d).disabled).toBe(true);
  expect(d.getElementById('batch-flow-help').textContent).toContain('Select at least one');
  }finally{w.close();}
 });

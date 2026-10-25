@@ -38,8 +38,9 @@ t('the Review count stays with the list that was previewed',async()=>{
  const {w,d,T,sleep,setInventory}=await setupRotate({certs});try{
  w.__routes.unshift(['/b/certificates/rotation/preview',(u,o,j)=>j(400,{success:false,error:'stop here',code:'bad_request'})]);
  T.setBatchStep(2,false);
- // the threshold preselects inst-a and inst-b
- expect(selected(T)).toEqual(['inst-a','inst-b']);
+d.querySelector('[data-instance-id="inst-a"] .upgrade-instance-id').click();
+ d.querySelector('[data-instance-id="inst-b"] .upgrade-instance-id').click();
+ expect(selected(T)).toEqual(['inst-a','inst-b']);await sleep(5);
  next(d).click();await sleep(80);
  expect(T.batchFlow.step).toBe(3);
  const count=d.getElementById('batch-flow-context');

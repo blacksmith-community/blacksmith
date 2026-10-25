@@ -31,7 +31,8 @@ t('rotate preview and create', async () => {
   const sel=w.blacksmithCerts.selection;
   ok(d.getElementById('rotate-mode-redeploy').checked&&d.getElementById('rotate-mode-patch').disabled,'Mode radio: Redeploy checked, Patch disabled');
   ok(d.getElementById('rotate-mode').textContent.includes('Patch in place is not available'),'Patch reason visible as text');
-  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf preselected');
+  sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
+  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf selected by the operator');
   const btn=d.getElementById('rotate-preview');
   ok(btn.textContent==='Preview rotation of 1 certificate on 1 instance'&&!btn.disabled,'footer label and enabled: '+btn.textContent);
   d.getElementById('rotate-reason').value='Quarterly'; d.getElementById('rotate-reason').dispatchEvent(new w.Event('input'));

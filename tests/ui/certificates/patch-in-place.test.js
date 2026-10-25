@@ -43,7 +43,8 @@ t('patch in place controls', async () => {
   ok(cp&&ci&&!cp.checked&&!ci.checked,'neither converge choice is selected');
   const fs=d.getElementById('rotate-mode-converge').textContent;
   ok(/Leave unconverged/.test(fs)&&/Converge right away/.test(fs)&&/stays flagged as unconverged until a converge/.test(fs)&&/every job restarts a second time/i.test(fs),'both choices carry a consequence sentence');
-  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf preselected');
+  sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
+  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K),'valkey leaf selected by the operator');
   const btn=d.getElementById('rotate-preview');
   ok(btn.disabled&&/Leave unconverged or Converge right away/.test(btn.title+d.getElementById('rotate-selection-line').textContent+(btn.getAttribute('aria-description')||'')+(d.getElementById('rotate-footer-hint')?d.getElementById('rotate-footer-hint').textContent:'')),'preview disabled until a converge choice is made: title='+btn.title);
   pick('rotate-mode-converge-pending'); await sleep(10);

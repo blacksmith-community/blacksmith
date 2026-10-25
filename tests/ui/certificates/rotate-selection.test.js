@@ -65,9 +65,10 @@ t('rotate selection on Batch Operations', async () => {
   ok(d.getElementById('rotate-preview')&&!visible(d.getElementById('rotate-preview')),'legacy action stays hidden behind step navigation');
   T.setBatchStep(1,false);
   ok(d.querySelector('.upgrade-targets-panel h2').textContent==='Certificate options','targets heading retitled');
-  ok(visible(d.getElementById('rotate-threshold')),'threshold control visible');
+  ok(!d.getElementById('rotate-threshold')&&!!d.getElementById('batch-expiring'),'expiry filter sits with the instance filters, not Options');
   const sel=w.blacksmithCerts.selection;
-  ok(sel.get('inst-valkey')&&sel.get('inst-valkey').has(K)&&!sel.get('inst-valkey').has(K2),'default threshold preselects valkey leaf only, on the shared selection');
+  ok(sel.size===0,'nothing is preselected');
+  sel.set('inst-valkey',new Set([K])); T.renderRotateInstances(); T.updateOperationFooter();
   const chipOf=(id,key)=>[...d.querySelectorAll('.rotate-row')].filter(r=>r.dataset.instanceId===id).flatMap(r=>[...r.querySelectorAll('.rotate-chip')]).find(c=>c.dataset.variable===key);
   const c1=chipOf('inst-valkey',K), c2=chipOf('inst-valkey',K2);
   ok(c1&&c1.getAttribute('aria-pressed')==='true'&&c2.getAttribute('aria-pressed')==='false','chips reflect selection via aria-pressed');
@@ -105,9 +106,8 @@ t('rotate selection on Batch Operations', async () => {
   ok(sel.get('inst-valkey').size===2&&sel.has(EVIL)&&!sel.has('inst-held')&&!sel.has('inst-pg'),'Select visible takes eligible chips, skips held and ineligible');
   d.getElementById('rotate-clear-visible').click();
   ok(sel.size===0,'Clear visible clears them');
-  d.getElementById('rotate-threshold').value='400'; d.getElementById('rotate-threshold').dispatchEvent(new w.Event('input'));
-  d.getElementById('rotate-select-matching').click();
-  ok(sel.get('inst-valkey').size===2,'Select matching with 400 days selects both');
+  d.getElementById('batch-select-matching').click();
+  ok(sel.get('inst-valkey').size===2,'Select all matching selects both');
   const line=d.getElementById('rotate-selection-line').textContent;
   ok(/3 certificates selected on 2 instances/.test(line),'selection line counts: '+line);
   ok(d.getElementById('rotate-preview').textContent==='Preview rotation of 3 certificates on 2 instances','footer label');

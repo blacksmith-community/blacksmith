@@ -2664,7 +2664,22 @@
   };
 
   const BATCH_PAGE_SIZE = 50;
-  const batchWorkspace = { page: 0, search: '', eligibility: '', selectedOnly: false };
+  const batchWorkspace = { page: 0, search: '', eligibility: '', expiring: 0, selectedOnly: false };
+
+  // The windows the Certificates tab's expiry table counts, in days.
+  const EXPIRY_HORIZONS = [
+    { days: 7, label: '1 week' },
+    { days: 14, label: '2 weeks' },
+    { days: 30, label: '30 days' },
+    { days: 60, label: '60 days' },
+    { days: 90, label: '90 days' },
+    { days: 180, label: '180 days' },
+    { days: 365, label: '1 year' }
+  ];
+
+  // Whether a certificate with this many days left expires within the
+  // window. One that has already expired counts for every window.
+  const expiresWithinDays = (daysLeft, days) => daysLeft !== null && daysLeft !== undefined && daysLeft <= days;
 
   // A single mounted draft: navigation changes visibility, never recreates inputs.
   const batchFlow = { installed: false, step: 0, furthest: 0, revision: 0, review: null, loading: false, frozenCount: null, submitting: false, jobName: '', drafts: {}, restoring: false };
@@ -2958,6 +2973,12 @@
       batchWorkspace.page = 0;
       refreshUpgradeInstanceList();
     });
+    document.getElementById('batch-expiring').addEventListener('change', (event) => {
+      batchWorkspace.selectedOnly = false;
+      batchWorkspace.expiring = parseInt(event.target.value, 10) || 0;
+      batchWorkspace.page = 0;
+      refreshUpgradeInstanceList();
+    });
     panel.addEventListener('change', (event) => {
       if (['upgrade-service-filter', 'upgrade-plan-filter', 'upgrade-stemcell-floor', 'upgrade-release-floor'].includes(event.target.id)) {
         batchWorkspace.page = 0;
@@ -2970,6 +2991,7 @@
       if (batchWorkspace.selectedOnly) {
         batchWorkspace.search = ''; search.value = '';
         batchWorkspace.eligibility = ''; document.getElementById('batch-eligibility').value = '';
+        batchWorkspace.expiring = 0; document.getElementById('batch-expiring').value = '';
 
       }
       refreshUpgradeInstanceList();
@@ -3011,6 +3033,10 @@
       <div class="filter-row">
         <label for="batch-eligibility">Availability</label>
         <select id="batch-eligibility"><option value="">All instances</option><option value="eligible">Eligible only</option><option value="blocked">Unavailable only</option></select>
+      </div>
+      <div class="filter-row" id="batch-expiring-row" hidden>
+        <label for="batch-expiring">Certificates expiring</label>
+        <select id="batch-expiring"><option value="">Any</option>${EXPIRY_HORIZONS.map(h => `<option value="${h.days}">within ${h.label}</option>`).join('')}</select>
       </div>
       <div class="upgrade-actions">
         <button id="upgrade-select-all" class="btn-secondary">Select this page</button>
@@ -3332,9 +3358,6 @@
     capabilities: null,
     warningDays: 30,
     criticalDays: 7,
-    thresholdDays: 30,
-    thresholdTouched: false,
-    thresholdApplied: false,
     imported: false,
     // Where a selection came from when another tab handed it over, such as
     // "certificates". It is empty for a selection made here.
@@ -3553,6 +3576,8 @@
     });
     return rows.filter((row) => {
       if (upgradeOperation === 'converge' && !(row.entry && row.entry.divergent)) return false;
+      if (!batchWorkspace.selectedOnly && upgradeOperation === 'rotate' && batchWorkspace.expiring > 0
+        && !row.chips.some((cert) => expiresWithinDays(cert.daysLeft, batchWorkspace.expiring))) return false;
       if (batchWorkspace.selectedOnly || !batchWorkspace.eligibility) return true;
       const eligible = !row.holder && (upgradeOperation === 'converge' || row.chips.length > 0);
       return (batchWorkspace.eligibility === 'eligible') === eligible;
@@ -3585,22 +3610,6 @@
       (row.entry ? row.entry.certs : []).forEach((cert) => rotateSetPair(row.id, cert.key, false));
       (rotateSelection().get(row.id) || new Set()).forEach((name) => rotateSetPair(row.id, name, false));
     });
-  };
-
-  // Selects the eligible certificates of the visible rows that expire within
-  // the given days.
-  const rotateSelectMatching = (days) => {
-    let added = 0;
-    rotateVisibleRows().forEach((row) => {
-      if (row.holder) return;
-      row.chips.forEach((cert) => {
-        if (cert.daysLeft !== null && cert.daysLeft <= days && !rotatePairSelected(row.id, cert.key)) {
-          rotateSetPair(row.id, cert.key, true);
-          added++;
-        }
-      });
-    });
-    return added;
   };
 
   // Whether a selected pair can still be rotated. Until the inventory loads
@@ -3941,16 +3950,10 @@
       const settings = inventory.settings || {};
       if (settings.warning_days > 0) rotateState.warningDays = settings.warning_days;
       if (settings.critical_days > 0) rotateState.criticalDays = settings.critical_days;
-      if (!rotateState.thresholdTouched) {
-        rotateState.thresholdDays = rotateState.warningDays;
-        const field = document.getElementById('rotate-threshold');
-        if (field) field.value = String(rotateState.thresholdDays);
-      }
       rotateState.loadState = 'ready';
       rotateState.loadError = '';
       rotateState.refreshError = '';
       rotateState.lastLoad = Date.now();
-      applyDefaultThreshold();
       renderRotateNotice();
       rotateRefresh();
       return true;
@@ -3968,16 +3971,6 @@
       rotateRefresh();
       return false;
     }
-  };
-
-  // On entering rotate mode with nothing imported from the Certificates tab,
-  // selects the certificates that expire within the threshold. It runs once
-  // per entry, so a chip the operator clears stays clear.
-  const applyDefaultThreshold = () => {
-    if (upgradeOperation !== 'rotate' || rotateState.thresholdApplied || rotateState.loadState !== 'ready') return;
-    if (rotateVisibleRows().length === 0) return;
-    rotateState.thresholdApplied = true;
-    if (!rotateState.imported) rotateSelectMatching(rotateState.thresholdDays);
   };
 
   // Redraws the inventory when the poll finds it stale.
@@ -4180,42 +4173,6 @@
         onChange: updateOperationFooter
       });
       pane.appendChild(rotateModeControls.root);
-
-      const row = rotateEl('div', 'filter-row rotate-threshold-row');
-      const label = rotateEl('label', '', 'Expiring within');
-      label.setAttribute('for', 'rotate-threshold');
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.id = 'rotate-threshold';
-      input.min = '1';
-      input.value = String(rotateState.thresholdDays);
-      input.addEventListener('input', () => {
-        const value = parseInt(input.value, 10);
-        if (value > 0) { rotateState.thresholdDays = value; rotateState.thresholdTouched = true; }
-      });
-      const unit = rotateEl('span', 'rotate-threshold-unit', 'days');
-      const match = rotateEl('button', 'btn-secondary btn-sm', 'Select matching');
-      match.type = 'button';
-      match.id = 'rotate-select-matching';
-      match.addEventListener('click', () => {
-        const value = parseInt(input.value, 10);
-        if (!(value > 0)) {
-          window.Feedback.warning('Enter a number of days greater than zero.', { toast: true });
-          return;
-        }
-        rotateState.thresholdDays = value;
-        rotateState.thresholdTouched = true;
-        rotateSelectMatching(value);
-        rotateRefresh();
-      });
-      row.appendChild(label);
-      row.appendChild(input);
-      row.appendChild(unit);
-      row.appendChild(match);
-      const thresholdSection = rotateEl('section','batch-option-section');
-      thresholdSection.appendChild(rotateEl('h3','','Start with expiring certificates'));
-      thresholdSection.appendChild(rotateEl('p','batch-field-help','Select certificates due within this window. You can adjust the selection on the Instances step.'));
-      thresholdSection.appendChild(row);pane.appendChild(thresholdSection);
     }
 
     const nameRow = rotateEl('div', 'filter-row rotate-name-row');
@@ -4337,6 +4294,8 @@
     batchWorkspace.page = 0;
     batchWorkspace.selectedOnly = false;
     panel.dataset.operation = next;
+    const expiringRow = document.getElementById('batch-expiring-row');
+    if (expiringRow) expiringRow.hidden = next !== 'rotate';
     document.getElementById('batch-selection-review')?.replaceChildren();
     wrapUpgradePane(targets);
     wrapUpgradePane(footer);
@@ -4355,14 +4314,12 @@
     buildRotateOptions(targets);
     buildRotateFooter(footer);
     if (entering) {
-      rotateState.thresholdApplied = Boolean(batchFlow.drafts[next]);
       rotateState.reviewOpen = false;
       rotateState.imported = rotatePairs().length > 0;
     }
     refreshUpgradeInstanceList();
     if (rotateState.loadState === 'ready') {
       if (entering) {
-        applyDefaultThreshold();
         rotateRefresh();
         loadRotateInventory({ silent: true });
       }
@@ -4404,9 +4361,10 @@
     if (draft) Object.entries(draft.values).forEach(([id,value]) => {
       const field = document.getElementById(id); if (field && id !== 'upgrade-service-filter') field.value = value;
     });
-    Object.assign(batchWorkspace,draft?.workspace || {page:0,search:'',eligibility:'',selectedOnly:false});
+    Object.assign(batchWorkspace,draft?.workspace || {page:0,search:'',eligibility:'',expiring:0,selectedOnly:false});
     document.getElementById('batch-search').value = batchWorkspace.search;
     document.getElementById('batch-eligibility').value = batchWorkspace.eligibility;
+    document.getElementById('batch-expiring').value = batchWorkspace.expiring ? String(batchWorkspace.expiring) : '';
     batchFlow.restoring = false;
     refreshUpgradeInstanceList();
     if (batchFlow.installed) { batchFlow.furthest = 1; setBatchStep(0,false); }
@@ -23514,15 +23472,7 @@
       return `${phrases.slice(0, -1).join(', ')}, and ${phrases[phrases.length - 1]}`;
     };
 
-    const HORIZONS = [
-      { days: 7, label: '1 week' },
-      { days: 14, label: '2 weeks' },
-      { days: 30, label: '30 days' },
-      { days: 60, label: '60 days' },
-      { days: 90, label: '90 days' },
-      { days: 180, label: '180 days' },
-      { days: 365, label: '1 year' }
-    ];
+    const HORIZONS = EXPIRY_HORIZONS;
 
     // Counts are cumulative. A certificate counts when its expiry falls
     // after the current server time and on or before that time plus the
