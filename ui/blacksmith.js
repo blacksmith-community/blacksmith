@@ -8404,11 +8404,6 @@
 
     return `
       <div class="job-logs-container">
-        <div class="logs-table-container" id="log-display-${domKey}">
-          <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}">
-            <thead>
-              <tr class="table-controls-row">
-                <th colspan="3" class="table-controls-header">
                   <div class="table-controls-container">
                     <div class="search-filter-container">
                       ${createSearchFilter(`instance-logs-table-${domKey}`, 'Search logs...')}
@@ -8430,8 +8425,9 @@
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
                   </div>
-                </th>
-              </tr>
+        <div class="logs-table-container" id="log-display-${domKey}">
+          <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}">
+            <thead>
               <tr>
                 <th class="log-col-timestamp">Timestamp</th>
                 <th class="log-col-level">Level</th>
