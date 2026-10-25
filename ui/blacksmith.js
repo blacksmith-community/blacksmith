@@ -12975,7 +12975,7 @@
 
     // Create HTML for tabs
     let html = `
-      <div class="manifest-details-container">
+      <div class="manifest-details-container deployment-manifest-workspace">
         <div class="manifest-tabs-nav">
           <button data-manifest-navigation class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
           ${instanceGroups.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
