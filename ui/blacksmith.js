@@ -1066,8 +1066,10 @@
         if (anyRabbitLog) return anyRabbitLog;
       }
 
-      // Redis specific
-      if (normalizedService.includes('redis')) {
+      // Redis specific, which Valkey shares
+      const redisFamilyFile = (lowerFile) => lowerFile.includes('redis') || lowerFile.includes('valkey');
+      const isRedisFamily = classifyServiceName(normalizedService)?.type === 'redis';
+      if (isRedisFamily) {
         // Look for standalone or cluster stdout logs (but not pre-start)
         const redisLog = files.find(f => {
           const lowerFile = f.toLowerCase();
@@ -1085,14 +1087,14 @@
 
           return (lowerFile.includes('standalone') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start')) ||
             (lowerFile.includes('cluster') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start')) ||
-            (lowerFile.includes('redis') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start'));
+            (redisFamilyFile(lowerFile) && lowerFile.includes('stdout') && !lowerFile.includes('pre-start'));
         });
         if (redisLog) return redisLog;
 
         // Fallback to any redis stdout log (excluding pre-start)
         const anyRedisStdout = files.find(f => {
           const lowerFile = f.toLowerCase();
-          return lowerFile.includes('redis') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start');
+          return redisFamilyFile(lowerFile) && lowerFile.includes('stdout') && !lowerFile.includes('pre-start');
         });
         if (anyRedisStdout) return anyRedisStdout;
       }
@@ -10071,14 +10073,13 @@
       }
 
       // Determine service type using vault data first, then credentials
-      const isRedis = isRedisService(creds, vaultData);
-      const isRabbitMQ = isRabbitMQService(creds, vaultData);
+      const family = detectServiceFamily(creds, vaultData);
 
-      if (!isRedis && !isRabbitMQ) {
+      if (!family.type) {
         return `<div class="no-data">Service testing not available for this service type</div>`;
       }
 
-      const serviceType = isRedis ? 'redis' : 'rabbitmq';
+      const serviceType = family.type;
 
       // Merge credentials with manifest fallbacks
       const enhancedCreds = enhanceCredentialsWithManifestFallbacks(creds, manifestData, serviceType);
@@ -10087,6 +10088,7 @@
       window.currentTestingInstance = {
         id: instanceId,
         serviceType: serviceType,
+        label: family.label,
         credentials: enhancedCreds,
         manifestData: manifestData
       };
@@ -10111,21 +10113,45 @@
     }
   };
 
-  const isRedisService = (creds, vaultData) => {
-    // First check vault data for service_name
-    if (vaultData?.service_name === 'redis') {
-      return true;
+  // Which testing screen a service instance gets. A service the instance names
+  // itself ("valkey", "redis-forge", "rabbitmq") decides on its own; the URI
+  // scheme and the credential shapes below only guess for older instances that
+  // name nothing. Valkey belongs to the Redis family and shares its screen and
+  // its /redis/ endpoints, with its own name in the copy.
+  const SERVICE_FAMILIES = [
+    { match: /valkey/, type: 'redis', label: 'Valkey' },
+    { match: /redis/, type: 'redis', label: 'Redis' },
+    { match: /rabbit|amqp/, type: 'rabbitmq', label: 'RabbitMQ' }
+  ];
+
+  const classifyServiceName = (value) => {
+    if (typeof value !== 'string') return null;
+    const lower = value.trim().toLowerCase();
+    if (!lower) return null;
+    const family = SERVICE_FAMILIES.find(f => f.match.test(lower));
+    return family ? { type: family.type, label: family.label } : { type: null, label: null };
+  };
+
+  const detectServiceFamily = (creds, vaultData) => {
+    const named = [vaultData?.service_name, vaultData?.service_type, creds?.service_name, creds?.service_type]
+      .map(classifyServiceName)
+      .filter(Boolean);
+    if (named.length > 0) {
+      // A named service the screen does not support gets no screen, never a guess.
+      return named.find(n => n.type) || { type: null, label: null };
     }
 
-    // Then check for explicit service_type
-    if (vaultData?.service_type === 'redis') {
-      return true;
-    }
+    const scheme = typeof creds?.uri === 'string' ? creds.uri.split(':')[0].toLowerCase() : '';
+    if (scheme === 'valkey' || scheme === 'valkeys') return { type: 'redis', label: 'Valkey' };
+    if (scheme === 'redis' || scheme === 'rediss') return { type: 'redis', label: 'Redis' };
+    if (scheme === 'amqp' || scheme === 'amqps') return { type: 'rabbitmq', label: 'RabbitMQ' };
 
-    // Finally fall back to credential patterns for older instances
-    if (creds.uri && (creds.uri.startsWith('redis://') || creds.uri.startsWith('rediss://'))) {
-      return true;
-    }
+    if (looksLikeRedis(creds)) return { type: 'redis', label: 'Redis' };
+    if (looksLikeRabbitMQ(creds)) return { type: 'rabbitmq', label: 'RabbitMQ' };
+    return { type: null, label: null };
+  };
+
+  const looksLikeRedis = (creds) => {
     if (creds.port === 6379 || creds.tls_port === 6380) {
       return true;
     }
@@ -10135,21 +10161,7 @@
     return false;
   };
 
-  const isRabbitMQService = (creds, vaultData) => {
-    // First check vault data for service_name
-    if (vaultData?.service_name === 'rabbitmq') {
-      return true;
-    }
-
-    // Then check for explicit service_type
-    if (vaultData?.service_type === 'rabbitmq') {
-      return true;
-    }
-
-    // Finally fall back to credential patterns for older instances
-    if (creds.uri && (creds.uri.startsWith('amqp://') || creds.uri.startsWith('amqps://'))) {
-      return true;
-    }
+  const looksLikeRabbitMQ = (creds) => {
     if (creds.protocols && (creds.protocols.amqp || creds.protocols.amqps)) {
       return true;
     }
@@ -10161,6 +10173,9 @@
     }
     return false;
   };
+
+  // The name the Redis-family screen shows for the instance under test.
+  const redisFamilyLabel = () => window.currentTestingInstance?.label || 'Redis';
 
   // Enhance credentials with manifest fallback data
   const enhanceCredentialsWithManifestFallbacks = (creds, manifestData, serviceType) => {
@@ -10516,8 +10531,8 @@
   const renderRedisInfoOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Redis INFO</h5>
-        <p>Get Redis server information and statistics.</p>
+        <h5>${redisFamilyLabel()} INFO</h5>
+        <p>Get ${redisFamilyLabel()} server information and statistics.</p>
         <button class="execute-btn" onclick="executeRedisInfo('${instanceId}')">Get Server Info</button>
       </div>
     `;
@@ -10526,7 +10541,7 @@
   const renderRedisSetOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Redis SET</h5>
+        <h5>${redisFamilyLabel()} SET</h5>
         <div class="form-row">
           <label for="redis-key-${instanceId}">Key:</label>
           <input type="text" id="redis-key-${instanceId}" placeholder="Enter key name" />
@@ -10547,7 +10562,7 @@
   const renderRedisGetOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Redis GET</h5>
+        <h5>${redisFamilyLabel()} GET</h5>
         <div class="form-row">
           <label for="redis-get-key-${instanceId}">Key:</label>
           <input type="text" id="redis-get-key-${instanceId}" placeholder="Enter key name" />
@@ -10560,7 +10575,7 @@
   const renderRedisDeleteOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Redis DELETE</h5>
+        <h5>${redisFamilyLabel()} DELETE</h5>
         <div class="form-row">
           <label for="redis-delete-keys-${instanceId}">Keys (one per line):</label>
           <textarea id="redis-delete-keys-${instanceId}" placeholder="Enter key names, one per line" rows="3"></textarea>
@@ -10573,7 +10588,7 @@
   const renderRedisKeysOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Redis KEYS</h5>
+        <h5>${redisFamilyLabel()} KEYS</h5>
         <div class="form-row">
           <label for="redis-pattern-${instanceId}">Pattern:</label>
           <input type="text" id="redis-pattern-${instanceId}" placeholder="* (default)" value="*" />
@@ -10586,7 +10601,7 @@
   const renderRedisCommandOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Redis COMMAND</h5>
+        <h5>${redisFamilyLabel()} COMMAND</h5>
         <div class="form-row">
           <label for="redis-cmd-${instanceId}">Command:</label>
           <input type="text" id="redis-cmd-${instanceId}" placeholder="e.g., PING, DBSIZE, TYPE" />
@@ -10603,7 +10618,7 @@
   const renderRedisFlushOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Redis FLUSH</h5>
+        <h5>${redisFamilyLabel()} FLUSH</h5>
         <p><strong>Warning:</strong> This will delete all data in the database!</p>
         <div class="form-row">
           <label for="redis-flush-db-${instanceId}">Database:</label>
