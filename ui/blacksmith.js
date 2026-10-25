@@ -9958,15 +9958,11 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           </button>
           <div class="resurrection-toggle-container">
-            <label class="resurrection-toggle-label">
-              <span class="resurrection-label-text">Resurrection:</span>
-              <div class="toggle-switch" onclick="window.toggleResurrection('${instanceId || 'blacksmith'}', event)">
-                <div class="toggle-slider" id="resurrection-slider-${instanceId || 'blacksmith'}">
-                  <span class="toggle-text-off">Off</span>
-                  <span class="toggle-text-on">On</span>
-                </div>
-              </div>
-            </label>
+            <span class="resurrection-label-text" title="Automatically recreate failed VMs">Resurrection</span>
+            <span class="resurrection-state" id="resurrection-state-${instanceId || 'blacksmith'}" role="status">Loading…</span>
+            <button type="button" class="resurrection-action" id="resurrection-slider-${instanceId || 'blacksmith'}"
+                    aria-label="Change automatic VM resurrection" disabled
+                    onclick="window.toggleResurrection('${instanceId || 'blacksmith'}', event)">Loading…</button>
             <button class="delete-resurrection-btn"
                     id="delete-resurrection-btn-${instanceId || 'blacksmith'}"
                     onclick="window.deleteResurrectionConfig('${instanceId || 'blacksmith'}', event)"
@@ -22808,6 +22804,16 @@
   // Make TerminalManager available globally
   window.TerminalManager = TerminalManager;
 
+  const showResurrectionState = (button, state) => {
+    button.dataset.state = state;
+    const status = document.getElementById(button.id.replace('resurrection-slider-', 'resurrection-state-'));
+    if (status) status.textContent = ({enabled:'Enabled', disabled:'Disabled', mixed:'Mixed', unknown:'Unavailable'})[state];
+    button.textContent = state === 'enabled' ? 'Disable' : state === 'mixed' ? 'Enable all' : 'Enable';
+    button.disabled = state === 'unknown';
+    button.title = state === 'enabled' ? 'Disable automatic recreation of failed VMs' : 'Enable automatic recreation of failed VMs';
+    button.setAttribute('aria-label', button.title);
+  };
+
   // Toggle resurrection for a service instance or blacksmith deployment
   window.toggleResurrection = async function (instanceId, event) {
     if (event) {
@@ -22821,12 +22827,15 @@
       return;
     }
 
-    // Determine current state based on toggle appearance
-    const isCurrentlyEnabled = slider.classList.contains('toggle-on');
+    if (slider.disabled) return;
+    const previousState = slider.dataset.state;
+    const isCurrentlyEnabled = previousState === 'enabled';
     const newState = !isCurrentlyEnabled;
 
     // Show loading state
-    slider.classList.add('toggle-loading');
+    slider.disabled = true;
+    slider.setAttribute('aria-busy', 'true');
+    slider.textContent = 'Saving…';
 
     try {
       const response = await fetch(`/b/${instanceId}/resurrection`, {
@@ -22843,14 +22852,7 @@
       const result = await response.json();
 
       if (response.ok && result.success) {
-        // Update toggle state
-        if (newState) {
-          slider.classList.add('toggle-on');
-          slider.classList.remove('toggle-off');
-        } else {
-          slider.classList.add('toggle-off');
-          slider.classList.remove('toggle-on');
-        }
+        slider.dataset.state = newState ? 'enabled' : 'disabled';
 
         // Show success message
         showNotification(`Resurrection ${newState ? 'enabled' : 'disabled'} successfully`, 'success');
@@ -22859,11 +22861,11 @@
         // No delay needed since we check config directly instead of waiting for VM field updates
         if (instanceId === 'blacksmith') {
           if (window.refreshBlacksmithVMs) {
-            window.refreshBlacksmithVMs(event);
+            await window.refreshBlacksmithVMs();
           }
         } else {
           if (window.refreshServiceInstanceVMs) {
-            window.refreshServiceInstanceVMs(instanceId, event);
+            await window.refreshServiceInstanceVMs(instanceId);
           }
         }
       } else {
@@ -22874,7 +22876,8 @@
       showNotification(`Failed to toggle resurrection: ${error.message}`, 'error');
     } finally {
       // Remove loading state
-      slider.classList.remove('toggle-loading');
+      slider.removeAttribute('aria-busy');
+      showResurrectionState(slider, slider.dataset.state || previousState);
     }
   };
 
@@ -22938,55 +22941,14 @@
   // Initialize resurrection toggle state based on VM data
   window.initializeResurrectionToggle = function (instanceId, vms) {
     const slider = document.getElementById(`resurrection-slider-${instanceId}`);
-    if (!slider || !vms || !vms.length) {
-      console.log('initializeResurrectionToggle: early return', { slider: !!slider, vms: vms?.length });
-      return;
-    }
-
-    // Debug: Log resurrection status for each VM
-    console.log('initializeResurrectionToggle: VM data', vms.map(vm => ({
-      id: vm.id,
-      resurrection_paused: vm.resurrection_paused,
-      resurrection_config_exists: vm.resurrection_config_exists
-    })));
-
-    // Check if any VM has resurrection paused
-    const anyPaused = vms.some(vm => vm.resurrection_paused);
-    const allPaused = vms.every(vm => vm.resurrection_paused);
-
-    // Check if resurrection config exists (should be same for all VMs in a deployment)
-    const resurrectionConfigExists = vms.some(vm => vm.resurrection_config_exists);
-
-    // Show/hide delete button based on config existence
+    if (!slider || slider.getAttribute('aria-busy') === 'true') return;
+    const rows = Array.isArray(vms) ? vms : [];
+    const known = rows.length > 0 && rows.every(vm => typeof vm.resurrection_paused === 'boolean');
+    const anyPaused = rows.some(vm => vm.resurrection_paused);
+    const allPaused = rows.length > 0 && rows.every(vm => vm.resurrection_paused);
+    showResurrectionState(slider, !known ? 'unknown' : allPaused ? 'disabled' : anyPaused ? 'mixed' : 'enabled');
     const deleteBtn = document.getElementById(`delete-resurrection-btn-${instanceId}`);
-    if (deleteBtn) {
-      deleteBtn.style.display = resurrectionConfigExists ? 'inline-flex' : 'none';
-    }
-
-    console.log('initializeResurrectionToggle: analysis', {
-      instanceId,
-      anyPaused,
-      allPaused,
-      resurrectionConfigExists,
-      vmCount: vms.length
-    });
-
-    if (allPaused) {
-      // All VMs have resurrection paused - toggle should be OFF
-      slider.classList.add('toggle-off');
-      slider.classList.remove('toggle-on');
-      console.log('initializeResurrectionToggle: set to OFF (all paused)');
-    } else if (!anyPaused) {
-      // No VMs have resurrection paused - toggle should be ON
-      slider.classList.add('toggle-on');
-      slider.classList.remove('toggle-off');
-      console.log('initializeResurrectionToggle: set to ON (none paused)');
-    } else {
-      // Mixed state - default to OFF for safety
-      slider.classList.add('toggle-off');
-      slider.classList.remove('toggle-on');
-      console.log('initializeResurrectionToggle: set to OFF (mixed state)');
-    }
+    if (deleteBtn) deleteBtn.style.display = rows.some(vm => vm.resurrection_config_exists) ? 'inline-flex' : 'none';
   };
 
   // Helper function to show notifications

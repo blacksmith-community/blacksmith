@@ -519,3 +519,9 @@ body > footer p { margin: 0; }
   #upgrade .cert-evidence-table td { box-sizing: border-box; }
   #upgrade .cert-evidence-table td::before { content: attr(data-label); display: block; font-weight: 600; margin-bottom: .25rem; }
 }
+
+/* Resurrection has a readable status and an explicit keyboard action. */
+.resurrection-toggle-container { gap: .5rem; flex-wrap: wrap; margin-left: .5rem; }
+.resurrection-state { font-size: .875rem; font-weight: 600; color: var(--text-primary); }
+.resurrection-action { min-height: 2.5rem; padding: .375rem .75rem; white-space: nowrap; }
+.resurrection-action:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }

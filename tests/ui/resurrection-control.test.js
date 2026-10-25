@@ -1,0 +1,27 @@
+const {test,expect}=require('bun:test');
+const {main:{boot,sleep}}=require('./certificates/harness.js');
+test('resurrection exposes state, prevents duplicate writes and preserves failures',async()=>{
+ const {w,d,calls}=boot();await sleep(100);
+ const host=d.createElement('div');d.body.appendChild(host);
+ host.innerHTML=w.__T.formatVMs([{id:'vm',resurrection_paused:false}],'i');
+ const button=d.getElementById('resurrection-slider-i');
+ expect(button.tagName).toBe('BUTTON');
+ w.initializeResurrectionToggle('i',[{resurrection_paused:false}]);
+ expect(button.textContent).toBe('Disable');
+ expect(d.getElementById('resurrection-state-i').textContent).toBe('Enabled');
+ let release;w.__routes.unshift(['/b/i/resurrection',()=>new Promise(resolve=>{release=resolve;})]);
+ const first=w.toggleResurrection('i');
+ expect(button.disabled).toBe(true);
+ await w.toggleResurrection('i');
+ expect(calls.filter(c=>c.startsWith('PUT /b/i/resurrection')).length).toBe(1);
+ release({ok:false,json:async()=>({error:'Refused'})});await first;
+ expect(button.disabled).toBe(false);expect(button.textContent).toBe('Disable');
+ expect(d.getElementById('resurrection-state-i').textContent).toBe('Enabled');
+ w.initializeResurrectionToggle('i',[{resurrection_paused:true},{resurrection_paused:false}]);
+ expect(d.getElementById('resurrection-state-i').textContent).toBe('Mixed');expect(button.textContent).toBe('Enable all');
+ w.__routes.shift();w.__routes.unshift(['/b/i/resurrection',(u,o,json)=>json(200,{success:true})]);
+ let refreshed=false;w.refreshServiceInstanceVMs=async(id,event)=>{refreshed=id==='i'&&event===undefined;};
+ await w.toggleResurrection('i');expect(refreshed).toBe(true);expect(button.textContent).toBe('Disable');
+ w.initializeResurrectionToggle('i',[]);expect(button.disabled).toBe(true);
+ w.close();
+});
