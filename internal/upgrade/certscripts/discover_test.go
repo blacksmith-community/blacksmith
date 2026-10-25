@@ -805,7 +805,7 @@ func TestBuildConsumersFailures(t *testing.T) {
 			certs, keys, []string{testVM, testVariable, valkeyJobDir + "/bundle.pem"}},
 		{"embedded key", jobdirs + certLine + keyLine + "embedded job=valkey path=" + valkeyJobDir + "/bundle.pem hash=" + hashB + "\n",
 			certs, keys, []string{testVM, testVariable}},
-		{"rootdirs=no", jobdirs + strings.Replace(certLine, "rootdirs=yes", "rootdirs=no", 1) + keyLine,
+		{"rootdirs=no", jobdirs + strings.Replace(certLine, "rootdirs=yes", "rootdirs=no why=many-links at="+valkeyCert, 1) + keyLine,
 			certs, keys, []string{testVM, testVariable, valkeyCert}},
 		{"a hash nobody asked for", jobdirs + certLine + keyLine +
 			"match job=valkey path=" + valkeyJobDir + "/x.crt hash=" + hashC + edges + " owner=root:root mode=0644 rootdirs=yes\n",

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -46,6 +47,21 @@ type Match struct {
 	// root's and not writable by group or other, and that the file has
 	// one link, so the checks a write makes would pass.
 	RootDirs bool
+	// Why says which check refused the file when RootDirs is false. It
+	// is nil when RootDirs is true.
+	Why *Refusal
+}
+
+// Refusal is the first check that stopped a patch in place on one file.
+type Refusal struct {
+	// Token is one of the closed set discover.sh prints.
+	Token string
+	// At is the path the check failed on, empty for a token with none.
+	At string
+	// Owner and Mode are the failing directory's owner:group and octal
+	// mode, set for the dir-owner and dir-writable tokens only.
+	Owner string
+	Mode  string
 }
 
 // Discovery is what discover.sh found on one VM.
@@ -88,6 +104,7 @@ func discoveryKinds() map[string]map[string]bool {
 		"match": {
 			keyJob: true, keyPath: true, keyHash: true, "raw": true, "lead": true, "tail": true,
 			"owner": true, "mode": true, "rootdirs": true,
+			"why": true, "at": true, "by": true, "bits": true,
 		},
 		"embedded": {keyJob: true, keyPath: true, keyHash: true},
 		"proc":     {keyJob: true, "name": true},
@@ -123,6 +140,8 @@ var (
 	errOwner        = errors.New("the owner is malformed")
 	errMode         = errors.New("the mode is malformed")
 	errRootDirs     = errors.New("rootdirs is neither yes nor no")
+	errWhy          = errors.New("the reason for rootdirs=no is missing, unknown, or malformed")
+	errWhyOnYes     = errors.New("a reason is given for rootdirs=yes")
 	errEdges        = errors.New("the whitespace around the file's PEM is malformed")
 	errProcess      = errors.New("the process name is malformed")
 )
@@ -327,12 +346,137 @@ func (d *Discovery) file(pairs map[string]string, whole bool) (Match, error) {
 	switch values[2] {
 	case "yes":
 		match.RootDirs = true
+
+		for _, key := range []string{keyWhy, keyAt, keyBy, keyBits} {
+			if _, ok := pairs[key]; ok {
+				return Match{}, errWhyOnYes
+			}
+		}
 	case "no":
+		why, err := refusal(pairs)
+		if err != nil {
+			return Match{}, err
+		}
+
+		match.Why = why
 	default:
 		return Match{}, errRootDirs
 	}
 
 	return match, nil
+}
+
+// The keys of a reason, and the tokens discover.sh prints for one.
+const (
+	keyWhy  = "why"
+	keyAt   = "at"
+	keyBy   = "by"
+	keyBits = "bits"
+)
+
+// Reason tokens. needsAt says whether a token names a path, and needsMode
+// whether it also names the directory's owner and mode.
+var reasonTokens = map[string]struct{ needsAt, needsMode bool }{
+	"shape":        {needsAt: false},
+	"job-link":     {needsAt: true},
+	"dir-symlink":  {needsAt: true},
+	"dir-missing":  {needsAt: true},
+	"dir-owner":    {needsAt: true, needsMode: true},
+	"dir-writable": {needsAt: true, needsMode: true},
+	"not-regular":  {needsAt: true},
+	"many-links":   {needsAt: true},
+	"realpath":     {needsAt: true},
+	"other":        {needsAt: false},
+}
+
+var reasonPath = regexp.MustCompile(`^/[A-Za-z0-9_./:-]*$`)
+
+// refusal reads the reason on a rootdirs=no line. The token must be a
+// known one, and each token takes exactly the extra fields it names.
+func refusal(pairs map[string]string) (*Refusal, error) {
+	token, ok := pairs[keyWhy]
+	if !ok {
+		return nil, errWhy
+	}
+
+	spec, known := reasonTokens[token]
+	if !known {
+		return nil, errWhy
+	}
+
+	why := &Refusal{Token: token, At: pairs[keyAt], Owner: pairs[keyBy], Mode: pairs[keyBits]}
+
+	_, hasAt := pairs[keyAt]
+	_, hasBy := pairs[keyBy]
+	_, hasBits := pairs[keyBits]
+
+	if hasAt != spec.needsAt || hasBy != spec.needsMode || hasBits != spec.needsMode {
+		return nil, errWhy
+	}
+
+	if hasAt && !reasonPath.MatchString(why.At) {
+		return nil, errWhy
+	}
+
+	if spec.needsMode && (!ownerValue.MatchString(why.Owner) || !modeValue.MatchString(why.Mode)) {
+		return nil, errWhy
+	}
+
+	return why, nil
+}
+
+// describe says in a sentence why the file could not be patched in place.
+func (r *Refusal) describe() string {
+	if r == nil {
+		return "a safety check failed that the scripts could not name, so patching in place isn't safe. Redeploy it instead"
+	}
+
+	switch r.Token {
+	case "job-link":
+		return fmt.Sprintf("the link %s is missing or does not point at the job's directory, so patching in place isn't safe. Redeploy it instead", r.At)
+	case "dir-symlink":
+		return fmt.Sprintf("the directory %s is a symbolic link, so patching in place isn't safe. Redeploy it instead", r.At)
+	case "dir-missing":
+		return fmt.Sprintf("the directory %s is missing or is not a directory, so patching in place isn't safe. Redeploy it instead", r.At)
+	case "dir-owner":
+		return fmt.Sprintf("the directory %s is owned by %s rather than root (mode %s), so patching in place isn't safe. Redeploy it instead",
+			r.At, r.Owner, r.Mode)
+	case "dir-writable":
+		return fmt.Sprintf("the directory %s can be changed by %s (owner %s, mode %s), so patching in place isn't safe. Redeploy it instead",
+			r.At, r.writers(), r.Owner, r.Mode)
+	case "not-regular":
+		return fmt.Sprint("that file is not a plain file, or is a symbolic link, so patching in place isn't safe. Redeploy it instead")
+	case "many-links":
+		return fmt.Sprint("that file has more than one link, so patching in place isn't safe. Redeploy it instead")
+	case "realpath":
+		return fmt.Sprint("that file resolves to a different real path, so patching in place isn't safe. Redeploy it instead")
+	case "shape":
+		return "the file or its job directory is not where a job's files belong, so patching in place isn't safe. Redeploy it instead"
+	default:
+		return "a safety check failed that the scripts could not name, so patching in place isn't safe. Redeploy it instead"
+	}
+}
+
+// writers names who the mode lets change the directory, from the group
+// in owner and the group and other write bits in mode.
+func (r *Refusal) writers() string {
+	bits, err := strconv.ParseUint(r.Mode, 8, 32)
+	if err != nil {
+		return "someone other than root"
+	}
+
+	_, group, _ := strings.Cut(r.Owner, ":")
+
+	var who []string
+	if bits&0o020 != 0 {
+		who = append(who, "group "+group)
+	}
+
+	if bits&0o002 != 0 {
+		who = append(who, "any user")
+	}
+
+	return strings.Join(who, " and ")
 }
 
 func sortMatches(matches []Match) {
@@ -419,8 +563,8 @@ func BuildConsumers(disc *Discovery, oldCertHash, oldKeyHash map[string]string) 
 		}
 
 		if !match.RootDirs {
-			return nil, disc.unsafe("the file %s of the variable %s is on a path that someone other than root can change, or has a second link",
-				match.Path, strings.Join(names, ", "))
+			return nil, disc.unsafe("for the file %s of the variable %s, %s",
+				match.Path, strings.Join(names, ", "), match.Why.describe())
 		}
 
 		for _, variable := range certOf[match.Hash] {

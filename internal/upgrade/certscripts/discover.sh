@@ -22,7 +22,12 @@
 # the patterns allow, is reported as embedded instead.
 # rootdirs=yes says that valid_pinned accepts the file, so every
 # directory from / down to it is root's and not writable by group or
-# other, and the file has a single link. An embedded line is a file that
+# other, and the file has a single link. A rootdirs=no line ends with
+# why=, the first condition that failed, and at= for the path it failed
+# on. The token is shape, job-link, dir-symlink, dir-missing, dir-owner,
+# dir-writable, not-regular, many-links, realpath, or other. The two
+# directory tokens that concern ownership and mode add by=, the
+# directory's owner:group, and bits=, its mode in octal. An embedded line is a file that
 # holds a PEM block with one of the hashes inside larger content, which
 # patching cannot replace. A value that is not safe to print, such as a
 # path with a space, is printed as !, which the broker refuses.
@@ -138,6 +143,94 @@ _dc_path() {
 	fi
 }
 
+# _dc_why <path> <jobdir> prints the first condition that makes valid_pinned
+# refuse the file, as the fields why=, at=, and for a directory by= and
+# bits=, with a space before each. It checks in the order valid_pinned
+# does, and it runs only after valid_pinned has refused, so it explains
+# a refusal and never grants anything. A refusal that none of its checks
+# reproduces, such as a file that changed in between, is why=other.
+_dc_why() {
+	local path=$1 jobdir=$2 root rest job link full real dir at info uid mode
+
+	if ! _cp_shaped "$jobdir" "$CP_JOBDIR_RE" || ! _cp_shaped "$path" "$CP_PINNED_RE" || [[ $path != "$jobdir"/* ]]; then
+		printf ' why=shape'
+		return 0
+	fi
+
+	root=$(_cp_root) || {
+		printf ' why=other'
+		return 0
+	}
+
+	rest=${jobdir#/var/vcap/data/jobs/}
+	job=${rest%%/*}
+	link=$root/var/vcap/jobs/$job
+
+	if [ ! -L "$link" ] || [ "$(readlink -- "$link")" != "$root$jobdir" ]; then
+		printf ' why=job-link at=%s' "$(_dc_word "/var/vcap/jobs/$job" "$DC_DIR_RE")"
+		return 0
+	fi
+
+	# Walk the directories from / down to the file's parent.
+	rest=${path%/*}
+	rest=${rest#/}
+	dir=
+
+	while :; do
+		at=$(_dc_word "${dir:-/}" "$DC_DIR_RE")
+
+		if [ -L "$root${dir:-/}" ]; then
+			printf ' why=dir-symlink at=%s' "$at"
+			return 0
+		fi
+
+		if [ ! -d "$root${dir:-/}" ]; then
+			printf ' why=dir-missing at=%s' "$at"
+			return 0
+		fi
+
+		info=$(stat -c '%u %a %U:%G' -- "$root${dir:-/}") || {
+			printf ' why=other'
+			return 0
+		}
+		uid=${info%% *}
+		mode=${info#* }
+		mode=${mode%% *}
+
+		if [ "$uid" != 0 ] || (((8#$mode & 8#022) != 0)); then
+			if [ "$uid" != 0 ]; then
+				printf ' why=dir-owner'
+			else
+				printf ' why=dir-writable'
+			fi
+
+			printf ' at=%s by=%s bits=%s' "$at" "$(_dc_word "${info##* }" "$DC_OWNER_RE")" "$(printf '%04o' "$((8#$mode))")"
+			return 0
+		fi
+
+		[ -n "$rest" ] || break
+
+		dir=$dir/${rest%%/*}
+
+		case $rest in
+		*/*) rest=${rest#*/} ;;
+		*) rest= ;;
+		esac
+	done
+
+	full=$root$path
+
+	if [ ! -f "$full" ] || [ -L "$full" ]; then
+		printf ' why=not-regular at=%s' "$(_dc_path "$path")"
+	elif [ "$(stat -c %h -- "$full")" != 1 ]; then
+		printf ' why=many-links at=%s' "$(_dc_path "$path")"
+	elif ! real=$(realpath -e -- "$full") || [ "$real" != "$full" ]; then
+		printf ' why=realpath at=%s' "$(_dc_path "$path")"
+	else
+		printf ' why=other'
+	fi
+}
+
 # _dc_regular <file> succeeds when the file is a regular file and not a
 # symlink. find listed it as one, but it can change before it is read,
 # and the reads below would follow a symlink.
@@ -150,7 +243,7 @@ _dc_regular() {
 # the file with _dc_regular right before each read, and a file that is
 # no longer a regular file fails discovery.
 _dc_file() {
-	local root=$1 job=$2 jobdir=$3 file=$4 path size hash raw edges lead tail info owner mode rootdirs=no
+	local root=$1 job=$2 jobdir=$3 file=$4 path size hash raw edges lead tail info owner mode rootdirs=no why=
 
 	path=${file#"$root"}
 	_dc_regular "$file" || return 1
@@ -163,6 +256,8 @@ _dc_file() {
 
 		if valid_pinned "$path" "$jobdir"; then
 			rootdirs=yes
+		else
+			why=$(_dc_why "$path" "$jobdir")
 		fi
 
 		_dc_regular "$file" || return 1
@@ -173,8 +268,8 @@ _dc_file() {
 		tail=${edges#* }
 
 		if [[ $lead =~ $DC_LEAD_RE ]] && [[ $tail =~ $DC_TAIL_RE ]]; then
-			printf 'match job=%s path=%s hash=%s raw=%s lead=%s tail=%s owner=%s mode=%s rootdirs=%s\n' \
-				"$job" "$(_dc_path "$path")" "$hash" "$raw" "$lead" "$tail" "$owner" "$mode" "$rootdirs"
+			printf 'match job=%s path=%s hash=%s raw=%s lead=%s tail=%s owner=%s mode=%s rootdirs=%s%s\n' \
+				"$job" "$(_dc_path "$path")" "$hash" "$raw" "$lead" "$tail" "$owner" "$mode" "$rootdirs" "$why"
 		else
 			printf 'embedded job=%s path=%s hash=%s\n' "$job" "$(_dc_path "$path")" "$hash"
 		fi
