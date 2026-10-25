@@ -2282,7 +2282,7 @@
     const options = groups.map(([label, entries]) => `<optgroup label="${label}">${entries.map(([id, name]) => `<option value="${id}">${name}</option>`).join('')}</optgroup>`).join('');
     return `<label class="entity-section-picker">View section<select class="entity-section-select" aria-label="View section">${options}</select></label>
       <nav class="detail-tabs entity-navigation" aria-label="${kind === 'instance' ? 'Instance' : 'Blacksmith'} sections">
-      ${groups.map(([label, entries]) => `<div class="entity-section-group" role="presentation"><p class="entity-group-label" aria-hidden="true">${label}</p>${entries.map(([id, name]) => `<button type="button" class="detail-tab ghost ${id === 'details' ? 'active' : ''}" data-tab="${id}">${name}</button>`).join('')}</div>`).join('')}</nav>`;
+      ${groups.map(([label, entries]) => `<div class="entity-section-group" role="group" aria-labelledby="entity-group-${kind}-${label.toLowerCase()}"><h4 class="entity-group-label" id="entity-group-${kind}-${label.toLowerCase()}">${label}</h4>${entries.map(([id, name]) => `<button type="button" class="detail-tab ghost ${id === 'details' ? 'active' : ''}" data-tab="${id}">${name}</button>`).join('')}</div>`).join('')}</nav>`;
   };
 
   const entityCopy = (value, label) => `<button type="button" class="copy-btn-inline entity-copy" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}" title="Copy ${escapeAttribute(label)}">${COPY_ICON_SVG}</button>`;
