@@ -30,7 +30,7 @@ describe('navigation destinations', () => {
     expect(entries.every(e => !('action' in e))).toBe(true);
   });
   test('supports an unavailable catalog and deleted instance context', () => {
-    expect(destinations(screens, null)).toHaveLength(12);
+    expect(destinations(screens, null)).toHaveLength(16);
     expect(destinations([], { gone: { deleted: true } })[0].context).toContain('Deleted');
   });
   test('includes catalog plan screens and familiar navigation aliases', () => {
@@ -54,4 +54,12 @@ test('operation prefixes lead to batch options shortcuts',()=>{
   expect(result.operation).toBe(operation);
   expect(result.breadcrumb).toBe('Batch Operations > Options');
  }
+});
+
+test('rotation completions distinguish unconverged from converge prefixes',()=>{
+ const entries=destinations(screens,{});
+ expect(search(entries,'rot pat un').map(e=>e.rotation)).toEqual([{mode:'patch',converge:'pending'}]);
+ expect(search(entries,'rot pa con').map(e=>e.rotation)).toEqual([{mode:'patch',converge:'immediate'}]);
+ expect(search(entries,'rot red')[0].rotation).toEqual({mode:'redeploy'});
+ expect(search(entries,'rot pat')[0].rotation).toEqual({mode:'patch'});
 });

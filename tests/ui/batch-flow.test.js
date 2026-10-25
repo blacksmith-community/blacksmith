@@ -181,3 +181,33 @@ t('batch shortcuts navigate views and steps without submitting or intercepting t
  panel.classList.remove('active');key('KeyA');expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');
  }finally{w.close();}
 });
+
+t('quick rotation presets select options without creating a task',async()=>{
+ const {w,d,calls}=await setup();try{
+ w.blacksmithNav.switchTab=async()=>true;
+ w.__routes.push(['/b/certificates/inventory',(u,o,j)=>j(200,{certificates:[],capabilities:{rotation:{enabled:true},patch_in_place:{enabled:true}}})]);
+ for(const converge of ['pending','immediate']){
+  expect(await w.blacksmithBatch.openOperation('rotate',undefined,{mode:'patch',converge})).toBe(true);
+  expect(w.__T.rotateState.mode).toBe('patch');
+  expect(w.__T.rotateState.converge).toBe(converge);
+  expect(d.getElementById('rotate-mode-patch-tab').getAttribute('aria-selected')).toBe('true');
+  expect(d.getElementById('rotate-mode-converge-'+converge).checked).toBe(true);
+  expect(w.__T.batchFlow.step).toBe(1);
+ }
+ await w.blacksmithBatch.openOperation('rotate',undefined,{mode:'redeploy'});
+ expect(w.__T.rotateState.mode).toBe('redeploy');expect(w.__T.rotateState.converge).toBe('');
+ const controller=new w.AbortController();controller.abort();
+ expect(await w.blacksmithBatch.openOperation('rotate',controller.signal,{mode:'patch',converge:'pending'})).toBe(false);
+ expect(w.__T.rotateState.mode).toBe('redeploy');
+ expect(calls.some(c=>c.method==='POST' && /tasks$/.test(c.url))).toBe(false);
+ }finally{w.close();}
+});
+
+t('quick patch options respect capability restrictions',async()=>{
+ const {w,d}=await setup();try{
+ w.blacksmithNav.switchTab=async()=>true;
+ w.__routes.push(['/b/certificates/inventory',(u,o,j)=>j(200,{certificates:[],capabilities:{patch_in_place:{enabled:false,reason:'Disabled by operator'}}})]);
+ await expect(w.blacksmithBatch.openOperation('rotate',undefined,{mode:'patch',converge:'pending'})).rejects.toThrow('Disabled by operator');
+ expect(w.__T.rotateState.mode).toBe('redeploy');
+ }finally{w.close();}
+});

@@ -30,6 +30,14 @@
     }
     [['upgrade', 'Upgrade'], ['converge', 'Converge'], ['rotate', 'Rotate certificates']].forEach(([operation, label]) =>
       entries.push({ screen: 'upgrade', operation, label, type: 'Operation', context: 'Batch Operations', breadcrumb: 'Batch Operations > Options', keywords: operation }));
+    [
+      ['Redeploy', {mode:'redeploy'}],
+      ['Patch in place', {mode:'patch'}],
+      ['Patch in place · Leave unconverged', {mode:'patch',converge:'pending'}],
+      ['Patch in place · Converge right away', {mode:'patch',converge:'immediate'}]
+    ].forEach(([choice,rotation]) => entries.push({screen:'upgrade',operation:'rotate',rotation,
+      label:`Rotate certificates · ${choice}`,type:'Operation',context:'Batch Operations',
+      breadcrumb:'Batch Operations > Options',keywords:rotation.converge === 'immediate' ? 'converged' : ''}));
     [['light','Anvil Light'], ['dark','Anvil Dark'], ['high-contrast-light','High Contrast Light'], ['high-contrast-dark','High Contrast Dark'], ['system','System']].forEach(([theme,label]) => entries.push({ theme, label, type: 'Theme', context: 'Appearance theme mode', breadcrumb: 'Appearance > Theme', detail: theme === 'system' ? 'Follow your device’s appearance with Anvil' : '', keywords: 'theme appearance color mode' }));
     return entries;
   }
@@ -40,7 +48,11 @@
       const label = entry.label.toLocaleLowerCase();
       return label === normalized ? 0 : label.startsWith(normalized) ? 1 : 2;
     };
-    return entries.filter(entry => words.every(word => `${entry.label} ${entry.context || ''} ${entry.breadcrumb || ''} ${entry.keywords || ''}`.toLocaleLowerCase().includes(word)))
+    return entries.filter(entry => {
+      const haystack = `${entry.label} ${entry.context || ''} ${entry.breadcrumb || ''} ${entry.keywords || ''}`.toLocaleLowerCase();
+      // Prefix matching keeps 'con' from also matching 'unconverged'.
+      return entry.rotation ? words.every(word => haystack.split(/[^a-z0-9]+/).some(token => token.startsWith(word))) : words.every(word => haystack.includes(word));
+    })
       .sort((a, b) => score(a) - score(b));
   }
   root.BlacksmithNavigation = { destinations, search };
@@ -203,7 +215,7 @@
           if (!root.blacksmithBatch?.openOperation) throw new Error('Batch Operations is still loading. Please try again.');
           input.disabled = true;
           status.textContent = 'Opening operation options…';
-          const opened = await root.blacksmithBatch.openOperation(entry.operation, controller.signal);
+          const opened = await root.blacksmithBatch.openOperation(entry.operation, controller.signal, entry.rotation);
           if (controller.signal.aborted || !dialog.open) return;
           if (!opened) throw new Error('Cannot open this operation right now. Please try again.');
           close(false);

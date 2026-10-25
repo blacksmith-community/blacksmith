@@ -5411,11 +5411,27 @@
     availability: rotateAvailability,
     readHolders: readHoldersOnce
   };
-  const openBatchOperation = async (mode, signal) => {
+  const openBatchOperation = async (mode, signal, rotation) => {
     if (!OPERATION_LABELS[mode] || batchFlow.submitting || signal?.aborted) return false;
     const switched = await window.blacksmithNav.switchTab('upgrade');
     if (switched === false || signal?.aborted || batchFlow.submitting || !batchFlow.installed) return false;
+    if (rotation) {
+      if (mode !== 'rotate' || !['redeploy','patch'].includes(rotation.mode) || (rotation.converge && !['pending','immediate'].includes(rotation.converge))) return false;
+      if (rotation.mode === 'patch') {
+        await loadRotateInventory();
+        if (signal?.aborted || batchFlow.submitting) return false;
+        const reason = batchPatchBlock();
+        if (reason) throw new Error(reason);
+      }
+    }
     await requestOperation(mode);
+    if (signal?.aborted || batchFlow.submitting) return false;
+    if (rotation) {
+      rotateState.mode = rotation.mode;
+      rotateState.converge = rotation.mode === 'patch' ? (rotation.converge || rotateState.converge) : '';
+      rotateModeControls?.update();
+      updateOperationFooter();
+    }
     setBatchView('new');
     setBatchStep(1, false);
     document.getElementById('upgrade').scrollTop = 0;
