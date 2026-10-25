@@ -2294,9 +2294,9 @@
   // Template rendering functions
   const ENTITY_SECTIONS = {
     blacksmith: [
-      ['Overview', [['details', 'Overview']]],
-      ['Operate', [['vms', 'Virtual machines'], ['tasks', 'Tasks'], ['events', 'Events'], ['blacksmith-logs', 'Logs'], ['certificates', 'Certificates']]],
-      ['Configure', [['plans', 'Service plans'], ['broker', 'Broker connections'], ['configs', 'BOSH configs'], ['config', 'Blacksmith settings'], ['manifest', 'Manifest']]]
+      ['Overview', [['details', 'Summary']]],
+      ['Operate', [['vms', 'Blacksmith VM'], ['tasks', 'Tasks'], ['events', 'Events'], ['blacksmith-logs', 'Logs'], ['certificates', 'Certificates']]],
+      ['Configure', [['plans', 'Service plans'], ['broker', 'Endpoints'], ['configs', 'BOSH configs'], ['config', 'Broker Settings'], ['manifest', 'Manifest']]]
     ],
     instance: [
       ['Overview', [['details', 'Overview']]],
