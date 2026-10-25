@@ -2369,7 +2369,7 @@
     ],
     instance: [
       ['Overview', [['details', 'Summary']]],
-      ['Operate', [['vms', 'Virtual machines'], ['events', 'Events'], ['instance-logs', 'Logs'], ['certificates', 'Certificates']]],
+      ['Operate', [['vms', 'VMs'], ['events', 'Events'], ['instance-logs', 'Logs'], ['certificates', 'Certificates']]],
       ['Connect', [['credentials', 'Credentials'], ['testing', 'Testing']]],
       ['Inspect', [['manifest', 'Manifest']]]
     ]

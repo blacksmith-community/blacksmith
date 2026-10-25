@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   const instanceSections = [
-    ['details', 'Summary'], ['events', 'Events'], ['vms', 'Virtual machines'],
+    ['details', 'Summary'], ['events', 'Events'], ['vms', 'VMs'],
     ['manifest', 'Manifest'], ['certificates', 'Certificates'],
     ['credentials', 'Credentials'], ['instance-logs', 'Logs'], ['testing', 'Testing']
   ];
