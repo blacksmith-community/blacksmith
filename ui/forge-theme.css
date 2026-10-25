@@ -836,3 +836,14 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 #services .detail-content .table-search-container { padding: 0; }
 #services .table-search-icon { left: 10px; }
 #services .table-search-input { padding-left: 34px; }
+
+/* Keep the fleet summary compact without shrinking interactive targets. */
+#certificates .cert-horizon { padding: 6px 12px; }
+#certificates .cert-horizon-table { margin: 0; border-collapse: separate; border-spacing: 0; }
+#certificates .cert-horizon-table :is(th, td) { padding: 4px 12px; }
+#certificates .cert-horizon-table thead th:first-child { border-top-left-radius: 6px; }
+#certificates .cert-horizon-table thead th:last-child { border-top-right-radius: 6px; }
+#certificates .cert-horizon-btn { min-height: 28px; min-width: 28px; padding: 0 6px; }
+#certificates .cert-icon-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 36px; min-height: 36px; padding: 6px; }
+#certificates .cert-icon-action svg { flex: none; }
+#certificates .cert-filter-count { font-size: .75rem; font-weight: 600; }

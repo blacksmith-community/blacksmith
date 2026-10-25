@@ -23419,10 +23419,10 @@
             <p class="cert-fleet-summary" id="cert-fleet-summary"></p>
           </div>
           <div class="cert-fleet-actions" id="cert-fleet-actions">
-            <button type="button" class="execute-btn" id="cert-scan-btn">Scan now</button>
-            <button type="button" class="cert-action-btn" id="cert-settings-btn" aria-haspopup="dialog">Settings</button>
+            <button type="button" class="cert-action-btn cert-icon-action" id="cert-scan-btn" title="Scan certificates now" aria-label="Scan certificates now"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17"/></svg></button>
+            <button type="button" class="cert-action-btn cert-icon-action" id="cert-settings-btn" aria-haspopup="dialog" title="Certificate settings" aria-label="Certificate settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 2-1 3 2 3-2 2 1 3-2-1-3 2-2-2-3-3-1-1-3Z"/></svg></button>
             <div class="cert-export">
-              <button type="button" class="cert-action-btn" id="cert-export-btn" aria-expanded="false" aria-controls="cert-export-menu">Export</button>
+              <button type="button" class="cert-action-btn cert-icon-action" id="cert-export-btn" aria-expanded="false" aria-controls="cert-export-menu" title="Export certificates" aria-label="Export certificates"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/></svg></button>
               <div class="cert-export-menu" id="cert-export-menu" hidden>
                 <p class="cert-export-note" id="cert-export-note" hidden></p>
                 <a class="cert-export-link" id="cert-export-csv" download>Download CSV</a>
@@ -23453,7 +23453,7 @@
               <span class="cert-field-label">Plan</span>
               <select id="cert-filter-plan"></select>
             </label>
-            <button type="button" class="cert-action-btn" id="cert-more-btn" aria-expanded="false" aria-controls="cert-more-panel">More filters</button>
+            <button type="button" class="cert-action-btn cert-icon-action" id="cert-more-btn" aria-expanded="false" aria-controls="cert-more-panel" title="More filters" aria-label="More filters"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-8 0v6"/></svg><span class="cert-filter-count" hidden aria-hidden="true"></span></button>
           </div>
           <div class="cert-more-panel" id="cert-more-panel" hidden></div>
           <div class="cert-chips" id="cert-chips" aria-label="Active filters"></div>
@@ -23982,7 +23982,12 @@
         view.refs.search.value = state.q;
       }
       const hiddenFilters = view.refs.moreChecks.filter(({ field, value }) => state[field].includes(value)).length;
-      view.refs.moreBtn.textContent = hiddenFilters > 0 ? `More filters (${hiddenFilters})` : 'More filters';
+      const filterLabel = hiddenFilters > 0 ? `More filters (${hiddenFilters} active)` : 'More filters';
+      view.refs.moreBtn.setAttribute('aria-label', filterLabel);
+      view.refs.moreBtn.title = filterLabel;
+      const count = view.refs.moreBtn.querySelector('.cert-filter-count');
+      count.hidden = hiddenFilters === 0;
+      count.textContent = hiddenFilters > 0 ? String(hiddenFilters) : '';
     };
 
     const chipDefs = () => {

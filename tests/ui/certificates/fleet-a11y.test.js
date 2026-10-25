@@ -16,6 +16,17 @@ t('fleet accessibility and announcements', async () => {
   w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
   d.getElementById('certificates').classList.add('active');
   await T.CertsFleet.init(); await sleep(250);
+  for (const id of ['cert-scan-btn', 'cert-settings-btn', 'cert-export-btn', 'cert-more-btn']) {
+    const action = d.getElementById(id);
+    expect(action.getAttribute('aria-label')).toBeTruthy();
+    expect(action.title).toBe(action.getAttribute('aria-label'));
+    expect(action.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+  }
+  const more = d.getElementById('cert-more-btn');
+  more.click();
+  expect(more.getAttribute('aria-expanded')).toBe('true');
+  more.click();
+  expect(more.getAttribute('aria-expanded')).toBe('false');
   const rows=()=>[...d.querySelectorAll('#cert-tbody tr.cert-row')];
   const blockedRow=rows().find(r=>r.dataset.certId==='c2');
   const cb=blockedRow.querySelector('input[type=checkbox]');
