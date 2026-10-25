@@ -19276,7 +19276,7 @@
       return box;
     };
 
-    return { expiryPill, healthPill, summary, detail, copyButton, formatName, formatDate, displayExpiry, setThresholds, el, errorBlock, setError, textPanel };
+    return { expiryPill, healthPill, summary, detail, fieldRow, copyButton, formatName, formatDate, displayExpiry, setThresholds, el, errorBlock, setError, textPanel };
   })();
 
   // ================================================================
@@ -24785,6 +24785,149 @@
       Promise.resolve(window.blacksmithNav.switchTab('services')).then(attempt);
     };
 
+    // The drawer reads top to bottom: the buttons, the warnings and notices,
+    // the CredHub details, the certificate details, and the probe results.
+    // Each warning and each notice gets its own callout.
+    const drawerCallouts = (cert) => {
+      const warnings = [];
+      const notices = [];
+      (cert.findings || []).forEach((finding) => {
+        const text = finding.message || finding.code || '';
+        if (!text) return;
+        if (finding.severity === 'error' || finding.severity === 'warning') warnings.push(text);
+        else notices.push(text);
+      });
+      if (cert.divergence) {
+        const since = shortDate(cert.divergence.since);
+        warnings.push(cert.divergence.state === 'reverted'
+          ? `A change to this certificate was reverted on some VMs, since ${since}.`
+          : `Some VMs still run an older copy of this certificate, since ${since}.`);
+      }
+      if (cert.coverage && cert.coverage.stale) warnings.push('Some of what we know about this certificate comes from an older scan.');
+      if (cert.expiry === 'unknown' && cert.expiry_reason) notices.push(`We cannot tell when this certificate expires. ${cert.expiry_reason}`);
+      if (cert.rotation && !cert.rotation.allowed && (cert.rotation.reasons || []).length > 0) {
+        notices.push(`This certificate cannot be rotated from here. ${cert.rotation.reasons.join(' ')}`);
+      }
+      if (warnings.length + notices.length === 0) return null;
+
+      const section = el('section', 'cert-drawer-callouts');
+      section.setAttribute('aria-label', 'Warnings and notices');
+      const add = (kind, label, text) => {
+        const box = el('div', `cert-notice cert-notice--${kind} cert-callout cert-callout--${kind}`);
+        box.appendChild(el('strong', 'cert-callout-label', label));
+        box.appendChild(el('span', 'cert-callout-text', text));
+        section.appendChild(box);
+      };
+      warnings.forEach((text) => add('warn', 'Warning', text));
+      notices.forEach((text) => add('info', 'Notice', text));
+      return section;
+    };
+
+    const credhubStateText = (obs) => {
+      if (obs.state === 'failed') return obs.error ? `Failed, ${obs.error}` : 'Failed';
+      if (obs.state === 'stale') return 'Stale';
+      return 'Read successfully';
+    };
+
+    const matchText = (matches) => ({
+      deployed: 'The deployed certificate',
+      latest: 'The latest certificate',
+      other: 'Another certificate'
+    }[matches] || 'Not compared');
+
+    // What we know from CredHub, as a label and value table. It holds names,
+    // IDs, versions, and dates, and never a key or a certificate body.
+    const credhubDetails = (cert) => {
+      const body = el('tbody');
+      const add = (label, text, copyValue) => {
+        if (text === undefined || text === null || text === '') return;
+        body.appendChild(CertView.fieldRow(label, String(text), copyValue === true ? String(text) : copyValue));
+      };
+      const named = cert.key && !String(cert.key).startsWith('sha256:');
+      const credhubObs = (cert.observations || []).filter((o) => o.source === 'credhub');
+      const versions = cert.versions;
+      if (!named && credhubObs.length === 0 && !versions) return null;
+
+      if (named) add('Credential name', cert.key, true);
+      add('Kind', cert.kind);
+      add('Read from', sourcesOf(cert));
+      if (versions) {
+        add('Deployed version', versions.deployed_version_id, true);
+        if (versions.deployed_not_after) add('Deployed version expires', shortDate(versions.deployed_not_after));
+        const same = versions.latest_version_id && versions.latest_version_id === versions.deployed_version_id;
+        if (same) add('Latest version', 'Same as the deployed version');
+        else add('Latest version', versions.latest_version_id, true);
+        if (!same && versions.latest_not_after) add('Latest version expires', shortDate(versions.latest_not_after));
+        if (versions.transitional) add('Transitional', 'Yes');
+      }
+      credhubObs.forEach((obs, index) => {
+        const tag = credhubObs.length > 1 ? ` ${index + 1}` : '';
+        if (obs.locator && obs.locator !== cert.key) add(`Credential path${tag}`, obs.locator, true);
+        add(`Version ID${tag}`, obs.version_id, true);
+        add(`SHA-256 fingerprint${tag}`, obs.sha256_fingerprint, true);
+        add(`Matches${tag}`, matchText(obs.matches));
+        if (obs.not_after) add(`Expires${tag}`, shortDate(obs.not_after));
+        add(`Status${tag}`, credhubStateText(obs));
+        if (obs.observed_at) add(`Last read${tag}`, `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}`);
+      });
+      if (!body.hasChildNodes()) return null;
+
+      const section = el('section', 'cert-drawer-credhub');
+      section.appendChild(el('h4', null, 'CredHub Details'));
+      const table = el('table', 'cert-details-table cert-credhub-table');
+      table.appendChild(body);
+      section.appendChild(table);
+      return section;
+    };
+
+    const probeResultText = (obs) => {
+      if (obs.state === 'failed') return obs.error ? `Failed, ${obs.error}` : 'Failed';
+      if (obs.state === 'stale') return 'Stale, from an older scan';
+      return 'Answered';
+    };
+
+    const probeInformation = (cert) => {
+      const section = el('section', 'cert-drawer-probes');
+      section.appendChild(el('h4', null, 'Probe information'));
+      const probes = (cert.observations || []).filter((o) => o.source === 'probe');
+      if (probes.length === 0) {
+        section.appendChild(el('p', 'cert-muted', 'No listener probes have run for this certificate.'));
+        return section;
+      }
+      if (cert.coverage) {
+        const note = coverageText(cert.coverage);
+        if (note) section.appendChild(el('p', 'cert-muted cert-probe-coverage', `${note}.`));
+      }
+      const wrap = el('div', 'cert-probe-wrap');
+      const table = el('table', 'cert-details-table cert-probe-table');
+      const head = el('tr');
+      ['Endpoint', 'Result', 'Matched', 'Expiry seen', 'Ran'].forEach((title) => {
+        const th = el('th', null, title);
+        th.setAttribute('scope', 'col');
+        head.appendChild(th);
+      });
+      table.appendChild(el('thead')).appendChild(head);
+      const body = el('tbody');
+      probes.forEach((obs) => {
+        const tr = el('tr', 'cert-probe-row');
+        const endpoint = el('td');
+        const value = el('div', 'cert-field-value');
+        value.appendChild(el('span', 'cert-field-text', obs.locator || 'listener'));
+        if (obs.locator) value.appendChild(CertView.copyButton(`Copy endpoint ${obs.locator}`, obs.locator));
+        endpoint.appendChild(value);
+        tr.appendChild(endpoint);
+        tr.appendChild(el('td', obs.state === 'failed' ? 'cert-probe-failed' : null, probeResultText(obs)));
+        tr.appendChild(el('td', null, obs.state === 'failed' ? 'Not compared' : matchText(obs.matches)));
+        tr.appendChild(el('td', null, obs.not_after ? shortDate(obs.not_after) : 'Not seen'));
+        tr.appendChild(el('td', null, obs.observed_at ? `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}` : 'Unknown'));
+        body.appendChild(tr);
+      });
+      table.appendChild(body);
+      wrap.appendChild(table);
+      section.appendChild(wrap);
+      return section;
+    };
+
     const renderDrawerBody = () => {
       const d = view.drawer;
       const body = view.refs.drawerBody;
@@ -24829,7 +24972,10 @@
       }
       nodes.push(actions);
 
-      nodes.push(expansionContent(cert));
+      const callouts = drawerCallouts(cert);
+      if (callouts) nodes.push(callouts);
+      const credhub = credhubDetails(cert);
+      if (credhub) nodes.push(credhub);
 
       const detailBox = el('section', 'cert-drawer-detail');
       detailBox.appendChild(el('h4', null, 'Certificate details'));
@@ -24848,6 +24994,8 @@
         detailBox.appendChild(CertView.detail(toLegacy(d.item)));
       }
       nodes.push(detailBox);
+
+      nodes.push(probeInformation(cert));
 
       if (cert.kind === 'ca' || cert.kind === 'intermediate') nodes.push(caRunbook());
       else if ((cert.owners || []).some((o) => o.kind === 'broker')) nodes.push(brokerRunbook());

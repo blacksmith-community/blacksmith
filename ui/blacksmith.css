@@ -12680,10 +12680,57 @@ span.config-type.resurrection {
 }
 
 .cert-drawer-detail,
+.cert-drawer-credhub,
+.cert-drawer-probes,
 .cert-runbook {
   margin-top: 16px;
   padding-top: 8px;
   border-top: 1px solid var(--border-primary);
+}
+
+.cert-drawer-callouts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cert-callout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.cert-callout-label {
+  flex: 0 0 auto;
+}
+
+.cert-callout-text {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.cert-callout--warn {
+  background: var(--cert-warning-bg);
+  color: var(--cert-warning-fg);
+}
+
+.cert-callout--info {
+  background: var(--bg-active);
+}
+
+.cert-probe-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.cert-probe-table th {
+  width: auto;
+}
+
+.cert-probe-failed {
+  color: var(--cert-expired-fg);
+  font-weight: 600;
 }
 
 .cert-runbook-commands {

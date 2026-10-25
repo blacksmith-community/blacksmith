@@ -85,7 +85,7 @@ t('fleet views and drawer', async () => {
   ok(dr.querySelector('.cert-details-table')!==null && dr.textContent.includes('Subject Alt Names'),'detail table rendered');
   ok(bad(d)===0 && dr.querySelectorAll('img,script,[onerror]').length===0,'no injected (drawer)');
   ok(dr.textContent.includes('"><img src=x'),'hostile text shown literally in drawer');
-  ok(dr.textContent.includes('sha256 8f2e1c0a'),'observation fingerprint shown');
+  ok(!!dr.querySelector('.cert-drawer-credhub') && dr.querySelector('.cert-drawer-credhub').textContent.includes('8f2e1c0aabbcc'),'observation fingerprint shown');
   { const rot=dr.querySelector('.cert-drawer-rotate'); const note=d.getElementById('cert-drawer-rotate-note');
     ok(!!rot && rot.disabled,'drawer Rotate is disabled while rotation is off');
     ok(!!note && dr.contains(note) && note.textContent.trim().length>0 && !note.hidden,'disabled drawer Rotate shows its reason as visible text: '+(note&&note.textContent));
@@ -136,7 +136,7 @@ t('fleet views and drawer', async () => {
   d.querySelector('#cert-tbody tr.cert-row[data-cert-id="c5"]').click(); await sleep(100);
   ok(/item broke/.test(dr.textContent) && dr.querySelector('.cert-retry-button')!==null && d.getElementById('cert-fleet-state').hidden && !d.getElementById('cert-fleet-main').hidden,'item error in drawer only, page intact');
   ok(dr.querySelectorAll('img,script').length===0,'no injected (item error)');
-  ok(dr.querySelector('.cert-obs-list')!==null,'list data still shown with item error');
+  ok(dr.querySelector('.cert-drawer-credhub')!==null && dr.querySelector('.cert-drawer-probes table')!==null,'list data still shown with item error');
   server.itemFail=false; dr.querySelector('.cert-retry-button').click(); await sleep(100);
   ok(dr.querySelector('.cert-details-table')!==null && !dr.querySelector('.cert-retry-button'),'Retry recovers');
   d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
