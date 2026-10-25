@@ -22,3 +22,19 @@ t('the Service and Plan filters have no visible labels but keep accessible names
  expect(plan.options[0].textContent).toBe('All Plans');
  }finally{w.close();}
 });
+
+t('instance filter actions are named icon buttons',()=>{
+ const {w,d}=boot();try{
+ const host=d.createElement('div');host.innerHTML=w.__T.renderServicesTemplate({});
+ const actions=host.querySelector('.filter-buttons');
+ for(const [id,name] of [['refresh-services','Refresh service instances'],['copy-deployment-names','Copy deployment names for matching instances'],['clear-filters','Clear instance filters']]){
+ const button=actions.querySelector('#'+id);
+ expect(button.textContent.trim()).toBe('');
+ expect(button.type).toBe('button');
+ expect(button.getAttribute('aria-label')).toBe(name);
+ expect(button.title).toBe(name);
+ expect(button.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+ expect(button.querySelector('svg').getAttribute('focusable')).toBe('false');
+ }
+ }finally{w.close();}
+});

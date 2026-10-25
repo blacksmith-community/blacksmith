@@ -2577,15 +2577,15 @@
           </label>
         </div>
         <div class="filter-buttons">
-          <button id="refresh-services" class="copy-deployment-names-btn" title="Refresh Service Instances" aria-label="Refresh service instances">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span>Refresh</span>
+          <button id="refresh-services" type="button" class="copy-deployment-names-btn" title="Refresh service instances" aria-label="Refresh service instances">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           </button>
-          <button id="copy-deployment-names" class="copy-deployment-names-btn" title="Copy deployment names for all matching instances" aria-label="Copy deployments">
+          <button id="copy-deployment-names" type="button" class="copy-deployment-names-btn" title="Copy deployment names for matching instances" aria-label="Copy deployment names for matching instances">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Deployments</span>
           </button>
-          <button id="clear-filters" class="clear-filters-btn">Clear filters</button>
+          <button id="clear-filters" type="button" class="clear-filters-btn" title="Clear instance filters" aria-label="Clear instance filters">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 4h18l-7 8v7l-4 2V12L3 4z"></path><path d="m17 15 5 5m0-5-5 5"></path></svg>
+          </button>
         </div>
         <div class="filter-status">
           <span id="filter-count" role="status" aria-live="polite">Showing ${instancesList.length} of ${instancesList.length} instances</span>
@@ -14678,6 +14678,15 @@
           if (copyDeploymentNamesBtn) {
             copyDeploymentNamesBtn.addEventListener('click', async (e) => {
               e.preventDefault();
+              const button = e.currentTarget;
+              const showCopied = () => {
+                button.classList.add('copied');
+                flashCopyIcon(button);
+                const originalTitle = button.title;
+                button.title = 'Deployment names copied';
+                announce('Deployment names copied.');
+                setTimeout(() => { button.classList.remove('copied'); button.title = originalTitle; }, 2000);
+              };
 
               // Get all visible service items
               const visibleItems = matching;
@@ -14718,21 +14727,7 @@
 
               try {
                 await navigator.clipboard.writeText(text);
-                // Visual feedback
-                const button = e.currentTarget;
-                button.classList.add('copied');
-                flashCopyIcon(button);
-                const originalTitle = button.title;
-                button.title = 'Copied!';
-                const spanElement = button.querySelector('span');
-                const originalText = spanElement.textContent;
-                spanElement.textContent = 'Copied!';
-
-                setTimeout(() => {
-                  button.classList.remove('copied');
-                  button.title = originalTitle;
-                  spanElement.textContent = originalText;
-                }, 2000);
+                showCopied();
               } catch (err) {
                 console.error('Failed to copy deployment names:', err);
                 // Fallback for older browsers
@@ -14744,16 +14739,7 @@
                 textarea.select();
                 try {
                   document.execCommand('copy');
-                  const button = e.currentTarget;
-                  button.classList.add('copied');
-                  flashCopyIcon(button);
-                  const spanElement = button.querySelector('span');
-                  const originalText = spanElement.textContent;
-                  spanElement.textContent = 'Copied!';
-                  setTimeout(() => {
-                    button.classList.remove('copied');
-                    spanElement.textContent = originalText;
-                  }, 2000);
+                  showCopied();
                 } catch (err) {
                   console.error('Fallback copy failed:', err);
                 }
@@ -14768,11 +14754,11 @@
               e.preventDefault();
 
               const button = e.currentTarget;
-              const spanElement = button.querySelector('span');
-              const originalText = spanElement.textContent;
+              const originalTitle = button.title;
 
               // Show loading state
-              spanElement.textContent = 'Refreshing...';
+              button.title = 'Refreshing service instances…';
+              button.setAttribute('aria-busy', 'true');
               button.disabled = true;
 
               try {
@@ -14964,20 +14950,14 @@
                 // Update plans data for when Plans sub-tab is accessed
                 window.plansData = catalog;
 
-                // Show success feedback
-                spanElement.textContent = 'Refreshed!';
-                setTimeout(() => {
-                  spanElement.textContent = originalText;
-                }, 2000);
-
+                announce('Service instances refreshed.');
               } catch (error) {
                 console.error('Failed to refresh services:', error);
-                spanElement.textContent = 'Error';
-                setTimeout(() => {
-                  spanElement.textContent = originalText;
-                }, 2000);
+                window.Feedback.error('Could not refresh service instances. Try again.', { toast: true });
               } finally {
                 button.disabled = false;
+                button.removeAttribute('aria-busy');
+                button.title = originalTitle;
               }
             });
           }

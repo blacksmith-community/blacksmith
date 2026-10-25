@@ -424,3 +424,11 @@ body > footer p { margin: 0; }
 .batch-release-picker-tools { position: sticky; top: 0; background: var(--background); padding-bottom: 8px; z-index: 2; }
 
 #upgrade .batch-release-toolbar h3 { color: var(--foreground); }
+
+/* Instance list actions stay compact without losing accessible touch targets. */
+#services .filter-buttons { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
+#services .filter-buttons button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; padding: 0; margin: 0; }
+#services .filter-buttons button svg { width: 18px; height: 18px; flex-shrink: 0; }
+@media (pointer: coarse) {
+ #services .filter-buttons button { flex-basis: 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+}
