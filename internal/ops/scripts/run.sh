@@ -261,14 +261,15 @@ cleanup() {
 # broker measured, and refuses without leaving a started marker when
 # anything is off. The refusal never names the command or its digest. For
 # vcap it also refuses an account that getent does not know, one with uid
-# or gid 0, and a home that is missing, a symlink, or owned by anyone but
-# the uid and gid of the account. The command gets a new session, a
-# deadline, an empty environment with fixed values, umask 022, stdin at
-# end of file, and the home of its user as its working directory. The
-# vcap command runs under setpriv, inside timeout, with no supplementary
-# groups and no way to gain privileges through setuid programs. The
-# wrapper exits with the code the command ended with, which it also
-# records in the exit file.
+# or gid 0, a home that is missing, a symlink, or owned by anyone but the
+# uid and gid of the account, and a home whose parent directories are not
+# all root-owned and closed to writes by anyone else. The command gets a
+# new session, a deadline, an empty environment with fixed values, umask
+# 022, stdin at end of file, and the home of its user as its working
+# directory. The vcap command runs under setpriv, inside timeout, with no
+# supplementary groups and no way to gain privileges through setuid
+# programs. The wrapper exits with the code the command ended with, which
+# it also records in the exit file.
 execute() {
 	[ "$#" -eq 4 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
