@@ -3,6 +3,7 @@ package upgrade
 import (
 	"slices"
 	"strconv"
+	"time"
 )
 
 // The bounds of a command's timeout, in seconds.
@@ -76,8 +77,8 @@ type CommandVM struct {
 	Phase           CommandPhase      `json:"phase"`
 	Status          string            `json:"status,omitempty"`
 	ExitCode        *int              `json:"exit_code,omitempty"`
-	StartedAt       string            `json:"started_at,omitempty"`
-	EndedAt         string            `json:"ended_at,omitempty"`
+	StartedAt       *time.Time        `json:"started_at,omitempty"`
+	EndedAt         *time.Time        `json:"ended_at,omitempty"`
 	StdoutKept      int               `json:"stdout_kept,omitempty"`
 	StdoutReceived  int               `json:"stdout_received,omitempty"`
 	StderrKept      int               `json:"stderr_kept,omitempty"`
@@ -132,7 +133,12 @@ func commandTarget(task *UpgradeTask) string {
 		}
 	}
 
-	return "Run as " + user + " on " + strconv.Itoa(nodes) + " nodes"
+	noun := "nodes"
+	if nodes == 1 {
+		noun = "node"
+	}
+
+	return "Run as " + user + " on " + strconv.Itoa(nodes) + " " + noun
 }
 
 // clone returns a copy of the spec that shares nothing with it.
@@ -166,6 +172,8 @@ func (c *InstanceCommand) clone() *InstanceCommand {
 		vm := &copied.VMs[i]
 		vm.Reviewed = vm.Reviewed.clone()
 		vm.Matched = vm.Matched.clone()
+		vm.StartedAt = copyTime(vm.StartedAt)
+		vm.EndedAt = copyTime(vm.EndedAt)
 
 		if vm.ExitCode != nil {
 			code := *vm.ExitCode

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"blacksmith/internal/mutation"
 )
@@ -12,6 +13,7 @@ const commandSecretText = "echo distinctive-command-text-9f3a"
 
 func newCommandTask() *UpgradeTask {
 	code := 0
+	started := time.Date(2026, 10, 25, 1, 2, 3, 0, time.UTC)
 
 	return &UpgradeTask{
 		ID:   "command-task-1",
@@ -31,10 +33,12 @@ func newCommandTask() *UpgradeTask {
 				Deployment: "dep-1",
 				VMs: []CommandVM{
 					{
-						Reviewed: CommandVMIdentity{Group: "redis", Index: 0, ID: "a", CID: "c1", IPs: []string{"10.0.0.1"}, State: "running"},
-						Matched:  CommandVMIdentity{Group: "redis", Index: 0, ID: "a", CID: "c1", IPs: []string{"10.0.0.1"}, State: "running"},
-						Phase:    CommandPhasePending,
-						ExitCode: &code,
+						Reviewed:  CommandVMIdentity{Group: "redis", Index: 0, ID: "a", CID: "c1", IPs: []string{"10.0.0.1"}, State: "running"},
+						Matched:   CommandVMIdentity{Group: "redis", Index: 0, ID: "a", CID: "c1", IPs: []string{"10.0.0.1"}, State: "running"},
+						Phase:     CommandPhasePending,
+						ExitCode:  &code,
+						StartedAt: &started,
+						EndedAt:   &started,
 					},
 					{
 						Reviewed: CommandVMIdentity{Group: "redis", Index: 1, ID: "b", CID: "c2", IPs: []string{"10.0.0.2"}, State: "running"},
@@ -122,6 +126,8 @@ func TestCopyTaskCommandDoesNotAlias(t *testing.T) {
 	vms := copied.Instances[0].Command.VMs
 	vms[0].Phase = CommandPhaseSettled
 	*vms[0].ExitCode = 7
+	*vms[0].StartedAt = time.Time{}
+	*vms[0].EndedAt = time.Time{}
 	vms[0].Reviewed.IPs[0] = "9.9.9.9"
 	vms[0].Matched.IPs[0] = "9.9.9.9"
 	vms[1].Reviewed.IPs[0] = "9.9.9.9"
@@ -135,11 +141,31 @@ func TestCopyTaskCommandDoesNotAlias(t *testing.T) {
 		t.Fatalf("original changed: %+v", orig.VMs[0])
 	}
 
+	if orig.VMs[0].StartedAt.IsZero() || orig.VMs[0].EndedAt.IsZero() {
+		t.Fatalf("original times changed")
+	}
+
 	if orig.VMs[0].Reviewed.IPs[0] != "10.0.0.1" || orig.VMs[0].Matched.IPs[0] != "10.0.0.1" || orig.VMs[1].Reviewed.IPs[0] != "10.0.0.2" {
 		t.Fatalf("original IPs changed")
 	}
 
 	if original.Command.Command != commandSecretText {
 		t.Fatalf("original spec changed")
+	}
+}
+
+func TestCommandTargetPlurals(t *testing.T) {
+	t.Parallel()
+
+	task := newCommandTask()
+
+	if got := commandTarget(task); got != "Run as vcap on 2 nodes" {
+		t.Fatalf("two nodes: %q", got)
+	}
+
+	task.Instances[0].Command.VMs = task.Instances[0].Command.VMs[:1]
+
+	if got := commandTarget(task); got != "Run as vcap on 1 node" {
+		t.Fatalf("one node: %q", got)
 	}
 }
