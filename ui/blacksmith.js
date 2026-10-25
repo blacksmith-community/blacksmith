@@ -8983,20 +8983,15 @@
       `;
     }
 
-    // Count configs by type for display
-    const typeCounts = Object.keys(configsByType).map(type => {
-      const count = configsByType[type].length;
-      return count > 0 ? `${count} ${type}` : null;
-    }).filter(Boolean).join(', ');
-
     return `
       <div class="table-controls-container compact-configs-controls">
+        <span class="configs-summary">${configs.length} configs</span>
         <div class="configs-controls-row-1">
           <div class="search-filter-container">
             ${createSearchFilter(tableId, 'Search configs...')}
           </div>
           <div class="configs-action-buttons">
-            <button id="refresh-configs-btn" class="refresh-btn" title="Refresh configs">
+            <button id="refresh-configs-btn" type="button" class="refresh-btn" title="Refresh configs" aria-label="Refresh configs">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
             </button>
             <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
@@ -9008,16 +9003,16 @@
         <div class="configs-controls-row-2">
           <div class="filter-group configs-filters">
             <label>Types:</label>
-            <div class="checkbox-group">
-              <label><input type="checkbox" value="cloud" checked> Cloud</label>
-              <label><input type="checkbox" value="runtime" checked> Runtime</label>
-              <label><input type="checkbox" value="cpi" checked> CPI</label>
-              <label><input type="checkbox" value="resurrection" checked> Resurrection</label>
+            <div class="checkbox-group" role="group" aria-label="Config types">
+              <label><input type="checkbox" value="cloud" checked> Cloud (${configsByType.cloud?.length || 0})</label>
+              <label><input type="checkbox" value="runtime" checked> Runtime (${configsByType.runtime?.length || 0})</label>
+              <label><input type="checkbox" value="cpi" checked> CPI (${configsByType.cpi?.length || 0})</label>
+              <label><input type="checkbox" value="resurrection" checked> Resurrection (${configsByType.resurrection?.length || 0})</label>
             </div>
           </div>
         </div>
+        <span class="configs-help" title="An asterisk marks the active version. Select an ID to view all versions." aria-label="An asterisk marks the active version. Select an ID to view all versions." tabindex="0">ⓘ</span>
       </div>
-      ${hasConfigs ? `<div class="configs-summary">${configs.length} configs${typeCounts ? ': ' + typeCounts : ''}</div>` : ''}
       <div class="configs-table-container">
         <table class="${tableId}">
           <thead>
@@ -9034,7 +9029,7 @@
           </tbody>
         </table>
       </div>
-      ${hasConfigs ? `<div class="configs-note">(*) Currently active - Click ID to see all versions</div>` : ''}
+
     `;
   };
 

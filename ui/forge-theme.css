@@ -605,3 +605,17 @@ body > footer p { margin: 0; }
   .logs-pagination-row { grid-template-columns: 1fr; }
   .logs-pagination-row .logs-load-more { grid-column: 1; justify-self: start; padding-left: 0; }
 }
+
+/* One compact config toolbar: count, search, types and actions. */
+.compact-configs-controls.table-controls-container { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: .5rem .75rem; padding: .5rem 0; margin: 0 0 .5rem; }
+.compact-configs-controls .configs-controls-row-1, .compact-configs-controls .configs-controls-row-2 { display: contents; }
+.compact-configs-controls .configs-summary { padding: 0; margin: 0; font-size: .875rem; white-space: nowrap; }
+.compact-configs-controls .search-filter-container { flex: 0 1 18rem; margin: 0; }
+.compact-configs-controls .configs-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: 0; margin: 0; border: 0; background: transparent; }
+.compact-configs-controls .checkbox-group { display: flex; flex-wrap: wrap; gap: .375rem .75rem; }
+.compact-configs-controls .checkbox-group label { display: inline-flex; align-items: center; gap: .25rem; margin: 0; font-size: .875rem; white-space: nowrap; }
+.compact-configs-controls .checkbox-group input { margin: 0; }
+.compact-configs-controls .configs-action-buttons { display: flex; gap: .375rem; order: 2; }
+.compact-configs-controls .configs-action-buttons button { width: 36px; min-width: 36px; height: 36px; padding: 0; margin: 0; }
+.compact-configs-controls .configs-help { order: 3; cursor: help; }
+.configs-table-container { margin-top: 0; }
