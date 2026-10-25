@@ -144,6 +144,11 @@ _gt_rabbitmq() {
 	[ -n "$node" ] || return 1
 
 	(
+		# vcap cannot read the caller's working directory, and the Erlang
+		# code server prints an error report to stdout for each file it
+		# fails to read there.
+		cd "$home" || exit 1
+
 		export HOME=$home RABBITMQ_NODENAME=$node RABBITMQ_USE_LONGNAME=true
 		export PATH=$root/var/vcap/packages/erlang/bin:$root/var/vcap/packages/rabbitmq/sbin:$PATH
 

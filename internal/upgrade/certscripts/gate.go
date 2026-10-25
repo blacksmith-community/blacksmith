@@ -113,6 +113,39 @@ type rabbitStatus struct {
 	RunningNodes []string `json:"running_nodes"`
 }
 
+// rabbitStatusDocument returns the status document in output. RabbitMQ
+// 4.2 can print Erlang error reports to stdout ahead of the JSON, so
+// when the whole output is not JSON, the document is the one line that
+// is a JSON object. Zero such lines or more than one return the output
+// unchanged, which then fails to decode.
+func rabbitStatusDocument(output []byte) []byte {
+	if json.Valid(output) {
+		return output
+	}
+
+	var found []byte
+
+	for _, line := range bytes.Split(output, []byte("\n")) {
+		line = bytes.TrimSuffix(line, []byte("\r"))
+
+		if !bytes.HasPrefix(line, []byte("{")) || !json.Valid(line) {
+			continue
+		}
+
+		if found != nil {
+			return output
+		}
+
+		found = line
+	}
+
+	if found == nil {
+		return output
+	}
+
+	return found
+}
+
 // ParseRabbitStatus passes when `rabbitmq-diagnostics check_running`
 // exited 0 and statusJSON, the cluster status in the JSON format,
 // lists at least one disc node and every disc node as running.
@@ -124,7 +157,7 @@ func ParseRabbitStatus(checkRunningExit int, statusJSON []byte) error {
 	var status rabbitStatus
 
 	// The decoder's error can quote the output, so it is not wrapped.
-	if json.Unmarshal(statusJSON, &status) != nil {
+	if json.Unmarshal(rabbitStatusDocument(statusJSON), &status) != nil {
 		return fmt.Errorf("%w: the cluster status is not valid JSON", ErrGateFailed)
 	}
 

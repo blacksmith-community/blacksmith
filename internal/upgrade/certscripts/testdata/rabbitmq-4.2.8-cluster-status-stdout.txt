@@ -1,0 +1,182 @@
+{erl_prim_loader,file_error}
+"File operation error: eacces. Target: no_dot_erlang.boot. Function: get_file. "
+=ERROR REPORT==== 25-Oct-2026::14:06:48.995057 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: .. Function: read_file_info. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.005890 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./maps.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.008658 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./logger_formatter.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.011278 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./string.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.014756 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./standard_error.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.016306 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./unicode_util.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.026487 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./supervisor_bridge.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.028608 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./io_lib.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.030727 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./inet_db.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.033256 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./io_lib_format.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.035506 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./inet_config.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.036642 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./epp.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.039649 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./inet_udp.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.041060 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./io_lib_pretty.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.043787 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./inet.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.047238 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./inet_parse.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.049816 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./inet_gethost_native.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.055327 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./rpc.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.057194 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./global.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.059916 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./net_kernel.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.065119 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./rand.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.068259 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./erl_distribution.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.069772 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./global_group.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.072907 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./erpc.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.074789 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./user_sup.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.075778 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./user_drv.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.078045 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./gen_statem.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.081539 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./prim_tty.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.087244 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./io.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.088562 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./group.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.091080 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./edlin.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.092984 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./logger_sup.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.093792 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./edlin_key.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.094887 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./logger_handler_watcher.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.096290 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./kernel_config.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.097660 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./kernel_refc.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.099025 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./erl_signal_handler.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.100137 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./logger_std_h.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.102339 ===
+    label: {erl_prim_loader,file_error}
+    report: File operation error: eacces. Target: ./logger_h_common.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:48.995057 ===
+File operation error: eacces. Target: .. Function: read_file_info. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.005890 ===
+File operation error: eacces. Target: ./maps.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.008658 ===
+File operation error: eacces. Target: ./logger_formatter.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.011278 ===
+File operation error: eacces. Target: ./string.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.014756 ===
+File operation error: eacces. Target: ./standard_error.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.016306 ===
+File operation error: eacces. Target: ./unicode_util.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.026487 ===
+File operation error: eacces. Target: ./supervisor_bridge.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.028608 ===
+File operation error: eacces. Target: ./io_lib.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.030727 ===
+File operation error: eacces. Target: ./inet_db.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.033256 ===
+File operation error: eacces. Target: ./io_lib_format.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.104003 ===
+File operation error: eacces. Target: ./escript.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.106466 ===
+File operation error: eacces. Target: ./raw_file_io.beam. Function: get_file. Process: code_server.
+=ERROR REPORT==== 25-Oct-2026::14:06:49.154577 ===
+File operation error: eacces. Target: .. Function: list_dir. Process: application_controller.
+
+14:06:49.898 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./sets.beam. Function: get_file. Process: code_server."]
+
+14:06:49.906 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./calendar.beam. Function: get_file. Process: code_server."]
+
+14:06:49.943 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./rabbit_env.beam. Function: get_file. Process: code_server."]
+
+14:06:49.992 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./filelib.beam. Function: get_file. Process: code_server."]
+
+14:06:50.010 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./net_adm.beam. Function: get_file. Process: code_server."]
+
+14:06:50.022 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./rabbit_nodes_common.beam. Function: get_file. Process: code_server."]
+
+14:06:50.037 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./rabbit_data_coercion.beam. Function: get_file. Process: code_server."]
+
+14:06:50.067 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./inet_tcp_dist.beam. Function: get_file. Process: code_server."]
+
+14:06:50.076 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./erl_epmd.beam. Function: get_file. Process: code_server."]
+
+14:06:50.085 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./auth.beam. Function: get_file. Process: code_server."]
+
+14:06:50.096 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./raw_file_io_list.beam. Function: get_file. Process: code_server."]
+
+14:06:50.107 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./inet_tcp.beam. Function: get_file. Process: code_server."]
+
+14:06:50.115 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./gen_tcp.beam. Function: get_file. Process: code_server."]
+
+14:06:50.129 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./rabbit_misc.beam. Function: get_file. Process: code_server."]
+
+14:06:50.141 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./dist_util.beam. Function: get_file. Process: code_server."]
+
+14:06:50.152 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./inet_hosts.beam. Function: get_file. Process: code_server."]
+
+14:06:50.193 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./thoas.beam. Function: get_file. Process: code_server."]
+
+14:06:50.203 [error] [label: {:erl_prim_loader, :file_error}, report: ~c"File operation error: eacces. Target: ./thoas_encode.beam. Function: get_file. Process: code_server."]
+{"alarms":[],"listeners":{"rabbit@node-2":[{"node":"rabbit@node-2","port":15671,"protocol":"https","interface":"[::]","purpose":"HTTP API over TLS (HTTPS)"},{"node":"rabbit@node-2","port":25672,"protocol":"clustering","interface":"[::]","purpose":"inter-node and CLI tool communication"},{"node":"rabbit@node-2","port":5671,"protocol":"amqp/ssl","interface":"[::]","purpose":"AMQP 0-9-1 and AMQP 1.0 over TLS"}],"rabbit@node-1":[{"node":"rabbit@node-1","port":15671,"protocol":"https","interface":"[::]","purpose":"HTTP API over TLS (HTTPS)"},{"node":"rabbit@node-1","port":25672,"protocol":"clustering","interface":"[::]","purpose":"inter-node and CLI tool communication"},{"node":"rabbit@node-1","port":5671,"protocol":"amqp/ssl","interface":"[::]","purpose":"AMQP 0-9-1 and AMQP 1.0 over TLS"}],"rabbit@node-3":[{"node":"rabbit@node-3","port":15671,"protocol":"https","interface":"[::]","purpose":"HTTP API over TLS (HTTPS)"},{"node":"rabbit@node-3","port":25672,"protocol":"clustering","interface":"[::]","purpose":"inter-node and CLI tool communication"},{"node":"rabbit@node-3","port":5671,"protocol":"amqp/ssl","interface":"[::]","purpose":"AMQP 0-9-1 and AMQP 1.0 over TLS"}]},"versions":{"rabbit@node-2":{"rabbitmq_version":"4.2.8","erlang_version":"26.2.5.21","rabbitmq_name":"RabbitMQ"},"rabbit@node-1":{"rabbitmq_version":"4.2.8","erlang_version":"26.2.5.21","rabbitmq_name":"RabbitMQ"},"rabbit@node-3":{"rabbitmq_version":"4.2.8","erlang_version":"26.2.5.21","rabbitmq_name":"RabbitMQ"}},"feature_flags":[{"name":"classic_mirrored_queue_version","state":"enabled","callbacks":[],"desc":"Support setting version for classic mirrored queues","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"classic_queue_type_delivery_support","state":"enabled","callbacks":[],"desc":"Bug fix for classic queue deliveries using mixed versions","stability":"required","provided_by":"rabbit","doc_url":"https://github.com/rabbitmq/rabbitmq-server/issues/5931","require_level":"hard","experiment_level":"supported"},{"name":"detailed_queues_endpoint","state":"enabled","callbacks":[],"desc":"Add a detailed queues HTTP API endpoint. Reduce number of metrics in the default endpoint.","stability":"stable","provided_by":"rabbitmq_management","doc_url":"","require_level":"none","experiment_level":"supported"},{"name":"direct_exchange_routing_v2","state":"enabled","callbacks":[],"desc":"v2 direct exchange routing implementation","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"drop_unroutable_metric","state":"enabled","callbacks":[],"desc":"Count unroutable publishes to be dropped in stats","stability":"required","provided_by":"rabbitmq_management_agent","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"empty_basic_get_metric","state":"enabled","callbacks":[],"desc":"Count AMQP `basic.get` on empty queues in stats","stability":"required","provided_by":"rabbitmq_management_agent","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"feature_flags_v2","state":"enabled","callbacks":[],"desc":"Feature flags subsystem V2","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"implicit_default_bindings","state":"enabled","callbacks":[],"desc":"Default bindings are now implicit, instead of being stored in the database","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"khepri_db","state":"enabled","callbacks":["enable","post_enable"],"desc":"New Raft-based metadata store.","stability":"stable","provided_by":"rabbit","doc_url":"https://www.rabbitmq.com/docs/next/metadata-store","require_level":"none","experiment_level":"supported"},{"name":"listener_records_in_ets","state":"enabled","callbacks":[],"desc":"Store listener records in ETS instead of Mnesia","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"maintenance_mode_status","state":"enabled","callbacks":[],"desc":"Maintenance mode status","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"message_containers","state":"enabled","callbacks":[],"desc":"Message containers.","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"message_containers_deaths_v2","state":"enabled","callbacks":[],"desc":"Bug fix for dead letter cycle detection","stability":"stable","provided_by":"rabbit","doc_url":"https://github.com/rabbitmq/rabbitmq-server/issues/11159","require_level":"none","experiment_level":"supported"},{"name":"quorum_queue","state":"enabled","callbacks":[],"desc":"Support queues of type `quorum`","stability":"required","provided_by":"rabbit","doc_url":"https://www.rabbitmq.com/docs/quorum-queues","require_level":"hard","experiment_level":"supported"},{"name":"quorum_queue_non_voters","state":"enabled","callbacks":[],"desc":"Allows new quorum queue members to be added as non voters initially.","stability":"stable","provided_by":"rabbit","doc_url":"","require_level":"none","experiment_level":"supported"},{"name":"rabbit_exchange_type_local_random","state":"enabled","callbacks":[],"desc":"Local random exchange","stability":"stable","provided_by":"rabbit","doc_url":"","require_level":"none","experiment_level":"supported"},{"name":"rabbitmq_4.0.0","state":"enabled","callbacks":[],"desc":"Allows rolling upgrades from 3.13.x to 4.0.x","stability":"stable","provided_by":"rabbit","doc_url":"","require_level":"none","experiment_level":"supported"},{"name":"rabbitmq_4.1.0","state":"enabled","callbacks":[],"desc":"Allows rolling upgrades to 4.1.x","stability":"stable","provided_by":"rabbit","doc_url":"","require_level":"none","experiment_level":"supported"},{"name":"rabbitmq_4.2.0","state":"enabled","callbacks":["enable"],"desc":"Allows rolling upgrades to 4.2.x","stability":"stable","provided_by":"rabbit","doc_url":"","require_level":"none","experiment_level":"supported"},{"name":"restart_streams","state":"enabled","callbacks":[],"desc":"Support for restarting streams with optional preferred next leader argument.Used to implement stream leader rebalancing","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"stream_filtering","state":"enabled","callbacks":[],"desc":"Support for stream filtering.","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"stream_queue","state":"enabled","callbacks":[],"desc":"Support queues of type `stream`","stability":"required","provided_by":"rabbit","doc_url":"https://www.rabbitmq.com/docs/stream","require_level":"hard","experiment_level":"supported"},{"name":"stream_sac_coordinator_unblock_group","state":"enabled","callbacks":[],"desc":"Bug fix to unblock a group of consumers in a super stream partition","stability":"required","provided_by":"rabbit","doc_url":"https://github.com/rabbitmq/rabbitmq-server/issues/7743","require_level":"hard","experiment_level":"supported"},{"name":"stream_single_active_consumer","state":"enabled","callbacks":[],"desc":"Single active consumer for streams","stability":"required","provided_by":"rabbit","doc_url":"https://www.rabbitmq.com/docs/stream","require_level":"hard","experiment_level":"supported"},{"name":"stream_update_config_command","state":"enabled","callbacks":[],"desc":"A new internal command that is used to update streams as part of a policy.","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"tracking_records_in_ets","state":"enabled","callbacks":[],"desc":"Store tracking records in ETS instead of Mnesia","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"user_limits","state":"enabled","callbacks":[],"desc":"Configure connection and channel limits for a user","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"},{"name":"virtual_host_metadata","state":"enabled","callbacks":[],"desc":"Virtual host metadata (description, tags, etc)","stability":"required","provided_by":"rabbit","doc_url":"","require_level":"hard","experiment_level":"supported"}],"running_nodes":["rabbit@node-1","rabbit@node-2","rabbit@node-3"],"cluster_tags":[],"cpu_cores":{"rabbit@node-2":1,"rabbit@node-1":1,"rabbit@node-3":1},"cluster_name":"rabbit@node-1","disk_nodes":["rabbit@node-1","rabbit@node-2","rabbit@node-3"],"ram_nodes":[],"partitions":{},"maintenance_status":{"rabbit@node-2":"not under maintenance","rabbit@node-1":"not under maintenance","rabbit@node-3":"not under maintenance"}}
