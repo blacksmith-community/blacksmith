@@ -10,24 +10,25 @@
   function destinations(screens, instances, catalog) {
     const entries = [];
     for (const screen of screens) {
-      entries.push({ screen: screen.id, label: screen.label, context: 'Screens', keywords: aliases[screen.id] });
+      entries.push({ screen: screen.id, label: screen.label, context: 'Screens', type: 'Screen', breadcrumb: screen.label, keywords: aliases[screen.id] });
       for (const section of screen.sections || []) {
-        entries.push({ screen: screen.id, section: section.id, label: section.label, context: screen.label, keywords: aliases[section.id] });
+        entries.push({ screen: screen.id, section: section.id, label: section.label, context: screen.label, type: 'Section', breadcrumb: screen.label + ' > ' + section.label, keywords: aliases[section.id] });
       }
     }
     (catalog?.services || []).forEach((service, serviceIndex) => {
       (service?.plans || []).forEach((plan, planIndex) => {
         if (plan) entries.push({ screen: 'blacksmith', section: 'plans', planId: plan.id, serviceId: service.id, serviceIndex, planIndex,
-          label: plan.name || plan.id || 'Plan', context: `Service Plans · ${service.name || service.id}` });
+          label: plan.name || plan.id || 'Plan', context: `Service Plans · ${service.name || service.id}`, type: 'Plan', breadcrumb: `Blacksmith Broker > Service plans > ${service.name || service.id}` });
       });
     });
     for (const [id, instance] of Object.entries(instances || {})) {
       if (!instance) continue;
       const context = [instance.instance_name, id, instance.service_id, instance.deleted ? 'Deleted' : ''].filter(Boolean).join(' · ');
       for (const [section, label] of instanceSections) {
-        entries.push({ screen: 'services', instanceId: id, section, label, context, keywords: aliases[section] });
+        entries.push({ screen: 'services', instanceId: id, section, label, context, type: 'Instance', breadcrumb: `Service Instances > ${instance.instance_name || id} > ${label}`, detail: [id, instance.service_id, instance.deleted ? 'Deleted' : ''].filter(Boolean).join(' · '), keywords: aliases[section] });
       }
     }
+    ['light', 'dark', 'system'].forEach(theme => entries.push({ theme, label: theme[0].toUpperCase() + theme.slice(1), type: 'Theme', context: 'Appearance theme mode', breadcrumb: 'Appearance > Theme', detail: theme === 'system' ? 'Follow your device’s appearance setting' : '', keywords: 'theme appearance color mode' }));
     return entries;
   }
   function search(entries, query) {
@@ -37,7 +38,7 @@
       const label = entry.label.toLocaleLowerCase();
       return label === normalized ? 0 : label.startsWith(normalized) ? 1 : 2;
     };
-    return entries.filter(entry => words.every(word => `${entry.label} ${entry.context || ''} ${entry.keywords || ''}`.toLocaleLowerCase().includes(word)))
+    return entries.filter(entry => words.every(word => `${entry.label} ${entry.context || ''} ${entry.breadcrumb || ''} ${entry.keywords || ''}`.toLocaleLowerCase().includes(word)))
       .sort((a, b) => score(a) - score(b));
   }
   root.BlacksmithNavigation = { destinations, search };
@@ -58,9 +59,10 @@
     const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K';
     trigger.querySelector('kbd').textContent = shortcut;
 
+    const buttonLabel = button => [...button.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join('').trim();
     function inventory() {
       const screens = [...document.querySelectorAll('.tabs > .tab-button')].map(button => ({
-        id: button.dataset.tab, label: button.textContent.trim(),
+        id: button.dataset.tab, label: buttonLabel(button),
         sections: button.dataset.tab === 'blacksmith' ? [...document.querySelectorAll('#blacksmith .detail-tab')].map(b => ({ id: b.dataset.tab, label: b.textContent.trim() })) : []
       }));
       const all = destinations(screens, root.serviceInstances, root.plansData);
@@ -93,12 +95,26 @@
         label.textContent = entry.label;
         const context = document.createElement('span');
         context.textContent = entry.context;
-        option.append(label, context);
+        const row = document.createElement('div');
+        row.className = 'navigation-result-row';
+        const type = document.createElement('span');
+        type.className = 'navigation-result-type';
+        type.textContent = entry.type || 'Section';
+        context.className = 'navigation-result-location';
+        context.textContent = entry.breadcrumb || entry.context;
+        row.append(label, type, context);
+        option.append(row);
+        if (entry.detail) {
+          const detail = document.createElement('span');
+          detail.className = 'navigation-result-detail';
+          detail.textContent = entry.detail;
+          option.append(detail);
+        }
         option.addEventListener('click', () => navigate(entry));
         list.append(option);
       });
-      status.textContent = !matches.length ? 'No matching screens. Try a screen name or instance ID.' :
-        matches.length > 80 ? `${matches.length} destinations. Showing the first 80; type to narrow results.` : `${matches.length} destinations`;
+      status.textContent = !matches.length ? 'No matches. Try a screen, instance, or theme.' :
+        matches.length > 80 ? `${matches.length} matches. Showing the first 80; type to narrow results.` : `${matches.length} matches`;
       paintSelection();
     }
     function blocked() {
@@ -128,6 +144,12 @@
       const controller = new AbortController();
       navigationController = controller;
       try {
+        if (entry.theme) {
+          if (!root.blacksmithTheme) throw new Error('Theme controls are still loading. Please try again.');
+          root.blacksmithTheme.setPreference(entry.theme);
+          close();
+          return;
+        }
         let target;
         if (entry.button) {
           if (!entry.button.isConnected) throw new Error('This screen is no longer available. Close and reopen navigation.');
@@ -204,7 +226,7 @@
     function updateContext() {
       const panel = document.querySelector('.tab-panel.active');
       if (!panel) return;
-      const main = mainButton(panel.id)?.textContent.trim() || 'Blacksmith';
+      const main = (mainButton(panel.id) ? buttonLabel(mainButton(panel.id)) : '') || 'Blacksmith';
       const detailVisible = panel.id !== 'services' || panel.classList.contains('instance-open');
       const section = detailVisible ? panel.querySelector('.detail-tab.active')?.textContent.trim() : '';
       const instance = panel.id === 'services' && detailVisible ? (root.currentInstanceInfo?.name || root.currentInstanceInfo?.id) : '';

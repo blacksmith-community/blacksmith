@@ -14,7 +14,7 @@
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261024-rotate">
-  <link rel="stylesheet" href="/forge-theme.css?v=20261025-compact-workspaces">
+  <link rel="stylesheet" href="/forge-theme.css?v=20261025-quick-navigation">
   <script src="/vendor/oat/oat.min.js" defer></script>
 </head>
 
@@ -386,16 +386,16 @@
   <div id="blacksmith-live-region" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <dialog id="navigation-dialog" aria-labelledby="navigation-title">
-    <div class="navigation-heading"><h2 id="navigation-title">Go to a screen</h2><button type="button" data-close aria-label="Close navigation">Esc</button></div>
-    <label for="navigation-search">Search screens or service instances</label>
-    <input id="navigation-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="navigation-results" autocomplete="off" spellcheck="false" placeholder="Try certificates, batch, or an instance ID…">
+    <div class="navigation-heading"><h2 id="navigation-title">Quick Navigation</h2><button type="button" data-close aria-label="Close navigation" title="Close navigation (Esc)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <label class="visually-hidden" for="navigation-search">Search screens, instances, or themes</label>
+    <input id="navigation-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="navigation-results" autocomplete="off" spellcheck="false" placeholder="Search screens, instances, or themes…">
+    <p class="navigation-count" role="status" aria-live="polite"></p>
     <div id="navigation-results" role="listbox" aria-label="Destinations"></div>
-    <p role="status" aria-live="polite"></p>
     <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
   </dialog>
   <script type="text/javascript" src="/xterm.min.js"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261025-broker-connections"></script>
-  <script src="/navigation.js?v=20261024-forge"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261025-quick-navigation"></script>
+  <script src="/navigation.js?v=20261025-quick-navigation"></script>
 </body>
 
 </html>

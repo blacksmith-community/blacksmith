@@ -134,6 +134,15 @@
     }
   };
 
+  window.blacksmithTheme = {
+    setPreference(theme) {
+      if (!['light', 'dark', 'system'].includes(theme)) return;
+      if (theme === 'system') localStorage.removeItem('theme');
+      else localStorage.setItem('theme', theme);
+      setTheme(theme === 'system' ? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme);
+    }
+  };
+
   const toggleTheme = () => {
     const currentTheme = document.documentElement.getAttribute('data-theme');
     const newTheme = currentTheme === 'dark' ? 'light' : 'dark';

@@ -30,7 +30,7 @@ describe('navigation destinations', () => {
     expect(entries.every(e => !('action' in e))).toBe(true);
   });
   test('supports an unavailable catalog and deleted instance context', () => {
-    expect(destinations(screens, null)).toHaveLength(4);
+    expect(destinations(screens, null)).toHaveLength(7);
     expect(destinations([], { gone: { deleted: true } })[0].context).toContain('Deleted');
   });
   test('includes catalog plan screens and familiar navigation aliases', () => {
@@ -38,4 +38,11 @@ describe('navigation destinations', () => {
     expect(search(entries, 'valkey small')[0].planId).toBe('small');
     expect(search(entries, 'upgrade')[0].screen).toBe('upgrade');
   });
+});
+
+test('theme modes are searchable actions with clear locations', () => {
+ const entries=destinations(screens,{});
+ expect(search(entries,'theme').map(e=>e.theme)).toEqual(['light','dark','system']);
+ expect(search(entries,'theme system')[0].label).toBe('System');
+ expect(entries.find(e=>e.section==='configs').breadcrumb).toBe('Blacksmith > BOSH Configs');
 });
