@@ -2,7 +2,8 @@
 // which is the base library lib.sh and the Go side of the contract: how a
 // script is assembled and invoked, and how its output is read back.
 // Packages with scripts of their own pass their file system and their
-// libraries to Script.
+// libraries to Script. The scripts that live here are lib.sh and run.sh,
+// which stages and cleans up after an operator command.
 package scripts
 
 import (
