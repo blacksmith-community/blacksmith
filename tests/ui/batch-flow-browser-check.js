@@ -63,9 +63,9 @@ async (page) => {
   await page.screenshot({path:'output/playwright/batch-flow-options.png'});
   await next.click();await page.locator('.rotate-chip').first().waitFor();
   const firstRow=page.locator('.upgrade-instance-item').nth(1);
-  await firstRow.locator('.batch-select-state').click();
-  check(await firstRow.locator('input[type=checkbox]').isChecked(),'visible select control tracks actual state');
-  check(await firstRow.locator('.select-on').isVisible(),'selected text is visible');
+  await firstRow.locator('.upgrade-instance-id').click();
+  check(await firstRow.locator('input[type=checkbox]').isChecked(),'row click tracks actual state');
+  check(await firstRow.locator('.batch-select-state').count()===0,'no select button in the row');
   check(await page.locator('.upgrade-instance-row-number').count()===0,'row ordinals removed');
   await page.locator('#upgrade-select-all').click();
   check(await page.locator('.upgrade-instance-item').count()===50,'instance page bounded');

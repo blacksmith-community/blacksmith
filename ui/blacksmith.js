@@ -3239,11 +3239,11 @@
         <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${escapeAttribute(id)}" data-row-number="${rowNumber}" data-service-id="${escapeAttribute(details.service_id)}" data-plan-id="${escapeAttribute(details.plan?.id || details.plan_id || '')}" data-stemcell-os="${escapeAttribute(stemcellInfo?.os || '')}" data-stemcell-version="${escapeAttribute(stemcellInfo?.version || '')}"${holder ? ' data-held="true"' : ''}>
           <label class="upgrade-instance-checkbox">
             <input type="checkbox" aria-label="Select ${escapeAttribute(details.name || details.instance_name || id)}" ${isSelected ? 'checked' : ''}${holder ? ' disabled' : ''} />
-            <span class="batch-select-state" aria-hidden="true"><span class="select-off">Select</span><span class="select-on">Selected</span><span class="select-some">Some selected</span></span>
           </label>
           <div class="upgrade-instance-info">
+            <span class="upgrade-instance-service">${escapeHtml(serviceName)}</span>
             <div class="upgrade-instance-id">${escapeHtml(id)}</div>
-            <div class="upgrade-instance-meta">${escapeHtml(serviceName)} / ${escapeHtml(planName)}</div>
+            <span class="upgrade-instance-plan">${escapeHtml(planName)}</span>
             ${holder ? `<div class="rotate-row-reason">${escapeHtml(`Busy: ${holder}`)}</div>` : ''}
           </div>
           <div class="upgrade-instance-stemcell-container">
@@ -3775,6 +3775,10 @@
         input.indeterminate = selectedChips.length > 0 && selectedChips.length < row.chips.length;
       }
       input.addEventListener('click', (event) => event.stopPropagation());
+      // Space toggles a checkbox natively, and Enter toggles it too.
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); input.click(); }
+      });
       input.addEventListener('change', () => {
         if (converge) {
           if (input.checked) convergeSelected.add(row.id); else convergeSelected.delete(row.id);
@@ -3784,27 +3788,31 @@
         rotateRefresh();
       });
       label.appendChild(input);
-      const state = rotateEl('span','batch-select-state');
-      state.setAttribute('aria-hidden','true');
-      state.innerHTML = '<span class="select-off">Select</span><span class="select-on">Selected</span><span class="select-some">Some selected</span>';
-      label.appendChild(state);
       item.appendChild(label);
 
+      // The cells sit in the row's grid columns, so every row lines up.
       const info = rotateEl('div', 'upgrade-instance-info');
-      info.appendChild(rotateEl('div', 'upgrade-instance-id', row.id));
-      const meta = [row.serviceName, row.planName].join(' / ');
-      info.appendChild(rotateEl('div', 'upgrade-instance-meta', row.entry && row.entry.name && row.entry.name !== row.id ? `${row.entry.name}, ${meta}` : meta));
+      info.appendChild(rotateEl('span', 'upgrade-instance-service', row.serviceName));
+      const idCell = rotateEl('div', 'upgrade-instance-id', row.id);
+      if (row.entry && row.entry.name && row.entry.name !== row.id) {
+        idCell.title = row.entry.name;
+        idCell.appendChild(rotateEl('span', 'upgrade-instance-name', row.entry.name));
+      }
+      info.appendChild(idCell);
+      info.appendChild(rotateEl('span', 'upgrade-instance-plan', row.planName));
+      const chips = rotateEl('div', 'rotate-chips');
       if (!converge && row.chips.length > 0 && !row.holder) {
-        const chips = rotateEl('div', 'rotate-chips');
         chips.setAttribute('role', 'group');
         chips.setAttribute('aria-label', `Certificates on ${rotateInstanceLabel(row)}`);
         row.chips.forEach((cert) => chips.appendChild(rotateChip(row, cert)));
-        info.appendChild(chips);
       }
+      info.appendChild(chips);
+      const status = rotateEl('div', 'upgrade-instance-status');
       if (converge && !row.holder) {
-        info.appendChild(rotateEl('div', 'rotate-row-note', 'BOSH has not deployed the patched certificates yet.'));
+        status.appendChild(rotateEl('div', 'rotate-row-note', 'BOSH has not deployed the patched certificates yet.'));
       }
-      if (row.reason) info.appendChild(rotateEl('div', 'rotate-row-reason', row.reason));
+      if (row.reason) status.appendChild(rotateEl('div', 'rotate-row-reason', row.reason));
+      info.appendChild(status);
       item.appendChild(info);
 
       item.addEventListener('click', (event) => {
@@ -5294,6 +5302,13 @@
     document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
       const checkbox = item.querySelector('input[type="checkbox"]');
       const instanceId = item.dataset.instanceId;
+
+      // Space toggles the checkbox natively, and Enter toggles it too.
+      if (checkbox) {
+        checkbox.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); checkbox.click(); }
+        });
+      }
 
       // Handle click on the entire item
       item.addEventListener('click', (e) => {

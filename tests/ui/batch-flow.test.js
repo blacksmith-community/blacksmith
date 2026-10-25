@@ -60,14 +60,14 @@ t('instance selection retains access to certificate removal controls',async()=>{
  }finally{w.close();}
 });
 
-t('selection labels toggle once and omit meaningless row numbers',async()=>{
+t('a row click toggles once and the rows omit meaningless row numbers',async()=>{
  const {w,d}=await setup();try{
  const row=d.querySelector('.upgrade-instance-item');
  expect(row.querySelector('.upgrade-instance-row-number')).toBeNull();
- row.querySelector('label span').click();
+ row.querySelector('.upgrade-instance-id').click();
  expect(row.querySelector('input').checked).toBe(true);
  expect(w.__T.selectedUpgradeInstances.has('cache')).toBe(true);
- row.querySelector('label span').click();
+ row.querySelector('.upgrade-instance-id').click();
  expect(row.querySelector('input').checked).toBe(false);
  }finally{w.close();}
 });

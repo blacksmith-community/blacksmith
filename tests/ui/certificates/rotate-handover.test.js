@@ -133,8 +133,8 @@ t('Rotate on one certificate of a multi-certificate instance selects only that c
     expect(box(d,'inst-a').indeterminate).toBe(true);
     expect(d.getElementById('batch-flow-context').textContent).toBe('1 instance selected from the Certificates tab');
     const css=require('fs').readFileSync(require('path').resolve(__dirname,'..','..','..','ui','forge-theme.css'),'utf8');
-    expect(css).toContain('input:is(:checked,:indeterminate) + .batch-select-state { color: var(--primary-foreground); background: var(--primary)');
-    expect(css).toContain('.select-some::before');
+    expect(css).toContain('.upgrade-instance-item.selected { background: var(--secondary); box-shadow: inset 3px 0 var(--primary)');
+    expect(css).not.toContain('batch-select-state');
   } finally { w.close(); }
 });
 

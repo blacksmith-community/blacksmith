@@ -282,18 +282,24 @@ body > footer p { margin: 0; }
 #upgrade .rotate-name-row input { width: 100%; }
 #upgrade .rotate-name-row .batch-field-help { margin: 0; }
 /* Keep native checkbox semantics without the misleading decorative box. */
-#upgrade .upgrade-instance-checkbox { position: relative; flex-shrink: 0; margin: 0 16px 0 0; }
+#upgrade .upgrade-instance-checkbox { position: relative; flex-shrink: 0; margin: 0; grid-column: 1; }
 #upgrade .upgrade-instance-checkbox input { position: absolute; width: 1px; height: 1px; padding: 0; clip-path: inset(50%); overflow: hidden; }
-#upgrade .batch-select-state { min-width: 104px; min-height: 44px; display: grid; place-items: center; border: 1px solid var(--input); border-radius: 8px; padding: 8px; background: var(--card); color: var(--foreground); font-size: .875rem; }
-#upgrade .batch-select-state :is(.select-on,.select-some) { display: none; }
-#upgrade input:checked + .batch-select-state .select-on, #upgrade input:indeterminate + .batch-select-state .select-some { display: inline; }
-#upgrade input:checked + .batch-select-state .select-off, #upgrade input:indeterminate + .batch-select-state :is(.select-off,.select-on) { display: none; }
-#upgrade input:is(:checked,:indeterminate) + .batch-select-state { color: var(--primary-foreground); background: var(--primary); border-color: var(--primary); font-weight: 600; }
-#upgrade .batch-select-state .select-some::before { content: "\2013\00a0"; }
-#upgrade input:focus-visible + .batch-select-state { outline: 3px solid var(--ring); outline-offset: 3px; }
-#upgrade input:disabled + .batch-select-state { color: var(--muted-foreground); background: var(--secondary); cursor: not-allowed; }
-#upgrade .upgrade-instance-item { padding: 16px; }
-#upgrade .upgrade-instance-item.selected { background: var(--secondary); }
+/* Each row is one line of aligned columns. The row highlight, the bold service name, and the accent edge show what is selected. */
+#upgrade .upgrade-instance-item { display: grid; grid-template-columns: 1px minmax(6rem, 1fr) minmax(10rem, 2fr) minmax(5rem, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 6px 12px; }
+#upgrade .upgrade-instance-item.rotate-row { grid-template-columns: 1px minmax(6rem, 1fr) minmax(10rem, 2fr) minmax(5rem, 1fr) minmax(0, 3fr) auto; }
+#upgrade .upgrade-instance-info { display: contents; }
+#upgrade .upgrade-instance-service { grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
+#upgrade .upgrade-instance-item .upgrade-instance-id { grid-column: 3; min-width: 0; }
+#upgrade .upgrade-instance-name { margin-left: 8px; color: var(--muted-foreground); font-family: inherit; }
+#upgrade .upgrade-instance-plan { grid-column: 4; min-width: 0; color: var(--muted-foreground); overflow-wrap: anywhere; }
+#upgrade .upgrade-instance-item .rotate-chips { grid-column: 5; margin-top: 0; min-width: 0; }
+#upgrade .upgrade-instance-item .upgrade-instance-status { grid-column: 6; min-width: 0; }
+#upgrade .upgrade-instance-item:not(.rotate-row) .upgrade-instance-stemcell-container { grid-column: 5; margin-left: 0; padding-left: 0; }
+#upgrade .upgrade-instance-item:not(.rotate-row) .upgrade-instance-release-container { grid-column: 6; padding-left: 0; }
+#upgrade .upgrade-instance-item > .upgrade-instance-info > .rotate-row-reason { grid-column: 2 / -1; }
+#upgrade .upgrade-instance-item.selected { background: var(--secondary); box-shadow: inset 3px 0 var(--primary); }
+#upgrade .upgrade-instance-item.selected .upgrade-instance-service { font-weight: 600; color: var(--primary); }
+#upgrade .upgrade-instance-item:has(input:focus-visible) { outline: 3px solid var(--ring); outline-offset: -3px; }
 /* Review: scannable scope, impact, then optional detail and confirmation. */
 #upgrade .batch-review-facts { display: flex; flex-wrap: wrap; gap: 12px; padding: 0; border: 0; background: transparent; margin: 8px 0 28px; }
 #upgrade .batch-review-fact { display: grid; gap: 8px; min-width: 130px; flex: 1; padding: 16px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
@@ -309,9 +315,10 @@ body > footer p { margin: 0; }
  #upgrade .upgrade-mode-pane:not([hidden]) { display: grid; grid-template-columns: 1fr; }
  #upgrade .upgrade-targets-panel { padding: 16px; }
  #upgrade .batch-mode-panel { padding: 16px; }
+ #upgrade .upgrade-instance-item, #upgrade .upgrade-instance-item.rotate-row { grid-template-columns: 1px minmax(0, 1fr); row-gap: 2px; }
+ #upgrade .upgrade-instance-item.upgrade-instance-item :is(.upgrade-instance-service, .upgrade-instance-id, .upgrade-instance-plan, .rotate-chips, .upgrade-instance-status, .upgrade-instance-stemcell-container, .upgrade-instance-release-container) { grid-column: 2; }
+ #upgrade .upgrade-instance-item :is(.rotate-chips, .upgrade-instance-status):empty { display: none; }
  #upgrade .batch-mode-tabs button { flex: 1; padding-inline: 12px; }
- #upgrade .upgrade-instance-checkbox { margin-right: 12px; }
- #upgrade .batch-select-state { min-width: 76px; }
 }
 
 #upgrade .upgrade-targets-panel { padding: 0; border: 0; background: transparent; max-width: 1072px; overflow: visible; }
