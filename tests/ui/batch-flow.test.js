@@ -111,3 +111,35 @@ t('review presents a small selection without redundant cards or pagination',asyn
  expect(large.querySelectorAll('.batch-instance-name').length).toBe(1);
  }finally{w.close();}
 });
+
+t('upgrade options use System and Releases rows and an applied release summary',async()=>{
+ const {w,d}=await setup();try{
+ expect([...d.querySelectorAll('.batch-upgrade-options-table tbody th')].map(el=>el.textContent)).toEqual(['System','Releases']);
+ expect(d.querySelector('details.upgrade-advanced')).toBeNull();
+ const source=d.querySelector('.upgrade-advanced-releases');
+ source.innerHTML='<select id="upgrade-advrel-bpm" data-release-name="bpm"><option value="">Keep current</option><option value="1.4">1.4</option></select>';
+ source.querySelector('select').value='1.4';w.__T.syncAdvancedReleaseSummary();
+ expect(source.hidden).toBe(true);
+ expect(d.getElementById('batch-release-summary').textContent).toContain('bpm');
+ expect(d.getElementById('batch-release-summary').textContent).toContain('1.4');
+ d.querySelector('#batch-release-summary button').click();
+ expect(source.querySelector('select').value).toBe('');
+ }finally{w.close();}
+});
+
+t('release picker keeps drafts isolated until Apply and rejects stale versions',async()=>{
+ const {w,d}=await setup();try{
+ await sleep(30);
+ const source=d.querySelector('.upgrade-advanced-releases');
+ source.innerHTML='<select id="upgrade-advrel-bpm" data-release-name="bpm"><option value="">Keep current</option><option value="1.4">1.4</option><option value="1.5">1.5</option></select>';
+ const original=source.querySelector('select');original.value='1.4';w.__T.syncAdvancedReleaseSummary();
+ let pending=w.__T.openAdvancedReleasePicker();
+ let draft=d.querySelector('.batch-release-picker select');draft.value='1.5';draft.dispatchEvent(new w.Event('change'));
+ expect(original.value).toBe('1.4');d.querySelector('[data-dialog-role="cancel"]').click();await pending;expect(original.value).toBe('1.4');
+ pending=w.__T.openAdvancedReleasePicker();draft=d.querySelector('.batch-release-picker select');draft.value='1.5';draft.dispatchEvent(new w.Event('change'));
+ d.querySelector('[data-dialog-role="confirm"]').click();await pending;expect(original.value).toBe('1.5');
+ pending=w.__T.openAdvancedReleasePicker();draft=d.querySelector('.batch-release-picker select');draft.value='1.4';draft.dispatchEvent(new w.Event('change'));
+ original.querySelector('[value="1.4"]').remove();
+ d.querySelector('[data-dialog-role="confirm"]').click();await pending;expect(original.value).toBe('1.5');
+ }finally{w.close();}
+});

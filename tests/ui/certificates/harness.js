@@ -18,7 +18,7 @@ const html=fs.readFileSync(path.join(UI,'index.html'),'utf8').replace(/<script[\
 const EVIL='"><img src=x onerror=alert(1)><script>alert(2)</script>\'';
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const day=86400000, now=Date.now(), iso=(ms)=>new Date(ms).toISOString();
-const NAMES=['buildUpgradeFlowSummary','batchFlow','setBatchStep','showBatchReview','requestOperation','showConfirmDialog', 'CFRegistrationManager', 'renderServicesTemplate', 'renderBlacksmithTemplate','renderServiceDetail','renderBlacksmithOverview','setTheme','getInstanceStatusIcon','getInstanceStatusClass','taskDetailCache','decisionState','awaitingDecisionTaskIds','buildCertificateInstance','runDecision','holderDetails','upgradeTasks','buildDecisionPanel','buildRemediation','openRotateInstanceDialog','CertOverview','CertsFleet','readApiError','apiErrorText','renderUpgradeTaskList','renderTaskDetail','fetchUpgradeTasks','selectUpgradeTask','rerenderTaskPanel','renderPollStatus','initUpgradeTab','sendTaskControl',
+const NAMES=['openAdvancedReleasePicker','syncAdvancedReleaseSummary','buildUpgradeFlowSummary','batchFlow','setBatchStep','showBatchReview','requestOperation','showConfirmDialog', 'CFRegistrationManager', 'renderServicesTemplate', 'renderBlacksmithTemplate','renderServiceDetail','renderBlacksmithOverview','setTheme','getInstanceStatusIcon','getInstanceStatusClass','taskDetailCache','decisionState','awaitingDecisionTaskIds','buildCertificateInstance','runDecision','holderDetails','upgradeTasks','buildDecisionPanel','buildRemediation','openRotateInstanceDialog','CertOverview','CertsFleet','readApiError','apiErrorText','renderUpgradeTaskList','renderTaskDetail','fetchUpgradeTasks','selectUpgradeTask','rerenderTaskPanel','renderPollStatus','initUpgradeTab','sendTaskControl',
  'renderOperation','renderRotateInstances','refreshUpgradeInstanceList','updateUpgradeButton','renderUpgradeInstances','setupUpgradeInstanceHandlers','loadRotateInventory','rotateEligibleChips','rotateState','selectedUpgradeInstances','computeUpgradeHolders','rotateSelectVisible','rotateClearVisible','rotateSelectMatching','renderRotateSelectionLine','rotateSelection','setUpgradeTasks','setServiceInstances','rotateReviewList',
  'buildModeControls','selectedUpgradeInstances','updateOperationFooter','batchPatchBlock','startUpgrade','upgradeOperation','previewAndCreate','rotateErrorText','buildPreviewBody','rotateFooterLabel','renderRotateTargets','normalizeSerial','displaySerial','sameSerial','hasUndeployedVersion','renderServiceTesting','detectServiceFamily','LogSelectionManager','renderRedisInfoOperation'];
 function boot(opts={}){
@@ -27,6 +27,7 @@ function boot(opts={}){
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
   w.navigator.clipboard={writeText:()=>Promise.resolve()};
+  w.CSS=w.CSS||{escape:(x)=>String(x).replace(/[^\w-]/g,'\\$&')};
   w.HTMLElement.prototype.scrollIntoView=function(){};
   const errors=[]; const calls=[]; const alerts=[];
   w.alert=(m)=>alerts.push('alert:'+m); w.confirm=(m)=>{alerts.push('confirm:'+m);return true}; w.prompt=(m)=>{alerts.push('prompt:'+m);return 'x'};
@@ -67,6 +68,7 @@ function boot(){
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
   w.navigator.clipboard={writeText:(t)=>{w.__copied.push(t);return Promise.resolve();}};
   w.__copied=[];
+  w.CSS=w.CSS||{escape:(x)=>String(x).replace(/[^\w-]/g,'\\$&')};
   w.HTMLElement.prototype.scrollIntoView=function(){};
   const errors=[]; const calls=[];
   w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(String).join(' ')); w.console.warn=()=>{};

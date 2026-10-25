@@ -330,6 +330,7 @@
 
       // Set content
       dialog.classList.toggle('batch-review-dialog', Boolean(options.batchReview));
+      dialog.classList.toggle('batch-release-dialog', Boolean(options.body?.classList.contains('batch-release-picker')));
       titleEl.textContent = options.title || 'Confirm';
       const hasBody = Boolean(options.body);
       messageEl.textContent = options.message || (hasBody ? '' : 'Are you sure?');
@@ -412,6 +413,7 @@
 
       // Cleanup function
       function cleanup() {
+        dialog.classList.remove('batch-release-dialog');
         overlay.classList.remove('active');
         restoreBackground();
         cancelBtn.removeEventListener('click', handleCancel);
@@ -828,7 +830,7 @@
 
     tables.forEach(table => {
       // Skip if table already has sorting initialized
-      if (table.hasAttribute('data-sorting-initialized')) {
+      if (table.hasAttribute('data-sorting-initialized') || table.dataset.sortable === 'false') {
         return;
       }
 
@@ -3066,48 +3068,101 @@
 
   // Middle "Targets" panel: two stacked groups (Stemcell, Releases), each with a Target
   // (upgrade TO) and a Min floor filter. At least one target must be chosen.
-  const renderUpgradeTargets = () => {
-    return `
-      <div class="upgrade-target-group">
-        <h3>Operating system (stemcell)</h3><p class="batch-field-help">Choose the OS image version to deploy. Keep current leaves it unchanged.</p>
-        <div class="filter-row">
-          <label for="upgrade-stemcell-filter">Deploy version</label>
-          <select id="upgrade-stemcell-filter">
-            <option value="">— keep current —</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="upgrade-stemcell-floor">Minimum current version</label>
-          <select id="upgrade-stemcell-floor" aria-describedby="batch-stemcell-floor-help">
-            <option value="">No minimum</option>
-          </select>
-          <p class="batch-field-help" id="batch-stemcell-floor-help">Include instances already running this version or newer. This filters the selection; it does not change the target version.</p>
-        </div>
-      </div>
-      <div class="upgrade-target-group">
-        <h3>Service release</h3><p class="batch-field-help">Choose a service above to select its software release.</p>
-        <div class="filter-row">
-          <label for="upgrade-release-filter">Deploy version</label>
-          <select id="upgrade-release-filter" disabled title="Select a single service to choose a release">
-            <option value="">— keep current —</option>
-          </select>
-        </div>
-        <div class="filter-row">
-          <label for="upgrade-release-floor">Minimum current version</label>
-          <select id="upgrade-release-floor" aria-describedby="batch-release-floor-help" disabled title="Select a single service to filter by release">
-            <option value="">No minimum</option>
-          </select>
-          <p class="batch-field-help" id="batch-release-floor-help">Include instances already running this version or newer. Leave unset to include any current version.</p>
-        </div>
-        <details class="upgrade-advanced">
-          <summary>Advanced — other releases</summary>
-          <p class="batch-field-help">Each chosen release is upgraded only on instances whose deployment already uses it. Instances without it keep their current releases.</p>
-          <div class="upgrade-advanced-releases">
-            <div class="upgrade-advanced-empty">Loading the releases on the director...</div>
-          </div>
-        </details>
-      </div>
-    `;
+  const renderUpgradeTargets = () => `
+    <div class="batch-upgrade-options">
+      <table class="batch-upgrade-options-table" data-sortable="false">
+        <caption>Choose target versions. Leave a target unchanged to keep its current version.</caption>
+        <thead><tr><th scope="col">Component</th><th scope="col">Deploy version</th><th scope="col">Minimum current version <span class="batch-column-note">Optional filter</span></th></tr></thead>
+        <tbody>
+          <tr><th scope="row">System</th><td><select id="upgrade-stemcell-filter" aria-label="System deploy version"><option value="">— keep current —</option></select><span class="batch-cell-help">Operating system image (stemcell).</span></td>
+            <td><select id="upgrade-stemcell-floor" aria-label="System minimum current version" aria-describedby="batch-version-floor-help"><option value="">No minimum</option></select></td></tr>
+          <tr><th scope="row">Releases</th><td><select id="upgrade-release-filter" aria-label="Service release deploy version" disabled title="Select a single service to choose a release"><option value="">— keep current —</option></select><span class="batch-cell-help">The selected service’s primary release. Choose a service above to enable.</span></td>
+            <td><select id="upgrade-release-floor" aria-label="Release minimum current version" aria-describedby="batch-version-floor-help" disabled title="Select a single service to filter by release"><option value="">No minimum</option></select></td></tr>
+        </tbody>
+      </table>
+      <p id="batch-version-floor-help" class="batch-field-help">Minimum current version includes instances already running that version or newer. It filters eligible instances; it does not change the deploy version.</p>
+      <section class="batch-additional-releases" aria-labelledby="batch-additional-title">
+        <div class="batch-release-toolbar"><div><h3 id="batch-additional-title">Additional releases</h3><p>Choose other releases uploaded to the director. Each applies only to instances that already use it.</p></div><button type="button" id="batch-edit-releases" class="outline">Choose releases…</button></div>
+        <div id="batch-release-summary"></div>
+      </section>
+      <div class="upgrade-advanced-releases" hidden></div>
+    </div>`;
+
+  const syncAdvancedReleaseSummary = () => {
+    const host = document.getElementById('batch-release-summary');
+    if (!host) return;
+    const controls = Array.from(document.querySelectorAll('.upgrade-advanced-releases select'));
+    const chosen = controls.filter(control => control.value);
+    const edit = document.getElementById('batch-edit-releases');
+    edit.disabled = !controls.length;
+    edit.textContent = chosen.length ? `Edit releases (${chosen.length})…` : 'Choose releases…';
+    host.replaceChildren();
+    if (!chosen.length) {
+      host.appendChild(rotateEl('p','batch-field-help',controls.length ? 'No additional release changes.' : document.querySelector('.upgrade-advanced-empty')?.textContent || 'Loading available releases…'));
+      return;
+    }
+    const table = rotateEl('table','batch-release-summary-table');table.dataset.sortable='false';
+    table.innerHTML='<caption class="sr-only">Selected additional release targets</caption><thead><tr><th scope="col">Release</th><th scope="col">Deploy version</th><th scope="col">Action</th></tr></thead>';
+    const body = document.createElement('tbody');
+    chosen.forEach(control => {
+      const row = document.createElement('tr');
+      const name = rotateEl('th','',control.dataset.releaseName);name.scope='row';
+      const version=rotateEl('td','',control.value);const action=document.createElement('td');
+      const remove=rotateEl('button','outline small','Remove');remove.type='button';remove.setAttribute('aria-label',`Remove ${control.dataset.releaseName}`);
+      remove.addEventListener('click',()=>{control.value='';updateUpgradeButton();updateBatchFlow();document.getElementById('batch-edit-releases').focus();});
+      action.appendChild(remove);row.append(name,version,action);body.appendChild(row);
+    });
+    table.appendChild(body);host.appendChild(table);
+  };
+
+  const openAdvancedReleasePicker = async () => {
+    const source = Array.from(document.querySelectorAll('.upgrade-advanced-releases select'));
+    if (!source.length) return;
+    const service = document.getElementById('upgrade-service-filter').value;
+    const draft = new Map(source.map(control=>[control.dataset.releaseName,control.value]));
+    const body = rotateEl('div','batch-release-picker');
+    const toolbar=rotateEl('div','batch-release-picker-tools');
+    const searchLabel=rotateEl('label','','Find a release');
+    const search=document.createElement('input');search.type='search';search.placeholder='Search release names';search.id='batch-release-search';searchLabel.appendChild(search);
+    const selectedLabel=rotateEl('label','batch-release-selected-filter','');
+    const selectedOnly=document.createElement('input');selectedOnly.type='checkbox';selectedOnly.id='batch-release-selected-only';selectedLabel.append(selectedOnly,document.createTextNode('Selected only'));
+    const count=rotateEl('p','batch-field-help');count.setAttribute('role','status');
+    toolbar.append(searchLabel,selectedLabel);body.append(toolbar,count);
+    const table=rotateEl('table','batch-release-picker-table');table.dataset.sortable='false';
+    table.innerHTML='<caption class="sr-only">Available releases and target versions</caption><thead><tr><th scope="col">Release</th><th scope="col">Deploy version</th></tr></thead>';
+    const rows=document.createElement('tbody');table.appendChild(rows);body.appendChild(table);
+    const empty=rotateEl('p','batch-field-help','No releases match. Try another search or turn off Selected only.');body.appendChild(empty);
+    const pager=rotateEl('nav','batch-pagination');pager.setAttribute('aria-label','Release pages');
+    const previous=rotateEl('button','outline small','Previous');previous.type='button';
+    const pageLabel=rotateEl('span');const next=rotateEl('button','outline small','Next');next.type='button';pager.append(previous,pageLabel,next);body.appendChild(pager);
+    const pageSize=20;
+    body.insertBefore(pager,table);
+    let page=0;
+    const updateCount=()=>{count.textContent=`${Array.from(draft.values()).filter(Boolean).length} release targets selected. Unselected releases stay unchanged.`;};
+    const paint=()=>{
+      const query=search.value.trim().toLowerCase();
+      const matches=source.filter(control=>control.dataset.releaseName.toLowerCase().includes(query)&&(!selectedOnly.checked||draft.get(control.dataset.releaseName)));
+      page=Math.min(page,Math.max(0,Math.ceil(matches.length/pageSize)-1));rows.replaceChildren();
+      matches.slice(page*pageSize,(page+1)*pageSize).forEach(control=>{
+        const name=control.dataset.releaseName;const row=document.createElement('tr');const label=rotateEl('th','',name);label.scope='row';
+        const cell=document.createElement('td');const select=control.cloneNode(true);select.removeAttribute('id');select.removeAttribute('data-release-name');select.setAttribute('aria-label',`Deploy version for ${name}`);select.value=draft.get(name)||'';
+        select.addEventListener('change',()=>{draft.set(name,select.value);updateCount();});cell.appendChild(select);
+        if (select.disabled) cell.appendChild(rotateEl('span','batch-cell-help',select.title||'No uploaded versions available.'));
+        row.append(label,cell);rows.appendChild(row);
+      });
+      empty.hidden=matches.length>0;table.hidden=!matches.length;pager.hidden=matches.length<=pageSize;
+      previous.disabled=page===0;next.disabled=(page+1)*pageSize>=matches.length;
+      pageLabel.textContent=`Page ${page+1} of ${Math.max(1,Math.ceil(matches.length/pageSize))} · ${matches.length} releases`;updateCount();
+    };
+    search.addEventListener('input',()=>{page=0;paint();});selectedOnly.addEventListener('change',()=>{page=0;paint();});
+    previous.addEventListener('click',()=>{page--;paint();});next.addEventListener('click',()=>{page++;paint();});paint();
+    const answer=await showConfirmDialog({title:'Choose release versions',message:'Only instances already using a selected release will receive its target version. Applying these choices does not start an upgrade.',body,confirmText:'Apply choices',cancelText:'Cancel',icon:'info'});
+    if (!answer || !answer.confirmed) return;
+    const current=new Map(Array.from(document.querySelectorAll('.upgrade-advanced-releases select')).map(control=>[control.dataset.releaseName,control]));
+    const valid=document.getElementById('upgrade-service-filter').value===service&&Array.from(draft).every(([name,value])=>!value || (current.has(name)&&!current.get(name).disabled&&Array.from(current.get(name).options).some(option=>option.value===value)));
+    if (!valid) {window.Feedback.warning('Available releases changed while the picker was open. No choices were applied. Reopen the picker to review the current versions.',{toast:true});return;}
+    current.forEach((control,name)=>{control.value=draft.get(name)||'';});
+    updateUpgradeButton();updateBatchFlow();
   };
 
   // An instance's deployment name. An instance indexed before deployment names
@@ -3282,6 +3337,7 @@
 
   // Update the upgrade button state
   const updateUpgradeButton = () => {
+    syncAdvancedReleaseSummary();
     // Rotate and converge have their own footer, and never touch this button.
     if (upgradeOperation !== 'upgrade') return;
 
@@ -5372,6 +5428,7 @@
     // Render the Services (filters/selection) and Targets (stemcell/releases) panels
     servicesContainer.innerHTML = renderUpgradeServices();
     targetsContainer.innerHTML = renderUpgradeTargets();
+    document.getElementById('batch-edit-releases').addEventListener('click', openAdvancedReleasePicker);
     installOperationSelector();
     installBatchWorkspace();
     installBatchFlow();

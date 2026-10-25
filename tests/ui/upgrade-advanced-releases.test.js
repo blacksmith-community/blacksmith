@@ -27,7 +27,7 @@ t('with All services the Advanced section lists the director releases, sorted',a
  sels.forEach(s=>{expect(s.value).toBe('');expect(s.options[0].textContent).toBe("Don't change");});
  expect([...sels[2].options].map(o=>o.value)).toEqual(['','3.0','2.0']);
  expect(d.querySelector('.upgrade-advanced-releases').textContent).not.toContain('Select a service');
- expect(d.querySelector('.upgrade-advanced > .batch-field-help').textContent).toContain('only on instances whose deployment already uses it');
+ expect(d.querySelector('.batch-release-toolbar p').textContent).toContain('only to instances that already use it');
  }finally{w.close();}
 });
 t('with one service its own release is left out',async()=>{

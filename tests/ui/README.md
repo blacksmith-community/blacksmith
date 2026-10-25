@@ -90,3 +90,10 @@ After `batch-flow-browser-check.js`, run `batch-review-browser-check.js` to
 verify the single-instance review at desktop and mobile sizes. It checks
 that pagination is hidden for a single page, text uses the available width,
 and the action bar stays compact while retaining 44px button targets.
+
+Run `upgrade-options-browser-check.js` for the System/Releases table and
+additional-release picker. It uses 153 uploaded releases and checks bounded
+pages, search, draft isolation, Apply/Cancel/Escape, summary removal, and
+responsive layouts without creating tasks. Inject axe-core afterward and run
+`upgrade-options-accessibility-browser-check.js` for both screens in both
+themes at desktop/mobile widths.

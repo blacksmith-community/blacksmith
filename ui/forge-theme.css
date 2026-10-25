@@ -381,3 +381,46 @@ body > footer p { margin: 0; }
 #upgrade .batch-flow-review .batch-review-note { white-space: normal; }
 
 #upgrade.tab-panel { padding-bottom: 0; }
+
+/* Upgrade targets are rows; additional release selection has its own dialog. */
+#upgrade .upgrade-targets-panel:has(.batch-upgrade-options:not([hidden])) { max-width: none; }
+#upgrade .upgrade-mode-pane:not([hidden]):has(.batch-upgrade-options) { display: block; }
+#upgrade .batch-upgrade-options { width: 100%; }
+#upgrade .batch-upgrade-options table, .batch-release-picker table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+#upgrade .batch-upgrade-options-table caption { text-align: left; margin-bottom: 12px; color: var(--muted-foreground); font-size: .875rem; }
+#upgrade .batch-upgrade-options-table th:first-child { width: 20%; }
+#upgrade .batch-upgrade-options :is(th,td), .batch-release-picker :is(th,td) { padding: 12px 16px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--border); }
+#upgrade .batch-upgrade-options thead th, .batch-release-picker thead th { color: var(--muted-foreground); font-size: .8125rem; font-weight: 600; background: var(--secondary); }
+#upgrade .batch-upgrade-options select, .batch-release-picker select { width: 100%; min-width: 0; min-height: 44px; }
+.batch-cell-help, .batch-column-note { display: block; font-size: .8125rem; font-weight: 400; color: var(--muted-foreground); line-height: 1.5; margin-top: 6px; }
+#upgrade #batch-version-floor-help { max-width: none; margin: 12px 0 24px; }
+#upgrade .batch-release-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+#upgrade .batch-release-toolbar h3 { margin: 0 0 6px; font-size: 1rem; }
+#upgrade .batch-release-toolbar p { margin: 0; color: var(--muted-foreground); font-size: .875rem; }
+#upgrade .batch-release-toolbar button { flex-shrink: 0; min-height: 44px; }
+#upgrade .batch-additional-releases { border-top: 1px solid var(--border); padding-top: 20px; }
+#upgrade .batch-release-summary-table th:last-child { width: 120px; }
+.batch-release-dialog { width: min(960px,calc(100vw - 32px)); max-width: 960px; }
+.batch-release-dialog .dialog-modal-icon { display: none; }
+.batch-release-dialog .dialog-modal-body { overflow-y: auto; min-height: 0; }
+.batch-release-picker-tools { display: flex; align-items: end; gap: 16px; flex-wrap: wrap; margin: 8px 0 12px; }
+.batch-release-picker-tools > label:first-child { flex: 1 1 260px; display: grid; gap: 6px; }
+.batch-release-picker input[type="search"] { min-height: 44px; width: 100%; }
+.batch-release-picker .batch-release-selected-filter { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+.batch-release-picker .batch-release-selected-filter input { appearance: auto; width: 18px; height: 18px; accent-color: var(--primary); }
+.batch-release-picker .batch-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
+.batch-release-picker .batch-field-help { color: var(--muted-foreground); font-size: .875rem; margin: 0 0 12px; }
+@media(max-width:640px) {
+ #upgrade .batch-upgrade-options-table thead { display: none; }
+ #upgrade .batch-upgrade-options-table :is(tbody,tr,th,td) { display: block; width: 100%; }
+ #upgrade .batch-upgrade-options-table tbody th { width: 100%; padding-top: 16px; background: var(--secondary); }
+ #upgrade .batch-upgrade-options-table td:nth-child(2)::before { content: 'Deploy version'; display: block; margin-bottom: 6px; font-size: .875rem; font-weight: 600; }
+ #upgrade .batch-upgrade-options-table td:nth-child(3)::before { content: 'Minimum current version (optional)'; display: block; margin-bottom: 6px; font-size: .875rem; font-weight: 600; }
+ .batch-release-picker :is(th,td) { padding: 10px 8px; }
+ .batch-release-picker-tools { gap: 8px; }
+}
+
+.batch-release-picker .batch-pagination { padding: 8px 0 12px; }
+.batch-release-picker-tools { position: sticky; top: 0; background: var(--background); padding-bottom: 8px; z-index: 2; }
+
+#upgrade .batch-release-toolbar h3 { color: var(--foreground); }
