@@ -135,7 +135,7 @@ var (
 	// CreateTask, which builds upgrades only.
 	ErrCertificateTaskKind = errors.New("certificate tasks are created through CreateCertificateTask")
 	// ErrInvalidTaskKind names a task kind the manager does not know.
-	ErrInvalidTaskKind = errors.New("invalid task kind: it must be upgrade or certificates")
+	ErrInvalidTaskKind = errors.New("invalid task kind: it must be upgrade, certificates, or command")
 )
 
 // Manager manages upgrade tasks.
@@ -2972,6 +2972,7 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 	copied.StartedAt = copyTime(task.StartedAt)
 	copied.CompletedAt = copyTime(task.CompletedAt)
 	copied.Certificates = task.Certificates.Clone()
+	copied.Command = task.Command.clone()
 
 	if task.Instances != nil {
 		copied.Instances = make([]InstanceUpgrade, len(task.Instances))
@@ -2982,6 +2983,7 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 			instance.StartedAt = copyTime(instance.StartedAt)
 			instance.CompletedAt = copyTime(instance.CompletedAt)
 			instance.Certificates = instance.Certificates.Clone()
+			instance.Command = instance.Command.clone()
 			instance.ApprovedAdditional = slices.Clone(instance.ApprovedAdditional)
 			copied.Instances[i] = instance
 		}

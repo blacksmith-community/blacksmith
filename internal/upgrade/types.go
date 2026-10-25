@@ -95,6 +95,9 @@ type InstanceUpgrade struct {
 	// Certificates is the instance's rotation record, and is set on a
 	// certificate task only.
 	Certificates *InstanceRotation `json:"certificates,omitempty"`
+	// Command is the instance's command record, and is set on a command
+	// task only.
+	Command *InstanceCommand `json:"command,omitempty"`
 	// ApprovedAdditional holds, for an instance that had a divergence
 	// record when its upgrade was created, the variables the upgrade
 	// preview showed its deploy would apply at their latest versions. It
@@ -133,6 +136,9 @@ type UpgradeTask struct {
 	// Certificates is what a certificate task was asked to do, and is nil
 	// on an upgrade.
 	Certificates *CertificateTaskSpec `json:"certificates,omitempty"`
+	// Command is what a command task was asked to do, and is nil on every
+	// other kind.
+	Command *CommandTaskSpec `json:"command,omitempty"`
 	// ClientRequestID is the ID the client sent with the create request,
 	// so a retried request finds the task it already made.
 	ClientRequestID string `json:"client_request_id,omitempty"`
@@ -231,6 +237,8 @@ type TaskSummary struct {
 	// decisions can be resolved.
 	AwaitingDecisionCount int       `json:"awaiting_decision_count"`
 	CreatedAt             time.Time `json:"created_at"`
+	// Command holds a command task's settings, without the command text.
+	Command *CommandSummary `json:"command,omitempty"`
 }
 
 // awaitingDecisionCount counts the instances with a pending decision.
@@ -268,6 +276,13 @@ func (t *UpgradeTask) ToSummary() TaskSummary {
 
 	if summary.Kind == TaskKindCertificates {
 		summary.Target = certificateTarget(t)
+
+		return summary
+	}
+
+	if summary.Kind == TaskKindCommand {
+		summary.Target = commandTarget(t)
+		summary.Command = commandSummary(t.Command)
 
 		return summary
 	}

@@ -13,11 +13,20 @@ import (
 // each task's record is saved under it by the task's ID.
 const certificateTasksVaultPath = "certificate-tasks"
 
+// commandTasksVaultPath is the index of the command tasks, and each
+// task's record is saved under it by the task's ID.
+const commandTasksVaultPath = "command-tasks"
+
 // tasksIndexPath returns the index a task of the kind is saved under.
 // Upgrades keep the index they have always had.
 func tasksIndexPath(kind TaskKind) string {
-	if kind == TaskKindCertificates {
+	switch kind {
+	case TaskKindCertificates:
 		return certificateTasksVaultPath
+	case TaskKindCommand:
+		return commandTasksVaultPath
+	case TaskKindUpgrade:
+		return upgradeTasksVaultPath
 	}
 
 	return upgradeTasksVaultPath

@@ -16,6 +16,8 @@ const (
 	TaskKindUpgrade TaskKind = "upgrade"
 	// TaskKindCertificates rotates certificates.
 	TaskKindCertificates TaskKind = "certificates"
+	// TaskKindCommand runs a command on the nodes of service instances.
+	TaskKindCommand TaskKind = "command"
 )
 
 // KindOrDefault returns the task's kind, reading an empty kind as an

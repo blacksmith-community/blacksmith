@@ -21,6 +21,7 @@ type HolderKind string
 const (
 	KindUpgrade          HolderKind = "upgrade"
 	KindCertificates     HolderKind = "certificates"
+	KindCommand          HolderKind = "command"
 	KindConverge         HolderKind = "converge"
 	KindProvision        HolderKind = "provision"
 	KindUpdate           HolderKind = "update"
