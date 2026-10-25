@@ -790,3 +790,12 @@ body > header .theme-toggle { flex-shrink: 0; white-space: nowrap; }
 }
 
 :root[data-contrast="high"] :is(body,button,input,select,textarea,a) { transition: none; }
+
+#blacksmith .entity-technical .service-info-table { table-layout: auto; }
+#blacksmith .entity-technical .service-info-table th.info-key { width: 12rem; white-space: normal; }
+#blacksmith .entity-technical .info-value { width: auto; max-width: none; }
+#blacksmith .entity-technical .copy-wrapper { display: flex; align-items: flex-start; gap: 8px; }
+#blacksmith .entity-technical .copy-wrapper > span { min-width: 0; overflow-wrap: anywhere; }
+#blacksmith .entity-technical .entity-copy { flex-shrink: 0; }
+
+@media (max-width: 540px) { #blacksmith .entity-technical .service-info-table th.info-key { width: 8rem; } }
