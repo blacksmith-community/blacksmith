@@ -23,6 +23,9 @@ var (
 	ErrBOSHPasswordNotSet         = errors.New("BOSH password is not set")
 	ErrBOSHRequestTimeoutNegative = errors.New("bosh.request_timeout must not be negative")
 	ErrBOSHTaskWatchMaxNegative   = errors.New("bosh.task_watch_max must not be negative")
+	// ErrBOSHDirectorWorkersTooFew is the error a bosh.director_workers of 1 or
+	// less loads with, other than 0.
+	ErrBOSHDirectorWorkersTooFew = errors.New("bosh.director_workers must be at least 2")
 	// ErrVMMonitoringTimeoutNegative is the error a negative
 	// vm_monitoring.timeout loads with.
 	ErrVMMonitoringTimeoutNegative = errors.New("vm_monitoring.timeout must not be negative")
@@ -52,6 +55,7 @@ type Config struct {
 	Forges       ForgesConfig       `yaml:"forges"`
 	CredHub      CredHubConfig      `yaml:"credhub"`
 	Certificates CertificatesConfig `yaml:"certificates"`
+	Commands     CommandsConfig     `yaml:"commands"`
 }
 
 // Sweep modes for the CredHub orphan sweep.
@@ -330,6 +334,7 @@ type BOSHConfig struct {
 	ConnectionTimeout   int       `yaml:"connection_timeout"`    // Timeout waiting for connection slot (seconds)
 	RequestTimeout      int       `yaml:"request_timeout"`       // Timeout for one director HTTP request (seconds); 0 means 60
 	TaskWatchMax        int       `yaml:"task_watch_max"`        // How long a lost job-state answer holds its slot, and how long a task is followed while reads fail (seconds); 0 means 21600
+	DirectorWorkers     int       `yaml:"director_workers"`      // How many workers the director has; 0 means 4
 	SSH                 SSHConfig `yaml:"ssh,omitempty"`         // Deprecated: Use top-level SSH config instead
 }
 
@@ -572,6 +577,12 @@ func setBOSHDefaults(config *Config) error {
 
 	if config.BOSH.TaskWatchMax == 0 {
 		config.BOSH.TaskWatchMax = defaultBOSHTaskWatchMax
+	}
+
+	// The director's worker count bounds how many commands run at once, and
+	// that bound must be at least 1 and strictly below the count.
+	if config.BOSH.DirectorWorkers != 0 && config.BOSH.DirectorWorkers < 2 {
+		return fmt.Errorf("%w: it is %d, and it must be 2 or more, or 0 for the default of %d", ErrBOSHDirectorWorkersTooFew, config.BOSH.DirectorWorkers, defaultDirectorWorkers)
 	}
 
 	return nil
