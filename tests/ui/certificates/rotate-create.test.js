@@ -126,11 +126,11 @@ t('rotate preview and create', async () => {
   createAnswers=[];
   const bigBefore=posts(/"kind":"certificates"/).length;
   d.getElementById('rotate-preview').click(); await waitDialog();
-  ok(!!dlg().querySelector('.dialog-modal-ack-input')&&/Type "rotate"/.test(dlg().textContent),'11 instances require typing rotate');
+  ok(!!dlg().querySelector('.dialog-modal-ack-input')&&/Type redeploy to continue/.test(dlg().textContent),'11 instances require typing redeploy');
   confirmBtn().click(); await sleep(30);
   ok(dlg().classList.contains('active')&&posts(/"kind":"certificates"/).length===bigBefore,'confirm without typing does not proceed');
-  dlg().querySelector('.dialog-modal-ack-input').value='rotate'; confirmBtn().click(); await sleep(80);
-  ok(posts(/"kind":"certificates"/).length===bigBefore+1,'typing rotate proceeds');
+  dlg().querySelector('.dialog-modal-ack-input').value='redeploy'; confirmBtn().click(); await sleep(80);
+  ok(posts(/"kind":"certificates"/).length===bigBefore+1,'typing redeploy proceeds');
   // exactly 10 does not
   previewAnswer=()=>({status:200,body:{preview_id:'pv-ten',instances:Array.from({length:10},(_,i)=>pvInst('inst-'+i)),warnings:[]}});
   sel.set('inst-valkey',new Set([K])); d.getElementById('rotate-select-visible').click();

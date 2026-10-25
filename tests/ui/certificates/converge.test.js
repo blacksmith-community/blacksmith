@@ -18,7 +18,8 @@ t('converge preview and create', async () => {
   const sel=d.getElementById('upgrade-stemcell-filter'); const opt=d.createElement('option'); opt.value='ubuntu-noble/1.2'; opt.textContent='x'; sel.appendChild(opt); sel.value='ubuntu-noble/1.2';
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
   const waitDialog=async()=>{ for(let i=0;i<60;i++){ if(d.querySelector('#dialog-modal-overlay.active')) return true; await sleep(10);} return false; };
-  const confirmBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]');
+  // A diverged upgrade asks for the typed word, so the helper types it when the field exists.
+  const confirmBtn=()=>{ const ack=d.querySelector('#dialog-modal-overlay .dialog-modal-ack-input'); if(ack) ack.value='upgrade'; return d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]'); };
   const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
   const dlgText=()=>d.querySelector('#dialog-modal-overlay').textContent;
   const run=async(n)=>{ T.selectedUpgradeInstances.clear(); T.selectedUpgradeInstances.add('inst-1'); const p=T.startUpgrade(); await waitDialog(); confirmBtn().click(); /* name prompt */ return p; };
@@ -43,6 +44,7 @@ t('converge preview and create', async () => {
   const nBefore=posts(/"instance_ids"/).length;
   p=T.startUpgrade(); await waitDialog(); confirmBtn().click(); await sleep(100);
   ok(d.querySelector('#dialog-modal-overlay.active')&&/not converged/.test(dlgText()),'confirm dialog opens for a diverged instance');
+  ok(/Type upgrade to continue/.test(dlgText()),'a diverged upgrade asks for the word upgrade');
   ok(dlgText().includes('2026-10-21 14:00 UTC')&&!dlgText().includes('2026-10-21T14')&&dlgText().includes(EVIL)&&dlgText().includes('/s/other_crt')&&dlgText().includes('/s/a_crt')&&d.querySelectorAll('#dialog-modal-overlay img,#dialog-modal-overlay script').length===0,'dialog names the instance and its additional variables, hostile inert');
   ok(posts(/"instance_ids"/).length===nBefore+1,'no create before confirm (preview only)');
   cancelBtn().click(); await p; await sleep(30);

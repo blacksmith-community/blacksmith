@@ -63,7 +63,7 @@ t('patch in place controls', async () => {
   ok(!!ack,'patch confirm requires typing even for one instance'); confirmBtn().click(); await sleep(40);
   ok(posts(/"kind":"certificates"/).length===0&&dlg().classList.contains('active'),'confirm without the word creates nothing');
   // Enter on Cancel never submits
-  cancelBtn().focus(); ack.value='rotate'; ack.dispatchEvent(new w.Event('input',{bubbles:true}));
+  cancelBtn().focus(); ack.value='patch in place'; ack.dispatchEvent(new w.Event('input',{bubbles:true}));
   cancelBtn().dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})); await sleep(60);
   ok(posts(/"kind":"certificates"/).length===0,'Enter on Cancel creates nothing');
   if(dlg().classList.contains('active')) cancelBtn().click(); await sleep(30);
@@ -72,7 +72,7 @@ t('patch in place controls', async () => {
   d.getElementById('rotate-preview').click(); await waitDialog();
   const ack2=dlg().querySelector('.dialog-modal-ack-input'); ack2.value='nope'; ack2.dispatchEvent(new w.Event('input',{bubbles:true}));
   confirmBtn().click(); await sleep(40); ok(posts(/"kind":"certificates"/).length===0&&dlg().classList.contains('active'),'wrong word does not submit');
-  ack2.value='rotate'; ack2.dispatchEvent(new w.Event('input',{bubbles:true}));
+  ack2.value='patch in place'; ack2.dispatchEvent(new w.Event('input',{bubbles:true}));
     confirmBtn().click(); await sleep(100);
   ok(posts(/"kind":"certificates"/).length===1,'patch create posted after typing');
 

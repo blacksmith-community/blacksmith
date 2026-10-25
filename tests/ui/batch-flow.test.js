@@ -30,9 +30,9 @@ t('inline review requires acknowledgment and cancels when returning to edit',asy
  const {w,d}=await setup();try{
  const F=w.__T.batchFlow;F.step=3;
  const body=d.createElement('p');body.textContent='Server preview';
- const pending=w.__T.showBatchReview({title:'Review rotation',body,requireText:'rotate',confirmText:'Rotate and redeploy'},F.revision);
+ const pending=w.__T.showBatchReview({title:'Review rotation',body,requireText:'redeploy',confirmText:'Rotate and redeploy'},F.revision);
  expect(d.getElementById('batch-flow-next').disabled).toBe(true);
- const ack=d.getElementById('batch-flow-ack');ack.value='rotate';ack.dispatchEvent(new w.Event('input',{bubbles:true}));
+ const ack=d.getElementById('batch-flow-ack');ack.value='redeploy';ack.dispatchEvent(new w.Event('input',{bubbles:true}));
  expect(d.getElementById('batch-flow-next').disabled).toBe(false);
  w.__T.setBatchStep(2);expect(await pending).toBe(false);
  expect(await w.__T.showBatchReview({title:'Stale'},F.revision-1)).toBe(false);
@@ -42,10 +42,10 @@ t('inline review requires acknowledgment and cancels when returning to edit',asy
 t('a refreshed server preview requires a new explicit confirmation',async()=>{
  const {w,d}=await setup();try{
  const F=w.__T.batchFlow;F.step=3;
- const first=w.__T.showBatchReview({title:'First preview',requireText:'rotate',confirmText:'Rotate'},F.revision);
- const ack=d.getElementById('batch-flow-ack');ack.value='rotate';ack.dispatchEvent(new w.Event('input'));
+ const first=w.__T.showBatchReview({title:'First preview',requireText:'redeploy',confirmText:'Rotate'},F.revision);
+ const ack=d.getElementById('batch-flow-ack');ack.value='redeploy';ack.dispatchEvent(new w.Event('input'));
  d.getElementById('batch-flow-next').click();expect((await first).confirmed).toBe(true);expect(F.submitting).toBe(true);
- const refreshed=w.__T.showBatchReview({title:'Updated preview',requireText:'rotate',confirmText:'Rotate'},F.revision);
+ const refreshed=w.__T.showBatchReview({title:'Updated preview',requireText:'redeploy',confirmText:'Rotate'},F.revision);
  expect(F.submitting).toBe(false);expect(d.getElementById('batch-flow-ack').value).toBe('');expect(d.getElementById('batch-flow-next').disabled).toBe(true);
  w.__T.setBatchStep(2);expect(await refreshed).toBe(false);
  }finally{w.close();}

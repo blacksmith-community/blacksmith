@@ -1,6 +1,21 @@
 (function (document, window) {
   'use strict';
 
+  // The typed confirmation names the action itself. Two spellings of the
+  // word match when they agree after trimming, folding case, and collapsing
+  // runs of spaces.
+  const normalizeConfirmText = (value) => String(value == null ? '' : value).trim().replace(/\s+/g, ' ').toLowerCase();
+  const confirmWordMatches = (typed, word) => normalizeConfirmText(typed) === normalizeConfirmText(word);
+  const confirmWordLabel = (label, before, word, after) => {
+    label.textContent = '';
+    label.appendChild(document.createTextNode(before));
+    const strong = document.createElement('strong');
+    strong.className = 'confirm-word';
+    strong.textContent = String(word);
+    label.appendChild(strong);
+    label.appendChild(document.createTextNode(after));
+  };
+
   // SSH Terminal Configuration State
   let sshTerminalConfig = { enabled: true, message: '' };
   
@@ -258,7 +273,8 @@
 
     if (options.requireText) {
       const wrap = make('div', 'dialog-modal-ack');
-      const label = make('label', 'dialog-modal-ack-label', `Type "${options.requireText}" to continue`);
+      const label = make('label', 'dialog-modal-ack-label');
+      confirmWordLabel(label, 'Type ', normalizeConfirmText(options.requireText), ' to continue');
       label.setAttribute('for', 'dialog-modal-ack-input');
       const input = make('input', 'dialog-modal-input dialog-modal-ack-input');
       input.type = 'text';
@@ -433,8 +449,8 @@
 
         if (options.requireText) {
           text = extras.ackInput.value.trim();
-          if (text !== String(options.requireText)) {
-            problems.push(`Type "${options.requireText}" in the field to continue.`);
+          if (!confirmWordMatches(text, options.requireText)) {
+            problems.push(`Type "${normalizeConfirmText(options.requireText)}" in the field to continue.`);
             focusTarget = focusTarget || extras.ackInput;
           }
         }
@@ -2753,11 +2769,11 @@
     const issue = step === 1 ? batchOptionIssue() : step === 2 ? batchInstanceIssue() : '';
     const review = batchFlow.review;
     const needsWord = review?.options.requireText;
-    const acknowledged = !needsWord || document.getElementById('batch-flow-ack')?.value.trim() === String(needsWord);
+    const acknowledged = !needsWord || confirmWordMatches(document.getElementById('batch-flow-ack')?.value, needsWord);
     next.textContent = batchFlow.submitting ? 'Starting…' : batchFlow.loading ? 'Preparing review…' : step === 3 ? (review?.options.confirmText || 'Refresh review') : ['Next: Options','Next: Instances','Review operation'][step];
     next.disabled = batchFlow.submitting || batchFlow.loading || Boolean(issue) || (step === 3 && !acknowledged);
     next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
-    const helpText = issue || (step === 3 && needsWord && !acknowledged ? `Type ${needsWord} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
+    const helpText = issue || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
     if (help.textContent !== helpText) help.textContent = helpText;
     document.getElementById('batch-activity').disabled = batchFlow.submitting;
@@ -2818,7 +2834,8 @@
     }
     if (options.requireText) {
       host.appendChild(rotateEl('h3','batch-review-section-title','Confirm this operation'));
-      const label = rotateEl('label', 'batch-ack-label', `Type ${options.requireText} to confirm`);
+      const label = rotateEl('label', 'batch-ack-label');
+      confirmWordLabel(label, 'Type ', normalizeConfirmText(options.requireText), ' to confirm');
       const input = document.createElement('input'); input.id = 'batch-flow-ack'; input.autocomplete = 'off'; input.spellcheck = false;
       input.addEventListener('input', updateBatchFlow); label.appendChild(input); host.appendChild(label);
     }
@@ -4417,13 +4434,15 @@
   // =====================================================
 
   const PREVIEW_EXPIRED_NOTE = 'The state changed since the preview, so here is a fresh one.';
-  const ROTATE_CONFIRM_WORD = 'rotate';
-  const ROTATE_TYPED_THRESHOLD = 10;
+  const TYPED_CONFIRM_THRESHOLD = 10;
   const ROTATE_MODE_LABELS = {
     redeploy: 'Redeploy',
     patch: 'Patch in place',
     converge: 'Converge'
   };
+  const UPGRADE_CONFIRM_WORD = 'upgrade';
+  // The word to type is the action's own label, so the two cannot drift apart.
+  const rotateConfirmWord = (mode) => String(ROTATE_MODE_LABELS[mode] || mode).toLowerCase();
   const PATCH_WARNING = 'Temporary repair. BOSH can restore the old certificate until this instance converges, for example when it recreates or resurrects a VM.';
   const PATCH_PREREQUISITE = 'Before you patch, make sure nobody runs director commands against the instance while the patch runs.';
   const PATCH_NOTE = 'Temporary repair: BOSH can restore the old certificate';
@@ -4895,7 +4914,7 @@
         danger: mode === 'patch',
         icon: 'warning',
         // A patch always asks for the typed word, because it is a temporary repair.
-        requireText: mode === 'patch' || included.length > ROTATE_TYPED_THRESHOLD ? ROTATE_CONFIRM_WORD : undefined
+        requireText: mode === 'patch' || included.length > TYPED_CONFIRM_THRESHOLD ? rotateConfirmWord(mode) : undefined
       });
       if (!answer || (answer !== true && !answer.confirmed)) return { ok: false, cancelled: true };
 
@@ -6406,7 +6425,7 @@
           danger: mode === 'patch',
           icon: 'warning',
           // A patch is a temporary repair, so approving it asks for the word.
-          requireText: mode === 'patch' ? ROTATE_CONFIRM_WORD : undefined
+          requireText: mode === 'patch' ? rotateConfirmWord(mode) : undefined
         });
         return confirmedAnswer(answer)
           ? { verb: 'approve', body: { preview_id: preview.preview_id } }
@@ -7220,7 +7239,7 @@
 
         const diverged = Array.isArray(preview && preview.diverged) ? preview.diverged.filter(Boolean) : [];
         const createBody = { ...requestBody };
-        if (diverged.length > 0 || flowReview) {
+        if (diverged.length > 0 || flowReview || instanceIds.length > TYPED_CONFIRM_THRESHOLD) {
           const body = flowReview ? buildUpgradeFlowSummary(instanceIds, targetParts) : undefined;
           const answer = await (flowReview ? options => showBatchReview(options, reviewRevision) : showConfirmDialog)({
             body,
@@ -7229,7 +7248,9 @@
             details: buildUpgradeDivergedDetails(diverged),
             confirmText: 'Upgrade',
             cancelText: 'Cancel',
-            danger: true
+            danger: true,
+            // Diverged instances always ask, and so does a large upgrade.
+            requireText: diverged.length > 0 || instanceIds.length > TYPED_CONFIRM_THRESHOLD ? UPGRADE_CONFIRM_WORD : undefined
           });
           if (!answer || (answer !== true && !answer.confirmed)) return;
           if (diverged.length) createBody.upgrade_preview_id = preview.id;

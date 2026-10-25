@@ -102,9 +102,10 @@ t('decision panels', async () => {
     btn(app,'preview').click(); await waitDialog();
     const ackA=d.querySelector('#dialog-modal-overlay .dialog-modal-ack-input');
     ok(!!ackA&&confirmBtn().classList.contains('dialog-modal-btn-danger'),'patch approve requires the typed word');
+    ok(d.querySelector('#dialog-modal-overlay .dialog-modal-ack-label').textContent==='Type patch in place to continue'&&d.querySelector('#dialog-modal-overlay .dialog-modal-ack-label strong').textContent==='patch in place','patch approve asks for patch in place');
     confirmBtn().click(); await sleep(40);
     ok(posts().filter(c=>/\/approve( |$)/.test(c)).length===nA&&d.querySelector('#dialog-modal-overlay.active'),'patch approve without the word posts nothing');
-    ackA.value='rotate'; ackA.dispatchEvent(new w.Event('input',{bubbles:true})); confirmBtn().click(); await sleep(80);
+    ackA.value='patch in place'; ackA.dispatchEvent(new w.Event('input',{bubbles:true})); confirmBtn().click(); await sleep(80);
     ok(posts().filter(c=>/\/approve( |$)/.test(c)).length===nA+1,'patch approve posts after the word');
     previewResp=null; }
   T.renderTaskDetail(mkTask());
