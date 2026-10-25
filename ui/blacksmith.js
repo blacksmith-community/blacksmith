@@ -4455,7 +4455,7 @@
   const PREVIEW_WHAT = {
     redeploy: 'BOSH rolls the VMs of each instance through its update block, with canaries and drains.',
     patch: 'We swap the certificate files over SSH, and the affected processes restart under monit, one VM at a time.',
-    converge: 'A redeploy applies the patched values for good.'
+    converge: 'A redeploy applies the patched values as permanent.'
   };
   const PREVIEW_GATE_CLAUSE = 'A failed health gate pauses the task.';
   const PREVIEW_POLICY = {
@@ -4535,13 +4535,13 @@
       : previewBadge(variable.days_left));
     item.appendChild(top);
     const technical = rotateEl('details', 'rotate-preview-technical');
-    technical.appendChild(rotateEl('summary', '', 'Certificate path'));
+    technical.appendChild(rotateEl('summary', '', 'Certificate CredHub path'));
     technical.appendChild(previewPathNode(variable.name));
     const copy = rotateEl('button', 'copy-btn-inline rotate-preview-copy', '');
     copy.type = 'button';
     copy.innerHTML = COPY_ICON_SVG;
-    copy.setAttribute('aria-label', 'Copy certificate path');
-    copy.title = 'Copy certificate path';
+    copy.setAttribute('aria-label', 'Copy certificate CredHub path');
+    copy.title = 'Copy certificate CredHub path';
     copy.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(String(variable.name || ''));

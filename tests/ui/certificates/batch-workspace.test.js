@@ -80,7 +80,7 @@ t('review paginates the fleet and hides copyable technical paths', async () => {
     const path = body.querySelector('.rotate-preview-path');
     expect(path.closest('details').open).toBe(false);
     const copyPath = path.parentElement.querySelector('button');
-    expect(copyPath.getAttribute('aria-label')).toBe('Copy certificate path');
+    expect(copyPath.getAttribute('aria-label')).toBe('Copy certificate CredHub path');
     expect(copyPath.querySelector('svg')).not.toBeNull();
     expect(copyPath.textContent.trim()).toBe('');
   } finally { w.close(); }
