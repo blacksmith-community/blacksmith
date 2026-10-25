@@ -48,6 +48,7 @@ t('the BOSH configs list link shows the config and its versions', async () => {
     w.showConfigVersions('cloud', 'default', ID);
     await sleep(150);
     expectOverview(d);
-    expect(d.querySelectorAll('#config-versions-list .version-item').length).toBe(1);
+    expect(d.querySelectorAll('#config-versions-list button.version-item').length).toBe(1);
+    expect(d.querySelector('.version-item').getAttribute('aria-pressed')).toBe('true');
   } finally { w.close(); }
 });

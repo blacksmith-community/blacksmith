@@ -7,9 +7,10 @@ async page => {
   const violations=await page.evaluate(async()=>(await axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa','wcag22aa']}})).violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})));
   results.push({mode,step,theme,width,violations});
  };
- for(const theme of ['light','dark']) for(const width of [1440,390]){
+ for(const theme of ['light','dark','high-contrast-light','high-contrast-dark']) for(const width of [1440,390]){
   await page.setViewportSize({width,height:900});
-  await page.evaluate(t=>{document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;},theme);
+  await page.evaluate(t=>{window.blacksmithTheme.setPreference(t);},theme);
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   for(const mode of ['upgrade','rotate','converge']){
    await page.locator('[data-batch-step="0"]').click();
    await page.locator(`#rotate-op-${mode}`).check();
@@ -20,7 +21,7 @@ async page => {
    await next.click();
    await page.locator('#upgrade-select-all').click();
    await audit(mode,'instances',theme,width);
-   await next.click();await page.locator('#batch-flow-review > h3').first().waitFor();
+   await next.click();await page.locator('#batch-flow-review .batch-review-title').first().waitFor();
    await audit(mode,'review',theme,width);
    await page.locator('#batch-flow-back').click();
   }

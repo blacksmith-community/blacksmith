@@ -175,7 +175,7 @@
 
   // The focusable elements inside a root that are actually visible.
   const focusableWithin = (root) => Array.from(root.querySelectorAll(FOCUSABLE_SELECTOR))
-    .filter((node) => !node.hidden && !node.closest('[hidden]') && node.style.display !== 'none' && node.getClientRects().length > 0);
+    .filter((node) => !node.hidden && !node.closest('[hidden]') && node.style.display !== 'none' && node.getClientRects().length > 0 && !node.closest('[inert]') && getComputedStyle(node).visibility !== 'hidden');
 
   // Puts focus back on the element that opened a surface, when it is still on the page.
   const restoreFocus = (opener) => {
@@ -303,6 +303,59 @@
       !node.matches('script, style, #blacksmith-live-region'));
     changed.forEach(node => node.setAttribute('inert', ''));
     return () => changed.forEach(node => node.removeAttribute('inert'));
+  };
+
+  // Persistent legacy dialogs keep their DOM between openings.
+  const persistentDialogState = new WeakMap();
+  const activatePersistentDialog = (modal, close) => {
+    if (persistentDialogState.has(modal)) return;
+    const opener = document.activeElement;
+    const wasInert = modal.hasAttribute('inert');
+    modal.removeAttribute('inert');
+    const restoreBackground = isolateDialog(modal);
+    const surface = {close};
+    window.blacksmithSurfaces.push(surface);
+    modal.setAttribute('aria-modal', 'true');
+    modal.tabIndex = -1;
+    const onKey = event => {
+      if (!window.blacksmithSurfaces.isTop(surface)) return;
+      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); }
+      if (event.key !== 'Tab') return;
+      const items = focusableWithin(modal);
+      const first = items[0] || modal, last = items[items.length - 1] || modal;
+      if (!items.length || !items.includes(document.activeElement) || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault(); (event.shiftKey ? last : first).focus();
+      }
+    };
+    let lastFocused = null;
+    const onFocus = event => { lastFocused = event.target; };
+    modal.addEventListener('focusin', onFocus);
+    const observer = new MutationObserver(() => {
+      if (window.blacksmithSurfaces.isTop(surface) && lastFocused && !lastFocused.isConnected && document.activeElement === document.body) {
+        (focusableWithin(modal)[0] || modal).focus();
+      }
+    });
+    observer.observe(modal, {childList: true, subtree: true});
+    document.addEventListener('keydown', onKey, true);
+    persistentDialogState.set(modal, {opener, restoreBackground, surface, onKey, observer, onFocus, wasInert});
+    (focusableWithin(modal)[0] || modal).focus();
+    requestAnimationFrame(() => {
+      if (persistentDialogState.has(modal) && window.blacksmithSurfaces.isTop(surface) && (document.activeElement === document.body || document.activeElement === modal)) {
+        (focusableWithin(modal)[0] || modal).focus();
+      }
+    });
+  };
+  const deactivatePersistentDialog = modal => {
+    const state = persistentDialogState.get(modal);
+    if (!state) return;
+    document.removeEventListener('keydown', state.onKey, true);
+    state.observer.disconnect();
+    modal.removeEventListener('focusin', state.onFocus);
+    state.restoreBackground();
+    if (state.wasInert) modal.setAttribute('inert', '');
+    window.blacksmithSurfaces.remove(state.surface);
+    persistentDialogState.delete(modal);
+    restoreFocus(state.opener);
   };
 
   // Show a confirm dialog. It resolves true or false for callers that pass
@@ -836,7 +889,7 @@
       const headers = table.querySelectorAll('thead th');
       headers.forEach((header, index) => {
         // Skip if header already has sorting
-        if (header.classList.contains('sortable') || header.classList.contains('sort-asc') || header.classList.contains('sort-desc')) {
+        if (header.closest('table') !== table || header.colSpan > 1 || !header.textContent.trim() || header.classList.contains('sortable-header') || header.classList.contains('sortable') || header.classList.contains('sort-asc') || header.classList.contains('sort-desc')) {
           return;
         }
 
@@ -844,11 +897,23 @@
         header.classList.add('sortable');
         header.style.cursor = 'pointer';
         header.setAttribute('data-column-index', index);
+        header.tabIndex = 0;
+        header.setAttribute('aria-sort', 'none');
+        const keyHandler = event => {
+          if (!event.altKey && !event.ctrlKey && !event.metaKey && ['Enter', ' '].includes(event.key)) {
+            event.preventDefault();
+            header.click();
+          }
+        };
+        header.addEventListener('keydown', keyHandler);
 
         // Add click handler for sorting
-        header.addEventListener('click', () => {
-          sortTableByColumn(table, index, header);
-        });
+        const clickHandler = () => sortTableByColumn(table, header.cellIndex, header);
+        header.addEventListener('click', clickHandler);
+        header._genericSortCleanup = () => {
+          header.removeEventListener('click', clickHandler);
+          header.removeEventListener('keydown', keyHandler);
+        };
       });
 
       // Mark table as initialized
@@ -868,6 +933,7 @@
     // Clear all sort indicators in this table
     table.querySelectorAll('th').forEach(th => {
       th.classList.remove('sort-asc', 'sort-desc');
+      if (th.hasAttribute('aria-sort')) th.setAttribute('aria-sort', 'none');
     });
 
     // Determine sort direction
@@ -879,6 +945,8 @@
       sortDirection = 'asc';
       headerElement.classList.add('sort-asc');
     }
+
+    headerElement.setAttribute('aria-sort', sortDirection === 'asc' ? 'ascending' : 'descending');
 
     // Sort rows
     rows.sort((a, b) => {
@@ -1509,6 +1577,7 @@
   const createSortIndicator = (column, currentSort) => {
     const indicator = document.createElement('span');
     indicator.className = 'sort-icon';
+    indicator.setAttribute('aria-hidden', 'true');
     indicator.setAttribute('data-column', column);
 
     if (currentSort && currentSort.column === column) {
@@ -1529,6 +1598,7 @@
     const indicators = table.querySelectorAll('.sort-icon');
     indicators.forEach(indicator => {
       const column = indicator.getAttribute('data-column');
+      indicator.closest('th')?.setAttribute('aria-sort', sortState?.column === column && sortState.direction ? (sortState.direction === 'asc' ? 'ascending' : 'descending') : 'none');
       indicator.className = 'sort-icon';
 
       if (sortState && sortState.column === column && sortState.direction) {
@@ -1763,8 +1833,9 @@
     // Clean up existing listeners for this table
     if (tableHeaderListeners.has(tableClass)) {
       const listeners = tableHeaderListeners.get(tableClass);
-      listeners.forEach(({ element, handler }) => {
+      listeners.forEach(({ element, handler, keyHandler }) => {
         element.removeEventListener('click', handler);
+        if (keyHandler) element.removeEventListener('keydown', keyHandler);
       });
       tableHeaderListeners.delete(tableClass);
     }
@@ -1791,7 +1862,10 @@
       if (index >= columns.length) return;
 
       const column = columns[index];
-      if (!column.sortable) return;
+      header._genericSortCleanup?.();
+      if (!column.sortable) { header.removeAttribute('tabindex'); header.removeAttribute('aria-sort'); return; }
+      header.tabIndex = 0;
+      header.setAttribute('aria-sort', sortState.column === column.key && sortState.direction ? (sortState.direction === 'asc' ? 'ascending' : 'descending') : 'none');
 
       // Remove existing sort icon if present (to handle re-initialization)
       const existingIcon = header.querySelector('.sort-icon');
@@ -1815,7 +1889,13 @@
       header.addEventListener('click', clickHandler);
 
       // Store reference for cleanup
-      listeners.push({ element: header, handler: clickHandler });
+      const keyHandler = event => {
+        if (!event.altKey && !event.ctrlKey && !event.metaKey && ['Enter', ' '].includes(event.key)) {
+          event.preventDefault(); header.click();
+        }
+      };
+      header.addEventListener('keydown', keyHandler);
+      listeners.push({ element: header, handler: clickHandler, keyHandler });
     });
 
     // Store listeners for this table
@@ -2300,7 +2380,7 @@
     const options = groups.map(([label, entries]) => `<optgroup label="${label}">${entries.map(([id, name]) => `<option value="${id}">${name}</option>`).join('')}</optgroup>`).join('');
     return `<label class="entity-section-picker">View section<select class="entity-section-select" aria-label="View section">${options}</select></label>
       <nav class="detail-tabs entity-navigation" aria-label="${kind === 'instance' ? 'Instance' : 'Blacksmith'} sections">
-      ${groups.map(([label, entries]) => `<div class="entity-section-group" role="group" aria-labelledby="entity-group-${kind}-${label.toLowerCase()}"><h4 class="entity-group-label" id="entity-group-${kind}-${label.toLowerCase()}">${label}</h4>${entries.map(([id, name]) => `<button type="button" class="detail-tab ghost ${id === 'details' ? 'active' : ''}" data-tab="${id}">${name}</button>`).join('')}</div>`).join('')}</nav>`;
+      ${groups.map(([label, entries]) => `<div class="entity-section-group" role="presentation"><h4 class="entity-group-label" role="presentation" aria-hidden="true" id="entity-group-${kind}-${label.toLowerCase()}">${label}</h4>${entries.map(([id, name]) => `<button type="button" class="detail-tab ghost ${id === 'details' ? 'active' : ''}" data-tab="${id}" aria-describedby="entity-group-${kind}-${label.toLowerCase()}">${name}</button>`).join('')}</div>`).join('')}</nav>`;
   };
 
   const entityCopy = (value, label) => `<button type="button" class="copy-btn-inline entity-copy" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}" title="Copy ${escapeAttribute(label)}">${COPY_ICON_SVG}</button>`;
@@ -10602,25 +10682,25 @@
   const getOperationTabs = (serviceType, instanceId) => {
     if (serviceType === 'redis') {
       return `
-        <button class="operation-tab active" data-operation="test" data-instance="${instanceId}">Connection</button>
-        <button class="operation-tab" data-operation="info" data-instance="${instanceId}">INFO</button>
-        <button class="operation-tab" data-operation="set" data-instance="${instanceId}">SET</button>
-        <button class="operation-tab" data-operation="get" data-instance="${instanceId}">GET</button>
-        <button class="operation-tab" data-operation="delete" data-instance="${instanceId}">DELETE</button>
-        <button class="operation-tab" data-operation="keys" data-instance="${instanceId}">KEYS</button>
-        <button class="operation-tab" data-operation="command" data-instance="${instanceId}">COMMAND</button>
-        <button class="operation-tab" data-operation="flush" data-instance="${instanceId}">FLUSH</button>
+        <button class="operation-tab active" aria-pressed="true" data-operation="test" data-instance="${instanceId}">Connection</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="info" data-instance="${instanceId}">INFO</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="set" data-instance="${instanceId}">SET</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="get" data-instance="${instanceId}">GET</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="delete" data-instance="${instanceId}">DELETE</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="keys" data-instance="${instanceId}">KEYS</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="command" data-instance="${instanceId}">COMMAND</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="flush" data-instance="${instanceId}">FLUSH</button>
       `;
     } else if (serviceType === 'rabbitmq') {
       return `
-        <button class="operation-tab active" data-operation="test" data-instance="${instanceId}">Connection</button>
-        <button class="operation-tab" data-operation="publish" data-instance="${instanceId}">PUBLISH</button>
-        <button class="operation-tab" data-operation="consume" data-instance="${instanceId}">CONSUME</button>
-        <button class="operation-tab" data-operation="queues" data-instance="${instanceId}">QUEUE INFO</button>
-        <button class="operation-tab" data-operation="queue-ops" data-instance="${instanceId}">QUEUE OPS</button>
-        <button class="operation-tab" data-operation="management" data-instance="${instanceId}">MANAGEMENT</button>
-        <button class="operation-tab" data-operation="rabbitmqctl" data-instance="${instanceId}">RABBITMQCTL</button>
-        <button class="operation-tab" data-operation="plugins" data-instance="${instanceId}">PLUGINS</button>
+        <button class="operation-tab active" aria-pressed="true" data-operation="test" data-instance="${instanceId}">Connection</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="publish" data-instance="${instanceId}">PUBLISH</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="consume" data-instance="${instanceId}">CONSUME</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="queues" data-instance="${instanceId}">QUEUE INFO</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="queue-ops" data-instance="${instanceId}">QUEUE OPS</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="management" data-instance="${instanceId}">MANAGEMENT</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="rabbitmqctl" data-instance="${instanceId}">RABBITMQCTL</button>
+        <button class="operation-tab" aria-pressed="false" data-operation="plugins" data-instance="${instanceId}">PLUGINS</button>
       `;
     }
     return '';
@@ -12646,8 +12726,11 @@
     // Update active tab
     document.querySelectorAll(`.operation-tab[data-instance="${instanceId}"]`).forEach(tab => {
       tab.classList.remove('active');
+      tab.setAttribute('aria-pressed', 'false');
     });
-    document.querySelector(`.operation-tab[data-operation="${operation}"][data-instance="${instanceId}"]`).classList.add('active');
+    const selected = document.querySelector(`.operation-tab[data-operation="${operation}"][data-instance="${instanceId}"]`);
+    selected.classList.add('active');
+    selected.setAttribute('aria-pressed', 'true');
 
     // Get service type from global storage
     const testingInstance = window.currentTestingInstance;
@@ -15911,6 +15994,8 @@
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
 
+    activatePersistentDialog(modal, window.hideTaskDetailsModal);
+
     // Move focus to the modal close button for accessibility
     const closeButton = modal.querySelector('.modal-close');
     if (closeButton) {
@@ -15933,6 +16018,7 @@
         activeElement.blur();
       }
 
+      deactivatePersistentDialog(modal);
       modal.classList.remove('active');
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
@@ -15975,6 +16061,7 @@
     modal.removeAttribute('inert');
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+    activatePersistentDialog(modal, window.hideConfigVersionsModal);
 
     // Show loading state
     const loadingDiv = document.getElementById('config-details-loading');
@@ -16033,6 +16120,7 @@
   window.hideConfigDetailsModal = () => {
     const modal = document.getElementById('config-details-modal');
     if (modal) {
+      deactivatePersistentDialog(modal);
       modal.classList.remove('active');
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
@@ -16217,6 +16305,7 @@
     modal.removeAttribute('inert'); // Remove inert attribute to make interactive
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+    activatePersistentDialog(modal, window.hideConfigVersionsModal);
 
     // Force z-index to ensure modal is on top
     modal.style.zIndex = '99999';
@@ -16307,13 +16396,15 @@
 
         versions.forEach((version, index) => {
           const isActive = version.is_active || version.id === currentId || (index === 0 && currentId && version.id.replace('*', '') === currentId);
-          const versionItem = document.createElement('div');
+          const versionItem = document.createElement('button');
+          versionItem.type = 'button';
+          versionItem.setAttribute('aria-pressed', 'false');
           versionItem.className = 'version-item' + (isActive ? ' active' : '');
           versionItem.dataset.versionId = version.id;
           versionItem.innerHTML = `
-            <div class="version-id">${version.id}${isActive ? ' *' : ''}</div>
-            <div class="version-date">${formatTimestamp(version.created_at)}</div>
-            ${version.team ? `<div class="version-team">Team: ${version.team}</div>` : ''}
+            <span class="version-id">${version.id}${isActive ? ' *' : ''}</span>
+            <span class="version-date">${formatTimestamp(version.created_at)}</span>
+            ${version.team ? `<span class="version-team">Team: ${escapeHtml(version.team)}</span>` : ''}
           `;
 
           // Create a bound function to avoid closure issues
@@ -16378,8 +16469,10 @@
       // Update selected state in the list
       document.querySelectorAll('.version-item').forEach(item => {
         item.classList.remove('selected');
+        item.setAttribute('aria-pressed', 'false');
       });
       versionItem.classList.add('selected');
+      versionItem.setAttribute('aria-pressed', 'true');
 
       // Show loading state in content area
       const contentPre = document.getElementById('config-content-text');
@@ -16414,6 +16507,7 @@
   window.hideConfigVersionsModal = () => {
     const modal = document.getElementById('config-details-modal');
     if (modal) {
+      deactivatePersistentDialog(modal);
       modal.classList.remove('active');
       modal.classList.add('is-hidden'); // Add back hidden class
       modal.classList.add('is-transparent'); // Add back opacity-0 state class
@@ -18686,6 +18780,16 @@
         modalElement.style.zIndex = '10200';
       }
 
+      const state = this.modalState.get(modalElement);
+      state.wasInert = modalElement.hasAttribute('inert');
+      modalElement.removeAttribute('inert');
+      state.restoreBackground = isolateDialog(modalElement);
+      const dialog = modalElement.matches('[role="dialog"]') ? modalElement : modalElement.querySelector('[role="dialog"]');
+      if (dialog) {
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.tabIndex = -1;
+      }
+
       // Prevent body scroll
       document.body.style.overflow = 'hidden';
 
@@ -18746,6 +18850,8 @@
       this.removeModalListeners(modalElement);
 
       if (state) {
+        state.restoreBackground?.();
+        if (state.wasInert) modalElement.setAttribute('inert', '');
         window.blacksmithSurfaces.remove(state.surface);
         this.modalState.delete(modalElement);
         if (restoreOpenerFocus) restoreFocus(state.opener);
@@ -18840,14 +18946,18 @@
 
       const focusableElements = focusableWithin(this.currentModal);
 
-      if (focusableElements.length === 0) return;
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        this.trapFocus(this.currentModal);
+        return;
+      }
 
       const firstElement = focusableElements[0];
       const lastElement = focusableElements[focusableElements.length - 1];
       const active = document.activeElement;
       const inside = this.currentModal.contains(active);
 
-      if (!inside) {
+      if (!inside || !focusableElements.includes(active)) {
         event.preventDefault();
         (event.shiftKey ? lastElement : firstElement).focus();
       } else if (event.shiftKey) {
@@ -18865,11 +18975,9 @@
 
     // Trap focus within modal
     trapFocus: function (modalElement) {
-      const focusableElements = Array.from(modalElement.querySelectorAll(FOCUSABLE_SELECTOR));
-
-      if (focusableElements.length > 0) {
-        focusableElements[0].focus();
-      }
+      const target = focusableWithin(modalElement)[0] || modalElement.querySelector('[role="dialog"]') || modalElement;
+      if (!target.hasAttribute('tabindex') && !target.matches(FOCUSABLE_SELECTOR)) target.tabIndex = -1;
+      target.focus();
     }
   };
 
@@ -20330,16 +20438,15 @@
       modal.style.display = 'block';
       modal.setAttribute('aria-hidden', 'false');
 
-      // Focus first input
-      setTimeout(() => {
-        document.getElementById('reg-name').focus();
-      }, 100);
+      activatePersistentDialog(modal, () => this.hideRegistrationModal());
+      document.getElementById('reg-name').focus();
     },
 
     // Hide registration modal with proper cleanup
     hideRegistrationModal() {
       const modal = document.getElementById('registration-modal');
       if (modal) {
+        deactivatePersistentDialog(modal);
         modal.style.display = 'none';
         modal.setAttribute('aria-hidden', 'true');
 
@@ -21990,7 +22097,8 @@
 
       // Create terminal instance
       const terminal = new Terminal({
-        cursorBlink: true,
+        cursorBlink: false,
+        screenReaderMode: true,
         fontSize: 14,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
         theme: {
@@ -22023,6 +22131,15 @@
       terminalDiv.className = 'terminal-instance';
       terminalDiv.id = `terminal-${sessionKey}`;
       terminalContainer.appendChild(terminalDiv);
+
+      // Ctrl+Shift+F6 leaves terminal input without sending a key to SSH.
+      terminal.attachCustomKeyEventHandler(event => {
+        if (event.ctrlKey && event.shiftKey && event.key === 'F6') {
+          if (event.type === 'keydown') document.getElementById('minimize-btn')?.focus();
+          return false;
+        }
+        return true;
+      });
 
       // Open terminal in the div
       terminal.open(terminalDiv);
@@ -22256,28 +22373,23 @@
 
     createTab(sessionKey, context) {
       const tabsContainer = document.getElementById('terminal-tabs');
-      const tab = document.createElement('button');
+      const tab = document.createElement('div');
       tab.className = `terminal-tab ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
       tab.id = `tab-${sessionKey}`;
-
-      // Use instance_name for tab display if available
-      const tabDisplayName = context.instanceName || context.deploymentName;
-
-      tab.innerHTML = `
-        <svg class="terminal-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-          <line x1="8" y1="21" x2="16" y2="21"></line>
-          <line x1="12" y1="17" x2="12" y2="21"></line>
-        </svg>
-        <span class="${context.deploymentType === 'blacksmith' ? 'blacksmith-prefix' : 'service-prefix'}">[${context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}]</span>
-        ${tabDisplayName}/${context.instanceId}
-        <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
-      `;
-      tab.onclick = (e) => {
-        if (!e.target.classList.contains('tab-close')) {
-          this.switchToSession(sessionKey);
-        }
-      };
+      const name = `${context.instanceName || context.deploymentName}/${context.instanceId}`;
+      const select = document.createElement('button');
+      select.type = 'button';
+      select.className = 'terminal-tab-select';
+      select.textContent = `[${context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}] ${name}`;
+      select.setAttribute('aria-pressed', 'false');
+      select.addEventListener('click', () => this.switchToSession(sessionKey));
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'tab-close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', `Close terminal ${name}`);
+      close.addEventListener('click', event => this.closeSession(sessionKey, event));
+      tab.append(select, close);
       tabsContainer.appendChild(tab);
     },
 
@@ -22302,6 +22414,7 @@
       // Deactivate all tabs
       document.querySelectorAll('.terminal-tab').forEach(el => {
         el.classList.remove('active');
+        el.querySelector('.terminal-tab-select')?.setAttribute('aria-pressed', 'false');
       });
 
       // Show selected terminal
@@ -22309,6 +22422,7 @@
       if (session) {
         session.element.classList.add('active');
         document.getElementById(`tab-${sessionKey}`).classList.add('active');
+        document.getElementById(`tab-${sessionKey}`).querySelector('.terminal-tab-select')?.setAttribute('aria-pressed', 'true');
         this.activeSession = sessionKey;
 
         // Update header title details to reflect the active session

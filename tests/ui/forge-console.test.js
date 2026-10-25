@@ -29,7 +29,8 @@ t('Blacksmith and instance navigation retain all destinations in named groups', 
     expect(broker.querySelectorAll('.detail-tab')).toHaveLength(11);
     expect(instance.querySelectorAll('.detail-tab')).toHaveLength(8);
     for (const host of [broker,instance]) {
-      expect(host.querySelector('.entity-section-group')).not.toBeNull();
+      expect(host.querySelector('.entity-section-group').getAttribute('role')).toBe('presentation');
+      expect(host.querySelector('.detail-tab').getAttribute('aria-describedby')).toMatch(/^entity-group-/);
       expect(host.querySelector('[data-tab="details"]').textContent).toBe(host === broker ? 'Summary' : 'Overview');
       expect(host.querySelector('.entity-section-select').getAttribute('aria-label')).toBe('View section');
       expect(host.querySelector('.service-detail-header h2')).not.toBeNull();

@@ -336,7 +336,7 @@
       document.querySelectorAll('.service-item, .plan-item, .endpoint-item').forEach(item => {
         item.tabIndex = 0;
         item.setAttribute('role', 'button');
-        item.setAttribute('aria-pressed', String(item.classList.contains('active')));
+        item.setAttribute('aria-pressed', String(item.classList.contains('active') || item.classList.contains('selected')));
       });
     }
     document.addEventListener('click', event => {

@@ -2,8 +2,9 @@
 async page => {
  if (!await page.evaluate(() => typeof axe !== 'undefined')) throw new Error('Preload axe-core before this check.');
  const results=[];
- for(const theme of ['light','dark']){
-  await page.evaluate(t=>{document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;},theme);
+ for(const theme of ['light','dark','high-contrast-light','high-contrast-dark']){
+  await page.evaluate(t=>{window.blacksmithTheme.setPreference(t);},theme);
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   for(const width of [1440,390]){
    await page.setViewportSize({width,height:900});
    for(const screen of ['upgrade','certificates']){
@@ -17,7 +18,7 @@ async page => {
  }
  await page.locator('.tabs .tab-button[data-tab="upgrade"]').click();
  await page.locator('#batch-flow-next').click();
- await page.locator('#batch-flow-review > h3').first().waitFor();
+ await page.locator('#batch-flow-review .batch-review-title').first().waitFor();
  const modalViolations=await page.evaluate(async()=>(await axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa','wcag22aa']}})).violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})));
  const screens=results.filter(r=>r.violations.length);
  if(screens.length || modalViolations.length) throw new Error(JSON.stringify({screens,modalViolations}));

@@ -97,3 +97,16 @@ pages, search, draft isolation, Apply/Cancel/Escape, summary removal, and
 responsive layouts without creating tasks. Inject axe-core afterward and run
 `upgrade-options-accessibility-browser-check.js` for both screens in both
 themes at desktop/mobile widths.
+
+## Accessibility audit fixtures
+
+`accessibility-populated-fixture.js` loads synthetic tasks, VMs, events,
+configs, credentials and logs. Run it instead of the navigation regression
+script before injecting axe-core. `accessibility-browser-check.js` covers
+all broker and instance sections in all four themes at 1440px and 320px.
+`accessibility-dialogs-browser-check.js` additionally checks Quick Navigation,
+keyboard help, task details and config details, including task focus containment.
+The batch and advanced-picker accessibility checks also cover all four themes.
+Use only a local static server: the fixtures reject infrastructure writes.
+
+See `docs/ui-accessibility-audit.md` for findings, remediation and limits.

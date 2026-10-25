@@ -14,7 +14,7 @@
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261024-rotate">
-  <link rel="stylesheet" href="/forge-theme.css?v=20261025-technical-columns">
+  <link rel="stylesheet" href="/forge-theme.css?v=20261025-a11y-audit">
   <script src="/vendor/oat/oat.min.js" defer></script>
 </head>
 
@@ -279,11 +279,12 @@
   </div>
 
   <!-- Terminal Modal -->
-  <div id="terminal-modal" class="modal-overlay is-hidden is-transparent is-invisible" role="dialog" inert>
+  <div id="terminal-modal" class="modal-overlay is-hidden is-transparent is-invisible" role="dialog" aria-label="SSH Terminal" aria-describedby="terminal-keyboard-help" inert>
     <div class="modal terminal-modal-content">
       <div class="modal-header terminal-header">
         <div class="terminal-title">
           <h2 class="terminal-title-text">SSH Terminal</h2>
+          <p id="terminal-keyboard-help" class="visually-hidden">Press Control Shift F6 to leave terminal input and focus terminal controls.</p>
           <div id="terminal-title-details" class="terminal-title-details"></div>
         </div>
         <div class="terminal-header-controls">
@@ -292,12 +293,12 @@
               <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
             </svg>
           </button>
-          <button class="terminal-control-btn" id="minimize-btn" title="Minimize" onclick="window.TerminalManager && window.TerminalManager.minimizeAll()">
+          <button class="terminal-control-btn" id="minimize-btn" aria-keyshortcuts="Control+Shift+F6" title="Minimize terminal (Ctrl+Shift+F6 to focus controls)" onclick="window.TerminalManager && window.TerminalManager.minimizeAll()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="6" y1="19" x2="18" y2="19"/>
             </svg>
           </button>
-          <button class="modal-close" onclick="window.TerminalManager && window.TerminalManager.closeAll()">&times;</button>
+          <button class="modal-close" aria-label="Close all terminals" onclick="window.TerminalManager && window.TerminalManager.closeAll()">&times;</button>
         </div>
       </div>
       <div class="terminal-tabs min-h-10" id="terminal-tabs"></div>
@@ -409,8 +410,8 @@
     <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
   </dialog>
   <script type="text/javascript" src="/xterm.min.js"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261025-accessible-themes"></script>
-  <script src="/navigation.js?v=20261025-accessible-themes"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261025-a11y-audit"></script>
+  <script src="/navigation.js?v=20261025-a11y-audit"></script>
 </body>
 
 </html>

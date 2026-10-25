@@ -1,0 +1,69 @@
+const {test,expect}=require('bun:test');
+const {main:{boot}}=require('./certificates/harness.js');
+test('generic sortable columns work with keyboard and announce direction',()=>{
+ const {w,d}=boot();try{
+ const table=d.createElement('table');table.innerHTML='<thead><tr><th>Name</th><th>Count</th></tr></thead><tbody><tr><td>Z</td><td>2</td></tr><tr><td>A</td><td>1</td></tr></tbody>';d.body.append(table);
+ w.__T.initializeAllTables();const header=table.querySelector('th');
+ expect(header.tabIndex).toBe(0);
+ header.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+ expect(table.tBodies[0].rows[0].cells[0].textContent).toBe('A');
+ expect(header.getAttribute('aria-sort')).toBe('ascending');
+ header.dispatchEvent(new w.KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true}));
+ expect(table.tBodies[0].rows[0].cells[0].textContent).toBe('Z');
+ expect(header.getAttribute('aria-sort')).toBe('descending');
+ }finally{w.close();}
+});
+test('managed dialogs isolate background and handle an empty focus list',()=>{
+ const {w,d}=boot();try{
+ const opener=d.createElement('button');d.body.append(opener);opener.focus();
+ const previouslyInert=d.createElement('div');previouslyInert.setAttribute('inert','');d.body.append(previouslyInert);
+ const overlay=d.createElement('div');overlay.className='modal-overlay';overlay.innerHTML='<div role="dialog" aria-label="Test details">Details</div>';
+ w.ModalManager.openModal(overlay);
+ expect(opener.hasAttribute('inert')).toBe(true);
+ expect(overlay.querySelector('[role="dialog"]').getAttribute('aria-modal')).toBe('true');
+ expect(overlay.contains(d.activeElement)).toBe(true);
+ const event=new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});d.activeElement.dispatchEvent(event);
+ expect(event.defaultPrevented).toBe(true);
+ w.ModalManager.closeModal(overlay);
+ expect(opener.hasAttribute('inert')).toBe(false);
+ expect(previouslyInert.hasAttribute('inert')).toBe(true);
+ expect(d.activeElement).toBe(opener);
+ }finally{w.close();}
+});
+
+test('enhanced sort replaces generic handlers and reports one keyboard sort',()=>{
+ const {w,d}=boot();try{
+ const table=d.createElement('table');table.className='tasks-table';table.innerHTML='<thead><tr><th>ID</th><th>State</th></tr></thead><tbody><tr><td>2</td><td>done</td></tr><tr><td>1</td><td>done</td></tr></tbody>';d.body.append(table);
+ w.__T.tableOriginalData.set('tasks',[{id:2,state:'done'},{id:1,state:'done'}]);
+ w.__T.initializeAllTables();w.__T.initializeSorting('tasks-table');w.__T.initializeSorting('tasks-table');
+ const header=table.querySelector('th');header.focus();
+ header.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+ expect(header.getAttribute('aria-sort')).toBe('ascending');
+ expect(d.activeElement).toBe(header);
+ expect(table.tBodies[0].rows[0].cells[0].textContent.trim()).toBe('1');
+ }finally{w.close();}
+});
+test('registration Escape closes and restores focus to its opener',()=>{
+ const {w,d}=boot();try{
+ const opener=d.createElement('button');d.body.append(opener);opener.focus();
+ w.__T.CFRegistrationManager.showRegistrationModal();
+ const modal=d.getElementById('registration-modal');
+ expect(modal.contains(d.activeElement)).toBe(true);
+ expect(opener.hasAttribute('inert')).toBe(true);
+ d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ expect(modal.getAttribute('aria-hidden')).toBe('true');
+ expect(d.activeElement).toBe(opener);
+ expect(opener.hasAttribute('inert')).toBe(false);
+ }finally{w.close();}
+});
+
+test('terminal tabs have separate named selection and close buttons',()=>{
+ const {w,d}=boot();try{
+ const manager=w.TerminalManager;
+ manager.createTab('fixture',{deploymentType:'blacksmith',deploymentName:'broker',instanceId:'node/0'});
+ const tab=d.getElementById('tab-fixture');
+ expect(tab.querySelectorAll('button').length).toBe(2);
+ expect(tab.querySelector('button button')).toBeNull();
+ expect(tab.querySelector('.tab-close').getAttribute('aria-label')).toBe('Close terminal broker/node/0');
+ }finally{w.close();}
+});

@@ -7,7 +7,7 @@ const t = JSDOM ? test : test.skip;
 
 const UI = path.resolve(__dirname, '..', '..', 'ui');
 
-t('left panel section headings are headings, not options', () => {
+t('sidebar group labels describe tabs without interrupting the tablist', () => {
   const { w, d } = boot();
   try {
     const host = d.createElement('div');
@@ -19,11 +19,12 @@ t('left panel section headings are headings, not options', () => {
       expect(label).not.toBeNull();
       const isHeading = /^H[1-6]$/.test(label.tagName) || label.getAttribute('role') === 'heading';
       expect(isHeading).toBe(true);
-      expect(label.getAttribute('aria-hidden')).toBeNull();
+      expect(label.getAttribute('aria-hidden')).toBe('true');
       expect(label.hasAttribute('tabindex')).toBe(false);
       expect(label.hasAttribute('data-tab')).toBe(false);
       expect(label.matches('button, a, .detail-tab')).toBe(false);
-      expect(group.getAttribute('aria-labelledby')).toBe(label.id);
+      expect(group.getAttribute('role')).toBe('presentation');
+      group.querySelectorAll('.detail-tab').forEach(tab => expect(tab.getAttribute('aria-describedby')).toBe(label.id));
       const options = Array.from(group.querySelectorAll('.detail-tab'));
       expect(options.length).toBeGreaterThan(0);
       options.forEach((o) => expect(o.tagName).toBe('BUTTON'));
@@ -41,5 +42,5 @@ test('headings are styled as muted uppercase labels apart from the options', () 
   expect(css).not.toMatch(/\.entity-group-label:(hover|active|focus)/);
   const option = css.match(/\.entity-navigation \.detail-tab \{([^}]*)\}/)[1];
   expect(option).toMatch(/padding: 8px 8px 8px 16px/);
-  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/forge-theme.css?v=20261025-technical-columns');
+  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/forge-theme.css?v=20261025-a11y-audit');
 });
