@@ -830,3 +830,9 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
   #services .entity-header { padding: 10px 12px; }
   #services .entity-identity { flex-basis: 100%; }
 }
+
+/* Compact instance navigation and inset search icons inside their fields. */
+#services .entity-navigation { flex-basis: 160px; }
+#services .detail-content .table-search-container { padding: 0; }
+#services .table-search-icon { left: 10px; }
+#services .table-search-input { padding-left: 34px; }
