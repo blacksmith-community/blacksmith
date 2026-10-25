@@ -2,9 +2,9 @@
 (function (root) {
   'use strict';
   const instanceSections = [
-    ['details', 'Overview'], ['events', 'Events'], ['vms', 'Virtual machines'],
+    ['details', 'Summary'], ['events', 'Events'], ['vms', 'Virtual machines'],
     ['manifest', 'Manifest'], ['certificates', 'Certificates'],
-    ['credentials', 'Credentials'], ['instance-logs', 'Logs'], ['testing', 'Connection tests']
+    ['credentials', 'Credentials'], ['instance-logs', 'Logs'], ['testing', 'Testing']
   ];
   const aliases = { upgrade: 'upgrade releases stemcells jobs', configs: 'bosh configuration', config: 'settings configuration', vms: 'vms virtual machines ssh terminal', details: 'details overview context', testing: 'testing connection tests' };
   function destinations(screens, instances, catalog) {

@@ -2368,9 +2368,9 @@
       ['Configure', [['plans', 'Service plans'], ['broker', 'Endpoints'], ['configs', 'BOSH configs'], ['config', 'Broker Settings'], ['manifest', 'Manifest']]]
     ],
     instance: [
-      ['Overview', [['details', 'Overview']]],
+      ['Overview', [['details', 'Summary']]],
       ['Operate', [['vms', 'Virtual machines'], ['events', 'Events'], ['instance-logs', 'Logs'], ['certificates', 'Certificates']]],
-      ['Connect', [['credentials', 'Credentials'], ['testing', 'Connection tests']]],
+      ['Connect', [['credentials', 'Credentials'], ['testing', 'Testing']]],
       ['Inspect', [['manifest', 'Manifest']]]
     ]
   };
@@ -2408,7 +2408,7 @@
 
   // The broker header is a single heading; an instance header adds its
   // kind above the name and its service and plan below it.
-  const renderEntityShell = (kind, title, context) => `<header class="service-detail-header entity-header"><div>${kind === 'instance' ? `<p class="entity-eyebrow">Service instance</p><h2>${escapeHtml(title)}</h2><p class="entity-context-line">${escapeHtml(context)}</p>` : `<h2>${escapeHtml(title)}</h2>`}</div>${kind === 'instance' ? '<button type="button" class="outline entity-back">All instances</button>' : ''}</header>
+  const renderEntityShell = (kind, title, context) => `<header class="service-detail-header entity-header"><div class="entity-identity">${kind === 'instance' ? `<h2>${escapeHtml(title)}</h2><p class="entity-context-line">${escapeHtml(context)}</p>` : `<h2>${escapeHtml(title)}</h2>`}</div>${kind === 'instance' ? '<button type="button" class="outline entity-back">All instances</button>' : ''}</header>
     <div class="entity-workspace">${renderEntityNavigation(kind)}<section class="entity-main"><div class="entity-section-toolbar"><h3 class="entity-current-title">Overview</h3><span class="entity-read-hint">Snapshot · reload to update</span></div><div class="detail-content" aria-label="Overview"><div class="loading" role="status">Loading…</div></div></section></div>`;
 
   document.addEventListener('click', async (event) => {

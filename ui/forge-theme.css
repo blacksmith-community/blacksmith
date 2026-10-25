@@ -820,3 +820,13 @@ button.version-item > span { display: block; }
 body { transition: none; }
 
 th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
+
+/* Instance identity shares one row when space permits. */
+#services .entity-header { padding: 10px 18px; flex-wrap: wrap; gap: 8px 16px; }
+#services .entity-identity { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; min-width: 0; flex: 1 1 auto; }
+#services .entity-identity h2 { margin: 0; min-width: 0; }
+#services .entity-identity .entity-context-line { margin: 0; }
+@media (max-width: 540px) {
+  #services .entity-header { padding: 10px 12px; }
+  #services .entity-identity { flex-basis: 100%; }
+}

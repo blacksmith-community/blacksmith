@@ -31,7 +31,7 @@ t('Blacksmith and instance navigation retain all destinations in named groups', 
     for (const host of [broker,instance]) {
       expect(host.querySelector('.entity-section-group').getAttribute('role')).toBe('presentation');
       expect(host.querySelector('.detail-tab').getAttribute('aria-describedby')).toMatch(/^entity-group-/);
-      expect(host.querySelector('[data-tab="details"]').textContent).toBe(host === broker ? 'Summary' : 'Overview');
+      expect(host.querySelector('[data-tab="details"]').textContent).toBe('Summary');
       expect(host.querySelector('.entity-section-select').getAttribute('aria-label')).toBe('View section');
       expect(host.querySelector('.service-detail-header h2')).not.toBeNull();
     }
@@ -162,7 +162,7 @@ t('the broker header is one line of environment and deployment', () => {
     host.innerHTML=w.__T.renderBlacksmithTemplate({});
     expect(host.querySelector('.entity-header h2').textContent).toBe('Blacksmith');
     host.innerHTML=w.__T.renderServiceDetail('id-1',{service_id:'valkey',plan_id:'cluster'},null);
-    expect(host.querySelector('.entity-eyebrow').textContent).toBe('Service instance');
+    expect(host.querySelector('.entity-eyebrow')).toBeNull();
     expect(host.querySelector('.entity-context-line')).not.toBeNull();
   } finally { w.close(); }
 });
@@ -189,4 +189,15 @@ test('high contrast palettes meet stronger text and visible boundary targets',()
   }
   for(const color of ['primary','danger','success','warning']) expect(contrast(vars[color],vars[color+'-foreground'])).toBeGreaterThanOrEqual(7);
  }
+});
+
+t('instance identity omits redundant eyebrow and keeps context beside the name',()=>{
+ const {w,d}=boot();try{
+ const host=d.createElement('div');host.innerHTML=w.__T.renderServiceDetail('id-1',{instance_name:'Cache <one>',service_id:'valkey',plan_id:'cluster'},null);
+ expect(host.querySelector('.entity-eyebrow')).toBeNull();
+ expect(host.querySelector('.entity-identity h2').textContent).toBe('Cache <one>');
+ expect(host.querySelector('.entity-identity .entity-context-line').textContent).toBe('valkey / cluster');
+ expect(host.querySelector('[data-tab="testing"]').textContent).toBe('Testing');
+ expect(host.querySelector('[data-tab="details"]').textContent).toBe('Summary');
+ }finally{w.close();}
 });
