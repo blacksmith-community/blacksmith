@@ -1,4 +1,4 @@
-# lib.sh holds the shared functions of the certificate patch helpers. The
+# lib.sh is the shared base library of the broker's on-VM scripts. The
 # broker sends it, followed by one script, to `sudo -n /bin/bash -s --`
 # on stdin, so nothing here is ever installed on the VM.
 #

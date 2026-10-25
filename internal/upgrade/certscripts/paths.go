@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"blacksmith/internal/ops/scripts"
 )
 
 // ErrPathRefused is the error every validator wraps when it refuses its
@@ -23,7 +25,6 @@ var (
 	logicalPath = regexp.MustCompile(`^/var/vcap/jobs/[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$`)
 	pinnedPath  = regexp.MustCompile(`^/var/vcap/data/jobs/[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$`)
 	jobDirPath  = regexp.MustCompile(`^/var/vcap/data/jobs/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	taskID      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	workTail    = regexp.MustCompile(`^[sb]/(0|[1-9][0-9]{0,8})$`)
 )
 
@@ -105,9 +106,11 @@ func ValidWorkPath(path, taskID string) error {
 
 // ValidTaskID accepts only a lowercase canonical UUID, which is the form
 // CreateTask mints. A task ID names a directory on the VM, so nothing
-// else may pass.
+// else may pass. The check is scripts.ValidTaskID, and a refusal wraps
+// ErrPathRefused.
 func ValidTaskID(id string) error {
-	if !taskID.MatchString(id) {
+	err := scripts.ValidTaskID(id)
+	if err != nil {
 		return refused("the task ID is not a lowercase UUID")
 	}
 

@@ -11,11 +11,6 @@ import (
 	"strings"
 )
 
-// SudoCheckCommand is the command a driver runs on a VM before discovery.
-// Every privileged step runs with sudo -n, so a VM whose BOSH SSH user
-// needs a password fails this at once instead of hanging a later step.
-const SudoCheckCommand = "sudo -n true"
-
 // ErrNoPasswordlessSudo is the error a driver reports, before anything is
 // regenerated, when SudoCheckCommand fails.
 var ErrNoPasswordlessSudo = errors.New("passwordless sudo is not available for BOSH SSH users")

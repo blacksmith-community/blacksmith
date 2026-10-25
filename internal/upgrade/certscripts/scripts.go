@@ -41,6 +41,10 @@ const (
 	ExitInvalid = scripts.ExitInvalid
 )
 
+// SudoCheckCommand is the command a driver runs on a VM before discovery.
+// See scripts.SudoCheckCommand.
+const SudoCheckCommand = scripts.SudoCheckCommand
+
 // opStage is patch.sh's operation that writes the content on stdin to a
 // staging path.
 const opStage = "stage"
