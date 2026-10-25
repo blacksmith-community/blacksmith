@@ -67,10 +67,18 @@ func (m *Manager) Close() error {
 	return nil
 }
 
+// otherServiceNames are the names of services that are known not to be
+// Redis, so a credentials name that holds one rules the instance out.
+var otherServiceNames = []string{
+	"rabbit", "amqp", "postgres", "mysql", "mariadb", "mongo", "kafka", "nats", "elasticsearch",
+}
+
 // IsRedisInstance checks if the credentials indicate a Redis service.
 // Valkey belongs to the Redis family. A service the credentials name in
-// service_name or service_type decides on its own; the URI scheme, the
-// port, and the password shape only guess for instances that name nothing.
+// service_name or service_type decides on its own when it names Redis,
+// Valkey, or a known other service. A name that matches none of these may
+// only be the instance name the operator chose, so the URI scheme, the
+// port, and the password shape guess as they do for unnamed instances.
 func IsRedisInstance(creds common.Credentials) bool {
 	named := false
 
@@ -84,7 +92,13 @@ func IsRedisInstance(creds common.Credentials) bool {
 			return true
 		}
 
-		named = true
+		for _, other := range otherServiceNames {
+			if strings.Contains(name, other) {
+				named = true
+
+				break
+			}
+		}
 	}
 
 	if named {

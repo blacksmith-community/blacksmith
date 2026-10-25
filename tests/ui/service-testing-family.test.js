@@ -108,3 +108,15 @@ t('the log selection treats Valkey like Redis',()=>{
   expect(pick(both,'valkey')).toBe('standalone-3/standalone-3.stdout.log');
  }finally{b.w.close();}
 });
+
+t('an instance name that matches no service falls through to the guesses',async()=>{
+ const r=await screen({host:'h',password:'p',port:6379},{service_name:'my-cache'});
+ try{
+  expect(r.html).toContain('executeRedisTest');
+  expect(r.w.currentTestingInstance.label).toBe('Redis');
+ }finally{r.close();}
+ const p=await screen({host:'h',password:'p',port:6379},{service_name:'postgres-orders'});
+ try{expect(p.html).toContain('Service testing not available for this service type');}finally{p.close();}
+ const v=await screen(valkeyCreds,{service_name:'my-cache'});
+ try{expect(v.w.currentTestingInstance.label).toBe('Valkey');}finally{v.close();}
+});

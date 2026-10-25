@@ -108,6 +108,35 @@ func TestIsRedisInstance(t *testing.T) {
 			expected: false,
 		},
 		{
+			name: "Instance name that matches no service falls through to the guesses",
+			creds: common.Credentials{
+				"host":         "cache.example.com",
+				"port":         6379,
+				"password":     "secret",
+				"service_name": "my-cache",
+			},
+			expected: true,
+		},
+		{
+			name: "Postgres-named service is not Redis",
+			creds: common.Credentials{
+				"host":         "db.example.com",
+				"port":         6379,
+				"password":     "secret",
+				"service_name": "postgres-orders",
+			},
+			expected: false,
+		},
+		{
+			name: "Valkey service type is Redis family",
+			creds: common.Credentials{
+				"host":         "h",
+				"tls_port":     6379,
+				"service_type": "valkey",
+			},
+			expected: true,
+		},
+		{
 			name: "Valkey URI",
 			creds: common.Credentials{
 				"uri": "valkey://default:password@host:6379",

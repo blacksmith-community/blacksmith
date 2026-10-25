@@ -10147,12 +10147,18 @@
     { match: /rabbit|amqp/, type: 'rabbitmq', label: 'RabbitMQ' }
   ];
 
+  // Services the screen knows it does not support. A name that matches none
+  // of the families or of these may only be an instance name the operator
+  // chose, so it decides nothing.
+  const UNSUPPORTED_SERVICES = /postgres|mysql|mariadb|mongo|kafka|nats|elasticsearch/;
+
   const classifyServiceName = (value) => {
     if (typeof value !== 'string') return null;
     const lower = value.trim().toLowerCase();
     if (!lower) return null;
     const family = SERVICE_FAMILIES.find(f => f.match.test(lower));
-    return family ? { type: family.type, label: family.label } : { type: null, label: null };
+    if (family) return { type: family.type, label: family.label };
+    return UNSUPPORTED_SERVICES.test(lower) ? { type: null, label: null } : null;
   };
 
   const detectServiceFamily = (creds, vaultData) => {
