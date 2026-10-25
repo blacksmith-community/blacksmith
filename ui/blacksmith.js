@@ -24092,43 +24092,26 @@
 
     const expansionContent = (cert) => {
       const box = el('div', 'cert-expansion');
-      const dl = el('dl', 'cert-facts');
-      factRow(dl, 'Key', cert.key);
-      factRow(dl, 'Kind', cert.kind);
-      factRow(dl, 'Issuer', cert.issuer);
-      factRow(dl, 'Sources', sourcesOf(cert));
-      const versions = versionsText(cert.versions);
-      factRow(dl, 'Deployed', versions.deployed);
-      factRow(dl, 'Latest', versions.latest);
-      if (cert.versions && cert.versions.transitional) factRow(dl, 'Transitional', 'Yes');
-      factRow(dl, 'Coverage', coverageText(cert.coverage));
-      if (cert.expiry === 'unknown' && cert.expiry_reason) factRow(dl, 'Expiry', cert.expiry_reason);
-      if (cert.divergence) factRow(dl, 'Divergence', `${cert.divergence.state} since ${shortDate(cert.divergence.since)}`);
-      if (cert.rotation && !cert.rotation.allowed && (cert.rotation.reasons || []).length > 0) {
-        factRow(dl, 'Rotation', cert.rotation.reasons.join(' '));
-      }
-      box.appendChild(dl);
+      const callouts = drawerCallouts(cert);
+      if (callouts) box.appendChild(callouts);
+      const credhub = credhubDetails(cert);
+      if (credhub) box.appendChild(credhub);
 
-      if ((cert.findings || []).length > 0) {
-        const list = el('ul', 'cert-findings');
-        cert.findings.forEach((finding) => {
-          const li = el('li', `cert-finding cert-finding--${finding.severity || 'info'}`);
-          li.appendChild(el('span', 'cert-finding-severity', finding.severity || 'info'));
-          li.appendChild(el('span', 'cert-finding-text', finding.message || finding.code || ''));
-          list.appendChild(li);
-        });
-        box.appendChild(list);
-      }
-
-      const observations = cert.observations || [];
-      if (observations.length > 0) {
-        const list = el('ul', 'cert-obs-list');
-        list.setAttribute('aria-label', 'Observations');
-        observations.forEach((obs) => list.appendChild(observationRow(obs)));
-        box.appendChild(list);
-      } else {
-        box.appendChild(el('p', 'cert-muted', 'No observations recorded.'));
-      }
+      const details = el('section', 'cert-drawer-detail');
+      details.appendChild(el('h4', null, 'Certificate details'));
+      const table = el('table', 'cert-details-table');
+      const body = el('tbody');
+      const add = (label, value, copy) => {
+        if (value !== undefined && value !== null && value !== '') body.appendChild(CertView.fieldRow(label, String(value), copy ? String(value) : undefined));
+      };
+      add('Issuer', cert.issuer);
+      add('Expires', cert.effective_not_after ? shortDate(cert.effective_not_after) : cert.expiry_reason || 'Unknown');
+      add('Coverage', coverageText(cert.coverage));
+      if (cert.divergence) add('Deployment state', `${cert.divergence.state}${cert.divergence.since ? ` since ${shortDate(cert.divergence.since)}` : ''}`);
+      table.appendChild(body); details.appendChild(table); box.appendChild(details);
+      box.appendChild(probeInformation(cert));
+      const others = otherSources(cert);
+      if (others) box.appendChild(others);
       return box;
     };
 

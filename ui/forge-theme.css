@@ -587,3 +587,12 @@ body > footer p { margin: 0; }
 @media (pointer: coarse) {
   #services .instance-pagination button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
 }
+
+/* Expanded fleet rows share the drawer's information hierarchy. */
+.cert-expansion { padding: 1rem; overflow-wrap: anywhere; }
+.cert-expansion > section { height: auto; min-height: 0; flex: none; position: static; overflow: visible; }
+.cert-expansion > section:first-child { margin-top: 0; }
+.cert-expansion h4 { margin: 0 0 .75rem; font-size: 1rem; }
+.cert-expansion .cert-details-table { width: 100%; margin: 0; }
+.cert-expansion .cert-details-table th, .cert-expansion .cert-details-table td { vertical-align: top; overflow-wrap: anywhere; }
+.cert-expansion .cert-field-value { min-width: 0; }
