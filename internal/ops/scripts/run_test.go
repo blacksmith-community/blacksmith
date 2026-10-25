@@ -1728,7 +1728,16 @@ func (r *runTree) fakeGetent(t *testing.T, entry string) {
 		script = fmt.Sprintf("#!/bin/sh\n[ \"$1 $2\" = 'passwd vcap' ] || exit 2\nprintf '%%s\\n' %q\n", entry)
 	}
 
-	err := os.WriteFile(r.path("usr/bin/getent"), []byte(script), 0o755) //nolint:gosec // a test tool
+	// The plant is removed first, so a link to the real getent is
+	// replaced and never written through.
+	plant := r.path("usr/bin/getent")
+
+	err := os.Remove(plant)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1814,7 +1823,7 @@ func TestRunExecVcapLaunchLine(t *testing.T) {
 		tree.path("usr/bin/setpriv"),
 		fmt.Sprintf("--reuid=%d", uid), fmt.Sprintf("--regid=%d", gid), "--clear-groups", "--",
 		"env", "-i", "HOME=/home/vcap", "USER=vcap", "LOGNAME=vcap", "SHELL=/bin/bash",
-		"PATH=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"PATH=/var/vcap/bosh/bin:/usr/local/bin:/usr/bin:/bin",
 		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TMPDIR=/var/vcap/data/tmp",
 		"/bin/bash", "--", tree.cmdFile(runTask),
 	}, "\n") + "\n"
@@ -1835,23 +1844,65 @@ func TestRunExecVcapLaunchLine(t *testing.T) {
 func TestRunExecVcapRefusals(t *testing.T) {
 	t.Parallel()
 
+	same := func(uid, gid int) string { return vcapEntry(uid, gid, "/home/vcap") }
+
+	chown := func(path string, uid, gid int) func(*testing.T, *runTree) {
+		return func(t *testing.T, tree *runTree) {
+			t.Helper()
+
+			err := os.Chown(tree.path(path), uid, gid)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// Every case is built so that the check it names is the only one that
+	// refuses. Without that check the command would run.
 	for _, tc := range []struct {
 		name  string
 		entry func(uid, gid int) string
 		setup func(t *testing.T, tree *runTree)
 	}{
 		{"no vcap entry", func(int, int) string { return "" }, nil},
-		{"uid 0", func(_, gid int) string { return vcapEntry(0, gid, "/home/vcap") }, nil},
-		{"gid 0", func(uid, _ int) string { return vcapEntry(uid, 0, "/home/vcap") }, nil},
-		{"a uid that is not a number", func(_, gid int) string { return fmt.Sprintf("vcap:x:abc:%d:vcap:/home/vcap:/bin/bash", gid) }, nil},
-		{"a missing home", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/nobody") }, nil},
-		{"a home that is not a path", func(uid, gid int) string { return vcapEntry(uid, gid, "home/vcap") }, nil},
-		{"a home with dots", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/../root") }, nil},
+		{"a name that is not vcap", func(uid, gid int) string {
+			return fmt.Sprintf("vcapx:x:%d:%d:vcap:/home/vcap:/bin/bash", uid, gid)
+		}, nil},
+		{"uid 0 on a home owned by root", func(_, gid int) string { return vcapEntry(0, gid, "/home/vcap") }, chown("home/vcap", 0, vcapGID)},
+		{"gid 0 on a task and home of group 0", func(uid, _ int) string { return vcapEntry(uid, 0, "/home/vcap") }, func(t *testing.T, tree *runTree) {
+			t.Helper()
+
+			for _, path := range []string{"home/vcap", runOps + "/" + runTask, runOps + "/" + runTask + "/cmd.sh"} {
+				chown(path, -1, 0)(t, tree)
+			}
+		}},
 		{"a home owned by another uid", func(uid, gid int) string { return vcapEntry(uid+1, gid, "/home/vcap") }, nil},
+		{"a home owned by another gid", same, chown("home/vcap", -1, vcapGID+1)},
+		{"a missing home", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/nobody") }, nil},
 		{"a symlinked home", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/link") }, func(t *testing.T, tree *runTree) {
 			t.Helper()
 
 			err := os.Symlink(tree.path("home/vcap"), tree.path("home/link"))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a home with a dot-dot segment", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/../home/vcap") }, nil},
+		{"a home with a space", func(uid, gid int) string { return vcapEntry(uid, gid, "/home/v cap") }, func(t *testing.T, tree *runTree) {
+			t.Helper()
+
+			err := os.Mkdir(tree.path("home/v cap"), 0o755) //nolint:gosec // a test tree
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			chown("home/v cap", vcapGID, vcapGID)(t, tree)
+		}},
+		{"a home that is not absolute", func(uid, gid int) string { return vcapEntry(uid, gid, "home/vcap") }, nil},
+		{"a parent of the home that anyone can write", same, func(t *testing.T, tree *runTree) {
+			t.Helper()
+
+			err := os.Chmod(tree.path("home"), 0o777) //nolint:gosec // the case under test
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1893,6 +1944,54 @@ func TestRunExecVcapRefusals(t *testing.T) {
 				if err == nil {
 					t.Errorf("a refusal left %s behind", name)
 				}
+			}
+		})
+	}
+}
+
+// TestRunExecVcapEntryChecks calls the entry parser alone, so each check
+// shows up without the ownership checks that follow it in exec.
+func TestRunExecVcapEntryChecks(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		entry string
+		want  string
+	}{
+		{"a good entry", "vcap:x:1000:1001:vcap:/home/vcap:/bin/bash", "1000 1001 /home/vcap"},
+		{"a name that is not vcap", "vcapx:x:1000:1001:v:/home/vcap:/bin/bash", ""},
+		{"no entry", "", ""},
+		{"uid 0", "vcap:x:0:1001:v:/home/vcap:/bin/bash", ""},
+		{"gid 0", "vcap:x:1000:0:v:/home/vcap:/bin/bash", ""},
+		{"uid 00", "vcap:x:00:1001:v:/home/vcap:/bin/bash", ""},
+		{"gid 00", "vcap:x:1000:00:v:/home/vcap:/bin/bash", ""},
+		{"uid with leading zeros", "vcap:x:01000:1001:v:/home/vcap:/bin/bash", ""},
+		{"uid that is not a number", "vcap:x:abc:1001:v:/home/vcap:/bin/bash", ""},
+		{"uid of minus one", "vcap:x:4294967295:1001:v:/home/vcap:/bin/bash", ""},
+		{"gid of minus one", "vcap:x:1000:4294967295:v:/home/vcap:/bin/bash", ""},
+		{"a home that is not absolute", "vcap:x:1000:1001:v:home/vcap:/bin/bash", ""},
+		{"a home with a space", "vcap:x:1000:1001:v:/home/v cap:/bin/bash", ""},
+		{"a home with dot-dot", "vcap:x:1000:1001:v:/home/../root:/bin/bash", ""},
+		{"a home that ends in dot-dot", "vcap:x:1000:1001:v:/home/vcap/..:/bin/bash", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newRunTree(t)
+			tree.fakeGetent(t, tc.entry)
+
+			code, out := tree.snippet(t, false, "_rc_vcap_entry\n")
+			if tc.want == "" {
+				if code == 0 || out != "" {
+					t.Errorf("exit %d, printed %q; want a refusal", code, out)
+				}
+
+				return
+			}
+
+			if code != 0 || out != tc.want {
+				t.Errorf("exit %d, printed %q; want %q", code, out, tc.want)
 			}
 		})
 	}
@@ -1978,16 +2077,16 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 	tree := newRunTree(t)
 	tree.linkRunTools(t)
 
-	for _, tool := range []string{"getent", "setpriv"} {
-		path, lookErr := exec.LookPath(tool)
-		if lookErr != nil {
-			t.Skipf("no %s on this host", tool)
-		}
+	// Only setpriv is linked. getent is a fake, and a fake must never be
+	// written through a link to the real tool.
+	path, err := exec.LookPath("setpriv")
+	if err != nil {
+		t.Skip("no setpriv on this host")
+	}
 
-		lookErr = os.Symlink(path, tree.path("usr/bin", tool))
-		if lookErr != nil {
-			t.Fatal(lookErr)
-		}
+	err = os.Symlink(path, tree.path("usr/bin/setpriv"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// The fake home stands in for the account's home, and the account must
@@ -1999,8 +2098,24 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for dir := tree.root; dir != os.TempDir() && dir != "/"; dir = filepath.Dir(dir) {
-		err = os.Chmod(dir, 0o711) //nolint:gosec // a test tree the account must pass through
+	// The search bit is added to the test root and to the directories
+	// above it that this test created, and to nothing outside them.
+	stop, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(tree.root)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(tree.root, stop+"/") || strings.Count(strings.TrimPrefix(tree.root, stop), "/") > 2 {
+		t.Fatalf("the test root %s is not within two levels of %s", tree.root, stop)
+	}
+
+	for dir := tree.root; dir != stop; dir = filepath.Dir(dir) {
+		info, statErr := os.Stat(dir)
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+
+		err = os.Chmod(dir, info.Mode().Perm()|0o011) //nolint:gosec // a test tree the account must pass through
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2011,7 +2126,7 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 	tree.fakeGetent(t, vcapEntry(uid, gid, "/home/vcap"))
 
 	taskDir := tree.path(runOps, runTask)
-	command := fmt.Sprintf("id -u\nid -g\ncat %[1]q\n(echo more >> %[1]q) 2> /dev/null || echo append-denied\nrm -rf %[2]q 2> /dev/null\n[ -e %[2]q ] && echo remove-denied\n", taskDir+"/cmd.sh", taskDir)
+	command := fmt.Sprintf("id -u\nid -g\nid -G\ncat %[1]q\n(echo more >> %[1]q) 2> /dev/null || echo append-denied\nrm -rf %[2]q 2> /dev/null\n[ -e %[2]q ] && echo remove-denied\n", taskDir+"/cmd.sh", taskDir)
 
 	code, _ := tree.prepare(t, runTask, "vcap", []byte(command))
 	if code != 0 {
@@ -2023,7 +2138,7 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 		t.Fatalf("exit = %d; stderr %q", code, errOut)
 	}
 
-	want := fmt.Sprintf("%d\n%d\n%sappend-denied\nremove-denied\n", uid, gid, command)
+	want := fmt.Sprintf("%d\n%d\n%d\n%sappend-denied\nremove-denied\n", uid, gid, gid, command)
 	if out != want {
 		t.Errorf("the command printed\n%s\nwant\n%s", out, want)
 	}

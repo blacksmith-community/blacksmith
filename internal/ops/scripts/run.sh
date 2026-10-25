@@ -28,6 +28,9 @@
 readonly RC_DATA=/var/vcap/data
 readonly RC_USER_RE='^(root|vcap)$'
 readonly RC_SECS_RE='^[1-9][0-9]{0,5}$'
+# A user or group ID the script will pass to setpriv: canonical decimal, not
+# zero, and not 4294967295, which setpriv reads as "unchanged".
+readonly RC_ID_RE='^[1-9][0-9]{0,9}$'
 readonly RC_EXIT_RE='^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
 
 # The directory that the EXIT trap removes when an operation stops before
@@ -65,6 +68,11 @@ _rc_tool() {
 	printf '%s/usr/bin/%s' "$root" "$1"
 }
 
+# _rc_id_ok <id> accepts a user or group ID that setpriv can take.
+_rc_id_ok() {
+	[[ $1 =~ $RC_ID_RE ]] && [ "$1" != 4294967295 ]
+}
+
 # _rc_vcap_gid prints the group ID of the vcap account. In production it
 # comes from getent. Under the test root there is no account database, so
 # it is the group of the fake home/vcap directory, which stands in for
@@ -80,15 +88,14 @@ _rc_vcap_gid() {
 		IFS=: read -r _ _ _ gid _ <<< "$entry"
 	fi
 
-	[[ $gid =~ ^[0-9]+$ ]] || return 1
-	[ "$gid" != 0 ] || return 1
+	_rc_id_ok "$gid" || return 1
 	printf '%s' "$gid"
 }
 
 # _rc_vcap_entry prints "uid gid home" for the vcap account from getent,
 # which the tests replace with a fake under the test root. It refuses an
-# entry with no vcap name, a uid or gid that is not a number, a uid or gid
-# of 0, and a home that is not a plain absolute path, because the home goes
+# entry with no vcap name, a uid or gid that is not a canonical number or is 0,
+# and a home that is not a plain absolute path, because the home goes
 # into the command's environment.
 _rc_vcap_entry() {
 	local entry name uid gid home
@@ -97,8 +104,8 @@ _rc_vcap_entry() {
 	IFS=: read -r name _ uid gid _ home _ <<< "$entry"
 
 	[ "$name" = vcap ] || return 1
-	[[ $uid =~ ^[0-9]+$ ]] && [ "$uid" != 0 ] || return 1
-	[[ $gid =~ ^[0-9]+$ ]] && [ "$gid" != 0 ] || return 1
+	_rc_id_ok "$uid" || return 1
+	_rc_id_ok "$gid" || return 1
 	[[ $home =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
 	[[ /$home/ != */../* ]] || return 1
 
@@ -258,8 +265,8 @@ cleanup() {
 # deadline, an empty environment with fixed values, umask 022, stdin at
 # end of file, and the home of its user as its working directory. The
 # vcap command runs under setpriv, inside timeout, with no supplementary
-# groups. The wrapper exits with the code the
-# command ended with, which it also records in the exit file.
+# groups. The wrapper exits with the code the command ended with, which
+# it also records in the exit file.
 execute() {
 	[ "$#" -eq 4 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
@@ -268,24 +275,31 @@ execute() {
 	valid_hash "$4" || return "$EXIT_USAGE"
 
 	local task=$1 user=$2 secs=$3 want=$4 root gid base dir file home digest setsid timeout code
-	local uid entry homepath setpriv
+	local uid entry homepath setpriv path
 	local -a priv=()
 
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 	_cp_secure_chain "$root" "$RC_DATA" || return "$EXIT_REFUSED"
-	gid=$(_rc_vcap_gid) || return "$EXIT_REFUSED"
 
 	base=$root$RC_DATA/runcmd
 	dir=$base/$task
 	file=$dir/cmd.sh
 	home=$root/root
 	homepath=/root
+	path=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 	if [ "$user" = vcap ]; then
 		entry=$(_rc_vcap_entry) || return "$EXIT_REFUSED"
 		IFS=' ' read -r uid gid homepath <<< "$entry"
 		home=$root$homepath
+		path=/var/vcap/bosh/bin:/usr/local/bin:/usr/bin:/bin
+
+		# Only root may swap a directory on the way to the home between
+		# this check and the cd.
+		_cp_secure_chain "$root" "${homepath%/*}" || return "$EXIT_REFUSED"
 		_rc_check_dir "$home" "$uid" "$gid" - || return "$EXIT_REFUSED"
+	else
+		gid=$(_rc_vcap_gid) || return "$EXIT_REFUSED"
 	fi
 
 	_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
@@ -320,15 +334,16 @@ execute() {
 	# for a command that exited 1. The brace group sends the command's
 	# stderr through descriptor 3 and the shell's own job notice, such as
 	# "Killed", to /dev/null. The launch closes descriptor 3 for everything
-	# it starts, so the command cannot write to the notice channel. A command that outlives the kill-after is
-	# killed together with timeout, and shows up as 137, not 124.
+	# it starts, so the command cannot write to the notice channel. A
+	# command that outlives the kill-after is killed together with timeout,
+	# and shows up as 137, not 124.
 	# shellcheck disable=SC2016
 	{
 		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$2" 2> /dev/null || nostart; umask 022; shift 2; exec "$@"' \
 			_ "$dir/pgid" "$home" \
 			"$timeout" -k 10 "$secs" ${priv[@]+"${priv[@]}"} \
 			env -i HOME="$homepath" USER="$user" LOGNAME="$user" SHELL=/bin/bash \
-			PATH=/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+			PATH="$path" \
 			LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/var/vcap/data/tmp \
 			/bin/bash -- "$file" < /dev/null 2>&3 3>&-
 	} 3>&2 2> /dev/null
