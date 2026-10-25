@@ -5170,8 +5170,21 @@
     const switched = await window.blacksmithNav.switchTab('upgrade');
     if (switched === false) return false;
     // The count names where a handed-over selection came from.
-    if (rotatePairs().length > 0) rotateState.source = 'certificates';
+    const handedOver = rotatePairs().length > 0;
+    if (handedOver) rotateState.source = 'certificates';
     renderOperation('rotate');
+    if (handedOver) {
+      // Every filter goes back to Any, so none can hide a handed-over instance.
+      Object.assign(batchWorkspace, { page: 0, search: '', eligibility: '', expiring: 0, selectedOnly: false });
+      ['batch-search', 'batch-eligibility', 'batch-expiring'].forEach((id) => {
+        const field = document.getElementById(id);
+        if (field) field.value = '';
+      });
+      // The list opens on the page that holds the first handed-over instance.
+      const first = rotateVisibleRows().findIndex((row) => rotateSelection().has(row.id));
+      if (first >= 0) batchWorkspace.page = Math.floor(first / BATCH_PAGE_SIZE);
+      refreshUpgradeInstanceList();
+    }
     if (batchFlow.installed) setBatchStep(2, false);
     rotateRefresh();
     const radio = document.getElementById('rotate-op-rotate');
@@ -24768,7 +24781,7 @@
       const rotate = button('cert-action-btn cert-drawer-rotate', avail.label);
       rotate.disabled = avail.state !== 'enabled';
       if (avail.note) rotate.setAttribute('aria-describedby', 'cert-drawer-rotate-note');
-      rotate.addEventListener('click', () => { openDrawerRotate(d, rotate); });
+      rotate.addEventListener('click', () => { openDrawerRotate(d); });
       actions.appendChild(rotate);
       if (avail.note) {
         const note = el('span', 'cert-muted cert-drawer-rotate-note', avail.note);
@@ -24776,10 +24789,6 @@
         actions.appendChild(note);
       }
       nodes.push(actions);
-      nodes.push(d.rotateHost);
-      if (allowed.length > 1) {
-        nodes.push(el('p', 'cert-muted cert-drawer-rotate-owners', `This certificate is used by ${allowed.length} instances. Rotate... starts with ${ownerLabel((cert.owners || []).find((o) => o && o.instance_id === allowed[0][0]))}, and Batch Operations can rotate the others together.`));
-      }
 
       nodes.push(expansionContent(cert));
 
@@ -24807,25 +24816,17 @@
       body.replaceChildren(...nodes);
     };
 
-    function openDrawerRotate(d, opener) {
-      const cert = d.item || d.cert;
-      const pairs = allowedPairs(cert);
+    // Rotate in the details panel hands this certificate to the batch
+    // operations flow, which owns the options, the review, and the preview.
+    function openDrawerRotate(d) {
+      const pairs = allowedPairs(d.item || d.cert);
       if (pairs.length === 0) return;
-      const [instanceId, key] = pairs[0];
-      const owner = (cert.owners || []).find((o) => o && o.instance_id === instanceId);
-      window.blacksmithRotate.openInstanceDialog(d.rotateHost, {
-        instanceId,
-        instanceName: ownerLabel(owner),
-        certs: [{ key, variable: certName(cert), daysLeft: cert.days_left, expiry: cert.expiry, modes: (cert.rotation && cert.rotation.modes) || [], patchReason: ((cert.rotation && cert.rotation.reasons) || []).join(' ') }],
-        preselect: new Set([key]),
-        origin: 'drawer',
-        opener,
-        findOpener: () => (view.drawer === d
-          ? (view.refs.drawerBody.querySelector('.cert-drawer-rotate:not([disabled])') || view.refs.drawerTitle)
-          : null)
-      });
-      const first = d.rotateHost.querySelector('.cert-rotate-preview');
-      if (first && !first.disabled) first.focus({ preventScroll: true });
+      selection.clear();
+      pairs.forEach(([id, name]) => setPair(id, name, true));
+      renderSelectionLine();
+      renderTable();
+      syncRotateSelected();
+      window.blacksmithBatch.openRotate();
     }
 
     async function loadItem(d) {
@@ -24865,7 +24866,7 @@
         return;
       }
       closeDrawer({ restore: false });
-      const d = { id: cert.id, cert, item: null, status: 'loading', error: '', opener, surface: null, holders: new Map(), rotateHost: el('div', 'cert-drawer-rotate-host') };
+      const d = { id: cert.id, cert, item: null, status: 'loading', error: '', opener, surface: null, holders: new Map() };
       d.surface = { close: () => closeDrawer() };
       view.drawer = d;
       window.blacksmithSurfaces.push(d.surface);
@@ -24877,7 +24878,7 @@
       window.blacksmithRotate.readHolders().then((holders) => {
         if (view.drawer !== d) return;
         d.holders = holders;
-        if (holders.size > 0 && !d.rotateHost.firstChild) renderDrawerBody();
+        if (holders.size > 0) renderDrawerBody();
       });
       view.refs.drawerTitle.focus();
     }

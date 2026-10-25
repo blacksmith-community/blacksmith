@@ -146,21 +146,12 @@ t('instance rotation and overview', async () => {
   const row=d.querySelector('.cert-row'); row.click(); await sleep(150);
   const dr=d.querySelector('.cert-drawer-rotate');
   ok(dr&&!dr.disabled&&dr.textContent==='Rotate...','drawer: Rotate enabled for a rotatable certificate');
-  dr.focus(); dr.click(); await sleep(30);
-  const dd=d.querySelector('.cert-fleet-drawer .cert-rotate-dialog');
-  ok(!!dd&&dd.querySelectorAll('input[type=checkbox]').length===1&&dd.querySelector('input[type=checkbox]').checked,'drawer: dialog lists this certificate, preselected');
-  previewStatus=200;
-  // the item finishes loading while the dialog is open, which redraws the opener
-  const oldOpener=d.querySelector('.cert-drawer-rotate');
-  itemGate=null; openGate(); await sleep(120);
-  const redrawn=!oldOpener.isConnected;
-  ok(redrawn&&!!d.querySelector('.cert-fleet-drawer .cert-rotate-dialog'),'drawer: the opener is replaced and the dialog survives the redraw');
-  dd.querySelector('.cert-rotate-preview').click(); await waitDialog(); confirmBtn().click(); await sleep(150);
-  ok(!redrawn||(d.activeElement&&(d.activeElement===d.querySelector('.cert-drawer-rotate')||d.activeElement===d.querySelector('.cert-fleet-drawer-title, #cert-drawer-title')||d.activeElement.className.includes('cert-drawer-rotate')||d.activeElement.id==='cert-drawer-title')),'drawer: focus lands on a live drawer control when the opener was redrawn (redrawn='+redrawn+')');
-  const db=bodyOf(lastPost(/rotation\/preview( |$)/));
-  ok(db.selections[0].instance_id==='inst-a'&&db.selections[0].variables.join()==='/s/a_crt','drawer: preview body names the certificate');
-  const dc=bodyOf(lastPost(/\/b\/upgrade\/tasks( |$)/));
-  ok(dc.kind==='certificates'&&UUID.test(dc.client_request_id),'drawer: create body has client_request_id');
+  dr.focus(); dr.click(); await sleep(150);
+  ok(!d.querySelector('.cert-fleet-drawer .cert-rotate-dialog'),'drawer: Rotate opens no dialog of its own');
+  const hand=w.blacksmithCerts.selection;
+  ok(hand.size===1&&[...hand.get('inst-a')].join()==='/s/a_crt','drawer: this certificate is the whole shared selection');
+  ok(d.getElementById('upgrade').dataset.operation==='rotate','drawer: Rotate opens Batch in rotate mode');
+  itemGate=null; openGate(); previewStatus=200;
   ok(alerts.length===0,'no alert, confirm, or prompt used');
   ok(errors.filter(e=>!/HTTP 404/.test(e)).length===0,'no console errors '+errors.filter(e=>!/HTTP 404/.test(e)).join('|'));
   expect(failures).toEqual([]);
