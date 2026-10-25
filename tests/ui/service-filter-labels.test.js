@@ -38,3 +38,15 @@ t('instance filter actions are named icon buttons',()=>{
  }
  }finally{w.close();}
 });
+
+t('instance search and pagination stay compact with accessible names',()=>{
+ const {w,d}=boot();try{
+ const host=d.createElement('div');host.innerHTML=w.__T.renderServicesTemplate({});
+ expect(host.querySelector('label[for="instance-search"]')).toBeNull();
+ expect(host.querySelector('#instance-search').getAttribute('aria-label')).toBe('Find an instance');
+ for(const [id,name] of [['instance-prev','Previous page of instances'],['instance-next','Next page of instances']]){
+ const button=host.querySelector('#'+id);expect(button.textContent.trim()).toBe('');
+ expect(button.title).toBe(name);expect(button.getAttribute('aria-label')).toBe(name);expect(button.querySelector('svg')).not.toBeNull();
+ }
+ }finally{w.close();}
+});

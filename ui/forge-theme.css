@@ -575,3 +575,15 @@ body > footer p { margin: 0; }
 .header-deployment:has(#deployment-name:empty) { display: none; }
 #copy-header-deployment { color: inherit; opacity: 1; flex: 0 0 auto; min-width: 2rem; min-height: 2rem; }
 #copy-header-deployment:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+/* Compact instance discovery without shrinking the input controls. */
+#services .services-filter-section { padding: .5rem; margin-bottom: .5rem; }
+#services .filter-row { margin-bottom: .375rem; gap: .5rem; }
+#services .filter-row:last-of-type { margin-bottom: .5rem; }
+#services #instance-search { margin-bottom: 6px; }
+#services .filter-status { padding-top: .375rem; margin-top: .25rem; }
+#services .instance-pagination { padding: 5px 6px; gap: 4px; }
+#services .instance-pagination button { display: inline-flex; align-items: center; justify-content: center; width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0; }
+@media (pointer: coarse) {
+  #services .instance-pagination button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+}

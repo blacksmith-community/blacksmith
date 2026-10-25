@@ -2561,7 +2561,7 @@
 
     const filterSection = `
       <div class="services-filter-section">
-        <label for="instance-search">Find an instance</label><input id="instance-search" type="search" placeholder="Name, ID, service, or plan" autocomplete="off">
+        <input aria-label="Find an instance" id="instance-search" type="search" placeholder="Name, ID, service, or plan" autocomplete="off">
         ${showFilter ? `
         <div class="filter-row">
           <select id="service-filter" class="filter-select" aria-label="Service">
@@ -2654,7 +2654,7 @@
     return `
       <div class="services-list" role="region" aria-label="Service instances">
         ${filterSection}
-        <nav class="instance-pagination" aria-label="Instance pages"><button id="instance-prev" class="outline small">Previous</button><span id="instance-page"></span><button id="instance-next" class="outline small">Next</button></nav>
+        <nav class="instance-pagination" aria-label="Instance pages"><button id="instance-prev" type="button" class="outline small" aria-label="Previous page of instances" title="Previous page of instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="15 18 9 12 15 6"></polyline></svg></button><span id="instance-page"></span><button id="instance-next" type="button" class="outline small" aria-label="Next page of instances" title="Next page of instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="9 18 15 12 9 6"></polyline></svg></button></nav>
         <div class="services-items-container">
           ${listHtml}
         </div>
