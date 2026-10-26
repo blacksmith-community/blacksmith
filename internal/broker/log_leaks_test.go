@@ -139,6 +139,8 @@ var _ = Describe("Log leak prevention", func() {
 		{"Set-Cookie", "Set-Cookie", "session=" + leakSentinelAuth, true},
 		{"Proxy-Authorization", "Proxy-Authorization", "Basic " + leakSentinelAuth, true},
 		{"X-Vault-Token", "X-Vault-Token", leakSentinelAuth, true},
+		{"X-Blacksmith-Command-Key", "X-Blacksmith-Command-Key", leakSentinelAuth, true},
+		{"lowercase x-blacksmith-command-key", "x-blacksmith-command-key", leakSentinelAuth, false},
 		{"lowercase x-vault-token", "x-vault-token", leakSentinelAuth, false},
 		{"lowercase authorization", "authorization", "Basic " + leakSentinelAuth, false},
 	} {

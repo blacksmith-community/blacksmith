@@ -145,7 +145,7 @@ func redactedHeaders(h http.Header) http.Header {
 
 	for name, values := range h {
 		switch http.CanonicalHeaderKey(name) {
-		case "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "X-Vault-Token":
+		case "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "X-Vault-Token", "X-Blacksmith-Command-Key":
 			out[name] = []string{"<redacted>"}
 		case "X-Broker-Api-Originating-Identity":
 			masked := make([]string, len(values))

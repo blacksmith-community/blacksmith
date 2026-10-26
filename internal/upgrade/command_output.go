@@ -3,8 +3,11 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
+	"strings"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/ops/scripts"
 )
@@ -122,6 +125,111 @@ func (m *Manager) loadCommandOutput(ctx context.Context, path string) (CommandOu
 	}
 
 	return entry, true, nil
+}
+
+// ReadCommandOutput returns what one node of a command task printed. The vm
+// is the node's "<group>-<index>", split on its last hyphen, since a group
+// name may hold hyphens. The instance may be empty when only one instance of
+// the task has such a node. The path comes from the task's own records and
+// never from the request, so a request can't reach another entry.
+//
+// An unknown task, instance, or node, and a node with no entry, answer 404
+// not_found, and a vm that is not a group and an index, or that fits more
+// than one instance, answers 400 invalid_request. The caller decides whether
+// the read is allowed before it calls.
+func (m *Manager) ReadCommandOutput(ctx context.Context, taskID, instanceID, vm string) (CommandOutput, error) {
+	group, index, ok := splitCommandVM(vm)
+	if !ok {
+		return CommandOutput{}, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			"vm must be an instance group and an index, such as redis-0")
+	}
+
+	path, err := m.commandOutputPathFor(taskID, instanceID, group, index)
+	if err != nil {
+		return CommandOutput{}, err
+	}
+
+	entry, found, err := m.loadCommandOutput(ctx, path)
+	if err != nil {
+		return CommandOutput{}, apierr.Wrap(http.StatusInternalServerError, apierr.CodeInternal, err)
+	}
+
+	if !found {
+		return CommandOutput{}, errNoCommandOutput()
+	}
+
+	return entry, nil
+}
+
+func errNoCommandOutput() error {
+	return apierr.New(http.StatusNotFound, apierr.CodeNotFound, "the task has no output for that node")
+}
+
+// splitCommandVM splits "<group>-<index>" on the last hyphen.
+func splitCommandVM(vm string) (string, int, bool) {
+	cut := strings.LastIndex(vm, "-")
+	if cut < 1 {
+		return "", 0, false
+	}
+
+	digits := vm[cut+1:]
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return "", 0, false
+	}
+
+	index, err := strconv.Atoi(digits)
+	if err != nil {
+		return "", 0, false
+	}
+
+	return vm[:cut], index, true
+}
+
+// commandOutputPathFor finds the node in the task's records and returns the
+// path of its output entry.
+func (m *Manager) commandOutputPathFor(taskID, instanceID, group string, index int) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	task, exists := m.tasks[taskID]
+	if !exists || task.KindOrDefault() != TaskKindCommand {
+		return "", errNoCommandOutput()
+	}
+
+	type match struct {
+		instance string
+		vm       CommandVMIdentity
+	}
+
+	var matches []match
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Command == nil || (instanceID != "" && inst.InstanceID != instanceID) {
+			continue
+		}
+
+		for j := range inst.Command.VMs {
+			identity := inst.Command.VMs[j].Reviewed
+			if matched := inst.Command.VMs[j].Matched; matched.Group != "" {
+				identity = matched
+			}
+
+			if identity.Group == group && identity.Index == index {
+				matches = append(matches, match{instance: inst.InstanceID, vm: identity})
+			}
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", errNoCommandOutput()
+	case 1:
+		return commandOutputPath(taskID, matches[0].instance, matches[0].vm)
+	default:
+		return "", apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			"more than one instance has that node, so name the instance")
+	}
 }
 
 // nonNilBytes keeps an empty stream as "" in JSON, never null.

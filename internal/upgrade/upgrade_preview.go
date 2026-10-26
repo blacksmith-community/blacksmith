@@ -145,6 +145,8 @@ func checkUpgradeRequest(req CreateTaskRequest) error {
 	case "", TaskKindUpgrade:
 	case TaskKindCertificates:
 		return ErrCertificateTaskKind
+	case TaskKindCommand:
+		return ErrCommandTaskKind
 	default:
 		return fmt.Errorf("%w: %q", ErrInvalidTaskKind, req.Kind)
 	}

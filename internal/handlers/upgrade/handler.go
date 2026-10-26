@@ -32,6 +32,9 @@ type taskManager interface {
 	CreateTask(ctx context.Context, req upgrade.CreateTaskRequest) (*upgrade.UpgradeTask, error)
 	PreviewUpgrade(ctx context.Context, req upgrade.CreateTaskRequest) (*upgrade.UpgradePreview, error)
 	CreateCertificateTask(ctx context.Context, req upgrade.CreateCertificateTaskRequest) (*upgrade.UpgradeTask, bool, error)
+	PreviewCommand(ctx context.Context, req upgrade.CommandPreviewRequest) (*upgrade.CommandPreview, error)
+	CreateCommandTask(ctx context.Context, req upgrade.CommandCreateRequest) (*upgrade.UpgradeTask, bool, error)
+	ReadCommandOutput(ctx context.Context, taskID, instanceID, vm string) (upgrade.CommandOutput, error)
 	GetTask(taskID string) (*upgrade.UpgradeTask, error)
 	ListTasks() []*upgrade.UpgradeTask
 	PauseTask(ctx context.Context, taskID string) error
@@ -76,6 +79,12 @@ type Dependencies struct {
 	// PatchRunner opens the SSH sessions patch mode runs its scripts
 	// through. It may be nil, and then no instance can be patched.
 	PatchRunner func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error)
+	// Commands returns the commands configuration as it stands now. When
+	// nil, commands count as off.
+	Commands func() config.CommandsConfig
+	// BOSH returns the BOSH configuration as it stands now, which tells a
+	// command preview how many director workers a parallel run may use.
+	BOSH func() config.BOSHConfig
 }
 
 // NewHandler creates a new upgrade handler. It applies the persisted
@@ -116,6 +125,8 @@ func configureManager(manager *upgrade.Manager, deps Dependencies) {
 		UpgradePreviews: deps.UpgradePreviews,
 		Prober:          deps.Prober,
 		PatchRunner:     deps.PatchRunner,
+		Commands:        deps.Commands,
+		BOSH:            deps.BOSH,
 	}
 
 	if deps.Certificates != nil {
@@ -164,6 +175,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.CreateTask(w, r)
 	case path == "/preview" && r.Method == http.MethodPost:
 		h.PreviewUpgrade(w, r)
+	case path == "/commands/preview" && r.Method == http.MethodPost:
+		h.PreviewCommand(w, r)
 	case path == "/tasks" && r.Method == http.MethodGet:
 		h.ListTasks(w, r)
 	case path == "/settings" && r.Method == http.MethodGet:
@@ -179,6 +192,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/cancel") && r.Method == http.MethodPost:
 		taskID := strings.TrimPrefix(strings.TrimSuffix(path, "/cancel"), "/tasks/")
 		h.CancelTask(w, r, taskID)
+	case strings.HasPrefix(path, "/tasks/") && strings.HasSuffix(path, "/output") && r.Method == http.MethodGet:
+		taskID := strings.TrimPrefix(strings.TrimSuffix(path, "/output"), "/tasks/")
+		h.GetCommandOutput(w, r, taskID)
 	case strings.HasPrefix(path, "/tasks/") && r.Method == http.MethodGet:
 		taskID := strings.TrimPrefix(path, "/tasks/")
 		h.GetTask(w, r, taskID)
@@ -377,6 +393,12 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if kind.Kind == upgrade.TaskKindCommand {
+		h.createCommandTask(w, r, body)
+
+		return
+	}
+
 	var req upgrade.CreateTaskRequest
 
 	err = json.Unmarshal(body, &req)
@@ -481,6 +503,146 @@ func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, 
 	response.JSON(w, status, task)
 }
 
+// PreviewCommand handles POST /b/upgrade/commands/preview. It takes the
+// instances, the command, and its settings, and answers 200 with the stored
+// preview, which holds the command's digest and length and never its text.
+// The request is authorized before anything else is read, so a caller with
+// no second credential learns nothing about the instances.
+func (h *Handler) PreviewCommand(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	if err != nil {
+		writeInvalidRequest(w, "invalid command preview request: "+err.Error())
+
+		return
+	}
+
+	var req upgrade.CommandPreviewRequest
+
+	err = json.Unmarshal(body, &req)
+	if err != nil {
+		writeInvalidRequest(w, "invalid command preview request: "+err.Error())
+
+		return
+	}
+
+	err = h.manager.Authorizer().AuthorizeRequest(r.Context(), r, req.RunAs)
+	if err != nil {
+		h.logger.Info("Refused a command preview: %v", err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	h.logger.Info("Previewing a command of %d bytes on %d instances", len(req.Command), len(req.InstanceIDs))
+
+	preview, err := h.tasks.PreviewCommand(r.Context(), req)
+	if err != nil {
+		h.logger.Error("Failed to preview the command: %v", err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	h.logger.Info("Command preview %s lists %d instances", preview.ID, len(preview.Instances))
+	response.JSON(w, http.StatusOK, preview)
+}
+
+// createCommandTask creates a command task from the preview the body names.
+// It authorizes the request before the preview is read, so a caller without
+// the second credential can't spend a preview. A new task answers 201 and a
+// retry that found the task its request ID already made answers 200, both
+// with the task, which carries the command text and never any output. Nothing
+// here logs the command.
+func (h *Handler) createCommandTask(w http.ResponseWriter, r *http.Request, body []byte) {
+	var req upgrade.CommandCreateRequest
+
+	err := json.Unmarshal(body, &req)
+	if err != nil {
+		writeInvalidRequest(w, "invalid command task request: "+err.Error())
+
+		return
+	}
+
+	err = h.manager.Authorizer().AuthorizeRequest(r.Context(), r, req.RunAs)
+	if err != nil {
+		h.logger.Info("Refused a command task: %v", err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	req.CredentialPresented = r.Header.Get(upgrade.CommandKeyHeader) != ""
+
+	h.logger.Info("Creating a command task of %d bytes from preview %s", len(req.Command), req.PreviewID)
+
+	task, existing, err := h.tasks.CreateCommandTask(r.Context(), req)
+	if err != nil {
+		h.logger.Error("Failed to create the command task: %v", err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	status := http.StatusCreated
+	if existing {
+		status = http.StatusOK
+	}
+
+	h.logger.Info("Answered command task %s, existing: %t", task.ID, existing)
+	response.JSON(w, status, task)
+}
+
+// commandOutputResponse is what one node printed. The streams are decoded
+// text, and the counts and flags say how much was kept of how much the node
+// sent.
+type commandOutputResponse struct {
+	Stdout          string `json:"stdout"`
+	Stderr          string `json:"stderr"`
+	StdoutKept      int64  `json:"stdout_kept"`
+	StdoutReceived  int64  `json:"stdout_received"`
+	StderrKept      int64  `json:"stderr_kept"`
+	StderrReceived  int64  `json:"stderr_received"`
+	StdoutTruncated bool   `json:"stdout_truncated"`
+	StderrTruncated bool   `json:"stderr_truncated"`
+}
+
+// GetCommandOutput handles GET /b/upgrade/tasks/{id}/output?vm=<group>-<index>
+// and answers with what that node printed. The read is authorized for the
+// feature switch and the second credential and never for the user the run
+// used, so a finished root run stays readable while root runs are off. The
+// optional instance parameter names the instance when more than one has the
+// node. The path of the stored entry comes from the task's own records.
+func (h *Handler) GetCommandOutput(w http.ResponseWriter, r *http.Request, taskID string) {
+	err := h.manager.Authorizer().AuthorizeRead(r.Context(), r)
+	if err != nil {
+		h.logger.Info("Refused a command output read of task %s: %v", taskID, err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	query := r.URL.Query()
+
+	output, err := h.tasks.ReadCommandOutput(r.Context(), taskID, query.Get("instance"), query.Get("vm"))
+	if err != nil {
+		h.logger.Info("Could not read command output of task %s: %v", taskID, err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	response.JSON(w, http.StatusOK, commandOutputResponse{
+		Stdout:          string(output.Stdout),
+		Stderr:          string(output.Stderr),
+		StdoutKept:      output.StdoutKept,
+		StdoutReceived:  output.StdoutReceived,
+		StderrKept:      output.StderrKept,
+		StderrReceived:  output.StderrReceived,
+		StdoutTruncated: output.StdoutTruncated,
+		StderrTruncated: output.StderrTruncated,
+	})
+}
+
 // ListTasks handles GET /b/upgrade/tasks - returns all upgrade tasks.
 func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("List upgrade tasks request")
@@ -511,6 +673,18 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request, taskID string)
 		response.WriteErrorCode(w, http.StatusNotFound, apierr.CodeInstanceNotFound, "task not found")
 
 		return
+	}
+
+	// The detail of a command task carries the full command text, so it
+	// needs the gate the output read has.
+	if task.KindOrDefault() == upgrade.TaskKindCommand {
+		err = h.manager.Authorizer().AuthorizeRead(r.Context(), r)
+		if err != nil {
+			h.logger.Info("Refused the detail of command task %s: %v", taskID, err)
+			writeCreateError(w, err)
+
+			return
+		}
 	}
 
 	response.HandleJSON(w, task, nil)
@@ -613,7 +787,8 @@ func writeCreateError(writer http.ResponseWriter, err error) {
 		errors.Is(err, upgrade.ErrInvalidRelease),
 		errors.Is(err, upgrade.ErrReleaseNotOnDirector),
 		errors.Is(err, upgrade.ErrInvalidTaskKind),
-		errors.Is(err, upgrade.ErrCertificateTaskKind):
+		errors.Is(err, upgrade.ErrCertificateTaskKind),
+		errors.Is(err, upgrade.ErrCommandTaskKind):
 		response.WriteError(writer, http.StatusBadRequest, err.Error())
 	case errors.Is(err, upgrade.ErrInstanceBusy):
 		// The guard's error names the operation that holds the instance.

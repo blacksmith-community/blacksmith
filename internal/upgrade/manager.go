@@ -134,6 +134,8 @@ var (
 	// ErrCertificateTaskKind turns a certificate task away from
 	// CreateTask, which builds upgrades only.
 	ErrCertificateTaskKind = errors.New("certificate tasks are created through CreateCertificateTask")
+	// ErrCommandTaskKind turns a command task away from CreateTask.
+	ErrCommandTaskKind = errors.New("command tasks are created through CreateCommandTask")
 	// ErrInvalidTaskKind names a task kind the manager does not know.
 	ErrInvalidTaskKind = errors.New("invalid task kind: it must be upgrade, certificates, or command")
 )
