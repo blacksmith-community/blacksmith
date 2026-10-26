@@ -497,17 +497,121 @@ func TestMatchesCommand(t *testing.T) {
 	}
 
 	for name, got := range map[string]bool{
-		"digest":   p.MatchesCommand("x", 5, "vcap", 600, true, 2),
-		"length":   p.MatchesCommand("d", 6, "vcap", 600, true, 2),
-		"run as":   p.MatchesCommand("d", 5, "root", 600, true, 2),
-		"timeout":  p.MatchesCommand("d", 5, "vcap", 601, true, 2),
-		"parallel": p.MatchesCommand("d", 5, "vcap", 600, false, 2),
-		"max":      p.MatchesCommand("d", 5, "vcap", 600, true, 3),
+		"digest":                  p.MatchesCommand("x", 5, "vcap", 600, true, 2),
+		"length":                  p.MatchesCommand("d", 6, "vcap", 600, true, 2),
+		"run as":                  p.MatchesCommand("d", 5, "root", 600, true, 2),
+		"timeout":                 p.MatchesCommand("d", 5, "vcap", 601, true, 2),
+		"parallel":                p.MatchesCommand("d", 5, "vcap", 600, false, 2),
+		"max":                     p.MatchesCommand("d", 5, "vcap", 600, true, 3),
+		"serial against parallel": p.MatchesCommand("d", 5, "vcap", 600, false, 2),
 	} {
 		if got {
 			t.Errorf("a different %s must not match", name)
 		}
 	}
+}
+
+func TestMatchesCommandParallelFlagAlone(t *testing.T) {
+	t.Parallel()
+
+	serial := &CommandPreview{CommandDigest: "d", CommandLength: 5, RunAs: "vcap", TimeoutSeconds: 600}
+	if serial.MatchesCommand("d", 5, "vcap", 600, true, 0) {
+		t.Error("a serial preview must not match a parallel create with max 0")
+	}
+
+	parallel := &CommandPreview{CommandDigest: "d", CommandLength: 5, RunAs: "vcap", TimeoutSeconds: 600, Parallel: true}
+	if parallel.MatchesCommand("d", 5, "vcap", 600, false, 0) {
+		t.Error("a parallel preview must not match a serial create")
+	}
+}
+
+func TestMatchesCommandTimeoutDefault(t *testing.T) {
+	t.Parallel()
+
+	env := newCmdEnv(t, nil)
+	req := cmdReq("i1")
+	req.TimeoutSeconds = 0
+
+	preview, err := env.manager.PreviewCommand(context.Background(), req)
+	if err != nil {
+		t.Fatalf("PreviewCommand: %v", err)
+	}
+
+	if !preview.MatchesCommand(preview.CommandDigest, preview.CommandLength, "vcap", 0, false, 0) {
+		t.Error("a create that sends 0 must match a preview made with 0")
+	}
+
+	if !preview.MatchesCommand(preview.CommandDigest, preview.CommandLength, "vcap", 600, false, 0) {
+		t.Error("an explicit 600 must match the default")
+	}
+}
+
+func TestPreviewCommandEmptyInputs(t *testing.T) {
+	t.Parallel()
+
+	env := newCmdEnv(t, nil)
+
+	for name, change := range map[string]func(*CommandPreviewRequest){
+		"empty command":      func(r *CommandPreviewRequest) { r.Command = "" },
+		"blank command":      func(r *CommandPreviewRequest) { r.Command = " \t\n" },
+		"only empty ID":      func(r *CommandPreviewRequest) { r.InstanceIDs = []string{""} },
+		"empty ID among IDs": func(r *CommandPreviewRequest) { r.InstanceIDs = []string{"i1", ""} },
+		"no IDs":             func(r *CommandPreviewRequest) { r.InstanceIDs = nil },
+	} {
+		req := cmdReq("i1")
+		change(&req)
+
+		_, err := env.manager.PreviewCommand(context.Background(), req)
+		if name == "empty command" || name == "blank command" {
+			wantAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
+		} else {
+			wantAPIError(t, err, http.StatusBadRequest, apierr.CodeNoSelections)
+		}
+	}
+}
+
+func TestPreviewCommandCountsDuplicateOnce(t *testing.T) {
+	t.Parallel()
+
+	env := newCmdEnv(t, nil)
+
+	preview, err := env.manager.PreviewCommand(context.Background(), cmdReq("i1", "i1", "i3"))
+	if err != nil {
+		t.Fatalf("PreviewCommand: %v", err)
+	}
+
+	if len(preview.Instances) != 2 {
+		t.Fatalf("expected two instances, got %+v", preview.Instances)
+	}
+}
+
+type failVault struct{ cmdVault }
+
+func (failVault) Get(context.Context, string, interface{}) (bool, error) {
+	return false, errors.New("vault is down") //nolint:err113 // test fake
+}
+
+type failDirector struct{ cmdDirector }
+
+func (failDirector) GetDeploymentVMs(context.Context, string) ([]bosh.VM, error) {
+	return nil, errors.New("director is down") //nolint:err113 // test fake
+}
+
+func TestPreviewCommandReadFailuresFailThePreview(t *testing.T) {
+	t.Parallel()
+
+	env := newCmdEnv(t, nil)
+
+	env.manager.vault = &failVault{}
+
+	_, err := env.manager.PreviewCommand(context.Background(), cmdReq("i1", "i3"))
+	wantAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+
+	env = newCmdEnv(t, nil)
+	env.manager.director = &failDirector{}
+
+	_, err = env.manager.PreviewCommand(context.Background(), cmdReq("i1", "i3"))
+	wantAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
 }
 
 func TestSpendKinds(t *testing.T) {
@@ -522,7 +626,8 @@ func TestSpendKinds(t *testing.T) {
 	_, err := store.Spend("pv-cert", PreviewKindCommand)
 	wantAPIError(t, err, http.StatusConflict, apierr.CodePreviewMismatch)
 
-	// Neither wrong-kind spend consumed anything.
+	// The command spend of the certificate preview consumed nothing, and
+	// neither did the certificate spend of the command preview above.
 	spent, err := store.Spend("pv-cert", PreviewKindCertificate)
 	if err != nil || spent.Certificate == nil {
 		t.Fatalf("certificate spend: %v %+v", err, spent)
@@ -534,9 +639,19 @@ func TestSpendKinds(t *testing.T) {
 	_, err = store.Spend("pv-missing", PreviewKindCommand)
 	wantAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
 
+	_, err = store.Spend("pv-cmd", PreviewKindCertificate)
+	wantAPIError(t, err, http.StatusConflict, apierr.CodePreviewMismatch)
+
+	store.PutCommand(&CommandPreview{ID: "pv-cmd2"}, time.Minute)
 	now = now.Add(2 * time.Minute)
 
-	_, err = store.Spend("pv-cmd", PreviewKindCommand)
+	_, err = store.GetCommand("pv-cmd")
+	wantAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
+
+	store.PutCommand(&CommandPreview{ID: "pv-cmd3"}, time.Minute)
+	now = now.Add(2 * time.Minute)
+
+	_, err = store.Spend("pv-cmd3", PreviewKindCommand)
 	wantAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
 }
 

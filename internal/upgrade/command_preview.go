@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -99,12 +101,24 @@ func (p *CommandPreview) MatchesCommand(digest string, length int, runAs string,
 		maxInFlight = 0
 	}
 
+	timeout = effectiveTimeout(timeout)
+
 	return p.CommandDigest == digest &&
 		p.CommandLength == length &&
 		p.RunAs == runAs &&
 		p.TimeoutSeconds == timeout &&
 		p.Parallel == parallel &&
 		p.MaxInFlight == maxInFlight
+}
+
+// effectiveTimeout is the timeout a request runs with, where 0 means the
+// default. The preview and the match both use it.
+func effectiveTimeout(seconds int) int {
+	if seconds == 0 {
+		return CommandTimeoutDefault
+	}
+
+	return seconds
 }
 
 // commandDigest returns the hex SHA-256 of the command.
@@ -152,18 +166,23 @@ func validateCommandSettings(req CommandPreviewRequest) (int, error) {
 		return 0, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRunUser, "commands run as root or vcap")
 	}
 
-	timeout := req.TimeoutSeconds
-	if timeout == 0 {
-		timeout = CommandTimeoutDefault
-	}
+	timeout := effectiveTimeout(req.TimeoutSeconds)
 
 	if timeout < CommandTimeoutMin || timeout > CommandTimeoutMax {
 		return 0, apierr.New(http.StatusBadRequest, apierr.CodeTimeoutOutOfRange,
 			fmt.Sprintf("the timeout is between %d and %d seconds", CommandTimeoutMin, CommandTimeoutMax))
 	}
 
+	if strings.TrimSpace(req.Command) == "" {
+		return 0, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest, "the command is empty")
+	}
+
 	if len(req.InstanceIDs) == 0 {
 		return 0, apierr.New(http.StatusBadRequest, apierr.CodeNoSelections, "Select at least one instance to preview.")
+	}
+
+	if slices.Contains(req.InstanceIDs, "") {
+		return 0, apierr.New(http.StatusBadRequest, apierr.CodeNoSelections, "Every selection must name an instance.")
 	}
 
 	return timeout, nil
@@ -225,7 +244,7 @@ func (m *Manager) PreviewCommand(ctx context.Context, req CommandPreviewRequest)
 	services := make(map[string]bool)
 
 	for _, id := range req.InstanceIDs {
-		if id == "" || seen[id] {
+		if seen[id] {
 			continue
 		}
 
@@ -291,9 +310,9 @@ func (m *Manager) previewCommandInstance(ctx context.Context, instanceID string)
 		return inst, nil
 	}
 
-	busy := m.busyBlock(certinventory.InstanceRef{ID: instanceID, Deployment: inst.Deployment}, "")
-	if busy != nil {
-		inst.Blocked = &Blocked{Code: busy.Code, Message: mutation.ErrInstanceBusy.Error() + ": " + busy.Message}
+	holder, busy := m.busyHolder(certinventory.InstanceRef{ID: instanceID, Deployment: inst.Deployment}, "")
+	if busy {
+		inst.Blocked = &Blocked{Code: apierr.CodeInstanceBusy, Message: mutation.ErrInstanceBusy.Error() + ", held by " + holder.Description}
 
 		return inst, nil
 	}

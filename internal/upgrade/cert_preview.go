@@ -20,6 +20,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/credhub"
+	"blacksmith/internal/mutation"
 )
 
 const (
@@ -241,7 +242,7 @@ func (s *PreviewStore) GetCommand(id string) (*CommandPreview, error) {
 }
 
 func errPreviewGone() error {
-	return apierr.New(http.StatusGone, apierr.CodePreviewExpired, "The preview has expired or is unknown, so preview the rotation again.")
+	return apierr.New(http.StatusGone, apierr.CodePreviewExpired, "The preview has expired or is unknown, so preview it again.")
 }
 
 func errPreviewKind(want PreviewKind) error {
@@ -772,6 +773,17 @@ func (inst *PreviewInstance) block(code, message string) PreviewInstance {
 // busyBlock blocks an instance that the guard holds, or that a task waits
 // to reserve, for anything but holderTask.
 func (m *Manager) busyBlock(ref certinventory.InstanceRef, holderTask string) *Blocked {
+	holder, held := m.busyHolder(ref, holderTask)
+	if !held {
+		return nil
+	}
+
+	return &Blocked{Code: apierr.CodeInstanceBusy, Message: "The instance is busy with " + holder.Description + "."}
+}
+
+// busyHolder returns the holder of the instance, or false when it is free
+// or held by holderTask.
+func (m *Manager) busyHolder(ref certinventory.InstanceRef, holderTask string) (mutation.Holder, bool) {
 	holder, held := m.Guard().Holder(ref.ID, ref.Deployment)
 	if !held || (holderTask != "" && holder.TaskID == holderTask) {
 		holder, held = m.WaitingFor(ref.ID, ref.Deployment)
@@ -780,11 +792,7 @@ func (m *Manager) busyBlock(ref certinventory.InstanceRef, holderTask string) *B
 		}
 	}
 
-	if !held {
-		return nil
-	}
-
-	return &Blocked{Code: apierr.CodeInstanceBusy, Message: "The instance is busy with " + holder.Description + "."}
+	return holder, held
 }
 
 // selectedCheck is the outcome of checking one selected variable.
