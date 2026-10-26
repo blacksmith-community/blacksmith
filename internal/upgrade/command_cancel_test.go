@@ -805,3 +805,43 @@ func TestCommandCancelResumeThatCannotCleanSavesTheHold(t *testing.T) {
 
 	fix.assertNoCommandText()
 }
+
+// A resume that finds processes of the command alive after KILL has nothing
+// more to clean, so it ends the instance as cancelled, skips its pending
+// nodes, and releases it.
+func TestCommandCancelResumeEndsAnInstanceWhoseProcessesSurvived(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	script := fix.blockExec()
+	script.cleanupDown.Store(true)
+
+	fix.queue()
+	script.wait(t, 1)
+	fix.cancel()
+	fix.waitFor("the task to wait for a resume", func(task UpgradeTask) bool { return task.Paused })
+	waitUntil(t, "the processor to let go", func() bool { return !fix.owned() })
+
+	fix.mu.Lock()
+	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
+	fix.mu.Unlock()
+	script.cleanupDown.Store(false)
+
+	fix.resume()
+
+	done := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusCancelled })
+
+	if got := nodeOf(done, 0, 0); got.Phase != CommandPhaseSettled || !got.Survived {
+		t.Errorf("node 0 is %s, survived %v, want settled with survivors recorded", got.Phase, got.Survived)
+	}
+
+	if got := nodeOf(done, 0, 1).Phase; got != CommandPhaseSkipped {
+		t.Errorf("node 1 is %s, want skipped", got)
+	}
+
+	if done.Status != TaskStatusCancelled || done.Paused || done.CancelledCount != 1 {
+		t.Errorf("task is %s, paused %v, cancelled count %d, want cancelled, not paused, and 1", done.Status, done.Paused, done.CancelledCount)
+	}
+
+	fix.waitReleased()
+	waitUntil(t, "the end to be saved", func() bool { return fix.lastSaved().Instances[0].Status == InstanceStatusCancelled })
+	fix.assertNoCommandText()
+}

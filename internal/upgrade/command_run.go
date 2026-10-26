@@ -1677,11 +1677,15 @@ func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade
 	sessions := m.newCommandSessions(inst.Command.Deployment)
 	defer sessions.close()
 
-	if m.settleStrandedNodes(m.ctx, sessions, task, inst) {
-		m.holdAndSave(context.WithoutCancel(m.ctx), task, inst)
+	persistCtx := context.WithoutCancel(m.ctx)
 
-		return
+	// A settle that stopped the task leaves a node held only when it could
+	// not clean it. Processes that outlived KILL settle the node, so
+	// nothing is left to wait for, and the instance ends as it does when
+	// every node is clean.
+	if m.settleStrandedNodes(m.ctx, sessions, task, inst) {
+		m.holdAndSave(persistCtx, task, inst)
 	}
 
-	m.endCancelledCommandInstance(context.WithoutCancel(m.ctx), task, inst)
+	m.endCancelledCommandInstance(persistCtx, task, inst)
 }
