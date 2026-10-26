@@ -813,24 +813,21 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 
 	taskID := expectUnconfirmedCommandCreate(t, env, err, preview.ID, "i1", "i3")
 
-	env.vault.script.Lock()
-	landed := env.vault.saved[commandTasksVaultPath+"/"+taskID]
-	env.vault.script.Unlock()
-
-	if len(landed) == 0 {
-		t.Fatal("the confirming save should have landed in Vault")
+	// The premise: the confirming save landed, so Vault holds exactly one
+	// confirmed record of this review although the create failed.
+	if confirmed := env.vault.confirmedRecordsFrom(t, preview.ID); confirmed != 1 {
+		t.Fatalf("expected exactly one confirmed record in Vault before the heal, got %d", confirmed)
 	}
 
-	// The reviewer's reproduction: a retry on the spent preview is refused,
-	// so one review leaves at most one confirmed record in Vault.
+	// A retry on the spent preview is refused, so the review still has one.
 	again := createCmdReq(preview.ID)
 	again.ClientRequestID = "same-preview"
 
 	_, _, err = env.manager.CreateCommandTask(context.Background(), again)
 	expectAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
 
-	if confirmed := env.vault.confirmedRecordsFrom(t, preview.ID); confirmed > 1 {
-		t.Fatalf("one preview produced %d confirmed command records", confirmed)
+	if confirmed := env.vault.confirmedRecordsFrom(t, preview.ID); confirmed != 1 {
+		t.Fatalf("expected the refused retry to leave one confirmed record, got %d", confirmed)
 	}
 
 	// A create from another review of the same instances is refused while
@@ -846,6 +843,16 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 	}
 
 	expectFailedStatusSaved(t, env, taskID)
+
+	// The outcome: the failed status overwrote the confirmed record, so
+	// nothing of this review can run, and the record is the one task.
+	if confirmed := env.vault.confirmedRecordsFrom(t, preview.ID); confirmed != 0 {
+		t.Fatalf("expected no confirmed record after the failed status was saved, got %d", confirmed)
+	}
+
+	if stored, ok := env.vault.record(t, taskID); !ok || stored.Status != TaskStatusFailed {
+		t.Fatalf("expected the one record to be the failed task, got present %v status %q", ok, stored.Status)
+	}
 }
 
 // A retry with the same request ID and body returns the first task, even

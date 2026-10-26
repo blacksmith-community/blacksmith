@@ -50,13 +50,13 @@ func (m *Manager) Authorizer() CommandAuthorizer {
 // else, so no log line, error, or activity record holds it.
 //
 // The task reserves its instances and is saved twice, first with
-// CreationConfirmed false and then true, as a certificate task is. A failure
-// after the preview was spent frees every reservation, leaves no task in
-// memory, and puts the preview back so the create can be tried again. That
-// holds only before any save was attempted. Once a save was attempted, an
-// unconfirmed save may have landed, so the task is failed in memory, keeps
-// its reservations until a save of the failed status is confirmed, and the
-// preview stays spent.
+// CreationConfirmed false and then true, as a certificate task is. Two
+// failures differ. When a reservation fails, nothing was saved, so every
+// reservation is freed, no task is left in memory, and the preview is put
+// back so the create can be tried again. When a save cannot be confirmed, it
+// may still have landed, so the create follows the certificate create. The
+// task is failed in memory, keeps its reservations until a save of the
+// failed status is confirmed, and the preview stays spent.
 func (m *Manager) CreateCommandTask(ctx context.Context, req CommandCreateRequest) (*UpgradeTask, bool, error) {
 	select {
 	case <-m.loaded:
