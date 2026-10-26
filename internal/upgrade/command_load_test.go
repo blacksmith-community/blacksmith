@@ -712,3 +712,39 @@ func TestLoadedNodeLeftStagedByAFailedSentSaveIsCleanedOnly(t *testing.T) {
 	before.assertNoCommandText()
 	fix.assertNoCommandText()
 }
+
+// A refusal that is on an instance when the operator resumes is cleared, so
+// a later failure shows its own reason.
+func TestResumeAfterARefusedLoadClearsTheRefusalFromAFailure(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 1, 2, func(fix *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+		task.Command.RunAs = "root"
+		fix.setRoot(false)
+
+		task.Status = TaskStatusRunning
+		task.Instances[0].Status = InstanceStatusRunning
+		task.Instances[0].Command.VMs[0].Phase = CommandPhaseSettled
+		task.Instances[0].Command.VMs[0].Status = CommandStatusSucceeded
+	})
+	fix.exits["dep-0/1"] = 3
+
+	paused := fix.snapshot()
+	if paused.Status != TaskStatusPaused || !strings.HasPrefix(paused.Instances[0].Error, commandRefusedMessage) {
+		t.Fatalf("the task is %s with %q, want it paused with the refusal", paused.Status, paused.Instances[0].Error)
+	}
+
+	fix.setRoot(true)
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	done := fix.waitFor("the task to fail", func(task UpgradeTask) bool { return task.Status == TaskStatusFailed })
+
+	if strings.Contains(done.Instances[0].Error, "no longer allowed") {
+		t.Errorf("the failed instance still shows the refusal: %q", done.Instances[0].Error)
+	}
+
+	fix.assertNoCommandText()
+}

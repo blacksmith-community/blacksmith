@@ -943,6 +943,10 @@ func (m *Manager) commandRefusalLocked(task *UpgradeTask) error {
 	return authorizer.AuthorizeStored(m.ctx, *task.Command) //nolint:wrapcheck // the authorizer answers with the API error
 }
 
+// commandRefusedMessage starts what a loaded command task shows on its
+// instance when the authorizer refuses it.
+const commandRefusedMessage = "Running this command is no longer allowed, so the task paused after Blacksmith restarted. "
+
 // pauseRefusedCommandLocked pauses a loaded command task the authorizer
 // refuses, and says why on its first instance that has not ended. It
 // reports whether it paused the task. A manager that is not configured
@@ -967,7 +971,7 @@ func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 			continue
 		}
 
-		inst.Error = "Running this command is no longer allowed, so the task paused after Blacksmith restarted. " + commandErrorText(err)
+		inst.Error = commandRefusedMessage + commandErrorText(err)
 
 		break
 	}
@@ -1086,13 +1090,18 @@ func commandNeverStartedLocked(task *UpgradeTask) bool {
 	return true
 }
 
-// clearCommandNeverStartedLocked clears the never-started message from the
-// instances still pending once an operator resumes the task, since the
-// resume answers it. The caller holds mu.
-func clearCommandNeverStartedLocked(task *UpgradeTask) {
+// clearCommandLoadMessagesLocked clears the never-started message from the
+// instances still pending, and the refusal from any instance that has not
+// ended, once an operator resumes the task, since the resume answers both.
+// A later failure then shows its own reason. The caller holds mu.
+func clearCommandLoadMessagesLocked(task *UpgradeTask) {
 	for i := range task.Instances {
 		inst := &task.Instances[i]
 		if inst.Status == InstanceStatusPending && inst.Error == commandNeverStartedMessage {
+			inst.Error = ""
+		}
+
+		if !inst.Status.settled() && strings.HasPrefix(inst.Error, commandRefusedMessage) {
 			inst.Error = ""
 		}
 	}
