@@ -21,12 +21,16 @@
           label: plan.name || plan.id || 'Plan', context: `Service Plans · ${service.name || service.id}`, type: 'Plan', breadcrumb: `Blacksmith Broker > Service plans > ${service.name || service.id}` });
       });
     });
+    const services=new Map((catalog?.services||[]).flatMap(service=>[[service.id,service],[service.name,service]]));
     for (const [id, instance] of Object.entries(instances || {})) {
       if (!instance) continue;
-      const context = [instance.instance_name, id, instance.service_id, instance.deleted ? 'Deleted' : ''].filter(Boolean).join(' · ');
-      for (const [section, label] of instanceSections) {
-        entries.push({ screen: 'services', instanceId: id, section, label, context, type: 'Instance', breadcrumb: `Service Instances > ${instance.instance_name || id} > ${label}`, detail: [id, instance.service_id, instance.deleted ? 'Deleted' : ''].filter(Boolean).join(' · '), keywords: aliases[section] });
-      }
+      const label = instance.instance_name || id;
+      const service=services.get(instance.service_id);
+      const plan=service?.plans?.find(plan=>plan.id===instance.plan_id||plan.name===instance.plan_id);
+      const detail = [id, service?.name||instance.service_id, plan?.name||instance.plan_id, instance.deleted ? 'Deleted' : ''].filter(Boolean).join(' · ');
+      entries.push({screen:'services', instanceId:id, section:'details', label,
+        context:[label, detail].join(' · '), type:'Instance', breadcrumb:'Service Instances > Summary',
+        detail, keywords:[instance.service_id,instance.plan_id].filter(Boolean).join(' '), deleted:!!instance.deleted});
     }
     [['upgrade', 'Upgrade'], ['converge', 'Converge'], ['rotate', 'Rotate certificates']].forEach(([operation, label]) =>
       entries.push({ screen: 'upgrade', operation, label, type: 'Operation', context: 'Batch Operations', breadcrumb: 'Batch Operations > Options', keywords: operation }));
@@ -41,21 +45,52 @@
     [['light','Anvil Light'], ['dark','Anvil Dark'], ['high-contrast-light','High Contrast Light'], ['high-contrast-dark','High Contrast Dark'], ['system','System']].forEach(([theme,label]) => entries.push({ theme, label, type: 'Theme', context: 'Appearance theme mode', breadcrumb: 'Appearance > Theme', detail: theme === 'system' ? 'Follow your device’s appearance with Anvil' : '', keywords: 'theme appearance color mode' }));
     return entries;
   }
-  function search(entries, query) {
-    const normalized = query.trim().toLocaleLowerCase();
-    const words = normalized.split(/\s+/);
-    const score = entry => {
-      const label = entry.label.toLocaleLowerCase();
-      return label === normalized ? 0 : label.startsWith(normalized) ? 1 : 2;
-    };
-    return entries.filter(entry => {
-      const haystack = `${entry.label} ${entry.context || ''} ${entry.breadcrumb || ''} ${entry.keywords || ''}`.toLocaleLowerCase();
-      // Prefix matching keeps 'con' from also matching 'unconverged'.
-      return entry.rotation ? words.every(word => haystack.split(/[^a-z0-9]+/).some(token => token.startsWith(word))) : words.every(word => haystack.includes(word));
-    })
-      .sort((a, b) => score(a) - score(b));
+  const index = new WeakMap();
+  const normalize = value => String(value || '').toLocaleLowerCase();
+  function indexed(entry) {
+    if (!index.has(entry)) index.set(entry, {
+      label:normalize(entry.label), id:normalize(entry.instanceId),
+      text:normalize(`${entry.label} ${entry.context || ''} ${entry.breadcrumb || ''} ${entry.keywords || ''}`)
+    });
+    return index.get(entry);
   }
-  root.BlacksmithNavigation = { destinations, search };
+  function matcher(query) {
+    const normalized=normalize(query).trim(), words=normalized.split(/\s+/);
+    return entry => {
+      if (!normalized && entry.instanceId) return null;
+      const data=indexed(entry);
+      const matches=text=>words.every(word=>text.includes(word));
+      let result=entry;
+      if (entry.rotation ? !words.every(word=>data.text.split(/[^a-z0-9]+/).some(token=>token.startsWith(word))) : !matches(data.text)) {
+        if (!entry.instanceId) return null;
+        const section=instanceSections.find(([id,label])=> {
+          const tokens=normalize(label+' '+(aliases[id]||'')).split(/[^a-z0-9]+/);
+          return words.every(word=>data.text.includes(word)||tokens.some(token=>token.startsWith(word)));
+        });
+        if (!section) return null;
+        result={...entry,section:section[0],breadcrumb:`Service Instances > ${section[1]}`};
+      }
+      const rank=normalized&&data.id===normalized?0:(entry.deleted?10:0)+(data.label===normalized?1:data.label.startsWith(normalized)?2:3);
+      return {entry:result,rank};
+    };
+  }
+  function ordered(buckets) { return [...buckets.keys()].sort((a,b)=>a-b).flatMap(key=>buckets.get(key)); }
+  function addMatch(buckets,match) { if(match){if(!buckets.has(match.rank))buckets.set(match.rank,[]);buckets.get(match.rank).push(match.entry);} }
+  function search(entries,query) {
+    const match=matcher(query), buckets=new Map();
+    for(const entry of entries)addMatch(buckets,match(entry));
+    return ordered(buckets);
+  }
+  async function searchAsync(entries,query,{signal,yieldWork=()=>new Promise(resolve=>setTimeout(resolve,0))}={}) {
+    const match=matcher(query), buckets=new Map();
+    for(let offset=0;offset<entries.length;offset+=400){
+      if(signal?.aborted)return null;
+      for(const entry of entries.slice(offset,offset+400))addMatch(buckets,match(entry));
+      if(offset+400<entries.length)await yieldWork();
+    }
+    return signal?.aborted?null:ordered(buckets);
+  }
+  root.BlacksmithNavigation = { destinations, search, searchAsync };
   if (!root.document) return;
   const document = root.document;
 
@@ -67,6 +102,9 @@
     const list = dialog.querySelector('[role="listbox"]');
     const status = dialog.querySelector('[role="status"]');
     let entries = [], results = [], selected = 0, previousFocus;
+    let searchController, searchTimer, rendered = 0, composing = false;
+    const pageSize = 40;
+    const more = dialog.querySelector('[data-load-more]');
     let navigationController;
     const mainButton = id => [...document.querySelectorAll('.tabs > .tab-button')].find(b => b.dataset.tab === id);
     const sectionButton = (screen, id) => [...document.getElementById(screen).querySelectorAll('.detail-tab')].find(b => b.dataset.tab === id);
@@ -96,41 +134,47 @@
         active.scrollIntoView({ block: 'nearest' });
       } else input.removeAttribute('aria-activedescendant');
     }
-    function render() {
-      const matches = search(entries, input.value);
-      results = matches.slice(0, 80);
-      selected = 0;
-      list.replaceChildren();
-      results.forEach((entry, index) => {
-        const option = document.createElement('div');
-        option.id = `navigation-option-${index}`;
-        option.setAttribute('role', 'option');
-        const label = document.createElement('strong');
-        label.textContent = entry.label;
-        const context = document.createElement('span');
-        context.textContent = entry.context;
-        const row = document.createElement('div');
-        row.className = 'navigation-result-row';
-        const type = document.createElement('span');
-        type.className = 'navigation-result-type';
-        type.textContent = entry.type || 'Section';
-        context.className = 'navigation-result-location';
-        context.textContent = entry.breadcrumb || entry.context;
-        row.append(label, type, context);
-        option.append(row);
-        if (entry.detail) {
-          const detail = document.createElement('span');
-          detail.className = 'navigation-result-detail';
-          detail.textContent = entry.detail;
-          option.append(detail);
-        }
-        option.addEventListener('click', () => navigate(entry));
-        list.append(option);
-      });
-      status.textContent = !matches.length ? 'No matches. Try a screen, instance, or theme.' :
-        matches.length > 80 ? `${matches.length} matches. Showing the first 80; type to narrow results.` : `${matches.length} matches`;
-      paintSelection();
+    function updateCount() {
+      const empty=!input.value.trim();
+      status.textContent = !results.length ? 'No matches. Try an instance name, ID, service, plan, or screen.' :
+        empty ? `${results.length} shortcuts. Search by instance name or ID; add “logs” or “VMs” to open a section.` :
+        `${results.length.toLocaleString()} matches · ${rendered.toLocaleString()} shown`;
+      more.hidden=rendered>=results.length;
+      more.textContent=`Show ${Math.min(pageSize,results.length-rendered)} more results`;
     }
+    function appendPage() {
+      const end=Math.min(rendered+pageSize,results.length), fragment=document.createDocumentFragment();
+      for(let i=rendered;i<end;i++) {
+        const entry=results[i], option=document.createElement('div');
+        option.id=`navigation-option-${i}`;
+        option.setAttribute('role','option');option.setAttribute('aria-selected',String(i===selected));
+        option.setAttribute('aria-posinset',String(i+1));option.setAttribute('aria-setsize',String(results.length));
+        const row=document.createElement('div');row.className='navigation-result-row';
+        const label=document.createElement('strong');label.textContent=entry.label;
+        const type=document.createElement('span');type.className='navigation-result-type';type.textContent=entry.type||'Section';
+        const location=document.createElement('span');location.className='navigation-result-location';location.textContent=entry.breadcrumb||entry.context;
+        row.append(label,type,location);option.append(row);
+        if(entry.detail){const detail=document.createElement('span');detail.className='navigation-result-detail';detail.textContent=entry.detail;option.append(detail);}
+        option.addEventListener('click',()=>navigate(entry));fragment.append(option);
+      }
+      rendered=end;list.append(fragment);updateCount();
+    }
+    function cancelSearch() {clearTimeout(searchTimer);searchController?.abort();}
+    function render() {
+      cancelSearch();const controller=new AbortController();searchController=controller;
+      results=[];rendered=0;selected=0;list.replaceChildren();list.scrollTop=0;
+      input.removeAttribute('aria-activedescendant');more.hidden=true;
+      const query=input.value;
+      const complete=matches=>{
+        if(controller.signal.aborted||!dialog.open||matches===null)return;
+        results=matches;list.setAttribute('aria-busy','false');appendPage();paintSelection();
+      };
+      if(entries.length<1000||!query.trim()) {complete(search(entries,query));return;}
+      list.setAttribute('aria-busy','true');status.textContent='Searching instances and destinations…';
+      searchTimer=setTimeout(async()=>complete(await searchAsync(entries,query,{signal:controller.signal})),80);
+    }
+    more.addEventListener('click',()=>{appendPage();if(more.hidden)input.focus();});
+    list.addEventListener('scroll',()=>{if(rendered<results.length&&list.scrollHeight-list.scrollTop-list.clientHeight<80)appendPage();});
     function blocked() {
       return [...document.querySelectorAll('dialog[open], .modal, .modal-overlay, .dialog-modal-overlay.active, [role="dialog"], .terminal-modal')]
         .some(el => el !== dialog && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none') ||
@@ -202,6 +246,7 @@
     }
     function close(restore = true) {
       navigationController?.abort();
+      cancelSearch();
       dialog.close();
       input.setAttribute('aria-expanded', 'false');
       if (restore && previousFocus?.isConnected) previousFocus.focus();
@@ -284,7 +329,9 @@
       }
     }
     trigger.addEventListener('click', open);
-    input.addEventListener('input', render);
+    input.addEventListener('input', () => {if(!composing)render();});
+    input.addEventListener('compositionstart',()=>{composing=true;cancelSearch();results=[];list.replaceChildren();more.hidden=true;list.setAttribute('aria-busy','false');status.textContent='Finish typing to search.';input.removeAttribute('aria-activedescendant');});
+    input.addEventListener('compositionend',()=>{composing=false;render();});
     dialog.querySelector('[data-close]').addEventListener('click', () => close());
     dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
     dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
@@ -295,9 +342,10 @@
         return;
       }
       if (dialog.open) {
+        if(event.isComposing||composing)return;
         event.stopImmediatePropagation();
         if (event.key === 'Tab') {
-          const controls = [...dialog.querySelectorAll('button, input')].filter(el => !el.disabled);
+          const controls = [...dialog.querySelectorAll('button, input')].filter(el => !el.disabled && !el.hidden);
           const current = controls.indexOf(document.activeElement);
           event.preventDefault();
           controls[(current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
@@ -307,7 +355,8 @@
         } else if (event.key === 'Escape') { event.preventDefault(); close(); }
         else if (!input.disabled && ['ArrowDown', 'ArrowUp'].includes(event.key) && document.activeElement === input) {
           event.preventDefault();
-          selected = results.length ? (selected + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length : 0;
+          selected = Math.max(0,Math.min(results.length-1,selected+(event.key==='ArrowDown'?1:-1)));
+          if(selected>=rendered)appendPage();
           paintSelection();
         } else if (event.key === 'Enter' && document.activeElement === input && results[selected]) {
           event.preventDefault(); navigate(results[selected]);

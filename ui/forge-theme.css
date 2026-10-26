@@ -847,3 +847,15 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 #certificates .cert-icon-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 36px; min-height: 36px; padding: 6px; }
 #certificates .cert-icon-action svg { flex: none; }
 #certificates .cert-filter-count { font-size: .75rem; font-weight: 600; }
+
+/* Quick Navigation grows by result pages; search and help stay in view. */
+#navigation-dialog .navigation-more { background: var(--card); color: var(--foreground); border: 1px solid var(--border); flex: none; align-self: center; margin: 4px 12px 8px; min-height: 32px; }
+#navigation-dialog .navigation-result-row strong { min-width: 0; overflow-wrap: anywhere; }
+#navigation-dialog .navigation-result-detail { font-size: .75rem; color: var(--muted-foreground); }
+#navigation-dialog #navigation-results { overscroll-behavior: contain; scrollbar-gutter: stable; }
+@media (max-width: 600px), (max-height: 500px) {
+  #navigation-dialog { margin: 8px auto; max-height: calc(100dvh - 16px); width: calc(100vw - 16px); }
+  #navigation-dialog .navigation-heading { padding: 8px 12px; }
+  #navigation-dialog #navigation-search { margin: 8px 12px 0; width: calc(100% - 24px); }
+  #navigation-dialog .navigation-count, #navigation-dialog .navigation-help { padding: 6px 12px; }
+}

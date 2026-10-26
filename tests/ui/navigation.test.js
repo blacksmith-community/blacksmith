@@ -7,7 +7,7 @@ const screens = [{ id: 'blacksmith', label: 'Blacksmith', sections: [{ id: 'conf
 describe('navigation destinations', () => {
   test('covers main screens, sections and every instance detail screen', () => {
     const entries = destinations(screens, { 'cache-1': { instance_name: 'Orders cache', service_id: 'valkey' } });
-    expect(entries.filter(e => e.instanceId === 'cache-1')).toHaveLength(8);
+    expect(entries.filter(e => e.instanceId === 'cache-1')).toHaveLength(1);
     expect(entries.some(e => e.screen === 'upgrade')).toBe(true);
     expect(entries.some(e => e.section === 'configs')).toBe(true);
     expect(search(entries, 'orders credentials')[0].section).toBe('credentials');
@@ -19,7 +19,7 @@ describe('navigation destinations', () => {
   });
   test('matches all words, case insensitively, without interpreting regex or HTML', () => {
     const entries = destinations(screens, { '[x]': { instance_name: '<img onerror=alert(1)>', service_id: 'valkey' } });
-    expect(search(entries, '  VALKEY   [x] ')).toHaveLength(8);
+    expect(search(entries, '  VALKEY   [x] ')).toHaveLength(1);
     expect(search(entries, 'missing')).toEqual([]);
     expect(search(entries, '<img')[0].context).toContain('<img');
   });

@@ -121,3 +121,11 @@ The new `routes`, `quicknav-cancellation`, `inspection-routing`,
 suites cover canceled/late responses and prevent navigation from executing
 operational actions. `action-help` and `manifest-accessibility` cover the
 shared focus/hover help and nested tab semantics.
+
+
+`quicknav-scale.test.js` covers 10,000 instances, identity ranking, cooperative
+search cancellation, progressive keyboard results and friendly catalog names.
+Run `quicknav-scale-browser-check.js` after the populated local API fixture to
+check progressive results and all four themes at desktop, phone and short-window
+sizes. These checks use the already loaded fleet inventory; result pagination
+does not introduce a server-side search API.
