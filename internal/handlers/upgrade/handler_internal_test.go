@@ -28,8 +28,10 @@ type fakeTasks struct {
 
 func (f *fakeTasks) GetTask(string) (*upgrade.UpgradeTask, error) { return nil, f.err }
 func (f *fakeTasks) PauseTask(context.Context, string) error      { return f.err }
-func (f *fakeTasks) ResumeTask(context.Context, string) error     { return f.err }
-func (f *fakeTasks) CancelTask(context.Context, string) error     { return f.err }
+func (f *fakeTasks) ResumeTaskGated(context.Context, string, func(context.Context) error) error {
+	return f.err
+}
+func (f *fakeTasks) CancelTask(context.Context, string) error { return f.err }
 
 func (f *fakeTasks) CreateTask(context.Context, upgrade.CreateTaskRequest) (*upgrade.UpgradeTask, error) {
 	return nil, f.err

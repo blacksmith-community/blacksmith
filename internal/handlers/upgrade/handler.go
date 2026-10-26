@@ -40,7 +40,7 @@ type taskManager interface {
 	GetTask(taskID string) (*upgrade.UpgradeTask, error)
 	ListTasks() []*upgrade.UpgradeTask
 	PauseTask(ctx context.Context, taskID string) error
-	ResumeTask(ctx context.Context, taskID string) error
+	ResumeTaskGated(ctx context.Context, taskID string, gate func(context.Context) error) error
 	CancelTask(ctx context.Context, taskID string) error
 	RepreviewForDecision(ctx context.Context, taskID, instanceID string) (*upgrade.Preview, error)
 	RefreshCandidates(ctx context.Context, taskID, instanceID string) error
@@ -726,21 +726,28 @@ func (h *Handler) PauseTask(w http.ResponseWriter, r *http.Request, taskID strin
 func (h *Handler) ResumeTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	h.logger.Info("Resume upgrade task request: %s", taskID)
 
-	// A resume sends a stored command to VMs, so it takes the second
-	// credential the output read does. Pause and cancel send nothing.
-	task, err := h.tasks.GetTask(taskID)
-	if err == nil && task.KindOrDefault() == upgrade.TaskKindCommand {
-		err = h.manager.Authorizer().AuthorizeRead(r.Context(), r)
-		if err != nil {
+	// A resume can send a stored command to VMs, so it takes the second
+	// credential the output read does. The manager runs the gate, because
+	// only it knows under its lock whether the resume sends a command. A
+	// resume that only cleans a cancelled task never asks. Pause and cancel
+	// send nothing.
+	var gateErr error
+
+	gate := func(ctx context.Context) error {
+		gateErr = h.manager.Authorizer().AuthorizeRead(ctx, r)
+
+		return gateErr //nolint:wrapcheck // the authorizer answers with the API error
+	}
+
+	err := h.tasks.ResumeTaskGated(r.Context(), taskID, gate)
+	if err != nil {
+		if gateErr != nil && errors.Is(err, gateErr) {
 			h.logger.Info("Refused the resume of command task %s: %v", taskID, err)
 			writeCreateError(w, err)
 
 			return
 		}
-	}
 
-	err = h.tasks.ResumeTask(r.Context(), taskID)
-	if err != nil {
 		h.logger.Error("Failed to resume upgrade task %s: %v", taskID, err)
 		writeTaskActionError(w, err)
 

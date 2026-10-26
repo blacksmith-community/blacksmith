@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/mutation"
 )
@@ -1041,4 +1042,165 @@ func TestCommandCancelSaysWhenTheHoldIsNotConfirmed(t *testing.T) {
 
 	fix.wantBusy()
 	fix.assertNoCommandText()
+}
+
+func (f *taskFixture) setEnabled(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.cfg.Operation.On = &on
+}
+
+// holdCancelledTask cancels a task whose node can't be cleaned and waits for
+// it to wait for a resume with nothing processing it.
+func (f *taskFixture) holdCancelledTask(script *cancelScript) {
+	f.t.Helper()
+
+	script.cleanupDown.Store(true)
+
+	f.queue()
+	script.wait(f.t, 1)
+	f.cancel()
+	f.waitFor("the task to wait for a resume", func(task UpgradeTask) bool { return task.Paused })
+	waitUntil(f.t, "the processor to let go", func() bool { return !f.owned() })
+
+	script.cleanupDown.Store(false)
+}
+
+// Resuming a cancelled task only cleans its nodes, so it needs only the
+// broker's own credential, as the cancel did. It is allowed with commands
+// off and root runs off, never asks the second credential or the stored
+// task's authorizer, and sends cleanup and nothing else, with the switches
+// on as much as off.
+func TestCommandCancelledResumeNeedsNoCommandAuthorization(t *testing.T) {
+	for _, switches := range []string{"on", "off"} {
+		t.Run(switches, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 2, withRoot())
+			fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=yes"
+			script := fix.blockExec()
+
+			fix.holdCancelledTask(script)
+
+			if switches == "off" {
+				fix.setEnabled(false)
+				fix.setRoot(false)
+			}
+
+			var checks, gates atomic.Int32
+
+			fix.mu.Lock()
+			fix.authHook = func(context.Context) error {
+				checks.Add(1)
+
+				return errors.New("commands are off")
+			}
+			fix.mu.Unlock()
+
+			err := fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, func(context.Context) error {
+				gates.Add(1)
+
+				return errors.New("the second credential is wrong")
+			})
+			if err != nil {
+				t.Fatalf("resume: %v", err)
+			}
+
+			done := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusCancelled })
+
+			if got := nodeOf(done, 0, 0); got.Phase != CommandPhaseSettled {
+				t.Errorf("node is %s, want settled by the cleanup", got.Phase)
+			}
+
+			if n := checks.Load(); n != 0 {
+				t.Errorf("the resume asked the authorizer %d times", n)
+			}
+
+			if n := gates.Load(); n != 0 {
+				t.Errorf("the resume asked for the second credential %d times", n)
+			}
+
+			for index := range 2 {
+				if n := fix.countOps("dep-0", index, opRunExec); n > 1 || (index == 1 && n != 0) {
+					t.Errorf("node %d was sent exec %d times", index, n)
+				}
+			}
+
+			if n := fix.countOps("dep-0", 0, opRunPrepare); n != 1 {
+				t.Errorf("prepare was sent %d times, want only the one before the cancel", n)
+			}
+
+			if got := fix.opsOf("dep-0", 1); len(got) != 0 {
+				t.Errorf("the resume sent %v to a node that never started", got)
+			}
+
+			ops := fix.opsOf("dep-0", 0)
+			if ops[len(ops)-1] != opRunCleanup || fix.countOps("dep-0", 0, opRunExec) != 1 {
+				t.Errorf("the node saw %v, want cleanup last and exec only from before the cancel", ops)
+			}
+
+			fix.waitReleased()
+			fix.assertNoCommandText()
+		})
+	}
+}
+
+// A resume of a task that is not cancelled still needs the command switches
+// and the second credential.
+func TestCommandResumeOfAPausedTaskStillNeedsAuthorization(t *testing.T) {
+	cases := []struct {
+		name    string
+		options []taskOption
+		turnOff func(*taskFixture)
+		code    string
+	}{
+		{name: "commands off", turnOff: func(f *taskFixture) { f.setEnabled(false) }, code: apierr.CodeCommandsDisabled},
+		{name: "root off", options: []taskOption{withRoot()}, turnOff: func(f *taskFixture) { f.setRoot(false) }, code: apierr.CodeRootDisabled},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 2, tc.options...)
+			gate := fix.gate(opRunExec, "dep-0/0")
+
+			fix.queue()
+			gate.next()
+
+			err := fix.manager.PauseTask(context.Background(), fix.task.ID)
+			if err != nil {
+				t.Fatalf("pause: %v", err)
+			}
+
+			gate.let("dep-0/0")
+			waitUntil(t, "the loop to wait for the resume", func() bool { return strings.Contains(fix.log.joined(), "is paused, waiting") })
+
+			tc.turnOff(fix)
+
+			err = fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, nil)
+
+			var refusal *apierr.Error
+			if !errors.As(err, &refusal) || refusal.Code != tc.code {
+				t.Fatalf("resume answered %v, want the %s refusal", err, tc.code)
+			}
+
+			if got := fix.snapshot(); !got.Paused || got.Status != TaskStatusPaused {
+				t.Errorf("task is %s, paused %v, want it left paused", got.Status, got.Paused)
+			}
+
+			gated := errors.New("the second credential is wrong")
+
+			fix.setEnabled(true)
+			fix.setRoot(true)
+
+			err = fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, func(context.Context) error { return gated })
+			if !errors.Is(err, gated) {
+				t.Fatalf("resume answered %v, want the refusal of the second credential", err)
+			}
+
+			if got := fix.snapshot(); !got.Paused {
+				t.Error("a resume the gate refused lifted the pause")
+			}
+
+			fix.assertNoCommandText()
+		})
+	}
 }

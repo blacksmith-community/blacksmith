@@ -937,6 +937,34 @@ func (m *Manager) runsCommandLocked(task *UpgradeTask) bool {
 	return authorizer.AuthorizeStored(m.ctx, *task.Command) == nil
 }
 
+// commandResumeGate runs the gate and the authorizer for the resume of a
+// command task, and leaves any other task to ResumeTask. The gate comes
+// first, as the check of the second credential did before it moved here.
+// A cancelled task that waits for a resume only has its nodes cleaned, which
+// sends no command, so it needs neither, as the cancel needed neither.
+// Cancelled is final, so a task found waiting here never turns into one
+// that runs.
+func (m *Manager) commandResumeGate(ctx context.Context, taskID string, gate func(context.Context) error) error {
+	m.mu.RLock()
+	task, exists := m.tasks[taskID]
+	cleansOnly := exists && task.KindOrDefault() == TaskKindCommand && waitsCancelledLocked(task)
+	needsGate := exists && task.KindOrDefault() == TaskKindCommand && !cleansOnly
+	m.mu.RUnlock()
+
+	if !needsGate {
+		return nil
+	}
+
+	if gate != nil {
+		err := gate(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return m.commandResumeAllowed(ctx, taskID)
+}
+
 // commandResumeAllowed refuses the resume of a command task the authorizer
 // no longer allows, and leaves it paused. Any other task is left to
 // ResumeTask.

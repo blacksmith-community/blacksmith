@@ -1456,6 +1456,15 @@ func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 // through its swap stays cancelled and resumes that VM. It is turned away
 // while the stored tasks load.
 func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
+	return m.ResumeTaskGated(ctx, taskID, nil)
+}
+
+// ResumeTaskGated is ResumeTask with a gate the caller supplies for a
+// resume that sends a command, such as the check of the second credential.
+// The manager runs the gate itself, and only for a command task whose
+// resume can send something, so the caller never decides from a read that
+// has gone stale. A refusal of the gate leaves the task as it was.
+func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(context.Context) error) error {
 	err := m.tasksReady()
 	if err != nil {
 		return err
@@ -1466,7 +1475,7 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 		return err
 	}
 
-	err = m.commandResumeAllowed(ctx, taskID)
+	err = m.commandResumeGate(ctx, taskID, gate)
 	if err != nil {
 		return err
 	}
@@ -2184,8 +2193,10 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	status := task.Status
 
 	// A certificate task is queued only when the manager can rotate it,
-	// and a command task only while the authorizer allows it.
-	upgrade := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task) || m.runsCommandLocked(task)
+	// and a command task only while the authorizer allows it. A task that
+	// can't be queued anyway never asks, so a cancelled command task that
+	// is cleaned never reaches the authorizer.
+	upgrade := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task) || (resumable && m.runsCommandLocked(task))
 
 	ready := upgrade && settled && m.lookups == 0 && !m.waitingLocked(task.ID) && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
 	noDirector := ready && m.director == nil
