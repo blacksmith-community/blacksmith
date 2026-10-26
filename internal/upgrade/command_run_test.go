@@ -1180,3 +1180,28 @@ func TestRunCommandNodePausesWhenSurvivedCleanupExitsNonZero(t *testing.T) {
 		t.Error("the task is not paused")
 	}
 }
+
+// Processes that survive KILL pause a task that is still running, and
+// leave a task that has already ended as it is.
+func TestRunCommandNodePausesOnlyAUnfinishedTask(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []TaskStatus{TaskStatusCancelled, TaskStatusCompleted, TaskStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+
+			fix := newRunFixture(t)
+			fix.task.Status = status
+			fix.cleanup = "cleanup started=yes exit=- killed=survived"
+
+			fix.run(context.Background())
+
+			fix.manager.mu.RLock()
+			defer fix.manager.mu.RUnlock()
+
+			if fix.task.Status != status || fix.task.Paused {
+				t.Errorf("status %s paused %v, want %s and not paused", fix.task.Status, fix.task.Paused, status)
+			}
+		})
+	}
+}

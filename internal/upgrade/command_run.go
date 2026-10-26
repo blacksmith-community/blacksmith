@@ -509,8 +509,15 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 		}
 
 		if outcome.pause {
-			r.task.Status = TaskStatusPaused
-			r.task.Paused = true
+			// A finished or cancelled task stays as it is, as
+			// pauseUnconfirmed leaves it.
+			switch r.task.Status {
+			case TaskStatusPending, TaskStatusRunning, TaskStatusPaused:
+				r.task.Status = TaskStatusPaused
+				r.task.Paused = true
+			case TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled:
+			}
+
 			r.inst.Error = outcome.reason
 		}
 	})
