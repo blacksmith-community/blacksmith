@@ -748,9 +748,10 @@ func TestRunCommandNodePausesWhenASaveIsNotConfirmed(t *testing.T) {
 		phase CommandPhase
 		ops   []string
 		last  CommandPhase
+		held  CommandPhase
 	}{
-		{name: "staged", phase: CommandPhaseStaged, ops: []string{opSudoCheck}},
-		{name: "sent", phase: CommandPhaseSent, ops: []string{opSudoCheck, "prepare"}, last: CommandPhaseStaged},
+		{name: "staged", phase: CommandPhaseStaged, ops: []string{opSudoCheck}, held: CommandPhasePending},
+		{name: "sent", phase: CommandPhaseSent, ops: []string{opSudoCheck, "prepare"}, last: CommandPhaseStaged, held: CommandPhaseStaged},
 	}
 
 	for _, tc := range cases {
@@ -772,6 +773,10 @@ func TestRunCommandNodePausesWhenASaveIsNotConfirmed(t *testing.T) {
 
 			if fix.inst.Error == "" {
 				t.Error("the instance records no reason")
+			}
+
+			if got := fix.node().Phase; got != tc.held {
+				t.Errorf("the manager holds phase %s, want the confirmed %s", got, tc.held)
 			}
 
 			if tc.last == "" {
@@ -915,7 +920,11 @@ func TestRunCommandNodeFailsOnTheSudoCheck(t *testing.T) {
 				t.Errorf("the reason does not name the sudo check: %q", node.Reason)
 			}
 
-			if len(node.Error) > 300 || strings.ContainsAny(node.Error, "\n\x00\x1b") {
+			if tc.err != nil && node.Error == "" {
+				t.Error("the error case recorded no error text")
+			}
+
+			if len(node.Error) > commandErrorMax || strings.ContainsAny(node.Error, "\n\x00\x1b") {
 				t.Errorf("the error is not sanitised (length %d)", len(node.Error))
 			}
 		})
@@ -1226,5 +1235,34 @@ func TestRunCommandNodeNamesAMissingCommandRunner(t *testing.T) {
 	node := fix.vault.stored(t)
 	if node.Status != CommandStatusFailed || !strings.Contains(node.Error, "for commands") || strings.Contains(node.Error, "patch") {
 		t.Errorf("status %s error %q", node.Status, node.Error)
+	}
+}
+
+// The deadline flag settles a timeout even when the transport error does
+// not carry the context error, and without it the same error is a failure.
+func TestCommandRunClassifiesAnExecThatHitItsDeadline(t *testing.T) {
+	t.Parallel()
+
+	run := &commandRun{spec: CommandTaskSpec{TimeoutSeconds: runTimeoutSecs}}
+	closed := fmt.Errorf("%w: connection lost", ssh.ErrRunnerClosed)
+
+	cases := []struct {
+		name     string
+		deadline bool
+		want     string
+	}{
+		{name: "deadline hit", deadline: true, want: CommandStatusTimedOut},
+		{name: "deadline not hit", want: CommandStatusFailed},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := run.classify(ssh.Result{}, closed, tc.deadline, scripts.Cleanup{}, nil, false)
+			if got.status != tc.want {
+				t.Errorf("status %s, want %s", got.status, tc.want)
+			}
+		})
 	}
 }
