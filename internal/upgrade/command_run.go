@@ -1602,6 +1602,12 @@ func (m *Manager) holdCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	holdCancelledCommandLocked(task, inst)
+}
+
+// holdCancelledCommandLocked is holdCancelledCommand for a caller that holds
+// mu.
+func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 	if task.Status != TaskStatusCancelled || inst.Command == nil {
 		return
 	}
@@ -1617,6 +1623,20 @@ func (m *Manager) holdCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade)
 		inst.Error = fmt.Sprintf("The task was cancelled, but cleanup did not finish, so instance %s is held pending cleanup on %s/%d. Resume the task once the node can be reached.", inst.InstanceID, identity.Group, identity.Index)
 
 		return
+	}
+}
+
+// rewordHeldCommandsLocked gives the instances of a command task that
+// paused and was then cancelled the text of a hold, in place of the text of
+// the pause. A task that is not paused is left to its processor. The caller
+// holds mu.
+func rewordHeldCommandsLocked(task *UpgradeTask) {
+	if task.KindOrDefault() != TaskKindCommand || !task.Paused {
+		return
+	}
+
+	for i := range task.Instances {
+		holdCancelledCommandLocked(task, &task.Instances[i])
 	}
 }
 

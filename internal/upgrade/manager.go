@@ -1578,6 +1578,8 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
 
+	rewordHeldCommandsLocked(task)
+
 	ended := m.cancelIdleLocked(task)
 	skipped := m.skipUnownedLocked(task)
 	settle := m.settleCancelledLocked(task) //nolint:contextcheck // Resuming the task runs on the manager's lifecycle context, so a finished request never cancels it.

@@ -983,3 +983,34 @@ func TestCommandCancelBeforeANodeStartsSkipsItForTheCancel(t *testing.T) {
 	fix.waitReleased()
 	fix.assertNoCommandText()
 }
+
+// A task that paused because a node could not be reached and is then
+// cancelled says its instance is held pending cleanup, in place of the
+// message of the pause.
+func TestCommandCancelOfAPausedTaskRewordsTheHeldInstance(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+
+	const pauseText = "Blacksmith could not reach the node to clean up after an earlier run, so it is still waiting for a resume."
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusPaused
+	fix.task.Paused = true
+	fix.task.Instances[0].Status = InstanceStatusRunning
+	fix.task.Instances[0].Error = pauseText
+	fix.task.Instances[0].Command.VMs[0].Phase = CommandPhaseSent
+	fix.manager.mu.Unlock()
+
+	fix.cancel()
+
+	got := fix.snapshot()
+	if got.Status != TaskStatusCancelled || !got.Paused {
+		t.Errorf("task is %s, paused %v, want cancelled and waiting for a resume", got.Status, got.Paused)
+	}
+
+	if text := got.Instances[0].Error; !strings.Contains(text, "held pending cleanup on redis/0") {
+		t.Errorf("the status text is %q, want it to say the instance is held pending cleanup on redis/0", text)
+	}
+
+	fix.wantBusy()
+	fix.assertNoCommandText()
+}
