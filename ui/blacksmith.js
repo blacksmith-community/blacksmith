@@ -2834,7 +2834,7 @@
     const acknowledged = !needsWord || confirmWordMatches(document.getElementById('batch-flow-ack')?.value, needsWord);
     const blocker = step === 3 && review?.options.blocker ? review.options.blocker() : '';
     next.textContent = batchFlow.submitting ? 'Starting…' : batchFlow.loading ? 'Preparing review…' : step === 3 ? (review?.options.confirmText || 'Refresh review') : ['Next: Options','Next: Instances','Review operation'][step];
-    next.disabled = batchFlow.submitting || batchFlow.loading || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
+    next.disabled = batchFlow.submitting || batchFlow.loading || commandDiscarding || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
     next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
     const helpText = issue || blocker || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
@@ -3600,6 +3600,10 @@
   let commandPending = null;
   // Whether the controls a pending create must not change are locked now.
   let commandLocked = false;
+  // True while Discard reads the task list, so Retry and Discard wait.
+  let commandDiscarding = false;
+  // What a discard tells the operator at the options step, or an empty string.
+  let commandDiscardNote = '';
 
   const wholeNumber = (value) => (/^\d+$/.test(String(value).trim()) ? Number(String(value).trim()) : null);
 
@@ -4762,6 +4766,92 @@
     updateBatchFlow();
   };
 
+  // Shows the note a discard leaves at the options step.
+  const renderCommandDiscardNote = () => {
+    const pane = document.querySelector('#batch-flow-options .command-pane');
+    if (!pane) return;
+    pane.querySelector('#command-discard-note')?.remove();
+    if (!commandDiscardNote) return;
+    const note = rotateEl('p', 'batch-review-note', commandDiscardNote);
+    note.id = 'command-discard-note';
+    note.setAttribute('role', 'status');
+    pane.prepend(note);
+  };
+
+  // Lets the operator give up a pending create. It reads the task list. A task
+  // with the request's ID means the run started, so the review settles like a
+  // conflict. A list without it clears the pending create. A list that cannot
+  // be read offers Discard anyway, since the broker cannot say either way.
+  const buildCommandDiscard = (clientRequestId, revision) => {
+    const area = rotateEl('div', 'command-discard');
+    const discard = rotateEl('button', 'btn-secondary btn-sm', 'Discard');
+    discard.type = 'button';
+    discard.id = 'command-discard';
+    const unconfirmed = rotateEl('div', 'command-discard-unconfirmed');
+    unconfirmed.hidden = true;
+    unconfirmed.setAttribute('role', 'alert');
+    unconfirmed.appendChild(rotateEl('p', 'batch-review-note', 'The broker could not confirm whether this request started a run. Check Activity before you run the command again.'));
+    const anyway = rotateEl('button', 'btn-sm dialog-modal-btn-danger', 'Discard anyway');
+    anyway.type = 'button';
+    anyway.id = 'command-discard-anyway';
+    unconfirmed.appendChild(anyway);
+    area.appendChild(discard);
+    area.appendChild(unconfirmed);
+
+    const stillOpen = (open) => open === batchFlow.review && revision === batchFlow.revision;
+    const finish = (open, found) => {
+      commandDiscarding = false;
+      if (found) {
+        batchFlow.review = null;
+        batchFlow.submitting = true;
+        updateBatchFlow();
+        open.resolve({ confirmed: false, discard: 'found' });
+        return;
+      }
+      commandPending = null;
+      clearCommandOutputKey();
+      commandDiscardNote = 'The request was discarded and no run from it was found. A run that appears later in Activity would have come from it.';
+      // This clears the key and the frozen review, and ends the open review.
+      setBatchStep(1, false);
+      renderCommandDiscardNote();
+    };
+    const run = async (force) => {
+      const open = batchFlow.review;
+      if (!open || commandDiscarding || !stillOpen(open)) return;
+      commandDiscarding = true;
+      discard.disabled = true;
+      anyway.disabled = true;
+      updateBatchFlow();
+      let found = false;
+      let listed = false;
+      try {
+        const response = await fetch('/b/upgrade/tasks');
+        if (response.ok) {
+          const list = await response.json();
+          if (Array.isArray(list)) {
+            listed = true;
+            upgradeTasks = list;
+            found = list.some((task) => task && task.client_request_id === clientRequestId);
+          }
+        }
+      } catch (err) {
+        listed = false;
+      }
+      if (!stillOpen(open)) { commandDiscarding = false; updateBatchFlow(); return; }
+      if (found) { finish(open, true); return; }
+      if (listed || force) { finish(open, false); return; }
+      commandDiscarding = false;
+      discard.disabled = false;
+      anyway.disabled = false;
+      unconfirmed.hidden = false;
+      updateBatchFlow();
+    };
+    discard.addEventListener('click', () => run(false));
+    // A list that now shows the run still settles it as started.
+    anyway.addEventListener('click', () => run(true));
+    return area;
+  };
+
   // Previews a command run, shows the review, and creates the task once the
   // operator types the phrase and confirms. An expired preview shows a fresh
   // one. A create with an unknown outcome stays at the review as a Retry that
@@ -4780,6 +4870,7 @@
       setBatchStep(step, false);
     };
     let resume = commandPending;
+    if (!resume) { commandDiscardNote = ''; renderCommandDiscardNote(); }
     const values = resume ? resume.values : commandValues();
     // One ID for this review, which every retry and every fresh preview of it reuses.
     const clientRequestId = resume ? resume.createBody.client_request_id : newClientRequestId();
@@ -4859,14 +4950,21 @@
           commandPending = { createBody, preview, values, nodes };
           batchFlow.submitting = false;
           updateBatchFlow();
+          const reviewBody = buildCommandReviewBody(preview, values);
+          reviewBody.appendChild(buildCommandDiscard(createBody.client_request_id, revision));
           const retry = await showBatchReview({
             title: 'Outcome unknown',
             message: result.complete ? result.message : `${result.message} The broker may have started this run. Retry sends the same request, and the broker will not start it twice. Activity shows whether it started.`,
-            body: buildCommandReviewBody(preview, values),
+            body: reviewBody,
             confirmText: 'Retry',
             danger: true,
             blocker: () => ''
           }, revision);
+          if (retry && retry.discard === 'found') {
+            // The list holds the run, so it settles as a 409 request_id_conflict does.
+            result = { kind: 'exists' };
+            break;
+          }
           if (!retry || retry.confirmed !== true) return;
         } else if (result.kind === 'credential') {
           // The broker refused before it looked at the request, so we ask for
@@ -5004,6 +5102,7 @@
 
     pane.appendChild(buildBatchMetadata('e.g. Check disk usage on valkey nodes', 'e.g. Investigating an incident — change CHG-1234'));
     container.appendChild(pane);
+    renderCommandDiscardNote();
     syncCommandOptions();
   };
 

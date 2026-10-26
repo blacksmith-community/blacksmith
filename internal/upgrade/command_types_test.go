@@ -169,3 +169,27 @@ func TestCommandTargetPlurals(t *testing.T) {
 		t.Fatalf("one node: %q", got)
 	}
 }
+
+// A summary carries the client request ID, so a client that lost the answer
+// to a create can find its task in the list.
+func TestToSummaryCarriesClientRequestID(t *testing.T) {
+	task := &UpgradeTask{ID: "task-1", Kind: TaskKindCommand, ClientRequestID: "req-7"}
+
+	summary := task.ToSummary()
+	if summary.ClientRequestID != "req-7" {
+		t.Fatalf("expected the summary to carry the client request ID, got %q", summary.ClientRequestID)
+	}
+
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+
+	if !strings.Contains(string(encoded), `"client_request_id":"req-7"`) {
+		t.Fatalf("expected client_request_id in the summary JSON, got %s", encoded)
+	}
+
+	if bare := (&UpgradeTask{ID: "task-2"}).ToSummary(); strings.Contains(mustJSON(t, bare), "client_request_id") {
+		t.Fatal("expected a summary without a request ID to omit the field")
+	}
+}

@@ -792,3 +792,192 @@ t('a command with hidden characters is reviewed as escapes but previewed and cre
  expect(creates(env)[0].body.command===raw).toBe(true);
  }finally{w.close();}
 });
+
+// ---- Discard a pending create ----
+
+// Answers the task list with the next spec of lists, and every create with
+// an unknown outcome, so a review stays pending until Discard settles it.
+// A list spec is a [status, body], reject, or a function of the pending ID.
+function pendingRoutes(env,lists){
+ const {w}=env;let n=0;env.listReads=0;
+ w.__routes.unshift([CREATE_URL,(u,o,j)=>{
+  if((o.method||'GET')!=='POST'){
+   env.listReads++;
+   const spec=lists[Math.min(n,lists.length-1)];n++;
+   const r=typeof spec==='function'?spec(creates(env)[0]&&creates(env)[0].body.client_request_id):spec;
+   if(r&&r.raw) return r.raw;
+   return j(r[0],r[1]);
+  }
+  env.requests.push({url:CREATE_URL,headers:o.headers||{},body:JSON.parse(o.body)});
+  return Promise.reject(new TypeError('Failed to fetch'));
+ }]);
+}
+const discardBtn=(env)=>env.d.getElementById('command-discard');
+const anywayBtn=(env)=>env.d.getElementById('command-discard-anyway');
+const summaryOf=(id)=>({id:'task-77',kind:'command',status:'running',client_request_id:id,target:'Run command',total_count:2});
+const pendingReview=async(env)=>{await review(env);await confirmRun(env);};
+
+t('a review with no pending create shows no Discard',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await review(env);
+ expect(discardBtn(env)===null).toBe(true);
+ }finally{w.close();}
+});
+
+t('a pending create shows Discard beside Retry',async()=>{
+ const env=await setup();const {w}=env;try{
+ pendingRoutes(env,[[200,[]]]);
+ await pendingReview(env);
+ expect(discardBtn(env)!==null).toBe(true);
+ expect(next(env).textContent).toBe('Retry');
+ expect(discardBtn(env).disabled).toBe(false);
+ }finally{w.close();}
+});
+
+t('Discard disables Retry and Discard while it reads the list',async()=>{
+ const env=await setup();const {w}=env;try{
+ let release;const gate=new Promise((r)=>{release=r;});
+ pendingRoutes(env,[()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve([])}))})]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(10);
+ expect(next(env).disabled).toBe(true);
+ expect(discardBtn(env).disabled).toBe(true);
+ release();await sleep(30);
+ expect(env.w.__T.batchFlow.step).toBe(1);
+ }finally{w.close();}
+});
+
+t('Discard finding the run in the list settles it like a conflict',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ pendingRoutes(env,[(id)=>[200,[summaryOf(id)]]]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(40);
+ const text=d.body.textContent;
+ expect(text.includes('already started')).toBe(true);
+ expect(text.includes('not started')).toBe(false);
+ expect(d.getElementById('upgrade').querySelector('.upgrade-main').hidden).toBe(true);
+ expect(w.__T.batchFlow.review===null).toBe(true);
+ expect(unlocked(d)).toBe(true);
+ expect(creates(env).length).toBe(1);
+ expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
+ }finally{w.close();}
+});
+
+t('Discard with no matching task clears the create and keeps the settings',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ pendingRoutes(env,[[200,[{id:'other',kind:'command',client_request_id:'someone-else'}]]]);
+ await pendingReview(env);
+ const firstId=creates(env)[0].body.client_request_id;
+ discardBtn(env).click();await sleep(40);
+ expect(w.__T.batchFlow.step).toBe(1);
+ expect(w.__T.batchFlow.review===null).toBe(true);
+ expect(unlocked(d)).toBe(true);
+ expect(d.getElementById('command-text').value===SECRET).toBe(true);
+ expect([...d.querySelectorAll('#upgrade .upgrade-instances input')].some(i=>i.disabled)).toBe(false);
+ const note=d.getElementById('command-discard-note');
+ expect(note!==null).toBe(true);
+ expect(note.textContent.includes('discarded')).toBe(true);
+ expect(note.textContent.includes('no run from it was found')).toBe(true);
+ expect(note.textContent.includes('appears later in Activity')).toBe(true);
+ expect(d.getElementById('batch-flow-review').textContent.includes('Outcome unknown')).toBe(false);
+ expect(creates(env).length).toBe(1);
+ expect(hasSecret(d.getElementById('batch-flow-review').textContent)).toBe(false);
+ // The next review sends a new ID, and never the discarded one.
+ w.__T.setBatchStep(2,false);await sleep(5);
+ next(env).click();await sleep(30);
+ await confirmRun(env);
+ expect(creates(env).length).toBe(2);
+ expect(creates(env)[1].body.client_request_id!==firstId).toBe(true);
+ expect(d.getElementById('command-discard-note')===null).toBe(true);
+ expect(quiet(env)).toBe(true);
+ }finally{w.close();}
+});
+
+for(const [name,spec] of [['a rejected fetch',reject],['a 401',[401,{success:false,error:'sign in',code:'unauthorized'}]],['a 403',[403,{success:false,error:'no',code:'forbidden'}]],['a 503',[503,{success:false,error:'loading',code:'tasks_loading'}]],['a 500',[500,{success:false,error:'x',code:'internal'}]]]){
+ t(`Discard after ${name} offers Discard anyway and never uses a dialog`,async()=>{
+  const env=await setup();const {w,d}=env;try{
+  pendingRoutes(env,[spec]);
+  await pendingReview(env);
+  expect(anywayBtn(env).parentElement.hidden).toBe(true);
+  discardBtn(env).click();await sleep(40);
+  expect(w.__T.batchFlow.step).toBe(3);
+  expect(w.__T.batchFlow.review!==null).toBe(true);
+  expect(anywayBtn(env).parentElement.hidden).toBe(false);
+  const text=anywayBtn(env).parentElement.textContent;
+  expect(text.includes('could not confirm whether this request started a run')).toBe(true);
+  expect(text.includes('Check Activity before you run the command again')).toBe(true);
+  expect(anywayBtn(env).className.includes('danger')).toBe(true);
+  expect(next(env).disabled).toBe(false);
+  expect(unlocked(d)).toBe(false);
+  expect(creates(env).length).toBe(1);
+  }finally{w.close();}
+ });
+}
+
+t('Discard anyway clears the create, and the discarded ID is never sent again',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ pendingRoutes(env,[reject,reject,[200,[]]]);
+ await pendingReview(env);
+ const firstId=creates(env)[0].body.client_request_id;
+ discardBtn(env).click();await sleep(30);
+ anywayBtn(env).click();await sleep(30);
+ expect(w.__T.batchFlow.step).toBe(1);
+ expect(unlocked(d)).toBe(true);
+ expect(d.getElementById('command-discard-note')!==null).toBe(true);
+ expect(creates(env).length).toBe(1);
+ w.__T.setBatchStep(2,false);await sleep(5);
+ next(env).click();await sleep(30);
+ await confirmRun(env);
+ expect(creates(env).length).toBe(2);
+ expect(creates(env)[1].body.client_request_id!==firstId).toBe(true);
+ }finally{w.close();}
+});
+
+t('Discard clears the held command key and the key never shows after',async()=>{
+ const env=await setup({preview:needKey});const {w,d}=env;try{
+ pendingRoutes(env,[[200,[]]]);
+ await review(env);
+ const input=d.querySelector('#batch-flow-review input[type="password"]');
+ expect(input!==null).toBe(true);
+ type(w,input,KEY);next(env).click();await sleep(30);
+ await confirmRun(env);
+ expect(discardBtn(env)!==null).toBe(true);
+ discardBtn(env).click();await sleep(40);
+ expect(w.__T.batchFlow.step).toBe(1);
+ expect(quiet(env)).toBe(true);
+ expect(hasSecret(d.getElementById('batch-flow-review').textContent)).toBe(false);
+ }finally{w.close();}
+});
+
+t('a conflict on Retry finds the run in a list of summaries and opens it',async()=>{
+ const env=await setup({create:seq(reject,CONFLICT)});const {w,d}=env;try{
+ // The list endpoint answers summaries, which carry the request ID.
+ w.__routes.unshift([CREATE_URL,(u,o,j)=>{
+  if((o.method||'GET')!=='GET') return undefined;
+  const id=creates(env)[0]&&creates(env)[0].body.client_request_id;
+  return j(200,[{id:'task-77',kind:'command',status:'running',client_request_id:id,target:'Run command',total_count:2}]);
+ }]);
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(40);
+ expect(d.body.textContent.includes('already started')).toBe(true);
+ expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
+ expect(unlocked(d)).toBe(true);
+ }finally{w.close();}
+});
+
+t('leaving for Activity while Discard reads the list drops the answer',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ let release;const gate=new Promise((r)=>{release=r;});
+ pendingRoutes(env,[()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve([])}))})]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(10);
+ d.getElementById('batch-activity').click();await sleep(5);
+ release();await sleep(40);
+ expect(w.__T.batchFlow.step).toBe(3);
+ expect(d.getElementById('command-discard-note')===null).toBe(true);
+ d.getElementById('batch-new').click();
+ next(env).click();await sleep(30);
+ expect(next(env).textContent).toBe('Retry');
+ expect(next(env).disabled).toBe(false);
+ }finally{w.close();}
+});

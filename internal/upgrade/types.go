@@ -221,6 +221,10 @@ type TaskSummary struct {
 	Name   string     `json:"name,omitempty"`
 	Kind   TaskKind   `json:"kind"`
 	Status TaskStatus `json:"status"`
+	// ClientRequestID is the ID the browser chose for the create request. It
+	// is not a secret, and it lets a client find the task whose create
+	// answer it lost.
+	ClientRequestID string `json:"client_request_id,omitempty"`
 	// Target describes what the task does, such as the stemcell and
 	// releases of an upgrade or "Patch, 2 certificates".
 	Target         string   `json:"target"`
@@ -259,17 +263,18 @@ func (t *UpgradeTask) awaitingDecisionCount() int {
 // as name/version, and an upgrade of releases alone has no stemcell.
 func (t *UpgradeTask) ToSummary() TaskSummary {
 	summary := TaskSummary{
-		ID:             t.ID,
-		Name:           t.Name,
-		Kind:           t.KindOrDefault(),
-		Status:         t.Status,
-		TotalCount:     t.TotalCount,
-		CompletedCount: t.CompletedCount,
-		FailedCount:    t.FailedCount,
-		UnknownCount:   t.UnknownCount,
-		SkippedCount:   t.SkippedCount,
-		CancelledCount: t.CancelledCount,
-		CreatedAt:      t.CreatedAt,
+		ID:              t.ID,
+		Name:            t.Name,
+		ClientRequestID: t.ClientRequestID,
+		Kind:            t.KindOrDefault(),
+		Status:          t.Status,
+		TotalCount:      t.TotalCount,
+		CompletedCount:  t.CompletedCount,
+		FailedCount:     t.FailedCount,
+		UnknownCount:    t.UnknownCount,
+		SkippedCount:    t.SkippedCount,
+		CancelledCount:  t.CancelledCount,
+		CreatedAt:       t.CreatedAt,
 
 		AwaitingDecisionCount: t.awaitingDecisionCount(),
 	}
