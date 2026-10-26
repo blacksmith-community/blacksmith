@@ -1281,6 +1281,8 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Guard:                          brokerInstance.Guard,
 		CredHub:                        brokerInstance.CredHubClient,
 		Switches:                       certificateSwitches(config),
+		Commands:                       commandSettings(config),
+		BOSH:                           boshSettings(config),
 	})
 
 	// Provisions and deprovisions wait for the stored tasks to hold their

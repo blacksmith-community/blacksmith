@@ -91,6 +91,13 @@ type Dependencies struct {
 	// Switches returns the certificate configuration switches. The upgrade
 	// manager reads it before each certificate write.
 	Switches func() config.CertificatesConfig
+	// Commands returns the commands configuration. The upgrade manager
+	// reads it on every command request, so a change takes effect without
+	// a restart.
+	Commands func() config.CommandsConfig
+	// BOSH returns the BOSH configuration, which tells a command preview
+	// how many workers the director has.
+	BOSH func() config.BOSHConfig
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
@@ -266,6 +273,8 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		CredHub:               credhubAPI,
 		Certificates:          deps.Certificates,
 		Switches:              deps.Switches,
+		Commands:              deps.Commands,
+		BOSH:                  deps.BOSH,
 		Previews:              upgrade.NewPreviewStore(time.Now),
 		UpgradePreviews:       upgrade.NewUpgradePreviewStore(time.Now),
 		// The redeploy probes listeners as the inventory scanner does,
