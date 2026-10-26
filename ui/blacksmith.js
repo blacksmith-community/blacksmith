@@ -6919,16 +6919,21 @@
   // Fetches one task's full record. It throws an Error with the API's status
   // and code when the broker refuses.
   const loadUpgradeTask = async (taskId) => {
-    const sent = commandOutputKey;
+    const init = commandReadInit(taskId);
+    // Only a key that went out in the headers counts as sent.
+    const sent = init ? commandOutputKey : '';
     const gen = commandKeyGen;
-    const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}`, commandReadInit(taskId));
+    const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}`, init);
     if (gen !== commandKeyGen) throw staleCommandRead();
     if (!response.ok) {
       const err = await readApiError(response);
       err.keySent = sent;
       throw err;
     }
-    return response.json();
+    const detail = await response.json();
+    // The key may have gone while the body was arriving.
+    if (gen !== commandKeyGen) throw staleCommandRead();
+    return detail;
   };
 
   // Select a task and show its details. It resolves true when the details
@@ -7785,7 +7790,8 @@
         const err = await readApiError(response);
         if (response.status === 401 && sent && commandOutputKey === sent) {
           // The broker did not accept the key, so the pane asks for it again.
-          commandKeyPrompt = { taskId: context.taskId, action: 'detail', refused: true };
+          // The pane that asks again belongs to the task on screen, not one the operator left.
+          if (selectedTaskId === context.taskId) commandKeyPrompt = { taskId: context.taskId, action: 'detail', refused: true };
           clearCommandOutputKey();
           return;
         }

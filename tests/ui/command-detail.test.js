@@ -390,7 +390,8 @@ t('the prompt and Continue buttons wait for their request, so a second press sen
  let release;const gate=new Promise((r)=>{release=r;});
  w.__routes.unshift([`${DETAIL_URL}/resume`,async(u,o,j)=>{env.resumes.push({headers:o.headers||{}});await gate;return j(200,{success:true});}]);
  const btn=d.querySelector('.resume-btn');expect(btn!==null).toBe(true);
- btn.click();btn.click();await sleep(20);
+ btn.click();await sleep(5);btn.click();await sleep(5);btn.click();await sleep(20);
+ expect(btn.disabled).toBe(true);
  expect(env.resumes.length).toBe(1);
  release();await sleep(30);
  }finally{w.close();}
@@ -752,5 +753,107 @@ t('a resume refusal that answers after the key was dropped and entered again lea
  expect(panel(d).textContent.includes('did not accept')).toBe(false);
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
  expect(env.details[env.details.length-1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ }finally{w.close();}
+});
+
+// A response whose headers are here but whose body waits for the test.
+const heldBody=(status,make)=>{let release;const gate=new Promise((r)=>{release=r;});
+ const reply={ok:status>=200&&status<300,status,statusText:'st',json:()=>gate.then(make),text:()=>gate.then(()=>JSON.stringify(make()))};
+ return {reply,release:()=>release()};};
+
+t('a detail body that arrives after the key was dropped paints and caches nothing, for select and poll',async()=>{
+ for(const via of ['select','poll']){
+  const env=await setup({gated:true});const {w,d}=env;try{
+  await w.__T.selectUpgradeTask(TASK);await sleep(10);
+  await unlock(d);
+  const held=heldBody(200,()=>task({status:'running'}));
+  w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{env.details.push({headers:o.headers||{}});return Promise.resolve(held.reply);}]);
+  env.state.detail=task({status:'running'});
+  const pending=via==='select'?w.__T.selectUpgradeTask(TASK):w.__T.fetchUpgradeTasks();
+  await sleep(10);
+  expect(env.details[env.details.length-1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+  press(d,'.tab-button[data-tab="services"]');await sleep(20);
+  held.release();
+  const result=await pending;await sleep(30);
+  if(via==='poll') expect(result).toBe(true);
+  expect(hasSecret(d.body.textContent)).toBe(false);
+  expect(w.__T.taskDetailCache.get(TASK)===undefined).toBe(true);
+  expect(noKeyIn(d)).toBe(true);
+  // Coming back, nothing is shown and no key is sent.
+  const seen=env.details.length;
+  press(d,'.tab-button[data-tab="upgrade"]');await sleep(60);
+  expect(hasSecret(d.body.textContent)).toBe(false);
+  expect(env.details.slice(seen).every(r=>r.headers['X-Blacksmith-Command-Key']===undefined)).toBe(true);
+  }finally{w.close();}
+ }
+});
+
+t('a refusal for a command task the list never showed asks plainly and keeps the held key',async()=>{
+ const NEW='44444444-4444-4444-8444-444444444444';
+ const env=await setup({gated:true});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ const reads=[];
+ w.__routes.unshift([new RegExp(NEW+'$'),(u,o,j)=>{reads.push({headers:o.headers||{}});return j(401,{success:false,error:'k',code:'command_credential_required'});}]);
+ await w.__T.selectUpgradeTask(NEW);await sleep(20);
+ expect(reads.length).toBe(1);
+ expect(reads[0].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ expect(panel(d).textContent.includes('did not accept')).toBe(false);
+ expect(panel(d).textContent.includes('asks for a command key')).toBe(true);
+ await w.__T.selectUpgradeTask(TASK);await sleep(20);
+ expect(env.details[env.details.length-1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ }finally{w.close();}
+});
+
+t('an output refusal for a task the operator left drops the key but draws no rejection over the open task',async()=>{
+ const B='55555555-5555-4555-8555-555555555555';
+ const env=await setup({gated:true,output:(u,o)=>(o.headers&&o.headers['X-Blacksmith-Command-Key']===KEY)?[200,output()]:[401,{success:false,error:'k',code:'command_credential_required'}]});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([OUT_URL,async(u,o,j)=>{env.outputs.push({url:u,headers:o.headers||{}});await gate;return j(401,{success:false,error:'k',code:'command_credential_required'});}]);
+ await openDetails(env,0);
+ w.__routes.unshift([new RegExp(B+'$'),(u,o,j)=>j(200,task({id:B}))]);
+ await w.__T.selectUpgradeTask(B);await sleep(20);
+ expect(w.__T._getSelectedTask()===B).toBe(true);
+ release();await sleep(40);
+ expect(panel(d).textContent.includes('did not accept')).toBe(false);
+ expect(hasSecret(d.body.textContent)).toBe(false);
+ expect(noKeyIn(d)).toBe(true);
+ // The key is gone, so the first task asks for it again.
+ await w.__T.selectUpgradeTask(TASK);await sleep(20);
+ expect(env.details[env.details.length-1].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ }finally{w.close();}
+});
+
+t('an output answer for a task the operator left is not kept, so the node reads it again',async()=>{
+ const B='66666666-6666-4666-8666-666666666666';
+ const env=await setup();const {w,d}=env;try{
+ await open(env);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([OUT_URL,async(u,o,j)=>{env.outputs.push({url:u,headers:o.headers||{}});if(env.outputs.length===1) await gate;return j(200,output());}]);
+ await openDetails(env,0);
+ expect(env.outputs.length).toBe(1);
+ w.__routes.unshift([new RegExp(B+'$'),(u,o,j)=>j(200,task({id:B}))]);
+ await w.__T.selectUpgradeTask(B);await sleep(20);
+ release();await sleep(30);
+ await w.__T.selectUpgradeTask(TASK);await sleep(20);
+ await openDetails(env,0);
+ expect(env.outputs.length).toBe(2);
+ }finally{w.close();}
+});
+
+t('the resume key prompt goes away once the task is no longer paused',async()=>{
+ const paused=task({status:'paused',failed_count:1,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:3})],{status:'failed'})]});
+ const env=await setup({detail:paused,gated:true});const {w,d}=env;try{
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{env.details.push({headers:o.headers||{}});return j(200,env.state.detail);}]);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ press(d,'.resume-btn');await sleep(30);
+ expect(panel(d).querySelector('.command-key-prompt')!==null).toBe(true);
+ env.state.detail=task({status:'running'});
+ await w.__T.fetchUpgradeTasks();await sleep(30);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ expect(panel(d).querySelector('.command-key-prompt')===null).toBe(true);
  }finally{w.close();}
 });
