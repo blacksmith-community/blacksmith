@@ -430,7 +430,12 @@ func (f *runFixture) answer(ctx context.Context, call runCall) (ssh.Result, erro
 func (f *runFixture) run(ctx context.Context) bool {
 	f.t.Helper()
 
-	return f.manager.runCommandNode(ctx, f.sessions, f.task, f.inst, 0)
+	stopped, err := f.manager.runCommandNode(ctx, f.sessions, f.task, f.inst, 0)
+	if err != nil {
+		f.t.Fatalf("runCommandNode refused the node: %v", err)
+	}
+
+	return stopped
 }
 
 // node returns a copy of the node as the manager holds it.
@@ -1059,5 +1064,67 @@ func TestRunCommandNodeFailsWhenTheOutputCannotBeStored(t *testing.T) {
 
 	if !strings.Contains(node.Reason, "output") {
 		t.Errorf("the reason does not mention the output: %q", node.Reason)
+	}
+}
+
+// A node that is not pending is refused before anything is sent, not even
+// the sudo check, and the error names its phase.
+func TestRunCommandNodeRefusesANodeThatIsNotPending(t *testing.T) {
+	t.Parallel()
+
+	for _, phase := range []CommandPhase{CommandPhaseStaged, CommandPhaseSent, CommandPhaseSettled, CommandPhaseSkipped} {
+		t.Run(string(phase), func(t *testing.T) {
+			t.Parallel()
+
+			fix := newRunFixture(t)
+			fix.inst.Command.VMs[0].Phase = phase
+
+			stopped, err := fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, 0)
+			if err == nil || !strings.Contains(err.Error(), string(phase)) || !errors.Is(err, errCommandNodeNotPending) {
+				t.Fatalf("err = %v, want a refusal that names %s", err, phase)
+			}
+
+			if stopped || len(fix.sess.recorded()) != 0 || len(fix.opened) != 0 {
+				t.Fatalf("stopped=%v with %d calls and %d sessions opened", stopped, len(fix.sess.recorded()), len(fix.opened))
+			}
+
+			if len(fix.vault.recorded()) != 0 {
+				t.Fatal("a refused node was saved")
+			}
+		})
+	}
+}
+
+// A node left in sent by an unconfirmed final save is not driven to a
+// second exec when it is run again.
+func TestRunCommandNodeNeverExecsTwice(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.vault.failPhase = CommandPhaseSettled
+
+	if stopped := fix.run(context.Background()); !stopped {
+		t.Fatal("the task did not stop")
+	}
+
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = ""
+	fix.vault.mu.Unlock()
+
+	_, err := fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, 0)
+	if err == nil {
+		t.Fatal("a node left in sent was run again")
+	}
+
+	execs := 0
+
+	for _, op := range fix.sess.ops() {
+		if op == "exec" {
+			execs++
+		}
+	}
+
+	if execs != 1 {
+		t.Fatalf("%d execs were sent, want 1", execs)
 	}
 }

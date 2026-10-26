@@ -91,6 +91,11 @@ type commandRun struct {
 	host int
 }
 
+// errCommandNodeNotPending is what runCommandNode returns for a node that
+// has already been staged, sent, settled, or skipped. Such a node is never
+// driven again, because a node left in phase sent may have run its command.
+var errCommandNodeNotPending = errors.New("the command can only start on a pending node, so nothing was sent")
+
 // runCommandNode runs the task's command on one node of the instance and
 // settles the node. The node is saved in phase staged before prepare is
 // sent and in phase sent before exec is sent, each as a confirmed save,
@@ -98,8 +103,27 @@ type commandRun struct {
 // stopped, which happens when a save can't be confirmed or when processes
 // of the command outlive KILL. Every other outcome, including a failed
 // command, is recorded on the node and left to the caller. The command text
-// never reaches a log line or an error.
-func (m *Manager) runCommandNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) bool {
+// never reaches a log line or an error. A node that is not pending is
+// refused with an error that names its phase, and nothing is sent.
+func (m *Manager) runCommandNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) (bool, error) {
+	phase := m.commandNodePhase(inst, vm)
+	if phase != CommandPhasePending {
+		return false, fmt.Errorf("%w: the node is in phase %s", errCommandNodeNotPending, phase)
+	}
+
+	return m.driveCommandNode(ctx, sessions, task, inst, vm), nil
+}
+
+// commandNodePhase returns the phase the node is in now.
+func (m *Manager) commandNodePhase(inst *InstanceUpgrade, vm int) CommandPhase {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return inst.Command.VMs[vm].Phase
+}
+
+// driveCommandNode runs a pending node.
+func (m *Manager) driveCommandNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) bool {
 	run := m.newCommandRun(sessions, task, inst, vm)
 
 	err := run.validate()
