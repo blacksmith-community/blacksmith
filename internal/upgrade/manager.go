@@ -3511,6 +3511,19 @@ func taskHolder(task *UpgradeTask) mutation.Holder {
 		}
 	}
 
+	if task.KindOrDefault() == TaskKindCommand {
+		description := "command task " + task.ID
+		if task.Name != "" {
+			description = fmt.Sprintf("command %q", task.Name)
+		}
+
+		return mutation.Holder{
+			Kind:        mutation.KindCommand,
+			TaskID:      task.ID,
+			Description: description,
+		}
+	}
+
 	description := "upgrade task " + task.ID
 	if task.Name != "" {
 		description = fmt.Sprintf("upgrade %q", task.Name)
@@ -3553,8 +3566,13 @@ func (m *Manager) acquireLocked(task *UpgradeTask, inst *InstanceUpgrade) error 
 // task. The caller holds mu.
 func (m *Manager) reserveNewLocked(task *UpgradeTask) error {
 	verb := "upgraded"
-	if task.KindOrDefault() == TaskKindCertificates {
+
+	switch task.KindOrDefault() {
+	case TaskKindCertificates:
 		verb = "rotated"
+	case TaskKindCommand:
+		verb = "targeted"
+	case TaskKindUpgrade:
 	}
 
 	for i := range task.Instances {

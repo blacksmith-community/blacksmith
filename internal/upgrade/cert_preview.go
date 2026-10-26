@@ -188,6 +188,22 @@ func (s *PreviewStore) PutCommand(p *CommandPreview, ttl time.Duration) {
 	s.previews[p.ID] = storedPreview{kind: PreviewKindCommand, command: p, expires: p.ExpiresAt}
 }
 
+// restoreCommand puts a spent command preview back with the expiry it had,
+// so a create that failed after the spend can be tried again. A preview that
+// has expired meanwhile stays gone.
+func (s *PreviewStore) restoreCommand(p *CommandPreview) {
+	now := s.now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !now.Before(p.ExpiresAt) {
+		return
+	}
+
+	s.previews[p.ID] = storedPreview{kind: PreviewKindCommand, command: p, expires: p.ExpiresAt}
+}
+
 // SpentPreview is what Spend returns, with the field of its kind set.
 type SpentPreview struct {
 	Certificate *Preview

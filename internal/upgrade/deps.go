@@ -72,6 +72,12 @@ type Deps struct {
 	// BOSH returns the BOSH configuration as it stands now. A nil BOSH
 	// means the default configuration.
 	BOSH func() config.BOSHConfig
+	// Authorizer decides whether a command request may go ahead. Configure
+	// gives the manager a ConfigAuthorizer over Commands when it is nil.
+	Authorizer CommandAuthorizer
+	// Commands returns the commands configuration as it stands now. A nil
+	// Commands turns commands off.
+	Commands func() config.CommandsConfig
 }
 
 // Configure gives the manager the dependencies its certificate tasks use. It
@@ -95,6 +101,10 @@ func (m *Manager) Configure(d Deps) error {
 
 	if d.UpgradePreviews == nil {
 		d.UpgradePreviews = NewUpgradePreviewStore(d.Now)
+	}
+
+	if d.Authorizer == nil {
+		d.Authorizer = NewConfigAuthorizer(d.Commands)
 	}
 
 	m.deps = d
