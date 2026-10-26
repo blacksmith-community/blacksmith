@@ -2,11 +2,8 @@ package upgrade
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
-	"strings"
-	"unicode"
 
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/ops/scripts"
@@ -16,7 +13,12 @@ import (
 // one entry for each node.
 const commandOutputVaultPath = "command-output"
 
-var errCommandOutputSegment = errors.New("a command output path segment is not valid")
+// commandOutputSegmentMax is the longest instance ID or group a path takes.
+const commandOutputSegmentMax = 128
+
+// errCommandOutputSegment wraps scripts.ErrRefused, so a caller can match
+// either one.
+var errCommandOutputSegment = fmt.Errorf("%w: a command output path segment is not valid", scripts.ErrRefused)
 
 // CommandOutput is what one node printed, as it is stored in Vault. The
 // streams are base64 in JSON, so any bytes survive. Kept is how much of a
@@ -32,14 +34,25 @@ type CommandOutput struct {
 	StderrTruncated bool   `json:"stderr_truncated"`
 }
 
-// validCommandOutputSegment accepts one path segment that can't leave its
-// place in the tree.
+// validCommandOutputSegment accepts ASCII letters, digits, dot, underscore,
+// and hyphen, up to 128 bytes, and refuses "." and "..". Nothing a Vault URL
+// path treats specially gets through.
 func validCommandOutputSegment(segment string) bool {
-	if segment == "" || segment == "." || segment == ".." || strings.Contains(segment, "/") {
+	if segment == "" || segment == "." || segment == ".." || len(segment) > commandOutputSegmentMax {
 		return false
 	}
 
-	return !strings.ContainsFunc(segment, unicode.IsControl)
+	for i := range len(segment) {
+		c := segment[i]
+
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 // commandOutputPath checks every segment and returns the entry's path. An

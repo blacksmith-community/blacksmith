@@ -10,18 +10,36 @@ import (
 	"testing"
 
 	"blacksmith/internal/bosh/ssh"
+	"blacksmith/internal/ops/scripts"
 	"blacksmith/pkg/logger"
 )
 
 const outputTaskID = "0b6f5c1e-8a52-4f0e-9d3a-1c2b3d4e5f60"
 
-// failingPutVault refuses every write.
+var errSealed = errors.New("vault is sealed")
+
+// failingPutVault counts the writes it is asked for and refuses each one.
 type failingPutVault struct {
 	*waitVault
+
+	callsMu sync.Mutex
+	puts    []string
 }
 
-func (v *failingPutVault) Put(context.Context, string, interface{}) error {
-	return errors.New("vault is sealed")
+func (v *failingPutVault) Put(_ context.Context, path string, _ interface{}) error {
+	v.callsMu.Lock()
+	v.puts = append(v.puts, path)
+	v.callsMu.Unlock()
+
+	return errSealed
+}
+
+// savedCount returns how many entries the vault holds.
+func (v *waitVault) savedCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	return len(v.saved)
 }
 
 func newOutputManager() (*Manager, *waitVault) {
@@ -126,7 +144,8 @@ func TestCommandOutputWriteFailureWritesNothing(t *testing.T) {
 	t.Parallel()
 
 	inner := newWaitVault()
-	m := NewManager(&logger.NoOpLogger{}, newWaitDirector(), &failingPutVault{inner})
+	failing := &failingPutVault{waitVault: inner}
+	m := NewManager(&logger.NoOpLogger{}, newWaitDirector(), failing)
 
 	path, err := m.storeCommandOutput(context.Background(), outputTaskID, "inst-1",
 		CommandVMIdentity{Group: "g", Index: 0}, ssh.Result{Stdout: []byte("secret-output-7c1")})
@@ -142,8 +161,17 @@ func TestCommandOutputWriteFailureWritesNothing(t *testing.T) {
 		t.Errorf("error leaks output: %v", err)
 	}
 
-	if len(inner.saved) != 0 {
-		t.Errorf("partial writes: %d", len(inner.saved))
+	if !errors.Is(err, errSealed) {
+		t.Errorf("error = %v, want the vault's error", err)
+	}
+
+	wantPath := "command-output/" + outputTaskID + "/inst-1/g-0"
+	if len(failing.puts) != 1 || failing.puts[0] != wantPath {
+		t.Errorf("puts = %v, want exactly one at %s", failing.puts, wantPath)
+	}
+
+	if inner.savedCount() != 0 {
+		t.Errorf("partial writes: %d", inner.savedCount())
 	}
 }
 
@@ -173,6 +201,18 @@ func TestCommandOutputRejectsBadSegments(t *testing.T) {
 		{"group dot", outputTaskID, "inst-1", CommandVMIdentity{Group: ".", Index: 0}},
 		{"group dotdot", outputTaskID, "inst-1", CommandVMIdentity{Group: "..", Index: 0}},
 		{"group control", outputTaskID, "inst-1", CommandVMIdentity{Group: "a\tb", Index: 0}},
+		{"instance question mark", outputTaskID, "a?b", good},
+		{"instance hash", outputTaskID, "a#b", good},
+		{"instance percent", outputTaskID, "a%2fb", good},
+		{"instance space", outputTaskID, "a b", good},
+		{"instance non-ascii", outputTaskID, "caf\u00e9", good},
+		{"instance 129 bytes", outputTaskID, strings.Repeat("a", 129), good},
+		{"group question mark", outputTaskID, "inst-1", CommandVMIdentity{Group: "a?b", Index: 0}},
+		{"group hash", outputTaskID, "inst-1", CommandVMIdentity{Group: "a#b", Index: 0}},
+		{"group percent", outputTaskID, "inst-1", CommandVMIdentity{Group: "a%b", Index: 0}},
+		{"group space", outputTaskID, "inst-1", CommandVMIdentity{Group: "a b", Index: 0}},
+		{"group non-ascii", outputTaskID, "inst-1", CommandVMIdentity{Group: "gr\u00fcp", Index: 0}},
+		{"group 129 bytes", outputTaskID, "inst-1", CommandVMIdentity{Group: strings.Repeat("g", 129), Index: 0}},
 		{"index negative", outputTaskID, "inst-1", CommandVMIdentity{Group: "redis", Index: -1}},
 	}
 
@@ -188,8 +228,12 @@ func TestCommandOutputRejectsBadSegments(t *testing.T) {
 				t.Fatalf("accepted, path %q", path)
 			}
 
-			if path != "" || len(vault.saved) != 0 {
-				t.Errorf("wrote %q / %d entries", path, len(vault.saved))
+			if !errors.Is(err, scripts.ErrRefused) {
+				t.Errorf("error = %v, want ErrRefused", err)
+			}
+
+			if path != "" || vault.savedCount() != 0 {
+				t.Errorf("wrote %q / %d entries", path, vault.savedCount())
 			}
 		})
 	}
