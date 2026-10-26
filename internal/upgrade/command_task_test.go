@@ -944,7 +944,9 @@ func TestKilledSurvivorFailsTheInstanceAndSkipsItsLaterNodes(t *testing.T) {
 	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
 	fix.queue()
 
-	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused && task.Paused })
+	paused := fix.waitFor("the task to pause with its instance failed", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusPaused && task.Paused && task.Instances[0].Status == InstanceStatusFailed
+	})
 
 	first := paused.Instances[0]
 	if first.Status != InstanceStatusFailed {
@@ -1156,6 +1158,126 @@ func TestHaltedInstanceFailsAndPausesTheTask(t *testing.T) {
 
 	if snap.Status != TaskStatusPaused || !snap.Paused {
 		t.Errorf("the task is %s paused=%v, want paused, since an instance is pending", snap.Status, snap.Paused)
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestKilledSurvivorInTheLastInstanceKeepsTheTaskPausedAndHeld(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
+	fix.queue()
+
+	paused := fix.waitFor("the task to pause with its instance failed", func(task UpgradeTask) bool {
+		return task.Instances[0].Status == InstanceStatusFailed
+	})
+
+	// Give a wrong finish the time it needs to show.
+	time.Sleep(200 * time.Millisecond)
+
+	paused = fix.snapshot()
+	if paused.Status != TaskStatusPaused || !paused.Paused {
+		t.Fatalf("the task is %s paused=%v, want paused, since processes survived KILL", paused.Status, paused.Paused)
+	}
+
+	if got := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; !slices.Equal(phases(paused.Instances[0]), got) {
+		t.Errorf("phases = %v, want %v", phases(paused.Instances[0]), got)
+	}
+
+	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
+		t.Errorf("the node after the survivor saw %v, want nothing", ops)
+	}
+
+	other := &UpgradeTask{ID: "other", Kind: TaskKindUpgrade, Status: TaskStatusPending, Instances: []InstanceUpgrade{pendingInstance("inst-0", "dep-0")}}
+
+	fix.manager.mu.Lock()
+	_, reserved := fix.manager.reservations[fix.task.ID][fix.task.Instances[0].InstanceID]
+	err := fix.manager.reserveNewLocked(other)
+	fix.manager.mu.Unlock()
+
+	if !reserved || err == nil {
+		t.Errorf("the guard let go of the instance with surviving processes: reserved=%v, another task's reserve = %v", reserved, err)
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestRefusalIsReplacedByTheRealFailureAfterAResume(t *testing.T) {
+	fix := newTaskFixture(t, 2, 1, withRoot())
+	fix.setSlots(1)
+
+	fix.manager.settingsLock.RLock()
+	semaphore := fix.manager.jobSemaphore
+	fix.manager.settingsLock.RUnlock()
+
+	semaphore <- struct{}{}
+
+	fix.queue()
+
+	waitUntil(t, "the task to wait for its slot", func() bool {
+		fix.manager.taskCancelLock.RLock()
+		defer fix.manager.taskCancelLock.RUnlock()
+
+		_, waiting := fix.manager.taskCancelCh[fix.task.ID]
+
+		return waiting
+	})
+
+	fix.setRoot(false)
+
+	<-semaphore
+
+	fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused })
+
+	fix.setRoot(true)
+
+	fix.exits["dep-0/0"] = 7
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	done := fix.waitFor("the first instance to fail", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusFailed })
+
+	first := done.Instances[0]
+	if strings.Contains(first.Error, "no longer allowed") || first.Error == "" || first.Error != first.Command.VMs[0].Reason {
+		t.Errorf("the instance's error is %q, want the node's own reason %q", first.Error, first.Command.VMs[0].Reason)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// Once the first instance has started, the switch turning off at an
+// instance boundary is the business of the node gate, which fails the next
+// node with the refusal, and not of a refusal of the whole task.
+func TestRootTurnedOffAtAnInstanceBoundaryFailsTheNextNodeNotTheTask(t *testing.T) {
+	fix := newTaskFixture(t, 3, 1, withRoot())
+	fix.onOp = func(deployment string, _ int, op string) {
+		if deployment == "dep-0" && op == opRunCleanup {
+			fix.setRoot(false)
+		}
+	}
+
+	fix.queue()
+
+	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused })
+
+	if paused.Instances[0].Status != InstanceStatusSuccess {
+		t.Errorf("the first instance is %s, want success", paused.Instances[0].Status)
+	}
+
+	second := paused.Instances[1]
+	if second.Status != InstanceStatusFailed {
+		t.Fatalf("the second instance is %s, want failed through the node gate", second.Status)
+	}
+
+	if node := second.Command.VMs[0]; node.Status != CommandStatusFailed || !strings.Contains(node.Error, apierr.CodeRootDisabled) {
+		t.Errorf("the node is %s with error %q, want failed with %s", node.Status, node.Error, apierr.CodeRootDisabled)
+	}
+
+	if paused.Instances[2].Status != InstanceStatusPending {
+		t.Errorf("the third instance is %s, want pending", paused.Instances[2].Status)
 	}
 
 	fix.assertNoCommandText()

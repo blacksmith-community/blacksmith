@@ -593,6 +593,7 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 		node.ExitCode = outcome.exit
 		node.EndedAt = &ended
 		node.Killed = outcome.killed
+		node.Survived = outcome.pause
 		node.OutputPath = outcome.path
 
 		if outcome.err != nil {
@@ -748,6 +749,10 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		started := m.certNowLocked()
 		inst.Status = InstanceStatusRunning
 		inst.StartedAt = &started
+
+		// A refusal recorded before the task started is over once the
+		// instance runs, so a later failure shows its own error.
+		inst.Error = ""
 	}
 	m.mu.Unlock()
 
@@ -762,7 +767,11 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		return false
 	}
 
-	halted := false
+	// survived is set when the node that stopped the deployment also
+	// stopped the task, which only processes that outlived KILL do. The
+	// instance is ended first, and then the task stays paused rather than
+	// finishing, whatever instance it is in.
+	halted, survived := false, false
 
 	for vm := range inst.Command.VMs {
 		goOn, _ = m.waitWhilePaused(persistCtx, task, cancelCh)
@@ -784,7 +793,7 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		if halt {
 			m.skipRemainingNodes(inst)
 
-			halted = true
+			halted, survived = true, stopped
 
 			break
 		}
@@ -794,7 +803,7 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		}
 	}
 
-	return m.endCommandInstance(persistCtx, task, inst, halted)
+	return m.endCommandInstance(persistCtx, task, inst, halted) && !survived
 }
 
 // driveNodeInLoop runs one pending node and reports whether the task
