@@ -266,3 +266,6 @@ func SetLateSSHCleanupTimeout(director Director, timeout time.Duration) {
 func ExtractLogsFromTarGz(data io.Reader, budget *LogBudget) (*LogBundle, error) {
 	return extractLogsFromTarGz(data, budget)
 }
+
+// CheckGroupHosts exposes the check a group setup's result passes.
+var CheckGroupHosts = checkGroupHosts

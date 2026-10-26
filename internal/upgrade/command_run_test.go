@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/bosh/sshconn"
 	"blacksmith/internal/ops/scripts"
@@ -269,6 +271,39 @@ func (c *runClock) advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
+// runDirector lists the VMs of the fixture's deployment and counts the
+// listings. Its list function answers each call, and the default answers
+// with the VM of every node as it was reviewed.
+type runDirector struct {
+	*waitDirector
+
+	list func(call int) ([]bosh.VM, error)
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (d *runDirector) GetDeploymentVMs(context.Context, string) ([]bosh.VM, error) {
+	d.mu.Lock()
+	d.calls++
+	call := d.calls
+	d.mu.Unlock()
+
+	return d.list(call)
+}
+
+func (d *runDirector) listings() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.calls
+}
+
+// vmOf is the VM the director lists for an identity.
+func vmOf(identity CommandVMIdentity) bosh.VM {
+	return bosh.VM{ID: identity.ID, CID: identity.CID, Job: identity.Group, Index: identity.Index, AZ: identity.AZ, IPs: slices.Clone(identity.IPs), State: identity.State, JobState: identity.JobState}
+}
+
 // runFixture is a manager with one command task of one node, and a fake
 // session that answers each operation from the fixture's script.
 type runFixture struct {
@@ -281,6 +316,7 @@ type runFixture struct {
 	inst     *InstanceUpgrade
 	sess     *runSession
 	sessions *patchSessions
+	director *runDirector
 
 	opened [][]int
 
@@ -332,14 +368,9 @@ func newRunFixture(t *testing.T, options ...runOption) *runFixture {
 		option(fix, &node)
 	}
 
-	identity := node.Reviewed
-	if node.Matched.Group != "" {
-		identity = node.Matched
-	}
-
 	fix.sess = &runSession{
 		seq:    &seq,
-		hosts:  []sshconn.Host{{Job: identity.Group, IndexOrID: identity.ID, Address: "10.0.0.10"}},
+		hosts:  []sshconn.Host{{Job: node.Reviewed.Group, IndexOrID: node.Reviewed.ID, Address: "10.0.0.10"}},
 		answer: fix.answer,
 	}
 
@@ -369,7 +400,21 @@ func newRunFixture(t *testing.T, options ...runOption) *runFixture {
 	}
 	fix.inst = &fix.task.Instances[0]
 
-	manager := NewManager(fix.log, newWaitDirector(), fix.vault)
+	fix.director = &runDirector{waitDirector: newWaitDirector()}
+	fix.director.list = func(int) ([]bosh.VM, error) {
+		fix.manager.mu.RLock()
+		defer fix.manager.mu.RUnlock()
+
+		var vms []bosh.VM
+
+		for i := range fix.inst.Command.VMs {
+			vms = append(vms, vmOf(fix.inst.Command.VMs[i].Reviewed))
+		}
+
+		return vms, nil
+	}
+
+	manager := NewManager(fix.log, fix.director, fix.vault)
 
 	deps := Deps{Now: fix.clock.read}
 
@@ -486,10 +531,6 @@ func (f *runFixture) assertNoCommandText() {
 			f.t.Errorf("the Vault record at %s holds the command text or its digest", path)
 		}
 	}
-}
-
-func withMatched(identity CommandVMIdentity) runOption {
-	return func(_ *runFixture, node *CommandVM) { node.Matched = identity }
 }
 
 func wantOps(t *testing.T, sess *runSession, want ...string) {
@@ -640,34 +681,6 @@ func TestRunCommandNodeSettlesTheNode(t *testing.T) {
 	}
 
 	fix.assertNoCommandText()
-}
-
-// Output is stored under the identity the output route reads, which is the
-// matched one when the node has it and the reviewed one otherwise.
-func TestRunCommandNodeStoresOutputWhereTheRouteReads(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]struct {
-		options []runOption
-		vm      string
-	}{
-		"reviewed only": {vm: "redis-0"},
-		"matched":       {options: []runOption{withMatched(CommandVMIdentity{Group: "redis", Index: 1, ID: "vm-id-1", CID: "cid-1"})}, vm: "redis-1"},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			fix := newRunFixture(t, tc.options...)
-			fix.run(context.Background())
-
-			out, err := fix.manager.ReadCommandOutput(context.Background(), runTaskID, "", tc.vm)
-			if err != nil || string(out.Stdout) != "out" {
-				t.Fatalf("the route could not read the output of %s: %v", tc.vm, err)
-			}
-		})
-	}
 }
 
 // How the exit codes map to an outcome, with the cleanup record that
@@ -1266,3 +1279,355 @@ func TestCommandRunClassifiesAnExecThatHitItsDeadline(t *testing.T) {
 		})
 	}
 }
+
+// A fresh fixture's node has been reviewed as redis-0 with no Matched
+// tuple. These helpers build the listings the binding tests change.
+func reviewedListing(fix *runFixture) []bosh.VM {
+	return []bosh.VM{vmOf(fix.node().Reviewed)}
+}
+
+func listsOnly(vms ...bosh.VM) func(int) ([]bosh.VM, error) {
+	return func(int) ([]bosh.VM, error) { return slices.Clone(vms), nil }
+}
+
+// wantNothingSent fails unless the node failed with the changed message,
+// nothing reached the VM or the SSH setup, and the node was never staged.
+func wantNothingSent(t *testing.T, fix *runFixture, stopped bool, err error) {
+	t.Helper()
+
+	if !errors.Is(err, errCommandVMChanged) {
+		t.Fatalf("err = %v, want errCommandVMChanged", err)
+	}
+
+	if stopped {
+		t.Error("the task stopped, but only the deployment should")
+	}
+
+	wantOps(t, fix.sess)
+
+	if len(fix.opened) != 0 {
+		t.Errorf("%d SSH sessions were opened for a node that changed", len(fix.opened))
+	}
+
+	node := fix.vault.stored(t)
+	if node.Status != CommandStatusFailed || node.Phase != CommandPhaseSettled {
+		t.Errorf("phase %s status %s", node.Phase, node.Status)
+	}
+
+	if want := "VM redis/0 changed since the review, so nothing ran on it"; !strings.Contains(node.Reason, want) {
+		t.Errorf("reason %q lacks %q", node.Reason, want)
+	}
+
+	if node.Matched.Group != "" {
+		t.Error("a node that changed has a matched tuple")
+	}
+
+	for _, write := range fix.vault.recorded() {
+		if write.phase == CommandPhaseStaged || write.phase == CommandPhaseSent {
+			t.Errorf("the node was saved in phase %s", write.phase)
+		}
+	}
+
+	fix.assertNoCommandText()
+}
+
+// The node is bound to the VM the review showed. A listing with a new
+// CID, a new ID at the same index, or no row for the node fails the node,
+// sends nothing, and tells the caller to stop the deployment.
+func TestRunCommandNodeFailsWhenTheVMChanged(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]func(reviewed bosh.VM) []bosh.VM{
+		"new CID":     func(vm bosh.VM) []bosh.VM { vm.CID = "cid-recreated"; return []bosh.VM{vm} },
+		"new ID":      func(vm bosh.VM) []bosh.VM { vm.ID = "vm-id-other"; return []bosh.VM{vm} },
+		"no row":      func(bosh.VM) []bosh.VM { return nil },
+		"other group": func(vm bosh.VM) []bosh.VM { vm.Job = "rabbit"; return []bosh.VM{vm} },
+		"other index": func(vm bosh.VM) []bosh.VM { vm.Index = 1; return []bosh.VM{vm} },
+		"CID gone":    func(vm bosh.VM) []bosh.VM { vm.CID = ""; return []bosh.VM{vm} },
+	}
+
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			fix := newRunFixture(t)
+			fix.director.list = listsOnly(change(reviewedListing(fix)[0])...)
+
+			stopped, err := fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, 0)
+
+			wantNothingSent(t, fix, stopped, err)
+		})
+	}
+}
+
+// A listing that fails fails the node with the director's error cut down
+// to one line, sends nothing, and never falls back to the reviewed tuple.
+func TestRunCommandNodeFailsWhenTheListingFails(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.director.list = func(int) ([]bosh.VM, error) {
+		return nil, errors.New("director unavailable\nsecond line") //nolint:err113 // test fake
+	}
+
+	stopped, err := fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, 0)
+	if err != nil || stopped {
+		t.Fatalf("stopped=%v err=%v, want the node failed and nothing more", stopped, err)
+	}
+
+	wantOps(t, fix.sess)
+
+	if len(fix.opened) != 0 {
+		t.Errorf("%d SSH sessions were opened without a listing", len(fix.opened))
+	}
+
+	node := fix.vault.stored(t)
+	if node.Status != CommandStatusFailed || node.Matched.Group != "" {
+		t.Errorf("status %s matched %q", node.Status, node.Matched.Group)
+	}
+
+	if !strings.Contains(node.Error, "director unavailable") || strings.ContainsAny(node.Error, "\n\r") {
+		t.Errorf("error %q is not the sanitised director error", node.Error)
+	}
+
+	if strings.Contains(node.Reason, "changed since the review") {
+		t.Errorf("reason %q blames a change the listing never showed", node.Reason)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// A listing that differs only in fields the tuple does not hold, such as
+// the IPs and the job state, still binds the node, and the matched tuple
+// records what the director listed this time.
+func TestRunCommandNodeRecordsTheMatchedTuple(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+
+	listed := reviewedListing(fix)[0]
+	listed.AZ, listed.IPs, listed.State, listed.JobState = "z2", []string{"10.0.0.99"}, "running", "failing"
+	fix.director.list = listsOnly(listed)
+
+	if fix.run(context.Background()) {
+		t.Fatal("the task stopped")
+	}
+
+	wantOps(t, fix.sess, opSudoCheck, "prepare", "exec", "cleanup")
+
+	want := CommandVMIdentity{Group: "redis", Index: 0, ID: runVMID, CID: "cid-0", AZ: "z2", IPs: []string{"10.0.0.99"}, State: "running", JobState: "failing"}
+
+	for name, node := range map[string]CommandVM{"memory": fix.node(), "vault": fix.vault.stored(t)} {
+		if !reflect.DeepEqual(node.Matched, want) {
+			t.Errorf("%s: matched = %+v, want %+v", name, node.Matched, want)
+		}
+
+		if node.Reviewed.AZ != "" || node.Reviewed.CID != "cid-0" || len(node.Reviewed.IPs) != 0 {
+			t.Errorf("%s: the reviewed tuple was changed: %+v", name, node.Reviewed)
+		}
+	}
+
+	// The matched tuple is saved with the staged record, before prepare.
+	if got := fix.vault.writeSeq(t, CommandPhaseStaged); got == 0 {
+		t.Fatal("no staged save")
+	}
+
+	// The output is stored under the matched identity, and the route that
+	// the output read uses finds it, though the two tuples differ.
+	path, err := commandOutputPath(runTaskID, runInstanceID, identityOf(fix.node()))
+	if err != nil || fix.node().OutputPath != path {
+		t.Fatalf("output path %q, want %q (%v)", fix.node().OutputPath, path, err)
+	}
+
+	out, err := fix.manager.ReadCommandOutput(context.Background(), runTaskID, "", "redis-0")
+	if err != nil || string(out.Stdout) != "out" {
+		t.Fatalf("the route could not read the output under the matched tuple: %v", err)
+	}
+}
+
+// A session whose host has the wrong group, or an IndexOrID that is
+// neither the node's index nor its ID, is refused before the sudo check,
+// though the host count and uniqueness checkGroupHosts looks at are right.
+func TestRunCommandNodeRefusesAHostThatIsNotTheNode(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]sshconn.Host{
+		"other group": {Job: "rabbit", IndexOrID: runVMID, Address: "10.0.0.10"},
+		"other ID":    {Job: "redis", IndexOrID: "vm-id-other", Address: "10.0.0.10"},
+		"other index": {Job: "redis", IndexOrID: "3", Address: "10.0.0.10"},
+	}
+
+	for name, host := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			fix := newRunFixture(t)
+			fix.sess.hosts = []sshconn.Host{host}
+
+			// TestCheckGroupHostsAcceptsHostsOfOtherNodes shows the setup's
+			// own check passes a list like this one.
+			if fix.run(context.Background()) {
+				t.Fatal("the task stopped")
+			}
+
+			wantOps(t, fix.sess)
+
+			node := fix.vault.stored(t)
+			if node.Status != CommandStatusFailed || node.Phase != CommandPhaseSettled || node.Matched.Group != "" {
+				t.Errorf("phase %s status %s matched %q", node.Phase, node.Status, node.Matched.Group)
+			}
+
+			for _, write := range fix.vault.recorded() {
+				if write.phase == CommandPhaseStaged {
+					t.Error("the node was staged on a host that is not it")
+				}
+			}
+		})
+	}
+}
+
+// A host list that holds two hosts for one node cannot be told apart, so
+// the node is refused rather than given the first.
+func TestRunCommandNodeRefusesAmbiguousHosts(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.sess.hosts = []sshconn.Host{
+		{Job: "redis", IndexOrID: "0", Address: "10.0.0.11"},
+		{Job: "redis", IndexOrID: runVMID, Address: "10.0.0.10"},
+	}
+
+	fix.run(context.Background())
+
+	wantOps(t, fix.sess)
+
+	if node := fix.vault.stored(t); node.Status != CommandStatusFailed || node.Matched.Group != "" {
+		t.Errorf("status %s matched %q", node.Status, node.Matched.Group)
+	}
+}
+
+// Hosts come back in the director's order, which need not be the node
+// order. Each node reaches the host that carries its own identity, and the
+// session is asked for both indices.
+func TestRunCommandNodeMatchesHostsByIdentityNotPosition(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+
+	fix.inst.Command.VMs = append(fix.inst.Command.VMs, CommandVM{
+		Reviewed: CommandVMIdentity{Group: "redis", Index: 1, ID: "vm-id-1", CID: "cid-1"},
+		Phase:    CommandPhasePending,
+	})
+
+	fix.sess.hosts = []sshconn.Host{
+		{Job: "redis", IndexOrID: "vm-id-1", Address: "10.0.0.11"},
+		{Job: "redis", IndexOrID: runVMID, Address: "10.0.0.10"},
+	}
+
+	// Record which host each call went to.
+	sess := &hostRecorder{runSession: fix.sess}
+	fix.sessions = &patchSessions{open: func(context.Context, string, string, []int) (PatchSession, error) { return sess, nil }, deployment: runDeployment, byGroup: make(map[string]PatchSession)}
+
+	for index := range 2 {
+		stopped, err := fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, index)
+		if err != nil || stopped {
+			t.Fatalf("node %d: stopped=%v err=%v", index, stopped, err)
+		}
+	}
+
+	if !slices.Equal(sess.used("prepare"), []int{1, 0}) {
+		t.Errorf("prepare went to hosts %v, want [1 0] for nodes 0 and 1", sess.used("prepare"))
+	}
+}
+
+// hostRecorder notes which host each call went to.
+type hostRecorder struct {
+	*runSession
+
+	mu    sync.Mutex
+	hosts map[string][]int
+}
+
+func (h *hostRecorder) Run(ctx context.Context, vm int, op string, args []string, stdin io.Reader) (ssh.Result, error) {
+	h.mu.Lock()
+
+	if h.hosts == nil {
+		h.hosts = make(map[string][]int)
+	}
+
+	h.hosts[op] = append(h.hosts[op], vm)
+	h.mu.Unlock()
+
+	return h.runSession.Run(ctx, vm, op, args, stdin)
+}
+
+func (h *hostRecorder) used(op string) []int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return slices.Clone(h.hosts[op])
+}
+
+// The driver keeps no listing between calls. Two nodes of one deployment
+// driven one after the other list the deployment twice, and a listing that
+// changes between them fails only the second.
+func TestRunCommandNodeListsAgainBeforeEachNode(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+
+	fix.inst.Command.VMs = append(fix.inst.Command.VMs, CommandVM{
+		Reviewed: CommandVMIdentity{Group: "redis", Index: 1, ID: "vm-id-1", CID: "cid-1"},
+		Phase:    CommandPhasePending,
+	})
+	fix.sess.hosts = append(fix.sess.hosts, sshconn.Host{Job: "redis", IndexOrID: "vm-id-1", Address: "10.0.0.11"})
+
+	first := vmOf(fix.inst.Command.VMs[0].Reviewed)
+	second := vmOf(fix.inst.Command.VMs[1].Reviewed)
+
+	// The second node is recreated while the first runs.
+	fix.director.list = func(call int) ([]bosh.VM, error) {
+		if call == 1 {
+			return []bosh.VM{first, second}, nil
+		}
+
+		recreated := second
+		recreated.CID = "cid-recreated"
+
+		return []bosh.VM{first, recreated}, nil
+	}
+
+	stopped, err := fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, 0)
+	if err != nil || stopped {
+		t.Fatalf("first node: stopped=%v err=%v", stopped, err)
+	}
+
+	if got := fix.director.listings(); got != 1 {
+		t.Fatalf("after one node the director was listed %d times, want 1", got)
+	}
+
+	opsAfterFirst := len(fix.sess.recorded())
+
+	_, err = fix.manager.runCommandNode(context.Background(), fix.sessions, fix.task, fix.inst, 1)
+	if !errors.Is(err, errCommandVMChanged) {
+		t.Fatalf("second node: err = %v, want errCommandVMChanged", err)
+	}
+
+	if got := fix.director.listings(); got != 2 {
+		t.Fatalf("after two nodes the director was listed %d times, want 2", got)
+	}
+
+	if len(fix.sess.recorded()) != opsAfterFirst {
+		t.Error("something was sent to the node that changed")
+	}
+
+	fix.manager.mu.RLock()
+	second2 := fix.inst.Command.VMs[1]
+	fix.manager.mu.RUnlock()
+
+	if second2.Status != CommandStatusFailed || second2.Phase != CommandPhaseSettled {
+		t.Errorf("second node: phase %s status %s", second2.Phase, second2.Status)
+	}
+}
+
+func identityOf(node CommandVM) CommandVMIdentity { return node.identity() }

@@ -303,3 +303,21 @@ func TestDialSSHHostRefusesNoSession(t *testing.T) {
 		t.Errorf("DialSSHHost with no session returned %v and %v, want bosh.ErrSSHSessionMissing", client, err)
 	}
 }
+
+// checkGroupHosts looks at the count and at duplicates only, so hosts that
+// belong to other groups or other instances pass it. A caller that pairs
+// hosts with nodes has to match them itself.
+func TestCheckGroupHostsAcceptsHostsOfOtherNodes(t *testing.T) {
+	t.Parallel()
+
+	for name, host := range map[string]sshconn.Host{
+		"other group": {Job: "rabbit", IndexOrID: "vm-id-0"},
+		"other ID":    {Job: "redis", IndexOrID: "vm-id-other"},
+		"other index": {Job: "redis", IndexOrID: "3"},
+	} {
+		err := bosh.CheckGroupHosts("redis", 1, []sshconn.Host{host})
+		if err != nil {
+			t.Errorf("%s: checkGroupHosts refused it: %v", name, err)
+		}
+	}
+}

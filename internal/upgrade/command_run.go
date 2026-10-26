@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/ops/scripts"
 )
@@ -87,9 +89,10 @@ type commandRun struct {
 	inst     *InstanceUpgrade
 	vm       int
 
-	spec     CommandTaskSpec
-	identity CommandVMIdentity
-	indices  []int
+	deployment string
+	spec       CommandTaskSpec
+	identity   CommandVMIdentity
+	indices    []int
 
 	sess PatchSession
 	host int
@@ -106,13 +109,23 @@ type commandRun struct {
 // driven again, because a node left in phase sent may have run its command.
 var errCommandNodeNotPending = errors.New("the command can only start on a pending node, so nothing was sent")
 
+// errCommandVMChanged is what runCommandNode returns when the director no
+// longer lists the VM the operator reviewed. The node is already failed
+// and nothing was sent to it, and the caller stops the deployment.
+var errCommandVMChanged = errors.New("the VM changed since the review")
+
 // runCommandNode runs the task's command on one node of the instance and
 // settles the node. The node is saved in phase staged before prepare is
 // sent and in phase sent before exec is sent, each as a confirmed save,
 // so a crash never sends a command twice. It returns true when the task
 // stopped, which happens when a save can't be confirmed or when processes
 // of the command outlive KILL. Every other outcome, including a failed
-// command, is recorded on the node and left to the caller. The command text
+// command, is recorded on the node and left to the caller. Before anything
+// reaches the node, the deployment is listed again and the node is bound
+// to the VM the review showed. A node whose VM changed is failed, nothing
+// is sent, and the error wraps errCommandVMChanged so the caller can stop
+// the deployment. A listing that fails fails the node and nothing more.
+// The listing is never kept between calls. The command text
 // never reaches a log line or an error. A node that is not pending is
 // refused with an error that names its phase, and nothing is sent.
 func (m *Manager) runCommandNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) (bool, error) {
@@ -121,7 +134,7 @@ func (m *Manager) runCommandNode(ctx context.Context, sessions *patchSessions, t
 		return false, fmt.Errorf("%w: the node is in phase %s", errCommandNodeNotPending, phase)
 	}
 
-	return m.driveCommandNode(ctx, sessions, task, inst, vm), nil
+	return m.driveCommandNode(ctx, sessions, task, inst, vm)
 }
 
 // commandNodePhase returns the phase the node is in now.
@@ -132,47 +145,55 @@ func (m *Manager) commandNodePhase(inst *InstanceUpgrade, vm int) CommandPhase {
 	return inst.Command.VMs[vm].Phase
 }
 
-// driveCommandNode runs a pending node.
-func (m *Manager) driveCommandNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) bool {
+// driveCommandNode runs a pending node. The order is the listing, the SSH
+// setup, the match of the session's host to the node, the sudo check, and
+// then the saves and the operations, so nothing reaches the VM before the
+// node is bound to it.
+func (m *Manager) driveCommandNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) (bool, error) {
 	run := m.newCommandRun(sessions, task, inst, vm)
 
 	err := run.validate()
 	if err != nil {
-		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "The task's settings are not valid for the wrapper, so nothing was sent.", err: err})
+		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "The task's settings are not valid for the wrapper, so nothing was sent.", err: err}), nil
 	}
 
 	err = run.buildInputs()
 	if err != nil {
-		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not build the script for the node, so nothing was sent.", err: err})
+		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not build the script for the node, so nothing was sent.", err: err}), nil
 	}
 
-	err = run.connect(ctx)
-	if err != nil {
-		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not open an SSH session on the node, so nothing was sent.", err: err})
-	}
-
-	outcome := run.checkSudo(ctx)
+	live, outcome, bindErr := run.relist(ctx)
 	if outcome != nil {
-		return run.settle(ctx, *outcome)
+		return run.settle(ctx, *outcome), bindErr
+	}
+
+	err = run.connect(ctx, live)
+	if err != nil {
+		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not open an SSH session on the node, so nothing was sent.", err: err}), nil
+	}
+
+	outcome = run.checkSudo(ctx)
+	if outcome != nil {
+		return run.settle(ctx, *outcome), nil
 	}
 
 	outcome, stop := run.stage(ctx)
 	if outcome != nil {
-		return run.settle(ctx, *outcome)
+		return run.settle(ctx, *outcome), nil
 	}
 
 	if stop {
-		return true
+		return true, nil
 	}
 
-	return run.execute(ctx)
+	return run.execute(ctx), nil
 }
 
 func (m *Manager) newCommandRun(sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) *commandRun {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	run := &commandRun{m: m, sessions: sessions, task: task, inst: inst, vm: vm}
+	run := &commandRun{m: m, sessions: sessions, task: task, inst: inst, vm: vm, deployment: inst.Command.Deployment}
 
 	if task.Command != nil {
 		run.spec = *task.Command
@@ -236,28 +257,83 @@ func (r *commandRun) buildInputs() error {
 	return nil
 }
 
-// connect opens the group's session and finds the node's host in it.
-func (r *commandRun) connect(ctx context.Context) error {
+// relist lists the deployment's VMs and finds the node's reviewed tuple
+// among them. It returns the VM as the director lists it now. When the
+// node is not there, or is there with another CID or ID, the outcome is
+// the failure to settle and the error is errCommandVMChanged. When the
+// listing fails, the outcome is the failure and the error is nil. The
+// reviewed tuple is never trusted in place of a listing.
+func (r *commandRun) relist(ctx context.Context) (CommandVMIdentity, *commandOutcome, error) {
+	vms, err := directorCall(ctx, func(c context.Context) ([]bosh.VM, error) {
+		return r.m.director.GetDeploymentVMs(c, r.deployment)
+	})
+	if err != nil {
+		return CommandVMIdentity{}, &commandOutcome{status: CommandStatusFailed, reason: "The director did not list the deployment's VMs, so nothing was sent.", err: err}, nil
+	}
+
+	reviewed := r.identity
+
+	for _, vm := range vms {
+		if vm.Job == reviewed.Group && vm.Index == reviewed.Index && vm.ID == reviewed.ID && vm.CID == reviewed.CID {
+			return CommandVMIdentity{
+				Group: vm.Job, Index: vm.Index, ID: vm.ID, CID: vm.CID,
+				AZ: vm.AZ, IPs: slices.Clone(vm.IPs), State: vm.State, JobState: vm.JobState,
+			}, nil, nil
+		}
+	}
+
+	reason := fmt.Sprintf("VM %s/%d changed since the review, so nothing ran on it", reviewed.Group, reviewed.Index)
+
+	return CommandVMIdentity{}, &commandOutcome{status: CommandStatusFailed, reason: reason}, errCommandVMChanged
+}
+
+// connect opens the group's session, finds the one host that carries the
+// node's identity, and records the matched tuple on the node. The host is
+// matched by group and by an IndexOrID equal to the node's instance ID or
+// index, never by position, and a session with no host or with more than
+// one for the node is refused.
+func (r *commandRun) connect(ctx context.Context, live CommandVMIdentity) error {
 	sess, err := r.sessions.group(ctx, r.identity.Group, r.indices)
 	if err != nil {
 		return err
 	}
 
-	ids := []string{strconv.Itoa(r.identity.Index)}
-	if r.identity.ID != "" {
-		ids = []string{r.identity.ID, ids[0]}
+	host, err := r.matchHost(sess)
+	if err != nil {
+		return err
 	}
 
-	for _, id := range ids {
-		host, err := hostIndex(sess, r.identity.Group, id)
-		if err == nil {
-			r.sess, r.host = sess, host
+	r.m.mu.Lock()
+	r.inst.Command.VMs[r.vm].Matched = live.clone()
+	r.m.mu.Unlock()
 
-			return nil
+	r.sess, r.host, r.identity = sess, host, live
+
+	return nil
+}
+
+// matchHost finds the node's host in the session.
+func (r *commandRun) matchHost(sess PatchSession) (int, error) {
+	found := -1
+
+	for index, host := range sess.VMs() {
+		named := host.IndexOrID == strconv.Itoa(r.identity.Index) || (r.identity.ID != "" && host.IndexOrID == r.identity.ID)
+		if host.Job != r.identity.Group || !named {
+			continue
 		}
+
+		if found >= 0 {
+			return 0, fmt.Errorf("the SSH session has more than one host for %s-%d", r.identity.Group, r.identity.Index)
+		}
+
+		found = index
 	}
 
-	return fmt.Errorf("the SSH session has no host for %s-%d", r.identity.Group, r.identity.Index)
+	if found < 0 {
+		return 0, fmt.Errorf("the SSH session has no host for %s-%d", r.identity.Group, r.identity.Index)
+	}
+
+	return found, nil
 }
 
 // checkSudo runs the sudo check, which a VM without passwordless sudo
