@@ -615,17 +615,17 @@ commands:
 #### `enabled` (boolean)
 **Default:** `true`
 
-Turns the whole operation on or off. When it is off, the broker refuses previews, creates, and output reads with a 403 `commands_disabled` error, and the broker UI disables the Run command choice. Turning it off also stops any stored command task at its next gate, so a task that is part way through a run pauses before it starts another node.
+Turns the whole operation on or off. When it is off, the broker refuses previews, creates, and output reads with a 403 `commands_disabled` error, and the broker UI disables the Run command choice. Turning it off also stops any stored command task at the next authorization check it reaches, so a task that is part way through a run does not start another node.
 
 #### `allow_root` (boolean)
 **Default:** `false`
 
-Allows an operator to run a command as root. With the default, operators can run as `vcap` only, and a request to run as root is refused with a 403 `root_disabled` error. We keep this off by default so that a deployment turns root on deliberately. The switch decides only whether a root run can start. Turning it off stops every stored root task at its next gate, but it never hides the output of a root run that already happened, because reading that output is an audit read. Root runs are never allowed while `enabled` is false.
+Allows an operator to run a command as root. With the default, operators can run as `vcap` only, and a request to run as root is refused with a 403 `root_disabled` error. We keep this off by default so that a deployment turns root on deliberately. The switch decides only whether a root run can start. Turning it off stops every stored root task at the next authorization check it reaches, but it never hides the output of a root run that already happened, because reading that output is an audit read. Root runs are never allowed while `enabled` is false.
 
 #### `credential.key` (string)
 **Default:** `""` (no second credential)
 
-A second credential, shared by everyone who may run commands. When it is set, every command preview, create, and output read must send it in the `X-Blacksmith-Command-Key` request header, and the broker refuses a missing or wrong key with a 401 `command_credential_required` error. The same key also guards the detail of a command task, because that detail carries the command text, and it guards resuming a paused command task. The key travels only in the header and never in a JSON body, the broker compares it in constant time, and the request-header debug log redacts it. Treat the value as a secret, and keep it out of version control the way you keep the broker password out.
+A second credential, shared by everyone who may run commands. When it is set, every command preview, create, and output read must send it in the `X-Blacksmith-Command-Key` request header, and the broker refuses a missing or wrong key with a 401 `command_credential_required` error. The same key also guards the detail of a command task, because that detail carries the command text, and it guards a resume that sends a command. The key travels only in the header and never in a JSON body, the broker compares it in constant time, and the request-header debug log redacts it. Treat the value as a secret, and keep it out of version control as we do the broker password.
 
 ## SHIELD Configuration (`shield`)
 

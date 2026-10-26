@@ -7,16 +7,27 @@ This feature runs arbitrary operator text on customer VMs, and sometimes as root
 ## Table of Contents
 
 - [Overview](#overview)
+
 - [Configuration](#configuration)
+
 - [Who May Run Commands](#who-may-run-commands)
+
 - [Running a Command in the UI](#running-a-command-in-the-ui)
+
 - [How the Command Reaches the VM](#how-the-command-reaches-the-vm)
+
 - [Targets](#targets)
+
 - [Execution](#execution)
+
 - [Output](#output)
+
 - [Audit](#audit)
+
 - [HTTP API](#http-api)
+
 - [Node Scripts](#node-scripts)
+
 - [What It Will Not Do](#what-it-will-not-do)
 
 ## Overview
@@ -57,27 +68,27 @@ The operation uses the existing broker credential, which is the HTTP basic auth 
 
 The first is the `commands.enabled` switch, which turns the whole operation on or off. The second is the `commands.allow_root` switch, which applies only to a run as root. We also support an optional second credential, `commands.credential.key`. When a key is configured, it becomes required for this operation. The client sends it in the `X-Blacksmith-Command-Key` header and never in the JSON body. The broker compares it in constant time, and the request-header debug log redacts it.
 
-The checks live behind one interface, `CommandAuthorizer`, in the upgrade package, so that a later RBAC or OAuth integration can replace the implementation without reworking the operation. The first implementation, `ConfigAuthorizer`, reads the `commands` block on every call, so a change in the configuration takes effect at the next gate a stored task reaches. It answers three kinds of question.
+The checks live behind one interface, `CommandAuthorizer`, in the upgrade package, so that a later RBAC or OAuth integration can replace the implementation without reworking the operation. The first implementation, `ConfigAuthorizer`, reads the `commands` block on every call, so a change in the configuration takes effect at the next check a stored task reaches. It answers three kinds of question.
 
 - A preview or a create is refused with 403 `commands_disabled` when the feature is off, with 403 `root_disabled` when the run is as root and root runs are off, and with 401 `command_credential_required` when a key is configured and the request does not carry the right one. A user other than `root` or `vcap` is refused with 400 `invalid_run_user`.
 
 - An output read, and the detail view of a command task, are refused with 403 `commands_disabled` when the feature is off and with 401 `command_credential_required` under the same key rule. They never look at `allow_root`, because reading what a past run printed is an audit read. An operator investigating a root run must not be locked out by the switch that stops the next one.
 
-- A stored task is checked before it is queued, resumed, or allowed to run its next node, and twice per node, once before the command is staged and once more immediately before it is sent. This check has no request to read, so it applies only the two switches to the user the task was created with. Turning `allow_root` off therefore stops every stored root task at its next gate.
+- The broker checks a stored task before it queues the task and before it resumes the task. It checks the task again at each node, once before it stages the command and once more just before it sends the command. A stored task has no request to read, so these checks apply only the two switches to the user the task was created with. Turning `allow_root` off therefore stops every stored root task at the next check it reaches.
 
-Resuming a paused command task takes the second credential as well, because a resume can send a stored command to VMs.
+A resume that sends a command takes the second credential as well, because it can send a stored command to VMs. A resume that only cleans up a cancelled task never asks for the key.
 
 The UI enforces nothing on its own. Every one of these checks happens on the server.
 
 ## Running a Command in the UI
 
-Choose Run command in the operation selector of the Batch Operations tab. The radio is disabled, with the reason shown, when the broker answers 403 to the preview endpoint. The flow has the same three steps as the other operations.
+Choose Run command in the operation selector of the Batch Operations tab. The page probes the preview endpoint when it loads. The radio is disabled, with the reason shown, when the broker answers 403 `commands_disabled`. When the broker answers 403 `root_disabled`, only the root choice is disabled. The flow has the same three steps as the other operations.
 
 ### Options
 
 The Options step holds the command, the user, and the limits.
 
-- The command box takes the text of any shape. The help line reminds the operator that the command runs under `/bin/bash` on every node with stdin closed and a fixed `PATH`.
+- The command box accepts text of any shape. The help line reminds the operator that the command runs under `/bin/bash` on every node with stdin closed and a fixed `PATH`.
 
 - A radio pair picks the user, with `vcap` as the default. Root is marked as needing care, and it is disabled with a note when the preview reports that root is off.
 
@@ -89,7 +100,7 @@ The Options step holds the command, the user, and the limits.
 
 - The optional job name and reason inputs work as they do for the other operations.
 
-Next stays disabled while the command is empty or only whitespace, while the timeout is out of range, and while parallel is on and the max in flight is empty or out of range.
+Next stays disabled while the command is empty or only whitespace, while the timeout is not a whole number in range, and while parallel is on and the max in flight is empty, below 1, or above the limit the preview reports. It also stays disabled after the broker refuses a set of options, until the operator changes them.
 
 ### Instances
 
@@ -99,11 +110,11 @@ The Instances step reuses the instance list that Upgrade uses, with its filters,
 
 The Review step calls the preview endpoint and freezes the values it sent. It shows the command in a preformatted block, the user, the shell, the timeout, and the parallel settings, followed by one table per deployment with the columns Node, AZ, State, Job state, and Targeted. A node that is not targeted shows its reason. Any edit to the command, the user, the timeout, the parallel settings, or the selection drops the review and requires a fresh one.
 
-Hidden characters in the command text and in the reason are made visible. Control characters and the bidirectional formatting characters that could disguise what a command does are shown as `\u` escapes such as `‮`, and a note tells the operator the command contains them. The text that runs is never changed, so the escapes are only a way to see what is there.
+Hidden characters in the command text and in the reason are made visible. Control characters and the bidirectional formatting characters that could disguise what a command does are shown as `\u` escapes such as `\u202E`, and a note tells the operator the command contains them. The text that runs is never changed, so the escapes are only a way to see what is there.
 
 When the selection spans more than one service, the preview carries a `mixed_services` warning, and the review shows a prominent warning block that names the services. The backend allows the run. A command is usually specific to one service, so the warning is there to make a mistaken selection obvious and not to stop a deliberate one.
 
-When the broker has a second credential configured and the request carries none, it answers 401, and the review step asks for the key in a password input. The key goes in the `X-Blacksmith-Command-Key` header on the preview, the create, and the output reads. The UI holds it in memory for those requests and never keeps it in a draft or in browser storage.
+When the broker has a second credential configured and the request carries none or the wrong one, it answers 401, and the review step asks for the key in a password input. After a wrong key, the prompt says the broker did not accept it. The key goes in the `X-Blacksmith-Command-Key` header on the preview, the create, and the output reads. The UI holds it in memory only, for those requests, and never keeps it in a draft or in browser storage.
 
 The operator must always type a confirmation word. There is no instance-count threshold for this operation, because the action is arbitrary code on customer VMs and the cost of a mistaken click is unbounded. The word names the privilege, so it is `run as root` or `run as vcap`. Case and spacing are forgiven, and the confirm button stays disabled until the word matches. The button reads "Run on N nodes". The server also binds the preview to the command, the user, the timeout, the parallel settings, and the targets, which is what makes the typed word mean something.
 
@@ -119,7 +130,7 @@ Retry resends the identical request. Discard first reads the task list and looks
 
 Activity shows a Command badge beside the Certificates one, with the first twelve characters of the command's digest and never the text. The task detail shows the command, the user, the shell, the timeout, the parallel settings, and the reason, and it lists each node with its status, exit code, and duration.
 
-When the broker has a second credential configured, the task detail asks for the command key before it shows the task. The pane shows a password input and a Show task button, and it tells the operator when the broker did not accept the key. The held key is dropped when the operator clears it, and doing so also drops the command text and the output from the page.
+When the broker has a second credential configured, the task detail asks for the command key before it shows the task. The pane shows a password input and a Show task button. An output read asks for the key the same way, with a Show output button, and a resume that sends a command asks with a Use key button. Each prompt tells the operator when the broker did not accept the key. The held key is dropped when the operator clears it, and doing so also drops the command text and the output from the page.
 
 Each node has a collapsed Output element that fetches that node's output the first time the operator opens it and shows stdout and stderr in separate blocks. The text is rendered as plain text, with control characters other than newline and tab removed. The summary line reads like "Output (stdout 1.2 KiB of 1.2 KiB, stderr 0 B)".
 
@@ -159,7 +170,7 @@ Before any of the three operations, the broker runs `sudo -n true` once on each 
 
 The stdin of `prepare` is the library, then `run.sh`, then the command bytes, with nothing added between them. `run.sh` ends with a line that exits unconditionally, so when `prepare` refuses before it reads, the unread command bytes are discarded with the session and are never read as shell.
 
-The `prepare` operation makes `/var/vcap/data/runcmd` as a root-owned directory of mode 0711 and, inside it, a task directory of mode 0710 that belongs to root with vcap's group. It then writes the command to `cmd.sh` in that directory as root, with mode 0640 and vcap's group. The user `vcap` can open `cmd.sh` by name and cannot list, replace, write, or remove anything on the way to it. When the user is root, the layout is the same. The operation prints the byte count and the SHA-256 of what it stored, and the broker compares that digest with its own. A mismatch means stdin was cut short or altered, and the node fails before anything runs.
+The `prepare` operation creates `/var/vcap/data/runcmd`, which root owns and which has mode 0711. Inside it, `prepare` creates a directory for the task. Root owns that directory too, it carries vcap's group, and its mode is 0710. The operation then writes the command to `cmd.sh` in that directory as root, with mode 0640 and vcap's group. The user `vcap` can open `cmd.sh` by name and cannot list, replace, write, or remove anything on the way to it. When the user is root, the layout is the same. The operation prints the byte count and the SHA-256 of what it stored, and the broker compares that digest with its own. A mismatch means stdin was cut short or altered, and the node fails before anything runs.
 
 ### Exec
 
@@ -242,13 +253,13 @@ The parallel option is off by default. When the operator turns it on, `max_in_fl
 
 The cap must be strictly less than the director's worker count, because the SSH setup and cleanup behind each node are director tasks that each hold a worker while they run. A cap that reached the count would starve the director. The broker resolves the worker count in this order.
 
-1. The director itself. Its API does not report a worker count, so this source does nothing in this version, and the code leaves a seam for a director that one day does.
+1. The broker first asks the director itself, but the director's API does not report a worker count, so this step does nothing in this version. The code leaves room for a director that one day does.
 
-2. The `bosh.director_workers` setting, when it is set.
+2. The broker next uses the `bosh.director_workers` setting, when it is set.
 
-3. The default of 4, which is the value bosh-deployment sets.
+3. Otherwise the broker uses 4, which is the value bosh-deployment sets.
 
-With nothing configured, the highest allowed `max_in_flight` is therefore 3. The broker refuses any larger value with 400 `max_in_flight_too_high`, and the preview reports `worker_count` and `max_in_flight_limit` so the UI refuses the same values. The SSH setup is one director task per instance group for all of that group's indices and not one per node, so the cap is conservative, and that is fine.
+With nothing configured, the highest allowed `max_in_flight` is therefore 3. The broker refuses any larger value with 400 `max_in_flight_too_high`, and the preview reports `worker_count` and `max_in_flight_limit` so the UI refuses the same values. The SSH setup is one director task per instance group for all of that group's indices and not one per node, so the cap is conservative.
 
 ### A command runs at most once per node
 
@@ -282,7 +293,7 @@ The task reserves each instance with the mutation guard under its own command ho
 
 The broker captures each node's stdout and stderr separately and keeps the first 64 KiB of each. To report that honestly, it records for each stream how many bytes were kept, how many the stream delivered in all, and whether the stream was truncated. A node that was cancelled or timed out keeps the partial output it had.
 
-Output lives in Vault at `command-output/<task-id>/<instance-id>/<group>-<index>`, one entry for each node holding the two streams base64-encoded with their flags and counts. Each node writes its own entry, so parallel nodes never collide. Output is not part of the task record, because a task of thirty nodes could carry close to four megabytes of it. Output lives as long as its task record, and pruning is decided later for all task records together.
+Output lives in Vault at `command-output/<task-id>/<instance-id>/<group>-<index>`, one entry for each node holding the two streams base64-encoded with their flags and counts. Each node writes its own entry, so parallel nodes never collide. Output is not part of the task record, because a task of thirty nodes could carry close to four megabytes of it. Output is kept as long as its task record is kept, and pruning is decided later for all task records together.
 
 The broker's runner never logs what a command prints. Its log lines for a command carry the exit status, the byte counts, and the flags only.
 
@@ -302,7 +313,19 @@ Operators may type a secret into a command, and a command may print one. We ther
 
 Every run writes records in the same shape as the certificate audit, under the Vault path `command-audit/<record-id>`. The events are `task_started`, `node_staged`, `node_settled`, `instance_settled`, `task_finished`, and `task_cancelled`.
 
-A record carries the task ID, the actor's username and address, whether a second credential was presented, the reason the operator typed, the user the command ran as, the shell, the timeout, the parallel settings, the command text, its SHA-256 and length, the preview ID, and the deployments and node tuples targeted. A node event also carries the node's tuple as reviewed and as matched at run time, the exit code, the byte counts, the flags, the duration, whether `cleanup` had to kill the command, and the status. The task record keeps the same facts, so the audit survives even if a record is lost between a settle and its write.
+A record carries the following facts.
+
+- The task ID, and the preview ID the task came from.
+
+- The actor's username and address, and whether the request presented a second credential.
+
+- The reason the operator typed, the user the command ran as, the shell, the timeout, and the parallel settings.
+
+- The command text, its SHA-256, and its length.
+
+- The deployments and node tuples the task targeted.
+
+A node event also carries the node's tuple as reviewed and as matched at run time. It records the exit code, the byte counts, the flags, the duration, whether `cleanup` had to kill the command, and the status. The task record keeps the same facts, so the audit survives even if a record is lost between a settle and its write.
 
 The line the broker writes to its log for an audit record has the command text removed and the digest left in, and it never has output. The broker log therefore answers who ran which digest where, and Vault answers what the text was.
 
@@ -337,26 +360,26 @@ The errors specific to this operation are these.
 
 ## Node Scripts
 
-The scripts that run on service VMs live in the package `internal/ops/scripts`. It is the one home for node scripts, and it holds the base `lib.sh`, the embed, the invocation builder, the output parser, the validators, and `run.sh`. The base library sets a strict prelude, a fixed `PATH`, `LC_ALL=C`, and `umask 077`, and it provides the checks for secure directories, task IDs, and hashes.
+The scripts that run on service VMs live in the package `internal/ops/scripts`. It is the one home for node scripts, and it holds the base `lib.sh`, the embedded copy of the scripts, the invocation builder, the output parser, the validators, and `run.sh`. The base library sets a strict prelude, a fixed `PATH`, `LC_ALL=C`, and `umask 077`, and it provides the checks for secure directories, task IDs, and hashes.
 
 The package `internal/upgrade/certscripts` is the certificate layer on top of that base. It keeps the pieces that are about certificate paths and cluster facts, which are `certlib.sh`, `gate.sh`, `patch.sh`, `discover.sh`, and `verify.sh`, and it sends a certificate script as the base `lib.sh`, then `certlib.sh`, then the script. The certificate patch and gate behavior did not change when the base moved out, and each certificate operation sends the same functions to a VM as before.
 
 ## What It Will Not Do
 
-- It does not let the operator pick a shell, a user other than `root` or `vcap`, a subset of nodes within a deployment, or a working directory.
+- Operators cannot pick a shell, a user other than `root` or `vcap`, a subset of nodes within a deployment, or a working directory.
 
-- It does not run deployments in parallel, retry a node, or re-run a failed instance.
+- Deployments never run in parallel, a node is never retried, and a failed instance is never re-run.
 
-- It does not stream output while a command runs. Output appears when the node settles.
+- Output is not streamed while a command runs. It appears when the node settles.
 
-- It does not upload files or scripts, and it refuses a command longer than 64 KiB.
+- Operators cannot upload files or scripts, and the broker refuses a command longer than 64 KiB.
 
-- It does not offer saved or templated commands, scheduling, or a dry run.
+- There are no saved or templated commands, no scheduling, and no dry run.
 
-- It does not add roles. The second credential is one shared key, and the authorizer interface is where RBAC and OAuth will land later.
+- The operation adds no roles. The second credential is one shared key, and the authorizer interface is where RBAC and OAuth will land later.
 
-- It does not read the worker count from the director, because the director does not expose it.
+- The broker does not read the worker count from the director, because the director does not expose it.
 
-- It does not contain hostile root code. It ends a cooperative command's process group on timeout and cancel, and no more.
+- The wrapper does not contain hostile root code. It ends a cooperative command's process group on timeout and cancel, and no more.
 
-- It does not prune output or audit records.
+- The broker does not prune output or audit records.
