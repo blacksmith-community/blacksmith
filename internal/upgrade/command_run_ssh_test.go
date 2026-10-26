@@ -229,7 +229,7 @@ func blockAfterSecrets(channel gossh.Channel, stop <-chan struct{}) uint32 {
 	return 0
 }
 
-// openSecretSession opens a session through open and runs exec on it with a
+// runWithSecrets opens a session through build and runs exec on it with a
 // secret on stdin, and returns what the runner logged along with the
 // result.
 func runWithSecrets(t *testing.T, build func(*sshDirector, *captureLog) func(context.Context, string, string, []int) (PatchSession, error), handle func(gossh.Channel, <-chan struct{}) uint32, timeout time.Duration) (string, string, error) {
@@ -279,13 +279,17 @@ func TestNewCommandRunnerLogsNoOutput(t *testing.T) {
 		return NewCommandRunner(director, log)
 	}
 
+	// ended is the log line each path writes when the runner is quiet. A
+	// run that logged nothing would pass the secret check without
+	// proving anything, so each case has to show its line.
 	cases := map[string]struct {
 		handle  func(gossh.Channel, <-chan struct{}) uint32
 		timeout time.Duration
+		ended   string
 	}{
-		"success": {handle: printSecrets(0)},
-		"failure": {handle: printSecrets(3)},
-		"cancel":  {handle: blockAfterSecrets, timeout: 300 * time.Millisecond},
+		"success": {handle: printSecrets(0), ended: "ended with exit status 0"},
+		"failure": {handle: printSecrets(3), ended: "ended with exit status 3"},
+		"cancel":  {handle: blockAfterSecrets, timeout: 300 * time.Millisecond, ended: "ended without an exit status"},
 	}
 
 	for name, tc := range cases {
@@ -293,6 +297,10 @@ func TestNewCommandRunnerLogsNoOutput(t *testing.T) {
 			t.Parallel()
 
 			logs, _, _ := runWithSecrets(t, command, tc.handle, tc.timeout)
+
+			if !strings.Contains(logs, tc.ended) {
+				t.Errorf("the runner did not log %q, so the check proves nothing", tc.ended)
+			}
 
 			assertNoSecrets(t, logs)
 		})
@@ -316,8 +324,8 @@ func TestNewPatchRunnerLogsOutput(t *testing.T) {
 		t.Fatal("the fake VM's output did not come back")
 	}
 
-	if !strings.Contains(logs, secretStdout) && !strings.Contains(logs, secretStderr) {
-		t.Skip("the patch runner no longer logs streams, so the control proves nothing")
+	if !strings.Contains(logs, secretStdout) || !strings.Contains(logs, secretStderr) {
+		t.Fatal("the patch runner no longer logs streams, so the control proves nothing")
 	}
 }
 
