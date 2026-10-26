@@ -2757,6 +2757,7 @@
       const targets = document.querySelectorAll('#upgrade-stemcell-filter, #upgrade-release-filter, [id^="upgrade-advrel-"]');
       return Array.from(targets).some(field => field.value) ? '' : 'Choose a stemcell or release target to continue.';
     }
+    if (upgradeOperation === 'command') return commandOptionIssue();
     if (rotateState.loadState === 'disabled') return 'Certificate inventory is turned off.';
     if (rotateState.loadState === 'error') return 'Certificate inventory could not load. Retry below to continue.';
     if (rotateState.loadState !== 'ready') return 'Loading certificate inventory…';
@@ -2800,8 +2801,8 @@
     const serviceRow = document.getElementById('upgrade-service-filter').closest('.filter-row');
     const serviceHost = upgradeOperation === 'upgrade' ? optionsContext : panel.querySelector('.upgrade-services');
     if (serviceRow.parentElement !== serviceHost) serviceHost.prepend(serviceRow);
-    optionsContext.hidden = step !== 1 || upgradeOperation !== 'upgrade';
-    panel.querySelector('.upgrade-targets-panel').hidden = step !== 1;
+    optionsContext.hidden = step !== 1 || (upgradeOperation !== 'upgrade' && upgradeOperation !== 'command');
+    panel.querySelector('.upgrade-targets-panel').hidden = step !== 1 || upgradeOperation === 'command';
     panel.querySelector('.upgrade-services-panel').hidden = step !== 2;
     panel.querySelector('.upgrade-instances').hidden = step !== 2;
     panel.querySelector('#batch-selection-review').hidden = step !== 2;
@@ -3458,6 +3459,8 @@
     const stemcellFloor = document.getElementById('upgrade-stemcell-floor')?.value || '';
     const releaseFloor = document.getElementById('upgrade-release-floor')?.value || '';
 
+    // A command run has no instance list yet.
+    if (upgradeOperation === 'command') return;
     if (upgradeOperation !== 'upgrade') {
       renderRotateInstances();
       updateOperationFooter();
@@ -3496,10 +3499,56 @@
   const OPERATION_LABELS = {
     upgrade: 'Upgrade',
     rotate: 'Rotate certificates',
-    converge: 'Converge'
+    converge: 'Converge',
+    command: 'Run command'
   };
   const OPERATION_HINTS = {
-    converge: 'Converge redeploys instances whose patched certificates BOSH has not picked up yet.'
+    converge: 'Converge redeploys instances whose patched certificates BOSH has not picked up yet.',
+    command: 'Run one shell command on every VM of the selected instances.'
+  };
+
+  // The timeout range of a command run, in seconds. These equal
+  // CommandTimeoutMin, CommandTimeoutMax, and CommandTimeoutDefault in
+  // internal/upgrade/command_types.go, which refuses anything outside them.
+  const COMMAND_TIMEOUT_MIN = 10;
+  const COMMAND_TIMEOUT_MAX = 3600;
+  const COMMAND_TIMEOUT_DEFAULT = 600;
+  const COMMAND_PREVIEW_URL = '/b/upgrade/commands/preview';
+  const COMMAND_ROOT_OFF_NOTE = 'Running as root is switched off on this broker.';
+  const COMMAND_NO_PARALLEL_NOTE = 'Parallel runs are not available because the director has too few workers.';
+
+  // What the operator has entered for a command run. The text lives here and
+  // in the textarea only. The probes, the draft, and the page never carry it.
+  const commandState = {
+    text: '',
+    user: 'vcap',
+    timeout: String(COMMAND_TIMEOUT_DEFAULT),
+    parallel: false,
+    maxInFlight: '',
+    // Why the operation is unavailable, from a commands_disabled answer.
+    unavailable: '',
+    // Why root is unavailable, from a root_disabled answer.
+    rootOff: '',
+    // What the last real preview said about parallel runs, or null before one.
+    preview: null
+  };
+
+  const wholeNumber = (value) => (/^\d+$/.test(String(value).trim()) ? Number(String(value).trim()) : null);
+
+  // The reason Next stays disabled for a command run, or an empty string.
+  const commandOptionIssue = () => {
+    if (!commandState.text.trim()) return 'Enter the command to run.';
+    const timeout = wholeNumber(commandState.timeout);
+    if (timeout === null || timeout < COMMAND_TIMEOUT_MIN || timeout > COMMAND_TIMEOUT_MAX) {
+      return `Set the timeout to a whole number of seconds from ${COMMAND_TIMEOUT_MIN} to ${COMMAND_TIMEOUT_MAX}.`;
+    }
+    if (commandState.parallel) {
+      const limit = commandState.preview ? commandState.preview.limit : 0;
+      const value = wholeNumber(commandState.maxInFlight);
+      if (value === null || value < 1) return 'Set the most nodes to run at once to a whole number of at least 1.';
+      if (limit > 0 && value > limit) return `The director allows at most ${limit} nodes at once. Lower the most nodes to run at once.`;
+    }
+    return '';
   };
 
   // Instances picked for a converge, and the fallback certificate selection
@@ -4311,6 +4360,45 @@
   // The Mode controls of Batch Operations, or null while another operation shows.
   let rotateModeControls = null;
 
+  // The optional job name and reason inputs that every operation shares.
+  const buildBatchMetadata = () => {
+    const nameRow = rotateEl('div', 'filter-row rotate-name-row');
+    const nameLabel = rotateEl('label', '', 'Job name');
+    nameLabel.setAttribute('for', 'rotate-name');
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.id = 'rotate-name';
+    nameInput.placeholder = 'e.g. October certificate renewal';
+    nameInput.setAttribute('aria-describedby','rotate-name-help');
+    nameInput.value = rotateState.name;
+    nameInput.addEventListener('input', () => { rotateState.name = nameInput.value; });
+    nameRow.appendChild(nameLabel);
+    nameRow.appendChild(nameInput);
+    nameRow.appendChild(rotateEl('p','batch-field-help',''));
+    nameRow.lastChild.id = 'rotate-name-help';
+    nameRow.lastChild.textContent = 'A short label to find this operation in Activity. Leave blank to use a generated name.';
+    const metadata = rotateEl('details', 'batch-optional');
+    metadata.appendChild(rotateEl('summary', '', 'Job name and reason (optional)'));
+    metadata.appendChild(nameRow);
+
+    const reasonRow = rotateEl('div', 'filter-row rotate-name-row');
+    const reasonLabel = rotateEl('label', '', 'Reason');
+    reasonLabel.setAttribute('for', 'rotate-reason');
+    const reasonInput = document.createElement('input');
+    reasonInput.type = 'text';
+    reasonInput.id = 'rotate-reason';
+    reasonInput.placeholder = 'e.g. Scheduled renewal — change CHG-1234';
+    reasonInput.setAttribute('aria-describedby','rotate-reason-help');
+    reasonInput.value = rotateState.reason;
+    reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
+    reasonRow.appendChild(reasonLabel);
+    reasonRow.appendChild(reasonInput);
+    const reasonHelp = rotateEl('p','batch-field-help','Explain why you are running this operation, such as a maintenance window, incident, or change ticket. Optional.');
+    reasonHelp.id = 'rotate-reason-help'; reasonRow.appendChild(reasonHelp);
+    metadata.appendChild(reasonRow);
+    return metadata;
+  };
+
   const buildRotateOptions = (container) => {
     rotateModeControls = null;
     const pane = rotateEl('div', 'rotate-pane');
@@ -4346,43 +4434,180 @@
       pane.appendChild(rotateModeControls.root);
     }
 
-    const nameRow = rotateEl('div', 'filter-row rotate-name-row');
-    const nameLabel = rotateEl('label', '', 'Job name');
-    nameLabel.setAttribute('for', 'rotate-name');
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.id = 'rotate-name';
-    nameInput.placeholder = 'e.g. October certificate renewal';
-    nameInput.setAttribute('aria-describedby','rotate-name-help');
-    nameInput.value = rotateState.name;
-    nameInput.addEventListener('input', () => { rotateState.name = nameInput.value; });
-    nameRow.appendChild(nameLabel);
-    nameRow.appendChild(nameInput);
-    nameRow.appendChild(rotateEl('p','batch-field-help',''));
-    nameRow.lastChild.id = 'rotate-name-help';
-    nameRow.lastChild.textContent = 'A short label to find this operation in Activity. Leave blank to use a generated name.';
-    const metadata = rotateEl('details', 'batch-optional');
-    metadata.appendChild(rotateEl('summary', '', 'Job name and reason (optional)'));
-    metadata.appendChild(nameRow);
-
-    const reasonRow = rotateEl('div', 'filter-row rotate-name-row');
-    const reasonLabel = rotateEl('label', '', 'Reason');
-    reasonLabel.setAttribute('for', 'rotate-reason');
-    const reasonInput = document.createElement('input');
-    reasonInput.type = 'text';
-    reasonInput.id = 'rotate-reason';
-    reasonInput.placeholder = 'e.g. Scheduled renewal — change CHG-1234';
-    reasonInput.setAttribute('aria-describedby','rotate-reason-help');
-    reasonInput.value = rotateState.reason;
-    reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
-    reasonRow.appendChild(reasonLabel);
-    reasonRow.appendChild(reasonInput);
-    const reasonHelp = rotateEl('p','batch-field-help','Explain why you are running this operation, such as a maintenance window, incident, or change ticket. Optional.');
-    reasonHelp.id = 'rotate-reason-help'; reasonRow.appendChild(reasonHelp);
-    metadata.appendChild(reasonRow);
+    const metadata = buildBatchMetadata();
     pane.appendChild(metadata);
     container.appendChild(pane);
     renderRotateNotice();
+  };
+
+  // Brings the command pane's controls in line with commandState. Every
+  // change to the state, or to what the broker reported, ends here.
+  const syncCommandOptions = () => {
+    const pane = document.querySelector('#batch-flow-options .command-pane');
+    if (!pane) return;
+    const root = pane.querySelector('#command-user-root');
+    if (commandState.rootOff && commandState.user === 'root') commandState.user = 'vcap';
+    root.disabled = Boolean(commandState.rootOff);
+    pane.querySelector('#command-user-vcap').checked = commandState.user === 'vcap';
+    root.checked = commandState.user === 'root';
+    const rootNote = pane.querySelector('#command-root-note');
+    rootNote.textContent = commandState.rootOff || 'Root can change anything on the VM. Use it only when vcap cannot do the job.';
+    const noParallel = Boolean(commandState.preview && !commandState.preview.available);
+    if (noParallel) commandState.parallel = false;
+    const parallel = pane.querySelector('#command-parallel');
+    parallel.disabled = noParallel;
+    parallel.checked = commandState.parallel;
+    pane.querySelector('#command-parallel-note').textContent = noParallel ? COMMAND_NO_PARALLEL_NOTE : 'Run more than one node at a time. Off by default, so nodes run one after another.';
+    pane.querySelector('#command-parallel-limit-row').hidden = !commandState.parallel;
+    const limit = pane.querySelector('#command-max-in-flight');
+    const bound = commandState.preview ? commandState.preview.limit : 0;
+    if (bound > 0) limit.max = String(bound); else limit.removeAttribute('max');
+  };
+
+  // Notes what a real preview said about parallel runs, so the limit and the
+  // checkbox match the director.
+  const recordCommandPreview = (preview) => {
+    commandState.preview = { available: preview.parallel_available !== false, limit: Number(preview.max_in_flight_limit) || 0 };
+    syncCommandOptions();
+    updateBatchFlow();
+  };
+
+  // Notes a refusal from a real preview. Only root_disabled changes a control.
+  const recordCommandRefusal = (error) => {
+    if (error && error.status === 403 && error.code === 'root_disabled') {
+      commandState.rootOff = String(error.message || COMMAND_ROOT_OFF_NOTE);
+      syncCommandOptions();
+      updateBatchFlow();
+    }
+  };
+
+  const buildCommandOptions = (container) => {
+    container.querySelector('.command-pane')?.remove();
+    const pane = rotateEl('div', 'command-pane');
+    pane.dataset.pane = 'command-options';
+    pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS.command));
+    const changed = () => { syncCommandOptions(); updateBatchFlow(); };
+
+    const textRow = rotateEl('div', 'filter-row');
+    const textLabel = rotateEl('label', '', 'Command');
+    textLabel.setAttribute('for', 'command-text');
+    const text = document.createElement('textarea');
+    text.id = 'command-text';
+    text.rows = 6;
+    text.className = 'command-text';
+    text.setAttribute('spellcheck', 'false');
+    text.setAttribute('autocomplete', 'off');
+    text.setAttribute('aria-describedby', 'command-text-help');
+    text.value = commandState.text;
+    text.addEventListener('input', () => { commandState.text = text.value; changed(); });
+    textRow.appendChild(textLabel);
+    textRow.appendChild(text);
+    const textHelp = rotateEl('p', 'batch-field-help', 'The command runs under /bin/bash on every node with stdin closed and a fixed PATH.');
+    textHelp.id = 'command-text-help';
+    textRow.appendChild(textHelp);
+    pane.appendChild(textRow);
+
+    const userSet = rotateEl('fieldset', 'command-user');
+    userSet.appendChild(rotateEl('legend', '', 'Run as'));
+    [['vcap', 'vcap'], ['root', 'root (use with care)']].forEach(([user, name]) => {
+      const label = rotateEl('label', 'command-user-option');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'command-user';
+      radio.id = `command-user-${user}`;
+      radio.value = user;
+      if (user === 'root') radio.setAttribute('aria-describedby', 'command-root-note');
+      radio.addEventListener('change', () => { if (radio.checked) { commandState.user = user; changed(); } });
+      label.appendChild(radio);
+      label.appendChild(rotateEl('span', '', name));
+      userSet.appendChild(label);
+    });
+    const rootNote = rotateEl('p', 'batch-field-help');
+    rootNote.id = 'command-root-note';
+    userSet.appendChild(rootNote);
+    pane.appendChild(userSet);
+    pane.appendChild(rotateEl('p', 'batch-field-help', 'Shell: /bin/bash (fixed in this version)'));
+
+    const timeoutRow = rotateEl('div', 'filter-row');
+    const timeoutLabel = rotateEl('label', '', 'Timeout per node, in seconds');
+    timeoutLabel.setAttribute('for', 'command-timeout');
+    const timeout = document.createElement('input');
+    timeout.type = 'number';
+    timeout.id = 'command-timeout';
+    timeout.min = String(COMMAND_TIMEOUT_MIN);
+    timeout.max = String(COMMAND_TIMEOUT_MAX);
+    timeout.step = '1';
+    timeout.value = commandState.timeout;
+    timeout.addEventListener('input', () => { commandState.timeout = timeout.value; changed(); });
+    timeoutRow.appendChild(timeoutLabel);
+    timeoutRow.appendChild(timeout);
+    pane.appendChild(timeoutRow);
+
+    const parallelRow = rotateEl('div', 'filter-row command-parallel-row');
+    const parallelLabel = rotateEl('label', 'command-parallel-option');
+    const parallel = document.createElement('input');
+    parallel.type = 'checkbox';
+    parallel.id = 'command-parallel';
+    parallel.setAttribute('aria-describedby', 'command-parallel-note');
+    parallel.addEventListener('change', () => { commandState.parallel = parallel.checked; changed(); });
+    parallelLabel.appendChild(parallel);
+    parallelLabel.appendChild(rotateEl('span', '', 'Run nodes in parallel'));
+    parallelRow.appendChild(parallelLabel);
+    const parallelNote = rotateEl('p', 'batch-field-help');
+    parallelNote.id = 'command-parallel-note';
+    parallelRow.appendChild(parallelNote);
+    const limitRow = rotateEl('div', 'filter-row');
+    limitRow.id = 'command-parallel-limit-row';
+    const limitLabel = rotateEl('label', '', 'Most nodes to run at once');
+    limitLabel.setAttribute('for', 'command-max-in-flight');
+    const limit = document.createElement('input');
+    limit.type = 'number';
+    limit.id = 'command-max-in-flight';
+    limit.min = '1';
+    limit.step = '1';
+    limit.value = commandState.maxInFlight;
+    limit.addEventListener('input', () => { commandState.maxInFlight = limit.value; changed(); });
+    limitRow.appendChild(limitLabel);
+    limitRow.appendChild(limit);
+    parallelRow.appendChild(limitRow);
+    pane.appendChild(parallelRow);
+
+    pane.appendChild(buildBatchMetadata());
+    container.appendChild(pane);
+    syncCommandOptions();
+  };
+
+  // Asks the preview endpoint, with no instances and no command text, whether
+  // command runs and root are switched on. The authorizer answers before it
+  // validates, so a 403 names the true reason and any other answer says
+  // nothing. The real preview at the review step still refuses with the
+  // reason, so those answers leave the controls enabled.
+  const probeCommandAvailability = async () => {
+    const refusalOf = async (runAs) => {
+      try {
+        const response = await fetch(COMMAND_PREVIEW_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ instance_ids: [], run_as: runAs })
+        });
+        if (response.status === 403) return await readApiError(response);
+      } catch (error) {
+        // A failed probe changes nothing.
+      }
+      return null;
+    };
+    const [vcap, root] = await Promise.all([refusalOf('vcap'), refusalOf('root')]);
+    const off = [vcap, root].find((error) => error && error.code === 'commands_disabled');
+    if (off) commandState.unavailable = off.message;
+    if (root && root.code === 'root_disabled') commandState.rootOff = root.message;
+    const radio = document.getElementById('rotate-op-command');
+    if (radio && commandState.unavailable) {
+      radio.disabled = true;
+      const description = radio.closest('label').querySelector('.batch-operation-description');
+      description.textContent = commandState.unavailable;
+      radio.setAttribute('aria-describedby', description.id);
+    }
+    syncCommandOptions();
   };
 
   const buildRotateFooter = (container) => {
@@ -4474,7 +4699,13 @@
     setPaneMode(footer, next);
     syncOperationRadios();
     if (heading) {
-      heading.textContent = next === 'upgrade' ? 'Upgrade targets' : (next === 'rotate' ? 'Certificate options' : 'Converge options');
+      heading.textContent = next === 'upgrade' ? 'Upgrade targets' : (next === 'rotate' ? 'Certificate options' : (next === 'command' ? 'Command options' : 'Converge options'));
+    }
+    const optionsHost = document.getElementById('batch-flow-options');
+    optionsHost?.querySelector('.command-pane')?.remove();
+    if (next === 'command' && optionsHost) {
+      buildCommandOptions(optionsHost);
+      return;
     }
 
     if (next === 'upgrade') {
@@ -4567,12 +4798,15 @@
       radio.addEventListener('change', () => { if (radio.checked) requestOperation(mode); });
       label.appendChild(radio);
       label.appendChild(rotateEl('strong', '', OPERATION_LABELS[mode]));
-      label.appendChild(rotateEl('span', 'batch-operation-description', {upgrade:'Update stemcells or service releases.',rotate:'Replace certificates using redeploy or patch in place.',converge:'Deploy current certificates to instances left unconverged.'}[mode]));
+      const description = rotateEl('span', 'batch-operation-description', {upgrade:'Update stemcells or service releases.',rotate:'Replace certificates using redeploy or patch in place.',converge:'Deploy current certificates to instances left unconverged.',command:OPERATION_HINTS.command}[mode]);
+      description.id = `rotate-op-${mode}-description`;
+      label.appendChild(description);
       label.appendChild(rotateEl('span', 'batch-operation-selected', 'Selected'));
       fieldset.appendChild(label);
     });
     main.insertBefore(fieldset, top);
     syncOperationRadios();
+    probeCommandAvailability();
   };
 
   // =====================================================

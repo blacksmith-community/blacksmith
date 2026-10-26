@@ -41,7 +41,7 @@ t('rotate selection on Batch Operations', async () => {
   w.plansData={services:[{id:'svc1',name:'valkey'},{id:EVIL,name:EVIL}]}; d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(150);
   ok(!!d.getElementById('rotate-operation'),'operation fieldset installed');
   const radios=[...d.querySelectorAll('input[name="upgrade-operation"]')];
-  ok(radios.length===3&&radios.map(r=>r.value).join()==='upgrade,rotate,converge'&&radios[0].checked,'three radios, upgrade default');
+  ok(radios.length===4&&radios.map(r=>r.value).join()==='upgrade,rotate,converge,command'&&radios[0].checked,'four radios, upgrade default');
   const main=d.querySelector('#upgrade .upgrade-main');
   ok(main.firstElementChild.id==='rotate-operation'||main.firstElementChild.nextElementSibling===d.querySelector('.upgrade-top')||d.getElementById('rotate-operation').nextElementSibling.classList.contains('upgrade-top'),'selector sits above .upgrade-top');
   // upgrade mode rows: hostile + held

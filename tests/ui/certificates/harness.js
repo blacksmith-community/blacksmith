@@ -20,7 +20,7 @@ const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const day=86400000, now=Date.now(), iso=(ms)=>new Date(ms).toISOString();
 const NAMES=['formatManifestDetails','selectManifestView','renderBlacksmithSettings','setupBlacksmithSettingsHandlers','refreshTasksTable','refreshConfigsTable','initializeSorting','tableOriginalData','initializeAllTables','renderPlansTemplate','renderPlanDetail','formatTasks','renderBrokerTab','initBrokerTab','formatConfigs','formatBlacksmithLogs','formatCredentials','formatInstanceLogs','mountLogNotice','formatJobLogContent','formatVMs','openAdvancedReleasePicker','syncAdvancedReleaseSummary','buildUpgradeFlowSummary','batchFlow','setBatchStep','showBatchReview','requestOperation','showConfirmDialog', 'CFRegistrationManager', 'renderServicesTemplate', 'renderBlacksmithTemplate','renderServiceDetail','renderBlacksmithOverview','setTheme','getInstanceStatusIcon','getInstanceStatusClass','taskDetailCache','decisionState','awaitingDecisionTaskIds','buildCertificateInstance','runDecision','holderDetails','upgradeTasks','buildDecisionPanel','buildRemediation','openRotateInstanceDialog','CertOverview','CertsFleet','readApiError','apiErrorText','renderUpgradeTaskList','renderTaskDetail','fetchUpgradeTasks','selectUpgradeTask','rerenderTaskPanel','renderPollStatus','initUpgradeTab','sendTaskControl',
  'renderOperation','renderRotateInstances','refreshUpgradeInstanceList','updateUpgradeButton','renderUpgradeInstances','setupUpgradeInstanceHandlers','loadRotateInventory','rotateEligibleChips','rotateState','selectedUpgradeInstances','computeUpgradeHolders','rotateSelectVisible','rotateClearVisible','rotateSelectMatching','renderRotateSelectionLine','rotateSelection','setUpgradeTasks','setServiceInstances','rotateReviewList',
- 'buildModeControls','selectedUpgradeInstances','updateOperationFooter','batchPatchBlock','startUpgrade','upgradeOperation','previewAndCreate','rotateErrorText','buildPreviewBody','rotateFooterLabel','renderRotateTargets','normalizeSerial','displaySerial','sameSerial','hasUndeployedVersion','renderServiceTesting','detectServiceFamily','LogSelectionManager','renderRedisInfoOperation'];
+ 'buildModeControls','selectedUpgradeInstances','updateOperationFooter','batchPatchBlock','startUpgrade','upgradeOperation','previewAndCreate','rotateErrorText','buildPreviewBody','rotateFooterLabel','renderRotateTargets','normalizeSerial','displaySerial','sameSerial','hasUndeployedVersion','renderServiceTesting','detectServiceFamily','LogSelectionManager','renderRedisInfoOperation','batchOptionIssue','recordCommandPreview','recordCommandRefusal','commandState'];
 function boot(opts={}){
   const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
@@ -30,7 +30,10 @@ function boot(opts={}){
   w.CSS=w.CSS||{escape:(x)=>String(x).replace(/[^\w-]/g,'\\$&')};
   w.HTMLElement.prototype.scrollIntoView=function(){};
   const errors=[]; const calls=[]; const alerts=[];
-  w.alert=(m)=>alerts.push('alert:'+m); w.confirm=(m)=>{alerts.push('confirm:'+m);return true}; w.prompt=(m)=>{alerts.push('prompt:'+m);return 'x'};
+  // A suite that passes noDialogs has every dialog call recorded and thrown, so
+  // it fails on the first one and can assert alerts stays empty.
+  const refuse=(kind)=>(m)=>{ alerts.push(kind+':'+m); if(opts.noDialogs) throw new Error('window.'+kind+' called'); return kind==='confirm'?true:(kind==='prompt'?'x':undefined); };
+  w.alert=refuse('alert'); w.confirm=refuse('confirm'); w.prompt=refuse('prompt');
   w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(String).join(' ')); w.console.warn=()=>{};
   w.__routes=[];
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(typeof body==='string'?body:JSON.stringify(body))});
