@@ -396,9 +396,11 @@ func (m *Manager) saveUnconfirmedCreate(task *UpgradeTask, interval time.Duratio
 	}
 }
 
-// failOrphanLocked fails a loaded certificate task whose creation was
-// never confirmed, which an interrupted create left, so it never runs. It
-// reports whether it changed the task. The caller holds mu.
+// failOrphanLocked fails a loaded certificate or command task whose
+// creation was never confirmed, which an interrupted create left, so it
+// never runs. A command task's pending nodes are skipped, so none of them
+// is ever driven. It reports whether it changed the task. The caller holds
+// mu.
 func failOrphanLocked(task *UpgradeTask, now time.Time) bool {
 	if task.Status == TaskStatusFailed {
 		return false
@@ -417,15 +419,21 @@ func failOrphanLocked(task *UpgradeTask, now time.Time) bool {
 		inst.Error = orphanCreationMessage
 		inst.CompletedAt = copyTime(&now)
 		task.FailedCount++
+
+		if task.KindOrDefault() == TaskKindCommand {
+			skipPendingNodesLocked(inst, orphanCreationMessage)
+		}
 	}
 
 	return true
 }
 
-// isOrphanCreation reports whether a loaded task is a certificate task
-// whose creation was never confirmed.
+// isOrphanCreation reports whether a loaded task is a certificate or
+// command task whose creation was never confirmed.
 func isOrphanCreation(task *UpgradeTask) bool {
-	return task.KindOrDefault() == TaskKindCertificates && !task.CreationConfirmed
+	kind := task.KindOrDefault()
+
+	return (kind == TaskKindCertificates || kind == TaskKindCommand) && !task.CreationConfirmed
 }
 
 // failLoadedOrphans fails each loaded orphan and saves it, as
@@ -455,11 +463,11 @@ func (m *Manager) failLoadedOrphans(loaded []*UpgradeTask) []*UpgradeTask {
 	m.mu.Unlock()
 
 	for _, task := range changed {
-		m.logger.Info("Certificate task %s failed at load, because its creation was never confirmed", task.ID)
+		m.logger.Info("%s task %s failed at load, because its creation was never confirmed", task.KindOrDefault(), task.ID)
 
 		err := m.persistTask(context.WithoutCancel(m.ctx), task)
 		if err != nil {
-			m.logger.Error("Failed to persist the failed status of certificate task %s: %v", task.ID, fmt.Errorf("saving the orphan: %w", err))
+			m.logger.Error("Failed to persist the failed status of %s task %s: %v", task.KindOrDefault(), task.ID, fmt.Errorf("saving the orphan: %w", err))
 		}
 	}
 

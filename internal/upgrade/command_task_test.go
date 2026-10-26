@@ -204,6 +204,16 @@ func (f *taskFixture) setRoot(on bool) {
 func newTaskFixture(t *testing.T, instances, nodes int, options ...taskOption) *taskFixture {
 	t.Helper()
 
+	return newTaskFixtureFrom(t, instances, nodes, nil, options...)
+}
+
+// newTaskFixtureFrom is newTaskFixture, and with a seed it is a broker that
+// restarts instead. The seed changes the task, which is then saved under its
+// index before the manager starts, so the manager loads it as a stored
+// record. The fixture's task is then the manager's loaded copy.
+func newTaskFixtureFrom(t *testing.T, instances, nodes int, seed func(*taskFixture, *UpgradeTask), options ...taskOption) *taskFixture {
+	t.Helper()
+
 	var seq atomic.Int64
 
 	fix := &taskFixture{t: t, log: &captureLog{}, listed: map[string][]CommandVMIdentity{}, exits: map[string]int{}, stdouts: map[string]string{}, cleanups: map[string]string{}, listErr: map[string]error{}}
@@ -281,10 +291,30 @@ func newTaskFixture(t *testing.T, instances, nodes int, options ...taskOption) *
 	}
 
 	t.Cleanup(manager.Stop)
-	manager.Start()
-	waitForLoad(t, manager)
 
 	fix.manager = manager
+
+	if seed != nil {
+		seed(fix, task)
+		fix.store(task)
+		manager.Start()
+		waitForLoad(t, manager)
+
+		manager.mu.RLock()
+		loaded := manager.tasks[task.ID]
+		manager.mu.RUnlock()
+
+		// A broker that loads nothing leaves the seeded task, so a test
+		// fails on what it asserts rather than on a nil task.
+		if loaded != nil {
+			fix.task = loaded
+		}
+
+		return fix
+	}
+
+	manager.Start()
+	waitForLoad(t, manager)
 
 	err = manager.reserveCertificateTask(task)
 	if err != nil {

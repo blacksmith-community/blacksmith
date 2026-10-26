@@ -929,12 +929,124 @@ func (m *Manager) runsCommandLocked(task *UpgradeTask) bool {
 		return false
 	}
 
+	return m.commandRefusalLocked(task) == nil
+}
+
+// commandRefusalLocked asks the authorizer about the stored task and
+// returns its refusal. The caller holds mu, as runsCommandLocked describes.
+func (m *Manager) commandRefusalLocked(task *UpgradeTask) error {
 	authorizer := m.deps.Authorizer
 	if authorizer == nil {
 		authorizer = NewConfigAuthorizer(nil)
 	}
 
-	return authorizer.AuthorizeStored(m.ctx, *task.Command) == nil
+	return authorizer.AuthorizeStored(m.ctx, *task.Command) //nolint:wrapcheck // the authorizer answers with the API error
+}
+
+// pauseRefusedCommandLocked pauses a loaded command task the authorizer
+// refuses, and says why on its first instance that has not ended. It
+// reports whether it paused the task. A manager that is not configured
+// asks nothing, because it can't tell yet. The instances' holds are
+// released as far as nothing on a VM keeps them. The caller holds mu.
+func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
+	if task.KindOrDefault() != TaskKindCommand || task.Command == nil || !m.configured {
+		return false
+	}
+
+	err := m.commandRefusalLocked(task)
+	if err == nil {
+		return false
+	}
+
+	task.Status = TaskStatusPaused
+	task.Paused = true
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status.settled() {
+			continue
+		}
+
+		inst.Error = "Running this command is no longer allowed, so the task paused after Blacksmith restarted. " + commandErrorText(err)
+
+		break
+	}
+
+	m.releaseUnheldLocked(task)
+	m.logger.Info("Command task %s paused after a restart, because the authorizer refuses it: %v", task.ID, err)
+
+	return true
+}
+
+// prepareLoadedCommandLocked settles in memory what a restart left of a
+// loaded command task, and reports whether it changed the task, which the
+// caller then saves. Nothing here sends anything. A node left staged or
+// sent stays as it is, and settles through cleanup alone when the task
+// resumes, since its command may have run. A halt that was never saved is
+// found again here. An instance that holds a node that failed, survived,
+// or is waiting to be settled has its pending nodes skipped, so none of
+// them is ever driven, and a node whose processes survived keeps an
+// unfinished task paused, as does an authorizer that refuses the task. A
+// cancelled task ends each running instance that
+// has no node left to clean, and keeps the instances that have one held.
+// The caller holds mu.
+func (m *Manager) prepareLoadedCommandLocked(task *UpgradeTask) bool {
+	changed := false
+
+	switch task.Status {
+	case TaskStatusCompleted, TaskStatusFailed:
+		return false
+	case TaskStatusCancelled:
+		for i := range task.Instances {
+			inst := &task.Instances[i]
+			if inst.Command != nil && m.endCancelledCommandInstanceLocked(task, inst) {
+				changed = true
+			}
+		}
+
+		return changed
+	case TaskStatusPending, TaskStatusRunning, TaskStatusPaused:
+	}
+
+	survived := false
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Command == nil {
+			continue
+		}
+
+		if commandInstanceHaltedLocked(inst) && skipPendingNodesLocked(inst, "Blacksmith restarted after a node of the deployment did not succeed, so the command was not sent.") {
+			changed = true
+		}
+
+		survived = survived || slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool { return vm.Survived })
+	}
+
+	if survived && !task.Paused {
+		task.Status = TaskStatusPaused
+		task.Paused = true
+		changed = true
+	}
+
+	// A queued or running task the authorizer refuses after the restart is
+	// not queued. It is paused, with the refusal on the task, so a resume
+	// after the switch is turned back on runs what is left of it.
+	if !task.Paused && m.pauseRefusedCommandLocked(task) {
+		changed = true
+	}
+
+	return changed
+}
+
+// commandInstanceHaltedLocked reports whether a node of the instance
+// stopped the deployment, which it did when it failed or its processes
+// survived, or when its outcome is not known because a restart found it
+// staged or sent. The caller holds mu.
+func commandInstanceHaltedLocked(inst *InstanceUpgrade) bool {
+	return slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool {
+		return commandNodeHeld(vm) || vm.Survived || (vm.Phase == CommandPhaseSettled && vm.Status != CommandStatusSucceeded)
+	})
 }
 
 // commandResumeGate runs the gate and the authorizer for the resume of a
@@ -1441,6 +1553,15 @@ func (m *Manager) skipRemainingNodes(inst *InstanceUpgrade) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	skipPendingNodesLocked(inst, "An earlier node of the deployment did not succeed, so the command was not sent.")
+}
+
+// skipPendingNodesLocked marks every pending node of the instance skipped
+// with the reason, except one a worker has claimed, and reports whether it
+// marked any. The caller holds mu.
+func skipPendingNodesLocked(inst *InstanceUpgrade, reason string) bool {
+	skipped := false
+
 	for i := range inst.Command.VMs {
 		node := &inst.Command.VMs[i]
 		if node.Phase != CommandPhasePending || node.claimed {
@@ -1448,8 +1569,11 @@ func (m *Manager) skipRemainingNodes(inst *InstanceUpgrade) {
 		}
 
 		node.Phase = CommandPhaseSkipped
-		node.Reason = "An earlier node of the deployment did not succeed, so the command was not sent."
+		node.Reason = reason
+		skipped = true
 	}
+
+	return skipped
 }
 
 // endCommandInstance settles the instance from its nodes, counts it, and
@@ -1688,22 +1812,27 @@ func rewordHeldCommandsLocked(task *UpgradeTask) {
 // instance with a node still to clean stays as it is, held, for the resume.
 func (m *Manager) endCancelledCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
 	m.mu.Lock()
+	ended := m.endCancelledCommandInstanceLocked(task, inst)
+	m.mu.Unlock()
 
-	if task.Status != TaskStatusCancelled || inst.Status != InstanceStatusRunning || inst.Command == nil || commandInstanceHeldLocked(inst) {
-		m.mu.Unlock()
-
+	if !ended {
 		return
 	}
 
-	for i := range inst.Command.VMs {
-		node := &inst.Command.VMs[i]
-		if node.Phase != CommandPhasePending || node.claimed {
-			continue
-		}
-
-		node.Phase = CommandPhaseSkipped
-		node.Reason = reasonCancelledBeforeStart
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.logger.Error("Command task %s ended instance %s as cancelled, but the record could not be confirmed in Vault", task.ID, inst.InstanceID)
 	}
+}
+
+// endCancelledCommandInstanceLocked is endCancelledCommandInstance up to
+// its save, and reports whether it ended the instance. The caller holds mu.
+func (m *Manager) endCancelledCommandInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
+	if task.Status != TaskStatusCancelled || inst.Status != InstanceStatusRunning || inst.Command == nil || commandInstanceHeldLocked(inst) {
+		return false
+	}
+
+	skipPendingNodesLocked(inst, reasonCancelledBeforeStart)
 
 	ended := m.certNowLocked()
 	inst.Status = InstanceStatusCancelled
@@ -1712,12 +1841,8 @@ func (m *Manager) endCancelledCommandInstance(ctx context.Context, task *Upgrade
 	task.CancelledCount++
 
 	m.releaseUnheldLocked(task)
-	m.mu.Unlock()
 
-	err := m.persistCertConfirmed(ctx, task)
-	if err != nil {
-		m.logger.Error("Command task %s ended instance %s as cancelled, but the record could not be confirmed in Vault", task.ID, inst.InstanceID)
-	}
+	return true
 }
 
 // resumeCancelledCommandLocked starts the cleanup of each running instance

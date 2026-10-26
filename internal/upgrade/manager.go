@@ -2289,7 +2289,8 @@ func (m *Manager) loadAndSettle() {
 }
 
 // loadPersistedTasks loads every task saved in Vault, the upgrades from
-// the upgrade tasks index and the certificate tasks from theirs. A failed
+// the upgrade tasks index, the certificate tasks from theirs, and the
+// command tasks from theirs. A failed
 // read of an index or of a task is retried until it succeeds or Stop ends
 // the load, so a Vault that starts after the broker never loses a task. A
 // task whose record can't be decoded is skipped and logged instead, since
@@ -2303,7 +2304,7 @@ func (m *Manager) loadAndSettle() {
 func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 	var loaded []*UpgradeTask
 
-	for _, kind := range []TaskKind{TaskKindUpgrade, TaskKindCertificates} {
+	for _, kind := range []TaskKind{TaskKindUpgrade, TaskKindCertificates, TaskKindCommand} {
 		tasks, ok := m.loadIndex(kind)
 		if !ok {
 			return nil, false
@@ -2312,9 +2313,9 @@ func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 		loaded = append(loaded, tasks...)
 	}
 
-	// A certificate task whose creation was never confirmed is failed
-	// here, so it never runs, and neither indexes its request ID nor holds
-	// its instances.
+	// A certificate or command task whose creation was never confirmed is
+	// failed here, so it never runs, and neither indexes its request ID nor
+	// holds its instances.
 	kept := m.failLoadedOrphans(loaded)
 
 	for _, task := range kept {
@@ -2507,6 +2508,16 @@ func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
 			m.pauseNeverStartedLocked(task)
 
 			changed = append(changed, task)
+
+			continue
+		}
+
+		// A command task has no deploy to settle. What a restart left on
+		// its nodes is settled when it resumes, through cleanup alone.
+		if task.KindOrDefault() == TaskKindCommand {
+			if m.prepareLoadedCommandLocked(task) {
+				changed = append(changed, task)
+			}
 
 			continue
 		}
@@ -3740,10 +3751,10 @@ func (m *Manager) restoreReservationsLocked(task *UpgradeTask) bool {
 }
 
 // heldByTask reports whether the holder is an upgrade, a certificate
-// rotation, or a converge task, the kinds the manager holds instances
-// for.
+// rotation, a converge task, or a command task, the kinds the manager
+// holds instances for.
 func heldByTask(holder mutation.Holder) bool {
-	return holder.Kind == mutation.KindUpgrade || holder.Kind == mutation.KindCertificates || holder.Kind == mutation.KindConverge
+	return holder.Kind == mutation.KindUpgrade || holder.Kind == mutation.KindCertificates || holder.Kind == mutation.KindConverge || holder.Kind == mutation.KindCommand
 }
 
 // failReservedLocked fails a loaded task's instance that another task
@@ -3971,9 +3982,11 @@ func (m *Manager) restoreLoadedReservations(loaded []*UpgradeTask) {
 	for _, task := range ordered {
 		inFlight := 0
 
+		// A command task has no deploy to settle, so none of its
+		// instances counts, whatever its status.
 		for i := range task.Instances {
 			status := task.Instances[i].Status
-			if status == InstanceStatusRunning || status == InstanceStatusInterrupted {
+			if task.KindOrDefault() != TaskKindCommand && (status == InstanceStatusRunning || status == InstanceStatusInterrupted) {
 				inFlight++
 			}
 		}
