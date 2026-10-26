@@ -469,6 +469,13 @@ func TestLoadedCommandTasksOfOneInstanceFailTheLaterOne(t *testing.T) {
 	if !failed || !strings.Contains(reason, "reserved by task "+fix.task.ID) {
 		t.Errorf("the later command task's instance is failed=%v with %q, want it failed and naming the first task", failed, reason)
 	}
+
+	// The seeded second record carries the command text itself, so only
+	// the logs are checked here.
+	logs := fix.log.joined()
+	if strings.Contains(logs, runCommandText) || strings.Contains(logs, commandDigest(runCommandText)) {
+		t.Error("a log line holds the command text or its digest")
+	}
 }
 
 func TestLoadedSurvivorKeepsTheTaskPausedAndTheInstanceHeld(t *testing.T) {
