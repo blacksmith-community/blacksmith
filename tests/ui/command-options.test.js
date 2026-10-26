@@ -69,7 +69,7 @@ t('the probes send no command text and each user is probed',async()=>{
  expect(probes.length).toBe(2);
  const bodies=probes.map(c=>JSON.parse(c.slice(('POST '+PREVIEW_URL+' ').length)));
  expect(bodies.map(b=>b.run_as).sort()).toEqual(['root','vcap']);
- bodies.forEach(b=>{expect(b.instance_ids).toEqual([]);expect(b.command||'').toBe('');});
+ bodies.forEach(b=>{expect(b.instance_ids).toEqual([]);expect((b.command||'').length).toBe(0);});
  }finally{w.close();}
 });
 
@@ -135,7 +135,7 @@ t('the option issue follows the command, timeout, and parallel fields',async()=>
  ['','0','-1','x','1.5'].forEach(v=>{type(w,limit,v);expect(issue()).toBeTruthy();expect(next.disabled).toBe(true);});
  type(w,limit,'250');expect(issue()).toBe('');expect(next.disabled).toBe(false);
  d.getElementById('command-parallel').click();type(w,limit,'');expect(issue()).toBe('');
- expect(issue()).not.toContain(SECRET);
+ expect(issue().includes(SECRET)).toBe(false);
  }finally{w.close();}
 });
 
@@ -174,11 +174,11 @@ t('the command text stays out of the page, requests, and storage',async()=>{
  w.__T.setBatchStep(0,false);w.__T.setBatchStep(1,false);
  const outside=d.documentElement.cloneNode(true);
  outside.querySelector('#command-text').value='';outside.querySelector('#command-text').textContent='';
- expect(outside.outerHTML).not.toContain(SECRET);
- expect(env.calls.join('\n')).not.toContain(SECRET);
- expect(env.errors.join('\n')).not.toContain(SECRET);
- expect(JSON.stringify(Object.entries(w.localStorage))).not.toContain(SECRET);
- expect(d.getElementById('command-text').value).toBe(SECRET);
+ expect(outside.outerHTML.includes(SECRET)).toBe(false);
+ expect(env.calls.some(c=>c.includes(SECRET))).toBe(false);
+ expect(env.errors.some(e=>e.includes(SECRET))).toBe(false);
+ expect(JSON.stringify(Object.entries(w.localStorage)).includes(SECRET)).toBe(false);
+ expect(d.getElementById('command-text').value===SECRET).toBe(true);
  expect(env.alerts).toEqual([]);
  }finally{w.close();}
 });
