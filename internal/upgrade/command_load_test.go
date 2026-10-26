@@ -548,6 +548,34 @@ func TestLoadedFailedNodeSkipsItsPendingNodesAndIsNeverDriven(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
+// A pending instance can hold a settled, failed node, so the node phases
+// matter as well as the instance status.
+func TestLoadedLoadTimeSkipIsNotNeverStarted(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 1, 2, func(_ *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+
+		node := &task.Instances[0].Command.VMs[0]
+		node.Phase = CommandPhaseSettled
+		node.Status = CommandStatusFailed
+	})
+
+	done := fix.waitFor("the second node to be skipped", func(task UpgradeTask) bool {
+		return task.Instances[0].Command.VMs[1].Phase == CommandPhaseSkipped
+	})
+
+	for _, inst := range done.Instances {
+		if inst.Error == commandNeverStartedMessage {
+			t.Errorf("instance %s shows the never-started message for a task that ran", inst.InstanceID)
+		}
+	}
+
+	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
+		t.Errorf("the skipped node saw %v", ops)
+	}
+
+	fix.assertNoCommandText()
+}
+
 func TestLoadedOrphanCommandTaskIsFailedAndNeverDriven(t *testing.T) {
 	fix := newTaskFixtureFrom(t, 2, 2, func(_ *taskFixture, task *UpgradeTask) {
 		task.CreationConfirmed = false
