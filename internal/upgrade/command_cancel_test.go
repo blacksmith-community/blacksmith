@@ -845,3 +845,82 @@ func TestCommandCancelResumeEndsAnInstanceWhoseProcessesSurvived(t *testing.T) {
 	waitUntil(t, "the end to be saved", func() bool { return fix.lastSaved().Instances[0].Status == InstanceStatusCancelled })
 	fix.assertNoCommandText()
 }
+
+// signalsPending counts the values on the task's cancel channel that no
+// receiver has taken.
+func (f *taskFixture) signalsPending() int {
+	f.manager.taskCancelLock.RLock()
+	defer f.manager.taskCancelLock.RUnlock()
+
+	return len(f.manager.taskCancelCh[f.task.ID])
+}
+
+// A pause lets the nodes in flight run on. The value it puts on the task's
+// channel is read by every node's watcher, and none of them ends its node,
+// so a command running as root is never killed by a pause.
+func TestCommandPauseLeavesTheNodesInFlightRunning(t *testing.T) {
+	fix := newTaskFixture(t, 1, 3, withParallel(2))
+	release := make(chan struct{})
+	started := make(chan string, 8)
+
+	var ended sync.Map
+
+	fix.override = func(ctx context.Context, deployment string, index int, op string) *opAnswer {
+		if op != opRunExec {
+			return nil
+		}
+
+		key := nodeKey(deployment, index)
+		started <- key
+
+		select {
+		case <-ctx.Done():
+			ended.Store(key, ctx.Err())
+		case <-release:
+			if err := ctx.Err(); err != nil {
+				ended.Store(key, err)
+			}
+		}
+
+		return nil
+	}
+
+	fix.queue()
+
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(waitTimeout):
+			t.Fatal("two nodes never began exec")
+		}
+	}
+
+	err := fix.manager.PauseTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	waitUntil(t, "the watchers to read the pause", func() bool { return fix.signalsPending() == 0 })
+	close(release)
+
+	waitUntil(t, "the loop to wait for the resume", func() bool { return strings.Contains(fix.log.joined(), "is paused, waiting") })
+
+	ended.Range(func(key, err any) bool {
+		t.Errorf("the pause ended the context of node %v: %v", key, err)
+
+		return true
+	})
+
+	paused := fix.snapshot()
+	for index := range 2 {
+		if got := nodeOf(paused, 0, index); got.Status != CommandStatusSucceeded {
+			t.Errorf("node %d is %s, want succeeded", index, got.Status)
+		}
+	}
+
+	if got := nodeOf(paused, 0, 2).Phase; got != CommandPhasePending {
+		t.Errorf("node 2 is %s, want pending", got)
+	}
+
+	fix.assertNoCommandText()
+}
