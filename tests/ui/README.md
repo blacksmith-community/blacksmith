@@ -110,3 +110,14 @@ The batch and advanced-picker accessibility checks also cover all four themes.
 Use only a local static server: the fixtures reject infrastructure writes.
 
 See `docs/ui-accessibility-audit.md` for findings, remediation and limits.
+
+
+For navigation/history regression coverage, run
+`tests/ui/navigation-history-browser-check.js` after the populated fixture.
+It exercises all broker and instance sections, plan Back/Forward, nested
+certificate reloads, testing drafts across instances, and mobile plan return.
+The new `routes`, `quicknav-cancellation`, `inspection-routing`,
+`inspection-lifecycle`, `endpoint-navigation`, and `refresh-lifecycle` unit
+suites cover canceled/late responses and prevent navigation from executing
+operational actions. `action-help` and `manifest-accessibility` cover the
+shared focus/hover help and nested tab semantics.

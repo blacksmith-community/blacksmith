@@ -1,5 +1,5 @@
 const {test,expect}=require('bun:test');
-const {main:{boot}}=require('./certificates/harness.js');
+const {main:{boot,sleep}}=require('./certificates/harness.js');
 test('generic sortable columns work with keyboard and announce direction',()=>{
  const {w,d}=boot();try{
  const table=d.createElement('table');table.innerHTML='<thead><tr><th>Name</th><th>Count</th></tr></thead><tbody><tr><td>Z</td><td>2</td></tr><tr><td>A</td><td>1</td></tr></tbody>';d.body.append(table);
@@ -65,5 +65,16 @@ test('terminal tabs have separate named selection and close buttons',()=>{
  expect(tab.querySelectorAll('button').length).toBe(2);
  expect(tab.querySelector('button button')).toBeNull();
  expect(tab.querySelector('.tab-close').getAttribute('aria-label')).toBe('Close terminal broker/node/0');
+ }finally{w.close();}
+});
+
+test('reopening a managed dialog cancels stale delayed removal',async()=>{
+ const {w,d}=boot();try{
+ const overlay=d.createElement('div');overlay.className='modal-overlay';overlay.innerHTML='<div role="dialog" aria-label="Reopened"><button>Close</button></div>';
+ w.ModalManager.openModal(overlay);w.ModalManager.closeModal(overlay);w.ModalManager.openModal(overlay);
+ await sleep(330);
+ expect(overlay.isConnected).toBe(true);
+ expect(w.ModalManager.currentModal).toBe(overlay);
+ expect(overlay.contains(d.activeElement)).toBe(true);
  }finally{w.close();}
 });

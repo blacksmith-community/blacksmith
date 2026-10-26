@@ -1,0 +1,14 @@
+.route-context { display:flex; align-items:center; gap:12px; padding:8px 14px; border-bottom:1px solid var(--border); background:var(--card); min-width:0; }
+.route-context nav { min-width:0; }
+.route-context ol { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; list-style:none; padding:0; margin:0; font-size:.875rem; }
+.route-context li { display:flex; align-items:center; gap:8px; min-width:0; margin:0; overflow-wrap:anywhere; }
+.route-context li+li::before { content:'›'; color:var(--muted-foreground); }
+.route-context a { text-decoration:underline; text-underline-offset:3px; }
+.route-context [aria-current] { font-weight:600; }
+.route-back { flex:none; padding:4px 9px; min-height:32px; }
+#route-error { padding:10px 14px; border-left:3px solid var(--danger); background:var(--card); }
+.entity-navigation .detail-tab:not(.active):hover { background:transparent; text-decoration:underline; }
+.entity-navigation .detail-tab:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
+@media(max-width:540px){.route-context {align-items:flex-start;padding:8px;gap:8px;}.route-context ol{font-size:.8125rem;}}
+
+.retained-view-note { margin: 0; padding: .25rem .75rem; font-size: .8rem; color: var(--muted-foreground, inherit); overflow-wrap: anywhere; }

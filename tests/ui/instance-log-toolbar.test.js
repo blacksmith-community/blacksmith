@@ -6,6 +6,6 @@ test('log controls stay outside the scrolling table and its sortable headers',as
  expect(host.querySelectorAll('thead th').length).toBe(3);
  expect(host.querySelector('.table-controls-container').closest('table')).toBe(null);
  expect(host.querySelector('.logs-table-container').contains(host.querySelector('.table-controls-container'))).toBe(false);
- expect(host.querySelectorAll('[data-instance-log]').length).toBe(4);
+ expect(host.querySelectorAll('[data-instance-log]').length).toBe(3);
  w.close();
 });

@@ -49,7 +49,8 @@ t('explicit light and dark choices control the Oat color scheme', () => {
     expect(d.documentElement.style.colorScheme).toBe('light');
     w.__T.setTheme('dark');
     expect(d.documentElement.style.colorScheme).toBe('dark');
-    expect(d.getElementById('themeToggle').getAttribute('aria-label')).toBe('Switch to Anvil Light theme');
+    expect(d.getElementById('themeToggle').getAttribute('aria-label')).toBe('Choose appearance theme');
+    expect(d.getElementById('themeToggle').getAttribute('aria-haspopup')).toBe('dialog');
   } finally { w.close(); }
 });
 
@@ -153,7 +154,7 @@ t('the broker header is one line of environment and deployment', () => {
     const host=d.createElement('div');
     host.innerHTML=w.__T.renderBlacksmithTemplate({env:'ocfp-lab-wayneeseguin-ocf',deployment:'ocfp-lab-wayneeseguin-ocf-blacksmith'});
     const header=host.querySelector('.entity-header');
-    expect(header.querySelector('h2').textContent).toBe('ocfp-lab-wayneeseguin-ocf > ocfp-lab-wayneeseguin-ocf-blacksmith');
+    expect(header.querySelector('h2').textContent).toBe('ocfp-lab-wayneeseguin-ocf · ocfp-lab-wayneeseguin-ocf-blacksmith');
     expect(header.querySelector('.entity-eyebrow')).toBeNull();
     expect(header.querySelector('.entity-context-line')).toBeNull();
     expect(header.textContent).not.toMatch(/blacksmith broker/i);

@@ -165,7 +165,7 @@
         ['Esc', 'Close the current dialog']
       ]);
       const panel = document.querySelector('.tab-panel.active');
-      const rows = [['Arrow keys / Home / End', 'Move between focused navigation tabs'],
+      const rows = [['Arrow keys / Home / End', 'Focus a navigation tab; Enter or Space opens it'],
         ['Arrow keys', 'Choose radio, mode, or select options']];
       const names = {'batch-new':'New Operation (keeps your draft)', 'batch-activity':'Activity',
         'batch-flow-next':'Next step; on Review, focus confirmation', 'batch-flow-back':'Previous step',
@@ -206,6 +206,7 @@
       input.setAttribute('aria-expanded', 'false');
       if (restore && previousFocus?.isConnected) previousFocus.focus();
     }
+    function docFocus() { (document.querySelector('.tab-panel.active .detail-content') || document.querySelector('.tab-panel.active'))?.focus({preventScroll:true}); }
     async function navigate(entry) {
       if (input.disabled) return;
       const controller = new AbortController();
@@ -215,7 +216,7 @@
           if (!root.blacksmithBatch?.openOperation) throw new Error('Batch Operations is still loading. Please try again.');
           input.disabled = true;
           status.textContent = 'Opening operation options…';
-          const opened = await root.blacksmithBatch.openOperation(entry.operation, controller.signal, entry.rotation);
+          const opened = root.blacksmithRouter ? await root.blacksmithRouter.navigate({screen:'upgrade',view:'new',operation:entry.operation,step:1,...(entry.rotation?{rotation:entry.rotation}:{})},{signal:controller.signal}) : await root.blacksmithBatch.openOperation(entry.operation, controller.signal, entry.rotation);
           if (controller.signal.aborted || !dialog.open) return;
           if (!opened) throw new Error('Cannot open this operation right now. Please try again.');
           close(false);
@@ -227,6 +228,17 @@
           if (!root.blacksmithTheme) throw new Error('Theme controls are still loading. Please try again.');
           root.blacksmithTheme.setPreference(entry.theme);
           close();
+          return;
+        }
+        if (root.blacksmithRouter && !entry.button) {
+          input.disabled = true;
+          status.textContent = 'Opening destination…';
+          const route = entry.instanceId ? {screen:'services',instance:entry.instanceId,section:entry.section} : {screen:entry.screen,...(entry.section?{section:entry.section}:{}),...(entry.planId!==undefined?{service:entry.serviceId,plan:entry.planId}:{})};
+          const opened = await root.blacksmithRouter.navigate(route,{signal:controller.signal});
+          if (controller.signal.aborted || !dialog.open) return;
+          if (!opened) throw new Error('This destination is not available. Check the navigation message.');
+          close(false);
+          docFocus();
           return;
         }
         let target;
@@ -362,7 +374,7 @@
         const siblings = [...(tab.closest('.detail-tabs') || tab.parentElement).querySelectorAll('.detail-tab, .tab-button')];
         let index = siblings.indexOf(tab);
         index = event.key === 'Home' ? 0 : event.key === 'End' ? siblings.length - 1 : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + siblings.length) % siblings.length;
-        event.preventDefault(); siblings[index].focus(); siblings[index].click();
+        event.preventDefault(); siblings[index].focus();
       }
     });
     new MutationObserver(updateContext).observe(document.querySelector('.tab-content'), { childList: true, subtree: true });

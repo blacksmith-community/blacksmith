@@ -835,6 +835,14 @@
       });
       if (moveFocus) tab.focus();
       if (typeof options.onSelect === 'function') options.onSelect(name);
+      notifyRoute();
+    };
+
+    tablist.blacksmithSelect = (name) => {
+      const tab = tabs.find(candidate => candidate.dataset.tab === name);
+      if (!tab) return false;
+      activate(tab, false);
+      return true;
     };
 
     // Set the starting state without touching the panes' inline styles
@@ -1830,7 +1838,7 @@
   // Initialize sorting on a table
   const initializeSorting = (tableClass) => {
     const table = document.querySelector(`.${CSS.escape(tableClass)}`);
-    if (!table) return;
+    if (!table || table.dataset.sortable === 'false') return;
 
     // Clean up existing listeners for this table
     if (tableHeaderListeners.has(tableClass)) {
@@ -2362,6 +2370,48 @@
     return 'Unknown';
   };
 
+  // Retain live view nodes in memory. Nothing here is serialized to storage/history.
+  const retainedViews = new Map();
+  const mountedViews = new WeakMap();
+  const inspectionGlobals = ['instanceLogsData','instanceLogFiles','instanceLogOriginalText','currentTestingInstance','blacksmithLogsPagination'];
+  const captureInspectionContext = () => ({globals:Object.fromEntries(inspectionGlobals.map(key=>[key,window[key]&&typeof window[key]==='object'?{...window[key]}:window[key]])),tables:new Map(tableOriginalData)});
+  const restoreInspectionContext = (context) => {if(!context)return;for(const [key,value] of Object.entries(context.globals))window[key]=value;tableOriginalData.clear();for(const [key,value] of context.tables)tableOriginalData.set(key,value);};
+  const dirtyViews = new WeakSet();
+  document.addEventListener('input',event=>{const host=event.target.closest('.detail-content');if(host&&!event.target.matches('[type=search],.table-search-input')){dirtyViews.add(host);host.dataset.hasDraft='true';}});
+  const trimRetainedViews = () => {if(retainedViews.size<=32)return;for(const [key,value] of retainedViews){if(value.dirty)continue;retainedViews.delete(key);if(retainedViews.size<=32)break;}};
+  const showRetainedContext = (container, savedAt) => {
+    if (!container.classList.contains('detail-content')) return;
+    let note = container.parentElement?.querySelector(':scope > .retained-view-note');
+    if (!savedAt) { note?.remove(); delete container.dataset.retainedAt; return; }
+    if (!note) { note = document.createElement('p'); note.className = 'retained-view-note'; container.before(note); }
+    note.textContent = `Restored your view saved at ${new Date(savedAt).toLocaleTimeString()}. Data may have changed; use Refresh where available.`;
+  };
+  const retainView = (container, key) => {
+    const previous = mountedViews.get(container);
+    if (previous === key && !container.querySelector(':scope > .loading')) return true;
+    if (previous && !container.querySelector(':scope > .loading')) {
+      const fragment = document.createDocumentFragment();
+      while (container.firstChild) fragment.appendChild(container.firstChild);
+      retainedViews.set(previous, {fragment, plans: container.classList.contains('plans-view'), savedAt: Date.now(),context:captureInspectionContext(),dirty:dirtyViews.has(container)});
+      trimRetainedViews();
+    }
+    mountedViews.set(container, key);
+    dirtyViews.delete(container);
+    delete container.dataset.hasDraft;
+    const saved = retainedViews.get(key);
+    showRetainedContext(container, saved?.savedAt);
+    if (!saved) return false;
+    restoreInspectionContext(saved.context);
+    if(saved.dirty){dirtyViews.add(container);container.dataset.hasDraft='true';}
+    container.replaceChildren(saved.fragment);
+    container.dataset.retainedAt=String(saved.savedAt);
+    container.querySelectorAll('table[class]').forEach(table=>{const cls=[...table.classList].find(c=>c.includes('table'));if(cls)initializeSorting(cls);});
+    container.classList.toggle('plans-view', saved.plans);
+    retainedViews.delete(key);
+    return true;
+  };
+  const notifyRoute = () => window.blacksmithViews?.notify();
+
   // Template rendering functions
   const ENTITY_SECTIONS = {
     blacksmith: [
@@ -2431,16 +2481,19 @@
     const jump = event.target.closest('[data-entity-section]');
     if (jump) {
       if (jump.dataset.entitySection === 'instances') {
+        if (window.blacksmithRouter) { await window.blacksmithRouter.navigate({screen:'services'}); return; }
         await window.blacksmithNav.switchTab('services');
         document.querySelector('.tab-button[data-tab="services"]')?.focus();
         return;
       }
       const root = jump.closest('#blacksmith, .service-detail');
       const target = Array.from(root?.querySelectorAll('.detail-tab') || []).find(tab => tab.dataset.tab === jump.dataset.entitySection);
+      if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:root.closest('#services') ? 'services' : 'blacksmith',section:jump.dataset.entitySection,...(root.closest('#services') ? {instance:window.currentInstanceInfo?.id} : {})}); return; }
       target?.click();
       (target?.getClientRects().length ? target : root?.querySelector('.entity-section-select'))?.focus();
     }
     if (event.target.closest('.entity-back')) {
+      if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:'services'}); return; }
       document.getElementById('services')?.classList.remove('instance-open');
       window.revealServiceInstance?.(window.currentInstanceInfo?.id);
       document.querySelector('#services .service-item.active')?.focus();
@@ -2449,148 +2502,61 @@
   document.addEventListener('change', (event) => {
     if (!event.target.matches('.entity-section-select')) return;
     const root = event.target.closest('.entity-workspace');
+    if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:root.closest('#services') ? 'services' : 'blacksmith',section:event.target.value,...(root.closest('#services') ? {instance:window.currentInstanceInfo?.id} : {})}); return; }
     Array.from(root.querySelectorAll('.detail-tab')).find(tab => tab.dataset.tab === event.target.value)?.click();
   });
 
   const renderBlacksmithTemplate = (data) => {
     window.blacksmithDetailsContent = renderBlacksmithOverview(data);
-    const path = [data.env, data.deployment].filter(Boolean).join(' > ');
+    const path = [data.env, data.deployment].filter(Boolean).join(' · ');
     return renderEntityShell('blacksmith', path || 'Blacksmith');
   };
 
   const renderPlansTemplate = (data) => {
-    if (!data.services || data.services.length === 0) {
-      return '<div class="no-data">No services configured</div>';
-    }
-
-    // Build the plans list for the left column
-    const plansList = [];
-    data.services.forEach((service, serviceIndex) => {
-      if (!service || !service.plans) return;
-      service.plans.forEach((plan, planIndex) => {
-        if (!plan) return;
-        plansList.push({
-          serviceIndex, planIndex,
-          service: service,
-          plan: plan,
-          id: `${service.name || service.id || 'unknown'}-${plan.name || plan.id || 'unknown'}`
-        });
-      });
-    });
-
-    const listHtml = plansList.map(item => `
-      <div class="plan-item" data-plan-id="${item.id}" data-service-index="${item.serviceIndex}" data-plan-index="${item.planIndex}">
-        <div class="plan-name">${item.service.name || item.service.id || 'unknown'} / ${item.plan.name || item.plan.id || 'unknown'}</div>
-        <div class="plan-meta">
-          Instances: ${item.plan.blacksmith?.instances || 0} / ${item.plan.blacksmith?.limit > 0 ? item.plan.blacksmith.limit : item.plan.blacksmith?.limit == 0 ? '∞' : '‑'}
-        </div>
-      </div>
-    `).join('');
-
-    return `
-      <div class="plans-list">
-        <h2>Service Plans</h2>
-        ${listHtml}
-      </div>
-      <div class="plan-detail">
-        <div class="no-selection">Select a plan to view details</div>
-      </div>
-    `;
+    const services = Array.isArray(data?.services) ? data.services : [];
+    const groups = services.map((service, serviceIndex) => {
+      if (!service || !Array.isArray(service.plans)) return '';
+      const serviceName = String(service.name || service.id || 'Unnamed service');
+      const rows = service.plans.map((plan, planIndex) => {
+        if (!plan) return '';
+        const planName = String(plan.name || plan.id || 'Unnamed plan');
+        const count = plan.blacksmith?.instances;
+        const limit = plan.blacksmith?.limit;
+        const usage = Number.isFinite(count) && count >= 0 ? `${count} instance${count === 1 ? '' : 's'}` : 'Instances not reported';
+        const capacity = Number.isFinite(limit) && limit >= 0 ? (limit === 0 ? 'Unlimited' : `limit ${limit}`) : 'Limit not reported';
+        return `<button type="button" class="plan-item" data-plan-id="${escapeAttribute(String(plan.id || planName))}" data-service-id="${escapeAttribute(String(service.id || ''))}" data-plan-key="${escapeAttribute(String(plan.id || ''))}" data-service-index="${serviceIndex}" data-plan-index="${planIndex}" aria-pressed="false" aria-label="${escapeAttribute(`${serviceName}: ${planName}. ${usage}, ${capacity}`)}">
+          <span class="plan-name">${escapeHtml(planName)}</span><span class="plan-meta">${escapeHtml(usage)} · ${escapeHtml(capacity)}</span>
+        </button>`;
+      }).join('');
+      if (!rows) return '';
+      return `<section class="plan-service-group" aria-labelledby="plan-service-${serviceIndex}"><h3 id="plan-service-${serviceIndex}">${escapeHtml(serviceName)}</h3>${rows}</section>`;
+    }).join('');
+    if (!groups) return '<div class="no-data">No service plans are configured.</div>';
+    return `<div class="plans-list" aria-label="Plans by service">${groups}</div>
+      <div class="plan-detail"><div class="no-selection">Select a service plan to inspect its configuration and instance limits.</div></div>`;
   };
 
-  const renderPlanDetail = (service, plan) => {
-    const planName = `${service?.name || service?.id || 'unknown'} / ${plan?.name || plan?.id || 'unknown'}`;
-
-    // Build the plan details table
-    const detailsTable = `
-      <table class="plan-details-table">
-        <caption class="visually-hidden">Plan information</caption>
-        <tbody>
-          <tr>
-            <th scope="row" class="info-key">Service</th>
-            <td class="info-value">
-              <span class="copy-wrapper">
-                <span>${service?.name || service?.id || 'unknown'}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${service?.name || service?.id || 'unknown'}')"
-                        title="Copy to clipboard" aria-label="Copy service">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <th scope="row" class="info-key">Plan</th>
-            <td class="info-value">
-              <span class="copy-wrapper">
-                <span>${plan?.name || plan?.id || 'unknown'}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${plan?.name || plan?.id || 'unknown'}')"
-                        title="Copy to clipboard" aria-label="Copy plan">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                </button>
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <th scope="row" class="info-key">Description</th>
-            <td class="info-value">${plan.description || '-'}</td>
-          </tr>
-          <tr>
-            <th scope="row" class="info-key">Current Instances</th>
-            <td class="info-value">${plan.blacksmith.instances}</td>
-          </tr>
-          <tr>
-            <th scope="row" class="info-key">Instance Limit</th>
-            <td class="info-value">${plan.blacksmith.limit > 0 ? plan.blacksmith.limit : plan.blacksmith.limit == 0 ? 'Unlimited' : 'Not Set'}</td>
-          </tr>
-        </tbody>
-      </table>
-    `;
-
-    // Build service tags
-    const tagsHtml = service.tags && service.tags.length > 0
-      ? `<ul class="tags">${service.tags.map(tag => `<li>${tag}</li>`).join('')}</ul>`
-      : '';
-
-    // Build VM configurations table if available
-    let vmsTable = '';
-    if (plan.vms && plan.vms.length > 0) {
-      vmsTable = `
-        <table class="plan-vms-table">
-          <thead>
-            <tr>
-              <th>VM Name</th>
-              <th>Count</th>
-              <th>Type</th>
-              <th>Persistent Disk</th>
-              <th>Properties</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${plan.vms.map(vm => `
-              <tr>
-                <td>${vm.name || '-'}</td>
-                <td>${vm.instances || 1}</td>
-                <td>${vm.vm_type || '-'}</td>
-                <td>${vm.persistent_disk_type || '-'}</td>
-                <td>${vm.properties ? JSON.stringify(vm.properties, null, 2) : '-'}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
-    }
-
-    return `
-      <div class="service-detail-header plan-detail-header">
-        <h2 class="deployment-name">${planName}</h2>
-        ${tagsHtml}
-      </div>
-      <div class="service-detail-content plan-detail-content">
-        ${detailsTable}
-        ${vmsTable ? '<h3>VM Configuration</h3>' + vmsTable : ''}
-        ${service.description ? `<div class="service-description"><h3>Service Description</h3><p>${service.description}</p></div>` : ''}
-      </div>
-    `;
+  const renderPlanDetail = (service = {}, plan = {}) => {
+    service = service || {};
+    plan = plan || {};
+    const serviceName = String(service.name || service.id || 'Unnamed service');
+    const planName = String(plan.name || plan.id || 'Unnamed plan');
+    const count = plan.blacksmith?.instances;
+    const limit = plan.blacksmith?.limit;
+    const currentInstances = Number.isFinite(count) && count >= 0 ? count : 'Not reported';
+    const instanceLimit = Number.isFinite(limit) && limit >= 0 ? (limit === 0 ? 'Unlimited' : limit) : 'Not reported';
+    const rows = [
+      ['Service', serviceName, true], ['Plan', planName, true],
+      ['Description', plan.description || 'Not provided'],
+      ['Current instances', currentInstances], ['Instance limit', instanceLimit]
+    ].map(([label,value,copy]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span>${escapeHtml(String(value))}</span>${copy ? entityCopy(value,label.toLowerCase()) : ''}</span></td></tr>`).join('');
+    const tags = Array.isArray(service.tags) ? service.tags : [];
+    const tagsHtml = tags.length ? `<ul class="tags" aria-label="Service tags">${tags.map(tag => `<li>${escapeHtml(String(tag))}</li>`).join('')}</ul>` : '';
+    const vms = Array.isArray(plan.vms) ? plan.vms.filter(Boolean) : [];
+    const vmsTable = vms.length ? `<div class="plan-vms-scroll" role="region" tabindex="0" aria-label="Plan VM configuration"><table class="plan-vms-table"><caption>VM configuration</caption><thead><tr><th scope="col">VM name</th><th scope="col">Count</th><th scope="col">Type</th><th scope="col">Persistent disk</th><th scope="col">Properties</th></tr></thead><tbody>${vms.map(vm => `<tr><td>${escapeHtml(String(vm.name || 'Not reported'))}</td><td>${escapeHtml(String(vm.instances ?? 1))}</td><td>${escapeHtml(String(vm.vm_type || 'Not reported'))}</td><td>${escapeHtml(String(vm.persistent_disk_type || 'Not reported'))}</td><td>${vm.properties ? `<pre>${escapeHtml(JSON.stringify(vm.properties, null, 2))}</pre>` : 'Not reported'}</td></tr>`).join('')}</tbody></table></div>` : '';
+    return `<div class="service-detail-header plan-detail-header"><a class="plan-collection-link" href="#/broker/plans">All service plans</a><h2 class="deployment-name">${escapeHtml(serviceName)} / ${escapeHtml(planName)}</h2>${tagsHtml}</div>
+      <div class="service-detail-content plan-detail-content"><table class="plan-details-table"><caption class="visually-hidden">Plan information</caption><tbody>${rows}</tbody></table>${vmsTable}
+      ${service.description ? `<div class="service-description"><h3>Service description</h3><p>${escapeHtml(String(service.description))}</p></div>` : ''}</div>`;
   };
 
   const renderServicesTemplate = (instances) => {
@@ -2874,6 +2840,7 @@
     if (step !== 3) batchFlow.frozenCount = null;
     batchFlow.furthest = Math.max(batchFlow.furthest, step);
     updateBatchFlow();
+    notifyRoute();
     // Coming back to the list, every row follows the selection as it stands.
     if (step === 2 && upgradeOperation === 'upgrade') syncUpgradeRows();
     if (focus) {
@@ -3092,6 +3059,7 @@
     const activity = view === 'activity';
     panel.querySelector('.upgrade-main').hidden = activity;
     panel.querySelector('.upgrade-right-panel').hidden = !activity;
+    notifyRoute();
     document.getElementById('batch-new')?.setAttribute('aria-pressed', String(!activity));
     document.getElementById('batch-activity')?.setAttribute('aria-pressed', String(activity));
   };
@@ -6288,7 +6256,9 @@
   // Select a task and show its details. It resolves true when the details
   // are on screen. With throwOnError it rethrows a failure for a caller that
   // shows it, and otherwise it reports the failure through the feedback panel.
+  let selectedTaskRevision = 0;
   const selectUpgradeTask = async (taskId, options = {}) => {
+    const revision=++selectedTaskRevision;
     setBatchView('activity');
     selectedTaskId = taskId;
 
@@ -6298,7 +6268,9 @@
     });
 
     try {
-      renderTaskDetail(await loadUpgradeTask(taskId));
+      const task=await loadUpgradeTask(taskId);
+      if(revision!==selectedTaskRevision||selectedTaskId!==taskId)return false;
+      renderTaskDetail(task);
       const heading = document.querySelector('#upgrade .task-detail-header h3');
       heading?.focus({ preventScroll: true });
       heading?.scrollIntoView?.({ block: 'nearest' });
@@ -7078,7 +7050,9 @@
   // Go back to task list from detail view
   window.backToTaskList = () => {
     const previousTaskId = selectedTaskId;
+    selectedTaskRevision++;
     selectedTaskId = null;
+    notifyRoute();
     renderUpgradeTaskList();
     const previous = Array.from(document.querySelectorAll('#upgrade .upgrade-task-item'))
       .find(item => item.dataset.taskId === previousTaskId);
@@ -7717,20 +7691,20 @@
         <div class="settings-row">
           <label class="settings-label" for="settings-max-versions">Vault Max Versions</label>
           <div class="settings-input-group">
-            <input type="number" id="settings-max-versions" class="settings-input" value="${maxVersions}" min="0" max="1000" placeholder="0 = unlimited" />
-            <button id="apply-max-versions" class="settings-apply-btn">Apply</button>
+            <input type="number" id="settings-max-versions" class="settings-input" value="${escapeAttribute(String(maxVersions))}" min="0" max="1000" step="1" placeholder="0 = unlimited" aria-describedby="help-max-versions feedback-max-versions" />
+            <button type="button" id="apply-max-versions" class="settings-apply-btn" aria-label="Apply Vault maximum versions">Apply</button>
           </div>
-          <span class="settings-hint">Controls how many versions are kept per secret path (0 = unlimited). Only affects future writes.</span>
-          <span id="feedback-max-versions" class="settings-feedback"></span>
+          <span id="help-max-versions" class="settings-hint">Controls how many versions are kept per secret path (0 = unlimited). Only affects future writes.</span>
+          <span id="feedback-max-versions" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
         <div class="settings-row">
           <label class="settings-label" for="settings-reconciler-interval">Reconciler Interval</label>
           <div class="settings-input-group">
-            <input type="text" id="settings-reconciler-interval" class="settings-input" value="${reconcilerInterval}" placeholder="e.g. 1h, 30m, 5m" />
-            <button id="apply-reconciler-interval" class="settings-apply-btn">Apply</button>
+            <input type="text" id="settings-reconciler-interval" class="settings-input" value="${escapeAttribute(String(reconcilerInterval))}" placeholder="e.g. 1h, 30m, 5m" aria-describedby="help-reconciler-interval feedback-reconciler-interval" />
+            <button type="button" id="apply-reconciler-interval" class="settings-apply-btn" aria-label="Apply reconciler interval">Apply</button>
           </div>
-          <span class="settings-hint">How often the reconciler syncs BOSH deployments with Vault (minimum 10s). Persisted across restarts.</span>
-          <span id="feedback-reconciler-interval" class="settings-feedback"></span>
+          <span id="help-reconciler-interval" class="settings-hint">How often the reconciler syncs BOSH deployments with Vault (minimum 10s). Persisted across restarts.</span>
+          <span id="feedback-reconciler-interval" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
       </div>
     `;
@@ -7752,93 +7726,59 @@
 
   // Set up event handlers for the Blacksmith settings form
   const setupBlacksmithSettingsHandlers = () => {
-    const applyMaxVersions = document.getElementById('apply-max-versions');
-    const applyReconcilerInterval = document.getElementById('apply-reconciler-interval');
-
-    if (applyMaxVersions) {
-      applyMaxVersions.addEventListener('click', async () => {
-        const input = document.getElementById('settings-max-versions');
-        const feedback = document.getElementById('feedback-max-versions');
-        const value = parseInt(input.value, 10);
-
-        if (isNaN(value) || value < 0 || value > 1000) {
-          feedback.textContent = 'Must be between 0 and 1000';
-          feedback.className = 'settings-feedback error';
-          return;
+    const fields = [
+      {id:'max-versions', key:'vault_max_versions', name:'Vault maximum versions', number:true},
+      {id:'reconciler-interval', key:'reconciler_interval', name:'Reconciler interval'}
+    ];
+    fields.forEach(field => {
+      const input = document.getElementById(`settings-${field.id}`);
+      const button = document.getElementById(`apply-${field.id}`);
+      const feedback = document.getElementById(`feedback-${field.id}`);
+      if (!input || !button || !feedback || button.dataset.settingsBound) return;
+      button.dataset.settingsBound = 'true';
+      let applied = input.value;
+      const message = (text, tone = '') => {
+        feedback.textContent = text;
+        feedback.className = `settings-feedback ${tone}`.trim();
+      };
+      input.addEventListener('input', () => {
+        input.removeAttribute('aria-invalid');
+        message(input.value === applied ? '' : 'Unapplied changes.');
+      });
+      button.addEventListener('click', async () => {
+        if (button.disabled) return;
+        const raw = input.value.trim();
+        const value = field.number ? Number(raw) : raw;
+        const error = field.number
+          ? (!raw || !Number.isInteger(value) || value < 0 || value > 1000 ? 'Enter a whole number between 0 and 1000.' : '')
+          : (!raw ? 'Enter an interval, for example 1h, 30m, or 5m.' : '');
+        if (error) {
+          input.setAttribute('aria-invalid', 'true'); message(error, 'error'); input.focus(); return;
         }
-
-        applyMaxVersions.disabled = true;
-        applyMaxVersions.textContent = 'Applying...';
-        feedback.textContent = '';
-
+        input.removeAttribute('aria-invalid');
+        button.disabled = true; button.textContent = 'Applying…'; button.setAttribute('aria-busy','true');
+        message('Applying changes…');
         try {
           const res = await fetch('/b/blacksmith/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vault_max_versions: value })
+            method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({[field.key]:value})
           });
           const data = await res.json();
-
           if (res.ok && data.success) {
-            feedback.textContent = 'Applied successfully';
-            feedback.className = 'settings-feedback success';
+            applied = String(data[field.key] ?? value);
+            const unchanged = input.value.trim() === raw;
+            if (unchanged) input.value = applied;
+            message(`${field.name} applied: ${applied}.${unchanged ? '' : ' You have unapplied changes.'}`, 'success');
           } else {
-            feedback.textContent = data.error || 'Failed to apply';
-            feedback.className = 'settings-feedback error';
+            if (res.status === 400 || res.status === 422) input.setAttribute('aria-invalid','true');
+            message(data.error || 'Could not apply this setting. Your changes are kept.', 'error');
           }
-        } catch (err) {
-          feedback.textContent = 'Request failed: ' + err.message;
-          feedback.className = 'settings-feedback error';
+        } catch (error) {
+          message(`Request failed: ${error.message}. Your changes are kept.`, 'error');
         } finally {
-          applyMaxVersions.disabled = false;
-          applyMaxVersions.textContent = 'Apply';
+          button.disabled = false; button.textContent = 'Apply'; button.removeAttribute('aria-busy');
         }
       });
-    }
-
-    if (applyReconcilerInterval) {
-      applyReconcilerInterval.addEventListener('click', async () => {
-        const input = document.getElementById('settings-reconciler-interval');
-        const feedback = document.getElementById('feedback-reconciler-interval');
-        const value = input.value.trim();
-
-        if (!value) {
-          feedback.textContent = 'Please enter an interval (e.g. 1h, 30m, 5m)';
-          feedback.className = 'settings-feedback error';
-          return;
-        }
-
-        applyReconcilerInterval.disabled = true;
-        applyReconcilerInterval.textContent = 'Applying...';
-        feedback.textContent = '';
-
-        try {
-          const res = await fetch('/b/blacksmith/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reconciler_interval: value })
-          });
-          const data = await res.json();
-
-          if (res.ok && data.success) {
-            feedback.textContent = 'Applied successfully';
-            feedback.className = 'settings-feedback success';
-            if (data.reconciler_interval) {
-              input.value = data.reconciler_interval;
-            }
-          } else {
-            feedback.textContent = data.error || 'Failed to apply';
-            feedback.className = 'settings-feedback error';
-          }
-        } catch (err) {
-          feedback.textContent = 'Request failed: ' + err.message;
-          feedback.className = 'settings-feedback error';
-        } finally {
-          applyReconcilerInterval.disabled = false;
-          applyReconcilerInterval.textContent = 'Apply';
-        }
-      });
-    }
+    });
   };
 
   // Helper function to extract the latest deployment task ID from events
@@ -7914,7 +7854,7 @@
   };
 
   // Fetch Blacksmith detail data
-  const fetchBlacksmithDetail = async (deploymentName, type) => {
+  const fetchBlacksmithDetail = async (deploymentName, type, isCurrent = () => true) => {
     // Validate deploymentName
     if (!deploymentName || deploymentName === 'undefined') {
       return `<div class="error">No deployment name specified</div>`;
@@ -7928,6 +7868,7 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         const data = await response.json();
+        if (!isCurrent()) return '';
         return formatBlacksmithLogs(data.logs, null, data);
 
       } else if (type === 'events') {
@@ -7937,6 +7878,7 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         const events = await response.json();
+        if (!isCurrent()) return '';
         return formatEvents(events);
 
       } else if (type === 'logs' || type === 'debug') {
@@ -7971,6 +7913,7 @@
         }
         const vmsResponse = await response.json();
         const vms = Array.isArray(vmsResponse) ? vmsResponse : (vmsResponse.vms || []);
+        if (!isCurrent()) return '';
         return formatVMs(vms);
 
       } else if (type === 'manifest') {
@@ -7996,6 +7939,8 @@
           return `<div class="no-data">Deployment ${escapeHtml(deploymentName)} has no manifest yet, because its first deploy has not finished.</div>`;
         }
 
+        if (!isCurrent()) return '';
+
         return formatManifestDetails(manifestData, `blacksmith-${deploymentName}`);
 
       } else if (type === 'config') {
@@ -8006,12 +7951,15 @@
         ]);
         const settings = settingsRes.ok ? await settingsRes.json() : {};
         const config = configRes.ok ? await configRes.json() : {};
+        if (!isCurrent()) return '';
         return renderBlacksmithSettings(settings, config);
       } else if (type === 'certificates') {
         // Render certificates tab content
+        if (!isCurrent()) return '';
         return renderCertificatesTab();
       } else if (type === 'broker') {
         // Render broker tab content with CF endpoints management
+        if (!isCurrent()) return '';
         return renderBrokerTab();
       } else if (type === 'tasks') {
         // Fetch BOSH director tasks
@@ -8020,6 +7968,7 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         const tasks = await response.json();
+        if (!isCurrent()) return '';
         return formatTasks(tasks);
       } else if (type === 'configs') {
         // Fetch BOSH director configs
@@ -8028,6 +7977,7 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         const configs = await response.json();
+        if (!isCurrent()) return '';
         return formatConfigs(configs);
       }
 
@@ -8039,7 +7989,7 @@
 
 
   // Fetch service detail data
-  const fetchServiceDetail = async (instanceId, type) => {
+  const fetchServiceDetail = async (instanceId, type, isCurrent = () => true) => {
     // Validate instanceId
     if (!instanceId || instanceId === 'undefined') {
       return `<div class="error">No service instance selected</div>`;
@@ -8047,10 +7997,11 @@
 
     // Handle special cases that don't use endpoints
     if (type === 'testing') {
-      return await renderServiceTesting(instanceId);
+      return await renderServiceTesting(instanceId,isCurrent);
     }
 
     if (type === 'certificates') {
+      if (!isCurrent()) return '';
       return renderServiceCertificatesTab(instanceId);
     }
 
@@ -8081,6 +8032,7 @@
         const text = await response.text();
         try {
           const events = JSON.parse(text);
+          if (!isCurrent()) return '';
           return formatEvents(events, 'service-events', instanceId);
         } catch (e) {
           return `<pre>${text}</pre>`;
@@ -8090,17 +8042,20 @@
         try {
           const vmsResponse = JSON.parse(text);
           const vms = Array.isArray(vmsResponse) ? vmsResponse : (vmsResponse.vms || []);
+          if (!isCurrent()) return '';
           return formatVMs(vms, instanceId);
         } catch (e) {
           return `<pre>${text}</pre>`;
         }
       } else if (type === 'credentials') {
         const creds = await response.json();
+        if (!isCurrent()) return '';
         return formatCredentials(creds);
       } else if (type === 'logs') {
         const text = await response.text();
         try {
           const logs = JSON.parse(text);
+          if (!isCurrent()) return '';
           return formatDeploymentLog(logs, instanceId);
         } catch (e) {
           // If not JSON, display as plain text
@@ -8110,6 +8065,7 @@
         const text = await response.text();
         try {
           const responseData = JSON.parse(text);
+          if (!isCurrent()) return '';
           return formatInstanceLogs(responseData.logs || responseData, responseData.truncated);
         } catch (e) {
           // If not JSON, display as plain text
@@ -8119,6 +8075,7 @@
         const text = await response.text();
         try {
           const config = JSON.parse(text);
+          if (!isCurrent()) return '';
           return formatConfig(config);
         } catch (e) {
           // If not JSON, display as plain text
@@ -8128,6 +8085,7 @@
         const text = await response.text();
         try {
           const logs = JSON.parse(text);
+          if (!isCurrent()) return '';
           return formatDebugLog(logs, instanceId);
         } catch (e) {
           // If not JSON, display as plain text
@@ -8138,6 +8096,7 @@
       // Handle manifest separately since it returns JSON
       if (type === 'manifest') {
         const manifestData = await response.json();
+        if (!isCurrent()) return '';
         return formatManifestDetails(manifestData, instanceId);
       }
 
@@ -8399,8 +8358,9 @@
   };
 
   // Helper function to format job log content with dropdown and content
-  const formatJobLogContent = (jobKey, jobData) => {
-    const nodeSelector = `<select class="log-node-select" aria-label="Node" data-job="${escapeAttribute(jobKey)}" data-instance-log="select-job">
+  const formatJobLogContent = (jobKey, jobData, preferredFile = '') => {
+    const nodes = Object.keys(window.instanceLogsData || {[jobKey]: jobData});
+    const nodeSelector = nodes.length === 1 ? `<span class="log-node-label"><strong>Node:</strong> ${escapeHtml(jobKey)}</span>` : `<select class="log-node-select" aria-label="Node" data-job="${escapeAttribute(jobKey)}" data-instance-log="select-job">
                       ${Object.keys(window.instanceLogsData || {[jobKey]: jobData}).map(job => `<option value="${escapeAttribute(job)}"${job === jobKey ? ' selected' : ''}>${escapeHtml(job)}</option>`).join('')}
                     </select>`;
     const empty = message => `<div class="job-logs-container"><div class="table-controls-container">${nodeSelector}</div><div class="no-data">${message}</div></div>`;
@@ -8424,7 +8384,7 @@
 
     // Get smart default file selection
     const instanceInfo = window.currentInstanceInfo || {};
-    const defaultFile = LogSelectionManager.getSmartDefault(
+    const defaultFile = filesList.includes(preferredFile) ? preferredFile : LogSelectionManager.getSmartDefault(
       filesList,
       instanceInfo.service,
       instanceInfo.plan,
@@ -8513,6 +8473,7 @@
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
                   </div>
+        ${preferredFile && preferredFile !== defaultFile ? `<p class="log-file-fallback" role="status">${escapeHtml(preferredFile)} is not available on this node. Showing ${escapeHtml(defaultFile)}.</p>` : ''}
         <div class="logs-table-container" id="log-display-${domKey}">
           <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}">
             <thead>
@@ -8601,7 +8562,8 @@
       const wrapper = contentArea.closest('.instance-logs-wrapper');
       const info = wrapper?.querySelector('.log-info-toggle');
       if (info) wrapper.prepend(info);
-      contentArea.innerHTML = formatJobLogContent(job, logsData[job]);
+      const preferredFile = contentArea.querySelector('[data-instance-log="select-file"]')?.value || '';
+      contentArea.innerHTML = formatJobLogContent(job, logsData[job], preferredFile);
       if (wrapper) mountLogNotice(wrapper);
       contentArea.querySelector('.log-node-select')?.focus();
       // Re-initialize sorting and filtering for the new job table
@@ -8729,6 +8691,9 @@
       return;
     }
 
+    const refresh = beginDetailRefresh('services', 'instance-logs', instanceId);
+    if (!refresh?.current()) return;
+
     // Capture current search filter state
     const tableId = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
     const currentSearchFilter = captureSearchFilterState(tableId);
@@ -8746,6 +8711,7 @@
 
       const text = await response.text();
       const logsData = JSON.parse(text);
+      if (!refresh.current()) return;
 
       // Update the global logs data
       window.instanceLogsData = logsData;
@@ -8782,6 +8748,7 @@
           tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
           // Re-initialize sorting and restore search filter state after updating table
           setTimeout(() => {
+            if (!refresh.current()) return;
             const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
             initializeSorting(tableClass);
             restoreSearchFilterState(tableId, currentSearchFilter);
@@ -8816,6 +8783,7 @@
           tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
           // Re-initialize sorting and restore search filter state after updating table
           setTimeout(() => {
+            if (!refresh.current()) return;
             const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
             initializeSorting(tableClass);
             restoreSearchFilterState(tableId, currentSearchFilter);
@@ -8838,6 +8806,8 @@
       }, 1000);
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error('Unable to refresh logs.');
       console.error('Failed to refresh instance logs:', error);
 
       // Visual feedback for error
@@ -9094,11 +9064,12 @@
           typeConfigs.forEach(config => {
             const createdAt = formatTimestamp(config.created_at);
 
-            // Add asterisk for active configs and make it clickable to show versions
-            const isActive = config.is_active || config.id.endsWith('*');
-            const cleanId = config.id.replace('*', '');
-            const configIdDisplay = isActive ? `${cleanId}*` : cleanId;
-            const configIdLink = `<a href="#" class="config-link" data-config-id="${cleanId}" data-config-type="${config.type}" data-config-name="${config.name}" onclick="showConfigVersions('${config.type}', '${config.name ? config.name.replace(/'/g, "\\'") : ''}', '${cleanId}', event); return false;">${configIdDisplay}</a>`;
+            // Keep API IDs clean and expose active state without an unexplained symbol.
+            const rawId = String(config.id ?? '');
+            const isActive = Boolean(config.is_active) || rawId.endsWith('*');
+            const cleanId = rawId.replace(/\*$/, '');
+            const argumentsHtml = [config.type || '', config.name || '', cleanId].map(value => escapeAttribute(JSON.stringify(String(value)))).join(', ');
+            const configIdLink = `<a href="#" class="config-link" data-config-id="${escapeAttribute(cleanId)}" data-config-type="${escapeAttribute(String(config.type || ''))}" data-config-name="${escapeAttribute(String(config.name || ''))}" onclick="showConfigVersions(${argumentsHtml}, event); return false;">${escapeHtml(cleanId)}</a>${isActive ? '<span class="config-active-label">Active</span>' : ''}`;
 
             // Format team, show dash for empty
             const teamDisplay = config.team || '-';
@@ -9151,7 +9122,7 @@
             </div>
           </div>
         </div>
-        <span class="configs-help" title="An asterisk marks the active version. Select an ID to view all versions." aria-label="An asterisk marks the active version. Select an ID to view all versions." tabindex="0">* Active · select ID for versions</span>
+        <span class="configs-help">Select a config ID to inspect versions and compare changes.</span>
       </div>
       <div class="configs-table-container">
         <table class="${tableId}">
@@ -10248,7 +10219,7 @@
   };
 
   // Service Testing Functions
-  const renderServiceTesting = async (instanceId) => {
+  const renderServiceTesting = async (instanceId, isCurrent = () => true) => {
     try {
       // Get credentials, config/manifest, and vault data for service detection
       const [credsResponse, configResponse, vaultResponse] = await Promise.all([
@@ -10297,6 +10268,7 @@
       const enhancedCreds = enhanceCredentialsWithManifestFallbacks(creds, manifestData, serviceType);
 
       // Store the service type and credentials globally for testing functions
+      if (!isCurrent()) return '';
       window.currentTestingInstance = {
         id: instanceId,
         serviceType: serviceType,
@@ -12741,6 +12713,9 @@
 
   // Operation Tab Switching
   window.switchTestingOperation = (instanceId, operation) => {
+    const selectedOperation = Array.from(document.querySelectorAll('.operation-tab')).find(tab=>tab.dataset.instance===instanceId&&tab.dataset.operation===operation);
+    if (!selectedOperation) return false;
+    if (selectedOperation.classList.contains('active')) return true;
     // Update active tab
     document.querySelectorAll(`.operation-tab[data-instance="${instanceId}"]`).forEach(tab => {
       tab.classList.remove('active');
@@ -12760,7 +12735,10 @@
     // Update operation content
     const contentContainer = document.getElementById(`operation-content-${instanceId}`);
     if (contentContainer) {
+      const restored=retainView(contentContainer,JSON.stringify(['testing',instanceId,operation]));
+      if(restored){notifyRoute();return true;}
       contentContainer.innerHTML = getOperationContent(testingInstance.serviceType, operation, instanceId);
+      notifyRoute();
 
       // After content is loaded, restore connection state for connection tab
       setTimeout(() => {
@@ -12791,6 +12769,7 @@
         }
       }, 50);
     }
+    return true;
   };
 
   // Function to restore connection parameters to the UI
@@ -12992,27 +12971,34 @@
 
   // Format manifest details with tabbed view
   // Delegate manifest navigation so newly rendered tabs work immediately.
-  document.addEventListener('click', event => {
-    const button = event.target.closest('[data-manifest-navigation]');
-    if (!button) return;
-    const container = button.closest('.manifest-details-container');
-    if (!container) return;
-    container.querySelectorAll('[data-manifest-navigation]').forEach(tab => {
-      tab.classList.toggle('active', tab === button);
-    });
-    container.querySelectorAll('.manifest-tab-pane').forEach(pane => {
-      if (pane.dataset.group === button.dataset.group) {
-        pane.style.display = pane.dataset.tab === button.dataset.tab ? 'block' : 'none';
-      }
-    });
+  const selectManifestView = (container, name) => {
+    const button=Array.from(container?.querySelectorAll('[data-manifest-navigation]')||[]).find(tab=>tab.dataset.tab===name);
+    if(!button)return false;
+    container.querySelectorAll('[data-manifest-navigation]').forEach(tab=>{const active=tab===button;tab.classList.toggle('active',active);tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;});
+    container.querySelectorAll('.manifest-tab-pane').forEach(pane=>{if(pane.dataset.group===button.dataset.group)pane.style.display=pane.dataset.tab===name?'block':'none';});
+    notifyRoute();return true;
+  };
+  document.addEventListener('click',event=>{if(!(event.target instanceof Element))return;const button=event.target.closest('[data-manifest-navigation]');if(button)selectManifestView(button.closest('.manifest-details-container'),button.dataset.tab);if(event.target.closest('.broker-tab-btn'))notifyRoute();});
+  document.addEventListener('change',event=>{if(event.target.matches('#cf-endpoint-select'))notifyRoute();});
+  document.addEventListener('keydown', event => {
+    if (!(event.target instanceof Element)) return;
+    const tab = event.target.closest('[data-manifest-navigation]');
+    if (!tab || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+    const container = tab.closest('.manifest-details-container');
+    const tabs = [...container.querySelectorAll('[data-manifest-navigation]')];
+    const index = tabs.indexOf(tab);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault(); selectManifestView(container, tabs[next].dataset.tab); tabs[next].focus();
   });
 
+
+  let manifestRenderSequence = 0;
   const formatManifestDetails = (manifestData, instanceId) => {
     if (!manifestData || !manifestData.text || !manifestData.parsed) {
       return '<div class="error">Failed to load manifest details</div>';
     }
 
-    const manifestId = `manifest-${instanceId}-${Date.now()}`;
+    const manifestId = `manifest-${Date.now()}-${++manifestRenderSequence}`;
     window.manifestTexts = window.manifestTexts || {};
     window.manifestTexts[manifestId] = manifestData.text;
 
@@ -13023,8 +13009,8 @@
     const flattenObject = (obj, prefix = '') => {
       const result = {};
       for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-          const newKey = prefix ? `${prefix}.${key}` : key;
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+          const newKey = prefix ? `${prefix}.${escapeHtml(String(key))}` : key;
           if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
             Object.assign(result, flattenObject(obj[key], newKey));
           } else {
@@ -13042,14 +13028,14 @@
       if (typeof value === 'number') return `<span class="number-value">${value}</span>`;
       if (Array.isArray(value)) {
         if (value.length === 0) return '<em>[]</em>';
-        if (typeof value[0] === 'string') return value.join(', ');
+        if (typeof value[0] === 'string') return escapeHtml(value.join(', '));
         return `<em>[${value.length} items]</em>`;
       }
       if (typeof value === 'object') return '<em>[object]</em>';
       if (typeof value === 'string' && value.includes('\n')) {
-        return `<pre style="margin: 0; white-space: pre-wrap;">${value.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        return `<pre style="margin: 0; white-space: pre-wrap;">${escapeHtml(value)}</pre>`;
       }
-      return value.toString().replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return escapeHtml(String(value));
     };
 
     // Extract data from parsed manifest
@@ -13066,21 +13052,21 @@
     // Create HTML for tabs
     let html = `
       <div class="manifest-details-container deployment-manifest-workspace">
-        <div class="manifest-tabs-nav">
-          <button data-manifest-navigation class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
-          ${instanceGroups.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
-          ${releases.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
-          ${stemcells.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
-          ${Object.keys(features).length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
-          ${Object.keys(update).length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="update" data-group="${tabGroupId}">Update</button>` : ''}
-          ${variables.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="variables" data-group="${tabGroupId}">Variables</button>` : ''}
-          ${addons.length > 0 ? `<button data-manifest-navigation class="manifest-tab-btn" data-tab="addons" data-group="${tabGroupId}">Addons</button>` : ''}
-          <button data-manifest-navigation class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">YAML</button>
+        <div class="manifest-tabs-nav" role="tablist" aria-label="Manifest sections">
+          <button type="button" role="tab" id="${tabGroupId}-tab-global" aria-controls="${tabGroupId}-panel-global" aria-selected="true" tabindex="0" data-manifest-navigation class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
+          ${instanceGroups.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-instance-groups" aria-controls="${tabGroupId}-panel-instance-groups" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
+          ${releases.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-releases" aria-controls="${tabGroupId}-panel-releases" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
+          ${stemcells.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-stemcells" aria-controls="${tabGroupId}-panel-stemcells" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
+          ${Object.keys(features).length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-features" aria-controls="${tabGroupId}-panel-features" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
+          ${Object.keys(update).length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-update" aria-controls="${tabGroupId}-panel-update" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="update" data-group="${tabGroupId}">Update</button>` : ''}
+          ${variables.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-variables" aria-controls="${tabGroupId}-panel-variables" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="variables" data-group="${tabGroupId}">Variables</button>` : ''}
+          ${addons.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-addons" aria-controls="${tabGroupId}-panel-addons" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="addons" data-group="${tabGroupId}">Addons</button>` : ''}
+          <button type="button" role="tab" id="${tabGroupId}-tab-manifest" aria-controls="${tabGroupId}-panel-manifest" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">YAML</button>
         </div>
 
         <div class="manifest-tab-content">
           <!-- Global Tab -->
-          <div class="manifest-tab-pane active" data-tab="global" data-group="${tabGroupId}">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-global" aria-labelledby="${tabGroupId}-tab-global" class="manifest-tab-pane active" data-tab="global" data-group="${tabGroupId}">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -13093,11 +13079,11 @@
                   <td>Director UUID</td>
                   <td>
                     <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${directorUuid.replace(/'/g, "\\'")}')"
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(directorUuid)))})"
                               title="Copy to clipboard" aria-label="Copy director UUID">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
-                      <code>${directorUuid}</code>
+                      <code>${escapeHtml(String(directorUuid))}</code>
                     </span>
                   </td>
                 </tr>
@@ -13105,11 +13091,11 @@
                   <td>Name</td>
                   <td>
                     <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${(parsed.name || 'Not specified').replace(/'/g, "\\'")}')"
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((parsed.name || 'Not specified'))))})"
                               title="Copy to clipboard" aria-label="Copy manifest name">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
-                      <code>${parsed.name || 'Not specified'}</code>
+                      <code>${escapeHtml(String(parsed.name || 'Not specified'))}</code>
                     </span>
                   </td>
                 </tr>
@@ -13119,13 +13105,13 @@
 
           <!-- Instance Groups Tab -->
           ${instanceGroups.length > 0 ? `
-          <div class="manifest-tab-pane" data-tab="instance-groups" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-instance-groups" aria-labelledby="${tabGroupId}-tab-instance-groups" class="manifest-tab-pane" data-tab="instance-groups" data-group="${tabGroupId}" style="display: none;">
             <div class="instance-groups-container">
               <div class="instance-group-selector">
                 <label for="instance-group-select-${manifestId}">Select Instance Group:</label>
                 <select id="instance-group-select-${manifestId}" class="instance-group-select">
                   ${instanceGroups.map((ig, idx) =>
-      `<option value="${idx}">${ig.name} (${ig.instances || 1} instance${(ig.instances || 1) > 1 ? 's' : ''})</option>`
+      `<option value="${idx}">${escapeHtml(String(ig.name))} (${escapeHtml(String(ig.instances || 1))} instance${(ig.instances || 1) > 1 ? 's' : ''})</option>`
     ).join('')}
                 </select>
               </div>
@@ -13135,7 +13121,7 @@
       const jobs = ig.jobs || [];
       return `
                     <div class="instance-group-pane ${idx === 0 ? 'active' : ''}" data-group-index="${idx}">
-                      <h4>Instance Group: ${ig.name}</h4>
+                      <h4>Instance Group: ${escapeHtml(String(ig.name))}</h4>
                       <table class="manifest-table">
                         <thead>
                           <tr>
@@ -13148,8 +13134,8 @@
                             <td>Instances</td>
                             <td>
                               <span class="copy-wrapper">
-                                <span>${ig.instances || 1}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ig.instances || 1}')"
+                                <span>${escapeHtml(String(ig.instances || 1))}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(ig.instances || 1)))})"
                         title="Copy to clipboard" aria-label="Copy instance count">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
@@ -13160,11 +13146,11 @@
                             <td>AZs</td>
                             <td>
                               <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.azs || []).join(', ') || 'None').replace(/'/g, "\\'")}')"
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(((ig.azs || []).join(', ') || 'None'))))})"
                                         title="Copy to clipboard" aria-label="Copy availability zones">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
-                                <span>${(ig.azs || []).join(', ') || 'None'}</span>
+                                <span>${escapeHtml(String((ig.azs || []).join(', ') || 'None'))}</span>
                               </span>
                             </td>
                           </tr>
@@ -13172,11 +13158,11 @@
                             <td>Networks</td>
                             <td>
                               <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.networks || []).map(n => n.name || n).join(', ') || 'None').replace(/'/g, "\\'")}')"
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(((ig.networks || []).map(n => n.name || n).join(', ') || 'None'))))})"
                                         title="Copy to clipboard" aria-label="Copy networks">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
-                                <span>${(ig.networks || []).map(n => n.name || n).join(', ') || 'None'}</span>
+                                <span>${escapeHtml(String((ig.networks || []).map(n => n.name || n).join(', ') || 'None'))}</span>
                               </span>
                             </td>
                           </tr>
@@ -13184,11 +13170,11 @@
                             <td>VM Type</td>
                             <td>
                               <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.vm_type || 'Not specified').replace(/'/g, "\\'")}')"
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.vm_type || 'Not specified'))))})"
                                         title="Copy to clipboard" aria-label="Copy VM type">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
-                                <span>${ig.vm_type || 'Not specified'}</span>
+                                <span>${escapeHtml(String(ig.vm_type || 'Not specified'))}</span>
                               </span>
                             </td>
                           </tr>
@@ -13196,11 +13182,11 @@
                             <td>Persistent Disk Type</td>
                             <td>
                               <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.persistent_disk_type || 'None').replace(/'/g, "\\'")}')"
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.persistent_disk_type || 'None'))))})"
                                         title="Copy to clipboard" aria-label="Copy persistent disk type">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
-                                <span>${ig.persistent_disk_type || 'None'}</span>
+                                <span>${escapeHtml(String(ig.persistent_disk_type || 'None'))}</span>
                               </span>
                             </td>
                           </tr>
@@ -13208,11 +13194,11 @@
                             <td>Stemcell</td>
                             <td>
                               <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.stemcell || 'default').replace(/'/g, "\\'")}')"
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.stemcell || 'default'))))})"
                                         title="Copy to clipboard" aria-label="Copy stemcell">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                 </button>
-                                <span>${ig.stemcell || 'default'}</span>
+                                <span>${escapeHtml(String(ig.stemcell || 'default'))}</span>
                               </span>
                             </td>
                           </tr>
@@ -13226,7 +13212,7 @@
                             <label for="job-select-${manifestId}-${idx}">Select Job:</label>
                             <select id="job-select-${manifestId}-${idx}" class="job-select" data-group-index="${idx}">
                               ${jobs.map((job, jidx) =>
-        `<option value="${jidx}">${job.name} (${job.release || 'unknown release'})</option>`
+        `<option value="${jidx}">${escapeHtml(String(job.name))} (${escapeHtml(String(job.release || 'unknown release'))})</option>`
       ).join('')}
                             </select>
                           </div>
@@ -13239,7 +13225,7 @@
 
         return `
                                 <div class="job-pane ${jidx === 0 ? 'active' : ''}" data-job-index="${jidx}" data-group-index="${idx}">
-                                  <h6>Job: ${job.name}</h6>
+                                  <h6>Job: ${escapeHtml(String(job.name))}</h6>
                                   <table class="manifest-table">
                                     <thead>
                                       <tr>
@@ -13252,11 +13238,11 @@
                                         <td>Release</td>
                                         <td>
                                           <span class="copy-wrapper">
-                                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${(job.release || 'Not specified').replace(/'/g, "\\'")}')"
+                                            <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((job.release || 'Not specified'))))})"
                                                     title="Copy to clipboard" aria-label="Copy release">
                                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                             </button>
-                                            <span>${job.release || 'Not specified'}</span>
+                                            <span>${escapeHtml(String(job.release || 'Not specified'))}</span>
                                           </span>
                                         </td>
                                       </tr>
@@ -13265,10 +13251,10 @@
           const copyValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
           return `
                                         <tr>
-                                          <td><code>${key}</code></td>
+                                          <td><code>${escapeHtml(String(key))}</code></td>
                                           <td>
                                             <span class="copy-wrapper">
-                                              <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+                                              <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(copyValue)))})"
                                                       title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(key))}">
                                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                                               </button>
@@ -13296,7 +13282,7 @@
 
           <!-- Releases Tab -->
           ${releases.length > 0 ? `
-          <div class="manifest-tab-pane" data-tab="releases" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-releases" aria-labelledby="${tabGroupId}-tab-releases" class="manifest-tab-pane" data-tab="releases" data-group="${tabGroupId}" style="display: none;">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -13311,17 +13297,17 @@
                   <tr>
                     <td>
                       <span class="copy-wrapper">
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.name.replace(/'/g, "\\'")}')"
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.name)))})"
                                 title="Copy to clipboard" aria-label="Copy release name">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
-                        <span>${release.name}</span>
+                        <span>${escapeHtml(String(release.name))}</span>
                       </span>
                     </td>
                     <td>
                       <span class="copy-wrapper">
-                        <span>${release.version || 'latest'}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(release.version || 'latest').replace(/'/g, "\\'")}')"
+                        <span>${escapeHtml(String(release.version || 'latest'))}</span>
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((release.version || 'latest'))))})"
                                 title="Copy to clipboard" aria-label="Copy release version">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -13330,8 +13316,8 @@
                     <td>
                       ${release.url ? `
                         <span class="copy-wrapper">
-                          <a href="${release.url}" target="_blank" style="word-break: break-all;">${release.url}</a>
-                          <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.url.replace(/'/g, "\\'")}')"
+                          ${/^https?:\/\//i.test(String(release.url)) ? `<a href="${escapeAttribute(String(release.url))}" target="_blank" rel="noopener noreferrer" style="word-break: break-all;">${escapeHtml(String(release.url))}</a>` : escapeHtml(String(release.url))}
+                          <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.url)))})"
                                   title="Copy URL" aria-label="Copy release URL">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
@@ -13341,11 +13327,11 @@
                     <td>
                       ${release.sha1 && release.sha1 !== 'N/A' ? `
                         <span class="copy-wrapper">
-                          <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.sha1.replace(/'/g, "\\'")}')"
+                          <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.sha1)))})"
                                   title="Copy SHA1" aria-label="Copy release SHA1">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
-                          <code style="font-size: 0.8em;">${release.sha1}</code>
+                          <code style="font-size: 0.8em;">${escapeHtml(String(release.sha1))}</code>
                         </span>
                       ` : '<code style="font-size: 0.8em;">N/A</code>'}
                     </td>
@@ -13358,7 +13344,7 @@
 
           <!-- Stemcells Tab -->
           ${stemcells.length > 0 ? `
-          <div class="manifest-tab-pane" data-tab="stemcells" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-stemcells" aria-labelledby="${tabGroupId}-tab-stemcells" class="manifest-tab-pane" data-tab="stemcells" data-group="${tabGroupId}" style="display: none;">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -13372,8 +13358,8 @@
                   <tr>
                     <td>
                       <span class="copy-wrapper">
-                        <span>${stemcell.alias || 'default'}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.alias || 'default').replace(/'/g, "\\'")}')"
+                        <span>${escapeHtml(String(stemcell.alias || 'default'))}</span>
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((stemcell.alias || 'default'))))})"
                                 title="Copy to clipboard" aria-label="Copy stemcell alias">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -13381,8 +13367,8 @@
                     </td>
                     <td>
                       <span class="copy-wrapper">
-                        <span>${stemcell.os || 'Not specified'}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.os || 'Not specified').replace(/'/g, "\\'")}')"
+                        <span>${escapeHtml(String(stemcell.os || 'Not specified'))}</span>
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((stemcell.os || 'Not specified'))))})"
                                 title="Copy to clipboard" aria-label="Copy stemcell OS">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -13390,8 +13376,8 @@
                     </td>
                     <td>
                       <span class="copy-wrapper">
-                        <span>${stemcell.version || 'latest'}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${String(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
+                        <span>${escapeHtml(String(stemcell.version || 'latest'))}</span>
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(String(stemcell.version || 'latest'))))})"
                                 title="Copy to clipboard" aria-label="Copy stemcell version">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -13406,7 +13392,7 @@
 
           <!-- Features Tab -->
           ${Object.keys(features).length > 0 ? `
-          <div class="manifest-tab-pane" data-tab="features" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-features" aria-labelledby="${tabGroupId}-tab-features" class="manifest-tab-pane" data-tab="features" data-group="${tabGroupId}" style="display: none;">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -13417,7 +13403,7 @@
               <tbody>
                 ${Object.entries(features).map(([key, value]) => `
                   <tr>
-                    <td>${key}</td>
+                    <td>${escapeHtml(String(key))}</td>
                     <td>${formatValue(value)}</td>
                   </tr>
                 `).join('')}
@@ -13428,7 +13414,7 @@
 
           <!-- Update Tab -->
           ${Object.keys(update).length > 0 ? `
-          <div class="manifest-tab-pane" data-tab="update" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-update" aria-labelledby="${tabGroupId}-tab-update" class="manifest-tab-pane" data-tab="update" data-group="${tabGroupId}" style="display: none;">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -13439,7 +13425,7 @@
               <tbody>
                 ${Object.entries(update).map(([key, value]) => `
                   <tr>
-                    <td>${key}</td>
+                    <td>${escapeHtml(String(key))}</td>
                     <td>${formatValue(value)}</td>
                   </tr>
                 `).join('')}
@@ -13450,7 +13436,7 @@
 
           <!-- Variables Tab -->
           ${variables.length > 0 ? `
-          <div class="manifest-tab-pane" data-tab="variables" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-variables" aria-labelledby="${tabGroupId}-tab-variables" class="manifest-tab-pane" data-tab="variables" data-group="${tabGroupId}" style="display: none;">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -13462,9 +13448,9 @@
               <tbody>
                 ${variables.map(variable => `
                   <tr>
-                    <td>${variable.name}</td>
-                    <td>${variable.type || 'Not specified'}</td>
-                    <td>${variable.options ? `<pre style="margin: 0;">${JSON.stringify(variable.options, null, 2)}</pre>` : 'None'}</td>
+                    <td>${escapeHtml(String(variable.name))}</td>
+                    <td>${escapeHtml(String(variable.type || 'Not specified'))}</td>
+                    <td>${variable.options ? `<pre style="margin: 0;">${escapeHtml(String(JSON.stringify(variable.options, null, 2)))}</pre>` : 'None'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -13474,11 +13460,11 @@
 
           <!-- Addons Tab -->
           ${addons.length > 0 ? `
-          <div class="manifest-tab-pane" data-tab="addons" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-addons" aria-labelledby="${tabGroupId}-tab-addons" class="manifest-tab-pane" data-tab="addons" data-group="${tabGroupId}" style="display: none;">
             <div class="addons-list">
               ${addons.map((addon, idx) => `
                 <div class="addon-item">
-                  <h5>Addon ${idx + 1}: ${addon.name || 'Unnamed'}</h5>
+                  <h5>Addon ${idx + 1}: ${escapeHtml(String(addon.name || 'Unnamed'))}</h5>
                   ${addon.jobs ? `
                     <table class="manifest-table">
                       <thead>
@@ -13490,8 +13476,8 @@
                       <tbody>
                         ${addon.jobs.map(job => `
                           <tr>
-                            <td>${job.name}</td>
-                            <td>${job.release || 'Not specified'}</td>
+                            <td>${escapeHtml(String(job.name))}</td>
+                            <td>${escapeHtml(String(job.release || 'Not specified'))}</td>
                           </tr>
                         `).join('')}
                       </tbody>
@@ -13504,7 +13490,7 @@
           ` : ''}
 
           <!-- Manifest Tab -->
-          <div class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-manifest" aria-labelledby="${tabGroupId}-tab-manifest" class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}" style="display: none;">
             <div class="manifest-container">
               <div class="manifest-header">
                 <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
@@ -13512,7 +13498,7 @@
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
               </div>
-              <pre>${manifestData.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+              <pre>${escapeHtml(manifestData.text)}</pre>
             </div>
           </div>
         </div>
@@ -13526,7 +13512,7 @@
       if (instanceGroupSelect) {
         instanceGroupSelect.addEventListener('change', (e) => {
           const index = e.target.value;
-          const panes = document.querySelectorAll('.instance-group-pane');
+          const panes = instanceGroupSelect.closest('.manifest-details-container').querySelectorAll('.instance-group-pane');
           panes.forEach(pane => {
             if (pane.dataset.groupIndex === index) {
               pane.classList.add('active');
@@ -13540,12 +13526,12 @@
       }
 
       // Job selectors
-      const jobSelects = document.querySelectorAll('.job-select');
+      const jobSelects = document.querySelectorAll(`[data-group="${tabGroupId}"] .job-select`);
       jobSelects.forEach(select => {
         select.addEventListener('change', (e) => {
           const jobIndex = e.target.value;
           const groupIndex = e.target.dataset.groupIndex;
-          const panes = document.querySelectorAll(`.job-pane[data-group-index="${groupIndex}"]`);
+          const panes = select.closest('.manifest-details-container').querySelectorAll(`.job-pane[data-group-index="${groupIndex}"]`);
           panes.forEach(pane => {
             if (pane.dataset.jobIndex === jobIndex) {
               pane.classList.add('active');
@@ -13585,12 +13571,12 @@
       const originalTitle = button.title;
       button.title = 'Copied!';
       const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Copied!';
+      const originalText = spanElement?.textContent;
+      if (spanElement) spanElement.textContent = 'Copied!';
       setTimeout(() => {
         button.classList.remove('copied');
         button.title = originalTitle;
-        spanElement.textContent = originalText;
+        if (spanElement) spanElement.textContent = originalText;
       }, 2000);
     } catch (err) {
       console.error('Failed to copy manifest:', err);
@@ -13606,11 +13592,11 @@
         button.classList.add('copied');
         flashCopyIcon(button);
         const spanElement = button.querySelector('span');
-        const originalText = spanElement.textContent;
-        spanElement.textContent = 'Copied!';
+        const originalText = spanElement?.textContent;
+        if (spanElement) spanElement.textContent = 'Copied!';
         setTimeout(() => {
           button.classList.remove('copied');
-          spanElement.textContent = originalText;
+          if (spanElement) spanElement.textContent = originalText;
         }, 2000);
       } catch (err) {
         console.error('Fallback copy failed:', err);
@@ -13621,6 +13607,8 @@
 
   // Handler for blacksmith log file selection
   window.selectBlacksmithLogFile = async (logFilePath) => {
+    const refresh = beginDetailRefresh('blacksmith', 'blacksmith-logs');
+    if (!refresh?.current()) return;
     const displayContainer = document.getElementById('blacksmith-logs-display');
 
     if (!displayContainer) {
@@ -13629,7 +13617,7 @@
     }
 
     // Show loading state
-    displayContainer.innerHTML = '<div class="loading">Loading...</div>';
+    displayContainer.setAttribute('aria-busy', 'true');
 
     try {
       // Fetch the logs for the selected file with pagination
@@ -13639,6 +13627,7 @@
       }
 
       const data = await response.json();
+      if (!refresh.current()) return;
       const logs = data.logs;
 
       // Update pagination state
@@ -13684,15 +13673,42 @@
       setupLogsScrollListener();
 
     } catch (error) {
+      if (!refresh.current()) return;
       console.error('Failed to fetch log file:', error);
-      displayContainer.innerHTML = `<div class="error">Failed to load log file: ${error.message}</div>`;
+      refresh.error(`Unable to load selected log file: ${error.message}`);
+    } finally {
+      if (refresh.current()) displayContainer.removeAttribute('aria-busy');
     }
+  };
+
+  // Refreshes belong to the mounted entity/section that started them. A late
+  // response must never replace another section or a newer refresh result.
+  const detailRefreshRequests = new WeakMap();
+  const beginDetailRefresh = (owner, section, instanceId = null) => {
+    const panel = document.getElementById(owner);
+    const container = panel?.querySelector('.detail-content');
+    if (!container) return null;
+    const viewKey = mountedViews.get(container);
+    const request = (detailRefreshRequests.get(container) || 0) + 1;
+    detailRefreshRequests.set(container, request);
+    const current = () => container.isConnected && panel.classList.contains('active') &&
+      detailRefreshRequests.get(container) === request && mountedViews.get(container) === viewKey &&
+      (!instanceId || window.currentInstanceInfo?.id === instanceId) &&
+      (!panel.querySelector('.detail-tab.active') || panel.querySelector('.detail-tab.active').dataset.tab === section);
+    return {container, current, error(message) {
+      if (!current()) return;
+      let note = container.querySelector('.view-refresh-error');
+      if (!note) { note = document.createElement('p'); note.className = 'view-refresh-error error'; note.setAttribute('role', 'status'); container.prepend(note); }
+      note.textContent = `${message} Existing results are retained; use Refresh to retry.`;
+    }};
   };
 
   // Handler for refreshing blacksmith events
   window.refreshBlacksmithEvents = async (event) => {
+    const refresh = beginDetailRefresh('blacksmith', 'events');
+    if (!refresh?.current()) return;
     const button = event.currentTarget;
-    const displayContainer = document.querySelector('.events-table-container');
+    const displayContainer = document.querySelector('#blacksmith .events-table-container');
 
     if (!displayContainer) {
       console.error('Events container not found');
@@ -13717,20 +13733,22 @@
       }
 
       const events = await response.json();
+      if (!refresh.current()) return;
 
       if (!events || events.length === 0) {
         // Find the detail-content container and update it
-        const detailContent = document.querySelector('#blacksmith .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = '<div class="no-data">No events recorded</div>';
         }
       } else {
         // Update the detail-content with formatted events
-        const detailContent = document.querySelector('#blacksmith .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = formatEvents(events);
           // Re-initialize sorting and filtering
           setTimeout(() => {
+            if (!refresh.current()) return;
             initializeSorting('events-table');
             attachSearchFilter('events-table-events');
             // Restore search filter state
@@ -13742,19 +13760,23 @@
       // Visual feedback for successful refresh
       button.classList.add('success');
       const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
+      const originalText = spanElement?.textContent;
+      if (spanElement) spanElement.textContent = 'Refreshed!';
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('success');
-        spanElement.textContent = originalText;
+        if (spanElement) spanElement.textContent = originalText;
       }, 1000);
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error(`Refresh failed: ${error.message}`);
       console.error('Failed to refresh events:', error);
 
       // Visual feedback for error
       button.classList.add('error');
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('error');
       }, 2000);
     } finally {
@@ -13766,8 +13788,10 @@
 
   // Handler for refreshing blacksmith VMs
   window.refreshBlacksmithVMs = async (event) => {
+    const refresh = beginDetailRefresh('blacksmith', 'vms');
+    if (!refresh?.current()) return;
     const button = event && event.currentTarget || null;
-    const displayContainer = document.querySelector('.vms-table-container');
+    const displayContainer = document.querySelector('#blacksmith .vms-table-container');
 
     if (!displayContainer) {
       console.error('VMs container not found');
@@ -13794,20 +13818,22 @@
       }
 
       const vms = await response.json();
+      if (!refresh.current()) return;
 
       if (!vms || vms.length === 0) {
         // Find the detail-content container and update it
-        const detailContent = document.querySelector('#blacksmith .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = '<div class="no-data">No VMs available</div>';
         }
       } else {
         // Update the detail-content with formatted VMs
-        const detailContent = document.querySelector('#blacksmith .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = formatVMs(vms);
           // Re-initialize sorting and filtering
           setTimeout(() => {
+            if (!refresh.current()) return;
             initializeSorting('vms-table');
             attachSearchFilter('vms-table');
             // Restore search filter state
@@ -13826,19 +13852,23 @@
           const originalText = spanElement.textContent;
           spanElement.textContent = 'Refreshed!';
           setTimeout(() => {
+            if (!refresh.current()) return;
             button.classList.remove('success');
-            spanElement.textContent = originalText;
+            if (spanElement) spanElement.textContent = originalText;
           }, 1000);
         }
       }
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error(`Refresh failed: ${error.message}`);
       console.error('Failed to refresh VMs:', error);
 
       // Visual feedback for error (if button exists)
       if (button) {
         button.classList.add('error');
         setTimeout(() => {
+            if (!refresh.current()) return;
           button.classList.remove('error');
         }, 2000);
       }
@@ -13853,8 +13883,10 @@
 
   // Handler for refreshing service instance VMs
   window.refreshServiceInstanceVMs = async (instanceId, event) => {
+    const refresh = beginDetailRefresh('services', 'vms', instanceId);
+    if (!refresh?.current()) return;
     const button = event && event.currentTarget || null;
-    const displayContainer = document.querySelector('.vms-table-container');
+    const displayContainer = document.querySelector('#services .vms-table-container');
 
     if (!displayContainer) {
       console.error('Service VMs container not found');
@@ -13878,27 +13910,29 @@
       }
 
       const text = await response.text();
+      if (!refresh.current()) return;
       let vms;
       try {
         vms = JSON.parse(text);
       } catch (e) {
-        displayContainer.parentElement.parentElement.innerHTML = `<pre>${text}</pre>`;
+        displayContainer.parentElement.parentElement.innerHTML = `<pre>${escapeHtml(text)}</pre>`;
         return;
       }
 
       if (!vms || vms.length === 0) {
         // Find the detail-content container and update it
-        const detailContent = document.querySelector('#services .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = '<div class="no-data">No VMs available</div>';
         }
       } else {
         // Update the detail-content with formatted VMs
-        const detailContent = document.querySelector('#services .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = formatVMs(vms, instanceId);
           // Re-initialize sorting and filtering
           setTimeout(() => {
+            if (!refresh.current()) return;
             initializeSorting('vms-table');
             attachSearchFilter('vms-table');
             // Restore search filter state
@@ -13915,19 +13949,23 @@
           const originalText = spanElement.textContent;
           spanElement.textContent = 'Refreshed!';
           setTimeout(() => {
+            if (!refresh.current()) return;
             button.classList.remove('success');
-            spanElement.textContent = originalText;
+            if (spanElement) spanElement.textContent = originalText;
           }, 1000);
         }
       }
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error(`Refresh failed: ${error.message}`);
       console.error('Failed to refresh service VMs:', error);
 
       // Visual feedback for error (if button exists)
       if (button) {
         button.classList.add('error');
         setTimeout(() => {
+            if (!refresh.current()) return;
           button.classList.remove('error');
         }, 2000);
       }
@@ -13943,10 +13981,12 @@
 
   // Handler for refreshing service instance deployment logs
   window.refreshServiceInstanceDeploymentLog = async (instanceId, event) => {
+    const refresh = beginDetailRefresh('services', 'logs', instanceId);
+    if (!refresh?.current()) return;
     const button = event.currentTarget;
 
     // Find the detail-content container - this is what we need to update
-    const detailContent = document.querySelector('#services .detail-content');
+    const detailContent = refresh.container;
     if (!detailContent) {
       console.error('Detail content container not found');
       return;
@@ -13967,6 +14007,7 @@
       }
 
       const text = await response.text();
+      if (!refresh.current()) return;
       let logs;
       try {
         logs = JSON.parse(text);
@@ -13982,6 +14023,7 @@
         detailContent.innerHTML = formatDeploymentLog(logs, instanceId);
         // Re-initialize sorting and filtering
         setTimeout(() => {
+            if (!refresh.current()) return;
           initializeSorting('deployment-log-table');
           attachSearchFilter('deployment-log-table');
           // Restore search filter state
@@ -13992,19 +14034,23 @@
       // Visual feedback for successful refresh
       button.classList.add('success');
       const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
+      const originalText = spanElement?.textContent;
+      if (spanElement) spanElement.textContent = 'Refreshed!';
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('success');
-        spanElement.textContent = originalText;
+        if (spanElement) spanElement.textContent = originalText;
       }, 1000);
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error(`Refresh failed: ${error.message}`);
       console.error('Failed to refresh service deployment logs:', error);
 
       // Visual feedback for error
       button.classList.add('error');
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('error');
       }, 2000);
     } finally {
@@ -14017,10 +14063,12 @@
 
   // Handler for refreshing service instance debug logs
   window.refreshServiceInstanceDebugLog = async (instanceId, event) => {
+    const refresh = beginDetailRefresh('services', 'debug', instanceId);
+    if (!refresh?.current()) return;
     const button = event.currentTarget;
 
     // Find the detail-content container - this is what we need to update
-    const detailContent = document.querySelector('#services .detail-content');
+    const detailContent = refresh.container;
     if (!detailContent) {
       console.error('Detail content container not found');
       return;
@@ -14041,6 +14089,7 @@
       }
 
       const text = await response.text();
+      if (!refresh.current()) return;
       let logs;
       try {
         logs = JSON.parse(text);
@@ -14056,6 +14105,7 @@
         detailContent.innerHTML = formatDebugLog(logs, instanceId);
         // Re-initialize sorting and filtering
         setTimeout(() => {
+            if (!refresh.current()) return;
           initializeSorting('debug-log-table');
           attachSearchFilter('debug-log-table');
           // Restore search filter state
@@ -14066,19 +14116,23 @@
       // Visual feedback for successful refresh
       button.classList.add('success');
       const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
+      const originalText = spanElement?.textContent;
+      if (spanElement) spanElement.textContent = 'Refreshed!';
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('success');
-        spanElement.textContent = originalText;
+        if (spanElement) spanElement.textContent = originalText;
       }, 1000);
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error(`Refresh failed: ${error.message}`);
       console.error('Failed to refresh service debug logs:', error);
 
       // Visual feedback for error
       button.classList.add('error');
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('error');
       }, 2000);
     } finally {
@@ -14090,6 +14144,8 @@
 
   // Handler for refreshing service instance events
   window.refreshServiceInstanceEvents = async (instanceId, event) => {
+    const refresh = beginDetailRefresh('services', 'events', instanceId);
+    if (!refresh?.current()) return;
     const button = event.currentTarget;
     const displayContainer = document.querySelector('#services .detail-content .events-table-container');
 
@@ -14113,27 +14169,29 @@
       }
 
       const text = await response.text();
+      if (!refresh.current()) return;
       let events;
       try {
         events = JSON.parse(text);
       } catch (e) {
-        displayContainer.parentElement.innerHTML = `<pre>${text}</pre>`;
+        displayContainer.parentElement.innerHTML = `<pre>${escapeHtml(text)}</pre>`;
         return;
       }
 
       if (!events || events.length === 0) {
         // Find the detail-content container and update it
-        const detailContent = document.querySelector('#services .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = '<div class="no-data">No events recorded</div>';
         }
       } else {
         // Update the detail-content with formatted events
-        const detailContent = document.querySelector('#services .detail-content');
+        const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = formatEvents(events, 'service-events', instanceId);
           // Re-initialize sorting and filtering
           setTimeout(() => {
+            if (!refresh.current()) return;
             initializeSorting('events-table');
             attachSearchFilter('events-table-service-events');
             // Restore search filter state
@@ -14145,19 +14203,23 @@
       // Visual feedback for successful refresh
       button.classList.add('success');
       const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
+      const originalText = spanElement?.textContent;
+      if (spanElement) spanElement.textContent = 'Refreshed!';
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('success');
-        spanElement.textContent = originalText;
+        if (spanElement) spanElement.textContent = originalText;
       }, 1000);
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error(`Refresh failed: ${error.message}`);
       console.error('Failed to refresh service events:', error);
 
       // Visual feedback for error
       button.classList.add('error');
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('error');
       }, 2000);
     } finally {
@@ -14169,6 +14231,8 @@
 
   // Handler for refreshing blacksmith logs
   window.refreshBlacksmithLogs = async (event) => {
+    const refresh = beginDetailRefresh('blacksmith', 'blacksmith-logs');
+    if (!refresh?.current()) return;
     const button = event.currentTarget;
     const logFileDropdown = document.getElementById('blacksmith-log-select');
     const displayContainer = document.getElementById('blacksmith-logs-display');
@@ -14196,6 +14260,7 @@
       }
 
       const data = await response.json();
+      if (!refresh.current()) return;
       const logs = data.logs;
 
       // Update pagination state
@@ -14243,16 +14308,20 @@
       // Visual feedback for successful refresh
       button.classList.add('success');
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('success');
       }, 1000);
 
     } catch (error) {
+      if (!refresh.current()) return;
+      refresh.error(`Refresh failed: ${error.message}`);
       console.error('Failed to refresh logs:', error);
-      displayContainer.innerHTML = `<div class="error">Failed to refresh logs: ${error.message}</div>`;
+
 
       // Visual feedback for error
       button.classList.add('error');
       setTimeout(() => {
+            if (!refresh.current()) return;
         button.classList.remove('error');
       }, 2000);
     } finally {
@@ -14273,6 +14342,9 @@
     const loadMoreEl = document.getElementById('logs-load-more');
     if (!displayContainer) return;
 
+    const selectedFile = pagination.currentFile;
+    const current = () => displayContainer.isConnected && window.blacksmithLogsPagination === pagination && pagination.currentFile === selectedFile && document.querySelector('#blacksmith .detail-tab.active')?.dataset.tab === 'blacksmith-logs';
+
     // Set loading state
     pagination.isLoading = true;
     if (loadMoreEl) {
@@ -14289,6 +14361,7 @@
       }
 
       const data = await response.json();
+      if (!current()) return;
       const newLogs = data.logs;
 
       if (newLogs && newLogs !== '') {
@@ -14343,9 +14416,10 @@
         }
       }
     } catch (error) {
+      if (!current()) return;
       console.error('Failed to load more logs:', error);
       if (loadMoreEl) {
-        loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Failed to load: ${error.message}</span>`;
+        loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Failed to load: ${escapeHtml(error.message)}</span>`;
       }
     } finally {
       pagination.isLoading = false;
@@ -14453,7 +14527,8 @@
         e.preventDefault();
         const tabId = button.dataset.tab;
         if (tabId) {
-          switchTab(tabId).catch((error) => console.error('Tab switch failed:', error));
+          const route = window.blacksmithViews?.read(tabId);
+          (window.blacksmithRouter && route ? window.blacksmithRouter.navigate(route) : switchTab(tabId)).catch((error) => console.error('Tab switch failed:', error));
         }
       });
     });
@@ -14638,11 +14713,23 @@
 
         // One awaited selection path for pointer, keyboard and quick navigation.
         let instanceSelectionSequence = 0;
+        const instanceShells = new Map();
+        let mountedInstance = null;
+        const trimInstanceShells=()=>{if(instanceShells.size<=8)return;for(const [id,cached] of instanceShells){if(cached.fragment.querySelector('[data-has-draft="true"]'))continue;instanceShells.delete(id);for(const key of retainedViews.keys()){let parts;try{parts=JSON.parse(key);}catch(_){continue;}if(parts[1]===id)retainedViews.delete(key);}if(instanceShells.size<=8)break;}};
         window.navigateToInstance = async (instanceId, signal) => {
           const item = window.serviceInstanceElements?.get(instanceId);
           const details = window.serviceInstances?.[instanceId];
           if (!item || !details) return false;
           const selection = ++instanceSelectionSequence;
+          const detailHost = document.querySelector('#services .service-detail');
+          if (mountedInstance === instanceId && detailHost?.querySelector('.entity-workspace')) { servicesPanel.classList.add('instance-open'); return true; }
+          if (instanceShells.has(instanceId)) {
+            if (mountedInstance) { const fragment = document.createDocumentFragment(); while(detailHost.firstChild) fragment.appendChild(detailHost.firstChild); instanceShells.set(mountedInstance,{fragment,info:window.currentInstanceInfo,context:captureInspectionContext()}); }
+            const cached = instanceShells.get(instanceId); instanceShells.delete(instanceId);
+            detailHost.replaceChildren(cached.fragment); restoreInspectionContext(cached.context); window.currentInstanceInfo=cached.info; mountedInstance=instanceId;
+            servicesPanel.classList.add('instance-open'); window.serviceInstanceElements.forEach((node,id)=>node.classList.toggle('active',id===instanceId));
+            return true;
+          }
           // Fetch vault data for the instance
           let vaultData = null;
           try {
@@ -14672,7 +14759,10 @@
           }
 
           if (signal?.aborted || selection !== instanceSelectionSequence || window.serviceInstanceElements?.get(instanceId) !== item) return false;
-          window.revealServiceInstance?.(instanceId);
+          if (mountedInstance && detailHost) { const fragment=document.createDocumentFragment(); while(detailHost.firstChild) fragment.appendChild(detailHost.firstChild); instanceShells.set(mountedInstance,{fragment,info:window.currentInstanceInfo,context:captureInspectionContext()}); }
+          mountedInstance = instanceId;
+          trimInstanceShells();
+          // Keep the collection's filtered page and scroll while inspecting a result.
 
           // Store current instance info globally for log selection
           window.currentInstanceInfo = {
@@ -14701,7 +14791,7 @@
         const setupServiceHandlers = () => {
           window.serviceInstanceElements = new Map([...document.querySelectorAll('#services .service-item')].map(item => [item.dataset.instanceId,item]));
           document.querySelectorAll('#services .service-item').forEach(item => {
-            item.addEventListener('click', () => window.navigateToInstance(item.dataset.instanceId));
+            item.addEventListener('click', () => window.blacksmithRouter ? window.blacksmithRouter.navigate({screen:'services',instance:item.dataset.instanceId,section:'details'}) : window.navigateToInstance(item.dataset.instanceId));
           });
           setupFilterHandlers();
         };
@@ -15135,6 +15225,7 @@
           document.querySelectorAll('#services .detail-tab').forEach(tab => {
             tab.addEventListener('click', function () {
               const tabType = this.dataset.tab;
+              if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:'services',instance:instanceId,section:tabType}); return; }
 
               // Update active state
               document.querySelectorAll('#services .detail-tab').forEach(t => t.classList.remove('active'));
@@ -15151,6 +15242,7 @@
         const loadDetailTab = async (instanceId, tabType) => {
           const request = ++detailRequestSequence;
           const contentContainer = document.querySelector('#services .detail-content');
+          if (retainView(contentContainer, JSON.stringify(['instance',instanceId,tabType]))) return;
           contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
           // Handle the Details tab
@@ -15159,13 +15251,15 @@
             return;
           }
 
-          const content = await fetchServiceDetail(instanceId, tabType);
+          const content = await fetchServiceDetail(instanceId, tabType, () => request === detailRequestSequence && contentContainer.isConnected && window.currentInstanceInfo?.id === instanceId);
           if (request !== detailRequestSequence || !contentContainer.isConnected || window.currentInstanceInfo?.id !== instanceId) return;
           contentContainer.innerHTML = content;
           mountLogNotice(contentContainer);
 
           // Initialize sorting and filtering for tables
-          setTimeout(() => {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (request !== detailRequestSequence || !contentContainer.isConnected || window.currentInstanceInfo?.id !== instanceId) return;
+          {
             if (tabType === 'events') {
               initializeSorting('events-table');
               attachSearchFilter('events-table-service-events');
@@ -15194,8 +15288,10 @@
                 });
               }
             } else if (tabType === 'testing') {
+              const operationContent=document.getElementById(`operation-content-${instanceId}`);
+              if(operationContent)mountedViews.set(operationContent,JSON.stringify(['testing',instanceId,'test']));
               // Set up operation tab switching for service testing
-              setTimeout(() => {
+              {
                 document.querySelectorAll('.operation-tab').forEach(tab => {
                   tab.addEventListener('click', function () {
                     const operation = this.dataset.operation;
@@ -15205,10 +15301,10 @@
                     }
                   });
                 });
-              }, 50);
+              }
             } else if (tabType === 'certificates') {
               // Set up tab switching for service instance certificates
-              setTimeout(() => {
+              {
                 bindCertificateActions(document, {
                   'fetch-manifest': (id) => window.fetchManifestCertificates(id),
                   'fetch-vm': (id) => window.fetchServiceVMCertificates(id),
@@ -15218,10 +15314,13 @@
                   label: 'Service certificate sources'
                 });
                 CertOverview.mountInstance(document.getElementById(`service-cert-overview-${instanceId}`), instanceId);
-              }, 100);
+              }
             }
-          }, 100);
+          }
         };
+
+        window.loadInstanceSection = loadDetailTab;
+        window.cancelInstanceSection = () => { detailRequestSequence++; instanceSelectionSequence++; };
 
         setupServiceHandlers();
       }
@@ -15231,6 +15330,7 @@
         document.querySelectorAll('#blacksmith .detail-tab').forEach(tab => {
           tab.addEventListener('click', function () {
             const tabType = this.dataset.tab;
+            if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:'blacksmith',section:tabType}); return; }
 
             // Update active state
             document.querySelectorAll('#blacksmith .detail-tab').forEach(t => t.classList.remove('active'));
@@ -15246,6 +15346,7 @@
       const loadBlacksmithDetailTab = async (tabType) => {
         const request = ++blacksmithRequestSequence;
         const contentContainer = document.querySelector('#blacksmith .detail-content');
+        if (retainView(contentContainer, JSON.stringify(['broker',tabType]))) return;
         // Clean up any special layout classes
         contentContainer.classList.remove('plans-view');
         contentContainer.innerHTML = '<div class="loading">Loading...</div>';
@@ -15277,6 +15378,7 @@
                 item.addEventListener('click', function () {
                   const selectedService = window.plansData?.services?.[this.dataset.serviceIndex];
                   const selectedPlan = selectedService?.plans?.[this.dataset.planIndex];
+                  if (window.blacksmithRouter && selectedService && selectedPlan) { window.blacksmithRouter.navigate({screen:'blacksmith',section:'plans',service:selectedService.id,plan:selectedPlan.id}); return; }
 
                   if (selectedService && selectedPlan) {
                     // Update active plan selection
@@ -15302,9 +15404,7 @@
             contentContainer.innerHTML = renderBrokerTab();
 
             // Initialize broker functionality after content is rendered
-            setTimeout(() => {
-              if (request === blacksmithRequestSequence) initBrokerTab();
-            }, 50);
+            if (request === blacksmithRequestSequence) await initBrokerTab();
             return;
           }
 
@@ -15312,13 +15412,14 @@
           // This should already be available from the initial blacksmith status load
           const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
 
-          const content = await fetchBlacksmithDetail(deploymentName, tabType);
+          const content = await fetchBlacksmithDetail(deploymentName, tabType, () => request === blacksmithRequestSequence);
           if (request !== blacksmithRequestSequence) return;
           contentContainer.innerHTML = content;
           mountLogNotice(contentContainer);
 
           // Initialize sorting and filtering for tables
-          setTimeout(() => {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          {
             if (request !== blacksmithRequestSequence) return;
             if (tabType === 'events') {
               initializeSorting('events-table');
@@ -15354,7 +15455,7 @@
               attachSearchFilter('configs-table');
               initializeConfigsTab();
             }
-          }, 100);
+          }
         } catch (error) {
           if (request !== blacksmithRequestSequence) return;
           contentContainer.innerHTML = `<div class="error">Failed to load tab: ${error.message}</div>`;
@@ -15404,6 +15505,86 @@
         // Set up Blacksmith detail tab handlers
         setupBlacksmithDetailTabHandlers();
       }
+
+      const readRoute = (screen = document.querySelector('.tab-panel.active')?.id || 'blacksmith') => {
+        if (screen === 'upgrade') {
+          const activity = document.getElementById('batch-activity')?.getAttribute('aria-pressed') === 'true';
+          return activity ? {screen,view:'activity',...(selectedTaskId ? {task:selectedTaskId} : {})} : {screen,view:'new',operation:upgradeOperation,step:batchFlow.step||0};
+        }
+        if(screen === 'certificates') return {screen};
+        const route={screen};
+        if(screen==='services') {if(!document.getElementById('services').classList.contains('instance-open')) return route;route.instance=window.currentInstanceInfo?.id;}
+        route.section=document.querySelector(`#${screen} .detail-tab.active`)?.dataset.tab||'details';
+        if(route.section==='plans') {const item=document.querySelector('#blacksmith .plan-item.active');if(item){const svc=window.plansData?.services?.[item.dataset.serviceIndex];const plan=svc?.plans?.[item.dataset.planIndex];if(svc&&plan){route.service=svc.id;route.plan=plan.id;}}}
+        const content=document.querySelector(`#${screen} .detail-content`);
+        const sub=content?.querySelector('.manifest-tabs-nav .manifest-tab-btn.active, .broker-tab-btn.active, .operation-tab.active');
+        if(sub) route.subview=sub.dataset.tab||sub.dataset.cftab||sub.dataset.operation;
+        if(route.section==='broker' && window.CFEndpointManager?.selectedEndpoint)route.endpoint=window.CFEndpointManager.selectedEndpoint;
+        return route;
+      };
+      let notifyQueued=false;
+      const panelContexts=new Map();
+      window.blacksmithViews={read:readRoute,notify(){if(notifyQueued)return;notifyQueued=true;queueMicrotask(()=>{notifyQueued=false;window.blacksmithRouter?.record(readRoute());});},
+        async activate(route,{signal,history:restoring}={}) {
+          if(route.screen!=='upgrade'||route.view!=='activity')selectedTaskRevision++;
+          if(batchFlow.submitting)throw new Error('Wait for the operation submission to finish before navigating.');
+          const finish = async destination => {
+            if (signal?.aborted) return null;
+            if (route.inspection) {
+              const item = route.inspection;
+              if (item.kind === 'task') await window.showTaskDetails(Number(item.id));
+              else if (item.kind === 'config') await window.showConfigVersions(item.type, item.name, item.id);
+              else if (item.kind === 'certificate') await window.blacksmithCerts.openItem(item.id, {signal});
+            }
+            return signal?.aborted ? null : destination;
+          };
+          const inspection=window.blacksmithRouter?.current?.inspection;
+          if(inspection&&JSON.stringify(inspection)!==JSON.stringify(route.inspection)){if(inspection.kind==='task')window.hideTaskDetailsModal();else if(inspection.kind==='config')window.hideConfigVersionsModal();else if(inspection.kind==='certificate')window.blacksmithCerts.closeDrawer({restore:false});}
+          const oldScreen=document.querySelector('.tab-panel.active')?.id;
+          if(oldScreen!==route.screen){panelContexts.set(oldScreen,captureInspectionContext());restoreInspectionContext(panelContexts.get(route.screen));}
+          blacksmithRequestSequence++;window.cancelInstanceSection?.();
+          if(signal?.aborted)return null;
+          if(await switchTab(route.screen)===false||signal?.aborted)return null;
+          const selected=(screen,section)=>document.querySelectorAll(`#${screen} .detail-tab`).forEach(tab=>{const on=tab.dataset.tab===section;tab.classList.toggle('active',on);tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
+          if(route.screen==='blacksmith') {selected('blacksmith',route.section||'details');await loadBlacksmithDetailTab(route.section||'details');}
+          if(route.screen==='services') {
+            if(!route.instance){document.getElementById('services').classList.remove('instance-open');return finish(route);}
+            if(!await window.navigateToInstance(route.instance,signal))throw new Error('This service instance is no longer available.');
+            if(signal?.aborted)return null;selected('services',route.section||'details');await window.loadInstanceSection(route.instance,route.section||'details');
+          }
+          if(signal?.aborted)return null;
+          if(route.plan) {
+            const svc=window.plansData?.services?.find(s=>s.id===route.service), plan=svc?.plans?.find(p=>p.id===route.plan);
+            if(!svc||!plan)throw new Error('This service plan is no longer available.');
+            document.querySelectorAll('#blacksmith .plan-item').forEach(item=>item.classList.toggle('active',window.plansData.services[item.dataset.serviceIndex]===svc&&svc.plans[item.dataset.planIndex]===plan));
+            document.querySelector('#blacksmith .plan-detail').innerHTML=renderPlanDetail(svc,plan);
+            document.querySelector('#blacksmith .plans-view')?.classList.add('plan-selected');
+          }
+          if(route.screen==='blacksmith'&&route.section==='plans'&&!route.plan){document.querySelector('#blacksmith .plans-view')?.classList.remove('plan-selected');document.querySelectorAll('#blacksmith .plan-item').forEach(item=>item.classList.remove('active'));const detail=document.querySelector('#blacksmith .plan-detail');if(detail)detail.innerHTML='<p class="no-selection">Select a service plan to inspect its configuration and instance limits.</p>';}
+          if(route.screen==='upgrade') {
+            if(batchFlow.submitting)throw new Error('The operation is being submitted. Wait for its task before navigating.');
+            if(route.view==='activity'){setBatchView('activity');if(route.task){if(!await selectUpgradeTask(route.task,{throwOnError:true}))return null;}else{selectedTaskId=null;renderUpgradeTaskList();}return finish(route);}
+            setBatchView('new');
+            if(route.operation&&route.operation!==upgradeOperation){if(restoring){announce('This operation draft is no longer available. Review the current draft.');return readRoute('upgrade');}await requestOperation(route.operation);}
+            if(route.rotation){if(!await openBatchOperation(route.operation,signal,route.rotation))return null;}
+            let step=Math.min(route.step||0,Math.max(1,batchFlow.furthest||0));
+            if(step>=2&&batchOptionIssue())step=1;
+            if(step>=3){step=2;announce('Review the selected instances, then prepare a fresh confirmation.');}
+            setBatchStep(step,false);return finish({...route,operation:upgradeOperation,step});
+          }
+          if(route.endpoint&&route.section==='broker'){if(!await window.CFEndpointManager?.selectEndpoint(route.endpoint))throw new Error('This endpoint is no longer available.');}
+          if(route.subview) {
+            const content=document.querySelector(`#${route.screen} .detail-content`);let handled=false;
+            for(const group of content?.querySelectorAll('[role="tablist"]')||[])if(group.blacksmithSelect?.(route.subview)){handled=true;break;}
+            if(route.section==='manifest')handled=selectManifestView(content?.querySelector('.manifest-details-container'),route.subview);
+            if(route.section==='testing'){handled=window.switchTestingOperation(route.instance,route.subview)!==false;}
+            if(route.section==='broker'&&['marketplace','services'].includes(route.subview)){await switchCFDetailTab(route.subview);handled=true;}
+            if(!handled)throw new Error('This detail view is not available for the selected resource.');
+          }
+          if(signal?.aborted)return null;return finish(route);
+        }
+      };
+      document.dispatchEvent(new CustomEvent('blacksmith:ready'));
 
     } catch (error) {
       console.error('Error loading data:', error);
@@ -15587,11 +15768,11 @@
     CertOverview.mountBroker(document.getElementById('cert-broker-overview'));
 
     // Set up tab switching for certificates tabs
-    setTimeout(() => {
+    {
       window.blacksmithTabs.bind(document.getElementById('cert-main-tablist'), {
         label: 'Certificate sources'
       });
-    }, 100);
+    }
   };
 
   // Initialize tasks tab functionality
@@ -15659,6 +15840,7 @@
 
   // Populate task filter dropdown with filter options
   const populateTaskFilter = async (preserveSelection = null) => {
+    const taskFilter = document.getElementById('task-filter');
     try {
       const response = await fetch('/b/service-filter-options', { cache: 'no-cache' });
       if (!response.ok) {
@@ -15667,7 +15849,7 @@
       }
 
       const data = await response.json();
-      const taskFilter = document.getElementById('task-filter');
+      if (!taskFilter?.isConnected || document.getElementById('task-filter') !== taskFilter) return;
 
       if (taskFilter && data && data.options && Array.isArray(data.options)) {
         // Save current selection if not provided
@@ -15699,6 +15881,9 @@
 
   // Refresh tasks table
   const refreshTasksTable = async () => {
+    const refresh = beginDetailRefresh('blacksmith', 'tasks');
+    if (!refresh?.current()) return;
+    const currentSearchFilter = captureSearchFilterState('tasks-table');
     const typeFilter = document.getElementById('task-type-filter');
     const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked');
     const taskFilter = document.getElementById('task-filter');
@@ -15726,15 +15911,18 @@
       }
 
       const tasks = await response.json();
-      const contentContainer = document.querySelector('#blacksmith .detail-content');
+      if (!refresh.current()) return;
+      const contentContainer = refresh.container;
 
       if (contentContainer) {
         contentContainer.innerHTML = formatTasks(tasks);
 
         // Restore filter states after refresh
         setTimeout(async () => {
+          if (!refresh.current()) return;
           // First repopulate the task filter dropdown since formatTasks() recreated the HTML
           await populateTaskFilter(taskFilterValue);
+          if (!refresh.current()) return;
 
           // Restore dropdown selections
           const newTypeFilter = document.getElementById('task-type-filter');
@@ -15777,15 +15965,12 @@
           // Reinitialize functionality
           initializeSorting('tasks-table');
           attachSearchFilter('tasks-table');
+          restoreSearchFilterState('tasks-table', currentSearchFilter);
           // Don't call initializeTasksTab() again - it would repopulate the dropdown
         }, 50);
       }
     } catch (error) {
-      console.error('Failed to refresh tasks:', error);
-      const contentContainer = document.querySelector('#blacksmith .detail-content');
-      if (contentContainer) {
-        contentContainer.innerHTML = `<div class="error">Failed to load tasks: ${error.message}</div>`;
-      }
+      refresh.error(`Refresh failed: ${error.message}`);
     }
   };
 
@@ -15835,6 +16020,9 @@
 
   // Refresh configs table
   const refreshConfigsTable = async () => {
+    const refresh = beginDetailRefresh('blacksmith', 'configs');
+    if (!refresh?.current()) return;
+    const currentSearchFilter = captureSearchFilterState('configs-table');
     console.log('Refreshing configs table');
 
     const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]:checked');
@@ -15852,24 +16040,23 @@
       }
 
       const configs = await response.json();
-      const contentContainer = document.querySelector('#blacksmith .detail-content');
+      if (!refresh.current()) return;
+      const contentContainer = refresh.container;
 
       if (contentContainer) {
         contentContainer.innerHTML = formatConfigs(configs);
 
         // Reinitialize functionality
         setTimeout(() => {
+          if (!refresh.current()) return;
           initializeSorting('configs-table');
           attachSearchFilter('configs-table');
+          restoreSearchFilterState('configs-table', currentSearchFilter);
           initializeConfigsTab();
         }, 100);
       }
     } catch (error) {
-      console.error('Failed to refresh configs:', error);
-      const contentContainer = document.querySelector('#blacksmith .detail-content');
-      if (contentContainer) {
-        contentContainer.innerHTML = `<div class="error">Failed to load configs: ${error.message}</div>`;
-      }
+      refresh.error(`Refresh failed: ${error.message}`);
     }
   };
 
@@ -15893,8 +16080,16 @@
     });
   };
 
+  let taskInspectionRevision = 0;
+  let configInspectionRevision = 0;
+
   // Show task details modal
   window.showTaskDetails = async (taskId, event) => {
+    if (window.blacksmithRouter && !window.blacksmithRouter.applying) {
+      event?.preventDefault();
+      return window.blacksmithRouter.inspect({kind: 'task', id: String(taskId)});
+    }
+    const inspectionRevision = ++taskInspectionRevision;
     if (event) {
       event.preventDefault();
     }
@@ -15917,34 +16112,16 @@
                 <div id="task-details-loading" class="loading">Loading task details...</div>
                 <div id="task-details-content" class="task-details-content" style="display: none;">
                   <div class="task-summary task-summary-section">
-                    <div class="task-info-table task-summary-card">
-                      <table class="task-details-table">
-                        <thead>
-                          <tr>
-                            <th>State</th>
-                            <th>Description</th>
-                            <th>Deployment</th>
-                            <th>User</th>
-                            <th>Context ID</th>
-                            <th>Started</th>
-                            <th>Finished</th>
-                            <th>Duration</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            <td id="task-state-badge"></td>
-                            <td id="task-description"></td>
-                            <td id="task-deployment"></td>
-                            <td id="task-user"></td>
-                            <td id="task-context-id"></td>
-                            <td id="task-started"></td>
-                            <td id="task-finished"></td>
-                            <td id="task-duration"></td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
+                    <dl class="task-summary-facts">
+                      <div><dt>State</dt><dd id="task-state-badge"></dd></div>
+                      <div class="task-fact-description"><dt>Description</dt><dd id="task-description"></dd></div>
+                      <div class="task-fact-deployment"><dt>Deployment</dt><dd id="task-deployment"></dd></div>
+                      <div><dt>Started</dt><dd id="task-started"></dd></div>
+                      <div><dt>Finished</dt><dd id="task-finished"></dd></div>
+                      <div><dt>Duration</dt><dd id="task-duration"></dd></div>
+                      <div><dt>User</dt><dd id="task-user"></dd></div>
+                      <div><dt>Context ID</dt><dd id="task-context-id"></dd></div>
+                    </dl>
                   </div>
 
                   <div class="manifest-tabs-nav task-tabs-nav">
@@ -16022,6 +16199,7 @@
 
     // Load task details
     await loadTaskDetails(taskId);
+    if (inspectionRevision !== taskInspectionRevision || !modal.classList.contains('active')) return;
 
     // Set up auto-refresh for running tasks
     startTaskModalAutoRefresh();
@@ -16029,6 +16207,8 @@
 
   // Hide task details modal
   window.hideTaskDetailsModal = () => {
+    if (window.blacksmithRouter?.current?.inspection?.kind === 'task' && !window.blacksmithRouter.applying) return window.blacksmithRouter.closeInspection();
+    taskInspectionRevision++;
     const modal = document.getElementById('task-details-modal');
     if (modal) {
       const activeElement = document.activeElement;
@@ -16055,6 +16235,37 @@
     window.taskDetailsPreviousFocus = null;
 
     window.currentTaskId = null;
+  };
+
+  // Retain inspection choices only; never cache configuration contents or credentials.
+  const configInspectionStates = new Map();
+  const configInspectionKey = (type, name) => JSON.stringify([type, name]);
+  const rememberConfigInspection = () => {
+    const info = window.currentConfigInfo;
+    if (!info) return;
+    const modal = document.getElementById('config-details-modal');
+    const key = configInspectionKey(info.type, info.name);
+    configInspectionStates.delete(key);
+    configInspectionStates.set(key, {
+      version: modal?.querySelector('.version-item.selected')?.dataset.versionId,
+      tab: modal?.querySelector('.manifest-tab-btn.active')?.dataset.tab || 'versions',
+      diff: modal?.querySelector('#diff-version-selector')?.value || ''
+    });
+    while (configInspectionStates.size > 30) configInspectionStates.delete(configInspectionStates.keys().next().value);
+  };
+  const selectConfigInspectionTab = tabName => {
+    const modal = document.getElementById('config-details-modal');
+    modal?.querySelectorAll('.manifest-tab-btn').forEach(button => {
+      const active = button.dataset.tab === tabName;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+    modal?.querySelectorAll('.manifest-tab-pane').forEach(pane => {
+      const active = pane.dataset.tab === tabName;
+      pane.classList.toggle('active', active);
+      pane.style.display = active ? '' : 'none';
+    });
   };
 
   // Show config details modal
@@ -16198,6 +16409,14 @@
 
   // Show config details modal
   window.showConfigVersions = async (configType, configName, currentId, event) => {
+    if (window.blacksmithRouter && !window.blacksmithRouter.applying) {
+      event?.preventDefault();
+      return window.blacksmithRouter.inspect({kind: 'config', id: String(currentId), type: String(configType), name: String(configName)});
+    }
+    rememberConfigInspection();
+    const retained = configInspectionStates.get(configInspectionKey(configType, configName));
+    const inspectionRevision = ++configInspectionRevision;
+    loadingConfigVersion = false;
     if (event) {
       event.preventDefault();
     }
@@ -16336,11 +16555,12 @@
 
     try {
       // Fetch config versions from API
-      const response = await fetch(`/b/configs/${configType}/${configName}/versions?limit=30`, { cache: 'no-cache' });
+      const response = await fetch(`/b/configs/${encodeURIComponent(configType)}/${encodeURIComponent(configName)}/versions?limit=30`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const data = await response.json();
+      if (inspectionRevision !== configInspectionRevision || !modal.classList.contains('active')) return;
       const versions = data.configs || [];
 
       // Update modal title
@@ -16365,7 +16585,7 @@
         if (statusElem) {
           // Check if this is the active version using the same logic as version list
           const isActive = latestVersion.is_active || latestVersion.current ||
-            (latestVersion.id && latestVersion.id.includes('*'));
+            (latestVersion.id && String(latestVersion.id).includes('*'));
           statusElem.innerHTML = isActive ?
             '<span class="badge badge-success">ACTIVE</span>' :
             '<span class="badge badge-secondary">INACTIVE</span>';
@@ -16411,14 +16631,16 @@
         versionsList.innerHTML = '<div class="no-versions">No versions found</div>';
       } else {
         let firstVersionItem = null;
+        let selectedVersionItem = null;
 
         versions.forEach((version, index) => {
-          const isActive = version.is_active || version.id === currentId || (index === 0 && currentId && version.id.replace('*', '') === currentId);
+          const isActive = version.is_active || String(version.id).replace('*', '') === String(currentId).replace('*', '');
           const versionItem = document.createElement('button');
           versionItem.type = 'button';
           versionItem.setAttribute('aria-pressed', 'false');
           versionItem.className = 'version-item' + (isActive ? ' active' : '');
           versionItem.dataset.versionId = version.id;
+          if (String(version.id).replace('*', '') === String(retained?.version || currentId).replace('*', '')) selectedVersionItem = versionItem;
           versionItem.innerHTML = `
             <span class="version-id">${version.id}${isActive ? ' *' : ''}</span>
             <span class="version-date">${formatTimestamp(version.created_at)}</span>
@@ -16442,7 +16664,10 @@
         if (firstVersionItem && versions.length > 0) {
           // Small delay to ensure DOM is fully ready
           setTimeout(() => {
-            loadConfigVersion(versions[0].id, firstVersionItem);
+            if (inspectionRevision === configInspectionRevision && modal.classList.contains('active')) {
+              const selected = selectedVersionItem || firstVersionItem;
+              loadConfigVersion(selected.dataset.versionId, selected);
+            }
           }, 10);
         }
       }
@@ -16459,8 +16684,11 @@
 
       // Set up tab functionality for static modal
       setupConfigDetailsTabs();
+      selectConfigInspectionTab(retained?.tab === 'diffs' ? 'diffs' : 'versions');
+      if (retained?.tab === 'diffs') await window.initConfigDiffTab(configType, configName);
 
     } catch (error) {
+      if (inspectionRevision !== configInspectionRevision || !modal.classList.contains('active')) return;
       console.error('Failed to load config versions:', error);
       if (loadingDiv) {
         loadingDiv.innerHTML = `<div class="error">Failed to load config versions: ${error.message}</div>`;
@@ -16479,10 +16707,11 @@
     }
 
     loadingConfigVersion = true;
+    const inspectionRevision = configInspectionRevision;
 
     try {
       // Remove the asterisk if present
-      const cleanId = versionId.replace('*', '');
+      const cleanId = String(versionId).replace('*', '');
 
       // Update selected state in the list
       document.querySelectorAll('.version-item').forEach(item => {
@@ -16504,6 +16733,7 @@
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const config = await response.json();
+      if (inspectionRevision !== configInspectionRevision || !versionItem.isConnected) return;
 
       // Display the content (check if element still exists)
       if (contentPre) {
@@ -16511,18 +16741,22 @@
       }
 
     } catch (error) {
+      if (inspectionRevision !== configInspectionRevision || !versionItem.isConnected) return;
       console.error('Failed to load config version content:', error);
       const contentPre = document.getElementById('config-content-text');
       if (contentPre) {
         contentPre.textContent = `Failed to load config content: ${error.message}`;
       }
     } finally {
-      loadingConfigVersion = false;
+      if (inspectionRevision === configInspectionRevision) loadingConfigVersion = false;
     }
   };
 
   // Hide config versions modal
   window.hideConfigVersionsModal = () => {
+    if (window.blacksmithRouter?.current?.inspection?.kind === 'config' && !window.blacksmithRouter.applying) return window.blacksmithRouter.closeInspection();
+    rememberConfigInspection();
+    configInspectionRevision++;
     const modal = document.getElementById('config-details-modal');
     if (modal) {
       deactivatePersistentDialog(modal);
@@ -16588,7 +16822,9 @@
     });
 
     tabButtons.forEach(button => {
-      button.addEventListener('click', () => {
+      if (button._configTabHandler) button.removeEventListener('click', button._configTabHandler);
+      button._configTabHandler = () => {
+        rememberConfigInspection();
         const tabName = button.dataset.tab;
         const buttonGroupId = button.dataset.group;
 
@@ -16613,11 +16849,13 @@
         // Initialize diff tab when clicked
         if (tabName === 'diffs' && window.currentConfigInfo) {
           // Small delay to ensure DOM elements are available after tab switch
+          const revision = configInspectionRevision;
           setTimeout(() => {
-            initConfigDiffTab(window.currentConfigInfo.type, window.currentConfigInfo.name);
+            if (revision === configInspectionRevision && window.currentConfigInfo) initConfigDiffTab(window.currentConfigInfo.type, window.currentConfigInfo.name);
           }, 10);
         }
-      });
+      };
+      button.addEventListener('click', button._configTabHandler);
     });
 
     // Set up diff version selector
@@ -16694,13 +16932,24 @@
         selector.appendChild(option);
       }
 
-      // Reset selection
-      selector.value = '';
+      const retained = configInspectionStates.get(configInspectionKey(configType, configName));
+      const previous = retained?.diff || '';
+      selector.value = [...selector.options].some(option => option.value === previous) ? previous : '';
+      if (selector.value) {
+        const [fromId, toId] = selector.value.split('|');
+        await window.loadConfigDiffById(fromId, toId);
+      }
     }
   };
 
+  let configDiffRevision = 0;
   // Load config diff by version IDs
   window.loadConfigDiffById = async (fromId, toId) => {
+    const inspectionRevision = configInspectionRevision;
+    const diffRevision = ++configDiffRevision;
+    const info = window.currentConfigInfo;
+    if (!info) return;
+    const stillCurrent = () => inspectionRevision === configInspectionRevision && diffRevision === configDiffRevision;
     const diffOutput = document.getElementById('diff-output');
     const placeholder = document.getElementById('diff-placeholder');
 
@@ -16714,7 +16963,7 @@
     try {
       // Fetch diff from API
       const response = await fetch(
-        `/b/configs/${window.currentConfigInfo.type}/${window.currentConfigInfo.name}/diff?from=${fromId}&to=${toId}`,
+        `/b/configs/${encodeURIComponent(info.type)}/${encodeURIComponent(info.name)}/diff?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}`,
         { cache: 'no-cache' }
       );
 
@@ -16723,11 +16972,13 @@
       }
 
       const diffData = await response.json();
+      if (!stillCurrent()) return;
 
       // Display the diff
       displaySimpleDiff(diffData, fromId, toId);
 
     } catch (error) {
+      if (!stillCurrent()) return;
       console.error('Failed to load config diff:', error);
       diffOutput.innerHTML = `Error loading diff: ${error.message}`;
       diffOutput.classList.add('active');
@@ -17072,6 +17323,8 @@
 
   // Load task details
   const loadTaskDetails = async (taskId) => {
+    const inspectionRevision = taskInspectionRevision;
+    const stillCurrent = () => inspectionRevision === taskInspectionRevision && String(window.currentTaskId) === String(taskId);
     const loadingDiv = document.getElementById('task-details-loading');
     const contentDiv = document.getElementById('task-details-content');
 
@@ -17083,6 +17336,7 @@
       }
 
       const taskData = await response.json();
+      if (!stillCurrent()) return;
       const task = taskData.task;
 
       // Update task summary and modal title
@@ -17129,6 +17383,7 @@
       await loadTaskTabContent(taskId, 'task');
 
     } catch (error) {
+      if (!stillCurrent()) return;
       console.error('Failed to load task details:', error);
       loadingDiv.innerHTML = `<div class="error">Failed to load task details: ${error.message}</div>`;
     }
@@ -17136,6 +17391,8 @@
 
   // Load specific tab content for task modal
   const loadTaskTabContent = async (taskId, tabType) => {
+    const inspectionRevision = taskInspectionRevision;
+    const stillCurrent = () => inspectionRevision === taskInspectionRevision && String(window.currentTaskId) === String(taskId);
     const contentDiv = document.getElementById(`task-${tabType}-content`);
     if (!contentDiv) return;
 
@@ -17255,6 +17512,7 @@
         `;
       }
 
+      if (!stillCurrent()) return;
       contentDiv.innerHTML = content;
 
       // Initialize search and sorting functionality for tables
@@ -17272,18 +17530,21 @@
         const tableClass = `task-${tableClassSuffix}-table`;
         // Set a timeout to ensure DOM is ready
         setTimeout(() => {
+          if (!stillCurrent()) return;
           initializeSorting(tableClass);
           attachSearchFilter(tableClass);
         }, 100);
       } else if (tabType === 'events') {
         // Events table uses logs-table class
         setTimeout(() => {
+          if (!stillCurrent()) return;
           initializeSorting('logs-table');
           attachSearchFilter('logs-table');
         }, 100);
       }
 
     } catch (error) {
+      if (!stillCurrent()) return;
       console.error(`Failed to load ${tabType} content:`, error);
       contentDiv.innerHTML = `<div class="error">Failed to load ${tabType}: ${error.message}</div>`;
     }
@@ -18389,6 +18650,7 @@
   };
 
   // Show CF endpoint form for adding/editing endpoints
+  const endpointFormDrafts = new Map();
   const showCFEndpointForm = (endpoint = null) => {
     const modal = document.getElementById('cf-endpoint-modal');
     if (!modal) {
@@ -18402,7 +18664,9 @@
                 <button class="modal-close" aria-label="Close modal">&times;</button>
               </div>
             <div class="modal-body">
-              <form id="cf-endpoint-form">
+              <form id="cf-endpoint-form" aria-describedby="cf-endpoint-form-help">
+                <p id="cf-endpoint-form-help">Name this Cloud Foundry API endpoint and enter credentials to use when connecting. Closing keeps this draft in this browser tab; nothing is saved until you submit.</p>
+                <p id="cf-endpoint-form-error" role="alert" hidden></p>
                 <div class="form-group">
                   <label for="cf-endpoint-name">Name:</label>
                   <input type="text" id="cf-endpoint-name" name="name" required>
@@ -18422,7 +18686,8 @@
               </form>
             </div>
             <div class="modal-footer">
-              <button type="button" class="btn btn-secondary" onclick="hideCFEndpointForm()">Cancel</button>
+              <button type="button" class="btn btn-secondary" onclick="hideCFEndpointForm()">Close</button>
+              <button type="button" class="btn btn-secondary" id="discard-endpoint-draft">Discard draft</button>
               <button type="button" class="btn btn-primary" onclick="saveCFEndpoint()">${endpoint ? 'Update' : 'Add'} Endpoint</button>
             </div>
             </div>
@@ -18436,16 +18701,25 @@
     const newModal = document.getElementById('cf-endpoint-modal');
     newModal.style.display = 'flex';
     newModal.setAttribute('aria-hidden', 'false');
-    document.getElementById('cf-endpoint-form').reset();
+    const form = document.getElementById('cf-endpoint-form');
+    const draftKey = endpoint ? `edit:${endpoint.name}` : 'add';
+    form.dataset.draftKey = draftKey;
+    form.reset();
+    document.getElementById('cf-endpoint-modal-title').textContent = `${endpoint ? 'Edit' : 'Add'} CF Endpoint`;
+    newModal.querySelector('.modal-footer .btn-primary').textContent = `${endpoint ? 'Update' : 'Add'} endpoint`;
+    const draft = endpointFormDrafts.get(draftKey) || endpoint || {};
+    ['name', 'endpoint', 'username', 'password'].forEach(name => { form.elements[name].value = draft[name] || ''; });
+    const remember = () => endpointFormDrafts.set(draftKey, Object.fromEntries(new FormData(form)));
+    form.oninput = remember;
+    form.onchange = remember;
+    document.getElementById('discard-endpoint-draft').onclick = () => {
+      endpointFormDrafts.delete(draftKey);
+      form.reset();
+      hideCFEndpointForm();
+    };
     ModalManager.openModal(newModal);
     document.getElementById('cf-endpoint-name').focus();
 
-    // Pre-fill form if editing
-    if (endpoint) {
-      document.getElementById('cf-endpoint-name').value = endpoint.name || '';
-      document.getElementById('cf-endpoint-url').value = endpoint.endpoint || '';
-      document.getElementById('cf-endpoint-username').value = endpoint.username || '';
-    }
   };
 
   // Hide CF endpoint form
@@ -18457,8 +18731,13 @@
   // Save CF endpoint
   const saveCFEndpoint = async () => {
     const form = document.getElementById('cf-endpoint-form');
-    if (!form.reportValidity()) return;
+    if (!form || form.dataset.saving === 'true' || !form.reportValidity()) return;
+    form.dataset.saving = 'true';
+    form.setAttribute('aria-busy', 'true');
     const formData = new FormData(form);
+    const errorLine = form.querySelector('[role=alert]');
+    errorLine.hidden = true;
+    endpointFormDrafts.set(form.dataset.draftKey, Object.fromEntries(formData));
 
     const endpointData = {
       name: formData.get('name'),
@@ -18480,6 +18759,8 @@
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      endpointFormDrafts.delete(form.dataset.draftKey);
+      form.reset();
       // Reload endpoints list
       await CFEndpointManager.loadEndpoints();
       hideCFEndpointForm();
@@ -18490,7 +18771,11 @@
       }
     } catch (error) {
       console.error('Failed to save CF endpoint:', error);
-      window.Feedback.error('Failed to save CF endpoint: ' + error.message, { context: 'cf-endpoint', toast: true });
+      errorLine.textContent = 'Failed to save endpoint: ' + error.message;
+      errorLine.hidden = false;
+    } finally {
+      delete form.dataset.saving;
+      form.removeAttribute('aria-busy');
     }
   };
 
@@ -18854,7 +19139,7 @@
 
       // Remove modal from DOM after animation completes
       setTimeout(() => {
-        if (modalElement.parentNode) {
+        if (!this.modalState.has(modalElement) && modalElement.parentNode) {
           modalElement.parentNode.removeChild(modalElement);
         }
       }, 300); // Match CSS transition duration
@@ -21031,11 +21316,12 @@
     });
 
     // Load CF endpoints from configuration
-    CFEndpointManager.loadEndpoints();
+    return CFEndpointManager.loadEndpoints();
   };
 
   // Switch between CF detail tabs
   const switchCFDetailTab = (tabName) => {
+    if (!['marketplace', 'services'].includes(tabName)) return false;
     // Remove active class from all broker tab buttons
     document.querySelectorAll('.broker-tab-btn').forEach(btn => {
       btn.classList.remove('active');
@@ -21061,13 +21347,13 @@
       if (selectedEndpoint && tabName !== 'details') {
         const connectionState = CFEndpointManager.connectionStates[selectedEndpoint] || { connected: false };
         if (connectionState.connected) {
-          CFEndpointManager.loadTabContent(tabName, selectedEndpoint);
+          return CFEndpointManager.loadTabContent(tabName, selectedEndpoint);
         } else {
           // Show message that connection is required
           targetPanel.innerHTML = `
             <div class="empty-state">
               <h3>Connection Required</h3>
-              <p>Please connect to the ${selectedEndpoint} endpoint to view ${tabName} data.</p>
+              <p>Connect to ${escapeHtml(selectedEndpoint)} to view ${escapeHtml(tabName)} data. Selecting an endpoint does not connect it.</p>
               <button class="btn btn-primary" onclick="CFEndpointManager.toggleConnection()">Connect Now</button>
             </div>
           `;
@@ -21158,6 +21444,9 @@
     endpoints: {},
     selectedEndpoint: null,
     connectionStates: {}, // Persist connection status
+    selectionRevision: 0,
+    endpointsRevision: 0,
+    contentRevision: 0,
 
     clearFeedback() {
       window.Feedback.clear('cf-endpoint');
@@ -21169,8 +21458,10 @@
 
     // Load CF endpoints from configuration
     async loadEndpoints() {
-      // Load persistent connection states first
-      this.loadConnectionStates();
+      const request = ++this.endpointsRevision;
+      const selectionRevision = this.selectionRevision;
+      // Restore the endpoint preference once; connection state is session-local.
+      if (!this.preferenceLoaded) { this.loadConnectionStates(); this.preferenceLoaded = true; }
       this.clearFeedback();
 
       try {
@@ -21197,6 +21488,7 @@
           }
         }
 
+        if (request !== this.endpointsRevision) return false;
         if (response.ok) {
           this.endpoints = (data && typeof data.endpoints === 'object' && data.endpoints !== null)
             ? data.endpoints
@@ -21211,14 +21503,12 @@
             return;
           }
 
-          // Restore previously selected endpoint if it exists, otherwise auto-select first endpoint
-          if (this.selectedEndpoint && endpointNames.includes(this.selectedEndpoint)) {
-            // Use setTimeout to ensure DOM is ready before selecting
-            setTimeout(() => this.selectEndpoint(this.selectedEndpoint), 100);
-          } else {
-            // Always auto-select the first endpoint if none is selected or the saved one doesn't exist
-            setTimeout(() => this.selectEndpoint(endpointNames[0]), 100);
-          }
+          // Inspection selection is pure: restoration never connects an endpoint.
+          // A user selection made while this request was pending wins.
+          if (selectionRevision !== this.selectionRevision) return true;
+          const selected = endpointNames.includes(this.selectedEndpoint) ? this.selectedEndpoint : endpointNames[0];
+          this.selectEndpoint(selected);
+          return true;
         } else if (response.status === 404) {
           console.warn('CF endpoint configuration not found.');
           this.endpoints = {};
@@ -21230,12 +21520,13 @@
           throw new Error(errorMessage);
         }
       } catch (error) {
+        if (request !== this.endpointsRevision) return false;
         console.error('Error loading CF endpoints:', error);
         this.showError('Failed to load CF endpoints: ' + error.message);
 
         const dropdown = document.getElementById('cf-endpoint-select');
         if (dropdown) {
-          dropdown.innerHTML = '<option value="">Error loading endpoints</option>';
+          if (!Object.keys(this.endpoints).length) dropdown.innerHTML = '<option value="">Error loading endpoints</option>';
         }
       }
     },
@@ -21269,7 +21560,7 @@
         const endpoint = this.endpoints[name];
         const displayName = endpoint.name || name;
         const isSelected = this.selectedEndpoint === name ? 'selected' : '';
-        options.push(`<option value="${name}" ${isSelected}>${displayName} (${endpoint.endpoint})</option>`);
+        options.push(`<option value="${escapeAttribute(name)}" ${isSelected}>${escapeHtml(displayName)} (${escapeHtml(endpoint.endpoint || '')})</option>`);
       });
 
       dropdown.innerHTML = options.join('');
@@ -21291,11 +21582,11 @@
       const isSelected = this.selectedEndpoint === endpointName;
 
       return `
-        <div class="endpoint-item ${isSelected ? 'selected' : ''}" data-endpoint="${endpointName}">
+        <div class="endpoint-item ${isSelected ? 'selected' : ''}" data-endpoint="${escapeAttribute(endpointName)}">
           <div class="endpoint-info">
-            <h4>${endpoint.name || endpointName}</h4>
-            <p class="endpoint-url">${endpoint.endpoint}</p>
-            <small class="endpoint-user">User: ${endpoint.username}</small>
+            <h4>${escapeHtml(endpoint.name || endpointName)}</h4>
+            <p class="endpoint-url">${escapeHtml(endpoint.endpoint || '')}</p>
+            <small class="endpoint-user">User: ${escapeHtml(endpoint.username || '')}</small>
           </div>
         </div>
       `;
@@ -21313,6 +21604,9 @@
 
     // Select an endpoint and load its details
     selectEndpoint(endpointName) {
+      if (!Object.prototype.hasOwnProperty.call(this.endpoints, endpointName)) return false;
+      this.selectionRevision++;
+      this.contentRevision++;
       // Update selection state
       this.selectedEndpoint = endpointName;
 
@@ -21334,18 +21628,15 @@
       // Show/hide register button based on endpoint selection
       this.updateRegisterButtonVisibility(endpointName);
 
-      // Auto-connect if not already connected (with a small delay to ensure UI is ready)
-      const connectionState = this.connectionStates[endpointName] || { connected: false, testing: false };
-      if (!connectionState.connected && !connectionState.testing) {
-        setTimeout(() => this.toggleConnection(), 150);
-      }
-
-      // Reset to marketplace tab
+      // Selecting a destination must never change its connection state.
       this.switchToBrokerTab('marketplace');
+      return true;
     },
 
     // Clear endpoint selection
     clearSelection() {
+      this.selectionRevision++;
+      this.contentRevision++;
       this.selectedEndpoint = null;
       // Save the cleared selection to localStorage
       this.saveConnectionStates();
@@ -21368,9 +21659,8 @@
 
       // Clear all detail panels
       document.querySelectorAll('.cf-detail-panel').forEach(panel => {
-        const contentDiv = panel.querySelector('div[id*="cf-"]');
-        if (contentDiv) {
-          contentDiv.innerHTML = `
+        {
+          panel.innerHTML = `
             <div class="empty-state">
               <h3>Select an endpoint</h3>
               <p>Choose a Cloud Foundry endpoint from the dropdown above to view services and manage broker registration.</p>
@@ -21405,8 +21695,10 @@
         return;
       }
 
+      const selected = this.selectedEndpoint;
       // First prefill the form with broker defaults
       await this.prefillRegistrationForm();
+      if (this.selectedEndpoint !== selected) return;
 
       // Then show the existing registration modal
       CFRegistrationManager.showRegistrationModal();
@@ -21414,12 +21706,14 @@
 
     // Pre-fill registration form with broker defaults
     async prefillRegistrationForm() {
+      const endpointName = this.selectedEndpoint;
       try {
         // Get broker info from the blacksmith status
         const response = await fetch('/status');
         const data = await response.json();
 
-        const endpoint = this.endpoints[this.selectedEndpoint];
+        if (this.selectedEndpoint !== endpointName) return false;
+        const endpoint = this.endpoints[endpointName];
         if (endpoint && data) {
           // Pre-fill name field
           const nameInput = document.getElementById('reg-name');
@@ -21452,7 +21746,7 @@
 
     // Switch to a specific broker tab
     switchToBrokerTab(tabName) {
-      switchCFDetailTab(tabName);
+      return switchCFDetailTab(tabName);
     },
 
     // Load endpoint details
@@ -21467,33 +21761,40 @@
 
     // Load content for specific tabs
     async loadTabContent(tabName, endpointName) {
+      const request = ++this.contentRevision;
+      const selection = this.selectionRevision;
       const panel = document.querySelector(`[data-panel="${tabName}"]`);
       if (!panel) return;
 
+      const current = () => this.selectedEndpoint === endpointName && this.selectionRevision === selection && this.contentRevision === request && panel.isConnected;
       // Show loading
       panel.innerHTML = '<div class="loading">Loading...</div>';
 
       try {
         switch (tabName) {
           case 'marketplace':
-            await this.loadMarketplaceTab(panel, endpointName);
+            await this.loadMarketplaceTab(panel, endpointName, current);
             break;
           case 'services':
-            await this.loadServicesTab(panel, endpointName);
+            await this.loadServicesTab(panel, endpointName, current);
             break;
         }
       } catch (error) {
-        panel.innerHTML = `<div class="error">Failed to load ${tabName}: ${error.message}</div>`;
+        if (current()) panel.innerHTML = `<div class="error">Failed to load ${escapeHtml(tabName)}: ${escapeHtml(error.message)}</div>`;
       }
     },
 
 
     // Load marketplace tab
-    async loadMarketplaceTab(panel, endpointName) {
+    async loadMarketplaceTab(panel, endpointName, current) {
+      const revision = this.selectionRevision;
+      current ||= () => panel.isConnected && this.selectedEndpoint === endpointName && this.selectionRevision === revision;
       const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/marketplace`);
       const data = await response.json();
 
-      if (data.services) {
+      if (!current()) return;
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (Array.isArray(data.services)) {
         const html = `
           <div class="marketplace-content">
             <div class="marketplace-services-table-container">
@@ -21510,7 +21811,7 @@
                                   title="Copy table data" aria-label="Copy table data">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
-                          <button class="refresh-btn-logs" onclick="window.refreshMarketplaceServices('${endpointName}', event)"
+                          <button class="refresh-btn-logs" onclick="window.refreshMarketplaceServices(${escapeAttribute(JSON.stringify(endpointName))}, event)"
                                   title="Refresh marketplace services">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                           </button>
@@ -21527,8 +21828,8 @@
                   <tbody>
                     ${data.services.map(service => `
                       <tr>
-                        <td><strong>${service.name}</strong></td>
-                        <td>${service.description || 'N/A'}</td>
+                        <td><strong>${escapeHtml(service.name || 'Not reported')}</strong></td>
+                        <td>${escapeHtml(service.description || 'Not reported')}</td>
                         <td>${service.plans ? service.plans.length + ' plan(s)' : 'N/A'}</td>
                         <td>${service.available !== undefined ? (service.available ? 'Yes' : 'No') : 'N/A'}</td>
                       </tr>
@@ -21550,7 +21851,8 @@
     },
 
     // Load services tab
-    async loadServicesTab(panel, endpointName) {
+    async loadServicesTab(panel, endpointName, current = () => panel.isConnected && this.selectedEndpoint === endpointName) {
+      if (!current()) return;
       panel.innerHTML = `
         <div class="services-content">
           <div class="org-space-selector">
@@ -21569,7 +21871,7 @@
                   </select>
                 </td>
                 <td>
-                  <button class="refresh-btn" onclick="window.CFEndpointManager && window.CFEndpointManager.refreshOrgsSpaces('${endpointName}')" title="Refresh organizations and spaces">
+                  <button class="refresh-btn" onclick="window.CFEndpointManager && window.CFEndpointManager.refreshOrgsSpaces(${escapeAttribute(JSON.stringify(endpointName))})" title="Refresh organizations and spaces">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
                     </svg>
@@ -21585,7 +21887,7 @@
       `;
 
       // Load organizations
-      this.loadOrganizations(endpointName);
+      await this.loadOrganizations(endpointName);
     },
 
 
@@ -21615,109 +21917,81 @@
     },
 
     // Load organizations for services tab
-    async loadOrganizations(endpointName) {
+    async loadOrganizations(endpointName, selection = {}) {
+      const orgSelector = document.getElementById('org-selector');
+      const revision = this.selectionRevision;
+      const current = () => this.selectedEndpoint === endpointName && this.selectionRevision === revision && orgSelector?.isConnected && document.getElementById('org-selector') === orgSelector;
       try {
         const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs`);
         const data = await response.json();
-
-        const orgSelector = document.getElementById('org-selector');
-        if (orgSelector && data.organizations) {
-          orgSelector.innerHTML = '<option value="">Select organization...</option>' +
-            data.organizations.map(org => `<option value="${org.guid}">${org.name}</option>`).join('');
-
-          // Setup org selector change handler
-          orgSelector.addEventListener('change', (e) => {
-            const orgGuid = e.target.value;
-            if (orgGuid) {
-              this.loadSpaces(endpointName, orgGuid);
-            } else {
-              const spaceSelector = document.getElementById('space-selector');
-              spaceSelector.innerHTML = '<option value="">Select organization first</option>';
-              spaceSelector.disabled = true;
-            }
-          });
-
-          // Auto-select if there's only one organization
-          if (data.organizations.length === 1) {
-            orgSelector.value = data.organizations[0].guid;
-            orgSelector.dispatchEvent(new Event('change'));
-          }
-        }
+        if (!current()) return false;
+        if (!response.ok || !Array.isArray(data.organizations)) throw new Error(data.error || 'Could not load organizations');
+        orgSelector.innerHTML = '<option value="">Select organization...</option>' +
+          data.organizations.map(org => `<option value="${escapeAttribute(org.guid)}">${escapeHtml(org.name)}</option>`).join('');
+        orgSelector.onchange = () => {
+          const space = document.getElementById('space-selector');
+          const results = document.getElementById('services-results');
+          if (space) { space.innerHTML = '<option value="">Select organization first</option>'; space.disabled = true; }
+          if (results) results.textContent = 'Select an organization and space to view service instances.';
+          if (orgSelector.value) this.loadSpaces(endpointName, orgSelector.value);
+        };
+        const wanted = selection.org && data.organizations.some(org => org.guid === selection.org) ? selection.org : data.organizations.length === 1 ? data.organizations[0].guid : '';
+        if (wanted) { orgSelector.value = wanted; await this.loadSpaces(endpointName, wanted, selection.space); }
+        return true;
       } catch (error) {
-        console.error('Failed to load organizations:', error);
+        if (current()) this.showError(`Could not load organizations: ${error.message}`);
+        return false;
       }
     },
 
     // Load spaces for selected organization
-    async loadSpaces(endpointName, orgGuid) {
+    async loadSpaces(endpointName, orgGuid, selectedSpace = '') {
+      const spaceSelector = document.getElementById('space-selector');
+      const orgSelector = document.getElementById('org-selector');
+      const revision = this.selectionRevision;
+      const current = () => this.selectedEndpoint === endpointName && this.selectionRevision === revision && spaceSelector?.isConnected && document.getElementById('space-selector') === spaceSelector && orgSelector?.value === orgGuid;
       try {
-        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces`);
+        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${encodeURIComponent(orgGuid)}/spaces`);
         const data = await response.json();
-
-        const spaceSelector = document.getElementById('space-selector');
-        if (spaceSelector && data.spaces) {
-          spaceSelector.innerHTML = '<option value="">Select space...</option>' +
-            data.spaces.map(space => `<option value="${space.guid}">${space.name}</option>`).join('');
-          spaceSelector.disabled = false;
-
-          // Setup space selector change handler
-          spaceSelector.addEventListener('change', (e) => {
-            const spaceGuid = e.target.value;
-            if (spaceGuid) {
-              this.loadServiceInstances(endpointName, orgGuid, spaceGuid);
-            }
-          });
-
-          // Auto-select if there's only one space
-          if (data.spaces.length === 1) {
-            spaceSelector.value = data.spaces[0].guid;
-            spaceSelector.dispatchEvent(new Event('change'));
-          }
-        }
+        if (!current()) return false;
+        if (!response.ok || !Array.isArray(data.spaces)) throw new Error(data.error || 'Could not load spaces');
+        spaceSelector.innerHTML = '<option value="">Select space...</option>' +
+          data.spaces.map(space => `<option value="${escapeAttribute(space.guid)}">${escapeHtml(space.name)}</option>`).join('');
+        spaceSelector.disabled = false;
+        spaceSelector.onchange = () => {
+          const results = document.getElementById('services-results');
+          if (results) results.textContent = 'Select a space to view service instances.';
+          if (spaceSelector.value) this.loadServiceInstances(endpointName, orgGuid, spaceSelector.value);
+        };
+        const wanted = selectedSpace && data.spaces.some(space => space.guid === selectedSpace) ? selectedSpace : data.spaces.length === 1 ? data.spaces[0].guid : '';
+        if (wanted) { spaceSelector.value = wanted; await this.loadServiceInstances(endpointName, orgGuid, wanted); }
+        return true;
       } catch (error) {
-        console.error('Failed to load spaces:', error);
+        if (current()) this.showError(`Could not load spaces: ${error.message}`);
+        return false;
       }
     },
 
     // Refresh organizations and spaces while preserving selections
     async refreshOrgsSpaces(endpointName) {
-      const orgSelector = document.getElementById('org-selector');
-      const spaceSelector = document.getElementById('space-selector');
-      const selectedOrg = orgSelector?.value;
-      const selectedSpace = spaceSelector?.value;
-
-      // Reload organizations
-      await this.loadOrganizations(endpointName);
-
-      // Restore selections if they still exist
-      if (selectedOrg) {
-        setTimeout(() => {
-          const orgSelector = document.getElementById('org-selector');
-          if (orgSelector && [...orgSelector.options].some(opt => opt.value === selectedOrg)) {
-            orgSelector.value = selectedOrg;
-            orgSelector.dispatchEvent(new Event('change'));
-
-            if (selectedSpace) {
-              setTimeout(() => {
-                const spaceSelector = document.getElementById('space-selector');
-                if (spaceSelector && [...spaceSelector.options].some(opt => opt.value === selectedSpace)) {
-                  spaceSelector.value = selectedSpace;
-                  spaceSelector.dispatchEvent(new Event('change'));
-                }
-              }, 100);
-            }
-          }
-        }, 100);
-      }
+      if (this.selectedEndpoint !== endpointName) return false;
+      return this.loadOrganizations(endpointName, {
+        org: document.getElementById('org-selector')?.value,
+        space: document.getElementById('space-selector')?.value
+      });
     },
 
     // Load service instances for selected space
     async loadServiceInstances(endpointName, orgGuid, spaceGuid) {
+      const resultsContainer = document.getElementById('services-results');
+      const revision = this.selectionRevision;
+      const current = () => this.selectedEndpoint === endpointName && this.selectionRevision === revision && resultsContainer?.isConnected && document.getElementById('services-results') === resultsContainer && document.getElementById('org-selector')?.value === orgGuid && document.getElementById('space-selector')?.value === spaceGuid;
       try {
         const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces/${spaceGuid}/services`);
         const data = await response.json();
 
-        const resultsContainer = document.getElementById('services-results');
+        if (!current()) return;
+        if (!response.ok || !Array.isArray(data.services)) throw new Error(data.error || 'Could not load service instances');
         if (resultsContainer && data.services) {
           const html = `
             <div class="service-instances-table-container">
@@ -21734,7 +22008,7 @@
                                   title="Copy table data" aria-label="Copy table data">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
-                          <button class="refresh-btn-logs" onclick="window.refreshServiceInstances('${endpointName}', '${orgGuid}', '${spaceGuid}', event)"
+                          <button class="refresh-btn-logs" onclick="window.refreshServiceInstances(${escapeAttribute(JSON.stringify(endpointName))}, ${escapeAttribute(JSON.stringify(orgGuid))}, ${escapeAttribute(JSON.stringify(spaceGuid))}, event)"
                                   title="Refresh service instances">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                           </button>
@@ -21751,11 +22025,11 @@
                   <tbody>
                     ${data.services.map(service => `
                       <tr>
-                        <td><strong>${service.name}</strong></td>
-                        <td>${service.type || 'N/A'}</td>
-                        <td>${service.last_operation?.state || 'Unknown'}</td>
+                        <td><strong>${escapeHtml(service.name || 'Not reported')}</strong></td>
+                        <td>${escapeHtml(service.type || 'Not reported')}</td>
+                        <td>${escapeHtml(service.last_operation?.state || 'Unknown')}</td>
                         <td>
-                          <span class="bindings-count" id="bindings-${service.guid}">Loading...</span>
+                          <span class="bindings-count" id="bindings-${escapeAttribute(service.guid)}">Loading...</span>
                         </td>
                       </tr>
                     `).join('')}
@@ -21777,18 +22051,20 @@
         }
       } catch (error) {
         console.error('Failed to load service instances:', error);
-        document.getElementById('services-results').innerHTML = `<div class="error">Failed to load services: ${error.message}</div>`;
+        if (current()) resultsContainer.innerHTML = `<div class="error">Failed to load services: ${escapeHtml(error.message)}</div>`;
       }
     },
 
     // Load bindings for a specific service instance
     async loadServiceBindings(endpointName, orgGuid, spaceGuid, serviceGuid) {
+      const bindingsElement = document.getElementById(`bindings-${serviceGuid}`);
+      const revision = this.selectionRevision;
+      const current = () => this.selectedEndpoint === endpointName && this.selectionRevision === revision && bindingsElement?.isConnected && document.getElementById(`bindings-${serviceGuid}`) === bindingsElement;
       try {
         const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces/${spaceGuid}/service_instances/${serviceGuid}/bindings`);
         const data = await response.json();
 
-        const bindingsElement = document.getElementById(`bindings-${serviceGuid}`);
-        if (bindingsElement) {
+        if (current()) {
           const bindings = data.bindings || [];
 
           if (bindings.length > 0) {
@@ -21805,7 +22081,7 @@
               }
             });
 
-            bindingsElement.innerHTML = bindingNames.join(', ');
+            bindingsElement.textContent = bindingNames.join(', ');
             bindingsElement.title = `Service bindings: ${bindingNames.join(', ')}`;
           } else {
             bindingsElement.innerHTML = `<span class="text-muted">No Bindings</span>`;
@@ -21814,8 +22090,7 @@
         }
       } catch (error) {
         console.error(`Failed to load bindings for service ${serviceGuid}:`, error);
-        const bindingsElement = document.getElementById(`bindings-${serviceGuid}`);
-        if (bindingsElement) {
+        if (current()) {
           bindingsElement.innerHTML = `<span class="badge badge-warning">Error</span>`;
           bindingsElement.title = 'Failed to load binding information';
         }
@@ -21824,6 +22099,7 @@
 
     // Update connection status display
     updateConnectionStatus(endpointName) {
+      if (endpointName !== this.selectedEndpoint) return;
       const statusIndicator = document.getElementById('status-indicator');
       const connectionBtn = document.getElementById('connection-btn');
 
@@ -21850,40 +22126,31 @@
 
     // Toggle connection status
     async toggleConnection() {
-      if (!this.selectedEndpoint) return;
-
-      const currentState = this.connectionStates[this.selectedEndpoint] || { connected: false, testing: false };
-
+      const endpointName = this.selectedEndpoint;
+      if (!endpointName || !this.endpoints[endpointName]) return;
+      const currentState = this.connectionStates[endpointName] || { connected: false, testing: false };
+      if (currentState.testing) return;
       if (currentState.connected) {
-        // Disconnect
-        this.connectionStates[this.selectedEndpoint] = { connected: false, testing: false };
-        this.updateConnectionStatus(this.selectedEndpoint);
-        // Save state to localStorage
-        this.saveConnectionStates();
+        this.contentRevision++;
+        this.connectionStates[endpointName] = { connected: false, testing: false };
       } else {
-        // Connect - start testing
-        this.connectionStates[this.selectedEndpoint] = { connected: false, testing: true };
-        this.updateConnectionStatus(this.selectedEndpoint);
-
+        this.connectionStates[endpointName] = { connected: false, testing: true };
+        this.updateConnectionStatus(endpointName);
         try {
-          const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(this.selectedEndpoint)}/connect`, {
-            method: 'POST'
-          });
+          const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/connect`, { method: 'POST' });
           const result = await response.json();
-
-          this.connectionStates[this.selectedEndpoint] = {
-            connected: response.ok && result.success,
-            testing: false
-          };
+          this.connectionStates[endpointName] = { connected: response.ok && result.success === true, testing: false };
+          if (this.selectedEndpoint === endpointName && !this.connectionStates[endpointName].connected) {
+            this.showError(result.error || 'Could not connect. Check the endpoint credentials and try again.');
+          }
         } catch (error) {
-          this.connectionStates[this.selectedEndpoint] = { connected: false, testing: false };
+          this.connectionStates[endpointName] = { connected: false, testing: false };
+          if (this.selectedEndpoint === endpointName) this.showError(`Could not connect: ${error.message}`);
         }
-
-        this.updateConnectionStatus(this.selectedEndpoint);
-        // Save state to localStorage
-        this.saveConnectionStates();
-
-        // Refresh current tab if it was showing connection required message
+      }
+      this.saveConnectionStates();
+      if (this.selectedEndpoint === endpointName) {
+        this.updateConnectionStatus(endpointName);
         this.refreshCurrentTab();
       }
     },
@@ -21895,7 +22162,7 @@
         const tabName = activeTab.dataset.cftab;
         if (tabName && tabName !== 'details') {
           // Re-trigger the tab switching to reload content
-          switchCFDetailTab(tabName);
+          return switchCFDetailTab(tabName);
         }
       }
     },
@@ -21904,7 +22171,6 @@
     saveConnectionStates() {
       try {
         const persistentData = {
-          connectionStates: this.connectionStates,
           selectedEndpoint: this.selectedEndpoint
         };
         localStorage.setItem('cf-endpoint-data', JSON.stringify(persistentData));
@@ -21919,7 +22185,7 @@
         const saved = localStorage.getItem('cf-endpoint-data');
         if (saved) {
           const persistentData = JSON.parse(saved);
-          this.connectionStates = persistentData.connectionStates || {};
+          this.connectionStates = {};
           this.selectedEndpoint = persistentData.selectedEndpoint || null;
         }
       } catch (error) {
@@ -23672,6 +23938,7 @@
       box.id = 'cert-horizon';
 
       const table = el('table', 'cert-horizon-table');
+      table.dataset.sortable = 'false';
       table.appendChild(el('caption', 'cert-horizon-caption', 'Certificates expiring within'));
       const head = el('tr');
       const row = el('tr');
@@ -25152,6 +25419,7 @@
     };
 
     function openDrawer(cert, opener) {
+      if(window.blacksmithRouter&&!window.blacksmithRouter.applying)return window.blacksmithRouter.inspect({kind:'certificate',id:cert.id});
       if (view.drawer && view.drawer.id === cert.id) {
         view.refs.drawerTitle.focus();
         return;
@@ -25175,6 +25443,8 @@
     }
 
     function closeDrawer(opts = {}) {
+      itemOpenRevision++;
+      if(opts.restore!==false&&window.blacksmithRouter?.current?.inspection?.kind==='certificate'&&!window.blacksmithRouter.applying)return window.blacksmithRouter.closeInspection();
       const d = view.drawer;
       if (!d) return;
       view.drawer = null;
@@ -25192,6 +25462,13 @@
     }
 
     const buildDrawer = () => {
+      const existing = document.getElementById('cert-fleet-drawer');
+      if (existing) {
+        view.refs.drawer = existing;
+        view.refs.drawerTitle = existing.querySelector('.cert-drawer-title');
+        view.refs.drawerBody = existing.querySelector('.cert-drawer-body');
+        return;
+      }
       const drawer = el('aside', 'cert-fleet-drawer');
       drawer.id = 'cert-fleet-drawer';
       drawer.setAttribute('role', 'dialog');
@@ -25212,7 +25489,7 @@
 
       const body = el('div', 'cert-drawer-body');
       drawer.appendChild(body);
-      view.root.appendChild(drawer);
+      document.body.appendChild(drawer);
       view.refs.drawer = drawer;
       view.refs.drawerTitle = title;
       view.refs.drawerBody = body;
@@ -25828,7 +26105,27 @@
       await refresh({ announce: false });
     };
 
-    return { state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
+    let itemOpenRevision = 0;
+    const openItem = async (id, {signal} = {}) => {
+      const revision = ++itemOpenRevision;
+      const current = () => !signal?.aborted && revision === itemOpenRevision;
+      if (!current()) return false;
+      let cert = view.resp?.certificates?.find(item => item.id === id);
+      if (!cert) {
+        let result;
+        try { result = await getJSON(`/b/certificates/items/${encodeURIComponent(id)}`, {signal}); }
+        catch (error) { if (!current()) return false; throw error; }
+        if (!current()) return false;
+        if (!result.ok) throw new Error('This certificate is no longer available.');
+        cert = result.body;
+      }
+      if (!current()) return false;
+      if (!cert || cert.id !== id) throw new Error('This certificate is no longer available.');
+      buildDrawer();
+      openDrawer(cert, document.querySelector(`[data-cert-id="${CSS.escape(id)}"]`));
+      return true;
+    };
+    return { openItem, state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
   })();
 
   window.blacksmithCerts = {
@@ -25836,6 +26133,7 @@
     toQuery: CertsFleet.toQuery,
     refresh: CertsFleet.refresh,
     selection: CertsFleet.selection,
+    openItem: CertsFleet.openItem,
     closeDrawer: CertsFleet.closeDrawer
   };
 
