@@ -166,6 +166,10 @@ type Manager struct {
 	configured bool
 	started    bool
 
+	// commandScript builds the script a command node is sent. It is nil
+	// outside tests, and then scripts.RunScript builds it.
+	commandScript func() ([]byte, error)
+
 	// Cancellation tracking - maps taskID to cancel channel
 	taskCancelCh   map[string]chan struct{}
 	taskCancelLock sync.RWMutex

@@ -1128,3 +1128,29 @@ func TestRunCommandNodeNeverExecsTwice(t *testing.T) {
 		t.Fatalf("%d execs were sent, want 1", execs)
 	}
 }
+
+// A script that can't be built fails the node before the first save, so
+// nothing is staged, sent, or saved as staged or sent.
+func TestRunCommandNodeBuildsItsInputsBeforeTheFirstSave(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.manager.commandScript = func() ([]byte, error) { return nil, errors.New("no script") }
+
+	if stopped := fix.run(context.Background()); stopped {
+		t.Fatal("the task stopped")
+	}
+
+	wantOps(t, fix.sess)
+
+	for _, write := range fix.vault.recorded() {
+		if write.phase == CommandPhaseStaged || write.phase == CommandPhaseSent {
+			t.Fatalf("a write saved the node in phase %s", write.phase)
+		}
+	}
+
+	node := fix.vault.stored(t)
+	if node.Phase != CommandPhaseSettled || node.Status != CommandStatusFailed || node.Error == "" {
+		t.Errorf("phase %s status %s error %q", node.Phase, node.Status, node.Error)
+	}
+}

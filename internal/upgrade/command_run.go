@@ -89,6 +89,12 @@ type commandRun struct {
 
 	sess PatchSession
 	host int
+
+	// script is what exec and cleanup take on stdin, and prepareInput is
+	// the script followed by the command, as scripts.RunInput builds it.
+	// Both are built before the first save.
+	script       []byte
+	prepareInput []byte
 }
 
 // errCommandNodeNotPending is what runCommandNode returns for a node that
@@ -129,6 +135,11 @@ func (m *Manager) driveCommandNode(ctx context.Context, sessions *patchSessions,
 	err := run.validate()
 	if err != nil {
 		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "The task's settings are not valid for the wrapper, so nothing was sent.", err: err})
+	}
+
+	err = run.buildInputs()
+	if err != nil {
+		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not build the script for the node, so nothing was sent.", err: err})
 	}
 
 	err = run.connect(ctx)
@@ -203,6 +214,24 @@ func (r *commandRun) validate() error {
 	return nil
 }
 
+// buildInputs builds every stdin the three operations take.
+func (r *commandRun) buildInputs() error {
+	build := scripts.RunScript
+	if r.m.commandScript != nil {
+		build = r.m.commandScript
+	}
+
+	script, err := build()
+	if err != nil {
+		return fmt.Errorf("building the script: %w", err)
+	}
+
+	r.script = script
+	r.prepareInput = append(bytes.Clone(script), r.spec.Command...)
+
+	return nil
+}
+
 // connect opens the group's session and finds the node's host in it.
 func (r *commandRun) connect(ctx context.Context) error {
 	sess, err := r.sessions.group(ctx, r.identity.Group, r.indices)
@@ -255,15 +284,10 @@ func (r *commandRun) stage(ctx context.Context) (*commandOutcome, bool) {
 		return nil, true
 	}
 
-	input, err := scripts.RunInput([]byte(r.spec.Command))
-	if err != nil {
-		return &commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not build the script for the node, so nothing ran.", err: err}, false
-	}
-
 	prepCtx, cancel := context.WithTimeout(ctx, patchCommandTimeout)
 	defer cancel()
 
-	result, err := r.sess.Run(prepCtx, r.host, opRunPrepare, []string{r.task.ID, r.spec.RunAs}, input)
+	result, err := r.sess.Run(prepCtx, r.host, opRunPrepare, []string{r.task.ID, r.spec.RunAs}, bytes.NewReader(r.prepareInput))
 
 	switch {
 	case err != nil:
@@ -330,17 +354,12 @@ func (r *commandRun) execute(ctx context.Context) bool {
 		return true
 	}
 
-	script, err := scripts.RunScript()
-	if err != nil {
-		return r.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Blacksmith could not build the script for the node.", err: err})
-	}
-
 	timeout := time.Duration(r.spec.TimeoutSeconds) * time.Second
 
 	execCtx, cancel := context.WithTimeout(ctx, timeout+patchCleanupTimeout)
 	args := []string{r.task.ID, r.spec.RunAs, strconv.Itoa(r.spec.TimeoutSeconds), r.spec.CommandDigest}
 	execStart := r.m.certNow()
-	result, execErr := r.sess.Run(execCtx, r.host, opRunExec, args, bytes.NewReader(script))
+	result, execErr := r.sess.Run(execCtx, r.host, opRunExec, args, bytes.NewReader(r.script))
 	deadlineHit := errors.Is(execCtx.Err(), context.DeadlineExceeded)
 
 	cancel()
@@ -413,15 +432,10 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 // ended still has its directory removed, and reads the record. The bool is
 // true when processes outlived KILL.
 func (r *commandRun) cleanup(ctx context.Context) (scripts.Cleanup, bool, error) {
-	script, err := scripts.RunScript()
-	if err != nil {
-		return scripts.Cleanup{}, false, err
-	}
-
 	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), patchCommandTimeout)
 	defer cancel()
 
-	result, err := r.sess.Run(cleanCtx, r.host, opRunCleanup, []string{r.task.ID}, bytes.NewReader(script))
+	result, err := r.sess.Run(cleanCtx, r.host, opRunCleanup, []string{r.task.ID}, bytes.NewReader(r.script))
 	if err != nil {
 		return scripts.Cleanup{}, false, fmt.Errorf("cleanup did not finish: %w", err)
 	}
