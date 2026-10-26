@@ -49,18 +49,18 @@ async function setup(routes={}){
 }
 const type=(w,el,value)=>{el.value=value;el.dispatchEvent(new w.Event('input',{bubbles:true}));};
 const pick=(d,id)=>d.querySelector(`#upgrade .upgrade-instance-item[data-instance-id="${id}"] input[type="checkbox"]`).click();
-async function openInstances(env,ids=['val-a']){
+async function openInstances(env,ids=['val-a'],text=SECRET){
  const {w,d}=env;
  await w.__T.requestOperation('command');
  w.__T.setBatchStep(1,false);
- type(w,d.getElementById('command-text'),SECRET);
+ type(w,d.getElementById('command-text'),text);
  w.__T.setBatchStep(2,false);
  await sleep(5);
  ids.forEach(id=>pick(d,id));
 }
 // Clicks Next from the instance step and waits for the review to settle.
-async function review(env,ids){
- await openInstances(env,ids);
+async function review(env,ids,text){
+ await openInstances(env,ids,text);
  env.d.getElementById('batch-flow-next').click();
  await sleep(20);
 }
@@ -774,5 +774,21 @@ t('the console capture sees command text nested in an object',async()=>{
  w.console.error({message:'create failed',body:{command:SECRET}});
  expect(env.logs.some(hasSecret)).toBe(true);
  env.logs.length=0;
+ }finally{w.close();}
+});
+
+t('a command with hidden characters is reviewed as escapes but previewed and created as typed',async()=>{
+ const raw=SECRET+'\u0007\u001b\u202e\u200f\u2066\u0085';
+ const env=await setup();const {w,d}=env;try{
+ await review(env,['val-a'],raw);
+ const pre=d.querySelector('#batch-flow-review pre.command-review-text');
+ expect(pre!==null).toBe(true);
+ expect(/[\u0007\u001b\u202e\u200f\u2066\u0085]/.test(pre.textContent)).toBe(false);
+ expect(pre.textContent.includes('\\u0007')&&pre.textContent.includes('\\u202E')&&pre.textContent.includes('\\u0085')).toBe(true);
+ ack(env,'run as vcap');
+ next(env).click();await sleep(20);
+ expect(previews(env)[0].body.command===raw).toBe(true);
+ expect(creates(env).length).toBe(1);
+ expect(creates(env)[0].body.command===raw).toBe(true);
  }finally{w.close();}
 });

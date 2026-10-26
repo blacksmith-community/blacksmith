@@ -3572,7 +3572,24 @@
   // send again once the detail is back.
   let commandKeyPrompt = null;
   // The request init of a read that a command task gates, with the key when one is held.
-  const commandReadInit = () => (commandOutputKey ? { headers: { 'X-Blacksmith-Command-Key': commandOutputKey } } : undefined);
+  // It counts the times a held key was dropped. A read answers into the
+  // page only if no key was dropped since it went out.
+  let commandKeyGen = 0;
+  // Tasks the broker has asked a key for, so a read of one sends it.
+  const commandTaskIds = new Set();
+  // The request init of a read of a task's detail. Only command tasks take
+  // the key, and the kind comes from the summary, the cached detail, or the
+  // refusal that asked for a key.
+  const commandReadInit = (taskId, kind) => {
+    if (!commandOutputKey) return undefined;
+    const listed = upgradeTasks.find((task) => task.id === taskId);
+    const cached = taskDetailCache.get(taskId);
+    const command = kind === 'command' || commandTaskIds.has(taskId) || (listed && listed.kind === 'command') || (cached && cached.kind === 'command');
+    return command ? { headers: { 'X-Blacksmith-Command-Key': commandOutputKey } } : undefined;
+  };
+  const staleCommandRead = () => Object.assign(new Error('The read was replaced.'), { stale: true });
+  // A holder entry never keeps the command text.
+  const slimHolderDetail = (detail) => (detail && detail.command ? { ...detail, command: { ...detail.command, command: undefined } } : detail);
   // The values the open review froze, as a signature to compare against the
   // controls. An empty signature means no command review is open.
   const commandRun = { signature: '' };
@@ -3788,9 +3805,12 @@
         const known = holderDetails.get(task.id);
         if (known && known.readAt && known.signature === signature && now - known.readAt < HOLDER_DETAIL_MAX_AGE_MS) return;
         try {
-          const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit());
+          const gen = commandKeyGen;
+          const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit(task.id, task.kind));
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          holderDetails.set(task.id, { detail: await response.json(), signature, readAt: now });
+          const detail = await response.json();
+          if (gen !== commandKeyGen) return;
+          holderDetails.set(task.id, { detail: slimHolderDetail(detail), signature, readAt: now });
         } catch (err) {
           if (known) holderDetails.set(task.id, { detail: known.detail, signature, readAt: 0 });
         }
@@ -5778,7 +5798,7 @@
       const active = (Array.isArray(list) ? list : []).filter((task) => task && ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
       const details = await Promise.all(active.map(async (task) => {
         try {
-          const detail = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit());
+          const detail = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit(task.id, task.kind));
           return detail.ok ? await detail.json() : null;
         } catch (err) {
           return null;
@@ -6900,7 +6920,9 @@
   // and code when the broker refuses.
   const loadUpgradeTask = async (taskId) => {
     const sent = commandOutputKey;
-    const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}`, commandReadInit());
+    const gen = commandKeyGen;
+    const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}`, commandReadInit(taskId));
+    if (gen !== commandKeyGen) throw staleCommandRead();
     if (!response.ok) {
       const err = await readApiError(response);
       err.keySent = sent;
@@ -6925,14 +6947,15 @@
     });
 
     try {
-      const task=await loadUpgradeTask(taskId);
-      if(revision!==selectedTaskRevision||selectedTaskId!==taskId)return false;
-      renderTaskDetail(task);
+      const detail = await loadUpgradeTask(taskId);
+      if (revision !== selectedTaskRevision || selectedTaskId !== taskId) return false;
+      renderTaskDetail(detail);
       const heading = document.querySelector('#upgrade .task-detail-header h3');
       heading?.focus({ preventScroll: true });
       heading?.scrollIntoView?.({ block: 'nearest' });
       return true;
     } catch (err) {
+      if (err && err.stale) return false;
       if (denyCommandDetail(taskId, err)) return false;
       console.error('Failed to fetch task details:', err);
       if (options.throwOnError) throw err;
@@ -7544,6 +7567,7 @@
   // any command text or output on the page. The pane then asks for the key.
   const clearCommandOutputKey = () => {
     const held = Boolean(commandOutputKey);
+    if (held) commandKeyGen++;
     commandOutputKey = '';
     document.querySelectorAll('input.command-output-key').forEach((input) => { input.value = ''; });
     if (!held) return;
@@ -7595,7 +7619,13 @@
       input.value = '';
       if (!typed) { input.focus(); return; }
       commandOutputKey = typed;
-      onSubmit();
+      // The prompt waits for its request, so a second press sends nothing.
+      input.disabled = true;
+      submit.disabled = true;
+      Promise.resolve(onSubmit()).finally(() => {
+        input.disabled = false;
+        submit.disabled = false;
+      });
     };
     submit.addEventListener('click', send);
     input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); send(); } });
@@ -7617,22 +7647,37 @@
       back.type = 'button';
       back.addEventListener('click', () => window.backToTaskList());
       header.append(back, rotateEl('h3', '', 'Command task'));
-      wrap.append(header, buildCommandKeyPrompt(commandKeyMessage(prompt.refused), 'Show task', async () => {
+      wrap.append(header, buildCommandKeyPrompt(commandKeyMessage(prompt.refused), 'Show task', () => {
         commandKeyPrompt = null;
-        const ok = await selectUpgradeTask(prompt.taskId);
-        if (ok && prompt.then === 'resume') sendTaskControl(prompt.taskId, 'resume');
+        return selectUpgradeTask(prompt.taskId);
       }));
       container.appendChild(wrap);
     });
+  };
+
+  // Reads a task's detail again after a key was entered, and shows it.
+  const refreshCommandDetail = async (taskId) => {
+    commandKeyPrompt = null;
+    try {
+      const detail = await loadUpgradeTask(taskId);
+      if (selectedTaskId === taskId) renderTaskDetail(detail);
+    } catch (err) {
+      if (err && err.stale) return;
+      if (!denyCommandDetail(taskId, err)) reportTaskError('Could not load the task.', err);
+    }
   };
 
   // Shows the key prompt when a detail read was refused for want of a key.
   // It reports whether the error was that refusal.
   const denyCommandDetail = (taskId, err) => {
     if (!err || err.status !== 401 || err.code !== 'command_credential_required') return false;
+    commandTaskIds.add(taskId);
+    // A refusal for a task the operator has left says nothing now.
+    if (selectedTaskId !== taskId) return true;
     const refused = Boolean(err.keySent);
     commandKeyPrompt = { taskId, action: 'detail', refused };
     if (refused && commandOutputKey === err.keySent) {
+      commandKeyGen++;
       commandOutputKey = '';
       document.querySelectorAll('input.command-output-key').forEach((input) => { input.value = ''; });
       commandOutputs.clear();
@@ -7701,7 +7746,7 @@
     } else if (entry.status === 'credential') {
       body.appendChild(buildCommandKeyPrompt(commandKeyMessage(false).replace('show this', 'show this output'), 'Show output', () => {
         commandOutputs.delete(context.key);
-        loadCommandOutput(context);
+        return loadCommandOutput(context);
       }));
     } else {
       body.appendChild(rotateEl('p', 'command-output-note command-output-error', entry.message));
@@ -7723,6 +7768,7 @@
   // Reads one node's output. The key goes out only when one is held.
   const loadCommandOutput = async (context) => {
     const sent = commandOutputKey;
+    const gen = commandKeyGen;
     commandOutputs.set(context.key, { status: 'loading' });
     paintCommandOutput(context.key);
     const params = new URLSearchParams({ vm: context.vm, instance: context.instanceId });
@@ -7731,6 +7777,8 @@
     let result;
     try {
       const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(context.taskId)}/output?${params}`, { headers });
+      // A key dropped meanwhile, or a task the operator left, takes the answer with it.
+      if (gen !== commandKeyGen) return;
       if (response.ok) {
         result = { status: 'loaded', data: await response.json() };
       } else {
@@ -7748,6 +7796,8 @@
     } catch (err) {
       result = { status: 'error', retry: true, message: 'Could not read the output. The connection to the broker failed.' };
     }
+    if (gen !== commandKeyGen) return;
+    if (selectedTaskId !== context.taskId) { commandOutputs.delete(context.key); return; }
     commandOutputs.set(context.key, result);
     paintCommandOutput(context.key);
   };
@@ -7827,7 +7877,11 @@
     add('Shell', spec.shell || '/bin/bash');
     add('Timeout', `${Number(spec.timeout_seconds) || 0} seconds`);
     add('Parallel', spec.parallel ? `Yes, ${Number(spec.max_in_flight) || 1} at a time` : 'No');
-    if (spec.reason) add('Reason', revealHiddenChars(spec.reason).shown);
+    if (spec.reason) {
+      const reason = revealHiddenChars(spec.reason);
+      const cell = add('Reason', reason.shown);
+      if (reason.hidden) cell.appendChild(rotateEl('p', 'command-hidden-note', 'The reason contains hidden control characters, shown here as \\u escapes.'));
+    }
     return rows;
   };
 
@@ -7949,12 +8003,11 @@
         </div>
       </div>
     `;
-      if (isCommand && commandKeyPrompt && commandKeyPrompt.action === 'resume' && commandKeyPrompt.taskId === task.id) {
+      if (isCommand && isPaused && commandKeyPrompt && commandKeyPrompt.action === 'resume' && commandKeyPrompt.taskId === task.id) {
         const header = tasksContainer.querySelector('.task-detail-header');
         if (header) {
-          header.after(buildCommandKeyPrompt('The broker asks for a command key to continue this task.', 'Continue with key', () => {
-            sendTaskControl(task.id, 'resume');
-          }));
+          // The key only opens the task. Continue is a separate press.
+          header.after(buildCommandKeyPrompt('The broker asks for a command key to continue this task. Enter it, then press Continue.', 'Use key', () => refreshCommandDetail(task.id)));
         }
       }
       if (isCommand) {
@@ -7982,7 +8035,16 @@
       cancel: (event) => window.cancelTask(task.id, event)
     };
     tasksContainer.querySelectorAll('[data-task-action]').forEach((button) => {
-      button.addEventListener('click', actions[button.dataset.taskAction]);
+      if (button.dataset.taskAction !== 'resume') {
+        button.addEventListener('click', actions[button.dataset.taskAction]);
+        return;
+      }
+      // Continue waits for its request, so a second press sends nothing.
+      button.addEventListener('click', (event) => {
+        if (button.disabled) return;
+        button.disabled = true;
+        Promise.resolve(actions.resume(event)).finally(() => { if (button.isConnected) button.disabled = false; });
+      });
     });
     tasksContainer.querySelectorAll('[data-bosh-task-id]').forEach((button) => {
       button.addEventListener('click', (event) => window.showTaskDetails(Number(button.dataset.boshTaskId), event));
@@ -8043,6 +8105,7 @@
       const isCommandTask = Boolean(cached && cached.kind === 'command');
       // A resume of a command task is gated by the key. Nothing else is.
       const sent = verb === 'resume' && isCommandTask ? commandOutputKey : '';
+      const gen = commandKeyGen;
       const init = { method: 'POST' };
       if (sent) init.headers = { [COMMAND_KEY_HEADER]: sent };
       const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}/${verb}`, init);
@@ -8058,9 +8121,10 @@
       }
       const refusal = await readApiError(response);
       if (verb === 'resume' && isCommandTask && response.status === 401 && refusal.code === 'command_credential_required') {
+        if (gen !== commandKeyGen) return false;
         if (sent) {
           // The broker did not accept the key, so the detail it unlocked goes too.
-          commandKeyPrompt = { taskId, action: 'detail', refused: true, then: 'resume' };
+          commandKeyPrompt = { taskId, action: 'detail', refused: true };
           clearCommandOutputKey();
         } else {
           commandKeyPrompt = { taskId, action: 'resume', refused: false };
@@ -8184,7 +8248,7 @@
             try {
               detail = await loadUpgradeTask(taskId);
             } catch (err) {
-              if (!denyCommandDetail(taskId, err)) throw err;
+              if (!(err && err.stale) && !denyCommandDetail(taskId, err)) throw err;
             }
           }
           // Preserve DOM, selection and expanded evidence when nothing changed.

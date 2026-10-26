@@ -18,6 +18,9 @@ afterEach(()=>{ while(envs.length){ const env=envs.pop(); expect(env.alerts).toE
 const hasSecret=(s)=>String(s).includes(SECRET);
 const hasKey=(s)=>String(s).includes(KEY);
 const noKeyIn=(d)=>!hasKey(d.documentElement.outerHTML)&&[...d.querySelectorAll('input')].every(i=>!hasKey(i.value));
+// Looks the input up, proves it exists, then types into it.
+const typeKey=(root,sel='input[type="password"]',val=KEY)=>{const i=root.querySelector(sel);expect(i!==null).toBe(true);i.value=val;return i;};
+const press=(root,sel)=>{const b=root.querySelector(sel);expect(b!==null).toBe(true);b.click();};
 const panel=(d)=>d.querySelector('#upgrade .upgrade-tasks');
 const when=(d,s)=>new Date(Date.UTC(2026,9,26,12,0,0)+s*1000).toISOString();
 
@@ -194,7 +197,7 @@ t('a command key prompt opens on 401, and the key is sent, reused, and never lea
  expect(el.textContent.includes('asks for a command key')).toBe(true);
  const button=[...el.querySelectorAll('button')].find(b=>b.textContent==='Show output');
  expect(button!==undefined).toBe(true);
- input.value=KEY;button.click();await sleep(30);
+ input.value=KEY;expect(button!==undefined).toBe(true);button.click();await sleep(30);
  expect(env.outputs.length).toBe(2);
  expect(env.outputs[1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
  expect(el.querySelectorAll('pre').length).toBe(2);
@@ -220,9 +223,9 @@ t('a rejected key blanks every key input, drops the output, and asks for the key
  const first=await openDetails(env,0);
  const second=await openDetails(env,1);
  const other=second.querySelector('input[type="password"]');
- other.value=KEY+'-typed';
- first.querySelector('input[type="password"]').value=KEY;
- [...first.querySelectorAll('button')].find(b=>b.textContent==='Show output').click();await sleep(30);
+ expect(other!==null).toBe(true);other.value=KEY+'-typed';
+ typeKey(first);
+ const show=[...first.querySelectorAll('button')].find(b=>b.textContent==='Show output');expect(show!==undefined).toBe(true);show.click();await sleep(30);
  expect(env.outputs[2].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
  expect(other.value==='').toBe(true);
  expect(panel(d).textContent.includes('did not accept')).toBe(true);
@@ -238,11 +241,10 @@ t('a rejected key blanks every key input, drops the output, and asks for the key
 t('switching to another top-level tab drops the key and leaves no command text or output on the page',async()=>{
  const env=await setup({gated:true,output:(u,o)=>(o.headers&&o.headers['X-Blacksmith-Command-Key']===KEY)?[200,output()]:[401,{success:false,error:'k',code:'command_credential_required'}]});const {w,d}=env;try{
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
- panel(d).querySelector('input[type="password"]').value=KEY;
- panel(d).querySelector('button.command-output-show').click();await sleep(40);
+ typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);
  const first=await openDetails(env,0);
  expect(first.querySelectorAll('pre').length).toBe(2);
- const stray=first.ownerDocument.createElement('input');stray.type='password';stray.className='command-output-key';stray.value=KEY;first.appendChild(stray);
+ const stray=first.ownerDocument.createElement('input');stray.type='password';stray.className='command-output-key';stray.value=KEY;first.appendChild(stray);expect(first.contains(stray)).toBe(true);
  d.querySelector('.tab-button[data-tab="services"]').click();await sleep(30);
  expect(stray.value==='').toBe(true);
  expect(noKeyIn(d)).toBe(true);
@@ -257,8 +259,7 @@ t('switching to another top-level tab drops the key and leaves no command text o
  expect(env.details.slice(reads).every(r=>r.headers['X-Blacksmith-Command-Key']===undefined)).toBe(true);
  // With the key entered again the output is read again, not shown from memory.
  const before=env.outputs.length;
- panel(d).querySelector('input[type="password"]').value=KEY;
- panel(d).querySelector('button.command-output-show').click();await sleep(40);
+ typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);
  await openDetails(env,0);
  expect(env.outputs.length).toBe(before+1);
  }finally{w.close();}
@@ -274,8 +275,7 @@ t('a gated detail asks for the key inline, sends it, and keeps the key off the p
  // The poll does not repeat the refused read while it waits for a key.
  await w.__T.fetchUpgradeTasks();await w.__T.fetchUpgradeTasks();await sleep(20);
  expect(env.details.length).toBe(1);
- panel(d).querySelector('input[type="password"]').value=KEY;
- panel(d).querySelector('button.command-output-show').click();await sleep(40);
+ typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);
  expect(env.details.length).toBe(2);
  expect(env.details[1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
  expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
@@ -290,8 +290,7 @@ t('a gated detail asks for the key inline, sends it, and keeps the key off the p
 t('a detail the broker refuses a held key for says so, drops the key, and stops',async()=>{
  const env=await setup({gated:true});const {w,d}=env;try{
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
- panel(d).querySelector('input[type="password"]').value='wrong-'+KEY;
- panel(d).querySelector('button.command-output-show').click();await sleep(40);
+ typeKey(panel(d),'input[type="password"]','wrong-'+KEY);press(panel(d),'button.command-output-show');await sleep(40);
  expect(panel(d).textContent.includes('did not accept')).toBe(true);
  const n=env.details.length;
  await w.__T.fetchUpgradeTasks();await sleep(20);
@@ -314,42 +313,86 @@ t('a poll that meets the gate shows the prompt and stops reading',async()=>{
  }finally{w.close();}
 });
 
-t('resume of a command task sends the held key, and without it asks for one and resends the same request',async()=>{
+t('resume of a command task sends the held key, and without it asks for one and waits for Continue',async()=>{
  const paused=task({status:'paused',failed_count:1,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:3})],{status:'failed'}),inst('val-b',[node('node',0,{phase:'pending',status:''})],{status:'pending'})]});
  const env=await setup({detail:paused,gated:true});const {w,d}=env;try{
  w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{ env.details.push({headers:o.headers||{}}); return j(200,paused); }]);
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
- d.querySelector('.resume-btn').click();await sleep(30);
+ press(d,'.resume-btn');await sleep(30);
  expect(env.resumes.length).toBe(1);
  expect(env.resumes[0].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
  const prompt=panel(d).querySelector('.command-key-prompt');
  expect(prompt!==null).toBe(true);
  expect(prompt.textContent.includes('asks for a command key')).toBe(true);
- prompt.querySelector('input').value=KEY;
- prompt.querySelector('button').click();await sleep(40);
+ typeKey(prompt,'input');
+ press(prompt,'button');await sleep(40);
+ // The key only reopens the task. No resume went out with it.
+ expect(env.resumes.length).toBe(1);
+ expect(panel(d).querySelector('.command-key-prompt')===null).toBe(true);
+ press(d,'.resume-btn');await sleep(30);
  expect(env.resumes.length).toBe(2);
  expect(env.resumes[1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
- expect(panel(d).querySelector('.command-key-prompt')===null).toBe(true);
- // With the key held, the next resume carries it with no prompt.
- d.querySelector('.resume-btn').click();await sleep(30);
+ press(d,'.resume-btn');await sleep(30);
  expect(env.resumes.length).toBe(3);
  expect(env.resumes[2].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
  expect(noKeyIn(d)).toBe(true);
  }finally{w.close();}
 });
 
-t('a resume the broker rejects the key for drops the key and the detail',async()=>{
+t('a resume the broker rejects the key for drops the key, and entering it again re-reads without resuming',async()=>{
  const paused=task({status:'paused',failed_count:1,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:3})],{status:'failed'})]});
  const env=await setup({detail:paused});const {w,d}=env;try{
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
- env.w.__routes.unshift([`${DETAIL_URL}/resume`,(u,o,j)=>{env.resumes.push({headers:o.headers||{}});return j(401,{success:false,error:'k',code:'command_credential_required'});}]);
- d.querySelector('.resume-btn').click();await sleep(30);
+ env.w.__routes.unshift([`${DETAIL_URL}/resume`,(u,o,j)=>{env.resumes.push({headers:o.headers||{}});return (o.headers||{})['X-Blacksmith-Command-Key']===KEY&&env.resumes.length>2?j(200,{success:true}):j(401,{success:false,error:'k',code:'command_credential_required'});}]);
+ press(d,'.resume-btn');await sleep(30);
  const prompt=panel(d).querySelector('.command-key-prompt');
- prompt.querySelector('input').value=KEY;prompt.querySelector('button').click();await sleep(40);
- expect(env.resumes[1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ expect(prompt!==null).toBe(true);
+ typeKey(prompt,'input');press(prompt,'button');await sleep(40);
+ expect(env.resumes.length).toBe(1);
+ // Pressing Continue sends the key, the broker refuses it, and the key goes.
+ press(d,'.resume-btn');await sleep(30);
+ expect(env.resumes.length).toBe(2);
  expect(panel(d).textContent.includes('did not accept')).toBe(true);
  expect(panel(d).querySelector('pre.command-text')===null).toBe(true);
  expect(noKeyIn(d)).toBe(true);
+ // Entering the key again re-reads the task and sends no resume.
+ const reads=env.details.length;
+ typeKey(panel(d),'input[type="password"]');press(panel(d),'button.command-output-show');await sleep(40);
+ expect(env.resumes.length).toBe(2);
+ expect(env.details.length>reads).toBe(true);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ // Continue then sends one resume with the key.
+ press(d,'.resume-btn');await sleep(30);
+ expect(env.resumes.length).toBe(3);
+ expect(env.resumes[2].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ }finally{w.close();}
+});
+
+t('cancelling or leaving the tab while a resume prompt is up never leads to a resume',async()=>{
+ const paused=task({status:'paused',failed_count:1,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:3})],{status:'failed'})]});
+ const env=await setup({detail:paused,gated:true});const {w,d}=env;try{
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{ env.details.push({headers:o.headers||{}}); return j(200,paused); }]);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ press(d,'.resume-btn');await sleep(30);
+ expect(env.resumes.length).toBe(1);
+ expect(panel(d).querySelector('.command-key-prompt')!==null).toBe(true);
+ d.querySelector('.tab-button[data-tab="services"]').click();await sleep(30);
+ d.querySelector('.tab-button[data-tab="upgrade"]').click();await sleep(60);
+ expect(env.resumes.length).toBe(1);
+ expect(noKeyIn(d)).toBe(true);
+ }finally{w.close();}
+});
+
+t('the prompt and Continue buttons wait for their request, so a second press sends nothing',async()=>{
+ const paused=task({status:'paused',failed_count:1,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:3})],{status:'failed'})]});
+ const env=await setup({detail:paused});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([`${DETAIL_URL}/resume`,async(u,o,j)=>{env.resumes.push({headers:o.headers||{}});await gate;return j(200,{success:true});}]);
+ const btn=d.querySelector('.resume-btn');expect(btn!==null).toBe(true);
+ btn.click();btn.click();await sleep(20);
+ expect(env.resumes.length).toBe(1);
+ release();await sleep(30);
  }finally{w.close();}
 });
 
@@ -489,5 +532,225 @@ t('the page never holds the command text outside the detail pre after the whole 
  expect(env.outputs.every(r=>!hasSecret(r.url)&&!hasSecret(JSON.stringify(r.headers)))).toBe(true);
  expect(env.logs.some(hasSecret)).toBe(false);
  expect(env.calls.some(hasSecret)).toBe(false);
+ }finally{w.close();}
+});
+
+// Enters the key on the inline prompt and waits for the task to load.
+const unlock=async(d)=>{typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);};
+
+t('every hidden character shows as an escape in the command, the reason, and the review',async()=>{
+ const codes=[];
+ for(let c=0;c<=0x08;c++) codes.push(c);
+ for(let c=0x0B;c<=0x1F;c++) codes.push(c);
+ for(let c=0x7F;c<=0x9F;c++) codes.push(c);
+ codes.push(0x200E,0x200F);
+ for(let c=0x202A;c<=0x202E;c++) codes.push(c);
+ for(let c=0x2066;c<=0x2069;c++) codes.push(c);
+ const raw=codes.map(c=>String.fromCharCode(c)).join('');
+ const esc=(c)=>'\\u'+c.toString(16).toUpperCase().padStart(4,'0');
+ const want=codes.map(esc).join('');
+ const env=await setup({detail:task({command:{...task().command,command:'ok',reason:raw}})});const {w,d}=env;try{
+ await open(env);
+ const host=d.querySelector('#upgrade .upgrade-task-detail');
+ // A clean command still gets a note about the reason.
+ const reasonRow=[...host.querySelectorAll('.summary-row')].find(r=>r.textContent.startsWith('Reason'));
+ expect(reasonRow!==undefined).toBe(true);
+ expect(reasonRow.textContent.includes(want)).toBe(true);
+ expect(reasonRow.querySelector('.command-hidden-note')!==null).toBe(true);
+ expect(codes.some(c=>host.textContent.includes(String.fromCharCode(c)))).toBe(false);
+ expect(host.querySelectorAll('.command-hidden-note').length).toBe(1);
+ env.state.detail=task({command:{...task().command,command:raw,reason:'clean'}});
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ const pre=d.querySelector('#upgrade pre.command-text');
+ expect(pre.textContent===want).toBe(true);
+ expect(codes.some(c=>d.querySelector('#upgrade .upgrade-task-detail').textContent.includes(String.fromCharCode(c)))).toBe(false);
+ const review=w.__T.buildCommandReviewBody({instances:[],warnings:[],run_as:'vcap',shell:'/bin/bash',timeout_seconds:600},{command:raw,run_as:'vcap',timeout_seconds:600,parallel:false});
+ expect(review.querySelector('pre').textContent===want).toBe(true);
+ expect(codes.some(c=>review.textContent.includes(String.fromCharCode(c)))).toBe(false);
+ }finally{w.close();}
+});
+
+t('a tab switch clears the cached detail and a read held in flight across it leaves nothing behind',async()=>{
+ const env=await setup({gated:true});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ expect(w.__T.taskDetailCache.get(TASK)!==undefined).toBe(true);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),async(u,o,j)=>{env.details.push({headers:o.headers||{}});await gate;return j(200,task());}]);
+ const pending=w.__T.selectUpgradeTask(TASK);
+ await sleep(5);
+ d.querySelector('.tab-button[data-tab="services"]').click();await sleep(20);
+ expect(w.__T.taskDetailCache.get(TASK)===undefined).toBe(true);
+ release();await pending;await sleep(30);
+ expect(hasSecret(d.body.textContent)).toBe(false);
+ expect(hasSecret(JSON.stringify([...w.__T.taskDetailCache]))).toBe(false);
+ expect(w.__T.taskDetailCache.get(TASK)===undefined).toBe(true);
+ expect(noKeyIn(d)).toBe(true);
+ }finally{w.close();}
+});
+
+t('an output read held in flight across a rejected key paints nothing and is read again after the key returns',async()=>{
+ const env=await setup({gated:true,output:(u,o)=>(o.headers&&o.headers['X-Blacksmith-Command-Key']===KEY)?[200,output()]:[401,{success:false,error:'k',code:'command_credential_required'}]});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([OUT_URL,async(u,o,j)=>{env.outputs.push({url:u,headers:o.headers||{}});await gate;return j(200,output());}]);
+ const el=await openDetails(env,0);
+ expect(env.outputs.length).toBe(1);
+ // The poll meets a refusal of the held key while the output read waits.
+ let refuse=true;
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{env.details.push({headers:o.headers||{}});return refuse?j(401,{success:false,error:'k',code:'command_credential_required'}):j(200,task());}]);
+ env.state.detail=task({status:'running'});
+ await w.__T.fetchUpgradeTasks();await sleep(30);
+ expect(panel(d).textContent.includes('did not accept')).toBe(true);
+ release();await sleep(30);
+ expect(d.body.textContent.includes('hello out')).toBe(false);
+ expect(hasSecret(d.body.textContent)).toBe(false);
+ // With the key entered again the output is read again, not taken from memory.
+ refuse=false;
+ w.__routes.shift();
+ w.__routes.unshift([OUT_URL,(u,o,j)=>{env.outputs.push({url:u,headers:o.headers||{}});return j(200,output());}]);
+ await unlock(d);
+ await openDetails(env,0);
+ expect(env.outputs.length).toBe(2);
+ expect(d.body.textContent.includes('hello out')).toBe(true);
+ }finally{w.close();}
+});
+
+t('a rejected key blanks stray key inputs, purges the caches, and the next read carries no key',async()=>{
+ const env=await setup({gated:true});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ const stray=d.createElement('input');stray.type='password';stray.className='command-output-key';stray.value=KEY;d.querySelector('#upgrade').appendChild(stray);
+ expect(d.querySelector('#upgrade').contains(stray)).toBe(true);
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{env.details.push({headers:o.headers||{}});return j(401,{success:false,error:'k',code:'command_credential_required'});}]);
+ env.state.detail=task({status:'running'});
+ await w.__T.fetchUpgradeTasks();await sleep(30);
+ expect(stray.value==='').toBe(true);
+ expect(w.__T.taskDetailCache.get(TASK)===undefined).toBe(true);
+ expect(hasSecret(d.body.textContent)).toBe(false);
+ expect(noKeyIn(d)).toBe(true);
+ const before=env.details.length;
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ expect(env.details.length>before).toBe(true);
+ expect(env.details[env.details.length-1].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ }finally{w.close();}
+});
+
+t('only command tasks are sent the key, and the holder cache never keeps the command text',async()=>{
+ const CERT='22222222-2222-4222-8222-222222222222';
+ const env=await setup({gated:true});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ const certReads=[];
+ w.__routes.unshift([new RegExp(CERT+'$'),(u,o,j)=>{certReads.push({headers:o.headers||{}});return j(200,{id:CERT,kind:'certificates',status:'completed',name:'',target:'x',total_count:0,completed_count:0,failed_count:0,created_at:when(0,0),instances:[]});}]);
+ await w.__T.selectUpgradeTask(CERT);await sleep(20);
+ expect(certReads.length).toBe(1);
+ expect(certReads[0].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ // A poll with an active command task reads its holder detail with the key and stores no text.
+ env.state.detail=task({status:'running'});
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const keyed=env.details.filter(r=>r.headers['X-Blacksmith-Command-Key']===KEY);
+ expect(keyed.length>0).toBe(true);
+ expect(w.__T.holderDetails.size>0).toBe(true);
+ expect(hasSecret(JSON.stringify([...w.__T.holderDetails]))).toBe(false);
+ expect(hasKey(JSON.stringify([...w.__T.holderDetails]))).toBe(false);
+ }finally{w.close();}
+});
+
+t('pause and cancel requests carry no key even while one is held',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ const seen=[];
+ w.__routes.unshift([`${DETAIL_URL}/pause`,(u,o,j)=>{seen.push({verb:'pause',headers:o.headers||{}});return j(200,{success:true});}]);
+ w.__routes.unshift([new RegExp('/'+TASK+'/cancel$'),(u,o,j)=>{seen.push({verb:'cancel',headers:o.headers||{}});return j(200,{success:true});}]);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ press(d,'.pause-btn');await sleep(40);
+ press(d,'.cancel-btn');await sleep(20);
+ const confirm=d.getElementById('dialog-modal-overlay').querySelector('[data-dialog-role="confirm"]');
+ expect(confirm!==null).toBe(true);confirm.click();await sleep(40);
+ expect(seen.map(s=>s.verb).sort()).toEqual(['cancel','pause']);
+ expect(seen.every(s=>s.headers['X-Blacksmith-Command-Key']===undefined)).toBe(true);
+ }finally{w.close();}
+});
+
+const OTHER='33333333-3333-4333-8333-333333333333';
+
+t('a detail read that answers after the operator left the task paints nothing and draws no prompt',async()=>{
+ for(const gated of [false,true]){
+  const env=await setup({gated});const {w,d}=env;try{
+  let release;const gate=new Promise((r)=>{release=r;});
+  w.__routes.unshift([new RegExp(DETAIL_URL+'$'),async(u,o,j)=>{env.details.push({headers:o.headers||{}});await gate;return gated?j(401,{success:false,error:'k',code:'command_credential_required'}):j(200,task());}]);
+  const pending=w.__T.selectUpgradeTask(TASK);await sleep(5);
+  w.__T._setSelectedTask(OTHER);
+  release();await pending;await sleep(30);
+  expect(panel(d).querySelector('pre.command-text')===null).toBe(true);
+  expect(panel(d).querySelector('.command-key-prompt')===null).toBe(true);
+  expect(hasSecret(d.body.textContent)).toBe(false);
+  }finally{w.close();}
+ }
+});
+
+t('a holder read held in flight across a dropped key stores nothing',async()=>{
+ const env=await setup({gated:true});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ w.__T._setSelectedTask(null);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),async(u,o,j)=>{env.details.push({headers:o.headers||{}});await gate;return j(200,task({status:'running'}));}]);
+ env.state.detail=task({status:'running'});
+ await w.__T.fetchUpgradeTasks();await sleep(20);
+ const held=env.details[env.details.length-1];
+ expect(held.headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ press(d,'.tab-button[data-tab="services"]');await sleep(20);
+ release();await sleep(30);
+ expect(w.__T.holderDetails.has(TASK)).toBe(false);
+ }finally{w.close();}
+});
+
+t('a key prompt button waits for its request, so a second press sends nothing',async()=>{
+ const env=await setup({gated:true});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),async(u,o,j)=>{env.details.push({headers:o.headers||{}});await gate;return j(200,task());}]);
+ const before=env.details.length;
+ const input=typeKey(panel(d));
+ const button=panel(d).querySelector('button.command-output-show');expect(button!==null).toBe(true);
+ button.click();await sleep(10);
+ expect(button.disabled&&input.disabled).toBe(true);
+ button.click();button.click();await sleep(10);
+ expect(env.details.length).toBe(before+1);
+ release();await sleep(40);
+ }finally{w.close();}
+});
+
+t('a resume refusal that answers after the key was dropped and entered again leaves the new key alone',async()=>{
+ const paused=task({status:'paused',failed_count:1,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:3})],{status:'failed'})]});
+ const env=await setup({detail:paused,gated:true});const {w,d}=env;try{
+ let refuse=false;
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{env.details.push({headers:o.headers||{}});
+  if(refuse||(o.headers||{})['X-Blacksmith-Command-Key']!==KEY) return j(401,{success:false,error:'k',code:'command_credential_required'});
+  return j(200,env.state.detail);}]);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.unshift([`${DETAIL_URL}/resume`,async(u,o,j)=>{env.resumes.push({headers:o.headers||{}});await gate;return j(401,{success:false,error:'k',code:'command_credential_required'});}]);
+ press(d,'.resume-btn');await sleep(10);
+ expect(env.resumes[0].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ // The poll meets a refusal, so the key goes. The operator enters it again.
+ refuse=true;
+ env.state.detail={...paused,status:'running'};
+ await w.__T.fetchUpgradeTasks();await sleep(30);
+ expect(panel(d).textContent.includes('did not accept')).toBe(true);
+ refuse=false;
+ await unlock(d);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ release();await sleep(40);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ expect(panel(d).textContent.includes('did not accept')).toBe(false);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ expect(env.details[env.details.length-1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
  }finally{w.close();}
 });
