@@ -902,6 +902,14 @@ func TestCommandPauseLeavesTheNodesInFlightRunning(t *testing.T) {
 	}
 
 	waitUntil(t, "the watchers to read the pause", func() bool { return fix.signalsPending() == 0 })
+
+	// Two more values give a watcher that wrongly cancels on any value
+	// every chance to act before the nodes are released.
+	for range 2 {
+		fix.manager.signalTask(fix.task.ID)
+		waitUntil(t, "the watchers to read the value", func() bool { return fix.signalsPending() == 0 })
+	}
+
 	close(release)
 
 	waitUntil(t, "the loop to wait for the resume", func() bool { return strings.Contains(fix.log.joined(), "is paused, waiting") })

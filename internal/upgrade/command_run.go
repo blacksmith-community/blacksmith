@@ -153,11 +153,7 @@ func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask, can
 	nodeCtx, cancel := context.WithCancelCause(ctx)
 	watcherDone := make(chan struct{})
 
-	go func() {
-		defer close(watcherDone)
-
-		m.watchNodeCancel(nodeCtx, cancel, task, cancelCh)
-	}()
+	go m.watchNodeCancel(nodeCtx, cancel, task, cancelCh, watcherDone)
 
 	return nodeCtx, func() {
 		cancel(nil)
@@ -166,8 +162,12 @@ func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask, can
 }
 
 // watchNodeCancel ends the node's context with errCommandCancelled when
-// the task is cancelled, and returns when the node's context ends.
-func (m *Manager) watchNodeCancel(nodeCtx context.Context, cancel context.CancelCauseFunc, task *UpgradeTask, cancelCh <-chan struct{}) {
+// the task is cancelled, and returns when the node's context ends. It
+// closes done on the way out. It is the goroutine's own entry frame, so a
+// dump of the goroutines names it.
+func (m *Manager) watchNodeCancel(nodeCtx context.Context, cancel context.CancelCauseFunc, task *UpgradeTask, cancelCh <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+
 	for {
 		select {
 		case _, open := <-cancelCh:
