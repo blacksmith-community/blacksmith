@@ -75,7 +75,7 @@ t('a selection that spans two services is allowed and the summary says so',async
  type(w,d.getElementById('command-max-in-flight'),'2');
  expect(summary.textContent).toBe('Run as vcap, 1 command, 3 instances, across 2 services, 2 at a time');
  expect(summary.hidden||summary.closest('[hidden]')).toBeFalsy();
- expect(summary.textContent).not.toContain('SECRET');
+ expect(summary.textContent.includes(SECRET)).toBe(false);
  }finally{w.close();}
 });
 
@@ -90,10 +90,20 @@ t('the review step on a command run requests no preview and sends no command tex
  next.click();await sleep(20);
  expect(w.__T.batchFlow.step).toBe(3);
  const sent=env.calls.slice(before);
- expect(sent).toEqual([]);
- expect(env.calls.filter(c=>c.includes(SECRET))).toEqual([]);
+ expect(sent.length).toBe(0);
+ expect(env.calls.some(c=>c.includes(SECRET))).toBe(false);
  expect(d.getElementById('batch-flow-review').children.length).toBe(0);
- expect(d.body.textContent).not.toContain(SECRET);
- expect(env.errors.join('\n')).not.toContain(SECRET);
+ expect(d.body.textContent.includes(SECRET)).toBe(false);
+ expect(env.errors.some(e=>e.includes(SECRET))).toBe(false);
+ }finally{w.close();}
+});
+
+t('a selected instance the list no longer knows counts as a service of its own',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await openInstances(env);
+ pick(d,'val-a');
+ w.__T.selectedUpgradeInstances.add('gone-instance');
+ w.__T.refreshUpgradeInstanceList();
+ expect(d.getElementById('batch-options-summary').textContent).toBe('Run as vcap, 1 command, 2 instances, across 2 services');
  }finally{w.close();}
 });

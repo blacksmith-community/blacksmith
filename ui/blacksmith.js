@@ -4451,7 +4451,8 @@
   // many instances, and how many services they span.
   const commandSummary = () => {
     const selected = Array.from(batchSelectedIds());
-    const services = new Set(selected.map((id) => (window.serviceInstances || {})[id]?.service_id).filter(Boolean));
+    // An instance with no known service counts as one service of its own.
+    const services = new Set(selected.map((id) => (window.serviceInstances || {})[id]?.service_id || ''));
     const parts = [`Run as ${commandState.user}`, pluralize(1, 'command'), pluralize(selected.length, 'instance')];
     if (services.size > 1) parts.push(`across ${services.size} services`);
     const limit = wholeNumber(commandState.maxInFlight);
