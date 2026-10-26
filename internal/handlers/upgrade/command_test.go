@@ -278,6 +278,35 @@ func TestTaskDetailOfCommandTaskIsGated(t *testing.T) {
 	}
 }
 
+func TestResumeOfCommandTaskIsGatedAndPauseAndCancelAreNot(t *testing.T) {
+	t.Parallel()
+
+	env := commandHandler(t, commandsOn(cmdKey, false))
+	taskID := ranCommandTask(t, env, "vcap", cmdKey)
+	resume := "/b/upgrade/tasks/" + taskID + "/resume"
+
+	expectCode(t, send(t, env.handler, http.MethodPost, resume, "", ""), http.StatusUnauthorized, apierr.CodeCommandCredentialRequired)
+
+	env.set(commandsOff())
+	expectCode(t, send(t, env.handler, http.MethodPost, resume, "", cmdKey), http.StatusForbidden, apierr.CodeCommandsDisabled)
+
+	env.set(commandsOn(cmdKey, false))
+
+	// With the key, the resume reaches the manager, which turns away a task
+	// that is not paused. The gate is not what answers.
+	passed := send(t, env.handler, http.MethodPost, resume, "", cmdKey)
+	if passed.Code == http.StatusUnauthorized || passed.Code == http.StatusForbidden {
+		t.Fatalf("a resume with the key was refused by the gate with %d", passed.Code)
+	}
+
+	for _, action := range []string{"pause", "cancel"} {
+		answer := send(t, env.handler, http.MethodPost, "/b/upgrade/tasks/"+taskID+"/"+action, "", "")
+		if answer.Code == http.StatusUnauthorized || answer.Code == http.StatusForbidden {
+			t.Errorf("%s needs only the broker credential, and answered %d", action, answer.Code)
+		}
+	}
+}
+
 func TestTaskDetailOfCertificateTaskIgnoresCommands(t *testing.T) {
 	t.Parallel()
 

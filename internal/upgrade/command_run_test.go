@@ -19,6 +19,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/bosh/sshconn"
+	"blacksmith/internal/config"
 	"blacksmith/internal/ops/scripts"
 	"blacksmith/pkg/logger"
 )
@@ -418,7 +419,7 @@ func newRunFixture(t *testing.T, options ...runOption) *runFixture {
 
 	manager := NewManager(fix.log, fix.director, fix.vault)
 
-	deps := Deps{Now: fix.clock.read}
+	deps := Deps{Now: fix.clock.read, Commands: func() config.CommandsConfig { return config.CommandsConfig{} }}
 
 	if !fix.noRunner {
 		deps.CommandRunner = func(_ context.Context, _, _ string, indices []int) (PatchSession, error) {

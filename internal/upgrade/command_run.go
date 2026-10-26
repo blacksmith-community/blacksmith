@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/ops/scripts"
@@ -153,7 +154,12 @@ func (m *Manager) commandNodePhase(inst *InstanceUpgrade, vm int) CommandPhase {
 func (m *Manager) driveCommandNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) (bool, error) {
 	run := m.newCommandRun(sessions, task, inst, vm)
 
-	err := run.validate()
+	err := run.authorize(ctx)
+	if err != nil {
+		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Running this command is no longer allowed, so nothing was sent.", err: err}), nil
+	}
+
+	err = run.validate()
 	if err != nil {
 		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "The task's settings are not valid for the wrapper, so nothing was sent.", err: err}), nil
 	}
@@ -215,6 +221,11 @@ func (m *Manager) newCommandRun(sessions *patchSessions, task *UpgradeTask, inst
 	}
 
 	return run
+}
+
+// authorize asks the authorizer whether the stored task may still run.
+func (r *commandRun) authorize(ctx context.Context) error {
+	return r.m.authorizeCommand(ctx, r.spec) //nolint:wrapcheck // the authorizer answers with the API error
 }
 
 // validate checks every value the three operations take, before anything is
@@ -423,9 +434,17 @@ func (r *commandRun) cleanedUp(ctx context.Context, reason string, cause error) 
 // execute saves the node as sent, sends exec, cleans up, stores the
 // output, and settles the node.
 func (r *commandRun) execute(ctx context.Context) bool {
+	// The switch can flip during the prepare round trip and its save, so
+	// this is the last gate before anything runs. A refusal removes what
+	// prepare left on the node.
+	err := r.authorize(ctx)
+	if err != nil {
+		return r.settle(ctx, *r.cleanedUp(ctx, "Running this command is no longer allowed, so it did not run.", err))
+	}
+
 	started := r.m.certNow()
 
-	err := r.advance(ctx, func(node *CommandVM) {
+	err = r.advance(ctx, func(node *CommandVM) {
 		node.Phase = CommandPhaseSent
 		node.StartedAt = &started
 	})
@@ -614,6 +633,11 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 // commandErrorText makes an error fit a node's record, as one short line
 // of printable text.
 func commandErrorText(err error) string {
+	var refusal *apierr.Error
+	if errors.As(err, &refusal) {
+		err = fmt.Errorf("%d %s: %s", refusal.Status, refusal.Code, refusal.Message)
+	}
+
 	text := strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return ' '
@@ -634,4 +658,328 @@ func commandErrorText(err error) string {
 // Vault.
 func storeContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), persistTaskTimeout)
+}
+
+// authorizeCommand asks the authorizer whether a stored command task may
+// go on. The authorizer is read under the manager's lock, so a gate never
+// races Configure.
+func (m *Manager) authorizeCommand(ctx context.Context, spec CommandTaskSpec) error {
+	m.mu.RLock()
+	authorizer := m.deps.Authorizer
+	m.mu.RUnlock()
+
+	if authorizer == nil {
+		authorizer = NewConfigAuthorizer(nil)
+	}
+
+	return authorizer.AuthorizeStored(ctx, spec) //nolint:wrapcheck // the authorizer answers with the API error
+}
+
+// runsCommandLocked reports whether the manager runs this task as a
+// command task. Only a configured manager does, and only while the
+// authorizer still allows the stored task, so a task whose switches were
+// turned off while it waited is let go the way an unrunnable certificate
+// task is. The caller holds mu, which the authorizer is read under without
+// taking it again.
+func (m *Manager) runsCommandLocked(task *UpgradeTask) bool {
+	if task.KindOrDefault() != TaskKindCommand || task.Command == nil || !m.configured {
+		return false
+	}
+
+	authorizer := m.deps.Authorizer
+	if authorizer == nil {
+		authorizer = NewConfigAuthorizer(nil)
+	}
+
+	return authorizer.AuthorizeStored(m.ctx, *task.Command) == nil
+}
+
+// commandResumeAllowed refuses the resume of a command task the authorizer
+// no longer allows, and leaves it paused. Any other task is left to
+// ResumeTask.
+func (m *Manager) commandResumeAllowed(ctx context.Context, taskID string) error {
+	m.mu.RLock()
+	task, exists := m.tasks[taskID]
+
+	var spec *CommandTaskSpec
+	if exists && task.KindOrDefault() == TaskKindCommand {
+		spec = task.Command.clone()
+	}
+	m.mu.RUnlock()
+
+	if spec == nil {
+		return nil
+	}
+
+	err := m.authorizeCommand(ctx, *spec)
+	if err != nil {
+		m.logger.Info("Command task %s stays paused, because the authorizer refuses it: %v", taskID, err)
+	}
+
+	return err
+}
+
+// processCommandInstance runs the command on the nodes of one instance, in
+// order, one at a time, and reports whether the task goes on to its next
+// instance. A node that ends in anything but success stops the deployment:
+// the nodes after it are skipped, the instance fails, and the task pauses
+// when an instance is still pending, so the operator decides whether the
+// rest get the command. A failed instance is settled, so a resume never
+// runs it again. A node left staged or sent by an earlier run is settled
+// through cleanup only, and is never driven again.
+func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
+	ctx := m.ctx
+	persistCtx := context.WithoutCancel(ctx)
+
+	goOn, _ := m.waitWhilePaused(persistCtx, task, cancelCh)
+	if !goOn {
+		return false
+	}
+
+	m.mu.Lock()
+	settled := inst.Status.settled()
+
+	if !settled && inst.Status == InstanceStatusPending {
+		started := m.certNowLocked()
+		inst.Status = InstanceStatusRunning
+		inst.StartedAt = &started
+	}
+	m.mu.Unlock()
+
+	if settled {
+		return true
+	}
+
+	sessions := m.newCommandSessions(inst.Command.Deployment)
+	defer sessions.close()
+
+	if m.settleStrandedNodes(ctx, sessions, task, inst) {
+		return false
+	}
+
+	for vm := range inst.Command.VMs {
+		goOn, _ = m.waitWhilePaused(persistCtx, task, cancelCh)
+		if !goOn {
+			return false
+		}
+
+		if ctx.Err() != nil {
+			m.logger.Info("Manager stopping during command task %s, so instance %s stays as it is", task.ID, inst.InstanceID)
+
+			return false
+		}
+
+		if !m.commandNodeWaits(inst, vm) {
+			continue
+		}
+
+		stopped, err := m.runCommandNode(ctx, sessions, task, inst, vm)
+		if err != nil && !errors.Is(err, errCommandVMChanged) {
+			m.logger.Error("Command task %s did not run node %d of instance %s: %v", task.ID, vm, inst.InstanceID, err)
+
+			return false
+		}
+
+		if stopped {
+			return false
+		}
+
+		if m.commandNodeFailed(inst, vm) {
+			m.skipRemainingNodes(inst)
+
+			break
+		}
+	}
+
+	return m.endCommandInstance(persistCtx, task, inst)
+}
+
+// commandNodeWaits reports whether the node is still pending, and skips it
+// first when its VM has no CID, which is no failure.
+func (m *Manager) commandNodeWaits(inst *InstanceUpgrade, vm int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	node := &inst.Command.VMs[vm]
+	if node.Phase != CommandPhasePending {
+		return false
+	}
+
+	if node.Reviewed.CID == "" {
+		node.Phase = CommandPhaseSkipped
+		node.Reason = "The VM has no CID, so there is nothing to run on."
+
+		return false
+	}
+
+	return true
+}
+
+// commandNodeFailed reports whether the node settled in anything but
+// success.
+func (m *Manager) commandNodeFailed(inst *InstanceUpgrade, vm int) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	node := &inst.Command.VMs[vm]
+
+	return node.Phase == CommandPhaseSettled && node.Status != CommandStatusSucceeded
+}
+
+// skipRemainingNodes marks every pending node of the instance skipped.
+func (m *Manager) skipRemainingNodes(inst *InstanceUpgrade) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range inst.Command.VMs {
+		node := &inst.Command.VMs[i]
+		if node.Phase != CommandPhasePending {
+			continue
+		}
+
+		node.Phase = CommandPhaseSkipped
+		node.Reason = "An earlier node of the deployment did not succeed, so the command was not sent."
+	}
+}
+
+// endCommandInstance settles the instance from its nodes, counts it, and
+// saves it. The instance fails when any node ended in anything but success,
+// and a failure pauses the task when an instance is still pending. A save
+// that can't be confirmed pauses the task instead. It reports whether the
+// task goes on to its next instance.
+func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
+	m.mu.Lock()
+
+	failed := false
+
+	for i := range inst.Command.VMs {
+		node := &inst.Command.VMs[i]
+		if node.Phase == CommandPhaseSettled && node.Status != CommandStatusSucceeded {
+			failed = true
+
+			if inst.Error == "" {
+				inst.Error = node.Reason
+			}
+		}
+	}
+
+	ended := m.certNowLocked()
+	inst.CompletedAt = &ended
+
+	if failed {
+		inst.Status = InstanceStatusFailed
+		task.FailedCount++
+	} else {
+		inst.Status = InstanceStatusSuccess
+		inst.Error = ""
+		task.CompletedCount++
+	}
+
+	pause := failed && task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
+	if pause {
+		task.Paused = true
+		task.Status = TaskStatusPaused
+	}
+
+	m.releaseUnheldLocked(task)
+	m.mu.Unlock()
+
+	if pause {
+		m.logger.Info("Instance %s of command task %s did not succeed, so the task pauses before its remaining instances", inst.InstanceID, task.ID)
+	}
+
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.pauseUnconfirmed(task, inst, "record how the instance ended")
+
+		return false
+	}
+
+	return true
+}
+
+// settleStrandedNodes settles each node an earlier run left staged or sent.
+// A resume never drives such a node again, because the command may have run
+// on it, so cleanup reports what it left and the node is recorded as an
+// outcome Blacksmith did not see. It reports whether the task stopped,
+// which it does when a node can't be reached or the save can't be
+// confirmed, and the node then stays as it was for the next resume.
+func (m *Manager) settleStrandedNodes(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade) bool {
+	for vm := range inst.Command.VMs {
+		phase := m.commandNodePhase(inst, vm)
+		if phase != CommandPhaseStaged && phase != CommandPhaseSent {
+			continue
+		}
+
+		if m.settleStrandedNode(ctx, sessions, task, inst, vm) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// settleStrandedNode runs cleanup on one stranded node and records it.
+func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) bool {
+	run := m.newCommandRun(sessions, task, inst, vm)
+
+	err := m.reachStranded(ctx, run)
+	if err != nil {
+		m.pauseStranded(task, inst, "Blacksmith could not reach the node to clean up after an earlier run, so it is still waiting for a resume.", err)
+
+		return true
+	}
+
+	record, _, err := run.cleanup(ctx)
+	if err != nil {
+		m.pauseStranded(task, inst, "The cleanup of a node an earlier run left behind did not report cleanly, so it is still waiting for a resume.", err)
+
+		return true
+	}
+
+	outcome := commandOutcome{
+		status: CommandStatusFailed,
+		reason: "Blacksmith lost track of this node's command when it paused, so its outcome is not known. Cleanup found started=" + record.Started + " killed=" + record.Killed + ".",
+		pause:  record.Killed == "survived",
+	}
+
+	if code, convErr := strconv.Atoi(record.Exit); convErr == nil {
+		outcome.exit = &code
+	}
+
+	return run.settle(ctx, outcome)
+}
+
+// reachStranded builds the cleanup input and opens the session on the
+// node, after the deployment is listed again and the node's VM is found.
+// A VM that changed or is gone is a reason not to reach the node, like any
+// other.
+func (m *Manager) reachStranded(ctx context.Context, run *commandRun) error {
+	err := run.buildInputs()
+	if err != nil {
+		return err
+	}
+
+	live, outcome, err := run.relist(ctx)
+	if outcome != nil {
+		return errors.Join(err, outcome.err, errors.New(outcome.reason))
+	}
+
+	return run.connect(ctx, live)
+}
+
+// pauseStranded pauses the task because a stranded node can't be settled
+// yet, and says why on the instance.
+func (m *Manager) pauseStranded(task *UpgradeTask, inst *InstanceUpgrade, message string, cause error) {
+	m.mu.Lock()
+
+	if task.Status == TaskStatusPending || task.Status == TaskStatusRunning || task.Status == TaskStatusPaused {
+		task.Status = TaskStatusPaused
+		task.Paused = true
+	}
+
+	inst.Error = message
+	m.mu.Unlock()
+
+	m.logger.Error("Command task %s paused: %s %s", task.ID, message, commandErrorText(cause))
 }

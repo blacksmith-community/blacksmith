@@ -726,7 +726,20 @@ func (h *Handler) PauseTask(w http.ResponseWriter, r *http.Request, taskID strin
 func (h *Handler) ResumeTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	h.logger.Info("Resume upgrade task request: %s", taskID)
 
-	err := h.tasks.ResumeTask(r.Context(), taskID)
+	// A resume sends a stored command to VMs, so it takes the second
+	// credential the output read does. Pause and cancel send nothing.
+	task, err := h.tasks.GetTask(taskID)
+	if err == nil && task.KindOrDefault() == upgrade.TaskKindCommand {
+		err = h.manager.Authorizer().AuthorizeRead(r.Context(), r)
+		if err != nil {
+			h.logger.Info("Refused the resume of command task %s: %v", taskID, err)
+			writeCreateError(w, err)
+
+			return
+		}
+	}
+
+	err = h.tasks.ResumeTask(r.Context(), taskID)
 	if err != nil {
 		h.logger.Error("Failed to resume upgrade task %s: %v", taskID, err)
 		writeTaskActionError(w, err)

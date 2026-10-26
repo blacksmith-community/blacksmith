@@ -686,10 +686,11 @@ func (m *Manager) dispatchTasks() {
 			return
 		case task := <-m.taskQueue:
 			// A certificate task runs only when the manager can rotate
-			// it. Any other one that reaches the queue is let go, and
+			// it, and a command task only while the authorizer allows it.
+			// Any other one that reaches the queue is let go, and
 			// keeps its reservations.
 			m.mu.RLock()
-			runs := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task)
+			runs := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task) || m.runsCommandLocked(task)
 			m.mu.RUnlock()
 
 			if !runs {
@@ -1465,6 +1466,11 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 		return err
 	}
 
+	err = m.commandResumeAllowed(ctx, taskID)
+	if err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	task, exists := m.tasks[taskID]
 	if !exists {
@@ -1913,6 +1919,12 @@ func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		return m.processCertificateInstance(task, instance, cancelCh)
 	}
 
+	// A command task runs its command on the instance's nodes and never
+	// deploys it.
+	if task.KindOrDefault() == TaskKindCommand {
+		return m.processCommandInstance(task, instance, cancelCh)
+	}
+
 	deploy, goOn := m.readyToDeploy(task, instance, cancelCh, targetsChecked)
 	if !deploy {
 		return goOn
@@ -2169,8 +2181,9 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	resumable := task.Status == TaskStatusRunning || task.Status == TaskStatusPending
 	status := task.Status
 
-	// A certificate task is queued only when the manager can rotate it.
-	upgrade := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task)
+	// A certificate task is queued only when the manager can rotate it,
+	// and a command task only while the authorizer allows it.
+	upgrade := task.KindOrDefault() == TaskKindUpgrade || m.runsCertificatesLocked(task) || m.runsCommandLocked(task)
 
 	ready := upgrade && settled && m.lookups == 0 && !m.waitingLocked(task.ID) && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
 	noDirector := ready && m.director == nil

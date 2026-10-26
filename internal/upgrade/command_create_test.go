@@ -211,6 +211,22 @@ func (a *stubAuthorizer) AuthorizeStored(context.Context, CommandTaskSpec) error
 	return a.stored
 }
 
+// flippingAuthorizer allows every stored task until off is set, and refuses
+// every one after.
+type flippingAuthorizer struct {
+	ConfigAuthorizer
+
+	off *atomic.Bool
+}
+
+func (a *flippingAuthorizer) AuthorizeStored(context.Context, CommandTaskSpec) error {
+	if a.off.Load() {
+		return errCommandsDisabled()
+	}
+
+	return nil
+}
+
 // newCreateCmdEnv returns a loaded manager over a director with three
 // instances. Commands are on and root is off unless change says otherwise.
 func newCreateCmdEnv(t *testing.T, change func(*Deps)) *cmdCreateEnv {
@@ -1009,19 +1025,26 @@ func TestCreateCommandTaskNeverLogsCommand(t *testing.T) {
 	expectNoCommandText(t, "the log", env.log.text())
 }
 
-// A created command task is never run as an upgrade. Queueing it drops it,
-// resuming it queues nothing, pause and cancel turn it away, and the
-// director, which panics on any call, is never asked for a deploy.
+// A created command task is never run as an upgrade. Once the authorizer
+// refuses it, queueing it drops it, resuming it queues nothing, pause and
+// cancel turn it away, and the director, which panics on any call, is never
+// asked for a deploy.
 func TestCreatedCommandTaskIsNeverRunAsUpgrade(t *testing.T) {
 	t.Parallel()
 
-	env := newCreateCmdEnv(t, nil)
+	var off atomic.Bool
+
+	env := newCreateCmdEnv(t, func(deps *Deps) {
+		deps.Authorizer = &flippingAuthorizer{off: &off}
+	})
 	preview := env.previewFor(t, cmdReq("i1"))
 
 	task, _, err := env.manager.CreateCommandTask(context.Background(), createCmdReq(preview.ID))
 	if err != nil {
 		t.Fatalf("CreateCommandTask: %v", err)
 	}
+
+	off.Store(true)
 
 	live := func() *UpgradeTask {
 		env.manager.mu.RLock()
