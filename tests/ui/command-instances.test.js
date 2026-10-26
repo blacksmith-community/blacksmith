@@ -83,6 +83,11 @@ t('the review step on a command run requests only the command preview',async()=>
  const env=await setup();const {w,d}=env;try{
  w.__T.selectedUpgradeInstances.add('val-a');
  w.__T.rotateSelection().set('val-b',new Set(['/s/b_crt']));
+ // A stemcell target and a ready inventory, so a stray certificate or
+ // upgrade preview would post.
+ w.__T.rotateState.loadState='ready';
+ const stemcell=d.getElementById('upgrade-stemcell-filter');
+ stemcell.innerHTML='<option value="ubuntu-noble/1.1">ubuntu-noble/1.1</option>';stemcell.value='ubuntu-noble/1.1';
  await openInstances(env);
  const before=env.calls.length;
  const next=d.getElementById('batch-flow-next');
@@ -90,8 +95,7 @@ t('the review step on a command run requests only the command preview',async()=>
  next.click();await sleep(20);
  const sent=env.calls.slice(before);
  expect(sent.some(c=>c.startsWith('POST '+PREVIEW_URL))).toBe(true);
- expect(sent.every(c=>c.includes(PREVIEW_URL)||c.includes('/b/upgrade/tasks'))).toBe(true);
- expect(sent.some(c=>c.includes('/b/certificates')||c.includes('/b/upgrade/preview'))).toBe(false);
+ expect(sent.every(c=>c.startsWith('POST '+PREVIEW_URL)||c==='GET /b/upgrade/tasks')).toBe(true);
  expect(env.errors.some(e=>e.includes(SECRET))).toBe(false);
  }finally{w.close();}
 });

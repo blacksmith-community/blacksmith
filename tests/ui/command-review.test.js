@@ -22,7 +22,7 @@ const preview=(over={})=>({preview_id:'prev-1',expires_at:'2030-01-01T00:00:00Z'
 async function setup(routes={}){
  const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  const requests=[];
- const answer=(spec,o,j)=>{const [status,body]=typeof spec==='function'?spec(o):spec;return j(status,body);};
+ const answer=(spec,o,j)=>{const r=typeof spec==='function'?spec(o):spec;if(r&&r.raw) return r.raw;return j(r[0],r[1]);};
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
   [PREVIEW_URL,(u,o,j)=>{
    const body=JSON.parse(o.body);
@@ -36,6 +36,10 @@ async function setup(routes={}){
    requests.push({url:CREATE_URL,headers:o.headers||{},body});
    return answer(routes.create||[201,{id:'task-1'}],o,j);
   }]);
+ // The harness drops log and warn, so every console call is kept for the absence checks.
+ const logs=[];
+ ['log','warn','info','error','debug'].forEach(k=>{w.console[k]=(...a)=>logs.push(a.map(String).join(' '));});
+ env.logs=logs;
  w.plansData={services:[{id:'valkey',name:'valkey'}]};
  await sleep(30);
  w.serviceInstances={
@@ -64,6 +68,7 @@ async function review(env,ids){
 }
 const ack=(env,value)=>type(env.w,env.d.getElementById('batch-flow-ack'),value);
 const next=(env)=>env.d.getElementById('batch-flow-next');
+const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const hasSecret=(s)=>String(s).includes(SECRET);
 const hasKey=(s)=>String(s).includes(KEY);
 const previews=(env)=>env.requests.filter(r=>r.url===PREVIEW_URL);
@@ -84,16 +89,16 @@ t('the preview posts the entered values and the review shows them',async()=>{
  const {w,d}=env;try{
  await review(env,['val-a','val-b']);
  expect(previews(env).length).toBe(1);
- expect(previews(env)[0].body).toEqual({instance_ids:['val-a','val-b'],command:SECRET,run_as:'vcap',timeout_seconds:600,parallel:false,max_in_flight:0});
+ expect(same(previews(env)[0].body,{instance_ids:['val-a','val-b'],command:SECRET,run_as:'vcap',timeout_seconds:600,parallel:false,max_in_flight:0})).toBe(true);
  expect(w.__T.batchFlow.step).toBe(3);
  const host=d.getElementById('batch-flow-review');
  const pre=host.querySelector('pre');
- expect(pre).not.toBeNull();expect(pre.textContent).toBe(SECRET);
+ expect((pre)!==null).toBe(true);expect(pre.textContent===SECRET).toBe(true);
  const text=host.textContent.replace(SECRET,'');
- expect(text).toContain('vcap');expect(text).toContain('/bin/bash');expect(text).toContain('600');
+ expect(String(text).includes('vcap')).toBe(true);expect(String(text).includes('/bin/bash')).toBe(true);expect(String(text).includes('600')).toBe(true);
  expect(host.querySelectorAll('table').length).toBe(2);
- expect(host.textContent).toContain('dep-one');expect(host.textContent).toContain('dep-two');
- expect(host.textContent).toContain('failing');expect(host.textContent).toContain('no VM');
+ expect(String(host.textContent).includes('dep-one')).toBe(true);expect(String(host.textContent).includes('dep-two')).toBe(true);
+ expect(String(host.textContent).includes('failing')).toBe(true);expect(String(host.textContent).includes('no VM')).toBe(true);
  // The command text is in the pre and nowhere else on the page.
  const holders=[...d.querySelectorAll('*')].filter(e=>e.children.length===0&&hasSecret(e.textContent));
  expect(holders.every(e=>e.tagName==='PRE')).toBe(true);
@@ -109,7 +114,7 @@ t('the review shows the parallel settings',async()=>{
  type(w,d.getElementById('command-max-in-flight'),'2');
  next(env).click();await sleep(20);
  expect(previews(env)[0].body.parallel).toBe(true);expect(previews(env)[0].body.max_in_flight).toBe(2);
- expect(d.getElementById('batch-flow-review').textContent).toContain('2 at a time');
+ expect(String(d.getElementById('batch-flow-review').textContent).includes('2 at a time')).toBe(true);
  }finally{w.close();}
 });
 
@@ -117,15 +122,15 @@ t('a mixed_services warning shows a danger block that names the services',async(
  const env=await setup({preview:[200,preview({warnings:['mixed_services'],services:['valkey','redis'],instances:[instance('val-a'),instance('val-b',{service:'redis'})]})]});const {w,d}=env;try{
  await review(env,['val-a','val-b']);
  const block=d.querySelector('#batch-flow-review .batch-review-warning');
- expect(block).not.toBeNull();expect(block.dataset.variant).toBe('danger');
- expect(block.textContent).toContain('valkey');expect(block.textContent).toContain('redis');
+ expect((block)!==null).toBe(true);expect(block.dataset.variant).toBe('danger');
+ expect(String(block.textContent).includes('valkey')).toBe(true);expect(String(block.textContent).includes('redis')).toBe(true);
  }finally{w.close();}
 });
 
 t('no warning block shows without mixed_services',async()=>{
  const env=await setup();const {w,d}=env;try{
  await review(env);
- expect(d.querySelector('#batch-flow-review .batch-review-warning')).toBeNull();
+ expect((d.querySelector('#batch-flow-review .batch-review-warning'))===null).toBe(true);
  }finally{w.close();}
 });
 
@@ -136,8 +141,8 @@ t('a limit below the entered value sends the operator back to the options step',
  type(w,d.getElementById('command-max-in-flight'),'8');
  next(env).click();await sleep(20);
  expect(w.__T.batchFlow.step).toBe(1);
- expect(d.getElementById('batch-flow-review').querySelector('pre')).toBeNull();
- expect(d.getElementById('batch-flow-help').textContent).toContain('at most 3');
+ expect((d.getElementById('batch-flow-review').querySelector('pre'))===null).toBe(true);
+ expect(String(d.getElementById('batch-flow-help').textContent).includes('at most 3')).toBe(true);
  expect(creates(env).length).toBe(0);
  }finally{w.close();}
 });
@@ -148,7 +153,7 @@ t('the confirmation needs the typed phrase and creates with the previewed values
  const confirm=next(env);
  expect(confirm.textContent).toBe('Run on 2 nodes');
  expect(confirm.disabled).toBe(true);
- expect(d.getElementById('batch-flow-review').textContent).toContain('run as vcap');
+ expect(String(d.getElementById('batch-flow-review').textContent).includes('run as vcap')).toBe(true);
  ack(env,'run as root');expect(confirm.disabled).toBe(true);
  ack(env,'  Run   as VCAP ');expect(confirm.disabled).toBe(false);
  type(w,d.getElementById('rotate-name'),'');
@@ -159,7 +164,7 @@ t('the confirmation needs the typed phrase and creates with the previewed values
  expect(sent.kind).toBe('command');
  expect(sent.preview_id).toBe('prev-1');
  expect(typeof sent.client_request_id).toBe('string');expect(sent.client_request_id.length>0).toBe(true);
- ['command','run_as','timeout_seconds','parallel','max_in_flight'].forEach(k=>expect(sent[k]).toEqual(asked[k]));
+ ['command','run_as','timeout_seconds','parallel','max_in_flight'].forEach(k=>expect(same(sent[k],asked[k])).toBe(true));
  expect(Object.keys(sent).sort()).toEqual(['client_request_id','command','kind','max_in_flight','name','parallel','preview_id','reason','run_as','timeout_seconds']);
  expect(env.calls.some(c=>c.includes('/rotation/preview'))).toBe(false);
  }finally{w.close();}
@@ -180,10 +185,10 @@ t('a blocked instance shows its reason and stops the confirmation',async()=>{
  const env=await setup({preview:[200,preview({instances:[instance('val-a'),instance('val-b',{blocked:{code:'instance_busy',message:'Another operation holds this instance.'},vms:[]})]})]});const {w,d}=env;try{
  await review(env,['val-a','val-b']);
  const host=d.getElementById('batch-flow-review');
- expect(host.textContent).toContain('Another operation holds this instance.');
+ expect(String(host.textContent).includes('Another operation holds this instance.')).toBe(true);
  ack(env,'run as vcap');
  expect(next(env).disabled).toBe(true);
- expect(d.getElementById('batch-flow-help').textContent.toLowerCase()).toContain('deselect');
+ expect(String(d.getElementById('batch-flow-help').textContent.toLowerCase()).includes('deselect')).toBe(true);
  next(env).click();await sleep(10);
  expect(creates(env).length).toBe(0);
  }finally{w.close();}
@@ -200,12 +205,12 @@ for(const [name,edit] of Object.entries(edits)){
  t(`editing the ${name} after a preview drops the review and needs a fresh one`,async()=>{
   const env=await setup();const {w,d}=env;try{
   await review(env);
-  expect(w.__T.batchFlow.review).not.toBeNull();
+  expect((w.__T.batchFlow.review)!==null).toBe(true);
   edit(w,d);
   await sleep(5);
-  expect(w.__T.batchFlow.review).toBeNull();
+  expect((w.__T.batchFlow.review)===null).toBe(true);
   expect(w.__T.batchFlow.step).not.toBe(3);
-  expect(d.getElementById('batch-flow-review').querySelector('pre')).toBeNull();
+  expect((d.getElementById('batch-flow-review').querySelector('pre'))===null).toBe(true);
   w.__T.setBatchStep(2,false);
   if(name==='parallel') type(w,d.getElementById('command-max-in-flight'),'2');
   next(env).click();await sleep(20);
@@ -222,21 +227,21 @@ t('a credential answer shows a password input and the key rides on the preview a
  }});const {w,d}=env;try{
  await review(env);
  const input=d.querySelector('#batch-flow-review input[type="password"]');
- expect(input).not.toBeNull();
+ expect((input)!==null).toBe(true);
  expect(next(env).disabled).toBe(true);
  expect(creates(env).length).toBe(0);
  type(w,input,KEY);
  expect(next(env).disabled).toBe(false);
  next(env).click();await sleep(20);
  expect(previews(env).length).toBe(2);
- expect(headerOf(previews(env)[0],'X-Blacksmith-Command-Key')).toBe('');
- expect(headerOf(previews(env)[1],'X-Blacksmith-Command-Key')).toBe(KEY);
+ expect(headerOf(previews(env)[0],'X-Blacksmith-Command-Key')==='').toBe(true);
+ expect(headerOf(previews(env)[1],'X-Blacksmith-Command-Key')===KEY).toBe(true);
  // The review shows now, and the key is not in the page.
- expect(d.querySelector('#batch-flow-review input[type="password"]')).toBeNull();
- expect(d.querySelector('#batch-flow-review pre')).not.toBeNull();
+ expect((d.querySelector('#batch-flow-review input[type="password"]'))===null).toBe(true);
+ expect((d.querySelector('#batch-flow-review pre'))!==null).toBe(true);
  ack(env,'run as vcap');next(env).click();await sleep(20);
  expect(creates(env).length).toBe(1);
- expect(headerOf(creates(env)[0],'X-Blacksmith-Command-Key')).toBe(KEY);
+ expect(headerOf(creates(env)[0],'X-Blacksmith-Command-Key')===KEY).toBe(true);
  expect(creates(env)[0].body.preview_id).toBe('prev-1');
  // The key is held nowhere once the create ends.
  expect(hasKey(d.documentElement.outerHTML)).toBe(false);
@@ -252,8 +257,8 @@ t('a credential answer shows a password input and the key rides on the preview a
  pick(d,'val-a');
  await sleep(5);
  next(env).click();await sleep(20);
- expect(headerOf(previews(env)[2],'X-Blacksmith-Command-Key')).toBe('');
- expect(d.querySelector('#batch-flow-review input[type="password"]')).not.toBeNull();
+ expect(headerOf(previews(env)[2],'X-Blacksmith-Command-Key')==='').toBe(true);
+ expect((d.querySelector('#batch-flow-review input[type="password"]'))!==null).toBe(true);
  }finally{w.close();}
 });
 
@@ -262,7 +267,7 @@ t('the credential never reaches the draft or the page while it is held',async()=
  await review(env);
  type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);
  next(env).click();await sleep(20);
- expect(w.__T.batchFlow.review).not.toBeNull();
+ expect((w.__T.batchFlow.review)!==null).toBe(true);
  expect(hasKey(JSON.stringify(w.__T.batchFlow.drafts))).toBe(false);
  expect(hasKey(d.body.textContent)).toBe(false);
  expect(hasKey(JSON.stringify(Object.entries(w.localStorage)))).toBe(false);
@@ -270,8 +275,8 @@ t('the credential never reaches the draft or the page while it is held',async()=
  // Dropping the review clears it, so the next preview asks again.
  w.__T.setBatchStep(2,false);
  next(env).click();await sleep(20);
- expect(headerOf(previews(env)[previews(env).length-1],'X-Blacksmith-Command-Key')).toBe('');
- expect(d.querySelector('#batch-flow-review input[type="password"]')).not.toBeNull();
+ expect(headerOf(previews(env)[previews(env).length-1],'X-Blacksmith-Command-Key')==='').toBe(true);
+ expect((d.querySelector('#batch-flow-review input[type="password"]'))!==null).toBe(true);
  expect(env.errors.some(hasKey)).toBe(false);
  }finally{w.close();}
 });
@@ -282,7 +287,7 @@ t('a refused credential asks again',async()=>{
  type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);
  next(env).click();await sleep(20);
  const input=d.querySelector('#batch-flow-review input[type="password"]');
- expect(input).not.toBeNull();expect(input.value).toBe('');
+ expect((input)!==null).toBe(true);expect(input.value==='').toBe(true);
  expect(next(env).disabled).toBe(true);
  expect(creates(env).length).toBe(0);
  }finally{w.close();}
@@ -297,10 +302,10 @@ t('an expired preview opens a fresh review and a fresh confirmation',async()=>{
  await review(env);
  ack(env,'run as vcap');next(env).click();await sleep(30);
  expect(previews(env).length).toBe(2);
- expect(w.__T.batchFlow.review).not.toBeNull();
+ expect((w.__T.batchFlow.review)!==null).toBe(true);
  expect(d.getElementById('batch-flow-ack').value).toBe('');
  expect(next(env).disabled).toBe(true);
- expect(d.getElementById('batch-flow-review').textContent).toContain("fresh one");
+ expect(String(d.getElementById('batch-flow-review').textContent).includes("fresh one")).toBe(true);
  ack(env,'run as vcap');next(env).click();await sleep(30);
  expect(creates(env).map(c=>c.body.preview_id)).toEqual(['prev-1','prev-2']);
  expect(creates(env)[1].body.client_request_id.length>0).toBe(true);
@@ -311,7 +316,7 @@ t('a refused preview leaves the review step with the reason',async()=>{
  const env=await setup({preview:[400,{success:false,error:'The command is empty.',code:'invalid_request'}]});const {w,d}=env;try{
  await review(env);
  expect(w.__T.batchFlow.step).toBe(2);
- expect(w.__T.batchFlow.review).toBeNull();
+ expect((w.__T.batchFlow.review)===null).toBe(true);
  expect(creates(env).length).toBe(0);
  expect(env.errors.some(hasSecret)).toBe(false);
  }finally{w.close();}
@@ -327,5 +332,236 @@ t('a command run never touches a certificate endpoint',async()=>{
  expect(sent.length>0).toBe(true);
  expect(sent.some(c=>c.includes('/b/certificates'))).toBe(false);
  expect(sent.some(c=>c.includes('/b/upgrade/preview'))).toBe(false);
+ }finally{w.close();}
+});
+
+// ---- Unknown create outcomes, retries, and the key ----
+
+// seq answers each call with the next spec and repeats the last.
+const seq=(...specs)=>{let n=0;return ()=>{const spec=specs[Math.min(n,specs.length-1)];n++;return typeof spec==='function'?spec():spec;};};
+const reject=()=>({raw:Promise.reject(new TypeError('Failed to fetch'))});
+const unreadable=()=>({raw:Promise.resolve({ok:true,status:200,json:()=>Promise.reject(new Error('bad body')),text:()=>Promise.resolve('')})});
+const HTML502=[502,'<html>Bad Gateway</html>'];
+const needKey=(o)=>((o.headers||{})['X-Blacksmith-Command-Key']?[200,preview()]:[401,{success:false,error:'A command key is required.',code:'command_credential_required'}]);
+const confirmRun=async(env)=>{ack(env,'run as vcap');next(env).click();await sleep(30);};
+const quiet=(env)=>{
+ const all=env.d.documentElement.outerHTML+env.logs.join('\n')+env.errors.join('\n')+env.calls.join('\n')+JSON.stringify(Object.entries(env.w.localStorage))+JSON.stringify(Object.entries(env.w.sessionStorage))+JSON.stringify(env.w.__T.batchFlow.drafts)+env.w.location.href;
+ return !hasKey(all)&&![...env.d.querySelectorAll('input')].some(i=>hasKey(i.value));
+};
+
+for(const [name,spec] of [['a rejected fetch',reject],['a 502 from a proxy',HTML502],['a 500',[500,{success:false,error:'internal',code:'internal'}]],['an unreadable 2xx',unreadable]]){
+ t(`${name} leaves the outcome unknown and Retry resends the same request`,async()=>{
+  const env=await setup({create:seq(spec,[201,{id:'task-9'}])});const {w,d}=env;try{
+  await review(env);await confirmRun(env);
+  expect(w.__T.batchFlow.step).toBe(3);
+  expect(w.__T.batchFlow.review!==null).toBe(true);
+  const host=d.getElementById('batch-flow-review');
+  expect(host.textContent.includes('may have started')).toBe(true);
+  expect(host.textContent.includes('not started')).toBe(false);
+  expect(host.textContent.includes('<html>')).toBe(false);
+  expect(next(env).textContent).toBe('Retry');expect(next(env).disabled).toBe(false);
+  expect(d.getElementById('batch-flow-back').disabled).toBe(true);
+  expect([...d.querySelectorAll('[data-batch-step]')].every(b=>b.disabled)).toBe(true);
+  expect(d.getElementById('command-text').disabled).toBe(true);
+  expect([...d.querySelectorAll('#upgrade .upgrade-instances input')].every(i=>i.disabled)).toBe(true);
+  expect(previews(env).length).toBe(1);
+  next(env).click();await sleep(30);
+  expect(creates(env).length).toBe(2);
+  expect(same(creates(env)[0].body,creates(env)[1].body)).toBe(true);
+  expect(previews(env).length).toBe(1);
+  expect(d.getElementById('command-text').disabled).toBe(false);
+  expect([...d.querySelectorAll('#upgrade .upgrade-instances input')].some(i=>i.disabled)).toBe(false);
+  }finally{w.close();}
+ });
+}
+
+t('a second unknown outcome keeps asking with the same request',async()=>{
+ const env=await setup({create:seq(reject,HTML502,[201,{id:'task-9'}])});const {w}=env;try{
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(30);
+ expect(w.__T.batchFlow.review!==null).toBe(true);expect(next(env).textContent).toBe('Retry');
+ next(env).click();await sleep(30);
+ expect(creates(env).length).toBe(3);
+ expect(creates(env).every(c=>same(c.body,creates(env)[0].body))).toBe(true);
+ expect(previews(env).length).toBe(1);
+ }finally{w.close();}
+});
+
+t('a retry that finds the preview expired keeps the request ID on the fresh preview',async()=>{
+ let n=0;
+ const env=await setup({preview:()=>[200,preview({preview_id:'prev-'+(++n)})],create:seq(reject,[410,{success:false,error:'expired',code:'preview_expired'}],[201,{id:'task-9'}])});const {w}=env;try{
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(30);
+ expect(previews(env).length).toBe(2);
+ ack(env,'run as vcap');next(env).click();await sleep(30);
+ const sent=creates(env);
+ expect(sent.length).toBe(3);
+ expect(sent.every(c=>c.body.client_request_id===sent[0].body.client_request_id)).toBe(true);
+ expect(sent[2].body.preview_id).toBe('prev-2');
+ }finally{w.close();}
+});
+
+t('a definite refusal lets the next review mint a new request ID',async()=>{
+ const env=await setup({create:seq([409,{success:false,error:'The settings changed.',code:'preview_mismatch'}],[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ expect(w.__T.batchFlow.step).toBe(2);
+ expect(d.getElementById('command-text').disabled).toBe(false);
+ next(env).click();await sleep(30);await confirmRun(env);
+ expect(creates(env).length).toBe(2);
+ expect(creates(env)[0].body.client_request_id!==creates(env)[1].body.client_request_id).toBe(true);
+ }finally{w.close();}
+});
+
+t('a 401 on create re-previews with the same request ID and the key prompt says it was refused',async()=>{
+ let n=0;
+ const env=await setup({preview:(o)=>{const r=needKey(o);if(r[0]===200) r[1]=preview({preview_id:'prev-'+(++n)});return r;},
+  create:seq([401,{success:false,error:'A command key is required.',code:'command_credential_required'}],[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);
+ type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);next(env).click();await sleep(30);
+ await confirmRun(env);
+ const prompt=d.getElementById('batch-flow-review');
+ expect(prompt.querySelector('input[type="password"]')!==null).toBe(true);
+ expect(prompt.textContent.includes('did not accept')).toBe(true);
+ type(w,prompt.querySelector('input[type="password"]'),KEY);next(env).click();await sleep(30);
+ await confirmRun(env);
+ expect(creates(env).length).toBe(2);
+ expect(creates(env)[0].body.client_request_id===creates(env)[1].body.client_request_id).toBe(true);
+ expect(creates(env)[1].body.preview_id).toBe('prev-2');
+ }finally{w.close();}
+});
+
+t('the preview bodies are equal across a 401 retry',async()=>{
+ const env=await setup({preview:needKey});const {w,d}=env;try{
+ await review(env);
+ type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);next(env).click();await sleep(30);
+ expect(previews(env).length).toBe(2);
+ expect(same(previews(env)[0].body,previews(env)[1].body)).toBe(true);
+ }finally{w.close();}
+});
+
+t('the key stays through a Retry in the same review and leaves with the flow',async()=>{
+ const env=await setup({preview:needKey,create:seq(reject,reject,[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);
+ const input=d.querySelector('#batch-flow-review input[type="password"]');
+ type(w,input,KEY);next(env).click();await sleep(30);
+ expect(input.value==='').toBe(true);
+ await confirmRun(env);
+ next(env).click();await sleep(30);
+ expect(creates(env).length).toBe(2);
+ expect(creates(env).every(c=>headerOf(c,'X-Blacksmith-Command-Key')===KEY)).toBe(true);
+ expect(quiet(env)).toBe(true);
+ // Leaving drops the key, and the retry state comes back without it.
+ d.getElementById('batch-activity').click();await sleep(5);
+ expect(w.__T.batchFlow.review===null).toBe(true);
+ expect(quiet(env)).toBe(true);
+ expect(d.getElementById('command-text').disabled).toBe(true);
+ d.getElementById('batch-new').click();
+ next(env).click();await sleep(30);
+ expect(next(env).textContent).toBe('Retry');
+ expect(d.getElementById('batch-flow-review').textContent.includes('may have started')).toBe(true);
+ next(env).click();await sleep(30);
+ expect(creates(env).length).toBe(3);
+ expect(headerOf(creates(env)[2],'X-Blacksmith-Command-Key')==='').toBe(true);
+ expect(same(creates(env)[2].body,creates(env)[0].body)).toBe(true);
+ expect(quiet(env)).toBe(true);
+ }finally{w.close();}
+});
+
+const exits={
+ activity:(env)=>env.d.getElementById('batch-activity').click(),
+ operation:(env)=>env.w.__T.requestOperation('upgrade'),
+ step:(env)=>env.w.__T.setBatchStep(2,false),
+ back:(env)=>env.d.getElementById('batch-flow-back').click(),
+ tab:(env)=>env.w.blacksmithNav.switchTab('services')
+};
+for(const [name,leave] of Object.entries(exits)){
+ t(`leaving by ${name} clears the key while the key prompt is open`,async()=>{
+  const env=await setup({preview:needKey});const {w,d}=env;try{
+  await review(env);
+  const input=d.querySelector('#batch-flow-review input[type="password"]');
+  type(w,input,KEY);
+  await leave(env);await sleep(30);
+  expect(input.value==='').toBe(true);
+  expect(w.__T.batchFlow.review===null).toBe(true);
+  expect(quiet(env)).toBe(true);
+  expect(previews(env).length).toBe(1);
+  }finally{w.close();}
+ });
+ t(`leaving by ${name} clears the key while the review is open`,async()=>{
+  const env=await setup({preview:needKey});const {w,d}=env;try{
+  await review(env);
+  const input=d.querySelector('#batch-flow-review input[type="password"]');
+  type(w,input,KEY);next(env).click();await sleep(30);
+  expect(w.__T.batchFlow.review!==null).toBe(true);
+  await leave(env);await sleep(30);
+  expect(input.value==='').toBe(true);
+  expect(w.__T.batchFlow.review===null).toBe(true);
+  expect(d.querySelector('#batch-flow-review pre')===null).toBe(true);
+  expect(quiet(env)).toBe(true);
+  // The next review asks for the key again.
+  if(name!=='operation'){
+   w.__T.setBatchStep(2,false);await sleep(5);
+   next(env).click();await sleep(30);
+   expect(headerOf(previews(env)[previews(env).length-1],'X-Blacksmith-Command-Key')==='').toBe(true);
+  }
+  }finally{w.close();}
+ });
+}
+
+t('a finished create clears the key and the unknown state',async()=>{
+ const env=await setup({preview:needKey});const {w,d}=env;try{
+ await review(env);
+ type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);next(env).click();await sleep(30);
+ await confirmRun(env);
+ expect(creates(env).length).toBe(1);
+ expect(quiet(env)).toBe(true);
+ expect(d.getElementById('command-text').disabled).toBe(false);
+ }finally{w.close();}
+});
+
+for(const [code,message] of [['max_in_flight_too_high','Most nodes at once is above the limit of 3.'],['timeout_out_of_range','The timeout is out of range.'],['command_too_long','The command is too long.'],['invalid_run_user','Commands run as root or vcap.']]){
+ t(`a ${code} refusal puts its issue on the options step`,async()=>{
+  const env=await setup({preview:[400,{success:false,error:message,code}]});const {w,d}=env;try{
+  await review(env);
+  expect(w.__T.batchFlow.step).toBe(1);
+  expect(d.getElementById('batch-flow-help').textContent.includes(message)).toBe(true);
+  expect(d.querySelector('#batch-flow-review pre')===null).toBe(true);
+  expect(next(env).disabled).toBe(true);
+  expect(creates(env).length).toBe(0);
+  // Changing an option clears the issue.
+  type(w,d.getElementById('command-timeout'),'601');
+  expect(w.__T.batchOptionIssue()).toBe('');
+  expect(hasSecret(d.getElementById('batch-flow-help').textContent)).toBe(false);
+  }finally{w.close();}
+ });
+}
+
+t('the review table has the AZ and state columns',async()=>{
+ const env=await setup({preview:[200,preview({instances:[instance('val-a',{vms:[vm(0,{az:'z1',state:'running',job_state:'failing'}),vm(1,{az:'z2',state:'unresponsive agent',targeted:false,reason:'no VM'})]})]})]});const {w,d}=env;try{
+ await review(env);
+ const table=d.querySelector('#batch-flow-review table');
+ expect(same([...table.querySelectorAll('th')].map(h=>h.textContent),['Node','AZ','State','Job state','Targeted','Reason'])).toBe(true);
+ const rows=[...table.querySelectorAll('tr')].slice(1).map(r=>[...r.children].map(c=>c.textContent));
+ expect(rows[0].slice(1).join('|')).toBe('z1|running|failing|Yes|');
+ expect(rows[1].slice(1).join('|')).toBe('z2|unresponsive agent|running|No|no VM');
+ }finally{w.close();}
+});
+
+t('a selection with no node to run stops the confirmation',async()=>{
+ const env=await setup({preview:[200,preview({instances:[instance('val-a',{vms:[vm(0,{targeted:false,reason:'no VM'})]})]})]});const {w,d}=env;try{
+ await review(env);
+ ack(env,'run as vcap');
+ expect(next(env).disabled).toBe(true);
+ expect(d.getElementById('batch-flow-help').textContent.includes('No node')).toBe(true);
+ next(env).click();await sleep(10);
+ expect(creates(env).length).toBe(0);
+ }finally{w.close();}
+});
+
+t('a preview error with an HTML body never shows markup',async()=>{
+ const env=await setup({preview:[502,'<html>Bad Gateway</html>']});const {w,d}=env;try{
+ await review(env);
+ expect(d.documentElement.outerHTML.includes('&lt;html&gt;')||d.body.textContent.includes('<html>')).toBe(false);
+ expect(d.body.textContent.includes('HTTP 502')).toBe(true);
  }finally{w.close();}
 });
