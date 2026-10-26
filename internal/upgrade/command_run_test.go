@@ -686,6 +686,9 @@ func TestRunCommandNodeClassifiesTheExit(t *testing.T) {
 		{name: "kill before the timeout", exit: 137, takes: 5 * time.Second, cleanup: "cleanup started=yes exit=137 killed=no", status: CommandStatusFailed, wantExit: intPtr(137), reasonHas: "status 137"},
 		{name: "wrapper failed after the marker", exit: 125, cleanup: "cleanup started=yes exit=- killed=no", status: CommandStatusFailed, reasonHas: "before the command started"},
 		{name: "wrapper refusal", exit: 13, cleanup: "cleanup started=no exit=- killed=no", status: CommandStatusRefused, reasonHas: "refused"},
+		{name: "usage error before the marker", exit: 2, cleanup: "cleanup started=no exit=- killed=no", status: CommandStatusFailed, reasonHas: "did not start"},
+		{name: "trap exit before the marker", exit: 130, cleanup: "cleanup started=no exit=- killed=no", status: CommandStatusFailed, reasonHas: "did not start"},
+		{name: "exit with the directory gone", exit: 143, cleanup: "cleanup started=- exit=- killed=no", status: CommandStatusFailed, reasonHas: "did not start"},
 		{name: "the command's own 13", exit: 13, cleanup: "cleanup started=yes exit=13 killed=no", status: CommandStatusFailed, wantExit: intPtr(13), reasonHas: "status 13"},
 		{name: "ended by cleanup", exit: 124, cleanup: "cleanup started=yes exit=- killed=yes", status: CommandStatusTimedOut, wantExit: intPtr(124), wantKilled: true},
 	}
