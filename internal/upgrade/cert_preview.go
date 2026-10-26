@@ -142,6 +142,10 @@ type PreviewStore struct {
 
 	mu       sync.Mutex
 	previews map[string]storedPreview
+	// revoked holds the IDs Revoke was called for, with the moment each
+	// entry lapses, so a spent preview that is revoked meanwhile is not put
+	// back by restoreCommand.
+	revoked map[string]time.Time
 
 	// spends counts the calls of Spend, so a test can tell a peek from a
 	// spend that was put back.
@@ -154,7 +158,7 @@ func NewPreviewStore(now func() time.Time) *PreviewStore {
 		now = time.Now
 	}
 
-	return &PreviewStore{now: now, previews: make(map[string]storedPreview)}
+	return &PreviewStore{now: now, previews: make(map[string]storedPreview), revoked: make(map[string]time.Time)}
 }
 
 // Put stores the preview for ttl, sets its ExpiresAt, and drops every
@@ -210,7 +214,36 @@ func (s *PreviewStore) restoreCommand(p *CommandPreview) {
 		return
 	}
 
+	if until, gone := s.revoked[p.ID]; gone && now.Before(until) {
+		return
+	}
+
 	s.previews[p.ID] = storedPreview{kind: PreviewKindCommand, command: p, expires: p.ExpiresAt}
+}
+
+// Revoke deletes the command preview with the ID, and remembers the ID for a
+// while so a create that had spent the preview cannot put it back. An ID
+// that is absent or has expired is no error, and a certificate preview is
+// left alone.
+func (s *PreviewStore) Revoke(id string) {
+	now := s.now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for gone, until := range s.revoked {
+		if !now.Before(until) {
+			delete(s.revoked, gone)
+		}
+	}
+
+	if stored, ok := s.previews[id]; ok && stored.kind != PreviewKindCommand {
+		return
+	}
+
+	delete(s.previews, id)
+
+	s.revoked[id] = now.Add(defaultPreviewTTL)
 }
 
 // SpentPreview is what Spend returns, with the field of its kind set.

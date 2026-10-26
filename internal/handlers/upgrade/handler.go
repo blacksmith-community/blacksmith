@@ -36,6 +36,7 @@ type taskManager interface {
 	CreateCertificateTask(ctx context.Context, req upgrade.CreateCertificateTaskRequest) (*upgrade.UpgradeTask, bool, error)
 	PreviewCommand(ctx context.Context, req upgrade.CommandPreviewRequest) (*upgrade.CommandPreview, error)
 	CreateCommandTask(ctx context.Context, req upgrade.CommandCreateRequest) (*upgrade.UpgradeTask, bool, error)
+	DiscardCommandRequest(ctx context.Context, req upgrade.CommandDiscardRequest) (upgrade.CommandDiscardResult, error)
 	ReadCommandOutput(ctx context.Context, taskID, instanceID, vm string) (upgrade.CommandOutput, error)
 	GetTask(taskID string) (*upgrade.UpgradeTask, error)
 	ListTasks() []*upgrade.UpgradeTask
@@ -186,6 +187,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.PreviewUpgrade(w, r)
 	case path == "/commands/preview" && r.Method == http.MethodPost:
 		h.PreviewCommand(w, r)
+	case path == "/commands/discard" && r.Method == http.MethodPost:
+		h.DiscardCommand(w, r)
 	case path == "/tasks" && r.Method == http.MethodGet:
 		h.ListTasks(w, r)
 	case path == "/settings" && r.Method == http.MethodGet:
@@ -554,6 +557,49 @@ func (h *Handler) PreviewCommand(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("Command preview %s lists %d instances", preview.ID, len(preview.Instances))
 	response.JSON(w, http.StatusOK, preview)
+}
+
+// DiscardCommand handles POST /b/upgrade/commands/discard. It takes the
+// client request ID and the preview ID of a create that may still be on its
+// way, and answers 200 with whether the discard stopped it. The feature
+// switch applies, but the second credential does not, because a discard can
+// only stop a run and never start one.
+func (h *Handler) DiscardCommand(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	if err != nil {
+		writeInvalidRequest(w, "invalid command discard request: "+err.Error())
+
+		return
+	}
+
+	var req upgrade.CommandDiscardRequest
+
+	err = json.Unmarshal(body, &req)
+	if err != nil {
+		writeInvalidRequest(w, "invalid command discard request: "+err.Error())
+
+		return
+	}
+
+	// A stored check applies the feature switch and, for the vcap user,
+	// nothing else, and it reads no credential from the request.
+	err = h.manager.Authorizer().AuthorizeStored(r.Context(), upgrade.CommandTaskSpec{RunAs: "vcap"})
+	if err != nil {
+		h.logger.Info("Refused a command discard: %v", err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	result, err := h.tasks.DiscardCommandRequest(r.Context(), req)
+	if err != nil {
+		h.logger.Error("Failed to discard the command request: %v", err)
+		writeCreateError(w, err)
+
+		return
+	}
+
+	response.JSON(w, http.StatusOK, result)
 }
 
 // createCommandTask creates a command task from the preview the body names.

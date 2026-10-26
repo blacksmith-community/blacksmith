@@ -513,3 +513,91 @@ func TestCreateRecordsWhetherTheCredentialWasChecked(t *testing.T) {
 		t.Fatal("no key and no header should not read as presented")
 	}
 }
+
+func discardBody(previewID string) string {
+	return `{"client_request_id":"` + cmdRequestID + `","preview_id":"` + previewID + `"}`
+}
+
+// The discard route answers 200 with the result in both outcomes. A discard
+// with no task revokes the preview, so the create that follows fails, and a
+// discard after a create reports the task.
+func TestDiscardCommandRoute(t *testing.T) {
+	t.Parallel()
+
+	const target = "/b/upgrade/commands/discard"
+
+	env := commandHandler(t, commandsOn("", false))
+	id := previewID(t, env.handler, "vcap", "")
+
+	discarded := send(t, env.handler, http.MethodPost, target, discardBody(id), "")
+	if discarded.Code != http.StatusOK || strings.TrimSpace(discarded.Body.String()) != `{"discarded":true}` {
+		t.Fatalf("expected a discard, got %d: %s", discarded.Code, discarded.Body.String())
+	}
+
+	expectCode(t, send(t, env.handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), ""), http.StatusGone, apierr.CodePreviewExpired)
+
+	second := commandHandler(t, commandsOn("", false))
+	id = previewID(t, second.handler, "vcap", "")
+
+	created := send(t, second.handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), "")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", created.Code)
+	}
+
+	var task struct {
+		ID string `json:"id"`
+	}
+
+	if err := json.Unmarshal(created.Body.Bytes(), &task); err != nil || task.ID == "" {
+		t.Fatalf("decoding the task: %v", err)
+	}
+
+	found := send(t, second.handler, http.MethodPost, target, discardBody(id), "")
+	if found.Code != http.StatusOK || !strings.Contains(found.Body.String(), `"discarded":false`) || !strings.Contains(found.Body.String(), `"task_id":"`+task.ID+`"`) {
+		t.Fatalf("expected the task back, got %d: %s", found.Code, found.Body.String())
+	}
+
+	expectNoCommandText(t, "the discard answer", found)
+
+	expectCode(t, send(t, second.handler, http.MethodPost, target, `{"client_request_id":""}`, ""), http.StatusBadRequest, apierr.CodeInvalidRequest)
+	expectCode(t, send(t, second.handler, http.MethodPost, target, `not json`, ""), http.StatusBadRequest, apierr.CodeInvalidRequest)
+}
+
+func TestDiscardCommandRouteCommandsOff(t *testing.T) {
+	t.Parallel()
+
+	off := commandHandler(t, commandsOff())
+	expectCode(t, send(t, off.handler, http.MethodPost, "/b/upgrade/commands/discard", discardBody("pv-1"), ""), http.StatusForbidden, apierr.CodeCommandsDisabled)
+}
+
+// A discard can only stop a run, so it never asks for the second credential,
+// and it works with or without the header.
+func TestDiscardCommandRouteNeedsNoCredential(t *testing.T) {
+	t.Parallel()
+
+	env := commandHandler(t, commandsOn(cmdKey, false))
+	id := previewID(t, env.handler, "vcap", cmdKey)
+
+	for _, key := range []string{"", "wrong"} {
+		got := send(t, env.handler, http.MethodPost, "/b/upgrade/commands/discard", discardBody(id), key)
+		if got.Code != http.StatusOK {
+			t.Fatalf("expected 200 with key %q, got %d: %s", key, got.Code, got.Body.String())
+		}
+	}
+
+	// The revoked preview can no longer be spent, even with the key.
+	expectCode(t, send(t, env.handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), cmdKey), http.StatusGone, apierr.CodePreviewExpired)
+}
+
+func TestDiscardCommandRouteRefusesOtherMethods(t *testing.T) {
+	t.Parallel()
+
+	env := commandHandler(t, commandsOn("", false))
+
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		got := send(t, env.handler, method, "/b/upgrade/commands/discard", discardBody("pv-1"), "")
+		if got.Code != http.StatusNotFound {
+			t.Fatalf("expected %s to answer 404 like the other command routes, got %d", method, got.Code)
+		}
+	}
+}
