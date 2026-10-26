@@ -58,12 +58,14 @@ type InstanceCommand struct {
 
 // CommandVMIdentity names one VM as the director reported it.
 type CommandVMIdentity struct {
-	Group string   `json:"group"`
-	Index int      `json:"index"`
-	ID    string   `json:"id"`
-	CID   string   `json:"cid"`
-	IPs   []string `json:"ips,omitempty"`
-	State string   `json:"state,omitempty"`
+	Group    string   `json:"group"`
+	Index    int      `json:"index"`
+	ID       string   `json:"id"`
+	CID      string   `json:"cid"`
+	AZ       string   `json:"az,omitempty"`
+	IPs      []string `json:"ips,omitempty"`
+	State    string   `json:"state,omitempty"`
+	JobState string   `json:"job_state,omitempty"`
 }
 
 // CommandVM is the record of a command on one node. Reviewed is the VM

@@ -125,9 +125,12 @@ type Preview struct {
 	selection []string
 }
 
-// storedPreview is a preview with the moment it expires.
+// storedPreview is a preview with the moment it expires. Exactly one of
+// preview and command is set, and kind says which.
 type storedPreview struct {
+	kind    PreviewKind
 	preview *Preview
+	command *CommandPreview
 	expires time.Time
 }
 
@@ -163,7 +166,86 @@ func (s *PreviewStore) Put(p *Preview, ttl time.Duration) {
 	}
 
 	p.ExpiresAt = now.Add(ttl).UTC()
-	s.previews[p.ID] = storedPreview{preview: p, expires: p.ExpiresAt}
+	s.previews[p.ID] = storedPreview{kind: PreviewKindCertificate, preview: p, expires: p.ExpiresAt}
+}
+
+// PutCommand stores the command preview for ttl, sets its ExpiresAt, and
+// drops every preview that has expired.
+func (s *PreviewStore) PutCommand(p *CommandPreview, ttl time.Duration) {
+	now := s.now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id, stored := range s.previews {
+		if !now.Before(stored.expires) {
+			delete(s.previews, id)
+		}
+	}
+
+	p.ExpiresAt = now.Add(ttl).UTC()
+	s.previews[p.ID] = storedPreview{kind: PreviewKindCommand, command: p, expires: p.ExpiresAt}
+}
+
+// SpentPreview is what Spend returns, with the field of its kind set.
+type SpentPreview struct {
+	Certificate *Preview
+	Command     *CommandPreview
+}
+
+// Spend returns the preview with the ID and removes it, under one lock, so
+// exactly one caller spends it. A preview of another kind is refused with a
+// 409 preview_mismatch and stays in the store, and one that is unknown or
+// has expired answers 410 preview_expired.
+func (s *PreviewStore) Spend(id string, kind PreviewKind) (SpentPreview, error) {
+	now := s.now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, ok := s.previews[id]
+	if !ok || !now.Before(stored.expires) {
+		delete(s.previews, id)
+
+		return SpentPreview{}, errPreviewGone()
+	}
+
+	if stored.kind != kind {
+		return SpentPreview{}, errPreviewKind(kind)
+	}
+
+	delete(s.previews, id)
+
+	return SpentPreview{Certificate: stored.preview, Command: stored.command}, nil
+}
+
+// GetCommand returns the command preview with the ID without spending it.
+func (s *PreviewStore) GetCommand(id string) (*CommandPreview, error) {
+	now := s.now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, ok := s.previews[id]
+	if !ok || !now.Before(stored.expires) {
+		delete(s.previews, id)
+
+		return nil, errPreviewGone()
+	}
+
+	if stored.kind != PreviewKindCommand {
+		return nil, errPreviewKind(PreviewKindCommand)
+	}
+
+	return stored.command, nil
+}
+
+func errPreviewGone() error {
+	return apierr.New(http.StatusGone, apierr.CodePreviewExpired, "The preview has expired or is unknown, so preview the rotation again.")
+}
+
+func errPreviewKind(want PreviewKind) error {
+	return apierr.New(http.StatusConflict, apierr.CodePreviewMismatch, "This preview is not a "+string(want)+" preview.")
 }
 
 // Get returns the preview with the ID, or a 410 preview_expired error when
@@ -177,12 +259,16 @@ func (s *PreviewStore) Get(id string) (*Preview, error) {
 
 	stored, ok := s.previews[id]
 	if ok && now.Before(stored.expires) {
+		if stored.kind != PreviewKindCertificate {
+			return nil, errPreviewKind(PreviewKindCertificate)
+		}
+
 		return stored.preview, nil
 	}
 
 	delete(s.previews, id)
 
-	return nil, apierr.New(http.StatusGone, apierr.CodePreviewExpired, "The preview has expired or is unknown, so preview the rotation again.")
+	return nil, errPreviewGone()
 }
 
 // PreviewRotation reads the current state of each selected instance and

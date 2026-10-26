@@ -63,6 +63,15 @@ type Deps struct {
 	// at the indices given, for patch mode. It is nil when the broker
 	// cannot open one, and then no instance can be patched.
 	PatchRunner func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error)
+	// WorkerCount reports how many workers the director has, and whether
+	// it knows. A nil WorkerCount, or one that answers false, sends the
+	// preview to the BOSH configuration. The director's /info exposes no
+	// count (boshapi@v0.283.9/pkg/boshapi/info.go:4-14), so the default
+	// seam always answers false.
+	WorkerCount func(ctx context.Context) (int, bool)
+	// BOSH returns the BOSH configuration as it stands now. A nil BOSH
+	// means the default configuration.
+	BOSH func() config.BOSHConfig
 }
 
 // Configure gives the manager the dependencies its certificate tasks use. It
