@@ -119,8 +119,9 @@ func (s *runSession) call(t *testing.T, op string) runCall {
 
 // runWrite is one write of the command task's record.
 type runWrite struct {
-	seq   int64
-	phase CommandPhase
+	seq     int64
+	phase   CommandPhase
+	matched CommandVMIdentity
 }
 
 // runVault is the fake Vault of a command task. It numbers each write of
@@ -151,13 +152,14 @@ func (v *runVault) Put(ctx context.Context, path string, data interface{}) error
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
-		phase := task.Instances[0].Command.VMs[0].Phase
+		node := task.Instances[0].Command.VMs[0]
+		phase := node.Phase
 
 		v.mu.Lock()
 		fail := v.failPhase != "" && v.failPhase == phase
 
 		if !fail {
-			v.writes = append(v.writes, runWrite{seq: v.seq.Add(1), phase: phase})
+			v.writes = append(v.writes, runWrite{seq: v.seq.Add(1), phase: phase, matched: node.Matched})
 		}
 		v.mu.Unlock()
 
@@ -1427,13 +1429,28 @@ func TestRunCommandNodeRecordsTheMatchedTuple(t *testing.T) {
 		}
 	}
 
-	// The matched tuple is saved with the staged record, before prepare.
-	if got := fix.vault.writeSeq(t, CommandPhaseStaged); got == 0 {
+	// The matched tuple is already in the record saved at the staged
+	// phase, which is before prepare is sent.
+	staged := false
+
+	for _, write := range fix.vault.recorded() {
+		if write.phase == CommandPhaseStaged {
+			staged = true
+
+			if !reflect.DeepEqual(write.matched, want) {
+				t.Errorf("the staged save holds matched %+v, want %+v", write.matched, want)
+			}
+		}
+	}
+
+	if !staged {
 		t.Fatal("no staged save")
 	}
 
-	// The output is stored under the matched identity, and the route that
-	// the output read uses finds it, though the two tuples differ.
+	// The output is stored where the route that reads it looks, and the
+	// route finds it. The path keys only on the group and the index, which
+	// the matched and reviewed tuples share, so this does not tell the
+	// matched identity from the reviewed one.
 	path, err := commandOutputPath(runTaskID, runInstanceID, identityOf(fix.node()))
 	if err != nil || fix.node().OutputPath != path {
 		t.Fatalf("output path %q, want %q (%v)", fix.node().OutputPath, path, err)
@@ -1441,8 +1458,34 @@ func TestRunCommandNodeRecordsTheMatchedTuple(t *testing.T) {
 
 	out, err := fix.manager.ReadCommandOutput(context.Background(), runTaskID, "", "redis-0")
 	if err != nil || string(out.Stdout) != "out" {
-		t.Fatalf("the route could not read the output under the matched tuple: %v", err)
+		t.Fatalf("the route could not read the output of the node: %v", err)
 	}
+
+	fix.assertNoCommandText()
+}
+
+// A node that fails the sudo check settles with the matched tuple already
+// recorded, because the binding happens before anything is sent.
+func TestRunCommandNodeKeepsTheMatchedTupleWhenSudoFails(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.sudo = ssh.Result{ExitCode: 1}
+
+	listed := reviewedListing(fix)[0]
+	listed.AZ = "z2"
+	fix.director.list = listsOnly(listed)
+
+	fix.run(context.Background())
+
+	wantOps(t, fix.sess, opSudoCheck)
+
+	node := fix.vault.stored(t)
+	if node.Status != CommandStatusFailed || node.Matched.Group != "redis" || node.Matched.AZ != "z2" {
+		t.Errorf("status %s matched %+v", node.Status, node.Matched)
+	}
+
+	fix.assertNoCommandText()
 }
 
 // A session whose host has the wrong group, or an IndexOrID that is
@@ -1482,6 +1525,8 @@ func TestRunCommandNodeRefusesAHostThatIsNotTheNode(t *testing.T) {
 					t.Error("the node was staged on a host that is not it")
 				}
 			}
+
+			fix.assertNoCommandText()
 		})
 	}
 }
@@ -1504,6 +1549,8 @@ func TestRunCommandNodeRefusesAmbiguousHosts(t *testing.T) {
 	if node := fix.vault.stored(t); node.Status != CommandStatusFailed || node.Matched.Group != "" {
 		t.Errorf("status %s matched %q", node.Status, node.Matched.Group)
 	}
+
+	fix.assertNoCommandText()
 }
 
 // Hosts come back in the director's order, which need not be the node
@@ -1538,6 +1585,8 @@ func TestRunCommandNodeMatchesHostsByIdentityNotPosition(t *testing.T) {
 	if !slices.Equal(sess.used("prepare"), []int{1, 0}) {
 		t.Errorf("prepare went to hosts %v, want [1 0] for nodes 0 and 1", sess.used("prepare"))
 	}
+
+	fix.assertNoCommandText()
 }
 
 // hostRecorder notes which host each call went to.
@@ -1628,6 +1677,8 @@ func TestRunCommandNodeListsAgainBeforeEachNode(t *testing.T) {
 	if second2.Status != CommandStatusFailed || second2.Phase != CommandPhaseSettled {
 		t.Errorf("second node: phase %s status %s", second2.Phase, second2.Status)
 	}
+
+	fix.assertNoCommandText()
 }
 
 func identityOf(node CommandVM) CommandVMIdentity { return node.identity() }

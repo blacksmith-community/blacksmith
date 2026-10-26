@@ -123,8 +123,9 @@ var errCommandVMChanged = errors.New("the VM changed since the review")
 // command, is recorded on the node and left to the caller. Before anything
 // reaches the node, the deployment is listed again and the node is bound
 // to the VM the review showed. A node whose VM changed is failed, nothing
-// is sent, and the error wraps errCommandVMChanged so the caller can stop
-// the deployment. A listing that fails fails the node and nothing more.
+// is sent, and runCommandNode returns errCommandVMChanged, so the caller
+// stops the deployment. A listing that fails fails the node like any other
+// failure and returns no error, and the caller treats it as a failed node.
 // The listing is never kept between calls. The command text
 // never reaches a log line or an error. A node that is not pending is
 // refused with an error that names its phase, and nothing is sent.
