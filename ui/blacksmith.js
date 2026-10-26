@@ -3494,6 +3494,8 @@
     // Set up checkbox handlers
     setupUpgradeInstanceHandlers();
     updateUpgradeButton();
+    // A redraw under the lock comes up locked too.
+    if (commandLocked) lockCommandControls(true);
 
     instancesContainer.scrollTop = scrollTop;
     if (focusedId) {
@@ -4597,9 +4599,10 @@
     ? `The broker answered with HTTP ${err.status || 'an error'}.`
     : apiErrorText(err));
 
-  // Sends the create and sorts the answer. Only a readable 2xx or a 4xx
-  // proves the outcome. A rejected fetch, any 5xx, or an unreadable 2xx
-  // leaves it unknown, and the caller must resend the same request.
+  // Sends the create and sorts the answer. Only a readable 2xx, or an
+  // answer the broker gives at or after its client request ID lookup, settles
+  // the outcome. Anything else, such as a rejected fetch, a 5xx, a 401, or a
+  // 403, leaves it unknown, and the caller must resend the same request.
   const attemptCommandCreate = async (createBody) => {
     let response;
     try {
@@ -4615,10 +4618,14 @@
       }
     }
     const err = await readApiError(response);
-    if (response.status >= 500) return { kind: 'unknown', message: commandErrorText(err) };
     if (response.status === 410 || err.code === 'preview_expired') return { kind: 'expired' };
     if (response.status === 401 && err.code === 'command_credential_required') return { kind: 'credential' };
-    return { kind: 'refused', error: err };
+    if (response.status === 403) {
+      return { kind: 'unknown', message: `The broker refused the request for now. ${commandErrorText(err)} Retry sends the same request once it is allowed.`, complete: true };
+    }
+    if (response.status === 409 && err.code === 'request_id_conflict') return { kind: 'exists' };
+    if (response.status === 400 || (response.status === 409 && (err.code === 'preview_mismatch' || err.code === 'instance_busy'))) return { kind: 'refused', error: err };
+    return { kind: 'unknown', message: response.status === 401 ? 'The broker asked for a sign-in.' : commandErrorText(err) };
   };
 
   // The nodes a preview would run on, which skip blocked instances and
@@ -4715,9 +4722,11 @@
   // Locks the controls that would change the selection or the settings
   // while a create is unconfirmed, and frees them again afterward.
   const lockCommandControls = (locked) => {
-    if (locked === commandLocked) return;
+    if (!locked && !commandLocked) return;
+    const changed = locked !== commandLocked;
     commandLocked = locked;
     document.querySelectorAll('#batch-flow-options .command-pane :is(input, textarea), #upgrade .upgrade-instances input').forEach((control) => { control.disabled = locked; });
+    if (!changed) return;
     if (!locked) { syncCommandOptions(); refreshUpgradeInstanceList(); }
     updateBatchFlow();
   };
@@ -4745,7 +4754,6 @@
     const clientRequestId = resume ? resume.createBody.client_request_id : newClientRequestId();
     let note = '';
     let expired = 0;
-    let keyRefused = false;
     while (expired < 3) {
       let preview;
       let createBody;
@@ -4762,9 +4770,8 @@
         } catch (err) {
           if (revision !== batchFlow.revision) return;
           if (err.status === 401 && err.code === 'command_credential_required') {
-            const refused = Boolean(commandCredential) || keyRefused;
+            const refused = Boolean(commandCredential);
             commandCredential = '';
-            keyRefused = false;
             const key = await askCommandCredential(revision, refused);
             if (key === null || revision !== batchFlow.revision) return;
             commandCredential = key;
@@ -4816,42 +4823,53 @@
         result = await attemptCommandCreate(createBody);
       }
 
-      while (result.kind === 'unknown') {
-        commandPending = { createBody, preview, values, nodes };
-        batchFlow.submitting = false;
-        updateBatchFlow();
-        const retry = await showBatchReview({
-          title: 'Outcome unknown',
-          message: `${result.message} The broker may have started this run. Retry sends the same request, and the broker will not start it twice. Activity shows whether it started.`,
-          body: buildCommandReviewBody(preview, values),
-          confirmText: 'Retry',
-          danger: true,
-          blocker: () => ''
-        }, revision);
-        if (!retry || retry.confirmed !== true) return;
+      for (;;) {
+        if (result.kind === 'unknown') {
+          commandPending = { createBody, preview, values, nodes };
+          batchFlow.submitting = false;
+          updateBatchFlow();
+          const retry = await showBatchReview({
+            title: 'Outcome unknown',
+            message: result.complete ? result.message : `${result.message} The broker may have started this run. Retry sends the same request, and the broker will not start it twice. Activity shows whether it started.`,
+            body: buildCommandReviewBody(preview, values),
+            confirmText: 'Retry',
+            danger: true,
+            blocker: () => ''
+          }, revision);
+          if (!retry || retry.confirmed !== true) return;
+        } else if (result.kind === 'credential') {
+          // The broker refused before it looked at the request, so we ask for
+          // the key and send the same create again.
+          commandPending = { createBody, preview, values, nodes };
+          const refused = Boolean(commandCredential);
+          commandCredential = '';
+          const key = await askCommandCredential(revision, refused);
+          if (key === null || revision !== batchFlow.revision) return;
+          commandCredential = key;
+          batchFlow.submitting = true;
+          updateBatchFlow();
+        } else {
+          break;
+        }
         result = await attemptCommandCreate(createBody);
       }
       commandPending = null;
 
-      if (result.kind === 'created') {
+      if (result.kind === 'created' || result.kind === 'exists') {
         clearCommandRun();
         selectedUpgradeInstances.clear();
         syncUpgradeRows();
         updateCommandFooter();
         await fetchUpgradeTasks();
-        selectUpgradeTask(result.task.id);
+        const task = result.kind === 'created' ? result.task : upgradeTasks.find((candidate) => candidate && candidate.client_request_id === clientRequestId);
+        if (result.kind === 'exists') window.Feedback.warning('This run already started. Open it in Activity.', { toast: true });
+        if (task && task.id) selectUpgradeTask(task.id);
         setBatchView('activity');
         return;
       }
       if (result.kind === 'expired') {
         note = PREVIEW_EXPIRED_NOTE;
         expired++;
-        loading();
-        continue;
-      }
-      if (result.kind === 'credential') {
-        commandCredential = '';
-        keyRefused = true;
         loading();
         continue;
       }

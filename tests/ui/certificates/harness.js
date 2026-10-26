@@ -34,7 +34,9 @@ function boot(opts={}){
   // it fails on the first one and can assert alerts stays empty.
   const refuse=(kind)=>(m)=>{ alerts.push(kind+':'+m); if(opts.noDialogs) throw new Error('window.'+kind+' called'); return kind==='confirm'?true:(kind==='prompt'?'x':undefined); };
   w.alert=refuse('alert'); w.confirm=refuse('confirm'); w.prompt=refuse('prompt');
-  w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(String).join(' ')); w.console.warn=()=>{};
+  // logs holds every console call, so a suite can prove a value never reached the console.
+  const logs=[]; const keep=(...a)=>logs.push(a.map(String).join(' '));
+  w.console.log=keep; w.console.warn=keep; w.console.info=keep; w.console.debug=keep; w.console.error=(...a)=>{errors.push(a.map(String).join(' ')); keep(...a);};
   w.__routes=[];
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(typeof body==='string'?body:JSON.stringify(body))});
   w.fetch=(u,o={})=>{
@@ -52,7 +54,7 @@ function boot(opts={}){
   _setSelectedTask:(id)=>{ selectedTaskId=id; },
   _getSelectedTask:()=>selectedTaskId};\n`+src.slice(idx);
   try{ w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); errors.push('LOAD ERROR '+e.message); }
-  return {w,d:w.document,errors,calls,alerts,json};
+  return {w,d:w.document,errors,logs,calls,alerts,json};
 }
 return {boot,sleep,EVIL,day,now,iso};
 })();

@@ -11,7 +11,9 @@ const CREATE_URL='/b/upgrade/tasks';
 // Every env a test boots, checked once the test ends so a dialog error that
 // the UI code swallows still fails it.
 const envs=[];
-afterEach(()=>{ while(envs.length) expect(envs.pop().alerts).toEqual([]); });
+afterEach(()=>{ while(envs.length){ const env=envs.pop(); expect(env.alerts).toEqual([]);
+ // Neither the command nor the key reaches any console method.
+ expect(env.logs.some(l=>String(l).includes(SECRET)||String(l).includes(KEY))).toBe(false); } });
 
 const vm=(index,over={})=>({group:'node',index,id:'vm-'+index,cid:'cid-'+index,job_state:'running',targeted:true,...over});
 const instance=(id,over={})=>({instance_id:id,instance_name:id+'-name',deployment:'dep-'+id,service:'valkey',plan:'small',blocked:null,vms:[vm(0),vm(1)],...over});
@@ -22,7 +24,7 @@ const preview=(over={})=>({preview_id:'prev-1',expires_at:'2030-01-01T00:00:00Z'
 async function setup(routes={}){
  const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  const requests=[];
- const answer=(spec,o,j)=>{const r=typeof spec==='function'?spec(o):spec;if(r&&r.raw) return r.raw;return j(r[0],r[1]);};
+ const answer=(spec,o,j)=>{const r=typeof spec==='function'?spec(o,j):spec;if(r&&r.raw) return r.raw;return j(r[0],r[1]);};
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
   [PREVIEW_URL,(u,o,j)=>{
    const body=JSON.parse(o.body);
@@ -36,10 +38,6 @@ async function setup(routes={}){
    requests.push({url:CREATE_URL,headers:o.headers||{},body});
    return answer(routes.create||[201,{id:'task-1'}],o,j);
   }]);
- // The harness drops log and warn, so every console call is kept for the absence checks.
- const logs=[];
- ['log','warn','info','error','debug'].forEach(k=>{w.console[k]=(...a)=>logs.push(a.map(String).join(' '));});
- env.logs=logs;
  w.plansData={services:[{id:'valkey',name:'valkey'}]};
  await sleep(30);
  w.serviceInstances={
@@ -102,7 +100,7 @@ t('the preview posts the entered values and the review shows them',async()=>{
  // The command text is in the pre and nowhere else on the page.
  const holders=[...d.querySelectorAll('*')].filter(e=>e.children.length===0&&hasSecret(e.textContent));
  expect(holders.every(e=>e.tagName==='PRE')).toBe(true);
- expect(env.errors.some(hasSecret)).toBe(false);
+ expect(env.logs.some(hasSecret)).toBe(false);
  expect(hasSecret(JSON.stringify(w.__T.batchFlow.drafts))).toBe(false);
  }finally{w.close();}
 });
@@ -318,7 +316,7 @@ t('a refused preview leaves the review step with the reason',async()=>{
  expect(w.__T.batchFlow.step).toBe(2);
  expect((w.__T.batchFlow.review)===null).toBe(true);
  expect(creates(env).length).toBe(0);
- expect(env.errors.some(hasSecret)).toBe(false);
+ expect(env.logs.some(hasSecret)).toBe(false);
  }finally{w.close();}
 });
 
@@ -338,7 +336,7 @@ t('a command run never touches a certificate endpoint',async()=>{
 // ---- Unknown create outcomes, retries, and the key ----
 
 // seq answers each call with the next spec and repeats the last.
-const seq=(...specs)=>{let n=0;return ()=>{const spec=specs[Math.min(n,specs.length-1)];n++;return typeof spec==='function'?spec():spec;};};
+const seq=(...specs)=>{let n=0;return (o,j)=>{const spec=specs[Math.min(n,specs.length-1)];n++;return typeof spec==='function'?spec(o,j):spec;};};
 const reject=()=>({raw:Promise.reject(new TypeError('Failed to fetch'))});
 const unreadable=()=>({raw:Promise.resolve({ok:true,status:200,json:()=>Promise.reject(new Error('bad body')),text:()=>Promise.resolve('')})});
 const HTML502=[502,'<html>Bad Gateway</html>'];
@@ -409,24 +407,6 @@ t('a definite refusal lets the next review mint a new request ID',async()=>{
  next(env).click();await sleep(30);await confirmRun(env);
  expect(creates(env).length).toBe(2);
  expect(creates(env)[0].body.client_request_id!==creates(env)[1].body.client_request_id).toBe(true);
- }finally{w.close();}
-});
-
-t('a 401 on create re-previews with the same request ID and the key prompt says it was refused',async()=>{
- let n=0;
- const env=await setup({preview:(o)=>{const r=needKey(o);if(r[0]===200) r[1]=preview({preview_id:'prev-'+(++n)});return r;},
-  create:seq([401,{success:false,error:'A command key is required.',code:'command_credential_required'}],[201,{id:'task-9'}])});const {w,d}=env;try{
- await review(env);
- type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);next(env).click();await sleep(30);
- await confirmRun(env);
- const prompt=d.getElementById('batch-flow-review');
- expect(prompt.querySelector('input[type="password"]')!==null).toBe(true);
- expect(prompt.textContent.includes('did not accept')).toBe(true);
- type(w,prompt.querySelector('input[type="password"]'),KEY);next(env).click();await sleep(30);
- await confirmRun(env);
- expect(creates(env).length).toBe(2);
- expect(creates(env)[0].body.client_request_id===creates(env)[1].body.client_request_id).toBe(true);
- expect(creates(env)[1].body.preview_id).toBe('prev-2');
  }finally{w.close();}
 });
 
@@ -563,5 +543,174 @@ t('a preview error with an HTML body never shows markup',async()=>{
  await review(env);
  expect(d.documentElement.outerHTML.includes('&lt;html&gt;')||d.body.textContent.includes('<html>')).toBe(false);
  expect(d.body.textContent.includes('HTTP 502')).toBe(true);
+ }finally{w.close();}
+});
+
+// ---- Definite answers, a create 401, and the lock ----
+
+const CONFLICT=[409,{success:false,error:'This client_request_id was already used for a different request, so no task was created.',code:'request_id_conflict'}];
+const NEED_KEY=[401,{success:false,error:'A command key is required.',code:'command_credential_required'}];
+const keyed=(o)=>Boolean((o.headers||{})['X-Blacksmith-Command-Key']);
+const sameCreates=(env)=>creates(env).every(c=>same(c.body,creates(env)[0].body));
+const unlocked=(d)=>!d.getElementById('command-text').disabled;
+
+t('a 401 on the first create asks for the key and resends the same create without a new preview',async()=>{
+ const env=await setup({create:(o)=>keyed(o)?[201,{id:'task-9'}]:NEED_KEY});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ const prompt=d.getElementById('batch-flow-review');
+ expect(prompt.querySelector('input[type="password"]')!==null).toBe(true);
+ expect(prompt.textContent.includes('asks for a command key')).toBe(true);
+ expect(prompt.textContent.includes('did not accept')).toBe(false);
+ expect(d.getElementById('command-text').disabled).toBe(true);
+ type(w,prompt.querySelector('input[type="password"]'),KEY);next(env).click();await sleep(30);
+ expect(previews(env).length).toBe(1);
+ expect(creates(env).length).toBe(2);
+ expect(sameCreates(env)).toBe(true);
+ expect(headerOf(creates(env)[0],'X-Blacksmith-Command-Key')==='').toBe(true);
+ expect(headerOf(creates(env)[1],'X-Blacksmith-Command-Key')===KEY).toBe(true);
+ expect(unlocked(d)).toBe(true);
+ expect(quiet(env)).toBe(true);
+ }finally{w.close();}
+});
+
+t('a key the broker refuses on create is asked for again with the refusal named',async()=>{
+ const env=await setup({create:(o)=>(o.headers||{})['X-Blacksmith-Command-Key']==='good-'+KEY?[201,{id:'task-9'}]:NEED_KEY});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);next(env).click();await sleep(30);
+ const prompt=d.getElementById('batch-flow-review');
+ expect(prompt.textContent.includes('did not accept')).toBe(true);
+ expect(previews(env).length).toBe(1);
+ type(w,prompt.querySelector('input[type="password"]'),'good-'+KEY);next(env).click();await sleep(30);
+ expect(creates(env).length).toBe(3);
+ expect(sameCreates(env)).toBe(true);
+ }finally{w.close();}
+});
+
+// P1: unknown, leave for Activity, come back, Retry without the key gets a 401.
+t('a Retry after leaving gets a 401, asks for the key, and resends the original create',async()=>{
+ const env=await setup({create:seq(reject,(o)=>NEED_KEY,(o)=>NEED_KEY)});const {w,d}=env;try{
+ let n=0;
+ env.w.__routes.unshift([CREATE_URL,(u,o,j)=>{
+  if((o.method||'GET')!=='POST') return undefined;
+  const body=JSON.parse(o.body);env.requests.push({url:CREATE_URL,headers:o.headers||{},body});n++;
+  if(n===1) return Promise.reject(new TypeError('Failed to fetch'));
+  return keyed(o)?j(201,{id:'task-9'}):j(401,NEED_KEY[1]);
+ }]);
+ await review(env);await confirmRun(env);
+ d.getElementById('batch-activity').click();await sleep(5);
+ d.getElementById('batch-new').click();
+ next(env).click();await sleep(30);
+ expect(next(env).textContent).toBe('Retry');
+ next(env).click();await sleep(30);
+ const prompt=d.getElementById('batch-flow-review');
+ expect(prompt.querySelector('input[type="password"]')!==null).toBe(true);
+ expect(prompt.textContent.includes('did not accept')).toBe(false);
+ expect(previews(env).length).toBe(1);
+ expect(unlocked(d)).toBe(false);
+ expect(d.getElementById('batch-flow-back').disabled).toBe(true);
+ type(w,prompt.querySelector('input[type="password"]'),KEY);next(env).click();await sleep(30);
+ expect(previews(env).length).toBe(1);
+ expect(creates(env).length).toBe(3);
+ expect(sameCreates(env)).toBe(true);
+ expect(headerOf(creates(env)[2],'X-Blacksmith-Command-Key')===KEY).toBe(true);
+ expect(unlocked(d)).toBe(true);
+ }finally{w.close();}
+});
+
+// P2: a Retry answered 409 request_id_conflict means the run already exists.
+t('a conflict on Retry says the run already started and opens Activity',async()=>{
+ const env=await setup({create:seq(reject,CONFLICT)});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(30);
+ const text=d.body.textContent;
+ expect(text.includes('already started')).toBe(true);
+ expect(text.includes('was not started')).toBe(false);
+ expect(d.getElementById('upgrade').querySelector('.upgrade-main').hidden).toBe(true);
+ expect(w.__T.batchFlow.review===null).toBe(true);
+ expect(unlocked(d)).toBe(true);
+ expect(previews(env).length).toBe(1);
+ expect(creates(env).length).toBe(2);
+ expect(sameCreates(env)).toBe(true);
+ }finally{w.close();}
+});
+
+// P3: a 403 on Retry leaves the create pending.
+t('a 403 on Retry keeps the create pending and offers Retry again',async()=>{
+ const env=await setup({create:seq(reject,[403,{success:false,error:'Commands are switched off.',code:'commands_disabled'}],[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(30);
+ const host=d.getElementById('batch-flow-review');
+ expect(next(env).textContent).toBe('Retry');
+ expect(host.textContent.includes('refused the request for now')).toBe(true);
+ expect(host.textContent.includes('not started')).toBe(false);
+ expect(unlocked(d)).toBe(false);
+ expect(w.__T.batchFlow.step).toBe(3);
+ next(env).click();await sleep(30);
+ expect(creates(env).length).toBe(3);
+ expect(sameCreates(env)).toBe(true);
+ expect(previews(env).length).toBe(1);
+ expect(unlocked(d)).toBe(true);
+ }finally{w.close();}
+});
+
+for(const [name,answer] of [['a 400',[400,{success:false,error:'The command is empty.',code:'invalid_request'}]],['a preview_mismatch',[409,{success:false,error:'The settings changed.',code:'preview_mismatch'}]],['an instance_busy',[409,{success:false,error:'Another operation holds it.',code:'instance_busy'}]]]){
+ t(`${name} on Retry is definite and frees the review`,async()=>{
+  const env=await setup({create:seq(reject,answer)});const {w,d}=env;try{
+  await review(env);await confirmRun(env);
+  next(env).click();await sleep(30);
+  expect(w.__T.batchFlow.step).toBe(2);
+  expect(w.__T.batchFlow.review===null).toBe(true);
+  expect(unlocked(d)).toBe(true);
+  }finally{w.close();}
+ });
+}
+
+t('a 503 on Retry stays pending',async()=>{
+ const env=await setup({create:seq(reject,[503,{success:false,error:'Tasks are still loading.',code:'tasks_loading'}])});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(30);
+ expect(next(env).textContent).toBe('Retry');expect(unlocked(d)).toBe(false);
+ }finally{w.close();}
+});
+
+t('the command text in the console fails the suite check',async()=>{
+ const env=await setup();const {w}=env;try{
+ w.console.error(SECRET);
+ expect(env.logs.some(hasSecret)).toBe(true);
+ env.logs.length=0;
+ }finally{w.close();}
+});
+
+t('the instance list redrawn under the lock stays disabled',async()=>{
+ const env=await setup({create:seq(reject)});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ w.__T.refreshUpgradeInstanceList();
+ const boxes=[...d.querySelectorAll('#upgrade .upgrade-instances input')];
+ expect(boxes.length>0).toBe(true);
+ expect(boxes.every(b=>b.disabled)).toBe(true);
+ }finally{w.close();}
+});
+
+t('a pending create ignores a change to the controls',async()=>{
+ const env=await setup({create:seq(reject)});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ w.__T.commandState.text=SECRET+' more';
+ d.getElementById('upgrade').dispatchEvent(new w.Event('change',{bubbles:true}));await sleep(10);
+ expect(w.__T.batchFlow.step).toBe(3);
+ expect(w.__T.batchFlow.review!==null).toBe(true);
+ expect(next(env).textContent).toBe('Retry');
+ }finally{w.close();}
+});
+
+t('the review signature comes from the frozen values, not the live controls',async()=>{
+ let release;
+ const env=await setup({preview:(o,j)=>({raw:new Promise(r=>{release=()=>r(j(200,preview()));})})});const {w,d}=env;try{
+ await openInstances(env);
+ next(env).click();await sleep(10);
+ // The operator edits while the preview is in flight.
+ type(w,d.getElementById('command-text'),SECRET+' --changed');
+ release();await sleep(30);
+ expect(w.__T.batchFlow.review===null).toBe(true);
+ expect(w.__T.batchFlow.step).not.toBe(3);
  }finally{w.close();}
 });
