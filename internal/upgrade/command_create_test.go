@@ -801,6 +801,10 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 	t.Parallel()
 
 	env := newCreateCmdEnv(t, nil)
+	// The background loop that saves the failed status waits this long
+	// between attempts, so it stays out of the way until the test starts a
+	// loop of its own.
+	env.manager.createRetry = time.Hour
 	env.vault.setRules(func(n int) bool { return n >= 3 }, func(n int) bool { return n == 2 }, true)
 
 	preview := env.previewFor(t, cmdReq("i1", "i3"))
@@ -818,6 +822,11 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 	if confirmed := env.vault.confirmedRecordsFrom(t, preview.ID); confirmed != 1 {
 		t.Fatalf("expected exactly one confirmed record in Vault before the heal, got %d", confirmed)
 	}
+
+	// The Vault now takes every write, so a retry that wrongly ran the create
+	// again could land a second confirmed record. The failed status is not
+	// saved yet, because the loop waits.
+	env.vault.setRules(nil, nil, false)
 
 	// A retry on the spent preview is refused, so the review still has one.
 	again := createCmdReq(preview.ID)
@@ -841,6 +850,14 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 	if len(env.manager.ListTasks()) != 1 {
 		t.Fatal("the refused retry left a task behind")
 	}
+
+	// Start the loop that saves the failed status now.
+	env.manager.mu.Lock()
+	live := env.manager.tasks[taskID]
+	env.manager.wg.Add(1)
+	env.manager.mu.Unlock()
+
+	go env.manager.saveUnconfirmedCreate(live, 5*time.Millisecond)
 
 	expectFailedStatusSaved(t, env, taskID)
 
