@@ -63,6 +63,11 @@ type Deps struct {
 	// at the indices given, for patch mode. It is nil when the broker
 	// cannot open one, and then no instance can be patched.
 	PatchRunner func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error)
+	// CommandRunner opens one SSH session on the VMs of an instance group
+	// at the indices given, for batch commands. Its sessions never log what
+	// a command prints. It is nil when the broker cannot open one, and then
+	// no command can run.
+	CommandRunner func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error)
 	// WorkerCount reports how many workers the director has, and whether
 	// it knows. A nil WorkerCount, or one that answers false, sends the
 	// preview to the BOSH configuration. The director's /info exposes no

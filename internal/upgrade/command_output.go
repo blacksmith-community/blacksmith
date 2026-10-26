@@ -210,10 +210,7 @@ func (m *Manager) commandOutputPathFor(taskID, instanceID, group string, index i
 		}
 
 		for j := range inst.Command.VMs {
-			identity := inst.Command.VMs[j].Reviewed
-			if matched := inst.Command.VMs[j].Matched; matched.Group != "" {
-				identity = matched
-			}
+			identity := inst.Command.VMs[j].identity()
 
 			if identity.Group == group && identity.Index == index {
 				matches = append(matches, match{instance: inst.InstanceID, vm: identity})

@@ -96,6 +96,21 @@ type patchDirector interface {
 // whose deadline closed the connection. A nil director gives a nil
 // runner.
 func NewPatchRunner(director patchDirector, log logger.Logger) func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error) {
+	return newSessionOpener(director, log, false)
+}
+
+// NewCommandRunner returns the CommandRunner a broker uses. Its sessions are
+// those of NewPatchRunner, except that their runners never put what a
+// command prints in a log line, because an operator typed the command and
+// it may print a secret.
+func NewCommandRunner(director patchDirector, log logger.Logger) func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error) {
+	return newSessionOpener(director, log, true)
+}
+
+// newSessionOpener returns the function that opens a session over a group.
+// A quiet session builds runners that keep command output out of every log
+// line.
+func newSessionOpener(director patchDirector, log logger.Logger, quiet bool) func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error) {
 	if director == nil {
 		return nil
 	}
@@ -106,7 +121,7 @@ func NewPatchRunner(director patchDirector, log logger.Logger) func(ctx context.
 			return nil, fmt.Errorf("setting up SSH on %s of %s: %w", group, deployment, err)
 		}
 
-		return &sshPatchSession{director: director, session: session, log: log, runners: make(map[int]*ssh.Runner)}, nil
+		return &sshPatchSession{director: director, session: session, log: log, quiet: quiet, runners: make(map[int]*ssh.Runner)}, nil
 	}
 }
 
@@ -115,6 +130,8 @@ type sshPatchSession struct {
 	director patchDirector
 	session  *sshconn.Session
 	log      logger.Logger
+	// quiet keeps command output out of the runners' log lines.
+	quiet bool
 
 	mu      sync.Mutex
 	runners map[int]*ssh.Runner
@@ -169,6 +186,10 @@ func (s *sshPatchSession) runner(ctx context.Context, vm int) (*ssh.Runner, erro
 	}
 
 	runner := ssh.NewRunner(client, s.log)
+	if s.quiet {
+		runner.WithoutOutputLogging()
+	}
+
 	s.runners[vm] = runner
 
 	return runner, nil
