@@ -340,7 +340,7 @@ _rc_signal() {
 # files are untrusted. A pgid that is not a canonical number above 1 is
 # never used, because kill -- -1 reaches every process the caller may
 # signal. The starttime must be that of the process now leading the
-# group, because a pid that was reused since belongs to another process.
+# group, if there is one, because a pid that was reused since belongs to another process.
 # A session that is gone, that is cleanup's own, or whose leader is not
 # the process exec recorded is left alone and reported no. A live
 # session gets TERM, and KILL after the wait, and is reported yes once it
@@ -365,10 +365,17 @@ _rc_kill_group() {
 	kill=$(_rc_tool kill) || { printf 'no'; return 0; }
 	command -v -- "$kill" > /dev/null || { printf 'no'; return 0; }
 
-	# Field 22 of the stat file is the 20th after the name.
-	_rc_stat "/proc/$pg/stat" lead || { printf 'no'; return 0; }
-	read -ra f <<< "$lead"
-	[ "${f[19]:-}" = "$want" ] || { printf 'no'; return 0; }
+	# A leader that is there must be the process exec recorded, and field
+	# 22 of its stat file is the 20th after the name. A leader that is
+	# gone is no reason to leave the rest of its session running. The
+	# kernel keeps a pid allocated while any process uses it as a session
+	# ID, so while a member of that session remains, no new process can
+	# have received the number, and any process with that session ID
+	# belongs to the command.
+	if _rc_stat "/proc/$pg/stat" lead; then
+		read -ra f <<< "$lead"
+		[ "${f[19]:-}" = "$want" ] || { printf 'no'; return 0; }
+	fi
 
 	_rc_alive "$pg" "$want" || { printf 'no'; return 0; }
 

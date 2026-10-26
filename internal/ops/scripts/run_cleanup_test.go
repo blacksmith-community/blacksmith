@@ -814,3 +814,82 @@ func TestRunCleanupEndsAChildInAGroupOfItsOwn(t *testing.T) {
 		t.Error("a member of the command's session is still alive")
 	}
 }
+
+func TestRunCleanupEndsTheSessionWhenItsLeaderHasExited(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("sessions are read from /proc")
+	}
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+
+	setsid, err := exec.LookPath("setsid")
+	if err != nil {
+		t.Skip("no setsid on this host")
+	}
+
+	pidFile := tree.path("sleeper-pid")
+	statFile := tree.path("leader-stat")
+	script := `echo $$ > "$1.leader"; cat /proc/$$/stat > "$2"; sleep 60 & echo $! > "$1"; exit 0`
+
+	// Not a group leader, so setsid does not fork and the leader is this
+	// process's own child, which Wait reaps.
+	leader := exec.Command(setsid, "--wait", bashPath(t), "-c", script, "_", pidFile, statFile) //nolint:gosec // a test helper
+	leader.WaitDelay = 2 * time.Second
+
+	err = leader.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pgid := leader.Process.Pid
+
+	t.Cleanup(func() {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+
+		raw, readErr := os.ReadFile(pidFile)
+		if pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw))); readErr == nil && convErr == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+
+	err = leader.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(statFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fields := strings.Fields(string(raw[bytes.LastIndex(raw, []byte(") "))+2:]))
+	if len(fields) < 20 {
+		t.Fatalf("the leader's stat has %d fields", len(fields))
+	}
+
+	if !sessionLive(t, pgid) {
+		t.Fatal("no member of the session remains after the leader exited")
+	}
+
+	if len(procFields(pgid)) != 0 {
+		t.Fatal("the leader is still in /proc")
+	}
+
+	tree.makeTask(t, runTask, map[string]string{
+		"started":   "",
+		"pgid":      strconv.Itoa(pgid) + "\n",
+		"starttime": fields[19] + "\n",
+	})
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	if sessionLive(t, pgid) {
+		t.Error("a member of the session is still alive")
+	}
+}
