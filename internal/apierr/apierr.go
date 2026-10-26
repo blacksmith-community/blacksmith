@@ -68,23 +68,6 @@ const (
 	CodeVaultUnavailable   = "vault_unavailable"
 )
 
-// CommandStatus returns the HTTP status that answers one of the run command
-// codes, and false for any other code.
-func CommandStatus(code string) (int, bool) {
-	switch code {
-	case CodeCommandsDisabled, CodeRootDisabled:
-		return http.StatusForbidden, true
-	case CodeCommandCredentialRequired:
-		return http.StatusUnauthorized, true
-	case CodePreviewMismatch:
-		return http.StatusConflict, true
-	case CodeCommandTooLong, CodeInvalidRunUser, CodeTimeoutOutOfRange, CodeMaxInFlightTooHigh:
-		return http.StatusBadRequest, true
-	default:
-		return 0, false
-	}
-}
-
 // Error is an error that knows the HTTP status and code it should be
 // answered with.
 type Error struct {

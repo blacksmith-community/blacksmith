@@ -120,32 +120,3 @@ func TestCodesMatchSpec(t *testing.T) {
 		}
 	}
 }
-
-func TestCommandCodeStatuses(t *testing.T) {
-	t.Parallel()
-
-	table := []struct {
-		code   string
-		status int
-	}{
-		{apierr.CodeCommandsDisabled, http.StatusForbidden},
-		{apierr.CodeRootDisabled, http.StatusForbidden},
-		{apierr.CodeCommandCredentialRequired, http.StatusUnauthorized},
-		{apierr.CodePreviewMismatch, http.StatusConflict},
-		{apierr.CodeCommandTooLong, http.StatusBadRequest},
-		{apierr.CodeInvalidRunUser, http.StatusBadRequest},
-		{apierr.CodeTimeoutOutOfRange, http.StatusBadRequest},
-		{apierr.CodeMaxInFlightTooHigh, http.StatusBadRequest},
-	}
-
-	for _, row := range table {
-		got, ok := apierr.CommandStatus(row.code)
-		if !ok || got != row.status {
-			t.Errorf("%s: status = %d (known %v), want %d", row.code, got, ok, row.status)
-		}
-	}
-
-	if _, ok := apierr.CommandStatus(apierr.CodeInternal); ok {
-		t.Error("a code that is not a command code reported a command status")
-	}
-}
