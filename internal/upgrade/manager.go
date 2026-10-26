@@ -1452,7 +1452,9 @@ func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 
 // ResumeTask resumes a paused task. A certificate task resumes only when
 // the switches allow its mode to write, and a refusal leaves it paused. A
-// cancelled patch task that waits for a resume of a VM left part way
+// command task resumes only while the authorizer allows it, except a
+// cancelled one that waits for a resume, which only has its nodes cleaned.
+// A cancelled patch task that waits for a resume of a VM left part way
 // through its swap stays cancelled and resumes that VM. It is turned away
 // while the stored tasks load.
 func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
