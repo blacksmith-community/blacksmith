@@ -819,8 +819,6 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 	halted := false
 
 	for {
-		before := m.commandPhases(inst)
-
 		pool := newCommandPool(m.commandWorkers(task))
 		if !m.feedCommandNodes(ctx, persistCtx, pool, sessions, task, inst, cancelCh) {
 			return false
@@ -848,14 +846,8 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 			return false
 		}
 
-		goOn, waited := m.waitWhilePaused(persistCtx, task, cancelCh)
+		goOn, _ := m.waitWhilePaused(persistCtx, task, cancelCh)
 		if !goOn {
-			return false
-		}
-
-		// A stop that left the task running and moved no node has nothing
-		// to resume, so it is handed back rather than tried again.
-		if !waited && slices.Equal(before, m.commandPhases(inst)) {
 			return false
 		}
 
@@ -950,19 +942,6 @@ func (m *Manager) commandTaskOver(task *UpgradeTask) bool {
 	default:
 		return false
 	}
-}
-
-// commandPhases returns the phase of each node of the instance.
-func (m *Manager) commandPhases(inst *InstanceUpgrade) []CommandPhase {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	phases := make([]CommandPhase, len(inst.Command.VMs))
-	for i := range inst.Command.VMs {
-		phases[i] = inst.Command.VMs[i].Phase
-	}
-
-	return phases
 }
 
 // pauseWorkerPanic pauses the task after a worker panicked, because what

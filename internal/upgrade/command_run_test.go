@@ -231,13 +231,21 @@ type captureLog struct {
 
 	mu    sync.Mutex
 	lines []string
+	// hook sees each line after it is kept, outside the lock.
+	hook func(line string)
 }
 
 func (l *captureLog) add(format string, args ...interface{}) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	line := fmt.Sprintf(format, args...)
 
-	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+	l.mu.Lock()
+	l.lines = append(l.lines, line)
+	hook := l.hook
+	l.mu.Unlock()
+
+	if hook != nil {
+		hook(line)
+	}
 }
 
 func (l *captureLog) Debugf(format string, args ...interface{})   { l.add(format, args...) }
@@ -2799,4 +2807,97 @@ func TestCommandPoolRefusesASlotAfterAHaltingWorkerReports(t *testing.T) {
 
 		pool.wait()
 	}
+}
+
+// A resume that lands between the pause a worker made and the processor's
+// read of it, with no node moved, still carries the task on to its end.
+func TestCommandResumeBeforeTheProcessorReadsThePauseGoesOn(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = CommandPhaseStaged
+	fix.vault.mu.Unlock()
+
+	var resumed atomic.Bool
+
+	fix.log.hook = func(line string) {
+		if !strings.Contains(line, "could not confirm") || !resumed.CompareAndSwap(false, true) {
+			return
+		}
+
+		fix.vault.mu.Lock()
+		fix.vault.failPhase = ""
+		fix.vault.mu.Unlock()
+
+		fix.resume()
+	}
+
+	fix.queue()
+
+	done := fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	wantEverySettled(t, done.Instances[0])
+	waitUntil(t, "the processor to let the task go", func() bool { return !fix.owned() })
+
+	fix.assertNoCommandText()
+}
+
+// A deployment halted in the same pass as a stop is still failed when the
+// resume ends it, even though the pass after the resume halts nothing.
+func TestCommandHaltBeforeAStopFailsTheInstanceAfterTheResume(t *testing.T) {
+	fix := newTaskFixture(t, 1, 4, withParallel(2))
+	inst := &fix.task.Instances[0]
+	sudo := fix.gate(opSudoCheck, "dep-0/0", "dep-0/2")
+	exec := fix.gate(opRunExec, "dep-0/1")
+
+	rival := make(chan error, 1)
+
+	go func() {
+		sessions := fix.manager.newCommandSessions(inst.Command.Deployment)
+		defer sessions.close()
+
+		_, err := fix.manager.runCommandNode(fix.manager.ctx, sessions, fix.task, inst, 2)
+		rival <- err
+	}()
+
+	sudo.wantNext("dep-0/2")
+
+	fix.queue()
+
+	sudo.wantNext("dep-0/0")
+	exec.wantNext("dep-0/1")
+
+	// Node 1 ends, and the loop reaches node 2, which the rival holds, so
+	// the deployment halts while node 0 is still in flight.
+	exec.let("dep-0/1")
+	fix.waitForStop()
+
+	// Node 0 then stops the task, because its stage save is not confirmed.
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = CommandPhaseStaged
+	fix.vault.mu.Unlock()
+
+	sudo.let("dep-0/0")
+	fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Paused })
+
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = ""
+	fix.vault.mu.Unlock()
+
+	sudo.let("dep-0/2")
+
+	err := <-rival
+	if err != nil {
+		t.Errorf("the rival returned %v", err)
+	}
+
+	fix.resume()
+
+	done := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status.settled() })
+
+	if got := done.Instances[0].Status; got != InstanceStatusFailed {
+		t.Errorf("the instance is %s, want failed", got)
+	}
+
+	fix.assertNoCommandText()
 }
