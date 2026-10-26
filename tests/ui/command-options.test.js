@@ -212,7 +212,7 @@ t('a preview limit of 0 with parallel available sets no upper bound',async()=>{
  }finally{w.close();}
 });
 
-t('a command run cannot leave the instances step on a leftover selection',async()=>{
+t('a command run on a leftover selection can leave the instances step',async()=>{
  const env=await setup();const {w,d}=env;try{
  w.__T.selectedUpgradeInstances.add('cache');
  await openOptions(env);
@@ -221,10 +221,7 @@ t('a command run cannot leave the instances step on a leftover selection',async(
  expect(next.disabled).toBe(false);next.click();
  expect(w.__T.batchFlow.step).toBe(2);
  expect(w.__T.batchOptionIssue()).toBe('');
- expect(next.disabled).toBe(true);
- next.click();
- expect(w.__T.batchFlow.step).toBe(2);
- expect(d.getElementById('batch-flow-help').textContent).toContain('not available yet');
+ expect(next.disabled).toBe(false);
  }finally{w.close();}
 });
 

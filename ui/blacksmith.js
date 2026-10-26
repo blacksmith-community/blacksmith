@@ -2764,11 +2764,12 @@
     if (upgradeOperation === 'rotate' && rotateState.mode === 'patch' && !rotateState.converge) return 'Choose what should happen after patching.';
     return '';
   };
+  // The footer button each operation reads its Instances step issue from.
+  const ACTION_BUTTONS = { upgrade: 'upgrade-start', command: 'command-preview' };
   const batchInstanceIssue = () => {
     if (batchOptionIssue()) return batchOptionIssue();
-    if (upgradeOperation === 'command') return 'Choosing instances for a command run is not available yet.';
-    if (upgradeOperation !== 'upgrade' && rotateState.busy && batchFlow.step !== 3) return 'Finishing the previous preview. Your changes are kept.';
-    const action = document.getElementById(upgradeOperation === 'upgrade' ? 'upgrade-start' : 'rotate-preview');
+    if (!usesUpgradeList() && rotateState.busy && batchFlow.step !== 3) return 'Finishing the previous preview. Your changes are kept.';
+    const action = document.getElementById(ACTION_BUTTONS[upgradeOperation] || 'rotate-preview');
     return !batchSelectedIds().size || action?.disabled ? (action?.title || 'Select at least one eligible instance to continue.') : '';
   };
   // The one selection count, on the right of the step header. Only the
@@ -2803,7 +2804,8 @@
     const serviceHost = upgradeOperation === 'upgrade' ? optionsContext : panel.querySelector('.upgrade-services');
     if (serviceRow.parentElement !== serviceHost) serviceHost.prepend(serviceRow);
     optionsContext.hidden = step !== 1 || (upgradeOperation !== 'upgrade' && upgradeOperation !== 'command');
-    panel.querySelector('.upgrade-targets-panel').hidden = step !== 1 || upgradeOperation === 'command';
+    // A command run keeps its summary above the instance list.
+    panel.querySelector('.upgrade-targets-panel').hidden = upgradeOperation === 'command' ? step !== 2 : step !== 1;
     panel.querySelector('.upgrade-services-panel').hidden = step !== 2;
     panel.querySelector('.upgrade-instances').hidden = step !== 2;
     panel.querySelector('#batch-selection-review').hidden = step !== 2;
@@ -2844,7 +2846,7 @@
     updateBatchFlow();
     notifyRoute();
     // Coming back to the list, every row follows the selection as it stands.
-    if (step === 2 && upgradeOperation === 'upgrade') syncUpgradeRows();
+    if (step === 2 && usesUpgradeList()) syncUpgradeRows();
     if (focus) {
       document.getElementById('upgrade').scrollTop = 0;
       document.getElementById('batch-flow-title').focus({preventScroll:true});
@@ -2911,6 +2913,7 @@
     updateBatchFlow();
     try {
       if (upgradeOperation === 'upgrade') await startUpgrade({flowReview:true});
+      else if (upgradeOperation === 'command') document.getElementById('batch-flow-review').replaceChildren();
       else await startRotatePreview({flowReview:true});
     } finally {
       if (revision !== batchFlow.revision) return;
@@ -2996,7 +2999,7 @@
     : (upgradeOperation === 'converge' ? convergeSelected : selectedUpgradeInstances);
 
   const batchMatchingRows = () => {
-    if (upgradeOperation !== 'upgrade') return rotateVisibleRows().map((row) => [row.id, row.details]);
+    if (!usesUpgradeList()) return rotateVisibleRows().map((row) => [row.id, row.details]);
     const f = currentUpgradeFilters();
     return filterUpgradeInstances(window.serviceInstances || {}, f.service, f.plan, f.stemcellFloor, f.releaseFloor).rows;
   };
@@ -3024,7 +3027,8 @@
     if (optionsSummary) {
       const target = document.getElementById('upgrade-stemcell-filter')?.value;
       const release = document.getElementById('upgrade-release-filter')?.value;
-      optionsSummary.textContent = upgradeOperation === 'upgrade'
+      if (upgradeOperation === 'command') optionsSummary.textContent = commandSummary();
+      else optionsSummary.textContent = upgradeOperation === 'upgrade'
         ? `Upgrade options${target ? ` · ${target}` : ''}${release ? ` · release ${release}` : ''}`
         : (upgradeOperation === 'rotate' ? 'Certificate options' : 'Converge options');
     }
@@ -3108,7 +3112,7 @@
       refreshUpgradeInstanceList();
     });
     document.getElementById('batch-select-matching').addEventListener('click', () => {
-      if (upgradeOperation === 'upgrade') {
+      if (usesUpgradeList()) {
         batchMatchingRows().forEach(([id]) => { if (!upgradeHolders.has(id)) selectedUpgradeInstances.add(id); });
       } else {
         rotateVisibleRows().forEach((row) => {
@@ -3323,7 +3327,7 @@
       const instanceName = rotateState.byInstance.get(id)?.name || details.name || details.instance_name || '';
       if (!batchWorkspace.selectedOnly && query && !`${id} ${instanceName}`.toLowerCase().includes(query)) return false;
       if (batchWorkspace.selectedOnly) return batchSelectedIds().has(id);
-      if (upgradeOperation === 'upgrade' && batchWorkspace.eligibility) {
+      if (usesUpgradeList() && batchWorkspace.eligibility) {
         const eligible = !upgradeHolders.has(id);
         if ((batchWorkspace.eligibility === 'eligible') !== eligible) return false;
       }
@@ -3430,6 +3434,7 @@
   // Update the upgrade button state
   const updateUpgradeButton = () => {
     syncAdvancedReleaseSummary();
+    if (upgradeOperation === 'command') { updateCommandFooter(); return; }
     // Rotate and converge have their own footer, and never touch this button.
     if (upgradeOperation !== 'upgrade') return;
 
@@ -3460,9 +3465,7 @@
     const stemcellFloor = document.getElementById('upgrade-stemcell-floor')?.value || '';
     const releaseFloor = document.getElementById('upgrade-release-floor')?.value || '';
 
-    // A command run has no instance list yet.
-    if (upgradeOperation === 'command') return;
-    if (upgradeOperation !== 'upgrade') {
+    if (!usesUpgradeList()) {
       renderRotateInstances();
       updateOperationFooter();
       return;
@@ -3497,6 +3500,9 @@
   // default, and its controls stay in the page (hidden) while another
   // operation shows, so their choices and listeners survive a switch.
   let upgradeOperation = 'upgrade';
+  // Upgrade and command both act on service instances, so they share the
+  // upgrade instance list, its selection, and its row handlers.
+  const usesUpgradeList = () => upgradeOperation === 'upgrade' || upgradeOperation === 'command';
   const OPERATION_LABELS = {
     upgrade: 'Upgrade',
     rotate: 'Rotate certificates',
@@ -4106,7 +4112,7 @@
 
   // The selection line and the footer button.
   const updateOperationFooter = () => {
-    if (upgradeOperation === 'upgrade') return;
+    if (usesUpgradeList()) return;
     updateBatchWorkspace();
     const line = document.getElementById('rotate-selection-line');
     const button = document.getElementById('rotate-preview');
@@ -4146,7 +4152,7 @@
 
   // Redraws the list and the footer together after a selection change.
   const rotateRefresh = () => {
-    if (upgradeOperation === 'upgrade') return;
+    if (usesUpgradeList()) return;
     renderRotateInstances();
     updateOperationFooter();
   };
@@ -4196,7 +4202,7 @@
 
   // Redraws the inventory when the poll finds it stale.
   const maybeRefreshRotateInventory = () => {
-    if (upgradeOperation === 'upgrade' || rotateState.loadState === 'loading' || !batchTabActive()) return;
+    if (usesUpgradeList() || rotateState.loadState === 'loading' || !batchTabActive()) return;
     if (Date.now() - rotateState.lastLoad > INVENTORY_REFRESH_MS) loadRotateInventory({ silent: true });
   };
 
@@ -4441,6 +4447,40 @@
     renderRotateNotice();
   };
 
+  // The options summary of a command run, which says who runs it, on how
+  // many instances, and how many services they span.
+  const commandSummary = () => {
+    const selected = Array.from(batchSelectedIds());
+    const services = new Set(selected.map((id) => (window.serviceInstances || {})[id]?.service_id).filter(Boolean));
+    const parts = [`Run as ${commandState.user}`, pluralize(1, 'command'), pluralize(selected.length, 'instance')];
+    if (services.size > 1) parts.push(`across ${services.size} services`);
+    const limit = wholeNumber(commandState.maxInFlight);
+    if (commandState.parallel && limit !== null && limit >= 1) parts.push(`${limit} at a time`);
+    return parts.join(', ');
+  };
+
+  // The preview button of a command run, enabled once an instance is
+  // selected. Its click handler arrives with the review step.
+  const updateCommandFooter = () => {
+    updateBatchWorkspace();
+    const button = document.getElementById('command-preview');
+    if (!button) return;
+    const none = selectedUpgradeInstances.size === 0;
+    button.disabled = none;
+    button.title = none ? 'Select at least one instance to continue.' : '';
+  };
+
+  const buildCommandFooter = (container) => {
+    const pane = rotateEl('div', 'rotate-pane command-footer-pane');
+    pane.dataset.pane = 'command-footer';
+    const button = rotateEl('button', 'btn-primary', 'Preview command run');
+    button.type = 'button';
+    button.id = 'command-preview';
+    button.disabled = true;
+    pane.appendChild(button);
+    container.appendChild(pane);
+  };
+
   // Brings the command pane's controls in line with commandState. Every
   // change to the state, or to what the broker reported, ends here.
   const syncCommandOptions = () => {
@@ -4487,7 +4527,7 @@
     const pane = rotateEl('div', 'command-pane');
     pane.dataset.pane = 'command-options';
     pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS.command));
-    const changed = () => { syncCommandOptions(); updateBatchFlow(); };
+    const changed = () => { syncCommandOptions(); updateBatchWorkspace(); updateBatchFlow(); };
 
     const textRow = rotateEl('div', 'filter-row');
     const textLabel = rotateEl('label', '', 'Command');
@@ -4706,6 +4746,8 @@
     optionsHost?.querySelector('.command-pane')?.remove();
     if (next === 'command' && optionsHost) {
       buildCommandOptions(optionsHost);
+      buildCommandFooter(footer);
+      refreshUpgradeInstanceList();
       return;
     }
 
@@ -5647,7 +5689,7 @@
   // The footer button of rotate and converge mode.
   const startRotatePreview = async ({flowReview = false} = {}) => {
     const reviewRevision = batchFlow.revision;
-    if (rotateState.busy || upgradeOperation === 'upgrade') return;
+    if (rotateState.busy || usesUpgradeList()) return;
     const converge = upgradeOperation === 'converge';
     const grouped = new Map();
     let skipped = 0;
@@ -6029,7 +6071,7 @@
     const selectAllBtn = document.getElementById('upgrade-select-all');
     if (selectAllBtn) {
       selectAllBtn.addEventListener('click', () => {
-        if (upgradeOperation !== 'upgrade') {
+        if (!usesUpgradeList()) {
           rotateSelectVisible();
           rotateRefresh();
           return;
@@ -6048,7 +6090,7 @@
     const deselectAllBtn = document.getElementById('upgrade-deselect-all');
     if (deselectAllBtn) {
       deselectAllBtn.addEventListener('click', () => {
-        if (upgradeOperation !== 'upgrade') {
+        if (!usesUpgradeList()) {
           clearSelectionFor(upgradeOperation);
           rotateRefresh();
           return;
