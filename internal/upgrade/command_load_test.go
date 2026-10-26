@@ -852,3 +852,21 @@ func TestLoadedRefusedTaskCancelledThenResumedOnlyCleans(t *testing.T) {
 	waitUntil(t, "the instance to be released", func() bool { return fix.busyWith(0) == nil })
 	fix.assertNoCommandText()
 }
+
+// A task whose instance is running has started, even when every node is
+// still pending, so it runs again instead of waiting for a resume.
+func TestLoadedRunningInstanceWithPendingNodesIsNotNeverStarted(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+		task.Status = TaskStatusRunning
+		task.Instances[0].Status = InstanceStatusRunning
+	})
+
+	done := fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	if done.Paused || done.Instances[0].Error == commandNeverStartedMessage {
+		t.Errorf("the started task was paused as never started: paused=%v", done.Paused)
+	}
+
+	fix.assertNoCommandText()
+}
