@@ -440,16 +440,19 @@ func (r *commandRun) cleanup(ctx context.Context) (scripts.Cleanup, bool, error)
 		return scripts.Cleanup{}, false, fmt.Errorf("cleanup did not finish: %w", err)
 	}
 
+	// run.sh prints the record before it exits non-zero when it can't
+	// remove the directory, so the record is read whatever the status is.
+	record, parseErr := scripts.ParseCleanup(result.Stdout)
+	if parseErr != nil {
+		record = scripts.Cleanup{}
+		err = fmt.Errorf("cleanup: %w", parseErr)
+	}
+
 	if result.ExitCode != 0 {
-		return scripts.Cleanup{}, false, fmt.Errorf("cleanup exited with status %d", result.ExitCode)
+		err = errors.Join(err, fmt.Errorf("cleanup exited with status %d", result.ExitCode))
 	}
 
-	record, err := scripts.ParseCleanup(result.Stdout)
-	if err != nil {
-		return scripts.Cleanup{}, false, fmt.Errorf("cleanup: %w", err)
-	}
-
-	return record, record.Killed == "survived", nil
+	return record, record.Killed == "survived", err
 }
 
 // advance changes the node and saves the task with a confirmed save. When

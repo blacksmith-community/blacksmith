@@ -1154,3 +1154,26 @@ func TestRunCommandNodeBuildsItsInputsBeforeTheFirstSave(t *testing.T) {
 		t.Errorf("phase %s status %s error %q", node.Phase, node.Status, node.Error)
 	}
 }
+
+// A survived record still fails the node and pauses the task when cleanup
+// then exits non-zero.
+func TestRunCommandNodePausesWhenSurvivedCleanupExitsNonZero(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.cleanup = "cleanup started=yes exit=- killed=survived"
+	fix.cleanupExit = 1
+
+	if stopped := fix.run(context.Background()); !stopped {
+		t.Fatal("the task did not stop")
+	}
+
+	node := fix.vault.stored(t)
+	if node.Status != CommandStatusFailed || !strings.Contains(node.Reason, "survived") {
+		t.Errorf("status %s reason %q", node.Status, node.Reason)
+	}
+
+	if !fix.taskPaused() {
+		t.Error("the task is not paused")
+	}
+}
