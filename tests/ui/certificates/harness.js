@@ -35,8 +35,9 @@ function boot(opts={}){
   const refuse=(kind)=>(m)=>{ alerts.push(kind+':'+m); if(opts.noDialogs) throw new Error('window.'+kind+' called'); return kind==='confirm'?true:(kind==='prompt'?'x':undefined); };
   w.alert=refuse('alert'); w.confirm=refuse('confirm'); w.prompt=refuse('prompt');
   // logs holds every console call, so a suite can prove a value never reached the console.
-  const logs=[]; const keep=(...a)=>logs.push(a.map(String).join(' '));
-  w.console.log=keep; w.console.warn=keep; w.console.info=keep; w.console.debug=keep; w.console.error=(...a)=>{errors.push(a.map(String).join(' ')); keep(...a);};
+  const show=(x)=>{ if(x&&typeof x==='object'&&typeof x.message!=='string'){ try{ return JSON.stringify(x); }catch(e){ return String(x); } } return String(x); };
+  const logs=[]; const keep=(...a)=>logs.push(a.map(show).join(' '));
+  w.console.log=keep; w.console.warn=keep; w.console.info=keep; w.console.debug=keep; w.console.error=(...a)=>{errors.push(a.map(show).join(' ')); keep(...a);};
   w.__routes=[];
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(typeof body==='string'?body:JSON.stringify(body))});
   w.fetch=(u,o={})=>{

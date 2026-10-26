@@ -10,7 +10,7 @@ const PREVIEW_URL='/b/upgrade/commands/preview';
 // Every env a test boots, checked once the test ends so a dialog error that
 // the UI code swallows still fails it.
 const envs=[];
-afterEach(()=>{ while(envs.length) expect(envs.pop().alerts).toEqual([]); });
+afterEach(()=>{ while(envs.length){ const env=envs.pop(); expect(env.alerts).toEqual([]); expect(env.logs.some(l=>String(l).includes(SECRET))).toBe(false); } });
 async function setup(probes={},{network=false}={}){
  const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);

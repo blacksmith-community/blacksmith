@@ -4684,7 +4684,7 @@
   // Asks for the second credential in the review step and resolves to what
   // the operator typed, or null when they leave. The input is cleared once
   // it is read.
-  const askCommandCredential = async (revision, refused) => {
+  const askCommandCredential = async (revision, refused, action = {}) => {
     const body = rotateEl('div', 'command-credential');
     const label = rotateEl('label', '', 'Command key');
     const input = document.createElement('input');
@@ -4695,7 +4695,8 @@
       title: 'Command key',
       message: refused ? 'The broker did not accept that key. Enter it again.' : 'This broker asks for a command key before it previews or runs a command.',
       body,
-      confirmText: 'Preview command run',
+      confirmText: action.confirmText || 'Preview command run',
+      danger: Boolean(action.danger),
       blocker: () => (input.value ? '' : 'Enter the command key to continue.')
     }, revision);
     const value = input.value;
@@ -4843,7 +4844,8 @@
           commandPending = { createBody, preview, values, nodes };
           const refused = Boolean(commandCredential);
           commandCredential = '';
-          const key = await askCommandCredential(revision, refused);
+          // This button starts the run, so it reads and looks like the run button.
+          const key = await askCommandCredential(revision, refused, { confirmText: `Run on ${pluralize(nodes, 'node')}`, danger: true });
           if (key === null || revision !== batchFlow.revision) return;
           commandCredential = key;
           batchFlow.submitting = true;

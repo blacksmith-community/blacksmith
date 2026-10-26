@@ -714,3 +714,62 @@ t('the review signature comes from the frozen values, not the live controls',asy
  expect(w.__T.batchFlow.step).not.toBe(3);
  }finally{w.close();}
 });
+
+// ---- Key prompt labels, a bare 401, and the ID through a 410 ----
+
+t('the key prompt from a create 401 carries the run label and danger styling',async()=>{
+ const env=await setup({create:(o)=>keyed(o)?[201,{id:'task-9'}]:NEED_KEY});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ expect(next(env).textContent.startsWith('Run on ')).toBe(true);
+ expect(next(env).textContent.includes('Preview')).toBe(false);
+ expect(next(env).dataset.variant).toBe('danger');
+ }finally{w.close();}
+});
+
+t('the key prompt from a preview 401 keeps the preview label',async()=>{
+ const env=await setup({preview:needKey});const {w,d}=env;try{
+ await openInstances(env);
+ next(env).click();await sleep(30);
+ expect(next(env).textContent).toBe('Preview command run');
+ expect(next(env).dataset.variant).toBe('primary');
+ }finally{w.close();}
+});
+
+t('a bare 401 on a pending create keeps it pending with the same request',async()=>{
+ const env=await setup({create:seq(reject,[401,{error:'Unauthorized'}],[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(30);
+ expect(next(env).textContent).toBe('Retry');
+ expect(unlocked(d)).toBe(false);
+ expect(w.__T.batchFlow.step).toBe(3);
+ next(env).click();await sleep(30);
+ expect(creates(env).length).toBe(3);
+ expect(sameCreates(env)).toBe(true);
+ expect(previews(env).length).toBe(1);
+ }finally{w.close();}
+});
+
+t('a review resumed after leaving keeps its request ID through a 410',async()=>{
+ let n=0;
+ const env=await setup({preview:()=>[200,preview({preview_id:'prev-'+(++n)})],create:seq(reject,[410,{success:false,error:'expired',code:'preview_expired'}],[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ d.getElementById('batch-activity').click();await sleep(5);
+ d.getElementById('batch-new').click();
+ next(env).click();await sleep(30);
+ next(env).click();await sleep(30);
+ expect(previews(env).length).toBe(2);
+ ack(env,'run as vcap');next(env).click();await sleep(30);
+ const sent=creates(env);
+ expect(sent.length).toBe(3);
+ expect(sent.every(c=>c.body.client_request_id===sent[0].body.client_request_id)).toBe(true);
+ expect(sent[2].body.preview_id).toBe('prev-2');
+ }finally{w.close();}
+});
+
+t('the console capture sees command text nested in an object',async()=>{
+ const env=await setup();const {w}=env;try{
+ w.console.log('create',{command:SECRET});
+ expect(env.logs.some(hasSecret)).toBe(true);
+ env.logs.length=0;
+ }finally{w.close();}
+});
