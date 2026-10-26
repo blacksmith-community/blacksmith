@@ -162,6 +162,34 @@ func (v *cmdCreateVault) countSaved(prefix string) int {
 	return count
 }
 
+// confirmedRecordsFrom counts the saved command task records that say their
+// creation was confirmed and came from the preview.
+func (v *cmdCreateVault) confirmedRecordsFrom(t *testing.T, previewID string) int {
+	t.Helper()
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	count := 0
+
+	for path, raw := range v.saved {
+		if !strings.HasPrefix(path, commandTasksVaultPath+"/") {
+			continue
+		}
+
+		var task UpgradeTask
+		if err := json.Unmarshal(raw, &task); err != nil {
+			t.Fatalf("the saved record at %s is not a task: %v", path, err)
+		}
+
+		if task.CreationConfirmed && task.Command != nil && task.Command.PreviewID == previewID {
+			count++
+		}
+	}
+
+	return count
+}
+
 type cmdCreateEnv struct {
 	manager *Manager
 	vault   *cmdCreateVault
@@ -791,6 +819,18 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 
 	if len(landed) == 0 {
 		t.Fatal("the confirming save should have landed in Vault")
+	}
+
+	// The reviewer's reproduction: a retry on the spent preview is refused,
+	// so one review leaves at most one confirmed record in Vault.
+	again := createCmdReq(preview.ID)
+	again.ClientRequestID = "same-preview"
+
+	_, _, err = env.manager.CreateCommandTask(context.Background(), again)
+	expectAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
+
+	if confirmed := env.vault.confirmedRecordsFrom(t, preview.ID); confirmed > 1 {
+		t.Fatalf("one preview produced %d confirmed command records", confirmed)
 	}
 
 	// A create from another review of the same instances is refused while
