@@ -296,19 +296,37 @@ _rc_group_state() {
 	printf '%s%s' "$found" "$extra"
 }
 
-# _rc_alive <pgid> succeeds while the session still has a member.
+# _rc_leader_ok <pgid> <starttime> succeeds unless the process now
+# leading the group started at another time than exec recorded. A leader
+# that is gone passes, because the number stays pinned while any member
+# of the session remains. A different start time means the session ended
+# and a stranger took the number.
+_rc_leader_ok() {
+	local lead f
+
+	_rc_stat "/proc/$1/stat" lead || return 0
+	read -ra f <<< "$lead"
+	[ "${f[19]:-}" = "$2" ]
+}
+
+# _rc_alive <pgid> <starttime> succeeds while the session of the command
+# still has a member.
 _rc_alive() {
 	local state
 
+	_rc_leader_ok "$1" "$2" || return 1
 	state=$(_rc_group_state "$1")
 	[[ $state == live || $state == "live "* ]]
 }
 
-# _rc_signal <kill> <signal> <pgid> sends a signal to the group and to
-# the members of its session that are outside the group.
+# _rc_signal <kill> <signal> <pgid> <starttime> sends a signal to the
+# group and to the members of its session that are outside the group. It
+# checks the leader again first, so a number reused during the wait is
+# never signalled.
 _rc_signal() {
 	local state extra
 
+	_rc_leader_ok "$3" "$4" || return 0
 	state=$(_rc_group_state "$3")
 	extra=${state#live}
 	[ "$extra" != "$state" ] || return 0
@@ -352,27 +370,27 @@ _rc_kill_group() {
 	read -ra f <<< "$lead"
 	[ "${f[19]:-}" = "$want" ] || { printf 'no'; return 0; }
 
-	_rc_alive "$pg" || { printf 'no'; return 0; }
+	_rc_alive "$pg" "$want" || { printf 'no'; return 0; }
 
 	ticks=$(_rc_kill_ticks)
 
-	_rc_signal "$kill" TERM "$pg"
+	_rc_signal "$kill" TERM "$pg" "$want"
 
 	for ((i = 0; i < ticks; i++)); do
-		_rc_alive "$pg" || break
+		_rc_alive "$pg" "$want" || break
 		sleep 0.1
 	done
 
-	if _rc_alive "$pg"; then
-		_rc_signal "$kill" KILL "$pg"
+	if _rc_alive "$pg" "$want"; then
+		_rc_signal "$kill" KILL "$pg" "$want"
 
 		for ((i = 0; i < ticks / 5 + 1; i++)); do
-			_rc_alive "$pg" || break
+			_rc_alive "$pg" "$want" || break
 			sleep 0.1
 		done
 	fi
 
-	if _rc_alive "$pg"; then
+	if _rc_alive "$pg" "$want"; then
 		printf 'survived'
 		return 0
 	fi
@@ -507,7 +525,8 @@ execute() {
 	# pid is its group ID. The start time of that process, field 22 of its
 	# stat file, goes into the starttime file first, so cleanup can tell
 	# the process from a later one that reuses its pid, and a pgid file
-	# always has one beside it. Keep both writes ahead of the exec in that
+	# always has one beside it. A start time that cannot be read or written
+	# ends in 125 like a pgid write that fails. Keep both writes ahead of the exec in that
 	# same process. timeout then fails its own setpgid as a session leader,
 	# which is harmless, because the group is already the one to signal.
 	# --wait keeps setsid from forking and returning at once, which would
@@ -521,7 +540,7 @@ execute() {
 	# and shows up as 137, not 124.
 	# shellcheck disable=SC2016
 	{
-		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; echo "${f[19]}" > "$2"; echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 3; exec "$@"' \
+		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; [ -n "${f[19]:-}" ] && echo "${f[19]}" > "$2" && echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 3; exec "$@"' \
 			_ "$dir/pgid" "$dir/starttime" "$home" \
 			"$timeout" -k 10 "$secs" ${priv[@]+"${priv[@]}"} \
 			env -i HOME="$homepath" USER="$user" LOGNAME="$user" SHELL=/bin/bash \

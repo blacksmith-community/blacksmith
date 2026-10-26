@@ -2157,3 +2157,33 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 		t.Errorf("the command printed\n%s\nwant\n%s", out, want)
 	}
 }
+
+func TestRunExecRootStarttimeWriteFailureExits125(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkRunTools(t)
+
+	command := canaryExec(tree)
+
+	code, _ := tree.prepare(t, runTask, "root", command)
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	err := os.WriteFile(tree.path(runOps, runTask, "starttime"), nil, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := tree.execRoot(t, "30", digestOf(command))
+	if code != 125 || out != "" || errOut != "run.sh: the command was not started\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+
+	tree.requireExecCanary(t, false)
+
+	if _, statErr := os.Stat(tree.path(runOps, runTask, "pgid")); statErr == nil {
+		t.Error("a pgid was written although the start time was not")
+	}
+}

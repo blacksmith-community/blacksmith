@@ -380,38 +380,66 @@ func TestRunCleanupExitedGroupReportsKilledNo(t *testing.T) {
 func TestRunCleanupNeverSignalsOnABadPgid(t *testing.T) {
 	t.Parallel()
 
-	files := map[string]map[string]string{
-		"missing":     {"started": ""},
-		"empty":       {"started": "", "pgid": ""},
-		"zero":        {"started": "", "pgid": "0\n"},
-		"one":         {"started": "", "pgid": "1\n"},
-		"minus one":   {"started": "", "pgid": "-1\n"},
-		"leading 0":   {"started": "", "pgid": "01\n"},
-		"two numbers": {"started": "", "pgid": "12 34\n"},
-		"junk":        {"started": "", "pgid": "2; id\n"},
-		"too long":    {"started": "", "pgid": "99999999999\n"},
-		"wrap":        {"started": "", "pgid": "4294967295\n"},
-		"spaces":      {"started": "", "pgid": " 123\n"},
+	if runtime.GOOS != "linux" {
+		t.Skip("kill_group reads /proc")
 	}
 
-	for name, task := range files {
+	// Every case has a well formed starttime that the stubbed leader
+	// matches, and the group stubbed live, so only the pgid refuses.
+	for name, pgid := range map[string]string{
+		"missing": "", "empty": "\n", "zero": "0\n", "one": "1\n", "minus one": "-1\n",
+		"leading 0": "01\n", "two numbers": "12 34\n", "junk": "2; id\n",
+		"too long": "99999999999\n", "wrap": "4294967295\n", "spaces": " 123\n",
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			tree := newRunTree(t)
-			log := tree.plantKill(t)
-			tree.makeTask(t, runTask, task)
-
-			code, out := tree.cleanup(t, runTask)
-			if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
-				t.Errorf("exit = %d, output = %q", code, out)
+			files := map[string]string{"started": "", "starttime": "777\n"}
+			if name != "missing" {
+				files["pgid"] = pgid
 			}
 
-			_, err := os.Stat(log)
-			if err == nil {
-				t.Error("a signal was sent for an invalid pgid")
+			out, sent := killGroup(t, files, nil, liveStubs)
+			if out != "no" || sent {
+				t.Errorf("output = %q, signal sent = %v", out, sent)
 			}
 		})
+	}
+}
+
+func TestRunCleanupSendsNoKillWhenTheLeaderChangesAfterTerm(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("kill_group reads /proc")
+	}
+
+	// The leader matches for the first checks, which are before TERM, and
+	// has another start time from the fifth, which is after it.
+	stubs := `_rc_group_state() { printf live; }
+_n=0
+_rc_stat() { _n=$((_n + 1)); local t=777; [ "$_n" -gt 4 ] && t=888; printf -v "$2" 'S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s 0' "$t"; }
+RC_KILL_TICKS=2
+`
+
+	tree := newRunTree(t)
+	log := tree.plantKill(t)
+	tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"})
+
+	dir := tree.path(runOps, runTask)
+
+	code, out := tree.snippet(t, false, "CERTPATCH_ROOT="+tree.root+"\n"+stubs+"printf '%s\\n' \"$(_rc_kill_group \""+dir+"\")\"\n")
+	if code != 0 {
+		t.Fatalf("snippet exited %d", code)
+	}
+
+	logged, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(logged) != "-TERM -- -4242\n" || strings.TrimSpace(out) != "yes" {
+		t.Errorf("signals sent = %q, output = %q; want TERM only and yes", logged, out)
 	}
 }
 
@@ -658,7 +686,12 @@ func TestRunCleanupIgnoresAForgedCommName(t *testing.T) {
 	// A process outside the command whose name holds a newline and a
 	// ")", so a line-by-line read of its stat file takes the group and
 	// session from the name.
-	forgery := fmt.Sprintf("x) S 1 %d 1\n", running.pgid)
+	// The name holds 15 bytes at most, which seven digits of pgid fit.
+	forgery := fmt.Sprintf("x) S 1 %d\n", running.pgid)
+	if len(forgery) > 15 {
+		t.Skipf("the pgid %d is too long to forge in a 15 byte name", running.pgid)
+	}
+
 	forger := exec.Command("bash", "-c", `printf '%s' "$1" > /proc/$$/comm; sleep 60 & wait`, "_", forgery) //nolint:gosec // a test helper
 	forger.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	forger.WaitDelay = 2 * time.Second
@@ -676,7 +709,7 @@ func TestRunCleanupIgnoresAForgedCommName(t *testing.T) {
 	if !waitFor(5*time.Second, func() bool {
 		raw, readErr := os.ReadFile("/proc/" + strconv.Itoa(forger.Process.Pid) + "/comm")
 
-		return readErr == nil && strings.HasPrefix(string(raw), "x) S 1")
+		return readErr == nil && strings.HasPrefix(string(raw), forgery)
 	}) {
 		t.Fatal("the forged name did not take")
 	}
