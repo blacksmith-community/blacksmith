@@ -2795,6 +2795,11 @@
   };
   const updateBatchFlow = () => {
     if (!batchFlow.installed) return;
+    // Any change to what a command review froze drops that review.
+    if (upgradeOperation === 'command' && batchFlow.step === 3 && !batchFlow.submitting && commandRun.signature && commandRun.signature !== commandSignature()) {
+      setBatchStep(2, false);
+      return;
+    }
     const step = batchFlow.step;
     const panel = document.getElementById('upgrade');
     if (!panel) return;
@@ -2826,10 +2831,11 @@
     const review = batchFlow.review;
     const needsWord = review?.options.requireText;
     const acknowledged = !needsWord || confirmWordMatches(document.getElementById('batch-flow-ack')?.value, needsWord);
+    const blocker = step === 3 && review?.options.blocker ? review.options.blocker() : '';
     next.textContent = batchFlow.submitting ? 'Starting…' : batchFlow.loading ? 'Preparing review…' : step === 3 ? (review?.options.confirmText || 'Refresh review') : ['Next: Options','Next: Instances','Review operation'][step];
-    next.disabled = batchFlow.submitting || batchFlow.loading || Boolean(issue) || (step === 3 && !acknowledged);
+    next.disabled = batchFlow.submitting || batchFlow.loading || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
     next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
-    const helpText = issue || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
+    const helpText = issue || blocker || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
     if (help.textContent !== helpText) help.textContent = helpText;
     document.getElementById('batch-activity').disabled = batchFlow.submitting;
@@ -2838,6 +2844,9 @@
   const setBatchStep = (step, focus = true) => {
     if (!batchFlow.installed || batchFlow.submitting) return;
     if (batchFlow.review) { batchFlow.review.resolve(false); batchFlow.review = null; }
+    clearCommandRun();
+    // The command text leaves the page with its review.
+    if (upgradeOperation === 'command' && step !== 3) document.getElementById('batch-flow-review')?.replaceChildren();
     batchFlow.revision++;
     batchFlow.loading = false;
     batchFlow.step = step;
@@ -2913,7 +2922,7 @@
     updateBatchFlow();
     try {
       if (upgradeOperation === 'upgrade') await startUpgrade({flowReview:true});
-      else if (upgradeOperation === 'command') document.getElementById('batch-flow-review').replaceChildren();
+      else if (upgradeOperation === 'command') await startCommandReview(revision);
       else await startRotatePreview({flowReview:true});
     } finally {
       if (revision !== batchFlow.revision) return;
@@ -3063,6 +3072,7 @@
     const panel = document.getElementById('upgrade');
     if (!panel) return;
     const activity = view === 'activity';
+    if (activity) clearCommandRun();
     panel.querySelector('.upgrade-main').hidden = activity;
     panel.querySelector('.upgrade-right-panel').hidden = !activity;
     notifyRoute();
@@ -3521,6 +3531,7 @@
   const COMMAND_TIMEOUT_MAX = 3600;
   const COMMAND_TIMEOUT_DEFAULT = 600;
   const COMMAND_PREVIEW_URL = '/b/upgrade/commands/preview';
+  const COMMAND_KEY_HEADER = 'X-Blacksmith-Command-Key';
   const COMMAND_ROOT_OFF_NOTE = 'Running as root is switched off on this broker.';
   const COMMAND_NO_PARALLEL_NOTE = 'Parallel runs are not available because the director has too few workers.';
 
@@ -3539,6 +3550,15 @@
     // What the last real preview said about parallel runs, or null before one.
     preview: null
   };
+
+  // The second credential a broker may ask for before it previews or runs a
+  // command. It lives in memory for one review. It never reaches a draft,
+  // storage, the URL, or the page outside its password input.
+  let commandCredential = '';
+  // The values the open review froze, as a signature to compare against the
+  // controls. An empty signature means no command review is open.
+  const commandRun = { signature: '' };
+  const clearCommandRun = () => { commandCredential = ''; commandRun.signature = ''; };
 
   const wholeNumber = (value) => (/^\d+$/.test(String(value).trim()) ? Number(String(value).trim()) : null);
 
@@ -4523,6 +4543,207 @@
     }
   };
 
+  // What a command review freezes, as one string to compare with the
+  // controls. It holds the command in memory only, like commandState.
+  const commandSignature = () => JSON.stringify([
+    commandState.text, commandState.user, commandState.timeout, commandState.parallel, commandState.maxInFlight,
+    Array.from(batchSelectedIds()).sort()
+  ]);
+
+  // The request values a preview and its create both carry.
+  const commandValues = () => ({
+    instance_ids: Array.from(batchSelectedIds()),
+    command: commandState.text,
+    run_as: commandState.user,
+    timeout_seconds: wholeNumber(commandState.timeout),
+    parallel: commandState.parallel,
+    max_in_flight: commandState.parallel ? wholeNumber(commandState.maxInFlight) : 0
+  });
+
+  // Posts a command request, with the credential in its header when one is
+  // held, and throws the API error of a refusal.
+  const commandPost = async (url, body) => {
+    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    if (commandCredential) headers[COMMAND_KEY_HEADER] = commandCredential;
+    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!response.ok) throw await readApiError(response);
+    return { status: response.status, body: await response.json() };
+  };
+
+  // The nodes a preview would run on, which skip blocked instances and
+  // nodes the preview left untargeted.
+  const commandTargets = (preview) => (preview.instances || []).reduce((sum, instance) => (
+    instance.blocked ? sum : sum + (instance.vms || []).filter((node) => node.targeted).length
+  ), 0);
+
+  // The review of a command preview: a danger block for a mixed run, the
+  // settings, the command in a <pre>, and one table per deployment.
+  const buildCommandReviewBody = (preview, values) => {
+    const body = rotateEl('div', 'command-review');
+    if ((preview.warnings || []).includes('mixed_services')) {
+      const warning = rotateEl('div', 'batch-review-warning', `This run spans more than one service (${(preview.services || []).join(', ')}). Make sure the command is safe on every one of them.`);
+      warning.dataset.variant = 'danger';
+      warning.setAttribute('role', 'alert');
+      body.appendChild(warning);
+    }
+    const parallel = preview.parallel ?? values.parallel;
+    const settings = [
+      `Run as ${preview.run_as || values.run_as} with ${preview.shell || '/bin/bash'}`,
+      `a timeout of ${preview.timeout_seconds || values.timeout_seconds} seconds per node`,
+      parallel ? `${preview.max_in_flight || values.max_in_flight} at a time` : 'one node at a time'
+    ];
+    body.appendChild(rotateEl('p', 'command-review-settings', `${settings.join(', ')}.`));
+    body.appendChild(rotateEl('pre', 'command-review-text', values.command));
+    const byDeployment = new Map();
+    (preview.instances || []).forEach((instance) => {
+      const key = instance.deployment || instance.instance_id;
+      if (!byDeployment.has(key)) byDeployment.set(key, []);
+      byDeployment.get(key).push(instance);
+    });
+    byDeployment.forEach((instances, deployment) => {
+      const table = rotateEl('table', 'command-review-table');
+      table.appendChild(rotateEl('caption', '', deployment));
+      const head = rotateEl('tr');
+      ['Instance', 'Node', 'Job state', 'Result'].forEach((name) => { const th = rotateEl('th', '', name); th.scope = 'col'; head.appendChild(th); });
+      table.appendChild(head);
+      const row = (cells) => { const tr = rotateEl('tr'); cells.forEach((text) => tr.appendChild(rotateEl('td', '', text))); table.appendChild(tr); };
+      instances.forEach((instance) => {
+        const name = instance.instance_name || instance.instance_id;
+        if (instance.blocked) {
+          row([name, '', '', `Blocked. ${instance.blocked.message || instance.blocked.code}`]);
+          return;
+        }
+        (instance.vms || []).forEach((node) => row([name, `${node.group}/${node.index}`, node.job_state || node.state || 'unknown', node.targeted ? 'Will run' : (node.reason || 'Skipped')]));
+      });
+      body.appendChild(table);
+    });
+    return body;
+  };
+
+  // Asks for the second credential in the review step and resolves to what
+  // the operator typed, or null when they leave. The input is cleared once
+  // it is read.
+  const askCommandCredential = async (revision, refused) => {
+    const body = rotateEl('div', 'command-credential');
+    const label = rotateEl('label', '', 'Command key');
+    const input = document.createElement('input');
+    input.type = 'password'; input.id = 'command-credential'; input.autocomplete = 'off'; input.spellcheck = false;
+    input.addEventListener('input', updateBatchFlow);
+    label.appendChild(input); body.appendChild(label);
+    const answer = await showBatchReview({
+      title: 'Command key',
+      message: refused ? 'The broker did not accept that key. Enter it again.' : 'This broker asks for a command key before it previews or runs a command.',
+      body,
+      confirmText: 'Preview command run',
+      blocker: () => (input.value ? '' : 'Enter the command key to continue.')
+    }, revision);
+    if (!answer || !answer.confirmed) return null;
+    const value = input.value;
+    input.value = '';
+    return value;
+  };
+
+  // Previews a command run, shows the review, and creates the task once the
+  // operator types the phrase and confirms. An expired preview shows a fresh
+  // one. Every other stop leaves the flow on the step that fixes it.
+  const startCommandReview = async (revision) => {
+    const host = document.getElementById('batch-flow-review');
+    const loading = () => {
+      batchFlow.submitting = false;
+      batchFlow.loading = true;
+      host.replaceChildren(rotateEl('p', '', 'Preparing the latest preview…'));
+      updateBatchFlow();
+    };
+    const leave = (step, message) => {
+      batchFlow.submitting = false;
+      if (message) window.Feedback.error(message, { toast: true });
+      setBatchStep(step, false);
+    };
+    const values = commandValues();
+    let note = '';
+    let expired = 0;
+    while (expired < 3) {
+      let preview;
+      try {
+        preview = (await commandPost(COMMAND_PREVIEW_URL, values)).body;
+      } catch (err) {
+        if (revision !== batchFlow.revision) return;
+        if (err.status === 401 && err.code === 'command_credential_required') {
+          const refused = Boolean(commandCredential);
+          commandCredential = '';
+          const key = await askCommandCredential(revision, refused);
+          if (key === null || revision !== batchFlow.revision) return;
+          commandCredential = key;
+          loading();
+          continue;
+        }
+        recordCommandRefusal(err);
+        leave(err.code === 'root_disabled' ? 1 : 2, `The command was not previewed. ${apiErrorText(err)}`);
+        return;
+      }
+      if (revision !== batchFlow.revision) return;
+      recordCommandPreview(preview);
+      if (commandOptionIssue()) { leave(1); return; }
+      commandRun.signature = commandSignature();
+
+      const nodes = commandTargets(preview);
+      const blocked = (preview.instances || []).filter((instance) => instance.blocked);
+      const clientRequestId = newClientRequestId();
+      const answer = await showBatchReview({
+        title: 'Run this command?',
+        message: note,
+        body: buildCommandReviewBody(preview, values),
+        confirmText: `Run on ${pluralize(nodes, 'node')}`,
+        danger: true,
+        requireText: commandConfirmWord(values.run_as),
+        blocker: () => {
+          if (blocked.length) return `Another operation holds ${blocked.map((instance) => instance.instance_name || instance.instance_id).join(', ')}. Deselect ${blocked.length === 1 ? 'it' : 'them'} to continue.`;
+          return nodes === 0 ? 'No node in this selection can run the command. Change the selection to continue.' : '';
+        }
+      }, revision);
+      if (!answer || answer.confirmed !== true) return;
+
+      const createBody = {
+        kind: 'command',
+        preview_id: preview.preview_id,
+        client_request_id: clientRequestId,
+        command: values.command,
+        run_as: values.run_as,
+        timeout_seconds: values.timeout_seconds,
+        parallel: values.parallel,
+        max_in_flight: values.max_in_flight,
+        name: rotateState.name.trim() || `Run command on ${pluralize(nodes, 'node')}`,
+        reason: rotateState.reason.trim()
+      };
+      try {
+        const { body: task } = await commandPost('/b/upgrade/tasks', createBody);
+        clearCommandRun();
+        selectedUpgradeInstances.clear();
+        syncUpgradeRows();
+        updateCommandFooter();
+        await fetchUpgradeTasks();
+        selectUpgradeTask(task.id);
+        setBatchView('activity');
+        return;
+      } catch (err) {
+        if (err.status === 410 || err.code === 'preview_expired') {
+          note = PREVIEW_EXPIRED_NOTE;
+          expired++;
+          loading();
+          continue;
+        }
+        if (err.status === 401 && err.code === 'command_credential_required') {
+          commandCredential = '';
+          loading();
+          continue;
+        }
+        leave(2, `The command was not started. ${apiErrorText(err)}`);
+        return;
+      }
+    }
+    leave(2, 'The preview keeps changing. Preview once more when it settles.');
+  };
+
   const buildCommandOptions = (container) => {
     container.querySelector('.command-pane')?.remove();
     const pane = rotateEl('div', 'command-pane');
@@ -4792,6 +5013,7 @@
       syncOperationRadios();
       return false;
     }
+    clearCommandRun();
     const fields = ['upgrade-service-filter','upgrade-plan-filter','upgrade-stemcell-filter','upgrade-release-filter','upgrade-stemcell-floor','upgrade-release-floor'];
     const controls = [...fields, ...Array.from(document.querySelectorAll('[id^="upgrade-advrel-"]')).map(field=>field.id)];
     batchFlow.drafts[upgradeOperation] = {
@@ -4865,6 +5087,7 @@
     converge: 'Converge'
   };
   const UPGRADE_CONFIRM_WORD = 'upgrade';
+  const commandConfirmWord = (user) => `run as ${user}`;
   // The word to type is the action's own label, so the two cannot drift apart.
   const rotateConfirmWord = (mode) => String(ROTATE_MODE_LABELS[mode] || mode).toLowerCase();
   const PATCH_WARNING = 'Temporary repair. BOSH can restore the old certificate until this instance converges, for example when it recreates or resurrects a VM.';

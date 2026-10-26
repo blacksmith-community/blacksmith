@@ -79,7 +79,7 @@ t('a selection that spans two services is allowed and the summary says so',async
  }finally{w.close();}
 });
 
-t('the review step on a command run requests no preview and sends no command text',async()=>{
+t('the review step on a command run requests only the command preview',async()=>{
  const env=await setup();const {w,d}=env;try{
  w.__T.selectedUpgradeInstances.add('val-a');
  w.__T.rotateSelection().set('val-b',new Set(['/s/b_crt']));
@@ -88,12 +88,10 @@ t('the review step on a command run requests no preview and sends no command tex
  const next=d.getElementById('batch-flow-next');
  expect(next.disabled).toBe(false);
  next.click();await sleep(20);
- expect(w.__T.batchFlow.step).toBe(3);
  const sent=env.calls.slice(before);
- expect(sent.length).toBe(0);
- expect(env.calls.some(c=>c.includes(SECRET))).toBe(false);
- expect(d.getElementById('batch-flow-review').children.length).toBe(0);
- expect(d.body.textContent.includes(SECRET)).toBe(false);
+ expect(sent.some(c=>c.startsWith('POST '+PREVIEW_URL))).toBe(true);
+ expect(sent.every(c=>c.includes(PREVIEW_URL)||c.includes('/b/upgrade/tasks'))).toBe(true);
+ expect(sent.some(c=>c.includes('/b/certificates')||c.includes('/b/upgrade/preview'))).toBe(false);
  expect(env.errors.some(e=>e.includes(SECRET))).toBe(false);
  }finally{w.close();}
 });
