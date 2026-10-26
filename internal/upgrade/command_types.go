@@ -92,6 +92,11 @@ type CommandVM struct {
 	Survived        bool              `json:"survived,omitempty"`
 	OutputPath      string            `json:"output_path,omitempty"`
 	Error           string            `json:"error,omitempty"`
+
+	// claimed says a worker of this process is driving the node. It is
+	// never saved, so a node left pending by an earlier run is free to be
+	// claimed again.
+	claimed bool
 }
 
 // CommandSummary is what a task list shows of a command task. It never

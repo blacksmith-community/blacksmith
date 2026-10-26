@@ -136,7 +136,15 @@ type runVault struct {
 
 	mu        sync.Mutex
 	writes    []runWrite
+	saves     []runSave
 	failPhase CommandPhase
+}
+
+// runSave is one write of the whole command task's record, numbered from
+// the session's sequence.
+type runSave struct {
+	seq  int64
+	task UpgradeTask
 }
 
 func (v *runVault) Put(ctx context.Context, path string, data interface{}) error {
@@ -157,6 +165,7 @@ func (v *runVault) Put(ctx context.Context, path string, data interface{}) error
 		phase := node.Phase
 
 		v.mu.Lock()
+		v.saves = append(v.saves, runSave{seq: v.seq.Add(1), task: task})
 		fail := v.failPhase != "" && v.failPhase == phase
 
 		if !fail {
@@ -170,6 +179,13 @@ func (v *runVault) Put(ctx context.Context, path string, data interface{}) error
 	}
 
 	return v.confirmVault.Put(ctx, path, data)
+}
+
+func (v *runVault) savedTasks() []runSave {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	return slices.Clone(v.saves)
 }
 
 func (v *runVault) recorded() []runWrite {
@@ -1683,3 +1699,810 @@ func TestRunCommandNodeListsAgainBeforeEachNode(t *testing.T) {
 }
 
 func identityOf(node CommandVM) CommandVMIdentity { return node.identity() }
+
+// nodeKey names a node the way the fixture's maps do.
+func nodeKey(deployment string, index int) string { return fmt.Sprintf("%s/%d", deployment, index) }
+
+// nodeGate holds nodes of a task fixture at one operation until the test
+// lets each go, and tells the test when a node arrives. A gate that names
+// no node holds every node.
+type nodeGate struct {
+	t       *testing.T
+	op      string
+	held    map[string]bool
+	arrived chan string
+
+	mu      sync.Mutex
+	open    bool
+	release map[string]chan struct{}
+}
+
+// gate holds the fixture's nodes at op. It stays in front of any hook the
+// fixture already has, and lets every node go when the test ends, so a
+// failed test never strands a worker.
+func (f *taskFixture) gate(op string, keys ...string) *nodeGate {
+	g := &nodeGate{t: f.t, op: op, held: map[string]bool{}, arrived: make(chan string, 64), release: map[string]chan struct{}{}}
+
+	for _, key := range keys {
+		g.held[key] = true
+	}
+
+	previous := f.onOp
+
+	f.onOp = func(deployment string, index int, called string) {
+		if previous != nil {
+			previous(deployment, index, called)
+		}
+
+		key := nodeKey(deployment, index)
+		if called != g.op || (len(g.held) > 0 && !g.held[key]) {
+			return
+		}
+
+		g.arrived <- key
+
+		<-g.channel(key)
+	}
+
+	f.t.Cleanup(g.releaseAll)
+
+	return g
+}
+
+// channel returns the channel the node waits on.
+func (g *nodeGate) channel(key string) chan struct{} {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	ch, ok := g.release[key]
+	if !ok {
+		ch = make(chan struct{})
+		if g.open {
+			close(ch)
+		}
+
+		g.release[key] = ch
+	}
+
+	return ch
+}
+
+// let sends the node on its way.
+func (g *nodeGate) let(key string) {
+	ch := g.channel(key)
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
+func (g *nodeGate) releaseAll() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.open = true
+
+	for _, ch := range g.release {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
+	}
+}
+
+// next waits for a node to arrive and returns its key.
+func (g *nodeGate) next() string {
+	g.t.Helper()
+
+	select {
+	case key := <-g.arrived:
+		return key
+	case <-time.After(waitTimeout):
+		g.t.Fatalf("no node reached %s", g.op)
+
+		return ""
+	}
+}
+
+// wantNext requires the next node to arrive to be the named one.
+func (g *nodeGate) wantNext(want string) {
+	g.t.Helper()
+
+	if got := g.next(); got != want {
+		g.t.Fatalf("%s was reached by %s, want %s", g.op, got, want)
+	}
+}
+
+// quiet reports whether no node arrives within a short window. It is the
+// one place a test waits for something not to happen, because nothing
+// signals that.
+func (g *nodeGate) quiet() bool {
+	select {
+	case <-g.arrived:
+		return false
+	case <-time.After(100 * time.Millisecond):
+		return true
+	}
+}
+
+// nodeWatch follows the fixture's nodes from their first operation to
+// their cleanup, without holding any of them.
+type nodeWatch struct {
+	mu sync.Mutex
+	// started is every node, in the order its first operation arrived.
+	started []string
+	// active counts the nodes of each deployment between their first
+	// operation and their cleanup.
+	active map[string]int
+	// pastPrepare counts the nodes between prepare and cleanup.
+	pastPrepare, peakPastPrepare int
+	// overlaps lists each node that began while another deployment had a
+	// node active.
+	overlaps []string
+}
+
+// watch records every node of the fixture. It stays in front of any hook
+// the fixture already has.
+func (f *taskFixture) watch() *nodeWatch {
+	w := &nodeWatch{active: map[string]int{}}
+	previous := f.onOp
+
+	f.onOp = func(deployment string, index int, op string) {
+		w.see(deployment, index, op)
+
+		if previous != nil {
+			previous(deployment, index, op)
+		}
+	}
+
+	return w
+}
+
+func (w *nodeWatch) see(deployment string, index int, op string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	switch op {
+	case opSudoCheck:
+		for other, count := range w.active {
+			if other != deployment && count > 0 {
+				w.overlaps = append(w.overlaps, nodeKey(deployment, index))
+			}
+		}
+
+		w.started = append(w.started, nodeKey(deployment, index))
+		w.active[deployment]++
+	case opRunPrepare:
+		w.pastPrepare++
+		w.peakPastPrepare = max(w.peakPastPrepare, w.pastPrepare)
+	case opRunCleanup:
+		w.pastPrepare--
+		w.active[deployment]--
+	}
+}
+
+func (w *nodeWatch) peak() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.peakPastPrepare
+}
+
+func (w *nodeWatch) overlapping() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return slices.Clone(w.overlaps)
+}
+
+func (w *nodeWatch) order() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return slices.Clone(w.started)
+}
+
+// phaseRank orders the phases a node moves through. A skipped node never
+// left pending, and ends where a settled one does.
+func phaseRank(phase CommandPhase) int {
+	switch phase {
+	case CommandPhasePending:
+		return 0
+	case CommandPhaseStaged:
+		return 1
+	case CommandPhaseSent:
+		return 2
+	case CommandPhaseSettled, CommandPhaseSkipped:
+		return 3
+	}
+
+	return -1
+}
+
+// wantSavesInOrder decodes every save of the task and requires each node's
+// phase never to go backwards from one save to the next, the staged save of
+// every node that was sent prepare to land before the prepare, and the sent
+// save of every node that was sent exec to land before the exec.
+func (f *taskFixture) wantSavesInOrder() {
+	f.t.Helper()
+
+	last := map[string]CommandPhase{}
+	firstSeen := map[string]map[CommandPhase]int64{}
+
+	for _, save := range f.vault.savedTasks() {
+		for _, inst := range save.task.Instances {
+			if inst.Command == nil {
+				continue
+			}
+
+			for _, vm := range inst.Command.VMs {
+				key := nodeKey(inst.Command.Deployment, vm.Reviewed.Index)
+
+				if before, ok := last[key]; ok && phaseRank(vm.Phase) < phaseRank(before) {
+					f.t.Errorf("a save wrote node %s in phase %s after it was saved in phase %s", key, vm.Phase, before)
+				}
+
+				last[key] = vm.Phase
+
+				if firstSeen[key] == nil {
+					firstSeen[key] = map[CommandPhase]int64{}
+				}
+
+				if _, ok := firstSeen[key][vm.Phase]; !ok {
+					firstSeen[key][vm.Phase] = save.seq
+				}
+			}
+		}
+	}
+
+	f.mu.Lock()
+	calls, stamps := slices.Clone(f.calls), slices.Clone(f.stamps)
+	f.mu.Unlock()
+
+	for i, call := range calls {
+		key := nodeKey(call.deployment, call.index)
+
+		switch call.op {
+		case opRunPrepare:
+			if seq, ok := firstSeen[key][CommandPhaseStaged]; !ok || seq > stamps[i] {
+				f.t.Errorf("node %s was sent prepare before its staged save landed", key)
+			}
+		case opRunExec:
+			if seq, ok := firstSeen[key][CommandPhaseSent]; !ok || seq > stamps[i] {
+				f.t.Errorf("node %s was sent exec before its sent save landed", key)
+			}
+		}
+	}
+}
+
+// wantEachNodeSentOnce requires every named node to have been sent each
+// operation of a run exactly once.
+func (f *taskFixture) wantEachNodeSentOnce(deployment string, indices ...int) {
+	f.t.Helper()
+
+	want := []string{opSudoCheck, opRunPrepare, opRunExec, opRunCleanup}
+
+	for _, index := range indices {
+		if got := f.opsOf(deployment, index); !slices.Equal(got, want) {
+			f.t.Errorf("node %s saw %v, want %v", nodeKey(deployment, index), got, want)
+		}
+	}
+}
+
+// outputOf reads what a node's settled record points at.
+func (f *taskFixture) outputOf(node CommandVM) string {
+	f.t.Helper()
+
+	entry, found, err := f.manager.loadCommandOutput(context.Background(), node.OutputPath)
+	if err != nil || !found {
+		f.t.Fatalf("reading the output of node %d: found=%v err=%v", node.Reviewed.Index, found, err)
+	}
+
+	return string(entry.Stdout)
+}
+
+// stdoutOf is what the fixture's node prints.
+func (f *taskFixture) stdoutOf(index int) string {
+	if out, ok := f.stdouts[nodeKey("dep-0", index)]; ok {
+		return out
+	}
+
+	return "out"
+}
+
+// waitForStop waits for the loop to say a deployment stopped, which it does
+// before the nodes in flight have finished.
+func (f *taskFixture) waitForStop() {
+	f.t.Helper()
+
+	waitUntil(f.t, "the deployment to stop", func() bool { return strings.Contains(f.log.joined(), "so the deployment stops") })
+}
+
+func TestCommandParallelRunsAtMostMaxInFlightNodes(t *testing.T) {
+	fix := newTaskFixture(t, 1, 5, withParallel(2))
+
+	for i := 0; i < 5; i++ {
+		fix.stdouts[nodeKey("dep-0", i)] = "out-" + strconv.Itoa(i)
+	}
+
+	watch := fix.watch()
+	gate := fix.gate(opRunExec)
+	fix.queue()
+
+	first := []string{gate.next(), gate.next()}
+	slices.Sort(first)
+
+	if want := []string{"dep-0/0", "dep-0/1"}; !slices.Equal(first, want) {
+		t.Fatalf("the first two nodes in flight are %v, want %v", first, want)
+	}
+
+	// Each node that finishes frees one slot, which the next node in order
+	// takes. The one still in flight stays held, so nothing else can start.
+	gate.let("dep-0/1")
+	gate.wantNext("dep-0/2")
+	gate.let("dep-0/0")
+	gate.wantNext("dep-0/3")
+	gate.let("dep-0/2")
+	gate.wantNext("dep-0/4")
+	gate.let("dep-0/3")
+	gate.let("dep-0/4")
+
+	done := fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	if got := watch.peak(); got != 2 {
+		t.Errorf("%d nodes were past prepare at once, want 2", got)
+	}
+
+	if got, want := watch.order()[2:], []string{"dep-0/2", "dep-0/3", "dep-0/4"}; !slices.Equal(got, want) {
+		t.Errorf("the nodes after the first two started as %v, want %v", got, want)
+	}
+
+	paths := map[string]bool{}
+
+	for i, node := range done.Instances[0].Command.VMs {
+		if node.Phase != CommandPhaseSettled || node.Status != CommandStatusSucceeded {
+			t.Errorf("node %d is %s/%s, want settled/succeeded", i, node.Phase, node.Status)
+		}
+
+		want, err := commandOutputPath(done.ID, done.Instances[0].InstanceID, node.Reviewed)
+		if err != nil || node.OutputPath != want {
+			t.Errorf("node %d keeps its output at %q, want %q", i, node.OutputPath, want)
+		}
+
+		paths[node.OutputPath] = true
+
+		if got := fix.outputOf(node); got != fix.stdoutOf(i) {
+			t.Errorf("node %d's entry holds %q, want %q", i, got, fix.stdoutOf(i))
+		}
+	}
+
+	if len(paths) != 5 {
+		t.Errorf("the nodes kept their output at %d paths, want 5", len(paths))
+	}
+
+	fix.wantEachNodeSentOnce("dep-0", 0, 1, 2, 3, 4)
+	fix.wantSavesInOrder()
+	fix.assertNoCommandText()
+}
+
+// A cap above the node count lets every node run at once.
+func TestCommandParallelCapAboveTheNodeCountRunsThemAllAtOnce(t *testing.T) {
+	fix := newTaskFixture(t, 1, 3, withParallel(10))
+	watch := fix.watch()
+	gate := fix.gate(opRunExec)
+	fix.queue()
+
+	got := []string{gate.next(), gate.next(), gate.next()}
+	slices.Sort(got)
+
+	if want := []string{"dep-0/0", "dep-0/1", "dep-0/2"}; !slices.Equal(got, want) {
+		t.Fatalf("the nodes in flight are %v, want %v", got, want)
+	}
+
+	for _, key := range got {
+		gate.let(key)
+	}
+
+	fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	if got := watch.peak(); got != 3 {
+		t.Errorf("%d nodes were past prepare at once, want 3", got)
+	}
+
+	fix.wantEachNodeSentOnce("dep-0", 0, 1, 2)
+	fix.wantSavesInOrder()
+	fix.assertNoCommandText()
+}
+
+// With the option off the cap is ignored, and the nodes run one at a time
+// in order.
+func TestCommandParallelOffRunsOneNodeAtATime(t *testing.T) {
+	fix := newTaskFixture(t, 1, 3, func(_ *taskFixture, task *UpgradeTask) { task.Command.MaxInFlight = 3 })
+	watch := fix.watch()
+	fix.queue()
+
+	fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	if got := watch.peak(); got != 1 {
+		t.Errorf("%d nodes were past prepare at once, want 1", got)
+	}
+
+	if got, want := watch.order(), []string{"dep-0/0", "dep-0/1", "dep-0/2"}; !slices.Equal(got, want) {
+		t.Errorf("the nodes started as %v, want %v", got, want)
+	}
+
+	fix.wantSavesInOrder()
+	fix.assertNoCommandText()
+}
+
+// Of any number of workers that reach one pending node, one drives it and
+// the rest are refused with nothing sent.
+func TestRunCommandNodeClaimsAPendingNodeForOneWorker(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	inst := &fix.task.Instances[0]
+	gate := fix.gate(opSudoCheck)
+
+	type result struct {
+		stopped bool
+		err     error
+	}
+
+	const workers = 4
+
+	results := make(chan result, workers)
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			sessions := fix.manager.newCommandSessions(inst.Command.Deployment)
+			defer sessions.close()
+
+			stopped, err := fix.manager.runCommandNode(fix.manager.ctx, sessions, fix.task, inst, 0)
+			results <- result{stopped, err}
+		}()
+	}
+
+	// The winner waits at its sudo check. A second worker that got past the
+	// claim would reach it too, and the refused ones answer at once.
+	gate.next()
+
+	for i := 0; i < workers-1; i++ {
+		select {
+		case got := <-results:
+			if !errors.Is(got.err, errCommandNodeNotPending) {
+				t.Fatalf("a second worker was not refused: stopped=%v err=%v", got.stopped, got.err)
+			}
+		case second := <-gate.arrived:
+			t.Fatalf("two workers drove node %s", second)
+		case <-time.After(waitTimeout):
+			t.Fatal("the refused workers never returned")
+		}
+	}
+
+	gate.let("dep-0/0")
+
+	got := <-results
+	if got.err != nil || got.stopped {
+		t.Errorf("the winner returned stopped=%v err=%v", got.stopped, got.err)
+	}
+
+	fix.wantEachNodeSentOnce("dep-0", 0)
+	fix.assertNoCommandText()
+}
+
+// A node left pending by a save that could not be confirmed is free to be
+// claimed again, so a resume may drive it.
+func TestRunCommandNodeGivesTheClaimBackWhenTheNodeIsPendingAgain(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	inst := &fix.task.Instances[0]
+
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = CommandPhaseStaged
+	fix.vault.mu.Unlock()
+
+	sessions := fix.manager.newCommandSessions(inst.Command.Deployment)
+	defer sessions.close()
+
+	stopped, err := fix.manager.runCommandNode(fix.manager.ctx, sessions, fix.task, inst, 0)
+	if err != nil || !stopped {
+		t.Fatalf("the unconfirmed stage returned stopped=%v err=%v, want stopped", stopped, err)
+	}
+
+	err = fix.manager.claimCommandNode(inst, 0)
+	if err != nil {
+		t.Errorf("the node is pending again, but its claim was kept: %v", err)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// An error that is not a changed VM stops the deployment, and here it is
+// the refusal of a node that another driver holds.
+func TestCommandParallelNodeRefusedByAClaimStopsTheDeployment(t *testing.T) {
+	fix := newTaskFixture(t, 2, 4, withParallel(2))
+	inst := &fix.task.Instances[0]
+	rivalGate := fix.gate(opSudoCheck, "dep-0/2")
+	exec := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+
+	rival := make(chan error, 1)
+
+	go func() {
+		sessions := fix.manager.newCommandSessions(inst.Command.Deployment)
+		defer sessions.close()
+
+		_, err := fix.manager.runCommandNode(fix.manager.ctx, sessions, fix.task, inst, 2)
+		rival <- err
+	}()
+
+	rivalGate.wantNext("dep-0/2")
+
+	fix.queue()
+
+	exec.next()
+	exec.next()
+
+	// Node 0 finishes, and the loop reaches node 2, which is still pending
+	// and held by the rival.
+	exec.let("dep-0/0")
+	fix.waitForStop()
+
+	// The node in flight is let go and recorded with its real result.
+	exec.let("dep-0/1")
+
+	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused && task.Paused })
+
+	first := paused.Instances[0]
+	if first.Status != InstanceStatusFailed {
+		t.Errorf("the instance is %s, want failed", first.Status)
+	}
+
+	for _, index := range []int{0, 1} {
+		if node := first.Command.VMs[index]; node.Phase != CommandPhaseSettled || node.Status != CommandStatusSucceeded {
+			t.Errorf("node %d is %s/%s, want settled/succeeded", index, node.Phase, node.Status)
+		}
+	}
+
+	if node := first.Command.VMs[2]; node.Phase != CommandPhasePending {
+		t.Errorf("the node the rival holds is %s, want pending", node.Phase)
+	}
+
+	if node := first.Command.VMs[3]; node.Phase != CommandPhaseSkipped {
+		t.Errorf("the node after the refused one is %s, want skipped", node.Phase)
+	}
+
+	if ops := fix.opsOf("dep-0", 3); len(ops) != 0 {
+		t.Errorf("the node after the refused one saw %v", ops)
+	}
+
+	if paused.Instances[1].Status != InstanceStatusPending || fix.sentTo("dep-1") {
+		t.Errorf("the second instance is %s and was sent to: %v", paused.Instances[1].Status, fix.sentTo("dep-1"))
+	}
+
+	rivalGate.let("dep-0/2")
+
+	err := <-rival
+	if err != nil {
+		t.Errorf("the rival returned %v", err)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// A failure on the second node, with the first and third in flight, starts
+// no fourth node, lets the others finish with their real results, skips the
+// rest, fails the instance, and pauses the task.
+func TestCommandParallelFailureLetsTheNodesInFlightFinish(t *testing.T) {
+	fix := newTaskFixture(t, 2, 5, withParallel(3))
+	fix.exits["dep-0/1"] = 2
+	fix.exits["dep-0/2"] = 5
+	fix.stdouts["dep-0/0"] = "out-0"
+	fix.stdouts["dep-0/2"] = "out-2"
+
+	gate := fix.gate(opRunExec, "dep-0/0", "dep-0/1", "dep-0/2")
+	fix.queue()
+
+	gate.next()
+	gate.next()
+	gate.next()
+
+	// Only the second node ends, while the first and third are in flight.
+	gate.let("dep-0/1")
+
+	fix.waitFor("the second node to settle", func(task UpgradeTask) bool {
+		return task.Instances[0].Command.VMs[1].Phase == CommandPhaseSettled
+	})
+
+	gate.let("dep-0/0")
+	gate.let("dep-0/2")
+
+	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused && task.Paused })
+
+	first := paused.Instances[0]
+	if first.Status != InstanceStatusFailed {
+		t.Fatalf("the instance is %s, want failed", first.Status)
+	}
+
+	want := []struct {
+		status string
+		exit   int
+	}{{CommandStatusSucceeded, 0}, {CommandStatusFailed, 2}, {CommandStatusFailed, 5}}
+
+	for i, w := range want {
+		node := first.Command.VMs[i]
+		if node.Phase != CommandPhaseSettled || node.Status != w.status || node.ExitCode == nil || *node.ExitCode != w.exit {
+			t.Errorf("node %d is %s/%s with exit %v, want settled/%s with exit %d", i, node.Phase, node.Status, node.ExitCode, w.status, w.exit)
+		}
+
+		if got := fix.outputOf(node); got != fix.stdoutOf(i) {
+			t.Errorf("node %d's entry holds %q, want %q", i, got, fix.stdoutOf(i))
+		}
+	}
+
+	for _, index := range []int{3, 4} {
+		if node := first.Command.VMs[index]; node.Phase != CommandPhaseSkipped {
+			t.Errorf("node %d is %s, want skipped", index, node.Phase)
+		}
+
+		if ops := fix.opsOf("dep-0", index); len(ops) != 0 {
+			t.Errorf("node %d saw %v, want nothing", index, ops)
+		}
+	}
+
+	if paused.Instances[1].Status != InstanceStatusPending || fix.sentTo("dep-1") {
+		t.Errorf("the second instance is %s and was sent to: %v", paused.Instances[1].Status, fix.sentTo("dep-1"))
+	}
+
+	fix.wantEachNodeSentOnce("dep-0", 0, 1, 2)
+	fix.wantSavesInOrder()
+	fix.assertNoCommandText()
+}
+
+// Processes that outlive KILL on one node stop the deployment like any
+// failure, and keep the task paused with the instance held.
+func TestCommandParallelSurvivedKillStopsTheDeploymentAndHoldsIt(t *testing.T) {
+	fix := newTaskFixture(t, 1, 4, withParallel(2))
+	fix.cleanups["dep-0/1"] = "cleanup started=yes exit=- killed=survived"
+
+	gate := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+	fix.queue()
+
+	gate.next()
+	gate.next()
+	gate.let("dep-0/1")
+
+	fix.waitFor("the surviving node to settle", func(task UpgradeTask) bool {
+		return task.Instances[0].Command.VMs[1].Phase == CommandPhaseSettled
+	})
+
+	gate.let("dep-0/0")
+
+	fix.waitFor("the instance to fail", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusFailed })
+
+	// Give a wrong finish the time it needs to show.
+	if !gate.quiet() {
+		t.Fatal("a node started after the deployment stopped")
+	}
+
+	done := fix.snapshot()
+	if done.Status != TaskStatusPaused || !done.Paused {
+		t.Errorf("the task is %s paused=%v, want paused, since processes survived KILL", done.Status, done.Paused)
+	}
+
+	got := phases(done.Instances[0])
+	if want := []CommandPhase{CommandPhaseSettled, CommandPhaseSettled, CommandPhaseSkipped, CommandPhaseSkipped}; !slices.Equal(got, want) {
+		t.Errorf("phases = %v, want %v", got, want)
+	}
+
+	if node := done.Instances[0].Command.VMs[0]; node.Status != CommandStatusSucceeded {
+		t.Errorf("the node in flight is %s, want its real result, succeeded", node.Status)
+	}
+
+	if node := done.Instances[0].Command.VMs[1]; !node.Survived {
+		t.Error("the node whose processes survived is not recorded as such")
+	}
+
+	for _, index := range []int{2, 3} {
+		if ops := fix.opsOf("dep-0", index); len(ops) != 0 {
+			t.Errorf("node %d saw %v, want nothing", index, ops)
+		}
+	}
+
+	other := &UpgradeTask{ID: "other", Kind: TaskKindUpgrade, Status: TaskStatusPending, Instances: []InstanceUpgrade{pendingInstance("inst-0", "dep-0")}}
+
+	fix.manager.mu.Lock()
+	_, reserved := fix.manager.reservations[fix.task.ID][fix.task.Instances[0].InstanceID]
+	err := fix.manager.reserveNewLocked(other)
+	fix.manager.mu.Unlock()
+
+	if !reserved || err == nil {
+		t.Errorf("the guard let go of the instance with surviving processes: reserved=%v, another task's reserve = %v", reserved, err)
+	}
+
+	fix.wantSavesInOrder()
+	fix.assertNoCommandText()
+}
+
+// Both gates of a node still run under parallel. Root runs turned off while
+// two nodes are in flight fail those two at their own gate, and no node
+// starts after them.
+func TestCommandParallelRootTurnedOffFailsTheNodesInFlightAtTheirGate(t *testing.T) {
+	fix := newTaskFixture(t, 1, 4, withRoot(), withParallel(2))
+	gate := fix.gate(opRunPrepare, "dep-0/0", "dep-0/1")
+	fix.queue()
+
+	gate.next()
+	gate.next()
+
+	fix.setRoot(false)
+
+	gate.let("dep-0/0")
+	gate.let("dep-0/1")
+
+	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool { return task.Status == TaskStatusFailed })
+
+	got := phases(done.Instances[0])
+	if want := []CommandPhase{CommandPhaseSettled, CommandPhaseSettled, CommandPhaseSkipped, CommandPhaseSkipped}; !slices.Equal(got, want) {
+		t.Errorf("phases = %v, want %v", got, want)
+	}
+
+	for _, index := range []int{0, 1} {
+		node := done.Instances[0].Command.VMs[index]
+		if node.Status != CommandStatusFailed || !strings.Contains(node.Reason, "no longer allowed") {
+			t.Errorf("node %d is %s with reason %q, want failed at its gate", index, node.Status, node.Reason)
+		}
+
+		if ops := fix.opsOf("dep-0", index); slices.Contains(ops, opRunExec) {
+			t.Errorf("node %d was sent exec after the gate refused it: %v", index, ops)
+		}
+	}
+
+	for _, index := range []int{2, 3} {
+		if ops := fix.opsOf("dep-0", index); len(ops) != 0 {
+			t.Errorf("node %d saw %v, want nothing", index, ops)
+		}
+	}
+
+	fix.wantSavesInOrder()
+	fix.assertNoCommandText()
+}
+
+// A deployment waits for every node of its pool before the next
+// deployment starts.
+func TestCommandParallelDeploymentsNeverOverlap(t *testing.T) {
+	fix := newTaskFixture(t, 2, 2, withParallel(2))
+	watch := fix.watch()
+	gate := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+	fix.queue()
+
+	gate.next()
+	gate.next()
+
+	// One node of the first deployment ends and the other stays in flight.
+	gate.let("dep-0/1")
+
+	fix.waitFor("a node of the first deployment to settle", func(task UpgradeTask) bool {
+		return task.Instances[0].Command.VMs[1].Phase == CommandPhaseSettled
+	})
+
+	// Nothing signals that the second deployment is not about to start, so
+	// the test gives it a short window to show.
+	if !gate.quiet() || fix.sentTo("dep-1") {
+		t.Fatal("the second deployment started while a node of the first was in flight")
+	}
+
+	gate.let("dep-0/0")
+
+	fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	if got := watch.overlapping(); len(got) != 0 {
+		t.Errorf("nodes %v began while another deployment had a node in flight", got)
+	}
+
+	fix.wantSavesInOrder()
+	fix.assertNoCommandText()
+}

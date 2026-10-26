@@ -112,6 +112,7 @@ type taskFixture struct {
 
 	mu     sync.Mutex
 	calls  []nodeCall
+	stamps []int64
 	listed map[string][]CommandVMIdentity
 	flight int
 	peak   int
@@ -126,6 +127,9 @@ type taskFixture struct {
 	cleanups map[string]string
 	// listErr maps a deployment to the error its listing fails with.
 	listErr map[string]error
+	// stdouts maps "deployment/index" to what exec prints, and a node it
+	// does not name prints "out".
+	stdouts map[string]string
 	// onOp runs before a node's operation is answered.
 	onOp func(deployment string, index int, op string)
 }
@@ -137,6 +141,14 @@ func withRoot() taskOption {
 	return func(f *taskFixture, task *UpgradeTask) {
 		task.Command.RunAs = "root"
 		f.setRoot(true)
+	}
+}
+
+// withParallel turns the parallel option on with the cap.
+func withParallel(maxInFlight int) taskOption {
+	return func(_ *taskFixture, task *UpgradeTask) {
+		task.Command.Parallel = true
+		task.Command.MaxInFlight = maxInFlight
 	}
 }
 
@@ -152,7 +164,7 @@ func newTaskFixture(t *testing.T, instances, nodes int, options ...taskOption) *
 
 	var seq atomic.Int64
 
-	fix := &taskFixture{t: t, log: &captureLog{}, listed: map[string][]CommandVMIdentity{}, exits: map[string]int{}, cleanups: map[string]string{}, listErr: map[string]error{}}
+	fix := &taskFixture{t: t, log: &captureLog{}, listed: map[string][]CommandVMIdentity{}, exits: map[string]int{}, stdouts: map[string]string{}, cleanups: map[string]string{}, listErr: map[string]error{}}
 	fix.vault = &runVault{confirmVault: newConfirmVault(), seq: &seq, taskID: taskFixtureID}
 
 	command := runCommandText
@@ -254,8 +266,10 @@ func (f *taskFixture) setSlots(n int) {
 func (f *taskFixture) answer(deployment string, index int, op string) (ssh.Result, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, nodeCall{deployment: deployment, index: index, op: op})
+	f.stamps = append(f.stamps, f.vault.seq.Add(1))
 	hook := f.onOp
 	key := fmt.Sprintf("%s/%d", deployment, index)
+	stdout, hasStdout := f.stdouts[key]
 	exit := f.exits[key]
 	cleanup, hasCleanup := f.cleanups[key]
 	f.mu.Unlock()
@@ -275,7 +289,11 @@ func (f *taskFixture) answer(deployment string, index int, op string) (ssh.Resul
 		f.enter()
 		defer f.leave()
 
-		return ssh.Result{Stdout: []byte("out"), ExitCode: exit}, nil
+		if !hasStdout {
+			stdout = "out"
+		}
+
+		return ssh.Result{Stdout: []byte(stdout), ExitCode: exit}, nil
 	case opRunCleanup:
 		if hasCleanup {
 			return ssh.Result{Stdout: []byte(cleanup + "\n")}, nil
