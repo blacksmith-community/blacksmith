@@ -771,5 +771,8 @@ t('the console capture sees command text nested in an object',async()=>{
  w.console.log('create',{command:SECRET});
  expect(env.logs.some(hasSecret)).toBe(true);
  env.logs.length=0;
+ w.console.error({message:'create failed',body:{command:SECRET}});
+ expect(env.logs.some(hasSecret)).toBe(true);
+ env.logs.length=0;
  }finally{w.close();}
 });

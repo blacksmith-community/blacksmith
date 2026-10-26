@@ -35,7 +35,10 @@ function boot(opts={}){
   const refuse=(kind)=>(m)=>{ alerts.push(kind+':'+m); if(opts.noDialogs) throw new Error('window.'+kind+' called'); return kind==='confirm'?true:(kind==='prompt'?'x':undefined); };
   w.alert=refuse('alert'); w.confirm=refuse('confirm'); w.prompt=refuse('prompt');
   // logs holds every console call, so a suite can prove a value never reached the console.
-  const show=(x)=>{ if(x&&typeof x==='object'&&typeof x.message!=='string'){ try{ return JSON.stringify(x); }catch(e){ return String(x); } } return String(x); };
+  // An error-like object shows its name, message, and stack beside its own fields,
+  // because errors from another realm fail instanceof Error and stringify as {}.
+  const flat=(x)=>{ try{ return JSON.stringify(x); }catch(e){ return String(x); } };
+  const show=(x)=>{ if(!x||typeof x!=='object') return String(x); if(typeof x.message==='string') return [x.name,x.message,x.stack,flat(x)].join(' '); return flat(x); };
   const logs=[]; const keep=(...a)=>logs.push(a.map(show).join(' '));
   w.console.log=keep; w.console.warn=keep; w.console.info=keep; w.console.debug=keep; w.console.error=(...a)=>{errors.push(a.map(show).join(' ')); keep(...a);};
   w.__routes=[];
