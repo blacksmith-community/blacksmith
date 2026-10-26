@@ -1282,3 +1282,32 @@ func TestRootTurnedOffAtAnInstanceBoundaryFailsTheNextNodeNotTheTask(t *testing.
 
 	fix.assertNoCommandText()
 }
+
+// An ordinary failure is not a survivor, so the failed instance is let go
+// while the task waits for its resume.
+func TestOrdinaryFailureReleasesTheFailedInstanceOnPause(t *testing.T) {
+	fix := newTaskFixture(t, 2, 2)
+	fix.exits["dep-0/0"] = 4
+	fix.queue()
+
+	paused := fix.waitFor("the task to pause with its instance failed", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusPaused && task.Instances[0].Status == InstanceStatusFailed
+	})
+
+	if paused.Instances[0].Command.VMs[0].Survived {
+		t.Error("an ordinary non-zero exit is recorded as processes that survived KILL")
+	}
+
+	other := &UpgradeTask{ID: "other", Kind: TaskKindUpgrade, Status: TaskStatusPending, Instances: []InstanceUpgrade{pendingInstance("inst-0", "dep-0")}}
+
+	fix.manager.mu.Lock()
+	_, reserved := fix.manager.reservations[fix.task.ID][fix.task.Instances[0].InstanceID]
+	err := fix.manager.reserveNewLocked(other)
+	fix.manager.mu.Unlock()
+
+	if reserved || err != nil {
+		t.Errorf("the failed instance is still held: reserved=%v, another task's reserve = %v", reserved, err)
+	}
+
+	fix.assertNoCommandText()
+}
