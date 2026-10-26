@@ -1,4 +1,4 @@
-const {test,expect}=require('bun:test');
+const {test,expect,afterEach}=require('bun:test');
 const {main:{boot,sleep}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const t=JSDOM?test:test.skip;
@@ -7,10 +7,15 @@ const SECRET='echo SECRET-COMMAND-TEXT-9141';
 const PREVIEW_URL='/b/upgrade/commands/preview';
 
 // probes maps the run_as a probe sends to the answer it gets, as [status, body].
-async function setup(probes={}){
- const env=boot({noDialogs:true}),{w}=env;
+// Every env a test boots, checked once the test ends so a dialog error that
+// the UI code swallows still fails it.
+const envs=[];
+afterEach(()=>{ while(envs.length) expect(envs.pop().alerts).toEqual([]); });
+async function setup(probes={},{network=false}={}){
+ const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
  w.__routes.push([PREVIEW_URL,(u,o,j)=>{
+  if(network) return Promise.reject(new Error('network down'));
   const answer=probes[JSON.parse(o.body).run_as];
   return answer?j(answer[0],answer[1]):j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'});
  }]);
@@ -95,7 +100,8 @@ t('a commands_disabled probe disables the radio with the reason',async()=>{
  const radio=d.getElementById('rotate-op-command');
  expect(radio.disabled).toBe(true);
  expect(d.getElementById(radio.getAttribute('aria-describedby')).textContent).toContain('Command runs are switched off on this broker.');
- expect(await w.__T.requestOperation('command')).toBe(true);
+ expect(await w.__T.requestOperation('command')).toBe(false);
+ expect(d.getElementById('command-text')).toBeNull();
  }finally{w.close();}
 });
 
@@ -183,5 +189,51 @@ t('leaving the operation hides the command pane and returns the upgrade options'
  await w.__T.requestOperation('upgrade');w.__T.setBatchStep(1,false);
  expect(d.getElementById('command-text')).toBeNull();
  expect(d.getElementById('batch-flow-options').hidden).toBe(false);
+ }finally{w.close();}
+});
+
+t('a probe that fails on the network leaves the controls enabled',async()=>{
+ const env=await setup({},{network:true});const {w,d}=env;try{
+ expect(d.getElementById('rotate-op-command').disabled).toBe(false);
+ await openOptions(env);
+ expect(d.getElementById('command-user-root').disabled).toBe(false);
+ }finally{w.close();}
+});
+
+t('a preview limit of 0 with parallel available sets no upper bound',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await openOptions(env);
+ type(w,d.getElementById('command-text'),SECRET);
+ d.getElementById('command-parallel').click();
+ w.__T.recordCommandPreview({parallel_available:true,worker_count:0,max_in_flight_limit:0});
+ const limit=d.getElementById('command-max-in-flight');
+ expect(limit.hasAttribute('max')).toBe(false);expect(d.getElementById('command-parallel').disabled).toBe(false);
+ type(w,limit,'500');expect(w.__T.batchOptionIssue()).toBe('');
+ }finally{w.close();}
+});
+
+t('a command run cannot leave the instances step on a leftover selection',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ w.__T.selectedUpgradeInstances.add('cache');
+ await openOptions(env);
+ type(w,d.getElementById('command-text'),SECRET);
+ const next=d.getElementById('batch-flow-next');
+ expect(next.disabled).toBe(false);next.click();
+ expect(w.__T.batchFlow.step).toBe(2);
+ expect(w.__T.batchOptionIssue()).toBe('');
+ expect(next.disabled).toBe(true);
+ next.click();
+ expect(w.__T.batchFlow.step).toBe(2);
+ expect(d.getElementById('batch-flow-help').textContent).toContain('not available yet');
+ }finally{w.close();}
+});
+
+t('the command pane shows placeholders for commands, not certificates',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await openOptions(env);
+ expect(d.getElementById('rotate-name').placeholder).not.toContain('certificate');
+ expect(d.getElementById('rotate-reason').placeholder).not.toContain('renewal');
+ await w.__T.requestOperation('rotate');
+ expect(d.getElementById('rotate-name').placeholder).toBe('e.g. October certificate renewal');
  }finally{w.close();}
 });

@@ -2766,6 +2766,7 @@
   };
   const batchInstanceIssue = () => {
     if (batchOptionIssue()) return batchOptionIssue();
+    if (upgradeOperation === 'command') return 'Choosing instances for a command run is not available yet.';
     if (upgradeOperation !== 'upgrade' && rotateState.busy && batchFlow.step !== 3) return 'Finishing the previous preview. Your changes are kept.';
     const action = document.getElementById(upgradeOperation === 'upgrade' ? 'upgrade-start' : 'rotate-preview');
     return !batchSelectedIds().size || action?.disabled ? (action?.title || 'Select at least one eligible instance to continue.') : '';
@@ -4361,14 +4362,14 @@
   let rotateModeControls = null;
 
   // The optional job name and reason inputs that every operation shares.
-  const buildBatchMetadata = () => {
+  const buildBatchMetadata = (namePlaceholder = 'e.g. October certificate renewal', reasonPlaceholder = 'e.g. Scheduled renewal — change CHG-1234') => {
     const nameRow = rotateEl('div', 'filter-row rotate-name-row');
     const nameLabel = rotateEl('label', '', 'Job name');
     nameLabel.setAttribute('for', 'rotate-name');
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.id = 'rotate-name';
-    nameInput.placeholder = 'e.g. October certificate renewal';
+    nameInput.placeholder = namePlaceholder;
     nameInput.setAttribute('aria-describedby','rotate-name-help');
     nameInput.value = rotateState.name;
     nameInput.addEventListener('input', () => { rotateState.name = nameInput.value; });
@@ -4387,7 +4388,7 @@
     const reasonInput = document.createElement('input');
     reasonInput.type = 'text';
     reasonInput.id = 'rotate-reason';
-    reasonInput.placeholder = 'e.g. Scheduled renewal — change CHG-1234';
+    reasonInput.placeholder = reasonPlaceholder;
     reasonInput.setAttribute('aria-describedby','rotate-reason-help');
     reasonInput.value = rotateState.reason;
     reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
@@ -4572,7 +4573,7 @@
     parallelRow.appendChild(limitRow);
     pane.appendChild(parallelRow);
 
-    pane.appendChild(buildBatchMetadata());
+    pane.appendChild(buildBatchMetadata('e.g. Check disk usage on valkey nodes', 'e.g. Investigating an incident — change CHG-1234'));
     container.appendChild(pane);
     syncCommandOptions();
   };
@@ -4744,7 +4745,7 @@
 
   // Each operation retains its selection while the operator explores alternatives.
   const requestOperation = async (mode) => {
-    if (mode === upgradeOperation || !OPERATION_LABELS[mode]) {
+    if (mode === upgradeOperation || !OPERATION_LABELS[mode] || (mode === 'command' && commandState.unavailable)) {
       syncOperationRadios();
       return false;
     }
