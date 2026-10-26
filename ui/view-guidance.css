@@ -1,9 +1,12 @@
-/* Optional context stays compact; important field instructions stay beside fields. */
-.view-guidance { margin: 0 0 8px; border: 0; padding: 0; background: transparent; color: var(--foreground); }
-.view-guidance > summary { display: list-item; width: fit-content; max-width: 100%; padding: 4px 0; min-height: 28px; font-size: .8125rem; color: var(--muted-foreground); cursor: pointer; }
-.view-guidance > p { margin: 2px 0 8px; padding: 0; font-size: .875rem; line-height: 1.5; max-width: 90ch; }
-.view-guidance > summary:hover { color: var(--foreground); }
-.view-guidance > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Context help belongs to the route header, never the content layout. */
+.route-context > .view-guidance { margin-left: auto; flex: none; display: inline-flex; padding: 0; }
+.view-guidance-button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; min-height: 32px; padding: 6px; background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 50%; }
+.view-guidance-button:hover, .view-guidance-button[aria-expanded="true"] { color: var(--foreground); background: var(--secondary); }
+.view-guidance-button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.view-guidance-tip { position: fixed; inset: auto; z-index: 10000; margin: 0; box-sizing: border-box; width: min(360px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); box-shadow: 0 4px 18px #0003; font-size: .875rem; line-height: 1.5; }
+.view-guidance-tip[hidden] { display: none; }
+.view-guidance-tip > strong { display: block; font-size: .875rem; }
+.view-guidance-tip > p { margin: 6px 0 0; padding: 0; }
 
 #blacksmith .detail-content.plans-view { display: flex; align-items: flex-start; gap: 16px; min-width: 0; }
 #blacksmith .plans-view > .plans-list { flex: 0 0 16rem; width: 16rem; min-width: 0; max-width: 100%; padding: 0; border: 0; }

@@ -13,7 +13,7 @@
     return control.dataset.help || (genericCopy.test(title || '') ? name || title : title || name) || '';
   }
   function normalize(control) {
-    if (!control.matches?.(selector) || control.closest('.action-tooltip')) return;
+    if (!control.matches?.(selector) || control.hasAttribute('data-context-help') || control.closest('.action-tooltip')) return;
     const value = label(control);
     if (!value) return;
     if (control.dataset.actionHelp !== value) control.dataset.actionHelp = value;
@@ -61,7 +61,7 @@
     tooltip.style.top = `${Math.max(top + 8, Math.min(below + tip.height <= top + height - 8 ? below : box.top - tip.height - 6, top + height - tip.height - 8))}px`;
   }
   function show(control) {
-    if (dismissed === control || !control.isConnected || control.closest('[inert]')) return;
+    if (control.hasAttribute('data-context-help') || dismissed === control || !control.isConnected || control.closest('[inert]')) return;
     if (active === control) return;
     const text = label(control);
     if (!text) return;

@@ -169,7 +169,7 @@
   crumbs.forEach((c,i)=>{const li=doc.createElement('li');if(i===crumbs.length-1){const span=doc.createElement('span');span.textContent=c.label;span.setAttribute('aria-current','page');li.append(span);}else{const a=doc.createElement('a');a.textContent=c.label;a.href=format(c.r);a.addEventListener('click',e=>{if(e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;e.preventDefault();root.blacksmithRouter.navigate(c.r);});li.append(a);}list.append(li);});
   doc.title=crumbs.map(c=>c.label).reverse().join(' · ')+' — Blacksmith';
   const heading=doc.getElementById('console-title');if(heading)heading.textContent=crumbs.map(c=>c.label).join(' / ');
-  root.BlacksmithViewGuidance?.mount(doc.querySelector('.tab-panel.active .entity-main')||doc.querySelector('.tab-panel.active'),route);
+  root.BlacksmithViewGuidance?.mount(bar,route);
  }
  function error(error){let node=doc.getElementById('route-error');if(!node){node=doc.createElement('div');node.id='route-error';node.setAttribute('role','alert');doc.querySelector('.tab-content')?.before(node);}node.textContent=error.message+' Use Back or select a destination from the navigation.';}
  function start(){if(root.blacksmithRouter||!root.blacksmithViews)return;const router=create(root,{activate:(r,o)=>root.blacksmithViews.activate(r,o),changed:(r,o)=>{doc.getElementById('route-error')?.remove();render(r);root.blacksmithNav?.announce(doc.title.replace(' — Blacksmith',''));if(!r.inspection&&!o.history&&!o.record){const h=doc.querySelector('.tab-panel.active .detail-content')||doc.querySelector('.tab-panel.active');h?.setAttribute('tabindex','-1');h?.focus({preventScroll:true});}},error});root.blacksmithRouter=router;router.start();}

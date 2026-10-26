@@ -93,19 +93,38 @@
     }
     return null;
   }
+  let dispose;
   function mount(host, context) {
+    dispose?.();dispose=null;
     if (!host || !root.document) return null;
-    const value = get(context);
-    let node = host.querySelector(':scope > .view-guidance');
-    if (!value) { node?.remove(); return null; }
-    const key = JSON.stringify([value.label,value.body]);
-    if (node?.dataset.guidanceKey === key) return node;
-    if (!node) { node = root.document.createElement('details'); node.className = 'view-guidance'; host.prepend(node); }
-    node.open = false;
-    node.dataset.guidanceKey = key;
-    const summary = root.document.createElement('summary'); summary.textContent = `About ${value.label}`;
-    const text = root.document.createElement('p'); text.textContent = value.body;
-    node.replaceChildren(summary,text);
+    const value=get(context);if(!value)return null;
+    const doc=root.document, node=doc.createElement('span'), button=doc.createElement('button'), tip=doc.createElement('div');
+    node.className='view-guidance';button.type='button';button.className='view-guidance-button';
+    button.dataset.contextHelp='';button.setAttribute('aria-label',`About ${value.label}`);
+    button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls','view-guidance-tip');
+    button.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></svg>';
+    tip.id='view-guidance-tip';tip.className='view-guidance-tip';tip.setAttribute('role','tooltip');tip.setAttribute('popover','manual');tip.hidden=true;
+    const title=doc.createElement('strong'), text=doc.createElement('p');title.textContent=`About ${value.label}`;text.textContent=value.body;tip.append(title,text);
+    node.append(button);host.append(node);doc.body.append(tip);
+    let pinned=false,hover=false,timer;
+    function position(){
+      if(tip.hidden)return;
+      const rect=button.getBoundingClientRect(), width=tip.getBoundingClientRect().width;
+      tip.style.left=Math.max(8,Math.min(rect.right-width,root.innerWidth-width-8))+'px';
+      const height=tip.getBoundingClientRect().height;
+      tip.style.top=Math.max(8,rect.bottom+8+height>root.innerHeight?rect.top-height-8:rect.bottom+8)+'px';
+    }
+    function show(){clearTimeout(timer);tip.hidden=false;if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',tip.id);position();}
+    function hide(){clearTimeout(timer);pinned=false;if(tip.hidePopover&&tip.matches(':popover-open'))tip.hidePopover();tip.hidden=true;button.setAttribute('aria-expanded','false');button.removeAttribute('aria-describedby');}
+    function leave(){hover=false;timer=setTimeout(()=>{if(!hover&&!pinned&&doc.activeElement!==button)hide();},120);}
+    button.addEventListener('pointerenter',()=>{hover=true;show();});button.addEventListener('pointerleave',leave);
+    tip.addEventListener('pointerenter',()=>{hover=true;clearTimeout(timer);});tip.addEventListener('pointerleave',leave);
+    button.addEventListener('focus',show);button.addEventListener('blur',leave);
+    button.addEventListener('click',()=>{if(pinned)hide();else{pinned=true;show();}});
+    const escape=event=>{if(event.key==='Escape'&&!tip.hidden){event.preventDefault();event.stopImmediatePropagation();hide();}};
+    const outside=event=>{if(!node.contains(event.target)&&!tip.contains(event.target))hide();};
+    doc.addEventListener('keydown',escape,true);doc.addEventListener('pointerdown',outside,true);root.addEventListener('resize',position);doc.addEventListener('scroll',position,true);
+    dispose=()=>{hide();node.remove();tip.remove();doc.removeEventListener('keydown',escape,true);doc.removeEventListener('pointerdown',outside,true);root.removeEventListener('resize',position);doc.removeEventListener('scroll',position,true);};
     return node;
   }
   root.BlacksmithViewGuidance = {get,mount};

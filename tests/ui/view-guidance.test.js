@@ -17,20 +17,19 @@ test('every entity section has concise scoped help, including nested contexts',(
  w.close();
 });
 
-test('help is a single named disclosure, retains expansion and never renders HTML from context',()=>{
- const {w,d}=boot(); w.eval(script());
- const host=d.createElement('div'); d.body.append(host);
- const api=w.BlacksmithViewGuidance;
- api.mount(host,{screen:'blacksmith',section:'plans'});
- expect(host.querySelectorAll('details').length).toBe(1);
- expect(host.querySelector('summary').textContent).toBe('About service plans');
- host.querySelector('details').open=true;
- api.mount(host,{screen:'blacksmith',section:'plans'});
- expect(host.querySelector('details').open).toBe(true);
+test('header info opens on focus and click, dismisses with Escape and cleans up on navigation',()=>{
+ const {w,d}=boot();w.eval(script());const host=d.createElement('header');d.body.append(host);
+ const api=w.BlacksmithViewGuidance;api.mount(host,{screen:'blacksmith',section:'plans'});
+ const button=host.querySelector('button');expect(button?.getAttribute('aria-label')).toBe('About service plans');
+ expect(host.querySelector('details')).toBeNull();button.focus();
+ expect(d.querySelector('[role=tooltip]').hidden).toBe(false);
+ expect(button.getAttribute('aria-describedby')).toBe(d.querySelector('[role=tooltip]').id);
+ button.click();button.blur();expect(d.querySelector('[role=tooltip]').hidden).toBe(false);
+ const escape=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});d.dispatchEvent(escape);
+ expect(escape.defaultPrevented).toBe(true);expect(d.querySelector('[role=tooltip]').hidden).toBe(true);
  api.mount(host,{screen:'services',section:'testing',subview:'flush'});
- expect(host.querySelectorAll('details').length).toBe(1);
- expect(host.querySelector('details').open).toBe(false);
- api.mount(host,{screen:'invalid',section:'<img src=x>'});
- expect(host.querySelector('details')).toBeNull();
- w.close();
+ expect(host.querySelectorAll('button').length).toBe(1);expect(d.querySelectorAll('[role=tooltip]').length).toBe(1);
+ expect(host.textContent).not.toContain('delete');
+ host.querySelector('button').click();expect(d.querySelector('[role=tooltip]').textContent).toContain('delete');
+ api.mount(host,{screen:'invalid'});expect(host.querySelector('button')).toBeNull();expect(d.querySelector('[role=tooltip]')).toBeNull();w.close();
 });
