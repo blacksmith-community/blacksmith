@@ -680,7 +680,8 @@ func (m *Manager) authorizeCommand(ctx context.Context, spec CommandTaskSpec) er
 // authorizer still allows the stored task, so a task whose switches were
 // turned off while it waited is let go the way an unrunnable certificate
 // task is. The caller holds mu, which the authorizer is read under without
-// taking it again.
+// taking it again, so an authorizer must never block or take a manager
+// lock.
 func (m *Manager) runsCommandLocked(task *UpgradeTask) bool {
 	if task.KindOrDefault() != TaskKindCommand || task.Command == nil || !m.configured {
 		return false
@@ -736,6 +737,10 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		return false
 	}
 
+	if m.refusedBeforeStart(ctx, task, inst) {
+		return false
+	}
+
 	m.mu.Lock()
 	settled := inst.Status.settled()
 
@@ -757,6 +762,8 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		return false
 	}
 
+	halted := false
+
 	for vm := range inst.Command.VMs {
 		goOn, _ = m.waitWhilePaused(persistCtx, task, cancelCh)
 		if !goOn {
@@ -773,25 +780,85 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 			continue
 		}
 
-		stopped, err := m.runCommandNode(ctx, sessions, task, inst, vm)
-		if err != nil && !errors.Is(err, errCommandVMChanged) {
-			m.logger.Error("Command task %s did not run node %d of instance %s: %v", task.ID, vm, inst.InstanceID, err)
+		stopped, halt := m.driveNodeInLoop(ctx, sessions, task, inst, vm)
+		if halt {
+			m.skipRemainingNodes(inst)
 
-			return false
+			halted = true
+
+			break
 		}
 
 		if stopped {
 			return false
 		}
-
-		if m.commandNodeFailed(inst, vm) {
-			m.skipRemainingNodes(inst)
-
-			break
-		}
 	}
 
-	return m.endCommandInstance(persistCtx, task, inst)
+	return m.endCommandInstance(persistCtx, task, inst, halted)
+}
+
+// driveNodeInLoop runs one pending node and reports whether the task
+// stopped and whether the deployment must stop. The deployment stops when
+// the node settled in anything but success, and also when the node could
+// not be run for a reason other than a VM that changed, which no node may
+// pass over without a word. A node whose processes outlived KILL has both
+// stopped the task and settled failed, so the deployment stops and the
+// caller ends the instance before it honours the stop.
+func (m *Manager) driveNodeInLoop(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, vm int) (bool, bool) {
+	stopped, err := m.runCommandNode(ctx, sessions, task, inst, vm)
+	if err != nil && !errors.Is(err, errCommandVMChanged) {
+		m.logger.Error("Command task %s did not run node %d of instance %s, so the deployment stops: %v", task.ID, vm, inst.InstanceID, err)
+
+		return stopped, true
+	}
+
+	return stopped, m.commandNodeFailed(inst, vm)
+}
+
+// refusedBeforeStart asks the authorizer about a task no node of which has
+// started, which is the case for a root task that waited for its slot while
+// root runs were turned off. A refusal pauses the task with the refusal on
+// its first instance, fails no instance, and leaves every instance pending,
+// so a resume after the switch is turned back on runs the whole task. The
+// task's slot is released when the processing returns. A task that has
+// started is not asked here, because the gate of each node refuses its next
+// node instead. It reports whether the task paused.
+func (m *Manager) refusedBeforeStart(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
+	m.mu.RLock()
+
+	started := slices.ContainsFunc(task.Instances, func(other InstanceUpgrade) bool { return other.Status != InstanceStatusPending })
+	spec := task.Command.clone()
+
+	m.mu.RUnlock()
+
+	if started || spec == nil {
+		return false
+	}
+
+	err := m.authorizeCommand(ctx, *spec)
+	if err == nil {
+		return false
+	}
+
+	m.mu.Lock()
+
+	if task.Status == TaskStatusRunning {
+		task.Status = TaskStatusPaused
+		task.Paused = true
+	}
+
+	inst.Error = "Running this command is no longer allowed, so the task paused before any node started. " + commandErrorText(err)
+	m.releaseUnheldLocked(task)
+	m.mu.Unlock()
+
+	m.logger.Info("Command task %s paused before it started, because the authorizer refuses it: %v", task.ID, err)
+
+	err = m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.pauseUnconfirmed(task, inst, "record the refusal")
+	}
+
+	return true
 }
 
 // commandNodeWaits reports whether the node is still pending, and skips it
@@ -845,9 +912,10 @@ func (m *Manager) skipRemainingNodes(inst *InstanceUpgrade) {
 // endCommandInstance settles the instance from its nodes, counts it, and
 // saves it. The instance fails when any node ended in anything but success,
 // and a failure pauses the task when an instance is still pending. A save
-// that can't be confirmed pauses the task instead. It reports whether the
-// task goes on to its next instance.
-func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
+// that can't be confirmed pauses the task instead. A halted deployment is
+// one the loop stopped, which fails the instance even when no node recorded
+// a failure. It reports whether the task goes on to its next instance.
+func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, halted bool) bool {
 	m.mu.Lock()
 
 	failed := false
@@ -861,6 +929,13 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 				inst.Error = node.Reason
 			}
 		}
+	}
+
+	// A deployment halted by a node that could not be run fails even when
+	// no node recorded a failure.
+	if halted && !failed {
+		failed = true
+		inst.Error = "Blacksmith could not run a node of the deployment, so the deployment stopped."
 	}
 
 	ended := m.certNowLocked()

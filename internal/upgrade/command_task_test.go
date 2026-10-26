@@ -51,6 +51,10 @@ func (d *taskDirector) GetDeploymentVMs(_ context.Context, deployment string) ([
 	d.fix.mu.Lock()
 	defer d.fix.mu.Unlock()
 
+	if err := d.fix.listErr[deployment]; err != nil {
+		return nil, err
+	}
+
 	var vms []bosh.VM
 
 	for _, listed := range d.fix.listed[deployment] {
@@ -118,6 +122,10 @@ type taskFixture struct {
 
 	// exits maps "deployment/index" to the exit status of exec.
 	exits map[string]int
+	// cleanups maps "deployment/index" to the record cleanup answers with.
+	cleanups map[string]string
+	// listErr maps a deployment to the error its listing fails with.
+	listErr map[string]error
 	// onOp runs before a node's operation is answered.
 	onOp func(deployment string, index int, op string)
 }
@@ -144,7 +152,7 @@ func newTaskFixture(t *testing.T, instances, nodes int, options ...taskOption) *
 
 	var seq atomic.Int64
 
-	fix := &taskFixture{t: t, log: &captureLog{}, listed: map[string][]CommandVMIdentity{}, exits: map[string]int{}}
+	fix := &taskFixture{t: t, log: &captureLog{}, listed: map[string][]CommandVMIdentity{}, exits: map[string]int{}, cleanups: map[string]string{}, listErr: map[string]error{}}
 	fix.vault = &runVault{confirmVault: newConfirmVault(), seq: &seq, taskID: taskFixtureID}
 
 	command := runCommandText
@@ -247,7 +255,9 @@ func (f *taskFixture) answer(deployment string, index int, op string) (ssh.Resul
 	f.mu.Lock()
 	f.calls = append(f.calls, nodeCall{deployment: deployment, index: index, op: op})
 	hook := f.onOp
-	exit := f.exits[fmt.Sprintf("%s/%d", deployment, index)]
+	key := fmt.Sprintf("%s/%d", deployment, index)
+	exit := f.exits[key]
+	cleanup, hasCleanup := f.cleanups[key]
 	f.mu.Unlock()
 
 	if hook != nil {
@@ -267,6 +277,10 @@ func (f *taskFixture) answer(deployment string, index int, op string) (ssh.Resul
 
 		return ssh.Result{Stdout: []byte("out"), ExitCode: exit}, nil
 	case opRunCleanup:
+		if hasCleanup {
+			return ssh.Result{Stdout: []byte(cleanup + "\n")}, nil
+		}
+
 		return ssh.Result{Stdout: []byte(runCleanupDone + "\n")}, nil
 	}
 
@@ -299,6 +313,15 @@ func (f *taskFixture) leave() {
 	defer f.mu.Unlock()
 
 	f.flight--
+}
+
+// concurrency returns the most nodes that ran at once and the most slots
+// the manager handed out while one ran.
+func (f *taskFixture) concurrency() (peak, held int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.peak, f.held
 }
 
 // queue hands the task to the dispatcher the way a create does.
@@ -403,12 +426,13 @@ func TestCommandTaskRunsEveryNodeOneAtATime(t *testing.T) {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
 
-	if fix.peak != 1 {
-		t.Errorf("%d nodes ran at once, want 1", fix.peak)
+	peak, held := fix.concurrency()
+	if peak != 1 {
+		t.Errorf("%d nodes ran at once, want 1", peak)
 	}
 
-	if fix.held != 1 {
-		t.Errorf("the task held %d slots while it ran, want 1", fix.held)
+	if held != 1 {
+		t.Errorf("the task held %d slots while it ran, want 1", held)
 	}
 
 	if done.CompletedCount != 2 || done.FailedCount != 0 {
@@ -594,13 +618,59 @@ func TestRootTaskWaitingForASlotIsRefusedWhenRootTurnsOff(t *testing.T) {
 
 	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused })
 
-	node := paused.Instances[0].Command.VMs[0]
-	if node.Status != CommandStatusFailed || !strings.Contains(node.Error, "403") || !strings.Contains(node.Error, apierr.CodeRootDisabled) {
-		t.Errorf("the node is %s with error %q, want failed with 403 %s", node.Status, node.Error, apierr.CodeRootDisabled)
+	if !paused.Paused {
+		t.Error("the task is paused in status only")
+	}
+
+	first := paused.Instances[0]
+	if !strings.Contains(first.Error, "403") || !strings.Contains(first.Error, apierr.CodeRootDisabled) {
+		t.Errorf("the refusal recorded on the task is %q, want 403 %s", first.Error, apierr.CodeRootDisabled)
+	}
+
+	for _, inst := range paused.Instances {
+		if inst.Status != InstanceStatusPending || inst.CompletedAt != nil {
+			t.Errorf("instance %s is %s, want pending, since no node started", inst.InstanceID, inst.Status)
+		}
+
+		for _, vm := range inst.Command.VMs {
+			if vm.Phase != CommandPhasePending {
+				t.Errorf("a node of %s is %s, want pending", inst.InstanceID, vm.Phase)
+			}
+		}
+	}
+
+	if paused.FailedCount != 0 {
+		t.Errorf("the refusal failed %d instances, want none", paused.FailedCount)
 	}
 
 	if calls := fix.recorded(); len(calls) != 0 {
 		t.Errorf("a refused root task sent %v", calls)
+	}
+
+	waitUntil(t, "the paused task to give its slot back", func() bool {
+		fix.manager.settingsLock.RLock()
+		defer fix.manager.settingsLock.RUnlock()
+
+		return len(fix.manager.jobSemaphore) == 0
+	})
+
+	fix.setRoot(true)
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	done := fix.waitFor("the resumed task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	for _, inst := range done.Instances {
+		if inst.Status != InstanceStatusSuccess {
+			t.Errorf("instance %s is %s after the resume, want success", inst.InstanceID, inst.Status)
+		}
+	}
+
+	if done.Instances[0].Error != "" {
+		t.Errorf("the refusal is still recorded after the run: %q", done.Instances[0].Error)
 	}
 
 	fix.assertNoCommandText()
@@ -731,11 +801,21 @@ func TestResumeListsTheDeploymentAgainBeforeItsFirstNode(t *testing.T) {
 }
 
 func TestResumeSettlesAStrandedNodeThroughCleanupOnly(t *testing.T) {
+	for _, phase := range []CommandPhase{CommandPhaseSent, CommandPhaseStaged} {
+		t.Run(string(phase), func(t *testing.T) {
+			assertStrandedNodeSettlesThroughCleanupOnly(t, phase)
+		})
+	}
+}
+
+func assertStrandedNodeSettlesThroughCleanupOnly(t *testing.T, phase CommandPhase) {
+	t.Helper()
+
 	fix := newTaskFixture(t, 1, 2)
 
 	started := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	node := &fix.task.Instances[0].Command.VMs[0]
-	node.Phase = CommandPhaseSent
+	node.Phase = phase
 	node.StartedAt = &started
 
 	fix.manager.mu.Lock()
@@ -753,12 +833,8 @@ func TestResumeSettlesAStrandedNodeThroughCleanupOnly(t *testing.T) {
 		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
 	})
 
-	if ops := fix.opsOf("dep-0", 0); !slices.Equal(ops, []string{opSudoCheck, opRunCleanup}) && !slices.Equal(ops, []string{opRunCleanup}) {
-		t.Errorf("the stranded node saw %v, want cleanup only, with no prepare and no exec", ops)
-	}
-
-	if slices.Contains(fix.opsOf("dep-0", 0), opRunExec) || slices.Contains(fix.opsOf("dep-0", 0), opRunPrepare) {
-		t.Errorf("the stranded node was driven again: %v", fix.opsOf("dep-0", 0))
+	if ops := fix.opsOf("dep-0", 0); !slices.Equal(ops, []string{opRunCleanup}) {
+		t.Errorf("the stranded node saw %v, want exactly [%s]", ops, opRunCleanup)
 	}
 
 	inst := done.Instances[0]
@@ -777,29 +853,72 @@ func TestResumeSettlesAStrandedNodeThroughCleanupOnly(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
+// The hold is kept per instance, so a pending instance and a staged one
+// are held alike. The test proves what that design promises, that a pause
+// during the staging of a node keeps the node staged and keeps the
+// instance reserved through a release, so no other task takes the
+// deployment while a command may sit staged on it.
 func TestStagedNodeStaysHeldAcrossAPause(t *testing.T) {
-	fix := newTaskFixture(t, 1, 1)
+	fix := newTaskFixture(t, 2, 1)
+	release := make(chan struct{})
 
-	fix.manager.mu.Lock()
-	fix.task.Instances[0].Command.VMs[0].Phase = CommandPhaseStaged
-	fix.task.Instances[0].Status = InstanceStatusRunning
-	fix.task.Status = TaskStatusPaused
-	fix.task.Paused = true
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
 
-	held := fix.manager.shouldHoldLocked(fix.task, &fix.task.Instances[0])
-	_, reserved := fix.manager.reservations[fix.task.ID][fix.task.Instances[0].InstanceID]
+	fix.onOp = func(deployment string, _ int, op string) {
+		if deployment == "dep-0" && op == opRunPrepare {
+			err := fix.manager.PauseTask(context.Background(), fix.task.ID)
+			if err != nil {
+				t.Errorf("pause: %v", err)
+			}
+
+			<-release
+		}
+	}
+
+	fix.queue()
+
+	paused := fix.waitFor("the task to pause with a staged node", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusPaused && task.Instances[0].Command.VMs[0].Phase == CommandPhaseStaged
+	})
+
+	if paused.Instances[0].Status != InstanceStatusRunning {
+		t.Errorf("the instance of the staged node is %s, want running", paused.Instances[0].Status)
+	}
 
 	other := &UpgradeTask{ID: "other", Kind: TaskKindUpgrade, Status: TaskStatusPending, Instances: []InstanceUpgrade{pendingInstance("inst-0", "dep-0")}}
+
+	fix.manager.mu.Lock()
+	fix.manager.releaseUnheldLocked(fix.task)
+
+	_, reserved := fix.manager.reservations[fix.task.ID][fix.task.Instances[0].InstanceID]
 	err := fix.manager.reserveNewLocked(other)
 	fix.manager.mu.Unlock()
 
-	if !held || !reserved {
-		t.Errorf("a paused task's staged node is held=%v reserved=%v, want both", held, reserved)
+	if !reserved {
+		t.Error("the release freed the reservation of an instance with a staged node")
 	}
 
 	if err == nil || !strings.Contains(err.Error(), "command") {
 		t.Errorf("another task reserved the instance of a paused staged node, or the refusal does not name the command: %v", err)
 	}
+
+	close(release)
+
+	settled := fix.waitFor("the staged node to settle", func(task UpgradeTask) bool {
+		return task.Instances[0].Command.VMs[0].Phase == CommandPhaseSettled
+	})
+
+	if settled.Status != TaskStatusPaused || settled.Instances[1].Status != InstanceStatusPending || fix.sentTo("dep-1") {
+		t.Errorf("the pause did not hold the rest of the task: %s, second instance %s", settled.Status, settled.Instances[1].Status)
+	}
+
+	fix.assertNoCommandText()
 }
 
 func TestCommandTaskFailureInTheLastInstanceFinishesTheTaskFailed(t *testing.T) {
@@ -815,6 +934,228 @@ func TestCommandTaskFailureInTheLastInstanceFinishesTheTaskFailed(t *testing.T) 
 
 	if got := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; !slices.Equal(phases(done.Instances[0]), got) {
 		t.Errorf("phases = %v, want %v", phases(done.Instances[0]), got)
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestKilledSurvivorFailsTheInstanceAndSkipsItsLaterNodes(t *testing.T) {
+	fix := newTaskFixture(t, 2, 2)
+	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
+	fix.queue()
+
+	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused && task.Paused })
+
+	first := paused.Instances[0]
+	if first.Status != InstanceStatusFailed {
+		t.Fatalf("the first instance is %s, want failed, so a resume never runs it again", first.Status)
+	}
+
+	if got := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; !slices.Equal(phases(first), got) {
+		t.Errorf("phases = %v, want %v", phases(first), got)
+	}
+
+	if first.CompletedAt == nil || paused.FailedCount != 1 {
+		t.Errorf("the instance has end %v and the task counts %d failures, want an end and one", first.CompletedAt, paused.FailedCount)
+	}
+
+	if paused.Instances[1].Status != InstanceStatusPending {
+		t.Errorf("the second instance is %s, want pending", paused.Instances[1].Status)
+	}
+
+	before := len(fix.recorded())
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	done := fix.waitFor("the task to complete", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+	})
+
+	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
+		t.Errorf("the node after the survivor saw %v, want nothing", ops)
+	}
+
+	for _, call := range fix.recorded()[before:] {
+		if call.deployment != "dep-1" {
+			t.Fatalf("the resume sent %s to %s, which is not the second instance", call.op, call.deployment)
+		}
+	}
+
+	if done.Instances[1].Status != InstanceStatusSuccess || done.Instances[0].Status != InstanceStatusFailed {
+		t.Errorf("instances are %s and %s, want failed and success", done.Instances[0].Status, done.Instances[1].Status)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// A node an earlier run stranded keeps its own rule, which is that the
+// nodes after it still run once the task is resumed, even when its cleanup
+// finds survivors.
+func TestStrandedSurvivorPausesAndThePendingNodeStillRuns(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
+
+	started := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	node := &fix.task.Instances[0].Command.VMs[0]
+	node.Phase = CommandPhaseSent
+	node.StartedAt = &started
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusPaused
+	fix.task.Paused = true
+	fix.task.Instances[0].Status = InstanceStatusRunning
+	fix.manager.mu.Unlock()
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	paused := fix.waitFor("the task to pause again", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusPaused && task.Instances[0].Command.VMs[0].Phase == CommandPhaseSettled
+	})
+
+	inst := paused.Instances[0]
+	if inst.Status != InstanceStatusRunning || inst.Command.VMs[1].Phase != CommandPhasePending {
+		t.Fatalf("the instance is %s with its second node %s, want running and pending", inst.Status, inst.Command.VMs[1].Phase)
+	}
+
+	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("second resume: %v", err)
+	}
+
+	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+	})
+
+	if ops := fix.opsOf("dep-0", 1); !slices.Equal(ops, []string{opSudoCheck, opRunPrepare, opRunExec, opRunCleanup}) {
+		t.Errorf("the pending node saw %v, want the command's four operations", ops)
+	}
+
+	if done.Instances[0].Status != InstanceStatusFailed {
+		t.Errorf("the instance is %s, want failed", done.Instances[0].Status)
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestListingFailureStopsTheDeploymentAndPausesTheTask(t *testing.T) {
+	fix := newTaskFixture(t, 2, 2)
+	fix.listErr["dep-0"] = errors.New("director down")
+	fix.queue()
+
+	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused && task.Paused })
+
+	first := paused.Instances[0]
+	if first.Status != InstanceStatusFailed {
+		t.Fatalf("the first instance is %s, want failed", first.Status)
+	}
+
+	if got := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; !slices.Equal(phases(first), got) {
+		t.Errorf("phases = %v, want %v", phases(first), got)
+	}
+
+	if node := first.Command.VMs[0]; node.Status != CommandStatusFailed || !strings.Contains(node.Reason, "did not list") {
+		t.Errorf("the first node is %s with reason %q, want failed because the listing failed", node.Status, node.Reason)
+	}
+
+	if paused.Instances[1].Status != InstanceStatusPending || len(fix.recorded()) != 0 {
+		t.Errorf("the second instance is %s and the nodes saw %v, want pending and nothing", paused.Instances[1].Status, fix.recorded())
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestWrapperFailureStopsTheDeploymentAndPausesTheTask(t *testing.T) {
+	cases := []struct {
+		name    string
+		exit    int
+		cleanup string
+	}{
+		{name: "wrapper failed", exit: 125, cleanup: "cleanup started=yes exit=- killed=no"},
+		{name: "wrapper refusal", exit: 13, cleanup: "cleanup started=no exit=- killed=no"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fix := newTaskFixture(t, 2, 2)
+			fix.exits["dep-0/0"] = tc.exit
+			fix.cleanups["dep-0/0"] = tc.cleanup
+			fix.queue()
+
+			paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused && task.Paused })
+
+			first := paused.Instances[0]
+			if first.Status != InstanceStatusFailed {
+				t.Fatalf("the first instance is %s, want failed", first.Status)
+			}
+
+			if got := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; !slices.Equal(phases(first), got) {
+				t.Errorf("phases = %v, want %v", phases(first), got)
+			}
+
+			if first.Command.VMs[0].Status == CommandStatusSucceeded {
+				t.Error("the node with the wrapper's exit is recorded as a success")
+			}
+
+			if ops := fix.opsOf("dep-0", 1); len(ops) != 0 || paused.Instances[1].Status != InstanceStatusPending {
+				t.Errorf("the second node saw %v and the second instance is %s", ops, paused.Instances[1].Status)
+			}
+
+			fix.assertNoCommandText()
+		})
+	}
+}
+
+// Only a race lets runCommandNode refuse a node the loop found pending, so
+// the test hands it a node that is not, and expects the deployment to stop.
+func TestUnexpectedNodeErrorHaltsTheDeployment(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	inst := &fix.task.Instances[0]
+
+	fix.manager.mu.Lock()
+	inst.Command.VMs[0].Phase = CommandPhaseStaged
+	fix.manager.mu.Unlock()
+
+	sessions := fix.manager.newCommandSessions(inst.Command.Deployment)
+	defer sessions.close()
+
+	stopped, halted := fix.manager.driveNodeInLoop(fix.manager.ctx, sessions, fix.task, inst, 0)
+	if !halted {
+		t.Errorf("a node that could not be run did not halt the deployment (stopped=%v)", stopped)
+	}
+
+	if calls := fix.recorded(); len(calls) != 0 {
+		t.Errorf("the refused node was sent %v", calls)
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestHaltedInstanceFailsAndPausesTheTask(t *testing.T) {
+	fix := newTaskFixture(t, 2, 2)
+	inst := &fix.task.Instances[0]
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusRunning
+	inst.Status = InstanceStatusRunning
+	fix.manager.mu.Unlock()
+
+	fix.manager.skipRemainingNodes(inst)
+
+	fix.manager.endCommandInstance(context.Background(), fix.task, inst, true)
+
+	snap := fix.snapshot()
+	if snap.Instances[0].Status != InstanceStatusFailed || snap.Instances[0].Error == "" {
+		t.Errorf("the halted instance is %s with error %q, want failed with a reason", snap.Instances[0].Status, snap.Instances[0].Error)
+	}
+
+	if snap.Status != TaskStatusPaused || !snap.Paused {
+		t.Errorf("the task is %s paused=%v, want paused, since an instance is pending", snap.Status, snap.Paused)
 	}
 
 	fix.assertNoCommandText()
