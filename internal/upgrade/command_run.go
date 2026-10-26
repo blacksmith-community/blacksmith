@@ -572,9 +572,12 @@ func (r *commandRun) execute(ctx context.Context) bool {
 
 	// Cleanup is how a cancelled node is known to have ended. When it
 	// can't tell, the command may still be running, so the node stays sent,
-	// the instance stays held, and a resume sends cleanup only.
+	// the instance stays held, and a resume sends cleanup only. What the
+	// node wrote before the cancel is kept on the node meanwhile.
 	if r.cancelled && cleanErr != nil && !survived {
-		return r.settle(ctx, commandOutcome{strand: true})
+		path, _ := r.storeOutput(ctx, result)
+
+		return r.settle(ctx, commandOutcome{strand: true, result: &result, path: path})
 	}
 
 	outcome := r.classify(result, execErr, deadlineHit, record, cleanErr, ended.Sub(execStart) >= timeout)
@@ -583,11 +586,7 @@ func (r *commandRun) execute(ctx context.Context) bool {
 	outcome.killed = record.Killed == "yes"
 	outcome.pause = survived
 
-	storeCtx, storeCancel := storeContext(ctx)
-	path, storeErr := r.m.storeCommandOutput(storeCtx, r.task.ID, r.inst.InstanceID, r.identity, result)
-
-	storeCancel()
-
+	path, storeErr := r.storeOutput(ctx, result)
 	if storeErr != nil {
 		outcome.status = CommandStatusFailed
 		outcome.reason = "Blacksmith could not store the node's output. " + outcome.reason
@@ -597,6 +596,15 @@ func (r *commandRun) execute(ctx context.Context) bool {
 	outcome.path = path
 
 	return r.settle(ctx, outcome)
+}
+
+// storeOutput keeps what the node printed, on a context that outlives the
+// node's own.
+func (r *commandRun) storeOutput(ctx context.Context, result ssh.Result) (string, error) {
+	storeCtx, storeCancel := storeContext(ctx)
+	defer storeCancel()
+
+	return r.m.storeCommandOutput(storeCtx, r.task.ID, r.inst.InstanceID, r.identity, result) //nolint:wrapcheck // the caller records the store's own error
 }
 
 // classify turns what the node answered into an outcome.
@@ -722,7 +730,7 @@ func (r *commandRun) advance(ctx context.Context, change func(*CommandVM)) error
 // settled node could not be confirmed.
 func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 	if outcome.strand {
-		return r.strand(ctx)
+		return r.strand(ctx, outcome)
 	}
 
 	ended := outcome.ended
@@ -739,19 +747,15 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 		node.EndedAt = &ended
 		node.Killed = outcome.killed
 		node.Survived = outcome.pause
-		node.OutputPath = outcome.path
 
 		if outcome.err != nil {
 			node.Error = commandErrorText(outcome.err)
 		}
 
-		if res := outcome.result; res != nil {
-			node.StdoutKept = len(res.Stdout)
-			node.StdoutReceived = int(res.StdoutReceived)
-			node.StderrKept = len(res.Stderr)
-			node.StderrReceived = int(res.StderrReceived)
-			node.StdoutTruncated = res.StdoutTruncated
-			node.StderrTruncated = res.StderrTruncated
+		// An outcome with no result, as a resume's cleanup gives, keeps
+		// the output an earlier run stored.
+		if outcome.result != nil {
+			recordOutput(node, outcome)
 		}
 
 		if outcome.pause {
@@ -776,11 +780,31 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 	return outcome.pause
 }
 
+// recordOutput records on the node what it printed and where that is kept.
+func recordOutput(node *CommandVM, outcome commandOutcome) {
+	res := outcome.result
+
+	node.OutputPath = outcome.path
+	node.StdoutKept = len(res.Stdout)
+	node.StdoutReceived = int(res.StdoutReceived)
+	node.StderrKept = len(res.Stderr)
+	node.StderrReceived = int(res.StderrReceived)
+	node.StdoutTruncated = res.StdoutTruncated
+	node.StderrTruncated = res.StderrTruncated
+}
+
 // strand leaves the node in the phase it is in, because cleanup could not
 // remove what the node holds, and keeps the instance held. The task stays
-// cancelled and pauses, so a resume is what cleans the node. It returns
+// cancelled and pauses, so a resume is what cleans the node. The output the
+// node wrote is recorded on it, so the resume does not lose it. It returns
 // true, because the task stopped.
-func (r *commandRun) strand(ctx context.Context) bool {
+func (r *commandRun) strand(ctx context.Context, outcome commandOutcome) bool {
+	if outcome.result != nil {
+		r.m.mu.Lock()
+		recordOutput(&r.inst.Command.VMs[r.vm], outcome)
+		r.m.mu.Unlock()
+	}
+
 	r.m.holdCancelledCommand(r.task, r.inst)
 
 	err := r.m.persistCertConfirmed(ctx, r.task)

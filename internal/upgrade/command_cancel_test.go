@@ -716,3 +716,49 @@ func TestCommandPauseAndCancelNeedNoAuthorization(t *testing.T) {
 		t.Errorf("pause and cancel asked the authorizer %d times", n)
 	}
 }
+
+// A node whose cleanup could not answer after a cancel keeps the output it
+// wrote before the cancel, on the node's record and in the store, and the
+// resume that cleans it does not lose it.
+func TestCommandCancelKeepsPartialOutputWhenCleanupFails(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=yes"
+	script := fix.blockExec()
+	script.cleanupDown.Store(true)
+
+	fix.queue()
+	script.wait(t, 1)
+	fix.cancel()
+
+	held := fix.waitFor("the task to wait for a resume", func(task UpgradeTask) bool { return task.Paused })
+
+	const want = "partial output of dep-0/0"
+
+	node := nodeOf(held, 0, 0)
+	if node.Phase != CommandPhaseSent || node.StdoutKept != len(want) || node.OutputPath == "" {
+		t.Errorf("held node is %s with %d bytes at %q, want it sent with its partial output kept", node.Phase, node.StdoutKept, node.OutputPath)
+	}
+
+	out, err := fix.manager.ReadCommandOutput(context.Background(), fix.task.ID, "inst-0", "redis-0")
+	if err != nil || string(out.Stdout) != want {
+		t.Errorf("the stored output is %q, err %v", out.Stdout, err)
+	}
+
+	script.cleanupDown.Store(false)
+	fix.resume()
+
+	done := fix.waitFor("the node to settle", func(task UpgradeTask) bool { return nodeOf(task, 0, 0).Phase == CommandPhaseSettled })
+
+	node = nodeOf(done, 0, 0)
+	if node.StdoutKept != len(want) || node.OutputPath == "" {
+		t.Errorf("settled node kept %d bytes at %q, want the partial output the cancel left", node.StdoutKept, node.OutputPath)
+	}
+
+	out, err = fix.manager.ReadCommandOutput(context.Background(), fix.task.ID, "inst-0", "redis-0")
+	if err != nil || string(out.Stdout) != want {
+		t.Errorf("the stored output after the resume is %q, err %v", out.Stdout, err)
+	}
+
+	fix.waitReleased()
+	fix.assertNoCommandText()
+}
