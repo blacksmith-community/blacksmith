@@ -297,10 +297,11 @@ _rc_group_state() {
 }
 
 # _rc_leader_ok <pgid> <starttime> succeeds unless the process now
-# leading the group started at another time than exec recorded. A leader
-# that is gone passes, because the number stays pinned while any member
-# of the session remains. A different start time means the session ended
-# and a stranger took the number.
+# leading the group started at another time than exec recorded. It runs
+# only after cleanup has found the recorded leader, so a leader that has
+# gone since then passes, because the session has been unbroken from the
+# moment it was shown to be the command's. A different start time means
+# the session ended and a stranger took the number.
 _rc_leader_ok() {
 	local lead f
 
@@ -339,10 +340,12 @@ _rc_signal() {
 # of a task whose exec started and left no exit. The pgid and starttime
 # files are untrusted. A pgid that is not a canonical number above 1 is
 # never used, because kill -- -1 reaches every process the caller may
-# signal. The starttime must be that of the process now leading the
-# group, if there is one, because a pid that was reused since belongs to another process.
-# A session that is gone, that is cleanup's own, or whose leader is not
-# the process exec recorded is left alone and reported no. A live
+# signal. The only proof that a session is the command's is its leader,
+# a live process with the start time exec recorded. A session whose
+# leader has gone is left alone and reported no, because a pid that was
+# reused since, by a daemon that called setsid and whose leader then
+# exited, looks the same. A session that is gone, that is cleanup's own,
+# or whose leader is not the process exec recorded is left alone too. A live
 # session gets TERM, and KILL after the wait, and is reported yes once it
 # is gone, or survived when a member outlives the KILL.
 _rc_kill_group() {
@@ -365,17 +368,13 @@ _rc_kill_group() {
 	kill=$(_rc_tool kill) || { printf 'no'; return 0; }
 	command -v -- "$kill" > /dev/null || { printf 'no'; return 0; }
 
-	# A leader that is there must be the process exec recorded, and field
-	# 22 of its stat file is the 20th after the name. A leader that is
-	# gone is no reason to leave the rest of its session running. The
-	# kernel keeps a pid allocated while any process uses it as a session
-	# ID, so while a member of that session remains, no new process can
-	# have received the number, and any process with that session ID
-	# belongs to the command.
-	if _rc_stat "/proc/$pg/stat" lead; then
-		read -ra f <<< "$lead"
-		[ "${f[19]:-}" = "$want" ] || { printf 'no'; return 0; }
-	fi
+	# The leader must be there and be the process exec recorded. Field 22
+	# of its stat file is the 20th after the name. Without the leader's
+	# start time nothing proves that a session is ours, and its members
+	# are left running.
+	_rc_stat "/proc/$pg/stat" lead || { printf 'no'; return 0; }
+	read -ra f <<< "$lead"
+	[ "${f[19]:-}" = "$want" ] || { printf 'no'; return 0; }
 
 	_rc_alive "$pg" "$want" || { printf 'no'; return 0; }
 
@@ -532,10 +531,11 @@ execute() {
 	# pid is its group ID. The start time of that process, field 22 of its
 	# stat file, goes into the starttime file first, so cleanup can tell
 	# the process from a later one that reuses its pid, and a pgid file
-	# always has one beside it. A start time that cannot be read or written
-	# ends in 125 like a pgid write that fails. Keep both writes ahead of the exec in that
-	# same process. timeout then fails its own setpgid as a session leader,
-	# which is harmless, because the group is already the one to signal.
+	# always has one beside it. A start time that cannot be read or
+	# written ends in 125 like a pgid write that fails. Keep both writes
+	# ahead of the exec in that same process. timeout then fails its own
+	# setpgid as a session leader, which is harmless, because the group is
+	# already the one to signal.
 	# --wait keeps setsid from forking and returning at once, which would
 	# hide the exit status of the command. A pgid write or cd that fails
 	# after started ends with 125 and one fixed line, so it is not taken

@@ -815,7 +815,7 @@ func TestRunCleanupEndsAChildInAGroupOfItsOwn(t *testing.T) {
 	}
 }
 
-func TestRunCleanupEndsTheSessionWhenItsLeaderHasExited(t *testing.T) {
+func TestRunCleanupLeavesASessionWhoseLeaderHasExited(t *testing.T) {
 	t.Parallel()
 
 	if runtime.GOOS != "linux" {
@@ -823,7 +823,7 @@ func TestRunCleanupEndsTheSessionWhenItsLeaderHasExited(t *testing.T) {
 	}
 
 	tree := newRunTree(t)
-	tree.linkKill(t)
+	log := tree.plantKill(t)
 
 	setsid, err := exec.LookPath("setsid")
 	if err != nil {
@@ -885,11 +885,16 @@ func TestRunCleanupEndsTheSessionWhenItsLeaderHasExited(t *testing.T) {
 	})
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
-	if sessionLive(t, pgid) {
-		t.Error("a member of the session is still alive")
+	_, err = os.Stat(log)
+	if err == nil {
+		t.Error("a signal was sent to a session whose leader is gone")
+	}
+
+	if !sessionLive(t, pgid) {
+		t.Error("the member of the session was ended")
 	}
 }
