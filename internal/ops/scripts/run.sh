@@ -20,7 +20,8 @@
 # user without the group can pass through runcmd by name but cannot list
 # it, and vcap can open cmd.sh by name but cannot list, replace, write,
 # or remove anything on the way to it. The task directory also holds the
-# files a later operation writes, which are started, pgid, and exit.
+# files a later operation writes, which are started, starttime, pgid, and
+# exit.
 #
 # CERTPATCH_ROOT lets the tests put the VM's files under a temporary
 # directory, as lib.sh explains.
@@ -226,23 +227,45 @@ _rc_kill_ticks() {
 	printf '100'
 }
 
-# _rc_group_state <pgid> prints what cleanup may do about a process
-# group.
+# _rc_stat <path> <var> sets var to the fields of a /proc stat file that
+# follow the command name, which start with the state. The file is read
+# whole and split after its last ") ", because the name may hold a
+# newline or a ")" that any process can plant by writing to its comm, and
+# a line-by-line read would take the fields from the planted text. The
+# kernel's own fields after the name hold no parenthesis.
+_rc_stat() {
+	local rec=''
+
+	{ IFS= read -r -d '' rec < "$1"; } 2> /dev/null || [ -n "$rec" ] || return 1
+	printf -v "$2" '%s' "${rec##*) }"
+}
+
+# _rc_group_state <pgid> prints what cleanup may do about the processes
+# of the command's session, and after the word "live" the pids of the
+# members that are not in the group.
 #
-#   none  no process outside the zombies is in the group
+#   none  no process outside the zombies is in the session
+#   bad   the pgid is not a number above 1
 #   self  the group or its session is the one cleanup runs in
 #   other the group has a member outside the session that setsid made
-#   live  the group is alive and belongs to that session
+#   live  the session is alive, which is the command and its children
 #
 # setsid made the leader of the command's group a session leader, so
 # every member of the group has the group ID as its session ID. A group
 # ID that a stranger's process group has taken over since will have
-# another session, and is never signalled.
+# another session, and is never signalled. A child that moved to a group
+# of its own with setpgid stays in the session and is found by it. One
+# that called setsid again has left the session and is out of reach.
 _rc_group_state() {
-	local pg=$1 line f state pgrp sess found=none mypg mysid
+	local pg=$1 fields f state pgrp sess found=none mypg mysid extra=''
 
-	{ read -r line < "/proc/$BASHPID/stat"; } 2> /dev/null || { printf 'self'; return 0; }
-	read -r _ _ mypg mysid _ <<< "${line##*) }"
+	if ! _rc_id_ok "$pg" || [ "$((10#$pg))" -le 1 ]; then
+		printf 'bad'
+		return 0
+	fi
+
+	_rc_stat "/proc/$BASHPID/stat" fields || { printf 'self'; return 0; }
+	read -r _ _ mypg mysid _ <<< "$fields"
 
 	if [ "$pg" = "$mypg" ] || [ "$pg" = "$mysid" ]; then
 		printf 'self'
@@ -250,42 +273,73 @@ _rc_group_state() {
 	fi
 
 	for f in /proc/[0-9]*/stat; do
-		line=
-		{ read -r line < "$f"; } 2> /dev/null || continue
-		read -r state _ pgrp sess _ <<< "${line##*) }"
+		_rc_stat "$f" fields || continue
+		read -r state _ pgrp sess _ <<< "$fields"
 
-		[ "$pgrp" = "$pg" ] && [ "$state" != Z ] || continue
+		[ "$state" != Z ] || continue
 
-		if [ "$sess" != "$pg" ]; then
+		if [ "$pgrp" = "$pg" ] && [ "$sess" != "$pg" ]; then
 			printf 'other'
 			return 0
 		fi
 
+		[ "$sess" = "$pg" ] || continue
+
 		found=live
+
+		if [ "$pgrp" != "$pg" ]; then
+			f=${f#/proc/}
+			extra+=" ${f%/stat}"
+		fi
 	done
 
-	printf '%s' "$found"
+	printf '%s%s' "$found" "$extra"
+}
+
+# _rc_alive <pgid> succeeds while the session still has a member.
+_rc_alive() {
+	local state
+
+	state=$(_rc_group_state "$1")
+	[[ $state == live || $state == "live "* ]]
+}
+
+# _rc_signal <kill> <signal> <pgid> sends a signal to the group and to
+# the members of its session that are outside the group.
+_rc_signal() {
+	local state extra
+
+	state=$(_rc_group_state "$3")
+	extra=${state#live}
+	[ "$extra" != "$state" ] || return 0
+
+	# shellcheck disable=SC2086
+	"$1" "-$2" -- "-$3" $extra > /dev/null 2>&1 || true
 }
 
 # _rc_kill_group <dir> prints yes, no, or survived. It ends the command
-# of a task whose exec started and left no exit. The pgid file is
-# untrusted. A value that is not a canonical number above 1 is never used,
-# because kill -- -1 reaches every process the caller may signal. A group
-# that is gone, that is cleanup's own, or that is not the session setsid
-# made is left alone and reported no. A live group gets TERM, and KILL
-# after the wait, and is reported yes once it is gone, or survived when
-# it outlives the KILL.
+# of a task whose exec started and left no exit. The pgid and starttime
+# files are untrusted. A pgid that is not a canonical number above 1 is
+# never used, because kill -- -1 reaches every process the caller may
+# signal. The starttime must be that of the process now leading the
+# group, because a pid that was reused since belongs to another process.
+# A session that is gone, that is cleanup's own, or whose leader is not
+# the process exec recorded is left alone and reported no. A live
+# session gets TERM, and KILL after the wait, and is reported yes once it
+# is gone, or survived when a member outlives the KILL.
 _rc_kill_group() {
-	local dir=$1 pg='' kill state ticks i
+	local dir=$1 pg='' want='' kill lead f ticks i
 
-	if [ ! -f "$dir/pgid" ] || [ -L "$dir/pgid" ]; then
+	if [ ! -f "$dir/pgid" ] || [ -L "$dir/pgid" ] ||
+		[ ! -f "$dir/starttime" ] || [ -L "$dir/starttime" ]; then
 		printf 'no'
 		return 0
 	fi
 
 	IFS= read -r pg < "$dir/pgid" || true
+	IFS= read -r want < "$dir/starttime" || true
 
-	if ! _rc_id_ok "$pg" || [ "$((10#$pg))" -le 1 ]; then
+	if ! _rc_id_ok "$pg" || [ "$((10#$pg))" -le 1 ] || [[ ! $want =~ ^[1-9][0-9]{0,19}$ ]]; then
 		printf 'no'
 		return 0
 	fi
@@ -293,31 +347,32 @@ _rc_kill_group() {
 	kill=$(_rc_tool kill) || { printf 'no'; return 0; }
 	command -v -- "$kill" > /dev/null || { printf 'no'; return 0; }
 
-	state=$(_rc_group_state "$pg")
-	if [ "$state" != live ]; then
-		printf 'no'
-		return 0
-	fi
+	# Field 22 of the stat file is the 20th after the name.
+	_rc_stat "/proc/$pg/stat" lead || { printf 'no'; return 0; }
+	read -ra f <<< "$lead"
+	[ "${f[19]:-}" = "$want" ] || { printf 'no'; return 0; }
+
+	_rc_alive "$pg" || { printf 'no'; return 0; }
 
 	ticks=$(_rc_kill_ticks)
 
-	"$kill" -TERM -- "-$pg" > /dev/null 2>&1 || true
+	_rc_signal "$kill" TERM "$pg"
 
 	for ((i = 0; i < ticks; i++)); do
-		[ "$(_rc_group_state "$pg")" = live ] || break
+		_rc_alive "$pg" || break
 		sleep 0.1
 	done
 
-	if [ "$(_rc_group_state "$pg")" = live ]; then
-		"$kill" -KILL -- "-$pg" > /dev/null 2>&1 || true
+	if _rc_alive "$pg"; then
+		_rc_signal "$kill" KILL "$pg"
 
 		for ((i = 0; i < ticks / 5 + 1; i++)); do
-			[ "$(_rc_group_state "$pg")" = live ] || break
+			_rc_alive "$pg" || break
 			sleep 0.1
 		done
 	fi
 
-	if [ "$(_rc_group_state "$pg")" = live ]; then
+	if _rc_alive "$pg"; then
 		printf 'survived'
 		return 0
 	fi
@@ -371,7 +426,9 @@ cleanup() {
 
 	_RC_DROP=$dir
 	printf 'cleanup started=%s exit=%s killed=%s\n' "$started" "$code" "$killed"
-	rm -rf -- "$dir" || return 1
+	# A command that was just ended lets its wrapper write the exit file
+	# while the removal runs, which can fail the removal once.
+	rm -rf -- "$dir" || { sleep 0.2; rm -rf -- "$dir"; } || return 1
 	_RC_DROP=
 }
 
@@ -447,8 +504,11 @@ execute() {
 
 	# The pid that bash -c records is the process group ID only because
 	# setsid makes that process a session leader, and a session leader's
-	# pid is its group ID. Keep the echo ahead of the exec in that same
-	# process. timeout then fails its own setpgid as a session leader,
+	# pid is its group ID. The start time of that process, field 22 of its
+	# stat file, goes into the starttime file first, so cleanup can tell
+	# the process from a later one that reuses its pid, and a pgid file
+	# always has one beside it. Keep both writes ahead of the exec in that
+	# same process. timeout then fails its own setpgid as a session leader,
 	# which is harmless, because the group is already the one to signal.
 	# --wait keeps setsid from forking and returning at once, which would
 	# hide the exit status of the command. A pgid write or cd that fails
@@ -461,8 +521,8 @@ execute() {
 	# and shows up as 137, not 124.
 	# shellcheck disable=SC2016
 	{
-		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$2" 2> /dev/null || nostart; umask 022; shift 2; exec "$@"' \
-			_ "$dir/pgid" "$home" \
+		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; echo "${f[19]}" > "$2"; echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 3; exec "$@"' \
+			_ "$dir/pgid" "$dir/starttime" "$home" \
 			"$timeout" -k 10 "$secs" ${priv[@]+"${priv[@]}"} \
 			env -i HOME="$homepath" USER="$user" LOGNAME="$user" SHELL=/bin/bash \
 			PATH="$path" \
