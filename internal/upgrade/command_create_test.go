@@ -57,17 +57,40 @@ func (l *cmdLogger) text() string {
 	return strings.Join(l.lines, "\n")
 }
 
-// cmdCreateVault answers instance records, saves everything else the way
-// waitVault does, and refuses writes of command task records while failPuts
-// is set.
+// cmdCreateVault answers instance records and saves everything else the way
+// waitVault does. Writes of command task records are counted from 1. A write
+// the refuse rule picks stores nothing and fails, and one the land rule picks
+// stores the record and fails anyway. While blind is set, every read of a
+// command task record fails, so the manager can't tell that a write landed.
 type cmdCreateVault struct {
 	*waitVault
 
-	records  map[string]map[string]any
-	failPuts atomic.Bool
+	records map[string]map[string]any
+
+	script sync.Mutex
+	writes int
+	refuse func(n int) bool
+	land   func(n int) bool
+	blind  bool
+}
+
+// script sets the rules under the lock.
+func (v *cmdCreateVault) setRules(refuse, land func(n int) bool, blind bool) {
+	v.script.Lock()
+	defer v.script.Unlock()
+
+	v.refuse, v.land, v.blind = refuse, land, blind
 }
 
 func (v *cmdCreateVault) Get(ctx context.Context, path string, result interface{}) (bool, error) {
+	v.script.Lock()
+	blind := v.blind && strings.HasPrefix(path, commandTasksVaultPath+"/")
+	v.script.Unlock()
+
+	if blind {
+		return false, errGetRefused
+	}
+
 	record, ok := v.records[path]
 	if !ok {
 		return v.waitVault.Get(ctx, path, result)
@@ -82,11 +105,27 @@ func (v *cmdCreateVault) Get(ctx context.Context, path string, result interface{
 }
 
 func (v *cmdCreateVault) Put(ctx context.Context, path string, data interface{}) error {
-	if v.failPuts.Load() && strings.HasPrefix(path, commandTasksVaultPath+"/") {
+	if !strings.HasPrefix(path, commandTasksVaultPath+"/") {
+		return v.waitVault.Put(ctx, path, data)
+	}
+
+	v.script.Lock()
+	v.writes++
+	number := v.writes
+	refused := v.refuse != nil && v.refuse(number)
+	unacknowledged := v.land != nil && v.land(number)
+	v.script.Unlock()
+
+	if refused {
 		return errPutRefused
 	}
 
-	return v.waitVault.Put(ctx, path, data)
+	err := v.waitVault.Put(ctx, path, data)
+	if err == nil && unacknowledged {
+		return errAnswerLost
+	}
+
+	return err
 }
 
 // record returns the command task record as the vault holds it.
@@ -127,6 +166,7 @@ type cmdCreateEnv struct {
 	manager *Manager
 	vault   *cmdCreateVault
 	log     *cmdLogger
+	now     *atomic.Value
 }
 
 // stubAuthorizer answers every stored check with one error.
@@ -169,8 +209,11 @@ func newCreateCmdEnv(t *testing.T, change func(*Deps)) *cmdCreateEnv {
 	manager := NewManager(log, director, vault)
 	t.Cleanup(manager.Stop)
 
+	now := &atomic.Value{}
+	now.Store(time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC))
+
 	deps := Deps{
-		Now:         func() time.Time { return time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC) },
+		Now:         func() time.Time { return now.Load().(time.Time) },
 		Commands:    func() config.CommandsConfig { return config.CommandsConfig{} },
 		WorkerCount: func(context.Context) (int, bool) { return 4, true },
 	}
@@ -185,7 +228,9 @@ func newCreateCmdEnv(t *testing.T, change func(*Deps)) *cmdCreateEnv {
 	manager.Start()
 	waitForLoad(t, manager)
 
-	return &cmdCreateEnv{manager: manager, vault: vault, log: log}
+	manager.createRetry = 5 * time.Millisecond
+
+	return &cmdCreateEnv{manager: manager, vault: vault, log: log, now: now}
 }
 
 // previewFor stores a command preview for the instances with the settings of
@@ -240,6 +285,24 @@ func expectPreviewKept(t *testing.T, e *cmdCreateEnv, previewID string) {
 	if _, err := e.manager.certDeps().Previews.GetCommand(previewID); err != nil {
 		t.Fatalf("expected the preview to be unspent, got %v", err)
 	}
+}
+
+// expectNoSpend fails the test when the preview store was ever asked to
+// spend a preview, so a peek can't pass for a spend that was put back.
+func expectNoSpend(t *testing.T, e *cmdCreateEnv) {
+	t.Helper()
+
+	if spends := e.manager.certDeps().Previews.spends.Load(); spends != 0 {
+		t.Fatalf("expected no spend, got %d", spends)
+	}
+}
+
+// expectPreviewSpent fails the test unless the preview is gone.
+func expectPreviewSpent(t *testing.T, e *cmdCreateEnv, previewID string) {
+	t.Helper()
+
+	_, err := e.manager.certDeps().Previews.GetCommand(previewID)
+	expectAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
 }
 
 // expectTasksNone fails the test when the manager holds a task or the guard
@@ -322,6 +385,10 @@ func TestCreateCommandTaskBuildsTask(t *testing.T) {
 	if node.Reviewed.Group != "redis" || node.Reviewed.Index != 0 || node.Reviewed.ID != "id-0" || node.Reviewed.CID != "cid-0" ||
 		node.Reviewed.AZ != "z1" || node.Phase != CommandPhasePending {
 		t.Fatalf("wrong first node: %+v", node)
+	}
+
+	if skipped := first.Command.VMs[1]; skipped.Reason != noVMReason || skipped.Error != "" {
+		t.Fatalf("a skipped node keeps its reason out of Error: reason %q error %q", skipped.Reason, skipped.Error)
 	}
 
 	if first.Command.VMs[1].Phase != CommandPhaseSkipped || first.Command.VMs[2].Phase != CommandPhasePending {
@@ -432,6 +499,7 @@ func TestCreateCommandTaskMismatchSpendsNothing(t *testing.T) {
 			_, _, err := env.manager.CreateCommandTask(context.Background(), req)
 			expectAPIError(t, err, http.StatusConflict, apierr.CodePreviewMismatch)
 			expectNoCommandText(t, "the error", err.Error())
+			expectNoSpend(t, env)
 			expectPreviewKept(t, env, preview.ID)
 			expectTasksNone(t, env)
 		})
@@ -500,6 +568,7 @@ func TestCreateCommandTaskAuthorizerRefuses(t *testing.T) {
 		t.Fatal("the authorizer was never asked")
 	}
 
+	expectNoSpend(t, env)
 	expectPreviewKept(t, env, preview.ID)
 	expectTasksNone(t, env)
 }
@@ -569,13 +638,89 @@ func TestCreateCommandTaskBusy(t *testing.T) {
 	expectPreviewKept(t, env, second.ID)
 }
 
-// A save that cannot be confirmed fails the create with a 500, frees every
-// reservation, leaves no task in memory, and keeps the preview for a retry.
-func TestCreateCommandTaskSaveFailureReleases(t *testing.T) {
+// expectCommandHolder fails the test unless the guard holds the instance for the
+// task as a command.
+func expectCommandHolder(t *testing.T, e *cmdCreateEnv, instanceID, taskID string) {
+	t.Helper()
+
+	holder, held := e.manager.Guard().Holder(instanceID, "")
+	if !held || holder.Kind != mutation.KindCommand || holder.TaskID != taskID {
+		t.Fatalf("expected task %s to hold %s as a command, got %+v (held %v)", taskID, instanceID, holder, held)
+	}
+}
+
+// onlyTask returns the one task the manager holds.
+func onlyTask(t *testing.T, e *cmdCreateEnv) UpgradeTask {
+	t.Helper()
+
+	tasks := e.manager.ListTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected one task in memory, got %d", len(tasks))
+	}
+
+	return *tasks[0]
+}
+
+// expectUnconfirmedCommandCreate checks what a create whose save was not
+// confirmed leaves behind and returns the task's ID. The error is a 500 that
+// holds no command text, the task is failed in memory, its instances stay
+// held, its preview stays spent, and a create for the same instances is
+// refused.
+func expectUnconfirmedCommandCreate(t *testing.T, env *cmdCreateEnv, err error, previewID string, instances ...string) string {
+	t.Helper()
+
+	expectAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+	expectNoCommandText(t, "the error", err.Error())
+	expectNoCommandText(t, "the log", env.log.text())
+
+	task := onlyTask(t, env)
+	if task.Status != TaskStatusFailed || task.CreationConfirmed {
+		t.Fatalf("expected a failed, unconfirmed task, got %q confirmed %v", task.Status, task.CreationConfirmed)
+	}
+
+	for i := range task.Instances {
+		if task.Instances[i].Status != InstanceStatusFailed || task.Instances[i].Error != createUnconfirmedMessage {
+			t.Fatalf("expected failed instances with the unconfirmed message, got %+v", task.Instances[i].Status)
+		}
+	}
+
+	for _, id := range instances {
+		expectCommandHolder(t, env, id, task.ID)
+	}
+
+	expectPreviewSpent(t, env, previewID)
+
+	return task.ID
+}
+
+// expectFailedStatusSaved heals the vault, waits until the failed status of
+// the task is saved, and checks that the instances are then free while the
+// record in Vault can never run.
+func expectFailedStatusSaved(t *testing.T, env *cmdCreateEnv, taskID string) {
+	t.Helper()
+
+	env.vault.setRules(nil, nil, false)
+
+	waitUntil(t, "the failed status of task "+taskID+" to be saved", func() bool {
+		stored, ok := env.vault.record(t, taskID)
+
+		return ok && stored.Status == TaskStatusFailed && !stored.CreationConfirmed
+	})
+
+	waitUntil(t, "the instances of task "+taskID+" to be freed", func() bool {
+		return len(env.manager.Guard().Snapshot()) == 0
+	})
+}
+
+// A first save that is refused fails the create with a 500 and leaves the
+// task failed in memory, still holding its instances, with the preview
+// spent, until a save of the failed status is confirmed. Only then are the
+// instances freed. Nothing in Vault could ever run.
+func TestCreateCommandTaskFirstSaveRefusedHoldsUntilFailedSaved(t *testing.T) {
 	t.Parallel()
 
 	env := newCreateCmdEnv(t, nil)
-	env.vault.failPuts.Store(true)
+	env.vault.setRules(func(int) bool { return true }, nil, false)
 
 	preview := env.previewFor(t, cmdReq("i1", "i3"))
 
@@ -584,22 +729,83 @@ func TestCreateCommandTaskSaveFailureReleases(t *testing.T) {
 		t.Fatal("expected the create to fail")
 	}
 
-	expectAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
-	expectNoCommandText(t, "the error", err.Error())
-	expectTasksNone(t, env)
-	expectPreviewKept(t, env, preview.ID)
-	expectNoCommandText(t, "the log", env.log.text())
+	taskID := expectUnconfirmedCommandCreate(t, env, err, preview.ID, "i1", "i3")
 
-	env.vault.failPuts.Store(false)
-
-	task, _, err := env.manager.CreateCommandTask(context.Background(), createCmdReq(preview.ID))
-	if err != nil {
-		t.Fatalf("the retry: %v", err)
+	if _, ok := env.vault.record(t, taskID); ok {
+		t.Fatal("a refused save left a record in Vault")
 	}
 
-	if task.ID == "" {
-		t.Fatal("the retry made no task")
+	expectFailedStatusSaved(t, env, taskID)
+}
+
+// A first save that is confirmed and a second that is refused outright leave
+// an unconfirmed record in Vault, which can't run. The task stays failed in
+// memory and holds its instances until the failed status is saved over it.
+func TestCreateCommandTaskSecondSaveRefused(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	env.vault.setRules(func(n int) bool { return n >= 2 }, nil, false)
+
+	preview := env.previewFor(t, cmdReq("i1", "i3"))
+
+	_, _, err := env.manager.CreateCommandTask(context.Background(), createCmdReq(preview.ID))
+	if err == nil {
+		t.Fatal("expected the create to fail")
 	}
+
+	taskID := expectUnconfirmedCommandCreate(t, env, err, preview.ID, "i1", "i3")
+
+	stored, ok := env.vault.record(t, taskID)
+	if !ok || stored.CreationConfirmed || stored.Status != TaskStatusPending {
+		t.Fatalf("expected the first save's unconfirmed pending record in Vault, got present %v confirmed %v status %q", ok, stored.CreationConfirmed, stored.Status)
+	}
+
+	expectFailedStatusSaved(t, env, taskID)
+}
+
+// The confirming save lands in Vault but is reported as an error, and its
+// read-back fails too, so the manager can't tell that a confirmed, runnable
+// record is stored. The task stays failed in memory with its instances held
+// and its preview spent, so no second task can come from the review, and the
+// failed status is saved over the confirmed record before anything frees.
+func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	env.vault.setRules(func(n int) bool { return n >= 3 }, func(n int) bool { return n == 2 }, true)
+
+	preview := env.previewFor(t, cmdReq("i1", "i3"))
+	retry := env.previewFor(t, cmdReq("i1", "i3"))
+
+	_, _, err := env.manager.CreateCommandTask(context.Background(), createCmdReq(preview.ID))
+	if err == nil {
+		t.Fatal("expected the create to fail")
+	}
+
+	taskID := expectUnconfirmedCommandCreate(t, env, err, preview.ID, "i1", "i3")
+
+	env.vault.script.Lock()
+	landed := env.vault.saved[commandTasksVaultPath+"/"+taskID]
+	env.vault.script.Unlock()
+
+	if len(landed) == 0 {
+		t.Fatal("the confirming save should have landed in Vault")
+	}
+
+	// A create from another review of the same instances is refused while
+	// the first task holds them.
+	req := createCmdReq(retry.ID)
+	req.ClientRequestID = "retry"
+
+	_, _, err = env.manager.CreateCommandTask(context.Background(), req)
+	expectAPIError(t, err, http.StatusConflict, apierr.CodeInstanceBusy)
+
+	if len(env.manager.ListTasks()) != 1 {
+		t.Fatal("the refused retry left a task behind")
+	}
+
+	expectFailedStatusSaved(t, env, taskID)
 }
 
 // A retry with the same request ID and body returns the first task, even
@@ -817,4 +1023,37 @@ func TestManagerAuthorizer(t *testing.T) {
 
 	err := unconfigured.Authorizer().AuthorizeStored(context.Background(), CommandTaskSpec{RunAs: "vcap"})
 	expectAPIError(t, err, http.StatusForbidden, apierr.CodeCommandsDisabled)
+}
+
+// The authorizer is asked before the request is matched, so a refused
+// request that also differs from its preview answers the refusal, and the
+// preview is not spent.
+func TestCreateCommandTaskAuthorizerBeforeMatch(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubAuthorizer{stored: apierr.New(http.StatusForbidden, apierr.CodeCommandsDisabled, "running commands is disabled")}
+	env := newCreateCmdEnv(t, func(d *Deps) { d.Authorizer = stub })
+	preview := env.previewFor(t, cmdReq("i1"))
+
+	req := createCmdReq(preview.ID)
+	req.Command = "echo another-marker"
+
+	_, _, err := env.manager.CreateCommandTask(context.Background(), req)
+	expectAPIError(t, err, http.StatusForbidden, apierr.CodeCommandsDisabled)
+	expectNoSpend(t, env)
+	expectPreviewKept(t, env, preview.ID)
+}
+
+// A preview that has expired answers 410 preview_expired and creates nothing.
+func TestCreateCommandTaskPreviewExpired(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	preview := env.previewFor(t, cmdReq("i1"))
+
+	env.now.Store(preview.ExpiresAt.Add(time.Second))
+
+	_, _, err := env.manager.CreateCommandTask(context.Background(), createCmdReq(preview.ID))
+	expectAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
+	expectTasksNone(t, env)
 }

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -141,6 +142,10 @@ type PreviewStore struct {
 
 	mu       sync.Mutex
 	previews map[string]storedPreview
+
+	// spends counts the calls of Spend, so a test can tell a peek from a
+	// spend that was put back.
+	spends atomic.Int64
 }
 
 // NewPreviewStore returns an empty store that tells time with now.
@@ -189,8 +194,12 @@ func (s *PreviewStore) PutCommand(p *CommandPreview, ttl time.Duration) {
 }
 
 // restoreCommand puts a spent command preview back with the expiry it had,
-// so a create that failed after the spend can be tried again. A preview that
-// has expired meanwhile stays gone.
+// so a create whose reservation failed, before any save was attempted, can
+// be tried again. A preview that has expired meanwhile stays gone. The
+// remaining window is the span between the spend and this call, one
+// critical section of the manager wide, where a create on the same preview
+// with another request ID answers 410 preview_expired although the preview
+// comes back a moment later.
 func (s *PreviewStore) restoreCommand(p *CommandPreview) {
 	now := s.now()
 
@@ -215,6 +224,8 @@ type SpentPreview struct {
 // 409 preview_mismatch and stays in the store, and one that is unknown or
 // has expired answers 410 preview_expired.
 func (s *PreviewStore) Spend(id string, kind PreviewKind) (SpentPreview, error) {
+	s.spends.Add(1)
+
 	now := s.now()
 
 	s.mu.Lock()

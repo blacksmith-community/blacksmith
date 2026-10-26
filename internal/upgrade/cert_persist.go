@@ -61,7 +61,7 @@ func (m *Manager) confirmSnapshot(ctx context.Context, snapshot taskSnapshot) er
 	}
 
 	if err != nil {
-		m.logger.Error("Could not confirm the save of certificate task %s at revision %d: %v", snapshot.task.ID, snapshot.task.Revision, err)
+		m.logger.Error("Could not confirm the save of task %s at revision %d: %v", snapshot.task.ID, snapshot.task.Revision, err)
 
 		return err
 	}
@@ -93,7 +93,7 @@ func (m *Manager) confirmRecord(ctx context.Context, snapshot taskSnapshot) erro
 			return fmt.Errorf("%w: task %s was not saved within %v: %w", ErrSaveUnconfirmed, snapshot.task.ID, persistTaskTimeout, writeErr)
 		}
 
-		m.logger.Info("Certificate task %s was not saved on write %d of %d, so it is written again: %v", snapshot.task.ID, attempt, confirmedWrites, writeErr)
+		m.logger.Info("Task %s was not saved on write %d of %d, so it is written again: %v", snapshot.task.ID, attempt, confirmedWrites, writeErr)
 	}
 
 	return fmt.Errorf("%w: task %s was not saved after %d writes: %w", ErrSaveUnconfirmed, snapshot.task.ID, confirmedWrites, writeErr)

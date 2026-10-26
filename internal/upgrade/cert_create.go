@@ -355,7 +355,7 @@ func (m *Manager) failUnconfirmedCreate(task *UpgradeTask, cause error) error {
 	}
 	m.mu.Unlock()
 
-	m.logger.Error("Certificate task %s failed, because its creation could not be confirmed: %v", task.ID, cause)
+	m.logger.Error("Task %s failed, because its creation could not be confirmed: %v", task.ID, cause)
 
 	if retry {
 		go m.saveUnconfirmedCreate(task, interval)
@@ -383,7 +383,7 @@ func (m *Manager) saveUnconfirmedCreate(task *UpgradeTask, interval time.Duratio
 			m.releaseAllLocked(task.ID)
 			m.mu.Unlock()
 
-			m.logger.Info("Saved the failed status of certificate task %s, so its instances are free", task.ID)
+			m.logger.Info("Saved the failed status of task %s, so its instances are free", task.ID)
 
 			return
 		}

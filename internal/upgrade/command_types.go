@@ -78,6 +78,7 @@ type CommandVM struct {
 	JobState        string            `json:"job_state,omitempty"`
 	Phase           CommandPhase      `json:"phase"`
 	Status          string            `json:"status,omitempty"`
+	Reason          string            `json:"reason,omitempty"`
 	ExitCode        *int              `json:"exit_code,omitempty"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	EndedAt         *time.Time        `json:"ended_at,omitempty"`

@@ -52,7 +52,11 @@ func (m *Manager) Authorizer() CommandAuthorizer {
 // The task reserves its instances and is saved twice, first with
 // CreationConfirmed false and then true, as a certificate task is. A failure
 // after the preview was spent frees every reservation, leaves no task in
-// memory, and puts the preview back so the create can be tried again.
+// memory, and puts the preview back so the create can be tried again. That
+// holds only before any save was attempted. Once a save was attempted, an
+// unconfirmed save may have landed, so the task is failed in memory, keeps
+// its reservations until a save of the failed status is confirmed, and the
+// preview stays spent.
 func (m *Manager) CreateCommandTask(ctx context.Context, req CommandCreateRequest) (*UpgradeTask, bool, error) {
 	select {
 	case <-m.loaded:
@@ -109,6 +113,8 @@ func (m *Manager) CreateCommandTask(ctx context.Context, req CommandCreateReques
 
 	err = m.reserveCertificateTask(task)
 	if err != nil {
+		// Nothing was saved, and the failed reserve took nothing, so the
+		// preview can be tried again.
 		store.restoreCommand(spent.Command)
 
 		return nil, false, err
@@ -124,17 +130,10 @@ func (m *Manager) CreateCommandTask(ctx context.Context, req CommandCreateReques
 	}
 
 	if err != nil {
-		m.abandonCommandTask(task)
-		store.restoreCommand(spent.Command)
-
-		m.logger.Error("Command task %s was not created, because its creation could not be confirmed: %v", task.ID, err)
-
-		return nil, false, &apierr.Error{
-			Status:  http.StatusInternalServerError,
-			Code:    apierr.CodeInternal,
-			Message: createUnconfirmedMessage,
-			Err:     err,
-		}
+		// A save that was not confirmed may still have landed, so the task
+		// stays held and failed until its failed status is saved, and the
+		// preview stays spent, exactly as a certificate create does.
+		return nil, false, m.failUnconfirmedCreate(task, err)
 	}
 
 	m.requests.Put(req.ClientRequestID, task.ID, digest)
@@ -190,7 +189,7 @@ func (m *Manager) newCommandTask(req CommandCreateRequest, digest string, previe
 
 			if !vm.Targeted {
 				node.Phase = CommandPhaseSkipped
-				node.Error = vm.Reason
+				node.Reason = vm.Reason
 			}
 
 			nodes = append(nodes, node)
@@ -219,14 +218,4 @@ func (m *Manager) newCommandTask(req CommandCreateRequest, digest string, previe
 		TotalCount:      len(instances),
 		CreatedAt:       m.certNow(),
 	}
-}
-
-// abandonCommandTask frees every reservation of a command task whose creation
-// failed and forgets it, so it holds nothing and is listed nowhere.
-func (m *Manager) abandonCommandTask(task *UpgradeTask) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.releaseAllLocked(task.ID)
-	delete(m.tasks, task.ID)
 }
