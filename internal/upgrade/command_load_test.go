@@ -240,6 +240,33 @@ func TestLoadedNeverStartedTaskPausesAndSendsNothing(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
+// A node the preview did not target is written as skipped at create, so a
+// record that was never started can carry one.
+func TestLoadedNeverStartedTaskWithAnUntargetedNodePauses(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 1, 2, func(_ *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+
+		node := &task.Instances[0].Command.VMs[1]
+		node.Phase = CommandPhaseSkipped
+		node.Reason = "the preview did not target this node"
+	})
+
+	paused := fix.snapshot()
+	if paused.Status != TaskStatusPaused || !paused.Paused {
+		t.Fatalf("the task is %s paused=%v, want paused", paused.Status, paused.Paused)
+	}
+
+	if got := paused.Instances[0].Error; got != commandNeverStartedMessage {
+		t.Errorf("the instance shows %q, want the never-started message", got)
+	}
+
+	if fix.owns() || len(fix.recorded()) != 0 {
+		t.Errorf("the never-started task was queued or sent %v", fix.recorded())
+	}
+
+	fix.assertNoCommandText()
+}
+
 func TestResumeOfALoadedNeverStartedTaskRunsIt(t *testing.T) {
 	fix := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
 		task.CreationConfirmed = true

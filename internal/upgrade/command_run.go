@@ -1066,8 +1066,9 @@ const commandNeverStartedMessage = "Blacksmith restarted before this task ran an
 	"the task's creation was reported as failed. Check that the command is still wanted, then resume it or cancel the task."
 
 // commandNeverStartedLocked reports whether a loaded command task sent
-// nothing yet: it is confirmed and unfinished, and every instance and every
-// node is pending. The caller holds mu.
+// nothing yet: it is confirmed and unfinished, every instance is pending,
+// and every node is pending or was skipped at create because the preview
+// did not target it. The caller holds mu.
 func commandNeverStartedLocked(task *UpgradeTask) bool {
 	if task.KindOrDefault() != TaskKindCommand || !task.CreationConfirmed || task.Paused {
 		return false
@@ -1083,7 +1084,7 @@ func commandNeverStartedLocked(task *UpgradeTask) bool {
 			return false
 		}
 
-		if slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool { return vm.Phase != CommandPhasePending }) {
+		if slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool { return vm.Phase != CommandPhasePending && vm.Phase != CommandPhaseSkipped }) {
 			return false
 		}
 	}
