@@ -801,3 +801,21 @@ func TestStagedNodeStaysHeldAcrossAPause(t *testing.T) {
 		t.Errorf("another task reserved the instance of a paused staged node, or the refusal does not name the command: %v", err)
 	}
 }
+
+func TestCommandTaskFailureInTheLastInstanceFinishesTheTaskFailed(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	fix.exits["dep-0/0"] = 2
+	fix.queue()
+
+	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool { return task.Status == TaskStatusFailed })
+
+	if done.Paused || done.Instances[0].Status != InstanceStatusFailed {
+		t.Errorf("paused=%v, instance %s, want a finished task with a failed instance", done.Paused, done.Instances[0].Status)
+	}
+
+	if got := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; !slices.Equal(phases(done.Instances[0]), got) {
+		t.Errorf("phases = %v, want %v", phases(done.Instances[0]), got)
+	}
+
+	fix.assertNoCommandText()
+}

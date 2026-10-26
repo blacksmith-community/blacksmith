@@ -138,9 +138,12 @@ func (m *Manager) CreateCommandTask(ctx context.Context, req CommandCreateReques
 
 	m.requests.Put(req.ClientRequestID, task.ID, digest)
 
-	m.mu.RLock()
+	m.mu.Lock()
+	m.owned[task.ID] = true
 	created := copyTask(task)
-	m.mu.RUnlock()
+	m.mu.Unlock()
+
+	m.enqueue(task) //nolint:contextcheck // the task outlives the request, so it is queued under the manager's context
 
 	return created, false, nil
 }

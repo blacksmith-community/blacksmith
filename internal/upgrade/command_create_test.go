@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +17,8 @@ import (
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/ssh"
+	"blacksmith/internal/bosh/sshconn"
 	"blacksmith/internal/config"
 	"blacksmith/internal/mutation"
 	"blacksmith/pkg/logger"
@@ -211,16 +215,17 @@ func (a *stubAuthorizer) AuthorizeStored(context.Context, CommandTaskSpec) error
 	return a.stored
 }
 
-// flippingAuthorizer allows every stored task until off is set, and refuses
-// every one after.
+// flippingAuthorizer allows the first allow stored checks, which are the
+// create's, and refuses every one after.
 type flippingAuthorizer struct {
 	ConfigAuthorizer
 
-	off *atomic.Bool
+	allow int32
+	calls atomic.Int32
 }
 
 func (a *flippingAuthorizer) AuthorizeStored(context.Context, CommandTaskSpec) error {
-	if a.off.Load() {
+	if a.calls.Add(1) > a.allow {
 		return errCommandsDisabled()
 	}
 
@@ -230,6 +235,16 @@ func (a *flippingAuthorizer) AuthorizeStored(context.Context, CommandTaskSpec) e
 // newCreateCmdEnv returns a loaded manager over a director with three
 // instances. Commands are on and root is off unless change says otherwise.
 func newCreateCmdEnv(t *testing.T, change func(*Deps)) *cmdCreateEnv {
+	t.Helper()
+
+	return newCreateCmdEnvParked(t, change, true)
+}
+
+// newCreateCmdEnvParked is newCreateCmdEnv with a choice about the
+// dispatcher. A created task is queued, and a parked environment holds the
+// only batch slot, so a dispatched task waits for it and stays as the create
+// left it. A test that follows a task through its run passes false.
+func newCreateCmdEnvParked(t *testing.T, change func(*Deps), park bool) *cmdCreateEnv {
 	t.Helper()
 
 	director := &cmdDirector{vms: map[string][]bosh.VM{
@@ -273,6 +288,14 @@ func newCreateCmdEnv(t *testing.T, change func(*Deps)) *cmdCreateEnv {
 	waitForLoad(t, manager)
 
 	manager.createRetry = 5 * time.Millisecond
+
+	if park {
+		manager.settingsLock.Lock()
+		manager.settings.MaxBatchJobs = 1
+		manager.settingsLock.Unlock()
+		manager.updateJobSemaphore()
+		manager.jobSemaphore <- struct{}{}
+	}
 
 	return &cmdCreateEnv{manager: manager, vault: vault, log: log, now: now}
 }
@@ -1026,16 +1049,14 @@ func TestCreateCommandTaskNeverLogsCommand(t *testing.T) {
 }
 
 // A created command task is never run as an upgrade. Once the authorizer
-// refuses it, queueing it drops it, resuming it queues nothing, pause and
+// refuses it, the queue the create put it on drops it, resuming it queues nothing, pause and
 // cancel turn it away, and the director, which panics on any call, is never
 // asked for a deploy.
 func TestCreatedCommandTaskIsNeverRunAsUpgrade(t *testing.T) {
 	t.Parallel()
 
-	var off atomic.Bool
-
 	env := newCreateCmdEnv(t, func(deps *Deps) {
-		deps.Authorizer = &flippingAuthorizer{off: &off}
+		deps.Authorizer = &flippingAuthorizer{allow: 1}
 	})
 	preview := env.previewFor(t, cmdReq("i1"))
 
@@ -1044,8 +1065,6 @@ func TestCreatedCommandTaskIsNeverRunAsUpgrade(t *testing.T) {
 		t.Fatalf("CreateCommandTask: %v", err)
 	}
 
-	off.Store(true)
-
 	live := func() *UpgradeTask {
 		env.manager.mu.RLock()
 		defer env.manager.mu.RUnlock()
@@ -1053,7 +1072,7 @@ func TestCreatedCommandTaskIsNeverRunAsUpgrade(t *testing.T) {
 		return env.manager.tasks[task.ID]
 	}()
 
-	env.manager.enqueue(live)
+	// The create queued the task, and the dispatcher's gate now refuses it.
 	env.manager.resumeIfReady(live)
 
 	if err := env.manager.PauseTask(context.Background(), task.ID); !errors.Is(err, ErrTaskNotRunning) {
@@ -1143,4 +1162,72 @@ func TestCreateCommandTaskPreviewExpired(t *testing.T) {
 	_, _, err := env.manager.CreateCommandTask(context.Background(), createCmdReq(preview.ID))
 	expectAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
 	expectTasksNone(t, env)
+}
+
+// createRunSession answers the operations of a created command task's nodes
+// with success and records them.
+func createRunSession(seq *atomic.Int64, hosts []sshconn.Host) *runSession {
+	return &runSession{seq: seq, hosts: hosts, answer: func(_ context.Context, call runCall) (ssh.Result, error) {
+		switch call.op {
+		case opRunPrepare:
+			return ssh.Result{Stdout: []byte("staged bytes=" + strconv.Itoa(len(secretCommand)) + " sha256=" + commandDigest(secretCommand) + "\n")}, nil
+		case opRunCleanup:
+			return ssh.Result{Stdout: []byte(runCleanupDone + "\n")}, nil
+		}
+
+		return ssh.Result{}, nil
+	}}
+}
+
+// A created command task is queued by the create, dispatched while the
+// authorizer passes, and runs its nodes in order to the end, with no deploy.
+func TestCreatedCommandTaskIsDispatchedAndRuns(t *testing.T) {
+	t.Parallel()
+
+	var seq atomic.Int64
+
+	sess := createRunSession(&seq, []sshconn.Host{
+		{Job: "redis", IndexOrID: "0", Address: "10.0.0.4"},
+		{Job: "redis", IndexOrID: "1", Address: "10.0.0.5"},
+		{Job: "redis", IndexOrID: "2", Address: "10.0.0.6"},
+	})
+
+	env := newCreateCmdEnvParked(t, func(deps *Deps) {
+		deps.CommandRunner = func(context.Context, string, string, []int) (PatchSession, error) { return sess, nil }
+	}, false)
+	preview := env.previewFor(t, cmdReq("i1"))
+
+	task, _, err := env.manager.CreateCommandTask(context.Background(), createCmdReq(preview.ID))
+	if err != nil {
+		t.Fatalf("CreateCommandTask: %v", err)
+	}
+
+	waitUntil(t, "the created task to finish", func() bool {
+		return taskCopy(t, env.manager, task.ID).Status == TaskStatusCompleted
+	})
+
+	cycle := []string{opSudoCheck, opRunPrepare, opRunExec, opRunCleanup}
+	if got, want := sess.ops(), append(slices.Clone(cycle), cycle...); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want two nodes in order, the node with no CID skipped", got)
+	}
+
+	done := taskCopy(t, env.manager, task.ID)
+	if done.Instances[0].Status != InstanceStatusSuccess {
+		t.Errorf("the instance is %s, want success", done.Instances[0].Status)
+	}
+
+	if text := env.log.text(); strings.Contains(text, "PANIC") {
+		t.Errorf("the run panicked, which a deploy through the panicking director would: %s", text)
+	}
+
+	expectNoCommandText(t, "the log", env.log.text())
+
+	env.vault.waitVault.mu.Lock()
+	defer env.vault.waitVault.mu.Unlock()
+
+	for path, raw := range env.vault.waitVault.saved {
+		if path != commandTasksVaultPath+"/"+task.ID {
+			expectNoCommandText(t, "the Vault record at "+path, string(raw))
+		}
+	}
 }
