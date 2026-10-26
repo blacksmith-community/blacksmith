@@ -116,8 +116,9 @@
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', background);
     const next = (highContrast ? 'high-contrast-' : '') + (dark ? 'light' : 'dark');
     const button = document.getElementById('themeToggle');
-    button?.setAttribute('aria-label', 'Switch to ' + THEME_NAMES[next] + ' theme');
-    if (button) button.title = 'Switch light/dark within the current theme. Find all themes in Quick Navigation.';
+    button?.setAttribute('aria-label', 'Choose appearance theme');
+    button?.setAttribute('aria-haspopup', 'dialog');
+    if (button) button.title = 'Choose appearance theme';
     const text = document.getElementById('themeText');
     if (text) text.textContent = THEME_NAMES[theme];
     const sun = document.querySelector('.sun-icon');
@@ -136,6 +137,7 @@
   };
 
   const toggleTheme = () => {
+    if (window.blacksmithActionHelp) { window.blacksmithActionHelp.openThemes(); return; }
     const dark = document.documentElement.getAttribute('data-theme') === 'dark';
     const highContrast = document.documentElement.getAttribute('data-contrast') === 'high';
     window.blacksmithTheme.setPreference((highContrast ? 'high-contrast-' : '') + (dark ? 'light' : 'dark'));
@@ -22625,89 +22627,31 @@
         this.sessions.forEach((session, sessionKey) => {
           const tab = document.createElement('div');
           tab.className = `minimized-terminal-tab rounded ${sessionKey === this.activeSession ? 'active ' : ''}`;
-          tab.innerHTML = `
-            <svg class="minimized-terminal-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-              <line x1="8" y1="21" x2="16" y2="21"></line>
-              <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
-            <span class="${session.context.deploymentType === 'blacksmith' ? 'blacksmith-prefix' : 'service-prefix'}">[${session.context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}]</span>
-            ${session.context.deploymentName}/${session.context.instanceId}
-            <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
-          `;
-
-          // Add hover tooltip functionality
-          let tooltipTimeout;
-          let tooltip;
-
-          const cleanupTooltip = () => {
-            clearTimeout(tooltipTimeout);
-            if (tooltip && tooltip.parentNode) {
-              tooltip.remove();
-              tooltip = null;
-            }
-          };
-
-          tab.addEventListener('mouseenter', (e) => {
-            cleanupTooltip();
-            tooltipTimeout = setTimeout(() => {
-              tooltip = document.createElement('div');
-              tooltip.className = 'terminal-tab-tooltip';
-              tooltip.style.cssText = `
-                position: fixed;
-                background: var(--bg-tertiary, #1f2937);
-                color: var(--text-primary, #f3f4f6);
-                font-size: 12px;
-                padding: 6px 12px;
-                border-radius: 4px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-                z-index: 10001;
-                pointer-events: none;
-                white-space: nowrap;
-                opacity: 0;
-                transition: opacity 0.2s ease-in-out;
-                border: 1px solid var(--border-primary, #374151);
-              `;
-
-              const connectionStatus = session.websocket && session.websocket.readyState === WebSocket.OPEN ? '●' : '●';
-              const statusColor = session.websocket && session.websocket.readyState === WebSocket.OPEN ?
-                'var(--text-success, #10b981)' : 'var(--text-error, #ef4444)';
-
-              const deploymentName = session.context.boshDeploymentName || session.context.deploymentName;
-              const instanceName = session.context.instanceName || session.context.instanceId;
-
-              tooltip.innerHTML = `
-                <span style="color: ${statusColor};">${connectionStatus}</span> ${deploymentName} / ${instanceName}
-              `;
-
-              document.body.appendChild(tooltip);
-
-              const rect = tab.getBoundingClientRect();
-              const tooltipRect = tooltip.getBoundingClientRect();
-              tooltip.style.left = `${Math.max(10, rect.left + rect.width / 2 - tooltipRect.width / 2)}px`;
-              tooltip.style.top = `${Math.max(10, rect.top - tooltipRect.height - 8)}px`;
-
-              requestAnimationFrame(() => {
-                if (tooltip) tooltip.style.opacity = '1';
-              });
-            }, 500);
+          const identity = `${session.context.boshDeploymentName || session.context.deploymentName}/${session.context.instanceName || session.context.instanceId}`;
+          const connected = session.websocket?.readyState === WebSocket.OPEN;
+          const open = document.createElement('button');
+          open.type = 'button';
+          open.className = 'minimized-session-open';
+          open.setAttribute('aria-label', `Restore terminal ${identity}`);
+          open.title = `Restore terminal ${identity} · ${connected ? 'Connected' : 'Disconnected'}`;
+          const name = document.createElement('span');
+          name.className = 'minimized-session-label';
+          name.textContent = `${session.context.deploymentType === 'blacksmith' ? '[Broker]' : '[Instance]'} ${identity}`;
+          open.appendChild(name);
+          open.addEventListener('click', () => {
+            this.switchToSession(sessionKey);
+            this.restoreAll();
           });
-
-          tab.addEventListener('mouseleave', cleanupTooltip);
-
-          const originalRemove = tab.remove.bind(tab);
-          tab.remove = function() {
-            cleanupTooltip();
-            originalRemove();
-          };
-
-          // Click to activate session and restore
-          tab.onclick = (e) => {
-            if (!e.target.classList.contains('tab-close')) {
-              this.switchToSession(sessionKey);
-              this.restoreAll();
-            }
-          };
+          const status = document.createElement('span');
+          status.className = 'minimized-session-status';
+          status.textContent = connected ? 'Connected' : 'Disconnected';
+          const close = document.createElement('button');
+          close.type = 'button'; close.className = 'tab-close';
+          close.textContent = '×';
+          close.title = `Close terminal ${identity}`;
+          close.setAttribute('aria-label', close.title);
+          close.addEventListener('click', event => this.closeSession(sessionKey, event));
+          tab.append(open, status, close);
 
           minimizedTabs.appendChild(tab);
         });

@@ -1,0 +1,42 @@
+/* Oat's built-in tooltip migrates title to data-tooltip. Keep that compatibility,
+   but show only the hoverable/focus-described help supplied by action-help.js. */
+.blacksmith-action-help .ot-tooltip { visibility: hidden !important; pointer-events: none !important; }
+/* Action help shares the active theme and remains inside modal top layers. */
+.action-tooltip {
+  position: fixed; z-index: 20000; max-width: min(24rem, calc(100vw - 16px));
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--foreground); color: var(--background); font-size: .8125rem;
+  line-height: 1.4; overflow-wrap: anywhere; box-shadow: 0 2px 8px #0003;
+  pointer-events: auto;
+}
+.theme-choice-dialog { width: min(26rem, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); }
+.theme-choice-dialog::backdrop { background: #0007; }
+.theme-choice-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0; margin: 0 0 10px; background: transparent; color: inherit; }
+.theme-choice-dialog h2 { margin: 0; font-size: 1.125rem; }
+.theme-choice-dialog p { margin: 0 0 12px; }
+.theme-choice-dialog [data-close] { min-width: 32px; min-height: 32px; padding: 2px 8px; }
+.theme-choices { display: grid; gap: 6px; }
+.theme-choices button { text-align: left; white-space: normal; }
+.theme-choices [aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 3px 0 var(--primary); font-weight: 700; }
+.action-label-setting { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+[data-icon-help]::after { display: none; }
+body[data-action-labels] [data-icon-help] { width: auto !important; max-width: 100%; gap: 6px; }
+body[data-action-labels] [data-icon-help]::after { display: inline; content: attr(data-action-help); font-size: .8125rem; white-space: normal; }
+@media (hover: none) and (pointer: coarse) {
+  [data-icon-help] { width: auto !important; min-height: 40px; max-width: 100%; gap: 6px; }
+  [data-icon-help]::after { display: inline; content: attr(data-action-help); font-size: .8125rem; white-space: normal; }
+}
+.minimized-terminal-tab { display: inline-flex; align-items: center; gap: 4px; }
+.minimized-terminal-tab .minimized-session-open { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 24rem; padding: 4px 6px; background: transparent; color: inherit; border: 0; }
+.minimized-terminal-tab .minimized-session-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.minimized-terminal-tab .tab-close { flex: none; min-width: 28px; min-height: 28px; padding: 2px 6px; }
+@media (forced-colors: active) {
+  .action-tooltip { background: Canvas; color: CanvasText; border-color: CanvasText; }
+  .theme-choices [aria-pressed="true"] { outline: 2px solid Highlight; }
+}
+
+/* Appearance changes stay immediately readable rather than cross-fading colors. */
+.theme-choice-dialog { transition: none; }
+.theme-choice-dialog button { background: var(--card); color: var(--foreground); border: 1px solid var(--border); transition: none; }
+.theme-choice-dialog button:hover { background: var(--secondary); }
+.theme-choice-dialog .theme-choices [aria-pressed="true"] { background: var(--secondary); border-color: var(--primary); }
