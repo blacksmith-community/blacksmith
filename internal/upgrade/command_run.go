@@ -855,6 +855,14 @@ func (m *Manager) holdAndSave(ctx context.Context, task *UpgradeTask, inst *Inst
 	err := m.persistCertConfirmed(ctx, task)
 	if err != nil {
 		m.logger.Error("Command task %s is cancelled and holds instance %s, but the hold could not be confirmed in Vault", task.ID, inst.InstanceID)
+
+		// The hold stands in memory. The text says that Vault may not
+		// have it, so the operator knows a restart can lose it.
+		m.mu.Lock()
+		if commandInstanceHeldLocked(inst) {
+			inst.Error += " The hold is not confirmed in Vault, so a restart may not find the task waiting."
+		}
+		m.mu.Unlock()
 	}
 }
 

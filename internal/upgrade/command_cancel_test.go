@@ -1014,3 +1014,31 @@ func TestCommandCancelOfAPausedTaskRewordsTheHeldInstance(t *testing.T) {
 	fix.wantBusy()
 	fix.assertNoCommandText()
 }
+
+// A hold that Vault will not confirm is said on the instance, so the
+// operator knows a restart may not find the task waiting.
+func TestCommandCancelSaysWhenTheHoldIsNotConfirmed(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	script := fix.blockExec()
+	script.cleanupDown.Store(true)
+
+	fix.queue()
+	script.wait(t, 1)
+
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = CommandPhaseSent
+	fix.vault.mu.Unlock()
+
+	fix.cancel()
+
+	held := fix.waitFor("the task to wait for a resume", func(task UpgradeTask) bool {
+		return task.Paused && strings.Contains(task.Instances[0].Error, "not confirmed")
+	})
+
+	if text := held.Instances[0].Error; !strings.Contains(text, "held pending cleanup on redis/0") {
+		t.Errorf("the status text is %q, want it to keep saying what the instance waits for", text)
+	}
+
+	fix.wantBusy()
+	fix.assertNoCommandText()
+}
