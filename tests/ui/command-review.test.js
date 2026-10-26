@@ -981,3 +981,78 @@ t('leaving for Activity while Discard reads the list drops the answer',async()=>
  expect(next(env).disabled).toBe(false);
  }finally{w.close();}
 });
+
+// ---- Discard: fix round 1 ----
+
+t('a stale Discard read does not leave the next review stuck',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ let release;const gate=new Promise((r)=>{release=r;});
+ pendingRoutes(env,[()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve([])}))})]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(10);
+ d.getElementById('batch-activity').click();await sleep(5);
+ d.getElementById('batch-new').click();
+ // The read is still held open.
+ next(env).click();await sleep(30);
+ expect(next(env).textContent).toBe('Retry');
+ expect(next(env).disabled).toBe(false);
+ expect(discardBtn(env).disabled).toBe(false);
+ release();await sleep(30);
+ expect(w.__T.batchFlow.step).toBe(3);
+ expect(next(env).disabled).toBe(false);
+ }finally{w.close();}
+});
+
+t('Discard and Discard anyway wait while a Retry is in flight',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ let release;const gate=new Promise((r)=>{release=r;});
+ pendingRoutes(env,[reject]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(30);
+ expect(anywayBtn(env).parentElement.hidden).toBe(false);
+ // Hold the next create open.
+ w.__routes.unshift([CREATE_URL,(u,o,j)=>{
+  if((o.method||'GET')!=='POST') return undefined;
+  env.requests.push({url:CREATE_URL,headers:o.headers||{},body:JSON.parse(o.body)});
+  return gate.then(()=>j(201,{id:'task-9'}));
+ }]);
+ next(env).click();await sleep(10);
+ expect(discardBtn(env).disabled).toBe(true);
+ expect(anywayBtn(env).disabled).toBe(true);
+ release();await sleep(40);
+ }finally{w.close();}
+});
+
+t('a Discard with no run found keeps the Activity output key',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ pendingRoutes(env,[[200,[]]]);
+ await pendingReview(env);
+ const held=d.createElement('input');held.type='password';held.className='command-output-key';held.value=KEY;d.querySelector('#upgrade').appendChild(held);
+ discardBtn(env).click();await sleep(40);
+ expect(w.__T.batchFlow.step).toBe(1);
+ expect(held.value===KEY).toBe(true);
+ }finally{w.close();}
+});
+
+t('Discard anyway reads again and a run that appeared settles as started',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ pendingRoutes(env,[reject,(id)=>[200,[summaryOf(id)]]]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(30);
+ expect(anywayBtn(env).parentElement.hidden).toBe(false);
+ anywayBtn(env).click();await sleep(50);
+ expect(env.listReads>=2).toBe(true);
+ expect(d.body.textContent.includes('already started')).toBe(true);
+ expect(d.getElementById('command-discard-note')===null).toBe(true);
+ expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
+ expect(creates(env).length).toBe(1);
+ }finally{w.close();}
+});
+
+t('the Discard button uses the outline style that Back uses',async()=>{
+ const env=await setup();const {w}=env;try{
+ pendingRoutes(env,[[200,[]]]);
+ await pendingReview(env);
+ expect(discardBtn(env).classList.contains('outline')).toBe(true);
+ }finally{w.close();}
+});

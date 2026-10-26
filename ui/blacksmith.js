@@ -2793,6 +2793,7 @@
     const text = show ? batchSelectionText(batchFlow.step === 2) : '';
     if (node.textContent !== text) node.textContent = text;
   };
+  const discardReading = () => Boolean(commandDiscarding && commandDiscarding === batchFlow.review);
   const updateBatchFlow = () => {
     if (!batchFlow.installed) return;
     // Any change to what a command review froze drops that review.
@@ -2827,6 +2828,7 @@
     });
     const back = document.getElementById('batch-flow-back');
     back.hidden = step === 0; back.disabled = batchFlow.submitting || commandLocked;
+    document.querySelectorAll('#command-discard, #command-discard-anyway').forEach((button) => { button.disabled = batchFlow.submitting || discardReading(); });
     const next = document.getElementById('batch-flow-next');
     const issue = step === 1 ? batchOptionIssue() : step === 2 ? batchInstanceIssue() : '';
     const review = batchFlow.review;
@@ -2834,7 +2836,7 @@
     const acknowledged = !needsWord || confirmWordMatches(document.getElementById('batch-flow-ack')?.value, needsWord);
     const blocker = step === 3 && review?.options.blocker ? review.options.blocker() : '';
     next.textContent = batchFlow.submitting ? 'Starting…' : batchFlow.loading ? 'Preparing review…' : step === 3 ? (review?.options.confirmText || 'Refresh review') : ['Next: Options','Next: Instances','Review operation'][step];
-    next.disabled = batchFlow.submitting || batchFlow.loading || commandDiscarding || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
+    next.disabled = batchFlow.submitting || batchFlow.loading || discardReading() || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
     next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
     const helpText = issue || blocker || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
@@ -2845,6 +2847,7 @@
   const setBatchStep = (step, focus = true) => {
     if (!batchFlow.installed || batchFlow.submitting) return;
     if (batchFlow.review) { batchFlow.review.resolve(false); batchFlow.review = null; }
+    commandDiscarding = null;
     clearCommandRun();
     // The command text leaves the page with its review.
     if (upgradeOperation === 'command' && step !== 3) document.getElementById('batch-flow-review')?.replaceChildren();
@@ -3600,8 +3603,9 @@
   let commandPending = null;
   // Whether the controls a pending create must not change are locked now.
   let commandLocked = false;
-  // True while Discard reads the task list, so Retry and Discard wait.
-  let commandDiscarding = false;
+  // The review whose Discard is reading the task list, or null. Retry and
+  // Discard wait while it is the open review.
+  let commandDiscarding = null;
   // What a discard tells the operator at the options step, or an empty string.
   let commandDiscardNote = '';
 
@@ -4741,6 +4745,7 @@
   // Drops an open command review when the operator leaves the flow. The
   // key and its input are cleared. A pending create stays, without the key.
   const dropCommandReview = () => {
+    commandDiscarding = null;
     clearCommandRun();
     const input = document.getElementById('command-credential');
     if (input) input.value = '';
@@ -4784,7 +4789,7 @@
   // be read offers Discard anyway, since the broker cannot say either way.
   const buildCommandDiscard = (clientRequestId, revision) => {
     const area = rotateEl('div', 'command-discard');
-    const discard = rotateEl('button', 'btn-secondary btn-sm', 'Discard');
+    const discard = rotateEl('button', 'outline', 'Discard');
     discard.type = 'button';
     discard.id = 'command-discard';
     const unconfirmed = rotateEl('div', 'command-discard-unconfirmed');
@@ -4800,7 +4805,7 @@
 
     const stillOpen = (open) => open === batchFlow.review && revision === batchFlow.revision;
     const finish = (open, found) => {
-      commandDiscarding = false;
+      commandDiscarding = null;
       if (found) {
         batchFlow.review = null;
         batchFlow.submitting = true;
@@ -4809,7 +4814,6 @@
         return;
       }
       commandPending = null;
-      clearCommandOutputKey();
       commandDiscardNote = 'The request was discarded and no run from it was found. A run that appears later in Activity would have come from it.';
       // This clears the key and the frozen review, and ends the open review.
       setBatchStep(1, false);
@@ -4818,9 +4822,7 @@
     const run = async (force) => {
       const open = batchFlow.review;
       if (!open || commandDiscarding || !stillOpen(open)) return;
-      commandDiscarding = true;
-      discard.disabled = true;
-      anyway.disabled = true;
+      commandDiscarding = open;
       updateBatchFlow();
       let found = false;
       let listed = false;
@@ -4837,12 +4839,10 @@
       } catch (err) {
         listed = false;
       }
-      if (!stillOpen(open)) { commandDiscarding = false; updateBatchFlow(); return; }
+      if (!stillOpen(open)) { if (commandDiscarding === open) commandDiscarding = null; updateBatchFlow(); return; }
       if (found) { finish(open, true); return; }
       if (listed || force) { finish(open, false); return; }
-      commandDiscarding = false;
-      discard.disabled = false;
-      anyway.disabled = false;
+      commandDiscarding = null;
       unconfirmed.hidden = false;
       updateBatchFlow();
     };
