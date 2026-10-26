@@ -762,3 +762,46 @@ func TestCommandCancelKeepsPartialOutputWhenCleanupFails(t *testing.T) {
 	fix.waitReleased()
 	fix.assertNoCommandText()
 }
+
+// lastSaved returns the task as the last write to Vault holds it.
+func (f *taskFixture) lastSaved() UpgradeTask {
+	saves := f.vault.savedTasks()
+	if len(saves) == 0 {
+		f.t.Fatal("nothing was saved to Vault")
+	}
+
+	return saves[len(saves)-1].task
+}
+
+// A resume that can't reach the node holds the task again, and the hold is
+// saved, so a restart finds the task waiting for a resume.
+func TestCommandCancelResumeThatCannotCleanSavesTheHold(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	script := fix.blockExec()
+	script.cleanupDown.Store(true)
+
+	fix.queue()
+	script.wait(t, 1)
+	fix.cancel()
+	fix.waitFor("the task to wait for a resume", func(task UpgradeTask) bool { return task.Paused })
+	waitUntil(t, "the processor to let go", func() bool { return !fix.owned() })
+
+	fix.resume()
+
+	if fix.lastSaved().Paused {
+		t.Fatal("the resume saved the task as paused")
+	}
+
+	waitUntil(t, "the resume to hold the task again", func() bool { return fix.snapshot().Paused })
+	waitUntil(t, "the hold to be saved", func() bool {
+		saved := fix.lastSaved()
+
+		return saved.Paused && strings.Contains(saved.Instances[0].Error, "held pending cleanup on redis/0")
+	})
+
+	if saved := fix.lastSaved(); saved.Status != TaskStatusCancelled || nodeOf(saved, 0, 0).Phase != CommandPhaseSent {
+		t.Errorf("the saved task is %s with its node %s, want cancelled with the node sent", saved.Status, nodeOf(saved, 0, 0).Phase)
+	}
+
+	fix.assertNoCommandText()
+}

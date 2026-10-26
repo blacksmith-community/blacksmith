@@ -805,14 +805,20 @@ func (r *commandRun) strand(ctx context.Context, outcome commandOutcome) bool {
 		r.m.mu.Unlock()
 	}
 
-	r.m.holdCancelledCommand(r.task, r.inst)
-
-	err := r.m.persistCertConfirmed(ctx, r.task)
-	if err != nil {
-		r.m.logger.Error("Command task %s is cancelled and holds instance %s, but the hold could not be confirmed in Vault", r.task.ID, r.inst.InstanceID)
-	}
+	r.m.holdAndSave(ctx, r.task, r.inst)
 
 	return true
+}
+
+// holdAndSave holds the cancelled task for a resume, as holdCancelledCommand
+// does, and saves the hold, so a restart finds the task waiting.
+func (m *Manager) holdAndSave(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
+	m.holdCancelledCommand(task, inst)
+
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.logger.Error("Command task %s is cancelled and holds instance %s, but the hold could not be confirmed in Vault", task.ID, inst.InstanceID)
+	}
 }
 
 // commandErrorText makes an error fit a node's record, as one short line
@@ -1662,7 +1668,7 @@ func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade
 	defer func() {
 		if r := recover(); r != nil {
 			m.logger.Error("PANIC while command task %s cleaned up instance %s (%T)", task.ID, inst.InstanceID, r)
-			m.holdCancelledCommand(task, inst)
+			m.holdAndSave(context.WithoutCancel(m.ctx), task, inst)
 		}
 	}()
 
@@ -1672,7 +1678,7 @@ func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade
 	defer sessions.close()
 
 	if m.settleStrandedNodes(m.ctx, sessions, task, inst) {
-		m.holdCancelledCommand(task, inst)
+		m.holdAndSave(context.WithoutCancel(m.ctx), task, inst)
 
 		return
 	}
