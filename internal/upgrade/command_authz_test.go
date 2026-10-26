@@ -43,7 +43,7 @@ func wantAPIError(t *testing.T, err error, status int, code string) {
 
 	var apiErr *apierr.Error
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("error is %v, want an *apierr.Error with code %s", err, code)
+		t.Fatalf("error is %T, want an *apierr.Error with code %s", err, code)
 	}
 
 	if apiErr.Status != status || apiErr.Code != code {
@@ -77,6 +77,11 @@ func TestAuthorizeRequest(t *testing.T) {
 		{name: "root, allow_root false", cfg: commandsConfig(nil, boolPtr(false), ""), runAs: "root", status: 403, code: "root_disabled"},
 		{name: "vcap, allow_root unset", cfg: commandsConfig(nil, nil, ""), runAs: "vcap"},
 		{name: "root, allow_root true", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "root"},
+		{name: "empty user", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "", status: 400, code: "invalid_run_user"},
+		{name: "Root cased", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "Root", status: 400, code: "invalid_run_user"},
+		{name: "padded vcap", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: " vcap", status: 400, code: "invalid_run_user"},
+		{name: "VCAP cased", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "VCAP", status: 400, code: "invalid_run_user"},
+		{name: "unknown user admin", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "admin", status: 400, code: "invalid_run_user"},
 		{name: "key configured, header missing", cfg: commandsConfig(nil, nil, testCommandKey), runAs: "vcap", status: 401, code: "command_credential_required"},
 		{name: "key configured, header empty", cfg: commandsConfig(nil, nil, testCommandKey), runAs: "vcap", header: strPtr(""), status: 401, code: "command_credential_required"},
 		{name: "key configured, header wrong", cfg: commandsConfig(nil, nil, testCommandKey), runAs: "vcap", header: strPtr(testCommandWrong), status: 401, code: "command_credential_required"},
@@ -120,6 +125,10 @@ func TestAuthorizeStored(t *testing.T) {
 		{name: "vcap, enabled false", cfg: commandsConfig(boolPtr(false), nil, ""), runAs: "vcap", code: "commands_disabled"},
 		{name: "root, enabled false", cfg: commandsConfig(boolPtr(false), boolPtr(true), ""), runAs: "root", code: "commands_disabled"},
 		{name: "vcap, credential configured is not checked", cfg: commandsConfig(nil, nil, testCommandKey), runAs: "vcap"},
+		{name: "empty user", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "", code: "invalid_run_user"},
+		{name: "Root cased", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "Root", code: "invalid_run_user"},
+		{name: "padded vcap", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: " vcap", code: "invalid_run_user"},
+		{name: "VCAP cased", cfg: commandsConfig(nil, boolPtr(true), ""), runAs: "VCAP", code: "invalid_run_user"},
 	}
 
 	for _, row := range table {
@@ -137,7 +146,12 @@ func TestAuthorizeStored(t *testing.T) {
 				return
 			}
 
-			wantAPIError(t, err, 403, row.code)
+			status := http.StatusForbidden
+			if row.code == "invalid_run_user" {
+				status = http.StatusBadRequest
+			}
+
+			wantAPIError(t, err, status, row.code)
 		})
 	}
 }
@@ -203,19 +217,50 @@ func TestAuthorizerReadsConfigOnEveryCall(t *testing.T) {
 	wantAPIError(t, authz.AuthorizeRead(ctx, authzRequest(nil)), 403, "commands_disabled")
 }
 
+func TestNilSwitchesFailClosed(t *testing.T) {
+	t.Parallel()
+
+	authz := NewConfigAuthorizer(nil)
+	ctx := context.Background()
+
+	wantAPIError(t, authz.AuthorizeRequest(ctx, authzRequest(nil), "vcap"), 403, "commands_disabled")
+	wantAPIError(t, authz.AuthorizeRead(ctx, authzRequest(nil)), 403, "commands_disabled")
+	wantAPIError(t, authz.AuthorizeStored(ctx, CommandTaskSpec{RunAs: "vcap"}), 403, "commands_disabled")
+}
+
 func TestAuthorizerErrorsNeverCarrySecrets(t *testing.T) {
 	t.Parallel()
 
 	authz := NewConfigAuthorizer(func() config.CommandsConfig { return commandsConfig(nil, nil, testCommandKey) })
+	ctx := context.Background()
 
-	err := authz.AuthorizeRequest(context.Background(), authzRequest(strPtr(testCommandWrong)), "vcap")
-	if err == nil {
-		t.Fatal("expected a refusal")
+	cases := map[string]error{
+		"request, wrong header":   authz.AuthorizeRequest(ctx, authzRequest(strPtr(testCommandWrong)), "vcap"),
+		"request, missing header": authz.AuthorizeRequest(ctx, authzRequest(nil), "vcap"),
+		"request, empty header":   authz.AuthorizeRequest(ctx, authzRequest(strPtr("")), "vcap"),
+		"read, wrong header":      authz.AuthorizeRead(ctx, authzRequest(strPtr(testCommandWrong))),
+		"read, missing header":    authz.AuthorizeRead(ctx, authzRequest(nil)),
 	}
 
-	for _, secret := range []string{testCommandKey, testCommandWrong} {
-		if strings.Contains(err.Error(), secret) {
-			t.Fatal("error message carries a credential")
+	for name, err := range cases {
+		if err == nil {
+			t.Fatalf("%s: expected a refusal", name)
 		}
+
+		for _, secret := range []string{testCommandKey, testCommandWrong} {
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("%s: error message carries a credential", name)
+			}
+		}
+	}
+}
+
+func TestLengthDifferingKeysAreRefused(t *testing.T) {
+	t.Parallel()
+
+	authz := NewConfigAuthorizer(func() config.CommandsConfig { return commandsConfig(nil, nil, testCommandKey) })
+
+	for _, header := range []string{testCommandKey + "x", testCommandKey[:len(testCommandKey)-1]} {
+		wantAPIError(t, authz.AuthorizeRead(context.Background(), authzRequest(&header)), 401, "command_credential_required")
 	}
 }

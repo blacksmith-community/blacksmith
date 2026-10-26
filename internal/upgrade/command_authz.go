@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
 
@@ -13,8 +14,11 @@ import (
 // is never read from the JSON body.
 const CommandKeyHeader = "X-Blacksmith-Command-Key"
 
-// runAsRoot is the stored run-as user that the root switch governs.
-const runAsRoot = "root"
+// The only users a command may run as. Anything else is refused.
+const (
+	runAsRoot = "root"
+	runAsVcap = "vcap"
+)
 
 // CommandAuthorizer decides whether a command request may go ahead, and
 // whether a stored command task may still run. A later RBAC or OAuth
@@ -42,8 +46,16 @@ type ConfigAuthorizer struct {
 	switches func() config.CommandsConfig
 }
 
-// NewConfigAuthorizer returns an authorizer that reads switches on every call.
+// NewConfigAuthorizer returns an authorizer that reads switches on every
+// call. A nil switches function turns commands off.
 func NewConfigAuthorizer(switches func() config.CommandsConfig) *ConfigAuthorizer {
+	if switches == nil {
+		off := false
+		switches = func() config.CommandsConfig {
+			return config.CommandsConfig{Operation: config.CommandSwitch{On: &off}}
+		}
+	}
+
 	return &ConfigAuthorizer{switches: switches}
 }
 
@@ -90,7 +102,12 @@ func checkFeatureAndCredential(cfg config.CommandsConfig, r *http.Request) error
 		return nil
 	}
 
-	if subtle.ConstantTimeCompare([]byte(r.Header.Get(CommandKeyHeader)), []byte(key)) != 1 {
+	// Hashing both sides gives the comparison equal-length inputs, so its
+	// timing does not reveal the length of the key.
+	got := sha256.Sum256([]byte(r.Header.Get(CommandKeyHeader)))
+	want := sha256.Sum256([]byte(key))
+
+	if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
 		return apierr.New(http.StatusUnauthorized, apierr.CodeCommandCredentialRequired,
 			"a valid command key is required in the "+CommandKeyHeader+" header")
 	}
@@ -98,14 +115,23 @@ func checkFeatureAndCredential(cfg config.CommandsConfig, r *http.Request) error
 	return nil
 }
 
-// checkRoot refuses a run as root when root runs are off.
+// checkRoot allows only the known users, and allows root only when root
+// runs are on.
 func checkRoot(cfg config.CommandsConfig, runAs string) error {
-	if runAs == runAsRoot && !cfg.RootAllowed() {
+	switch runAs {
+	case runAsVcap:
+		return nil
+	case runAsRoot:
+		if cfg.RootAllowed() {
+			return nil
+		}
+
 		return apierr.New(http.StatusForbidden, apierr.CodeRootDisabled,
 			"running commands as root is disabled")
+	default:
+		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidRunUser,
+			"commands run as root or vcap")
 	}
-
-	return nil
 }
 
 func errCommandsDisabled() error {
