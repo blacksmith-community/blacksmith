@@ -56,10 +56,14 @@ func (v *CommandVM) identity() CommandVMIdentity {
 	return v.Reviewed
 }
 
+// errNoCommandRunner is what a command node fails with when the broker
+// cannot open SSH sessions.
+var errNoCommandRunner = errors.New("blacksmith has no SSH runner for commands")
+
 // newCommandSessions returns the sessions one deployment's command nodes
 // share, one for each instance group.
 func (m *Manager) newCommandSessions(deployment string) *patchSessions {
-	return &patchSessions{open: m.certDeps().CommandRunner, deployment: deployment, log: m.logger, byGroup: make(map[string]PatchSession)}
+	return &patchSessions{open: m.certDeps().CommandRunner, deployment: deployment, log: m.logger, missing: errNoCommandRunner, byGroup: make(map[string]PatchSession)}
 }
 
 // commandOutcome is how one node ended.

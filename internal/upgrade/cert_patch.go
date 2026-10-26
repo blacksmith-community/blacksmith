@@ -252,6 +252,9 @@ type patchSessions struct {
 	open       func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error)
 	deployment string
 	log        logger.Logger
+	// missing is what group returns when there is no way to open a
+	// session. It defaults to errNoPatchRunner.
+	missing error
 
 	mu      sync.Mutex
 	byGroup map[string]PatchSession
@@ -272,7 +275,7 @@ func (s *patchSessions) group(ctx context.Context, group string, indices []int) 
 	}
 
 	if s.open == nil {
-		return nil, errNoPatchRunner
+		return nil, s.noRunner()
 	}
 
 	sess, err := s.open(ctx, s.deployment, group, indices)
@@ -281,12 +284,20 @@ func (s *patchSessions) group(ctx context.Context, group string, indices []int) 
 	}
 
 	if sess == nil {
-		return nil, errNoPatchRunner
+		return nil, s.noRunner()
 	}
 
 	s.byGroup[group] = sess
 
 	return sess, nil
+}
+
+func (s *patchSessions) noRunner() error {
+	if s.missing != nil {
+		return s.missing
+	}
+
+	return errNoPatchRunner
 }
 
 // close closes every session it opened.

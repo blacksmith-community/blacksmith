@@ -284,6 +284,9 @@ type runFixture struct {
 
 	opened [][]int
 
+	// noRunner leaves Deps.CommandRunner nil.
+	noRunner bool
+
 	// The script. A zero value is a node that succeeds.
 	sudo         ssh.Result
 	sudoErr      error
@@ -368,14 +371,17 @@ func newRunFixture(t *testing.T, options ...runOption) *runFixture {
 
 	manager := NewManager(fix.log, newWaitDirector(), fix.vault)
 
-	err := manager.Configure(Deps{
-		Now: fix.clock.read,
-		CommandRunner: func(_ context.Context, _, _ string, indices []int) (PatchSession, error) {
+	deps := Deps{Now: fix.clock.read}
+
+	if !fix.noRunner {
+		deps.CommandRunner = func(_ context.Context, _, _ string, indices []int) (PatchSession, error) {
 			fix.opened = append(fix.opened, slices.Clone(indices))
 
 			return fix.sess, nil
-		},
-	})
+		}
+	}
+
+	err := manager.Configure(deps)
 	if err != nil {
 		t.Fatalf("configuring the manager: %v", err)
 	}
@@ -1203,5 +1209,22 @@ func TestRunCommandNodePausesOnlyAUnfinishedTask(t *testing.T) {
 				t.Errorf("status %s paused %v, want %s and not paused", fix.task.Status, fix.task.Paused, status)
 			}
 		})
+	}
+}
+
+// A broker with no command runner fails the node with an error that says
+// so for commands, not for patch mode.
+func TestRunCommandNodeNamesAMissingCommandRunner(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t, func(f *runFixture, _ *CommandVM) { f.noRunner = true })
+
+	fix.run(context.Background())
+
+	wantOps(t, fix.sess)
+
+	node := fix.vault.stored(t)
+	if node.Status != CommandStatusFailed || !strings.Contains(node.Error, "for commands") || strings.Contains(node.Error, "patch") {
+		t.Errorf("status %s error %q", node.Status, node.Error)
 	}
 }
