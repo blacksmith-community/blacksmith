@@ -48,15 +48,17 @@ var runSeconds = regexp.MustCompile(`^[1-9][0-9]{1,3}$`)
 // The values a cleanup record may carry. started is - when the task
 // directory was already gone, so nothing is known about the command.
 var (
-	cleanupYesNo = regexp.MustCompile(`^(yes|no)$`)
-	cleanupExit  = regexp.MustCompile(`^(-|[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
-	cleanupSeen  = regexp.MustCompile(`^(yes|no|-)$`)
+	cleanupKilled = regexp.MustCompile(`^(yes|no|survived)$`)
+	cleanupExit   = regexp.MustCompile(`^(-|[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
+	cleanupSeen   = regexp.MustCompile(`^(yes|no|-)$`)
 )
 
 // Cleanup is what the cleanup operation reports. Started is "yes", "no",
 // or "-" when the task directory was already gone, which leaves the
 // outcome unknown. Exit is the recorded exit code, or "-" when there is
-// none. Killed is "yes" or "no".
+// none. Killed is "yes" when cleanup ended a running command, "no" when
+// there was nothing to end, and "survived" when the command's group was
+// still alive after KILL.
 type Cleanup struct {
 	Started string
 	Exit    string
@@ -79,7 +81,7 @@ func ParseCleanup(out []byte) (Cleanup, error) {
 	result := Cleanup{Started: fields["started"], Exit: fields["exit"], Killed: fields["killed"]}
 
 	if !cleanupSeen.MatchString(result.Started) || !cleanupExit.MatchString(result.Exit) ||
-		!cleanupYesNo.MatchString(result.Killed) {
+		!cleanupKilled.MatchString(result.Killed) {
 		return Cleanup{}, fmt.Errorf("%w: a cleanup field holds a value outside its set", ErrMalformedOutput)
 	}
 

@@ -13,7 +13,7 @@
 # it.
 #
 #   prepare prints  staged bytes=<n> sha256=<hex>
-#   cleanup prints  cleanup started=<yes|no|-> exit=<code or -> killed=<yes|no>
+#   cleanup prints  cleanup started=<yes|no|-> exit=<code or -> killed=<yes|no|survived>
 #
 # The directory of a task is root-owned with mode 0710 and the group of
 # the vcap account, inside runcmd, which is root-owned with mode 0711. A
@@ -213,9 +213,124 @@ prepare() {
 	printf 'staged bytes=%d sha256=%s\n' "$bytes" "$digest"
 }
 
+# _rc_kill_ticks prints how many tenths of a second cleanup waits for a
+# group to end after TERM. It is a hundred, ten seconds. The tests may
+# shorten it through RC_KILL_TICKS, but only under the test root, because
+# in production sudo resets the environment and the value is never read.
+_rc_kill_ticks() {
+	if [ -n "${CERTPATCH_ROOT:-}" ] && [[ ${RC_KILL_TICKS:-} =~ ^[1-9][0-9]{0,3}$ ]]; then
+		printf '%s' "$RC_KILL_TICKS"
+		return 0
+	fi
+
+	printf '100'
+}
+
+# _rc_group_state <pgid> prints what cleanup may do about a process
+# group.
+#
+#   none  no process outside the zombies is in the group
+#   self  the group or its session is the one cleanup runs in
+#   other the group has a member outside the session that setsid made
+#   live  the group is alive and belongs to that session
+#
+# setsid made the leader of the command's group a session leader, so
+# every member of the group has the group ID as its session ID. A group
+# ID that a stranger's process group has taken over since will have
+# another session, and is never signalled.
+_rc_group_state() {
+	local pg=$1 line f state pgrp sess found=none mypg mysid
+
+	{ read -r line < "/proc/$BASHPID/stat"; } 2> /dev/null || { printf 'self'; return 0; }
+	read -r _ _ mypg mysid _ <<< "${line##*) }"
+
+	if [ "$pg" = "$mypg" ] || [ "$pg" = "$mysid" ]; then
+		printf 'self'
+		return 0
+	fi
+
+	for f in /proc/[0-9]*/stat; do
+		line=
+		{ read -r line < "$f"; } 2> /dev/null || continue
+		read -r state _ pgrp sess _ <<< "${line##*) }"
+
+		[ "$pgrp" = "$pg" ] && [ "$state" != Z ] || continue
+
+		if [ "$sess" != "$pg" ]; then
+			printf 'other'
+			return 0
+		fi
+
+		found=live
+	done
+
+	printf '%s' "$found"
+}
+
+# _rc_kill_group <dir> prints yes, no, or survived. It ends the command
+# of a task whose exec started and left no exit. The pgid file is
+# untrusted. A value that is not a canonical number above 1 is never used,
+# because kill -- -1 reaches every process the caller may signal. A group
+# that is gone, that is cleanup's own, or that is not the session setsid
+# made is left alone and reported no. A live group gets TERM, and KILL
+# after the wait, and is reported yes once it is gone, or survived when
+# it outlives the KILL.
+_rc_kill_group() {
+	local dir=$1 pg='' kill state ticks i
+
+	if [ ! -f "$dir/pgid" ] || [ -L "$dir/pgid" ]; then
+		printf 'no'
+		return 0
+	fi
+
+	IFS= read -r pg < "$dir/pgid" || true
+
+	if ! _rc_id_ok "$pg" || [ "$((10#$pg))" -le 1 ]; then
+		printf 'no'
+		return 0
+	fi
+
+	kill=$(_rc_tool kill) || { printf 'no'; return 0; }
+	command -v -- "$kill" > /dev/null || { printf 'no'; return 0; }
+
+	state=$(_rc_group_state "$pg")
+	if [ "$state" != live ]; then
+		printf 'no'
+		return 0
+	fi
+
+	ticks=$(_rc_kill_ticks)
+
+	"$kill" -TERM -- "-$pg" > /dev/null 2>&1 || true
+
+	for ((i = 0; i < ticks; i++)); do
+		[ "$(_rc_group_state "$pg")" = live ] || break
+		sleep 0.1
+	done
+
+	if [ "$(_rc_group_state "$pg")" = live ]; then
+		"$kill" -KILL -- "-$pg" > /dev/null 2>&1 || true
+
+		for ((i = 0; i < ticks / 5 + 1; i++)); do
+			[ "$(_rc_group_state "$pg")" = live ] || break
+			sleep 0.1
+		done
+	fi
+
+	if [ "$(_rc_group_state "$pg")" = live ]; then
+		printf 'survived'
+		return 0
+	fi
+
+	printf 'yes'
+}
+
 # cleanup prints whether the command started and how it ended, and then
 # removes the task directory. started is yes when exec left its marker,
-# and exit is the code exec recorded, or - when there is none. It always
+# and exit is the code exec recorded, or - when there is none. A command
+# that started and has no exit is still running, or was left by a wrapper
+# that died, and cleanup ends its process group before it reports, so
+# killed is yes, or survived when the group outlives KILL. It always
 # prints exactly one record. A task with no directory prints
 # started=- and succeeds, because the directory may be missing either
 # because prepare never arrived or because an earlier cleanup removed it,
@@ -225,7 +340,7 @@ cleanup() {
 	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
 
-	local task=$1 root base dir started=no code=-
+	local task=$1 root base dir started=no code=- killed=no
 
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 	_cp_secure_chain "$root" "$RC_DATA" || return "$EXIT_REFUSED"
@@ -250,8 +365,12 @@ cleanup() {
 		[[ $code =~ $RC_EXIT_RE ]] || code=-
 	fi
 
+	if [ "$started" = yes ] && [ ! -e "$dir/exit" ] && [ ! -L "$dir/exit" ]; then
+		killed=$(_rc_kill_group "$dir")
+	fi
+
 	_RC_DROP=$dir
-	printf 'cleanup started=%s exit=%s killed=no\n' "$started" "$code"
+	printf 'cleanup started=%s exit=%s killed=%s\n' "$started" "$code" "$killed"
 	rm -rf -- "$dir" || return 1
 	_RC_DROP=
 }
