@@ -16,7 +16,6 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/ops/scripts"
-	"blacksmith/pkg/logger"
 )
 
 // The outcomes of a node's command, as the node's Status holds them.
@@ -168,17 +167,15 @@ func (m *Manager) claimCommandNode(inst *InstanceUpgrade, vm int) error {
 	return nil
 }
 
-// releaseCommandNode gives a claim back when the node is pending again,
-// which a save that could not be confirmed leaves it. A node that moved on
-// keeps its claim, and its phase refuses a second driver anyway.
+// releaseCommandNode gives a claim back when the worker is done with the
+// node. A node that moved on is refused a second driver by its phase, and a
+// node that is pending again, which a save that could not be confirmed
+// leaves it, can be claimed by the next run.
 func (m *Manager) releaseCommandNode(inst *InstanceUpgrade, vm int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	node := &inst.Command.VMs[vm]
-	if node.Phase == CommandPhasePending {
-		node.claimed = false
-	}
+	inst.Command.VMs[vm].claimed = false
 }
 
 // commandNodePhase returns the phase the node is in now.
@@ -814,26 +811,90 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		return false
 	}
 
-	// The pool is drained before the sessions close, on every way out, so
-	// no worker is left running on a closed session.
-	pool := newCommandPool(m.commandWorkers(task))
+	// A task a worker stopped is paused, and it is waited for here rather
+	// than handed back, so a resume that lands while the other workers are
+	// still in flight finds a processor that goes on with the instance. The
+	// halt is kept across passes, so a deployment halted before a stop is
+	// still failed when it ends.
+	halted := false
+
+	for {
+		before := m.commandPhases(inst)
+
+		pool := newCommandPool(m.commandWorkers(task))
+		if !m.feedCommandNodes(ctx, persistCtx, pool, sessions, task, inst, cancelCh) {
+			return false
+		}
+
+		stopped, halt, survived := pool.outcome()
+
+		halted = halted || halt
+		if halted {
+			m.skipRemainingNodes(inst)
+		}
+
+		// A task that stopped is paused already and its instance stays as
+		// it is, unless the node that stopped it is also the one that halted
+		// the deployment, which only processes that outlived KILL do. The
+		// instance is ended first, and then the task stays paused rather
+		// than finishing, whatever instance it is in.
+		if !stopped || survived {
+			ended := m.endCommandInstance(persistCtx, task, inst, halted)
+
+			return ended && (!survived || !m.commandTaskPaused(task))
+		}
+
+		if m.commandTaskOver(task) || ctx.Err() != nil {
+			return false
+		}
+
+		goOn, waited := m.waitWhilePaused(persistCtx, task, cancelCh)
+		if !goOn {
+			return false
+		}
+
+		// A stop that left the task running and moved no node has nothing
+		// to resume, so it is handed back rather than tried again.
+		if !waited && slices.Equal(before, m.commandPhases(inst)) {
+			return false
+		}
+
+		if m.settleStrandedNodes(ctx, sessions, task, inst) {
+			return false
+		}
+	}
+}
+
+// feedCommandNodes starts the pending nodes of the instance in order on the
+// pool and waits for the workers to end. A slot is taken before the checks,
+// so a pause, a stop, or a failure that happens while the pool is full is
+// seen before the next node starts. A pause that arrives while workers are
+// in flight lets them end first, so a failure among them is processed
+// before the pause is honoured. The pool is drained on every way out, so no
+// worker is left running on a session that closes. It reports whether the
+// instance goes on to be ended.
+func (m *Manager) feedCommandNodes(ctx, persistCtx context.Context, pool *commandPool, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
 	defer pool.wait()
 
-	// The nodes are fed in order. A slot is taken before the checks, so a
-	// pause, a stop, or a failure that happens while the pool is full is
-	// seen before the next node starts. A node that stopped the deployment
-	// may have paused the task too, so the stop is checked before the wait
-	// for a resume, and again after it.
 	for vm := range inst.Command.VMs {
-		pool.acquire()
-
-		if pool.stopping() {
-			pool.release()
-
+		if !pool.acquire() {
 			break
 		}
 
-		goOn, _ = m.waitWhilePaused(persistCtx, task, cancelCh)
+		if m.commandTaskPaused(task) {
+			pool.release()
+			pool.wait()
+
+			if pool.stopping() {
+				break
+			}
+
+			if !pool.acquire() {
+				break
+			}
+		}
+
+		goOn, _ := m.waitWhilePaused(persistCtx, task, cancelCh)
 		if !goOn {
 			pool.release()
 
@@ -860,26 +921,69 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 			continue
 		}
 
-		pool.start(func() (bool, bool) { return m.driveNodeInLoop(ctx, sessions, task, inst, vm) }, m.logger, task.ID, inst.InstanceID, vm)
+		pool.start(func() (bool, bool) { return m.driveNodeInLoop(ctx, sessions, task, inst, vm) }, func(recovered any) {
+			m.pauseWorkerPanic(task, inst, vm, recovered)
+		})
 	}
 
 	pool.wait()
 
-	stopped, halted, survived := pool.outcome()
-	if halted {
-		m.skipRemainingNodes(inst)
-	}
+	return true
+}
 
-	// A task that stopped is paused already and its instance stays as it
-	// is, unless the node that stopped it is also the one that halted the
-	// deployment, which only processes that outlived KILL do. The instance
-	// is ended first, and then the task stays paused rather than finishing,
-	// whatever instance it is in.
-	if stopped && !survived {
+// commandTaskPaused reports whether the task is paused.
+func (m *Manager) commandTaskPaused(task *UpgradeTask) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return task.Paused
+}
+
+// commandTaskOver reports whether the task has ended or been cancelled.
+func (m *Manager) commandTaskOver(task *UpgradeTask) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	switch task.Status {
+	case TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled:
+		return true
+	default:
 		return false
 	}
+}
 
-	return m.endCommandInstance(persistCtx, task, inst, halted) && !survived
+// commandPhases returns the phase of each node of the instance.
+func (m *Manager) commandPhases(inst *InstanceUpgrade) []CommandPhase {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	phases := make([]CommandPhase, len(inst.Command.VMs))
+	for i := range inst.Command.VMs {
+		phases[i] = inst.Command.VMs[i].Phase
+	}
+
+	return phases
+}
+
+// pauseWorkerPanic pauses the task after a worker panicked, because what
+// happened on the node is not known. Only the type of the panic is logged,
+// since its value may carry what the node was running. The node keeps its
+// last confirmed phase, so a resume settles a staged or sent node through
+// cleanup and drives a pending one.
+func (m *Manager) pauseWorkerPanic(task *UpgradeTask, inst *InstanceUpgrade, vm int, recovered any) {
+	message := "Blacksmith stopped a node of the deployment because of an internal error, so the task paused. Resume once the node has been looked at."
+
+	m.mu.Lock()
+
+	if task.Status == TaskStatusPending || task.Status == TaskStatusRunning || task.Status == TaskStatusPaused {
+		task.Status = TaskStatusPaused
+		task.Paused = true
+	}
+
+	inst.Error = message
+	m.mu.Unlock()
+
+	m.logger.Error("Command task %s paused, because node %d of instance %s panicked (%T)", task.ID, vm, inst.InstanceID, recovered)
 }
 
 // commandWorkers returns how many nodes of one deployment may run at once,
@@ -896,14 +1000,16 @@ func (m *Manager) commandWorkers(task *UpgradeTask) int {
 }
 
 // commandPool runs the nodes of one deployment on at most a fixed number of
-// workers, and keeps what the workers report. A worker reports before it
-// gives its slot back, so the feeder that takes the slot next sees the
+// workers, and keeps what the workers report. A worker reports and gives its
+// slot back in one step, so the feeder that takes the slot next sees the
 // report.
 type commandPool struct {
-	slots chan struct{}
 	group sync.WaitGroup
 
-	mu sync.Mutex
+	mu   sync.Mutex
+	cond *sync.Cond
+
+	workers, active int
 	// stoppedTask is set when a worker could not run its node and the task
 	// stopped, and halted when the deployment must stop. survived is set
 	// when the same node did both, which processes that outlived KILL do.
@@ -911,14 +1017,39 @@ type commandPool struct {
 }
 
 func newCommandPool(workers int) *commandPool {
-	return &commandPool{slots: make(chan struct{}, workers)}
+	p := &commandPool{workers: workers}
+	p.cond = sync.NewCond(&p.mu)
+
+	return p
 }
 
-// acquire waits for a free slot.
-func (p *commandPool) acquire() { p.slots <- struct{}{} }
+// acquire waits for a free slot and reports whether it got one. It gets
+// none once a worker has stopped the task or halted the deployment.
+func (p *commandPool) acquire() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for p.active >= p.workers && !p.stoppedTask && !p.halted {
+		p.cond.Wait()
+	}
+
+	if p.stoppedTask || p.halted {
+		return false
+	}
+
+	p.active++
+
+	return true
+}
 
 // release gives back a slot that no worker took.
-func (p *commandPool) release() { <-p.slots }
+func (p *commandPool) release() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.active--
+	p.cond.Broadcast()
+}
 
 // stopping reports whether no further node may start.
 func (p *commandPool) stopping() bool {
@@ -930,36 +1061,38 @@ func (p *commandPool) stopping() bool {
 
 // start runs the node on a worker that holds the slot the caller acquired.
 // A node that panics stops the task without ending its instance, because
-// what happened on the node is not known.
-func (p *commandPool) start(drive func() (bool, bool), log logger.Logger, taskID, instanceID string, vm int) {
+// what happened on the node is not known, and onPanic is told what the
+// panic carried.
+func (p *commandPool) start(drive func() (bool, bool), onPanic func(recovered any)) {
 	p.group.Add(1)
 
 	go func() {
 		defer p.group.Done()
-		defer p.release()
 
 		stopped, halt := true, false
 
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				log.Error("Command task %s stopped, because node %d of instance %s panicked: %v", taskID, vm, instanceID, recovered)
+				onPanic(recovered)
 			}
 
-			p.report(stopped, halt)
+			p.finish(stopped, halt)
 		}()
 
 		stopped, halt = drive()
 	}()
 }
 
-// report keeps what one worker found.
-func (p *commandPool) report(stopped, halt bool) {
+// finish keeps what one worker found and gives its slot back.
+func (p *commandPool) finish(stopped, halt bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.stoppedTask = p.stoppedTask || stopped
 	p.halted = p.halted || halt
 	p.survived = p.survived || (stopped && halt)
+	p.active--
+	p.cond.Broadcast()
 }
 
 // wait blocks until every worker has returned.

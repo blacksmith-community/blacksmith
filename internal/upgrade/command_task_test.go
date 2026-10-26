@@ -87,7 +87,11 @@ type taskSession struct {
 
 func (s *taskSession) VMs() []sshconn.Host { return slices.Clone(s.hosts) }
 
-func (s *taskSession) Close() error { return nil }
+func (s *taskSession) Close() error {
+	s.fix.closed.Add(1)
+
+	return nil
+}
 
 func (s *taskSession) Run(_ context.Context, host int, op string, _ []string, stdin io.Reader) (ssh.Result, error) {
 	if stdin != nil {
@@ -117,6 +121,9 @@ type taskFixture struct {
 	flight int
 	peak   int
 	held   int
+
+	// closed counts the sessions the manager closed.
+	closed atomic.Int32
 
 	// cfg is what the authorizer reads.
 	cfg config.CommandsConfig

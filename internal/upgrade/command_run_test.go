@@ -1819,18 +1819,6 @@ func (g *nodeGate) wantNext(want string) {
 	}
 }
 
-// quiet reports whether no node arrives within a short window. It is the
-// one place a test waits for something not to happen, because nothing
-// signals that.
-func (g *nodeGate) quiet() bool {
-	select {
-	case <-g.arrived:
-		return false
-	case <-time.After(100 * time.Millisecond):
-		return true
-	}
-}
-
 // nodeWatch follows the fixture's nodes from their first operation to
 // their cleanup, without holding any of them.
 type nodeWatch struct {
@@ -2383,11 +2371,6 @@ func TestCommandParallelSurvivedKillStopsTheDeploymentAndHoldsIt(t *testing.T) {
 
 	fix.waitFor("the instance to fail", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusFailed })
 
-	// Give a wrong finish the time it needs to show.
-	if !gate.quiet() {
-		t.Fatal("a node started after the deployment stopped")
-	}
-
 	done := fix.snapshot()
 	if done.Status != TaskStatusPaused || !done.Paused {
 		t.Errorf("the task is %s paused=%v, want paused, since processes survived KILL", done.Status, done.Paused)
@@ -2489,12 +2472,6 @@ func TestCommandParallelDeploymentsNeverOverlap(t *testing.T) {
 		return task.Instances[0].Command.VMs[1].Phase == CommandPhaseSettled
 	})
 
-	// Nothing signals that the second deployment is not about to start, so
-	// the test gives it a short window to show.
-	if !gate.quiet() || fix.sentTo("dep-1") {
-		t.Fatal("the second deployment started while a node of the first was in flight")
-	}
-
 	gate.let("dep-0/0")
 
 	fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
@@ -2503,6 +2480,323 @@ func TestCommandParallelDeploymentsNeverOverlap(t *testing.T) {
 		t.Errorf("nodes %v began while another deployment had a node in flight", got)
 	}
 
+	// Every call to the first deployment comes before any call to the
+	// second, so the second never began while the first was in flight.
+	seenSecond := false
+
+	for _, call := range fix.recorded() {
+		switch {
+		case call.deployment == "dep-1":
+			seenSecond = true
+		case seenSecond:
+			t.Errorf("%s was sent to %s/%d after the second deployment began", call.op, call.deployment, call.index)
+		}
+	}
+
 	fix.wantSavesInOrder()
 	fix.assertNoCommandText()
+}
+
+// owned reports whether a processor holds the task.
+func (f *taskFixture) owned() bool {
+	f.manager.mu.RLock()
+	defer f.manager.mu.RUnlock()
+
+	return f.manager.owned[f.task.ID]
+}
+
+// resume lifts the pause the way an operator does.
+func (f *taskFixture) resume() {
+	f.t.Helper()
+
+	err := f.manager.ResumeTask(context.Background(), f.task.ID)
+	if err != nil {
+		f.t.Fatalf("resume: %v", err)
+	}
+}
+
+// wantEverySettled requires every node of the instance to be settled.
+func wantEverySettled(t *testing.T, inst InstanceUpgrade) {
+	t.Helper()
+
+	for i, node := range inst.Command.VMs {
+		if node.Phase != CommandPhaseSettled {
+			t.Errorf("node %d is %s, want settled", i, node.Phase)
+		}
+	}
+}
+
+// A task that a worker stopped while a sibling was in flight, and that the
+// operator resumed before the sibling ended, goes on once the sibling ends.
+func TestCommandParallelResumeDuringDrainGoesOn(t *testing.T) {
+	fix := newTaskFixture(t, 1, 3, withParallel(2))
+	hold0 := fix.gate(opSudoCheck, "dep-0/0")
+	exec1 := fix.gate(opRunExec, "dep-0/1")
+	fix.queue()
+
+	hold0.next()
+	exec1.next()
+
+	// The save of node 0's staged phase can't be confirmed, so node 0
+	// stops the task while node 1 is in flight.
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = CommandPhaseStaged
+	fix.vault.mu.Unlock()
+
+	hold0.let("dep-0/0")
+	fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Paused })
+
+	fix.vault.mu.Lock()
+	fix.vault.failPhase = ""
+	fix.vault.mu.Unlock()
+
+	fix.resume()
+	exec1.let("dep-0/1")
+
+	done := fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+
+	wantEverySettled(t, done.Instances[0])
+
+	waitUntil(t, "the processor to let the task go", func() bool { return !fix.owned() })
+
+	// Node 0 is driven again after its stage save was lost, so it passes
+	// the sudo check twice, but no node is sent the command twice.
+	for index := range 3 {
+		if n := strings.Count(strings.Join(fix.opsOf("dep-0", index), " "), opRunExec); n != 1 {
+			t.Errorf("node %d was sent exec %d times, want once", index, n)
+		}
+	}
+
+	fix.assertNoCommandText()
+}
+
+// Processes that outlived KILL on the last instance's node, with the
+// operator resuming before the sibling ends, finish the task and leave no
+// task running without a processor.
+func TestCommandParallelResumeDuringDrainAfterSurvivedFinishesTheTask(t *testing.T) {
+	fix := newTaskFixture(t, 1, 3, withParallel(2))
+	fix.cleanups["dep-0/1"] = "cleanup started=yes exit=- killed=survived"
+	gate := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+	fix.queue()
+
+	gate.next()
+	gate.next()
+	gate.let("dep-0/1")
+
+	fix.waitFor("the task to pause", func(task UpgradeTask) bool {
+		return task.Paused && task.Instances[0].Command.VMs[1].Phase == CommandPhaseSettled
+	})
+
+	fix.resume()
+	gate.let("dep-0/0")
+
+	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusFailed || (task.Status == TaskStatusRunning && !task.Paused && task.Instances[0].Status == InstanceStatusFailed && !fix.owned())
+	})
+
+	if done.Status != TaskStatusFailed {
+		t.Errorf("the task is %s paused=%v owned=%v, want failed", done.Status, done.Paused, fix.owned())
+	}
+
+	fix.assertNoCommandText()
+}
+
+// A worker that panics pauses the task, keeps the processor, and leaves the
+// node in its last confirmed phase, so a resume settles a staged or sent
+// node through cleanup only and drives a pending one.
+func TestCommandWorkerPanicPausesTheTask(t *testing.T) {
+	cases := []struct {
+		name     string
+		options  []taskOption
+		op       string
+		phase    CommandPhase
+		settles  bool
+		wantExec int
+	}{
+		{"sequential before staged", nil, opSudoCheck, CommandPhasePending, false, 1},
+		{"sequential staged", nil, opRunPrepare, CommandPhaseStaged, true, 0},
+		{"sequential sent", nil, opRunExec, CommandPhaseSent, true, 1},
+		{"parallel before staged", []taskOption{withParallel(2)}, opSudoCheck, CommandPhasePending, false, 1},
+		{"parallel staged", []taskOption{withParallel(2)}, opRunPrepare, CommandPhaseStaged, true, 0},
+		{"parallel sent", []taskOption{withParallel(2)}, opRunExec, CommandPhaseSent, true, 1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 3, tc.options...)
+
+			var fired atomic.Bool
+
+			previous := fix.onOp
+			fix.onOp = func(deployment string, index int, op string) {
+				if previous != nil {
+					previous(deployment, index, op)
+				}
+
+				if index == 1 && op == tc.op && fired.CompareAndSwap(false, true) {
+					panic("boom " + runCommandText)
+				}
+			}
+
+			fix.queue()
+
+			paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Paused && task.Status == TaskStatusPaused })
+
+			if paused.Instances[0].Error == "" {
+				t.Error("the instance names no error for the panic")
+			}
+
+			if got := paused.Instances[0].Command.VMs[1].Phase; got != tc.phase {
+				t.Errorf("the node is %s after the panic, want %s", got, tc.phase)
+			}
+
+			if !fix.owned() {
+				t.Error("no processor holds the paused task")
+			}
+
+			fix.resume()
+
+			done := fix.waitFor("the task to finish", func(task UpgradeTask) bool {
+				return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+			})
+
+			node := done.Instances[0].Command.VMs[1]
+			if node.Phase != CommandPhaseSettled {
+				t.Errorf("the node is %s after the resume, want settled", node.Phase)
+			}
+
+			ops := fix.opsOf("dep-0", 1)
+			if n := strings.Count(strings.Join(ops, " "), opRunExec); n != tc.wantExec {
+				t.Errorf("the node was sent exec %d times (%v), want %d", n, ops, tc.wantExec)
+			}
+
+			if !tc.settles && done.Status != TaskStatusCompleted {
+				t.Errorf("the task is %s, want completed, since the node ran after the resume", done.Status)
+			}
+
+			fix.assertNoCommandText()
+		})
+	}
+}
+
+// A failure that lands while the operator has paused the task is processed
+// at once, so the record shows the failed instance and the skipped nodes
+// during the pause, and the resume does not stop on that instance again.
+func TestCommandParallelHaltDuringAPauseIsProcessedBeforeTheResume(t *testing.T) {
+	fix := newTaskFixture(t, 2, 4, withParallel(2))
+	fix.exits["dep-0/0"] = 2
+	gate := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+	fix.queue()
+
+	gate.next()
+	gate.next()
+
+	err := fix.manager.PauseTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	gate.let("dep-0/1")
+
+	fix.waitFor("node 1 to settle", func(task UpgradeTask) bool {
+		return task.Instances[0].Command.VMs[1].Phase == CommandPhaseSettled
+	})
+
+	gate.let("dep-0/0")
+
+	paused := fix.waitFor("the halted instance to fail during the pause", func(task UpgradeTask) bool {
+		return task.Instances[0].Status == InstanceStatusFailed
+	})
+
+	want := []CommandPhase{CommandPhaseSettled, CommandPhaseSettled, CommandPhaseSkipped, CommandPhaseSkipped}
+	if got := phases(paused.Instances[0]); !slices.Equal(got, want) {
+		t.Errorf("phases = %v, want %v", got, want)
+	}
+
+	if !paused.Paused || fix.sentTo("dep-1") {
+		t.Errorf("the task paused=%v and the second instance was sent to: %v", paused.Paused, fix.sentTo("dep-1"))
+	}
+
+	fix.resume()
+
+	done := fix.waitFor("the second instance to run", func(task UpgradeTask) bool { return task.Instances[1].Status == InstanceStatusSuccess })
+
+	if done.Instances[0].Status != InstanceStatusFailed {
+		t.Errorf("the first instance is %s, want failed", done.Instances[0].Status)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// Leaving the loop on a cancel still waits for the nodes in flight, so no
+// session closes under a node and the task stays owned until they end.
+func TestCommandParallelCancelWaitsForTheNodesInFlight(t *testing.T) {
+	fix := newTaskFixture(t, 1, 3, withParallel(2))
+	gate := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+
+	var closedAtCleanup atomic.Int32
+
+	closedAtCleanup.Store(-1)
+
+	var ownedAtCleanup atomic.Bool
+
+	previous := fix.onOp
+	fix.onOp = func(deployment string, index int, op string) {
+		if previous != nil {
+			previous(deployment, index, op)
+		}
+
+		if index == 0 && op == opRunCleanup {
+			closedAtCleanup.Store(fix.closed.Load())
+			ownedAtCleanup.Store(fix.owned())
+		}
+	}
+
+	fix.queue()
+
+	gate.next()
+	gate.next()
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusCancelled
+	fix.manager.mu.Unlock()
+
+	// Node 1's slot lets the feeder reach the cancel, which it logs.
+	gate.let("dep-0/1")
+
+	waitUntil(t, "the loop to see the cancel", func() bool { return strings.Contains(fix.log.joined(), "was cancelled") })
+
+	gate.let("dep-0/0")
+
+	waitUntil(t, "node 0 to clean up", func() bool { return closedAtCleanup.Load() >= 0 })
+
+	if got := closedAtCleanup.Load(); got != 0 {
+		t.Errorf("%d sessions were closed while node 0 was in flight", got)
+	}
+
+	if !ownedAtCleanup.Load() {
+		t.Error("the task was let go while node 0 was in flight")
+	}
+
+	fix.assertNoCommandText()
+}
+
+// A slot taken after a worker reported a halt is refused, so no node starts
+// once the deployment must stop.
+func TestCommandPoolRefusesASlotAfterAHaltingWorkerReports(t *testing.T) {
+	for range 2000 {
+		pool := newCommandPool(1)
+
+		if !pool.acquire() {
+			t.Fatal("the first slot was refused")
+		}
+
+		pool.start(func() (bool, bool) { return false, true }, func(any) {})
+
+		if pool.acquire() {
+			t.Fatal("a slot was given after the worker reported a halt")
+		}
+
+		pool.wait()
+	}
 }
