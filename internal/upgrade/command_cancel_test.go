@@ -924,3 +924,62 @@ func TestCommandPauseLeavesTheNodesInFlightRunning(t *testing.T) {
 
 	fix.assertNoCommandText()
 }
+
+// A node that was about to start when the task was cancelled is skipped
+// because of the cancel, and nothing is sent to it, whatever the next step
+// of the node would have said.
+func TestCommandCancelBeforeANodeStartsSkipsItForTheCancel(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+
+	arrived := make(chan struct{})
+	hold := make(chan struct{})
+
+	var blocked atomic.Bool
+
+	fix.authHook = func(context.Context) error {
+		// Only the first check of the node's driver is held, not the
+		// dispatcher's.
+		buf := make([]byte, 1<<14)
+		if !strings.Contains(string(buf[:runtime.Stack(buf, false)]), "driveCommandNode") || !blocked.CompareAndSwap(false, true) {
+			return nil
+		}
+
+		close(arrived)
+
+		<-hold
+
+		return nil
+	}
+	t.Cleanup(func() {
+		select {
+		case <-hold:
+		default:
+			close(hold)
+		}
+	})
+
+	fix.queue()
+
+	select {
+	case <-arrived:
+	case <-time.After(waitTimeout):
+		t.Fatal("the driver never reached its first check")
+	}
+
+	fix.cancel()
+	close(hold)
+
+	done := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusCancelled })
+
+	node := nodeOf(done, 0, 0)
+	if node.Phase != CommandPhaseSkipped || !strings.Contains(node.Reason, "cancelled") {
+		t.Errorf("node is %s with reason %q, want skipped because of the cancel", node.Phase, node.Reason)
+	}
+
+	if got := fix.opsOf("dep-0", 0); len(got) != 0 {
+		t.Errorf("a cancelled node was sent %v", got)
+	}
+
+	fix.waitReleased()
+	fix.assertNoCommandText()
+}

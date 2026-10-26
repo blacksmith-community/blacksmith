@@ -84,7 +84,14 @@ type commandOutcome struct {
 	// strand means cleanup could not finish on a node of a cancelled task,
 	// so the node is left as it is and the instance stays held.
 	strand bool
+	// skip means the node never started, because the task was cancelled
+	// first, so the node is skipped with the reason.
+	skip bool
 }
+
+// reasonCancelledBeforeStart is the reason a node that had not reached
+// the VM when the task was cancelled gives.
+const reasonCancelledBeforeStart = "The task was cancelled, so the command was not sent."
 
 // commandRun is one node's command being run.
 type commandRun struct {
@@ -250,6 +257,10 @@ func (m *Manager) driveCommandNode(ctx context.Context, sessions *patchSessions,
 		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "Running this command is no longer allowed, so nothing was sent.", err: err}), nil
 	}
 
+	if run.cancelledNow(ctx) {
+		return run.settle(ctx, commandOutcome{skip: true, reason: reasonCancelledBeforeStart}), nil
+	}
+
 	err = run.validate()
 	if err != nil {
 		return run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: "The task's settings are not valid for the wrapper, so nothing was sent.", err: err}), nil
@@ -312,6 +323,12 @@ func (m *Manager) newCommandRun(sessions *patchSessions, task *UpgradeTask, inst
 	}
 
 	return run
+}
+
+// cancelledNow reports whether the task was cancelled, whether or not the
+// cancel has reached the node's context yet.
+func (r *commandRun) cancelledNow(ctx context.Context) bool {
+	return wasCancelled(ctx) || r.m.taskCancelled(r.task)
 }
 
 // authorize asks the authorizer whether the stored task may still run.
@@ -460,6 +477,12 @@ func (r *commandRun) checkSudo(ctx context.Context) *commandOutcome {
 // stage saves the node as staged, sends prepare, and checks what the node
 // says it staged against the task.
 func (r *commandRun) stage(ctx context.Context) (*commandOutcome, bool) {
+	// The cancel can land while the node is bound to its VM, and nothing
+	// of the command should reach the VM after it.
+	if r.cancelledNow(ctx) {
+		return &commandOutcome{skip: true, reason: reasonCancelledBeforeStart}, false
+	}
+
 	err := r.advance(ctx, func(node *CommandVM) { node.Phase = CommandPhaseStaged })
 	if err != nil {
 		r.m.pauseUnconfirmed(r.task, r.inst, "stage the command on the node")
@@ -731,6 +754,20 @@ func (r *commandRun) advance(ctx context.Context, change func(*CommandVM)) error
 func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 	if outcome.strand {
 		return r.strand(ctx, outcome)
+	}
+
+	if outcome.skip {
+		err := r.advance(ctx, func(node *CommandVM) {
+			node.Phase = CommandPhaseSkipped
+			node.Reason = outcome.reason
+		})
+		if err != nil {
+			r.m.pauseUnconfirmed(r.task, r.inst, "record that the node was skipped")
+
+			return true
+		}
+
+		return false
 	}
 
 	ended := outcome.ended
@@ -1603,7 +1640,7 @@ func (m *Manager) endCancelledCommandInstance(ctx context.Context, task *Upgrade
 		}
 
 		node.Phase = CommandPhaseSkipped
-		node.Reason = "The task was cancelled, so the command was not sent."
+		node.Reason = reasonCancelledBeforeStart
 	}
 
 	ended := m.certNowLocked()
