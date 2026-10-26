@@ -3505,6 +3505,13 @@ func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) boo
 		return true
 	}
 
+	// A cancelled command task keeps an instance held while a node of it
+	// holds the command's text on its VM, until cleanup has returned for
+	// the node.
+	if task.Status == TaskStatusCancelled && task.KindOrDefault() == TaskKindCommand && commandInstanceHeldLocked(inst) {
+		return true
+	}
+
 	return (unfinished && !inst.Status.settled()) || (followed && inFlight)
 }
 

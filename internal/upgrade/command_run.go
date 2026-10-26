@@ -81,6 +81,9 @@ type commandOutcome struct {
 	path   string
 	ended  time.Time
 	pause  bool
+	// strand means cleanup could not finish on a node of a cancelled task,
+	// so the node is left as it is and the instance stays held.
+	strand bool
 }
 
 // commandRun is one node's command being run.
@@ -104,6 +107,10 @@ type commandRun struct {
 	// Both are built before the first save.
 	script       []byte
 	prepareInput []byte
+
+	// cancelled is set once the node's context ended because the task was
+	// cancelled.
+	cancelled bool
 }
 
 // errCommandNodeNotPending is what runCommandNode returns for a node that
@@ -112,10 +119,55 @@ type commandRun struct {
 // phase sent may have run its command.
 var errCommandNodeNotPending = errors.New("the command can only start on a pending node, so nothing was sent")
 
+// errCommandCancelled is the cause a node's context ends with when the task
+// is cancelled, which tells a cancel from a deadline or a stop of the
+// manager.
+var errCommandCancelled = errors.New("the task was cancelled")
+
 // errCommandVMChanged is what runCommandNode returns when the director no
 // longer lists the VM the operator reviewed. The node is already failed
 // and nothing was sent to it, and the caller stops the deployment.
 var errCommandVMChanged = errors.New("the VM changed since the review")
+
+// wasCancelled reports whether the context ended because the task was
+// cancelled.
+func wasCancelled(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errCommandCancelled)
+}
+
+// commandNodeContext derives the context one node runs on from the task's.
+// The context ends when the task is cancelled, which a close of the cancel
+// channel says, so every node in flight is cancelled together. A value sent
+// on the channel is a pause or a resume, and the watcher reads the task to
+// tell a cancel from those. The function it returns stops the node's
+// context and waits for the watcher to end, so no goroutine outlives its
+// node.
+func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask, cancelCh <-chan struct{}) (context.Context, func()) {
+	nodeCtx, cancel := context.WithCancelCause(ctx)
+	watcherDone := make(chan struct{})
+
+	go func() {
+		defer close(watcherDone)
+
+		for {
+			select {
+			case _, open := <-cancelCh:
+				if !open || m.taskCancelled(task) {
+					cancel(errCommandCancelled)
+
+					return
+				}
+			case <-nodeCtx.Done():
+				return
+			}
+		}
+	}()
+
+	return nodeCtx, func() {
+		cancel(nil)
+		<-watcherDone
+	}
+}
 
 // runCommandNode runs the task's command on one node of the instance and
 // settles the node. The node is saved in phase staged before prepare is
@@ -464,6 +516,13 @@ func (r *commandRun) checkStaged(out []byte) error {
 func (r *commandRun) cleanedUp(ctx context.Context, reason string, cause error) *commandOutcome {
 	_, _, err := r.cleanup(ctx)
 	if err != nil {
+		// A cancelled task never leaves the command's text on a node it
+		// could not clean, so the node keeps its phase and the instance
+		// stays held until a resume cleans it.
+		if wasCancelled(ctx) {
+			return &commandOutcome{strand: true}
+		}
+
 		cause = errors.Join(cause, err)
 	}
 
@@ -477,6 +536,10 @@ func (r *commandRun) execute(ctx context.Context) bool {
 	// this is the last gate before anything runs. A refusal removes what
 	// prepare left on the node.
 	err := r.authorize(ctx)
+	if wasCancelled(ctx) {
+		return r.settle(ctx, *r.cleanedUp(ctx, "The task was cancelled before the command was sent, so it did not run.", errCommandCancelled))
+	}
+
 	if err != nil {
 		return r.settle(ctx, *r.cleanedUp(ctx, "Running this command is no longer allowed, so it did not run.", err))
 	}
@@ -504,7 +567,15 @@ func (r *commandRun) execute(ctx context.Context) bool {
 	cancel()
 
 	ended := r.m.certNow()
+	r.cancelled = wasCancelled(ctx) && !deadlineHit
 	record, survived, cleanErr := r.cleanup(ctx)
+
+	// Cleanup is how a cancelled node is known to have ended. When it
+	// can't tell, the command may still be running, so the node stays sent,
+	// the instance stays held, and a resume sends cleanup only.
+	if r.cancelled && cleanErr != nil && !survived {
+		return r.settle(ctx, commandOutcome{strand: true})
+	}
 
 	outcome := r.classify(result, execErr, deadlineHit, record, cleanErr, ended.Sub(execStart) >= timeout)
 	outcome.ended = ended
@@ -541,6 +612,10 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 		return commandOutcome{status: CommandStatusFailed, reason: "The cleanup step did not report cleanly on the node.", err: cleanErr}
 	}
 
+	if execErr != nil && r.cancelled {
+		return r.classifyCancelled(execErr, record)
+	}
+
 	if execErr != nil {
 		if deadlineHit || errors.Is(execErr, context.DeadlineExceeded) {
 			return commandOutcome{status: CommandStatusTimedOut, reason: "The node did not finish within the timeout and the grace period.", err: execErr}
@@ -569,11 +644,38 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 	return commandOutcome{status: CommandStatusFailed, reason: "The command exited with status " + strconv.Itoa(code) + ".", exit: exit}
 }
 
+// classifyCancelled turns what cleanup found on a node whose exec ended with
+// the task's cancel into an outcome. No exit status reached Blacksmith, so
+// the record is the only witness. A command that had exited already counts
+// as the exit the record holds, and one cleanup had to end is failed and
+// killed.
+func (r *commandRun) classifyCancelled(execErr error, record scripts.Cleanup) commandOutcome {
+	if record.Started == "yes" && record.Killed != "yes" {
+		code, err := strconv.Atoi(record.Exit)
+		if err == nil && code == 0 {
+			return commandOutcome{status: CommandStatusSucceeded, exit: &code}
+		}
+
+		if err == nil {
+			return commandOutcome{status: CommandStatusFailed, reason: "The task was cancelled after the command exited with status " + strconv.Itoa(code) + ".", exit: &code}
+		}
+	}
+
+	switch {
+	case record.Killed == "yes":
+		return commandOutcome{status: CommandStatusFailed, reason: "The task was cancelled, so cleanup ended the command's process group on the node.", err: execErr}
+	case record.Started == "no":
+		return commandOutcome{status: CommandStatusFailed, reason: "The task was cancelled before the command started on the node.", err: execErr}
+	}
+
+	return commandOutcome{status: CommandStatusFailed, reason: "The task was cancelled, and what the command did on the node is not known.", err: execErr}
+}
+
 // cleanup sends cleanup on a context of its own, so a node whose context
 // ended still has its directory removed, and reads the record. The bool is
 // true when processes outlived KILL.
 func (r *commandRun) cleanup(ctx context.Context) (scripts.Cleanup, bool, error) {
-	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), patchCommandTimeout)
+	cleanCtx, cancel := context.WithTimeout(context.Background(), patchCommandTimeout)
 	defer cancel()
 
 	result, err := r.sess.Run(cleanCtx, r.host, opRunCleanup, []string{r.task.ID}, bytes.NewReader(r.script))
@@ -619,6 +721,10 @@ func (r *commandRun) advance(ctx context.Context, change func(*CommandVM)) error
 // stopped, because the outcome asks for it or because the save of the
 // settled node could not be confirmed.
 func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
+	if outcome.strand {
+		return r.strand(ctx)
+	}
+
 	ended := outcome.ended
 	if ended.IsZero() {
 		ended = r.m.certNow()
@@ -668,6 +774,21 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 	}
 
 	return outcome.pause
+}
+
+// strand leaves the node in the phase it is in, because cleanup could not
+// remove what the node holds, and keeps the instance held. The task stays
+// cancelled and pauses, so a resume is what cleans the node. It returns
+// true, because the task stopped.
+func (r *commandRun) strand(ctx context.Context) bool {
+	r.m.holdCancelledCommand(r.task, r.inst)
+
+	err := r.m.persistCertConfirmed(ctx, r.task)
+	if err != nil {
+		r.m.logger.Error("Command task %s is cancelled and holds instance %s, but the hold could not be confirmed in Vault", r.task.ID, r.inst.InstanceID)
+	}
+
+	return true
 }
 
 // commandErrorText makes an error fit a node's record, as one short line
@@ -774,6 +895,19 @@ func (m *Manager) commandResumeAllowed(ctx context.Context, taskID string) error
 // staged or sent by an earlier run is settled through cleanup only, and is
 // never driven again.
 func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
+	goOn := m.runCommandInstance(task, inst, cancelCh)
+	if !goOn && m.taskCancelled(task) {
+		persistCtx := context.WithoutCancel(m.ctx)
+
+		m.endCancelledCommandInstance(persistCtx, task, inst)
+		m.skipPendingInstances(persistCtx, task)
+	}
+
+	return goOn
+}
+
+// runCommandInstance is the body of processCommandInstance.
+func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, cancelCh <-chan struct{}) bool {
 	ctx := m.ctx
 	persistCtx := context.WithoutCancel(ctx)
 
@@ -825,6 +959,12 @@ func (m *Manager) processCommandInstance(task *UpgradeTask, inst *InstanceUpgrad
 		}
 
 		stopped, halt, survived := pool.outcome()
+
+		// A cancel that the nodes in flight have answered ends the instance
+		// as cancelled, whatever those nodes recorded.
+		if !stopped && m.taskCancelled(task) {
+			return false
+		}
 
 		halted = halted || halt
 		if halted {
@@ -913,7 +1053,12 @@ func (m *Manager) feedCommandNodes(ctx, persistCtx context.Context, pool *comman
 			continue
 		}
 
-		pool.start(func() (bool, bool) { return m.driveNodeInLoop(ctx, sessions, task, inst, vm) }, func(recovered any) {
+		pool.start(func() (bool, bool) {
+			nodeCtx, stop := m.commandNodeContext(ctx, task, cancelCh)
+			defer stop()
+
+			return m.driveNodeInLoop(nodeCtx, sessions, task, inst, vm)
+		}, func(recovered any) {
 			m.pauseWorkerPanic(task, inst, vm, recovered)
 		})
 	}
@@ -1301,9 +1446,14 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 		return true
 	}
 
+	why := "when it paused"
+	if m.taskCancelled(task) {
+		why = "when the task was cancelled"
+	}
+
 	outcome := commandOutcome{
 		status: CommandStatusFailed,
-		reason: "Blacksmith lost track of this node's command when it paused, so its outcome is not known. Cleanup found started=" + record.Started + " killed=" + record.Killed + ".",
+		reason: "Blacksmith lost track of this node's command " + why + ", so its outcome is not known. Cleanup found started=" + record.Started + " killed=" + record.Killed + ".",
 		pause:  record.Killed == "survived",
 	}
 
@@ -1346,4 +1496,162 @@ func (m *Manager) pauseStranded(task *UpgradeTask, inst *InstanceUpgrade, messag
 	m.mu.Unlock()
 
 	m.logger.Error("Command task %s paused: %s %s", task.ID, message, commandErrorText(cause))
+
+	// A cancelled task stays cancelled and waits for a resume, held.
+	m.holdCancelledCommand(task, inst)
+}
+
+// commandNodeHeld reports whether the node holds something of ours on its
+// VM. After prepare the command text sits in cmd.sh on the VM even though
+// nothing has run, so a staged node holds as a sent one does.
+func commandNodeHeld(vm CommandVM) bool {
+	return vm.Phase == CommandPhaseStaged || vm.Phase == CommandPhaseSent
+}
+
+// commandInstanceHeldLocked reports whether any node of the instance holds
+// something of ours on its VM. The caller holds mu.
+func commandInstanceHeldLocked(inst *InstanceUpgrade) bool {
+	return inst.Command != nil && slices.ContainsFunc(inst.Command.VMs, commandNodeHeld)
+}
+
+// commandHeldLocked reports whether any instance of the task has a node
+// that holds something of ours on its VM. The caller holds mu.
+func commandHeldLocked(task *UpgradeTask) bool {
+	for i := range task.Instances {
+		if commandInstanceHeldLocked(&task.Instances[i]) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// holdCancelledCommand makes a cancelled task wait for a resume because a
+// node of the instance could not be cleaned, and says so on the instance.
+// The task stays cancelled, so the reservation of the instance stays too.
+// It changes nothing for a task that is not cancelled or an instance with
+// no node left to clean.
+func (m *Manager) holdCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if task.Status != TaskStatusCancelled || inst.Command == nil {
+		return
+	}
+
+	for i := range inst.Command.VMs {
+		node := &inst.Command.VMs[i]
+		if !commandNodeHeld(*node) {
+			continue
+		}
+
+		identity := node.identity()
+		task.Paused = true
+		inst.Error = fmt.Sprintf("The task was cancelled, but cleanup did not finish, so instance %s is held pending cleanup on %s/%d. Resume the task once the node can be reached.", inst.InstanceID, identity.Group, identity.Index)
+
+		return
+	}
+}
+
+// endCancelledCommandInstance ends an instance of a cancelled task once no
+// node of it holds anything on a VM. Its pending nodes are skipped, the
+// instance is cancelled and counted, and its reservation is released. An
+// instance with a node still to clean stays as it is, held, for the resume.
+func (m *Manager) endCancelledCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
+	m.mu.Lock()
+
+	if task.Status != TaskStatusCancelled || inst.Status != InstanceStatusRunning || inst.Command == nil || commandInstanceHeldLocked(inst) {
+		m.mu.Unlock()
+
+		return
+	}
+
+	for i := range inst.Command.VMs {
+		node := &inst.Command.VMs[i]
+		if node.Phase != CommandPhasePending || node.claimed {
+			continue
+		}
+
+		node.Phase = CommandPhaseSkipped
+		node.Reason = "The task was cancelled, so the command was not sent."
+	}
+
+	ended := m.certNowLocked()
+	inst.Status = InstanceStatusCancelled
+	inst.CompletedAt = &ended
+	inst.Error = ""
+	task.CancelledCount++
+
+	m.releaseUnheldLocked(task)
+	m.mu.Unlock()
+
+	err := m.persistCertConfirmed(ctx, task)
+	if err != nil {
+		m.logger.Error("Command task %s ended instance %s as cancelled, but the record could not be confirmed in Vault", task.ID, inst.InstanceID)
+	}
+}
+
+// resumeCancelledCommandLocked starts the cleanup of each running instance
+// of a cancelled command task that has a node holding something on its VM,
+// when nothing processes or settles the task and it does not wait for a
+// resume. Each instance counts as a settle of the task, so nothing else ends
+// it meanwhile, and the function it returns starts the cleanups, which the
+// caller runs once it lets go of mu. The caller holds mu.
+func (m *Manager) resumeCancelledCommandLocked(task *UpgradeTask) func() {
+	if task.Status != TaskStatusCancelled || task.Paused || !m.configured || m.director == nil ||
+		m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
+		return func() {}
+	}
+
+	var clean []*InstanceUpgrade
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status == InstanceStatusRunning && commandInstanceHeldLocked(inst) {
+			clean = append(clean, inst)
+		}
+	}
+
+	if len(clean) == 0 {
+		return func() {}
+	}
+
+	m.settling[task.ID] += len(clean)
+	m.wg.Add(len(clean))
+
+	return func() {
+		for _, inst := range clean {
+			go m.cleanCancelledCommand(task, inst)
+		}
+	}
+}
+
+// cleanCancelledCommand settles the nodes of one instance of a cancelled
+// task through cleanup only, as a resume settles a stranded node, and never
+// sends the command again. It ends the settle that
+// resumeCancelledCommandLocked counted. A node it can't clean leaves the
+// task waiting for a resume with the instance held.
+func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade) {
+	defer m.wg.Done()
+	defer m.endSettling(loadedDeploy{task: task, instance: inst})
+
+	defer func() {
+		if r := recover(); r != nil {
+			m.logger.Error("PANIC while command task %s cleaned up instance %s (%T)", task.ID, inst.InstanceID, r)
+			m.holdCancelledCommand(task, inst)
+		}
+	}()
+
+	m.logger.Info("Command task %s is cancelled, so it cleans up the nodes of instance %s that still hold its command", task.ID, inst.InstanceID)
+
+	sessions := m.newCommandSessions(inst.Command.Deployment)
+	defer sessions.close()
+
+	if m.settleStrandedNodes(m.ctx, sessions, task, inst) {
+		m.holdCancelledCommand(task, inst)
+
+		return
+	}
+
+	m.endCancelledCommandInstance(context.WithoutCancel(m.ctx), task, inst)
 }

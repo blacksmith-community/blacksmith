@@ -3797,8 +3797,13 @@ func openPatchVMLocked(task *UpgradeTask) (*InstanceUpgrade, string) {
 // nothing else ends it meanwhile, and the function it returns starts the
 // resumes, which the caller runs once it lets go of mu. A manager that is
 // stopping, or has no director, starts none, since the next load does
-// it. The caller holds mu.
+// it. A command task instead has its held nodes cleaned, as
+// resumeCancelledCommandLocked starts. The caller holds mu.
 func (m *Manager) resumeCancelledLocked(task *UpgradeTask) func() {
+	if task.KindOrDefault() == TaskKindCommand {
+		return m.resumeCancelledCommandLocked(task)
+	}
+
 	if task.Status != TaskStatusCancelled || task.Paused || task.KindOrDefault() != TaskKindCertificates || certTaskMode(task) != RotationModePatch ||
 		!m.configured || m.director == nil || m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
 		return func() {}
@@ -3945,11 +3950,19 @@ func (m *Manager) cleanupCancelledVM(sessions *patchSessions, task *UpgradeTask,
 }
 
 // waitsCancelledLocked reports whether the task is a cancelled patch task
-// whose open VM waits for a resume, as awaitCancelledResume leaves it. The
-// caller holds mu.
+// whose open VM waits for a resume, as awaitCancelledResume leaves it, or a
+// cancelled and paused command task with a node that still holds files on
+// its VM, as holdCancelledCommand leaves it. The caller holds mu.
 func waitsCancelledLocked(task *UpgradeTask) bool {
-	return task.Status == TaskStatusCancelled && task.Paused && task.KindOrDefault() == TaskKindCertificates &&
-		certTaskMode(task) == RotationModePatch
+	if task.Status != TaskStatusCancelled || !task.Paused {
+		return false
+	}
+
+	if task.KindOrDefault() == TaskKindCommand {
+		return commandHeldLocked(task)
+	}
+
+	return task.KindOrDefault() == TaskKindCertificates && certTaskMode(task) == RotationModePatch
 }
 
 // cancelledVMOpenLocked reports whether a running instance of a cancelled

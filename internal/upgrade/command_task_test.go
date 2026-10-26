@@ -93,7 +93,7 @@ func (s *taskSession) Close() error {
 	return nil
 }
 
-func (s *taskSession) Run(_ context.Context, host int, op string, _ []string, stdin io.Reader) (ssh.Result, error) {
+func (s *taskSession) Run(ctx context.Context, host int, op string, _ []string, stdin io.Reader) (ssh.Result, error) {
 	if stdin != nil {
 		_, err := io.Copy(io.Discard, stdin)
 		if err != nil {
@@ -101,7 +101,7 @@ func (s *taskSession) Run(_ context.Context, host int, op string, _ []string, st
 		}
 	}
 
-	return s.fix.answer(s.deployment, s.indices[host], op)
+	return s.fix.answer(ctx, s.deployment, s.indices[host], op)
 }
 
 // taskFixture is a manager with a command task of several instances, each
@@ -139,6 +139,41 @@ type taskFixture struct {
 	stdouts map[string]string
 	// onOp runs before a node's operation is answered.
 	onOp func(deployment string, index int, op string)
+	// override answers an operation in place of the default when it
+	// returns an answer, and it sees the context the operation was sent
+	// with.
+	override func(ctx context.Context, deployment string, index int, op string) *opAnswer
+	// authHook runs at the start of each check of the stored task.
+	authHook func(ctx context.Context) error
+}
+
+// opAnswer is what a test makes an operation answer.
+type opAnswer struct {
+	result ssh.Result
+	err    error
+}
+
+// hookAuthorizer is the fixture's authorizer, which lets a test hold or
+// fail a check of the stored task.
+type hookAuthorizer struct {
+	CommandAuthorizer
+
+	fix *taskFixture
+}
+
+func (a *hookAuthorizer) AuthorizeStored(ctx context.Context, spec CommandTaskSpec) error {
+	a.fix.mu.Lock()
+	hook := a.fix.authHook
+	a.fix.mu.Unlock()
+
+	if hook != nil {
+		err := hook(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	return a.CommandAuthorizer.AuthorizeStored(ctx, spec) //nolint:wrapcheck // the fixture passes the answer on
 }
 
 type taskOption func(*taskFixture, *UpgradeTask)
@@ -232,12 +267,12 @@ func newTaskFixture(t *testing.T, instances, nodes int, options ...taskOption) *
 
 			return sess, nil
 		},
-		Authorizer: NewConfigAuthorizer(func() config.CommandsConfig {
+		Authorizer: &hookAuthorizer{fix: fix, CommandAuthorizer: NewConfigAuthorizer(func() config.CommandsConfig {
 			fix.mu.Lock()
 			defer fix.mu.Unlock()
 
 			return fix.cfg
-		}),
+		})},
 	}
 
 	err := manager.Configure(deps)
@@ -270,11 +305,12 @@ func (f *taskFixture) setSlots(n int) {
 }
 
 // answer plays the VM for one operation.
-func (f *taskFixture) answer(deployment string, index int, op string) (ssh.Result, error) {
+func (f *taskFixture) answer(ctx context.Context, deployment string, index int, op string) (ssh.Result, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, nodeCall{deployment: deployment, index: index, op: op})
 	f.stamps = append(f.stamps, f.vault.seq.Add(1))
 	hook := f.onOp
+	override := f.override
 	key := fmt.Sprintf("%s/%d", deployment, index)
 	stdout, hasStdout := f.stdouts[key]
 	exit := f.exits[key]
@@ -283,6 +319,12 @@ func (f *taskFixture) answer(deployment string, index int, op string) (ssh.Resul
 
 	if hook != nil {
 		hook(deployment, index, op)
+	}
+
+	if override != nil {
+		if answer := override(ctx, deployment, index, op); answer != nil {
+			return answer.result, answer.err
+		}
 	}
 
 	switch op {
