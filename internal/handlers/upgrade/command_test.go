@@ -169,7 +169,7 @@ func ranCommandTask(t *testing.T, env *cmdEnv, runAs, key string) string {
 
 	created := send(t, env.handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, runAs), key)
 	if created.Code != http.StatusCreated {
-		t.Fatalf("create answered %d: %s", created.Code, created.Body.String())
+		t.Fatalf("create answered %d", created.Code)
 	}
 
 	var task struct {
@@ -271,7 +271,9 @@ func TestTaskDetailOfCommandTaskIsGated(t *testing.T) {
 		t.Fatalf("expected 200 with the command text, got %d", allowed.Code)
 	}
 
-	if strings.Contains(allowed.Body.String(), strings.TrimSpace(cmdStdout)) {
+	// The node's output is in the vault, so a detail that read it would
+	// carry it.
+	if strings.Contains(allowed.Body.String(), strings.TrimSpace(cmdStdout)) || strings.Contains(allowed.Body.String(), `"stdout"`) {
 		t.Fatal("the detail carried output bytes")
 	}
 }
@@ -383,9 +385,23 @@ func TestCreateCommandRouteAuthorizesBeforeSpendingPreview(t *testing.T) {
 	handler := env.handler
 	id := previewID(t, handler, "vcap", cmdKey)
 
+	// A refused create made no task and spent no preview, so the list stays
+	// empty after each one.
+	expectEmptyList := func() {
+		t.Helper()
+
+		list := send(t, handler, http.MethodGet, "/b/upgrade/tasks", "", cmdKey)
+		if list.Code != http.StatusOK || strings.TrimSpace(list.Body.String()) != "[]" {
+			t.Fatal("a refused create left a task behind")
+		}
+	}
+
 	expectCode(t, send(t, handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), ""), http.StatusUnauthorized, apierr.CodeCommandCredentialRequired)
+	expectEmptyList()
 	expectCode(t, send(t, handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), "wrong"), http.StatusUnauthorized, apierr.CodeCommandCredentialRequired)
+	expectEmptyList()
 	expectCode(t, send(t, handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "root"), cmdKey), http.StatusForbidden, apierr.CodeRootDisabled)
+	expectEmptyList()
 
 	if got := send(t, handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), cmdKey); got.Code != http.StatusCreated {
 		t.Fatalf("expected the preview to be unspent and the create to answer 201, got %d", got.Code)
@@ -405,6 +421,12 @@ func TestCanHandleCommandPaths(t *testing.T) {
 			t.Fatalf("expected CanHandle to accept %s", path)
 		}
 	}
+
+	for _, path := range []string{"/b/other/commands/preview", "/b/upgrades/tasks/x/output", "/b/upgrade"} {
+		if env.handler.CanHandle(path) {
+			t.Fatalf("expected CanHandle to refuse %s", path)
+		}
+	}
 }
 
 // An upgrade preview of the command kind is turned away as a bad request
@@ -416,4 +438,49 @@ func TestUpgradePreviewRefusesCommandKind(t *testing.T) {
 
 	recorder := send(t, env.handler, http.MethodPost, "/b/upgrade/preview", `{"kind":"command","instance_ids":["i1"]}`, "")
 	expectError(t, recorder, http.StatusBadRequest, "created through CreateCommandTask")
+}
+
+// credentialPresented creates a task with the key header as given and returns
+// the flag the task recorded.
+func credentialPresented(t *testing.T, cfg config.CommandsConfig, header string) bool {
+	t.Helper()
+
+	env := commandHandler(t, cfg)
+	id := previewID(t, env.handler, "vcap", header)
+
+	created := send(t, env.handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), header)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create answered %d", created.Code)
+	}
+
+	var task struct {
+		Command struct {
+			CredentialPresented bool `json:"credential_presented"`
+		} `json:"command"`
+	}
+
+	if err := json.Unmarshal(created.Body.Bytes(), &task); err != nil {
+		t.Fatalf("decoding the task: %v", err)
+	}
+
+	return task.Command.CredentialPresented
+}
+
+// The flag is audit information that a configured second credential was
+// checked and matched, so a header sent to a deployment with no key does not
+// set it.
+func TestCreateRecordsWhetherTheCredentialWasChecked(t *testing.T) {
+	t.Parallel()
+
+	if !credentialPresented(t, commandsOn(cmdKey, false), cmdKey) {
+		t.Fatal("a configured key with a matching header should read as presented")
+	}
+
+	if credentialPresented(t, commandsOn("", false), "unused-header") {
+		t.Fatal("a header sent with no key configured should not read as presented")
+	}
+
+	if credentialPresented(t, commandsOn("", false), "") {
+		t.Fatal("no key and no header should not read as presented")
+	}
 }

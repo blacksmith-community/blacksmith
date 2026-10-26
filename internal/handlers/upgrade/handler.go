@@ -25,6 +25,8 @@ type Handler struct {
 	logger  interfaces.Logger
 	manager *upgrade.Manager
 	tasks   taskManager
+	// commands reads the commands configuration, which may be nil.
+	commands func() config.CommandsConfig
 }
 
 // taskManager is the part of the upgrade manager that the handlers call.
@@ -110,6 +112,8 @@ func NewHandler(deps Dependencies) *Handler {
 		logger:  deps.Logger.Named("upgrade-handler"),
 		manager: manager,
 		tasks:   manager,
+
+		commands: deps.Commands,
 	}
 }
 
@@ -571,7 +575,10 @@ func (h *Handler) createCommandTask(w http.ResponseWriter, r *http.Request, body
 		return
 	}
 
-	req.CredentialPresented = r.Header.Get(upgrade.CommandKeyHeader) != ""
+	// The authorizer has already proved a configured key matched the header,
+	// so the flag says a configured credential was checked, and a header
+	// sent to a deployment with no key does not set it.
+	req.CredentialPresented = h.commandKeyConfigured() && r.Header.Get(upgrade.CommandKeyHeader) != ""
 
 	h.logger.Info("Creating a command task of %d bytes from preview %s", len(req.Command), req.PreviewID)
 
@@ -590,6 +597,11 @@ func (h *Handler) createCommandTask(w http.ResponseWriter, r *http.Request, body
 
 	h.logger.Info("Answered command task %s, existing: %t", task.ID, existing)
 	response.JSON(w, status, task)
+}
+
+// commandKeyConfigured reports whether a second credential is configured.
+func (h *Handler) commandKeyConfigured() bool {
+	return h.commands != nil && h.commands().CredentialKey() != ""
 }
 
 // commandOutputResponse is what one node printed. The streams are decoded
