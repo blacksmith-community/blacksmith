@@ -81,6 +81,10 @@ type Dependencies struct {
 	// PatchRunner opens the SSH sessions patch mode runs its scripts
 	// through. It may be nil, and then no instance can be patched.
 	PatchRunner func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error)
+	// CommandRunner opens the SSH sessions batch commands run through,
+	// which never log what a command prints. It may be nil, and then no
+	// command can run.
+	CommandRunner func(ctx context.Context, deployment, group string, indices []int) (upgrade.PatchSession, error)
 	// Commands returns the commands configuration as it stands now. When
 	// nil, commands count as off.
 	Commands func() config.CommandsConfig
@@ -129,6 +133,7 @@ func configureManager(manager *upgrade.Manager, deps Dependencies) {
 		UpgradePreviews: deps.UpgradePreviews,
 		Prober:          deps.Prober,
 		PatchRunner:     deps.PatchRunner,
+		CommandRunner:   deps.CommandRunner,
 		Commands:        deps.Commands,
 		BOSH:            deps.BOSH,
 	}

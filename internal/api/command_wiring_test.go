@@ -118,3 +118,23 @@ func TestAPIWiresCommandDefaults(t *testing.T) {
 		t.Errorf("a preview reports a max in flight limit of %d, want 3", preview.MaxInFlightLimit)
 	}
 }
+
+// The production constructor gives the manager a command runner, beside
+// its patch runner, so a command task can open the SSH sessions it needs.
+func TestAPIWiresTheCommandRunner(t *testing.T) {
+	t.Parallel()
+
+	manager := newCommandWiringAPI(t,
+		func() config.CommandsConfig { return config.CommandsConfig{} },
+		func() config.BOSHConfig { return config.BOSHConfig{} },
+	)
+
+	deps := manager.Dependencies()
+	if deps.PatchRunner == nil {
+		t.Fatal("the manager has no patch runner")
+	}
+
+	if deps.CommandRunner == nil {
+		t.Fatal("the manager has no command runner")
+	}
+}

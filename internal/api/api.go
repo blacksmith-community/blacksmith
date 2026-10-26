@@ -284,6 +284,9 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		// Patch mode runs its scripts through one SSH user per instance
 		// group, on the same director as the rest of the task.
 		PatchRunner: upgrade.NewPatchRunner(director, deps.Logger),
+		// Batch commands use the same director, and their runners keep
+		// what a command prints out of the logs.
+		CommandRunner: upgrade.NewCommandRunner(director, deps.Logger),
 	})
 }
 
