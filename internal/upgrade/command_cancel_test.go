@@ -167,7 +167,7 @@ func commandWatchers() int {
 	buf := make([]byte, 1<<20)
 	buf = buf[:runtime.Stack(buf, true)]
 
-	return strings.Count(string(buf), "commandNodeContext.func1")
+	return strings.Count(string(buf), ".watchNodeCancel(")
 }
 
 func nodeOf(task UpgradeTask, instance, index int) CommandVM {

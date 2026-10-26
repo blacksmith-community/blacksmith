@@ -156,23 +156,29 @@ func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask, can
 	go func() {
 		defer close(watcherDone)
 
-		for {
-			select {
-			case _, open := <-cancelCh:
-				if !open || m.taskCancelled(task) {
-					cancel(errCommandCancelled)
-
-					return
-				}
-			case <-nodeCtx.Done():
-				return
-			}
-		}
+		m.watchNodeCancel(nodeCtx, cancel, task, cancelCh)
 	}()
 
 	return nodeCtx, func() {
 		cancel(nil)
 		<-watcherDone
+	}
+}
+
+// watchNodeCancel ends the node's context with errCommandCancelled when
+// the task is cancelled, and returns when the node's context ends.
+func (m *Manager) watchNodeCancel(nodeCtx context.Context, cancel context.CancelCauseFunc, task *UpgradeTask, cancelCh <-chan struct{}) {
+	for {
+		select {
+		case _, open := <-cancelCh:
+			if !open || m.taskCancelled(task) {
+				cancel(errCommandCancelled)
+
+				return
+			}
+		case <-nodeCtx.Done():
+			return
+		}
 	}
 }
 
