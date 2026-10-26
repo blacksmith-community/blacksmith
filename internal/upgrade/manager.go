@@ -2294,15 +2294,15 @@ func (m *Manager) loadAndSettle() {
 
 // loadPersistedTasks loads every task saved in Vault, the upgrades from
 // the upgrade tasks index, the certificate tasks from theirs, and the
-// command tasks from theirs. A failed
-// read of an index or of a task is retried until it succeeds or Stop ends
-// the load, so a Vault that starts after the broker never loses a task. A
+// command tasks from theirs. A failed read of an index or of a task is
+// retried until it succeeds or Stop ends the load, so a Vault that starts
+// after the broker never loses a task. A
 // task whose record can't be decoded is skipped and logged instead, since
 // no retry can read it, so the load still finishes. A record whose kind
 // does not belong under the index that names it is skipped and logged too,
 // so it never runs as the wrong kind. It rebuilds the request index from
 // the loaded tasks and restores their reservations, after failing each
-// certificate task whose creation was never confirmed. It returns the tasks
+// certificate or command task whose creation was never confirmed. It returns the tasks
 // it loaded, and false when Stop ended the load. A task already in memory,
 // created after the broker started, is kept.
 func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {

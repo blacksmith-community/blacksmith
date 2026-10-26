@@ -282,7 +282,7 @@ func TestResumeOfALoadedNeverStartedTaskIsRefusedWhenTheSwitchIsOff(t *testing.T
 	fix.assertNoCommandText()
 }
 
-func TestLoadedQueuedTaskTheAuthorizerRefusesIsDroppedWithAReason(t *testing.T) {
+func TestLoadedTaskTheAuthorizerRefusesPausesWithAReason(t *testing.T) {
 	fix := newTaskFixtureFrom(t, 2, 1, func(fix *taskFixture, task *UpgradeTask) {
 		task.CreationConfirmed = true
 		task.Command.RunAs = "root"
@@ -354,6 +354,8 @@ func TestLoadedPausedRootTaskIsRefusedAtResume(t *testing.T) {
 	if status := fix.snapshot(); status.Status != TaskStatusPaused || !status.Paused || len(fix.recorded()) != 0 {
 		t.Errorf("the task is %s paused=%v after the refusal and sent %v, want it left paused and silent", status.Status, status.Paused, fix.recorded())
 	}
+
+	fix.assertNoCommandText()
 }
 
 func TestLoadedFinishedTasksAreLoadedAsTheyAre(t *testing.T) {
@@ -392,6 +394,8 @@ func TestLoadedFinishedTasksAreLoadedAsTheyAre(t *testing.T) {
 			if err := fix.busyWith(0); err != nil {
 				t.Errorf("the loaded %s task holds its instance: %v", status, err)
 			}
+
+			fix.assertNoCommandText()
 		})
 	}
 }
@@ -410,6 +414,8 @@ func TestLoadedRunningTaskHoldsItsInstancesAsACommand(t *testing.T) {
 			t.Errorf("another task reserved instance %d of a loaded command task, or the refusal does not name the command: %v", instance, err)
 		}
 	}
+
+	fix.assertNoCommandText()
 }
 
 func TestLoadedCommandTasksOfOneInstanceFailTheLaterOne(t *testing.T) {
@@ -476,6 +482,8 @@ func TestLoadedSurvivorKeepsTheTaskPausedAndTheInstanceHeld(t *testing.T) {
 	}
 
 	fix.waitFor("the cancel to release the hold", func(UpgradeTask) bool { return fix.busyWith(0) == nil })
+
+	fix.assertNoCommandText()
 }
 
 func TestLoadedFailedNodeSkipsItsPendingNodesAndIsNeverDriven(t *testing.T) {
@@ -502,6 +510,8 @@ func TestLoadedFailedNodeSkipsItsPendingNodesAndIsNeverDriven(t *testing.T) {
 	if done.Instances[0].Status != InstanceStatusFailed {
 		t.Errorf("the instance is %s, want failed", done.Instances[0].Status)
 	}
+
+	fix.assertNoCommandText()
 }
 
 func TestLoadedOrphanCommandTaskIsFailedAndNeverDriven(t *testing.T) {
@@ -539,6 +549,8 @@ func TestLoadedOrphanCommandTaskIsFailedAndNeverDriven(t *testing.T) {
 	if err := fix.busyWith(0); err != nil {
 		t.Errorf("the orphan holds its instance: %v", err)
 	}
+
+	fix.assertNoCommandText()
 }
 
 func TestLoadedCancelledTaskKeepsItsHeldNodeAndCleansItOnResume(t *testing.T) {
@@ -618,6 +630,8 @@ func TestLoadedCancelledTaskWithNothingHeldEndsItsRunningInstance(t *testing.T) 
 	}
 
 	waitUntil(t, "the instance to be released", func() bool { return fix.busyWith(0) == nil })
+
+	fix.assertNoCommandText()
 }
 
 func TestLoadedCancelledTaskWithAHeldNodeCleansItWithoutAResume(t *testing.T) {
@@ -746,5 +760,68 @@ func TestResumeAfterARefusedLoadClearsTheRefusalFromAFailure(t *testing.T) {
 		t.Errorf("the failed instance still shows the refusal: %q", done.Instances[0].Error)
 	}
 
+	fix.assertNoCommandText()
+}
+
+// A task a restart paused because the authorizer refuses it can still be
+// cancelled, and the resume that follows only cleans, so it needs no
+// authorization and a node left sent is not stranded.
+func TestLoadedRefusedTaskCancelledThenResumedOnlyCleans(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 2, 2, func(fix *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+		task.Command.RunAs = "root"
+		fix.setRoot(false)
+
+		task.Status = TaskStatusRunning
+		task.Instances[0].Status = InstanceStatusRunning
+		task.Instances[0].Command.VMs[0].Phase = CommandPhaseSent
+		task.Instances[0].Command.VMs[0].StartedAt = &loadedStart
+	})
+
+	paused := fix.snapshot()
+	if paused.Status != TaskStatusPaused || !paused.Paused {
+		t.Fatalf("the task is %s paused=%v, want paused", paused.Status, paused.Paused)
+	}
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err == nil {
+		t.Fatal("a refused root task resumed while allow_root is off")
+	}
+
+	err = fix.manager.CancelTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	fix.manager.mu.RLock()
+	waits := waitsCancelledLocked(fix.task)
+	fix.manager.mu.RUnlock()
+
+	if !waits {
+		t.Fatal("the cancelled task does not wait for a resume")
+	}
+
+	if err := fix.busyWith(0); err == nil {
+		t.Error("the cancelled task freed the instance with a sent node")
+	}
+
+	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	done := fix.waitFor("the instances to end", func(task UpgradeTask) bool {
+		return task.Instances[0].Status == InstanceStatusCancelled && task.Instances[1].Status == InstanceStatusSkipped
+	})
+
+	if got := fix.recorded(); len(got) != 1 || got[0].op != opRunCleanup || got[0].index != 0 {
+		t.Errorf("the resume sent %v, want one cleanup to the sent node", got)
+	}
+
+	if done.Status != TaskStatusCancelled {
+		t.Errorf("the task is %s, want cancelled", done.Status)
+	}
+
+	waitUntil(t, "the instance to be released", func() bool { return fix.busyWith(0) == nil })
 	fix.assertNoCommandText()
 }

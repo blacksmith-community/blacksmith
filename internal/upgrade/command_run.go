@@ -950,8 +950,9 @@ const commandRefusedMessage = "Running this command is no longer allowed, so the
 // pauseRefusedCommandLocked pauses a loaded command task the authorizer
 // refuses, and says why on its first instance that has not ended. It
 // reports whether it paused the task. A manager that is not configured
-// asks nothing, because it can't tell yet. The instances' holds are
-// released as far as nothing on a VM keeps them. The caller holds mu.
+// asks nothing, because it can't tell yet. The task keeps its holds, since
+// a paused command task holds every instance that has not settled. The
+// caller holds mu.
 func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 	if task.KindOrDefault() != TaskKindCommand || task.Command == nil || !m.configured {
 		return false
@@ -976,7 +977,6 @@ func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 		break
 	}
 
-	m.releaseUnheldLocked(task)
 	m.logger.Info("Command task %s paused after a restart, because the authorizer refuses it: %v", task.ID, err)
 
 	return true
@@ -991,9 +991,10 @@ func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 // or is waiting to be settled has its pending nodes skipped, so none of
 // them is ever driven, and a node whose processes survived keeps an
 // unfinished task paused, as does an authorizer that refuses the task. A
-// cancelled task ends each running instance that
-// has no node left to clean, and keeps the instances that have one held.
-// The caller holds mu.
+// task that sent nothing loads paused, as commandNeverStartedLocked
+// describes. A cancelled task ends each running instance that has no node
+// left to clean, and keeps the instances that have one held. The caller
+// holds mu.
 func (m *Manager) prepareLoadedCommandLocked(task *UpgradeTask) bool {
 	changed := false
 
