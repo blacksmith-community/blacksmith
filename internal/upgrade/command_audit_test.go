@@ -14,6 +14,7 @@ import (
 
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/bosh/sshconn"
+	"blacksmith/internal/interfaces"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -251,6 +252,10 @@ func TestCommandAuditRecordsAWholeRun(t *testing.T) {
 			t.Errorf("a live record %s is marked rebuilt", rec.Event)
 		}
 
+		if rec.Command == nil || len(rec.Command.Targets) != 1 {
+			t.Errorf("the %s record does not carry the targets of the task", rec.Event)
+		}
+
 		if !fix.auditBody(rec.ID) || !fix.auditIndex()[rec.ID] {
 			t.Errorf("record %s is not in Vault and its index", rec.ID)
 		}
@@ -396,6 +401,7 @@ func TestCommandAuditCleanupOnlySettlesWriteNodeSettled(t *testing.T) {
 		"stranded on load": {
 			seed: func(task *UpgradeTask) {
 				restartedWith(map[int]CommandPhase{0: CommandPhaseSent})(nil, task)
+				task.Instances[0].Command.VMs[0].StagedAt = &loadedStart
 			},
 			done: func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusFailed },
 		},
@@ -405,6 +411,7 @@ func TestCommandAuditCleanupOnlySettlesWriteNodeSettled(t *testing.T) {
 				task.Status = TaskStatusCancelled
 				task.Instances[0].Status = InstanceStatusRunning
 				task.Instances[0].Command.VMs[0].Phase = CommandPhaseSent
+				task.Instances[0].Command.VMs[0].StagedAt = &loadedStart
 				task.Instances[0].Command.VMs[0].StartedAt = &loadedStart
 			},
 			done: func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusCancelled },
@@ -416,6 +423,7 @@ func TestCommandAuditCleanupOnlySettlesWriteNodeSettled(t *testing.T) {
 				task.Paused = true
 				task.Instances[0].Status = InstanceStatusRunning
 				task.Instances[0].Command.VMs[0].Phase = CommandPhaseStaged
+				task.Instances[0].Command.VMs[0].StagedAt = &loadedStart
 				task.Instances[0].Command.VMs[0].StartedAt = &loadedStart
 			},
 			resume: true,
@@ -430,9 +438,12 @@ func TestCommandAuditCleanupOnlySettlesWriteNodeSettled(t *testing.T) {
 			fix := newTaskFixtureFrom(t, 1, 2, func(f *taskFixture, task *UpgradeTask) {
 				trail = f.watchCommandAudit()
 
+				// The load itself starts the cleanup, so the answer is set
+				// before the manager starts.
+				f.cleanups["dep-0/0"] = "cleanup started=yes exit=7 killed=no"
+
 				tc.seed(task)
 			})
-			fix.cleanups["dep-0/0"] = "cleanup started=yes exit=7 killed=no"
 
 			if tc.resume {
 				err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
@@ -467,6 +478,7 @@ func TestCommandAuditCleanupOnlySettlesWriteNodeSettled(t *testing.T) {
 func settledSeed(f *taskFixture, task *UpgradeTask) {
 	asSubmitted(task)
 
+	staged := loadedStart.Add(-time.Second)
 	started := loadedStart
 	ended := loadedStart.Add(time.Minute)
 	exit := 0
@@ -485,6 +497,7 @@ func settledSeed(f *taskFixture, task *UpgradeTask) {
 		node.Phase = CommandPhaseSettled
 		node.Status = CommandStatusSucceeded
 		node.ExitCode = &exit
+		node.StagedAt = &staged
 		node.StartedAt = &started
 		node.EndedAt = &ended
 	}
@@ -536,7 +549,7 @@ func TestCommandAuditBackfillWritesWhatACrashSkippedOnce(t *testing.T) {
 		t.Errorf("the rebuilt settle has time %v and matched %+v", settled[0].At, settled[0].Node.Matched)
 	}
 
-	if staged := trail.of(AuditNodeStaged)[0]; staged.Node.Phase != CommandPhaseStaged || staged.Node.Status != "" || !staged.At.Equal(loadedStart) {
+	if staged := trail.of(AuditNodeStaged)[0]; staged.Node.Phase != CommandPhaseStaged || staged.Node.Status != "" || !staged.At.Equal(loadedStart.Add(-time.Second)) {
 		t.Errorf("the rebuilt staged record %+v at %v", staged.Node, staged.At)
 	}
 
@@ -570,6 +583,50 @@ func TestCommandAuditBackfillWritesWhatACrashSkippedOnce(t *testing.T) {
 	for id := range index {
 		if puts := fix.vault.putCount(commandAuditVaultPath + "/" + id); puts != 1 {
 			t.Errorf("after the second load record %s was written %d times", id, puts)
+		}
+	}
+}
+
+// A node that was staged and then settled before it was sent has no start
+// time, and its lost node_staged record is still rebuilt, at the time the
+// node was staged. A node that settled without ever being staged gets none.
+func TestCommandAuditBackfillRebuildsStagedNodeThatWasNeverSent(t *testing.T) {
+	var trail *commandTrail
+
+	staged := loadedStart.Add(-time.Second)
+
+	fix := newTaskFixtureFrom(t, 1, 2, func(f *taskFixture, task *UpgradeTask) {
+		settledSeed(f, task)
+
+		failed := &task.Instances[0].Command.VMs[0]
+		failed.Status = CommandStatusFailed
+		failed.ExitCode = nil
+		failed.StartedAt = nil
+		failed.StagedAt = &staged
+
+		never := &task.Instances[0].Command.VMs[1]
+		never.Status = CommandStatusFailed
+		never.ExitCode = nil
+		never.StartedAt = nil
+		never.StagedAt = nil
+
+		trail = f.watchCommandAudit()
+	})
+
+	waitUntil(t, "the rebuilt records", func() bool { return fix.manager.auditIdle() && len(trail.all()) >= 6 })
+
+	rebuilt := trail.of(AuditNodeStaged)
+	if len(rebuilt) != 1 {
+		t.Fatalf("rebuilt %d node_staged records, want one for the node that was staged", len(rebuilt))
+	}
+
+	if rebuilt[0].Node.Reviewed.ID != "vm-0-0" || !rebuilt[0].At.Equal(staged) {
+		t.Errorf("the rebuilt staged record is for %q at %v, want vm-0-0 at %v", rebuilt[0].Node.Reviewed.ID, rebuilt[0].At, staged)
+	}
+
+	for _, rec := range trail.all() {
+		if len(rec.Command.Targets) != 1 || len(rec.Command.Targets[0].Nodes) != 2 {
+			t.Errorf("the rebuilt %s record carries targets %+v", rec.Event, rec.Command.Targets)
 		}
 	}
 }
@@ -674,6 +731,17 @@ func (d *groupDirector) SSHGroupSession(_ context.Context, deployment, group str
 // line any package logged and no error the task shows, and the audit line
 // carries the digest and the length.
 func TestCommandRunLogsNoCanaryInAnyPackage(t *testing.T) {
+	for _, mode := range []string{"success", "failure", "cancel"} {
+		t.Run(mode, func(t *testing.T) { checkNoCanaries(t, mode) })
+	}
+}
+
+// checkNoCanaries runs the task to the end the mode names, which is a
+// success, a first node that exits non-zero, or a cancel while the first
+// node's command is running.
+func checkNoCanaries(t *testing.T, mode string) {
+	t.Helper()
+
 	const (
 		textCanary   = "text-canary-b3c9e1f4"
 		stdoutCanary = "stdout-canary-72ad90c1"
@@ -687,6 +755,15 @@ func TestCommandRunLogsNoCanaryInAnyPackage(t *testing.T) {
 
 	op.Store("")
 
+	running := make(chan struct{}, 4)
+	hold := make(chan struct{})
+
+	var release sync.Once
+
+	releaseHold := func() { release.Do(func() { close(hold) }) }
+
+	t.Cleanup(releaseHold)
+
 	vm := startSSHVM(t, func(channel gossh.Channel, _ <-chan struct{}) uint32 {
 		_, _ = io.Copy(io.Discard, channel)
 
@@ -696,8 +773,22 @@ func TestCommandRunLogsNoCanaryInAnyPackage(t *testing.T) {
 		case opRunExec:
 			_, _ = io.WriteString(channel, stdoutCanary)
 			_, _ = io.WriteString(channel.Stderr(), stderrCanary)
+
+			switch mode {
+			case "failure":
+				return 3
+			case "cancel":
+				running <- struct{}{}
+
+				<-hold
+			}
 		case opRunCleanup:
-			_, _ = io.WriteString(channel, runCleanupDone+"\n")
+			record := runCleanupDone
+			if mode == "cancel" {
+				record = "cleanup started=yes exit=- killed=yes"
+			}
+
+			_, _ = io.WriteString(channel, record+"\n")
 		}
 
 		return 0
@@ -724,8 +815,25 @@ func TestCommandRunLogsNoCanaryInAnyPackage(t *testing.T) {
 	trail := fix.watchCommandAudit()
 
 	fix.queue()
-	done := fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
-	trail.waitForEvent(t, AuditTaskFinished)
+
+	var done UpgradeTask
+
+	switch mode {
+	case "success":
+		done = fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
+		trail.waitForEvent(t, AuditTaskFinished)
+	case "failure":
+		done = fix.waitFor("the task to fail", func(task UpgradeTask) bool { return task.Status == TaskStatusFailed })
+		trail.waitForEvent(t, AuditTaskFinished)
+	case "cancel":
+		<-running
+		fix.cancel()
+		releaseHold()
+
+		done = fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusCancelled })
+		trail.waitForEvent(t, AuditTaskCancelled)
+	}
+
 	fix.waitAuditIdle()
 
 	logs := fix.log.joined()
@@ -733,7 +841,7 @@ func TestCommandRunLogsNoCanaryInAnyPackage(t *testing.T) {
 	// The controls show the check can see what it looks for. The runner
 	// logged its quiet line, the audit line carries the digest, and Vault
 	// holds the text and the output on purpose.
-	if !strings.Contains(logs, "ended with exit status 0") {
+	if !strings.Contains(logs, "ended with") {
 		t.Error("the SSH runner logged nothing, so the check does not cover it")
 	}
 
@@ -772,11 +880,70 @@ func TestCommandRunLogsNoCanaryInAnyPackage(t *testing.T) {
 		}
 	}
 
-	for _, rec := range trail.of(AuditNodeSettled) {
+	for _, rec := range trail.all() {
 		raw, _ := json.Marshal(rec)
 		if strings.Contains(string(raw), stdoutCanary) || strings.Contains(string(raw), stderrCanary) {
 			t.Error("an audit record holds output")
 		}
 	}
 
+}
+
+// indexRefusingVault refuses to read any audit index.
+type indexRefusingVault struct {
+	interfaces.Vault
+}
+
+func (v indexRefusingVault) Get(ctx context.Context, path string, out interface{}) (bool, error) {
+	if path == commandAuditVaultPath || path == certificateAuditVaultPath {
+		return false, errPutRefused
+	}
+
+	return v.Vault.Get(ctx, path, out)
+}
+
+// The lines that say records were given up name the trail the records
+// belong to, one line for each trail, and carry no text of the command.
+func TestCommandAuditGiveUpLinesNameTheirTrail(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+
+	fix.manager.auditQ.mu.Lock()
+	fix.manager.auditQ.pending = []AuditRecord{
+		{ID: "c1", Event: AuditNodeSettled, TaskID: taskFixtureID, Command: &CommandAudit{}},
+		{ID: "c2", Event: AuditTaskFinished, TaskID: taskFixtureID, Command: &CommandAudit{}},
+		{ID: "r1", Event: AuditSkipped, TaskID: "cert-task"},
+	}
+	fix.manager.auditQ.mu.Unlock()
+
+	fix.manager.dropPendingAudit()
+
+	logs := fix.log.joined()
+
+	for _, want := range []string{"audit=command-run 2 queued records were not saved", "audit=certificate-rotation 1 queued records were not saved"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("the log lacks %q:\n%s", want, logs)
+		}
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestCommandAuditUnreadableIndexLineNamesTheCommandTrail(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+
+	fix.manager.auditRetry = time.Nanosecond
+	fix.manager.vault = indexRefusingVault{Vault: fix.manager.vault}
+
+	fix.manager.retryBackfill([]string{taskFixtureID})
+
+	logs := fix.log.joined()
+	if !strings.Contains(logs, "audit=command-run the audit index could not be read, so lost records of 1 tasks were not rebuilt") {
+		t.Errorf("the log lacks the command trail line:\n%s", logs)
+	}
+
+	if strings.Contains(logs, "audit=certificate-rotation") {
+		t.Errorf("the line of a command task names the certificate trail:\n%s", logs)
+	}
+
+	fix.assertNoCommandText()
 }

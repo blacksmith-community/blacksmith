@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -326,12 +327,19 @@ func (m *Manager) drainAudit() {
 // from the persisted tasks.
 func (m *Manager) dropPendingAudit() {
 	m.auditQ.mu.Lock()
-	dropped := len(m.auditQ.pending)
+	dropped := make(map[string]int)
+
+	for _, rec := range m.auditQ.pending {
+		dropped[auditLabel(rec)]++
+	}
+
 	m.auditQ.pending = nil
 	m.auditQ.running = false
 	m.auditQ.mu.Unlock()
 
-	m.logger.Error("audit=certificate-rotation %d queued records were not saved before shutdown, and the next start rebuilds what the persisted tasks still hold", dropped)
+	for _, label := range slices.Sorted(maps.Keys(dropped)) {
+		m.logger.Error("audit=%s %d queued records were not saved before shutdown, and the next start rebuilds what the persisted tasks still hold", label, dropped[label])
+	}
 }
 
 // auditIdle reports whether every queued record has been written.
@@ -609,7 +617,17 @@ func (m *Manager) retryBackfill(ids []string) {
 		delay = min(delay*2, auditBackfillMaxDelay)
 	}
 
-	m.logger.Error("audit=certificate-rotation the audit index could not be read, so lost records of %d tasks were not rebuilt", len(ids))
+	lost := make(map[string]int)
+
+	for _, id := range ids {
+		for _, path := range m.backfillPaths([]string{id}) {
+			lost[auditPathLabel(path)]++
+		}
+	}
+
+	for _, label := range slices.Sorted(maps.Keys(lost)) {
+		m.logger.Error("audit=%s the audit index could not be read, so lost records of %d tasks were not rebuilt", label, lost[label])
+	}
 }
 
 // tryBackfill reads the audit index of each kind of task given once, and

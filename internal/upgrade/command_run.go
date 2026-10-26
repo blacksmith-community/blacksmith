@@ -489,7 +489,12 @@ func (r *commandRun) stage(ctx context.Context) (*commandOutcome, bool) {
 		return &commandOutcome{skip: true, reason: reasonCancelledBeforeStart}, false
 	}
 
-	err := r.advance(ctx, func(node *CommandVM) { node.Phase = CommandPhaseStaged })
+	staged := r.m.certNow()
+
+	err := r.advance(ctx, func(node *CommandVM) {
+		node.Phase = CommandPhaseStaged
+		node.StagedAt = &staged
+	})
 	if err != nil {
 		r.m.pauseUnconfirmed(r.task, r.inst, "stage the command on the node")
 

@@ -3,7 +3,6 @@ package upgrade
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strconv"
 )
 
@@ -35,7 +34,7 @@ type CommandAudit struct {
 	PreviewID           string `json:"preview_id,omitempty"`
 	CredentialPresented bool   `json:"credential_presented"`
 	// Targets lists the deployments and node tuples the task was made
-	// for, and only the records of the task as a whole carry it.
+	// for, and every record of the task carries it.
 	Targets []CommandAuditTarget `json:"targets,omitempty"`
 }
 
@@ -123,7 +122,8 @@ func commandNodeKey(vm *CommandVM) string {
 }
 
 // commandRecordLocked builds a command record of the task, or of one of its
-// instances, from what the task holds now. The caller holds mu.
+// instances, from what the task holds now, with the targets of the task. The
+// caller holds mu.
 func (m *Manager) commandRecordLocked(task *UpgradeTask, inst *InstanceUpgrade, event string) AuditRecord {
 	rec := AuditRecord{
 		ID:      auditID(task.ID, "", event, ""),
@@ -150,6 +150,8 @@ func (m *Manager) commandRecordLocked(task *UpgradeTask, inst *InstanceUpgrade, 
 			CredentialPresented: spec.CredentialPresented,
 		}
 	}
+
+	rec.Command.Targets = commandTargetsLocked(task)
 
 	if inst != nil {
 		rec.InstanceID = inst.InstanceID
@@ -187,8 +189,6 @@ func (m *Manager) commandStartRecordLocked(task *UpgradeTask) AuditRecord {
 	rec := m.commandRecordLocked(task, nil, AuditTaskStarted)
 	rec.Outcome = "started"
 	rec.Detail = fmt.Sprintf("%d instances", len(task.Instances))
-	rec.Command.Targets = commandTargetsLocked(task)
-
 	return rec
 }
 
@@ -212,8 +212,6 @@ func (m *Manager) commandEndRecordLocked(task *UpgradeTask) (AuditRecord, bool) 
 	rec := m.commandRecordLocked(task, nil, event)
 	rec.Outcome = string(task.Status)
 	rec.Detail = fmt.Sprintf("%d of %d instances succeeded, %d failed, %d cancelled", task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount)
-	rec.Command.Targets = commandTargetsLocked(task)
-
 	if task.CompletedAt != nil {
 		rec.At = *task.CompletedAt
 	}
@@ -352,15 +350,10 @@ func (m *Manager) backfillCommandLocked(task *UpgradeTask) {
 func (m *Manager) backfillCommandNodeLocked(task *UpgradeTask, inst *InstanceUpgrade, vm int) {
 	node := &inst.Command.VMs[vm]
 
-	staged := slices.Contains([]CommandPhase{CommandPhaseStaged, CommandPhaseSent}, node.Phase) ||
-		(node.Phase == CommandPhaseSettled && node.StartedAt != nil)
-	if staged {
+	if node.StagedAt != nil {
 		rec := m.commandNodeRecordLocked(task, inst, vm, AuditNodeStaged)
 		rec.Rebuilt = true
-
-		if node.StartedAt != nil {
-			rec.At = *node.StartedAt
-		}
+		rec.At = *node.StagedAt
 
 		rec.Node.Phase = CommandPhaseStaged
 		rec.Node.Status = ""

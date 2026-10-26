@@ -80,6 +80,7 @@ type CommandVM struct {
 	Status          string            `json:"status,omitempty"`
 	Reason          string            `json:"reason,omitempty"`
 	ExitCode        *int              `json:"exit_code,omitempty"`
+	StagedAt        *time.Time        `json:"staged_at,omitempty"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	EndedAt         *time.Time        `json:"ended_at,omitempty"`
 	StdoutKept      int               `json:"stdout_kept,omitempty"`
@@ -181,6 +182,7 @@ func (c *InstanceCommand) clone() *InstanceCommand {
 		vm := &copied.VMs[i]
 		vm.Reviewed = vm.Reviewed.clone()
 		vm.Matched = vm.Matched.clone()
+		vm.StagedAt = copyTime(vm.StagedAt)
 		vm.StartedAt = copyTime(vm.StartedAt)
 		vm.EndedAt = copyTime(vm.EndedAt)
 
