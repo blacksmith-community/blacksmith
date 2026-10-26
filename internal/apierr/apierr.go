@@ -22,12 +22,22 @@ const (
 	CodeInvalidSettings  = "invalid_settings"
 	CodeInvalidFilter    = "invalid_filter"
 
+	CodeCommandTooLong     = "command_too_long"
+	CodeInvalidRunUser     = "invalid_run_user"
+	CodeTimeoutOutOfRange  = "timeout_out_of_range"
+	CodeMaxInFlightTooHigh = "max_in_flight_too_high"
+
 	// 403.
 	CodeRotationDisabled     = "rotation_disabled"
 	CodePatchDisabled        = "patch_disabled"
 	CodeCredHubNotConfigured = "credhub_not_configured" //nolint:gosec // An error code, not a credential.
 	CodeDirectorUnsupported  = "director_unsupported"
 	CodeInventoryDisabled    = "inventory_disabled"
+	CodeCommandsDisabled     = "commands_disabled"
+	CodeRootDisabled         = "root_disabled"
+
+	// 401.
+	CodeCommandCredentialRequired = "command_credential_required" //nolint:gosec // An error code, not a credential.
 
 	// 404.
 	CodeInstanceNotFound = "instance_not_found"
@@ -44,6 +54,7 @@ const (
 	CodeRequestIDConflict      = "request_id_conflict"
 	CodeNotAwaitingDecision    = "not_awaiting_decision"
 	CodeInvalidTaskState       = "invalid_task_state"
+	CodePreviewMismatch        = "preview_mismatch"
 
 	// 410.
 	CodePreviewExpired = "preview_expired"

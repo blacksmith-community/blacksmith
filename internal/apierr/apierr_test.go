@@ -100,15 +100,54 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeTasksLoading, "tasks_loading"},
 		{apierr.CodeCredHubUnavailable, "credhub_unavailable"},
 		{apierr.CodeVaultUnavailable, "vault_unavailable"},
+		{apierr.CodeCommandsDisabled, "commands_disabled"},
+		{apierr.CodeRootDisabled, "root_disabled"},
+		{apierr.CodeCommandCredentialRequired, "command_credential_required"},
+		{apierr.CodePreviewMismatch, "preview_mismatch"},
+		{apierr.CodeCommandTooLong, "command_too_long"},
+		{apierr.CodeInvalidRunUser, "invalid_run_user"},
+		{apierr.CodeTimeoutOutOfRange, "timeout_out_of_range"},
+		{apierr.CodeMaxInFlightTooHigh, "max_in_flight_too_high"},
 	}
 
-	if len(table) != 31 {
-		t.Fatalf("table has %d codes, want 31", len(table))
+	if len(table) != 39 {
+		t.Fatalf("table has %d codes, want 39", len(table))
 	}
 
 	for _, row := range table {
 		if row.got != row.want {
 			t.Errorf("constant holds %q, want %q", row.got, row.want)
+		}
+	}
+}
+
+func TestNewCarriesCommandCodes(t *testing.T) {
+	t.Parallel()
+
+	table := []struct {
+		status int
+		code   string
+	}{
+		{http.StatusForbidden, apierr.CodeCommandsDisabled},
+		{http.StatusForbidden, apierr.CodeRootDisabled},
+		{http.StatusUnauthorized, apierr.CodeCommandCredentialRequired},
+		{http.StatusConflict, apierr.CodePreviewMismatch},
+		{http.StatusBadRequest, apierr.CodeCommandTooLong},
+		{http.StatusBadRequest, apierr.CodeInvalidRunUser},
+		{http.StatusBadRequest, apierr.CodeTimeoutOutOfRange},
+		{http.StatusBadRequest, apierr.CodeMaxInFlightTooHigh},
+	}
+
+	for _, row := range table {
+		rec := httptest.NewRecorder()
+		apierr.Write(rec, apierr.New(row.status, row.code, "msg"), http.StatusInternalServerError)
+
+		if rec.Code != row.status {
+			t.Errorf("%s: status = %d, want %d", row.code, rec.Code, row.status)
+		}
+
+		if body := decode(t, rec); body["code"] != row.code {
+			t.Errorf("%s: body code = %v", row.code, body["code"])
 		}
 	}
 }
