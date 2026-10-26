@@ -205,11 +205,50 @@ func TestLoadedParallelNodesEachGetTheirOwnCleanup(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
-func TestLoadedPendingTaskRunsAfterTheRestart(t *testing.T) {
-	fix := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
+// A create that answered "never started" can leave a confirmed record, so
+// a loaded task that did nothing waits for an operator and sends nothing.
+func TestLoadedNeverStartedTaskPausesAndSendsNothing(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 2, 1, func(_ *taskFixture, task *UpgradeTask) {
 		task.CreationConfirmed = true
 		task.ClientRequestID = "request-1"
 	})
+
+	paused := fix.snapshot()
+	if paused.Status != TaskStatusPaused || !paused.Paused {
+		t.Fatalf("the task is %s paused=%v, want paused", paused.Status, paused.Paused)
+	}
+
+	for _, inst := range paused.Instances {
+		if inst.Error != commandNeverStartedMessage || inst.Status != InstanceStatusPending {
+			t.Errorf("instance %s is %s with %q, want pending with the never-started message", inst.InstanceID, inst.Status, inst.Error)
+		}
+	}
+
+	if fix.owns() || len(fix.recorded()) != 0 {
+		t.Errorf("the never-started task was queued or sent %v", fix.recorded())
+	}
+
+	if _, _, found := fix.manager.requests.Lookup("request-1"); !found {
+		t.Error("the client request ID of the loaded command task is not indexed")
+	}
+
+	err := fix.busyWith(0)
+	if err == nil || !strings.Contains(err.Error(), "command") {
+		t.Errorf("another task reserved an instance of the never-started task: %v", err)
+	}
+
+	fix.assertNoCommandText()
+}
+
+func TestResumeOfALoadedNeverStartedTaskRunsIt(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+	})
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
 
 	done := fix.waitFor("the task to complete", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
 
@@ -217,12 +256,27 @@ func TestLoadedPendingTaskRunsAfterTheRestart(t *testing.T) {
 		t.Errorf("the node saw %v, want the command's four operations", ops)
 	}
 
-	if done.Instances[0].Status != InstanceStatusSuccess {
-		t.Errorf("the instance is %s, want success", done.Instances[0].Status)
+	if done.Instances[0].Error != "" {
+		t.Errorf("the instance still says %q after the resume", done.Instances[0].Error)
 	}
 
-	if _, _, found := fix.manager.requests.Lookup("request-1"); !found {
-		t.Error("the client request ID of the loaded command task is not indexed")
+	fix.assertNoCommandText()
+}
+
+func TestResumeOfALoadedNeverStartedTaskIsRefusedWhenTheSwitchIsOff(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 1, 1, func(fix *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+		task.Command.RunAs = "root"
+		fix.setRoot(false)
+	})
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err == nil {
+		t.Fatal("a never-started root task resumed while allow_root is off")
+	}
+
+	if got := fix.snapshot(); got.Status != TaskStatusPaused || !got.Paused || len(fix.recorded()) != 0 {
+		t.Errorf("the task is %s paused=%v and sent %v, want it left paused and silent", got.Status, got.Paused, fix.recorded())
 	}
 
 	fix.assertNoCommandText()
@@ -233,18 +287,23 @@ func TestLoadedQueuedTaskTheAuthorizerRefusesIsDroppedWithAReason(t *testing.T) 
 		task.CreationConfirmed = true
 		task.Command.RunAs = "root"
 		fix.setRoot(false)
+
+		// The first instance already ran, so the task is not one that
+		// sent nothing.
+		task.Status = TaskStatusRunning
+		task.Instances[0].Status = InstanceStatusSuccess
+		task.Instances[0].Command.VMs[0].Phase = CommandPhaseSettled
+		task.Instances[0].Command.VMs[0].Status = CommandStatusSucceeded
 	})
 
 	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused && task.Paused })
 
-	if !strings.Contains(paused.Instances[0].Error, "no longer allowed") {
-		t.Errorf("the first instance says %q, want the refusal", paused.Instances[0].Error)
+	if !strings.Contains(paused.Instances[1].Error, "no longer allowed") {
+		t.Errorf("the second instance says %q, want the refusal", paused.Instances[1].Error)
 	}
 
-	for _, inst := range paused.Instances {
-		if inst.Status != InstanceStatusPending {
-			t.Errorf("instance %s is %s, want pending, so a resume runs the whole task", inst.InstanceID, inst.Status)
-		}
+	if paused.Instances[1].Status != InstanceStatusPending {
+		t.Errorf("the second instance is %s, want pending, so a resume runs what is left", paused.Instances[1].Status)
 	}
 
 	if len(fix.recorded()) != 0 {
@@ -257,7 +316,7 @@ func TestLoadedQueuedTaskTheAuthorizerRefusesIsDroppedWithAReason(t *testing.T) 
 
 	// A paused task keeps its unfinished instances held, as any paused
 	// command task does.
-	err := fix.busyWith(0)
+	err := fix.busyWith(1)
 	if err == nil || !strings.Contains(err.Error(), "command") {
 		t.Errorf("another task reserved an instance of the paused task: %v", err)
 	}

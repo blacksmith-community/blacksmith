@@ -1517,6 +1517,10 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 		clearNeverStartedLocked(task)
 	}
 
+	if task.KindOrDefault() == TaskKindCommand {
+		clearCommandNeverStartedLocked(task)
+	}
+
 	m.logger.Info("Resumed task %s", taskID)
 	m.mu.Unlock()
 

@@ -1029,6 +1029,22 @@ func (m *Manager) prepareLoadedCommandLocked(task *UpgradeTask) bool {
 		changed = true
 	}
 
+	// A task that sent nothing may have had its creation reported as
+	// failed, so it never runs on its own, as a certificate task of the
+	// kind never does.
+	if commandNeverStartedLocked(task) {
+		task.Status = TaskStatusPaused
+		task.Paused = true
+
+		for i := range task.Instances {
+			task.Instances[i].Error = commandNeverStartedMessage
+		}
+
+		m.logger.Info("Command task %s sent nothing before Blacksmith restarted, so it loads paused until an operator resumes it", task.ID)
+
+		changed = true
+	}
+
 	// A queued or running task the authorizer refuses after the restart is
 	// not queued. It is paused, with the refusal on the task, so a resume
 	// after the switch is turned back on runs what is left of it.
@@ -1037,6 +1053,49 @@ func (m *Manager) prepareLoadedCommandLocked(task *UpgradeTask) bool {
 	}
 
 	return changed
+}
+
+// commandNeverStartedMessage is what a loaded command task that sent
+// nothing shows, since its creation may have been reported as failed.
+const commandNeverStartedMessage = "Blacksmith restarted before this task ran anything, and it can't tell whether " +
+	"the task's creation was reported as failed. Check that the command is still wanted, then resume it or cancel the task."
+
+// commandNeverStartedLocked reports whether a loaded command task sent
+// nothing yet: it is confirmed and unfinished, and every instance and every
+// node is pending. The caller holds mu.
+func commandNeverStartedLocked(task *UpgradeTask) bool {
+	if task.KindOrDefault() != TaskKindCommand || !task.CreationConfirmed || task.Paused {
+		return false
+	}
+
+	if task.Status != TaskStatusPending && task.Status != TaskStatusRunning {
+		return false
+	}
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status != InstanceStatusPending || inst.Command == nil {
+			return false
+		}
+
+		if slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool { return vm.Phase != CommandPhasePending }) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// clearCommandNeverStartedLocked clears the never-started message from the
+// instances still pending once an operator resumes the task, since the
+// resume answers it. The caller holds mu.
+func clearCommandNeverStartedLocked(task *UpgradeTask) {
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status == InstanceStatusPending && inst.Error == commandNeverStartedMessage {
+			inst.Error = ""
+		}
+	}
 }
 
 // commandInstanceHaltedLocked reports whether a node of the instance
