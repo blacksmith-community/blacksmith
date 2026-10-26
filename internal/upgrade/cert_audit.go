@@ -72,6 +72,10 @@ type AuditRecord struct {
 	// DeployFinishedAt is when the instance's last deploy ended on the
 	// director, as the record of that deploy has it.
 	DeployFinishedAt *time.Time `json:"deploy_finished_at,omitempty"`
+	// Command and Node are set on a record of a command task, and such a
+	// record is saved under the command audit index.
+	Command *CommandAudit     `json:"command,omitempty"`
+	Node    *CommandNodeAudit `json:"node,omitempty"`
 }
 
 // AuditVariable is what a record says about one variable.
@@ -104,15 +108,19 @@ type auditQueue struct {
 }
 
 // audit writes the record to Vault and to the log. The record is saved at
-// certificate-audit/<id> and its ID is then added to the index
-// certificate-audit, which is read, extended, and written back and never
+// certificate-audit/<id>, or at command-audit/<id> for a command record,
+// and its ID is then added to the index, which is read, extended, and written back and never
 // has an ID removed or rewritten. A failed try is repeated, up to three
 // tries in all, and a record that never lands is logged as an error. A
 // failure never fails the rotation.
 func (m *Manager) audit(ctx context.Context, rec AuditRecord) bool {
 	rec = sanitizeAudit(rec)
 
-	m.logAudit(rec)
+	if rec.Command != nil {
+		m.logCommandAudit(rec)
+	} else {
+		m.logAudit(rec)
+	}
 
 	m.auditWrite.Lock()
 	defer m.auditWrite.Unlock()
@@ -130,7 +138,7 @@ func (m *Manager) audit(ctx context.Context, rec AuditRecord) bool {
 			return true
 		}
 
-		m.logger.Error("audit=certificate-rotation record=%s event=%s could not be saved on try %d of %d: %v", rec.ID, rec.Event, attempt, auditAttempts, err)
+		m.logger.Error("audit=%s record=%s event=%s could not be saved on try %d of %d: %v", auditLabel(rec), rec.ID, rec.Event, attempt, auditAttempts, err)
 
 		// Once the manager is stopping, a failed first try is the last. The
 		// record comes back from the persisted task at the next load.
@@ -145,7 +153,7 @@ func (m *Manager) audit(ctx context.Context, rec AuditRecord) bool {
 		}
 	}
 
-	m.logger.Error("audit=certificate-rotation record=%s event=%s task=%s was never saved to Vault: %v", rec.ID, rec.Event, rec.TaskID, err)
+	m.logger.Error("audit=%s record=%s event=%s task=%s was never saved to Vault: %v", auditLabel(rec), rec.ID, rec.Event, rec.TaskID, err)
 
 	return false
 }
@@ -155,9 +163,11 @@ func (m *Manager) writeAudit(ctx context.Context, rec AuditRecord) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
 	defer cancel()
 
+	path := auditVaultPath(rec)
+
 	var index map[string]interface{}
 
-	_, err := m.vault.Get(ctx, certificateAuditVaultPath, &index)
+	_, err := m.vault.Get(ctx, path, &index)
 	if err != nil {
 		return fmt.Errorf("reading the index: %w", err)
 	}
@@ -169,7 +179,7 @@ func (m *Manager) writeAudit(ctx context.Context, rec AuditRecord) error {
 		return nil
 	}
 
-	err = m.vault.Put(ctx, certificateAuditVaultPath+"/"+rec.ID, rec)
+	err = m.vault.Put(ctx, path+"/"+rec.ID, rec)
 	if err != nil {
 		return fmt.Errorf("writing the record: %w", err)
 	}
@@ -186,7 +196,7 @@ func (m *Manager) writeAudit(ctx context.Context, rec AuditRecord) error {
 		"task_id": rec.TaskID,
 	}
 
-	err = m.vault.Put(ctx, certificateAuditVaultPath, extended)
+	err = m.vault.Put(ctx, path, extended)
 	if err != nil {
 		return fmt.Errorf("writing the index: %w", err)
 	}
@@ -524,9 +534,9 @@ const (
 	auditBackfillMaxDelay = 30 * time.Second
 )
 
-// backfillAudit writes the audit records that the loaded certificate tasks
-// lack, rebuilt from what the tasks persisted, so a crash between a settle
-// and its audit write loses nothing. It reads the audit index once. A
+// backfillAudit writes the audit records that the loaded certificate and
+// command tasks lack, rebuilt from what the tasks persisted, so a crash between a settle
+// and its audit write loses nothing. It reads each audit index once. A
 // record's ID comes from what it records, so a record that is in the index
 // is not written again, and a second load writes nothing new. A record
 // carries the time its event persisted: the start, the decision, or the
@@ -550,7 +560,7 @@ func (m *Manager) backfillAudit(loaded []*UpgradeTask) {
 	var ids []string
 
 	for _, task := range loaded {
-		if task.KindOrDefault() == TaskKindCertificates {
+		if kind := task.KindOrDefault(); kind == TaskKindCertificates || kind == TaskKindCommand {
 			ids = append(ids, task.ID)
 		}
 	}
@@ -602,19 +612,28 @@ func (m *Manager) retryBackfill(ids []string) {
 	m.logger.Error("audit=certificate-rotation the audit index could not be read, so lost records of %d tasks were not rebuilt", len(ids))
 }
 
-// tryBackfill reads the audit index once and queues the missing records of
-// the tasks given. It reports false when the index could not be read.
+// tryBackfill reads the audit index of each kind of task given once, and
+// queues the missing records of the tasks. It reports false when an index
+// could not be read.
 func (m *Manager) tryBackfill(ids []string) bool {
 	ctx, cancel := context.WithTimeout(m.ctx, auditWriteTimeout)
 	defer cancel()
 
-	var index map[string]interface{}
+	indexed := make(map[string]bool)
 
-	_, err := m.vault.Get(ctx, certificateAuditVaultPath, &index)
-	if err != nil {
-		m.logger.Error("audit=certificate-rotation the audit index could not be read for the rebuild of lost records: %v", err)
+	for _, path := range m.backfillPaths(ids) {
+		var index map[string]interface{}
 
-		return false
+		_, err := m.vault.Get(ctx, path, &index)
+		if err != nil {
+			m.logger.Error("audit=%s the audit index could not be read for the rebuild of lost records: %v", auditPathLabel(path), err)
+
+			return false
+		}
+
+		for id := range index {
+			indexed[id] = true
+		}
 	}
 
 	m.mu.Lock()
@@ -624,7 +643,7 @@ func (m *Manager) tryBackfill(ids []string) bool {
 		m.audited = make(map[string]bool)
 	}
 
-	for id := range index {
+	for id := range indexed {
 		m.audited[id] = true
 	}
 
@@ -637,9 +656,41 @@ func (m *Manager) tryBackfill(ids []string) bool {
 	return true
 }
 
+// backfillPaths names the audit indexes the tasks given write to.
+func (m *Manager) backfillPaths(ids []string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var paths []string
+
+	for _, id := range ids {
+		task, ok := m.tasks[id]
+		if !ok {
+			continue
+		}
+
+		path := certificateAuditVaultPath
+		if task.KindOrDefault() == TaskKindCommand {
+			path = commandAuditVaultPath
+		}
+
+		if !slices.Contains(paths, path) {
+			paths = append(paths, path)
+		}
+	}
+
+	return paths
+}
+
 // backfillTaskLocked queues the records of one loaded task that are not
 // in the index, in the order the events happened. The caller holds mu.
 func (m *Manager) backfillTaskLocked(task *UpgradeTask) {
+	if task.KindOrDefault() == TaskKindCommand {
+		m.backfillCommandLocked(task)
+
+		return
+	}
+
 	if task.StartedAt != nil && !neverStarted(task) {
 		rec := m.startRecordLocked(task)
 		rec.At = *task.StartedAt

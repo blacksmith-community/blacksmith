@@ -2072,6 +2072,10 @@ func (m *Manager) startProcessing(task *UpgradeTask) bool {
 		m.auditStartLocked(task)
 	}
 
+	if first && task.Status != TaskStatusCancelled && task.KindOrDefault() == TaskKindCommand {
+		m.enqueueAuditOnceLocked(m.commandStartRecordLocked(task))
+	}
+
 	return task.Status == TaskStatusCancelled
 }
 
@@ -3673,8 +3677,12 @@ func (m *Manager) releaseAllLocked(taskID string) {
 // it no longer has to hold, which is where shouldHoldLocked turns false.
 // The caller holds mu.
 func (m *Manager) releaseUnheldLocked(task *UpgradeTask) {
-	if task.KindOrDefault() == TaskKindCertificates {
+	switch task.KindOrDefault() {
+	case TaskKindCertificates:
 		m.auditSettledLocked(task)
+	case TaskKindCommand:
+		m.auditCommandLocked(task)
+	case TaskKindUpgrade:
 	}
 
 	held := m.reservations[task.ID]

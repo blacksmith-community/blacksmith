@@ -531,17 +531,28 @@ func (f *runFixture) taskPaused() bool {
 	return f.task.Paused && f.task.Status == TaskStatusPaused
 }
 
-// assertNoCommandText fails when the command or its digest reached a log
-// line or a Vault record other than the task record. It prints where it
-// looked and never the text.
+// assertNoCommandText fails when the command reached a log line, or its
+// digest reached any line but a command audit line, or the command or its
+// digest reached a Vault record other than the task record and the command
+// audit records, which hold them on purpose. It prints where it looked and
+// never the text.
 func (f *runFixture) assertNoCommandText() {
 	f.t.Helper()
 
 	digest := commandDigest(runCommandText)
-	logs := f.log.joined()
 
-	if strings.Contains(logs, runCommandText) || strings.Contains(logs, digest) {
-		f.t.Error("a log line holds the command text or its digest")
+	f.log.mu.Lock()
+	lines := slices.Clone(f.log.lines)
+	f.log.mu.Unlock()
+
+	for _, line := range lines {
+		if strings.Contains(line, runCommandText) {
+			f.t.Error("a log line holds the command text")
+		}
+
+		if strings.Contains(line, digest) && !strings.HasPrefix(line, "audit=command-run ") {
+			f.t.Error("a log line other than a command audit line holds the command digest")
+		}
 	}
 
 	taskRecord := commandTasksVaultPath + "/" + runTaskID
@@ -550,7 +561,7 @@ func (f *runFixture) assertNoCommandText() {
 	defer f.vault.waitVault.mu.Unlock()
 
 	for path, raw := range f.vault.saved {
-		if path == taskRecord {
+		if path == taskRecord || strings.HasPrefix(path, commandAuditVaultPath+"/") {
 			continue
 		}
 

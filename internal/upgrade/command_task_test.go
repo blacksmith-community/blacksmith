@@ -145,6 +145,8 @@ type taskFixture struct {
 	override func(ctx context.Context, deployment string, index int, op string) *opAnswer
 	// authHook runs at the start of each check of the stored task.
 	authHook func(ctx context.Context) error
+	// runner, when set, opens the sessions in place of the fake ones.
+	runner func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error)
 }
 
 // opAnswer is what a test makes an operation answer.
@@ -268,7 +270,11 @@ func newTaskFixtureFrom(t *testing.T, instances, nodes int, seed func(*taskFixtu
 
 	deps := Deps{
 		Now: func() time.Time { return time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC) },
-		CommandRunner: func(_ context.Context, deployment, _ string, indices []int) (PatchSession, error) {
+		CommandRunner: func(ctx context.Context, deployment, group string, indices []int) (PatchSession, error) {
+			if fix.runner != nil {
+				return fix.runner(ctx, deployment, group, indices)
+			}
+
 			sess := &taskSession{fix: fix, deployment: deployment, indices: slices.Clone(indices)}
 
 			for _, index := range indices {

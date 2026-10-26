@@ -735,9 +735,10 @@ func (r *commandRun) cleanup(ctx context.Context) (scripts.Cleanup, bool, error)
 	return record, record.Killed == "survived", err
 }
 
-// advance changes the node and saves the task with a confirmed save. When
-// the save can't be confirmed the node goes back to what it was, so memory
-// agrees with the last confirmed record.
+// advance changes the node and saves the task with a confirmed save, and
+// then queues the audit record of the move. When the save can't be
+// confirmed the node goes back to what it was, so memory agrees with the
+// last confirmed record, and nothing is audited.
 func (r *commandRun) advance(ctx context.Context, change func(*CommandVM)) error {
 	r.m.mu.Lock()
 	before := r.inst.Command.clone().VMs[r.vm]
@@ -745,13 +746,21 @@ func (r *commandRun) advance(ctx context.Context, change func(*CommandVM)) error
 	r.m.mu.Unlock()
 
 	err := r.m.persistCertConfirmed(ctx, r.task)
+
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+
 	if err != nil {
-		r.m.mu.Lock()
 		r.inst.Command.VMs[r.vm] = before
-		r.m.mu.Unlock()
+
+		return err
 	}
 
-	return err
+	// The move is in the confirmed record, so its audit record is queued
+	// now, and by the one worker that made it.
+	r.m.auditCommandNodeLocked(r.task, r.inst, r.vm)
+
+	return nil
 }
 
 // settle records how the node ended. It returns true when the task

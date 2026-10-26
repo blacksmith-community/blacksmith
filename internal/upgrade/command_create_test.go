@@ -335,6 +335,23 @@ func expectNoCommandText(t *testing.T, where, text string) {
 	}
 }
 
+// expectNoCommandTextInLog fails the test when a log line holds the command,
+// or holds its digest and is not a command audit line, which carries the
+// digest and length on purpose. It never prints the log.
+func expectNoCommandTextInLog(t *testing.T, where, text string) {
+	t.Helper()
+
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, secretCommand) {
+			t.Fatalf("%s holds the command", where)
+		}
+
+		if strings.Contains(line, commandDigest(secretCommand)) && !strings.HasPrefix(line, "audit=command-run ") {
+			t.Fatalf("%s holds the command digest outside a command audit line", where)
+		}
+	}
+}
+
 // expectCommandBytes fails the test unless got is the command, and prints
 // only lengths when it is not.
 func expectCommandBytes(t *testing.T, where, got string) {
@@ -1220,13 +1237,14 @@ func TestCreatedCommandTaskIsDispatchedAndRuns(t *testing.T) {
 		t.Errorf("the run panicked, which a deploy through the panicking director would: %s", text)
 	}
 
-	expectNoCommandText(t, "the log", env.log.text())
+	expectNoCommandTextInLog(t, "the log", env.log.text())
 
 	env.vault.waitVault.mu.Lock()
 	defer env.vault.waitVault.mu.Unlock()
 
 	for path, raw := range env.vault.waitVault.saved {
-		if path != commandTasksVaultPath+"/"+task.ID {
+		// The audit records hold the command on purpose.
+		if path != commandTasksVaultPath+"/"+task.ID && !strings.HasPrefix(path, commandAuditVaultPath+"/") {
 			expectNoCommandText(t, "the Vault record at "+path, string(raw))
 		}
 	}

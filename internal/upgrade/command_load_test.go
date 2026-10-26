@@ -472,9 +472,10 @@ func TestLoadedCommandTasksOfOneInstanceFailTheLaterOne(t *testing.T) {
 
 	// The seeded second record carries the command text itself, so only
 	// the logs are checked here.
-	logs := fix.log.joined()
-	if strings.Contains(logs, runCommandText) || strings.Contains(logs, commandDigest(runCommandText)) {
-		t.Error("a log line holds the command text or its digest")
+	for _, line := range strings.Split(fix.log.joined(), "\n") {
+		if strings.Contains(line, runCommandText) || (strings.Contains(line, commandDigest(runCommandText)) && !strings.HasPrefix(line, "audit=command-run ")) {
+			t.Error("a log line holds the command text, or its digest outside a command audit line")
+		}
 	}
 }
 
