@@ -1,0 +1,321 @@
+const {test,expect,afterEach}=require('bun:test');
+const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {JSDOM}=require('./certificates/support.js');
+const t=JSDOM?test:test.skip;
+
+const SECRET='echo SECRET-COMMAND-TEXT-7731';
+const KEY='key-SECRET-CREDENTIAL-5519';
+const TASK='11111111-1111-4111-8111-111111111111';
+const OUT_URL=`/b/upgrade/tasks/${TASK}/output`;
+const DETAIL_URL=`/b/upgrade/tasks/${TASK}`;
+
+// Every env a test boots, checked once the test ends so a dialog error that
+// the UI code swallows still fails it. Neither secret reaches a console method.
+const envs=[];
+afterEach(()=>{ while(envs.length){ const env=envs.pop(); expect(env.alerts).toEqual([]);
+ expect(env.logs.some(l=>String(l).includes(SECRET)||String(l).includes(KEY))).toBe(false); } });
+
+const hasSecret=(s)=>String(s).includes(SECRET);
+const hasKey=(s)=>String(s).includes(KEY);
+const when=(d,s)=>new Date(Date.UTC(2026,9,26,12,0,0)+s*1000).toISOString();
+
+const node=(group,index,over={})=>({reviewed:{group,index,id:'vm-'+index,cid:'c'+index},matched:{group,index,id:'vm-'+index,cid:'c'+index},phase:'settled',status:'succeeded',exit_code:0,started_at:when(0,0),ended_at:when(0,75),stdout_kept:1229,stdout_received:1229,stderr_kept:0,stderr_received:0,output_path:'command-output/x',...over});
+const inst=(id,vms,over={})=>({instance_id:id,instance_name:id+'-name',deployment_name:'dep-'+id,status:'success',command:{deployment:'dep-'+id,vms},...over});
+const task=(over={})=>({id:TASK,kind:'command',status:'completed',name:'',target:'Run as vcap on 2 nodes',total_count:1,completed_count:1,failed_count:0,created_at:when(0,0),
+ command:{command:SECRET,command_digest:'abcdef0123456789abcdef',command_length:SECRET.length,run_as:'vcap',shell:'/bin/bash',timeout_seconds:600,parallel:true,max_in_flight:2,reason:'rolling restart check'},
+ instances:[inst('val-a',[node('node',0),node('node',1,{status:'failed',exit_code:3})])],...over});
+const output=(over={})=>({stdout:'hello out\n',stderr:'oops err\n',stdout_kept:10,stdout_received:10,stderr_kept:9,stderr_received:9,stdout_truncated:false,stderr_truncated:false,...over});
+
+// routes.detail is the task detail answer, routes.output answers [status, body]
+// or a function of (url, options). outputs records each output read.
+async function setup(routes={}){
+ const env=boot({noDialogs:true}),{w}=env;envs.push(env);
+ const outputs=[];
+ const state={detail:routes.detail||task()};
+ w.__routes.push(
+  ['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
+  [OUT_URL,(u,o,j)=>{
+   outputs.push({url:u,headers:o.headers||{}});
+   const spec=routes.output||[200,output()];
+   const r=typeof spec==='function'?spec(u,o,outputs.length):spec;
+   return j(r[0],r[1]);
+  }],
+  [DETAIL_URL,(u,o,j)=>j(200,state.detail)],
+  ['/b/upgrade/tasks',(u,o,j)=>j(200,[{...state.detail,instances:undefined,command:{command_digest:state.detail.command&&state.detail.command.command_digest,command_length:1,run_as:'vcap',timeout_seconds:600,parallel:false}}])]);
+ w.plansData={services:[]};
+ await sleep(30);
+ await w.__T.initUpgradeTab();await sleep(10);
+ return {...env,outputs,state};
+}
+const open=async(env)=>{await env.w.__T.selectUpgradeTask(TASK);await sleep(10);};
+const detailsOf=(d)=>[...d.querySelectorAll('#upgrade .upgrade-tasks details')];
+const openDetails=async(env,i=0)=>{const el=detailsOf(env.d)[i];el.open=true;await sleep(30);return el;};
+const pageText=(d)=>d.body.textContent;
+
+t('the task list badges a command task with the digest prefix and never the text',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ const detail=task();
+ // A summary that carried the text by mistake must not show it.
+ w.__T._setTasks([{...detail,instances:undefined,command:{command:SECRET,command_digest:'abcdef0123456789abcdef',command_length:SECRET.length,run_as:'vcap',timeout_seconds:600,parallel:false}}]);
+ w.__T.renderUpgradeTaskList();
+ const item=d.querySelector('#upgrade .upgrade-task-item');
+ expect(item.textContent.includes('Command')).toBe(true);
+ expect(item.textContent.includes('abcdef012345')).toBe(true);
+ expect(item.textContent.includes('abcdef0123456')).toBe(false);
+ expect(hasSecret(d.body.innerHTML)).toBe(false);
+ expect([...d.querySelectorAll('*')].some(e=>[...e.attributes].some(a=>hasSecret(a.value)))).toBe(false);
+ }finally{w.close();}
+});
+
+t('the detail shows the command in a pre with its settings and a working copy button',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ const copied=[];
+ w.navigator.clipboard={writeText:(x)=>{copied.push(x);return Promise.resolve();}};
+ await open(env);
+ const host=d.querySelector('#upgrade .upgrade-task-detail');
+ const pre=host.querySelector('pre.command-text');
+ expect(pre!==null).toBe(true);expect(pre.textContent===SECRET).toBe(true);
+ const rest=host.textContent.replace(SECRET,'');
+ for(const want of ['Run as','vcap','Shell','/bin/bash','Timeout','600','Parallel','2 at a time','Reason','rolling restart check']) expect(rest.includes(want)).toBe(true);
+ // The text is in the pre and nowhere else, not even an attribute.
+ const holders=[...d.querySelectorAll('*')].filter(e=>e.children.length===0&&hasSecret(e.textContent));
+ expect(holders.every(e=>e.tagName==='PRE')).toBe(true);
+ expect([...d.querySelectorAll('*')].some(e=>[...e.attributes].some(a=>hasSecret(a.value)))).toBe(false);
+ host.querySelector('button.command-copy').click();await sleep(5);
+ expect(copied.length).toBe(1);expect(copied[0]===SECRET).toBe(true);
+ }finally{w.close();}
+});
+
+t('the copy button does nothing visible without a clipboard',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await open(env);
+ delete w.navigator.clipboard;
+ try{ Object.defineProperty(w.navigator,'clipboard',{value:undefined,configurable:true}); }catch(e){}
+ const before=d.body.innerHTML;
+ d.querySelector('button.command-copy').click();await sleep(5);
+ expect(d.body.innerHTML===before).toBe(true);
+ }finally{w.close();}
+});
+
+t('the detail renders no command text as markup and escapes record fields',async()=>{
+ const evil='<img src=x onerror=alert(1)><script>window.__pwn=1</script>';
+ const env=await setup({detail:task({command:{...task().command,command:evil,reason:evil},instances:[inst('val-a',[node('node',0,{reason:evil,error:evil})],{instance_name:evil})]})});const {w,d}=env;try{
+ await open(env);
+ const host=d.querySelector('#upgrade .upgrade-task-detail');
+ expect(host.querySelector('img')===null).toBe(true);
+ expect(host.querySelector('script')===null).toBe(true);
+ expect(host.querySelector('pre.command-text').textContent===evil).toBe(true);
+ expect(w.__pwn===undefined).toBe(true);
+ }finally{w.close();}
+});
+
+t('each node shows its icon, exit code, duration, and a killed note',async()=>{
+ const env=await setup({detail:task({instances:[inst('val-a',[node('node',0),node('node',1,{status:'timed_out',exit_code:137,killed:true,ended_at:when(0,130)})])]})});const {w,d}=env;try{
+ await open(env);
+ const rows=[...d.querySelectorAll('#upgrade .command-node')];
+ expect(rows.length).toBe(2);
+ expect(rows[0].textContent.includes('node-0')).toBe(true);
+ expect(rows[0].querySelector('.status-icon.success')!==null).toBe(true);
+ expect(rows[0].textContent.includes('exit 0')).toBe(true);
+ expect(rows[0].textContent.includes('1m 15s')).toBe(true);
+ expect(rows[0].textContent.includes('killed')).toBe(false);
+ expect(rows[1].textContent.includes('exit 137')).toBe(true);
+ expect(rows[1].textContent.includes('2m 10s')).toBe(true);
+ expect(rows[1].textContent.includes('killed')).toBe(true);
+ }finally{w.close();}
+});
+
+t('the output summary reports kept of received, truncation, and empty streams',async()=>{
+ const env=await setup({detail:task({instances:[inst('val-a',[
+  node('node',0,{stdout_kept:1229,stdout_received:1229,stderr_kept:0,stderr_received:0}),
+  node('node',1,{stdout_kept:65536,stdout_received:133120,stdout_truncated:true,stderr_kept:5,stderr_received:5})])]})});const {w,d}=env;try{
+ await open(env);
+ const s=detailsOf(d).map(x=>x.querySelector('summary').textContent);
+ expect(s[0]).toBe('Output (stdout 1.2 KiB, stderr 0 B)');
+ expect(s[1].startsWith('Output (stdout 64.0 KiB of 130.0 KiB')).toBe(true);
+ expect(s[1].includes('truncated')).toBe(true);
+ expect(s[1].includes('stderr 5 B')).toBe(true);
+ }finally{w.close();}
+});
+
+t('opening a node reads its output with vm and instance, and shows each stream in its own pre',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await open(env);
+ expect(env.outputs.length).toBe(0);
+ const el=await openDetails(env,1);
+ expect(env.outputs.length).toBe(1);
+ const url=new URL(env.outputs[0].url,'http://localhost');
+ expect(url.pathname).toBe(OUT_URL);
+ expect(url.searchParams.get('vm')).toBe('node-1');
+ expect(url.searchParams.get('instance')).toBe('val-a');
+ expect(env.outputs[0].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ const pres=[...el.querySelectorAll('pre')];
+ expect(pres.length).toBe(2);
+ expect(pres[0].textContent).toBe('hello out\n');
+ expect(pres[1].textContent).toBe('oops err\n');
+ }finally{w.close();}
+});
+
+t('output with markup and control bytes reaches the page only as stripped text',async()=>{
+ const env=await setup({output:[200,output({stdout:'<script>window.__pwn=1</script>\u0007bell\tkept\nline\u001b[31m\u009bx\u007f',stderr:'<img src=x onerror=alert(1)>'})]});const {w,d}=env;try{
+ await open(env);
+ const el=await openDetails(env,0);
+ expect(el.querySelector('script')===null).toBe(true);
+ expect(el.querySelector('img')===null).toBe(true);
+ expect(w.__pwn===undefined).toBe(true);
+ const pres=[...el.querySelectorAll('pre')];
+ expect(pres[0].textContent.includes('<script>')).toBe(true);
+ expect(pres[0].textContent.includes('\u0007')).toBe(false);
+ expect(pres[0].textContent.includes('\u001b')).toBe(false);
+ expect(pres[0].textContent.includes('\u009b')).toBe(false);
+ expect(pres[0].textContent.includes('\u007f')).toBe(false);
+ expect(pres[0].textContent.includes('bell\tkept\nline')).toBe(true);
+ expect(d.documentElement.outerHTML.includes('\u0007')).toBe(false);
+ }finally{w.close();}
+});
+
+t('a command key prompt opens on 401, and the key is sent, reused, and never leaves the input',async()=>{
+ const env=await setup({output:(u,o)=>(o.headers&&o.headers['X-Blacksmith-Command-Key']===KEY)?[200,output()]:[401,{success:false,error:'a command key is required',code:'command_credential_required'}]});const {w,d}=env;try{
+ await open(env);
+ const el=await openDetails(env,0);
+ const input=el.querySelector('input[type="password"]');
+ expect(input!==null).toBe(true);
+ expect(el.textContent.includes('asks for a command key')).toBe(true);
+ const button=[...el.querySelectorAll('button')].find(b=>b.textContent==='Show output');
+ expect(button!==undefined).toBe(true);
+ input.value=KEY;button.click();await sleep(30);
+ expect(env.outputs.length).toBe(2);
+ expect(env.outputs[1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ expect(el.querySelectorAll('pre').length).toBe(2);
+ // The next node reuses the key without a prompt.
+ const second=await openDetails(env,1);
+ expect(env.outputs.length).toBe(3);
+ expect(env.outputs[2].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ expect(second.querySelector('input[type="password"]')===null).toBe(true);
+ // Only the input ever held it, and not as an attribute or in a form field after use.
+ expect(hasKey(d.documentElement.outerHTML)).toBe(false);
+ expect([...d.querySelectorAll('input')].every(i=>!hasKey(i.value))).toBe(true);
+ const keep=(s)=>{try{return s.getItem?[...Array(s.length)].map((_,i)=>s.getItem(s.key(i))).join('|'):'';}catch(e){return '';}};
+ expect(hasKey(keep(w.localStorage))||hasKey(keep(w.sessionStorage))).toBe(false);
+ expect(hasKey(w.location.href)).toBe(false);
+ expect(hasKey(JSON.stringify(w.__T.batchFlow.drafts))).toBe(false);
+ expect(env.outputs.every(r=>!hasKey(r.url))).toBe(true);
+ }finally{w.close();}
+});
+
+t('a rejected key clears it and the prompt says the broker did not accept it',async()=>{
+ const env=await setup({output:[401,{success:false,error:'a command key is required',code:'command_credential_required'}]});const {w,d}=env;try{
+ await open(env);
+ const el=await openDetails(env,0);
+ el.querySelector('input[type="password"]').value=KEY;
+ [...el.querySelectorAll('button')].find(b=>b.textContent==='Show output').click();await sleep(30);
+ expect(env.outputs[1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ expect(el.textContent.includes('did not accept')).toBe(true);
+ expect(el.querySelector('input[type="password"]').value).toBe('');
+ // The key is gone, so a later read goes out without it.
+ await openDetails(env,1);
+ expect(env.outputs[2].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ expect(hasKey(d.documentElement.outerHTML)).toBe(false);
+ }finally{w.close();}
+});
+
+t('switching to another top-level tab drops the key and blanks the input',async()=>{
+ const env=await setup({output:(u,o)=>(o.headers&&o.headers['X-Blacksmith-Command-Key']===KEY)?[200,output()]:[401,{success:false,error:'k',code:'command_credential_required'}]});const {w,d}=env;try{
+ await open(env);
+ const first=await openDetails(env,0);
+ first.querySelector('input[type="password"]').value=KEY;
+ [...first.querySelectorAll('button')].find(b=>b.textContent==='Show output').click();await sleep(30);
+ const second=await openDetails(env,1);
+ // The second read used the key and succeeded, so give it a prompt to hold typed text.
+ const stray=d.createElement('input');stray.type='password';stray.className='command-output-key';stray.value=KEY;second.appendChild(stray);
+ d.querySelector('.tab-button[data-tab="services"]').click();await sleep(30);
+ expect(stray.value).toBe('');
+ expect([...d.querySelectorAll('input')].every(i=>!hasKey(i.value))).toBe(true);
+ const sent=env.outputs.length;
+ // A node read after the switch goes out without the key.
+ env.state.detail=task({status:'running',instances:[inst('val-b',[node('node',0)],{status:'running'})]});
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ await openDetails(env,0);
+ expect(env.outputs.length).toBe(sent+1);
+ expect(env.outputs[sent].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ }finally{w.close();}
+});
+
+t('a 403 shows the refusal inside the details',async()=>{
+ const env=await setup({output:[403,{success:false,error:'commands are switched off',code:'commands_disabled'}]});const {w,d}=env;try{
+ await open(env);
+ const el=await openDetails(env,0);
+ expect(el.textContent.includes('commands are switched off')).toBe(true);
+ expect(hasSecret(el.textContent)).toBe(false);
+ }finally{w.close();}
+});
+
+t('a 404, other errors, and a rejected fetch show a short error with Retry that reads again',async()=>{
+ for(const answer of [[404,{success:false,error:'no output',code:'not_found'}],[500,{success:false,error:'broker trouble',code:'internal_error'}],'reject']){
+  const env=await setup({output:answer==='reject'?()=>{throw new Error('boom');}:answer});const {w,d}=env;try{
+  if(answer==='reject') w.__routes.unshift([OUT_URL,()=>Promise.reject(new Error('network down'))]);
+  await open(env);
+  const el=await openDetails(env,0);
+  const retry=[...el.querySelectorAll('button')].find(b=>b.textContent==='Retry');
+  expect(retry!==undefined).toBe(true);
+  expect(el.querySelectorAll('pre').length).toBe(0);
+  expect(hasSecret(el.textContent)).toBe(false);
+  if(answer!=='reject'){ const before=env.outputs.length;retry.click();await sleep(30);expect(env.outputs.length).toBe(before+1); }
+  }finally{w.close();}
+ }
+});
+
+t('a node that has not settled says its output appears later and sends no request',async()=>{
+ const env=await setup({detail:task({status:'running',instances:[inst('val-a',[node('node',0,{phase:'sent',status:'',exit_code:undefined,ended_at:undefined}),node('node',1,{phase:'pending',status:''})],{status:'running'})]})});const {w,d}=env;try{
+ await open(env);
+ const el=await openDetails(env,0);
+ expect(el.textContent.includes('appears when the node finishes')).toBe(true);
+ await openDetails(env,1);
+ expect(env.outputs.length).toBe(0);
+ }finally{w.close();}
+});
+
+t('a re-render keeps fetched output, keeps the details open, and sends no second read',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await open(env);
+ const el=await openDetails(env,0);
+ expect(env.outputs.length).toBe(1);
+ // The task changes, so the poll redraws the detail.
+ env.state.detail=task({status:'running',completed_count:0});
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const again=detailsOf(d)[0];
+ expect(again!==el).toBe(true);
+ expect(again.open).toBe(true);
+ expect(again.querySelectorAll('pre').length).toBe(2);
+ expect(again.querySelectorAll('pre')[0].textContent).toBe('hello out\n');
+ expect(env.outputs.length).toBe(1);
+ }finally{w.close();}
+});
+
+t('a paused command task with a failed instance offers Continue remaining instances and Cancel',async()=>{
+ const env=await setup({detail:task({status:'paused',failed_count:1,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:3})],{status:'failed'}),inst('val-b',[node('node',0,{phase:'pending',status:''})],{status:'pending'})]})});const {w,d}=env;try{
+ await open(env);
+ const text=[...d.querySelectorAll('#upgrade .job-control-btn')].map(b=>b.textContent);
+ expect(text.includes('Continue remaining instances')).toBe(true);
+ expect(text.some(x=>x.includes('Cancel'))).toBe(true);
+ expect(text.includes('Resume')).toBe(false);
+ }finally{w.close();}
+});
+
+t('a paused command task with a running node reads Pause requested',async()=>{
+ const env=await setup({detail:task({status:'paused',failed_count:0,instances:[inst('val-a',[node('node',0,{phase:'sent',status:''})],{status:'running'})]})});const {w,d}=env;try{
+ await open(env);
+ expect(d.querySelector('#upgrade .task-detail-summary').textContent.includes('Pause requested')).toBe(true);
+ }finally{w.close();}
+});
+
+t('the page never holds the command text outside the detail pre after the whole flow',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await open(env);await openDetails(env,0);
+ const holders=[...d.querySelectorAll('*')].filter(e=>e.children.length===0&&hasSecret(e.textContent));
+ expect(holders.every(e=>e.tagName==='PRE'&&e.classList.contains('command-text'))).toBe(true);
+ expect(env.outputs.every(r=>!hasSecret(r.url)&&!hasSecret(JSON.stringify(r.headers)))).toBe(true);
+ expect(env.logs.some(hasSecret)).toBe(false);
+ expect(env.calls.some(hasSecret)).toBe(false);
+ }finally{w.close();}
+});

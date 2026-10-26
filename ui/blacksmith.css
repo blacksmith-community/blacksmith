@@ -13941,3 +13941,52 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 .rotate-preview-excluded strong {
   font-weight: 700;
 }
+
+/* Command tasks in Batch Operations: the kind badge, the command, and the
+   per-node output. */
+#upgrade .task-kind-badge--command {
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+
+#upgrade .task-command-digest {
+  margin-left: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+#upgrade pre.command-text,
+#upgrade pre.command-output {
+  margin: 4px 0;
+  padding: 8px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+}
+
+#upgrade .command-node {
+  padding: 4px 0;
+}
+
+#upgrade .command-node-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#upgrade .command-node-facts,
+#upgrade .command-output-note,
+#upgrade .command-output-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+#upgrade .command-output-key {
+  margin-right: 8px;
+}

@@ -6794,11 +6794,14 @@
       const statusClass = getTaskStatusClass(task.status);
       const statusIcon = getTaskStatusIcon(task.status);
       const progress = upgradeTaskProgress(task);
-      const taskName = task.name || task.target || (task.kind === 'certificates' ? 'Certificate operation' : `Upgrade to ${describeUpgradeTargets(task).label}`);
+      const taskName = task.name || task.target || (task.kind === 'certificates' ? 'Certificate operation' : task.kind === 'command' ? 'Run command' : `Upgrade to ${describeUpgradeTargets(task).label}`);
       const isCertificates = task.kind === 'certificates';
+      const commandDigest = task.kind === 'command' && task.command ? String(task.command.command_digest || '').slice(0, 12) : '';
       const kindBadge = isCertificates
         ? '<span class="task-kind-badge task-kind-badge--certificates">Certificates</span>'
-        : '';
+        : task.kind === 'command'
+          ? `<span class="task-kind-badge task-kind-badge--command">Command</span>${commandDigest ? `<span class="task-command-digest">${escapeHtml(commandDigest)}</span>` : ''}`
+          : '';
       const awaitingCount = Number(task.awaiting_decision_count) || 0;
       const awaitingBadge = awaitingCount > 0
         ? '<span class="task-awaiting-badge">Awaiting decision</span>'
@@ -7514,6 +7517,217 @@
     return wrap;
   };
 
+  // The key the operator typed to read command output. It lives in this
+  // variable and in a password input, and nowhere else.
+  let commandOutputKey = '';
+  // What each node's output read has come to, keyed by task, instance, and
+  // node, so a redraw of the detail never reads it again.
+  const commandOutputs = new Map();
+  const COMMAND_OUTPUT_PLACEHOLDER = 'The output appears when the node finishes.';
+
+  const clearCommandOutputKey = () => {
+    commandOutputKey = '';
+    document.querySelectorAll('input.command-output-key').forEach((input) => { input.value = ''; });
+  };
+
+  // Drops C0 and C1 control characters other than newline and tab, in the
+  // spirit of isControl in scripts.go.
+  const stripControlChars = (text) => String(text == null ? '' : text).replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '');
+
+  const formatByteCount = (count) => {
+    const n = Number(count) || 0;
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  };
+
+  // "1.2 KiB", or "64.0 KiB of 130.0 KiB (truncated)" when the stream was cut.
+  const commandStreamText = (kept, received, truncated) => {
+    const base = Number(received) > Number(kept) ? `${formatByteCount(kept)} of ${formatByteCount(received)}` : formatByteCount(kept);
+    return truncated ? `${base} (truncated)` : base;
+  };
+
+  const commandNodeIdentity = (node) => (node.matched && node.matched.group ? node.matched : node.reviewed) || {};
+
+  const commandDurationText = (node) => {
+    const ms = new Date(node.ended_at) - new Date(node.started_at);
+    if (!node.started_at || !node.ended_at || !Number.isFinite(ms) || ms < 0) return '';
+    const seconds = Math.round(ms / 1000);
+    return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+  };
+
+  const commandNodeIconStatus = (node) => {
+    switch (node.status) {
+      case 'succeeded': return 'success';
+      case 'failed': case 'timed_out': case 'refused': return 'failed';
+      default:
+        if (node.phase === 'skipped') return 'skipped';
+        if (node.phase === 'staged' || node.phase === 'sent') return 'running';
+        return 'pending';
+    }
+  };
+
+  // Fills the body of a node's output <details> from what is known now.
+  const fillCommandOutput = (body, context) => {
+    const entry = commandOutputs.get(context.key);
+    body.replaceChildren();
+    if (!context.settled) {
+      body.appendChild(rotateEl('p', 'command-output-note', context.skipped ? 'The command never ran on this node.' : COMMAND_OUTPUT_PLACEHOLDER));
+      return;
+    }
+    if (!entry) return;
+    if (entry.status === 'loading') {
+      body.appendChild(rotateEl('p', 'command-output-note', 'Loading output...'));
+    } else if (entry.status === 'loaded') {
+      [['stdout', entry.data.stdout], ['stderr', entry.data.stderr]].forEach(([label, text]) => {
+        const clean = stripControlChars(text);
+        if (!clean) return;
+        body.appendChild(rotateEl('div', 'command-output-label', label));
+        body.appendChild(rotateEl('pre', `command-output command-output-${label}`, clean));
+      });
+      if (!body.children.length) body.appendChild(rotateEl('p', 'command-output-note', 'The node printed nothing.'));
+    } else if (entry.status === 'credential') {
+      body.appendChild(rotateEl('p', 'command-output-note', entry.refused ? 'The broker did not accept that key. Enter the command key again.' : 'The broker asks for a command key to show this output.'));
+      const input = rotateEl('input', 'command-output-key');
+      input.type = 'password';
+      input.autocomplete = 'off';
+      input.setAttribute('aria-label', 'Command key');
+      const submit = rotateEl('button', 'command-output-show', 'Show output');
+      submit.type = 'button';
+      const send = () => {
+        const typed = input.value || commandOutputKey;
+        input.value = '';
+        if (!typed) { input.focus(); return; }
+        commandOutputKey = typed;
+        commandOutputs.delete(context.key);
+        loadCommandOutput(context);
+      };
+      submit.addEventListener('click', send);
+      input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); send(); } });
+      body.append(input, submit);
+    } else {
+      body.appendChild(rotateEl('p', 'command-output-note command-output-error', entry.message));
+      if (entry.retry) {
+        const retry = rotateEl('button', 'command-output-retry', 'Retry');
+        retry.type = 'button';
+        retry.addEventListener('click', () => { commandOutputs.delete(context.key); loadCommandOutput(context); });
+        body.appendChild(retry);
+      }
+    }
+  };
+
+  const paintCommandOutput = (key) => {
+    document.querySelectorAll('#upgrade .command-output-body').forEach((body) => {
+      if (body.dataset.outputKey === key && body.commandOutputContext) fillCommandOutput(body, body.commandOutputContext);
+    });
+  };
+
+  // Reads one node's output. The key goes out only when one is held.
+  const loadCommandOutput = async (context) => {
+    const sent = commandOutputKey;
+    commandOutputs.set(context.key, { status: 'loading' });
+    paintCommandOutput(context.key);
+    const params = new URLSearchParams({ vm: context.vm, instance: context.instanceId });
+    const headers = { Accept: 'application/json' };
+    if (sent) headers[COMMAND_KEY_HEADER] = sent;
+    let result;
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(context.taskId)}/output?${params}`, { headers });
+      if (response.ok) {
+        result = { status: 'loaded', data: await response.json() };
+      } else {
+        const err = await readApiError(response);
+        if (response.status === 401 && sent && commandOutputKey === sent) clearCommandOutputKey();
+        if (response.status === 401 && err.code === 'command_credential_required') result = { status: 'credential', refused: Boolean(sent) };
+        else if (response.status === 403) result = { status: 'forbidden', message: commandErrorText(err) };
+        else result = { status: 'error', retry: true, message: response.status === 401 ? 'The broker asked for a sign-in.' : `Could not read the output. ${commandErrorText(err)}` };
+      }
+    } catch (err) {
+      result = { status: 'error', retry: true, message: 'Could not read the output. The connection to the broker failed.' };
+    }
+    commandOutputs.set(context.key, result);
+    paintCommandOutput(context.key);
+  };
+
+  // One row for each node of a command instance: its icon, exit code,
+  // duration, a note when it had to be killed, and its output on demand.
+  // Everything from the task record goes in through textContent.
+  const buildCommandInstance = (task, instance) => {
+    const wrap = rotateEl('div', 'command-nodes');
+    const record = instance.command || {};
+    (record.vms || []).forEach((node) => {
+      const identity = commandNodeIdentity(node);
+      const name = `${identity.group}-${identity.index}`;
+      const key = [task.id, instance.instance_id, name].join('\u0000');
+      const settled = node.phase === 'settled';
+      const row = rotateEl('div', 'command-node');
+      const head = rotateEl('div', 'command-node-head');
+      const icon = document.createElement('span');
+      icon.innerHTML = getInstanceStatusIcon(commandNodeIconStatus(node));
+      head.appendChild(icon);
+      head.appendChild(rotateEl('span', 'command-node-name', name));
+      const facts = [];
+      if (node.status) facts.push(String(node.status).replace(/_/g, ' '));
+      else if (node.phase) facts.push(String(node.phase));
+      if (settled && Number.isInteger(node.exit_code)) facts.push(`exit ${node.exit_code}`);
+      const duration = commandDurationText(node);
+      if (duration) facts.push(duration);
+      if (node.killed) facts.push('killed');
+      head.appendChild(rotateEl('span', 'command-node-facts', facts.join(', ')));
+      row.appendChild(head);
+      if (node.reason || node.error) row.appendChild(rotateEl('div', 'instance-error', [node.reason, node.error].filter(Boolean).join(' ')));
+
+      const details = rotateEl('details', 'command-output-details');
+      details.dataset.keepKey = `output:${key}`;
+      const summary = rotateEl('summary', '', `Output (stdout ${commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)}, stderr ${commandStreamText(node.stderr_kept, node.stderr_received, node.stderr_truncated)})`);
+      const body = rotateEl('div', 'command-output-body');
+      body.dataset.outputKey = key;
+      const context = { key, taskId: task.id, instanceId: instance.instance_id, vm: name, settled, skipped: node.phase === 'skipped' };
+      body.commandOutputContext = context;
+      fillCommandOutput(body, context);
+      details.append(summary, body);
+      details.addEventListener('toggle', () => {
+        if (details.open && settled && !commandOutputs.has(key)) loadCommandOutput(context);
+      });
+      row.appendChild(details);
+      wrap.appendChild(row);
+    });
+    return wrap;
+  };
+
+  const buildCommandSummaryRows = (spec) => {
+    const rows = document.createElement('div');
+    const add = (label, value, extra) => {
+      const row = rotateEl('div', 'summary-row');
+      row.appendChild(rotateEl('span', 'label', `${label}:`));
+      const cell = rotateEl('span', 'value');
+      if (extra) cell.appendChild(extra); else cell.textContent = value;
+      row.appendChild(cell);
+      rows.appendChild(row);
+      return cell;
+    };
+    const holder = document.createElement('div');
+    holder.appendChild(rotateEl('pre', 'command-text', spec.command || ''));
+    const copy = rotateEl('button', 'command-copy', 'Copy');
+    copy.type = 'button';
+    copy.addEventListener('click', () => {
+      const clipboard = window.navigator && window.navigator.clipboard;
+      if (!clipboard || typeof clipboard.writeText !== 'function') return;
+      try {
+        const pending = clipboard.writeText(spec.command || '');
+        if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+      } catch (err) { /* nothing visible, and nothing logged */ }
+    });
+    holder.appendChild(copy);
+    add('Command', '', holder);
+    add('Run as', spec.run_as || '');
+    add('Shell', spec.shell || '/bin/bash');
+    add('Timeout', `${Number(spec.timeout_seconds) || 0} seconds`);
+    add('Parallel', spec.parallel ? `Yes, ${Number(spec.max_in_flight) || 1} at a time` : 'No');
+    if (spec.reason) add('Reason', spec.reason);
+    return rows;
+  };
+
   // Render task detail view
   const renderTaskDetail = (task) => {
     const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
@@ -7521,6 +7735,7 @@
 
     const instances = task.instances || [];
     const isCertificates = task.kind === 'certificates';
+    const isCommand = task.kind === 'command';
     taskDetailCache.set(task.id, task);
     const instancesHtml = instances.map((instance, index) => {
       const statusIcon = getInstanceStatusIcon(instance.status);
@@ -7544,7 +7759,7 @@
               ${boshTaskId ? `<button type="button" class="bosh-task-btn" data-bosh-task-id="${boshTaskId}">BOSH Task: ${boshTaskId}</button>` : ''}
             </div>
             ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
-            ${isCertificates ? `<div class="cert-task-host" data-cert-index="${index}"></div>` : ''}
+            ${isCertificates ? `<div class="cert-task-host" data-cert-index="${index}"></div>` : ''}${isCommand ? `<div class="command-task-host" data-command-index="${index}"></div>` : ''}
           </div>
         </div>
       `;
@@ -7556,8 +7771,8 @@
     const canControl = isRunning || isPaused;
     // A paused certificate task is still finishing its current VM or deploy
     // while one of its instances runs.
-    const pauseRequested = isCertificates && isPaused && instances.some((instance) => instance && instance.status === 'running');
-    const hasFailedInstance = isCertificates && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
+    const pauseRequested = (isCertificates || isCommand) && isPaused && instances.some((instance) => instance && instance.status === 'running');
+    const hasFailedInstance = (isCertificates || isCommand) && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
 
     // Build control buttons based on task status
     let controlButtonsHtml = '';
@@ -7573,8 +7788,10 @@
 
     const targets = describeUpgradeTargets(task);
     const spec = task.certificates || {};
-    const jobName = task.name || (isCertificates ? 'Certificate rotation' : `Upgrade to ${targets.label}`);
-    const targetRows = isCertificates
+    const jobName = task.name || (isCertificates ? 'Certificate rotation' : isCommand ? 'Run command' : `Upgrade to ${targets.label}`);
+    const targetRows = isCommand
+      ? '<div class="command-summary-host"></div>'
+      : isCertificates
       ? `
           <div class="summary-row">
             <span class="label">Mode:</span>
@@ -7608,8 +7825,8 @@
           ${targetRows}
           <div class="summary-row">
             <span class="label">Status:</span>
-            <span class="value status-${escapeAttribute(task.status)}">${isCertificates && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : `${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : ''}`}</span>
-          </div>${isCertificates && isPaused && hasFailedInstance ? `
+            <span class="value status-${escapeAttribute(task.status)}">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : `${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : ''}`}</span>
+          </div>${(isCertificates || isCommand) && isPaused && hasFailedInstance ? `
           <div class="summary-row">
             <span class="label">Resume:</span>
             <span class="value">Continue remaining instances. The failed instance is not retried.</span>
@@ -7629,6 +7846,14 @@
         </div>
       </div>
     `;
+      if (isCommand) {
+        const summaryHost = tasksContainer.querySelector('.command-summary-host');
+        if (summaryHost) summaryHost.replaceWith(...buildCommandSummaryRows(task.command || {}).childNodes);
+        tasksContainer.querySelectorAll('.command-task-host').forEach((host) => {
+          const instance = instances[Number(host.dataset.commandIndex)];
+          if (instance) host.appendChild(buildCommandInstance(task, instance));
+        });
+      }
       if (isCertificates) {
         tasksContainer.querySelectorAll('.cert-task-host').forEach((host) => {
           const instance = instances[Number(host.dataset.certIndex)];
@@ -15091,7 +15316,7 @@
 
     // Tab switching functionality
     const switchTab = async (tabId) => {
-      if (tabId !== 'upgrade') dropCommandReview();
+      if (tabId !== 'upgrade') { dropCommandReview(); clearCommandOutputKey(); }
       if (tabId !== 'certificates' && window.blacksmithCerts && window.blacksmithCerts.closeDrawer) {
         window.blacksmithCerts.closeDrawer({ restore: false });
       }
