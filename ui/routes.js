@@ -27,7 +27,7 @@
    else if(p[0]==='instances'&&(p.length===1||(p.length===3&&instance[p[2]]))){r={screen:'services'};if(p.length===3){r.instance=p[1];r.section=instance[p[2]];}}
    else if(p[0]==='certificates'&&p.length===1)r={screen:'certificates'};
    else if(p[0]==='batch'&&p[1]==='activity'&&p.length<=3){r={screen:'upgrade',view:'activity'};if(p[2])r.task=p[2];}
-   else if(p[0]==='batch'&&p[1]==='new'&&['upgrade','rotate','converge'].includes(p[2])&&steps.includes(p[3])&&p.length===4)r={screen:'upgrade',view:'new',operation:p[2],step:steps.indexOf(p[3])};
+   else if(p[0]==='batch'&&p[1]==='new'&&['upgrade','rotate','converge','command'].includes(p[2])&&steps.includes(p[3])&&p.length===4)r={screen:'upgrade',view:'new',operation:p[2],step:steps.indexOf(p[3])};
    else return null;
    if(r.screen==='services'&&!r.instance&&q.get('service')){r.service=q.get('service');if(q.get('plan'))r.plan=q.get('plan');}
    if(q.has('view'))r.subview=q.get('view');if(q.has('endpoint')&&r.section==='broker')r.endpoint=q.get('endpoint');if(q.has('inspect')){if(!['task','config','certificate'].includes(q.get('inspect'))||!q.get('id'))return null;r.inspection={kind:q.get('inspect'),id:q.get('id')};if(r.inspection.kind==='task'&&!/^\d+$/.test(r.inspection.id))return null;if(r.inspection.kind==='config'){if(!q.get('type')||!q.get('name'))return null;r.inspection.type=q.get('type');r.inspection.name=q.get('name');}}return r;
@@ -168,7 +168,7 @@
   if(route.instance)push(root.serviceInstances?.[route.instance]?.instance_name||route.instance,{screen:'services',instance:route.instance,section:'details'});
   if(route.section)push(labels[route.section]||route.section,{screen:route.screen,section:route.section,...(route.instance?{instance:route.instance}:{})});
   if(route.plan){const s=root.plansData?.services?.find(s=>s.id===route.service);push(s?.name||route.service,{screen:'blacksmith',section:'plans'});push(s?.plans?.find(p=>p.id===route.plan)?.name||route.plan,route);}
-  if(route.screen==='upgrade'){if(route.view==='activity'){push('Activity',{screen:'upgrade',view:'activity'});if(route.task)push('Job '+route.task,route);}else{push(({upgrade:'Upgrade',rotate:'Rotate certificates',converge:'Converge'})[route.operation]||'New Operation',route);push(steps[route.step||0].replace(/^./,c=>c.toUpperCase()),route);}}
+  if(route.screen==='upgrade'){if(route.view==='activity'){push('Activity',{screen:'upgrade',view:'activity'});if(route.task)push('Job '+route.task,route);}else{push(({upgrade:'Upgrade',rotate:'Rotate certificates',converge:'Converge',command:'Run command'})[route.operation]||'New Operation',route);push(steps[route.step||0].replace(/^./,c=>c.toUpperCase()),route);}}
   if(route.inspection)push(({task:'BOSH task ',config:'Config version ',certificate:'Certificate '})[route.inspection.kind]+route.inspection.id,route);
   if(route.subview)push(route.subview.replaceAll('-',' ').replace(/^./,c=>c.toUpperCase()),route);
   crumbs.forEach((c,i)=>{const li=doc.createElement('li');if(i===crumbs.length-1){const span=doc.createElement('span');span.textContent=c.label;span.setAttribute('aria-current','page');li.append(span);}else{const a=doc.createElement('a');a.textContent=c.label;a.href=format(c.r);a.addEventListener('click',e=>{if(e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;e.preventDefault();root.blacksmithRouter.navigate(c.r);});li.append(a);}list.append(li);});
