@@ -570,6 +570,81 @@ func TestRunCleanupRechecksTheSessionAfterTheSurvivorsEnd(t *testing.T) {
 	}
 }
 
+// A recheck that finds a recorded survivor still alive in the command's
+// session sends KILL to the whole session, so the children the survivor
+// forked, which the record never named, end with it, and the task is
+// reported ended.
+func TestRunCleanupRecheckEndsTheChildrenOfALiveSurvivor(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+	tree.env = []string{"RC_KILL_TICKS=10"}
+
+	pidFile := tree.path("sleeper-pid")
+	command := fmt.Sprintf("sleep 60 &\necho $! > %q\nwhile true; do sleep 600 & sleep 0.1; done\n", pidFile)
+	running := tree.startExec(t, "root", command, pidFile)
+	tree.plantKill(t)
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+		t.Fatalf("exit = %d, output = %q", code, out)
+	}
+
+	// The loop forks children the record does not name.
+	time.Sleep(500 * time.Millisecond)
+	tree.relinkKill(t)
+
+	code, out = tree.cleanup(t, runTask)
+	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
+		t.Errorf("exit = %d, output = %q; want killed=yes once KILL reached the session", code, out)
+	}
+
+	if sessionLive(t, running.pgid) {
+		_ = syscall.Kill(-running.pgid, syscall.SIGKILL)
+
+		t.Error("a child the record did not name outlived the recheck")
+	}
+}
+
+// A recheck sends KILL to the group the pgid file names only while a
+// recorded survivor is alive in that session, because only that shows the
+// session is the command's. A pgid file that names another session, as a
+// reused pid can, gets no signal, and the task is reported surviving while
+// that session has members.
+func TestRunCleanupRecheckSparesASessionNoSurvivorIsIn(t *testing.T) {
+	t.Parallel()
+
+	tree, running, _ := survivorTree(t)
+	defer func() { _ = syscall.Kill(-running.pgid, syscall.SIGKILL) }()
+
+	other := exec.Command("sleep", "60")
+	other.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	err := other.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() { _ = other.Process.Kill(); _ = other.Wait() }()
+
+	err = os.WriteFile(tree.path(runOps, runTask, "pgid"), []byte(strconv.Itoa(other.Process.Pid)+"\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tree.relinkKill(t)
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || !strings.HasSuffix(out, " killed=survived\n") {
+		t.Errorf("exit = %d, output = %q; want the survivors reported while the named session lives", code, out)
+	}
+
+	if !sessionLive(t, other.Process.Pid) {
+		t.Error("the recheck signalled a session no recorded survivor was in")
+	}
+}
+
 // A survivors record that can't be read proves nothing, so the processes
 // are reported as surviving and the record stays.
 func TestRunCleanupKeepsAnUnreadableSurvivorsRecord(t *testing.T) {
