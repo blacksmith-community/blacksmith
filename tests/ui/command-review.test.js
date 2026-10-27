@@ -999,8 +999,12 @@ for(const [name,spec] of [['a rejected fetch',reject],['a 401',[401,{success:fal
   const env=await setup();const {w,d}=env;try{
   pendingRoutes(env,[spec]);
   await pendingReview(env);
-  expect(anywayBtn(env).parentElement.hidden).toBe(true);
+  // The alert block starts empty, so inserting its content is what a screen reader announces.
+  const alertBlock=d.querySelector('.command-discard-unconfirmed');
+  expect(alertBlock!==null&&alertBlock.hidden&&alertBlock.getAttribute('role')==='alert'&&alertBlock.children.length===0&&alertBlock.textContent==='').toBe(true);
+  expect(anywayBtn(env)===null).toBe(true);
   discardBtn(env).click();await sleep(40);
+  expect(d.querySelector('.command-discard-unconfirmed')===alertBlock).toBe(true);
   expect(w.__T.batchFlow.step).toBe(3);
   expect(w.__T.batchFlow.review!==null).toBe(true);
   expect(anywayBtn(env).parentElement.hidden).toBe(false);

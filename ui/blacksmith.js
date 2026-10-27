@@ -4816,11 +4816,15 @@
     const unconfirmed = rotateEl('div', 'command-discard-unconfirmed');
     unconfirmed.hidden = true;
     unconfirmed.setAttribute('role', 'alert');
-    unconfirmed.appendChild(rotateEl('p', 'batch-review-note', 'The broker could not confirm whether this request started a run. Check Activity before you run the command again.'));
+    // The block is built empty and filled when it is shown, because a screen
+    // reader announces an alert when its content arrives, not when it is unhidden.
     const anyway = rotateEl('button', 'btn-sm dialog-modal-btn-danger', 'Discard anyway');
     anyway.type = 'button';
     anyway.id = 'command-discard-anyway';
-    unconfirmed.appendChild(anyway);
+    const showUnconfirmed = () => {
+      unconfirmed.replaceChildren(rotateEl('p', 'batch-review-note', 'The broker could not confirm whether this request started a run. Check Activity before you run the command again.'), anyway);
+      unconfirmed.hidden = false;
+    };
     area.appendChild(discard);
     area.appendChild(unconfirmed);
 
@@ -4871,7 +4875,7 @@
       if (answer && answer.taskId) { finish(open, answer.taskId, false); return; }
       if (answer || force) { finish(open, '', Boolean(force)); return; }
       commandDiscarding = null;
-      unconfirmed.hidden = false;
+      showUnconfirmed();
       updateBatchFlow();
     };
     discard.addEventListener('click', () => run(false));
