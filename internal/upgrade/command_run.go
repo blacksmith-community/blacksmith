@@ -1773,6 +1773,8 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 // that stopped on a node still staged or sent is never survived, and its
 // instance must stay open for the next resume.
 func (m *Manager) settleStrandedNodes(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade) (stopped, halted, survived bool) {
+	m.clearStrandPause(inst)
+
 	halted = m.commandInstanceFailed(inst)
 
 	for vm := range inst.Command.VMs {
@@ -1795,6 +1797,38 @@ func (m *Manager) settleStrandedNodes(ctx context.Context, sessions *patchSessio
 	return stopped, halted, stopped
 }
 
+// The messages pauseStranded leaves on an instance while a stranded node
+// waits for a resume.
+const (
+	strandUnreachable = "Blacksmith could not reach the node to clean up after an earlier run, so it is still waiting for a resume."
+	strandUnclean     = "The cleanup of a node an earlier run left behind did not report cleanly, so it is still waiting for a resume."
+)
+
+// clearStrandPause takes back the message of a strand pause once a resume
+// settles the stranded nodes again, so the instance never ends saying it
+// waits for a resume. A node whose processes outlived KILL gave the
+// instance its reason before the pause replaced it, and that reason comes
+// back; otherwise the message clears, and the instance ends with the
+// reason of the node that failed.
+func (m *Manager) clearStrandPause(inst *InstanceUpgrade) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if inst.Error != strandUnreachable && inst.Error != strandUnclean {
+		return
+	}
+
+	inst.Error = ""
+
+	for _, node := range inst.Command.VMs {
+		if node.Survived {
+			inst.Error = node.Reason
+
+			return
+		}
+	}
+}
+
 // commandInstanceFailed reports whether a node of the instance settled in
 // anything but success.
 func (m *Manager) commandInstanceFailed(inst *InstanceUpgrade) bool {
@@ -1812,14 +1846,14 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 
 	err := m.reachStranded(ctx, run)
 	if err != nil {
-		m.pauseStranded(task, inst, "Blacksmith could not reach the node to clean up after an earlier run, so it is still waiting for a resume.", err)
+		m.pauseStranded(task, inst, strandUnreachable, err)
 
 		return true
 	}
 
 	record, _, err := run.cleanup(ctx)
 	if err != nil {
-		m.pauseStranded(task, inst, "The cleanup of a node an earlier run left behind did not report cleanly, so it is still waiting for a resume.", err)
+		m.pauseStranded(task, inst, strandUnclean, err)
 
 		return true
 	}
