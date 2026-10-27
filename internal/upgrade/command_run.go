@@ -2034,7 +2034,7 @@ func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 
 		identity := node.identity()
 		task.Paused = true
-		inst.Error = fmt.Sprintf("The task was cancelled, but cleanup did not finish, so instance %s is held pending cleanup on %s/%d. Resume the task once the node can be reached.", inst.InstanceID, identity.Group, identity.Index)
+		inst.Error = fmt.Sprintf("The task was cancelled, but cleanup did not finish, so instance %s is held pending cleanup on %s/%d. Once the node can be reached, use Resume cleanup to finish it.", inst.InstanceID, identity.Group, identity.Index)
 
 		return
 	}

@@ -62,8 +62,41 @@ func TestACommandTaskSummaryNamesTheInstancesItHolds(t *testing.T) {
 
 	for _, status := range []TaskStatus{TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled} {
 		summary := heldSummaryTask(status).ToSummary()
-		if len(summary.HeldInstanceIDs) != 0 || strings.Contains(mustJSON(t, summary), "held_instance_ids") {
-			t.Errorf("a %s task's summary names %v, want none", status, summary.HeldInstanceIDs)
+		if summary.HeldInstanceIDs == nil || len(summary.HeldInstanceIDs) != 0 {
+			t.Errorf("a %s task's summary names %v, want an empty list", status, summary.HeldInstanceIDs)
 		}
+	}
+}
+
+// A command task that holds nothing says so with an empty list, so a page
+// can tell it from the summary of a server that names no held instances at
+// all. A task of another kind carries no list.
+func TestASummaryOfACommandTaskThatHoldsNothingNamesAnEmptyList(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []TaskStatus{TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled} {
+		if raw := mustJSON(t, heldSummaryTask(status).ToSummary()); !strings.Contains(raw, `"held_instance_ids":[]`) {
+			t.Errorf("a %s task's summary has no empty held_instance_ids list", status)
+		}
+	}
+
+	upgrade := &UpgradeTask{ID: "upgrade-1", Kind: TaskKindUpgrade, Status: TaskStatusRunning}
+	if raw := mustJSON(t, upgrade.ToSummary()); strings.Contains(raw, "held_instance_ids") {
+		t.Error("an upgrade task's summary carries held_instance_ids")
+	}
+}
+
+// A cancelled command task with a node still to clean holds that node's
+// instance until its cleanup returns, as while it waits for a resume to run
+// the cleanup, so its summary names that instance and no other.
+func TestACancelledCommandTaskSummaryNamesTheInstanceItHoldsForCleanup(t *testing.T) {
+	t.Parallel()
+
+	task := heldSummaryTask(TaskStatusCancelled)
+	task.Paused = true
+	task.Instances[0].Command.VMs[0].Phase = CommandPhaseSent
+
+	if got := task.ToSummary().HeldInstanceIDs; !slices.Equal(got, []string{"i-running"}) {
+		t.Errorf("the cancelled task's summary names %v, want the instance held for cleanup", got)
 	}
 }

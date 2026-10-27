@@ -1020,6 +1020,14 @@ func TestCommandCancelOfAPausedTaskRewordsTheHeldInstance(t *testing.T) {
 		t.Errorf("the status text is %q, want it to say the instance is held pending cleanup on redis/0", text)
 	}
 
+	if text := got.Instances[0].Error; !strings.Contains(text, "Resume cleanup") {
+		t.Errorf("the status text is %q, want it to point at the Resume cleanup control", text)
+	}
+
+	if ids := got.ToSummary().HeldInstanceIDs; !slices.Equal(ids, []string{got.Instances[0].InstanceID}) {
+		t.Errorf("the summary names %v, want the instance held for cleanup", ids)
+	}
+
 	fix.wantBusy()
 	fix.assertNoCommandText()
 }

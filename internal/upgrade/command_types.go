@@ -205,22 +205,30 @@ func commandSurvivorOn(inst *InstanceUpgrade) bool {
 	return inst.Command != nil && slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool { return vm.Survived })
 }
 
-// heldCommandInstanceIDs returns the IDs of the instances an unfinished
-// command task holds, as shouldHoldLocked holds them: each one it has not
-// settled, and each one with a node whose processes outlived KILL. A task
-// that has ended names none.
+// heldCommandInstanceIDs returns the IDs of the instances a command task
+// holds, as shouldHoldLocked holds them. An unfinished task holds each one
+// it has not settled, and each one with a node whose processes outlived
+// KILL. A cancelled task holds each one with a node still to clean, as
+// while it waits for the resume that cleans it. A task that holds nothing
+// gets an empty list, never nil, so its summary says it holds nothing.
 func heldCommandInstanceIDs(task *UpgradeTask) []string {
-	if task.Status != TaskStatusPending && task.Status != TaskStatusRunning && task.Status != TaskStatusPaused {
-		return nil
-	}
+	held := []string{}
 
-	var held []string
-
-	for i := range task.Instances {
-		inst := &task.Instances[i]
-		if !inst.Status.settled() || commandSurvivorOn(inst) {
-			held = append(held, inst.InstanceID)
+	switch task.Status {
+	case TaskStatusPending, TaskStatusRunning, TaskStatusPaused:
+		for i := range task.Instances {
+			inst := &task.Instances[i]
+			if !inst.Status.settled() || commandSurvivorOn(inst) {
+				held = append(held, inst.InstanceID)
+			}
 		}
+	case TaskStatusCancelled:
+		for i := range task.Instances {
+			if commandInstanceHeldLocked(&task.Instances[i]) {
+				held = append(held, task.Instances[i].InstanceID)
+			}
+		}
+	case TaskStatusCompleted, TaskStatusFailed:
 	}
 
 	return held
