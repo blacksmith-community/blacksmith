@@ -35,7 +35,7 @@ func TestRunCleanupReplaysTheDoneRecord(t *testing.T) {
 	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"})
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}))
 
 	want := "cleanup started=yes exit=7 killed=no\n"
 
@@ -76,7 +76,7 @@ func TestRunCleanupWritesTheRecordOverALeftoverTemporaryFile(t *testing.T) {
 	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, map[string]string{"started": "", "exit": "5\n"})
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "5\n"}))
 
 	err := os.WriteFile(tree.donePath(runTask)+".new", []byte("cleanup st"), 0o600)
 	if err != nil {
@@ -203,7 +203,7 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 
 	tree := newRunTree(t)
 	tree.makeTask(t, "kept-task", map[string]string{"started": ""})
-	tree.makeTask(t, runTask, map[string]string{"started": "", "exit": "0\n"})
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "0\n"}))
 
 	old := time.Now().Add(-8 * 24 * time.Hour)
 	young := time.Now().Add(-6 * 24 * time.Hour)
@@ -281,7 +281,7 @@ func TestRunCleanupKeepsTheTaskWhenTheDoneRecordFails(t *testing.T) {
 			t.Parallel()
 
 			tree := newRunTree(t)
-			tree.makeTask(t, runTask, map[string]string{"cmd.sh": "x", "started": "", "exit": "3\n"})
+			tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"cmd.sh": "x", "started": "", "exit": "3\n"}))
 
 			// A temporary file that an earlier failed write left behind
 			// does not stop the next write.

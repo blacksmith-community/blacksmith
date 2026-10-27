@@ -59,20 +59,23 @@ var (
 // is the recorded exit code, or "-" when there is none or the exit file
 // holds no usable status.
 //
-// Killed is "yes" when cleanup ended a running command, and "survived"
-// when the command's group was still alive after KILL. Killed is "no"
+// Whenever the command started, cleanup checks its session, whatever the
+// exit file holds, so Killed reports that check alongside any exit code.
+// Killed is "yes" when cleanup ended members of the session, and
+// "survived" when a member was still alive after KILL. Killed is "no"
 // when cleanup sent no signal because there was nothing to end: the
-// command never started, it recorded its exit, or cleanup checked its
-// session and found nothing alive in it. Killed is "unknown" when cleanup
-// could not check, because the pgid or start-time file is missing or
-// invalid, the kill tool is missing, or the leader is gone or is another
-// process while the session still has members or can't be judged.
-// ParseCleanup reads any other killed value as "unknown" too. On a
-// recheck of recorded survivors, Killed is "yes" once none of them lives
-// and the session's group has no member but zombies, and "survived"
-// otherwise. So an exit status, killed=yes, killed=no, and started=no
-// each show that nothing the command started still runs, and
-// killed=unknown and started=- show nothing.
+// command never started, cleanup found nothing alive in its session, or
+// the leader's pid is held by a process with another start time, which
+// the kernel allows only once the session has no member left. Killed is
+// "unknown" when cleanup could not check, because the pgid or start-time
+// file is missing or invalid, the kill tool is missing while the session
+// has members, or the session can't be judged. ParseCleanup reads any
+// other killed value as "unknown" too. On a recheck of recorded
+// survivors, Killed is "yes" once none of them lives and the session has
+// no member but zombies, or the leader's pid is held by another process,
+// and "survived" otherwise. So killed=yes, killed=no, and started=no each
+// show that nothing the command started still runs, and killed=unknown
+// and started=- show nothing.
 //
 // A cleanup that shows the command ended leaves a done record in place of
 // the task directory, and a repeat cleanup for the task returns the same

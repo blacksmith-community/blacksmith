@@ -987,9 +987,11 @@ func TestPrepareReportsAFailedWriteAsAFailure(t *testing.T) {
 	}
 }
 
-// An exit file that holds no usable status is not an exit, so cleanup
-// checks the command's group as it does when there is no exit file, and
-// reports killed=no only once it finds the group gone.
+// Cleanup checks the command's group whenever exec started, whatever the
+// exit file holds, and reports killed=no only once it finds the group
+// gone. An exit file that holds no usable status is not an exit. Without a
+// pgid file the group can't be checked, so a recorded exit comes with
+// killed=unknown and the directory stays.
 func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 	t.Parallel()
 	needDoneRecords(t)
@@ -998,13 +1000,15 @@ func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 		name  string
 		files map[string]string
 		gone  bool
+		kept  bool
 		want  string
 	}{
 		{name: "exec never ran", files: map[string]string{"cmd.sh": "true\n"}, want: "cleanup started=no exit=- killed=no\n"},
-		{name: "it ran and exited 7", files: map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}, want: "cleanup started=yes exit=7 killed=no\n"},
+		{name: "it ran and exited 7", files: map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}, gone: true, want: "cleanup started=yes exit=7 killed=no\n"},
+		{name: "an exit and no pgid file", files: map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}, kept: true, want: "cleanup started=yes exit=7 killed=unknown\n"},
 		{name: "an exit file with junk", files: map[string]string{"started": "", "exit": "7; id\n"}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
 		{name: "an exit file that is empty", files: map[string]string{"started": "", "exit": ""}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
-		{name: "an exit of 255", files: map[string]string{"started": "", "exit": "255\n"}, want: "cleanup started=yes exit=255 killed=no\n"},
+		{name: "an exit of 255", files: map[string]string{"started": "", "exit": "255\n"}, gone: true, want: "cleanup started=yes exit=255 killed=no\n"},
 		{name: "an exit of 256", files: map[string]string{"started": "", "exit": "256\n"}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
 		{name: "an exit of four digits", files: map[string]string{"started": "", "exit": "1000\n"}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
 	}
@@ -1018,8 +1022,7 @@ func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 			files := maps.Clone(tc.files)
 			if tc.gone {
 				tree.plantKill(t)
-				files["pgid"] = strconv.Itoa(goneGroup(t)) + "\n"
-				files["starttime"] = "5\n"
+				files = withGoneGroup(t, files)
 			}
 
 			tree.makeTask(t, runTask, files)
@@ -1034,7 +1037,11 @@ func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 			}
 
 			_, err := os.Lstat(tree.path(runOps, runTask))
-			if err == nil {
+			if tc.kept && err != nil {
+				t.Errorf("the task directory went: %v", err)
+			}
+
+			if !tc.kept && err == nil {
 				t.Error("the task directory is still there")
 			}
 
@@ -1060,6 +1067,19 @@ func goneGroup(t *testing.T) int {
 	}
 
 	return done.Process.Pid
+}
+
+// withGoneGroup returns files with a pgid and starttime that name the
+// group of a process that has exited, as exec leaves them for a command
+// that ended and left nothing running.
+func withGoneGroup(t *testing.T, files map[string]string) map[string]string {
+	t.Helper()
+
+	files = maps.Clone(files)
+	files["pgid"] = strconv.Itoa(goneGroup(t)) + "\n"
+	files["starttime"] = "5\n"
+
+	return files
 }
 
 func TestCleanupGuards(t *testing.T) {

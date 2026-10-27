@@ -803,9 +803,9 @@ func TestRunCleanupExitedGroupReportsKilledNo(t *testing.T) {
 }
 
 // An exit file that holds no usable status, as a write on a full disk can
-// leave, is not an exit. A command whose leader has exited while a child
-// still runs in its session leaves cleanup unable to tell whose that child
-// is, so it reports unknown and keeps the directory, and the child lives.
+// leave, is not an exit. A child still in the session of a command whose
+// leader has exited is the command's, because the session can't have been
+// reused while it has a member, so cleanup ends it and reports yes.
 func TestRunCleanupChecksTheGroupWhenTheExitFileIsEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -828,18 +828,54 @@ func TestRunCleanupChecksTheGroupWhenTheExitFileIsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
-		t.Errorf("exit = %d, output = %q; want killed=unknown", code, out)
+	if !sessionLive(t, running.pgid) {
+		t.Fatal("no child is left in the session, so the test proves nothing")
 	}
 
-	_, err = os.Stat(tree.path(runOps, runTask, "started"))
-	if err != nil {
-		t.Errorf("the task directory went: %v", err)
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+		t.Errorf("exit = %d, output = %q; want killed=yes", code, out)
+	}
+
+	if sessionLive(t, running.pgid) {
+		t.Error("the child in the session outlived cleanup")
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the task directory stayed: %v", err)
+	}
+}
+
+// A command that exits and leaves a child in its session has that child
+// ended by cleanup, which reports the exit code with killed=yes.
+func TestRunCleanupEndsTheChildrenOfACommandThatExited(t *testing.T) {
+	t.Parallel()
+	needDoneRecords(t)
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+
+	pidFile := tree.path("sleeper-pid")
+	running := tree.startExec(t, "root", fmt.Sprintf("sleep 60 &\necho $! > %q\nexit 4\n", pidFile), pidFile)
+
+	if !waitFor(10*time.Second, func() bool {
+		raw, err := os.ReadFile(tree.path(runOps, runTask, "exit")) //nolint:gosec // the test tree
+		return err == nil && string(raw) == "4\n"
+	}) {
+		t.Fatal("the command never recorded its exit")
 	}
 
 	if !sessionLive(t, running.pgid) {
-		t.Error("the child in the session is gone, so the test proves nothing")
+		t.Fatal("no child is left in the session, so the test proves nothing")
+	}
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=4 killed=yes\n" {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	if sessionLive(t, running.pgid) {
+		t.Error("the child in the session outlived cleanup")
 	}
 }
 
@@ -971,12 +1007,15 @@ echo "$(_rc_group_state "$pg") $(_rc_group_state "$sid")"
 	}
 }
 
+// A command that recorded its exit and left nothing in its session gets
+// no signal, and cleanup reports the exit with killed=no.
 func TestRunCleanupLeavesACommandThatHasExited(t *testing.T) {
 	t.Parallel()
+	needDoneRecords(t)
 
 	tree := newRunTree(t)
 	log := tree.plantKill(t)
-	tree.makeTask(t, runTask, map[string]string{"started": "", "exit": "3\n", "pgid": "2\n"})
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "3\n"}))
 
 	code, out := tree.cleanup(t, runTask)
 	if code != 0 || out != "cleanup started=yes exit=3 killed=no\n" {
@@ -1286,15 +1325,14 @@ func TestRunCleanupEndsAChildInAGroupOfItsOwn(t *testing.T) {
 	}
 }
 
-func TestRunCleanupLeavesASessionWhoseLeaderHasExited(t *testing.T) {
+// A session whose leader has exited can't have been reused while it has a
+// member, so its members are the command's, and cleanup ends them.
+func TestRunCleanupEndsASessionWhoseLeaderHasExited(t *testing.T) {
 	t.Parallel()
-
-	if runtime.GOOS != "linux" {
-		t.Skip("sessions are read from /proc")
-	}
+	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	log := tree.plantKill(t)
+	tree.linkKill(t)
 
 	setsid, err := exec.LookPath("setsid")
 	if err != nil {
@@ -1357,64 +1395,26 @@ func TestRunCleanupLeavesASessionWhoseLeaderHasExited(t *testing.T) {
 	})
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
+	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
-	_, err = os.Stat(log)
-	if err == nil {
-		t.Error("a signal was sent to a session whose leader is gone")
-	}
-
-	if !sessionLive(t, pgid) {
-		t.Error("the member of the session was ended")
-	}
-
-	// The directory stays without the command's text, so a later cleanup
-	// checks the session again, and reports no and removes the directory
-	// once nothing in it lives.
-	if _, err := os.Stat(tree.path(runOps, runTask)); err != nil {
-		t.Fatalf("the task directory went: %v", err)
-	}
-
-	if _, err := os.Stat(tree.path(runOps, runTask, "cmd.sh")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the command's text stayed: %v", err)
-	}
-
-	raw, err = os.ReadFile(pidFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	sleeper, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_ = syscall.Kill(sleeper, syscall.SIGKILL)
-
-	if !waitFor(5*time.Second, func() bool { return !sessionLive(t, pgid) }) {
-		t.Fatal("the member of the session did not end")
-	}
-
-	code, out = tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
-		t.Errorf("the later cleanup exited %d with %q, want killed=no", code, out)
+	if sessionLive(t, pgid) {
+		t.Error("the member of the session outlived cleanup")
 	}
 
 	if _, err := os.Stat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the later cleanup kept the task directory: %v", err)
+		t.Errorf("the task directory stayed: %v", err)
 	}
 }
 
 // killed=no says cleanup looked at the command's session and found nothing
 // alive in it. Every case where it could not look reports unknown and
 // signals nothing: a pgid or start-time file that is missing or invalid,
-// and a gone leader while the session still has members or is one cleanup
-// must not judge. A leader pid held by another process is no whatever the
-// session holds, because the kernel forks no process with the number of a
-// live group or session, and a gone leader with nothing left in the
-// session is no too.
+// and a session that is one cleanup must not judge. A leader pid held by
+// another process is no whatever the session holds, because the kernel
+// forks no process with the number of a live group or session, and a gone
+// leader with nothing left in the session is no too.
 func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
 	t.Parallel()
 
@@ -1437,7 +1437,6 @@ func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
 		{"no starttime file", map[string]string{"started": "", "pgid": "4242\n"}, liveStubs, "unknown"},
 		{"an invalid pgid", map[string]string{"started": "", "pgid": "x\n", "starttime": "777\n"}, liveStubs, "unknown"},
 		{"an invalid starttime", map[string]string{"started": "", "pgid": "4242\n", "starttime": "07\n"}, liveStubs, "unknown"},
-		{"a gone leader with a live session", good, gone + group("live 99"), "unknown"},
 		{"a gone leader with a group outside the session", good, gone + group("other"), "unknown"},
 		{"a gone leader in cleanup's own session", good, gone + group("self"), "unknown"},
 		{"another leader with a live session", good, other + group("live"), "no"},
