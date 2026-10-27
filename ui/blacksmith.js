@@ -26664,8 +26664,12 @@
           }
           tr.appendChild(print);
         }
-        tr.appendChild(el('td', null, obs.not_after ? shortDate(obs.not_after) : 'Not seen'));
-        tr.appendChild(el('td', null, obs.observed_at ? `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}` : 'Unknown'));
+        const probeExpires = el('td', null, obs.not_after ? shortDate(obs.not_after) : 'Not seen');
+        if (obs.not_after) probeExpires.setAttribute('data-sort-value', certSortValue(obs.not_after));
+        tr.appendChild(probeExpires);
+        const probeRead = el('td', null, obs.observed_at ? `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}` : 'Unknown');
+        if (obs.observed_at) probeRead.setAttribute('data-sort-value', certSortValue(obs.observed_at));
+        tr.appendChild(probeRead);
         body.appendChild(tr);
       });
       table.appendChild(body);
@@ -26684,9 +26688,9 @@
         { title: 'Location', has: (o) => o.locator, text: (o) => o.locator, copy: (o) => o.locator, label: 'location' },
         { title: 'SHA-256 fingerprint', has: (o) => o.sha256_fingerprint, text: (o) => o.sha256_fingerprint, copy: (o) => o.sha256_fingerprint, label: 'fingerprint' },
         { title: 'Matches', has: (o) => o.matches, text: (o) => matchText(o.matches) },
-        { title: 'Expires', has: (o) => o.not_after, text: (o) => shortDate(o.not_after) },
+        { title: 'Expires', has: (o) => o.not_after, text: (o) => shortDate(o.not_after), sort: (o) => certSortValue(o.not_after) },
         { title: 'Status', text: credhubStateText },
-        { title: 'Last read', has: (o) => o.observed_at, text: (o) => `${shortDate(o.observed_at)} ${clock(o.observed_at)}` }
+        { title: 'Last read', has: (o) => o.observed_at, text: (o) => `${shortDate(o.observed_at)} ${clock(o.observed_at)}`, sort: (o) => certSortValue(o.observed_at) }
       ].filter((c) => !c.has || obs.some(c.has));
 
       const section = el('section', 'cert-drawer-others');
@@ -26714,6 +26718,7 @@
           } else {
             td.textContent = value;
           }
+          if (c.sort && c.has(o)) td.setAttribute('data-sort-value', c.sort(o));
           tr.appendChild(td);
         });
         body.appendChild(tr);

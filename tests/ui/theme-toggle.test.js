@@ -69,3 +69,16 @@ t('the theme button opens its dialog on every click', () => {
     expect(isOpen(d)).toBe(false);
   }
 });
+
+t('the theme button opens its dialog when initTheme itself throws', () => {
+  const env = start((win) => {
+    const original = win.document.querySelector.bind(win.document);
+    win.document.querySelector = (selector) => {
+      if (String(selector).includes('theme-color')) throw new win.Error('setTheme failed');
+      return original(selector);
+    };
+  });
+  expect(env.errors.some((line) => line.includes('Theme setup failed'))).toBe(true);
+  env.d.getElementById('themeToggle').click();
+  expect(isOpen(env.d)).toBe(true);
+});
