@@ -6,8 +6,8 @@ const DAY=86400000;
 const iso=(days)=>new Date(Date.now()+days*DAY).toISOString();
 const cert=(key,variable,days,id,name,over={})=>({key,variable,kind:'leaf',days_left:days,effective_not_after:iso(days),expiry:iso(days),owners:[{kind:'instance',instance_id:id,instance_name:name}],rotation:{allowed:true,modes:['redeploy','patch'],reasons:[]},findings:[],...over});
 
-async function setupRotate({certs=[],caps={rotation:{enabled:true},patch_in_place:{enabled:true}},instances,start=true}={}){
-  const env=boot(),{w,d}=env;
+async function setupRotate({certs=[],caps={rotation:{enabled:true},patch_in_place:{enabled:true}},instances,start=true,bootOptions={}}={}){
+  const env=boot(bootOptions),{w,d}=env;
   let inventory={certificates:certs,capabilities:caps,settings:{warning_days:30,critical_days:7}};
   w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
     ['/b/certificates/inventory',(u,o,j)=>j(200,inventory)],[/\/b\/upgrade\/tasks$/,(u,o,j)=>j(200,[])]);

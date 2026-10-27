@@ -1,0 +1,75 @@
+const {test,expect,afterEach}=require('bun:test');
+const {main:{boot,sleep}}=require('./certificates/harness.js');
+const {JSDOM}=require('./certificates/support.js');
+const {setupRotate,cert}=require('./rotate-flow-support.js');
+const t=JSDOM?test:test.skip;
+
+const envs=[];
+afterEach(()=>{while(envs.length){const env=envs.pop();expect(env.alerts).toEqual([]);env.w.close();}});
+async function setupCommand(){
+ const env=boot({noDialogs:true,guidance:true}),{w}=env;envs.push(env);
+ w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])],
+  ['/b/upgrade/commands/preview',(u,o,j)=>j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'})]);
+ await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await sleep(10);
+ await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
+ return env;
+}
+// An info button for key right after anchor, outside any label or tablist.
+function infoAfter(anchor,key){
+ const node=anchor.nextElementSibling;
+ const button=node&&node.classList.contains('field-guidance')?node.querySelector('button[data-context-help]'):null;
+ expect(button===null).toBe(false);
+ expect(button.getAttribute('aria-controls').startsWith('batch-help-'+key)).toBe(true);
+ expect(button.closest('label')===null).toBe(true);
+ expect(button.closest('[role=tablist]')===null).toBe(true);
+ return button;
+}
+
+t('Run command options put an info button beside each command control',async()=>{
+ const env=await setupCommand();const {d}=env;
+ const pane=d.querySelector('#batch-flow-options .command-pane');
+ infoAfter(pane.querySelector('label[for="command-text"]'),'command-text');
+ infoAfter(pane.querySelector('.command-user > legend'),'command-user');
+ infoAfter(pane.querySelector('label[for="command-timeout"]'),'command-timeout');
+ infoAfter(pane.querySelector('.command-parallel-option'),'command-parallel');
+});
+
+t('info buttons stay usable while a command create is pending',async()=>{
+ const env=boot({noDialogs:true,guidance:true}),{w,d}=env;envs.push(env);
+ const vm=index=>({group:'node',index,id:'vm-'+index,cid:'cid-'+index,job_state:'running',targeted:true});
+ const preview={preview_id:'prev-1',expires_at:'2030-01-01T00:00:00Z',command_digest:'d',command_length:6,run_as:'vcap',shell:'/bin/bash',timeout_seconds:600,parallel:false,max_in_flight:0,parallel_available:true,worker_count:4,max_in_flight_limit:0,services:['valkey'],warnings:[],
+  instances:[{instance_id:'val-a',instance_name:'val-a-name',deployment:'dep-val-a',service:'valkey',plan:'small',blocked:null,vms:[vm(0)]}]};
+ w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
+  ['/b/upgrade/commands/preview',(u,o,j)=>JSON.parse(o.body).instance_ids.length?j(200,preview):j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'})],
+  ['/b/upgrade/tasks',(u,o,j)=>(o.method||'GET')==='POST'?j(401,{success:false,error:'A command key is required.',code:'command_credential_required'}):j(200,[])]);
+ w.plansData={services:[{id:'valkey',name:'valkey'}]};
+ await sleep(30);w.serviceInstances={'val-a':{service_id:'valkey',plan_id:'small',plan:{id:'small',name:'small'}}};
+ await w.__T.initUpgradeTab();await sleep(10);
+ await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
+ const text=d.getElementById('command-text');text.value='uptime';text.dispatchEvent(new w.Event('input',{bubbles:true}));
+ w.__T.setBatchStep(2,false);await sleep(5);
+ d.querySelector('#upgrade .upgrade-instance-item[data-instance-id="val-a"] input[type="checkbox"]').click();
+ w.__T.runBatchReview();await sleep(30);
+ const ack=d.getElementById('batch-flow-ack');ack.value='run as vcap';ack.dispatchEvent(new w.Event('input',{bubbles:true}));
+ d.getElementById('batch-flow-next').click();await sleep(30);
+ expect(d.getElementById('command-text').disabled).toBe(true);
+ const buttons=[...d.querySelectorAll('#batch-flow-options .command-pane .field-guidance button')];
+ expect(buttons.length).toBe(4);
+ expect(buttons.some(b=>b.disabled)).toBe(false);
+});
+
+t('Rotate options put info buttons after the Mode and After patching legends',async()=>{
+ const env=await setupRotate({certs:[cert('/s/a_crt','a_crt',5,'inst-a','cache-a')],bootOptions:{noDialogs:true,guidance:true}});envs.push(env);
+ const {d}=env;
+ const mode=d.getElementById('rotate-mode');
+ infoAfter(mode.querySelector(':scope > legend'),'rotate-mode');
+ infoAfter(d.querySelector('#rotate-mode-converge > legend'),'rotate-converge');
+});
+
+t('upgrade options and Execution settings each get an info button',async()=>{
+ const env=await setupCommand();const {d}=env;
+ infoAfter(d.getElementById('batch-additional-title'),'additional-releases');
+ infoAfter(d.querySelector('label[for="upgrade-max-batch-jobs"]'),'concurrent-jobs');
+ expect(d.querySelectorAll('.batch-execution-settings .field-guidance').length).toBe(1);
+});

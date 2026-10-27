@@ -3291,7 +3291,7 @@
             <td><select id="upgrade-release-floor" aria-label="Release minimum current version" aria-describedby="batch-version-floor-help" disabled title="Select a single service to filter by release"><option value="">No minimum</option></select></td></tr>
         </tbody>
       </table>
-      <p id="batch-version-floor-help" class="batch-field-help">Minimum current version includes instances already running that version or newer. It filters eligible instances; it does not change the deploy version.</p>
+      <p id="batch-version-floor-help" class="batch-field-help">Use a minimum to upgrade only instances already at that version or newer. It narrows the list and never changes the deploy version.</p>
       <section class="batch-additional-releases" aria-labelledby="batch-additional-title">
         <div class="batch-release-toolbar"><div><h3 id="batch-additional-title">Additional releases</h3><p>Choose other releases uploaded to the director. Each applies only to instances that already use it.</p></div><button type="button" id="batch-edit-releases" class="outline">Choose releases…</button></div>
         <div id="batch-release-summary"></div>
@@ -4444,11 +4444,24 @@
   // beside it, and choosing it reveals the converge choice with neither
   // option selected. Every id starts with the prefix, and the prefix starts
   // with rotate-.
+  // Puts the field help for key right after anchor, outside any label, when
+  // view guidance has loaded.
+  const addFieldHelp = (anchor, key) => {
+    const api = window.BlacksmithViewGuidance;
+    if (!anchor || !api || typeof api.field !== 'function') return null;
+    const holder = document.createDocumentFragment();
+    const node = api.field(holder, key);
+    if (node) anchor.after(holder);
+    return node;
+  };
+
   const buildModeControls = (ctx) => {
     const p = ctx.prefix;
     const group = rotateEl('fieldset', 'rotate-mode');
     group.id = p;
-    group.appendChild(rotateEl('legend', '', 'Mode'));
+    const modeLegend = rotateEl('legend', '', 'Mode');
+    group.appendChild(modeLegend);
+    addFieldHelp(modeLegend, 'rotate-mode');
     const batchTabs = p === 'rotate-mode';
     const tabs = {};
     const tablist = rotateEl('div','batch-mode-tabs');
@@ -4504,7 +4517,9 @@
 
     const converge = rotateEl('fieldset', 'rotate-converge');
     converge.id = `${p}-converge`;
-    converge.appendChild(rotateEl('legend', '', 'After patching'));
+    const convergeLegend = rotateEl('legend', '', 'After patching');
+    converge.appendChild(convergeLegend);
+    addFieldHelp(convergeLegend, 'rotate-converge');
     const choices = {};
     CONVERGE_CHOICES.forEach(([value, text, consequence]) => {
       const label = rotateEl('label', 'rotate-converge-option');
@@ -4592,7 +4607,7 @@
   let rotateModeControls = null;
 
   // The optional job name and reason inputs that every operation shares.
-  const buildBatchMetadata = (namePlaceholder = 'e.g. October certificate renewal', reasonPlaceholder = 'e.g. Scheduled renewal — change CHG-1234') => {
+  const buildBatchMetadata = (namePlaceholder = 'e.g. October certificate renewal', reasonPlaceholder = 'e.g. Scheduled renewal — change CHG-1234', reasonText = 'Explain why you\'re running this operation, such as a maintenance window, an incident, or a change ticket. The reason is saved with the job and shown in its details, so anyone reading Activity later knows why it ran. It\'s optional.') => {
     const nameRow = rotateEl('div', 'filter-row rotate-name-row');
     const nameLabel = rotateEl('label', '', 'Job name');
     nameLabel.setAttribute('for', 'rotate-name');
@@ -4624,7 +4639,7 @@
     reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
     reasonRow.appendChild(reasonLabel);
     reasonRow.appendChild(reasonInput);
-    const reasonHelp = rotateEl('p','batch-field-help','Explain why you are running this operation, such as a maintenance window, incident, or change ticket. Optional.');
+    const reasonHelp = rotateEl('p','batch-field-help',reasonText);
     reasonHelp.id = 'rotate-reason-help'; reasonRow.appendChild(reasonHelp);
     metadata.appendChild(reasonRow);
     return metadata;
@@ -4718,13 +4733,13 @@
     pane.querySelector('#command-user-vcap').checked = commandState.user === 'vcap';
     root.checked = commandState.user === 'root';
     const rootNote = pane.querySelector('#command-root-note');
-    rootNote.textContent = commandState.rootOff || 'Root can change anything on the VM. Use it only when vcap cannot do the job.';
+    rootNote.textContent = commandState.rootOff ? COMMAND_ROOT_OFF_NOTE : 'Root can change anything on the VM, so choose it only when vcap can\'t do the job.';
     const noParallel = Boolean(commandState.preview && !commandState.preview.available);
     if (noParallel) commandState.parallel = false;
     const parallel = pane.querySelector('#command-parallel');
     parallel.disabled = noParallel;
     parallel.checked = commandState.parallel;
-    pane.querySelector('#command-parallel-note').textContent = noParallel ? COMMAND_NO_PARALLEL_NOTE : 'Run more than one node at a time. Off by default, so nodes run one after another.';
+    pane.querySelector('#command-parallel-note').textContent = noParallel ? COMMAND_NO_PARALLEL_NOTE : 'Parallel runs are off by default, so nodes run one after another, and a failure stops the run early.';
     pane.querySelector('#command-parallel-limit-row').hidden = !commandState.parallel;
     const limit = pane.querySelector('#command-max-in-flight');
     const bound = commandState.preview ? commandState.preview.limit : 0;
@@ -4882,7 +4897,7 @@
     const answer = await showBatchReview({
       title: 'Command key',
       showTitle: true,
-      message: refused ? 'The broker did not accept that key. Enter it again.' : 'This broker asks for a command key before it previews or runs a command.',
+      message: refused ? 'The broker did not accept that key. Enter it again.' : 'This broker asks for a command key before it previews or runs a command, so that signing in to the broker isn\'t enough to run code on service VMs. The page keeps the key only for this review.',
       body,
       confirmText: action.confirmText || 'Preview command run',
       danger: Boolean(action.danger),
@@ -5194,14 +5209,17 @@
     text.value = commandState.text;
     text.addEventListener('input', () => { commandState.text = text.value; changed(); });
     textRow.appendChild(textLabel);
+    addFieldHelp(textLabel, 'command-text');
     textRow.appendChild(text);
-    const textHelp = rotateEl('p', 'batch-field-help', 'The command runs under /bin/bash on every node with stdin closed and a fixed PATH.');
+    const textHelp = rotateEl('p', 'batch-field-help', 'The command runs with bash on every node. It can\'t read input, and it uses a fixed search path, so give service tools by their full path.');
     textHelp.id = 'command-text-help';
     textRow.appendChild(textHelp);
     pane.appendChild(textRow);
 
     const userSet = rotateEl('fieldset', 'command-user');
-    userSet.appendChild(rotateEl('legend', '', 'Run as'));
+    const userLegend = rotateEl('legend', '', 'Run as');
+    userSet.appendChild(userLegend);
+    addFieldHelp(userLegend, 'command-user');
     [['vcap', 'vcap'], ['root', 'root (use with care)']].forEach(([user, name]) => {
       const label = rotateEl('label', 'command-user-option');
       const radio = document.createElement('input');
@@ -5231,9 +5249,14 @@
     timeout.max = String(COMMAND_TIMEOUT_MAX);
     timeout.step = '1';
     timeout.value = commandState.timeout;
+    timeout.setAttribute('aria-describedby', 'command-timeout-help');
     timeout.addEventListener('input', () => { commandState.timeout = timeout.value; changed(); });
     timeoutRow.appendChild(timeoutLabel);
+    addFieldHelp(timeoutLabel, 'command-timeout');
     timeoutRow.appendChild(timeout);
+    const timeoutHelp = rotateEl('p', 'batch-field-help', `Enter how many seconds each node may take, from ${COMMAND_TIMEOUT_MIN} to ${COMMAND_TIMEOUT_MAX}. The default is ${COMMAND_TIMEOUT_DEFAULT}, which is ten minutes.`);
+    timeoutHelp.id = 'command-timeout-help';
+    timeoutRow.appendChild(timeoutHelp);
     pane.appendChild(timeoutRow);
 
     const parallelRow = rotateEl('div', 'filter-row command-parallel-row');
@@ -5246,6 +5269,7 @@
     parallelLabel.appendChild(parallel);
     parallelLabel.appendChild(rotateEl('span', '', 'Run nodes in parallel'));
     parallelRow.appendChild(parallelLabel);
+    addFieldHelp(parallelLabel, 'command-parallel');
     const parallelNote = rotateEl('p', 'batch-field-help');
     parallelNote.id = 'command-parallel-note';
     parallelRow.appendChild(parallelNote);
@@ -5259,13 +5283,17 @@
     limit.min = '1';
     limit.step = '1';
     limit.value = commandState.maxInFlight;
+    limit.setAttribute('aria-describedby', 'command-max-in-flight-help');
     limit.addEventListener('input', () => { commandState.maxInFlight = limit.value; changed(); });
     limitRow.appendChild(limitLabel);
     limitRow.appendChild(limit);
+    const limitHelp = rotateEl('p', 'batch-field-help', 'This number must be below the director\'s worker count, so it\'s at most 3 with the default of four workers. The review checks it against your director.');
+    limitHelp.id = 'command-max-in-flight-help';
+    limitRow.appendChild(limitHelp);
     parallelRow.appendChild(limitRow);
     pane.appendChild(parallelRow);
 
-    pane.appendChild(buildBatchMetadata('e.g. Check disk usage on valkey nodes', 'e.g. Investigating an incident — change CHG-1234'));
+    pane.appendChild(buildBatchMetadata('e.g. Check disk usage on valkey nodes', 'e.g. Investigating an incident — change CHG-1234', 'Explain why you\'re running this command, such as an incident or a change ticket. The reason is saved in the audit record with the command.'));
     container.appendChild(pane);
     renderCommandDiscardNote();
     syncCommandOptions();
@@ -5495,7 +5523,7 @@
       radio.addEventListener('change', () => { if (radio.checked) requestOperation(mode); });
       label.appendChild(radio);
       label.appendChild(rotateEl('strong', '', OPERATION_LABELS[mode]));
-      const description = rotateEl('span', 'batch-operation-description', {upgrade:'Update stemcells or service releases.',rotate:'Replace certificates using redeploy or patch in place.',converge:'Deploy current certificates to instances left unconverged.',command:OPERATION_HINTS.command}[mode]);
+      const description = rotateEl('span', 'batch-operation-description', {upgrade:'Move instances to a newer stemcell or service release.',rotate:'Replace expiring certificates by redeploy or patch in place.',converge:'Finish a patch in place by deploying its certificates through BOSH.',command:OPERATION_HINTS.command}[mode]);
       description.id = `rotate-op-${mode}-description`;
       label.appendChild(description);
       label.appendChild(rotateEl('span', 'batch-operation-selected', 'Selected'));
@@ -6490,6 +6518,8 @@
     servicesContainer.innerHTML = renderUpgradeServices();
     targetsContainer.innerHTML = renderUpgradeTargets();
     document.getElementById('batch-edit-releases').addEventListener('click', openAdvancedReleasePicker);
+    addFieldHelp(document.getElementById('batch-additional-title'), 'additional-releases');
+    addFieldHelp(upgradePanel.querySelector('label[for="upgrade-max-batch-jobs"]'), 'concurrent-jobs');
     installOperationSelector();
     installBatchWorkspace();
     installBatchFlow();
@@ -27169,7 +27199,7 @@
       { key: 'instance_scan_timeout_seconds', label: 'Instance scan timeout (seconds)', type: 'number', help: 'Seconds we wait on one instance before we give up on it, at least 1.' },
       { key: 'preview_ttl_minutes', label: 'Preview lifetime (minutes)', type: 'number', help: 'Minutes a preview stays valid before we need a fresh one, from 5 to 60.' },
       { key: 'probe_enabled', label: 'Probe live listeners', type: 'checkbox', help: 'Connect to each listener and read the certificate it serves, so we can compare it with the stored one.' },
-      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'When this is off, a batch carries on after a failure.' }
+      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'This is on by default. A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. Turn it off only for routine rotations you\'ll watch from Activity. Upgrades carry on after a failure, and Run command always pauses.' }
     ];
 
     const settingKeys = () => SETTINGS_FIELDS.map((f) => f.key);

@@ -79,7 +79,7 @@ t('a root_disabled probe disables root with a note',async()=>{
  await openOptions(env);
  const root=d.getElementById('command-user-root');
  expect(root.disabled).toBe(true);
- expect(d.getElementById(root.getAttribute('aria-describedby')).textContent).toContain('Running as root is switched off.');
+ expect(d.getElementById(root.getAttribute('aria-describedby')).textContent).toBe('Running as root is switched off on this broker.');
  expect(d.getElementById('command-user-vcap').checked).toBe(true);
  }finally{w.close();}
 });
