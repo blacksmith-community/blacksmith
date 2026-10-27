@@ -3580,6 +3580,11 @@
   let commandKeyGen = 0;
   // Tasks the broker has asked a key for, so a read of one sends it.
   const commandTaskIds = new Set();
+  // Whether the broker has refused a read of a command task for want of a
+  // key. Once it has, a read of one without a key is certain to be refused
+  // again, so none is sent until the page holds a key.
+  let brokerWantsCommandKey = false;
+  const commandReadRefused = (task) => !commandOutputKey && brokerWantsCommandKey && Boolean(task) && (task.kind === 'command' || commandTaskIds.has(task.id));
   // The request init of a read of a task's detail. Only command tasks take
   // the key, and the kind comes from the summary, the cached detail, or the
   // refusal that asked for a key.
@@ -3812,10 +3817,22 @@
         const signature = `${task.id}:${task.status}`;
         const known = holderDetails.get(task.id);
         if (known && known.readAt && known.signature === signature && now - known.readAt < HOLDER_DETAIL_MAX_AGE_MS) return;
+        if (commandReadRefused(task)) {
+          // The detail is out of reach, so the holders come from what the list
+          // carries, or from the last detail read with a key.
+          if (Array.isArray(task.instances)) holderDetails.set(task.id, { detail: task, signature, readAt: 0 });
+          return;
+        }
         try {
           const gen = commandKeyGen;
           const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit(task.id, task.kind));
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (!response.ok) {
+            if (response.status === 401 && task.kind === 'command') {
+              const refusal = await readApiError(response);
+              if (refusal.code === 'command_credential_required' && !commandOutputKey) brokerWantsCommandKey = true;
+            }
+            throw new Error(`HTTP ${response.status}`);
+          }
           const detail = await response.json();
           if (gen !== commandKeyGen) return;
           holderDetails.set(task.id, { detail: slimHolderDetail(detail), signature, readAt: now });
@@ -5909,8 +5926,14 @@
       const list = await response.json();
       const active = (Array.isArray(list) ? list : []).filter((task) => task && ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
       const details = await Promise.all(active.map(async (task) => {
+        // The detail is out of reach without a key, so the list entry stands in for it.
+        if (commandReadRefused(task)) return task;
         try {
           const detail = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit(task.id, task.kind));
+          if (!detail.ok && detail.status === 401 && task.kind === 'command' && !commandOutputKey) {
+            const refusal = await readApiError(detail);
+            if (refusal.code === 'command_credential_required') brokerWantsCommandKey = true;
+          }
           return detail.ok ? await detail.json() : null;
         } catch (err) {
           return null;
@@ -7789,6 +7812,7 @@
   const denyCommandDetail = (taskId, err) => {
     if (!err || err.status !== 401 || err.code !== 'command_credential_required') return false;
     commandTaskIds.add(taskId);
+    brokerWantsCommandKey = true;
     // A refusal for a task the operator has left says nothing now.
     if (selectedTaskId !== taskId) return true;
     const refused = Boolean(err.keySent);
@@ -7911,7 +7935,7 @@
           clearCommandOutputKey();
           return;
         }
-        if (response.status === 401 && err.code === 'command_credential_required') result = { status: 'credential' };
+        if (response.status === 401 && err.code === 'command_credential_required') { brokerWantsCommandKey = true; result = { status: 'credential' }; }
         else if (response.status === 403) result = { status: 'forbidden', message: commandErrorText(err) };
         else result = { status: 'error', retry: true, message: response.status === 401 ? 'The broker asked for a sign-in.' : `Could not read the output. ${commandErrorText(err)}` };
       }

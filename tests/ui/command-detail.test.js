@@ -926,3 +926,53 @@ for(const code of [0x061C,0x200B,0x200C,0x200D,0x2060,0xFEFF,0x00AD]){
   }finally{w.close();}
  });
 }
+
+t('with a key configured and none held, holder reads stop asking for command task detail',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ // The first read learns that the broker wants a key. Reads after it send nothing.
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const learned=env.details.length;
+ expect(learned>0).toBe(true);
+ expect(env.details.every(r=>r.headers['X-Blacksmith-Command-Key']===undefined)).toBe(true);
+ for(let i=0;i<3;i++){await w.__T.fetchUpgradeTasks();await sleep(20);}
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(learned);
+ // A held key brings the reads back, and they carry it.
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ const before=env.details.length;
+ await unlock(d);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ expect(env.details.length>before).toBe(true);
+ expect(env.details.slice(before).every(r=>r.headers['X-Blacksmith-Command-Key']===KEY)).toBe(true);
+ }finally{w.close();}
+});
+
+t('a broker without a command key keeps serving holder reads to a page with none',async()=>{
+ const env=await setup({detail:task({status:'running'})});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const first=env.details.length;
+ expect(first>0).toBe(true);
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length>first).toBe(true);
+ }finally{w.close();}
+});
+
+t('an instance held by a command task still shows as held when its detail is out of reach',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const learned=env.details.length;
+ // A list entry that names its instances holds them without a detail read.
+ const listed={id:TASK,kind:'command',status:'running',name:'restart check',instances:[{instance_id:'val-a',status:'running'}]};
+ w.__routes.unshift(['/b/upgrade/tasks',(u,o,j)=>j(200,[listed])]);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ expect(env.details.length).toBe(learned);
+ const kept=w.__T.holderDetails.get(TASK);
+ expect(kept!==undefined&&kept.detail.instances.map(i=>i.instance_id).join()==='val-a').toBe(true);
+ const holders=await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(learned);
+ expect(holders.get('val-a')).toBe('command run "restart check"');
+ }finally{w.close();}
+});
