@@ -85,3 +85,58 @@ func TestResumeWhileTheProcessorIsStillOwnedDrivesTheTask(t *testing.T) {
 
 	fix.assertNoCommandText()
 }
+
+// An upgrade whose processor returns with the task still running, as one
+// does when an instance is still running with nothing settling it, is not
+// put back on the queue, since no resume landed while it was processed.
+// Without that the task would be processed again at once, without end.
+// The window is bounded, and the task is failed afterwards so nothing of
+// it outlives the test.
+func TestAProcessorThatLeavesItsTaskRunningDoesNotRequeueIt(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+
+	var processed atomic.Int32
+
+	fix.log.hook = func(line string) {
+		if strings.Contains(line, "so the upgrade stops until it settles") {
+			processed.Add(1)
+		}
+	}
+
+	upgrade := &UpgradeTask{
+		ID:        "upgrade-left-running",
+		Kind:      TaskKindUpgrade,
+		Status:    TaskStatusRunning,
+		Instances: []InstanceUpgrade{{InstanceID: "left-0", DeploymentName: "left-dep", Status: InstanceStatusRunning}},
+	}
+
+	fix.manager.mu.Lock()
+	fix.manager.tasks[upgrade.ID] = upgrade
+	fix.manager.mu.Unlock()
+
+	owned := func() bool {
+		fix.manager.mu.RLock()
+		defer fix.manager.mu.RUnlock()
+
+		return fix.manager.owned[upgrade.ID]
+	}
+
+	t.Cleanup(func() {
+		fix.manager.mu.Lock()
+		upgrade.Status = TaskStatusFailed
+		fix.manager.mu.Unlock()
+
+		waitUntil(t, "the upgrade to be let go", func() bool { return !owned() })
+	})
+
+	fix.manager.resumeIfReady(upgrade)
+
+	waitUntil(t, "the upgrade to be processed", func() bool { return processed.Load() >= 1 })
+	waitUntil(t, "the processor to let go of the upgrade", func() bool { return !owned() || processed.Load() > 1 })
+
+	time.Sleep(200 * time.Millisecond)
+
+	if got := processed.Load(); got != 1 {
+		t.Errorf("the upgrade was processed %d times, want once", got)
+	}
+}

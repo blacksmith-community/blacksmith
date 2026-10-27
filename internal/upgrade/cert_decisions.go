@@ -1139,6 +1139,7 @@ func (m *Manager) resumeAfterDecision(ctx context.Context, task *UpgradeTask, fa
 	task.Paused = false
 	task.Status = TaskStatusRunning
 	clearNeverStartedLocked(task)
+	m.noteResumeLocked(task)
 
 	m.mu.Unlock()
 

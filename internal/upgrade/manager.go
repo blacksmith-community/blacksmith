@@ -210,6 +210,12 @@ type Manager struct {
 	// processed, so only one processor ever runs an upgrade.
 	owned map[string]bool
 
+	// resumedOwned holds, under mu, each task that a resume or a decision
+	// set running while it was owned. Its processor may already have
+	// passed the point where it would see the resume, so once it lets go
+	// of the task, the task is looked at again.
+	resumedOwned map[string]bool
+
 	// strandCauses holds, under mu, why a node of a command task is
 	// stranded in the staged or sent phase when that is not a pause, by
 	// the node's key. The key is dropped once the node settles.
@@ -345,6 +351,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		loaded:         make(chan struct{}),
 		owned:          make(map[string]bool),
 		strandCauses:   make(map[string]string),
+		resumedOwned:   make(map[string]bool),
 		guard:          mutation.NewGuard(time.Now),
 		reservations:   make(map[string]map[string]func()),
 		requests:       newRequestIndex(),
@@ -1536,6 +1543,8 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 		clearCommandLoadMessagesLocked(task)
 	}
 
+	m.noteResumeLocked(task)
+
 	m.logger.Info("Resumed task %s", taskID)
 	m.mu.Unlock()
 
@@ -1751,6 +1760,7 @@ func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
 func (m *Manager) dropFromQueue(task *UpgradeTask) {
 	m.mu.Lock()
 	delete(m.owned, task.ID)
+	delete(m.resumedOwned, task.ID)
 	closed := m.cancelUnownedCommandLocked(task)
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
@@ -1797,6 +1807,7 @@ func (m *Manager) pauseRefusedQueued(task *UpgradeTask) queueAnswer {
 			answer = queuePaused
 
 			delete(m.owned, task.ID)
+			delete(m.resumedOwned, task.ID)
 			m.releaseUnheldLocked(task)
 		}
 	}
@@ -1850,6 +1861,8 @@ func (m *Manager) runTask(task *UpgradeTask) {
 
 		m.mu.Lock()
 		delete(m.owned, task.ID)
+		resumed := m.resumedOwned[task.ID]
+		delete(m.resumedOwned, task.ID)
 		ended := m.cancelIdleLocked(task)
 		finish := m.resumeCancelledLocked(task)
 		m.releaseUnheldLocked(task)
@@ -1867,10 +1880,14 @@ func (m *Manager) runTask(task *UpgradeTask) {
 		}
 
 		// A resume that landed while the processor was still owned found
-		// nothing to queue, and its signal went to a channel nobody reads
-		// any more. The task is looked at again now that it is unowned, so
-		// a task that is running and has no processor gets one.
-		m.resumeIfReady(task)
+		// nothing to queue, and its signal may have gone to a channel
+		// nobody reads any more. The task is looked at again now that it
+		// is unowned, so a task that is running and has no processor gets
+		// one. A task with no such resume is left as its processor left
+		// it, so one left running is never processed again without end.
+		if resumed {
+			m.resumeIfReady(task)
+		}
 	}()
 
 	release, ok := m.acquireSlot(task, cancelCh)
@@ -2289,6 +2306,14 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 	m.releaseUnheldLocked(task)
 
 	return skipped
+}
+
+// noteResumeLocked records that the task was resumed while it was owned,
+// as resumedOwned describes. The caller holds mu.
+func (m *Manager) noteResumeLocked(task *UpgradeTask) {
+	if m.owned[task.ID] {
+		m.resumedOwned[task.ID] = true
+	}
 }
 
 // resumeIfReady moves on an upgrade that has no processor, deciding under
