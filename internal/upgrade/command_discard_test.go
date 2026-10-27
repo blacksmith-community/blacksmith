@@ -306,3 +306,29 @@ func TestDiscardCommandRequestRefusesLongIDs(t *testing.T) {
 		t.Fatalf("expected an ID at the bound to be discarded, got %+v: %v", result, err)
 	}
 }
+
+// The scan finds a task of any kind, so a certificate task that carries the
+// request ID is reported and its preview is left alone.
+func TestDiscardCommandRequestFindsTaskOfAnyKind(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	preview := env.previewFor(t, cmdReq("i1"))
+
+	env.manager.mu.Lock()
+	env.manager.tasks["cert-task"] = &UpgradeTask{ID: "cert-task", Kind: TaskKindCertificates, ClientRequestID: cmdRequestID}
+	env.manager.mu.Unlock()
+
+	result, err := env.manager.DiscardCommandRequest(context.Background(), discardReq(preview.ID))
+	if err != nil || result.Discarded || result.TaskID != "cert-task" {
+		t.Fatalf("expected the certificate task, got %+v: %v", result, err)
+	}
+
+	if _, err := env.manager.certDeps().Previews.GetCommand(preview.ID); err != nil {
+		t.Fatalf("the preview was revoked although a task exists: %v", err)
+	}
+
+	env.manager.mu.Lock()
+	delete(env.manager.tasks, "cert-task")
+	env.manager.mu.Unlock()
+}
