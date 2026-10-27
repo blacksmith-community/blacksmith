@@ -18,6 +18,8 @@ const (
 		"Use Resume cleanup to check them again."
 	survivorUnknown = "Cleanup found no record of the command on %s/%d, so Blacksmith can't tell whether the processes " +
 		"that survived KILL still run. Instance %s stays held. Recreating the VM ends them, and Resume cleanup then releases the instance."
+	survivorUnchecked = "Cleanup on %s/%d found no record of the processes that survived KILL there, so it did not check them, " +
+		"and Blacksmith can't tell whether they still run. Instance %s stays held. Recreating the VM ends them, and Resume cleanup then releases the instance."
 )
 
 // cleanupOnlyDone is what the next instance of a task says once a Resume
@@ -28,11 +30,14 @@ const cleanupOnlyDone = "Resume cleanup finished, and it sends no command. Resum
 // recheckSurvivors runs cleanup again on each node of the instance whose
 // processes outlived KILL, and reports whether any of them still holds the
 // instance. A node is resolved only by evidence that nothing of the
-// command is left on its VM: cleanup finding the processes ended, or a
-// listing that shows the VM was replaced or removed. A director error, a
-// node that can't be reached, a cleanup that does not report cleanly, and a
-// record that can't say what ran are no evidence, so the node stays as it
-// is, the instance stays held, and the task waits for Resume cleanup.
+// command is left on its VM: cleanup reporting killed=yes, which the
+// wrapper prints only once no process its survivors record names still
+// lives, or a listing that shows the VM was replaced or removed. A director
+// error, a node that can't be reached, a cleanup that does not report
+// cleanly, a record that can't say what ran, and a record with killed=no
+// are no evidence, so the node stays as it is, the instance stays held, and
+// the task waits for Resume cleanup. killed=no means the wrapper found no
+// survivors record, so it never checked the processes.
 func (m *Manager) recheckSurvivors(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade) bool {
 	held := false
 
@@ -108,11 +113,15 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 		m.holdSurvivor(ctx, task, inst, fmt.Sprintf(survivorUnknown, identity.Group, identity.Index, inst.InstanceID), nil)
 
 		return true
+	case record.Killed != "yes":
+		m.holdSurvivor(ctx, task, inst, fmt.Sprintf(survivorUnchecked, identity.Group, identity.Index, inst.InstanceID), nil)
+
+		return true
 	}
 
 	reason := "Processes of the command survived KILL on the node, and a later cleanup found them ended."
 
-	return m.clearSurvivor(ctx, run, reason, record.Killed == "yes")
+	return m.clearSurvivor(ctx, run, reason, true)
 }
 
 // holdSurvivor keeps the instance held because a node whose processes

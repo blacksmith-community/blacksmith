@@ -288,8 +288,8 @@ func TestCommandSurvivorKeepsTheHoldWhenTheDirectorFails(t *testing.T) {
 // A recheck that finds no evidence that the survivor's processes ended
 // keeps the survivor and the hold, and says why on the instance. A director
 // that can't list the deployment, a node that can't be reached, a cleanup
-// that does not report cleanly, and a record that can't say what ran are
-// each no evidence.
+// that does not report cleanly, a record that can't say what ran, and a
+// record that says cleanup ended nothing are each no evidence.
 func TestCommandSurvivorRecheckWithoutEvidenceKeepsTheHold(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -315,6 +315,18 @@ func TestCommandSurvivorRecheckWithoutEvidenceKeepsTheHold(t *testing.T) {
 		}},
 		{name: "unknown record", want: "found no record", setup: func(f *taskFixture) {
 			f.setCleanup("dep-0/0", "cleanup started=- exit=- killed=no")
+		}},
+		// killed=no on a survivor means the wrapper found no survivors
+		// record and so never checked the processes, whatever else the
+		// record holds.
+		{name: "unchecked with an exit", want: "did not check them", setup: func(f *taskFixture) {
+			f.setCleanup("dep-0/0", "cleanup started=yes exit=137 killed=no")
+		}},
+		{name: "unchecked without an exit", want: "did not check them", setup: func(f *taskFixture) {
+			f.setCleanup("dep-0/0", "cleanup started=yes exit=- killed=no")
+		}},
+		{name: "unchecked and never started", want: "did not check them", setup: func(f *taskFixture) {
+			f.setCleanup("dep-0/0", "cleanup started=no exit=- killed=no")
 		}},
 	}
 
