@@ -2268,6 +2268,14 @@ func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 			inst.Error = fmt.Sprintf("%s, but processes of the command survived KILL on %s/%d, so instance %s stays held. Use Resume cleanup to check them again.", ended, identity.Group, identity.Index, inst.InstanceID)
 
 			return
+		case node.Unproven == unprovenUnknown:
+			inst.Error = fmt.Sprintf("%s, but cleanup could not check whether the command still runs on %s/%d, so instance %s stays held. Use Resume cleanup to check the node again.", ended, identity.Group, identity.Index, inst.InstanceID)
+
+			return
+		case node.Unproven == unprovenGone:
+			inst.Error = fmt.Sprintf("%s, but the command's directory was already gone from %s/%d, so nothing shows whether the command still runs there, and instance %s stays held. Recreating the VM releases it at the next Resume cleanup.", ended, identity.Group, identity.Index, inst.InstanceID)
+
+			return
 		}
 
 		inst.Error = fmt.Sprintf("%s, but cleanup did not finish, so instance %s is held pending cleanup on %s/%d. Once the node can be reached, use Resume cleanup to finish it.", ended, inst.InstanceID, identity.Group, identity.Index)

@@ -494,3 +494,67 @@ func TestCommandGoneRecordHeldUntilTheVMIsRecreated(t *testing.T) {
 		t.Errorf("exec was sent %d times, want once", n)
 	}
 }
+
+// A cancelled task whose node strands on a record that proves nothing holds
+// the instance with text that says why, in place of the text for a cleanup
+// that did not finish. The node keeps why in Vault, so after a restart a
+// Resume cleanup that can't reach the node still says it.
+func TestCancelledHoldSaysWhyTheRecordProvesNothing(t *testing.T) {
+	cases := []struct {
+		record   string
+		unproven string
+		says     string
+	}{
+		{"cleanup started=yes exit=- killed=unknown", unprovenUnknown, "could not check whether the command still runs on redis/0"},
+		{"cleanup started=- exit=- killed=no", unprovenGone, "Recreating the VM releases it"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.record, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 1)
+			script := fix.blockExec()
+			fix.setCleanup("dep-0/0", tc.record)
+
+			fix.queue()
+			script.wait(t, 1)
+			fix.cancel()
+
+			held := fix.waitFor("the task to wait for a resume", func(task UpgradeTask) bool {
+				return task.Paused && nodeOf(task, 0, 0).Phase == CommandPhaseSent && nodeOf(task, 0, 0).Unproven == tc.unproven
+			})
+
+			got := held.Instances[0].Error
+			if held.Status != TaskStatusCancelled || !strings.Contains(got, tc.says) || strings.Contains(got, "did not finish") {
+				t.Errorf("the %s task says %q, want it to say %q", held.Status, got, tc.says)
+			}
+
+			waitUntil(t, "the processor to let go", func() bool { return !fix.owned() })
+
+			saved := fix.storedTask()
+			if nodeOf(saved, 0, 0).Unproven != tc.unproven {
+				t.Fatalf("Vault holds unproven %q, want %q", nodeOf(saved, 0, 0).Unproven, tc.unproven)
+			}
+
+			loaded := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
+				*task = saved
+				task.CreationConfirmed = true
+			})
+			loaded.override = func(_ context.Context, _ string, _ int, op string) *opAnswer {
+				if op == opRunCleanup {
+					return &opAnswer{err: errNodeUnreachable}
+				}
+
+				return nil
+			}
+
+			loaded.resume()
+			waitUntil(t, "the resume's cleanup", func() bool { return loaded.countOps("dep-0", 0, opRunCleanup) == 1 })
+			waitUntil(t, "the cleanup to end", func() bool { return !loaded.settling() })
+
+			again := loaded.snapshot()
+			if got := again.Instances[0].Error; !again.Paused || !strings.Contains(got, tc.says) || strings.Contains(got, "did not finish") {
+				t.Errorf("after a Resume cleanup that could not reach the node the task is paused=%v saying %q, want it to say %q", again.Paused, got, tc.says)
+			}
+		})
+	}
+}
