@@ -613,8 +613,9 @@ func TestRunCleanupRecheckEndsTheChildrenOfALiveSurvivor(t *testing.T) {
 
 // A pgid that names a live process with another start time than exec
 // recorded shows that the command's group had emptied before that process
-// was forked. The recheck sends that process's session no signal, and
-// reports the survivors killed once none of the recorded ones lives.
+// was forked. The recheck sends that process's session no signal. It
+// reports the survivors again while a recorded one lives, and killed once
+// none does.
 func TestRunCleanupRecheckSparesAReusedLeaderPid(t *testing.T) {
 	t.Parallel()
 
@@ -636,15 +637,66 @@ func TestRunCleanupRecheckSparesAReusedLeaderPid(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The planted kill still signals nothing, so the recorded survivors
+	// live on.
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+		t.Errorf("exit = %d, output = %q; want the survivors reported while they live", code, out)
+	}
+
 	tree.relinkKill(t)
 
-	code, out := tree.cleanup(t, runTask)
+	code, out = tree.cleanup(t, runTask)
 	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
 		t.Errorf("exit = %d, output = %q; want killed=yes once the recorded survivors end", code, out)
 	}
 
 	if !sessionLive(t, other.Process.Pid) {
 		t.Error("the recheck signalled the session of a process that took the leader's pid")
+	}
+}
+
+// A recheck whose pgid or starttime file is missing or invalid can't
+// tell whether the session still has members, so it reports the survivors
+// again and keeps the record, even once the recorded ones have ended.
+func TestRunCleanupRecheckNeedsTheGroupFiles(t *testing.T) {
+	t.Parallel()
+
+	for name, change := range map[string]func(dir string) error{
+		"an invalid starttime": func(dir string) error { return os.WriteFile(filepath.Join(dir, "starttime"), []byte("junk\n"), 0o600) },
+		"no starttime":         func(dir string) error { return os.Remove(filepath.Join(dir, "starttime")) },
+		"an invalid pgid":      func(dir string) error { return os.WriteFile(filepath.Join(dir, "pgid"), []byte("1\n"), 0o600) },
+		"no pgid":              func(dir string) error { return os.Remove(filepath.Join(dir, "pgid")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tree, running, _ := survivorTree(t)
+
+			err := change(tree.path(runOps, runTask))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, pid := range []int{running.sleepPID, running.pgid} {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+
+			if !waitFor(10*time.Second, func() bool { return !sessionLive(t, running.pgid) }) {
+				t.Fatal("the survivors did not end")
+			}
+
+			tree.relinkKill(t)
+
+			code, out := tree.cleanup(t, runTask)
+			if code != 0 || !strings.HasSuffix(out, " killed=survived\n") {
+				t.Errorf("exit = %d, output = %q; want the survivors reported again", code, out)
+			}
+
+			if _, err := os.Stat(tree.path(runOps, runTask, "survivors")); err != nil {
+				t.Errorf("the survivors record went: %v", err)
+			}
+		})
 	}
 }
 
