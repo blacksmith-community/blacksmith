@@ -662,28 +662,23 @@ func TestCommandTaskSkipsAVMWithNoCIDWithoutFailing(t *testing.T) {
 	}
 }
 
-func TestDispatcherDropsACommandTaskTheAuthorizerRefuses(t *testing.T) {
+func TestDispatcherPausesACommandTaskTheAuthorizerRefuses(t *testing.T) {
 	fix := newTaskFixture(t, 1, 1, withRoot())
 	fix.setRoot(false)
 	fix.queue()
 
-	waitUntil(t, "the dispatcher to drop the task", func() bool {
-		fix.manager.mu.RLock()
-		defer fix.manager.mu.RUnlock()
-
-		return !fix.manager.owned[fix.task.ID]
-	})
+	paused := fix.waitFor("the dispatcher to pause the task", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused })
 
 	if calls := fix.recorded(); len(calls) != 0 {
 		t.Errorf("a refused task sent %v", calls)
 	}
 
-	if status := fix.snapshot().Status; status != TaskStatusPending {
-		t.Errorf("the dropped task is %s, want pending", status)
+	if !paused.Paused || fix.owns() {
+		t.Errorf("the refused task paused=%v owned=%v, want paused and unowned", paused.Paused, fix.owns())
 	}
 
-	if !strings.Contains(fix.log.joined(), "Skipping command task") {
-		t.Error("the drop was not logged")
+	if !strings.Contains(fix.log.joined(), "paused, because the authorizer refuses it") {
+		t.Error("the pause was not logged")
 	}
 }
 

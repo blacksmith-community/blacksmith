@@ -700,6 +700,10 @@ func (m *Manager) dispatchTasks() {
 			m.mu.RUnlock()
 
 			if !runs {
+				if m.pauseRefusedQueued(task) {
+					continue
+				}
+
 				m.dropFromQueue(task)
 
 				continue
@@ -1739,6 +1743,33 @@ func (m *Manager) dropFromQueue(task *UpgradeTask) {
 	m.mu.Unlock()
 
 	m.logger.Info("Skipping %s task %s in the upgrade queue", task.KindOrDefault(), task.ID)
+}
+
+// pauseRefusedQueued pauses a queued command task the authorizer refuses,
+// with the refusal on its instance, so Resume and Cancel reach it. The task
+// stops being owned and keeps its holds. It reports whether it paused the
+// task, which it does only for a command task of a configured manager.
+func (m *Manager) pauseRefusedQueued(task *UpgradeTask) bool {
+	m.mu.Lock()
+
+	paused := m.pauseRefusedCommandLocked(task)
+	if paused {
+		delete(m.owned, task.ID)
+		m.releaseUnheldLocked(task)
+	}
+
+	m.mu.Unlock()
+
+	if !paused {
+		return false
+	}
+
+	err := m.persistCertConfirmed(context.WithoutCancel(m.ctx), task)
+	if err != nil {
+		m.logger.Error("Failed to confirm that command task %s paused: %v", task.ID, err)
+	}
+
+	return true
 }
 
 // runTask runs one queued upgrade. Its cancel channel is registered before

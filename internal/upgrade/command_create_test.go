@@ -1066,9 +1066,10 @@ func TestCreateCommandTaskNeverLogsCommand(t *testing.T) {
 }
 
 // A created command task is never run as an upgrade. Once the authorizer
-// refuses it, the queue the create put it on drops it, resuming it queues nothing, pause and
-// cancel turn it away, and the director, which panics on any call, is never
-// asked for a deploy.
+// refuses it, the dispatcher pauses it with the refusal on its instance,
+// so an operator can act on it. It keeps its hold on the instance, a
+// resume is turned away while the refusal stands, a cancel works, and the
+// director, which panics on any call, is never asked for a deploy.
 func TestCreatedCommandTaskIsNeverRunAsUpgrade(t *testing.T) {
 	t.Parallel()
 
@@ -1082,26 +1083,8 @@ func TestCreatedCommandTaskIsNeverRunAsUpgrade(t *testing.T) {
 		t.Fatalf("CreateCommandTask: %v", err)
 	}
 
-	live := func() *UpgradeTask {
-		env.manager.mu.RLock()
-		defer env.manager.mu.RUnlock()
-
-		return env.manager.tasks[task.ID]
-	}()
-
-	// The create queued the task, and the dispatcher's gate now refuses it.
-	env.manager.resumeIfReady(live)
-
-	if err := env.manager.PauseTask(context.Background(), task.ID); !errors.Is(err, ErrTaskNotRunning) {
-		t.Fatalf("pausing a command task should be refused, got %v", err)
-	}
-
-	if err := env.manager.CancelTask(context.Background(), task.ID); !errors.Is(err, ErrTaskNotRunning) {
-		t.Fatalf("cancelling a pending command task should be refused, got %v", err)
-	}
-
-	waitUntil(t, "the queue to drop the command task", func() bool {
-		return strings.Contains(env.log.text(), "Skipping command task "+task.ID)
+	waitUntil(t, "the dispatcher to pause the refused command task", func() bool {
+		return taskCopy(t, env.manager, task.ID).Status == TaskStatusPaused
 	})
 
 	env.manager.mu.RLock()
@@ -1109,12 +1092,30 @@ func TestCreatedCommandTaskIsNeverRunAsUpgrade(t *testing.T) {
 	env.manager.mu.RUnlock()
 
 	current := taskCopy(t, env.manager, task.ID)
-	if owned || current.Status != TaskStatusPending || current.Instances[0].Status != InstanceStatusPending {
-		t.Fatalf("the command task started: owned %v status %q instance %q", owned, current.Status, current.Instances[0].Status)
+	if owned || !current.Paused || current.Instances[0].Status != InstanceStatusPending {
+		t.Fatalf("the refused command task is owned %v, paused %v, instance %q", owned, current.Paused, current.Instances[0].Status)
+	}
+
+	if reason := current.Instances[0].Error; !strings.HasPrefix(reason, commandRefusedMessage) || strings.Contains(reason, "restarted") {
+		t.Errorf("the instance says %q, want the refusal without a restart", reason)
 	}
 
 	if holder, held := env.manager.Guard().Holder("i1", ""); !held || holder.Kind != mutation.KindCommand {
-		t.Fatalf("the dropped command task should still hold its instance, got %+v", holder)
+		t.Fatalf("the paused command task should still hold its instance, got %+v", holder)
+	}
+
+	env.manager.resumeIfReady(env.manager.tasks[task.ID])
+
+	if err := env.manager.ResumeTask(context.Background(), task.ID); err == nil {
+		t.Fatal("resuming the command task while the authorizer refuses it should be refused")
+	}
+
+	if err := env.manager.CancelTask(context.Background(), task.ID); err != nil {
+		t.Fatalf("cancelling the paused command task: %v", err)
+	}
+
+	if status := taskCopy(t, env.manager, task.ID).Status; status != TaskStatusCancelled {
+		t.Fatalf("the command task is %q after the cancel, want cancelled", status)
 	}
 }
 

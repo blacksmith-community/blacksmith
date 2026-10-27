@@ -957,11 +957,11 @@ func (m *Manager) commandRefusalLocked(task *UpgradeTask) error {
 	return authorizer.AuthorizeStored(m.ctx, *task.Command) //nolint:wrapcheck // the authorizer answers with the API error
 }
 
-// commandRefusedMessage starts what a loaded command task shows on its
-// instance when the authorizer refuses it.
-const commandRefusedMessage = "Running this command is no longer allowed, so the task paused after Blacksmith restarted. "
+// commandRefusedMessage starts what a command task shows on its instance
+// when the authorizer refuses it, whether at a restart or at the queue.
+const commandRefusedMessage = "Running this command is no longer allowed, so the task paused. "
 
-// pauseRefusedCommandLocked pauses a loaded command task the authorizer
+// pauseRefusedCommandLocked pauses a loaded or queued command task the authorizer
 // refuses, and says why on its first instance that has not ended. It
 // reports whether it paused the task. A manager that is not configured
 // asks nothing, because it can't tell yet. The task keeps its holds, since
@@ -991,7 +991,7 @@ func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 		break
 	}
 
-	m.logger.Info("Command task %s paused after a restart, because the authorizer refuses it: %v", task.ID, err)
+	m.logger.Info("Command task %s paused, because the authorizer refuses it: %v", task.ID, err)
 
 	return true
 }
