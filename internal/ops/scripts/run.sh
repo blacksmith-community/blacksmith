@@ -314,10 +314,9 @@ _rc_group_state() {
 # says "the child process ID shall not match any active process group ID"
 # (https://pubs.opengroup.org/onlinepubs/9799919799/functions/fork.html).
 # A group that has emptied never gains a member again, because setpgid
-# only joins a group that exists or makes one that the caller leads. When
-# cleanup has found the recorded leader, a leader that has gone since then
-# passes, because the session has been unbroken from the moment it was
-# shown to be the command's.
+# only joins a group that exists or makes one that the caller leads. A
+# leader that is gone passes, because while the session has a member its
+# number can't have been reused, so every member is the command's.
 _rc_leader_ok() {
 	local lead f
 
@@ -409,70 +408,65 @@ _rc_survivors_live() {
 	done < "$file"
 }
 
-# _rc_kill_survivors <kill> <pgid> <pids> sends KILL to the live
-# survivors that pids names, one per line. While one of them is still a
-# member of the command's session, the session is ours, because a process
-# joins a session only by being forked from a member, so its group and
-# the members outside the group get KILL too. Otherwise nothing shows
-# whose the session's members are, and only the named survivors are
-# signalled.
-_rc_kill_survivors() {
-	local kill=$1 pg=$2 pid fields state extra ours=''
-	local -a pids p
+# _rc_read_ids <dir> sets pg and want, which the caller declares, from
+# the pgid and starttime files, and fails when either file is missing, is
+# not a regular file, or does not hold a number that exec could have
+# written. A pgid that is not a canonical number above 1 is never used,
+# because kill -- -1 reaches every process the caller may signal.
+_rc_read_ids() {
+	pg='' want=''
 
-	mapfile -t pids <<< "$3"
+	[ -f "$1/pgid" ] && [ ! -L "$1/pgid" ] && [ -f "$1/starttime" ] && [ ! -L "$1/starttime" ] || return 1
 
-	for pid in "${pids[@]}"; do
-		_rc_stat "/proc/$pid/stat" fields || continue
-		read -ra p <<< "$fields"
-		[ "${p[3]:-}" != "$pg" ] || ours=yes
-	done
+	IFS= read -r pg < "$1/pgid" || true
+	IFS= read -r want < "$1/starttime" || true
 
-	if [ -n "$ours" ]; then
-		state=$(_rc_group_state "$pg")
-		extra=${state#live}
+	_rc_id_ok "$pg" && [ "$((10#$pg))" -gt 1 ] && [[ $want =~ ^[1-9][0-9]{0,19}$ ]]
+}
 
-		if [ "$extra" != "$state" ]; then
-			# shellcheck disable=SC2086
-			"$kill" -KILL -- "-$pg" $extra > /dev/null 2>&1 || true
-		fi
-	fi
-
-	"$kill" -KILL -- "${pids[@]}" > /dev/null 2>&1 || true
+# _rc_ended <pgid> <starttime> succeeds when nothing of the command's
+# session is left but zombies, or a process holds the leader's pid with
+# another start time, which _rc_leader_ok explains.
+_rc_ended() {
+	! _rc_leader_ok "$1" "$2" || [ "$(_rc_group_state "$1")" = none ]
 }
 
 # _rc_recheck <dir> prints yes or survived for a task whose earlier
 # cleanup found processes that outlived KILL. The session is the unit,
 # because a survivor that forked before it ended leaves children the
 # survivors record never named. The processes the record names, with the
-# start times it holds, get KILL again, as _rc_kill_survivors says, and
-# the task is reported yes only once none of them lives and the session's
-# group has no member but zombies. It is reported survived while either
-# holds, and also when the record or the pgid file can't be read or the
-# kill can't be run, because nothing then shows that the processes ended.
+# start times it holds, get KILL again, and so does the command's group
+# and the rest of its session, as _rc_signal sends it, whether or not a
+# recorded survivor still lives. Every live member of the session is the
+# command's, as _rc_leader_ok explains. The task is reported yes only once
+# none of the recorded survivors lives and the session has no member but
+# zombies, or the leader's pid is held by another process. It is reported
+# survived while a member lives, and also when the record, the pgid file,
+# or the starttime file can't be read or the kill can't be run, because
+# nothing then shows that the processes ended.
 _rc_recheck() {
-	local dir=$1 kill live pg='' ticks i
+	local dir=$1 kill live pg want ticks i
+	local -a pids
 
 	kill=$(_rc_tool kill) || { printf 'survived'; return 0; }
 	command -v -- "$kill" > /dev/null || { printf 'survived'; return 0; }
-
-	if [ ! -f "$dir/pgid" ] || [ -L "$dir/pgid" ]; then
-		printf 'survived'
-		return 0
-	fi
-
-	IFS= read -r pg < "$dir/pgid" || true
-	_rc_id_ok "$pg" && [ "$((10#$pg))" -gt 1 ] || { printf 'survived'; return 0; }
+	_rc_read_ids "$dir" || { printf 'survived'; return 0; }
 
 	live=$(_rc_survivors_live "$dir/survivors") || { printf 'survived'; return 0; }
-	[ -z "$live" ] || _rc_kill_survivors "$kill" "$pg" "$live"
+
+	if [ -n "$live" ]; then
+		mapfile -t pids <<< "$live"
+		"$kill" -KILL -- "${pids[@]}" > /dev/null 2>&1 || true
+	fi
+
+	_rc_signal "$kill" KILL "$pg" "$want"
 
 	ticks=$(_rc_kill_ticks)
 
 	for ((i = 0; i < ticks / 5 + 1; i++)); do
 		live=$(_rc_survivors_live "$dir/survivors") || { printf 'survived'; return 0; }
 
-		if [ -z "$live" ] && [ "$(_rc_group_state "$pg")" = none ]; then
+		if [ -z "$live" ] && _rc_ended "$pg" "$want"; then
 			printf 'yes'
 			return 0
 		fi

@@ -511,8 +511,10 @@ func TestRunCleanupTrustsOnlyTheRecordedStartTimes(t *testing.T) {
 
 // A survivor that forked before it ended leaves a child the survivors
 // record never named, still in the command's session. The recheck treats
-// the session as the unit, so it reports the survivors again while that
-// child lives, and reports them killed once the session is empty.
+// the session as the unit and sends it KILL even though every recorded
+// survivor is dead, so it reports the survivors again while a KILL that
+// can't land leaves that child alive, and reports them killed once the
+// KILL ends it.
 func TestRunCleanupRechecksTheSessionAfterTheSurvivorsEnd(t *testing.T) {
 	t.Parallel()
 
@@ -547,8 +549,6 @@ func TestRunCleanupRechecksTheSessionAfterTheSurvivorsEnd(t *testing.T) {
 		t.Fatal("no unnamed child is left in the session, so the test proves nothing")
 	}
 
-	tree.relinkKill(t)
-
 	code, out = tree.cleanup(t, runTask)
 	if code != 0 || !strings.HasPrefix(out, "cleanup started=yes exit=") || !strings.HasSuffix(out, " killed=survived\n") {
 		t.Errorf("exit = %d, output = %q; want the survivors reported again", code, out)
@@ -558,15 +558,19 @@ func TestRunCleanupRechecksTheSessionAfterTheSurvivorsEnd(t *testing.T) {
 		t.Errorf("the survivors record went while the session has a member: %v", err)
 	}
 
-	_ = syscall.Kill(-running.pgid, syscall.SIGKILL)
-
-	if !waitFor(10*time.Second, func() bool { return !sessionLive(t, running.pgid) }) {
-		t.Fatal("the session did not end")
-	}
+	tree.relinkKill(t)
 
 	code, out = tree.cleanup(t, runTask)
 	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
-		t.Errorf("exit = %d, output = %q; want killed=yes once the session is empty", code, out)
+		t.Errorf("exit = %d, output = %q; want killed=yes once KILL reached the session", code, out)
+	}
+
+	if sessionLive(t, running.pgid) {
+		t.Error("a child the record did not name outlived the recheck")
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the task directory stayed: %v", err)
 	}
 }
 
@@ -607,12 +611,11 @@ func TestRunCleanupRecheckEndsTheChildrenOfALiveSurvivor(t *testing.T) {
 	}
 }
 
-// A recheck sends KILL to the group the pgid file names only while a
-// recorded survivor is alive in that session, because only that shows the
-// session is the command's. A pgid file that names another session, as a
-// reused pid can, gets no signal, and the task is reported surviving while
-// that session has members.
-func TestRunCleanupRecheckSparesASessionNoSurvivorIsIn(t *testing.T) {
+// A pgid that names a live process with another start time than exec
+// recorded shows that the command's group had emptied before that process
+// was forked. The recheck sends that process's session no signal, and
+// reports the survivors killed once none of the recorded ones lives.
+func TestRunCleanupRecheckSparesAReusedLeaderPid(t *testing.T) {
 	t.Parallel()
 
 	tree, running, _ := survivorTree(t)
@@ -636,12 +639,12 @@ func TestRunCleanupRecheckSparesASessionNoSurvivorIsIn(t *testing.T) {
 	tree.relinkKill(t)
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || !strings.HasSuffix(out, " killed=survived\n") {
-		t.Errorf("exit = %d, output = %q; want the survivors reported while the named session lives", code, out)
+	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
+		t.Errorf("exit = %d, output = %q; want killed=yes once the recorded survivors end", code, out)
 	}
 
 	if !sessionLive(t, other.Process.Pid) {
-		t.Error("the recheck signalled a session no recorded survivor was in")
+		t.Error("the recheck signalled the session of a process that took the leader's pid")
 	}
 }
 
