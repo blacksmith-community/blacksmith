@@ -7698,7 +7698,7 @@
   };
 
   // Control and bidi characters that would hide what a command does.
-  const HIDDEN_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+  const HIDDEN_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u00AD\u061C\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
 
   // The text with each hidden character written as a visible \u escape, and
   // whether there were any. The text that runs is never changed.

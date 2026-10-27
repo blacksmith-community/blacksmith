@@ -911,3 +911,18 @@ t('a settled node with no kept output says so, reads nothing, and offers no Retr
  expect(pageText(d).includes('Could not read the output')).toBe(false);
  }finally{w.close();}
 });
+
+// Each of these can disguise a command without drawing anything, so the
+// review writes it as a visible escape and says so.
+for(const code of [0x061C,0x200B,0x200C,0x200D,0x2060,0xFEFF,0x00AD]){
+ const hex=code.toString(16).toUpperCase().padStart(4,'0');
+ t(`the review shows U+${hex} as an escape and notes the hidden character`,async()=>{
+  const env=await setup();const {w}=env;try{
+  const text='echo a'+String.fromCharCode(code)+'b';
+  const review=w.__T.buildCommandReviewBody({instances:[],warnings:[],run_as:'vcap',shell:'/bin/bash',timeout_seconds:600},{command:text,run_as:'vcap',timeout_seconds:600,parallel:false});
+  expect(review.querySelector('pre').textContent==='echo a\\u'+hex+'b').toBe(true);
+  expect(review.querySelector('.command-hidden-note')!==null).toBe(true);
+  expect(review.textContent.includes(String.fromCharCode(code))).toBe(false);
+  }finally{w.close();}
+ });
+}
