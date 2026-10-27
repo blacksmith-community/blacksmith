@@ -660,6 +660,34 @@ func (m *Manager) decisionsReady() error {
 	return m.tasksReady()
 }
 
+// DecisionTaskKind is the kind of the task a decision names, for a gate
+// that runs before the decision. While the stored tasks load, or when the
+// task is missing, it turns the decision away with the error the decision
+// itself would give.
+func (m *Manager) DecisionTaskKind(taskID string) (TaskKind, error) {
+	err := m.decisionsReady()
+	if err != nil {
+		return "", err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return "", noCertificateTask(taskID)
+	}
+
+	return task.KindOrDefault(), nil
+}
+
+// noCertificateTask is the error of a decision on a task that is missing
+// or is not a certificate task.
+func noCertificateTask(taskID string) error {
+	return apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound,
+		fmt.Sprintf("Blacksmith has no certificate task %s.", taskID))
+}
+
 // decisionMode is the mode of the task, whose switches a decision checks
 // before it looks the instance up. An unknown task reads as a redeploy,
 // which needs only the rotation switch.
@@ -701,8 +729,7 @@ func decisionDigest(endpoint string, body any) (string, error) {
 func (m *Manager) decisionInstanceLocked(taskID, instanceID string) (*UpgradeTask, *InstanceUpgrade, error) {
 	task, ok := m.tasks[taskID]
 	if !ok || task.KindOrDefault() != TaskKindCertificates {
-		return nil, nil, apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound,
-			fmt.Sprintf("Blacksmith has no certificate task %s.", taskID))
+		return nil, nil, noCertificateTask(taskID)
 	}
 
 	for i := range task.Instances {

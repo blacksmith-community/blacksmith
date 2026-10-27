@@ -88,3 +88,38 @@ func TestTaskActionsWaitForTheLoad(t *testing.T) {
 func skipLoad(m *Manager) {
 	close(m.loaded)
 }
+
+// The kind a decision's gate reads is turned away as the decision itself
+// would be: with 503 tasks_loading until the load ends, and with the
+// decision's own not-found answer for a task that is missing once it has.
+func TestDecisionTaskKindAnswersAsTheDecisionWould(t *testing.T) {
+	t.Parallel()
+
+	manager := NewManager(&logger.NoOpLogger{}, noCallDirector{}, newWaitVault())
+	t.Cleanup(manager.Stop)
+
+	task := storedUpgrade(loadedTaskID, pendingInstance(waitInstanceID, waitDeployment))
+	task.Kind = TaskKindCommand
+
+	manager.mu.Lock()
+	manager.tasks[task.ID] = &task
+	manager.mu.Unlock()
+
+	_, err := manager.DecisionTaskKind(task.ID)
+	expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeTasksLoading)
+
+	skipLoad(manager)
+
+	kind, err := manager.DecisionTaskKind(task.ID)
+	if err != nil || kind != TaskKindCommand {
+		t.Fatalf("the kind is %q with %v, want the command kind", kind, err)
+	}
+
+	_, err = manager.DecisionTaskKind("missing")
+	expectAPIError(t, err, http.StatusNotFound, apierr.CodeInstanceNotFound)
+
+	decided := manager.RefreshCandidates(context.Background(), "missing", waitInstanceID)
+	if err.Error() != decided.Error() {
+		t.Errorf("the gate says %q for a missing task, the decision says %q", err, decided)
+	}
+}

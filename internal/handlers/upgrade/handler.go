@@ -39,6 +39,7 @@ type taskManager interface {
 	DiscardCommandRequest(ctx context.Context, req upgrade.CommandDiscardRequest) (upgrade.CommandDiscardResult, error)
 	ReadCommandOutput(ctx context.Context, taskID, instanceID, vm string) (upgrade.CommandOutput, error)
 	GetTask(taskID string) (*upgrade.UpgradeTask, error)
+	DecisionTaskKind(taskID string) (upgrade.TaskKind, error)
 	ListTasks() []*upgrade.UpgradeTask
 	PauseTask(ctx context.Context, taskID string) error
 	ResumeTaskGated(ctx context.Context, taskID string, gate func(context.Context) error) error
@@ -309,11 +310,16 @@ func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanc
 // gateCommandDecision gives a decision on a command task the read gate the
 // task detail takes, because the answer is the task and a command task
 // carries its command text. It runs before the decision is applied, so a
-// caller the gate refuses changes nothing. A task that cannot be read is
-// left to the decision, which reports its own error.
+// caller the gate refuses changes nothing. A task the gate cannot read,
+// while the stored tasks load or because it is missing, is turned away
+// with the error the decision would give, and the decision never runs.
 func (h *Handler) gateCommandDecision(r *http.Request, taskID string) error {
-	task, err := h.tasks.GetTask(taskID)
-	if err != nil || task == nil || task.KindOrDefault() != upgrade.TaskKindCommand {
+	kind, err := h.tasks.DecisionTaskKind(taskID)
+	if err != nil {
+		return err
+	}
+
+	if kind != upgrade.TaskKindCommand {
 		return nil
 	}
 

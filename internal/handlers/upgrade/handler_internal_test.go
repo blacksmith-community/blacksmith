@@ -308,6 +308,10 @@ func (d *decisionTasks) GetTask(taskID string) (*upgrade.UpgradeTask, error) {
 	return &upgrade.UpgradeTask{ID: taskID, Kind: upgrade.TaskKindCertificates}, nil
 }
 
+func (d *decisionTasks) DecisionTaskKind(string) (upgrade.TaskKind, error) {
+	return upgrade.TaskKindCertificates, nil
+}
+
 func (d *decisionTasks) ReconcileRegeneration(_ context.Context, taskID, instanceID string, req upgrade.ReconcileRequest) error {
 	return d.record("reconcile "+taskID+" "+instanceID, req)
 }

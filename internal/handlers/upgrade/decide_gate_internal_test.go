@@ -31,6 +31,10 @@ func (c *commandDecisionTasks) GetTask(taskID string) (*upgrade.UpgradeTask, err
 	}, nil
 }
 
+func (c *commandDecisionTasks) DecisionTaskKind(string) (upgrade.TaskKind, error) {
+	return upgrade.TaskKindCommand, nil
+}
+
 func (c *commandDecisionTasks) recorded() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -136,6 +140,70 @@ func TestDecideOnACommandTaskTakesTheReadGateFirst(t *testing.T) {
 
 				if len(calls) != 0 {
 					t.Errorf("the manager saw %v before the gate refused", calls)
+				}
+			})
+		}
+	}
+}
+
+// unreadDecisionTasks records each decision call as commandDecisionTasks
+// does, but the task a decision names cannot be read, as while the stored
+// tasks load or when the task is missing.
+type unreadDecisionTasks struct {
+	commandDecisionTasks
+
+	unread error
+}
+
+func (u *unreadDecisionTasks) GetTask(string) (*upgrade.UpgradeTask, error) {
+	return nil, upgrade.ErrTaskNotFound
+}
+
+func (u *unreadDecisionTasks) DecisionTaskKind(string) (upgrade.TaskKind, error) {
+	return "", u.unread
+}
+
+// A decision whose task the gate cannot read is turned away with the error
+// the decision would give, and is never applied, so the gate never lets a
+// decision through on a command task it could not see.
+func TestDecideOnATaskTheGateCannotReadIsNeverApplied(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		unread error
+		status int
+		code   string
+	}{
+		"tasks loading": {
+			apierr.Wrap(http.StatusServiceUnavailable, apierr.CodeTasksLoading, upgrade.ErrTasksLoading),
+			http.StatusServiceUnavailable, apierr.CodeTasksLoading,
+		},
+		"missing task": {
+			apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound, "Blacksmith has no certificate task x."),
+			http.StatusNotFound, apierr.CodeInstanceNotFound,
+		},
+	}
+
+	for name, tc := range cases {
+		for _, action := range []string{"reconcile", "approve", "resolve", "candidates", "preview"} {
+			t.Run(name+"/"+action, func(t *testing.T) {
+				t.Parallel()
+
+				log := logger.NewNoOpLogger()
+				tasks := &unreadDecisionTasks{unread: tc.unread}
+				handler := &Handler{logger: log, manager: upgrade.NewManager(log, nil, emptyVault{}), tasks: tasks}
+
+				status, raw := postDecisionWithKey(t, handler, "/b/upgrade/tasks/x/instances/i1/"+action, `{}`, "")
+				if status != tc.status {
+					t.Fatalf("answered %d, want %d", status, tc.status)
+				}
+
+				if !strings.Contains(raw, `"code":"`+tc.code+`"`) {
+					t.Errorf("the refusal does not carry the code %s", tc.code)
+				}
+
+				if calls := tasks.recorded(); len(calls) != 0 {
+					t.Errorf("the manager saw %v after the gate could not read the task", calls)
 				}
 			})
 		}
