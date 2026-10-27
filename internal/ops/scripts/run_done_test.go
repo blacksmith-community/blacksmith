@@ -55,6 +55,40 @@ func TestRunCleanupReplaysTheDoneRecord(t *testing.T) {
 	}
 }
 
+// A temporary record that an earlier failed write left behind does not
+// stop the write of the record: cleanup clears it first, writes the
+// record, and leaves no temporary file.
+func TestRunCleanupWritesTheRecordOverALeftoverTemporaryFile(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.makeTask(t, runTask, map[string]string{"started": "", "exit": "5\n"})
+
+	err := os.WriteFile(tree.donePath(runTask)+".new", []byte("cleanup st"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "cleanup started=yes exit=5 killed=no\n"
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != want {
+		t.Fatalf("exit = %d, output = %q, want %q", code, out, want)
+	}
+
+	if got, _ := os.ReadFile(tree.donePath(runTask)); string(got) != want { //nolint:gosec // the test tree
+		t.Errorf("the done record holds %q, want %q", got, want)
+	}
+
+	if _, err := os.Lstat(tree.donePath(runTask) + ".new"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the temporary file stayed: %v", err)
+	}
+
+	if _, err := os.Lstat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the task directory stayed: %v", err)
+	}
+}
+
 // A done record whose task directory is still there, as a cleanup that
 // died between the rename and the removal leaves it, is replayed, and the
 // directory goes.
@@ -177,7 +211,13 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 		}
 	}
 
-	for _, dir := range []string{tree.path(runOps, "kept-task"), tree.path(runOps, "kept-task", "started")} {
+	// A directory with a record's name is not a record, so it stays too.
+	err := os.Mkdir(tree.donePath("dir-task"), 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, dir := range []string{tree.path(runOps, "kept-task"), tree.path(runOps, "kept-task", "started"), tree.donePath("dir-task")} {
 		err := os.Chtimes(dir, old, old)
 		if err != nil {
 			t.Fatal(err)
@@ -198,6 +238,10 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 
 	if _, err := os.Stat(tree.path(runOps, "kept-task", "started")); err != nil {
 		t.Errorf("pruning removed a task directory: %v", err)
+	}
+
+	if _, err := os.Stat(tree.donePath("dir-task")); err != nil {
+		t.Errorf("pruning removed a directory with a record's name: %v", err)
 	}
 
 	if _, err := os.Stat(tree.donePath(runTask)); err != nil {
