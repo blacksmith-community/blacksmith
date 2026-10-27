@@ -21,7 +21,7 @@
 # it, and vcap can open cmd.sh by name but cannot list, replace, write,
 # or remove anything on the way to it. The task directory also holds the
 # files a later operation writes, which are started, starttime, pgid, and
-# exit.
+# exit, and the survivors record of processes that outlived KILL.
 #
 # CERTPATCH_ROOT lets the tests put the VM's files under a temporary
 # directory, as lib.sh explains.
@@ -341,8 +341,12 @@ _rc_signal() {
 # pid and start time, field 22 of its stat file, for each member of the
 # session that is not a zombie, so a later cleanup can tell whether the
 # same processes still live after their pids could have been reused. It
-# fails when the session has no such member left. A record that can't be
-# written still counts as survivors, because the processes do live.
+# fails when the session has no such member left. The record is written to
+# survivors.new and renamed to survivors, so survivors never holds part of
+# a record, as a write that fails on a full disk would leave it. A record
+# that can't be written or renamed still counts as survivors, because the
+# processes do live, and the survivors.new it leaves keeps every later
+# cleanup reporting them, as cleanup describes.
 _rc_note_survivors() {
 	local dir=$1 sid=$2 f fields members=''
 	local -a p
@@ -359,20 +363,25 @@ _rc_note_survivors() {
 
 	[ -n "$members" ] || return 1
 
-	printf '%s' "$members" | _rc_write "$dir/survivors" || true
+	{ printf '%s' "$members" | _rc_write "$dir/survivors.new"; } &&
+		mv -fT -- "$dir/survivors.new" "$dir/survivors" 2> /dev/null || true
 }
 
 # _rc_survivors_live <file> prints the pids of the survivors file whose
 # process still lives with the start time the file recorded. A pid whose
 # process is gone, is a zombie, or started at another time is one the
 # kernel may have handed to a stranger, and is left out. It fails when the
-# file is not a plain file or holds a line that is not a pid above 1 and a
-# start time, because such a record proves nothing.
+# file is not a plain file, is empty, ends without a newline, or holds a
+# line that is not a pid above 1 and a start time, because such a record
+# proves nothing. An empty record or an unterminated last line may be the
+# start of a record whose write failed, and read would skip that last line.
 _rc_survivors_live() {
-	local file=$1 pid want fields
+	local file=$1 pid want fields whole=''
 	local -a p
 
 	[ -f "$file" ] && [ ! -L "$file" ] || return 1
+	{ IFS= read -r -d '' whole < "$file"; } 2> /dev/null
+	[ -n "$whole" ] && [ "${whole: -1}" = $'\n' ] || return 1
 
 	while read -r pid want; do
 		_rc_id_ok "$pid" && [ "$((10#$pid))" -gt 1 ] && [[ $want =~ ^[1-9][0-9]{0,19}$ ]] || return 1
@@ -494,7 +503,10 @@ _rc_kill_group() {
 # the directory, with their record in place of the command's text, so the
 # next cleanup checks the same processes again, as _rc_recheck does,
 # whatever the exit file holds, and removes the directory only once they
-# have ended. It always prints exactly one record. A task with no directory prints
+# have ended. A survivors.new with no survivors beside it is a record that
+# could not be written or renamed, which names no processes that can be
+# checked, so every later cleanup reports survived and keeps the
+# directory. It always prints exactly one record. A task with no directory prints
 # started=- and succeeds, because the directory may be missing either
 # because prepare never arrived or because an earlier cleanup removed it,
 # and the caller must treat the outcome as unknown. A directory that is a
@@ -530,6 +542,8 @@ cleanup() {
 
 	if [ -e "$dir/survivors" ] || [ -L "$dir/survivors" ]; then
 		killed=$(_rc_recheck "$dir")
+	elif [ -e "$dir/survivors.new" ] || [ -L "$dir/survivors.new" ]; then
+		killed=survived
 	elif [ "$started" = yes ] && [ ! -e "$dir/exit" ] && [ ! -L "$dir/exit" ]; then
 		killed=$(_rc_kill_group "$dir")
 	fi

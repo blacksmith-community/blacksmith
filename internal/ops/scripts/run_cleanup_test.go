@@ -531,6 +531,110 @@ func TestRunCleanupKeepsAnUnreadableSurvivorsRecord(t *testing.T) {
 	}
 }
 
+// A survivors record that is empty, or whose last line has no newline, may
+// be the start of a record whose write failed, so it proves nothing. The
+// processes are reported as surviving, nothing is signalled, and the record
+// stays.
+func TestRunCleanupDistrustsAnIncompleteSurvivorsRecord(t *testing.T) {
+	t.Parallel()
+
+	for name, record := range map[string]func(runningCommand) string{
+		"empty": func(runningCommand) string { return "" },
+		"unterminated": func(running runningCommand) string {
+			return fmt.Sprintf("%d %s", running.sleepPID, startTime(t, running.sleepPID))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tree, running, log := survivorTree(t)
+
+			err := os.WriteFile(tree.path(runOps, runTask, "survivors"), []byte(record(running)), 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = os.Truncate(log, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			code, out := tree.cleanup(t, runTask)
+			if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+				t.Errorf("exit = %d, output = %q", code, out)
+			}
+
+			if logged, _ := os.ReadFile(log); len(logged) != 0 {
+				t.Errorf("cleanup signalled %q, want nothing", logged)
+			}
+
+			if _, err := os.Stat(tree.path(runOps, runTask, "survivors")); err != nil {
+				t.Errorf("the survivors record went: %v", err)
+			}
+		})
+	}
+}
+
+// A survivors record whose write or rename fails still reports the
+// processes as surviving and keeps the task directory, and no part of the
+// record ever stands under its own name. Every later cleanup reports them
+// again and signals nothing, because no whole record names them, even once
+// a working kill is back.
+func TestRunCleanupKeepsTheTaskWhenTheSurvivorsRecordFails(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("cleanup reads /proc")
+	}
+
+	for name, stub := range map[string]string{
+		// The first member's line lands and the write then fails, as on a
+		// disk that fills part way through.
+		"write": `_rc_write() { head -n 1 > "$1"; return 1; }` + "\n",
+		"rename": `mv() { return 1; }` + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newRunTree(t)
+			tree.linkKill(t)
+			tree.env = []string{"RC_KILL_TICKS=3"}
+
+			pidFile := tree.path("sleeper-pid")
+			running := tree.startExec(t, "root", sleeperCommand(pidFile), pidFile)
+			log := tree.plantKill(t)
+
+			code, out := tree.snippet(t, false, "RC_KILL_TICKS=3\n"+stub+"cleanup "+runTask+"\n")
+			if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+				t.Fatalf("exit = %d, output = %q", code, out)
+			}
+
+			if _, err := os.Stat(tree.path(runOps, runTask, "survivors")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("a survivors record whose write failed stands under its name: %v", err)
+			}
+
+			tree.relinkKill(t)
+
+			code, out = tree.cleanup(t, runTask)
+			if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+				t.Errorf("the later cleanup exited %d with %q, want the survivors reported again", code, out)
+			}
+
+			if _, err := os.Stat(tree.path(runOps, runTask)); err != nil {
+				t.Errorf("the task directory went: %v", err)
+			}
+
+			if !sessionLive(t, running.pgid) {
+				t.Error("the later cleanup ended processes that no whole record names")
+			}
+
+			if logged, _ := os.ReadFile(log); !strings.Contains(string(logged), "-KILL") {
+				t.Errorf("the first cleanup sent %q, want TERM and KILL", logged)
+			}
+		})
+	}
+}
+
 func TestRunCleanupExitedGroupReportsKilledNo(t *testing.T) {
 	t.Parallel()
 
