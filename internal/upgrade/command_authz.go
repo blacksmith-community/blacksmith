@@ -59,35 +59,48 @@ func NewConfigAuthorizer(switches func() config.CommandsConfig) *ConfigAuthorize
 	return &ConfigAuthorizer{switches: switches}
 }
 
-// AuthorizeRequest refuses a request when commands are off, when the run is
-// as root and root runs are off, or when the second credential is wrong.
+// config reads the switches. A zero-value authorizer has none, so it
+// answers with commands off and every gate fails closed.
+func (a *ConfigAuthorizer) config() config.CommandsConfig {
+	if a == nil || a.switches == nil {
+		off := false
+
+		return config.CommandsConfig{Operation: config.CommandSwitch{On: &off}}
+	}
+
+	return a.switches()
+}
+
+// AuthorizeRequest refuses a request when commands are off, when the second
+// credential is wrong, when the run is as root and root runs are off, or
+// when the user is neither root nor vcap.
 func (a *ConfigAuthorizer) AuthorizeRequest(_ context.Context, r *http.Request, runAs string) error {
-	cfg := a.switches()
+	cfg := a.config()
 
 	err := checkFeatureAndCredential(cfg, r)
 	if err != nil {
 		return err
 	}
 
-	return checkRoot(cfg, runAs)
+	return checkRunAs(cfg, runAs)
 }
 
 // AuthorizeRead refuses a read when commands are off or the second
 // credential is wrong. It never checks the root switch.
 func (a *ConfigAuthorizer) AuthorizeRead(_ context.Context, r *http.Request) error {
-	return checkFeatureAndCredential(a.switches(), r)
+	return checkFeatureAndCredential(a.config(), r)
 }
 
-// AuthorizeStored refuses a stored task when commands are off, or when it
-// runs as root and root runs are off.
+// AuthorizeStored refuses a stored task when commands are off, when it runs
+// as root and root runs are off, or when its user is neither root nor vcap.
 func (a *ConfigAuthorizer) AuthorizeStored(_ context.Context, spec CommandTaskSpec) error {
-	cfg := a.switches()
+	cfg := a.config()
 
 	if !cfg.CommandsEnabled() {
 		return errCommandsDisabled()
 	}
 
-	return checkRoot(cfg, spec.RunAs)
+	return checkRunAs(cfg, spec.RunAs)
 }
 
 // checkFeatureAndCredential applies the feature switch and the second
@@ -115,9 +128,9 @@ func checkFeatureAndCredential(cfg config.CommandsConfig, r *http.Request) error
 	return nil
 }
 
-// checkRoot allows only the known users, and allows root only when root
-// runs are on.
-func checkRoot(cfg config.CommandsConfig, runAs string) error {
+// checkRunAs allows only the known users, and allows root only when root
+// runs are on. It answers 400 for any other user.
+func checkRunAs(cfg config.CommandsConfig, runAs string) error {
 	switch runAs {
 	case runAsVcap:
 		return nil

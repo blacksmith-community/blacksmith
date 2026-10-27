@@ -239,6 +239,7 @@ func TestAuthorizerErrorsNeverCarrySecrets(t *testing.T) {
 		"request, missing header": authz.AuthorizeRequest(ctx, authzRequest(nil), "vcap"),
 		"request, empty header":   authz.AuthorizeRequest(ctx, authzRequest(strPtr("")), "vcap"),
 		"read, wrong header":      authz.AuthorizeRead(ctx, authzRequest(strPtr(testCommandWrong))),
+		"read, empty header":      authz.AuthorizeRead(ctx, authzRequest(strPtr(""))),
 		"read, missing header":    authz.AuthorizeRead(ctx, authzRequest(nil)),
 	}
 
@@ -263,4 +264,20 @@ func TestLengthDifferingKeysAreRefused(t *testing.T) {
 	for _, header := range []string{testCommandKey + "x", testCommandKey[:len(testCommandKey)-1]} {
 		wantAPIError(t, authz.AuthorizeRead(context.Background(), authzRequest(&header)), 401, "command_credential_required")
 	}
+}
+
+func TestZeroValueAuthorizerFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	var authz ConfigAuthorizer
+
+	ctx := context.Background()
+
+	wantAPIError(t, authz.AuthorizeRequest(ctx, authzRequest(nil), "vcap"), 403, "commands_disabled")
+	wantAPIError(t, authz.AuthorizeRead(ctx, authzRequest(nil)), 403, "commands_disabled")
+	wantAPIError(t, authz.AuthorizeStored(ctx, CommandTaskSpec{RunAs: "vcap"}), 403, "commands_disabled")
+
+	var none *ConfigAuthorizer
+
+	wantAPIError(t, none.AuthorizeStored(ctx, CommandTaskSpec{RunAs: "vcap"}), 403, "commands_disabled")
 }
