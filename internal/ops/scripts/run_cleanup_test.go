@@ -686,7 +686,7 @@ func TestRunCleanupNeverSignalsOnABadPgid(t *testing.T) {
 			}
 
 			out, sent := killGroup(t, files, nil, liveStubs)
-			if out != "no" || sent {
+			if out != "unknown" || sent {
 				t.Errorf("output = %q, signal sent = %v", out, sent)
 			}
 		})
@@ -761,7 +761,7 @@ func TestRunCleanupLeavesAGroupOutsideTheCommandsSession(t *testing.T) {
 	})
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+	if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -854,7 +854,7 @@ func TestRunCleanupValidatorAloneRefusesLowPgids(t *testing.T) {
 			t.Parallel()
 
 			out, sent := killGroup(t, map[string]string{"started": "", "pgid": pgid + "\n", "starttime": "777\n"}, nil, liveStubs)
-			if out != "no" || sent {
+			if out != "unknown" || sent {
 				t.Errorf("output = %q, signal sent = %v", out, sent)
 			}
 		})
@@ -913,7 +913,7 @@ func TestRunCleanupPgidFileMustBeARegularFile(t *testing.T) {
 			t.Parallel()
 
 			out, sent := killGroup(t, files, setup, liveStubs)
-			if out != "no" || sent {
+			if out != "unknown" || sent {
 				t.Errorf("output = %q, signal sent = %v", out, sent)
 			}
 		})
@@ -946,7 +946,7 @@ _rc_stat() { printf -v "$2" '%s' "$own"; }
 	text := "_dir=" + dir + "\n" + stub + "printf '%s\\n' \"$(_rc_kill_group \"$_dir\")\"\n"
 
 	code, out := tree.snippet(t, false, text)
-	if code != 0 || out != "no\n" {
+	if code != 0 || out != "unknown\n" {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -1062,7 +1062,7 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 			tc.change(t, tree.path(runOps, runTask, "starttime"), running.starttime)
 
 			code, out := tree.cleanup(t, runTask)
-			if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+			if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
 				t.Errorf("exit = %d, output = %q", code, out)
 			}
 
@@ -1165,13 +1165,14 @@ func TestRunCleanupLeavesASessionWhoseLeaderHasExited(t *testing.T) {
 	}
 
 	tree.makeTask(t, runTask, map[string]string{
+		"cmd.sh":    "sleep 60\n",
 		"started":   "",
 		"pgid":      strconv.Itoa(pgid) + "\n",
 		"starttime": fields[19] + "\n",
 	})
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+	if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -1182,5 +1183,168 @@ func TestRunCleanupLeavesASessionWhoseLeaderHasExited(t *testing.T) {
 
 	if !sessionLive(t, pgid) {
 		t.Error("the member of the session was ended")
+	}
+
+	// The directory stays without the command's text, so a later cleanup
+	// checks the session again, and reports no and removes the directory
+	// once nothing in it lives.
+	if _, err := os.Stat(tree.path(runOps, runTask)); err != nil {
+		t.Fatalf("the task directory went: %v", err)
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask, "cmd.sh")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the command's text stayed: %v", err)
+	}
+
+	raw, err = os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sleeper, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = syscall.Kill(sleeper, syscall.SIGKILL)
+
+	if !waitFor(5*time.Second, func() bool { return !sessionLive(t, pgid) }) {
+		t.Fatal("the member of the session did not end")
+	}
+
+	code, out = tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+		t.Errorf("the later cleanup exited %d with %q, want killed=no", code, out)
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the later cleanup kept the task directory: %v", err)
+	}
+}
+
+// killed=no says cleanup looked at the command's session and found nothing
+// alive in it. Every case where it could not look reports unknown and
+// signals nothing: a pgid or start-time file that is missing or invalid,
+// and a leader that is gone or is another process while the session still
+// has members or is one cleanup must not judge. A leader that is gone or is
+// another process, with nothing left in the session, is no.
+func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("kill_group reads /proc")
+	}
+
+	good := map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"}
+	gone := `_rc_stat() { return 1; }` + "\n"
+	other := `_rc_stat() { printf -v "$2" 'S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 888 0'; }` + "\n"
+	group := func(state string) string { return `_rc_group_state() { printf '` + state + `'; }` + "\n" }
+
+	cases := []struct {
+		name  string
+		files map[string]string
+		stub  string
+		want  string
+	}{
+		{"no pgid file", map[string]string{"started": "", "starttime": "777\n"}, liveStubs, "unknown"},
+		{"no starttime file", map[string]string{"started": "", "pgid": "4242\n"}, liveStubs, "unknown"},
+		{"an invalid pgid", map[string]string{"started": "", "pgid": "x\n", "starttime": "777\n"}, liveStubs, "unknown"},
+		{"an invalid starttime", map[string]string{"started": "", "pgid": "4242\n", "starttime": "07\n"}, liveStubs, "unknown"},
+		{"a gone leader with a live session", good, gone + group("live 99"), "unknown"},
+		{"a gone leader with a group outside the session", good, gone + group("other"), "unknown"},
+		{"a gone leader in cleanup's own session", good, gone + group("self"), "unknown"},
+		{"another leader with a live session", good, other + group("live"), "unknown"},
+		{"another leader with a group outside the session", good, other + group("other"), "unknown"},
+		{"the leader in a group outside the session", good, liveStubs + group("other"), "unknown"},
+		{"the leader in cleanup's own session", good, liveStubs + group("self"), "unknown"},
+		{"a gone leader with nothing left", good, gone + group("none"), "no"},
+		{"another leader with nothing left", good, other + group("none"), "no"},
+		{"the leader a zombie with nothing left", good, liveStubs + group("none"), "no"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			out, sent := killGroup(t, tc.files, nil, tc.stub)
+			if out != tc.want || sent {
+				t.Errorf("output = %q, signal sent = %v; want %q and no signal", out, sent, tc.want)
+			}
+		})
+	}
+}
+
+// With no kill tool, cleanup can end nothing, so it reports unknown.
+func TestRunCleanupReportsUnknownWithoutAKillTool(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"})
+
+	dir := tree.path(runOps, runTask)
+
+	code, out := tree.snippet(t, false, "CERTPATCH_ROOT="+tree.root+"\n"+liveStubs+"printf '%s\\n' \"$(_rc_kill_group \""+dir+"\")\"\n")
+	if code != 0 || strings.TrimSpace(out) != "unknown" {
+		t.Errorf("exit = %d, output = %q; want unknown", code, out)
+	}
+}
+
+// A cleanup that reports unknown keeps the task directory, without the
+// command's text, as it does for survivors, so a later cleanup can check
+// the session again. That later cleanup reports unknown again while it
+// still can't check, and removes the directory once it can.
+func TestRunCleanupKeepsTheTaskWhenItCannotCheckTheGroup(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.plantKill(t)
+	tree.makeTask(t, runTask, map[string]string{"cmd.sh": "sleep 60\n", "started": ""})
+
+	for range 2 {
+		code, out := tree.cleanup(t, runTask)
+		if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
+			t.Fatalf("exit = %d, output = %q", code, out)
+		}
+
+		if _, err := os.Stat(tree.path(runOps, runTask, "started")); err != nil {
+			t.Fatalf("the task directory went: %v", err)
+		}
+
+		if _, err := os.Stat(tree.path(runOps, runTask, "cmd.sh")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the command's text stayed: %v", err)
+		}
+	}
+
+	result, err := scripts.ParseCleanup([]byte("cleanup started=yes exit=- killed=unknown\n"))
+	if err != nil || result.Killed != "unknown" {
+		t.Errorf("the record parses as %+v, %v", result, err)
+	}
+
+	if runtime.GOOS != "linux" {
+		return
+	}
+
+	done := exec.Command("true")
+	done.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	err = done.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, text := range map[string]string{"pgid": strconv.Itoa(done.Process.Pid) + "\n", "starttime": "5\n"} {
+		err = os.WriteFile(tree.path(runOps, runTask, name), []byte(text), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+		t.Errorf("the cleanup that could check exited %d with %q, want killed=no", code, out)
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the task directory stayed: %v", err)
 	}
 }

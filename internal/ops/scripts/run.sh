@@ -13,7 +13,7 @@
 # it.
 #
 #   prepare prints  staged bytes=<n> sha256=<hex>
-#   cleanup prints  cleanup started=<yes|no|-> exit=<code or -> killed=<yes|no|survived>
+#   cleanup prints  cleanup started=<yes|no|-> exit=<code or -> killed=<yes|no|unknown|survived>
 #
 # The directory of a task is root-owned with mode 0710 and the group of
 # the vcap account, inside runcmd, which is root-owned with mode 0711. A
@@ -425,25 +425,27 @@ _rc_recheck() {
 	printf 'survived'
 }
 
-# _rc_kill_group <dir> prints yes, no, or survived. It ends the command
-# of a task whose exec started and left no exit. The pgid and starttime
-# files are untrusted. A pgid that is not a canonical number above 1 is
-# never used, because kill -- -1 reaches every process the caller may
-# signal. The only proof that a session is the command's is its leader,
-# a live process with the start time exec recorded. A session whose
-# leader has gone is left alone and reported no, because a pid that was
-# reused since, by a daemon that called setsid and whose leader then
-# exited, looks the same. A session that is gone, that is cleanup's own,
-# or whose leader is not the process exec recorded is left alone too. A live
-# session gets TERM, and KILL after the wait, and is reported yes once it
-# is gone, or survived when a member outlives the KILL, which leaves the
-# survivors record that _rc_note_survivors writes.
+# _rc_kill_group <dir> prints yes, no, unknown, or survived. It ends the
+# command of a task whose exec started and left no exit. The pgid and
+# starttime files are untrusted. A pgid that is not a canonical number
+# above 1 is never used, because kill -- -1 reaches every process the
+# caller may signal. The only proof that a session is the command's is its
+# leader, a live process with the start time exec recorded. A live session
+# gets TERM, and KILL after the wait, and is reported yes once it is gone,
+# or survived when a member outlives the KILL, which leaves the survivors
+# record that _rc_note_survivors writes.
+#
+# no means cleanup looked at the session and found nothing in it alive,
+# so nothing the command started still runs. unknown means it could not
+# look: the pgid or starttime file is missing or invalid, there is no kill
+# tool, or the session can't be judged, as _rc_unchecked says. Either way
+# nothing is signalled.
 _rc_kill_group() {
 	local dir=$1 pg='' want='' kill lead f ticks i
 
 	if [ ! -f "$dir/pgid" ] || [ -L "$dir/pgid" ] ||
 		[ ! -f "$dir/starttime" ] || [ -L "$dir/starttime" ]; then
-		printf 'no'
+		printf 'unknown'
 		return 0
 	fi
 
@@ -451,22 +453,22 @@ _rc_kill_group() {
 	IFS= read -r want < "$dir/starttime" || true
 
 	if ! _rc_id_ok "$pg" || [ "$((10#$pg))" -le 1 ] || [[ ! $want =~ ^[1-9][0-9]{0,19}$ ]]; then
-		printf 'no'
+		printf 'unknown'
 		return 0
 	fi
 
-	kill=$(_rc_tool kill) || { printf 'no'; return 0; }
-	command -v -- "$kill" > /dev/null || { printf 'no'; return 0; }
+	kill=$(_rc_tool kill) || { printf 'unknown'; return 0; }
+	command -v -- "$kill" > /dev/null || { printf 'unknown'; return 0; }
 
 	# The leader must be there and be the process exec recorded. Field 22
 	# of its stat file is the 20th after the name. Without the leader's
 	# start time nothing proves that a session is ours, and its members
 	# are left running.
-	_rc_stat "/proc/$pg/stat" lead || { printf 'no'; return 0; }
+	_rc_stat "/proc/$pg/stat" lead || { _rc_unchecked "$pg"; return 0; }
 	read -ra f <<< "$lead"
-	[ "${f[19]:-}" = "$want" ] || { printf 'no'; return 0; }
+	[ "${f[19]:-}" = "$want" ] || { _rc_unchecked "$pg"; return 0; }
 
-	_rc_alive "$pg" "$want" || { printf 'no'; return 0; }
+	_rc_alive "$pg" "$want" || { _rc_unchecked "$pg"; return 0; }
 
 	ticks=$(_rc_kill_ticks)
 
@@ -494,13 +496,35 @@ _rc_kill_group() {
 	printf 'yes'
 }
 
+# _rc_unchecked <pgid> prints no or unknown for a session cleanup leaves
+# alone, because its leader is gone, is another process, or leads nothing
+# cleanup may signal. It is no only when nothing but zombies is left in
+# the session or the group, which is the check kill -0 would make, done
+# through /proc so the members that moved to groups of their own count
+# too. A session with a member left is unknown, because a pid reused by a
+# daemon that called setsid, and whose leader then exited, looks the same
+# as the command's own children, so nothing shows whose they are. A group
+# that has members outside the session, and cleanup's own session, are
+# unknown too.
+_rc_unchecked() {
+	if [ "$(_rc_group_state "$1")" = none ]; then
+		printf 'no'
+	else
+		printf 'unknown'
+	fi
+}
+
 # cleanup prints whether the command started and how it ended, and then
 # removes the task directory. started is yes when exec left its marker,
 # and exit is the code exec recorded, or - when there is none. A command
 # that started and has no exit is still running, or was left by a wrapper
 # that died, and cleanup ends its process group before it reports, so
-# killed is yes, or survived when the group outlives KILL. Survivors keep
-# the directory, with their record in place of the command's text, so the
+# killed is yes, or survived when the group outlives KILL. killed is no
+# when cleanup found the command's session empty, or did not look because
+# the command never started or recorded its exit, and unknown when it
+# could not look, as _rc_kill_group says. An unknown keeps the directory
+# without cmd.sh, as survivors do, so the next cleanup looks again and
+# removes the directory once it can tell. Survivors keep the directory, with their record in place of the command's text, so the
 # next cleanup checks the same processes again, as _rc_recheck does,
 # whatever the exit file holds, and removes the directory only once they
 # have ended. A survivors.new with no survivors beside it is a record that
@@ -548,7 +572,7 @@ cleanup() {
 		killed=$(_rc_kill_group "$dir")
 	fi
 
-	if [ "$killed" = survived ]; then
+	if [ "$killed" = survived ] || [ "$killed" = unknown ]; then
 		rm -f -- "$dir/cmd.sh" || true
 		printf 'cleanup started=%s exit=%s killed=%s\n' "$started" "$code" "$killed"
 		return 0

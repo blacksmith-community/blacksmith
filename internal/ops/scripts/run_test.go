@@ -996,7 +996,6 @@ func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 	}{
 		{"exec never ran", map[string]string{"cmd.sh": "true\n"}, "cleanup started=no exit=- killed=no\n"},
 		{"it ran and exited 7", map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}, "cleanup started=yes exit=7 killed=no\n"},
-		{"it started with no exit", map[string]string{"started": ""}, "cleanup started=yes exit=- killed=no\n"},
 		{"an exit file with junk", map[string]string{"started": "", "exit": "7; id\n"}, "cleanup started=yes exit=- killed=no\n"},
 		{"an exit file that is empty", map[string]string{"started": "", "exit": ""}, "cleanup started=yes exit=- killed=no\n"},
 		{"an exit of 255", map[string]string{"started": "", "exit": "255\n"}, "cleanup started=yes exit=255 killed=no\n"},
@@ -1334,7 +1333,6 @@ func TestParseCleanupChecksValues(t *testing.T) {
 		"cleanup started=maybe exit=7 killed=no\n",
 		"cleanup started=yes exit=256 killed=no\n",
 		"cleanup started=yes exit=07 killed=no\n",
-		"cleanup started=yes exit=7 killed=-\n",
 		"cleanup started=yes exit=7 killed=no\ncleanup started=no exit=- killed=no\n",
 		"staged bytes=1 sha256=" + strings.Repeat("a", 64) + "\n",
 		"",
@@ -1342,6 +1340,22 @@ func TestParseCleanupChecksValues(t *testing.T) {
 		_, err := scripts.ParseCleanup([]byte(bad))
 		if err == nil {
 			t.Errorf("%q parsed", bad)
+		}
+	}
+
+	// A killed value outside the ones run.sh prints says nothing about
+	// whether the command still runs, so it reads as unknown.
+	for record, want := range map[string]string{
+		"cleanup started=yes exit=- killed=unknown\n": "unknown",
+		"cleanup started=yes exit=- killed=-\n":       "unknown",
+		"cleanup started=yes exit=- killed=maybe\n":   "unknown",
+		"cleanup started=yes exit=- killed=NO\n":      "unknown",
+		"cleanup started=yes exit=- killed=no\n":      "no",
+		"cleanup started=yes exit=- killed=yes\n":     "yes",
+	} {
+		result, err := scripts.ParseCleanup([]byte(record))
+		if err != nil || result.Killed != want {
+			t.Errorf("%q parsed as %+v, %v; want killed %s", record, result, err, want)
 		}
 	}
 }

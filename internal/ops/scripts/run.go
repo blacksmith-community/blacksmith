@@ -48,24 +48,29 @@ var runSeconds = regexp.MustCompile(`^[1-9][0-9]{1,3}$`)
 // The values a cleanup record may carry. started is - when the task
 // directory was already gone, so nothing is known about the command.
 var (
-	cleanupKilled = regexp.MustCompile(`^(yes|no|survived)$`)
+	cleanupKilled = regexp.MustCompile(`^(yes|no|unknown|survived)$`)
 	cleanupExit   = regexp.MustCompile(`^(-|[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
 	cleanupSeen   = regexp.MustCompile(`^(yes|no|-)$`)
 )
 
 // Cleanup is what the cleanup operation reports. Started is "yes", "no",
 // or "-" when the task directory was already gone, which leaves the
-// outcome unknown. Exit is the recorded exit code, or "-" when there is
-// none. Killed is "yes" when cleanup ended a running command, and
-// "survived" when the command's group was still alive after KILL. Killed
-// is "no" when cleanup sent no signal, which proves nothing on its own:
-// run.sh prints it when the group had ended, and also when the pgid or
-// start-time files are missing or unreadable, the kill tool is missing, or
-// the leader is gone or is another process, so it never checked the
-// group. Only an exit status, killed=yes, or started=no show that nothing
-// the command started still runs. On a recheck of recorded survivors,
-// Killed is "yes" when none of them lives and "survived" otherwise, and
-// "no" means there was no survivors record to check.
+// outcome unknown and the other fields empty of meaning. Exit is the
+// recorded exit code, or "-" when there is none. Killed is "yes" when
+// cleanup ended a running command, and "survived" when the command's group
+// was still alive after KILL. Killed is "no" when cleanup sent no signal
+// because there was nothing to end: the command never started, it
+// recorded its exit, or cleanup checked its session and found nothing
+// alive in it. Killed is "unknown" when cleanup could not check, because
+// the pgid or start-time file is missing or invalid, the kill tool is
+// missing, or the leader is gone or is another process while the session
+// still has members or can't be judged. The wrapper then keeps the task
+// directory, so a later cleanup checks again. ParseCleanup reads any
+// other killed value as "unknown" too. So an exit status, killed=yes,
+// killed=no, and started=no each show that nothing the command started
+// still runs, and killed=unknown and started=- show nothing. On a recheck
+// of recorded survivors, Killed is "yes" when none of them lives and
+// "survived" otherwise.
 type Cleanup struct {
 	Started string
 	Exit    string
@@ -87,8 +92,11 @@ func ParseCleanup(out []byte) (Cleanup, error) {
 	fields := records[0].Fields
 	result := Cleanup{Started: fields["started"], Exit: fields["exit"], Killed: fields["killed"]}
 
-	if !cleanupSeen.MatchString(result.Started) || !cleanupExit.MatchString(result.Exit) ||
-		!cleanupKilled.MatchString(result.Killed) {
+	if !cleanupKilled.MatchString(result.Killed) {
+		result.Killed = "unknown"
+	}
+
+	if !cleanupSeen.MatchString(result.Started) || !cleanupExit.MatchString(result.Exit) {
 		return Cleanup{}, fmt.Errorf("%w: a cleanup field holds a value outside its set", ErrMalformedOutput)
 	}
 
