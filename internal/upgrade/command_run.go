@@ -977,6 +977,19 @@ func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 		return false
 	}
 
+	return m.pauseCommandForRefusalLocked(task, err)
+}
+
+// pauseCommandForRefusalLocked pauses the command task for the refusal, as
+// pauseRefusedCommandLocked describes. Only a task that is pending,
+// running, or paused pauses. A task that has ended or was cancelled stays
+// as it is, so a later resume never runs what the operator cancelled. It
+// reports whether it paused the task. The caller holds mu.
+func (m *Manager) pauseCommandForRefusalLocked(task *UpgradeTask, err error) bool {
+	if task.Status != TaskStatusPending && task.Status != TaskStatusRunning && task.Status != TaskStatusPaused {
+		return false
+	}
+
 	task.Status = TaskStatusPaused
 	task.Paused = true
 

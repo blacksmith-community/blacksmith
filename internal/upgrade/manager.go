@@ -1740,20 +1740,33 @@ func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
 }
 
 // dropFromQueue lets go of a queued task the upgrade path does not run. It
-// stops being owned, and it keeps the reservations it still needs.
+// stops being owned, and it keeps the reservations it still needs. A
+// cancelled command task that nothing else will process has what it never
+// started ended, as CancelTask ends it for a task with no processor.
 func (m *Manager) dropFromQueue(task *UpgradeTask) {
 	m.mu.Lock()
 	delete(m.owned, task.ID)
+	closed := m.cancelUnownedCommandLocked(task)
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
 	m.logger.Info("Skipping %s task %s in the upgrade queue", task.KindOrDefault(), task.ID)
+
+	if closed > 0 {
+		m.logger.Info("Ended %d instances of cancelled command task %s, which nothing processes", closed, task.ID)
+
+		err := m.persistCertConfirmed(context.WithoutCancel(m.ctx), task)
+		if err != nil {
+			m.logger.Error("Failed to confirm the ended instances of task %s: %v", task.ID, err)
+		}
+	}
 }
 
 // pauseRefusedQueued pauses a queued command task the authorizer refuses,
 // with the refusal on its instance, so Resume and Cancel reach it. The task
 // stops being owned and keeps its holds. It reports whether it paused the
-// task, which it does only for a command task of a configured manager.
+// task, which it does only for a live command task of a configured
+// manager, so a cancelled one is dropped and stays cancelled.
 func (m *Manager) pauseRefusedQueued(task *UpgradeTask) bool {
 	m.mu.Lock()
 

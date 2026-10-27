@@ -110,3 +110,61 @@ func TestDispatchRefusalPausesTheCommandTask(t *testing.T) {
 		fix.assertNoCommandText()
 	})
 }
+
+// A command task is cancelled after it was queued and before the
+// dispatcher reads it, and the authorizer then refuses it at the queue.
+// The task stays cancelled, so turning commands back on and resuming it
+// never runs the command, and the instances it never started end.
+func TestACancelledTaskRefusedAtDispatchStaysCancelled(t *testing.T) {
+	fix := newTaskFixture(t, 2, 1)
+
+	var refusing atomic.Bool
+
+	refusing.Store(true)
+
+	fix.authHook = func(context.Context) error {
+		if refusing.Load() {
+			return errors.New("the authorizer refuses the stored task")
+		}
+
+		return nil
+	}
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusRunning
+	fix.manager.owned[fix.task.ID] = true
+	fix.manager.mu.Unlock()
+
+	fix.cancel()
+	fix.manager.enqueue(fix.task)
+
+	waitUntil(t, "the dispatcher to let go of the task", func() bool { return !fix.owns() })
+
+	got := fix.snapshot()
+	if got.Status != TaskStatusCancelled || got.Paused {
+		t.Errorf("the task is %s with paused %v after the refusal, want cancelled and not paused", got.Status, got.Paused)
+	}
+
+	for i, inst := range got.Instances {
+		if inst.Status != InstanceStatusSkipped {
+			t.Errorf("instance %d is %s, want skipped, since the task never started it", i, inst.Status)
+		}
+	}
+
+	refusing.Store(false)
+
+	if err := fix.manager.ResumeTask(context.Background(), fix.task.ID); err == nil {
+		t.Error("a resume of the cancelled task was accepted")
+	}
+
+	if got := fix.snapshot().Status; got != TaskStatusCancelled {
+		t.Errorf("the task is %s after the resume, want cancelled", got)
+	}
+
+	if len(fix.recorded()) != 0 {
+		t.Errorf("the cancelled task sent %v", fix.recorded())
+	}
+
+	fix.waitReleased()
+	fix.assertNoCommandText()
+}
