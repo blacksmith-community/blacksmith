@@ -1246,10 +1246,6 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 	sessions := m.newCommandSessions(inst.Command.Deployment)
 	defer sessions.close()
 
-	if m.settleStrandedNodes(ctx, sessions, task, inst) {
-		return false
-	}
-
 	// A task a worker stopped is paused, and it is waited for here rather
 	// than handed back, so a resume that lands while the other workers are
 	// still in flight finds a processor that goes on with the instance. The
@@ -1258,12 +1254,22 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 	halted := false
 
 	for {
-		pool := newCommandPool(m.commandWorkers(task))
-		if !m.feedCommandNodes(ctx, persistCtx, pool, sessions, task, inst, cancelCh) {
-			return false
-		}
+		// A node an earlier run left staged or sent is settled before any
+		// pending node is driven. It settles as failed, which halts the
+		// deployment like any failed node, so the pass that found one
+		// drives nothing more.
+		stopped, halt := m.settleStrandedNodes(ctx, sessions, task, inst)
+		stranded := stopped || halt
+		survived := stopped && halt
 
-		stopped, halt, survived := pool.outcome()
+		if !stranded {
+			pool := newCommandPool(m.commandWorkers(task))
+			if !m.feedCommandNodes(ctx, persistCtx, pool, sessions, task, inst, cancelCh) {
+				return false
+			}
+
+			stopped, halt, survived = pool.outcome()
+		}
 
 		// A cancel that the nodes in flight have answered ends the instance
 		// as cancelled, whatever those nodes recorded.
@@ -1287,16 +1293,14 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 			return ended && (!survived || !m.commandTaskPaused(task))
 		}
 
-		if m.commandTaskOver(task) || ctx.Err() != nil {
+		// A stranded node that can't be settled yet leaves the task for its
+		// next resume, which settles the node again from the start.
+		if stranded || m.commandTaskOver(task) || ctx.Err() != nil {
 			return false
 		}
 
 		goOn, _ := m.waitWhilePaused(persistCtx, task, cancelCh)
 		if !goOn {
-			return false
-		}
-
-		if m.settleStrandedNodes(ctx, sessions, task, inst) {
 			return false
 		}
 	}
@@ -1729,20 +1733,25 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 // on it, so cleanup reports what it left and the node is recorded as an
 // outcome Blacksmith did not see. It reports whether the task stopped,
 // which it does when a node can't be reached or the save can't be
-// confirmed, and the node then stays as it was for the next resume.
-func (m *Manager) settleStrandedNodes(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade) bool {
+// confirmed, and the node then stays as it was for the next resume. It
+// also reports whether a node settled as a failure, which halts the
+// deployment as any failed node does.
+func (m *Manager) settleStrandedNodes(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade) (stopped, halted bool) {
 	for vm := range inst.Command.VMs {
 		phase := m.commandNodePhase(inst, vm)
 		if phase != CommandPhaseStaged && phase != CommandPhaseSent {
 			continue
 		}
 
-		if m.settleStrandedNode(ctx, sessions, task, inst, vm) {
-			return true
+		stop := m.settleStrandedNode(ctx, sessions, task, inst, vm)
+		halted = halted || m.commandNodeFailed(inst, vm)
+
+		if stop {
+			return true, halted
 		}
 	}
 
-	return false
+	return false, halted
 }
 
 // settleStrandedNode runs cleanup on one stranded node and records it.
@@ -1991,7 +2000,8 @@ func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade
 	// not clean it. Processes that outlived KILL settle the node, so
 	// nothing is left to wait for, and the instance ends as it does when
 	// every node is clean.
-	if m.settleStrandedNodes(m.ctx, sessions, task, inst) {
+	stopped, _ := m.settleStrandedNodes(m.ctx, sessions, task, inst)
+	if stopped {
 		m.holdAndSave(persistCtx, task, inst)
 	}
 

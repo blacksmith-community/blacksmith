@@ -945,8 +945,12 @@ func assertStrandedNodeSettlesThroughCleanupOnly(t *testing.T, phase CommandPhas
 		t.Errorf("the stranded node is %s/%s, want settled and not a success", inst.Command.VMs[0].Phase, inst.Command.VMs[0].Status)
 	}
 
-	if ops := fix.opsOf("dep-0", 1); !slices.Equal(ops, []string{opSudoCheck, opRunPrepare, opRunExec, opRunCleanup}) {
-		t.Errorf("the pending node saw %v, want the command's four operations", ops)
+	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
+		t.Errorf("the pending node saw %v, want nothing, since the stranded node failed and stopped the deployment", ops)
+	}
+
+	if inst.Command.VMs[1].Phase != CommandPhaseSkipped {
+		t.Errorf("the pending node is %s, want skipped", inst.Command.VMs[1].Phase)
 	}
 
 	if inst.Status != InstanceStatusFailed {
@@ -1096,10 +1100,11 @@ func TestKilledSurvivorFailsTheInstanceAndSkipsItsLaterNodes(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
-// A node an earlier run stranded keeps its own rule, which is that the
-// nodes after it still run once the task is resumed, even when its cleanup
-// finds survivors.
-func TestStrandedSurvivorPausesAndThePendingNodeStillRuns(t *testing.T) {
+// A node an earlier run stranded fails, so the deployment stops as it does
+// for any failed node, and the nodes after it are skipped. Cleanup that
+// finds survivors also pauses the task, and the instance ends before the
+// task waits.
+func TestStrandedSurvivorPausesAndTheDeploymentStops(t *testing.T) {
 	fix := newTaskFixture(t, 1, 2)
 	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
 
@@ -1120,12 +1125,16 @@ func TestStrandedSurvivorPausesAndThePendingNodeStillRuns(t *testing.T) {
 	}
 
 	paused := fix.waitFor("the task to pause again", func(task UpgradeTask) bool {
-		return task.Status == TaskStatusPaused && task.Instances[0].Command.VMs[0].Phase == CommandPhaseSettled
+		return task.Status == TaskStatusPaused && task.Instances[0].Status == InstanceStatusFailed
 	})
 
 	inst := paused.Instances[0]
-	if inst.Status != InstanceStatusRunning || inst.Command.VMs[1].Phase != CommandPhasePending {
-		t.Fatalf("the instance is %s with its second node %s, want running and pending", inst.Status, inst.Command.VMs[1].Phase)
+	if inst.Command.VMs[0].Phase != CommandPhaseSettled || !inst.Command.VMs[0].Survived {
+		t.Errorf("the stranded node is %s with survived %v, want settled and survived", inst.Command.VMs[0].Phase, inst.Command.VMs[0].Survived)
+	}
+
+	if inst.Command.VMs[1].Phase != CommandPhaseSkipped {
+		t.Errorf("the second node is %s, want skipped, since the deployment stopped", inst.Command.VMs[1].Phase)
 	}
 
 	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
@@ -1137,12 +1146,47 @@ func TestStrandedSurvivorPausesAndThePendingNodeStillRuns(t *testing.T) {
 		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
 	})
 
-	if ops := fix.opsOf("dep-0", 1); !slices.Equal(ops, []string{opSudoCheck, opRunPrepare, opRunExec, opRunCleanup}) {
-		t.Errorf("the pending node saw %v, want the command's four operations", ops)
+	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
+		t.Errorf("the skipped node saw %v, want nothing", ops)
 	}
 
 	if done.Instances[0].Status != InstanceStatusFailed {
 		t.Errorf("the instance is %s, want failed", done.Instances[0].Status)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// A stranded node that can't be reached pauses the task and leaves the
+// instance running and the pending nodes pending, so the next resume
+// settles the node first and only then goes on.
+func TestStrandedNodeThatCannotBeReachedStopsTheTaskWithoutHalting(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	fix.listErr["dep-0"] = errors.New("director down")
+
+	started := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	node := &fix.task.Instances[0].Command.VMs[0]
+	node.Phase = CommandPhaseSent
+	node.StartedAt = &started
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusPaused
+	fix.task.Paused = true
+	fix.task.Instances[0].Status = InstanceStatusRunning
+	fix.manager.mu.Unlock()
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	paused := fix.waitFor("the task to pause again", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusPaused && strings.Contains(task.Instances[0].Error, "could not reach the node")
+	})
+
+	inst := paused.Instances[0]
+	if inst.Status != InstanceStatusRunning || inst.Command.VMs[0].Phase != CommandPhaseSent || inst.Command.VMs[1].Phase != CommandPhasePending {
+		t.Errorf("the instance is %s with nodes %v, want running with the first still sent and the second pending", inst.Status, phases(inst))
 	}
 
 	fix.assertNoCommandText()
