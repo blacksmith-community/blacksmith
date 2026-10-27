@@ -1858,9 +1858,32 @@ func strandKey(task *UpgradeTask, inst *InstanceUpgrade, vm int) string {
 }
 
 // noteStrandCauseLocked records why a node is stranded, when a pause is not
-// the reason. The caller holds mu.
+// the reason. A task that has ended keeps none, since a cancel names its
+// own cause and a finished task settles no node. The caller holds mu.
 func (m *Manager) noteStrandCauseLocked(task *UpgradeTask, inst *InstanceUpgrade, vm int, why string) {
+	if taskEndedLocked(task) {
+		return
+	}
+
 	m.strandCauses[strandKey(task, inst, vm)] = why
+}
+
+// forgetStrandCausesLocked drops every cause kept for the nodes of a task
+// that has ended. The caller holds mu.
+func (m *Manager) forgetStrandCausesLocked(task *UpgradeTask) {
+	prefix := task.ID + "/"
+
+	for key := range m.strandCauses {
+		if strings.HasPrefix(key, prefix) {
+			delete(m.strandCauses, key)
+		}
+	}
+}
+
+// taskEndedLocked reports whether the task completed, failed, or was
+// cancelled. The caller holds mu.
+func taskEndedLocked(task *UpgradeTask) bool {
+	return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed || task.Status == TaskStatusCancelled
 }
 
 // strandCause says why a stranded node was lost. A cancel is what the

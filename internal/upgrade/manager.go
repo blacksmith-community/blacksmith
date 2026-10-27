@@ -1618,6 +1618,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	task.CompletedAt = &completedAt
 
 	rewordHeldCommandsLocked(task)
+	m.forgetStrandCausesLocked(task)
 
 	ended := m.cancelIdleLocked(task)
 	closed := m.cancelUnownedCommandLocked(task)
@@ -2028,6 +2029,8 @@ func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 		task.Status = TaskStatusFailed
 		completedAt := time.Now()
 		task.CompletedAt = &completedAt
+
+		m.forgetStrandCausesLocked(task)
 	}
 
 	m.releaseUnheldLocked(task)
@@ -2247,6 +2250,7 @@ func (m *Manager) finishTask(ctx context.Context, task *UpgradeTask) {
 		task.Status = finishedStatus(task)
 	}
 
+	m.forgetStrandCausesLocked(task)
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
