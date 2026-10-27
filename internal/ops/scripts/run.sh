@@ -20,8 +20,9 @@
 # user without the group can pass through runcmd by name but cannot list
 # it, and vcap can open cmd.sh by name but cannot list, replace, write,
 # or remove anything on the way to it. The task directory also holds the
-# files a later operation writes, which are started, starttime, pgid, and
-# exit, and the survivors record of processes that outlived KILL. Beside
+# files a later operation writes, which are marker, started, starttime,
+# pgid, and exit, and the survivors record of processes that outlived
+# KILL. Beside
 # the task directories, runcmd holds the done records that cleanup leaves,
 # a root-owned file of mode 0600 named <task>.done, as cleanup describes.
 #
@@ -43,6 +44,10 @@ readonly RC_EXIT_RE='^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
 # cleanup removes a done record.
 readonly RC_DONE_RE='^cleanup started=(yes|no) exit=(-|[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]) killed=(yes|no)$'
 readonly RC_DONE_MINUTES=10080
+# exec puts the entry RC_MARK=<task> into the command's environment, so
+# cleanup can prove a process is the command's once the leader of its
+# session has gone, as _rc_ours explains.
+readonly RC_MARK=BLACKSMITH_RUN_TASK
 
 # The directory that the EXIT trap removes when an operation stops before
 # it is done. prepare sets it while the directory is half made, and
@@ -318,13 +323,108 @@ _rc_group_state() {
 # A group that has emptied never gains a member again, because setpgid
 # only joins a group that exists or makes one that the caller leads. A
 # leader that is gone passes, because while the session has a member its
-# number can't have been reused, so every member is the command's.
+# number can't have been reused. Once the session has emptied, though, a
+# stranger can take the number for a session of its own, as a daemon does
+# when it forks, calls setsid, forks again, and exits, so a session whose
+# leader is gone holds only the members _rc_ours proves are the command's.
 _rc_leader_ok() {
 	local lead f
 
 	_rc_stat "/proc/$1/stat" lead || return 0
 	read -ra f <<< "$lead"
 	[ "${f[19]:-}" = "$2" ]
+}
+
+# _rc_led <pgid> <starttime> succeeds while the recorded leader still
+# holds its pid with the start time exec recorded, as a zombie too. The
+# session is then the command's, and so is every member of it.
+_rc_led() {
+	local lead f
+
+	_rc_stat "/proc/$1/stat" lead || return 1
+	read -ra f <<< "$lead"
+	[ "${f[19]:-}" = "$2" ]
+}
+
+# _rc_ours <dir> <pid> succeeds when the task directory holds the marker
+# file and the environment of the process holds the entry RC_MARK=<task>
+# exactly. exec writes the marker file before it starts a command with
+# that entry, so a directory from before the entry existed proves nothing.
+# Cleanup reads the environment as root, and a read that fails proves
+# nothing, nor does a process that cleared its environment or exec'd with
+# another one.
+_rc_ours() {
+	local entry=$RC_MARK=${1##*/} e
+
+	[ -f "$1/marker" ] && [ ! -L "$1/marker" ] || return 1
+
+	{
+		while IFS= read -r -d '' e || [ -n "$e" ]; do
+			[ "$e" != "$entry" ] || return 0
+		done < "/proc/$2/environ"
+	} 2> /dev/null
+
+	return 1
+}
+
+# _rc_proven <dir> <sid> sets proven, which the caller declares, to the
+# pids of the live members of the session that _rc_ours proves are the
+# command's, and fails when a live member can't be proven. A member's stat
+# is read again after its environment, so a pid that a stranger took in
+# between, with another start time, is never proven. A member that is a
+# zombie on that second read, or ended in between, counts as neither.
+_rc_proven() {
+	local f pid fields ok unproven=0
+	local -a p q
+
+	proven=()
+
+	for f in /proc/[0-9]*/stat; do
+		_rc_stat "$f" fields || continue
+		read -ra p <<< "$fields"
+
+		[ "${p[3]:-}" = "$2" ] || continue
+
+		pid=${f#/proc/}
+		pid=${pid%/stat}
+		ok=no
+		! _rc_ours "$1" "$pid" || ok=yes
+
+		_rc_stat "$f" fields || continue
+		read -ra q <<< "$fields"
+		[ "${q[0]}" != Z ] && [ "${q[3]:-}" = "$2" ] && [ "${q[19]:-}" = "${p[19]:-}" ] || continue
+
+		if [ "$ok" = yes ]; then
+			proven+=("$pid")
+		else
+			unproven=1
+		fi
+	done
+
+	return "$unproven"
+}
+
+# _rc_unproven <pgid> <starttime> <dir> succeeds when the leader is gone
+# and a live member of the session can't be proven the command's, so
+# cleanup must not signal it and can't say the command ended. The caller
+# checks _rc_alive first, which rules out a leader pid another process
+# holds.
+_rc_unproven() {
+	local -a proven
+
+	! _rc_led "$1" "$2" && ! _rc_proven "$3" "$1"
+}
+
+# _rc_reachable <pgid> <starttime> <dir> succeeds while the session has a
+# member that _rc_signal would signal, which is any member while the
+# leader lives, and only a proven one once it has gone.
+_rc_reachable() {
+	local -a proven
+
+	_rc_alive "$1" "$2" || return 1
+	! _rc_led "$1" "$2" || return 0
+	_rc_proven "$3" "$1" || true
+	[ "${#proven[@]}" -gt 0 ]
 }
 
 # _rc_alive <pgid> <starttime> succeeds while the session of the command
@@ -337,20 +437,29 @@ _rc_alive() {
 	[[ $state == live || $state == "live "* ]]
 }
 
-# _rc_signal <kill> <signal> <pgid> <starttime> sends a signal to the
-# group and to the members of its session that are outside the group. It
-# checks the leader again first, so a number reused during the wait is
-# never signalled.
+# _rc_signal <kill> <signal> <pgid> <starttime> <dir> sends a signal to
+# the group and to the members of its session that are outside the group
+# while the leader lives. Once the leader has gone, it sends the signal
+# only to the members _rc_proven proves are the command's, and nothing to
+# the rest. It checks the leader again first, so a number reused during
+# the wait is never signalled.
 _rc_signal() {
 	local state extra
+	local -a proven
 
 	_rc_leader_ok "$3" "$4" || return 0
 	state=$(_rc_group_state "$3")
 	extra=${state#live}
 	[ "$extra" != "$state" ] || return 0
 
-	# shellcheck disable=SC2086
-	"$1" "-$2" -- "-$3" $extra > /dev/null 2>&1 || true
+	if _rc_led "$3" "$4"; then
+		# shellcheck disable=SC2086
+		"$1" "-$2" -- "-$3" $extra > /dev/null 2>&1 || true
+		return 0
+	fi
+
+	_rc_proven "$5" "$3" || true
+	[ "${#proven[@]}" -eq 0 ] || "$1" "-$2" -- "${proven[@]}" > /dev/null 2>&1 || true
 }
 
 # _rc_note_survivors <dir> <sid> writes the survivors record, one line of
@@ -439,16 +548,18 @@ _rc_ended() {
 # survivors record never named. The processes the record names, with the
 # start times it holds, get KILL again, and so does the command's group
 # and the rest of its session, as _rc_signal sends it, whether or not a
-# recorded survivor still lives. Every live member of the session is the
-# command's, as _rc_leader_ok explains. The task is reported yes only once
-# none of the recorded survivors lives and the session has no member but
-# zombies, or the leader's pid is held by another process. It is reported
-# survived while a member lives, and also when the record, the pgid file,
-# or the starttime file can't be read or the kill can't be run, because
-# nothing then shows that the processes ended.
+# recorded survivor still lives. Once the leader has gone, a recorded
+# survivor gets KILL only when _rc_ours proves it is the command's, as
+# _rc_leader_ok explains. The task is reported yes only once none of the
+# recorded survivors lives and the session has no member but zombies, or
+# the leader's pid is held by another process. It is reported survived
+# while a member lives, whether or not it could be signalled, and also
+# when the record, the pgid file, or the starttime file can't be read or
+# the kill can't be run, because nothing then shows that the processes
+# ended.
 _rc_recheck() {
-	local dir=$1 kill live pg want ticks i
-	local -a pids
+	local dir=$1 kill live pg want ticks i pid
+	local -a pids ours
 
 	kill=$(_rc_tool kill) || { printf 'survived'; return 0; }
 	command -v -- "$kill" > /dev/null || { printf 'survived'; return 0; }
@@ -458,10 +569,20 @@ _rc_recheck() {
 
 	if [ -n "$live" ]; then
 		mapfile -t pids <<< "$live"
-		"$kill" -KILL -- "${pids[@]}" > /dev/null 2>&1 || true
+		ours=("${pids[@]}")
+
+		if ! _rc_led "$pg" "$want"; then
+			ours=()
+
+			for pid in "${pids[@]}"; do
+				! _rc_ours "$dir" "$pid" || ours+=("$pid")
+			done
+		fi
+
+		[ "${#ours[@]}" -eq 0 ] || "$kill" -KILL -- "${ours[@]}" > /dev/null 2>&1 || true
 	fi
 
-	_rc_signal "$kill" KILL "$pg" "$want"
+	_rc_signal "$kill" KILL "$pg" "$want" "$dir"
 
 	ticks=$(_rc_kill_ticks)
 
@@ -489,9 +610,12 @@ _rc_recheck() {
 # no means cleanup found nothing of the command's session alive, or found
 # the leader's pid held by another process, which _rc_leader_ok explains,
 # so nothing the command started still runs. A session that still has a
-# member gets TERM, and KILL after the wait, and is reported yes once it
-# is gone, or survived when a member outlives the KILL, which leaves the
-# survivors record that _rc_note_survivors writes. A session that is
+# member gets TERM, and KILL after the wait, as _rc_signal sends them, and
+# is reported yes once it is gone, or survived when a member outlives the
+# KILL, which leaves the survivors record that _rc_note_survivors writes.
+# A session whose leader has gone and that still has a member _rc_ours
+# can't prove is the command's is unknown, because that member may be a
+# stranger's, and it gets no signal. A session that is
 # cleanup's own, or a group with a member outside the session, which only
 # a stranger that took the number can make, is unknown, as is a live
 # session when there is no kill tool. None of these is signalled.
@@ -512,20 +636,25 @@ _rc_kill_group() {
 
 	ticks=$(_rc_kill_ticks)
 
-	_rc_signal "$kill" TERM "$pg" "$want"
+	_rc_signal "$kill" TERM "$pg" "$want" "$dir"
 
 	for ((i = 0; i < ticks; i++)); do
-		_rc_alive "$pg" "$want" || break
+		_rc_reachable "$pg" "$want" "$dir" || break
 		sleep 0.1
 	done
 
-	if _rc_alive "$pg" "$want"; then
-		_rc_signal "$kill" KILL "$pg" "$want"
+	if _rc_reachable "$pg" "$want" "$dir"; then
+		_rc_signal "$kill" KILL "$pg" "$want" "$dir"
 
 		for ((i = 0; i < ticks / 5 + 1; i++)); do
-			_rc_alive "$pg" "$want" || break
+			_rc_reachable "$pg" "$want" "$dir" || break
 			sleep 0.1
 		done
+	fi
+
+	if _rc_alive "$pg" "$want" && _rc_unproven "$pg" "$want" "$dir"; then
+		printf 'unknown'
+		return 0
 	fi
 
 	if _rc_alive "$pg" "$want" && _rc_note_survivors "$dir" "$pg"; then
@@ -753,6 +882,10 @@ execute() {
 		priv=("$setpriv" "--reuid=$uid" "--regid=$gid" --clear-groups --no-new-privs --)
 	fi
 
+	# The marker file says the command gets the RC_MARK entry, so it goes
+	# in ahead of started, and a started directory without it is one from
+	# before the entry, whose members _rc_ours can't prove.
+	_rc_write "$dir/marker" < /dev/null || return "$EXIT_REFUSED"
 	_rc_write "$dir/started" < /dev/null || return "$EXIT_REFUSED"
 
 	# The pid that bash -c records is the process group ID only because
@@ -784,6 +917,7 @@ execute() {
 			env -i HOME="$homepath" USER="$user" LOGNAME="$user" SHELL=/bin/bash \
 			PATH="$path" \
 			LANG=C.UTF-8 LC_ALL=C.UTF-8 TMPDIR=/var/vcap/data/tmp \
+			"$RC_MARK=$task" \
 			/bin/bash -- "$file" < /dev/null 2>&3 3>&-
 	} 3>&2 2> /dev/null
 	code=$?

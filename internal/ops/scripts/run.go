@@ -69,11 +69,15 @@ var (
 // the kernel allows only once the session has no member left. Killed is
 // "unknown" when cleanup could not check, because the pgid or start-time
 // file is missing or invalid, the kill tool is missing while the session
-// has members, or the session can't be judged. ParseCleanup reads any
+// has members, the session can't be judged, or the session's leader is
+// gone and a live member's environment doesn't hold the task's
+// BLACKSMITH_RUN_TASK entry, which may make it a stranger's. Such a
+// member gets no signal. ParseCleanup reads any
 // other killed value as "unknown" too. On a recheck of recorded
 // survivors, Killed is "yes" once none of them lives and the session has
 // no member but zombies, or the leader's pid is held by another process,
-// and "survived" otherwise. So killed=yes, killed=no, and started=no each
+// and "survived" otherwise, also while a member lives that cleanup could
+// not prove was the command's and so did not signal. So killed=yes, killed=no, and started=no each
 // show that nothing the command started still runs, and killed=unknown
 // and started=- show nothing.
 //

@@ -189,6 +189,7 @@ The command starts with an empty environment and receives exactly the following 
 | `PATH` | `/var/vcap/bosh/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | `/var/vcap/bosh/bin:/usr/local/bin:/usr/bin:/bin` |
 | `LANG`, `LC_ALL` | `C.UTF-8` | `C.UTF-8` |
 | `TMPDIR` | `/var/vcap/data/tmp` | `/var/vcap/data/tmp` |
+| `BLACKSMITH_RUN_TASK` | the task ID | the task ID |
 | umask | `022` | `022` |
 
 Service packages are not on `PATH` on purpose. A command should spell the full path, as in the RabbitMQ example above, and a fixed `PATH` means a command does the same thing on every node of every service. The `/var/vcap/bosh/bin` entry is there so `monit` resolves for root.
@@ -198,6 +199,8 @@ For `vcap`, the wrapper looks up the account with `getent passwd vcap` and refus
 ### Cleanup
 
 The `cleanup` operation prints whether the command started, how it exited, and whether the wrapper had to kill it, and it then removes the task directory. When the command started and has not recorded an exit, it may still be running, so `cleanup` sends TERM to the process group, waits up to ten seconds, sends KILL, and reports that it killed the group. The broker runs `cleanup` on a fresh short context even when the node's own context has ended.
+
+Once the session's leader has gone, a session with the recorded ID may belong to a stranger, such as a daemon that forked, called `setsid`, forked again, and exited. So `cleanup` then signals only the members whose environment holds the task's `BLACKSMITH_RUN_TASK` entry, and it sends nothing to any other member. While such a member lives, `cleanup` reports `killed=unknown`, or `killed=survived` on a recheck of recorded survivors, and the node stays held. A command that clears its environment, or a task directory written before the entry existed, can't be proven this way and holds the node in the same way.
 
 ### What the wrapper can contain
 

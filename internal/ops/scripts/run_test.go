@@ -1531,7 +1531,7 @@ pwd -P
 		"LANG=C.UTF-8",
 		"LC_ALL=C.UTF-8",
 		"TMPDIR=/var/vcap/data/tmp",
-		"HOME LANG LC_ALL LOGNAME PATH SHELL TMPDIR USER ",
+		"BLACKSMITH_RUN_TASK HOME LANG LC_ALL LOGNAME PATH SHELL TMPDIR USER ",
 		"0022",
 		tree.path("root"),
 	}, "\n") + "\n"
@@ -2054,6 +2054,7 @@ func TestRunExecVcapLaunchLine(t *testing.T) {
 		"env", "-i", "HOME=/home/vcap", "USER=vcap", "LOGNAME=vcap", "SHELL=/bin/bash",
 		"PATH=/var/vcap/bosh/bin:/usr/local/bin:/usr/bin:/bin",
 		"LANG=C.UTF-8", "LC_ALL=C.UTF-8", "TMPDIR=/var/vcap/data/tmp",
+		runMarker,
 		"/bin/bash", "--", tree.cmdFile(runTask),
 	}, "\n") + "\n"
 	if string(got) != want {
