@@ -136,21 +136,25 @@
   }
   // Field popovers are toggletips. Only one is open at a time, and one set of
   // document listeners serves all of them, so a removed pane leaks nothing.
+  // Escape is consumed only when focus is on the open popover or its button,
+  // so a dialog or field elsewhere still gets the key.
   let openField=null, fieldSerial=0;
   const fieldDocs=new WeakSet();
   function listenForFields(doc){
     if(fieldDocs.has(doc))return;
     fieldDocs.add(doc);
     doc.addEventListener('keydown',event=>{
-      if(event.key!=='Escape'||!openField||!openField.button.isConnected)return;
-      event.preventDefault();event.stopImmediatePropagation();
-      const {button}=openField;openField.hide();button.focus();
+      if(event.key!=='Escape'||!openField)return;
+      const {button,tip}=openField, inside=button.contains(doc.activeElement)||tip.contains(doc.activeElement);
+      openField.hide();
+      if(!inside||!button.isConnected)return;
+      event.preventDefault();event.stopImmediatePropagation();button.focus();
     },true);
     doc.addEventListener('pointerdown',event=>{
       if(!openField||openField.button.contains(event.target)||openField.tip.contains(event.target))return;
       openField.hide();
     },true);
-    const reposition=()=>{if(openField)place(openField.button,openField.tip);};
+    const reposition=()=>{if(!openField)return;if(openField.button.isConnected)place(openField.button,openField.tip);else openField.hide();};
     root.addEventListener('resize',reposition);doc.addEventListener('scroll',reposition,true);
   }
   function field(host, name){
@@ -168,27 +172,31 @@
     const title=doc.createElement('strong'), status=doc.createElement('div');
     title.textContent=`About ${value.label}`;status.setAttribute('role','status');
     tip.append(title,status);node.append(button,tip);
+    // Hover shows the text as plain content. A click moves it into the status
+    // region, so a screen reader announces only the popover the user asked for.
+    const text=doc.createElement('p');text.textContent=value.body;
     let pinned=false,hover=false,timer;
     const self={button,tip,hide};
-    function show(){
+    function show(announce){
       if(openField&&openField!==self)openField.hide();
       clearTimeout(timer);openField=self;tip.hidden=false;
       if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();
       button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',id);
-      if(!status.textContent){const text=doc.createElement('p');text.textContent=value.body;status.append(text);}
+      if(announce)status.append(text);else if(!text.isConnected)tip.append(text);
       place(button,tip);
     }
     function hide(){
       clearTimeout(timer);pinned=false;
       if(tip.hidePopover&&tip.matches(':popover-open'))tip.hidePopover();
-      tip.hidden=true;status.replaceChildren();
+      tip.hidden=true;text.remove();
       button.setAttribute('aria-expanded','false');button.removeAttribute('aria-describedby');
       if(openField===self)openField=null;
     }
     function leave(){hover=false;timer=setTimeout(()=>{if(!hover&&!pinned)hide();},120);}
-    button.addEventListener('click',()=>{if(pinned)hide();else{pinned=true;show();}});
+    button.addEventListener('click',()=>{if(pinned)hide();else{pinned=true;show(true);}});
     button.addEventListener('pointerenter',()=>{hover=true;show();});button.addEventListener('pointerleave',leave);
     tip.addEventListener('pointerenter',()=>{hover=true;clearTimeout(timer);});tip.addEventListener('pointerleave',leave);
+    node.addEventListener('focusout',event=>{if(event.relatedTarget&&!node.contains(event.relatedTarget))hide();});
     host.append(node);
     return node;
   }

@@ -147,3 +147,56 @@ test('field buttons get a 24 pixel target and stay visible in forced colors',()=
  const forced=css.slice(css.indexOf('@media (forced-colors: active)'));
  expect(forced.includes('.view-guidance-button')&&forced.includes('.view-guidance-tip')).toBe(true);
 });
+
+test('a pinned popover closes when focus moves to a control outside it',()=>{
+ const {w,d,form,api}=start();
+ const button=api.field(form,'command-timeout').querySelector('button');
+ const tip=d.getElementById(button.getAttribute('aria-controls'));
+ const other=d.createElement('input');form.append(other);
+ button.focus();button.click();
+ tip.tabIndex=-1;tip.focus();
+ expect(tip.hidden).toBe(false);
+ other.focus();
+ expect(tip.hidden).toBe(true);
+ expect(button.getAttribute('aria-expanded')).toBe('false');
+});
+
+test('Escape outside an open popover closes it but reaches other handlers',()=>{
+ const {w,d,form,api}=start();
+ const button=api.field(form,'command-user').querySelector('button');
+ const tip=d.getElementById(button.getAttribute('aria-controls'));
+ const other=d.createElement('input');form.append(other);
+ let reached=false;d.addEventListener('keydown',()=>{reached=true;});
+ button.dispatchEvent(new w.Event('pointerenter'));
+ other.focus();
+ const escape=key(w,'Escape',other);
+ expect(tip.hidden).toBe(true);
+ expect(escape.defaultPrevented).toBe(false);
+ expect(reached).toBe(true);
+ expect(d.activeElement===other).toBe(true);
+});
+
+test('hover shows the text without announcing it, and a click announces it',()=>{
+ const {w,d,form,api}=start();
+ const button=api.field(form,'command-text').querySelector('button');
+ const tip=d.getElementById(button.getAttribute('aria-controls'));
+ const status=tip.querySelector('[role=status]');
+ button.dispatchEvent(new w.Event('pointerenter'));
+ expect(tip.hidden).toBe(false);
+ expect(tip.textContent).toContain(api.getField('command-text').body);
+ expect(status.textContent).toBe('');
+ button.click();
+ expect(status.textContent).toBe(api.getField('command-text').body);
+ expect(tip.textContent.split(api.getField('command-text').body).length).toBe(2);
+});
+
+test('a popover whose pane was rebuilt is closed and released on the next reposition',()=>{
+ const {w,d,form,api}=start();
+ const node=api.field(form,'rotate-mode');
+ const button=node.querySelector('button'),tip=node.querySelector('.field-guidance-tip');
+ button.click();
+ node.remove();
+ w.dispatchEvent(new w.Event('resize'));
+ expect(tip.hidden).toBe(true);
+ expect(button.getAttribute('aria-expanded')).toBe('false');
+});
