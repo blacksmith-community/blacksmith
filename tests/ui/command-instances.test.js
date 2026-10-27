@@ -100,12 +100,12 @@ t('the review step on a command run requests only the command preview',async()=>
  }finally{w.close();}
 });
 
-t('a selected instance the list no longer knows counts as a service of its own',async()=>{
+t('a selected instance with no known service is left out of the service count',async()=>{
  const env=await setup();const {w,d}=env;try{
  await openInstances(env);
  pick(d,'val-a');
  w.__T.selectedUpgradeInstances.add('gone-instance');
  w.__T.refreshUpgradeInstanceList();
- expect(d.getElementById('batch-options-summary').textContent).toBe('Run as vcap, 1 command, 2 instances, across 2 services');
+ expect(d.getElementById('batch-options-summary').textContent).toBe('Run as vcap, 1 command, 2 instances');
  }finally{w.close();}
 });

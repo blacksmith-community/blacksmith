@@ -4527,8 +4527,9 @@
   // many instances, and how many services they span.
   const commandSummary = () => {
     const selected = Array.from(batchSelectedIds());
-    // An instance with no known service counts as one service of its own.
-    const services = new Set(selected.map((id) => (window.serviceInstances || {})[id]?.service_id || ''));
+    // An instance with no known service is left out of the count, as the
+    // preview leaves it out of its mixed-services warning.
+    const services = new Set(selected.map((id) => (window.serviceInstances || {})[id]?.service_id).filter(Boolean));
     const parts = [`Run as ${commandState.user}`, pluralize(1, 'command'), pluralize(selected.length, 'instance')];
     if (services.size > 1) parts.push(`across ${services.size} services`);
     const limit = wholeNumber(commandState.maxInFlight);
