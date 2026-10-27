@@ -663,6 +663,47 @@ func TestRunCleanupExitedGroupReportsKilledNo(t *testing.T) {
 	}
 }
 
+// An exit file that holds no usable status, as a write on a full disk can
+// leave, is not an exit. A command whose leader has exited while a child
+// still runs in its session leaves cleanup unable to tell whose that child
+// is, so it reports unknown and keeps the directory, and the child lives.
+func TestRunCleanupChecksTheGroupWhenTheExitFileIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+
+	pidFile := tree.path("sleeper-pid")
+	running := tree.startExec(t, "root", fmt.Sprintf("sleep 60 &\necho $! > %q\n", pidFile), pidFile)
+	exitFile := tree.path(runOps, runTask, "exit")
+
+	if !waitFor(10*time.Second, func() bool {
+		raw, err := os.ReadFile(exitFile) //nolint:gosec // the test tree
+		return err == nil && string(raw) == "0\n"
+	}) {
+		t.Fatal("the command never recorded its exit")
+	}
+
+	err := os.WriteFile(exitFile, nil, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
+		t.Errorf("exit = %d, output = %q; want killed=unknown", code, out)
+	}
+
+	_, err = os.Stat(tree.path(runOps, runTask, "started"))
+	if err != nil {
+		t.Errorf("the task directory went: %v", err)
+	}
+
+	if !sessionLive(t, running.pgid) {
+		t.Error("the child in the session is gone, so the test proves nothing")
+	}
+}
+
 func TestRunCleanupNeverSignalsOnABadPgid(t *testing.T) {
 	t.Parallel()
 

@@ -516,9 +516,11 @@ _rc_unchecked() {
 
 # cleanup prints whether the command started and how it ended, and then
 # removes the task directory. started is yes when exec left its marker,
-# and exit is the code exec recorded, or - when there is none. A command
-# that started and has no exit is still running, or was left by a wrapper
-# that died, and cleanup ends its process group before it reports, so
+# and exit is the code exec recorded, or - when there is none. An exit
+# file that is empty or holds anything but a status, as a write on a full
+# disk can leave, counts as none. A command that started and has no exit
+# is still running, or was left by a wrapper that died, and cleanup ends
+# its process group before it reports, so
 # killed is yes, or survived when the group outlives KILL. killed is no
 # when cleanup found the command's session empty, or did not look because
 # the command never started or recorded its exit, and unknown when it
@@ -568,7 +570,7 @@ cleanup() {
 		killed=$(_rc_recheck "$dir")
 	elif [ -e "$dir/survivors.new" ] || [ -L "$dir/survivors.new" ]; then
 		killed=survived
-	elif [ "$started" = yes ] && [ ! -e "$dir/exit" ] && [ ! -L "$dir/exit" ]; then
+	elif [ "$started" = yes ] && [ "$code" = - ]; then
 		killed=$(_rc_kill_group "$dir")
 	fi
 
