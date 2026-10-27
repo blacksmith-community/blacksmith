@@ -148,7 +148,8 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 
 // holdSurvivor keeps the instance held because a node whose processes
 // outlived KILL is still unresolved, and says why on the instance. An
-// unfinished task pauses, and a cancelled one waits for Resume cleanup.
+// unfinished task pauses, and one that has ended keeps its status and
+// waits for Resume cleanup.
 func (m *Manager) holdSurvivor(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, message string, cause error) {
 	m.mu.Lock()
 	holdSurvivorLocked(task, inst, message)
@@ -177,9 +178,8 @@ func holdSurvivorLocked(task *UpgradeTask, inst *InstanceUpgrade, message string
 	case TaskStatusPending, TaskStatusRunning, TaskStatusPaused:
 		task.Status = TaskStatusPaused
 		task.Paused = true
-	case TaskStatusCancelled:
+	case TaskStatusCancelled, TaskStatusCompleted, TaskStatusFailed:
 		task.Paused = true
-	case TaskStatusCompleted, TaskStatusFailed:
 	}
 
 	inst.Error = message

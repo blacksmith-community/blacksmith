@@ -1262,12 +1262,14 @@ func TestRunCommandNodePausesWhenSurvivedCleanupExitsNonZero(t *testing.T) {
 	}
 }
 
-// Processes that survive KILL pause a task that is still running, and
-// leave a task that has already ended as it is.
+// Processes that survive KILL pause a task that is still running. A task
+// that has already ended keeps its status, and one whose node ran waits
+// for Resume cleanup with the instance held. A cancelled task never sends
+// the command, so nothing survives there and it does not wait.
 func TestRunCommandNodePausesOnlyAUnfinishedTask(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []TaskStatus{TaskStatusCancelled, TaskStatusCompleted, TaskStatusFailed} {
+	for status, waits := range map[TaskStatus]bool{TaskStatusCancelled: false, TaskStatusCompleted: true, TaskStatusFailed: true} {
 		t.Run(string(status), func(t *testing.T) {
 			t.Parallel()
 
@@ -1280,8 +1282,8 @@ func TestRunCommandNodePausesOnlyAUnfinishedTask(t *testing.T) {
 			fix.manager.mu.RLock()
 			defer fix.manager.mu.RUnlock()
 
-			if fix.task.Status != status || fix.task.Paused {
-				t.Errorf("status %s paused %v, want %s and not paused", fix.task.Status, fix.task.Paused, status)
+			if fix.task.Status != status || fix.task.Paused != waits || waitsCancelledLocked(fix.task) != waits {
+				t.Errorf("status %s paused %v, want %s and paused %v", fix.task.Status, fix.task.Paused, status, waits)
 			}
 		})
 	}

@@ -2403,9 +2403,14 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	skipped, ended := 0, 0
 	finish := func() {}
 
-	if settled && task.Status == TaskStatusCancelled {
+	switch {
+	case settled && task.Status == TaskStatusCancelled:
 		skipped = m.skipPendingLocked(task)
 		ended = m.cancelIdleLocked(task)
+		finish = m.resumeCancelledLocked(task)
+	case settled && task.KindOrDefault() == TaskKindCommand && taskEndedLocked(task):
+		// A completed or failed command task an earlier build ended with
+		// a node unresolved cleans it as a cancelled one does.
 		finish = m.resumeCancelledLocked(task)
 	}
 	m.mu.Unlock()

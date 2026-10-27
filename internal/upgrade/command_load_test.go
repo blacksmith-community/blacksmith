@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -535,6 +536,173 @@ func TestLoadedSurvivorKeepsTheTaskPausedAndTheInstanceHeld(t *testing.T) {
 
 	if got := fix.opsOf("dep-0", 0); len(got) != 1 || got[0] != opRunCleanup {
 		t.Errorf("Resume cleanup sent %v to the survivor, want one cleanup", got)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// An earlier build could end a task while a node's processes outlived
+// KILL. Loaded, such a completed or failed task keeps its status, holds
+// the instance, and waits paused for Resume cleanup, which needs no gate.
+// A recheck that finds the processes alive pauses it again, and one that
+// finds them ended releases the instance and stops the wait.
+func TestLoadedEndedTaskHoldingASurvivorOffersResumeCleanup(t *testing.T) {
+	for _, status := range []TaskStatus{TaskStatusCompleted, TaskStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			fix := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
+				task.CreationConfirmed = true
+				task.Status = status
+				task.CompletedAt = &loadedStart
+				task.Instances[0].Status = InstanceStatusFailed
+				task.Instances[0].CompletedAt = &loadedStart
+				task.Instances[0].Error = "Processes of the command survived KILL on the node, so the task is paused and nothing was sent again."
+				task.FailedCount = 1
+
+				node := &task.Instances[0].Command.VMs[0]
+				node.Phase = CommandPhaseSettled
+				node.Status = CommandStatusFailed
+				node.Survived = true
+			})
+
+			loaded := fix.snapshot()
+			if loaded.Status != status || !loaded.Paused || !fix.waits() {
+				t.Fatalf("the task loaded %s paused=%v waiting=%v, want %s and waiting for Resume cleanup", loaded.Status, loaded.Paused, fix.waits(), status)
+			}
+
+			fix.manager.mu.RLock()
+			cleansOnly := commandCleansOnlyLocked(fix.task)
+			fix.manager.mu.RUnlock()
+
+			if !cleansOnly {
+				t.Error("a resume of the loaded task is not a Resume cleanup")
+			}
+
+			if got := fix.heldIDs(); len(got) != 1 || got[0] != "inst-0" || fix.busyWith(0) == nil {
+				t.Errorf("the summary holds %v, want inst-0 held", got)
+			}
+
+			if got := loaded.Instances[0].Error; !strings.Contains(got, "Resume cleanup") || !strings.Contains(got, "redis/0") {
+				t.Errorf("the instance says %q, want it to name the survivor and Resume cleanup", got)
+			}
+
+			if len(fix.recorded()) != 0 || fix.owns() {
+				t.Error("the loaded task was queued or sent something before a resume")
+			}
+
+			gate := func(context.Context) error {
+				t.Error("Resume cleanup asked for the gate")
+
+				return errors.New("gated")
+			}
+
+			fix.setCleanup("dep-0/0", cleanupSurvived)
+
+			err := fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, gate)
+			if err != nil {
+				t.Fatalf("Resume cleanup: %v", err)
+			}
+
+			waitUntil(t, "the recheck", func() bool { return fix.countOps("dep-0", 0, opRunCleanup) == 1 })
+			waitUntil(t, "the recheck to end", func() bool { return !fix.settling() })
+
+			again := fix.snapshot()
+			if again.Status != status || !again.Paused || !fix.waits() || fix.busyWith(0) == nil {
+				t.Fatalf("after a recheck that found survivors the task is %s paused=%v, want %s, paused, and held", again.Status, again.Paused, status)
+			}
+
+			fix.setCleanup("dep-0/0", cleanupEnded)
+
+			err = fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, gate)
+			if err != nil {
+				t.Fatalf("Resume cleanup: %v", err)
+			}
+
+			fix.waitFor("Resume cleanup to release the hold", func(UpgradeTask) bool { return fix.busyWith(0) == nil })
+			waitUntil(t, "the cleanup to end", func() bool { return !fix.settling() })
+
+			done := fix.snapshot()
+			if done.Status != status || done.Paused || nodeOf(done, 0, 0).Survived || len(fix.heldIDs()) != 0 {
+				t.Errorf("the task is %s paused=%v survived=%v holding %v, want %s holding nothing", done.Status, done.Paused, nodeOf(done, 0, 0).Survived, fix.heldIDs(), status)
+			}
+
+			if got := fix.opsOf("dep-0", 0); !slices.Equal(got, []string{opRunCleanup, opRunCleanup}) {
+				t.Errorf("the survivor saw %v, want two cleanups and nothing else", got)
+			}
+
+			fix.assertNoCommandText()
+		})
+	}
+}
+
+// A Resume cleanup of a completed task that arrives while the cleanup of
+// another instance still runs starts nothing at once. Once that cleanup
+// ends, the instance that resume asked for is cleaned, so the task never
+// rests unpaused with a hold that no control reaches.
+func TestLoadedEndedTaskResumedDuringACleanupCleansOnceItEnds(t *testing.T) {
+	fix := newTaskFixtureFrom(t, 2, 1, func(_ *taskFixture, task *UpgradeTask) {
+		task.CreationConfirmed = true
+		task.Status = TaskStatusCompleted
+		task.CompletedAt = &loadedStart
+		task.FailedCount = 2
+
+		for i := range task.Instances {
+			task.Instances[i].Status = InstanceStatusFailed
+			task.Instances[i].CompletedAt = &loadedStart
+
+			node := &task.Instances[i].Command.VMs[0]
+			node.Phase = CommandPhaseSettled
+			node.Status = CommandStatusFailed
+			node.Survived = true
+		}
+	})
+
+	release := make(chan struct{})
+
+	fix.mu.Lock()
+	fix.override = func(_ context.Context, deployment string, _ int, op string) *opAnswer {
+		if deployment == "dep-1" && op == opRunCleanup {
+			<-release
+		}
+
+		return nil
+	}
+	fix.mu.Unlock()
+
+	fix.setCleanup("dep-0/0", cleanupSurvived)
+	fix.setCleanup("dep-1/0", cleanupEnded)
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("Resume cleanup: %v", err)
+	}
+
+	fix.waitFor("the first instance to hold again", func(task UpgradeTask) bool {
+		return task.Paused && strings.Contains(task.Instances[0].Error, "still survive")
+	})
+
+	fix.setCleanup("dep-0/0", cleanupEnded)
+
+	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("Resume cleanup while another cleanup runs: %v", err)
+	}
+
+	if n := fix.countOps("dep-0", 0, opRunCleanup); n != 1 {
+		t.Fatalf("the first instance saw %d cleanups while the second still ran, want one", n)
+	}
+
+	close(release)
+
+	waitUntil(t, "both holds to be released", func() bool { return fix.busyWith(0) == nil && fix.busyWith(1) == nil })
+	waitUntil(t, "the cleanups to end", func() bool { return !fix.settling() })
+
+	done := fix.snapshot()
+	if done.Status != TaskStatusCompleted || done.Paused || len(fix.heldIDs()) != 0 {
+		t.Errorf("the task is %s paused=%v holding %v, want completed holding nothing", done.Status, done.Paused, fix.heldIDs())
+	}
+
+	if n := fix.countOps("dep-0", 0, opRunCleanup); n != 2 {
+		t.Errorf("the first instance saw %d cleanups, want two", n)
 	}
 
 	fix.assertNoCommandText()

@@ -3951,15 +3951,16 @@ func (m *Manager) cleanupCancelledVM(sessions *patchSessions, task *UpgradeTask,
 
 // waitsCancelledLocked reports whether the task is a cancelled patch task
 // whose open VM waits for a resume, as awaitCancelledResume leaves it, or a
-// cancelled and paused command task with a node that still holds files on
-// its VM, as holdCancelledCommand leaves it. The caller holds mu.
+// paused command task that has ended with a node still unresolved, as
+// holdCancelledCommand leaves a cancelled one and the load leaves a
+// completed or failed one an earlier build ended. The caller holds mu.
 func waitsCancelledLocked(task *UpgradeTask) bool {
-	if task.Status != TaskStatusCancelled || !task.Paused {
-		return false
+	if task.KindOrDefault() == TaskKindCommand {
+		return task.Paused && taskEndedLocked(task) && commandHeldLocked(task)
 	}
 
-	if task.KindOrDefault() == TaskKindCommand {
-		return commandHeldLocked(task)
+	if task.Status != TaskStatusCancelled || !task.Paused {
+		return false
 	}
 
 	return task.KindOrDefault() == TaskKindCertificates && certTaskMode(task) == RotationModePatch
