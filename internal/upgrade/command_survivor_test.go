@@ -363,6 +363,67 @@ func TestCommandSurvivorRecheckWithoutEvidenceKeepsTheHold(t *testing.T) {
 	}
 }
 
+// A recheck that finds the processes ended, but whose save of that is
+// refused, keeps the hold and says the result was not saved. The wrapper
+// already removed the task directory, so the next Resume cleanup saves
+// the evidence it kept without cleaning the node again, and releases the
+// instance once the save lands.
+func TestCommandSurvivorEndSavedOnTheNextResume(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	fix.waitSurvivorPause()
+	waitUntil(t, "the processor to let go", func() bool { return !fix.owned() })
+
+	cleared := func(task UpgradeTask) bool { return !task.Instances[0].Command.VMs[0].Survived }
+
+	fix.vault.refuseWhen(cleared)
+	fix.setCleanup("dep-0/0", cleanupEnded)
+	fix.resume()
+
+	held := fix.waitFor("the refused save to keep the hold", func(task UpgradeTask) bool {
+		return strings.Contains(task.Instances[0].Error, "could not save")
+	})
+	waitUntil(t, "the resume to end", func() bool { return !fix.owned() && !fix.settling() })
+
+	snap := fix.snapshot()
+	if !nodeOf(snap, 0, 0).Survived || !fix.holds() || len(fix.heldIDs()) != 1 {
+		t.Fatalf("the node is survived %v, held %v, summary %v, want the hold kept until the save lands", nodeOf(snap, 0, 0).Survived, fix.holds(), fix.heldIDs())
+	}
+
+	if snap.Status != TaskStatusPaused || !snap.Paused || !strings.Contains(held.Instances[0].Error, "Resume cleanup") {
+		t.Errorf("the task is %s, paused %v, saying %q, want paused for Resume cleanup", snap.Status, snap.Paused, held.Instances[0].Error)
+	}
+
+	if stored := fix.vault.stored(t); !stored.Survived {
+		t.Fatal("Vault holds the node as cleared after the save was refused")
+	}
+
+	cleanups := fix.countOps("dep-0", 0, opRunCleanup)
+
+	fix.vault.refuseWhen(nil)
+	fix.setCleanup("dep-0/0", "cleanup started=- exit=- killed=no")
+	fix.resume()
+	fix.waitReleased()
+
+	done := fix.waitFor("the task to end", func(task UpgradeTask) bool { return task.Status == TaskStatusFailed })
+	if nodeOf(done, 0, 0).Survived || len(fix.heldIDs()) != 0 {
+		t.Errorf("the node is survived %v holding %v, want it cleared and released", nodeOf(done, 0, 0).Survived, fix.heldIDs())
+	}
+
+	if !strings.Contains(nodeOf(done, 0, 0).Reason, "found them ended") {
+		t.Errorf("the node says %q, want the reason the recheck found", nodeOf(done, 0, 0).Reason)
+	}
+
+	if stored := fix.vault.stored(t); stored.Survived {
+		t.Error("Vault still holds the node as survived after the save landed")
+	}
+
+	if n := fix.countOps("dep-0", 0, opRunCleanup); n != cleanups {
+		t.Errorf("the second Resume cleanup sent %d cleanups, want none", n-cleanups)
+	}
+
+	fix.assertNoCommandText()
+}
+
 // A panic in the processing of a command task that holds an unresolved
 // node pauses the task rather than failing it, so the hold it keeps still
 // has a Resume cleanup to resolve it. A cancelled one waits for one.

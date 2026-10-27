@@ -224,6 +224,12 @@ type Manager struct {
 	// the node's key. The key is dropped once the node settles.
 	strandCauses map[string]string
 
+	// survivorEnds holds, under mu, the evidence a recheck found that the
+	// processes of a node which outlived KILL had ended, by the node's
+	// strandKey, while the save of it is not confirmed. The key is dropped
+	// once the save lands.
+	survivorEnds map[string]survivorEnd
+
 	// lookups holds, under mu, how many loaded deploys saved without a
 	// task ID are still being looked up, by their context ID or by their
 	// deployment. No upgrade resumes while it is above zero, so a task a
@@ -354,6 +360,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		loaded:         make(chan struct{}),
 		owned:          make(map[string]bool),
 		strandCauses:   make(map[string]string),
+		survivorEnds:   make(map[string]survivorEnd),
 		resumedOwned:   make(map[string]bool),
 		guard:          mutation.NewGuard(time.Now),
 		reservations:   make(map[string]map[string]func()),

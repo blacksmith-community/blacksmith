@@ -138,6 +138,16 @@ type runVault struct {
 	writes    []runWrite
 	saves     []runSave
 	failPhase CommandPhase
+	// failWhen refuses each save of the task whose record it accepts.
+	failWhen func(UpgradeTask) bool
+}
+
+// refuseWhen makes the vault refuse each save of the task whose record
+// accept accepts, or no save when accept is nil.
+func (v *runVault) refuseWhen(accept func(UpgradeTask) bool) {
+	v.mu.Lock()
+	v.failWhen = accept
+	v.mu.Unlock()
 }
 
 // runSave is one write of the whole command task's record, numbered from
@@ -166,7 +176,7 @@ func (v *runVault) Put(ctx context.Context, path string, data interface{}) error
 
 		v.mu.Lock()
 		v.saves = append(v.saves, runSave{seq: v.seq.Add(1), task: task})
-		fail := v.failPhase != "" && v.failPhase == phase
+		fail := v.failPhase != "" && v.failPhase == phase || v.failWhen != nil && v.failWhen(task)
 
 		if !fail {
 			v.writes = append(v.writes, runWrite{seq: v.seq.Add(1), phase: phase, matched: node.Matched})

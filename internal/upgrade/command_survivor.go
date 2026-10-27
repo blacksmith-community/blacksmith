@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // The messages a check of a node whose processes outlived KILL leaves on
@@ -20,7 +21,18 @@ const (
 		"that survived KILL still run. Instance %s stays held. Recreating the VM ends them, and Resume cleanup then releases the instance."
 	survivorUnchecked = "Cleanup on %s/%d found no record of the processes that survived KILL there, so it did not check them, " +
 		"and Blacksmith can't tell whether they still run. Instance %s stays held. Recreating the VM ends them, and Resume cleanup then releases the instance."
+	survivorUnsaved = "Cleanup on %s/%d found the processes that survived KILL there ended, but Blacksmith could not save that to Vault, " +
+		"so instance %s stays held. Once Vault is healthy, use Resume cleanup to save it and release the instance."
 )
+
+// survivorEnd is what a recheck found when the processes of a node that
+// outlived KILL had ended, kept by the node's strandKey in survivorEnds
+// until a save of it is confirmed. The wrapper removes the task directory
+// once it finds them ended, so a later cleanup can't find them again.
+type survivorEnd struct {
+	reason string
+	killed bool
+}
 
 // cleanupOnlyDone is what the next instance of a task says once a Resume
 // cleanup has nothing more to clean and the task pauses before the command
@@ -69,6 +81,16 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 	run := m.newCommandRun(sessions, task, inst, vm)
 	identity := run.identity
 
+	// An earlier recheck found the processes ended but could not save it,
+	// so that evidence is saved now and the node is not cleaned again.
+	m.mu.RLock()
+	end, found := m.survivorEnds[strandKey(task, inst, vm)]
+	m.mu.RUnlock()
+
+	if found {
+		return m.clearSurvivor(ctx, run, end)
+	}
+
 	err := run.buildInputs()
 
 	var live CommandVMIdentity
@@ -80,7 +102,7 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 		if errors.Is(err, errCommandVMChanged) {
 			reason := fmt.Sprintf("VM %s/%d was replaced or removed after processes of the command survived KILL on it, so nothing of them is left.", identity.Group, identity.Index)
 
-			return m.clearSurvivor(ctx, run, reason, false)
+			return m.clearSurvivor(ctx, run, survivorEnd{reason: reason})
 		}
 
 		if outcome != nil {
@@ -121,7 +143,7 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 
 	reason := "Processes of the command survived KILL on the node, and a later cleanup found them ended."
 
-	return m.clearSurvivor(ctx, run, reason, true)
+	return m.clearSurvivor(ctx, run, survivorEnd{reason: reason, killed: true})
 }
 
 // holdSurvivor keeps the instance held because a node whose processes
@@ -129,17 +151,7 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 // unfinished task pauses, and a cancelled one waits for Resume cleanup.
 func (m *Manager) holdSurvivor(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, message string, cause error) {
 	m.mu.Lock()
-
-	switch task.Status {
-	case TaskStatusPending, TaskStatusRunning, TaskStatusPaused:
-		task.Status = TaskStatusPaused
-		task.Paused = true
-	case TaskStatusCancelled:
-		task.Paused = true
-	case TaskStatusCompleted, TaskStatusFailed:
-	}
-
-	inst.Error = message
+	holdSurvivorLocked(task, inst, message)
 	m.mu.Unlock()
 
 	if cause != nil {
@@ -158,26 +170,49 @@ func (m *Manager) holdSurvivor(ctx context.Context, task *UpgradeTask, inst *Ins
 	}
 }
 
+// holdSurvivorLocked is the change holdSurvivor makes in memory. The
+// caller holds mu.
+func holdSurvivorLocked(task *UpgradeTask, inst *InstanceUpgrade, message string) {
+	switch task.Status {
+	case TaskStatusPending, TaskStatusRunning, TaskStatusPaused:
+		task.Status = TaskStatusPaused
+		task.Paused = true
+	case TaskStatusCancelled:
+		task.Paused = true
+	case TaskStatusCompleted, TaskStatusFailed:
+	}
+
+	inst.Error = message
+}
+
 // clearSurvivor records that nothing of the node's processes is left, and
 // releases the instance once nothing else of it is unresolved. The node
-// stays failed. It reports whether the instance is still held because the
-// save could not be confirmed, which pauses the task.
-func (m *Manager) clearSurvivor(ctx context.Context, run *commandRun, reason string, killed bool) bool {
-	err := run.advance(ctx, func(node *CommandVM) {
-		node.Survived = false
-		node.Reason = reason
-		node.Killed = node.Killed || killed
+// stays failed. The change is saved from a snapshot first and made in
+// memory only once the save is confirmed, so no reader and no other
+// worker sees the node cleared, and nothing releases the instance, while
+// Vault may still hold it as survived. A save that is not confirmed keeps
+// end in survivorEnds for the next Resume cleanup and pauses the task. It
+// reports whether the instance is still held.
+func (m *Manager) clearSurvivor(ctx context.Context, run *commandRun, end survivorEnd) bool {
+	key := strandKey(run.task, run.inst, run.vm)
 
-		// A settled instance ends with the reason of its failed node, and
-		// one still open takes it when it ends.
-		if run.inst.Status.settled() {
-			run.inst.Error = reason
-		} else {
-			run.inst.Error = ""
-		}
-	})
+	m.mu.Lock()
+	run.task.Revision++
+	snapshot := m.snapshotLocked(run.task)
+	at := slices.IndexFunc(run.task.Instances, func(inst InstanceUpgrade) bool { return inst.InstanceID == run.inst.InstanceID })
+	endSurvivorLocked(&snapshot.task.Instances[at], run.vm, end)
+	m.mu.Unlock()
+
+	err := m.confirmSnapshot(ctx, snapshot)
 	if err != nil {
-		m.pauseUnconfirmed(run.task, run.inst, "record that the processes which survived KILL have ended")
+		identity := run.identity
+
+		m.mu.Lock()
+		m.survivorEnds[key] = end
+		holdSurvivorLocked(run.task, run.inst, fmt.Sprintf(survivorUnsaved, identity.Group, identity.Index, run.inst.InstanceID))
+		m.mu.Unlock()
+
+		m.logger.Error("Command task %s found the processes that survived KILL on a node of instance %s ended, but could not save it, so the instance stays held", run.task.ID, run.inst.InstanceID)
 
 		return true
 	}
@@ -185,10 +220,30 @@ func (m *Manager) clearSurvivor(ctx context.Context, run *commandRun, reason str
 	m.logger.Info("Command task %s found the processes that survived KILL on a node of instance %s ended", run.task.ID, run.inst.InstanceID)
 
 	m.mu.Lock()
+	delete(m.survivorEnds, key)
+	endSurvivorLocked(run.inst, run.vm, end)
+	m.auditCommandNodeLocked(run.task, run.inst, run.vm)
 	m.releaseUnheldLocked(run.task)
 	m.mu.Unlock()
 
 	return false
+}
+
+// endSurvivorLocked clears the survivor of one node of the instance with
+// the reason end gives. The caller holds mu, or owns inst.
+func endSurvivorLocked(inst *InstanceUpgrade, vm int, end survivorEnd) {
+	node := &inst.Command.VMs[vm]
+	node.Survived = false
+	node.Reason = end.reason
+	node.Killed = node.Killed || end.killed
+
+	// A settled instance ends with the reason of its failed node, and one
+	// still open takes it when it ends.
+	if inst.Status.settled() {
+		inst.Error = end.reason
+	} else {
+		inst.Error = ""
+	}
 }
 
 // commandCleansOnlyLocked reports whether a resume of the task is a Resume
