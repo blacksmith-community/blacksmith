@@ -43,5 +43,5 @@ test('headings are styled as muted uppercase labels apart from the options', () 
   const option = css.match(/\.entity-navigation \.detail-tab \{([^}]*)\}/)[1];
   expect(option).toMatch(/padding: 8px 8px 8px 16px/);
   expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/forge-theme.css?v=20261026-quicknav-scale');
-  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.js?v=20261026-command-discard-gate');
+  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.js?v=20261026-command-discard-guard');
 });

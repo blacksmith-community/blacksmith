@@ -124,7 +124,7 @@ An expired preview refreshes with a fresh confirmation before it submits.
 
 If a create request gets no answer, the review keeps it pending and offers Retry and Discard.
 
-Retry resends the identical request. Discard first reads the task list and looks for the pending `client_request_id`, which task summaries carry. If a task has it, the run already started, and Activity opens on that task. If none has it, the pending create is cleared and its ID is never sent again. If the list cannot be read, the review offers a danger-styled Discard anyway, with a warning that the operator should check Activity before running the command again.
+Retry resends the identical request. Discard asks the broker to give the request up, sending only the `client_request_id` and the preview ID, and no command key is needed because a discard can only stop a run and never start one. The broker revokes the preview, so a create with that request ID that is still on its way, or still being processed, is refused and no task is made. If a create with that ID is already under way, the broker lets it finish first. When the broker confirms the discard, the pending create is cleared, its ID is never sent again, and a note says Blacksmith will refuse the request if it arrives late. If a task already exists for the request, the run started, and Activity opens on that task. If the broker cannot be reached or does not give a clear answer, the review offers a danger-styled Discard anyway, with a warning that the operator should check Activity before running the command again. Discard anyway clears the create only in the browser, so a run that appears later in Activity would have come from the discarded request.
 
 ### Activity and the task view
 
@@ -337,6 +337,7 @@ All routes sit under `/b/upgrade` and take the broker's basic auth. A command ke
 |-------|---------|
 | `POST /b/upgrade/commands/preview` | Takes `instance_ids`, `command`, `run_as`, `timeout_seconds`, `parallel`, and `max_in_flight`. Answers with a `preview_id` that expires. |
 | `POST /b/upgrade/tasks` | With `kind` set to `command`, takes `preview_id`, `client_request_id`, `command`, `run_as`, `timeout_seconds`, `parallel`, `max_in_flight`, `name`, and `reason`. |
+| `POST /b/upgrade/commands/discard` | Takes `client_request_id` and `preview_id`, applies the commands switch, and needs no command key. Answers 200 with `{"discarded": true}` after it revokes the preview, or with `{"discarded": false, "task_id": "..."}` when a task already exists for the request. |
 | `GET /b/upgrade/tasks/{id}/output?vm=<group>-<index>&instance=<instance-id>` | Answers with what one node printed. |
 
 The preview lists each instance with its deployment and service. It lists every VM as `{group, index, id, cid, az, ips, state, job_state, targeted, reason}`, and it carries `services`, `warnings`, `worker_count`, and `max_in_flight_limit`. The preview stores the command's SHA-256 and length and never the text. A preview expires after a short time, which is 15 minutes by default, and one kind of preview cannot be spent as the other.

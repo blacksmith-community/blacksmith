@@ -4617,6 +4617,7 @@
   const commandSignature = () => commandSignatureOf(commandValues());
 
   const COMMAND_CREATE_URL = '/b/upgrade/tasks';
+  const COMMAND_DISCARD_URL = '/b/upgrade/commands/discard';
 
   // The request headers of a command call, with the key when one is held.
   const commandHeaders = () => {
@@ -4783,11 +4784,12 @@
     pane.prepend(note);
   };
 
-  // Lets the operator give up a pending create. It reads the task list. A task
-  // with the request's ID means the run started, so the review settles like a
-  // conflict. A list without it clears the pending create. A list that cannot
-  // be read offers Discard anyway, since the broker cannot say either way.
-  const buildCommandDiscard = (clientRequestId, revision) => {
+  // Lets the operator give up a pending create. It asks the broker to discard
+  // the request, which revokes its preview so a late create is refused. An
+  // answer that names a task means the run started, so the review settles like
+  // a conflict. A discarded answer clears the pending create. Any other
+  // answer offers Discard anyway, which clears it here only.
+  const buildCommandDiscard = (clientRequestId, previewId, revision) => {
     const area = rotateEl('div', 'command-discard');
     const discard = rotateEl('button', 'outline', 'Discard');
     discard.type = 'button';
@@ -4804,50 +4806,56 @@
     area.appendChild(unconfirmed);
 
     const stillOpen = (open) => open === batchFlow.review && revision === batchFlow.revision;
-    const finish = (open, found) => {
+    const finish = (open, taskId, forced) => {
       commandDiscarding = null;
-      if (found) {
+      if (taskId) {
         batchFlow.review = null;
         batchFlow.submitting = true;
         updateBatchFlow();
-        open.resolve({ confirmed: false, discard: 'found' });
+        open.resolve({ confirmed: false, discard: 'found', taskId });
         return;
       }
       commandPending = null;
-      commandDiscardNote = 'The request was discarded and no run from it was found. A run that appears later in Activity would have come from it.';
+      commandDiscardNote = forced
+        ? 'The request was discarded here, and the broker did not confirm it. A run that appears later in Activity would have come from it.'
+        : 'The request was discarded, and Blacksmith will refuse it if it arrives late.';
       // This clears the key and the frozen review, and ends the open review.
       setBatchStep(1, false);
       renderCommandDiscardNote();
+    };
+    // Asks the broker. Only a 200 with a boolean discarded, and a task ID when
+    // it is false, settles the question. Anything else is unknown.
+    const ask = async () => {
+      try {
+        const response = await fetch(COMMAND_DISCARD_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ client_request_id: clientRequestId, preview_id: previewId })
+        });
+        if (response.status !== 200) return null;
+        const answer = await response.json();
+        if (!answer || typeof answer.discarded !== 'boolean') return null;
+        if (answer.discarded) return { discarded: true };
+        return typeof answer.task_id === 'string' && answer.task_id ? { taskId: answer.task_id } : null;
+      } catch (err) {
+        return null;
+      }
     };
     const run = async (force) => {
       const open = batchFlow.review;
       if (!open || commandDiscarding || !stillOpen(open)) return;
       commandDiscarding = open;
       updateBatchFlow();
-      let found = false;
-      let listed = false;
-      try {
-        const response = await fetch('/b/upgrade/tasks');
-        if (response.ok) {
-          const list = await response.json();
-          if (Array.isArray(list)) {
-            listed = true;
-            upgradeTasks = list;
-            found = list.some((task) => task && task.client_request_id === clientRequestId);
-          }
-        }
-      } catch (err) {
-        listed = false;
-      }
+      // Discard anyway clears locally and asks nothing more.
+      const answer = force ? null : await ask();
       if (!stillOpen(open)) { if (commandDiscarding === open) commandDiscarding = null; updateBatchFlow(); return; }
-      if (found) { finish(open, true); return; }
-      if (listed || force) { finish(open, false); return; }
+      if (answer && answer.taskId) { finish(open, answer.taskId, false); return; }
+      if (answer || force) { finish(open, '', Boolean(force)); return; }
       commandDiscarding = null;
       unconfirmed.hidden = false;
       updateBatchFlow();
     };
     discard.addEventListener('click', () => run(false));
-    // A list that now shows the run still settles it as started.
     anyway.addEventListener('click', () => run(true));
     return area;
   };
@@ -4951,7 +4959,7 @@
           batchFlow.submitting = false;
           updateBatchFlow();
           const reviewBody = buildCommandReviewBody(preview, values);
-          reviewBody.appendChild(buildCommandDiscard(createBody.client_request_id, revision));
+          reviewBody.appendChild(buildCommandDiscard(createBody.client_request_id, createBody.preview_id, revision));
           const retry = await showBatchReview({
             title: 'Outcome unknown',
             message: result.complete ? result.message : `${result.message} The broker may have started this run. Retry sends the same request, and the broker will not start it twice. Activity shows whether it started.`,
@@ -4962,7 +4970,7 @@
           }, revision);
           if (retry && retry.discard === 'found') {
             // The list holds the run, so it settles as a 409 request_id_conflict does.
-            result = { kind: 'exists' };
+            result = { kind: 'exists', taskId: retry.taskId };
             break;
           }
           if (!retry || retry.confirmed !== true) return;
@@ -4993,7 +5001,8 @@
         await fetchUpgradeTasks();
         const task = result.kind === 'created' ? result.task : upgradeTasks.find((candidate) => candidate && candidate.client_request_id === clientRequestId);
         if (result.kind === 'exists') window.Feedback.warning('This run already started. Open it in Activity.', { toast: true });
-        if (task && task.id) selectUpgradeTask(task.id);
+        const openId = (task && task.id) || result.taskId;
+        if (openId) selectUpgradeTask(openId);
         setBatchView('activity');
         return;
       }
@@ -6647,8 +6656,7 @@
     try {
       const response = await fetch('/b/upgrade/settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ max_batch_jobs: value })
+                body: JSON.stringify({ max_batch_jobs: value })
       });
 
       if (response.ok) {
@@ -21970,8 +21978,7 @@
       try {
         const response = await fetch('/b/cf/test-connection', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(testData)
+                    body: JSON.stringify(testData)
         });
 
         const result = await response.json();
@@ -22004,8 +22011,7 @@
       try {
         const response = await fetch('/b/cf/registrations', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(registrationData)
+                    body: JSON.stringify(registrationData)
         });
 
         const result = await response.json();
@@ -22041,8 +22047,7 @@
       try {
         const response = await fetch(`/b/cf/registrations/${registrationId}/register`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password })
+                    body: JSON.stringify({ password })
         });
 
         const result = await response.json();

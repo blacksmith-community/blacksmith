@@ -795,18 +795,27 @@ t('a command with hidden characters is reviewed as escapes but previewed and cre
 
 // ---- Discard a pending create ----
 
-// Answers the task list with the next spec of lists, and every create with
-// an unknown outcome, so a review stays pending until Discard settles it.
-// A list spec is a [status, body], reject, or a function of the pending ID.
-function pendingRoutes(env,lists){
- const {w}=env;let n=0;env.listReads=0;
+const DISCARD_URL='/b/upgrade/commands/discard';
+const okBody=(body)=>({raw:Promise.resolve({ok:true,status:200,json:()=>Promise.resolve(body),text:()=>Promise.resolve(JSON.stringify(body))})});
+
+// Answers every create with an unknown outcome, so a review stays pending
+// until Discard settles it. The discard answers the next spec of discards,
+// each a [status, body], reject, or a function of the request body. The task
+// list answers whatever list returns for the pending request ID.
+function pendingRoutes(env,discards,list){
+ const {w}=env;let n=0;env.listReads=0;env.discards=[];
+ w.__routes.unshift([DISCARD_URL,(u,o,j)=>{
+  const body=JSON.parse(o.body);
+  env.discards.push({url:DISCARD_URL,method:o.method,headers:o.headers||{},raw:o.body,body});
+  const spec=discards[Math.min(n,discards.length-1)];n++;
+  const r=typeof spec==='function'?spec(body):spec;
+  if(r&&r.raw) return r.raw;
+  return j(r[0],r[1]);
+ }]);
  w.__routes.unshift([CREATE_URL,(u,o,j)=>{
   if((o.method||'GET')!=='POST'){
    env.listReads++;
-   const spec=lists[Math.min(n,lists.length-1)];n++;
-   const r=typeof spec==='function'?spec(creates(env)[0]&&creates(env)[0].body.client_request_id):spec;
-   if(r&&r.raw) return r.raw;
-   return j(r[0],r[1]);
+   return j(200,list?list(creates(env)[0]&&creates(env)[0].body.client_request_id):[]);
   }
   env.requests.push({url:CREATE_URL,headers:o.headers||{},body:JSON.parse(o.body)});
   return Promise.reject(new TypeError('Failed to fetch'));
@@ -816,9 +825,11 @@ const discardBtn=(env)=>env.d.getElementById('command-discard');
 const anywayBtn=(env)=>env.d.getElementById('command-discard-anyway');
 const summaryOf=(id)=>({id:'task-77',kind:'command',status:'running',client_request_id:id,target:'Run command',total_count:2});
 const pendingReview=async(env)=>{await review(env);await confirmRun(env);};
+const DISCARDED=[200,{discarded:true}];
+const gated=(body)=>{let release;const gate=new Promise((r)=>{release=r;});return {release,spec:()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve(body),text:()=>Promise.resolve(JSON.stringify(body))}))})};};
 
 t('a review with no pending create shows no Discard',async()=>{
- const env=await setup();const {w,d}=env;try{
+ const env=await setup();const {w}=env;try{
  await review(env);
  expect(discardBtn(env)===null).toBe(true);
  }finally{w.close();}
@@ -826,7 +837,7 @@ t('a review with no pending create shows no Discard',async()=>{
 
 t('a pending create shows Discard beside Retry',async()=>{
  const env=await setup();const {w}=env;try{
- pendingRoutes(env,[[200,[]]]);
+ pendingRoutes(env,[DISCARDED]);
  await pendingReview(env);
  expect(discardBtn(env)!==null).toBe(true);
  expect(next(env).textContent).toBe('Retry');
@@ -834,38 +845,22 @@ t('a pending create shows Discard beside Retry',async()=>{
  }finally{w.close();}
 });
 
-t('Discard disables Retry and Discard while it reads the list',async()=>{
+t('Discard disables Retry and Discard while the broker answers',async()=>{
  const env=await setup();const {w}=env;try{
- let release;const gate=new Promise((r)=>{release=r;});
- pendingRoutes(env,[()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve([])}))})]);
+ const hold=gated({discarded:true});
+ pendingRoutes(env,[hold.spec]);
  await pendingReview(env);
  discardBtn(env).click();await sleep(10);
  expect(next(env).disabled).toBe(true);
  expect(discardBtn(env).disabled).toBe(true);
- release();await sleep(30);
- expect(env.w.__T.batchFlow.step).toBe(1);
+ hold.release();await sleep(30);
+ expect(w.__T.batchFlow.step).toBe(1);
  }finally{w.close();}
 });
 
-t('Discard finding the run in the list settles it like a conflict',async()=>{
+t('a discarded answer clears the create, keeps the settings, and says the broker will refuse a late request',async()=>{
  const env=await setup();const {w,d}=env;try{
- pendingRoutes(env,[(id)=>[200,[summaryOf(id)]]]);
- await pendingReview(env);
- discardBtn(env).click();await sleep(40);
- const text=d.body.textContent;
- expect(text.includes('already started')).toBe(true);
- expect(text.includes('not started')).toBe(false);
- expect(d.getElementById('upgrade').querySelector('.upgrade-main').hidden).toBe(true);
- expect(w.__T.batchFlow.review===null).toBe(true);
- expect(unlocked(d)).toBe(true);
- expect(creates(env).length).toBe(1);
- expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
- }finally{w.close();}
-});
-
-t('Discard with no matching task clears the create and keeps the settings',async()=>{
- const env=await setup();const {w,d}=env;try{
- pendingRoutes(env,[[200,[{id:'other',kind:'command',client_request_id:'someone-else'}]]]);
+ pendingRoutes(env,[DISCARDED]);
  await pendingReview(env);
  const firstId=creates(env)[0].body.client_request_id;
  discardBtn(env).click();await sleep(40);
@@ -877,11 +872,13 @@ t('Discard with no matching task clears the create and keeps the settings',async
  const note=d.getElementById('command-discard-note');
  expect(note!==null).toBe(true);
  expect(note.textContent.includes('discarded')).toBe(true);
- expect(note.textContent.includes('no run from it was found')).toBe(true);
- expect(note.textContent.includes('appears later in Activity')).toBe(true);
+ expect(note.textContent.includes('Blacksmith will refuse it if it arrives late')).toBe(true);
+ expect(note.textContent.includes('appears later in Activity')).toBe(false);
  expect(d.getElementById('batch-flow-review').textContent.includes('Outcome unknown')).toBe(false);
- expect(creates(env).length).toBe(1);
  expect(hasSecret(d.getElementById('batch-flow-review').textContent)).toBe(false);
+ // Discard reads no task list and sends no create.
+ expect(env.listReads).toBe(0);
+ expect(creates(env).length).toBe(1);
  // The next review sends a new ID, and never the discarded one.
  w.__T.setBatchStep(2,false);await sleep(5);
  next(env).click();await sleep(30);
@@ -893,7 +890,70 @@ t('Discard with no matching task clears the create and keeps the settings',async
  }finally{w.close();}
 });
 
-for(const [name,spec] of [['a rejected fetch',reject],['a 401',[401,{success:false,error:'sign in',code:'unauthorized'}]],['a 403',[403,{success:false,error:'no',code:'forbidden'}]],['a 503',[503,{success:false,error:'loading',code:'tasks_loading'}]],['a 500',[500,{success:false,error:'x',code:'internal'}]]]){
+t('the discard request carries only the request ID and the preview ID, without the key or the command',async()=>{
+ const env=await setup({preview:needKey});const {w,d}=env;try{
+ pendingRoutes(env,[DISCARDED]);
+ await review(env);
+ const input=d.querySelector('#batch-flow-review input[type="password"]');
+ type(w,input,KEY);next(env).click();await sleep(30);
+ await confirmRun(env);
+ // The create did carry the key, as it must.
+ expect(creates(env).length).toBe(1);
+ expect(headerOf(creates(env)[0],'X-Blacksmith-Command-Key')).toBe(KEY);
+ discardBtn(env).click();await sleep(40);
+ expect(env.discards.length).toBe(1);
+ const post=env.discards[0];
+ expect(post.method).toBe('POST');
+ expect(Object.keys(post.body).sort()).toEqual(['client_request_id','preview_id']);
+ expect(post.body.client_request_id).toBe(creates(env)[0].body.client_request_id);
+ expect(post.body.preview_id).toBe(creates(env)[0].body.preview_id);
+ expect(Object.keys(post.headers).some(k=>k.toLowerCase()==='x-blacksmith-command-key')).toBe(false);
+ expect(post.headers['Content-Type']).toBe('application/json');
+ expect(hasSecret(post.raw)).toBe(false);
+ expect(hasKey(post.raw)).toBe(false);
+ expect(creates(env).length).toBe(1);
+ expect(w.__T.batchFlow.step).toBe(1);
+ expect(quiet(env)).toBe(true);
+ expect(hasSecret(d.getElementById('batch-flow-review').textContent)).toBe(false);
+ }finally{w.close();}
+});
+
+t('a discard that finds the run settles it like a conflict and opens it in Activity',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ pendingRoutes(env,[(body)=>[200,{discarded:false,task_id:'task-77'}]],(id)=>[summaryOf(id)]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(40);
+ const text=d.body.textContent;
+ expect(text.includes('already started')).toBe(true);
+ expect(d.getElementById('command-discard-note')===null).toBe(true);
+ expect(d.getElementById('upgrade').querySelector('.upgrade-main').hidden).toBe(true);
+ expect(w.__T.batchFlow.review===null).toBe(true);
+ expect(unlocked(d)).toBe(true);
+ expect(creates(env).length).toBe(1);
+ expect(env.discards.length).toBe(1);
+ expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
+ }finally{w.close();}
+});
+
+t('a discard that names a task opens it although the task list does not show it yet',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ pendingRoutes(env,[[200,{discarded:false,task_id:'task-77'}]],()=>[]);
+ await pendingReview(env);
+ discardBtn(env).click();await sleep(40);
+ expect(d.body.textContent.includes('already started')).toBe(true);
+ expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
+ }finally{w.close();}
+});
+
+const MALFORMED=[
+ ['a 200 with an empty body',[200,{}]],
+ ['a 200 whose discarded is not a boolean',[200,{discarded:'yes'}]],
+ ['a 200 that says not discarded and names no task',[200,{discarded:false}]],
+ ['a 200 that is not JSON',unreadable],
+ ['a 202 with a discarded body',[202,{discarded:true}]],
+ ['a 404 with a discarded body',[404,{discarded:true}]]
+];
+for(const [name,spec] of [['a rejected fetch',reject],['a 401',[401,{success:false,error:'sign in',code:'unauthorized'}]],['a 403',[403,{success:false,error:'no',code:'commands_disabled'}]],['a 503',[503,{success:false,error:'loading',code:'tasks_loading'}]],['a 500',[500,{success:false,error:'x',code:'internal'}]],...MALFORMED]){
  t(`Discard after ${name} offers Discard anyway and never uses a dialog`,async()=>{
   const env=await setup();const {w,d}=env;try{
   pendingRoutes(env,[spec]);
@@ -914,16 +974,21 @@ for(const [name,spec] of [['a rejected fetch',reject],['a 401',[401,{success:fal
  });
 }
 
-t('Discard anyway clears the create, and the discarded ID is never sent again',async()=>{
+t('Discard anyway clears the create locally, posts nothing more, and the discarded ID is never sent again',async()=>{
  const env=await setup();const {w,d}=env;try{
- pendingRoutes(env,[reject,reject,[200,[]]]);
+ pendingRoutes(env,[reject]);
  await pendingReview(env);
  const firstId=creates(env)[0].body.client_request_id;
  discardBtn(env).click();await sleep(30);
+ expect(env.discards.length).toBe(1);
  anywayBtn(env).click();await sleep(30);
+ expect(env.discards.length).toBe(1);
+ expect(env.listReads).toBe(0);
  expect(w.__T.batchFlow.step).toBe(1);
  expect(unlocked(d)).toBe(true);
- expect(d.getElementById('command-discard-note')!==null).toBe(true);
+ const note=d.getElementById('command-discard-note');
+ expect(note!==null).toBe(true);
+ expect(note.textContent.includes('A run that appears later in Activity would have come from it')).toBe(true);
  expect(creates(env).length).toBe(1);
  w.__T.setBatchStep(2,false);await sleep(5);
  next(env).click();await sleep(30);
@@ -935,7 +1000,7 @@ t('Discard anyway clears the create, and the discarded ID is never sent again',a
 
 t('Discard clears the held command key and the key never shows after',async()=>{
  const env=await setup({preview:needKey});const {w,d}=env;try{
- pendingRoutes(env,[[200,[]]]);
+ pendingRoutes(env,[DISCARDED]);
  await review(env);
  const input=d.querySelector('#batch-flow-review input[type="password"]');
  expect(input!==null).toBe(true);
@@ -949,30 +1014,14 @@ t('Discard clears the held command key and the key never shows after',async()=>{
  }finally{w.close();}
 });
 
-t('a conflict on Retry finds the run in a list of summaries and opens it',async()=>{
- const env=await setup({create:seq(reject,CONFLICT)});const {w,d}=env;try{
- // The list endpoint answers summaries, which carry the request ID.
- w.__routes.unshift([CREATE_URL,(u,o,j)=>{
-  if((o.method||'GET')!=='GET') return undefined;
-  const id=creates(env)[0]&&creates(env)[0].body.client_request_id;
-  return j(200,[{id:'task-77',kind:'command',status:'running',client_request_id:id,target:'Run command',total_count:2}]);
- }]);
- await review(env);await confirmRun(env);
- next(env).click();await sleep(40);
- expect(d.body.textContent.includes('already started')).toBe(true);
- expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
- expect(unlocked(d)).toBe(true);
- }finally{w.close();}
-});
-
-t('leaving for Activity while Discard reads the list drops the answer',async()=>{
+t('leaving for Activity while Discard waits drops the answer',async()=>{
  const env=await setup();const {w,d}=env;try{
- let release;const gate=new Promise((r)=>{release=r;});
- pendingRoutes(env,[()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve([])}))})]);
+ const hold=gated({discarded:true});
+ pendingRoutes(env,[hold.spec]);
  await pendingReview(env);
  discardBtn(env).click();await sleep(10);
  d.getElementById('batch-activity').click();await sleep(5);
- release();await sleep(40);
+ hold.release();await sleep(40);
  expect(w.__T.batchFlow.step).toBe(3);
  expect(d.getElementById('command-discard-note')===null).toBe(true);
  d.getElementById('batch-new').click();
@@ -982,29 +1031,26 @@ t('leaving for Activity while Discard reads the list drops the answer',async()=>
  }finally{w.close();}
 });
 
-// ---- Discard: fix round 1 ----
-
-t('a stale Discard read does not leave the next review stuck',async()=>{
+t('a stale Discard answer does not leave the next review stuck',async()=>{
  const env=await setup();const {w,d}=env;try{
- let release;const gate=new Promise((r)=>{release=r;});
- pendingRoutes(env,[()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve([])}))})]);
+ const hold=gated({discarded:true});
+ pendingRoutes(env,[hold.spec]);
  await pendingReview(env);
  discardBtn(env).click();await sleep(10);
  d.getElementById('batch-activity').click();await sleep(5);
  d.getElementById('batch-new').click();
- // The read is still held open.
  next(env).click();await sleep(30);
  expect(next(env).textContent).toBe('Retry');
  expect(next(env).disabled).toBe(false);
  expect(discardBtn(env).disabled).toBe(false);
- release();await sleep(30);
+ hold.release();await sleep(30);
  expect(w.__T.batchFlow.step).toBe(3);
  expect(next(env).disabled).toBe(false);
  }finally{w.close();}
 });
 
 t('Discard and Discard anyway wait while a Retry is in flight',async()=>{
- const env=await setup();const {w,d}=env;try{
+ const env=await setup();const {w}=env;try{
  let release;const gate=new Promise((r)=>{release=r;});
  pendingRoutes(env,[reject]);
  await pendingReview(env);
@@ -1023,9 +1069,9 @@ t('Discard and Discard anyway wait while a Retry is in flight',async()=>{
  }finally{w.close();}
 });
 
-t('a Discard with no run found keeps the Activity output key',async()=>{
+t('a discarded answer keeps the Activity output key',async()=>{
  const env=await setup();const {w,d}=env;try{
- pendingRoutes(env,[[200,[]]]);
+ pendingRoutes(env,[DISCARDED]);
  await pendingReview(env);
  const held=d.createElement('input');held.type='password';held.className='command-output-key';held.value=KEY;d.querySelector('#upgrade').appendChild(held);
  discardBtn(env).click();await sleep(40);
@@ -1034,24 +1080,9 @@ t('a Discard with no run found keeps the Activity output key',async()=>{
  }finally{w.close();}
 });
 
-t('Discard anyway reads again and a run that appeared settles as started',async()=>{
- const env=await setup();const {w,d}=env;try{
- pendingRoutes(env,[reject,(id)=>[200,[summaryOf(id)]]]);
- await pendingReview(env);
- discardBtn(env).click();await sleep(30);
- expect(anywayBtn(env).parentElement.hidden).toBe(false);
- anywayBtn(env).click();await sleep(50);
- expect(env.listReads>=2).toBe(true);
- expect(d.body.textContent.includes('already started')).toBe(true);
- expect(d.getElementById('command-discard-note')===null).toBe(true);
- expect(env.calls.some((c)=>String(c).includes('/b/upgrade/tasks/task-77'))).toBe(true);
- expect(creates(env).length).toBe(1);
- }finally{w.close();}
-});
-
 t('the Discard button uses the outline style that Back uses',async()=>{
  const env=await setup();const {w}=env;try{
- pendingRoutes(env,[[200,[]]]);
+ pendingRoutes(env,[DISCARDED]);
  await pendingReview(env);
  expect(discardBtn(env).classList.contains('outline')).toBe(true);
  }finally{w.close();}
