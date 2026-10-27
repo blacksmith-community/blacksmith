@@ -256,6 +256,14 @@ func decisionRoute(path string) (string, string, string, bool) {
 func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanceID, action string) {
 	h.logger.Info("Decision %s on instance %s of task %s", action, instanceID, taskID)
 
+	err := h.gateCommandDecision(r, taskID)
+	if err != nil {
+		h.logger.Info("Refused decision %s on command task %s: %v", action, taskID, err)
+		writeCreateError(w, err)
+
+		return
+	}
+
 	if action == decisionPreview {
 		preview, err := h.tasks.RepreviewForDecision(r.Context(), taskID, instanceID)
 		if err != nil {
@@ -269,8 +277,6 @@ func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanc
 
 		return
 	}
-
-	var err error
 
 	if action == decisionCandidates {
 		err = h.tasks.RefreshCandidates(r.Context(), taskID, instanceID)
@@ -297,19 +303,21 @@ func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanc
 		return
 	}
 
-	// The answer is the task, and a command task carries its command
-	// text, so it takes the read gate the task detail takes.
-	if task.KindOrDefault() == upgrade.TaskKindCommand {
-		err = h.manager.Authorizer().AuthorizeRead(r.Context(), r)
-		if err != nil {
-			h.logger.Info("Refused the decision answer for command task %s: %v", taskID, err)
-			writeCreateError(w, err)
+	response.JSON(w, http.StatusOK, task)
+}
 
-			return
-		}
+// gateCommandDecision gives a decision on a command task the read gate the
+// task detail takes, because the answer is the task and a command task
+// carries its command text. It runs before the decision is applied, so a
+// caller the gate refuses changes nothing. A task that cannot be read is
+// left to the decision, which reports its own error.
+func (h *Handler) gateCommandDecision(r *http.Request, taskID string) error {
+	task, err := h.tasks.GetTask(taskID)
+	if err != nil || task == nil || task.KindOrDefault() != upgrade.TaskKindCommand {
+		return nil
 	}
 
-	response.JSON(w, http.StatusOK, task)
+	return h.manager.Authorizer().AuthorizeRead(r.Context(), r)
 }
 
 // decide decodes the body of the decision and hands it to the manager. A

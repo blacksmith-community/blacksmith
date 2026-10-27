@@ -2,19 +2,23 @@ package upgrade
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/config"
 	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/logger"
 )
 
-const decideGateCommand = "echo decide-gate-canary-4e7a"
+const (
+	decideGateCommand = "echo decide-gate-canary-4e7a"
+	decideGateKey     = "decide-gate-key"
+)
 
-// commandDecisionTasks answers a decision as a manager would that applied
-// it, and answers GetTask with a command task, which carries the command
-// text.
+// commandDecisionTasks records each decision call as decisionTasks does,
+// and answers GetTask with a command task, which carries the command text.
 type commandDecisionTasks struct {
 	decisionTasks
 }
@@ -27,37 +31,113 @@ func (c *commandDecisionTasks) GetTask(taskID string) (*upgrade.UpgradeTask, err
 	}, nil
 }
 
-// A decision that succeeds answers with the task, and the detail of a
-// command task holds the command text, so the answer takes the read gate
-// the task detail takes. With commands off the caller gets the gate's own
-// refusal and never the text.
-func TestDecideOnACommandTaskAnswersWithTheReadGate(t *testing.T) {
+func (c *commandDecisionTasks) recorded() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return append([]string(nil), c.calls...)
+}
+
+// decideGateHandler is a handler over a manager whose commands
+// configuration is cfg, and over tasks that hold one command task.
+func decideGateHandler(t *testing.T, cfg config.CommandsConfig) (*Handler, *commandDecisionTasks) {
+	t.Helper()
+
+	log := logger.NewNoOpLogger()
+	manager := upgrade.NewManager(log, nil, emptyVault{})
+
+	err := manager.Configure(upgrade.Deps{Commands: func() config.CommandsConfig { return cfg }})
+	if err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+
+	tasks := &commandDecisionTasks{}
+
+	return &Handler{logger: log, manager: manager, tasks: tasks}, tasks
+}
+
+// postDecisionWithKey sends the body to the path with the command key
+// header when key is not empty, and returns the status and the raw answer.
+func postDecisionWithKey(t *testing.T, handler *Handler, path, body, key string) (int, string) {
+	t.Helper()
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+	if key != "" {
+		request.Header.Set(upgrade.CommandKeyHeader, key)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, request)
+
+	return rec.Code, rec.Body.String()
+}
+
+// A decision on a command task takes the read gate the task detail takes,
+// and it takes it before anything is applied. A caller the gate refuses
+// gets the gate's own refusal, never the command text, and the decision
+// never reaches the manager. A caller the gate allows has the decision
+// applied.
+func TestDecideOnACommandTaskTakesTheReadGateFirst(t *testing.T) {
 	t.Parallel()
+
+	root := true
+	keyed := config.CommandsConfig{Root: &root, Credential: config.CommandCredential{Key: decideGateKey}}
+	off := false
+	disabled := config.CommandsConfig{Operation: config.CommandSwitch{On: &off}}
 
 	bodies := map[string]string{
 		"reconcile":  `{"action":"adopt","variable":"v"}`,
 		"approve":    `{}`,
 		"resolve":    `{"action":"verify"}`,
 		"candidates": ``,
+		"preview":    ``,
 	}
 
-	for action, body := range bodies {
-		t.Run(action, func(t *testing.T) {
-			t.Parallel()
+	cases := map[string]struct {
+		cfg    config.CommandsConfig
+		key    string
+		status int
+		code   string
+	}{
+		"commands off": {disabled, "", http.StatusForbidden, apierr.CodeCommandsDisabled},
+		"wrong key":    {keyed, "wrong", http.StatusUnauthorized, apierr.CodeCommandCredentialRequired},
+		"right key":    {keyed, decideGateKey, http.StatusOK, ""},
+	}
 
-			log := logger.NewNoOpLogger()
-			handler := &Handler{logger: log, manager: upgrade.NewManager(log, nil, emptyVault{}), tasks: &commandDecisionTasks{}}
+	for name, tc := range cases {
+		for action, body := range bodies {
+			t.Run(name+"/"+action, func(t *testing.T) {
+				t.Parallel()
 
-			status, answer := postDecision(t, handler, "/b/upgrade/tasks/x/instances/i1/"+action, body)
-			if status != http.StatusForbidden || answer["code"] != apierr.CodeCommandsDisabled {
-				t.Fatalf("answered %d with %v, want 403 %s", status, answer, apierr.CodeCommandsDisabled)
-			}
+				handler, tasks := decideGateHandler(t, tc.cfg)
 
-			for _, value := range answer {
-				if text, ok := value.(string); ok && strings.Contains(text, decideGateCommand) {
-					t.Fatal("the refusal holds the command text")
+				status, raw := postDecisionWithKey(t, handler, "/b/upgrade/tasks/x/instances/i1/"+action, body, tc.key)
+				if status != tc.status {
+					t.Fatalf("answered %d, want %d", status, tc.status)
 				}
-			}
-		})
+
+				calls := tasks.recorded()
+
+				if tc.code == "" {
+					if len(calls) != 1 || !strings.HasPrefix(calls[0], action+" ") {
+						t.Errorf("the manager saw %v, want the %s call", calls, action)
+					}
+
+					return
+				}
+
+				if !strings.Contains(raw, `"code":"`+tc.code+`"`) {
+					t.Errorf("the refusal does not carry the code %s", tc.code)
+				}
+
+				if strings.Contains(raw, decideGateCommand) {
+					t.Error("the refusal holds the command text")
+				}
+
+				if len(calls) != 0 {
+					t.Errorf("the manager saw %v before the gate refused", calls)
+				}
+			})
+		}
 	}
 }
