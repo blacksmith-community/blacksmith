@@ -7849,6 +7849,10 @@
       body.appendChild(rotateEl('p', 'command-output-note', context.skipped ? 'The command never ran on this node.' : COMMAND_OUTPUT_PLACEHOLDER));
       return;
     }
+    if (context.noOutput) {
+      body.appendChild(rotateEl('p', 'command-output-note', ['This node produced no output.', context.reason].filter(Boolean).join(' ')));
+      return;
+    }
     if (!entry) return;
     if (entry.status === 'loading') {
       body.appendChild(rotateEl('p', 'command-output-note', 'Loading output...'));
@@ -7931,6 +7935,8 @@
       const name = `${identity.group}-${identity.index}`;
       const key = [task.id, instance.instance_id, name].join('\u0000');
       const settled = node.phase === 'settled';
+      // A node that settled before it ran anything has no stored output to read.
+      const noOutput = settled && !node.output_path;
       const row = rotateEl('div', 'command-node');
       const head = rotateEl('div', 'command-node-head');
       const icon = document.createElement('span');
@@ -7950,15 +7956,15 @@
 
       const details = rotateEl('details', 'command-output-details');
       details.dataset.keepKey = `output:${key}`;
-      const summary = rotateEl('summary', '', !settled ? 'Output' : `Output (stdout ${commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)}, stderr ${commandStreamText(node.stderr_kept, node.stderr_received, node.stderr_truncated)})`);
+      const summary = rotateEl('summary', '', !settled ? 'Output' : noOutput ? 'Output (none kept)' : `Output (stdout ${commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)}, stderr ${commandStreamText(node.stderr_kept, node.stderr_received, node.stderr_truncated)})`);
       const body = rotateEl('div', 'command-output-body');
       body.dataset.outputKey = key;
-      const context = { key, taskId: task.id, instanceId: instance.instance_id, vm: name, settled, skipped: node.phase === 'skipped' };
+      const context = { key, taskId: task.id, instanceId: instance.instance_id, vm: name, settled, noOutput, reason: node.reason || '', skipped: node.phase === 'skipped' };
       body.commandOutputContext = context;
       fillCommandOutput(body, context);
       details.append(summary, body);
       details.addEventListener('toggle', () => {
-        if (details.open && settled && !commandOutputs.has(key)) loadCommandOutput(context);
+        if (details.open && settled && !noOutput && !commandOutputs.has(key)) loadCommandOutput(context);
       });
       row.appendChild(details);
       wrap.appendChild(row);

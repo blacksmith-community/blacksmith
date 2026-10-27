@@ -894,3 +894,20 @@ t('the resume key prompt goes away once the task is no longer paused',async()=>{
  expect(panel(d).querySelector('.command-key-prompt')===null).toBe(true);
  }finally{w.close();}
 });
+
+t('a settled node with no kept output says so, reads nothing, and offers no Retry',async()=>{
+ const gone=(group,index,over={})=>node(group,index,{status:'failed',exit_code:undefined,output_path:undefined,stdout_kept:0,stdout_received:0,reason:'the node moved to another VM',...over});
+ const env=await setup({detail:task({instances:[inst('val-a',[gone('node',0),gone('node',1,{reason:undefined})])]})});const {w,d}=env;try{
+ await open(env);
+ const first=detailsOf(d)[0];
+ expect(first.querySelector('summary').textContent).toBe('Output (none kept)');
+ await openDetails(env,0);await openDetails(env,1);
+ expect(env.outputs.length).toBe(0);
+ const body=detailsOf(d)[0].querySelector('.command-output-body');
+ expect(body.textContent.includes('produced no output')).toBe(true);
+ expect(body.textContent.includes('the node moved to another VM')).toBe(true);
+ expect(detailsOf(d)[1].querySelector('.command-output-body').textContent.includes('produced no output')).toBe(true);
+ expect(detailsOf(d).every(el=>el.querySelector('button')===null)).toBe(true);
+ expect(pageText(d).includes('Could not read the output')).toBe(false);
+ }finally{w.close();}
+});
