@@ -168,3 +168,33 @@ func TestACancelledTaskRefusedAtDispatchStaysCancelled(t *testing.T) {
 	fix.waitReleased()
 	fix.assertNoCommandText()
 }
+
+// The authorizer refuses a queued command task when the dispatcher first
+// asks, and allows it by the time the dispatcher would pause it, as when
+// the switch is turned back on in between. The task runs, rather than
+// being let go running with no processor.
+func TestAQueuedTaskAllowedAgainBeforeItsPauseRuns(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+
+	var checks atomic.Int32
+
+	fix.authHook = func(context.Context) error {
+		if checks.Add(1) == 1 {
+			return errors.New("the authorizer refuses the stored task")
+		}
+
+		return nil
+	}
+
+	fix.queue()
+
+	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+	})
+
+	if done.Instances[0].Status != InstanceStatusSuccess || done.Paused {
+		t.Errorf("the instance is %s with the task paused %v, want success", done.Instances[0].Status, done.Paused)
+	}
+
+	fix.assertNoCommandText()
+}

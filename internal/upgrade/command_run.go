@@ -968,7 +968,7 @@ const commandRefusedMessage = "Running this command is no longer allowed, so the
 // a paused command task holds every instance that has not settled. The
 // caller holds mu.
 func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
-	if task.KindOrDefault() != TaskKindCommand || task.Command == nil || !m.configured {
+	if !m.asksAboutCommandLocked(task) {
 		return false
 	}
 
@@ -978,6 +978,13 @@ func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 	}
 
 	return m.pauseCommandForRefusalLocked(task, err)
+}
+
+// asksAboutCommandLocked reports whether the authorizer is asked about the
+// task, which it is for a command task of a configured manager. The
+// caller holds mu.
+func (m *Manager) asksAboutCommandLocked(task *UpgradeTask) bool {
+	return task.KindOrDefault() == TaskKindCommand && task.Command != nil && m.configured
 }
 
 // pauseCommandForRefusalLocked pauses the command task for the refusal, as

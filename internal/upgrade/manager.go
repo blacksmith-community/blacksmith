@@ -700,13 +700,18 @@ func (m *Manager) dispatchTasks() {
 			m.mu.RUnlock()
 
 			if !runs {
-				if m.pauseRefusedQueued(task) {
+				switch m.pauseRefusedQueued(task) {
+				case queuePaused:
 					continue
+				case queueDropped:
+					m.dropFromQueue(task)
+
+					continue
+				case queueRuns:
+					// The authorizer allowed the task by the time it was
+					// asked again, so the task runs rather than being let
+					// go running with no processor.
 				}
-
-				m.dropFromQueue(task)
-
-				continue
 			}
 
 			// Spawn a goroutine for each task to allow parallel processing
@@ -1754,40 +1759,72 @@ func (m *Manager) dropFromQueue(task *UpgradeTask) {
 
 	if closed > 0 {
 		m.logger.Info("Ended %d instances of cancelled command task %s, which nothing processes", closed, task.ID)
-
-		err := m.persistCertConfirmed(context.WithoutCancel(m.ctx), task)
-		if err != nil {
-			m.logger.Error("Failed to confirm the ended instances of task %s: %v", task.ID, err)
-		}
+		m.saveOffDispatcher(task, "the ended instances of")
 	}
 }
 
-// pauseRefusedQueued pauses a queued command task the authorizer refuses,
-// with the refusal on its instance, so Resume and Cancel reach it. The task
-// stops being owned and keeps its holds. It reports whether it paused the
-// task, which it does only for a live command task of a configured
-// manager, so a cancelled one is dropped and stays cancelled.
-func (m *Manager) pauseRefusedQueued(task *UpgradeTask) bool {
+// queueAnswer is what the dispatcher does with a queued task it found it
+// does not run.
+type queueAnswer int
+
+const (
+	// queueDropped lets the task go, as dropFromQueue does.
+	queueDropped queueAnswer = iota
+	// queuePaused means the task paused for a refusal and was let go.
+	queuePaused
+	// queueRuns means the authorizer allows the task after all, so it
+	// runs.
+	queueRuns
+)
+
+// pauseRefusedQueued asks the authorizer once more about a queued command
+// task of a configured manager. A refusal pauses a live task, with the
+// refusal on its instance, so Resume and Cancel reach it. The task stops
+// being owned and keeps its holds. A task the authorizer now allows runs,
+// and any other task, such as one that was cancelled, is dropped.
+func (m *Manager) pauseRefusedQueued(task *UpgradeTask) queueAnswer {
 	m.mu.Lock()
 
-	paused := m.pauseRefusedCommandLocked(task)
-	if paused {
-		delete(m.owned, task.ID)
-		m.releaseUnheldLocked(task)
+	answer := queueDropped
+
+	if m.asksAboutCommandLocked(task) {
+		err := m.commandRefusalLocked(task)
+
+		switch {
+		case err == nil:
+			answer = queueRuns
+		case m.pauseCommandForRefusalLocked(task, err):
+			answer = queuePaused
+
+			delete(m.owned, task.ID)
+			m.releaseUnheldLocked(task)
+		}
 	}
 
 	m.mu.Unlock()
 
-	if !paused {
-		return false
+	if answer == queuePaused {
+		m.saveOffDispatcher(task, "the refusal pause of")
 	}
 
-	err := m.persistCertConfirmed(context.WithoutCancel(m.ctx), task)
-	if err != nil {
-		m.logger.Error("Failed to confirm that command task %s paused: %v", task.ID, err)
-	}
+	return answer
+}
 
-	return true
+// saveOffDispatcher confirms the save of the task on a goroutine of its
+// own, so a slow Vault holds up neither the other queued tasks nor Stop.
+// Stop waits for it as it waits for every processor. The dispatcher is
+// counted while it runs, so the count is never zero when this adds to it.
+func (m *Manager) saveOffDispatcher(task *UpgradeTask, what string) {
+	m.wg.Add(1)
+
+	go func() {
+		defer m.wg.Done()
+
+		err := m.persistCertConfirmed(context.WithoutCancel(m.ctx), task)
+		if err != nil {
+			m.logger.Error("Failed to confirm %s task %s: %v", what, task.ID, err)
+		}
+	}()
 }
 
 // runTask runs one queued upgrade. Its cancel channel is registered before
