@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,14 @@ func (f *taskFixture) setCleanup(key, record string) {
 func (f *taskFixture) replaceVM(deployment string, index int) {
 	f.mu.Lock()
 	f.listed[deployment][index].CID = "cid-recreated"
+	f.mu.Unlock()
+}
+
+// removeVM drops a node's VM from the deployment's listing, as a delete
+// does.
+func (f *taskFixture) removeVM(deployment string, index int) {
+	f.mu.Lock()
+	f.listed[deployment] = slices.Delete(slices.Clone(f.listed[deployment]), index, index+1)
 	f.mu.Unlock()
 }
 

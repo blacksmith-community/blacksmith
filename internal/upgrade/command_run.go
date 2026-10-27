@@ -1920,6 +1920,10 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 	run := m.newCommandRun(sessions, task, inst, vm)
 
 	err := m.reachStranded(ctx, run)
+	if errors.Is(err, errCommandVMChanged) {
+		return m.settleReplacedNode(ctx, run)
+	}
+
 	if err != nil {
 		m.pauseStranded(task, inst, strandUnreachable, err)
 
@@ -1948,6 +1952,26 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 	stopped := run.settle(ctx, outcome)
 	if m.commandNodeFailed(inst, vm) {
 		m.clearStrandCause(task, inst, vm)
+	}
+
+	return stopped
+}
+
+// settleReplacedNode settles a stranded node whose VM the director lists
+// with another CID, or not at all. Nothing the command left can be on a VM
+// that is gone, so the node settles failed without cleanup, and the
+// instance is released once nothing else of it is unresolved.
+func (m *Manager) settleReplacedNode(ctx context.Context, run *commandRun) bool {
+	when := "after the command was sent, so its outcome isn't known"
+	if m.commandNodePhase(run.inst, run.vm) == CommandPhaseStaged {
+		when = "before the command was sent, so it never ran"
+	}
+
+	reason := fmt.Sprintf("VM %s/%d was replaced %s, and nothing of it is left to clean.", run.identity.Group, run.identity.Index, when)
+
+	stopped := run.settle(ctx, commandOutcome{status: CommandStatusFailed, reason: reason})
+	if m.commandNodeFailed(run.inst, run.vm) {
+		m.clearStrandCause(run.task, run.inst, run.vm)
 	}
 
 	return stopped
