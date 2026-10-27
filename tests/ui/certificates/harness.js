@@ -43,7 +43,7 @@ function boot(opts={}){
   w.console.log=keep; w.console.warn=keep; w.console.info=keep; w.console.debug=keep; w.console.error=(...a)=>{errors.push(a.map(show).join(' ')); keep(...a);};
   w.console.trace=keep; w.console.dir=keep; w.console.table=keep; w.console.group=keep; w.console.groupCollapsed=keep;
   w.console.assert=(ok,...a)=>{ if(!ok) keep(...a); };
-  w.__routes=[];
+  w.__routes=(opts.routes||[]).slice();
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(typeof body==='string'?body:JSON.stringify(body))});
   w.fetch=(u,o={})=>{
     u=String(u); calls.push((o.method||'GET')+' '+u+(o.body?' '+o.body:''));

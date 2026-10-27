@@ -2440,10 +2440,69 @@
   const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(label.toLowerCase())} →</span></button>`;
   const entityMetadata = (pairs, title = 'Technical details') => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span>${escapeHtml(typeof value === 'object' ? JSON.stringify(value,null,2) : String(value ?? 'Not reported'))}</span>${entityCopy(typeof value === 'object' ? JSON.stringify(value,null,2) : value,label)}</span></td></tr>`).join('')}</tbody></table></details>`;
 
+  const hasVmAlert = (instance) => !!instance.vm_status && instance.vm_status !== 'running';
+
+  // Active instances counted under each service type and plan. A plan comes
+  // from the broker catalog, or from an instance that names one the catalog
+  // no longer holds, so the counts always add up to the active total.
+  const groupServicesAndPlans = (data) => {
+    const types = new Map();
+    const typeFor = (id, name, inCatalog) => {
+      const key = String(id ?? '');
+      if (!types.has(key)) types.set(key, {name: String(name || key || 'Unknown service'), inCatalog, plans: new Map()});
+      return types.get(key);
+    };
+    const planFor = (type, id, plan, inCatalog) => {
+      const key = String(id ?? '');
+      if (!type.plans.has(key)) type.plans.set(key, {name: String(plan?.name || key || 'Unknown plan'), description: plan?.description || '', limit: plan?.limit, inCatalog, count: 0, alerts: 0});
+      return type.plans.get(key);
+    };
+    for (const [key, plan] of Object.entries(data.plans || {})) {
+      if (!plan) continue;
+      const [keyService, ...keyPlan] = key.split('/');
+      const type = typeFor(plan.service?.id ?? keyService, plan.service?.name, true);
+      planFor(type, plan.id ?? keyPlan.join('/'), plan, true);
+    }
+    for (const instance of Object.values(data.instances || {})) {
+      if (!instance || instance.deleted) continue;
+      const type = typeFor(instance.service_id, instance.service_id, false);
+      const plan = planFor(type, instance.plan_id, {name: instance.plan_id}, false);
+      plan.count++;
+      if (hasVmAlert(instance)) plan.alerts++;
+    }
+    return [...types.values()].map(type => {
+      const plans = [...type.plans.values()].sort((a, b) => a.name.localeCompare(b.name));
+      return {...type, plans, count: plans.reduce((n, plan) => n + plan.count, 0), alerts: plans.reduce((n, plan) => n + plan.alerts, 0)};
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const renderServicesAndPlans = (data) => {
+    const types = groupServicesAndPlans(data);
+    const heading = '<h3 id="entity-services-heading">Services and plans</h3>';
+    const shell = (body) => `<section class="card entity-services" aria-labelledby="entity-services-heading">${heading}${body}</section>`;
+    if (!types.length) return shell('<p class="no-data">The broker has no service plans or instances yet.</p>');
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const note = (inCatalog) => inCatalog ? '' : ' <span class="entity-not-in-catalog">Not in the catalog</span>';
+    // A type outside the catalog is not a choice in the Services filter, so it stays text.
+    const entry = (type, plan, text, count) => {
+      const target = plan ? ` data-plan="${escapeAttribute(plan.name)}"` : '';
+      const label = `Show the ${plural(count, type.name + ' instance')}${plan ? ` on plan ${plan.name}` : ''}`;
+      return type.inCatalog
+        ? `<button type="button" class="ghost entity-services-link" data-services-filter data-service="${escapeAttribute(type.name)}"${target} aria-label="${escapeAttribute(label)}">${escapeHtml(text)}</button>`
+        : escapeHtml(text);
+    };
+    const counts = (item) => `<td data-count="instances">${plural(item.count, 'instance')}</td><td data-count="alerts">${item.alerts ? `${item.alerts} with VM alerts` : 'None'}</td>`;
+    const body = types.map(type => `<tbody class="entity-service-group"><tr class="entity-type-row" data-service="${escapeAttribute(type.name)}"><th scope="row">${entry(type, null, type.name, type.count)}${note(type.inCatalog)}</th><td></td>${counts(type)}</tr>${type.plans.map(plan => {
+      const limit = Number.isFinite(plan.limit) && plan.limit > 0 ? `<span class="entity-plan-limit">Limit ${plan.limit}</span>` : '';
+      return `<tr class="entity-plan-row" data-service="${escapeAttribute(type.name)}" data-plan="${escapeAttribute(plan.name)}"><th scope="row">${entry(type, plan, plan.name, plan.count)}${note(plan.inCatalog)}</th><td>${escapeHtml(String(plan.description))}${plan.description && limit ? ' ' : ''}${limit}</td>${counts(plan)}</tr>`;
+    }).join('')}</tbody>`).join('');
+    return shell(`<div class="entity-services-scroll" role="region" tabindex="0" aria-labelledby="entity-services-heading"><table class="entity-services-table"><caption class="visually-hidden">Active instances and instances with VM alerts for each service type and plan</caption><thead><tr><th scope="col">Service type or plan</th><th scope="col">Details</th><th scope="col">Instances</th><th scope="col">Instances with VM alerts</th></tr></thead>${body}</table></div>`);
+  };
+
   const renderBlacksmithOverview = (data, creds = {}) => {
     const instances = Object.values(data.instances || {}).filter(instance => instance && !instance.deleted);
     const plans = Object.keys(data.plans || {}).length;
-    const attention = instances.filter(instance => instance.vm_status && instance.vm_status !== 'running').length;
+    const attention = instances.filter(hasVmAlert).length;
     const facts = [['Deployment',data.deployment || 'blacksmith'],['Environment',data.env || 'Not reported']];
     const technical = [['BOSH DNS',data.boshDNS || 'Not reported']];
     for (const [service, fields] of Object.entries({BOSH:['address','username','network'],Vault:['address'],Broker:['username','port','bind_ip']})) {
@@ -2453,6 +2512,7 @@
       <p class="entity-intro">Manage the broker and its service fleet. Inspect health, activity, and configuration using the sections alongside.</p>
       <div class="entity-metrics">${entityMetric(instances.length,'Service instances','instances')}${entityMetric(plans,'Service plans','plans')}${entityMetric(attention,'Instances with VM alerts','instances')}</div>
       <p class="entity-status-note">${instances.length} active instance${instances.length === 1 ? '' : 's'}. VM exceptions reflect reported status; missing status is not a health check.</p>
+      ${renderServicesAndPlans(data)}
       <article class="card entity-context"><h3>Deployment context</h3>${entityFacts(facts)}</article>
       ${entityMetadata(technical,'Connection and technical details')}
     </section>`;
@@ -2476,6 +2536,17 @@
     if (copy) {
       try { await navigator.clipboard.writeText(copy.dataset.entityCopy); announce('Copied to clipboard'); flashCopyIcon(copy); }
       catch (_) { announce('Clipboard unavailable. Select the value to copy it.'); }
+      return;
+    }
+    const filterJump = event.target.closest('[data-services-filter]');
+    if (filterJump) {
+      const {service, plan} = filterJump.dataset;
+      const route = {screen: 'services', service, ...(plan ? {plan} : {})};
+      if (window.blacksmithRouter) { await window.blacksmithRouter.navigate(route); return; }
+      try {
+        await window.blacksmithNav.switchTab('services');
+        window.applyServicesFilter?.(service, plan);
+      } catch (error) { announce(error.message); }
       return;
     }
     const jump = event.target.closest('[data-entity-section]');
@@ -2559,40 +2630,31 @@
       ${service.description ? `<div class="service-description"><h3>Service description</h3><p>${escapeHtml(String(service.description))}</p></div>` : ''}</div>`;
   };
 
+  // Service names are the filter values. Every catalog service and plan is a
+  // choice, and so is any plan an instance reports that the catalog lacks.
+  const buildServiceFilterIndex = (instances) => {
+    const serviceIdToName = {};
+    const plansPerService = {};
+    const plansFor = (name) => (plansPerService[name] = plansPerService[name] || new Set());
+    (window.plansData?.services || []).forEach(service => {
+      if (!service || !service.id || !service.name) return;
+      serviceIdToName[service.id] = service.name;
+      const known = plansFor(service.name);
+      (service.plans || []).forEach(plan => { if (plan && plan.name) known.add(plan.name); });
+    });
+    Object.values(instances || {}).forEach(details => {
+      const serviceName = details && serviceIdToName[details.service_id];
+      if (serviceName && details.plan && details.plan.name) plansFor(serviceName).add(details.plan.name);
+    });
+    return {serviceIdToName, plansPerService};
+  };
+
   const renderServicesTemplate = (instances) => {
     const instancesList = isEmpty(instances) ? [] : Object.entries(instances);
 
-    // Create service id to name mapping from catalog
-    const serviceIdToName = {};
     const hasCatalog = window.plansData && window.plansData.services && window.plansData.services.length > 0;
-
-    if (hasCatalog) {
-      window.plansData.services.forEach(service => {
-        if (service && service.id && service.name) {
-          serviceIdToName[service.id] = service.name;
-        }
-      });
-    }
-
-    // Extract unique services and plans for filter dropdowns
-    const services = new Set();
-    const plansPerService = {};
-
-    instancesList.forEach(([id, details]) => {
-      if (details.service_id) {
-        // Only add services that have a proper name mapping from the catalog
-        const serviceName = serviceIdToName[details.service_id];
-        if (serviceName) {
-          services.add(serviceName);
-          if (!plansPerService[serviceName]) {
-            plansPerService[serviceName] = new Set();
-          }
-          if (details.plan && details.plan.name) {
-            plansPerService[serviceName].add(details.plan.name);
-          }
-        }
-      }
-    });
+    const {serviceIdToName, plansPerService} = buildServiceFilterIndex(instances);
+    const services = new Set(Object.keys(plansPerService));
 
     const serviceOptions = Array.from(services).sort().map(s =>
       `<option value="${escapeAttribute(String(s))}">${escapeAttribute(String(s))}</option>`
@@ -16156,6 +16218,27 @@
             const index = matching.indexOf(target);
             if (index >= 0 && !target.isConnected) applyFilters(Math.floor(index / 50));
           };
+          // The Services route names a type and plan by their filter values. A
+          // value the filters no longer offer is refused before anything changes.
+          window.applyServicesFilter = (service = '', plan = '') => {
+            if (!service) {
+              if (serviceFilter) serviceFilter.value = '';
+              if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
+              applyFilters();
+              return;
+            }
+            const offers = (select, value) => !!select && [...select.options].some(option => option.value === value);
+            if (!offers(serviceFilter, service)) throw new Error('This service type is no longer available.');
+            serviceFilter.value = service;
+            serviceFilter.dispatchEvent(new Event('change'));
+            if (plan && !offers(planFilter, plan)) {
+              serviceFilter.value = '';
+              serviceFilter.dispatchEvent(new Event('change'));
+              throw new Error('This service plan is no longer available.');
+            }
+            planFilter.value = plan;
+            planFilter.dispatchEvent(new Event('change'));
+          };
           clearFiltersBtn?.addEventListener('click', () => {
             search.value = '';
             if (serviceFilter) serviceFilter.value = '';
@@ -16465,34 +16548,7 @@
             return;
           }
 
-          // Create service id to name mapping from catalog
-          const serviceIdToName = {};
-          if (window.plansData && window.plansData.services) {
-            window.plansData.services.forEach(service => {
-              if (service && service.id && service.name) {
-                serviceIdToName[service.id] = service.name;
-              }
-            });
-          }
-
-          // Build plans per service map for the filter
-          const plansPerService = {};
-          const instancesList = Object.entries(window.serviceInstances || {});
-
-          instancesList.forEach(([id, details]) => {
-            if (details.service_id) {
-              // Only use properly mapped service names for filtering
-              const serviceName = serviceIdToName[details.service_id];
-              if (serviceName) {
-                if (!plansPerService[serviceName]) {
-                  plansPerService[serviceName] = new Set();
-                }
-                if (details.plan && details.plan.name) {
-                  plansPerService[serviceName].add(details.plan.name);
-                }
-              }
-            }
-          });
+          const {plansPerService} = buildServiceFilterIndex(window.serviceInstances);
 
           // Service filter change handler
           serviceFilter.addEventListener('change', (e) => {
@@ -16820,7 +16876,14 @@
         }
         if(screen === 'certificates') return {screen};
         const route={screen};
-        if(screen==='services') {if(!document.getElementById('services').classList.contains('instance-open')) return route;route.instance=window.currentInstanceInfo?.id;}
+        if(screen==='services') {
+          if(!document.getElementById('services').classList.contains('instance-open')) {
+            const service=document.getElementById('service-filter')?.value, plan=document.getElementById('plan-filter')?.value;
+            if(service) {route.service=service;if(plan)route.plan=plan;}
+            return route;
+          }
+          route.instance=window.currentInstanceInfo?.id;
+        }
         route.section=document.querySelector(`#${screen} .detail-tab.active`)?.dataset.tab||'details';
         if(route.section==='plans') {const item=document.querySelector('#blacksmith .plan-item.active');if(item){const svc=window.plansData?.services?.[item.dataset.serviceIndex];const plan=svc?.plans?.[item.dataset.planIndex];if(svc&&plan){route.service=svc.id;route.plan=plan.id;}}}
         const content=document.querySelector(`#${screen} .detail-content`);
@@ -16829,7 +16892,7 @@
         if(route.section==='broker' && window.CFEndpointManager?.selectedEndpoint)route.endpoint=window.CFEndpointManager.selectedEndpoint;
         return route;
       };
-      let notifyQueued=false;
+      let notifyQueued=false,routeFilterApplied=false;
       const panelContexts=new Map();
       window.blacksmithViews={read:readRoute,notify(){if(notifyQueued)return;notifyQueued=true;queueMicrotask(()=>{notifyQueued=false;window.blacksmithRouter?.record(readRoute());});},
         async activate(route,{signal,history:restoring}={}) {
@@ -16855,7 +16918,12 @@
           const selected=(screen,section)=>document.querySelectorAll(`#${screen} .detail-tab`).forEach(tab=>{const on=tab.dataset.tab===section;tab.classList.toggle('active',on);tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
           if(route.screen==='blacksmith') {selected('blacksmith',route.section||'details');await loadBlacksmithDetailTab(route.section||'details');}
           if(route.screen==='services') {
-            if(!route.instance){document.getElementById('services').classList.remove('instance-open');return finish(route);}
+            if(!route.instance){
+              document.getElementById('services').classList.remove('instance-open');
+              // A route without a filter clears one only when the route being left carried it.
+              if(route.service||routeFilterApplied){window.applyServicesFilter?.(route.service,route.plan);routeFilterApplied=!!route.service;}
+              return finish(route);
+            }
             if(!await window.navigateToInstance(route.instance,signal))throw new Error('This service instance is no longer available.');
             if(signal?.aborted)return null;selected('services',route.section||'details');await window.loadInstanceSection(route.instance,route.section||'details');
           }

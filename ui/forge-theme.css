@@ -856,3 +856,17 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
   #navigation-dialog #navigation-search { margin: 8px 12px 0; width: calc(100% - 24px); }
   #navigation-dialog .navigation-count, #navigation-dialog .navigation-help { padding: 6px 12px; }
 }
+
+/* Services and plans panel on the broker overview */
+.entity-services.card { padding: 20px; margin: 0 0 20px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+.entity-services h3 { font-size: 1rem; margin: 0 0 16px; }
+.entity-services-scroll { overflow-x: auto; }
+.entity-services-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+.entity-services-table th, .entity-services-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.entity-services-table thead th { font-size: .75rem; color: var(--muted-foreground); font-weight: 600; }
+.entity-service-group + .entity-service-group .entity-type-row th, .entity-service-group + .entity-service-group .entity-type-row td { border-top: 1px solid var(--border); }
+.entity-type-row th, .entity-type-row td { background: var(--secondary); font-weight: 600; }
+.entity-plan-row th { padding-left: 28px; font-weight: 400; }
+.entity-services-link { padding: 0; min-height: 0; border: 0; background: none; color: var(--primary); font: inherit; font-weight: inherit; text-align: left; text-decoration: underline; cursor: pointer; }
+.entity-services-link:hover { text-decoration: none; }
+.entity-not-in-catalog, .entity-plan-limit { font-size: .75rem; font-weight: 400; color: var(--muted-foreground); }
