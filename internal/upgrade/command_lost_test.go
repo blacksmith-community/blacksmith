@@ -257,39 +257,95 @@ func TestCommandClassifyTakesOnlyEvidenceFromTheRecord(t *testing.T) {
 // A lost result whose cleanup reports that it ended nothing, with no exit,
 // strands the node in an unfinished task. The instance stays held, the
 // task pauses with a message that says the command was not shown to have
-// ended, and the partial output is kept.
+// ended, and the partial output is kept. A store of the output that fails
+// changes none of that.
 func TestRunCommandNodeStrandsALostResultTheRecordDoesNotSettle(t *testing.T) {
 	t.Parallel()
 
 	for _, record := range []string{"cleanup started=yes exit=- killed=no", "cleanup started=- exit=- killed=no"} {
-		t.Run(record, func(t *testing.T) {
-			t.Parallel()
+		for _, storeFails := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s store fails %v", record, storeFails), func(t *testing.T) {
+				t.Parallel()
 
-			fix := newRunFixture(t)
-			fix.exec = ssh.Result{Stdout: []byte("partial")}
-			fix.execErr = ssh.ErrNoExitStatus
-			fix.cleanup = record
+				fix := newRunFixture(t)
+				fix.exec = ssh.Result{Stdout: []byte("partial")}
+				fix.execErr = ssh.ErrNoExitStatus
+				fix.cleanup = record
 
-			if stopped := fix.run(context.Background()); !stopped {
-				t.Fatal("the task went on")
-			}
+				if storeFails {
+					path, err := commandOutputPath(fix.task.ID, fix.inst.InstanceID, fix.node().Reviewed)
+					if err != nil {
+						t.Fatalf("output path: %v", err)
+					}
 
-			node := fix.vault.stored(t)
-			if node.Phase != CommandPhaseSent || node.StdoutKept != len("partial") {
-				t.Errorf("phase %s kept %d, want sent with the partial output", node.Phase, node.StdoutKept)
-			}
+					fix.vault.scriptPut(path, 100, 0)
+				}
 
-			fix.manager.mu.RLock()
-			status, paused, message := fix.task.Status, fix.task.Paused, fix.inst.Error
-			fix.manager.mu.RUnlock()
+				if stopped := fix.run(context.Background()); !stopped {
+					t.Fatal("the task went on")
+				}
 
-			if status != TaskStatusPaused || !paused {
-				t.Errorf("the task is %s paused=%v, want paused", status, paused)
-			}
+				node := fix.vault.stored(t)
+				if node.Phase != CommandPhaseSent || node.StdoutKept != len("partial") {
+					t.Errorf("phase %s kept %d, want sent with the partial output", node.Phase, node.StdoutKept)
+				}
 
-			if !strings.Contains(message, "no evidence that the command ended") || !strings.Contains(message, "Resume cleanup") {
-				t.Errorf("the instance says %q, want it to say why it is held and how to go on", message)
-			}
-		})
+				fix.manager.mu.RLock()
+				status, paused, message := fix.task.Status, fix.task.Paused, fix.inst.Error
+				fix.manager.mu.RUnlock()
+
+				if status != TaskStatusPaused || !paused {
+					t.Errorf("the task is %s paused=%v, want paused", status, paused)
+				}
+
+				if !strings.Contains(message, "no evidence that the command ended") || !strings.Contains(message, "Resume cleanup") {
+					t.Errorf("the instance says %q, want it to say why it is held and how to go on", message)
+				}
+			})
+		}
 	}
+}
+
+// A node stranded by a record that does not show the command ended is
+// settled by the next Resume cleanup once a record does, and the instance
+// then ends with the node's reason in place of the message of the strand.
+func TestCommandUnprovenLostResultSettlesOnTheNextResume(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+
+	fix.override = func(_ context.Context, _ string, _ int, op string) *opAnswer {
+		if op == opRunExec {
+			return &opAnswer{result: ssh.Result{Stdout: []byte("partial")}, err: ssh.ErrNoExitStatus}
+		}
+
+		return nil
+	}
+	fix.setCleanup("dep-0/0", "cleanup started=yes exit=- killed=no")
+
+	fix.queue()
+
+	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Paused })
+	if got := paused.Instances[0].Error; !strings.Contains(got, "no evidence that the command ended") {
+		t.Fatalf("the instance says %q, want the unproven strand message", got)
+	}
+
+	if !fix.holds() {
+		t.Fatal("an unproven lost result released the instance")
+	}
+
+	fix.setCleanup("dep-0/0", cleanupEnded)
+	fix.resume()
+
+	ended := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status.settled() })
+
+	inst := ended.Instances[0]
+	if inst.Status != InstanceStatusFailed || inst.Error != inst.Command.VMs[0].Reason {
+		t.Errorf("the instance is %s saying %q, want failed with the node's reason %q", inst.Status, inst.Error, inst.Command.VMs[0].Reason)
+	}
+
+	if n := fix.countOps("dep-0", 0, opRunExec); n != 1 {
+		t.Errorf("exec was sent %d times, want once", n)
+	}
+
+	fix.waitReleased()
+	fix.assertNoCommandText()
 }
