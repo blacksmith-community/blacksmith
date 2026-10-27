@@ -3762,7 +3762,7 @@
     const holders = new Map();
     (Array.isArray(tasks) ? tasks : []).forEach((task) => {
       if (!task || !ACTIVE_TASK_STATUSES.has(task.status) || !Array.isArray(task.instances)) return;
-      const kind = task.kind === 'certificates' ? 'rotation' : 'upgrade';
+      const kind = task.kind === 'certificates' ? 'rotation' : task.kind === 'command' ? 'command run' : 'upgrade';
       const description = `${kind} "${task.name || task.id}"`;
       task.instances.forEach((instance) => {
         if (instance && instance.instance_id && HOLDING_INSTANCE_STATUSES.has(instance.status) && !holders.has(instance.instance_id)) {
@@ -8342,7 +8342,7 @@
     const changed = tasks.filter((task) => previous.has(task.id) && previous.get(task.id) !== String(task.status || ''));
     if (changed.length === 0) return;
     const say = (task) => {
-      const name = task.name || task.target || (task.kind === 'certificates' ? 'Certificate task' : 'Upgrade task');
+      const name = task.name || task.target || (task.kind === 'certificates' ? 'Certificate task' : task.kind === 'command' ? 'Command task' : 'Upgrade task');
       return `${name} is now ${String(task.status).replace(/_/g, ' ')}`;
     };
     const rest = changed.length - 1;

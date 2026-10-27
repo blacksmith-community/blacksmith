@@ -109,3 +109,12 @@ t('a selected instance with no known service is left out of the service count',a
  expect(d.getElementById('batch-options-summary').textContent).toBe('Run as vcap, 1 command, 2 instances');
  }finally{w.close();}
 });
+
+t('an instance held by a command task is labelled as a command run',async()=>{
+ const env=await setup();const {w}=env;try{
+ const task=(kind)=>({id:'ct-1',kind,name:'',status:'running',instances:[{instance_id:'val-a',status:'running'}]});
+ expect(w.__T.computeUpgradeHolders([task('command')]).get('val-a')).toBe('command run "ct-1"');
+ expect(w.__T.computeUpgradeHolders([task('certificates')]).get('val-a')).toBe('rotation "ct-1"');
+ expect(w.__T.computeUpgradeHolders([task('upgrade')]).get('val-a')).toBe('upgrade "ct-1"');
+ }finally{w.close();}
+});

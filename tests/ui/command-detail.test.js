@@ -534,6 +534,17 @@ t('a paused command task with no node in flight reads Paused',async()=>{
  }finally{w.close();}
 });
 
+t('a status change of an unnamed command task is announced as a command task',async()=>{
+ const env=await setup({detail:task({status:'running',target:''})});const {w,d}=env;try{
+ await w.__T.fetchUpgradeTasks();await sleep(20);
+ env.state.detail=task({status:'paused',target:''});
+ await w.__T.fetchUpgradeTasks();await sleep(120);
+ const said=d.getElementById('blacksmith-live-region').textContent;
+ expect(said.includes('Command task is now paused')).toBe(true);
+ expect(said.includes('Upgrade task')).toBe(false);
+ }finally{w.close();}
+});
+
 t('the page never holds the command text outside the detail pre after the whole flow',async()=>{
  const env=await setup();const {w,d}=env;try{
  await open(env);await openDetails(env,0);
