@@ -1621,7 +1621,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	m.forgetStrandCausesLocked(task)
 
 	ended := m.cancelIdleLocked(task)
-	closed := m.cancelUnownedCommandLocked(task)
+	closed := m.cancelUnownedCommandLocked(task) //nolint:contextcheck // A release can start the audit drain, which runs on the manager's lifecycle context, so a finished request never cancels it.
 	skipped := m.skipUnownedLocked(task)
 	settle := m.settleCancelledLocked(task) //nolint:contextcheck // Resuming the task runs on the manager's lifecycle context, so a finished request never cancels it.
 
