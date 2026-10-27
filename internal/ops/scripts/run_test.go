@@ -866,6 +866,31 @@ func TestPrepareRemovesWhatItMadeWhenItStopsEarly(t *testing.T) {
 	}
 }
 
+// A write that fails after the name was free, as a full disk makes it, is
+// not a refusal. The write reports a plain failure, and prepare passes it
+// on and removes what it made, so the broker fails the node instead of
+// reporting that the node refused the command.
+func TestPrepareReportsAFailedWriteAsAFailure(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	code, _ := tree.snippet(t, false, "cat() { return 1; }\nprepare "+runTask+" vcap < /dev/null\n")
+	if code != 1 {
+		t.Errorf("prepare exit = %d for a failed write, want 1 and not %d", code, scripts.ExitRefused)
+	}
+
+	_, err := os.Lstat(tree.path(runOps, runTask))
+	if err == nil {
+		t.Error("a failed write left the task directory behind")
+	}
+
+	code, _ = tree.snippet(t, false, "cat() { return 1; }\n_rc_write \""+tree.path("var/vcap/data/fresh")+"\" < /dev/null\n")
+	if code != 1 {
+		t.Errorf("_rc_write exit = %d for a failed write, want 1", code)
+	}
+}
+
 func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 	t.Parallel()
 
@@ -993,8 +1018,8 @@ func TestWriteRefusesAnExistingName(t *testing.T) {
 	}
 
 	code, _ := tree.snippet(t, false, `echo "new" | _rc_write "`+link+`"`+"\n")
-	if code == 0 {
-		t.Error("_rc_write wrote through a symlink")
+	if code != scripts.ExitRefused {
+		t.Errorf("_rc_write exit = %d for a symlink, want %d", code, scripts.ExitRefused)
 	}
 
 	got, err := os.ReadFile(target)
@@ -1010,8 +1035,8 @@ func TestWriteRefusesAnExistingName(t *testing.T) {
 	}
 
 	code, _ = tree.snippet(t, false, `echo "new" | _rc_write "`+plain+`"`+"\n")
-	if code == 0 {
-		t.Error("_rc_write replaced an existing file")
+	if code != scripts.ExitRefused {
+		t.Errorf("_rc_write exit = %d for an existing file, want %d", code, scripts.ExitRefused)
 	}
 
 	fresh := tree.path("var/vcap/data/fresh")

@@ -153,9 +153,10 @@ _rc_check_file() {
 # the shell's noclobber check skips O_EXCL when the name leads to
 # something that is not a regular file, such as a FIFO or a device, and
 # would then follow the link. noclobber still closes the race between
-# that test and the open.
+# that test and the open. A refusal exits 13, and a write that fails
+# after the name was free, such as a full disk, exits 1.
 _rc_write() {
-	[ ! -e "$1" ] && [ ! -L "$1" ] || return 1
+	[ ! -e "$1" ] && [ ! -L "$1" ] || return "$EXIT_REFUSED"
 
 	(
 		set -C
@@ -200,7 +201,7 @@ prepare() {
 	chmod -- 00710 "$dir" || return 1
 	_rc_check_dir "$dir" 0 "$gid" 710 || return "$EXIT_REFUSED"
 
-	_rc_write "$file" || return "$EXIT_REFUSED"
+	_rc_write "$file" || return $?
 	_rc_check_file "$file" 0 - 600 || return "$EXIT_REFUSED"
 	chgrp -- "$gid" "$file" || return 1
 	chmod -- 00640 "$file" || return 1
