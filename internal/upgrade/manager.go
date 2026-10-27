@@ -3677,8 +3677,7 @@ func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) boo
 	// An instance with processes that outlived KILL stays held while its
 	// task is unfinished, though it has failed, so no other task acts on a
 	// deployment with such a hazard.
-	if unfinished && task.KindOrDefault() == TaskKindCommand && inst.Command != nil &&
-		slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool { return vm.Survived }) {
+	if unfinished && task.KindOrDefault() == TaskKindCommand && commandSurvivorOn(inst) {
 		return true
 	}
 

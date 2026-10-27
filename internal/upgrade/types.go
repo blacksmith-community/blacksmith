@@ -243,6 +243,10 @@ type TaskSummary struct {
 	CreatedAt             time.Time `json:"created_at"`
 	// Command holds a command task's settings, without the command text.
 	Command *CommandSummary `json:"command,omitempty"`
+	// HeldInstanceIDs names the instances an unfinished command task holds,
+	// by ID alone, so a page that may not read the task's detail still
+	// shows them as busy.
+	HeldInstanceIDs []string `json:"held_instance_ids,omitempty"`
 }
 
 // awaitingDecisionCount counts the instances with a pending decision.
@@ -288,6 +292,7 @@ func (t *UpgradeTask) ToSummary() TaskSummary {
 	if summary.Kind == TaskKindCommand {
 		summary.Target = commandTarget(t)
 		summary.Command = commandSummary(t.Command)
+		summary.HeldInstanceIDs = heldCommandInstanceIDs(t)
 
 		return summary
 	}

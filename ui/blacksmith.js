@@ -3763,12 +3763,20 @@
   };
 
   // The holders in the tasks: each unfinished instance of an active task.
+  // A command task's list entry names the instances it holds by ID, which
+  // stands in for its instances when its detail is out of reach.
   const computeUpgradeHolders = (tasks) => {
     const holders = new Map();
     (Array.isArray(tasks) ? tasks : []).forEach((task) => {
-      if (!task || !ACTIVE_TASK_STATUSES.has(task.status) || !Array.isArray(task.instances)) return;
+      if (!task || !ACTIVE_TASK_STATUSES.has(task.status)) return;
       const kind = task.kind === 'certificates' ? 'rotation' : task.kind === 'command' ? 'command run' : 'upgrade';
       const description = `${kind} "${task.name || task.id}"`;
+      if (!Array.isArray(task.instances)) {
+        if (Array.isArray(task.held_instance_ids)) {
+          task.held_instance_ids.forEach((id) => { if (typeof id === 'string' && id && !holders.has(id)) holders.set(id, description); });
+        }
+        return;
+      }
       task.instances.forEach((instance) => {
         if (instance && instance.instance_id && HOLDING_INSTANCE_STATUSES.has(instance.status) && !holders.has(instance.instance_id)) {
           holders.set(instance.instance_id, description);
@@ -3820,7 +3828,7 @@
         if (commandReadRefused(task)) {
           // The detail is out of reach, so the holders come from what the list
           // carries, or from the last detail read with a key.
-          if (Array.isArray(task.instances)) holderDetails.set(task.id, { detail: task, signature, readAt: 0 });
+          if (Array.isArray(task.instances) || Array.isArray(task.held_instance_ids)) holderDetails.set(task.id, { detail: task, signature, readAt: 0 });
           return;
         }
         try {

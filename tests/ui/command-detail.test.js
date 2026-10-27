@@ -985,6 +985,39 @@ t('an instance held by a command task still shows as held when its detail is out
  }finally{w.close();}
 });
 
+t('a command task list entry that names the instances it holds keeps them busy on a page with no key',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const learned=env.details.length;
+ // The summary names the held instances by ID alone, with no instances array.
+ const listed={id:TASK,kind:'command',status:'paused',name:'restart check',held_instance_ids:['val-a','val-b']};
+ w.__routes.unshift(['/b/upgrade/tasks',(u,o,j)=>j(200,[listed])]);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const kept=w.__T.holderDetails.get(TASK);
+ expect(kept!==undefined&&kept.detail.held_instance_ids.join()==='val-a,val-b').toBe(true);
+ const holders=await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(learned);
+ expect(holders.get('val-a')).toBe('command run "restart check"');
+ expect(holders.get('val-b')).toBe('command run "restart check"');
+ expect(holders.size).toBe(2);
+ }finally{w.close();}
+});
+
+t('an ended command task frees the instances its list entry named',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const listed={id:TASK,kind:'command',status:'running',name:'restart check',held_instance_ids:['val-a']};
+ w.__routes.unshift(['/b/upgrade/tasks',(u,o,j)=>j(200,[listed])]);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ expect((await w.blacksmithRotate.readHolders()).has('val-a')).toBe(true);
+ listed.status='completed';delete listed.held_instance_ids;
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ expect((await w.blacksmithRotate.readHolders()).has('val-a')).toBe(false);
+ }finally{w.close();}
+});
+
 t('an output body that arrives after the key was dropped paints nothing',async()=>{
  const env=await setup({gated:true,output:(u,o)=>(o.headers&&o.headers['X-Blacksmith-Command-Key']===KEY)?[200,output()]:[401,{success:false,error:'k',code:'command_credential_required'}]});const {w,d}=env;try{
  await w.__T.selectUpgradeTask(TASK);await sleep(10);

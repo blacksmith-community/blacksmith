@@ -199,6 +199,33 @@ func (c *InstanceCommand) clone() *InstanceCommand {
 	return &copied
 }
 
+// commandSurvivorOn reports whether a node of the instance has processes
+// that outlived KILL.
+func commandSurvivorOn(inst *InstanceUpgrade) bool {
+	return inst.Command != nil && slices.ContainsFunc(inst.Command.VMs, func(vm CommandVM) bool { return vm.Survived })
+}
+
+// heldCommandInstanceIDs returns the IDs of the instances an unfinished
+// command task holds, as shouldHoldLocked holds them: each one it has not
+// settled, and each one with a node whose processes outlived KILL. A task
+// that has ended names none.
+func heldCommandInstanceIDs(task *UpgradeTask) []string {
+	if task.Status != TaskStatusPending && task.Status != TaskStatusRunning && task.Status != TaskStatusPaused {
+		return nil
+	}
+
+	var held []string
+
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if !inst.Status.settled() || commandSurvivorOn(inst) {
+			held = append(held, inst.InstanceID)
+		}
+	}
+
+	return held
+}
+
 // markInFlight marks each node of a reader's copy of a task that a worker
 // holds. Only a reader's copy carries the mark, so a saved record never
 // holds it.
