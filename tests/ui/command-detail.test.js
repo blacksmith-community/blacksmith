@@ -1209,3 +1209,44 @@ t('a poll whose detail read fails never logs the key',async()=>{
  expect(env.logs.some(hasKey)).toBe(false);
  }finally{w.close();}
 });
+
+const SURVIVOR_TEXT='Processes of the command still survive KILL on node/0, so instance val-a stays held. Use Resume cleanup to check them again.';
+const pausedHolding=(vm)=>task({status:'paused',paused:true,failed_count:1,completed_count:0,
+ instances:[inst('val-a',[node('node',0,vm)],{status:'failed',error:SURVIVOR_TEXT}),inst('val-b',[node('node',0,{phase:'pending',status:''})],{status:'pending'})]});
+const controlLabels=(d)=>[...panel(d).querySelectorAll('.job-control-buttons button')].map((b)=>b.textContent.trim());
+
+t('a paused command task that holds a node no worker drives offers Resume cleanup and Cancel',async()=>{
+ const holding={
+  'a survivor':{status:'failed',exit_code:undefined,survived:true},
+  'a sent node':{phase:'sent',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined},
+  'a staged node':{phase:'staged',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined}
+ };
+ for(const vm of Object.values(holding)){
+  const env=await setup({detail:pausedHolding(vm)});const {w,d}=env;try{
+  await open(env);
+  expect(controlLabels(d)).toEqual(['Resume cleanup','Cancel Job']);
+  expect(pageText(d).includes('Pause requested')).toBe(false);
+  }finally{w.close();}
+ }
+});
+
+t('a paused command task whose held node a worker still drives offers the ordinary resume',async()=>{
+ const env=await setup({detail:pausedHolding({phase:'sent',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined,in_flight:true})});const {w,d}=env;try{
+ await open(env);
+ expect(controlLabels(d).includes('Resume cleanup')).toBe(false);
+ }finally{w.close();}
+});
+
+t('Resume cleanup of a paused command task sends no key and never asks for one',async()=>{
+ const env=await setup({detail:pausedHolding({status:'failed',exit_code:undefined,survived:true}),gated:true});const {w,d}=env;try{
+ await open(env);
+ typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);
+ expect(controlLabels(d)[0]).toBe('Resume cleanup');
+ const resumes=[];
+ w.__routes.unshift([`${DETAIL_URL}/resume`,(u,o,j)=>{resumes.push({headers:o.headers||{}});return j(200,{success:true});}]);
+ press(panel(d),'.resume-btn');await sleep(30);
+ expect(resumes.length).toBe(1);
+ expect(resumes[0].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ expect(panel(d).querySelector('.command-key-prompt')===null).toBe(true);
+ }finally{w.close();}
+});

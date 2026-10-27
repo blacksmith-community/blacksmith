@@ -8130,8 +8130,10 @@
     const isRunning = task.status === 'running';
     const isPaused = task.status === 'paused';
     // A cancelled command task with a node still to clean waits for a
-    // resume that runs the cleanup alone.
-    const awaitsCleanup = isCommand && task.status === 'cancelled' && task.paused === true;
+    // resume that runs the cleanup alone. So does a paused one that holds
+    // a node no worker drives, which it can still cancel.
+    const cleansOnly = commandCleansOnly(task);
+    const awaitsCleanup = cleansOnly && task.status === 'cancelled';
     const canControl = isRunning || isPaused || awaitsCleanup;
     // A paused certificate task is still finishing its current VM or deploy
     // while one of its instances runs. A command task is only still working
@@ -8139,7 +8141,7 @@
     // worker that has yet to stage it, because it can also rest in the
     // paused state inside a running instance.
     const commandNodeInFlight = (instance) => ((instance && instance.command && instance.command.vms) || []).some((node) => node && (node.in_flight === true || node.phase === 'staged' || node.phase === 'sent'));
-    const pauseRequested = isPaused && instances.some((instance) => instance && instance.status === 'running' && (isCertificates || (isCommand && commandNodeInFlight(instance))));
+    const pauseRequested = isPaused && !cleansOnly && instances.some((instance) => instance && instance.status === 'running' && (isCertificates || (isCommand && commandNodeInFlight(instance))));
     const hasFailedInstance = (isCertificates || isCommand) && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
 
     // Build control buttons based on task status
@@ -8148,7 +8150,7 @@
       controlButtonsHtml = `
         <div class="job-control-buttons">
           ${isRunning ? '<button type="button" class="job-control-btn pause-btn" data-task-action="pause" data-keep-key="action:pause">Pause</button>' : ''}
-          ${isPaused ? `<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">${hasFailedInstance ? 'Continue remaining instances' : 'Resume'}</button>` : ''}
+          ${isPaused ? `<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">${cleansOnly ? 'Resume cleanup' : hasFailedInstance ? 'Continue remaining instances' : 'Resume'}</button>` : ''}
           ${awaitsCleanup ? '<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">Resume cleanup</button>' : ''}
           ${awaitsCleanup ? '' : '<button type="button" class="job-control-btn cancel-btn" data-task-action="cancel" data-keep-key="action:cancel">Cancel Job</button>'}
         </div>
@@ -8309,14 +8311,28 @@
     previous?.scrollIntoView?.({ block: 'nearest' });
   };
 
+  // Whether a resume of the task is a Resume cleanup, which cleans the
+  // nodes a command task still holds and sends no command, as the broker
+  // decides it: a cancelled task that waits for one, or a paused task with
+  // a staged, sent, or surviving node that no worker drives.
+  const commandCleansOnly = (task) => {
+    if (!task || task.kind !== 'command' || task.paused !== true) return false;
+    if (task.status === 'cancelled') return true;
+    if (task.status !== 'paused') return false;
+    const nodes = (task.instances || []).flatMap((instance) => (instance && instance.command && instance.command.vms) || []);
+    if (nodes.some((node) => node && node.in_flight === true)) return false;
+    return nodes.some((node) => node && (node.phase === 'staged' || node.phase === 'sent' || node.survived === true));
+  };
+
   // Sends pause, resume, or cancel for a task. A refusal comes back with an
   // error code, and the broker's message shows in the feedback panel.
   const sendTaskControl = async (taskId, verb) => {
     try {
       const cached = taskDetailCache.get(taskId);
       const isCommandTask = Boolean(cached && cached.kind === 'command');
-      // A resume of a command task is gated by the key. Nothing else is.
-      const sent = verb === 'resume' && isCommandTask ? commandOutputKey : '';
+      // A resume of a command task that sends the command is gated by the
+      // key. Nothing else is, a Resume cleanup included.
+      const sent = verb === 'resume' && isCommandTask && !commandCleansOnly(cached) ? commandOutputKey : '';
       const gen = commandKeyGen;
       const init = { method: 'POST' };
       if (sent) init.headers = { [COMMAND_KEY_HEADER]: sent };
