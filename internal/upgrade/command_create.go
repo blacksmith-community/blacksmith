@@ -64,6 +64,13 @@ func (m *Manager) CreateCommandTask(ctx context.Context, req CommandCreateReques
 		return nil, false, ErrTasksLoading
 	}
 
+	// An ID longer than the bound is refused before the lock or the request
+	// ledger sees it, as a discard's is.
+	if len(req.ClientRequestID) > maxClientRequestIDBytes {
+		return nil, false, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			"The client_request_id is too long.")
+	}
+
 	unlock := m.lockRequest(req.ClientRequestID)
 	defer unlock()
 

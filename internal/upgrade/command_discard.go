@@ -11,6 +11,10 @@ import (
 // shorter, and the bound keeps the revoked set from growing with huge IDs.
 const maxDiscardIDBytes = 128
 
+// maxClientRequestIDBytes bounds the client_request_id of a command create to
+// the same length.
+const maxClientRequestIDBytes = maxDiscardIDBytes
+
 // CommandDiscardRequest is the body of a request that discards a pending
 // command create.
 type CommandDiscardRequest struct {

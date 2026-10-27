@@ -1250,3 +1250,30 @@ func TestCreatedCommandTaskIsDispatchedAndRuns(t *testing.T) {
 		}
 	}
 }
+
+// A client_request_id longer than the bound is refused before the preview is
+// read, so the preview stays spendable and no task is made. One at the bound
+// is accepted.
+func TestCreateCommandTaskRefusesALongClientRequestID(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	preview := env.previewFor(t, cmdReq("i1"))
+
+	req := createCmdReq(preview.ID)
+	req.ClientRequestID = strings.Repeat("a", maxClientRequestIDBytes+1)
+
+	_, _, err := env.manager.CreateCommandTask(context.Background(), req)
+	expectAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
+
+	if n := len(env.manager.ListTasks()); n != 0 {
+		t.Fatalf("a refused create left %d tasks", n)
+	}
+
+	req.ClientRequestID = strings.Repeat("a", maxClientRequestIDBytes)
+
+	task, existing, err := env.manager.CreateCommandTask(context.Background(), req)
+	if err != nil || existing || task == nil {
+		t.Fatalf("an ID at the bound was not accepted: %v existing=%t", err, existing)
+	}
+}
