@@ -111,6 +111,86 @@
       para('Shortcuts pause in text fields and dialogs. On Review, Next focuses the confirmation button; press Enter to submit.')
     ];
   }
+  // Field help explains why to pick one setting over another, beside the control it covers.
+  const batchFields = {
+    'rotate-mode': help('rotation modes', 'Choose Redeploy unless you have a reason not to. It\'s the normal path, because BOSH rolls the new certificates out with canaries and drains, and its records match the VMs afterwards. Choose Patch in place when time matters more than a clean rollout, such as when a certificate expires before a deploy could finish. Patch is a temporary repair, because BOSH still holds the old certificate, and a recreate or resurrection puts that certificate back until you converge.'),
+    'rotate-converge': help('after patching', 'Choose Converge right away when you can accept a second restart now and want the repair made permanent in the same job. Choose Leave unconverged when the jobs should restart only once today, and plan a Converge for a later maintenance window. Until then, the instance is flagged as unconverged, and upgrading it also deploys its latest certificates.'),
+    'additional-releases': help('additional releases', 'Use additional releases when the change you need is in a release other than the service\'s own, such as a shared add-on release that several services use. A release only goes to deployments that already use it, so this never adds new software to an instance. The version you choose must already be uploaded to the director.'),
+    'command-text': help('the command', 'Write the command so it\'s safe on every node of every selected instance, because it runs on all of them, including nodes whose jobs are stopped. Service packages aren\'t on the search path, so give the full path, such as /var/vcap/packages/rabbitmq/sbin/rabbitmqctl. The command can\'t read input, so a prompt gets end of file instead of an answer. The job keeps the command text for the audit, so leave passwords out of it when you can. A command can be up to 64 kilobytes long, and each node\'s output appears when that node finishes.'),
+    'command-user': help('Run as', 'Choose vcap whenever it can do the job, because a vcap command can only change what vcap owns, and it can never gain more privileges than that. Most service maintenance works as vcap, including the service tools under /var/vcap/packages. Choose root only for work that truly needs it, such as reading files only root can read or restarting jobs with monit. Root can change anything on the VM, and nothing the broker does can undo or contain what a root command starts. Running as root stays off until an administrator turns on commands.allow_root in the broker configuration.'),
+    'command-timeout': help('the timeout', 'Set the timeout a little above the longest you expect the command to take on one node, because a timeout counts as a failure and pauses the job. Each node has its own clock. At the deadline the command gets a stop signal, and ten seconds later it\'s killed. Keep it short for quick checks, such as reading a file or checking a status, and allow more for work that restarts a service or waits for a cluster to settle. A long timeout lets a hung command hold its instance until the deadline. When nodes run one at a time, a slow command can take close to the timeout on every node in turn.'),
+    'command-parallel': help('parallel runs', 'Leave parallel off for anything that restarts a service, changes cluster membership, or could take a node down. One node at a time means a bad command stops at its first failure instead of reaching a whole cluster at once. Turn it on for read-only or independent work on deployments with many nodes, such as collecting a value or checking disk space. Deployments still run one at a time, and the limit caps how many nodes run the command at once. When a node fails, the nodes already running finish before the job pauses, so a higher limit lets more nodes get a bad command. For a clustered service, keep the limit at or below the number of nodes the cluster can lose at once. The limit must stay below the director\'s worker count, because each node\'s setup and cleanup take a director worker, and the director needs one left for everything else. With the default of four workers, the most you can set is 3, and the Review step checks the number against your director.'),
+    'concurrent-jobs': help('concurrent batch jobs', 'This limit decides how many batch jobs run at the same time across the whole broker, and the rest wait their turn. Each job works through its instances one at a time, so the limit is how many instances can be changing at once. Keep it low, such as 1 or 2, when the director is busy or when you want changes to land in a predictable order. Raise it when you have several independent jobs and the director has room for them. A paused job keeps its place, so with a limit of 1, one paused job holds every other job back. When the field is empty, any number of jobs can run, and deploys are still capped by the broker\'s batch connection limit, which is 10 unless an administrator changed it.')
+  };
+  const getField = name => Object.prototype.hasOwnProperty.call(batchFields, name) ? batchFields[name] : null;
+  const icon=paths=>`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${paths}</svg>`;
+  const infoIcon=icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/>');
+  // Keeps a fixed tip beside its button and inside the viewport.
+  function place(button, tip){
+    if(tip.hidden)return;
+    const rect=button.getBoundingClientRect(), width=tip.getBoundingClientRect().width;
+    tip.style.left=Math.max(8,Math.min(rect.right-width,root.innerWidth-width-8))+'px';
+    const height=tip.getBoundingClientRect().height;
+    tip.style.top=Math.max(8,rect.bottom+8+height>root.innerHeight?rect.top-height-8:rect.bottom+8)+'px';
+  }
+  // Field popovers are toggletips. Only one is open at a time, and one set of
+  // document listeners serves all of them, so a removed pane leaks nothing.
+  let openField=null, fieldSerial=0;
+  const fieldDocs=new WeakSet();
+  function listenForFields(doc){
+    if(fieldDocs.has(doc))return;
+    fieldDocs.add(doc);
+    doc.addEventListener('keydown',event=>{
+      if(event.key!=='Escape'||!openField||!openField.button.isConnected)return;
+      event.preventDefault();event.stopImmediatePropagation();
+      const {button}=openField;openField.hide();button.focus();
+    },true);
+    doc.addEventListener('pointerdown',event=>{
+      if(!openField||openField.button.contains(event.target)||openField.tip.contains(event.target))return;
+      openField.hide();
+    },true);
+    const reposition=()=>{if(openField)place(openField.button,openField.tip);};
+    root.addEventListener('resize',reposition);doc.addEventListener('scroll',reposition,true);
+  }
+  function field(host, name){
+    const value=getField(name), doc=root.document;
+    if(!host||!doc||!value)return null;
+    listenForFields(doc);
+    const node=doc.createElement('span'), button=doc.createElement('button'), tip=doc.createElement('div');
+    let id=`batch-help-${name}`;
+    while(doc.getElementById(id))id=`batch-help-${name}-${++fieldSerial}`;
+    node.className='field-guidance';
+    button.type='button';button.className='view-guidance-button field-guidance-button';button.dataset.contextHelp='';
+    button.setAttribute('aria-label',`About ${value.label}`);button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls',id);
+    button.innerHTML=infoIcon;
+    tip.id=id;tip.className='view-guidance-tip field-guidance-tip';tip.setAttribute('popover','manual');tip.hidden=true;
+    const title=doc.createElement('strong'), status=doc.createElement('div');
+    title.textContent=`About ${value.label}`;status.setAttribute('role','status');
+    tip.append(title,status);node.append(button,tip);
+    let pinned=false,hover=false,timer;
+    const self={button,tip,hide};
+    function show(){
+      if(openField&&openField!==self)openField.hide();
+      clearTimeout(timer);openField=self;tip.hidden=false;
+      if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();
+      button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',id);
+      if(!status.textContent){const text=doc.createElement('p');text.textContent=value.body;status.append(text);}
+      place(button,tip);
+    }
+    function hide(){
+      clearTimeout(timer);pinned=false;
+      if(tip.hidePopover&&tip.matches(':popover-open'))tip.hidePopover();
+      tip.hidden=true;status.replaceChildren();
+      button.setAttribute('aria-expanded','false');button.removeAttribute('aria-describedby');
+      if(openField===self)openField=null;
+    }
+    function leave(){hover=false;timer=setTimeout(()=>{if(!hover&&!pinned)hide();},120);}
+    button.addEventListener('click',()=>{if(pinned)hide();else{pinned=true;show();}});
+    button.addEventListener('pointerenter',()=>{hover=true;show();});button.addEventListener('pointerleave',leave);
+    tip.addEventListener('pointerenter',()=>{hover=true;clearTimeout(timer);});tip.addEventListener('pointerleave',leave);
+    host.append(node);
+    return node;
+  }
   let dispose;
   function mount(host, context) {
     dispose?.();dispose=null;
@@ -118,7 +198,6 @@
     const value=get(context), keys=getShortcuts(context);if(!value&&!keys)return null;
     const doc=root.document, node=doc.createElement('span'), disposers=[];
     node.className='view-guidance';
-    const icon=paths=>`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${paths}</svg>`;
     // One popover mechanism serves every header button: hover or focus shows, click pins, Escape and outside clicks dismiss.
     const hiders=[];
     function attach(spec){
@@ -131,13 +210,7 @@
       const title=doc.createElement('strong');title.textContent=spec.heading;tip.append(title,...spec.content());
       node.append(button);doc.body.append(tip);
       let pinned=false,hover=false,timer;
-      function position(){
-        if(tip.hidden)return;
-        const rect=button.getBoundingClientRect(), width=tip.getBoundingClientRect().width;
-        tip.style.left=Math.max(8,Math.min(rect.right-width,root.innerWidth-width-8))+'px';
-        const height=tip.getBoundingClientRect().height;
-        tip.style.top=Math.max(8,rect.bottom+8+height>root.innerHeight?rect.top-height-8:rect.bottom+8)+'px';
-      }
+      const position=()=>place(button,tip);
       function show(){hiders.forEach(fn=>{if(fn!==hide)fn();});clearTimeout(timer);tip.hidden=false;if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',tip.id);position();}
       function hide(){clearTimeout(timer);pinned=false;if(tip.hidePopover&&tip.matches(':popover-open'))tip.hidePopover();tip.hidden=true;button.setAttribute('aria-expanded','false');button.removeAttribute('aria-describedby');}
       hiders.push(hide);
@@ -157,11 +230,11 @@
       doc.addEventListener('keydown',escape,true);doc.addEventListener('pointerdown',outside,true);root.addEventListener('resize',position);doc.addEventListener('scroll',position,true);
       disposers.push(()=>{hide();tip.remove();doc.removeEventListener('keydown',escape,true);doc.removeEventListener('pointerdown',outside,true);root.removeEventListener('resize',position);doc.removeEventListener('scroll',position,true);});
     }
-    if(value)attach({dataset:'contextHelp',id:'view-guidance-tip',name:`About ${value.label}`,heading:`About ${value.label}`,icon:icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/>'),content:()=>{const text=doc.createElement('p');text.textContent=value.body;return [text];}});
+    if(value)attach({dataset:'contextHelp',id:'view-guidance-tip',name:`About ${value.label}`,heading:`About ${value.label}`,icon:infoIcon,content:()=>{const text=doc.createElement('p');text.textContent=value.body;return [text];}});
     if(keys)attach({titled:true,dataset:'keyboardHelp',id:'keyboard-shortcuts-tip',name:keys.label,heading:'Keyboard shortcuts',icon:icon('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),content:()=>shortcutBody(doc)});
     host.append(node);
     dispose=()=>{disposers.forEach(fn=>fn());node.remove();};
     return node;
   }
-  root.BlacksmithViewGuidance = {get,getShortcuts,mount};
+  root.BlacksmithViewGuidance = {get,getShortcuts,getField,field,mount};
 })(globalThis);

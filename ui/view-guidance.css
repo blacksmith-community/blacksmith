@@ -11,6 +11,11 @@
 .view-guidance-tip > dl > dt { font-weight: 600; }
 .view-guidance-tip > dl > dd { margin: 0; }
 .route-context > .view-guidance { gap: 8px; }
+/* Field help sits beside a label or legend and keeps a 24px target. */
+.field-guidance { display: inline-flex; vertical-align: middle; margin-left: 6px; }
+.field-guidance-button { width: 24px; height: 24px; min-height: 24px; min-width: 24px; padding: 3px; }
+.field-guidance-button > svg { width: 16px; height: 16px; }
+.field-guidance-tip > div > p { margin: 6px 0 0; padding: 0; }
 
 #blacksmith .detail-content.plans-view { display: flex; align-items: flex-start; gap: 16px; min-width: 0; }
 #blacksmith .plans-view > .plans-list { flex: 0 0 16rem; width: 16rem; min-width: 0; max-width: 100%; padding: 0; border: 0; }
@@ -40,6 +45,8 @@
   #blacksmith .plan-details-table .info-key { width: 7rem; }
 }
 @media (forced-colors: active) {
+  .view-guidance-button { border-color: ButtonText; color: ButtonText; }
+  .view-guidance-tip { border-color: CanvasText; }
   #blacksmith .plans-list .plan-item.active { border-left-color: Highlight; }
   #blacksmith .plans-list .plan-item.active .plan-name { color: Highlight; }
 }
