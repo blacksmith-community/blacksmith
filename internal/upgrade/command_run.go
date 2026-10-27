@@ -677,12 +677,12 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 // an exit status, and not with the task's cancel, into an outcome. The
 // connection dropped, the deadline passed, or the broker is stopping, and
 // the record is the only witness, as it is for a cancel. A command that
-// had exited counts as the exit the record holds, one cleanup had to end
-// failed, or timed out when the deadline passed, and one cleanup found
-// already ended failed. A record that shows none of these strands the
+// had exited counts as the exit the record holds, whatever cleanup then
+// found of its children, one cleanup had to end failed, or timed out when
+// the deadline passed, and one cleanup found already ended failed. A record that shows none of these strands the
 // node, as unprovenRecord says.
 func (r *commandRun) classifyLost(execErr error, deadlineHit bool, record scripts.Cleanup, pastTimeout bool) commandOutcome {
-	if record.Started == "yes" && record.Killed != "yes" {
+	if record.Started == "yes" {
 		code, err := strconv.Atoi(record.Exit)
 		if err == nil {
 			return r.classifyExit(code, true, pastTimeout)
@@ -732,11 +732,11 @@ func (r *commandRun) classifyExit(code int, started, pastTimeout bool) commandOu
 // classifyCancelled turns what cleanup found on a node whose exec ended with
 // the task's cancel into an outcome. No exit status reached Blacksmith, so
 // the record is the only witness. A command that had exited already counts
-// as the exit the record holds, and one cleanup had to end, or found
-// already ended, is failed. A record that shows none of these strands the
+// as the exit the record holds, whatever cleanup then found of its
+// children, and one cleanup had to end, or found already ended, is failed. A record that shows none of these strands the
 // node, as unprovenRecord says, the same as a lost result.
 func (r *commandRun) classifyCancelled(execErr error, record scripts.Cleanup) commandOutcome {
-	if record.Started == "yes" && record.Killed != "yes" {
+	if record.Started == "yes" {
 		code, err := strconv.Atoi(record.Exit)
 		if err == nil && code == 0 {
 			return commandOutcome{status: CommandStatusSucceeded, exit: &code}
@@ -766,8 +766,10 @@ func (r *commandRun) classifyCancelled(execErr error, record scripts.Cleanup) co
 // still runs, as the Cleanup comment explains: unprovenGone for started=-,
 // whose task directory was already gone, unprovenUnknown for a record with
 // no exit status in which cleanup could not check, and "" for a record that
-// shows nothing the command started is left. An exit status, killed=yes,
-// killed=no, and started=no each show that.
+// shows nothing the command started is left. killed=yes, killed=no, and
+// started=no each show that. An exit status with killed=unknown settles
+// from the exit status too, because the command itself has ended, and only
+// children it left behind could still run.
 func unprovenRecord(record scripts.Cleanup) string {
 	switch {
 	case record.Started == "-":

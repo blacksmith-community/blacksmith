@@ -196,7 +196,10 @@ func TestRunCommandNodeStrandsALostResultCleanupCannotReach(t *testing.T) {
 // exit status, whether a cancel, a lost connection, or a deadline ended it.
 // An exit status, a command that never started, a group cleanup ended, and
 // killed=no, which says cleanup found the command's session empty, settle
-// the node. killed=unknown, or any killed value run.sh does not print, says
+// the node. Cleanup checks the session whatever the exit file holds, so an
+// exit status comes with any killed value. With yes, no, or unknown the
+// node settles from the exit status, and with survived it is held as a
+// survivor. killed=unknown, or any killed value run.sh does not print, says
 // cleanup could not check, and the node strands with the instance held so
 // Resume cleanup can check again. started=- says the record is gone, so
 // the node strands with a message that recreating the VM releases it.
@@ -218,7 +221,10 @@ func TestCommandClassifyTakesOnlyEvidenceFromTheRecord(t *testing.T) {
 		{record: "cleanup started=yes exit=0 killed=unknown", lost: CommandStatusSucceeded, cancelled: CommandStatusSucceeded, wantExit: intPtr(0)},
 		{record: "cleanup started=yes exit=3 killed=unknown", lost: CommandStatusFailed, cancelled: CommandStatusFailed, wantExit: intPtr(3)},
 		{record: "cleanup started=yes exit=- killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "ended the command's process group"},
-		{record: "cleanup started=yes exit=7 killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+		{record: "cleanup started=yes exit=7 killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed, wantExit: intPtr(7)},
+		{record: "cleanup started=yes exit=0 killed=yes", lost: CommandStatusSucceeded, cancelled: CommandStatusSucceeded, wantExit: intPtr(0)},
+		{record: "cleanup started=yes exit=0 killed=survived", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "survived KILL"},
+		{record: "cleanup started=yes exit=3 killed=survived", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "survived KILL"},
 		{record: "cleanup started=no exit=- killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "before the command started"},
 		{record: "cleanup started=no exit=125 killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
 		{record: "cleanup started=yes exit=- killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "lost after the command ended"},

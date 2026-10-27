@@ -759,6 +759,10 @@ func TestRunCommandNodeClassifiesTheExit(t *testing.T) {
 		{name: "exit with the directory gone", exit: 143, cleanup: "cleanup started=- exit=- killed=no", status: CommandStatusFailed, reasonHas: "did not start"},
 		{name: "the command's own 13", exit: 13, cleanup: "cleanup started=yes exit=13 killed=no", status: CommandStatusFailed, wantExit: intPtr(13), reasonHas: "status 13"},
 		{name: "ended by cleanup", exit: 124, cleanup: "cleanup started=yes exit=- killed=yes", status: CommandStatusTimedOut, wantExit: intPtr(124), wantKilled: true},
+		{name: "success with children cleanup ended", exit: 0, cleanup: "cleanup started=yes exit=0 killed=yes", status: CommandStatusSucceeded, wantExit: intPtr(0), wantKilled: true},
+		{name: "failure with children cleanup ended", exit: 3, cleanup: "cleanup started=yes exit=3 killed=yes", status: CommandStatusFailed, wantExit: intPtr(3), reasonHas: "status 3", wantKilled: true},
+		{name: "success with the session unchecked", exit: 0, cleanup: "cleanup started=yes exit=0 killed=unknown", status: CommandStatusSucceeded, wantExit: intPtr(0)},
+		{name: "failure with the session unchecked", exit: 3, cleanup: "cleanup started=yes exit=3 killed=unknown", status: CommandStatusFailed, wantExit: intPtr(3), reasonHas: "status 3"},
 	}
 
 	for _, tc := range cases {
@@ -993,27 +997,46 @@ func TestRunCommandNodeFailsOnTheSudoCheck(t *testing.T) {
 	}
 }
 
-// Processes that outlive KILL fail the node and pause the task, and
-// nothing is sent again.
+// Processes that outlive KILL fail the node, hold it as a survivor, and
+// pause the task, and nothing is sent again. That holds even when the
+// command exited, because cleanup checks its session whatever the exit.
 func TestRunCommandNodePausesWhenProcessesSurvive(t *testing.T) {
 	t.Parallel()
 
-	fix := newRunFixture(t)
-	fix.cleanup = "cleanup started=yes exit=- killed=survived"
+	for _, tc := range []struct {
+		exit    int
+		cleanup string
+	}{
+		{exit: 124, cleanup: "cleanup started=yes exit=- killed=survived"},
+		{exit: 0, cleanup: "cleanup started=yes exit=0 killed=survived"},
+		{exit: 3, cleanup: "cleanup started=yes exit=3 killed=survived"},
+	} {
+		t.Run(tc.cleanup, func(t *testing.T) {
+			t.Parallel()
 
-	if stopped := fix.run(context.Background()); !stopped {
-		t.Fatal("the task did not stop")
-	}
+			fix := newRunFixture(t)
+			fix.exec.ExitCode = tc.exit
+			fix.cleanup = tc.cleanup
 
-	wantOps(t, fix.sess, opSudoCheck, "prepare", "exec", "cleanup")
+			if stopped := fix.run(context.Background()); !stopped {
+				t.Fatal("the task did not stop")
+			}
 
-	node := fix.vault.stored(t)
-	if node.Phase != CommandPhaseSettled || node.Status != CommandStatusFailed || !strings.Contains(node.Reason, "survived") {
-		t.Errorf("phase %s status %s reason %q", node.Phase, node.Status, node.Reason)
-	}
+			wantOps(t, fix.sess, opSudoCheck, "prepare", "exec", "cleanup")
 
-	if !fix.taskPaused() {
-		t.Error("the task is not paused")
+			node := fix.vault.stored(t)
+			if node.Phase != CommandPhaseSettled || node.Status != CommandStatusFailed || !strings.Contains(node.Reason, "survived") {
+				t.Errorf("phase %s status %s reason %q", node.Phase, node.Status, node.Reason)
+			}
+
+			if !node.Survived {
+				t.Error("the node is not held as a survivor")
+			}
+
+			if !fix.taskPaused() {
+				t.Error("the task is not paused")
+			}
+		})
 	}
 }
 
