@@ -590,7 +590,7 @@ func TestRunCleanupKeepsTheTaskWhenTheSurvivorsRecordFails(t *testing.T) {
 	for name, stub := range map[string]string{
 		// The first member's line lands and the write then fails, as on a
 		// disk that fills part way through.
-		"write": `_rc_write() { head -n 1 > "$1"; return 1; }` + "\n",
+		"write":  `_rc_write() { head -n 1 > "$1"; return 1; }` + "\n",
 		"rename": `mv() { return 1; }` + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
