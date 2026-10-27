@@ -83,7 +83,8 @@ test('keyboard button toggles aria-expanded, keeps kbd and dl markup, and closes
  expect([...tip.querySelectorAll('dt')].map(e=>e.textContent)).toEqual(['N','A','U / R / C','→ / ←']);
  expect(tip.querySelectorAll('dd').length).toBe(4);
  expect(tip.textContent).toContain('Shortcuts pause in text fields and dialogs');
- d.getElementById('console-title')?.focus();
+ host.setAttribute('tabindex','-1');host.focus();
+ expect(d.activeElement===host).toBe(true);
  d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
  expect(tip.hidden).toBe(true);expect(key.getAttribute('aria-expanded')).toBe('false');
  expect(d.activeElement===key).toBe(true);
@@ -107,5 +108,33 @@ test('the old shortcuts disclosure is gone from the markup',()=>{
  expect(html.includes('batch-keyboard-help')).toBe(false);
  const {w,d}=bootKeys();
  expect(d.querySelector('details.batch-keyboard-help')===null).toBe(true);
+ w.close();
+});
+
+test('Enter and Space on either button toggle its popover',()=>{
+ const {w,d,host}=bootKeys();
+ w.BlacksmithViewGuidance.mount(host,batchRoutes[0]);
+ const press=(button,key)=>{const down=new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true});button.dispatchEvent(down);button.dispatchEvent(new w.KeyboardEvent('keyup',{key,bubbles:true,cancelable:true}));return down;};
+ for(const [selector,id] of [['[data-keyboard-help]','keyboard-shortcuts-tip'],['[data-context-help]','view-guidance-tip']]){
+  const button=host.querySelector(selector),tip=d.getElementById(id);
+  for(const key of ['Enter',' ']){
+   expect(tip.hidden).toBe(true);
+   const down=press(button,key);
+   expect(down.defaultPrevented).toBe(true);expect(tip.hidden).toBe(false);expect(button.getAttribute('aria-expanded')).toBe('true');
+   press(button,key);expect(tip.hidden).toBe(true);expect(button.getAttribute('aria-expanded')).toBe('false');
+  }
+ }
+ w.close();
+});
+
+test('opening one popover closes the other, so one Escape leaves none open',()=>{
+ const {w,d,host}=bootKeys();
+ w.BlacksmithViewGuidance.mount(host,batchRoutes[0]);
+ const info=host.querySelector('[data-context-help]'),key=host.querySelector('[data-keyboard-help]');
+ const infoTip=d.getElementById('view-guidance-tip'),keyTip=d.getElementById('keyboard-shortcuts-tip');
+ info.click();expect(infoTip.hidden).toBe(false);
+ key.click();expect(keyTip.hidden).toBe(false);expect(infoTip.hidden).toBe(true);expect(info.getAttribute('aria-expanded')).toBe('false');
+ d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ expect(infoTip.hidden).toBe(true);expect(keyTip.hidden).toBe(true);
  w.close();
 });

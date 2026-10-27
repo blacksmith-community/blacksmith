@@ -120,6 +120,7 @@
     node.className='view-guidance';
     const icon=paths=>`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${paths}</svg>`;
     // One popover mechanism serves every header button: hover or focus shows, click pins, Escape and outside clicks dismiss.
+    const hiders=[];
     function attach(spec){
       const button=doc.createElement('button'), tip=doc.createElement('div');
       button.type='button';button.className='view-guidance-button';button.dataset[spec.dataset]='';
@@ -137,14 +138,20 @@
         const height=tip.getBoundingClientRect().height;
         tip.style.top=Math.max(8,rect.bottom+8+height>root.innerHeight?rect.top-height-8:rect.bottom+8)+'px';
       }
-      function show(){clearTimeout(timer);tip.hidden=false;if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',tip.id);position();}
+      function show(){hiders.forEach(fn=>{if(fn!==hide)fn();});clearTimeout(timer);tip.hidden=false;if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',tip.id);position();}
       function hide(){clearTimeout(timer);pinned=false;if(tip.hidePopover&&tip.matches(':popover-open'))tip.hidePopover();tip.hidden=true;button.setAttribute('aria-expanded','false');button.removeAttribute('aria-describedby');}
+      hiders.push(hide);
       function leave(){hover=false;timer=setTimeout(()=>{if(!hover&&!pinned&&doc.activeElement!==button)hide();},120);}
       button.addEventListener('pointerenter',()=>{hover=true;show();});button.addEventListener('pointerleave',leave);
       tip.addEventListener('pointerenter',()=>{hover=true;clearTimeout(timer);});tip.addEventListener('pointerleave',leave);
       let restoring=false;
       button.addEventListener('focus',()=>{if(!restoring)show();});button.addEventListener('blur',leave);
-      button.addEventListener('click',()=>{if(pinned)hide();else{pinned=true;show();}});
+      const toggle=()=>{if(pinned)hide();else{pinned=true;show();}};
+      button.addEventListener('click',toggle);
+      // Handle Enter and Space directly and cancel the native click so a press toggles once.
+      const activation=event=>event.key==='Enter'||event.key===' ';
+      button.addEventListener('keydown',event=>{if(!activation(event))return;event.preventDefault();toggle();});
+      button.addEventListener('keyup',event=>{if(activation(event))event.preventDefault();});
       const escape=event=>{if(event.key==='Escape'&&!tip.hidden){event.preventDefault();event.stopImmediatePropagation();hide();restoring=true;button.focus();restoring=false;}};
       const outside=event=>{if(!node.contains(event.target)&&!tip.contains(event.target))hide();};
       doc.addEventListener('keydown',escape,true);doc.addEventListener('pointerdown',outside,true);root.addEventListener('resize',position);doc.addEventListener('scroll',position,true);
