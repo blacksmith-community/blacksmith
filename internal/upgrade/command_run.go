@@ -1035,6 +1035,12 @@ func (m *Manager) prepareLoadedCommandLocked(task *UpgradeTask) bool {
 			continue
 		}
 
+		for vm, node := range inst.Command.VMs {
+			if commandNodeHeld(node) {
+				m.noteStrandCauseLocked(task, inst, vm, strandedByRestart)
+			}
+		}
+
 		if commandInstanceHaltedLocked(inst) && skipPendingNodesLocked(inst, "Blacksmith restarted after a node of the deployment did not succeed, so the command was not sent.") {
 			changed = true
 		}
@@ -1414,6 +1420,11 @@ func (m *Manager) pauseWorkerPanic(task *UpgradeTask, inst *InstanceUpgrade, vm 
 	}
 
 	inst.Error = message
+
+	if commandNodeHeld(inst.Command.VMs[vm]) {
+		m.noteStrandCauseLocked(task, inst, vm, strandedByPanic)
+	}
+
 	m.mu.Unlock()
 
 	m.logger.Error("Command task %s paused, because node %d of instance %s panicked (%T)", task.ID, vm, inst.InstanceID, recovered)
@@ -1772,10 +1783,7 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 		return true
 	}
 
-	why := "when it paused"
-	if m.taskCancelled(task) {
-		why = "when the task was cancelled"
-	}
+	why := m.strandCause(task, inst, vm)
 
 	outcome := commandOutcome{
 		status: CommandStatusFailed,
@@ -1787,7 +1795,56 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 		outcome.exit = &code
 	}
 
-	return run.settle(ctx, outcome)
+	stopped := run.settle(ctx, outcome)
+	if m.commandNodeFailed(inst, vm) {
+		m.clearStrandCause(task, inst, vm)
+	}
+
+	return stopped
+}
+
+// Why a node was stranded, as the reason of the node says it.
+const (
+	strandedByPause   = "when it paused"
+	strandedByCancel  = "when the task was cancelled"
+	strandedByRestart = "when Blacksmith restarted"
+	strandedByPanic   = "when a worker for the node hit an internal error"
+)
+
+// strandKey names one node of a task for strandCauses.
+func strandKey(task *UpgradeTask, inst *InstanceUpgrade, vm int) string {
+	return task.ID + "/" + inst.InstanceID + "/" + strconv.Itoa(vm)
+}
+
+// noteStrandCauseLocked records why a node is stranded, when a pause is not
+// the reason. The caller holds mu.
+func (m *Manager) noteStrandCauseLocked(task *UpgradeTask, inst *InstanceUpgrade, vm int, why string) {
+	m.strandCauses[strandKey(task, inst, vm)] = why
+}
+
+// strandCause says why a stranded node was lost. A cancel is what the
+// operator last asked for, so it comes first, then a restart or a worker
+// panic, and otherwise the node was stranded by a pause.
+func (m *Manager) strandCause(task *UpgradeTask, inst *InstanceUpgrade, vm int) string {
+	if m.taskCancelled(task) {
+		return strandedByCancel
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if why, found := m.strandCauses[strandKey(task, inst, vm)]; found {
+		return why
+	}
+
+	return strandedByPause
+}
+
+// clearStrandCause forgets the cause of a node that settled.
+func (m *Manager) clearStrandCause(task *UpgradeTask, inst *InstanceUpgrade, vm int) {
+	m.mu.Lock()
+	delete(m.strandCauses, strandKey(task, inst, vm))
+	m.mu.Unlock()
 }
 
 // reachStranded builds the cleanup input and opens the session on the

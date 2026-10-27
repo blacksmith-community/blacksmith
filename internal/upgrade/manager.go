@@ -210,6 +210,11 @@ type Manager struct {
 	// processed, so only one processor ever runs an upgrade.
 	owned map[string]bool
 
+	// strandCauses holds, under mu, why a node of a command task is
+	// stranded in the staged or sent phase when that is not a pause, by
+	// the node's key. The key is dropped once the node settles.
+	strandCauses map[string]string
+
 	// lookups holds, under mu, how many loaded deploys saved without a
 	// task ID are still being looked up, by their context ID or by their
 	// deployment. No upgrade resumes while it is above zero, so a task a
@@ -339,6 +344,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		settling:       make(map[string]int),
 		loaded:         make(chan struct{}),
 		owned:          make(map[string]bool),
+		strandCauses:   make(map[string]string),
 		guard:          mutation.NewGuard(time.Now),
 		reservations:   make(map[string]map[string]func()),
 		requests:       newRequestIndex(),
