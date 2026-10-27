@@ -136,6 +136,10 @@ var errCommandCancelled = errors.New("the task was cancelled")
 // and nothing was sent to it, and the caller stops the deployment.
 var errCommandVMChanged = errors.New("the VM changed since the review")
 
+// errUnprovenRecord is why a sent node stays held when its cleanup record
+// shows nothing about whether the command still runs.
+var errUnprovenRecord = errors.New("cleanup showed nothing about whether the command ended")
+
 // wasCancelled reports whether the context ended because the task was
 // cancelled.
 func wasCancelled(ctx context.Context) bool {
@@ -673,9 +677,10 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 // an exit status, and not with the task's cancel, into an outcome. The
 // connection dropped, the deadline passed, or the broker is stopping, and
 // the record is the only witness, as it is for a cancel. A command that
-// had exited counts as the exit the record holds, and one cleanup had to
-// end failed, or timed out when the deadline passed. A record that shows
-// none of these strands the node, as unprovenRecord says.
+// had exited counts as the exit the record holds, one cleanup had to end
+// failed, or timed out when the deadline passed, and one cleanup found
+// already ended failed. A record that shows none of these strands the
+// node, as unprovenRecord says.
 func (r *commandRun) classifyLost(execErr error, deadlineHit bool, record scripts.Cleanup, pastTimeout bool) commandOutcome {
 	if record.Started == "yes" && record.Killed != "yes" {
 		code, err := strconv.Atoi(record.Exit)
@@ -684,8 +689,8 @@ func (r *commandRun) classifyLost(execErr error, deadlineHit bool, record script
 		}
 	}
 
-	if unprovenRecord(record) {
-		return commandOutcome{strand: true, reason: strandUnproven, err: execErr}
+	if unproven := unprovenRecord(record); unproven != "" {
+		return commandOutcome{strand: true, reason: strandMessage(unproven), err: execErr}
 	}
 
 	timedOut := deadlineHit || errors.Is(execErr, context.DeadlineExceeded)
@@ -695,6 +700,8 @@ func (r *commandRun) classifyLost(execErr error, deadlineHit bool, record script
 		return commandOutcome{status: CommandStatusTimedOut, reason: "The node did not finish within the timeout and the grace period, so cleanup ended the command's process group.", err: execErr}
 	case record.Killed == "yes":
 		return commandOutcome{status: CommandStatusFailed, reason: "The connection to the node ended before the command's result was known, so cleanup ended the command's process group.", err: execErr}
+	case record.Started == "yes":
+		return commandOutcome{status: CommandStatusFailed, reason: "The connection to the node ended before the command's result arrived, and cleanup found nothing of the command running, so the result was lost after the command ended.", err: execErr}
 	}
 
 	return commandOutcome{status: CommandStatusFailed, reason: "The connection to the node ended before the command started.", err: execErr}
@@ -725,9 +732,9 @@ func (r *commandRun) classifyExit(code int, started, pastTimeout bool) commandOu
 // classifyCancelled turns what cleanup found on a node whose exec ended with
 // the task's cancel into an outcome. No exit status reached Blacksmith, so
 // the record is the only witness. A command that had exited already counts
-// as the exit the record holds, and one cleanup had to end is failed and
-// killed. A record that shows none of these strands the node, as
-// unprovenRecord says, the same as a lost result.
+// as the exit the record holds, and one cleanup had to end, or found
+// already ended, is failed. A record that shows none of these strands the
+// node, as unprovenRecord says, the same as a lost result.
 func (r *commandRun) classifyCancelled(execErr error, record scripts.Cleanup) commandOutcome {
 	if record.Started == "yes" && record.Killed != "yes" {
 		code, err := strconv.Atoi(record.Exit)
@@ -740,35 +747,51 @@ func (r *commandRun) classifyCancelled(execErr error, record scripts.Cleanup) co
 		}
 	}
 
-	if unprovenRecord(record) {
-		return commandOutcome{strand: true, reason: strandUnproven, err: execErr}
+	if unproven := unprovenRecord(record); unproven != "" {
+		return commandOutcome{strand: true, reason: strandMessage(unproven), err: execErr}
 	}
 
-	if record.Killed == "yes" {
+	switch {
+	case record.Killed == "yes":
 		return commandOutcome{status: CommandStatusFailed, reason: "The task was cancelled, so cleanup ended the command's process group on the node.", err: execErr}
+	case record.Started == "yes":
+		return commandOutcome{status: CommandStatusFailed, reason: "The task was cancelled, and cleanup found nothing of the command running on the node, so its result was lost after the command ended.", err: execErr}
 	}
 
 	return commandOutcome{status: CommandStatusFailed, reason: "The task was cancelled before the command started on the node.", err: execErr}
 }
 
-// unprovenRecord reports whether a cleanup record of a node whose exec ended
-// without an exit status leaves open whether the command still runs. A
-// record with no exit and killed=no proves nothing, because the wrapper
-// prints killed=no when it found no live group and also when it could not
-// check one, and started=- means the task directory was already gone. An
-// exit status, killed=yes, and started=no each show that nothing the
-// command started is left.
-func unprovenRecord(record scripts.Cleanup) bool {
+// unprovenRecord says what a cleanup record of a sent node, other than
+// one whose processes survived KILL, leaves open about whether the command
+// still runs, as the Cleanup comment explains: unprovenGone for started=-,
+// whose task directory was already gone, unprovenUnknown for a record with
+// no exit status in which cleanup could not check, and "" for a record that
+// shows nothing the command started is left. An exit status, killed=yes,
+// killed=no, and started=no each show that.
+func unprovenRecord(record scripts.Cleanup) string {
 	switch {
-	case record.Killed == "yes", record.Started == "no":
-		return false
 	case record.Started == "-":
-		return true
+		return unprovenGone
+	case record.Started == "no", record.Killed == "yes", record.Killed == "no":
+		return ""
 	}
 
 	_, err := strconv.Atoi(record.Exit)
+	if err == nil {
+		return ""
+	}
 
-	return err != nil
+	return unprovenUnknown
+}
+
+// strandMessage is the message of the pause for a node held on what
+// unprovenRecord says.
+func strandMessage(unproven string) string {
+	if unproven == unprovenGone {
+		return strandGone
+	}
+
+	return strandUnproven
 }
 
 // cleanup sends cleanup on a context of its own, so a node whose context
@@ -858,6 +881,7 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 		node.Status = outcome.status
 		node.Reason = outcome.reason
 		node.Error = ""
+		node.Unproven = ""
 		node.ExitCode = outcome.exit
 		node.EndedAt = &ended
 		node.Killed = outcome.killed
@@ -915,18 +939,27 @@ func recordOutput(node *CommandVM, outcome commandOutcome) {
 // stays cancelled and pauses, and an unfinished one pauses with strandLost
 // on the instance, so a resume is what cleans the node. The output the
 // node wrote is recorded on it, so the resume does not lose it. An outcome
-// whose reason is strandUnproven reached the node, but its record did not
-// show the command ended, and the instance says so in place of strandLost.
-// It returns true, because the task stopped.
+// whose reason is strandUnproven or strandGone reached the node, but its
+// record did not show the command ended. The node keeps why in Unproven,
+// and the instance says so in place of strandLost. It returns true,
+// because the task stopped.
 func (r *commandRun) strand(ctx context.Context, outcome commandOutcome) bool {
-	message, why := strandLost, "cleanup could not reach the node"
-	if outcome.reason == strandUnproven {
-		message, why = strandUnproven, "cleanup found no evidence that the command ended"
+	message, why, unproven := strandLost, "cleanup could not reach the node", ""
+
+	switch outcome.reason {
+	case strandUnproven:
+		message, why, unproven = strandUnproven, "cleanup could not check whether the command still runs", unprovenUnknown
+	case strandGone:
+		message, why, unproven = strandGone, "the command's directory was already gone", unprovenGone
 	}
 
 	r.m.mu.Lock()
 	if outcome.result != nil {
 		recordOutput(&r.inst.Command.VMs[r.vm], outcome)
+	}
+
+	if unproven != "" {
+		r.inst.Command.VMs[r.vm].Unproven = unproven
 	}
 
 	if !taskEndedLocked(r.task) {
@@ -1922,8 +1955,16 @@ const (
 	strandUnclean     = "The cleanup of a node an earlier run left behind did not report cleanly, so it is still waiting for a resume."
 	strandLost        = "The connection to a node ended before the command's result arrived, and cleanup could not reach the node, " +
 		"so the instance stays held and the task is paused. Once the node can be reached, use Resume cleanup to finish it."
-	strandUnproven = "The connection to a node ended before the command's result arrived, and cleanup found no evidence that the command ended there, " +
+	strandUnproven = "Cleanup could not check whether the command still runs on a node, " +
 		"so the instance stays held and the task is paused. Use Resume cleanup to check the node again."
+	strandGone = "Cleanup found the command's directory already gone from a node, so nothing shows whether the command still runs there. " +
+		"The instance stays held and the task is paused. Recreating the VM releases it at the next Resume cleanup."
+)
+
+// What a node's Unproven says.
+const (
+	unprovenUnknown = "unknown"
+	unprovenGone    = "gone"
 )
 
 // clearStrandPause takes back the message of a strand pause once a resume
@@ -1936,7 +1977,7 @@ func (m *Manager) clearStrandPause(inst *InstanceUpgrade) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if inst.Error != strandUnreachable && inst.Error != strandUnclean && inst.Error != strandLost && inst.Error != strandUnproven {
+	if inst.Error != strandUnreachable && inst.Error != strandUnclean && inst.Error != strandLost && inst.Error != strandUnproven && inst.Error != strandGone {
 		return
 	}
 
@@ -1982,6 +2023,21 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 		m.pauseStranded(task, inst, strandUnclean, err)
 
 		return true
+	}
+
+	// A sent node settles only on a record that shows nothing the command
+	// started is left. Any other keeps the instance held, with why on the
+	// node, for the next Resume cleanup or for a recreate of the VM.
+	if record.Killed != "survived" && m.commandNodePhase(inst, vm) == CommandPhaseSent {
+		if unproven := unprovenRecord(record); unproven != "" {
+			m.mu.Lock()
+			inst.Command.VMs[vm].Unproven = unproven
+			m.mu.Unlock()
+
+			m.pauseStranded(task, inst, strandMessage(unproven), fmt.Errorf("%w: started=%s exit=%s killed=%s", errUnprovenRecord, record.Started, record.Exit, record.Killed))
+
+			return true
+		}
 	}
 
 	why := m.strandCause(task, inst, vm)
@@ -2207,7 +2263,8 @@ func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 		identity := node.identity()
 		task.Paused = true
 
-		if node.Survived {
+		switch {
+		case node.Survived:
 			inst.Error = fmt.Sprintf("%s, but processes of the command survived KILL on %s/%d, so instance %s stays held. Use Resume cleanup to check them again.", ended, identity.Group, identity.Index, inst.InstanceID)
 
 			return

@@ -93,6 +93,11 @@ type CommandVM struct {
 	Survived        bool              `json:"survived,omitempty"`
 	OutputPath      string            `json:"output_path,omitempty"`
 	Error           string            `json:"error,omitempty"`
+	// Unproven says why the last cleanup of a sent node that is still held
+	// showed nothing about whether the command ended: unprovenUnknown when
+	// cleanup could not check, and unprovenGone when the task directory was
+	// already gone. It is empty once the node settles.
+	Unproven string `json:"unproven,omitempty"`
 	// InFlight says a worker of this process holds the node, which it may
 	// still read pending while the worker lists the VMs, connects, and
 	// checks sudo. It is set on the copies a reader gets and never saved.

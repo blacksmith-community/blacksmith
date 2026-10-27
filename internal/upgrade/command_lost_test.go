@@ -30,6 +30,7 @@ func TestRunCommandNodeTakesALostResultFromTheCleanupRecord(t *testing.T) {
 		{name: "exited 3", execErr: errors.New("connection lost"), cleanup: "cleanup started=yes exit=3 killed=no", status: CommandStatusFailed, wantExit: intPtr(3), reasonHas: "status 3"},
 		{name: "never started", execErr: ssh.ErrNoExitStatus, cleanup: "cleanup started=no exit=- killed=no", status: CommandStatusFailed, reasonHas: "before the command started"},
 		{name: "ended by cleanup", execErr: ssh.ErrNoExitStatus, cleanup: "cleanup started=yes exit=- killed=yes", status: CommandStatusFailed, reasonHas: "cleanup ended", wantKilled: true},
+		{name: "ended before cleanup", execErr: errors.New("connection lost"), cleanup: "cleanup started=yes exit=- killed=no", status: CommandStatusFailed, reasonHas: "lost after the command ended"},
 	}
 
 	for _, tc := range cases {
@@ -193,11 +194,12 @@ func TestRunCommandNodeStrandsALostResultCleanupCannotReach(t *testing.T) {
 
 // What a cleanup record proves about a node whose exec ended without an
 // exit status, whether a cancel, a lost connection, or a deadline ended it.
-// An exit status, a command that never started, and a group cleanup ended
-// settle the node. killed=no with no exit only says the wrapper did not
-// signal the session, which it also says when it could not check it, and
-// started=- says the record is gone, so neither proves the command ended
-// and the node strands with the instance held.
+// An exit status, a command that never started, a group cleanup ended, and
+// killed=no, which says cleanup found the command's session empty, settle
+// the node. killed=unknown, or any killed value run.sh does not print, says
+// cleanup could not check, and the node strands with the instance held so
+// Resume cleanup can check again. started=- says the record is gone, so
+// the node strands with a message that recreating the VM releases it.
 func TestCommandClassifyTakesOnlyEvidenceFromTheRecord(t *testing.T) {
 	t.Parallel()
 
@@ -208,15 +210,22 @@ func TestCommandClassifyTakesOnlyEvidenceFromTheRecord(t *testing.T) {
 		lost      string
 		cancelled string
 		wantExit  *int
+		reasonHas string
+		strandAs  string
 	}{
 		{record: "cleanup started=yes exit=0 killed=no", lost: CommandStatusSucceeded, cancelled: CommandStatusSucceeded, wantExit: intPtr(0)},
 		{record: "cleanup started=yes exit=3 killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed, wantExit: intPtr(3)},
-		{record: "cleanup started=yes exit=- killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+		{record: "cleanup started=yes exit=0 killed=unknown", lost: CommandStatusSucceeded, cancelled: CommandStatusSucceeded, wantExit: intPtr(0)},
+		{record: "cleanup started=yes exit=3 killed=unknown", lost: CommandStatusFailed, cancelled: CommandStatusFailed, wantExit: intPtr(3)},
+		{record: "cleanup started=yes exit=- killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "ended the command's process group"},
 		{record: "cleanup started=yes exit=7 killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
-		{record: "cleanup started=no exit=- killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+		{record: "cleanup started=no exit=- killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "before the command started"},
 		{record: "cleanup started=no exit=125 killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
-		{record: "cleanup started=yes exit=- killed=no", lost: stranded, cancelled: stranded},
-		{record: "cleanup started=- exit=- killed=no", lost: stranded, cancelled: stranded},
+		{record: "cleanup started=yes exit=- killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed, reasonHas: "lost after the command ended"},
+		{record: "cleanup started=yes exit=- killed=unknown", lost: stranded, cancelled: stranded, strandAs: strandUnproven},
+		{record: "cleanup started=yes exit=- killed=maybe", lost: stranded, cancelled: stranded, strandAs: strandUnproven},
+		{record: "cleanup started=- exit=- killed=no", lost: stranded, cancelled: stranded, strandAs: strandGone},
+		{record: "cleanup started=- exit=- killed=unknown", lost: stranded, cancelled: stranded, strandAs: strandGone},
 		{record: "cleanup started=yes exit=- killed=survived", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
 	}
 
@@ -244,6 +253,14 @@ func TestCommandClassifyTakesOnlyEvidenceFromTheRecord(t *testing.T) {
 				t.Errorf("%s, cancelled %v: got %q, want %q", tc.record, cancelled, got, want)
 			}
 
+			if outcome.strand && outcome.reason != tc.strandAs {
+				t.Errorf("%s, cancelled %v: stranded as %q, want %q", tc.record, cancelled, outcome.reason, tc.strandAs)
+			}
+
+			if !outcome.strand && !strings.Contains(outcome.reason, tc.reasonHas) {
+				t.Errorf("%s, cancelled %v: reason %q lacks %q", tc.record, cancelled, outcome.reason, tc.reasonHas)
+			}
+
 			switch {
 			case tc.wantExit == nil && outcome.exit != nil:
 				t.Errorf("%s, cancelled %v: exit %d taken as the command's", tc.record, cancelled, *outcome.exit)
@@ -254,23 +271,30 @@ func TestCommandClassifyTakesOnlyEvidenceFromTheRecord(t *testing.T) {
 	}
 }
 
-// A lost result whose cleanup reports that it ended nothing, with no exit,
-// strands the node in an unfinished task. The instance stays held, the
-// task pauses with a message that says the command was not shown to have
-// ended, and the partial output is kept. A store of the output that fails
-// changes none of that.
+// A lost result whose cleanup could not check the command, or found its
+// directory gone, strands the node in an unfinished task. The instance
+// stays held, the task pauses with a message that says why and how to go
+// on, the node keeps what the record lacked, and the partial output is
+// kept. A store of the output that fails changes none of that.
 func TestRunCommandNodeStrandsALostResultTheRecordDoesNotSettle(t *testing.T) {
 	t.Parallel()
 
-	for _, record := range []string{"cleanup started=yes exit=- killed=no", "cleanup started=- exit=- killed=no"} {
+	for _, tc := range []struct {
+		record   string
+		unproven string
+		says     string
+	}{
+		{"cleanup started=yes exit=- killed=unknown", unprovenUnknown, "Use Resume cleanup to check the node again"},
+		{"cleanup started=- exit=- killed=no", unprovenGone, "Recreating the VM releases it"},
+	} {
 		for _, storeFails := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s store fails %v", record, storeFails), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s store fails %v", tc.record, storeFails), func(t *testing.T) {
 				t.Parallel()
 
 				fix := newRunFixture(t)
 				fix.exec = ssh.Result{Stdout: []byte("partial")}
 				fix.execErr = ssh.ErrNoExitStatus
-				fix.cleanup = record
+				fix.cleanup = tc.record
 
 				if storeFails {
 					path, err := commandOutputPath(fix.task.ID, fix.inst.InstanceID, fix.node().Reviewed)
@@ -286,8 +310,8 @@ func TestRunCommandNodeStrandsALostResultTheRecordDoesNotSettle(t *testing.T) {
 				}
 
 				node := fix.vault.stored(t)
-				if node.Phase != CommandPhaseSent || node.StdoutKept != len("partial") {
-					t.Errorf("phase %s kept %d, want sent with the partial output", node.Phase, node.StdoutKept)
+				if node.Phase != CommandPhaseSent || node.StdoutKept != len("partial") || node.Unproven != tc.unproven {
+					t.Errorf("phase %s kept %d unproven %q, want sent with the partial output and %q", node.Phase, node.StdoutKept, node.Unproven, tc.unproven)
 				}
 
 				fix.manager.mu.RLock()
@@ -298,8 +322,8 @@ func TestRunCommandNodeStrandsALostResultTheRecordDoesNotSettle(t *testing.T) {
 					t.Errorf("the task is %s paused=%v, want paused", status, paused)
 				}
 
-				if !strings.Contains(message, "no evidence that the command ended") || !strings.Contains(message, "Resume cleanup") {
-					t.Errorf("the instance says %q, want it to say why it is held and how to go on", message)
+				if !strings.Contains(message, tc.says) {
+					t.Errorf("the instance says %q, want it to say %q", message, tc.says)
 				}
 			})
 		}
@@ -319,12 +343,12 @@ func TestCommandUnprovenLostResultSettlesOnTheNextResume(t *testing.T) {
 
 		return nil
 	}
-	fix.setCleanup("dep-0/0", "cleanup started=yes exit=- killed=no")
+	fix.setCleanup("dep-0/0", "cleanup started=yes exit=- killed=unknown")
 
 	fix.queue()
 
 	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Paused })
-	if got := paused.Instances[0].Error; !strings.Contains(got, "no evidence that the command ended") {
+	if got := paused.Instances[0].Error; got != strandUnproven {
 		t.Fatalf("the instance says %q, want the unproven strand message", got)
 	}
 
@@ -342,10 +366,131 @@ func TestCommandUnprovenLostResultSettlesOnTheNextResume(t *testing.T) {
 		t.Errorf("the instance is %s saying %q, want failed with the node's reason %q", inst.Status, inst.Error, inst.Command.VMs[0].Reason)
 	}
 
+	if got := inst.Command.VMs[0].Unproven; got != "" {
+		t.Errorf("the settled node still says the record was unproven: %q", got)
+	}
+
 	if n := fix.countOps("dep-0", 0, opRunExec); n != 1 {
 		t.Errorf("exec was sent %d times, want once", n)
 	}
 
 	fix.waitReleased()
 	fix.assertNoCommandText()
+}
+
+// strandUnprovenNode runs a task whose only node loses its result and whose
+// cleanup can't check the command, and waits for the strand's pause.
+func (f *taskFixture) strandUnprovenNode() {
+	f.t.Helper()
+
+	f.override = func(_ context.Context, _ string, _ int, op string) *opAnswer {
+		if op == opRunExec {
+			return &opAnswer{result: ssh.Result{Stdout: []byte("partial")}, err: ssh.ErrNoExitStatus}
+		}
+
+		return nil
+	}
+	f.setCleanup("dep-0/0", "cleanup started=yes exit=- killed=unknown")
+
+	f.queue()
+	f.waitFor("the strand to pause the task", func(task UpgradeTask) bool {
+		return task.Paused && task.Instances[0].Error == strandUnproven
+	})
+}
+
+// Resume cleanup settles a stranded sent node only on evidence that nothing
+// the command started still runs: an exit status, killed=yes, killed=no, or
+// started=no. A record that says cleanup could not check keeps the hold for
+// another Resume cleanup, and started=- keeps it with a message that
+// recreating the VM releases it, because no later cleanup can find a record
+// that is gone.
+func TestCommandResumeSettlesAStrandedNodeOnlyOnEvidence(t *testing.T) {
+	cases := []struct {
+		record   string
+		settles  bool
+		message  string
+		unproven string
+	}{
+		{record: "cleanup started=yes exit=- killed=no", settles: true},
+		{record: "cleanup started=yes exit=- killed=yes", settles: true},
+		{record: "cleanup started=yes exit=4 killed=unknown", settles: true},
+		{record: "cleanup started=no exit=- killed=no", settles: true},
+		{record: "cleanup started=yes exit=- killed=unknown", message: strandUnproven, unproven: unprovenUnknown},
+		{record: "cleanup started=yes exit=- killed=maybe", message: strandUnproven, unproven: unprovenUnknown},
+		{record: "cleanup started=- exit=- killed=no", message: strandGone, unproven: unprovenGone},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.record, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 1)
+			fix.strandUnprovenNode()
+
+			fix.setCleanup("dep-0/0", tc.record)
+			fix.resume()
+
+			waitUntil(t, "the resume's cleanup", func() bool { return fix.countOps("dep-0", 0, opRunCleanup) == 2 })
+
+			if tc.settles {
+				ended := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status.settled() })
+				if node := nodeOf(ended, 0, 0); node.Phase != CommandPhaseSettled || node.Unproven != "" {
+					t.Errorf("the node is %s unproven %q, want settled", node.Phase, node.Unproven)
+				}
+
+				fix.waitReleased()
+
+				return
+			}
+
+			held := fix.waitFor("the task to pause again", func(task UpgradeTask) bool {
+				return task.Paused && task.Instances[0].Error == tc.message
+			})
+
+			if node := nodeOf(held, 0, 0); node.Phase != CommandPhaseSent || node.Unproven != tc.unproven {
+				t.Errorf("the node is %s unproven %q, want sent and %q", node.Phase, node.Unproven, tc.unproven)
+			}
+
+			if !fix.holds() {
+				t.Error("a record that proves nothing released the instance")
+			}
+
+			if n := fix.countOps("dep-0", 0, opRunExec); n != 1 {
+				t.Errorf("exec was sent %d times, want once", n)
+			}
+		})
+	}
+}
+
+// A stranded node whose record is gone stays held through every Resume
+// cleanup, and is released by the first one after the VM is recreated.
+func TestCommandGoneRecordHeldUntilTheVMIsRecreated(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	fix.strandUnprovenNode()
+
+	fix.setCleanup("dep-0/0", "cleanup started=- exit=- killed=no")
+
+	for round := 2; round <= 3; round++ {
+		fix.resume()
+		waitUntil(t, "the resume's cleanup", func() bool { return fix.countOps("dep-0", 0, opRunCleanup) == round })
+		fix.waitFor("the task to pause again", func(task UpgradeTask) bool {
+			return task.Paused && task.Instances[0].Error == strandGone
+		})
+
+		if !fix.holds() {
+			t.Fatalf("Resume cleanup %d released the instance on a record that is gone", round-1)
+		}
+	}
+
+	fix.replaceVM("dep-0", 0)
+	fix.resume()
+
+	ended := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status.settled() })
+	if node := nodeOf(ended, 0, 0); !strings.Contains(node.Reason, "was replaced") || node.Unproven != "" {
+		t.Errorf("the node says %q unproven %q, want it settled as replaced", node.Reason, node.Unproven)
+	}
+
+	fix.waitReleased()
+
+	if n := fix.countOps("dep-0", 0, opRunExec); n != 1 {
+		t.Errorf("exec was sent %d times, want once", n)
+	}
 }
