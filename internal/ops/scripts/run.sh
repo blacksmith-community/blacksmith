@@ -25,6 +25,8 @@
 # the task directories, runcmd holds the done records that cleanup leaves,
 # a root-owned file of mode 0600 named <task>.done, as cleanup describes.
 #
+# The wrapper needs GNU coreutils for mv -T, which the stemcell has.
+#
 # CERTPATCH_ROOT lets the tests put the VM's files under a temporary
 # directory, as lib.sh explains.
 
