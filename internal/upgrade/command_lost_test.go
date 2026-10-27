@@ -488,10 +488,38 @@ func TestCommandGoneRecordHeldUntilTheVMIsRecreated(t *testing.T) {
 		t.Errorf("the node says %q unproven %q, want it settled as replaced", node.Reason, node.Unproven)
 	}
 
+	if got := ended.Instances[0].Error; got == strandGone {
+		t.Errorf("the released instance still says %q", got)
+	}
+
 	fix.waitReleased()
 
 	if n := fix.countOps("dep-0", 0, opRunExec); n != 1 {
 		t.Errorf("exec was sent %d times, want once", n)
+	}
+}
+
+// A node stranded staged was never sent the command, so a cleanup whose
+// record is gone shows nothing ran, and Resume cleanup releases it.
+func TestCommandStagedNodeSettlesOnAGoneRecord(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	script := fix.strandStaged()
+
+	fix.setCleanup("dep-0/0", "cleanup started=- exit=- killed=no")
+	script.cleanupDown.Store(false)
+	fix.resume()
+	fix.waitReleased()
+
+	done := fix.waitFor("the task to stop waiting", func(task UpgradeTask) bool {
+		return !task.Paused && nodeOf(task, 0, 0).Phase == CommandPhaseSettled
+	})
+
+	if node := nodeOf(done, 0, 0); node.Unproven != "" {
+		t.Errorf("the staged node is held as unproven %q", node.Unproven)
+	}
+
+	if n := fix.countOps("dep-0", 0, opRunExec); n != 0 {
+		t.Errorf("exec was sent %d times, want never", n)
 	}
 }
 
