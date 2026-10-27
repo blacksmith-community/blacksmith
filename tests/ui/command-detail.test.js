@@ -525,6 +525,15 @@ t('a paused command task with a running node reads Pause requested',async()=>{
  }finally{w.close();}
 });
 
+t('a paused command task with no node in flight reads Paused',async()=>{
+ const env=await setup({detail:task({status:'paused',failed_count:0,instances:[inst('val-a',[node('node',0,{status:'succeeded'}),node('node',1,{phase:'pending',status:''})],{status:'running'})]})});const {w,d}=env;try{
+ await open(env);
+ const summary=d.querySelector('#upgrade .task-detail-summary').textContent;
+ expect(summary.includes('Pause requested')).toBe(false);
+ expect(summary.includes('Paused')).toBe(true);
+ }finally{w.close();}
+});
+
 t('the page never holds the command text outside the detail pre after the whole flow',async()=>{
  const env=await setup();const {w,d}=env;try{
  await open(env);await openDetails(env,0);

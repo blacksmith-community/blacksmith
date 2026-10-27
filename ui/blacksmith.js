@@ -8041,8 +8041,11 @@
     const isPaused = task.status === 'paused';
     const canControl = isRunning || isPaused;
     // A paused certificate task is still finishing its current VM or deploy
-    // while one of its instances runs.
-    const pauseRequested = (isCertificates || isCommand) && isPaused && instances.some((instance) => instance && instance.status === 'running');
+    // while one of its instances runs. A command task is only still working
+    // when a node of a running instance is staged or sent, because it can
+    // also rest in the paused state inside a running instance.
+    const commandNodeInFlight = (instance) => ((instance && instance.command && instance.command.vms) || []).some((node) => node && (node.phase === 'staged' || node.phase === 'sent'));
+    const pauseRequested = isPaused && instances.some((instance) => instance && instance.status === 'running' && (isCertificates || (isCommand && commandNodeInFlight(instance))));
     const hasFailedInstance = (isCertificates || isCommand) && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
 
     // Build control buttons based on task status
