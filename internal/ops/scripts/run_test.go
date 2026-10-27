@@ -74,17 +74,30 @@ const runSlotCount = 4
 
 var runSlots = make(chan struct{}, runSlotCount)
 
-// takeRunSlot waits for a slot and returns the function that frees it.
+// takeRunSlot waits for a slot and returns the function that frees it. It
+// ends the test when the slot never comes, so only the test's own
+// goroutine may call it.
 func takeRunSlot(t *testing.T) func() {
 	t.Helper()
 
-	select {
-	case runSlots <- struct{}{}:
-	case <-t.Context().Done():
-		t.Fatal("the test ended while it waited for a slot to run a script")
+	free, err := acquireRunSlot(t.Context())
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	return func() { <-runSlots }
+	return free
+}
+
+// acquireRunSlot waits for a slot until ctx ends, and returns the function
+// that frees it. It reports a wait that ended as an error, so a goroutine
+// other than the test's can take a slot.
+func acquireRunSlot(ctx context.Context) (func(), error) {
+	select {
+	case runSlots <- struct{}{}:
+		return func() { <-runSlots }, nil
+	case <-ctx.Done():
+		return nil, errors.New("the test ended while it waited for a slot to run a script")
+	}
 }
 
 // requireRun skips a test on a host that cannot run run.sh. Linux needs
@@ -437,7 +450,13 @@ func TestRunSlotsBoundConcurrentScripts(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			free := takeRunSlot(t)
+			free, err := acquireRunSlot(t.Context())
+			if err != nil {
+				t.Error(err)
+
+				return
+			}
+
 			defer free()
 
 			now := running.Add(1)
