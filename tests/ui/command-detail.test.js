@@ -976,3 +976,32 @@ t('an instance held by a command task still shows as held when its detail is out
  expect(holders.get('val-a')).toBe('command run "restart check"');
  }finally{w.close();}
 });
+
+t('an output body that arrives after the key was dropped paints nothing',async()=>{
+ const env=await setup({gated:true,output:(u,o)=>(o.headers&&o.headers['X-Blacksmith-Command-Key']===KEY)?[200,output()]:[401,{success:false,error:'k',code:'command_credential_required'}]});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ await unlock(d);
+ // Only the body waits, so the answer is past the generation check at the headers.
+ const held=heldBody(200,()=>output({stdout:'LATE-BODY-OUT\n'}));
+ w.__routes.unshift([OUT_URL,(u,o,j)=>{env.outputs.push({url:u,headers:o.headers||{}});return Promise.resolve(held.reply);}]);
+ await openDetails(env,0);
+ expect(env.outputs.length).toBe(1);
+ expect(env.outputs[0].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
+ // The broker refuses the held key on a poll, which drops it while the same task stays on screen.
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{env.details.push({headers:o.headers||{}});return j(401,{success:false,error:'k',code:'command_credential_required'});}]);
+ env.state.detail=task({status:'running'});
+ await w.__T.fetchUpgradeTasks();await sleep(30);
+ expect(panel(d).textContent.includes('did not accept')).toBe(true);
+ held.release();await sleep(40);
+ expect(d.body.textContent.includes('LATE-BODY-OUT')).toBe(false);
+ expect(noKeyIn(d)).toBe(true);
+ // With the key entered again the output is read afresh, so the late body left nothing behind.
+ w.__routes.shift();
+ w.__routes.unshift([OUT_URL,(u,o,j)=>{env.outputs.push({url:u,headers:o.headers||{}});return j(200,output());}]);
+ await unlock(d);
+ await openDetails(env,0);
+ expect(env.outputs.length).toBe(2);
+ expect(d.body.textContent.includes('hello out')).toBe(true);
+ expect(d.body.textContent.includes('LATE-BODY-OUT')).toBe(false);
+ }finally{w.close();}
+});

@@ -1128,3 +1128,24 @@ t('the Discard button uses the outline style that Back uses',async()=>{
  expect(discardBtn(env).classList.contains('outline')).toBe(true);
  }finally{w.close();}
 });
+
+t('markup in the review caption, table cells, and mixed-services warning renders only as text',async()=>{
+ const env=await setup();const {w}=env;try{
+ const evil='<img src=x onerror=window.__pwn=1>';
+ const markup=(label)=>`${label}${evil}<b>bold</b>`;
+ const view={instances:[
+  {instance_id:'i1',deployment:markup('dep'),instance_name:markup('name'),vms:[{group:markup('grp'),index:0,az:markup('az'),state:markup('state'),job_state:markup('job'),targeted:false,reason:markup('why')}]},
+  {instance_id:'i2',deployment:markup('dep'),instance_name:'blocked-one',blocked:{message:markup('blockmsg'),code:'busy'},vms:[]}
+ ],warnings:['mixed_services'],services:[markup('svc-a'),'svc-b'],run_as:'vcap',shell:'/bin/bash',timeout_seconds:600};
+ const review=w.__T.buildCommandReviewBody(view,{command:'true',run_as:'vcap',timeout_seconds:600,parallel:false});
+ // Nothing became an element, and each piece of markup is there as plain text.
+ expect(review.querySelector('img')===null).toBe(true);
+ expect(review.querySelector('b')===null).toBe(true);
+ expect(w.__pwn===undefined).toBe(true);
+ const warning=review.querySelector('.batch-review-warning');
+ expect(warning!==null&&warning.textContent.includes('<img src=x')).toBe(true);
+ expect(review.querySelector('caption').textContent).toBe(markup('dep'));
+ const cells=[...review.querySelectorAll('td')].map(td=>td.textContent).join('|');
+ for(const label of ['name','grp','az','state','job','why','blockmsg']) expect(cells.includes(`${label}${evil}`)).toBe(true);
+ }finally{w.close();}
+});
