@@ -61,6 +61,26 @@ func TestDispatchRefusalPausesTheCommandTask(t *testing.T) {
 		fix.assertNoCommandText()
 	})
 
+	t.Run("the pause is saved", func(t *testing.T) {
+		fix, _ := newRefused(t)
+
+		fix.waitFor("the dispatcher to pause the task", func(task UpgradeTask) bool { return task.Status == TaskStatusPaused })
+
+		waitUntil(t, "the refusal pause to be saved", func() bool {
+			saves := fix.vault.savedTasks()
+			if len(saves) == 0 {
+				return false
+			}
+
+			saved := saves[len(saves)-1].task
+
+			return saved.Status == TaskStatusPaused && saved.Paused &&
+				strings.HasPrefix(saved.Instances[0].Error, commandRefusedMessage)
+		})
+
+		fix.assertNoCommandText()
+	})
+
 	t.Run("resume runs it once the authorizer allows it", func(t *testing.T) {
 		fix, refusing := newRefused(t)
 

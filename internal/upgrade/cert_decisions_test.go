@@ -423,6 +423,46 @@ func TestReconcileAbandon(t *testing.T) {
 	}
 }
 
+// A decision that resumes a task its processor still owns, as one does in
+// the window after the processor paused the task for the decision and
+// before it let go, notes the resume, so the processor puts the task back
+// on the queue as it lets go. Without the note the task would be left
+// running with no processor.
+func TestDecisionResumeWhileOwnedIsNoted(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.madeNewVersion()
+
+	manager := env.load(env.awaitingReconcile(nil))
+
+	manager.mu.Lock()
+	manager.owned[certTaskID] = true
+	manager.mu.Unlock()
+
+	err := manager.ReconcileRegeneration(context.Background(), certTaskID, waitInstanceID, ReconcileRequest{
+		Variable: regenLeaf, Action: "abandon",
+	})
+	if err != nil {
+		t.Fatalf("ReconcileRegeneration: %v", err)
+	}
+
+	manager.mu.Lock()
+	task := manager.tasks[certTaskID]
+	running := task.Status == TaskStatusRunning
+	noted := manager.resumedOwned[certTaskID]
+	// The processor lets go of the task here, as runTask's defer does.
+	delete(manager.owned, certTaskID)
+	delete(manager.resumedOwned, certTaskID)
+	manager.mu.Unlock()
+
+	if !running || !noted {
+		t.Errorf("the task is running %v and its resume noted %v, want both", running, noted)
+	}
+
+	manager.resumeIfReady(task)
+
+	waitUntil(t, "the task to finish", func() bool { return current(t, manager).Status == TaskStatusFailed })
+}
+
 // Skipping the approval marks the instance skipped and frees it.
 //
 //nolint:paralleltest // the manager's loader shares test seams
