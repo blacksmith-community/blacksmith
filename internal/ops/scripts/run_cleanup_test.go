@@ -509,6 +509,67 @@ func TestRunCleanupTrustsOnlyTheRecordedStartTimes(t *testing.T) {
 	}
 }
 
+// A survivor that forked before it ended leaves a child the survivors
+// record never named, still in the command's session. The recheck treats
+// the session as the unit, so it reports the survivors again while that
+// child lives, and reports them killed once the session is empty.
+func TestRunCleanupRechecksTheSessionAfterTheSurvivorsEnd(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+	tree.env = []string{"RC_KILL_TICKS=3"}
+
+	pidFile := tree.path("sleeper-pid")
+	command := fmt.Sprintf("sleep 60 &\necho $! > %q\nwhile true; do sleep 600 & sleep 0.1; done\n", pidFile)
+	running := tree.startExec(t, "root", command, pidFile)
+	tree.plantKill(t)
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+		t.Fatalf("exit = %d, output = %q", code, out)
+	}
+
+	// The loop forks children the record does not name before the test
+	// ends every process the record does name.
+	time.Sleep(500 * time.Millisecond)
+
+	for _, line := range strings.Split(strings.TrimSpace(tree.taskFile(t, "survivors")), "\n") {
+		pid, err := strconv.Atoi(strings.Fields(line)[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+
+	if !sessionLive(t, running.pgid) {
+		t.Fatal("no unnamed child is left in the session, so the test proves nothing")
+	}
+
+	tree.relinkKill(t)
+
+	code, out = tree.cleanup(t, runTask)
+	if code != 0 || !strings.HasPrefix(out, "cleanup started=yes exit=") || !strings.HasSuffix(out, " killed=survived\n") {
+		t.Errorf("exit = %d, output = %q; want the survivors reported again", code, out)
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask, "survivors")); err != nil {
+		t.Errorf("the survivors record went while the session has a member: %v", err)
+	}
+
+	_ = syscall.Kill(-running.pgid, syscall.SIGKILL)
+
+	if !waitFor(10*time.Second, func() bool { return !sessionLive(t, running.pgid) }) {
+		t.Fatal("the session did not end")
+	}
+
+	code, out = tree.cleanup(t, runTask)
+	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
+		t.Errorf("exit = %d, output = %q; want killed=yes once the session is empty", code, out)
+	}
+}
+
 // A survivors record that can't be read proves nothing, so the processes
 // are reported as surviving and the record stays.
 func TestRunCleanupKeepsAnUnreadableSurvivorsRecord(t *testing.T) {

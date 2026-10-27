@@ -394,31 +394,74 @@ _rc_survivors_live() {
 	done < "$file"
 }
 
+# _rc_kill_survivors <kill> <pgid> <pids> sends KILL to the live
+# survivors that pids names, one per line. While one of them is still a
+# member of the command's session, the session is ours, because a process
+# joins a session only by being forked from a member, so its group and
+# the members outside the group get KILL too. Otherwise nothing shows
+# whose the session's members are, and only the named survivors are
+# signalled.
+_rc_kill_survivors() {
+	local kill=$1 pg=$2 pid fields state extra ours=''
+	local -a pids p
+
+	mapfile -t pids <<< "$3"
+
+	for pid in "${pids[@]}"; do
+		_rc_stat "/proc/$pid/stat" fields || continue
+		read -ra p <<< "$fields"
+		[ "${p[3]:-}" != "$pg" ] || ours=yes
+	done
+
+	if [ -n "$ours" ]; then
+		state=$(_rc_group_state "$pg")
+		extra=${state#live}
+
+		if [ "$extra" != "$state" ]; then
+			# shellcheck disable=SC2086
+			"$kill" -KILL -- "-$pg" $extra > /dev/null 2>&1 || true
+		fi
+	fi
+
+	"$kill" -KILL -- "${pids[@]}" > /dev/null 2>&1 || true
+}
+
 # _rc_recheck <dir> prints yes or survived for a task whose earlier
-# cleanup found processes that outlived KILL. Only the processes the
-# survivors record names, with the start times it holds, are ours. Those
-# that still live get KILL again, and the task is reported yes once none
-# lives, or survived while any does. A record that can't be read, or a
-# kill that can't be run, is reported survived, because nothing then
-# shows that the processes ended.
+# cleanup found processes that outlived KILL. The session is the unit,
+# because a survivor that forked before it ended leaves children the
+# survivors record never named. The processes the record names, with the
+# start times it holds, get KILL again, as _rc_kill_survivors says, and
+# the task is reported yes only once none of them lives and the session's
+# group has no member but zombies. It is reported survived while either
+# holds, and also when the record or the pgid file can't be read or the
+# kill can't be run, because nothing then shows that the processes ended.
 _rc_recheck() {
-	local dir=$1 kill live ticks i
-	local -a pids
+	local dir=$1 kill live pg='' ticks i
 
 	kill=$(_rc_tool kill) || { printf 'survived'; return 0; }
 	command -v -- "$kill" > /dev/null || { printf 'survived'; return 0; }
 
-	live=$(_rc_survivors_live "$dir/survivors") || { printf 'survived'; return 0; }
-	[ -n "$live" ] || { printf 'yes'; return 0; }
+	if [ ! -f "$dir/pgid" ] || [ -L "$dir/pgid" ]; then
+		printf 'survived'
+		return 0
+	fi
 
-	mapfile -t pids <<< "$live"
-	"$kill" -KILL -- "${pids[@]}" > /dev/null 2>&1 || true
+	IFS= read -r pg < "$dir/pgid" || true
+	_rc_id_ok "$pg" && [ "$((10#$pg))" -gt 1 ] || { printf 'survived'; return 0; }
+
+	live=$(_rc_survivors_live "$dir/survivors") || { printf 'survived'; return 0; }
+	[ -z "$live" ] || _rc_kill_survivors "$kill" "$pg" "$live"
 
 	ticks=$(_rc_kill_ticks)
 
 	for ((i = 0; i < ticks / 5 + 1; i++)); do
 		live=$(_rc_survivors_live "$dir/survivors") || { printf 'survived'; return 0; }
-		[ -n "$live" ] || { printf 'yes'; return 0; }
+
+		if [ -z "$live" ] && [ "$(_rc_group_state "$pg")" = none ]; then
+			printf 'yes'
+			return 0
+		fi
+
 		sleep 0.1
 	done
 
