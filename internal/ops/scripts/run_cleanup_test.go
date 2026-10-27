@@ -1274,18 +1274,28 @@ func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
 	}
 }
 
-// With no kill tool, cleanup can end nothing, so it reports unknown.
+// With no kill tool, or no root to find it under, cleanup can end
+// nothing, so it reports unknown.
 func TestRunCleanupReportsUnknownWithoutAKillTool(t *testing.T) {
 	t.Parallel()
 
-	tree := newRunTree(t)
-	tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"})
+	for name, stubs := range map[string]string{
+		"no kill tool":   "",
+		"no usable root": "_cp_root() { return 1; }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	dir := tree.path(runOps, runTask)
+			tree := newRunTree(t)
+			tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"})
 
-	code, out := tree.snippet(t, false, "CERTPATCH_ROOT="+tree.root+"\n"+liveStubs+"printf '%s\\n' \"$(_rc_kill_group \""+dir+"\")\"\n")
-	if code != 0 || strings.TrimSpace(out) != "unknown" {
-		t.Errorf("exit = %d, output = %q; want unknown", code, out)
+			dir := tree.path(runOps, runTask)
+
+			code, out := tree.snippet(t, false, "CERTPATCH_ROOT="+tree.root+"\n"+liveStubs+stubs+"printf '%s\\n' \"$(_rc_kill_group \""+dir+"\")\"\n")
+			if code != 0 || strings.TrimSpace(out) != "unknown" {
+				t.Errorf("exit = %d, output = %q; want unknown", code, out)
+			}
+		})
 	}
 }
 
