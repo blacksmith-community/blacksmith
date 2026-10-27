@@ -1067,6 +1067,18 @@ func TestKilledSurvivorFailsTheInstanceAndSkipsItsLaterNodes(t *testing.T) {
 		t.Errorf("the second instance is %s, want pending", paused.Instances[1].Status)
 	}
 
+	// Resume cleanup finds the processes ended and pauses before the
+	// second instance, and only the resume after it sends the command.
+	fix.setCleanup("dep-0/0", cleanupEnded)
+	fix.resume()
+	fix.waitFor("the cleanup to pause the task", func(task UpgradeTask) bool {
+		return task.Paused && !nodeOf(task, 0, 0).Survived
+	})
+
+	if got := fix.opsOf("dep-0", 0); got[len(got)-1] != opRunCleanup || fix.sentTo("dep-1") {
+		t.Fatalf("Resume cleanup sent %v to the survivor and reached dep-1 %v, want one cleanup and nothing else", got, fix.sentTo("dep-1"))
+	}
+
 	before := len(fix.recorded())
 
 	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
@@ -1132,6 +1144,8 @@ func TestStrandedSurvivorPausesAndTheDeploymentStops(t *testing.T) {
 		t.Errorf("the second node is %s, want skipped, since the deployment stopped", inst.Command.VMs[1].Phase)
 	}
 
+	fix.setCleanup("dep-0/0", cleanupEnded)
+
 	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
 	if err != nil {
 		t.Fatalf("second resume: %v", err)
@@ -1140,6 +1154,10 @@ func TestStrandedSurvivorPausesAndTheDeploymentStops(t *testing.T) {
 	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool {
 		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
 	})
+
+	if nodeOf(done, 0, 0).Survived {
+		t.Error("the task finished with a node that still records survivors")
+	}
 
 	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
 		t.Errorf("the skipped node saw %v, want nothing", ops)

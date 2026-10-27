@@ -849,8 +849,9 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 		}
 
 		if outcome.pause {
-			// A finished or cancelled task stays as it is, as
-			// pauseUnconfirmed leaves it.
+			// A finished or cancelled task keeps its status, as
+			// pauseUnconfirmed leaves it, and a cancelled one waits for
+			// Resume cleanup with the instance held.
 			switch r.task.Status {
 			case TaskStatusPending, TaskStatusRunning, TaskStatusPaused:
 				r.task.Status = TaskStatusPaused
@@ -859,6 +860,7 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 			}
 
 			r.inst.Error = outcome.reason
+			holdCancelledCommandLocked(r.task, r.inst)
 		}
 	})
 	if err != nil {
@@ -980,15 +982,16 @@ func (m *Manager) authorizeCommand(ctx context.Context, spec CommandTaskSpec) er
 // command task. Only a configured manager does, and only while the
 // authorizer still allows the stored task, so a task whose switches were
 // turned off while it waited is let go the way an unrunnable certificate
-// task is. The caller holds mu, which the authorizer is read under without
-// taking it again, so an authorizer must never block or take a manager
-// lock.
+// task is. A task resumed by a Resume cleanup runs whatever the authorizer
+// says, since it sends no command and pauses before it would. The caller
+// holds mu, which the authorizer is read under without taking it again, so
+// an authorizer must never block or take a manager lock.
 func (m *Manager) runsCommandLocked(task *UpgradeTask) bool {
 	if task.KindOrDefault() != TaskKindCommand || task.Command == nil || !m.configured {
 		return false
 	}
 
-	return m.commandRefusalLocked(task) == nil
+	return task.CleanupOnly || m.commandRefusalLocked(task) == nil
 }
 
 // commandRefusalLocked asks the authorizer about the stored task and
@@ -1207,29 +1210,30 @@ func commandInstanceHaltedLocked(inst *InstanceUpgrade) bool {
 // commandResumeGate runs the gate and the authorizer for the resume of a
 // command task, and leaves any other task to ResumeTask. The gate comes
 // first, as the check of the second credential did before it moved here.
-// A cancelled task that waits for a resume only has its nodes cleaned, which
-// sends no command, so it needs neither, as the cancel needed neither.
-// Cancelled is final, so a task found waiting here never turns into one
-// that runs.
-func (m *Manager) commandResumeGate(ctx context.Context, taskID string, gate func(context.Context) error) error {
+// It reports whether the resume is a Resume cleanup, as
+// commandCleansOnlyLocked finds, which only has nodes cleaned and sends no
+// command, so it needs neither, as the cancel needed neither. Cancelled is
+// final, so a cancelled task found waiting here never turns into one that
+// runs, and a paused one pauses again before it would send the command.
+func (m *Manager) commandResumeGate(ctx context.Context, taskID string, gate func(context.Context) error) (bool, error) {
 	m.mu.RLock()
 	task, exists := m.tasks[taskID]
-	cleansOnly := exists && task.KindOrDefault() == TaskKindCommand && waitsCancelledLocked(task)
+	cleansOnly := exists && commandCleansOnlyLocked(task)
 	needsGate := exists && task.KindOrDefault() == TaskKindCommand && !cleansOnly
 	m.mu.RUnlock()
 
 	if !needsGate {
-		return nil
+		return cleansOnly, nil
 	}
 
 	if gate != nil {
 		err := gate(ctx)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 
-	return m.commandResumeAllowed(ctx, taskID)
+	return false, m.commandResumeAllowed(ctx, taskID)
 }
 
 // commandResumeAllowed refuses the resume of a command task the authorizer
@@ -1296,6 +1300,27 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 		return false
 	}
 
+	sessions := m.newCommandSessions(inst.Command.Deployment)
+	defer sessions.close()
+
+	// Processes that outlived KILL in an earlier run are checked again
+	// before anything else, whatever the instance's status, and the task
+	// never goes past an instance that still has them.
+	m.mu.RLock()
+	survivors := commandSurvivorOn(inst)
+	pending := inst.Status == InstanceStatusPending
+	m.mu.RUnlock()
+
+	if survivors && m.recheckSurvivors(ctx, sessions, task, inst) {
+		return false
+	}
+
+	// A Resume cleanup sends no command, so it stops before an instance
+	// that has not started.
+	if pending && m.pauseAfterCleanup(persistCtx, task, inst) {
+		return false
+	}
+
 	m.mu.Lock()
 	settled := inst.Status.settled()
 
@@ -1314,9 +1339,6 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 		return true
 	}
 
-	sessions := m.newCommandSessions(inst.Command.Deployment)
-	defer sessions.close()
-
 	// A task a worker stopped is paused, and it is waited for here rather
 	// than handed back, so a resume that lands while the other workers are
 	// still in flight finds a processor that goes on with the instance. The
@@ -1334,6 +1356,12 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 		stranded := stopped || halt
 
 		if !stranded {
+			// A Resume cleanup that settled what it had to stops before
+			// it drives a pending node.
+			if m.pauseAfterCleanup(persistCtx, task, inst) {
+				return false
+			}
+
 			pool := newCommandPool(m.commandWorkers(task))
 			if !m.feedCommandNodes(ctx, persistCtx, pool, sessions, task, inst, cancelCh) {
 				return false
@@ -2032,21 +2060,32 @@ func (m *Manager) pauseStranded(task *UpgradeTask, inst *InstanceUpgrade, messag
 	m.holdCancelledCommand(task, inst)
 }
 
-// commandNodeHeld reports whether the node holds something of ours on its
-// VM. After prepare the command text sits in cmd.sh on the VM even though
-// nothing has run, so a staged node holds as a sent one does.
+// commandNodeHeld reports whether the node is staged or sent. After prepare
+// the command text sits in cmd.sh on the VM even though nothing has run, so
+// a staged node holds as a sent one does.
 func commandNodeHeld(vm CommandVM) bool {
 	return vm.Phase == CommandPhaseStaged || vm.Phase == CommandPhaseSent
 }
 
-// commandInstanceHeldLocked reports whether any node of the instance holds
-// something of ours on its VM. The caller holds mu.
-func commandInstanceHeldLocked(inst *InstanceUpgrade) bool {
-	return inst.Command != nil && slices.ContainsFunc(inst.Command.VMs, commandNodeHeld)
+// commandNodeUnresolved reports whether something the command left may
+// still be on the node's VM: a node that is staged or sent, or a settled
+// one whose processes outlived KILL. Only evidence that nothing of the
+// command is left there resolves it: an exit status, a cleanup record that
+// says the command never started, finished, or was killed and ended, or a
+// listing that shows the VM was replaced or removed.
+func commandNodeUnresolved(vm CommandVM) bool {
+	return commandNodeHeld(vm) || vm.Survived
 }
 
-// commandHeldLocked reports whether any instance of the task has a node
-// that holds something of ours on its VM. The caller holds mu.
+// commandInstanceHeldLocked reports whether any node of the instance is
+// unresolved, which keeps the instance held whatever the task's status is.
+// The caller holds mu.
+func commandInstanceHeldLocked(inst *InstanceUpgrade) bool {
+	return inst.Command != nil && slices.ContainsFunc(inst.Command.VMs, commandNodeUnresolved)
+}
+
+// commandHeldLocked reports whether any instance of the task has an
+// unresolved node. The caller holds mu.
 func commandHeldLocked(task *UpgradeTask) bool {
 	for i := range task.Instances {
 		if commandInstanceHeldLocked(&task.Instances[i]) {
@@ -2078,12 +2117,19 @@ func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 
 	for i := range inst.Command.VMs {
 		node := &inst.Command.VMs[i]
-		if !commandNodeHeld(*node) {
+		if !commandNodeUnresolved(*node) {
 			continue
 		}
 
 		identity := node.identity()
 		task.Paused = true
+
+		if node.Survived {
+			inst.Error = fmt.Sprintf("The task was cancelled, but processes of the command survived KILL on %s/%d, so instance %s stays held. Use Resume cleanup to check them again.", identity.Group, identity.Index, inst.InstanceID)
+
+			return
+		}
+
 		inst.Error = fmt.Sprintf("The task was cancelled, but cleanup did not finish, so instance %s is held pending cleanup on %s/%d. Once the node can be reached, use Resume cleanup to finish it.", inst.InstanceID, identity.Group, identity.Index)
 
 		return
@@ -2176,10 +2222,10 @@ func (m *Manager) cancelUnownedCommandLocked(task *UpgradeTask) int {
 	return ended
 }
 
-// resumeCancelledCommandLocked starts the cleanup of each running instance
-// of a cancelled command task that has a node holding something on its VM,
-// when nothing processes or settles the task and it does not wait for a
-// resume. Each instance counts as a settle of the task, so nothing else ends
+// resumeCancelledCommandLocked starts the cleanup of each instance of a
+// cancelled command task that has an unresolved node, whatever the
+// instance's status, when nothing processes or settles the task and it
+// does not wait for a resume. Each instance counts as a settle of the task, so nothing else ends
 // it meanwhile, and the function it returns starts the cleanups, which the
 // caller runs once it lets go of mu. The caller holds mu.
 func (m *Manager) resumeCancelledCommandLocked(task *UpgradeTask) func() {
@@ -2192,7 +2238,7 @@ func (m *Manager) resumeCancelledCommandLocked(task *UpgradeTask) func() {
 
 	for i := range task.Instances {
 		inst := &task.Instances[i]
-		if inst.Status == InstanceStatusRunning && commandInstanceHeldLocked(inst) {
+		if commandInstanceHeldLocked(inst) {
 			clean = append(clean, inst)
 		}
 	}
@@ -2212,10 +2258,11 @@ func (m *Manager) resumeCancelledCommandLocked(task *UpgradeTask) func() {
 }
 
 // cleanCancelledCommand settles the nodes of one instance of a cancelled
-// task through cleanup only, as a resume settles a stranded node, and never
-// sends the command again. It ends the settle that
-// resumeCancelledCommandLocked counted. A node it can't clean leaves the
-// task waiting for a resume with the instance held.
+// task through cleanup only, as a resume settles a stranded node, checks
+// again the processes of any node that outlived KILL, and never sends the
+// command again. It ends the settle that resumeCancelledCommandLocked
+// counted. A node it can't resolve leaves the task waiting for a resume
+// with the instance held.
 func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade) {
 	defer m.wg.Done()
 	defer m.endSettling(loadedDeploy{task: task, instance: inst})
@@ -2234,13 +2281,15 @@ func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade
 
 	persistCtx := context.WithoutCancel(m.ctx)
 
-	// A settle that stopped the task leaves a node held only when it could
-	// not clean it. Processes that outlived KILL settle the node, so
-	// nothing is left to wait for, and the instance ends as it does when
-	// every node is clean.
+	// A settle that stopped the task left a node it could not clean, or
+	// one whose processes just outlived KILL, so there is nothing to check
+	// again yet. Otherwise each earlier survivor is checked again, and
+	// the instance ends once nothing of it is unresolved.
 	stopped, _, _ := m.settleStrandedNodes(m.ctx, sessions, task, inst)
 	if stopped {
 		m.holdAndSave(persistCtx, task, inst)
+	} else {
+		m.recheckSurvivors(m.ctx, sessions, task, inst)
 	}
 
 	m.endCancelledCommandInstance(persistCtx, task, inst)

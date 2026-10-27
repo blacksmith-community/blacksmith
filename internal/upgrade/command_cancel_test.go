@@ -807,10 +807,11 @@ func TestCommandCancelResumeThatCannotCleanSavesTheHold(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
-// A resume that finds processes of the command alive after KILL has nothing
-// more to clean, so it ends the instance as cancelled, skips its pending
-// nodes, and releases it.
-func TestCommandCancelResumeEndsAnInstanceWhoseProcessesSurvived(t *testing.T) {
+// A resume that finds processes of the command alive after KILL settles the
+// node, and the instance stays held, with the task waiting for Resume
+// cleanup. The Resume cleanup that finds the processes ended ends the
+// instance as cancelled, skips its pending nodes, and releases it.
+func TestCommandCancelResumeKeepsAnInstanceWhoseProcessesSurvived(t *testing.T) {
 	fix := newTaskFixture(t, 1, 2)
 	script := fix.blockExec()
 	script.cleanupDown.Store(true)
@@ -821,18 +822,30 @@ func TestCommandCancelResumeEndsAnInstanceWhoseProcessesSurvived(t *testing.T) {
 	fix.waitFor("the task to wait for a resume", func(task UpgradeTask) bool { return task.Paused })
 	waitUntil(t, "the processor to let go", func() bool { return !fix.owned() })
 
-	fix.mu.Lock()
-	fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
-	fix.mu.Unlock()
+	fix.setCleanup("dep-0/0", cleanupSurvived)
 	script.cleanupDown.Store(false)
 
 	fix.resume()
 
-	done := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusCancelled })
+	held := fix.waitFor("the survivor to hold the task", func(task UpgradeTask) bool {
+		return task.Paused && nodeOf(task, 0, 0).Phase == CommandPhaseSettled
+	})
 
-	if got := nodeOf(done, 0, 0); got.Phase != CommandPhaseSettled || !got.Survived {
+	if got := nodeOf(held, 0, 0); !got.Survived {
 		t.Errorf("node 0 is %s, survived %v, want settled with survivors recorded", got.Phase, got.Survived)
 	}
+
+	if held.Status != TaskStatusCancelled || held.Instances[0].Status != InstanceStatusRunning {
+		t.Errorf("the task is %s with its instance %s, want cancelled with the instance open", held.Status, held.Instances[0].Status)
+	}
+
+	waitUntil(t, "the cleanup to end", func() bool { return !fix.settling() })
+	fix.wantBusy()
+
+	fix.setCleanup("dep-0/0", cleanupEnded)
+	fix.resume()
+
+	done := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status == InstanceStatusCancelled })
 
 	if got := nodeOf(done, 0, 1).Phase; got != CommandPhaseSkipped {
 		t.Errorf("node 1 is %s, want skipped", got)

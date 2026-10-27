@@ -354,6 +354,183 @@ func TestRunCleanupReportsAGroupThatSurvivesKill(t *testing.T) {
 	}
 }
 
+// survivorTree is a task whose cleanup found processes that outlived
+// KILL, with the planted kill that let them live still in place.
+func survivorTree(t *testing.T) (*runTree, runningCommand, string) {
+	t.Helper()
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+	tree.env = []string{"RC_KILL_TICKS=3"}
+
+	pidFile := tree.path("sleeper-pid")
+	running := tree.startExec(t, "root", sleeperCommand(pidFile), pidFile)
+	log := tree.plantKill(t)
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+		t.Fatalf("exit = %d, output = %q", code, out)
+	}
+
+	return tree, running, log
+}
+
+// relinkKill takes the planted kill away and puts the real one back.
+func (r *runTree) relinkKill(t *testing.T) {
+	t.Helper()
+
+	err := os.Remove(r.path("usr/bin/kill"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r.linkKill(t)
+}
+
+// A cleanup that reports survivors keeps the task directory and a record
+// of each live member of the session with its start time, so a later
+// cleanup can tell whether the same processes still live. The command's
+// text goes.
+func TestRunCleanupKeepsARecordOfTheSurvivors(t *testing.T) {
+	t.Parallel()
+
+	tree, running, _ := survivorTree(t)
+
+	if _, err := os.Stat(tree.path(runOps, runTask, "cmd.sh")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("cmd.sh stayed beside the survivors: %v", err)
+	}
+
+	record := tree.taskFile(t, "survivors")
+
+	for _, pid := range []int{running.pgid, running.sleepPID} {
+		line := fmt.Sprintf("%d %s\n", pid, startTime(t, pid))
+		if !strings.Contains(record, line) {
+			t.Errorf("the survivors record %q lacks %q", record, line)
+		}
+	}
+}
+
+// A later cleanup sends KILL to the recorded survivors again, and while
+// they live it reports them again and keeps the record.
+func TestRunCleanupReportsTheSurvivorsAgainWhileTheyLive(t *testing.T) {
+	t.Parallel()
+
+	tree, running, log := survivorTree(t)
+
+	err := os.Truncate(log, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	logged, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, pid := range []int{running.pgid, running.sleepPID} {
+		if !strings.Contains(string(logged), " "+strconv.Itoa(pid)) || !strings.HasPrefix(string(logged), "-KILL -- ") {
+			t.Errorf("the second cleanup sent %q, want KILL to %d", logged, pid)
+		}
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask, "survivors")); err != nil {
+		t.Errorf("the survivors record went while they live: %v", err)
+	}
+}
+
+// A later cleanup that ends the survivors reports them killed and removes
+// the task directory.
+func TestRunCleanupEndsTheSurvivorsAndRemovesTheRecord(t *testing.T) {
+	t.Parallel()
+
+	tree, running, _ := survivorTree(t)
+	tree.relinkKill(t)
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	if sessionLive(t, running.pgid) {
+		t.Error("the survivors still live")
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the task directory stayed: %v", err)
+	}
+}
+
+// Survivors that ended on their own are reported killed, and nothing is
+// signalled, not even a process that now has a recorded pid with another
+// start time.
+func TestRunCleanupTrustsOnlyTheRecordedStartTimes(t *testing.T) {
+	t.Parallel()
+
+	tree, running, log := survivorTree(t)
+
+	for _, pid := range []int{running.sleepPID, running.pgid} {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+
+	if !waitFor(10*time.Second, func() bool { return !sessionLive(t, running.pgid) }) {
+		t.Fatal("the survivors did not end")
+	}
+
+	stranger := os.Getpid()
+	record := fmt.Sprintf("%d %s\n%d 1\n", running.sleepPID, running.starttime, stranger)
+
+	err := os.WriteFile(tree.path(runOps, runTask, "survivors"), []byte(record), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = os.Truncate(log, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The wrapper records the exit of the leader the test ended.
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || !strings.HasPrefix(out, "cleanup started=yes exit=") || !strings.HasSuffix(out, " killed=yes\n") {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	if logged, _ := os.ReadFile(log); len(logged) != 0 {
+		t.Errorf("cleanup signalled %q, want nothing", logged)
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the task directory stayed: %v", err)
+	}
+}
+
+// A survivors record that can't be read proves nothing, so the processes
+// are reported as surviving and the record stays.
+func TestRunCleanupKeepsAnUnreadableSurvivorsRecord(t *testing.T) {
+	t.Parallel()
+
+	tree, _, _ := survivorTree(t)
+
+	err := os.WriteFile(tree.path(runOps, runTask, "survivors"), []byte("not a record\n"), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	if _, err := os.Stat(tree.path(runOps, runTask, "survivors")); err != nil {
+		t.Errorf("the survivors record went: %v", err)
+	}
+}
+
 func TestRunCleanupExitedGroupReportsKilledNo(t *testing.T) {
 	t.Parallel()
 

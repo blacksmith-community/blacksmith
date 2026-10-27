@@ -42,7 +42,7 @@ func heldSummaryTask(status TaskStatus) *UpgradeTask {
 // The task list summary of an unfinished command task names the instances
 // it holds, so a page that may not read the task's detail can still show
 // them as busy. It names them by ID alone, and a task that has ended names
-// none.
+// only an instance with processes that outlived KILL.
 func TestACommandTaskSummaryNamesTheInstancesItHolds(t *testing.T) {
 	t.Parallel()
 
@@ -60,10 +60,12 @@ func TestACommandTaskSummaryNamesTheInstancesItHolds(t *testing.T) {
 		}
 	}
 
+	// A task that has ended still holds the instance whose processes
+	// outlived KILL, and nothing else.
 	for _, status := range []TaskStatus{TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled} {
 		summary := heldSummaryTask(status).ToSummary()
-		if summary.HeldInstanceIDs == nil || len(summary.HeldInstanceIDs) != 0 {
-			t.Errorf("a %s task's summary names %v, want an empty list", status, summary.HeldInstanceIDs)
+		if !slices.Equal(summary.HeldInstanceIDs, []string{"i-survived"}) {
+			t.Errorf("a %s task's summary names %v, want the instance with survivors", status, summary.HeldInstanceIDs)
 		}
 	}
 }
@@ -75,7 +77,12 @@ func TestASummaryOfACommandTaskThatHoldsNothingNamesAnEmptyList(t *testing.T) {
 	t.Parallel()
 
 	for _, status := range []TaskStatus{TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled} {
-		if raw := mustJSON(t, heldSummaryTask(status).ToSummary()); !strings.Contains(raw, `"held_instance_ids":[]`) {
+		task := heldSummaryTask(status)
+		for i := range task.Instances {
+			task.Instances[i].Command.VMs[0].Survived = false
+		}
+
+		if raw := mustJSON(t, task.ToSummary()); !strings.Contains(raw, `"held_instance_ids":[]`) {
 			t.Errorf("a %s task's summary has no empty held_instance_ids list", status)
 		}
 	}
@@ -88,7 +95,8 @@ func TestASummaryOfACommandTaskThatHoldsNothingNamesAnEmptyList(t *testing.T) {
 
 // A cancelled command task with a node still to clean holds that node's
 // instance until its cleanup returns, as while it waits for a resume to run
-// the cleanup, so its summary names that instance and no other.
+// the cleanup, and it holds the instance with processes that outlived
+// KILL, so its summary names those two and no other.
 func TestACancelledCommandTaskSummaryNamesTheInstanceItHoldsForCleanup(t *testing.T) {
 	t.Parallel()
 
@@ -96,7 +104,7 @@ func TestACancelledCommandTaskSummaryNamesTheInstanceItHoldsForCleanup(t *testin
 	task.Paused = true
 	task.Instances[0].Command.VMs[0].Phase = CommandPhaseSent
 
-	if got := task.ToSummary().HeldInstanceIDs; !slices.Equal(got, []string{"i-running"}) {
-		t.Errorf("the cancelled task's summary names %v, want the instance held for cleanup", got)
+	if got := task.ToSummary().HeldInstanceIDs; !slices.Equal(got, []string{"i-running", "i-survived"}) {
+		t.Errorf("the cancelled task's summary names %v, want the instances held for cleanup", got)
 	}
 }

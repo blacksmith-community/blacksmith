@@ -175,8 +175,9 @@ func TestANodeThatFailedEarlierHaltsTheNextPass(t *testing.T) {
 // pauses the task with a message that it waits for a resume. Once a resume
 // cleans the node and the instance ends, the instance gives the reason of
 // the node that failed, not the message of the pause that is over. When a
-// node's processes also outlived KILL, its reason is the one the instance
-// keeps, even when an earlier node failed first.
+// node's processes also outlived KILL, the resume checks them first and
+// keeps the instance open and held, saying so, while they live, and the
+// instance ends only once a later check finds them ended.
 func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -194,7 +195,7 @@ func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 			last := tc.stranded - 1
 
 			if tc.survivor >= 0 {
-				fix.cleanups[nodeKey("dep-0", tc.survivor)] = "cleanup started=yes exit=- killed=survived"
+				fix.cleanups[nodeKey("dep-0", tc.survivor)] = cleanupSurvived
 			}
 
 			fix.override = func(_ context.Context, deployment string, index int, op string) *opAnswer {
@@ -223,6 +224,22 @@ func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 			fix.override = nil
 			fix.mu.Unlock()
 
+			if tc.survivor >= 0 {
+				err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
+				if err != nil {
+					t.Fatalf("resume with the survivor alive: %v", err)
+				}
+
+				waitUntil(t, "the recheck to let go of the task", func() bool { return !fix.owns() && fix.snapshot().Paused })
+
+				held := fix.snapshot().Instances[0]
+				if held.Status.settled() || !strings.Contains(held.Error, "still survive KILL") {
+					t.Fatalf("the instance is %s saying %q, want it open and saying the processes still survive", held.Status, held.Error)
+				}
+
+				fix.setCleanup(nodeKey("dep-0", tc.survivor), cleanupEnded)
+			}
+
 			err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
 			if err != nil {
 				t.Fatalf("second resume: %v", err)
@@ -231,19 +248,14 @@ func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 			ended := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status.settled() })
 
 			inst := ended.Instances[0]
-			want := max(tc.survivor, 0)
 
-			if inst.Status != InstanceStatusFailed || inst.Error != inst.Command.VMs[want].Reason {
-				t.Errorf("the instance is %s with error %q, want failed with node %d's reason %q", inst.Status, inst.Error, want, inst.Command.VMs[want].Reason)
-			}
-
-			if want != 0 && inst.Command.VMs[0].Reason == inst.Command.VMs[want].Reason {
-				t.Errorf("node 0 and node %d give the same reason, so the instance's reason can't tell them apart", want)
+			if inst.Status != InstanceStatusFailed || inst.Error != inst.Command.VMs[0].Reason {
+				t.Errorf("the instance is %s with error %q, want failed with node 0's reason %q", inst.Status, inst.Error, inst.Command.VMs[0].Reason)
 			}
 
 			for i := range tc.stranded {
-				if got := inst.Command.VMs[i].Survived; got != (i == tc.survivor) {
-					t.Errorf("node %d survived %v, want %v", i, got, i == tc.survivor)
+				if inst.Command.VMs[i].Survived {
+					t.Errorf("node %d still records survivors", i)
 				}
 			}
 

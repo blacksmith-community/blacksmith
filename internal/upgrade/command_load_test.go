@@ -516,7 +516,26 @@ func TestLoadedSurvivorKeepsTheTaskPausedAndTheInstanceHeld(t *testing.T) {
 		t.Fatalf("cancel: %v", err)
 	}
 
-	fix.waitFor("the cancel to release the hold", func(UpgradeTask) bool { return fix.busyWith(0) == nil })
+	if err := fix.busyWith(0); err == nil {
+		t.Fatal("the cancel released an instance whose processes outlived KILL")
+	}
+
+	if snap := fix.snapshot(); snap.Status != TaskStatusCancelled || !snap.Paused {
+		t.Errorf("the task is %s paused=%v, want cancelled and waiting for Resume cleanup", snap.Status, snap.Paused)
+	}
+
+	fix.setCleanup("dep-0/0", cleanupEnded)
+
+	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("Resume cleanup: %v", err)
+	}
+
+	fix.waitFor("Resume cleanup to release the hold", func(UpgradeTask) bool { return fix.busyWith(0) == nil })
+
+	if got := fix.opsOf("dep-0", 0); len(got) != 1 || got[0] != opRunCleanup {
+		t.Errorf("Resume cleanup sent %v to the survivor, want one cleanup", got)
+	}
 
 	fix.assertNoCommandText()
 }
@@ -826,10 +845,12 @@ func TestResumeAfterARefusedLoadClearsTheRefusalFromAFailure(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
-// A task a restart paused because the authorizer refuses it can still be
-// cancelled, and the resume that follows only cleans, so it needs no
-// authorization and a node left sent is not stranded.
-func TestLoadedRefusedTaskCancelledThenResumedOnlyCleans(t *testing.T) {
+// A task a restart paused because the authorizer refuses it, with a node
+// left sent, gets a Resume cleanup, which needs no authorization and sends
+// cleanup only. The node settles, and the task pauses again before the
+// command reaches anything else. A resume after that sends the command, so
+// it is refused, and a cancel ends what is left.
+func TestLoadedRefusedTaskResumeOnlyCleans(t *testing.T) {
 	fix := newTaskFixtureFrom(t, 2, 2, func(fix *taskFixture, task *UpgradeTask) {
 		task.CreationConfirmed = true
 		task.Command.RunAs = "root"
@@ -846,7 +867,30 @@ func TestLoadedRefusedTaskCancelledThenResumedOnlyCleans(t *testing.T) {
 		t.Fatalf("the task is %s paused=%v, want paused", paused.Status, paused.Paused)
 	}
 
+	if err := fix.busyWith(0); err == nil {
+		t.Error("the paused task freed the instance with a sent node")
+	}
+
 	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("Resume cleanup: %v", err)
+	}
+
+	cleaned := fix.waitFor("the cleanup to pause the task", func(task UpgradeTask) bool {
+		return task.Paused && task.Instances[0].Status == InstanceStatusFailed
+	})
+
+	if got := nodeOf(cleaned, 0, 0); got.Phase != CommandPhaseSettled || got.Status != CommandStatusFailed {
+		t.Errorf("the sent node is %s %s, want settled as failed", got.Phase, got.Status)
+	}
+
+	if got := fix.recorded(); len(got) != 1 || got[0].op != opRunCleanup || got[0].index != 0 {
+		t.Errorf("Resume cleanup sent %v, want one cleanup to the sent node", got)
+	}
+
+	waitUntil(t, "the instance to be released", func() bool { return fix.busyWith(0) == nil })
+
+	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
 	if err == nil {
 		t.Fatal("a refused root task resumed while allow_root is off")
 	}
@@ -856,36 +900,18 @@ func TestLoadedRefusedTaskCancelledThenResumedOnlyCleans(t *testing.T) {
 		t.Fatalf("cancel: %v", err)
 	}
 
-	fix.manager.mu.RLock()
-	waits := waitsCancelledLocked(fix.task)
-	fix.manager.mu.RUnlock()
-
-	if !waits {
-		t.Fatal("the cancelled task does not wait for a resume")
-	}
-
-	if err := fix.busyWith(0); err == nil {
-		t.Error("the cancelled task freed the instance with a sent node")
-	}
-
-	err = fix.manager.ResumeTask(context.Background(), fix.task.ID)
-	if err != nil {
-		t.Fatalf("resume: %v", err)
-	}
-
-	done := fix.waitFor("the instances to end", func(task UpgradeTask) bool {
-		return task.Instances[0].Status == InstanceStatusCancelled && task.Instances[1].Status == InstanceStatusSkipped
+	done := fix.waitFor("the task to end", func(task UpgradeTask) bool {
+		return task.Instances[1].Status == InstanceStatusSkipped && !task.Paused
 	})
-
-	if got := fix.recorded(); len(got) != 1 || got[0].op != opRunCleanup || got[0].index != 0 {
-		t.Errorf("the resume sent %v, want one cleanup to the sent node", got)
-	}
 
 	if done.Status != TaskStatusCancelled {
 		t.Errorf("the task is %s, want cancelled", done.Status)
 	}
 
-	waitUntil(t, "the instance to be released", func() bool { return fix.busyWith(0) == nil })
+	if got := fix.recorded(); len(got) != 1 {
+		t.Errorf("the cancel sent %v after the cleanup", got[1:])
+	}
+
 	fix.assertNoCommandText()
 }
 

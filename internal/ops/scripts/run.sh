@@ -337,6 +337,85 @@ _rc_signal() {
 	"$1" "-$2" -- "-$3" $extra > /dev/null 2>&1 || true
 }
 
+# _rc_note_survivors <dir> <sid> writes the survivors record, one line of
+# pid and start time, field 22 of its stat file, for each member of the
+# session that is not a zombie, so a later cleanup can tell whether the
+# same processes still live after their pids could have been reused. It
+# fails when the session has no such member left. A record that can't be
+# written still counts as survivors, because the processes do live.
+_rc_note_survivors() {
+	local dir=$1 sid=$2 f fields members=''
+	local -a p
+
+	for f in /proc/[0-9]*/stat; do
+		_rc_stat "$f" fields || continue
+		read -ra p <<< "$fields"
+
+		[ "${p[0]}" != Z ] && [ "${p[3]:-}" = "$sid" ] && [ -n "${p[19]:-}" ] || continue
+
+		f=${f#/proc/}
+		members+="${f%/stat} ${p[19]}"$'\n'
+	done
+
+	[ -n "$members" ] || return 1
+
+	printf '%s' "$members" | _rc_write "$dir/survivors" || true
+}
+
+# _rc_survivors_live <file> prints the pids of the survivors file whose
+# process still lives with the start time the file recorded. A pid whose
+# process is gone, is a zombie, or started at another time is one the
+# kernel may have handed to a stranger, and is left out. It fails when the
+# file is not a plain file or holds a line that is not a pid above 1 and a
+# start time, because such a record proves nothing.
+_rc_survivors_live() {
+	local file=$1 pid want fields
+	local -a p
+
+	[ -f "$file" ] && [ ! -L "$file" ] || return 1
+
+	while read -r pid want; do
+		_rc_id_ok "$pid" && [ "$((10#$pid))" -gt 1 ] && [[ $want =~ ^[1-9][0-9]{0,19}$ ]] || return 1
+
+		_rc_stat "/proc/$pid/stat" fields || continue
+		read -ra p <<< "$fields"
+		[ "${p[0]}" != Z ] && [ "${p[19]:-}" = "$want" ] || continue
+
+		printf '%s\n' "$pid"
+	done < "$file"
+}
+
+# _rc_recheck <dir> prints yes or survived for a task whose earlier
+# cleanup found processes that outlived KILL. Only the processes the
+# survivors record names, with the start times it holds, are ours. Those
+# that still live get KILL again, and the task is reported yes once none
+# lives, or survived while any does. A record that can't be read, or a
+# kill that can't be run, is reported survived, because nothing then
+# shows that the processes ended.
+_rc_recheck() {
+	local dir=$1 kill live ticks i
+	local -a pids
+
+	kill=$(_rc_tool kill) || { printf 'survived'; return 0; }
+	command -v -- "$kill" > /dev/null || { printf 'survived'; return 0; }
+
+	live=$(_rc_survivors_live "$dir/survivors") || { printf 'survived'; return 0; }
+	[ -n "$live" ] || { printf 'yes'; return 0; }
+
+	mapfile -t pids <<< "$live"
+	"$kill" -KILL -- "${pids[@]}" > /dev/null 2>&1 || true
+
+	ticks=$(_rc_kill_ticks)
+
+	for ((i = 0; i < ticks / 5 + 1; i++)); do
+		live=$(_rc_survivors_live "$dir/survivors") || { printf 'survived'; return 0; }
+		[ -n "$live" ] || { printf 'yes'; return 0; }
+		sleep 0.1
+	done
+
+	printf 'survived'
+}
+
 # _rc_kill_group <dir> prints yes, no, or survived. It ends the command
 # of a task whose exec started and left no exit. The pgid and starttime
 # files are untrusted. A pgid that is not a canonical number above 1 is
@@ -348,7 +427,8 @@ _rc_signal() {
 # exited, looks the same. A session that is gone, that is cleanup's own,
 # or whose leader is not the process exec recorded is left alone too. A live
 # session gets TERM, and KILL after the wait, and is reported yes once it
-# is gone, or survived when a member outlives the KILL.
+# is gone, or survived when a member outlives the KILL, which leaves the
+# survivors record that _rc_note_survivors writes.
 _rc_kill_group() {
 	local dir=$1 pg='' want='' kill lead f ticks i
 
@@ -397,7 +477,7 @@ _rc_kill_group() {
 		done
 	fi
 
-	if _rc_alive "$pg" "$want"; then
+	if _rc_alive "$pg" "$want" && _rc_note_survivors "$dir" "$pg"; then
 		printf 'survived'
 		return 0
 	fi
@@ -410,8 +490,11 @@ _rc_kill_group() {
 # and exit is the code exec recorded, or - when there is none. A command
 # that started and has no exit is still running, or was left by a wrapper
 # that died, and cleanup ends its process group before it reports, so
-# killed is yes, or survived when the group outlives KILL. It always
-# prints exactly one record. A task with no directory prints
+# killed is yes, or survived when the group outlives KILL. Survivors keep
+# the directory, with their record in place of the command's text, so the
+# next cleanup checks the same processes again, as _rc_recheck does,
+# whatever the exit file holds, and removes the directory only once they
+# have ended. It always prints exactly one record. A task with no directory prints
 # started=- and succeeds, because the directory may be missing either
 # because prepare never arrived or because an earlier cleanup removed it,
 # and the caller must treat the outcome as unknown. A directory that is a
@@ -445,8 +528,16 @@ cleanup() {
 		[[ $code =~ $RC_EXIT_RE ]] || code=-
 	fi
 
-	if [ "$started" = yes ] && [ ! -e "$dir/exit" ] && [ ! -L "$dir/exit" ]; then
+	if [ -e "$dir/survivors" ] || [ -L "$dir/survivors" ]; then
+		killed=$(_rc_recheck "$dir")
+	elif [ "$started" = yes ] && [ ! -e "$dir/exit" ] && [ ! -L "$dir/exit" ]; then
 		killed=$(_rc_kill_group "$dir")
+	fi
+
+	if [ "$killed" = survived ]; then
+		rm -f -- "$dir/cmd.sh" || true
+		printf 'cleanup started=%s exit=%s killed=%s\n' "$started" "$code" "$killed"
+		return 0
 	fi
 
 	_RC_DROP=$dir

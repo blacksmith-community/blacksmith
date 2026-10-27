@@ -156,6 +156,12 @@ type UpgradeTask struct {
 	// save was confirmed. The loader fails a certificate task without it,
 	// since its create never finished.
 	CreationConfirmed bool `json:"creation_confirmed,omitempty"`
+	// CleanupOnly is true on a command task whose last resume was a Resume
+	// cleanup, which runs cleanup on the nodes that hold something and
+	// sends no command, so it needs no second credential. The task pauses
+	// again before it would send the command anywhere. It is saved, so a
+	// restart part way through the cleanup still sends nothing.
+	CleanupOnly bool `json:"cleanup_only,omitempty"`
 }
 
 // StemcellTarget represents the target stemcell for an upgrade.

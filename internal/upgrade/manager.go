@@ -1499,7 +1499,7 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 		return err
 	}
 
-	err = m.commandResumeGate(ctx, taskID, gate)
+	cleansOnly, err := m.commandResumeGate(ctx, taskID, gate)
 	if err != nil {
 		return err
 	}
@@ -1513,6 +1513,7 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 
 	if waitsCancelledLocked(task) {
 		task.Paused = false
+		task.CleanupOnly = false
 		finish := m.resumeCancelledLocked(task) //nolint:contextcheck // the resume outlives the request, so it runs under the manager's context
 		m.logger.Info("Resumed the open VMs of cancelled task %s", taskID)
 		m.mu.Unlock()
@@ -1534,6 +1535,7 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 
 	task.Paused = false
 	task.Status = TaskStatusRunning
+	task.CleanupOnly = cleansOnly
 
 	if task.KindOrDefault() == TaskKindCertificates {
 		clearNeverStartedLocked(task)
@@ -1617,11 +1619,21 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
 
+	task.CleanupOnly = false
+
 	rewordHeldCommandsLocked(task)
 	m.forgetStrandCausesLocked(task)
 
 	ended := m.cancelIdleLocked(task)
 	closed := m.cancelUnownedCommandLocked(task) //nolint:contextcheck // A release can start the audit drain, which runs on the manager's lifecycle context, so a finished request never cancels it.
+
+	// A cancelled command task that holds nothing waits for no Resume
+	// cleanup, whether or not a processor still has it, and a node that is
+	// stranded later holds it again.
+	if task.KindOrDefault() == TaskKindCommand && !commandHeldLocked(task) {
+		task.Paused = false
+	}
+
 	skipped := m.skipUnownedLocked(task)
 	settle := m.settleCancelledLocked(task) //nolint:contextcheck // Resuming the task runs on the manager's lifecycle context, so a finished request never cancels it.
 
@@ -2012,7 +2024,9 @@ func (m *Manager) processTask(task *UpgradeTask, cancelCh <-chan struct{}) {
 // never crashes the broker. processTask defers it. A patch task with a VM
 // part way through its patch pauses instead, so the resume that checks
 // the VM's files finishes or rolls it back, and a cancelled one stays
-// cancelled, for the resume that finishes its VMs.
+// cancelled, for the resume that finishes its VMs. A command task with an
+// unresolved node pauses too, or stays cancelled and waits, so its hold
+// keeps a Resume cleanup.
 func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 	r := recover()
 	if r == nil {
@@ -2032,6 +2046,13 @@ func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 		task.Paused = true
 		inst.Error = fmt.Sprintf("Blacksmith stopped part way through the patch of VM %s because of an internal error. "+
 			"Resume to check its files and finish or roll it back.", vm)
+	case task.KindOrDefault() == TaskKindCommand && commandHeldLocked(task):
+		if task.Status != TaskStatusCancelled {
+			task.Status = TaskStatusPaused
+		}
+
+		task.Paused = true
+		rewordHeldCommandsLocked(task)
 	default:
 		task.Status = TaskStatusFailed
 		completedAt := time.Now()
@@ -2256,6 +2277,9 @@ func (m *Manager) finishTask(ctx context.Context, task *UpgradeTask) {
 		task.CompletedAt = &completedAt
 		task.Status = finishedStatus(task)
 	}
+
+	// A Resume cleanup that reached the end of the task is over.
+	task.CleanupOnly = false
 
 	m.forgetStrandCausesLocked(task)
 	m.releaseUnheldLocked(task)
@@ -3669,9 +3693,12 @@ func (m *Manager) endForReleaseTargets(ctx context.Context, task *UpgradeTask, c
 // on the director. A certificate task holds every instance that is
 // running, interrupted, or waiting for a decision, whatever its own
 // status, since a regeneration, a deploy, or a half-patched VM of it may
-// still need a decision or a rollback that only the task can make. An
-// instance whose unknown outcome an operator abandoned waits for nothing,
-// so it is free. The caller holds mu.
+// still need a decision or a rollback that only the task can make. A
+// command task holds every instance with an unresolved node, whatever its
+// own status, since the command may still run there or have left
+// processes that outlived KILL. An instance whose unknown outcome an
+// operator abandoned waits for nothing, so it is free. The caller holds
+// mu.
 func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
 	unfinished := task.Status == TaskStatusPending || task.Status == TaskStatusRunning || task.Status == TaskStatusPaused
 	followed := m.owned[task.ID] || m.settling[task.ID] > 0
@@ -3681,17 +3708,11 @@ func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) boo
 		return true
 	}
 
-	// An instance with processes that outlived KILL stays held while its
-	// task is unfinished, though it has failed, so no other task acts on a
-	// deployment with such a hazard.
-	if unfinished && task.KindOrDefault() == TaskKindCommand && commandSurvivorOn(inst) {
-		return true
-	}
-
-	// A cancelled command task keeps an instance held while a node of it
-	// holds the command's text on its VM, until cleanup has returned for
-	// the node.
-	if task.Status == TaskStatusCancelled && task.KindOrDefault() == TaskKindCommand && commandInstanceHeldLocked(inst) {
+	// A command task keeps an instance held, though it has failed or the
+	// task has ended, until there is evidence that nothing of the command
+	// is left on any of its nodes, so no other task acts on a deployment
+	// with such a hazard.
+	if task.KindOrDefault() == TaskKindCommand && commandInstanceHeldLocked(inst) {
 		return true
 	}
 
