@@ -2098,8 +2098,8 @@ func (m *Manager) endCancelledCommandInstanceLocked(task *UpgradeTask, inst *Ins
 // cancel: each running instance that holds nothing on a VM ends as
 // cancelled with its pending nodes skipped, and each pending instance is
 // skipped. An instance with a node still to clean stays held for its
-// cleanup. It returns how many instances it ended or skipped. The caller
-// holds mu.
+// cleanup, and only a task that holds nothing stops waiting for a resume.
+// It returns how many instances it ended or skipped. The caller holds mu.
 func (m *Manager) cancelUnownedCommandLocked(task *UpgradeTask) int {
 	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCommand ||
 		m.owned[task.ID] || m.settling[task.ID] > 0 {
@@ -2114,7 +2114,16 @@ func (m *Manager) cancelUnownedCommandLocked(task *UpgradeTask) int {
 		}
 	}
 
-	return ended + m.skipPendingLocked(task)
+	ended += m.skipPendingLocked(task)
+
+	// With nothing held, nothing is left for a resume to do, so the task
+	// no longer waits for one. A held node keeps the task waiting for the
+	// resume that cleans it.
+	if !commandHeldLocked(task) {
+		task.Paused = false
+	}
+
+	return ended
 }
 
 // resumeCancelledCommandLocked starts the cleanup of each running instance

@@ -1024,6 +1024,53 @@ func TestCommandCancelOfAPausedTaskRewordsTheHeldInstance(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
+// A paused task that nothing processes and that holds nothing on a VM is
+// cancelled. Its instance ends and its nodes are skipped, so nothing is
+// left for a resume to do, and the task no longer reads as paused, in
+// memory or in the saved record.
+func TestCommandCancelOfAPausedTaskThatHoldsNothingEndsThePause(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusPaused
+	fix.task.Paused = true
+	fix.task.Instances[0].Status = InstanceStatusRunning
+	fix.manager.mu.Unlock()
+
+	fix.cancel()
+
+	got := fix.snapshot()
+	if got.Status != TaskStatusCancelled || got.Paused {
+		t.Errorf("task is %s, paused %v, want cancelled and not paused", got.Status, got.Paused)
+	}
+
+	if got.Instances[0].Status != InstanceStatusCancelled {
+		t.Errorf("instance is %s, want cancelled", got.Instances[0].Status)
+	}
+
+	for vm, node := range got.Instances[0].Command.VMs {
+		if node.Phase != CommandPhaseSkipped {
+			t.Errorf("node %d is %s, want skipped", vm, node.Phase)
+		}
+	}
+
+	if saved := fix.lastSaved(); saved.Paused {
+		t.Error("the saved record still says the task is paused")
+	}
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err == nil {
+		t.Error("a resume of a cancelled task with nothing to clean was accepted")
+	}
+
+	if got := fix.opsOf("dep-0", 0); len(got) != 0 {
+		t.Errorf("a cancelled node was sent %v", got)
+	}
+
+	fix.waitReleased()
+	fix.assertNoCommandText()
+}
+
 // A hold that Vault will not confirm is said on the instance, so the
 // operator knows a restart may not find the task waiting.
 func TestCommandCancelSaysWhenTheHoldIsNotConfirmed(t *testing.T) {
