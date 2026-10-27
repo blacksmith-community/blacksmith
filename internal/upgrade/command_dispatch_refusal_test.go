@@ -3,6 +3,7 @@ package upgrade
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -196,5 +197,55 @@ func TestAQueuedTaskAllowedAgainBeforeItsPauseRuns(t *testing.T) {
 		t.Errorf("the instance is %s with the task paused %v, want success", done.Instances[0].Status, done.Paused)
 	}
 
+	fix.assertNoCommandText()
+}
+
+// A command task with a sent node is cancelled while it is queued and
+// owned, so the cancel leaves the node's cleanup to whatever processes
+// the task next. The authorizer then refuses it at the queue, and the
+// dispatcher lets it go. The node is still cleaned, it never runs again,
+// and the instance is freed.
+func TestACancelledTaskDroppedAtDispatchCleansItsSentNode(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+
+	fix.authHook = func(context.Context) error {
+		return errors.New("the authorizer refuses the stored task")
+	}
+
+	strandNodes(fix, 1)
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusRunning
+	fix.task.Paused = false
+	fix.manager.owned[fix.task.ID] = true
+	fix.manager.mu.Unlock()
+
+	fix.cancel()
+	fix.manager.enqueue(fix.task)
+
+	done := fix.waitFor("the sent node to be cleaned", func(task UpgradeTask) bool {
+		return task.Instances[0].Status.settled()
+	})
+
+	inst := done.Instances[0]
+	if want := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; inst.Status != InstanceStatusCancelled || !slices.Equal(phases(inst), want) {
+		t.Errorf("the instance is %s with nodes %v, want cancelled with %v", inst.Status, phases(inst), want)
+	}
+
+	if done.Status != TaskStatusCancelled {
+		t.Errorf("the task is %s, want cancelled", done.Status)
+	}
+
+	if got := fix.countOps("dep-0", 0, opRunCleanup); got != 1 {
+		t.Errorf("the sent node saw %d cleanups, want 1", got)
+	}
+
+	for _, op := range []string{opRunPrepare, opRunExec} {
+		if got := fix.countOps("dep-0", 0, op) + fix.countOps("dep-0", 1, op); got != 0 {
+			t.Errorf("the cancelled task saw %d %s operations, want none", got, op)
+		}
+	}
+
+	fix.waitReleased()
 	fix.assertNoCommandText()
 }

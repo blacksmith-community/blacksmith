@@ -1757,14 +1757,21 @@ func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
 // dropFromQueue lets go of a queued task the upgrade path does not run. It
 // stops being owned, and it keeps the reservations it still needs. A
 // cancelled command task that nothing else will process has what it never
-// started ended, as CancelTask ends it for a task with no processor.
+// started ended, as CancelTask ends it for a task with no processor, and a
+// cancelled task that still holds a node has that node cleaned, as the
+// runTask defer cleans it.
 func (m *Manager) dropFromQueue(task *UpgradeTask) {
 	m.mu.Lock()
 	delete(m.owned, task.ID)
 	delete(m.resumedOwned, task.ID)
 	closed := m.cancelUnownedCommandLocked(task)
+	finish := m.resumeCancelledLocked(task)
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
+
+	// A cancelled task left the cleanup of what it holds to whatever
+	// processed it next, and nothing will now, so the cleanup runs here.
+	finish()
 
 	m.logger.Info("Skipping %s task %s in the upgrade queue", task.KindOrDefault(), task.ID)
 
