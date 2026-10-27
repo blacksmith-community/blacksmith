@@ -271,3 +271,38 @@ func TestRevokeTombstoneLapses(t *testing.T) {
 type atomicOnce struct{ done atomic.Bool }
 
 func (o *atomicOnce) first() bool { return o.done.CompareAndSwap(false, true) }
+
+// An ID longer than the bound is refused before the lock or the store sees
+// it, so a caller cannot grow the revoked set with huge IDs.
+func TestDiscardCommandRequestRefusesLongIDs(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	long := strings.Repeat("a", maxDiscardIDBytes+1)
+
+	for _, req := range []CommandDiscardRequest{
+		{ClientRequestID: long, PreviewID: "pv-1"},
+		{ClientRequestID: cmdRequestID, PreviewID: long},
+	} {
+		_, err := env.manager.DiscardCommandRequest(context.Background(), req)
+		expectAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
+	}
+
+	store := env.manager.certDeps().Previews
+
+	store.mu.Lock()
+	tombstones := len(store.revoked)
+	store.mu.Unlock()
+
+	if tombstones != 0 {
+		t.Fatal("a refused discard left a tombstone")
+	}
+
+	// An ID at the bound is still accepted.
+	atBound := strings.Repeat("a", maxDiscardIDBytes)
+
+	result, err := env.manager.DiscardCommandRequest(context.Background(), CommandDiscardRequest{ClientRequestID: atBound, PreviewID: atBound})
+	if err != nil || !result.Discarded {
+		t.Fatalf("expected an ID at the bound to be discarded, got %+v: %v", result, err)
+	}
+}

@@ -7,6 +7,10 @@ import (
 	"blacksmith/internal/apierr"
 )
 
+// maxDiscardIDBytes bounds the IDs of a discard. A UUID with a prefix is far
+// shorter, and the bound keeps the revoked set from growing with huge IDs.
+const maxDiscardIDBytes = 128
+
 // CommandDiscardRequest is the body of a request that discards a pending
 // command create.
 type CommandDiscardRequest struct {
@@ -37,6 +41,11 @@ func (m *Manager) DiscardCommandRequest(_ context.Context, req CommandDiscardReq
 	if req.ClientRequestID == "" || req.PreviewID == "" {
 		return CommandDiscardResult{}, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
 			"A discard needs a client_request_id and a preview_id.")
+	}
+
+	if len(req.ClientRequestID) > maxDiscardIDBytes || len(req.PreviewID) > maxDiscardIDBytes {
+		return CommandDiscardResult{}, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			"The client_request_id or the preview_id is too long.")
 	}
 
 	unlock := m.lockRequest(req.ClientRequestID)
