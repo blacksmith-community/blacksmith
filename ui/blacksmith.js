@@ -6656,7 +6656,8 @@
     try {
       const response = await fetch('/b/upgrade/settings', {
         method: 'PUT',
-                body: JSON.stringify({ max_batch_jobs: value })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_batch_jobs: value })
       });
 
       if (response.ok) {
@@ -21978,7 +21979,8 @@
       try {
         const response = await fetch('/b/cf/test-connection', {
           method: 'POST',
-                    body: JSON.stringify(testData)
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testData)
         });
 
         const result = await response.json();
@@ -22011,7 +22013,8 @@
       try {
         const response = await fetch('/b/cf/registrations', {
           method: 'POST',
-                    body: JSON.stringify(registrationData)
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(registrationData)
         });
 
         const result = await response.json();
@@ -22047,7 +22050,8 @@
       try {
         const response = await fetch(`/b/cf/registrations/${registrationId}/register`, {
           method: 'POST',
-                    body: JSON.stringify({ password })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
         });
 
         const result = await response.json();
