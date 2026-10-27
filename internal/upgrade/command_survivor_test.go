@@ -289,7 +289,8 @@ func TestCommandSurvivorKeepsTheHoldWhenTheDirectorFails(t *testing.T) {
 // keeps the survivor and the hold, and says why on the instance. A director
 // that can't list the deployment, a node that can't be reached, a cleanup
 // that does not report cleanly, a record that can't say what ran, and a
-// record that says cleanup ended nothing are each no evidence.
+// record that says cleanup could not check the session are each no
+// evidence.
 func TestCommandSurvivorRecheckWithoutEvidenceKeepsTheHold(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -316,17 +317,8 @@ func TestCommandSurvivorRecheckWithoutEvidenceKeepsTheHold(t *testing.T) {
 		{name: "unknown record", want: "found no record", setup: func(f *taskFixture) {
 			f.setCleanup("dep-0/0", "cleanup started=- exit=- killed=no")
 		}},
-		// killed=no on a survivor means the wrapper found no survivors
-		// record and so never checked the processes, whatever else the
-		// record holds.
-		{name: "unchecked with an exit", want: "did not check them", setup: func(f *taskFixture) {
-			f.setCleanup("dep-0/0", "cleanup started=yes exit=137 killed=no")
-		}},
-		{name: "unchecked without an exit", want: "did not check them", setup: func(f *taskFixture) {
-			f.setCleanup("dep-0/0", "cleanup started=yes exit=- killed=no")
-		}},
-		{name: "unchecked and never started", want: "did not check them", setup: func(f *taskFixture) {
-			f.setCleanup("dep-0/0", "cleanup started=no exit=- killed=no")
+		{name: "unchecked", want: "could not check", setup: func(f *taskFixture) {
+			f.setCleanup("dep-0/0", "cleanup started=yes exit=- killed=unknown")
 		}},
 	}
 
@@ -356,6 +348,40 @@ func TestCommandSurvivorRecheckWithoutEvidenceKeepsTheHold(t *testing.T) {
 
 			if !strings.Contains(held.Instances[0].Error, "Resume cleanup") && !strings.Contains(held.Instances[0].Error, "Recreating the VM") {
 				t.Errorf("the instance says %q, want it to say how the hold ends", held.Instances[0].Error)
+			}
+
+			fix.assertNoCommandText()
+		})
+	}
+}
+
+// A recheck whose record says killed=no found nothing of the command left
+// to end: the wrapper checks the session of a command without a usable
+// exit status, and records the command's own exit status otherwise. That
+// is evidence, so the survivor clears and the instance is released.
+func TestCommandSurvivorRecheckThatKilledNothingReleases(t *testing.T) {
+	for _, record := range []string{
+		"cleanup started=yes exit=137 killed=no",
+		"cleanup started=yes exit=- killed=no",
+		"cleanup started=no exit=- killed=no",
+	} {
+		t.Run(record, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 1)
+			fix.waitSurvivorPause()
+			waitUntil(t, "the processor to let go", func() bool { return !fix.owned() })
+
+			fix.setCleanup("dep-0/0", record)
+			fix.resume()
+			fix.waitReleased()
+
+			done := fix.waitFor("the task to stop waiting", func(task UpgradeTask) bool { return !task.Paused && !nodeOf(task, 0, 0).Survived })
+
+			if node := nodeOf(done, 0, 0); !strings.Contains(node.Reason, "found nothing of the command left") {
+				t.Errorf("the node gives the reason %q, want the recheck's evidence", node.Reason)
+			}
+
+			if n := fix.countOps("dep-0", 0, opRunExec); n != 1 {
+				t.Errorf("exec was sent %d times, want once", n)
 			}
 
 			fix.assertNoCommandText()

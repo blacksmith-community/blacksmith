@@ -19,8 +19,8 @@ const (
 		"Use Resume cleanup to check them again."
 	survivorUnknown = "Cleanup found no record of the command on %s/%d, so Blacksmith can't tell whether the processes " +
 		"that survived KILL still run. Instance %s stays held. Recreating the VM ends them, and Resume cleanup then releases the instance."
-	survivorUnchecked = "Cleanup on %s/%d found no record of the processes that survived KILL there, so it did not check them, " +
-		"and Blacksmith can't tell whether they still run. Instance %s stays held. Recreating the VM ends them, and Resume cleanup then releases the instance."
+	survivorUnchecked = "Cleanup on %s/%d could not check whether the processes of the command that survived KILL there still run, " +
+		"so instance %s stays held. Recreating the VM ends them, and Resume cleanup then releases the instance."
 	survivorUnsaved = "Cleanup on %s/%d found the processes that survived KILL there ended, but Blacksmith could not save that to Vault, " +
 		"so instance %s stays held. Once Vault is healthy, use Resume cleanup to save it and release the instance."
 )
@@ -135,6 +135,12 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 		m.holdSurvivor(ctx, task, inst, fmt.Sprintf(survivorUnknown, identity.Group, identity.Index, inst.InstanceID), nil)
 
 		return true
+	case record.Killed == "no":
+		// The wrapper checks the session of a command without a usable
+		// exit status, so killed=no means nothing of it was left to end.
+		reason := "Processes of the command survived KILL on the node, and a later cleanup found nothing of the command left running."
+
+		return m.clearSurvivor(ctx, run, survivorEnd{reason: reason})
 	case record.Killed != "yes":
 		m.holdSurvivor(ctx, task, inst, fmt.Sprintf(survivorUnchecked, identity.Group, identity.Index, inst.InstanceID), nil)
 
