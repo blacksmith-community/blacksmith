@@ -297,6 +297,18 @@ func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanc
 		return
 	}
 
+	// The answer is the task, and a command task carries its command
+	// text, so it takes the read gate the task detail takes.
+	if task.KindOrDefault() == upgrade.TaskKindCommand {
+		err = h.manager.Authorizer().AuthorizeRead(r.Context(), r)
+		if err != nil {
+			h.logger.Info("Refused the decision answer for command task %s: %v", taskID, err)
+			writeCreateError(w, err)
+
+			return
+		}
+	}
+
 	response.JSON(w, http.StatusOK, task)
 }
 
@@ -518,7 +530,8 @@ func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, 
 // PreviewCommand handles POST /b/upgrade/commands/preview. It takes the
 // instances, the command, and its settings, and answers 200 with the stored
 // preview, which holds the command's digest and length and never its text.
-// The request is authorized before anything else is read, so a caller with
+// The request is authorized right after its body is decoded, because the
+// authorizer needs run_as, and before any instance is read, so a caller with
 // no second credential learns nothing about the instances.
 func (h *Handler) PreviewCommand(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))

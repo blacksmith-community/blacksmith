@@ -601,3 +601,25 @@ func TestDiscardCommandRouteRefusesOtherMethods(t *testing.T) {
 		}
 	}
 }
+
+// No decision route on a command task answers with the task, and none holds
+// the command text, when the caller sends no second credential.
+func TestDecisionRoutesNeverAnswerACommandTaskWithoutTheCredential(t *testing.T) {
+	env := commandHandler(t, commandsOn(cmdKey, false))
+	taskID := ranCommandTask(t, env, "vcap", cmdKey)
+
+	bodies := map[string]string{
+		"reconcile": `{"action":"adopt","variable":"v"}`,
+		"resolve":   `{"action":"verify"}`,
+	}
+
+	for _, action := range []string{"reconcile", "approve", "resolve", "candidates", "preview"} {
+		for _, inst := range []string{"i1", "nope"} {
+			rec := send(t, env.handler, http.MethodPost, "/b/upgrade/tasks/"+taskID+"/instances/"+inst+"/"+action, bodies[action], "")
+
+			if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), cmdText) {
+				t.Errorf("%s on %s answered %d with the task or its text", action, inst, rec.Code)
+			}
+		}
+	}
+}
