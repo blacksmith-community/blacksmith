@@ -169,6 +169,11 @@ func (r *runTree) startExec(t *testing.T, user, command, pidFile string) running
 		t.Fatalf("prepare exited %d", code)
 	}
 
+	// The slot is held while the wrapper starts and no longer, because the
+	// test goes on to run cleanup while the command lives on.
+	freeSlot := takeRunSlot(t)
+	defer freeSlot()
+
 	wrapper = exec.Command(bashPath(t), "-s", "--", "exec", runTask, user, "300", digestOf([]byte(command))) //nolint:gosec // the script under test
 	wrapper.Env = append([]string{"CERTPATCH_ROOT=" + r.root, "HOME=" + r.root}, r.env...)
 	wrapper.Stdin = stdinFor(t, []byte("trailing bytes\n"))

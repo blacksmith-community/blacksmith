@@ -17,6 +17,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -61,6 +63,29 @@ realpath() {
 }
 `
 )
+
+// runSlotCount is how many scripts the tests run at once. Every test is
+// parallel and bash reads the script from stdin a byte at a time, so a
+// loaded host that runs them all together can leave one waiting past its
+// deadline. A slot is taken before the deadline starts, so waiting for one
+// never counts against it, and the deadline stays a hard ceiling on a
+// script that is really stuck.
+const runSlotCount = 4
+
+var runSlots = make(chan struct{}, runSlotCount)
+
+// takeRunSlot waits for a slot and returns the function that frees it.
+func takeRunSlot(t *testing.T) func() {
+	t.Helper()
+
+	select {
+	case runSlots <- struct{}{}:
+	case <-t.Context().Done():
+		t.Fatal("the test ended while it waited for a slot to run a script")
+	}
+
+	return func() { <-runSlots }
+}
 
 // requireRun skips a test on a host that cannot run run.sh. Linux needs
 // root, because the script checks that its directories belong to root,
@@ -200,6 +225,8 @@ func (r *runTree) path(parts ...string) string {
 func (r *runTree) run(t *testing.T, stdin io.Reader, args ...string) (int, string, string) {
 	t.Helper()
 
+	defer takeRunSlot(t)()
+
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 
@@ -279,6 +306,8 @@ func (r *runTree) snippet(t *testing.T, noRoot bool, text string) (int, string) 
 	script.Write(runBody(t))
 	script.WriteString(text)
 
+	defer takeRunSlot(t)()
+
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 
@@ -299,7 +328,15 @@ func (r *runTree) snippet(t *testing.T, noRoot bool, text string) (int, string) 
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// A process the snippet leaves behind would otherwise hold the output
+	// pipes open past the deadline.
+	cmd.WaitDelay = 2 * time.Second
+
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		t.Fatal("the snippet blocked until its deadline")
+	}
+
 	if err == nil {
 		return 0, stdout.String()
 	}
@@ -383,6 +420,45 @@ func randomBytes(t *testing.T, size int) []byte {
 	}
 
 	return out
+}
+
+// The harness never has more than runSlotCount scripts running, however
+// many tests ask at once, and a slot that is freed is taken by the next.
+func TestRunSlotsBoundConcurrentScripts(t *testing.T) {
+	t.Parallel()
+
+	var running, peak atomic.Int32
+
+	var wg sync.WaitGroup
+
+	for range 4 * runSlotCount {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			free := takeRunSlot(t)
+			defer free()
+
+			now := running.Add(1)
+			defer running.Add(-1)
+
+			for {
+				seen := peak.Load()
+				if now <= seen || peak.CompareAndSwap(seen, now) {
+					break
+				}
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}()
+	}
+
+	wg.Wait()
+
+	if got := peak.Load(); got > runSlotCount || got < 1 {
+		t.Errorf("%d scripts ran at once, want between 1 and %d", got, runSlotCount)
+	}
 }
 
 func TestRunInputIsScriptThenCommandExactly(t *testing.T) {
