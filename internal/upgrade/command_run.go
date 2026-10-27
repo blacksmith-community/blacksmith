@@ -675,8 +675,8 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 		return commandOutcome{status: CommandStatusSucceeded, exit: exit}
 	case code == scripts.ExitRefused && !started:
 		return commandOutcome{status: CommandStatusRefused, reason: "The wrapper refused to run the command on the node, so nothing ran."}
-	case code == exitWrapperLaunch && started:
-		return commandOutcome{status: CommandStatusFailed, reason: "The wrapper failed before the command started."}
+	case code == exitWrapperLaunch && !started:
+		return commandOutcome{status: CommandStatusFailed, reason: "The wrapper could not launch the command on the node, so it did not run."}
 	case !started:
 		return commandOutcome{status: CommandStatusFailed, reason: "The command did not start on the node, and the wrapper exited with status " + strconv.Itoa(code) + "."}
 	case code == exitTimedOut, code == exitKilled && pastTimeout:

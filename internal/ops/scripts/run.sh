@@ -540,7 +540,9 @@ execute() {
 	# --wait keeps setsid from forking and returning at once, which would
 	# hide the exit status of the command. A pgid write or cd that fails
 	# after started ends with 125 and one fixed line, so it is not taken
-	# for a command that exited 1. The brace group sends the command's
+	# for a command that exited 1, and it removes the started marker
+	# first, so cleanup reports started=no and the broker tells the failed
+	# launch from a command that ran and exited 125. The brace group sends the command's
 	# stderr through descriptor 3 and the shell's own job notice, such as
 	# "Killed", to /dev/null. The launch closes descriptor 3 for everything
 	# it starts, so the command cannot write to the notice channel. A
@@ -548,8 +550,8 @@ execute() {
 	# and shows up as 137, not 124.
 	# shellcheck disable=SC2016
 	{
-		"$setsid" --wait /bin/bash -c 'nostart() { echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; [ -n "${f[19]:-}" ] && echo "${f[19]}" > "$2" && echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 3; exec "$@"' \
-			_ "$dir/pgid" "$dir/starttime" "$home" \
+		"$setsid" --wait /bin/bash -c 'mark=$4; nostart() { rm -f -- "$mark"; echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; [ -n "${f[19]:-}" ] && echo "${f[19]}" > "$2" && echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 4; exec "$@"' \
+			_ "$dir/pgid" "$dir/starttime" "$home" "$dir/started" \
 			"$timeout" -k 10 "$secs" ${priv[@]+"${priv[@]}"} \
 			env -i HOME="$homepath" USER="$user" LOGNAME="$user" SHELL=/bin/bash \
 			PATH="$path" \

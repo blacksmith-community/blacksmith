@@ -1745,6 +1745,41 @@ func TestRunExecRootLaunchFailureExits125(t *testing.T) {
 	if got := tree.taskFile(t, "exit"); got != "125\n" {
 		t.Errorf("exit file holds %q", got)
 	}
+
+	// The launch takes back the started marker, so cleanup tells it from a
+	// command that ran and exited 125.
+	if _, statErr := os.Stat(tree.path(runOps, runTask, "started")); statErr == nil {
+		t.Error("the started marker stayed although the command was not started")
+	}
+
+	code, out = tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=no exit=125 killed=no\n" {
+		t.Errorf("cleanup exit = %d, output = %q", code, out)
+	}
+}
+
+func TestRunExecRootCommandExiting125KeepsStarted(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkRunTools(t)
+
+	command := []byte("exit 125\n")
+
+	code, _ := tree.prepare(t, runTask, "root", command)
+	if code != 0 {
+		t.Fatalf("prepare exited %d", code)
+	}
+
+	code, _, errOut := tree.execRoot(t, "30", digestOf(command))
+	if code != 125 || errOut != "" {
+		t.Errorf("exit %d, stderr %q", code, errOut)
+	}
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=125 killed=no\n" {
+		t.Errorf("cleanup exit = %d, output = %q", code, out)
+	}
 }
 
 func TestRunExecRootKeepsTheCommandsCodeWhenTheExitFileFails(t *testing.T) {
@@ -2305,5 +2340,9 @@ func TestRunExecRootStarttimeWriteFailureExits125(t *testing.T) {
 
 	if _, statErr := os.Stat(tree.path(runOps, runTask, "pgid")); statErr == nil {
 		t.Error("a pgid was written although the start time was not")
+	}
+
+	if _, statErr := os.Stat(tree.path(runOps, runTask, "started")); statErr == nil {
+		t.Error("the started marker stayed although the command was not started")
 	}
 }

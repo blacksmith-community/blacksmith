@@ -1220,7 +1220,7 @@ func TestWrapperFailureStopsTheDeploymentAndPausesTheTask(t *testing.T) {
 		exit    int
 		cleanup string
 	}{
-		{name: "wrapper failed", exit: 125, cleanup: "cleanup started=yes exit=- killed=no"},
+		{name: "wrapper failed", exit: 125, cleanup: "cleanup started=no exit=125 killed=no"},
 		{name: "wrapper refusal", exit: 13, cleanup: "cleanup started=no exit=- killed=no"},
 	}
 
