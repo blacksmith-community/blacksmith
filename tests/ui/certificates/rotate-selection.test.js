@@ -48,7 +48,7 @@ t('rotate selection on Batch Operations', async () => {
   const list=d.querySelector('#upgrade .upgrade-instances');
   ok(list.querySelectorAll('img,script').length===0&&list.textContent.includes(EVIL),'upgrade rows: hostile strings inert and literal');
   const held=list.querySelector('[data-instance-id="inst-held"]');
-  ok(held&&held.dataset.held==='true'&&held.textContent.includes('Busy: rotation "Spring"'),'upgrade: held row shows its holder');
+  ok(held&&held.dataset.held==='true'&&held.textContent.includes('Busy with rotation "Spring". You can select it once that finishes.'),'upgrade: held row shows its holder');
   d.getElementById('upgrade-select-all').click();
   ok(!T.selectedUpgradeInstances.has('inst-held')&&T.selectedUpgradeInstances.has('inst-valkey'),'Select All skips the held row');
   held.click(); ok(!T.selectedUpgradeInstances.has('inst-held'),'click on held row does not select');
@@ -95,7 +95,7 @@ t('rotate selection on Batch Operations', async () => {
   const pgRow=d.querySelector('[data-instance-id="inst-pg"]');
   ok(pgRow.querySelector('input').disabled&&pgRow.textContent.includes('Deploy is pending.'),'ineligible row disabled with reason text');
   const heldRow=d.querySelector('[data-instance-id="inst-held"]');
-  ok(heldRow.querySelector('input').disabled&&heldRow.textContent.includes('Busy: rotation "Spring"'),'held row disabled with holder');
+  ok(heldRow.querySelector('input').disabled&&heldRow.textContent.includes('Busy with rotation "Spring". You can select it once that finishes.'),'held row disabled with holder');
   const noInv=d.querySelector('[data-instance-id="inst-held"]'); 
   // hostile
   const evilRow=d.querySelector('#upgrade .upgrade-instances-list');

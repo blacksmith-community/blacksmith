@@ -231,6 +231,6 @@ t('the command pane shows placeholders for commands, not certificates',async()=>
  expect(d.getElementById('rotate-name').placeholder).not.toContain('certificate');
  expect(d.getElementById('rotate-reason').placeholder).not.toContain('renewal');
  await w.__T.requestOperation('rotate');
- expect(d.getElementById('rotate-name').placeholder).toBe('e.g. October certificate renewal');
+ expect(d.getElementById('rotate-name').placeholder).toBe('For example, October certificate renewal');
  }finally{w.close();}
 });

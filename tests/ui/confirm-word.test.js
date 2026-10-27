@@ -78,7 +78,7 @@ t('the batch review shows the lowercase word and accepts forgiving input',async(
  expect((await typedReview('patch in place','  patch   in place ')).disabled).toBe(false);
  const wrong=await typedReview('patch in place','rotate');
  expect(wrong.disabled).toBe(true);
- expect(wrong.help).toBe('Type patch in place in the confirmation field.');
+ expect(wrong.help).toBe('Type patch in place in the confirmation field. The typed word keeps a stray click or keypress from starting this operation.');
 });
 
 t('the modal accepts the same forgiving input and names the word',async()=>{

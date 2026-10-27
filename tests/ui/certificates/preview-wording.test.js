@@ -19,7 +19,7 @@ t('the preview names the CredHub path and the permanent converge wording', () =>
     expect(copy.getAttribute('aria-label')).toBe('Copy certificate CredHub path');
     expect(copy.title).toBe('Copy certificate CredHub path');
     const converge = w.__T.buildPreviewBody(preview, 'converge');
-    expect(converge.textContent).toContain('A redeploy applies the patched values as permanent.');
+    expect(converge.textContent).toContain('A redeploy makes the patched certificates permanent, so a recreate can no longer bring the old ones back.');
     expect(converge.textContent).not.toContain('for good');
   } finally { w.close(); }
 });

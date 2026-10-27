@@ -35,7 +35,7 @@ t('patch in place controls', async () => {
   const sel=w.blacksmithCerts.selection;
   sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
   ok(d.getElementById('rotate-mode-patch')&&!d.getElementById('rotate-mode-patch').disabled,'Patch radio enabled when the switch is on and the selection allows it');
-  ok(d.getElementById('rotate-mode').textContent.includes('Temporary repair: BOSH can restore the old certificate'),'Patch note shown beside the radio');
+  ok(d.getElementById('rotate-mode').textContent.includes('Temporary repair. BOSH can restore the old certificate until you converge.'),'Patch note shown beside the radio');
   ok(d.getElementById('rotate-mode-converge').hidden,'converge choice hidden before Patch');
   pick('rotate-mode-patch'); await sleep(10);
   ok(!d.getElementById('rotate-mode-converge').hidden,'choosing Patch reveals the converge choice');
@@ -55,7 +55,7 @@ t('patch in place controls', async () => {
   ok(pb.mode==='patch'&&pb.converge==='pending','preview body carries patch and converge: '+JSON.stringify(pb));
   const txt=dlg().querySelector('.rotate-preview').textContent; const pbody=dlg().querySelector('.rotate-preview-scroll');
   ok(/Temporary repair/.test(txt)&&(txt.match(/Temporary repair/g)||[]).length===1,'temporary-repair warning shown once');
-  ok(/nobody runs director commands against the instance while the patch runs/.test(txt),'prerequisite shown');
+  ok(/nobody runs director commands against this instance until the patch finishes/.test(txt),'prerequisite shown');
   ok(pbody.querySelector('.rotate-preview-callout')===pbody.querySelector('.rotate-preview-callout')&&!!(pbody.querySelector('.rotate-preview-callout').compareDocumentPosition(pbody.querySelector('.rotate-preview-cards'))&4),'patch warnings sit above the instance list');
   ok(/Leave unconverged/.test(txt)&&/flagged as unconverged/.test(txt),'chosen converge policy and its consequence');
   ok(confirmBtn().textContent==='Patch in place'&&confirmBtn().classList.contains('dialog-modal-btn-danger'),'patch keeps the danger button');

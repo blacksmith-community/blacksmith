@@ -57,7 +57,7 @@ t('rotate preview and create', async () => {
   ok(exc&&/Will not change/.test(exc.textContent)&&/inst-x-name/.test(exc.textContent)&&/Another task holds inst-x\./.test(exc.textContent),'excluded section with the reason');
   const callout=body.querySelector('.rotate-preview-callout');
   ok(callout&&callout.textContent.includes('Heads up')&&callout.textContent.includes(EVIL)&&!/Warning:/.test(txt)&&dlg().querySelectorAll('img,script').length===0,'warning callout, hostile text inert');
-  ok(/BOSH rolls the VMs/.test(txt)&&/failed health gate pauses the task/.test(txt),'what it does, with the gate clause');
+  ok(/BOSH rolls the VMs/.test(txt)&&/failed health check pauses the task/.test(txt),'what it does, with the gate clause');
   ok(confirmBtn().textContent==='Rotate and redeploy'&&confirmBtn().classList.contains('dialog-modal-btn-confirm')&&!confirmBtn().classList.contains('dialog-modal-btn-danger'),'redeploy confirm: named action, primary style');
   ok(/creates a task/.test(dlg().querySelector('.dialog-modal-footnote').textContent),'line above the buttons');
   ok(dlg().querySelector('.dialog-modal-icon').classList.contains('dialog-modal-icon--warning')&&!dlg().querySelector('.dialog-modal-icon').classList.contains('warning')&&/rotate-preview-summary/.test(dlg().querySelector('.dialog-modal').getAttribute('aria-describedby')),'warning icon, described by the summary');
@@ -104,7 +104,7 @@ t('rotate preview and create', async () => {
   const before=posts(/"kind":"certificates"/).length, pb=posts(/rotation\/preview/).length;
   d.getElementById('rotate-preview').click(); await waitDialog(); confirmBtn().click(); 
   await sleep(80); await waitDialog();
-  ok(dlg().querySelector('.dialog-modal-message').textContent.includes('The state changed since the preview, so here is a fresh one.'),'410 reopens preview with the fresh-one message');
+  ok(dlg().querySelector('.dialog-modal-message').textContent.includes('The state changed since the last preview, so this is a fresh one. Check it again before you confirm.'),'410 reopens preview with the fresh-one message');
   ok(posts(/rotation\/preview/).length===pb+2,'a second preview was requested');
   confirmBtn().click(); await sleep(80);
   c=posts(/"kind":"certificates"/);

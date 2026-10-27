@@ -2859,7 +2859,7 @@
       return Array.from(targets).some(field => field.value) ? '' : 'Choose a stemcell or release target to continue.';
     }
     if (upgradeOperation === 'command') return commandOptionIssue();
-    if (rotateState.loadState === 'disabled') return 'Certificate inventory is turned off.';
+    if (rotateState.loadState === 'disabled') return 'Certificate inventory is turned off on this broker, so certificate operations can\'t start here. An administrator turns it on with certificates.inventory.enabled.';
     if (rotateState.loadState === 'error') return 'Certificate inventory could not load. Retry below to continue.';
     if (rotateState.loadState !== 'ready') return 'Loading certificate inventory…';
     if (upgradeOperation === 'rotate' && rotateState.mode === 'patch' && !rotateState.converge) return 'Choose what should happen after patching.';
@@ -2939,7 +2939,7 @@
     next.textContent = batchFlow.submitting ? 'Starting…' : batchFlow.loading ? 'Preparing review…' : step === 3 ? (review?.options.confirmText || 'Refresh review') : ['Next: Options','Next: Instances','Review operation'][step];
     next.disabled = batchFlow.submitting || batchFlow.loading || discardReading() || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
     next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
-    const helpText = issue || blocker || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
+    const helpText = issue || blocker || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field. The typed word keeps a stray click or keypress from starting this operation.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
     if (help.textContent !== helpText) help.textContent = helpText;
     document.getElementById('batch-activity').disabled = batchFlow.submitting;
@@ -3000,7 +3000,7 @@
       input.addEventListener('input', () => { batchFlow.jobName = input.value; });
       input.setAttribute('aria-describedby','batch-job-name-help');
       label.appendChild(input); host.appendChild(label);
-      const hint = rotateEl('p','batch-field-help','Shown in Activity, e.g. “October service update”. Leave blank for an automatic name.');
+      const hint = rotateEl('p','batch-field-help','A name helps you find this job in Activity later, such as “October service update”. Leave it blank to use a generated name.');
       hint.id='batch-job-name-help';host.appendChild(hint);
     }
     if (options.requireText) {
@@ -3287,13 +3287,13 @@
         <tbody>
           <tr><th scope="row">System</th><td><select id="upgrade-stemcell-filter" aria-label="System deploy version"><option value="">— keep current —</option></select><span class="batch-cell-help">Operating system image (stemcell).</span></td>
             <td><select id="upgrade-stemcell-floor" aria-label="System minimum current version" aria-describedby="batch-version-floor-help"><option value="">No minimum</option></select></td></tr>
-          <tr><th scope="row">Releases</th><td><select id="upgrade-release-filter" aria-label="Service release deploy version" disabled title="Select a single service to choose a release"><option value="">— keep current —</option></select><span class="batch-cell-help">The selected service’s primary release. Choose a service above to enable.</span></td>
+          <tr><th scope="row">Releases</th><td><select id="upgrade-release-filter" aria-label="Service release deploy version" disabled title="Select a single service to choose a release"><option value="">— keep current —</option></select><span class="batch-cell-help">This is the service’s own release. Each service has a different one, so choose a single service above to pick a version.</span></td>
             <td><select id="upgrade-release-floor" aria-label="Release minimum current version" aria-describedby="batch-version-floor-help" disabled title="Select a single service to filter by release"><option value="">No minimum</option></select></td></tr>
         </tbody>
       </table>
       <p id="batch-version-floor-help" class="batch-field-help">Use a minimum to upgrade only instances already at that version or newer. It narrows the list and never changes the deploy version.</p>
       <section class="batch-additional-releases" aria-labelledby="batch-additional-title">
-        <div class="batch-release-toolbar"><div><h3 id="batch-additional-title">Additional releases</h3><p>Choose other releases uploaded to the director. Each applies only to instances that already use it.</p></div><button type="button" id="batch-edit-releases" class="outline">Choose releases…</button></div>
+        <div class="batch-release-toolbar"><div><h3 id="batch-additional-title">Additional releases</h3><p>Use this when the change you need is in a release other than the service’s own. Each release goes only to instances that already use it, so this never adds new software.</p></div><button type="button" id="batch-edit-releases" class="outline">Choose releases…</button></div>
         <div id="batch-release-summary"></div>
       </section>
       <div class="upgrade-advanced-releases" hidden></div>
@@ -3484,14 +3484,14 @@
   // Render upgrade instance list
   const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor, releaseFloor) => {
     if (!instances || Object.keys(instances).length === 0) {
-      return '<div class="no-instances">No service instances available.</div>';
+      return '<div class="no-instances">Blacksmith has no service instances yet, so there\'s nothing to select.</div>';
     }
 
     const { rows: filteredInstances, serviceIdToName, serviceReleaseOf } =
       filterUpgradeInstances(instances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
 
     if (filteredInstances.length === 0) {
-      return '<div class="no-instances">No instances match the current filters.</div>';
+      return '<div class="no-instances">No instances match the current filters. Clear a filter or change the search to see more.</div>';
     }
 
     const pageRows = batchPageRows(filteredInstances);
@@ -3528,7 +3528,7 @@
             <span class="upgrade-instance-service">${escapeHtml(serviceName)}</span>
             <div class="upgrade-instance-id">${escapeHtml(id)}</div>
             <span class="upgrade-instance-plan">${escapeHtml(planName)}</span>
-            ${holder ? `<div class="rotate-row-reason">${escapeHtml(`Busy: ${holder}`)}</div>` : ''}
+            ${holder ? `<div class="rotate-row-reason">${escapeHtml(`Busy with ${holder}. You can select it once that finishes.`)}</div>` : ''}
           </div>
           <div class="upgrade-instance-stemcell-container">
             ${stemcellDisplay}
@@ -3627,7 +3627,7 @@
     command: 'Run command'
   };
   const OPERATION_HINTS = {
-    converge: 'Converge redeploys instances whose patched certificates BOSH has not picked up yet.',
+    converge: 'Converge redeploys instances whose patched certificates BOSH hasn\'t picked up yet, so a recreate can no longer bring the old ones back.',
     command: 'Run one shell command on every VM of the selected instances.'
   };
 
@@ -3994,7 +3994,7 @@
       const holder = upgradeHolders.get(id) || '';
       let reason = '';
       if (holder) {
-        reason = `Busy: ${holder}`;
+        reason = `Busy with ${holder}. You can select it once that finishes.`;
       } else if (upgradeOperation === 'rotate') {
         if (rotateState.loadState !== 'ready') {
           reason = rotateState.loadState === 'loading' || rotateState.loadState === 'idle'
@@ -4180,12 +4180,12 @@
     container.textContent = '';
 
     if (!window.serviceInstances || Object.keys(window.serviceInstances).length === 0) {
-      container.appendChild(rotateEl('div', 'no-instances p-4 text-center text-gray-500', 'No service instances available.'));
+      container.appendChild(rotateEl('div', 'no-instances p-4 text-center text-gray-500', 'Blacksmith has no service instances yet, so there\'s nothing to select.'));
       return;
     }
     if (rows.length === 0) {
       const empty = converge && rotateState.loadState === 'ready'
-        ? 'No instance is waiting for a deploy of its patched certificates.'
+        ? 'No instance is waiting for a deploy of its patched certificates, so there\'s nothing to converge. An instance appears here after a patch in place leaves it unconverged.'
         : (converge && rotateState.loadState !== 'ready' ? 'Loading the certificate inventory...' : 'No instances match the current filters.');
       container.appendChild(rotateEl('div', 'no-instances p-4 text-center text-gray-500', empty));
       return;
@@ -4433,8 +4433,8 @@
   // What a patch does afterwards, as the value the broker takes, the label,
   // and what happens next.
   const CONVERGE_CHOICES = [
-    ['pending', 'Leave unconverged', 'The instance stays flagged as unconverged until a converge runs. A recreate or resurrection restores the old certificate until then.'],
-    ['immediate', 'Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
+    ['pending', 'Leave unconverged', 'Choose this to restart the jobs only once today. The instance stays flagged as unconverged until a converge runs, and a recreate or resurrection restores the old certificate until then.'],
+    ['immediate', 'Converge right away', 'Choose this to make the repair permanent in the same job. Every job restarts a second time, when the deploy that follows the patch runs.']
   ];
 
   // The Mode choice that Batch Operations and the instance rotate dialog
@@ -4571,7 +4571,7 @@
         modePanel.setAttribute('aria-labelledby',`${p}-${patch?'patch':'redeploy'}-tab`);
         modeDescription.replaceChildren(
           rotateEl('h3','',patch?'Replace certificates on the existing VMs':'Rotate certificates and redeploy'),
-          rotateEl('p','',patch?'Updates certificate files in place and restarts affected jobs. Choose below when BOSH should deploy the updated certificates.':'Issues new certificates and deploys them through BOSH using the deployment update policy, including canaries and drains.'),
+          rotateEl('p','',patch?'Patch writes the new certificate files onto the running VMs and restarts the affected jobs, so the new certificates are in service without waiting for a deploy. Choose below when BOSH should deploy them.':'Redeploy issues new certificates and deploys them through BOSH with the deployment\'s update policy, so canaries and drains protect the service while it rolls.'),
           rotateEl('p','batch-field-help',patch?PATCH_NOTE:'VMs and jobs may restart. Review the affected instances before confirming.')
         );
       }
@@ -4607,7 +4607,7 @@
   let rotateModeControls = null;
 
   // The optional job name and reason inputs that every operation shares.
-  const buildBatchMetadata = (namePlaceholder = 'e.g. October certificate renewal', reasonPlaceholder = 'e.g. Scheduled renewal — change CHG-1234', reasonText = 'Explain why you\'re running this operation, such as a maintenance window, an incident, or a change ticket. The reason is saved with the job and shown in its details, so anyone reading Activity later knows why it ran. It\'s optional.') => {
+  const buildBatchMetadata = (namePlaceholder = 'For example, October certificate renewal', reasonPlaceholder = 'For example, scheduled renewal for change CHG-1234', reasonText = 'Explain why you\'re running this operation, such as a maintenance window, an incident, or a change ticket. The reason is saved with the job and shown in its details, so anyone reading Activity later knows why it ran. It\'s optional.') => {
     const nameRow = rotateEl('div', 'filter-row rotate-name-row');
     const nameLabel = rotateEl('label', '', 'Job name');
     nameLabel.setAttribute('for', 'rotate-name');
@@ -4622,7 +4622,7 @@
     nameRow.appendChild(nameInput);
     nameRow.appendChild(rotateEl('p','batch-field-help',''));
     nameRow.lastChild.id = 'rotate-name-help';
-    nameRow.lastChild.textContent = 'A short label to find this operation in Activity. Leave blank to use a generated name.';
+    nameRow.lastChild.textContent = 'A short name helps you find this job in Activity later. Leave it blank to use a generated name.';
     const metadata = rotateEl('details', 'batch-optional');
     metadata.appendChild(rotateEl('summary', '', 'Job name and reason (optional)'));
     metadata.appendChild(nameRow);
@@ -5062,7 +5062,7 @@
         ({ preview, createBody, nodes } = resume);
         resume = null;
         commandRun.signature = commandSignatureOf(values);
-        result = { kind: 'unknown', message: 'The last attempt to start this run did not finish.' };
+        result = { kind: 'unknown', message: 'The last attempt to start this run didn\'t finish, so check Activity before you run it again.' };
       } else {
         try {
           preview = (await commandPost(COMMAND_PREVIEW_URL, values)).body;
@@ -5293,7 +5293,7 @@
     parallelRow.appendChild(limitRow);
     pane.appendChild(parallelRow);
 
-    pane.appendChild(buildBatchMetadata('e.g. Check disk usage on valkey nodes', 'e.g. Investigating an incident — change CHG-1234', 'Explain why you\'re running this command, such as an incident or a change ticket. The reason is saved in the audit record with the command.'));
+    pane.appendChild(buildBatchMetadata('For example, check disk usage on valkey nodes', 'For example, investigating an incident for change CHG-1234', 'Explain why you\'re running this command, such as an incident or a change ticket. The reason is saved in the audit record with the command.'));
     container.appendChild(pane);
     renderCommandDiscardNote();
     syncCommandOptions();
@@ -5538,7 +5538,7 @@
   // Rotation preview, confirmation, and creation
   // =====================================================
 
-  const PREVIEW_EXPIRED_NOTE = 'The state changed since the preview, so here is a fresh one.';
+  const PREVIEW_EXPIRED_NOTE = 'The state changed since the last preview, so this is a fresh one. Check it again before you confirm.';
   const TYPED_CONFIRM_THRESHOLD = 10;
   const ROTATE_MODE_LABELS = {
     redeploy: 'Redeploy',
@@ -5550,8 +5550,8 @@
   // The word to type is the action's own label, so the two cannot drift apart.
   const rotateConfirmWord = (mode) => String(ROTATE_MODE_LABELS[mode] || mode).toLowerCase();
   const PATCH_WARNING = 'Temporary repair. BOSH can restore the old certificate until this instance converges, for example when it recreates or resurrects a VM.';
-  const PATCH_PREREQUISITE = 'Before you patch, make sure nobody runs director commands against the instance while the patch runs.';
-  const PATCH_NOTE = 'Temporary repair: BOSH can restore the old certificate';
+  const PATCH_PREREQUISITE = 'Before you patch, make sure nobody runs director commands against this instance until the patch finishes. BOSH still records the old certificate, so a deploy, recreate, or resurrection during the patch would put it back, and the broker can\'t stop commands run against the director directly.';
+  const PATCH_NOTE = 'Temporary repair. BOSH can restore the old certificate until you converge.';
   const PATCH_UNAVAILABLE_REASON = 'Patch in place is not available.';
 
   // The text to show for an error from the preview or the create request.
@@ -5561,9 +5561,9 @@
   const PREVIEW_WHAT = {
     redeploy: 'BOSH rolls the VMs of each instance through its update block, with canaries and drains.',
     patch: 'We swap the certificate files over SSH, and the affected processes restart under monit, one VM at a time.',
-    converge: 'A redeploy applies the patched values as permanent.'
+    converge: 'A redeploy makes the patched certificates permanent, so a recreate can no longer bring the old ones back.'
   };
-  const PREVIEW_GATE_CLAUSE = 'A failed health gate pauses the task.';
+  const PREVIEW_GATE_CLAUSE = 'A failed health check pauses the task, so you can look into it before more changes go out.';
   const PREVIEW_POLICY = {
     pending: ['Leave unconverged', 'The instance stays flagged as unconverged until a converge runs.'],
     immediate: ['Converge right away', 'Every job restarts a second time, when the deploy that follows the patch runs.']
@@ -6120,7 +6120,7 @@
   const rotateAvailability = (capabilities, eligibleCount, holder, noneReason) => {
     const rotation = capabilities && capabilities.rotation;
     if (!rotation || rotation.enabled !== true) {
-      return { state: 'disabled', label: 'Rotate...', note: (rotation && rotation.reason) || 'Certificate rotation is turned off on this broker.' };
+      return { state: 'disabled', label: 'Rotate...', note: (rotation && rotation.reason) || 'Certificate rotation is turned off on this broker. An operator turns it on with the certificate_rotation kit parameter.' };
     }
     if (holder) return { state: 'busy', label: 'Busy', note: `Busy: ${holder}` };
     if (eligibleCount === 0) {
@@ -6860,7 +6860,7 @@
       });
 
       if (response.ok) {
-        saveBtn.textContent = 'Saved!';
+        saveBtn.textContent = 'Saved';
         setTimeout(() => {
           saveBtn.textContent = 'Save';
           saveBtn.disabled = false;
@@ -6980,7 +6980,7 @@
     rotation_disabled: 'Rotation is switched off on this broker. An operator turns it on with the certificate_rotation kit parameter.',
     patch_disabled: 'Patching in place is switched off on this broker. An operator turns it on with the certificate_patch_in_place kit parameter, and rotation has to be on as well.',
     credhub_not_configured: 'This broker has no CredHub connection. The broker Overview has a runbook that shows how to enable it.',
-    director_unsupported: 'This director cannot do what the operation needs, and nothing was changed.',
+    director_unsupported: 'This director can\'t do what the operation needs, so nothing was changed. Update the director, or leave this instance out.',
     signing_ca_changed: 'The CA that would sign the new certificate is not the one that signed the deployed one. The broker Overview has a runbook for CA renewal.',
     request_id_conflict: 'That request ID was already used for a different request. Preview again to start a fresh one.',
     upgrade_preview_required: 'Preview the upgrade again before you start it.',
@@ -7130,7 +7130,7 @@
 
     if (upgradeTasks.length === 0) {
       rerenderTaskPanel(tasksContainer, 'list', () => {
-        tasksContainer.innerHTML = '<div class="no-tasks">No batch jobs yet. Choose New Operation to upgrade, rotate certificates, or converge instances.</div>';
+        tasksContainer.innerHTML = '<div class="no-tasks">No batch jobs yet. Choose New Operation to upgrade, rotate certificates, converge, or run a command.</div>';
       });
       return;
     }
@@ -8334,7 +8334,7 @@
           </div>${(isCertificates || isCommand) && isPaused && hasFailedInstance ? `
           <div class="summary-row">
             <span class="label">Resume:</span>
-            <span class="value">Continue remaining instances. The failed instance is not retried.</span>
+            <span class="value">Continue remaining instances goes on with the instances still waiting. It never retries the failed one, so look at that failure first.</span>
           </div>` : ''}
           <div class="summary-row">
             <span class="label">Progress:</span>
@@ -8528,7 +8528,7 @@
     const patch = Boolean(cached && cached.certificates && cached.certificates.mode === 'patch');
     let dialog = {
       title: 'Cancel Batch Job',
-      message: 'Are you sure you want to cancel this job? This will cancel the current BOSH task and skip remaining instances.',
+      message: 'Cancelling stops the BOSH task that\'s running now and skips the remaining instances. The instance being deployed may be left part way through its update.',
       confirmText: 'Cancel Job',
       cancelText: 'Keep Running',
       danger: true
@@ -8953,12 +8953,12 @@
           note = PREVIEW_EXPIRED_NOTE;
           continue;
         }
-        window.Feedback.error(`Failed to start upgrade: ${apiErrorText(err)}`, { toast: true });
+        window.Feedback.error(`The upgrade wasn't started. ${apiErrorText(err)}`, { toast: true });
         return;
       }
     } catch (err) {
       console.error('Failed to start upgrade:', err);
-      window.Feedback.error(`Failed to start upgrade: ${err.message}`, { toast: true });
+      window.Feedback.error(`The upgrade wasn't started. ${err.message}`, { toast: true });
     } finally {
       updateUpgradeButton();
     }

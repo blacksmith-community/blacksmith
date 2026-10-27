@@ -73,7 +73,7 @@ t('preview body layout', async () => {
 
   // converge: no certificate rows
   n=build({instances:[inst('a')],warnings:[]},'converge');
-  ok(!n.querySelector('.rotate-preview-cert')&&/redeploy applies the patched values/.test(n.textContent),'converge lists no certificates');
+  ok(!n.querySelector('.rotate-preview-cert')&&/redeploy makes the patched certificates permanent/.test(n.textContent),'converge lists no certificates');
 
   ok(errors.filter(e=>!/Error loading data/.test(String(e))).length===0&&alerts.length===0,'no script errors or dialogs: '+JSON.stringify(errors));
   expect(failures).toEqual([]);
