@@ -1606,6 +1606,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	rewordHeldCommandsLocked(task)
 
 	ended := m.cancelIdleLocked(task)
+	closed := m.cancelUnownedCommandLocked(task)
 	skipped := m.skipUnownedLocked(task)
 	settle := m.settleCancelledLocked(task) //nolint:contextcheck // Resuming the task runs on the manager's lifecycle context, so a finished request never cancels it.
 
@@ -1621,6 +1622,10 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 
 	if skipped > 0 {
 		m.logger.Info("Skipped %d pending instances of cancelled certificate task %s", skipped, taskID)
+	}
+
+	if closed > 0 {
+		m.logger.Info("Ended %d instances of cancelled command task %s, which nothing processes", closed, taskID)
 	}
 
 	settle()
@@ -2200,7 +2205,8 @@ func finishedStatus(task *UpgradeTask) TaskStatus {
 }
 
 // skipPendingLocked marks every pending instance of a cancelled upgrade
-// skipped and returns how many it marked. A pending certificate instance
+// skipped, with the nodes of a command instance, and returns how many it
+// marked. A pending certificate instance
 // whose regeneration already made new versions, such as a loaded one whose
 // deploy went back to pending, says that they are deploy_pending. The
 // caller holds mu.
@@ -2215,6 +2221,12 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 
 		instance.Status = InstanceStatusSkipped
 		instance.Error = "skipped due to task cancellation"
+
+		// No node of a skipped command instance ever starts, so none
+		// reads as though it still might.
+		if instance.Command != nil {
+			skipPendingNodesLocked(instance, reasonCancelledBeforeStart)
+		}
 
 		if task.KindOrDefault() == TaskKindCertificates && regenerationStartedLocked(instance) {
 			instance.Error = cancelledUndeployed

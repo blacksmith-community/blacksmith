@@ -2016,6 +2016,30 @@ func (m *Manager) endCancelledCommandInstanceLocked(task *UpgradeTask, inst *Ins
 	return true
 }
 
+// cancelUnownedCommandLocked ends what a cancelled command task that
+// nothing processes or settles leaves open, as its processor would on the
+// cancel: each running instance that holds nothing on a VM ends as
+// cancelled with its pending nodes skipped, and each pending instance is
+// skipped. An instance with a node still to clean stays held for its
+// cleanup. It returns how many instances it ended or skipped. The caller
+// holds mu.
+func (m *Manager) cancelUnownedCommandLocked(task *UpgradeTask) int {
+	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCommand ||
+		m.owned[task.ID] || m.settling[task.ID] > 0 {
+		return 0
+	}
+
+	ended := 0
+
+	for i := range task.Instances {
+		if m.endCancelledCommandInstanceLocked(task, &task.Instances[i]) {
+			ended++
+		}
+	}
+
+	return ended + m.skipPendingLocked(task)
+}
+
 // resumeCancelledCommandLocked starts the cleanup of each running instance
 // of a cancelled command task that has a node holding something on its VM,
 // when nothing processes or settles the task and it does not wait for a
