@@ -21,7 +21,9 @@
 # it, and vcap can open cmd.sh by name but cannot list, replace, write,
 # or remove anything on the way to it. The task directory also holds the
 # files a later operation writes, which are started, starttime, pgid, and
-# exit, and the survivors record of processes that outlived KILL.
+# exit, and the survivors record of processes that outlived KILL. Beside
+# the task directories, runcmd holds the done records that cleanup leaves,
+# a root-owned file of mode 0600 named <task>.done, as cleanup describes.
 #
 # CERTPATCH_ROOT lets the tests put the VM's files under a temporary
 # directory, as lib.sh explains.
@@ -34,6 +36,11 @@ readonly RC_SECS_RE='^[1-9][0-9]{0,5}$'
 # "unchanged". Larger values wrap around in setpriv, so they are refused.
 readonly RC_ID_RE='^[1-9][0-9]{0,9}$'
 readonly RC_EXIT_RE='^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
+# The line a done record may hold, which is a cleanup line that shows the
+# command ended, and the age in minutes, seven days, after which any
+# cleanup removes a done record.
+readonly RC_DONE_RE='^cleanup started=(yes|no) exit=(-|[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]) killed=(yes|no)$'
+readonly RC_DONE_MINUTES=10080
 
 # The directory that the EXIT trap removes when an operation stops before
 # it is done. prepare sets it while the directory is half made, and
@@ -557,34 +564,89 @@ _rc_unchecked() {
 	fi
 }
 
+# _rc_replay <file> prints the line of a done record and succeeds, or
+# fails when the file is not a record that cleanup could have written: a
+# root-owned regular file of mode 0600 that holds exactly one line, ending
+# in a newline, with killed=yes or no.
+_rc_replay() {
+	local whole=''
+
+	_rc_check_file "$1" 0 - 600 || return 1
+	{ IFS= read -r -d '' whole < "$1"; } 2> /dev/null
+	[ "${whole: -1}" = $'\n' ] || return 1
+	[[ ${whole%$'\n'} =~ $RC_DONE_RE ]] || return 1
+	printf '%s' "$whole"
+}
+
+# _rc_write_done <base> <task> <line> writes the done record of a task. It
+# writes <task>.done.new, which it clears first of what an earlier failed
+# write left, and renames it to <task>.done, so the record never holds
+# part of a line under its own name. It fails, and leaves neither name,
+# when the write or the rename fails.
+_rc_write_done() {
+	local new=$1/$2.done.new
+
+	rm -f -- "$new" 2> /dev/null
+
+	if ! printf '%s\n' "$3" | _rc_write "$new" ||
+		! mv -fT -- "$new" "$1/$2.done" 2> /dev/null; then
+		rm -f -- "$new" 2> /dev/null
+		return 1
+	fi
+}
+
+# _rc_prune_done <base> removes the done records, and the part-written
+# ones that a failed write leaves, that are older than RC_DONE_MINUTES.
+# It removes only regular files with those names, never a task directory,
+# because a directory that cleanup kept may still hold a command it could
+# not check.
+_rc_prune_done() {
+	find "$1" -mindepth 1 -maxdepth 1 -type f \( -name '*.done' -o -name '*.done.new' \) \
+		-mmin "+$RC_DONE_MINUTES" -delete 2> /dev/null || true
+}
+
 # cleanup prints whether the command started and how it ended, and then
-# removes the task directory. started is yes when exec left its marker,
-# and exit is the code exec recorded, or - when there is none. An exit
-# file that is empty or holds anything but a status, as a write on a full
-# disk can leave, counts as none. A command that started and has no exit
-# is still running, or was left by a wrapper that died, and cleanup ends
-# its process group before it reports, so
-# killed is yes, or survived when the group outlives KILL. killed is no
-# when cleanup found the command's session empty, or did not look because
-# the command never started or recorded its exit, and unknown when it
-# could not look, as _rc_kill_group says. An unknown keeps the directory
-# without cmd.sh, as survivors do, so the next cleanup looks again and
-# removes the directory once it can tell. Survivors keep the directory, with their record in place of the command's text, so the
-# next cleanup checks the same processes again, as _rc_recheck does,
-# whatever the exit file holds, and removes the directory only once they
-# have ended. A survivors.new with no survivors beside it is a record that
-# could not be written or renamed, which names no processes that can be
-# checked, so every later cleanup reports survived and keeps the
-# directory. It always prints exactly one record. A task with no directory prints
-# started=- and succeeds, because the directory may be missing either
-# because prepare never arrived or because an earlier cleanup removed it,
-# and the caller must treat the outcome as unknown. A directory that is a
-# symlink, or is not root's, is refused and never removed.
+# replaces the task directory with a done record of what it printed.
+# started is yes when exec left its marker, and exit is the code exec
+# recorded, or - when there is none. An exit file that is empty or holds
+# anything but a status, as a write on a full disk can leave, counts as
+# none. A command that started and has no exit is still running, or was
+# left by a wrapper that died, and cleanup ends its process group before
+# it reports, so killed is yes, or survived when the group outlives KILL.
+# killed is no when cleanup found the command's session empty, or did not
+# look because the command never started or recorded its exit, and
+# unknown when it could not look, as _rc_kill_group says.
+#
+# An unknown keeps the directory without cmd.sh, as survivors do, so the
+# next cleanup looks again and removes the directory once it can tell.
+# Survivors keep the directory, with their record in place of the
+# command's text, so the next cleanup checks the same processes again, as
+# _rc_recheck does, whatever the exit file holds, and removes the
+# directory only once they have ended. A survivors.new with no survivors
+# beside it is a record that could not be written or renamed, which names
+# no processes that can be checked, so every later cleanup reports
+# survived and keeps the directory.
+#
+# Any other answer shows the command ended. cleanup writes it to the done
+# record <task>.done, as _rc_write_done does, and only then removes the
+# directory, so a cleanup asked again for the task prints the same line,
+# even when the first answer was lost on the way or the broker could not
+# save it. When the record can't be written, cleanup prints the line and
+# keeps the directory as it was, so the next cleanup works the answer out
+# again. A done record that is not one cleanup could have written is
+# ignored. Every cleanup first removes done records older than seven
+# days, as _rc_prune_done does, and never a task directory.
+#
+# It always prints exactly one record. A task with neither a done record
+# nor a directory prints started=- and succeeds, because the directory may
+# be missing either because prepare never arrived or because its done
+# record was pruned, and the caller must treat the outcome as unknown. A directory that is a symlink, or is not root's, is refused and
+# never removed.
 cleanup() {
 	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
 
-	local task=$1 root base dir started=no code=- killed=no
+	local task=$1 root base dir line started=no code=- killed=no
 
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 	_cp_secure_chain "$root" "$RC_DATA" || return "$EXIT_REFUSED"
@@ -592,12 +654,24 @@ cleanup() {
 	base=$root$RC_DATA/runcmd
 	dir=$base/$task
 
+	if [ -e "$base" ] || [ -L "$base" ]; then
+		_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
+		_rc_prune_done "$base"
+
+		if _rc_replay "$base/$task.done"; then
+			if _rc_check_dir "$dir" 0 - -; then
+				rm -rf -- "$dir" 2> /dev/null || true
+			fi
+
+			return 0
+		fi
+	fi
+
 	if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then
 		printf 'cleanup started=- exit=- killed=no\n'
 		return 0
 	fi
 
-	_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
 	_rc_check_dir "$dir" 0 - - || return "$EXIT_REFUSED"
 
 	if [ -f "$dir/started" ] && [ ! -L "$dir/started" ]; then
@@ -623,8 +697,15 @@ cleanup() {
 		return 0
 	fi
 
+	line="cleanup started=$started exit=$code killed=$killed"
+
+	if ! _rc_write_done "$base" "$task" "$line"; then
+		printf '%s\n' "$line"
+		return 0
+	fi
+
 	_RC_DROP=$dir
-	printf 'cleanup started=%s exit=%s killed=%s\n' "$started" "$code" "$killed"
+	printf '%s\n' "$line"
 	# A command that was just ended lets its wrapper write the exit file
 	# while the removal runs, which can fail the removal once.
 	rm -rf -- "$dir" || { sleep 0.2; rm -rf -- "$dir"; } || return 1

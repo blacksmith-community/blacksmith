@@ -54,23 +54,37 @@ var (
 )
 
 // Cleanup is what the cleanup operation reports. Started is "yes", "no",
-// or "-" when the task directory was already gone, which leaves the
-// outcome unknown and the other fields empty of meaning. Exit is the
-// recorded exit code, or "-" when there is none. Killed is "yes" when
-// cleanup ended a running command, and "survived" when the command's group
-// was still alive after KILL. Killed is "no" when cleanup sent no signal
-// because there was nothing to end: the command never started, it
-// recorded its exit, or cleanup checked its session and found nothing
-// alive in it. Killed is "unknown" when cleanup could not check, because
-// the pgid or start-time file is missing or invalid, the kill tool is
-// missing, or the leader is gone or is another process while the session
-// still has members or can't be judged. The wrapper then keeps the task
-// directory, so a later cleanup checks again. ParseCleanup reads any
-// other killed value as "unknown" too. So an exit status, killed=yes,
-// killed=no, and started=no each show that nothing the command started
-// still runs, and killed=unknown and started=- show nothing. On a recheck
-// of recorded survivors, Killed is "yes" when none of them lives and
-// "survived" otherwise.
+// or "-" when the task has neither a directory nor a done record, which
+// leaves the outcome unknown and the other fields empty of meaning. Exit
+// is the recorded exit code, or "-" when there is none or the exit file
+// holds no usable status.
+//
+// Killed is "yes" when cleanup ended a running command, and "survived"
+// when the command's group was still alive after KILL. Killed is "no"
+// when cleanup sent no signal because there was nothing to end: the
+// command never started, it recorded its exit, or cleanup checked its
+// session and found nothing alive in it. Killed is "unknown" when cleanup
+// could not check, because the pgid or start-time file is missing or
+// invalid, the kill tool is missing, or the leader is gone or is another
+// process while the session still has members or can't be judged.
+// ParseCleanup reads any other killed value as "unknown" too. On a
+// recheck of recorded survivors, Killed is "yes" once none of them lives
+// and the session's group has no member but zombies, and "survived"
+// otherwise. So an exit status, killed=yes, killed=no, and started=no
+// each show that nothing the command started still runs, and
+// killed=unknown and started=- show nothing.
+//
+// A cleanup that shows the command ended leaves a done record in place of
+// the task directory, and a repeat cleanup for the task returns the same
+// line from it. started=- therefore means that prepare never arrived or
+// that the record is older than the wrapper's seven-day pruning.
+//
+// On unknown the wrapper keeps the task directory, so a later cleanup
+// checks again. When exec itself returned the command's exit status, the
+// engine settles the node from that status and sends no later cleanup,
+// so the kept directory stays on the VM. That is accepted, because a
+// further cleanup would most likely answer unknown again, and the
+// pruning of done records never removes a task directory.
 type Cleanup struct {
 	Started string
 	Exit    string

@@ -523,6 +523,53 @@ func TestCommandStagedNodeSettlesOnAGoneRecord(t *testing.T) {
 	}
 }
 
+// The wrapper replaces the task directory with a done record of the line
+// its cleanup printed, and answers a repeat cleanup with that line. So a
+// node whose settle save is refused after cleanup ran gets the same
+// evidence on the next Resume cleanup, settles from it, and releases the
+// instance, where a directory that was simply gone would hold it until the
+// VM is recreated.
+func TestCommandRefusedSettleSaveSettlesFromTheReplayedRecord(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+
+	settled := func(task UpgradeTask) bool { return nodeOf(task, 0, 0).Phase == CommandPhaseSettled }
+
+	fix.vault.refuseWhen(settled)
+	fix.queue()
+
+	fix.waitFor("the refused save to pause the task", func(task UpgradeTask) bool {
+		return task.Paused && nodeOf(task, 0, 0).Phase == CommandPhaseSent
+	})
+	if !fix.holds() {
+		t.Fatal("the instance was released before the node settled in Vault")
+	}
+
+	cleanups := fix.countOps("dep-0", 0, opRunCleanup)
+
+	fix.vault.refuseWhen(nil)
+	fix.resume()
+	fix.waitReleased()
+
+	done := fix.waitFor("the node to settle", func(task UpgradeTask) bool { return !task.Paused && settled(task) })
+
+	node := nodeOf(done, 0, 0)
+	if node.ExitCode == nil || *node.ExitCode != 0 || node.Unproven != "" || node.Survived {
+		t.Errorf("the node settled with exit %v, unproven %q, survived %v, want exit 0 from the replayed record", node.ExitCode, node.Unproven, node.Survived)
+	}
+
+	if stored := fix.vault.stored(t); stored.Phase != CommandPhaseSettled {
+		t.Errorf("Vault holds the node in phase %s, want settled", stored.Phase)
+	}
+
+	if n := fix.countOps("dep-0", 0, opRunCleanup); n != cleanups+1 {
+		t.Errorf("Resume cleanup sent %d cleanups, want one", n-cleanups)
+	}
+
+	if n := fix.countOps("dep-0", 0, opRunExec); n != 1 {
+		t.Errorf("exec was sent %d times, want once", n)
+	}
+}
+
 // A cancelled task whose node strands on a record that proves nothing holds
 // the instance with text that says why, in place of the text for a cleanup
 // that did not finish. The node keeps why in Vault, so after a restart a
