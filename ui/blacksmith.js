@@ -2871,7 +2871,7 @@
     batchFlow.submitting = false;
     const host = document.getElementById('batch-flow-review');
     host.replaceChildren();
-    const title = rotateEl('h3', 'batch-review-title', options.details?.length ? options.title : 'Change summary');
+    const title = rotateEl('h3', 'batch-review-title', options.showTitle || options.details?.length ? options.title : 'Change summary');
     host.appendChild(title);
     if (options.message) host.appendChild(rotateEl('p', 'batch-review-note', options.message));
     if (options.body) {
@@ -4733,6 +4733,7 @@
     label.appendChild(input); body.appendChild(label);
     const answer = await showBatchReview({
       title: 'Command key',
+      showTitle: true,
       message: refused ? 'The broker did not accept that key. Enter it again.' : 'This broker asks for a command key before it previews or runs a command.',
       body,
       confirmText: action.confirmText || 'Preview command run',
@@ -4927,6 +4928,7 @@
         const blocked = (preview.instances || []).filter((instance) => instance.blocked);
         const answer = await showBatchReview({
           title: 'Run this command?',
+          showTitle: true,
           message: note,
           body: buildCommandReviewBody(preview, values),
           confirmText: `Run on ${pluralize(nodes, 'node')}`,
@@ -4963,6 +4965,7 @@
           reviewBody.appendChild(buildCommandDiscard(createBody.client_request_id, createBody.preview_id, revision));
           const retry = await showBatchReview({
             title: 'Outcome unknown',
+            showTitle: true,
             message: result.complete ? result.message : `${result.message} The broker may have started this run. Retry sends the same request, and the broker will not start it twice. Activity shows whether it started.`,
             body: reviewBody,
             confirmText: 'Retry',

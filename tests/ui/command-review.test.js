@@ -828,6 +828,23 @@ const pendingReview=async(env)=>{await review(env);await confirmRun(env);};
 const DISCARDED=[200,{discarded:true}];
 const gated=(body)=>{let release;const gate=new Promise((r)=>{release=r;});return {release,spec:()=>({raw:gate.then(()=>({ok:true,status:200,json:()=>Promise.resolve(body),text:()=>Promise.resolve(JSON.stringify(body))}))})};};
 
+t('the command review headings render',async()=>{
+ const env=await setup({preview:(o)=>{
+  const key=(o.headers||{})['X-Blacksmith-Command-Key'];
+  return key?[200,preview()]:[401,{success:false,error:'A command key is required.',code:'command_credential_required'}];
+ }});const {w,d}=env;try{
+ const heading=()=>{const h=d.querySelector('#batch-flow-review .batch-review-title');return h?h.textContent:'';};
+ await review(env);
+ expect(heading()==='Command key').toBe(true);
+ type(w,d.querySelector('#batch-flow-review input[type="password"]'),KEY);
+ next(env).click();await sleep(20);
+ expect(heading()==='Run this command?').toBe(true);
+ pendingRoutes(env,[DISCARDED]);
+ await confirmRun(env);
+ expect(heading()==='Outcome unknown').toBe(true);
+ }finally{w.close();}
+});
+
 t('a review with no pending create shows no Discard',async()=>{
  const env=await setup();const {w}=env;try{
  await review(env);
@@ -875,6 +892,8 @@ t('a discarded answer clears the create, keeps the settings, and says the broker
  expect(note.textContent.includes('Blacksmith will refuse it if it arrives late')).toBe(true);
  expect(note.textContent.includes('appears later in Activity')).toBe(false);
  expect(d.getElementById('batch-flow-review').textContent.includes('Outcome unknown')).toBe(false);
+ expect(d.getElementById('command-discard')===null).toBe(true);
+ expect(next(env).textContent==='Retry').toBe(false);
  expect(hasSecret(d.getElementById('batch-flow-review').textContent)).toBe(false);
  // Discard reads no task list and sends no create.
  expect(env.listReads).toBe(0);
