@@ -271,6 +271,9 @@ func TestCommandSurvivorKeepsTheHoldWhenTheDirectorFails(t *testing.T) {
 	fix.failListing("dep-0", errors.New("deployment dep-0 not found"))
 	fix.resume()
 
+	fix.waitFor("the recheck to keep the hold", func(task UpgradeTask) bool {
+		return strings.Contains(task.Instances[0].Error, "could not reach")
+	})
 	waitUntil(t, "the resume to end", func() bool { return fix.waits() && !fix.settling() })
 
 	if !fix.holds() || !nodeOf(fix.snapshot(), 0, 0).Survived {
@@ -280,6 +283,72 @@ func TestCommandSurvivorKeepsTheHoldWhenTheDirectorFails(t *testing.T) {
 	fix.failListing("dep-0", nil)
 	fix.resume()
 	fix.waitReleased()
+}
+
+// A recheck that finds no evidence that the survivor's processes ended
+// keeps the survivor and the hold, and says why on the instance. A director
+// that can't list the deployment, a node that can't be reached, a cleanup
+// that does not report cleanly, and a record that can't say what ran are
+// each no evidence.
+func TestCommandSurvivorRecheckWithoutEvidenceKeepsTheHold(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*taskFixture)
+		want  string
+	}{
+		{name: "director error", want: "could not reach", setup: func(f *taskFixture) {
+			f.failListing("dep-0", errors.New("deployment dep-0 not found"))
+		}},
+		{name: "unreachable node", want: "could not reach", setup: func(f *taskFixture) {
+			f.runner = func(context.Context, string, string, []int) (PatchSession, error) { return nil, errNodeUnreachable }
+		}},
+		{name: "unclean cleanup", want: "did not report cleanly", setup: func(f *taskFixture) {
+			f.mu.Lock()
+			f.override = func(_ context.Context, _ string, _ int, op string) *opAnswer {
+				if op == opRunCleanup {
+					return &opAnswer{err: errNodeUnreachable}
+				}
+
+				return nil
+			}
+			f.mu.Unlock()
+		}},
+		{name: "unknown record", want: "found no record", setup: func(f *taskFixture) {
+			f.setCleanup("dep-0/0", "cleanup started=- exit=- killed=no")
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 1)
+			fix.waitSurvivorPause()
+			waitUntil(t, "the processor to let go", func() bool { return !fix.owned() })
+
+			fix.setCleanup("dep-0/0", cleanupEnded)
+			tc.setup(fix)
+			fix.resume()
+
+			held := fix.waitFor("the recheck to keep the hold", func(task UpgradeTask) bool {
+				return strings.Contains(task.Instances[0].Error, tc.want)
+			})
+			waitUntil(t, "the resume to end", func() bool { return !fix.owned() && !fix.settling() })
+
+			snap := fix.snapshot()
+			if !nodeOf(snap, 0, 0).Survived || !fix.holds() {
+				t.Fatalf("the node is survived %v and held %v, want both kept", nodeOf(snap, 0, 0).Survived, fix.holds())
+			}
+
+			if snap.Status != TaskStatusPaused || !snap.Paused {
+				t.Errorf("the task is %s, paused %v, want paused for Resume cleanup", snap.Status, snap.Paused)
+			}
+
+			if !strings.Contains(held.Instances[0].Error, "Resume cleanup") && !strings.Contains(held.Instances[0].Error, "Recreating the VM") {
+				t.Errorf("the instance says %q, want it to say how the hold ends", held.Instances[0].Error)
+			}
+
+			fix.assertNoCommandText()
+		})
+	}
 }
 
 // A panic in the processing of a command task that holds an unresolved
