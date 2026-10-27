@@ -912,9 +912,10 @@ t('a settled node with no kept output says so, reads nothing, and offers no Retr
  await openDetails(env,0);await openDetails(env,1);
  expect(env.outputs.length).toBe(0);
  const body=detailsOf(d)[0].querySelector('.command-output-body');
- expect(body.textContent.includes('produced no output')).toBe(true);
+ expect(body.textContent.includes('Blacksmith kept no output for this node.')).toBe(true);
  expect(body.textContent.includes('the node moved to another VM')).toBe(true);
- expect(detailsOf(d)[1].querySelector('.command-output-body').textContent.includes('produced no output')).toBe(true);
+ expect(detailsOf(d)[1].querySelector('.command-output-body').textContent.includes('Blacksmith kept no output for this node.')).toBe(true);
+ expect(pageText(d).includes('produced no output')).toBe(false);
  expect(detailsOf(d).every(el=>el.querySelector('button')===null)).toBe(true);
  expect(pageText(d).includes('Could not read the output')).toBe(false);
  }finally{w.close();}

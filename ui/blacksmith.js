@@ -7886,7 +7886,7 @@
       return;
     }
     if (context.noOutput) {
-      body.appendChild(rotateEl('p', 'command-output-note', ['This node produced no output.', context.reason].filter(Boolean).join(' ')));
+      body.appendChild(rotateEl('p', 'command-output-note', ['Blacksmith kept no output for this node.', context.reason].filter(Boolean).join(' ')));
       return;
     }
     if (!entry) return;
