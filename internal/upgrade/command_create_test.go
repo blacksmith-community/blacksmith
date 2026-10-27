@@ -86,6 +86,15 @@ func (v *cmdCreateVault) setRules(refuse, land func(n int) bool, blind bool) {
 	v.refuse, v.land, v.blind = refuse, land, blind
 }
 
+// writeCount reports how many writes to a command task record the Vault
+// has seen, whether it took them or not.
+func (v *cmdCreateVault) writeCount() int {
+	v.script.Lock()
+	defer v.script.Unlock()
+
+	return v.writes
+}
+
 func (v *cmdCreateVault) Get(ctx context.Context, path string, result interface{}) (bool, error) {
 	v.script.Lock()
 	blind := v.blind && strings.HasPrefix(path, commandTasksVaultPath+"/")
@@ -878,6 +887,15 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 	if confirmed := env.vault.confirmedRecordsFrom(t, preview.ID); confirmed != 1 {
 		t.Fatalf("expected exactly one confirmed record in Vault before the heal, got %d", confirmed)
 	}
+
+	// The create starts a background loop that tries to save the failed
+	// status at once, and it waits an hour after a refusal. Wait for that
+	// first attempt, the third write, to be refused before the Vault starts
+	// taking writes, or a late attempt would save the failed status before
+	// the checks below.
+	waitUntil(t, "the first attempt to save the failed status", func() bool {
+		return env.vault.writeCount() >= 3
+	})
 
 	// The Vault now takes every write, so a retry that wrongly ran the create
 	// again could land a second confirmed record. The failed status is not
