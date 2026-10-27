@@ -1210,19 +1210,38 @@ t('a poll whose detail read fails never logs the key',async()=>{
  }finally{w.close();}
 });
 
+// A failed read logs the error's name, status, and code and never the
+// broker's message, which a proxy in between could fill with anything the
+// request carried.
+t('a failed detail read or poll logs the code and never the message',async()=>{
+ const MARKER='marker-of-the-broker-message';
+ const env=await setup({gated:true});const {w,d}=env;try{
+ await open(env);
+ typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>j(500,{success:false,error:MARKER,code:'internal_error'})]);
+ await open(env);
+ const opened=env.logs.length;
+ expect(opened>0).toBe(true);
+ await w.__T.fetchUpgradeTasks();await sleep(20);
+ expect(env.logs.length>opened).toBe(true);
+ expect(env.logs.some((l)=>String(l).includes('internal_error'))).toBe(true);
+ expect(env.logs.some((l)=>String(l).includes(MARKER))).toBe(false);
+ }finally{w.close();}
+});
+
 const SURVIVOR_TEXT='Processes of the command still survive KILL on node/0, so instance val-a stays held. Use Resume cleanup to check them again.';
-const pausedHolding=(vm)=>task({status:'paused',paused:true,failed_count:1,completed_count:0,
- instances:[inst('val-a',[node('node',0,vm)],{status:'failed',error:SURVIVOR_TEXT}),inst('val-b',[node('node',0,{phase:'pending',status:''})],{status:'pending'})]});
+const pausedHolding=(vm,status='failed')=>task({status:'paused',paused:true,failed_count:1,completed_count:0,
+ instances:[inst('val-a',[node('node',0,vm)],{status,error:SURVIVOR_TEXT}),inst('val-b',[node('node',0,{phase:'pending',status:''})],{status:'pending'})]});
 const controlLabels=(d)=>[...panel(d).querySelectorAll('.job-control-buttons button')].map((b)=>b.textContent.trim());
 
 t('a paused command task that holds a node no worker drives offers Resume cleanup and Cancel',async()=>{
  const holding={
-  'a survivor':{status:'failed',exit_code:undefined,survived:true},
-  'a sent node':{phase:'sent',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined},
-  'a staged node':{phase:'staged',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined}
+  'a survivor':[{status:'failed',exit_code:undefined,survived:true},'failed'],
+  'a sent node':[{phase:'sent',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined},'running'],
+  'a staged node':[{phase:'staged',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined},'running']
  };
- for(const vm of Object.values(holding)){
-  const env=await setup({detail:pausedHolding(vm)});const {w,d}=env;try{
+ for(const [vm,status] of Object.values(holding)){
+  const env=await setup({detail:pausedHolding(vm,status)});const {w,d}=env;try{
   await open(env);
   expect(controlLabels(d)).toEqual(['Resume cleanup','Cancel Job']);
   expect(pageText(d).includes('Pause requested')).toBe(false);
