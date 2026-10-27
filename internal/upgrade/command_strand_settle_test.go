@@ -171,30 +171,41 @@ func TestANodeThatFailedEarlierHaltsTheNextPass(t *testing.T) {
 	fix.assertNoCommandText()
 }
 
-// The cleanup of the second stranded node does not report cleanly, which
+// The cleanup of the last stranded node does not report cleanly, which
 // pauses the task with a message that it waits for a resume. Once a resume
 // cleans the node and the instance ends, the instance gives the reason of
-// the node that failed, not the message of the pause that is over. With
-// survived, the first node's processes also outlived KILL, and its reason
-// is the one the instance keeps.
+// the node that failed, not the message of the pause that is over. When a
+// node's processes also outlived KILL, its reason is the one the instance
+// keeps, even when an earlier node failed first.
 func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
-	for _, survived := range []bool{false, true} {
-		t.Run(map[bool]string{false: "two passes", true: "a survivor"}[survived], func(t *testing.T) {
-			fix := newTaskFixture(t, 1, 3)
+	cases := []struct {
+		name     string
+		stranded int
+		survivor int
+	}{
+		{name: "two passes", stranded: 2, survivor: -1},
+		{name: "a survivor", stranded: 2, survivor: 0},
+		{name: "a later survivor", stranded: 3, survivor: 1},
+	}
 
-			if survived {
-				fix.cleanups["dep-0/0"] = "cleanup started=yes exit=- killed=survived"
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fix := newTaskFixture(t, 1, 3)
+			last := tc.stranded - 1
+
+			if tc.survivor >= 0 {
+				fix.cleanups[nodeKey("dep-0", tc.survivor)] = "cleanup started=yes exit=- killed=survived"
 			}
 
 			fix.override = func(_ context.Context, deployment string, index int, op string) *opAnswer {
-				if deployment == "dep-0" && index == 1 && op == opRunCleanup {
+				if deployment == "dep-0" && index == last && op == opRunCleanup {
 					return &opAnswer{err: errors.New("the session broke")}
 				}
 
 				return nil
 			}
 
-			strandNodes(fix, 2)
+			strandNodes(fix, tc.stranded)
 
 			err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
 			if err != nil {
@@ -220,12 +231,20 @@ func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 			ended := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status.settled() })
 
 			inst := ended.Instances[0]
-			if inst.Status != InstanceStatusFailed || inst.Error != inst.Command.VMs[0].Reason {
-				t.Errorf("the instance is %s with error %q, want failed with the first node's reason %q", inst.Status, inst.Error, inst.Command.VMs[0].Reason)
+			want := max(tc.survivor, 0)
+
+			if inst.Status != InstanceStatusFailed || inst.Error != inst.Command.VMs[want].Reason {
+				t.Errorf("the instance is %s with error %q, want failed with node %d's reason %q", inst.Status, inst.Error, want, inst.Command.VMs[want].Reason)
 			}
 
-			if inst.Command.VMs[0].Survived != survived {
-				t.Errorf("the first node survived %v, want %v", inst.Command.VMs[0].Survived, survived)
+			if want != 0 && inst.Command.VMs[0].Reason == inst.Command.VMs[want].Reason {
+				t.Errorf("node 0 and node %d give the same reason, so the instance's reason can't tell them apart", want)
+			}
+
+			for i := range tc.stranded {
+				if got := inst.Command.VMs[i].Survived; got != (i == tc.survivor) {
+					t.Errorf("node %d survived %v, want %v", i, got, i == tc.survivor)
+				}
 			}
 
 			fix.assertNoCommandText()
