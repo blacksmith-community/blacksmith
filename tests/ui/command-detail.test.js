@@ -545,6 +545,23 @@ t('a status change of an unnamed command task is announced as a command task',as
  }finally{w.close();}
 });
 
+for(const state of ['disabled','loading','error']){
+ t(`a command task detail and its output read work with the certificate inventory ${state}`,async()=>{
+  const env=await setup();const {w,d}=env;try{
+  w.__T.rotateState.loadState=state;
+  await open(env);
+  const summary=d.querySelector('#upgrade .task-detail-summary');
+  expect(summary!==null).toBe(true);
+  expect(summary.textContent.includes('Pause requested')).toBe(false);
+  const el=await openDetails(env,0);
+  expect(env.outputs.length).toBe(1);
+  const pres=[...el.querySelectorAll('pre')];
+  expect(pres.length).toBe(2);
+  expect(pres[0].textContent).toBe('hello out\n');
+  }finally{w.close();}
+ });
+}
+
 t('the page never holds the command text outside the detail pre after the whole flow',async()=>{
  const env=await setup();const {w,d}=env;try{
  await open(env);await openDetails(env,0);

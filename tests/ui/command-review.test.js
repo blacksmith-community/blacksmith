@@ -168,6 +168,28 @@ t('the confirmation needs the typed phrase and creates with the previewed values
  }finally{w.close();}
 });
 
+for(const state of ['disabled','loading','error']){
+ t(`a command review and its confirmation work with the certificate inventory ${state}`,async()=>{
+  const env=await setup();const {w,d}=env;try{
+  w.__T.rotateState.loadState=state;
+  await review(env);
+  expect(w.__T.batchFlow.step).toBe(3);
+  const host=d.getElementById('batch-flow-review');
+  expect(host.querySelector('pre')!==null).toBe(true);
+  expect(host.querySelectorAll('table').length).toBe(1);
+  expect(next(env).textContent).toBe('Run on 2 nodes');
+  expect(next(env).disabled).toBe(true);
+  ack(env,'run as vcap');
+  expect(next(env).disabled).toBe(false);
+  next(env).click();await sleep(20);
+  expect(previews(env).length).toBe(1);
+  expect(creates(env).length).toBe(1);
+  expect(creates(env)[0].body.kind).toBe('command');
+  expect(env.calls.some(c=>c.includes('/rotation/preview'))).toBe(false);
+  }finally{w.close();}
+ });
+}
+
 t('a root run asks for run as root',async()=>{
  const env=await setup({preview:[200,preview({run_as:'root'})]});const {w,d}=env;try{
  await openInstances(env);
