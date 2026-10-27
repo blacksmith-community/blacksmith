@@ -2238,7 +2238,8 @@ func commandHeldLocked(task *UpgradeTask) bool {
 // stays too. A cancelled task is the usual one, and a completed or failed
 // task an earlier build ended with a node unresolved is held the same way.
 // It changes nothing for a task that has not ended or an instance with no
-// node left to clean.
+// node left to clean, and it keeps the message of a pause that a refused
+// save made, which says to resume once Vault is healthy.
 func (m *Manager) holdCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2271,6 +2272,12 @@ func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 
 		identity := node.identity()
 		task.Paused = true
+
+		// A refused save made the pause, and its message says what the
+		// operator has to fix first, so the hold keeps it.
+		if strings.HasPrefix(inst.Error, unconfirmedPrefix) {
+			return
+		}
 
 		switch {
 		case node.Survived:

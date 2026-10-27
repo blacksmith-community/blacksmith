@@ -177,13 +177,17 @@ func (m *Manager) confirmIndex(ctx context.Context, snapshot taskSnapshot) error
 	return nil
 }
 
+// unconfirmedPrefix begins every message pauseUnconfirmed leaves, so the
+// text of a hold can tell that a refused save made the pause.
+const unconfirmedPrefix = "Blacksmith could not confirm that it saved this task's progress to Vault, so it did not "
+
 // pauseUnconfirmed pauses a certificate task whose save could not be
 // confirmed before the step. The instance stays in its phase and records
 // why, and nothing is saved, so Vault keeps the last confirmed record,
 // which comes before the step that was not taken. A nil instance records
 // nothing on an instance. The caller does not hold mu.
 func (m *Manager) pauseUnconfirmed(task *UpgradeTask, inst *InstanceUpgrade, step string) {
-	message := fmt.Sprintf("Blacksmith could not confirm that it saved this task's progress to Vault, so it did not %s. Resume once Vault is healthy.", step)
+	message := fmt.Sprintf(unconfirmedPrefix+"%s. Resume once Vault is healthy.", step)
 
 	m.mu.Lock()
 

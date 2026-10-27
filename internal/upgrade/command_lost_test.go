@@ -677,3 +677,42 @@ func TestStrandForAnotherReasonClearsUnproven(t *testing.T) {
 		t.Errorf("the instance says %q, want the lost-result strand message", message)
 	}
 }
+
+// A Resume cleanup of an ended task whose save of the settled node is
+// refused keeps the message that says the save was the problem, rather
+// than the held text, and the next Resume cleanup settles the node and
+// releases the instance once Vault takes the save.
+func TestRefusedSettleSaveOfAnEndedTaskKeepsTheVaultMessage(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	script := fix.strandSent()
+	script.cleanupDown.Store(false)
+	fix.setCleanup("dep-0/0", "cleanup started=yes exit=0 killed=no")
+
+	settled := func(task UpgradeTask) bool { return nodeOf(task, 0, 0).Phase == CommandPhaseSettled }
+
+	fix.vault.refuseWhen(settled)
+	fix.resume()
+	waitUntil(t, "the resume to end", func() bool { return fix.waits() && !fix.settling() })
+
+	held := fix.snapshot()
+	if got := held.Instances[0].Error; !strings.Contains(got, "Resume once Vault is healthy") {
+		t.Errorf("the %s task says %q, want it to say the save was refused", held.Status, got)
+	}
+
+	if !fix.holds() || held.Status != TaskStatusCancelled {
+		t.Fatalf("the task is %s and held %v, want cancelled and held", held.Status, fix.holds())
+	}
+
+	fix.vault.refuseWhen(nil)
+	fix.resume()
+	fix.waitReleased()
+
+	if stored := fix.vault.stored(t); stored.Phase != CommandPhaseSettled {
+		t.Errorf("Vault holds the node in phase %s, want settled", stored.Phase)
+	}
+
+	done := fix.waitFor("the task to stop waiting", func(task UpgradeTask) bool { return !task.Paused })
+	if got := done.Instances[0].Error; strings.Contains(got, "Vault") {
+		t.Errorf("the released instance still says %q", got)
+	}
+}
