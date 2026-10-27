@@ -572,8 +572,10 @@ func TestCommandRefusedSettleSaveSettlesFromTheReplayedRecord(t *testing.T) {
 
 // A cancelled task whose node strands on a record that proves nothing holds
 // the instance with text that says why, in place of the text for a cleanup
-// that did not finish. The node keeps why in Vault, so after a restart a
-// Resume cleanup that can't reach the node still says it.
+// that did not finish. The node keeps why in Vault until a later cleanup
+// says something else, so after a restart a Resume cleanup that can't
+// reach the node, or whose cleanup does not report cleanly, drops it and
+// holds the instance with the text for a cleanup that did not finish.
 func TestCancelledHoldSaysWhyTheRecordProvesNothing(t *testing.T) {
 	cases := []struct {
 		record   string
@@ -611,26 +613,67 @@ func TestCancelledHoldSaysWhyTheRecordProvesNothing(t *testing.T) {
 				t.Fatalf("Vault holds unproven %q, want %q", nodeOf(saved, 0, 0).Unproven, tc.unproven)
 			}
 
-			loaded := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
-				*task = saved
-				task.CreationConfirmed = true
-			})
-			loaded.override = func(_ context.Context, _ string, _ int, op string) *opAnswer {
-				if op == opRunCleanup {
-					return &opAnswer{err: errNodeUnreachable}
+			for name, fail := range map[string]func(*taskFixture){
+				"unreachable": func(f *taskFixture) {
+					f.runner = func(context.Context, string, string, []int) (PatchSession, error) { return nil, errNodeUnreachable }
+				},
+				"unclean": func(f *taskFixture) {
+					f.override = func(_ context.Context, _ string, _ int, op string) *opAnswer {
+						if op == opRunCleanup {
+							return &opAnswer{err: errNodeUnreachable}
+						}
+
+						return nil
+					}
+				},
+			} {
+				loaded := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
+					*task = saved
+					task.CreationConfirmed = true
+				})
+				fail(loaded)
+
+				loaded.resume()
+				waitUntil(t, "the resume to end", func() bool { return loaded.waits() && !loaded.settling() })
+
+				again := loaded.snapshot()
+				if got := again.Instances[0].Error; !again.Paused || !strings.Contains(got, "did not finish") || strings.Contains(got, tc.says) {
+					t.Errorf("after a Resume cleanup that was %s the task is paused=%v saying %q, want the text for a cleanup that did not finish", name, again.Paused, got)
 				}
 
-				return nil
-			}
-
-			loaded.resume()
-			waitUntil(t, "the resume's cleanup", func() bool { return loaded.countOps("dep-0", 0, opRunCleanup) == 1 })
-			waitUntil(t, "the cleanup to end", func() bool { return !loaded.settling() })
-
-			again := loaded.snapshot()
-			if got := again.Instances[0].Error; !again.Paused || !strings.Contains(got, tc.says) || strings.Contains(got, "did not finish") {
-				t.Errorf("after a Resume cleanup that could not reach the node the task is paused=%v saying %q, want it to say %q", again.Paused, got, tc.says)
+				if got := nodeOf(again, 0, 0).Unproven; got != "" || !loaded.holds() {
+					t.Errorf("after a Resume cleanup that was %s the node keeps unproven %q and held %v, want it cleared and held", name, got, loaded.holds())
+				}
 			}
 		})
+	}
+}
+
+// A node whose earlier cleanup proved nothing, and whose next strand is
+// for a cleanup that could not reach it, drops what the earlier cleanup
+// found, because it no longer says why the node is held.
+func TestStrandForAnotherReasonClearsUnproven(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	fix.inst.Command.VMs[0].Unproven = unprovenUnknown
+	fix.exec = ssh.Result{Stdout: []byte("partial")}
+	fix.execErr = ssh.ErrNoExitStatus
+	fix.cleanupErr = errors.New("VM unreachable")
+
+	if stopped := fix.run(context.Background()); !stopped {
+		t.Fatal("the task went on")
+	}
+
+	if node := fix.vault.stored(t); node.Phase != CommandPhaseSent || node.Unproven != "" {
+		t.Errorf("phase %s unproven %q, want sent with unproven cleared", node.Phase, node.Unproven)
+	}
+
+	fix.manager.mu.RLock()
+	message := fix.inst.Error
+	fix.manager.mu.RUnlock()
+
+	if message != strandLost {
+		t.Errorf("the instance says %q, want the lost-result strand message", message)
 	}
 }

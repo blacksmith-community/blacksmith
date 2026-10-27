@@ -96,7 +96,8 @@ type CommandVM struct {
 	// Unproven says why the last cleanup of a sent node that is still held
 	// showed nothing about whether the command ended: unprovenUnknown when
 	// cleanup could not check, and unprovenGone when the task directory was
-	// already gone. It is empty once the node settles.
+	// already gone. It is empty once the node settles, and a later strand
+	// for any other reason clears it.
 	Unproven string `json:"unproven,omitempty"`
 	// InFlight says a worker of this process holds the node, which it may
 	// still read pending while the worker lists the VMs, connects, and

@@ -941,8 +941,9 @@ func recordOutput(node *CommandVM, outcome commandOutcome) {
 // node wrote is recorded on it, so the resume does not lose it. An outcome
 // whose reason is strandUnproven or strandGone reached the node, but its
 // record did not show the command ended. The node keeps why in Unproven,
-// and the instance says so in place of strandLost. It returns true,
-// because the task stopped.
+// and the instance says so in place of strandLost. Any other strand clears
+// Unproven, because what an earlier cleanup found no longer says why the
+// node is held. It returns true, because the task stopped.
 func (r *commandRun) strand(ctx context.Context, outcome commandOutcome) bool {
 	message, why, unproven := strandLost, "cleanup could not reach the node", ""
 
@@ -958,9 +959,7 @@ func (r *commandRun) strand(ctx context.Context, outcome commandOutcome) bool {
 		recordOutput(&r.inst.Command.VMs[r.vm], outcome)
 	}
 
-	if unproven != "" {
-		r.inst.Command.VMs[r.vm].Unproven = unproven
-	}
+	r.inst.Command.VMs[r.vm].Unproven = unproven
 
 	if !taskEndedLocked(r.task) {
 		r.task.Status = TaskStatusPaused
@@ -2014,6 +2013,7 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 	}
 
 	if err != nil {
+		m.setUnproven(inst, vm, "")
 		m.pauseStranded(task, inst, strandUnreachable, err)
 
 		return true
@@ -2021,6 +2021,7 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 
 	record, _, err := run.cleanup(ctx)
 	if err != nil {
+		m.setUnproven(inst, vm, "")
 		m.pauseStranded(task, inst, strandUnclean, err)
 
 		return true
@@ -2031,9 +2032,7 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 	// node, for the next Resume cleanup or for a recreate of the VM.
 	if record.Killed != "survived" && m.commandNodePhase(inst, vm) == CommandPhaseSent {
 		if unproven := unprovenRecord(record); unproven != "" {
-			m.mu.Lock()
-			inst.Command.VMs[vm].Unproven = unproven
-			m.mu.Unlock()
+			m.setUnproven(inst, vm, unproven)
 
 			m.pauseStranded(task, inst, strandMessage(unproven), fmt.Errorf("%w: started=%s exit=%s killed=%s", errUnprovenRecord, record.Started, record.Exit, record.Killed))
 
@@ -2148,6 +2147,15 @@ func (m *Manager) strandCause(task *UpgradeTask, inst *InstanceUpgrade, vm int) 
 func (m *Manager) clearStrandCause(task *UpgradeTask, inst *InstanceUpgrade, vm int) {
 	m.mu.Lock()
 	delete(m.strandCauses, strandKey(task, inst, vm))
+	m.mu.Unlock()
+}
+
+// setUnproven records on a stranded node why its last cleanup left it held
+// without evidence, or clears it when that cleanup did not reach the node
+// or report cleanly, so the hold text never gives a stale reason.
+func (m *Manager) setUnproven(inst *InstanceUpgrade, vm int, unproven string) {
+	m.mu.Lock()
+	inst.Command.VMs[vm].Unproven = unproven
 	m.mu.Unlock()
 }
 
