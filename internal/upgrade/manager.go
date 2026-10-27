@@ -127,6 +127,9 @@ var (
 	ErrNoDirector           = errors.New("no BOSH director is configured to check the release targets against")
 	ErrTaskNotRunning       = errors.New("task is not running")
 	ErrTaskNotPaused        = errors.New("task is not paused")
+	// ErrCleanupNotStarted turns away a Resume cleanup that the manager
+	// can't start, as while it stops, and the task goes on waiting.
+	ErrCleanupNotStarted = errors.New("the cleanup could not start because Blacksmith is stopping, so the task still waits for Resume cleanup")
 	// ErrInstanceBusy is the guard's own sentinel, so a caller that matches
 	// it sees an instance held by any broker operation, not only an upgrade.
 	ErrInstanceBusy = mutation.ErrInstanceBusy
@@ -1515,6 +1518,15 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 		task.Paused = false
 		task.CleanupOnly = false
 		finish := m.resumeCancelledLocked(task) //nolint:contextcheck // the resume outlives the request, so it runs under the manager's context
+
+		// A command task whose cleanup could not start is paused again,
+		// and nothing of the resume is saved.
+		if task.KindOrDefault() == TaskKindCommand && task.Paused {
+			m.mu.Unlock()
+
+			return ErrCleanupNotStarted
+		}
+
 		m.logger.Info("Resumed the open VMs of cancelled task %s", taskID)
 		m.mu.Unlock()
 

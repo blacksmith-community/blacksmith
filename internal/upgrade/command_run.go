@@ -2251,10 +2251,12 @@ func (m *Manager) cancelUnownedCommandLocked(task *UpgradeTask) int {
 // instance's status, when nothing processes or settles the task and it
 // does not wait for a resume. Each instance counts as a settle of the task, so nothing else ends
 // it meanwhile, and the function it returns starts the cleanups, which the
-// caller runs once it lets go of mu. The caller holds mu.
+// caller runs once it lets go of mu. A manager that is stopping, or has no
+// director, starts none, and the task waits for Resume cleanup again, so
+// the hold it keeps still has a control that reaches it after a restart.
+// The caller holds mu.
 func (m *Manager) resumeCancelledCommandLocked(task *UpgradeTask) func() {
-	if task.Status != TaskStatusCancelled || task.Paused || !m.configured || m.director == nil ||
-		m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
+	if task.Status != TaskStatusCancelled || task.Paused || m.owned[task.ID] || m.settling[task.ID] > 0 {
 		return func() {}
 	}
 
@@ -2268,6 +2270,12 @@ func (m *Manager) resumeCancelledCommandLocked(task *UpgradeTask) func() {
 	}
 
 	if len(clean) == 0 {
+		return func() {}
+	}
+
+	if !m.configured || m.director == nil || m.ctx.Err() != nil {
+		task.Paused = true
+
 		return func() {}
 	}
 

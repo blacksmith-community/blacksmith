@@ -66,6 +66,7 @@ const (
 	CodeTasksLoading       = "tasks_loading"
 	CodeCredHubUnavailable = "credhub_unavailable" //nolint:gosec // An error code, not a credential.
 	CodeVaultUnavailable   = "vault_unavailable"
+	CodeCleanupNotStarted  = "cleanup_not_started"
 )
 
 // Error is an error that knows the HTTP status and code it should be

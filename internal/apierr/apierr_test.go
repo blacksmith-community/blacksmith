@@ -100,6 +100,7 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeTasksLoading, "tasks_loading"},
 		{apierr.CodeCredHubUnavailable, "credhub_unavailable"},
 		{apierr.CodeVaultUnavailable, "vault_unavailable"},
+		{apierr.CodeCleanupNotStarted, "cleanup_not_started"},
 		{apierr.CodeCommandsDisabled, "commands_disabled"},
 		{apierr.CodeRootDisabled, "root_disabled"},
 		{apierr.CodeCommandCredentialRequired, "command_credential_required"},
@@ -110,8 +111,8 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeMaxInFlightTooHigh, "max_in_flight_too_high"},
 	}
 
-	if len(table) != 39 {
-		t.Fatalf("table has %d codes, want 39", len(table))
+	if len(table) != 40 {
+		t.Fatalf("table has %d codes, want 40", len(table))
 	}
 
 	for _, row := range table {

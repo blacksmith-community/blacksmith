@@ -68,6 +68,7 @@ func TestTaskActionErrorsMapSentinels(t *testing.T) {
 		{"not running", upgrade.ErrTaskNotRunning, http.StatusConflict, "invalid_task_state"},
 		{"not paused", upgrade.ErrTaskNotPaused, http.StatusConflict, "invalid_task_state"},
 		{"loading", upgrade.ErrTasksLoading, http.StatusServiceUnavailable, "tasks_loading"},
+		{"cleanup not started", upgrade.ErrCleanupNotStarted, http.StatusServiceUnavailable, "cleanup_not_started"},
 		{"other", errors.New(`task "x" broke`), http.StatusInternalServerError, "internal_error"},
 	}
 

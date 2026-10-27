@@ -929,6 +929,8 @@ func writeTaskActionError(w http.ResponseWriter, err error) {
 		response.WriteErrorCode(w, http.StatusConflict, apierr.CodeInvalidTaskState, err.Error())
 	case errors.Is(err, upgrade.ErrTasksLoading):
 		apierr.Write(w, apierr.Wrap(http.StatusServiceUnavailable, apierr.CodeTasksLoading, err), http.StatusServiceUnavailable)
+	case errors.Is(err, upgrade.ErrCleanupNotStarted):
+		apierr.Write(w, apierr.Wrap(http.StatusServiceUnavailable, apierr.CodeCleanupNotStarted, err), http.StatusServiceUnavailable)
 	default:
 		response.WriteErrorCode(w, http.StatusInternalServerError, apierr.CodeInternal, err.Error())
 	}
