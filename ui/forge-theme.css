@@ -672,14 +672,6 @@ body > footer p { margin: 0; }
 }
 
 #upgrade .batch-view-nav { align-items: flex-start; flex-wrap: wrap; }
-#upgrade .batch-keyboard-help { margin: 0 0 0 auto; padding: 0; max-width: min(600px, 100%); border: 0; background: transparent; }
-#upgrade .batch-keyboard-help > summary { padding: 6px 10px; font-size: .8125rem; cursor: pointer; }
-#upgrade .batch-keyboard-help > div { padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); font-size: .8125rem; }
-#upgrade .batch-keyboard-help p { margin: 0 0 8px; }
-#upgrade .batch-keyboard-help p:last-child { margin: 0; }
-#upgrade .batch-keyboard-help dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 8px 0; }
-#upgrade .batch-keyboard-help dt { font-weight: 600; }
-#upgrade .batch-keyboard-help dd { margin: 0; }
 
 #keyboard-help-trigger { min-width: 36px; height: 34px; padding: 4px 8px; border: 1px solid #8495ad; border-radius: 7px; color: #f1f5ff; background: transparent; font-size: 20px; }
 #keyboard-help-dialog { width: min(700px, calc(100vw - 24px)); max-height: 84dvh; margin: 8dvh auto auto; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--foreground); }

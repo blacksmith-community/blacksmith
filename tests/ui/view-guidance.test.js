@@ -33,3 +33,79 @@ test('header info opens on focus and click, dismisses with Escape and cleans up 
  host.querySelector('button').click();expect(d.querySelector('[role=tooltip]').textContent).toContain('delete');
  api.mount(host,{screen:'invalid'});expect(host.querySelector('button')).toBeNull();expect(d.querySelector('[role=tooltip]')).toBeNull();w.close();
 });
+
+const {afterEach}=require('bun:test');
+const keyEnv=[];
+afterEach(()=>{while(keyEnv.length){const env=keyEnv.pop();expect(env.alerts).toEqual([]);}});
+function bootKeys(){
+ const env=boot({noDialogs:true});keyEnv.push(env);
+ const logged=[];env.w.console.error=(...a)=>logged.push(a);env.w.eval(script());
+ const host=env.d.createElement('header');env.d.body.append(host);
+ return {...env,host,logged};
+}
+const batchRoutes=[{screen:'upgrade',view:'new',operation:'upgrade',step:0},{screen:'upgrade',view:'new',operation:'rotate',step:1},{screen:'upgrade',view:'new',operation:'converge',step:2},{screen:'upgrade',view:'new',step:3},{screen:'upgrade',view:'activity'},{screen:'upgrade',view:'activity',task:'7'}];
+
+test('every batch view mounts a keyboard button beside the info button',()=>{
+ const {w,host}=bootKeys();
+ for(const route of batchRoutes){
+  w.BlacksmithViewGuidance.mount(host,route);
+  const buttons=[...host.querySelectorAll('button')];
+  expect(buttons.length).toBe(2);
+  expect(buttons[0].hasAttribute('data-context-help')).toBe(true);
+  const key=buttons[1];
+  expect(key.tagName).toBe('BUTTON');expect(key.type).toBe('button');
+  expect(key.getAttribute('aria-label')).toBe('Keyboard shortcuts for this view');
+  expect(key.title).toBe('Keyboard shortcuts for this view');
+  expect(key.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+ }
+ w.close();
+});
+
+test('views without shortcut help get no keyboard button',()=>{
+ const {w,d,host}=bootKeys();
+ for(const route of [{screen:'blacksmith',section:'plans'},{screen:'services',section:'vms'},{screen:'certificates'}]){
+  w.BlacksmithViewGuidance.mount(host,route);
+  expect(host.querySelector('[data-keyboard-help]')===null).toBe(true);
+ }
+ expect(d.getElementById('keyboard-shortcuts-tip')===null).toBe(true);
+ w.close();
+});
+
+test('keyboard button toggles aria-expanded, keeps kbd and dl markup, and closes on Escape with focus returned',()=>{
+ const {w,d,host}=bootKeys();
+ w.BlacksmithViewGuidance.mount(host,batchRoutes[0]);
+ const key=host.querySelector('[data-keyboard-help]'),tip=d.getElementById('keyboard-shortcuts-tip');
+ expect(key.getAttribute('aria-controls')).toBe('keyboard-shortcuts-tip');
+ expect(key.getAttribute('aria-expanded')).toBe('false');expect(tip.hidden).toBe(true);
+ key.focus();expect(key.getAttribute('aria-expanded')).toBe('true');expect(tip.hidden).toBe(false);
+ key.click();key.blur();expect(tip.hidden).toBe(false);
+ expect(tip.querySelectorAll('kbd').length).toBeGreaterThan(5);
+ expect([...tip.querySelectorAll('dt')].map(e=>e.textContent)).toEqual(['N','A','U / R / C','→ / ←']);
+ expect(tip.querySelectorAll('dd').length).toBe(4);
+ expect(tip.textContent).toContain('Shortcuts pause in text fields and dialogs');
+ d.getElementById('console-title')?.focus();
+ d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ expect(tip.hidden).toBe(true);expect(key.getAttribute('aria-expanded')).toBe('false');
+ expect(d.activeElement===key).toBe(true);
+ key.click();expect(tip.hidden).toBe(false);key.click();expect(tip.hidden).toBe(true);
+ key.click();d.body.dispatchEvent(new w.Event('pointerdown',{bubbles:true}));expect(tip.hidden).toBe(true);
+ w.close();
+});
+
+test('remounting replaces both popovers and leaving batch removes them',()=>{
+ const {w,d,host}=bootKeys();
+ w.BlacksmithViewGuidance.mount(host,batchRoutes[0]);w.BlacksmithViewGuidance.mount(host,batchRoutes[4]);
+ expect(d.querySelectorAll('[role=tooltip]').length).toBe(2);expect(host.querySelectorAll('button').length).toBe(2);
+ w.BlacksmithViewGuidance.mount(host,{screen:'blacksmith',section:'plans'});
+ expect(d.querySelectorAll('[role=tooltip]').length).toBe(1);
+ w.BlacksmithViewGuidance.mount(host,{screen:'invalid'});expect(d.querySelectorAll('[role=tooltip]').length).toBe(0);
+ w.close();
+});
+
+test('the old shortcuts disclosure is gone from the markup',()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../../ui/index.html'),'utf8');
+ expect(html.includes('batch-keyboard-help')).toBe(false);
+ const {w,d}=bootKeys();
+ expect(d.querySelector('details.batch-keyboard-help')===null).toBe(true);
+ w.close();
+});

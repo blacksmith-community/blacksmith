@@ -93,39 +93,68 @@
     }
     return null;
   }
+  // Keyboard shortcuts exist only on Batch Operations; the same text was a disclosure there before.
+  function getShortcuts(context = {}) {
+    return context.screen === 'upgrade' ? {label: 'Keyboard shortcuts for this view'} : null;
+  }
+  function shortcutBody(doc) {
+    const el = (name, text) => {const node = doc.createElement(name); if (text) node.textContent = text; return node;};
+    const kbds = (parts) => parts.map(part => part.k ? el('kbd', part.k) : doc.createTextNode(part));
+    const para = (...parts) => {const p = el('p'); p.append(...kbds(parts)); return p;};
+    const list = el('dl');
+    [['N', 'New Operation (keeps your draft)'], ['A', 'Activity'], ['U / R / C', 'Upgrade / Rotate / Converge options'], ['→ / ←', 'Next / Back']]
+      .forEach(([key, action]) => list.append(el('dt', key), el('dd', action)));
+    return [
+      para('On this screen, hold ', {k: 'Alt / Option'}, ' + ', {k: 'Shift'}, ' and press:'),
+      list,
+      para({k: 'Tab'}, ' / ', {k: 'Shift Tab'}, ' moves between controls. Arrow keys choose operations, modes, and select options. ', {k: 'Space'}, ' selects a checkbox; ', {k: 'Enter'}, ' activates a focused button.'),
+      para('Shortcuts pause in text fields and dialogs. On Review, Next focuses the confirmation button; press Enter to submit.')
+    ];
+  }
   let dispose;
   function mount(host, context) {
     dispose?.();dispose=null;
     if (!host || !root.document) return null;
-    const value=get(context);if(!value)return null;
-    const doc=root.document, node=doc.createElement('span'), button=doc.createElement('button'), tip=doc.createElement('div');
-    node.className='view-guidance';button.type='button';button.className='view-guidance-button';
-    button.dataset.contextHelp='';button.setAttribute('aria-label',`About ${value.label}`);
-    button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls','view-guidance-tip');
-    button.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></svg>';
-    tip.id='view-guidance-tip';tip.className='view-guidance-tip';tip.setAttribute('role','tooltip');tip.setAttribute('popover','manual');tip.hidden=true;
-    const title=doc.createElement('strong'), text=doc.createElement('p');title.textContent=`About ${value.label}`;text.textContent=value.body;tip.append(title,text);
-    node.append(button);host.append(node);doc.body.append(tip);
-    let pinned=false,hover=false,timer;
-    function position(){
-      if(tip.hidden)return;
-      const rect=button.getBoundingClientRect(), width=tip.getBoundingClientRect().width;
-      tip.style.left=Math.max(8,Math.min(rect.right-width,root.innerWidth-width-8))+'px';
-      const height=tip.getBoundingClientRect().height;
-      tip.style.top=Math.max(8,rect.bottom+8+height>root.innerHeight?rect.top-height-8:rect.bottom+8)+'px';
+    const value=get(context), keys=getShortcuts(context);if(!value&&!keys)return null;
+    const doc=root.document, node=doc.createElement('span'), disposers=[];
+    node.className='view-guidance';
+    const icon=paths=>`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${paths}</svg>`;
+    // One popover mechanism serves every header button: hover or focus shows, click pins, Escape and outside clicks dismiss.
+    function attach(spec){
+      const button=doc.createElement('button'), tip=doc.createElement('div');
+      button.type='button';button.className='view-guidance-button';button.dataset[spec.dataset]='';
+      button.setAttribute('aria-label',spec.name);if(spec.titled)button.title=spec.name;
+      button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls',spec.id);
+      button.innerHTML=spec.icon;
+      tip.id=spec.id;tip.className='view-guidance-tip';tip.setAttribute('role','tooltip');tip.setAttribute('popover','manual');tip.hidden=true;
+      const title=doc.createElement('strong');title.textContent=spec.heading;tip.append(title,...spec.content());
+      node.append(button);doc.body.append(tip);
+      let pinned=false,hover=false,timer;
+      function position(){
+        if(tip.hidden)return;
+        const rect=button.getBoundingClientRect(), width=tip.getBoundingClientRect().width;
+        tip.style.left=Math.max(8,Math.min(rect.right-width,root.innerWidth-width-8))+'px';
+        const height=tip.getBoundingClientRect().height;
+        tip.style.top=Math.max(8,rect.bottom+8+height>root.innerHeight?rect.top-height-8:rect.bottom+8)+'px';
+      }
+      function show(){clearTimeout(timer);tip.hidden=false;if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',tip.id);position();}
+      function hide(){clearTimeout(timer);pinned=false;if(tip.hidePopover&&tip.matches(':popover-open'))tip.hidePopover();tip.hidden=true;button.setAttribute('aria-expanded','false');button.removeAttribute('aria-describedby');}
+      function leave(){hover=false;timer=setTimeout(()=>{if(!hover&&!pinned&&doc.activeElement!==button)hide();},120);}
+      button.addEventListener('pointerenter',()=>{hover=true;show();});button.addEventListener('pointerleave',leave);
+      tip.addEventListener('pointerenter',()=>{hover=true;clearTimeout(timer);});tip.addEventListener('pointerleave',leave);
+      let restoring=false;
+      button.addEventListener('focus',()=>{if(!restoring)show();});button.addEventListener('blur',leave);
+      button.addEventListener('click',()=>{if(pinned)hide();else{pinned=true;show();}});
+      const escape=event=>{if(event.key==='Escape'&&!tip.hidden){event.preventDefault();event.stopImmediatePropagation();hide();restoring=true;button.focus();restoring=false;}};
+      const outside=event=>{if(!node.contains(event.target)&&!tip.contains(event.target))hide();};
+      doc.addEventListener('keydown',escape,true);doc.addEventListener('pointerdown',outside,true);root.addEventListener('resize',position);doc.addEventListener('scroll',position,true);
+      disposers.push(()=>{hide();tip.remove();doc.removeEventListener('keydown',escape,true);doc.removeEventListener('pointerdown',outside,true);root.removeEventListener('resize',position);doc.removeEventListener('scroll',position,true);});
     }
-    function show(){clearTimeout(timer);tip.hidden=false;if(tip.showPopover&&!tip.matches(':popover-open'))tip.showPopover();button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',tip.id);position();}
-    function hide(){clearTimeout(timer);pinned=false;if(tip.hidePopover&&tip.matches(':popover-open'))tip.hidePopover();tip.hidden=true;button.setAttribute('aria-expanded','false');button.removeAttribute('aria-describedby');}
-    function leave(){hover=false;timer=setTimeout(()=>{if(!hover&&!pinned&&doc.activeElement!==button)hide();},120);}
-    button.addEventListener('pointerenter',()=>{hover=true;show();});button.addEventListener('pointerleave',leave);
-    tip.addEventListener('pointerenter',()=>{hover=true;clearTimeout(timer);});tip.addEventListener('pointerleave',leave);
-    button.addEventListener('focus',show);button.addEventListener('blur',leave);
-    button.addEventListener('click',()=>{if(pinned)hide();else{pinned=true;show();}});
-    const escape=event=>{if(event.key==='Escape'&&!tip.hidden){event.preventDefault();event.stopImmediatePropagation();hide();}};
-    const outside=event=>{if(!node.contains(event.target)&&!tip.contains(event.target))hide();};
-    doc.addEventListener('keydown',escape,true);doc.addEventListener('pointerdown',outside,true);root.addEventListener('resize',position);doc.addEventListener('scroll',position,true);
-    dispose=()=>{hide();node.remove();tip.remove();doc.removeEventListener('keydown',escape,true);doc.removeEventListener('pointerdown',outside,true);root.removeEventListener('resize',position);doc.removeEventListener('scroll',position,true);};
+    if(value)attach({dataset:'contextHelp',id:'view-guidance-tip',name:`About ${value.label}`,heading:`About ${value.label}`,icon:icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/>'),content:()=>{const text=doc.createElement('p');text.textContent=value.body;return [text];}});
+    if(keys)attach({titled:true,dataset:'keyboardHelp',id:'keyboard-shortcuts-tip',name:keys.label,heading:'Keyboard shortcuts',icon:icon('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),content:()=>shortcutBody(doc)});
+    host.append(node);
+    dispose=()=>{disposers.forEach(fn=>fn());node.remove();};
     return node;
   }
-  root.BlacksmithViewGuidance = {get,mount};
+  root.BlacksmithViewGuidance = {get,getShortcuts,mount};
 })(globalThis);

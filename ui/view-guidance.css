@@ -7,6 +7,10 @@
 .view-guidance-tip[hidden] { display: none; }
 .view-guidance-tip > strong { display: block; font-size: .875rem; }
 .view-guidance-tip > p { margin: 6px 0 0; padding: 0; }
+.view-guidance-tip > dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 8px 0 0; }
+.view-guidance-tip > dl > dt { font-weight: 600; }
+.view-guidance-tip > dl > dd { margin: 0; }
+.route-context > .view-guidance { gap: 8px; }
 
 #blacksmith .detail-content.plans-view { display: flex; align-items: flex-start; gap: 16px; min-width: 0; }
 #blacksmith .plans-view > .plans-list { flex: 0 0 16rem; width: 16rem; min-width: 0; max-width: 100%; padding: 0; border: 0; }
