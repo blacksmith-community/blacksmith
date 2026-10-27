@@ -965,6 +965,21 @@
 
       if (!aCell || !bCell) return 0;
 
+      // A data-sort-value on either cell decides the order. A cell without
+      // one, such as an Unknown date, sorts after every cell that has one.
+      const aKey = aCell.getAttribute('data-sort-value');
+      const bKey = bCell.getAttribute('data-sort-value');
+      if (aKey !== null || bKey !== null) {
+        const aVal = aKey === null ? NaN : Number(aKey);
+        const bVal = bKey === null ? NaN : Number(bKey);
+        let keyed = 0;
+        if (Number.isNaN(aVal) && Number.isNaN(bVal)) keyed = 0;
+        else if (Number.isNaN(aVal)) keyed = 1;
+        else if (Number.isNaN(bVal)) keyed = -1;
+        else keyed = aVal - bVal;
+        return sortDirection === 'desc' ? -keyed : keyed;
+      }
+
       const aText = aCell.textContent.trim();
       const bText = bCell.textContent.trim();
 
@@ -7246,7 +7261,6 @@
   // The date formatters every certificate screen shares. Go's zero time and
   // a missing time both read as nothing, so none of them prints a made-up
   // date for a time the broker never set.
-  const CERT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   const certDate = (value) => {
     if (!value) return null;
@@ -7280,10 +7294,13 @@
     return [oldDay, newDay];
   };
 
-  // A day such as "21 Oct 2026".
-  const certDayText = (value) => {
+  // A day such as 2026-10-21, so the text sorts in date order.
+  const certDayText = (value) => certDay(value);
+
+  // The epoch milliseconds that sort a date cell, or an empty string when there is no date.
+  const certSortValue = (value) => {
     const date = certDate(value);
-    return date ? `${date.getUTCDate()} ${CERT_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}` : '';
+    return date ? String(date.getTime()) : '';
   };
 
   // A time of day such as "14:00 UTC".
@@ -20740,7 +20757,7 @@
     const formatDate = (value) => {
       if (!value) return 'N/A';
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+      return Number.isNaN(date.getTime()) ? String(value) : `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC`;
     };
 
     const utcString = (value) => {
@@ -21285,7 +21302,10 @@
         const expires = el('td');
         const day = dayText(cert.effective_not_after);
         expires.textContent = day || cert.expiry_reason || 'Unknown';
-        if (day) expires.setAttribute('title', timeText(cert.effective_not_after));
+        if (day) {
+          expires.setAttribute('title', timeText(cert.effective_not_after));
+          expires.setAttribute('data-sort-value', certSortValue(cert.effective_not_after));
+        }
         tr.appendChild(expires);
         if (opts.versions) tr.appendChild(el('td', null, versionText(cert)));
         body.appendChild(tr);
@@ -25894,7 +25914,10 @@
       tr.appendChild(ownerCell);
 
       const expiresCell = el('td', 'cert-col-expires', cert.effective_not_after ? shortDate(cert.effective_not_after) : 'Unknown');
-      if (cert.effective_not_after) expiresCell.setAttribute('title', CertView.formatDate(cert.effective_not_after));
+      if (cert.effective_not_after) {
+        expiresCell.setAttribute('title', certMinute(cert.effective_not_after));
+        expiresCell.setAttribute('data-sort-value', certSortValue(cert.effective_not_after));
+      }
       tr.appendChild(expiresCell);
 
       tr.appendChild(el('td', 'cert-col-wide', cert.kind || ''));
