@@ -80,23 +80,37 @@
   };
 
   // Theme Management
+  // Storage can throw when the browser blocks it, so a failure reads as no saved
+  // theme and the page keeps its default.
+  const readThemePreference = () => {
+    try { return localStorage.getItem('theme'); } catch (_) { return null; }
+  };
+  const writeThemePreference = (theme) => {
+    try {
+      if (theme === null) localStorage.removeItem('theme');
+      else localStorage.setItem('theme', theme);
+    } catch (_) { /* the choice applies for this visit only */ }
+  };
+
   const initTheme = () => {
     // Check for saved theme preference or default to system preference
-    const savedTheme = localStorage.getItem('theme');
-    const systemPrefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const savedTheme = readThemePreference();
+    let query = null;
+    try { query = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null; } catch (_) { query = null; }
+    const systemPrefersDark = Boolean(query && query.matches);
 
     // Set initial theme
     const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
     setTheme(theme);
 
-    // Listen for system theme changes
-    if (window.matchMedia) {
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-        if (!localStorage.getItem('theme')) {
-          setTheme(e.matches ? 'dark' : 'light');
-        }
-      });
-    }
+    // Listen for system theme changes, on older browsers through addListener
+    const onSystemChange = (e) => {
+      if (!readThemePreference()) {
+        setTheme(e.matches ? 'dark' : 'light');
+      }
+    };
+    if (query && typeof query.addEventListener === 'function') query.addEventListener('change', onSystemChange);
+    else if (query && typeof query.addListener === 'function') query.addListener(onSystemChange);
   };
 
   const THEME_NAMES = {
@@ -130,14 +144,13 @@
   window.blacksmithTheme = {
     setPreference(theme) {
       if (!THEME_NAMES[theme] && theme !== 'system') return;
-      if (theme === 'system') localStorage.removeItem('theme');
-      else localStorage.setItem('theme', theme);
+      writeThemePreference(theme === 'system' ? null : theme);
       setTheme(theme === 'system' ? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme);
     }
   };
 
   const toggleTheme = () => {
-    if (window.blacksmithActionHelp) { window.blacksmithActionHelp.openThemes(); return; }
+    if (typeof window.blacksmithActionHelp?.openThemes === 'function') { window.blacksmithActionHelp.openThemes(); return; }
     const dark = document.documentElement.getAttribute('data-theme') === 'dark';
     const highContrast = document.documentElement.getAttribute('data-contrast') === 'high';
     window.blacksmithTheme.setPreference((highContrast ? 'high-contrast-' : '') + (dark ? 'light' : 'dark'));
@@ -1036,13 +1049,13 @@
 
   // Initialize theme on page load
   document.addEventListener('DOMContentLoaded', () => {
-    initTheme();
-
-    // Add click handler to theme toggle button
+    // Bind the button first so nothing in the theme setup can leave it dead.
     const themeToggle = document.getElementById('themeToggle');
     if (themeToggle) {
       themeToggle.addEventListener('click', toggleTheme);
     }
+
+    try { initTheme(); } catch (error) { console.error('Theme setup failed:', error); }
 
     // Initialize tables with sorting
     initializeAllTables();
