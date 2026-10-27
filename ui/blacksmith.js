@@ -6867,13 +6867,13 @@
         }, 1500);
       } else {
         const data = await response.json();
-        alert(`Failed to save settings: ${data.error || 'Unknown error'}`);
+        window.Feedback.error(`The setting wasn't saved. ${data.error || 'Unknown error'}`);
         saveBtn.textContent = 'Save';
         saveBtn.disabled = false;
       }
     } catch (err) {
       console.error('Failed to save upgrade settings:', err);
-      alert(`Failed to save settings: ${err.message}`);
+      window.Feedback.error(`The setting wasn't saved. ${err.message}`);
       saveBtn.textContent = 'Save';
       saveBtn.disabled = false;
     }
