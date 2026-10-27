@@ -1773,6 +1773,12 @@ func (m *Manager) runTask(task *UpgradeTask) {
 				m.logger.Error("Failed to persist the cancelled instances of task %s: %v", task.ID, err)
 			}
 		}
+
+		// A resume that landed while the processor was still owned found
+		// nothing to queue, and its signal went to a channel nobody reads
+		// any more. The task is looked at again now that it is unowned, so
+		// a task that is running and has no processor gets one.
+		m.resumeIfReady(task)
 	}()
 
 	release, ok := m.acquireSlot(task, cancelCh)
