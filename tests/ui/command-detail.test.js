@@ -8,6 +8,9 @@ const KEY='key-SECRET-CREDENTIAL-5519';
 const TASK='11111111-1111-4111-8111-111111111111';
 const OUT_URL=`/b/upgrade/tasks/${TASK}/output`;
 const DETAIL_URL=`/b/upgrade/tasks/${TASK}`;
+// The task list alone, never a task's detail, which a plain string route
+// would also match.
+const LIST_ONLY=/\/b\/upgrade\/tasks(\?|$)/;
 
 // Every env a test boots, checked once the test ends so a dialog error that
 // the UI code swallows still fails it. Neither secret reaches a console method.
@@ -975,7 +978,7 @@ t('an instance held by a command task still shows as held when its detail is out
  const learned=env.details.length;
  // A list entry that names its instances holds them without a detail read.
  const listed={id:TASK,kind:'command',status:'running',name:'restart check',instances:[{instance_id:'val-a',status:'running'}]};
- w.__routes.unshift(['/b/upgrade/tasks',(u,o,j)=>j(200,[listed])]);
+ w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  expect(env.details.length).toBe(learned);
  const kept=w.__T.holderDetails.get(TASK);
@@ -993,7 +996,7 @@ t('a command task list entry that names the instances it holds keeps them busy o
  const learned=env.details.length;
  // The summary names the held instances by ID alone, with no instances array.
  const listed={id:TASK,kind:'command',status:'paused',name:'restart check',held_instance_ids:['val-a','val-b']};
- w.__routes.unshift(['/b/upgrade/tasks',(u,o,j)=>j(200,[listed])]);
+ w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const kept=w.__T.holderDetails.get(TASK);
  expect(kept!==undefined&&kept.detail.held_instance_ids.join()==='val-a,val-b').toBe(true);
@@ -1010,7 +1013,7 @@ t('an ended command task frees the instances its list entry named',async()=>{
  press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const listed={id:TASK,kind:'command',status:'running',name:'restart check',held_instance_ids:['val-a']};
- w.__routes.unshift(['/b/upgrade/tasks',(u,o,j)=>j(200,[listed])]);
+ w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  expect((await w.blacksmithRotate.readHolders()).has('val-a')).toBe(true);
  listed.status='completed';delete listed.held_instance_ids;
@@ -1045,5 +1048,96 @@ t('an output body that arrives after the key was dropped paints nothing',async()
  expect(env.outputs.length).toBe(2);
  expect(d.body.textContent.includes('hello out')).toBe(true);
  expect(d.body.textContent.includes('LATE-BODY-OUT')).toBe(false);
+ }finally{w.close();}
+});
+
+t('a keyless page shows a command task holder on its first pass when the detail is refused',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ const listed={id:TASK,kind:'command',status:'running',name:'restart check',held_instance_ids:['val-a']};
+ w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
+ // The first holder read is refused, and the list entry stands in for it.
+ const holders=await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(1);
+ expect(holders.get('val-a')).toBe('command run "restart check"');
+ }finally{w.close();}
+});
+
+t('a keyless page keeps a command task holder on the first refresh when the detail is refused',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ const listed={id:TASK,kind:'command',status:'running',name:'restart check',held_instance_ids:['val-a']};
+ w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ expect(env.details.length>0).toBe(true);
+ const kept=w.__T.holderDetails.get(TASK);
+ expect(kept!==undefined&&Array.isArray(kept.detail.held_instance_ids)&&kept.detail.held_instance_ids.join()==='val-a').toBe(true);
+ }finally{w.close();}
+});
+
+t('an empty held list in the task list frees what an older detail read held',async()=>{
+ const env=await setup({detail:task({status:'running',instances:[inst('val-a',[node('node',0)],{status:'running'})]})});const {w,d}=env;try{
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ expect(w.__T.holderDetails.get(TASK).detail.instances[0].instance_id).toBe('val-a');
+ // The detail can no longer be read, and the list says the task holds nothing.
+ const listed={id:TASK,kind:'command',status:'paused',name:'restart check',held_instance_ids:[]};
+ w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])],[new RegExp(DETAIL_URL+'$'),(u,o,j)=>j(500,{success:false,error:'down'})]);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ const kept=w.__T.holderDetails.get(TASK);
+ expect(kept!==undefined&&Array.isArray(kept.detail.held_instance_ids)&&kept.detail.held_instance_ids.length===0).toBe(true);
+ expect(kept.detail.instances===undefined).toBe(true);
+ }finally{w.close();}
+});
+
+t('a refused task detail stops holder reads from asking for command task detail',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ expect(panel(d).querySelector('.command-key-prompt')!==null).toBe(true);
+ const refused=env.details.length;
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(refused);
+ }finally{w.close();}
+});
+
+t('a refused output read stops holder reads from asking for command task detail',async()=>{
+ const env=await setup({detail:task({status:'running'}),output:[401,{success:false,error:'a valid command key is required',code:'command_credential_required'}]});const {w,d}=env;try{
+ await open(env);
+ await openDetails(env,0);
+ expect(env.outputs.length).toBe(1);
+ const read=env.details.length;
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(read);
+ }finally{w.close();}
+});
+
+t('a keyless detail the broker answers lets holder reads ask for command task detail again',async()=>{
+ const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ const refused=env.details.length;
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(refused);
+ // The broker stops asking for a key.
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>{env.details.push({headers:o.headers||{}});return j(200,env.state.detail);}]);
+ await w.__T.selectUpgradeTask(TASK);await sleep(10);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ const answered=env.details.length;
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length>answered).toBe(true);
+ }finally{w.close();}
+});
+
+t('a keyless output read the broker answers lets holder reads ask for command task detail again',async()=>{
+ const refusal=[401,{success:false,error:'a valid command key is required',code:'command_credential_required'}];
+ const env=await setup({detail:task({status:'running'}),output:(u,o,n)=>n===1?refusal:[200,output()]});const {w,d}=env;try{
+ await open(env);
+ await openDetails(env,0);
+ const refused=env.details.length;
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length).toBe(refused);
+ // The next node's output is served with no key.
+ await openDetails(env,1);
+ expect(env.outputs.length).toBe(2);
+ await w.blacksmithRotate.readHolders();
+ expect(env.details.length>refused).toBe(true);
  }finally{w.close();}
 });

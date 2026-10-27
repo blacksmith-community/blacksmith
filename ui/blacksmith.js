@@ -3584,6 +3584,12 @@
   // key. Once it has, a read of one without a key is certain to be refused
   // again, so none is sent until the page holds a key.
   let brokerWantsCommandKey = false;
+  // A command task read that went out with no key and that the broker
+  // answered means it no longer asks for one.
+  const noteKeylessCommandRead = (init, kind) => {
+    const sentKey = Boolean(init && init.headers && init.headers[COMMAND_KEY_HEADER]);
+    if (!sentKey && kind === 'command') brokerWantsCommandKey = false;
+  };
   const commandReadRefused = (task) => !commandOutputKey && brokerWantsCommandKey && Boolean(task) && (task.kind === 'command' || commandTaskIds.has(task.id));
   // The request init of a read of a task's detail. Only command tasks take
   // the key, and the kind comes from the summary, the cached detail, or the
@@ -3833,7 +3839,8 @@
         }
         try {
           const gen = commandKeyGen;
-          const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit(task.id, task.kind));
+          const init = commandReadInit(task.id, task.kind);
+          const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, init);
           if (!response.ok) {
             if (response.status === 401 && task.kind === 'command') {
               const refusal = await readApiError(response);
@@ -3843,9 +3850,13 @@
           }
           const detail = await response.json();
           if (gen !== commandKeyGen) return;
+          noteKeylessCommandRead(init, detail.kind);
           holderDetails.set(task.id, { detail: slimHolderDetail(detail), signature, readAt: now });
         } catch (err) {
-          if (known) holderDetails.set(task.id, { detail: known.detail, signature, readAt: 0 });
+          // The list entry names what a command task holds now, an empty
+          // list included, so it stands in before a detail read earlier.
+          if (Array.isArray(task.held_instance_ids)) holderDetails.set(task.id, { detail: task, signature, readAt: 0 });
+          else if (known) holderDetails.set(task.id, { detail: known.detail, signature, readAt: 0 });
         }
       }));
       setUpgradeHolders(computeUpgradeHolders(Array.from(holderDetails.values()).map((entry) => entry.detail)));
@@ -5937,18 +5948,25 @@
       if (!response.ok) return new Map();
       const list = await response.json();
       const active = (Array.isArray(list) ? list : []).filter((task) => task && ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
+      // A list entry that names what a command task holds stands in for a
+      // detail that can't be read.
+      const listed = (task) => (Array.isArray(task.held_instance_ids) ? task : null);
       const details = await Promise.all(active.map(async (task) => {
         // The detail is out of reach without a key, so the list entry stands in for it.
         if (commandReadRefused(task)) return task;
         try {
-          const detail = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, commandReadInit(task.id, task.kind));
+          const init = commandReadInit(task.id, task.kind);
+          const detail = await fetch(`/b/upgrade/tasks/${encodeURIComponent(task.id)}`, init);
           if (!detail.ok && detail.status === 401 && task.kind === 'command' && !commandOutputKey) {
             const refusal = await readApiError(detail);
             if (refusal.code === 'command_credential_required') brokerWantsCommandKey = true;
           }
-          return detail.ok ? await detail.json() : null;
+          if (!detail.ok) return listed(task);
+          const body = await detail.json();
+          noteKeylessCommandRead(init, body && body.kind);
+          return body;
         } catch (err) {
-          return null;
+          return listed(task);
         }
       }));
       return computeUpgradeHolders(details.filter(Boolean));
@@ -7080,6 +7098,7 @@
     const detail = await response.json();
     // The key may have gone while the body was arriving.
     if (gen !== commandKeyGen) throw staleCommandRead();
+    noteKeylessCommandRead(init, detail && detail.kind);
     return detail;
   };
 
@@ -7937,6 +7956,7 @@
       // A key dropped meanwhile, or a task the operator left, takes the answer with it.
       if (gen !== commandKeyGen) return;
       if (response.ok) {
+        if (!sent) brokerWantsCommandKey = false;
         result = { status: 'loaded', data: await response.json() };
       } else {
         const err = await readApiError(response);
