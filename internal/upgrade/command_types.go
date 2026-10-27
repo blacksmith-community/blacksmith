@@ -93,6 +93,10 @@ type CommandVM struct {
 	Survived        bool              `json:"survived,omitempty"`
 	OutputPath      string            `json:"output_path,omitempty"`
 	Error           string            `json:"error,omitempty"`
+	// InFlight says a worker of this process holds the node, which it may
+	// still read pending while the worker lists the VMs, connects, and
+	// checks sudo. It is set on the copies a reader gets and never saved.
+	InFlight bool `json:"in_flight,omitempty"`
 
 	// claimed says a worker of this process is driving the node. It is
 	// never saved, so a node left pending by an earlier run is free to be
@@ -193,4 +197,20 @@ func (c *InstanceCommand) clone() *InstanceCommand {
 	}
 
 	return &copied
+}
+
+// markInFlight marks each node of a reader's copy of a task that a worker
+// holds. Only a reader's copy carries the mark, so a saved record never
+// holds it.
+func markInFlight(task *UpgradeTask) {
+	for i := range task.Instances {
+		if task.Instances[i].Command == nil {
+			continue
+		}
+
+		for vm := range task.Instances[i].Command.VMs {
+			node := &task.Instances[i].Command.VMs[vm]
+			node.InFlight = node.claimed
+		}
+	}
 }

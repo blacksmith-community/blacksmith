@@ -671,7 +671,7 @@ func (m *Manager) GetTask(taskID string) (*UpgradeTask, error) {
 		return nil, ErrTaskNotFound
 	}
 
-	return copyTask(task), nil
+	return readerCopyLocked(task), nil
 }
 
 // ListTasks returns a copy of every task.
@@ -681,7 +681,7 @@ func (m *Manager) ListTasks() []*UpgradeTask {
 
 	tasks := make([]*UpgradeTask, 0, len(m.tasks))
 	for _, task := range m.tasks {
-		tasks = append(tasks, copyTask(task))
+		tasks = append(tasks, readerCopyLocked(task))
 	}
 
 	return tasks
@@ -3148,6 +3148,15 @@ func (m *Manager) storeFoundTask(ctx context.Context, task *UpgradeTask, instanc
 // higher number holds a state at least as new.
 func (m *Manager) snapshotLocked(task *UpgradeTask) taskSnapshot {
 	return taskSnapshot{task: copyTask(task), seq: m.snapshotSeq.Add(1)}
+}
+
+// readerCopyLocked returns the copy of the task a reader gets, which marks
+// each node a worker holds as in flight. The caller holds mu.
+func readerCopyLocked(task *UpgradeTask) *UpgradeTask {
+	copied := copyTask(task)
+	markInFlight(copied)
+
+	return copied
 }
 
 // copyTask returns a deep copy of the task, its release targets, its
