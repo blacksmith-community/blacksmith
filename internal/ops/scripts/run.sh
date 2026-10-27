@@ -304,12 +304,20 @@ _rc_group_state() {
 	printf '%s%s' "$found" "$extra"
 }
 
-# _rc_leader_ok <pgid> <starttime> succeeds unless the process now
-# leading the group started at another time than exec recorded. It runs
-# only after cleanup has found the recorded leader, so a leader that has
-# gone since then passes, because the session has been unbroken from the
-# moment it was shown to be the command's. A different start time means
-# the session ended and a stranger took the number.
+# _rc_leader_ok <pgid> <starttime> succeeds unless a process holds the
+# leader's pid with another start time than exec recorded. Such a process
+# shows that the command's group and session had no member left when it
+# was forked, because the kernel never hands out the number of a live
+# group or session as a pid. Linux fork(2) says the child's "PID does not
+# match the ID of any existing process group (setpgid(2)) or session"
+# (https://man7.org/linux/man-pages/man2/fork.2.html), and POSIX fork()
+# says "the child process ID shall not match any active process group ID"
+# (https://pubs.opengroup.org/onlinepubs/9799919799/functions/fork.html).
+# A group that has emptied never gains a member again, because setpgid
+# only joins a group that exists or makes one that the caller leads. When
+# cleanup has found the recorded leader, a leader that has gone since then
+# passes, because the session has been unbroken from the moment it was
+# shown to be the command's.
 _rc_leader_ok() {
 	local lead f
 
@@ -486,12 +494,13 @@ _rc_recheck() {
 # record that _rc_note_survivors writes.
 #
 # no means cleanup looked at the session and found nothing in it alive,
-# so nothing the command started still runs. unknown means it could not
-# look: the pgid or starttime file is missing or invalid, there is no kill
-# tool, or the session can't be judged, as _rc_unchecked says. Either way
-# nothing is signalled.
+# or found the leader's pid held by another process, which _rc_leader_ok
+# explains, so nothing the command started still runs. unknown means it
+# could not look: the pgid or starttime file is missing or invalid, there
+# is no kill tool, or the session can't be judged, as _rc_unchecked says.
+# Either way nothing is signalled.
 _rc_kill_group() {
-	local dir=$1 pg='' want='' kill lead f ticks i
+	local dir=$1 pg='' want='' kill lead ticks i
 
 	if [ ! -f "$dir/pgid" ] || [ -L "$dir/pgid" ] ||
 		[ ! -f "$dir/starttime" ] || [ -L "$dir/starttime" ]; then
@@ -510,13 +519,12 @@ _rc_kill_group() {
 	kill=$(_rc_tool kill) || { printf 'unknown'; return 0; }
 	command -v -- "$kill" > /dev/null || { printf 'unknown'; return 0; }
 
-	# The leader must be there and be the process exec recorded. Field 22
-	# of its stat file is the 20th after the name. Without the leader's
-	# start time nothing proves that a session is ours, and its members
-	# are left running.
+	# A leader pid held by another process shows the session ended. The
+	# leader must otherwise be there, because without the leader's start
+	# time nothing proves that a session is ours, and its members are
+	# left running.
+	_rc_leader_ok "$pg" "$want" || { printf 'no'; return 0; }
 	_rc_stat "/proc/$pg/stat" lead || { _rc_unchecked "$pg"; return 0; }
-	read -ra f <<< "$lead"
-	[ "${f[19]:-}" = "$want" ] || { _rc_unchecked "$pg"; return 0; }
 
 	_rc_alive "$pg" "$want" || { _rc_unchecked "$pg"; return 0; }
 
@@ -547,8 +555,7 @@ _rc_kill_group() {
 }
 
 # _rc_unchecked <pgid> prints no or unknown for a session cleanup leaves
-# alone, because its leader is gone, is another process, or leads nothing
-# cleanup may signal. It is no only when nothing but zombies is left in
+# alone, because its leader is gone or leads nothing cleanup may signal. It is no only when nothing but zombies is left in
 # the session or the group, which is the check kill -0 would make, done
 # through /proc so the members that moved to groups of their own count
 # too. A session with a member left is unknown, because a pid reused by a

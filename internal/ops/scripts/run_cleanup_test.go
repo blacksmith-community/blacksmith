@@ -1187,14 +1187,19 @@ func TestRunCleanupIgnoresAForgedCommName(t *testing.T) {
 	}
 }
 
+// A leader pid held by a process with another start time than exec
+// recorded shows that the command's group had emptied before that process
+// was forked, so cleanup reports no and signals nothing. A start time that
+// is malformed or missing proves nothing, so it is unknown.
 func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		name   string
+		want   string
 		change func(t *testing.T, path, real string)
 	}{
-		{"a different one", func(t *testing.T, path, real string) {
+		{"a different one", "no", func(t *testing.T, path, real string) {
 			t.Helper()
 
 			n, _ := strconv.Atoi(real)
@@ -1204,7 +1209,7 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"a malformed one", func(t *testing.T, path, _ string) {
+		{"a malformed one", "unknown", func(t *testing.T, path, _ string) {
 			t.Helper()
 
 			err := os.WriteFile(path, []byte("12 34\n"), 0o600)
@@ -1212,7 +1217,7 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"a missing one", func(t *testing.T, path, _ string) {
+		{"a missing one", "unknown", func(t *testing.T, path, _ string) {
 			t.Helper()
 
 			err := os.Remove(path)
@@ -1239,8 +1244,8 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 			tc.change(t, tree.path(runOps, runTask, "starttime"), running.starttime)
 
 			code, out := tree.cleanup(t, runTask)
-			if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
-				t.Errorf("exit = %d, output = %q", code, out)
+			if code != 0 || out != "cleanup started=yes exit=- killed="+tc.want+"\n" {
+				t.Errorf("exit = %d, output = %q, want killed=%s", code, out, tc.want)
 			}
 
 			_, err := os.Stat(log)
@@ -1402,9 +1407,11 @@ func TestRunCleanupLeavesASessionWhoseLeaderHasExited(t *testing.T) {
 // killed=no says cleanup looked at the command's session and found nothing
 // alive in it. Every case where it could not look reports unknown and
 // signals nothing: a pgid or start-time file that is missing or invalid,
-// and a leader that is gone or is another process while the session still
-// has members or is one cleanup must not judge. A leader that is gone or is
-// another process, with nothing left in the session, is no.
+// and a gone leader while the session still has members or is one cleanup
+// must not judge. A leader pid held by another process is no whatever the
+// session holds, because the kernel forks no process with the number of a
+// live group or session, and a gone leader with nothing left in the
+// session is no too.
 func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
 	t.Parallel()
 
@@ -1430,8 +1437,8 @@ func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
 		{"a gone leader with a live session", good, gone + group("live 99"), "unknown"},
 		{"a gone leader with a group outside the session", good, gone + group("other"), "unknown"},
 		{"a gone leader in cleanup's own session", good, gone + group("self"), "unknown"},
-		{"another leader with a live session", good, other + group("live"), "unknown"},
-		{"another leader with a group outside the session", good, other + group("other"), "unknown"},
+		{"another leader with a live session", good, other + group("live"), "no"},
+		{"another leader with a group outside the session", good, other + group("other"), "no"},
 		{"the leader in a group outside the session", good, liveStubs + group("other"), "unknown"},
 		{"the leader in cleanup's own session", good, liveStubs + group("self"), "unknown"},
 		{"a gone leader with nothing left", good, gone + group("none"), "no"},
