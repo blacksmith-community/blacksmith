@@ -35,7 +35,7 @@ const rewrites=[
  ['A failed health gate pauses the task.','A failed health check pauses the task, so you can look into it before more changes go out.'],
  ["|| 'Certificate rotation is turned off on this broker.'","|| 'Certificate rotation is turned off on this broker. An administrator turns it on with the certificate_rotation kit parameter.'"],
  ['or converge instances.</div>','No batch jobs yet. Choose New Operation to upgrade, rotate certificates, converge, or run a command.'],
- ['The failed instance is not retried.','Continue remaining instances goes on with the instances still waiting. It never retries the failed one, so look at that failure first.'],
+ ['The failed instance is not retried.','The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.'],
  ['Are you sure you want to cancel this job?',"Cancelling stops the BOSH task that\\'s running now and skips the remaining instances. The instance being deployed may be left part way through its update."],
  ["'Saved!'","'Saved'"],
  ['`Failed to start upgrade:','`The upgrade wasn\'t started. ${'],

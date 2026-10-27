@@ -13,6 +13,7 @@ const fixes=[
  [js,"'Temporary repair. BOSH can restore the old certificate until you converge.'","'This is a temporary repair, because BOSH can restore the old certificate until you converge.'"],
  [html,'the parallel setting does.','except for Run command, where the parallel setting sets it.'],
  [js,"help: 'This is on by default. A certificate job","help: 'A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. The setting is on by default."],
+ [js,'Continue remaining instances goes on with','The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.'],
  [js,'restores the old certificate until then.','and in the meantime a recreate or resurrection restores the old certificate.']
 ];
 

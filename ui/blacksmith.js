@@ -8334,7 +8334,7 @@
           </div>${(isCertificates || isCommand) && isPaused && hasFailedInstance ? `
           <div class="summary-row">
             <span class="label">Resume:</span>
-            <span class="value">Continue remaining instances goes on with the instances still waiting. It never retries the failed one, so look at that failure first.</span>
+            <span class="value">The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.</span>
           </div>` : ''}
           <div class="summary-row">
             <span class="label">Progress:</span>
