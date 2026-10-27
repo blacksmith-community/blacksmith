@@ -110,7 +110,7 @@ The Instances step reuses the instance list that Upgrade uses, with its filters,
 
 The Review step calls the preview endpoint and freezes the values it sent. It shows the command in a preformatted block, the user, the shell, the timeout, and the parallel settings, followed by one table per deployment with the columns Node, AZ, State, Job state, and Targeted. A node that is not targeted shows its reason. Any edit to the command, the user, the timeout, the parallel settings, or the selection drops the review and requires a fresh one.
 
-Hidden characters in the command text and in the reason are made visible. Control characters and the bidirectional formatting characters that could disguise what a command does are shown as `\u` escapes such as `\u202E`, and a note tells the operator the command contains them. The text that runs is never changed, so the escapes are only a way to see what is there.
+Hidden characters in the command text and in the reason are made visible. Control characters, the bidirectional formatting characters, the zero-width characters, and the soft hyphen, all of which could disguise what a command does, are shown as `\u` escapes such as `\u202E`, and a note tells the operator the command contains them. The text that runs is never changed, so the escapes are only a way to see what is there.
 
 When the selection spans more than one service, the preview carries a `mixed_services` warning, and the review shows a prominent warning block that names the services. The backend allows the run. A command is usually specific to one service, so the warning is there to make a mistaken selection obvious and not to stop a deliberate one.
 
@@ -132,7 +132,7 @@ Activity shows a Command badge beside the Certificates one, with the first twelv
 
 When the broker has a second credential configured, the task detail asks for the command key before it shows the task. The pane shows a password input and a Show task button. An output read asks for the key the same way, with a Show output button, and a resume that sends a command asks with a Use key button. When the broker does not accept a key, the operator is taken to the task detail pane, which says so and asks for the key again. The held key is dropped when the operator clears it, and doing so also drops the command text and the output from the page.
 
-Each node has a collapsed Output element that fetches that node's output the first time the operator opens it and shows stdout and stderr in separate blocks. The text is rendered as plain text, with control characters other than newline and tab removed. The summary line reads like "Output (stdout 1.2 KiB of 1.2 KiB, stderr 0 B)".
+Each node has a collapsed Output element that fetches that node's output the first time the operator opens it and shows stdout and stderr in separate blocks. The text is rendered as plain text, with control characters other than newline and tab removed. The summary line reads like "Output (stdout 1.2 KiB, stderr 0 B)", and a stream that was cut reads like "stdout 64.0 KiB of 130.0 KiB (truncated)". A node that settled without running anything has no stored output, so its summary reads "Output (none kept)", it sends no request, and it says the node produced no output along with the reason when there is one.
 
 A paused command task offers the "Continue remaining instances" control that the certificate tasks already have.
 
