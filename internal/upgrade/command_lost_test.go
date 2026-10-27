@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"blacksmith/internal/bosh/ssh"
+	"blacksmith/internal/ops/scripts"
 )
 
 // An exec that ends without an exit status takes the outcome from the
@@ -29,7 +30,6 @@ func TestRunCommandNodeTakesALostResultFromTheCleanupRecord(t *testing.T) {
 		{name: "exited 3", execErr: errors.New("connection lost"), cleanup: "cleanup started=yes exit=3 killed=no", status: CommandStatusFailed, wantExit: intPtr(3), reasonHas: "status 3"},
 		{name: "never started", execErr: ssh.ErrNoExitStatus, cleanup: "cleanup started=no exit=- killed=no", status: CommandStatusFailed, reasonHas: "before the command started"},
 		{name: "ended by cleanup", execErr: ssh.ErrNoExitStatus, cleanup: "cleanup started=yes exit=- killed=yes", status: CommandStatusFailed, reasonHas: "cleanup ended", wantKilled: true},
-		{name: "no exit and nothing left", execErr: ssh.ErrNoExitStatus, cleanup: "cleanup started=yes exit=- killed=no", status: CommandStatusFailed, reasonHas: "connection to the node ended"},
 	}
 
 	for _, tc := range cases {
@@ -186,6 +186,109 @@ func TestRunCommandNodeStrandsALostResultCleanupCannotReach(t *testing.T) {
 
 			if status != TaskStatusPaused || !paused {
 				t.Errorf("the task is %s paused=%v, want paused", status, paused)
+			}
+		})
+	}
+}
+
+// What a cleanup record proves about a node whose exec ended without an
+// exit status, whether a cancel, a lost connection, or a deadline ended it.
+// An exit status, a command that never started, and a group cleanup ended
+// settle the node. killed=no with no exit only says the wrapper did not
+// signal the session, which it also says when it could not check it, and
+// started=- says the record is gone, so neither proves the command ended
+// and the node strands with the instance held.
+func TestCommandClassifyTakesOnlyEvidenceFromTheRecord(t *testing.T) {
+	t.Parallel()
+
+	const stranded = "strand"
+
+	cases := []struct {
+		record    string
+		lost      string
+		cancelled string
+		wantExit  *int
+	}{
+		{record: "cleanup started=yes exit=0 killed=no", lost: CommandStatusSucceeded, cancelled: CommandStatusSucceeded, wantExit: intPtr(0)},
+		{record: "cleanup started=yes exit=3 killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed, wantExit: intPtr(3)},
+		{record: "cleanup started=yes exit=- killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+		{record: "cleanup started=yes exit=7 killed=yes", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+		{record: "cleanup started=no exit=- killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+		{record: "cleanup started=no exit=125 killed=no", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+		{record: "cleanup started=yes exit=- killed=no", lost: stranded, cancelled: stranded},
+		{record: "cleanup started=- exit=- killed=no", lost: stranded, cancelled: stranded},
+		{record: "cleanup started=yes exit=- killed=survived", lost: CommandStatusFailed, cancelled: CommandStatusFailed},
+	}
+
+	for _, tc := range cases {
+		record, err := scripts.ParseCleanup([]byte(tc.record + "\n"))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.record, err)
+		}
+
+		for _, cancelled := range []bool{false, true} {
+			want := tc.lost
+			if cancelled {
+				want = tc.cancelled
+			}
+
+			run := &commandRun{spec: CommandTaskSpec{TimeoutSeconds: runTimeoutSecs}, cancelled: cancelled}
+			outcome := run.classify(ssh.Result{}, ssh.ErrNoExitStatus, false, record, nil, false)
+
+			got := outcome.status
+			if outcome.strand {
+				got = stranded
+			}
+
+			if got != want {
+				t.Errorf("%s, cancelled %v: got %q, want %q", tc.record, cancelled, got, want)
+			}
+
+			switch {
+			case tc.wantExit == nil && outcome.exit != nil:
+				t.Errorf("%s, cancelled %v: exit %d taken as the command's", tc.record, cancelled, *outcome.exit)
+			case tc.wantExit != nil && (outcome.exit == nil || *outcome.exit != *tc.wantExit):
+				t.Errorf("%s, cancelled %v: exit %v, want %d", tc.record, cancelled, outcome.exit, *tc.wantExit)
+			}
+		}
+	}
+}
+
+// A lost result whose cleanup reports that it ended nothing, with no exit,
+// strands the node in an unfinished task. The instance stays held, the
+// task pauses with a message that says the command was not shown to have
+// ended, and the partial output is kept.
+func TestRunCommandNodeStrandsALostResultTheRecordDoesNotSettle(t *testing.T) {
+	t.Parallel()
+
+	for _, record := range []string{"cleanup started=yes exit=- killed=no", "cleanup started=- exit=- killed=no"} {
+		t.Run(record, func(t *testing.T) {
+			t.Parallel()
+
+			fix := newRunFixture(t)
+			fix.exec = ssh.Result{Stdout: []byte("partial")}
+			fix.execErr = ssh.ErrNoExitStatus
+			fix.cleanup = record
+
+			if stopped := fix.run(context.Background()); !stopped {
+				t.Fatal("the task went on")
+			}
+
+			node := fix.vault.stored(t)
+			if node.Phase != CommandPhaseSent || node.StdoutKept != len("partial") {
+				t.Errorf("phase %s kept %d, want sent with the partial output", node.Phase, node.StdoutKept)
+			}
+
+			fix.manager.mu.RLock()
+			status, paused, message := fix.task.Status, fix.task.Paused, fix.inst.Error
+			fix.manager.mu.RUnlock()
+
+			if status != TaskStatusPaused || !paused {
+				t.Errorf("the task is %s paused=%v, want paused", status, paused)
+			}
+
+			if !strings.Contains(message, "no evidence that the command ended") || !strings.Contains(message, "Resume cleanup") {
+				t.Errorf("the instance says %q, want it to say why it is held and how to go on", message)
 			}
 		})
 	}

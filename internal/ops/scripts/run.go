@@ -56,9 +56,16 @@ var (
 // Cleanup is what the cleanup operation reports. Started is "yes", "no",
 // or "-" when the task directory was already gone, which leaves the
 // outcome unknown. Exit is the recorded exit code, or "-" when there is
-// none. Killed is "yes" when cleanup ended a running command, "no" when
-// there was nothing to end, and "survived" when the command's group was
-// still alive after KILL.
+// none. Killed is "yes" when cleanup ended a running command, and
+// "survived" when the command's group was still alive after KILL. Killed
+// is "no" when cleanup sent no signal, which proves nothing on its own:
+// run.sh prints it when the group had ended, and also when the pgid or
+// start-time files are missing or unreadable, the kill tool is missing, or
+// the leader is gone or is another process, so it never checked the
+// group. Only an exit status, killed=yes, or started=no show that nothing
+// the command started still runs. On a recheck of recorded survivors,
+// Killed is "yes" when none of them lives and "survived" otherwise, and
+// "no" means there was no survivors record to check.
 type Cleanup struct {
 	Started string
 	Exit    string

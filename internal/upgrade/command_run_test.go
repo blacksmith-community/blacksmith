@@ -1315,7 +1315,7 @@ func TestCommandRunClassifiesAnExecThatHitItsDeadline(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := run.classify(ssh.Result{}, closed, tc.deadline, scripts.Cleanup{}, nil, false)
+			got := run.classify(ssh.Result{}, closed, tc.deadline, scripts.Cleanup{Started: "yes", Exit: "-", Killed: "yes"}, nil, false)
 			if got.status != tc.want {
 				t.Errorf("status %s, want %s", got.status, tc.want)
 			}
