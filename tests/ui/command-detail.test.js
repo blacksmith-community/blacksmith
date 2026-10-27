@@ -1126,6 +1126,49 @@ t('a keyless detail the broker answers lets holder reads ask for command task de
  }finally{w.close();}
 });
 
+const HOLD_TEXT='The task was cancelled, but cleanup did not finish, so instance val-a is held pending cleanup on node/0. Once the node can be reached, use Resume cleanup to finish it.';
+const awaitingCleanup=(over={})=>task({status:'cancelled',paused:true,completed_count:0,cancelled_count:0,
+ instances:[inst('val-a',[node('node',0,{phase:'sent',status:undefined,exit_code:undefined,ended_at:undefined,output_path:undefined})],{status:'running',error:HOLD_TEXT})],...over});
+
+t('a cancelled command task that waits for its cleanup offers Resume cleanup and nothing else',async()=>{
+ const env=await setup({detail:awaitingCleanup()});const {w,d}=env;try{
+ await open(env);
+ const buttons=[...panel(d).querySelectorAll('.job-control-buttons button')];
+ expect(buttons.length).toBe(1);
+ expect(buttons[0].classList.contains('resume-btn')).toBe(true);
+ expect(buttons[0].textContent.trim()).toBe('Resume cleanup');
+ expect(panel(d).querySelector('.cancel-btn')===null).toBe(true);
+ expect(panel(d).querySelector('.pause-btn')===null).toBe(true);
+ expect(pageText(d).includes('use Resume cleanup')).toBe(true);
+ press(panel(d),'.resume-btn');await sleep(30);
+ expect(env.resumes.length).toBe(1);
+ expect(env.resumes[0].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+ }finally{w.close();}
+});
+
+t('a cancelled command task that waits for nothing offers no controls',async()=>{
+ const env=await setup({detail:task({status:'cancelled',paused:false,instances:[inst('val-a',[node('node',0,{phase:'skipped'})],{status:'cancelled'})]})});const {w,d}=env;try{
+ await open(env);
+ expect(panel(d).querySelector('.job-control-buttons')===null).toBe(true);
+ }finally{w.close();}
+});
+
+t('a cancelled command task keeps the instances it holds for cleanup busy',async()=>{
+ const env=await setup({detail:awaitingCleanup({name:'restart check'})});const {w,d}=env;try{
+ const listed={id:TASK,kind:'command',status:'cancelled',name:'restart check',held_instance_ids:['val-a']};
+ w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
+ const holders=await w.blacksmithRotate.readHolders();
+ expect(holders.get('val-a')).toBe('command run "restart check"');
+ press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ await w.__T.fetchUpgradeTasks();await sleep(40);
+ expect(w.__T.holderDetails.has(TASK)).toBe(true);
+ // Once the cleanup ends, the list names nothing and the instance is free.
+ listed.held_instance_ids=[];
+ env.state.detail=task({status:'cancelled',paused:false,instances:[inst('val-a',[node('node',0)],{status:'cancelled'})]});
+ expect((await w.blacksmithRotate.readHolders()).has('val-a')).toBe(false);
+ }finally{w.close();}
+});
+
 t('a keyless output read the broker answers lets holder reads ask for command task detail again',async()=>{
  const refusal=[401,{success:false,error:'a valid command key is required',code:'command_credential_required'}];
  const env=await setup({detail:task({status:'running'}),output:(u,o,n)=>n===1?refusal:[200,output()]});const {w,d}=env;try{

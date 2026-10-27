@@ -3682,6 +3682,13 @@
   const INVENTORY_REFRESH_MS = 15000;
   const HOLDING_INSTANCE_STATUSES = new Set(['pending', 'running', 'interrupted', 'awaiting_decision']);
   const ACTIVE_TASK_STATUSES = new Set(['pending', 'running', 'paused']);
+  // A cancelled command task still holds an instance while a node of it
+  // waits for cleanup, so its holders count too.
+  const holdingTask = (task) => Boolean(task) && (ACTIVE_TASK_STATUSES.has(task.status) || (task.kind === 'command' && task.status === 'cancelled'));
+  // Whether a task list entry may hold instances: an active task, or a
+  // cancelled command task whose entry names instances it holds for cleanup.
+  const mayHoldInstances = (task) => Boolean(task) && (ACTIVE_TASK_STATUSES.has(task.status) ||
+    (holdingTask(task) && Array.isArray(task.held_instance_ids) && task.held_instance_ids.length > 0));
 
   // The certificates chosen for rotation, as instance ID to a Set of full
   // variable names. The Certificates tab shares this Map.
@@ -3768,13 +3775,14 @@
     return byInstance;
   };
 
-  // The holders in the tasks: each unfinished instance of an active task.
-  // A command task's list entry names the instances it holds by ID, which
-  // stands in for its instances when its detail is out of reach.
+  // The holders in the tasks: each unfinished instance of an active task,
+  // and each instance a cancelled command task holds for cleanup. A command
+  // task's list entry names the instances it holds by ID, which stands in
+  // for its instances when its detail is out of reach.
   const computeUpgradeHolders = (tasks) => {
     const holders = new Map();
     (Array.isArray(tasks) ? tasks : []).forEach((task) => {
-      if (!task || !ACTIVE_TASK_STATUSES.has(task.status)) return;
+      if (!holdingTask(task)) return;
       const kind = task.kind === 'certificates' ? 'rotation' : task.kind === 'command' ? 'command run' : 'upgrade';
       const description = `${kind} "${task.name || task.id}"`;
       if (!Array.isArray(task.instances)) {
@@ -3823,7 +3831,7 @@
     if (upgradeHoldersInFlight || !batchTabActive()) return;
     upgradeHoldersInFlight = true;
     try {
-      const active = upgradeTasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
+      const active = upgradeTasks.filter(mayHoldInstances).slice(0, 20);
       const activeIds = new Set(active.map((task) => task.id));
       Array.from(holderDetails.keys()).forEach((id) => { if (!activeIds.has(id)) holderDetails.delete(id); });
       const now = Date.now();
@@ -5947,7 +5955,7 @@
       const response = await fetch('/b/upgrade/tasks');
       if (!response.ok) return new Map();
       const list = await response.json();
-      const active = (Array.isArray(list) ? list : []).filter((task) => task && ACTIVE_TASK_STATUSES.has(task.status)).slice(0, 20);
+      const active = (Array.isArray(list) ? list : []).filter(mayHoldInstances).slice(0, 20);
       // A list entry that names what a command task holds stands in for a
       // detail that can't be read.
       const listed = (task) => (Array.isArray(task.held_instance_ids) ? task : null);
@@ -8105,7 +8113,10 @@
     const progress = upgradeTaskProgress(task);
     const isRunning = task.status === 'running';
     const isPaused = task.status === 'paused';
-    const canControl = isRunning || isPaused;
+    // A cancelled command task with a node still to clean waits for a
+    // resume that runs the cleanup alone.
+    const awaitsCleanup = isCommand && task.status === 'cancelled' && task.paused === true;
+    const canControl = isRunning || isPaused || awaitsCleanup;
     // A paused certificate task is still finishing its current VM or deploy
     // while one of its instances runs. A command task is only still working
     // when a node of a running instance is staged or sent, or is held by a
@@ -8122,7 +8133,8 @@
         <div class="job-control-buttons">
           ${isRunning ? '<button type="button" class="job-control-btn pause-btn" data-task-action="pause" data-keep-key="action:pause">Pause</button>' : ''}
           ${isPaused ? `<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">${hasFailedInstance ? 'Continue remaining instances' : 'Resume'}</button>` : ''}
-          <button type="button" class="job-control-btn cancel-btn" data-task-action="cancel" data-keep-key="action:cancel">Cancel Job</button>
+          ${awaitsCleanup ? '<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">Resume cleanup</button>' : ''}
+          ${awaitsCleanup ? '' : '<button type="button" class="job-control-btn cancel-btn" data-task-action="cancel" data-keep-key="action:cancel">Cancel Job</button>'}
         </div>
       `;
     }
@@ -8166,7 +8178,7 @@
           ${targetRows}
           <div class="summary-row">
             <span class="label">Status:</span>
-            <span class="value status-${escapeAttribute(task.status)}">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : `${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : ''}`}</span>
+            <span class="value status-${escapeAttribute(task.status)}">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : `${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : awaitsCleanup ? ' (cleanup waits for a resume)' : ''}`}</span>
           </div>${(isCertificates || isCommand) && isPaused && hasFailedInstance ? `
           <div class="summary-row">
             <span class="label">Resume:</span>
