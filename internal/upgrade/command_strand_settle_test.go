@@ -132,3 +132,40 @@ func TestASurvivingStrandedNodeLeavesNoOtherNodeSent(t *testing.T) {
 
 	fix.assertNoCommandText()
 }
+
+// A node failed in an earlier pass, and the halt it caused never reached
+// the record, so the next pass finds a pending node and nothing stranded.
+// The failure still halts the deployment, so the pending node is skipped
+// and never sent.
+func TestANodeThatFailedEarlierHaltsTheNextPass(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+
+	fix.manager.mu.Lock()
+	failed := &fix.task.Instances[0].Command.VMs[0]
+	failed.Phase = CommandPhaseSettled
+	failed.Status = CommandStatusFailed
+	fix.task.Status = TaskStatusPaused
+	fix.task.Paused = true
+	fix.task.Instances[0].Status = InstanceStatusRunning
+	fix.manager.mu.Unlock()
+
+	err := fix.manager.ResumeTask(context.Background(), fix.task.ID)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+	})
+
+	inst := done.Instances[0]
+	if want := []CommandPhase{CommandPhaseSettled, CommandPhaseSkipped}; !slices.Equal(phases(inst), want) || inst.Status != InstanceStatusFailed {
+		t.Errorf("the instance is %s with nodes %v, want failed with %v", inst.Status, phases(inst), want)
+	}
+
+	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
+		t.Errorf("the pending node saw %v, want nothing", ops)
+	}
+
+	fix.assertNoCommandText()
+}
