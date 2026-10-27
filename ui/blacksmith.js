@@ -3285,9 +3285,9 @@
         <caption>Choose target versions. Leave a target unchanged to keep its current version.</caption>
         <thead><tr><th scope="col">Component</th><th scope="col">Deploy version</th><th scope="col">Minimum current version <span class="batch-column-note">Optional filter</span></th></tr></thead>
         <tbody>
-          <tr><th scope="row">System</th><td><select id="upgrade-stemcell-filter" aria-label="System deploy version"><option value="">— keep current —</option></select><span class="batch-cell-help">Operating system image (stemcell).</span></td>
+          <tr><th scope="row">System</th><td><select id="upgrade-stemcell-filter" aria-label="System deploy version"><option value="">Keep current</option></select><span class="batch-cell-help">Operating system image (stemcell).</span></td>
             <td><select id="upgrade-stemcell-floor" aria-label="System minimum current version" aria-describedby="batch-version-floor-help"><option value="">No minimum</option></select></td></tr>
-          <tr><th scope="row">Releases</th><td><select id="upgrade-release-filter" aria-label="Service release deploy version" disabled title="Select a single service to choose a release"><option value="">— keep current —</option></select><span class="batch-cell-help">This is the service’s own release. Each service has a different one, so choose a single service above to pick a version.</span></td>
+          <tr><th scope="row">Releases</th><td><select id="upgrade-release-filter" aria-label="Service release deploy version" disabled title="Select a single service to choose a release"><option value="">Keep current</option></select><span class="batch-cell-help">This is the service’s own release. Each service has a different one, so choose a single service above to pick a version.</span></td>
             <td><select id="upgrade-release-floor" aria-label="Release minimum current version" aria-describedby="batch-version-floor-help" disabled title="Select a single service to filter by release"><option value="">No minimum</option></select></td></tr>
         </tbody>
       </table>
@@ -4433,7 +4433,7 @@
   // What a patch does afterwards, as the value the broker takes, the label,
   // and what happens next.
   const CONVERGE_CHOICES = [
-    ['pending', 'Leave unconverged', 'Choose this to restart the jobs only once today. The instance stays flagged as unconverged until a converge runs, and a recreate or resurrection restores the old certificate until then.'],
+    ['pending', 'Leave unconverged', 'Choose this to restart the jobs only once today. The instance stays flagged as unconverged until a converge runs, and in the meantime a recreate or resurrection restores the old certificate.'],
     ['immediate', 'Converge right away', 'Choose this to make the repair permanent in the same job. Every job restarts a second time, when the deploy that follows the patch runs.']
   ];
 
@@ -5211,7 +5211,7 @@
     textRow.appendChild(textLabel);
     addFieldHelp(textLabel, 'command-text');
     textRow.appendChild(text);
-    const textHelp = rotateEl('p', 'batch-field-help', 'The command runs with bash on every node. It can\'t read input, and it uses a fixed search path, so give service tools by their full path.');
+    const textHelp = rotateEl('p', 'batch-field-help', 'The command runs with bash on every node. It can\'t read input, and it uses a fixed search path, so call service tools by their full path.');
     textHelp.id = 'command-text-help';
     textRow.appendChild(textHelp);
     pane.appendChild(textRow);
@@ -5551,7 +5551,7 @@
   const rotateConfirmWord = (mode) => String(ROTATE_MODE_LABELS[mode] || mode).toLowerCase();
   const PATCH_WARNING = 'Temporary repair. BOSH can restore the old certificate until this instance converges, for example when it recreates or resurrects a VM.';
   const PATCH_PREREQUISITE = 'Before you patch, make sure nobody runs director commands against this instance until the patch finishes. BOSH still records the old certificate, so a deploy, recreate, or resurrection during the patch would put it back, and the broker can\'t stop commands run against the director directly.';
-  const PATCH_NOTE = 'Temporary repair. BOSH can restore the old certificate until you converge.';
+  const PATCH_NOTE = 'This is a temporary repair, because BOSH can restore the old certificate until you converge.';
   const PATCH_UNAVAILABLE_REASON = 'Patch in place is not available.';
 
   // The text to show for an error from the preview or the create request.
@@ -6120,7 +6120,7 @@
   const rotateAvailability = (capabilities, eligibleCount, holder, noneReason) => {
     const rotation = capabilities && capabilities.rotation;
     if (!rotation || rotation.enabled !== true) {
-      return { state: 'disabled', label: 'Rotate...', note: (rotation && rotation.reason) || 'Certificate rotation is turned off on this broker. An operator turns it on with the certificate_rotation kit parameter.' };
+      return { state: 'disabled', label: 'Rotate...', note: (rotation && rotation.reason) || 'Certificate rotation is turned off on this broker. An administrator turns it on with the certificate_rotation kit parameter.' };
     }
     if (holder) return { state: 'busy', label: 'Busy', note: `Busy: ${holder}` };
     if (eligibleCount === 0) {
@@ -6574,7 +6574,7 @@
       const sel = document.getElementById('upgrade-release-filter');
       if (!sel) return;
       const previous = keep ? sel.value : '';
-      sel.innerHTML = '<option value="">— keep current —</option>';
+      sel.innerHTML = '<option value="">Keep current</option>';
       sel.disabled = true;
       window.upgradeCurrentRelease = '';
       const releaseName = serviceId ? upgradeServiceRelease(serviceId) : '';
@@ -6977,8 +6977,8 @@
     invalid_request: 'The broker did not accept that request. Check what you sent, then try again.',
     empty_preview: 'Nothing was changed, so choose Preview again to ask for a fresh one.',
     internal_error: 'The broker hit an unexpected problem. Try again, and look in the broker log if it keeps happening.',
-    rotation_disabled: 'Rotation is switched off on this broker. An operator turns it on with the certificate_rotation kit parameter.',
-    patch_disabled: 'Patching in place is switched off on this broker. An operator turns it on with the certificate_patch_in_place kit parameter, and rotation has to be on as well.',
+    rotation_disabled: 'Rotation is switched off on this broker. An administrator turns it on with the certificate_rotation kit parameter.',
+    patch_disabled: 'Patching in place is switched off on this broker. An administrator turns it on with the certificate_patch_in_place kit parameter, and rotation has to be on as well.',
     credhub_not_configured: 'This broker has no CredHub connection. The broker Overview has a runbook that shows how to enable it.',
     director_unsupported: 'This director can\'t do what the operation needs, so nothing was changed. Update the director, or leave this instance out.',
     signing_ca_changed: 'The CA that would sign the new certificate is not the one that signed the deployed one. The broker Overview has a runbook for CA renewal.',
@@ -27199,7 +27199,7 @@
       { key: 'instance_scan_timeout_seconds', label: 'Instance scan timeout (seconds)', type: 'number', help: 'Seconds we wait on one instance before we give up on it, at least 1.' },
       { key: 'preview_ttl_minutes', label: 'Preview lifetime (minutes)', type: 'number', help: 'Minutes a preview stays valid before we need a fresh one, from 5 to 60.' },
       { key: 'probe_enabled', label: 'Probe live listeners', type: 'checkbox', help: 'Connect to each listener and read the certificate it serves, so we can compare it with the stored one.' },
-      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'This is on by default. A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. Turn it off only for routine rotations you\'ll watch from Activity. Upgrades carry on after a failure, and Run command always pauses.' }
+      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. The setting is on by default. Turn it off only for routine rotations you\'ll watch from Activity. Upgrades carry on after a failure, and Run command always pauses.' }
     ];
 
     const settingKeys = () => SETTINGS_FIELDS.map((f) => f.key);

@@ -35,7 +35,7 @@ t('patch in place controls', async () => {
   const sel=w.blacksmithCerts.selection;
   sel.delete('inst-pg'); T.renderRotateInstances(); T.updateOperationFooter(); await sleep(30);
   ok(d.getElementById('rotate-mode-patch')&&!d.getElementById('rotate-mode-patch').disabled,'Patch radio enabled when the switch is on and the selection allows it');
-  ok(d.getElementById('rotate-mode').textContent.includes('Temporary repair. BOSH can restore the old certificate until you converge.'),'Patch note shown beside the radio');
+  ok(d.getElementById('rotate-mode').textContent.includes('This is a temporary repair, because BOSH can restore the old certificate until you converge.'),'Patch note shown beside the radio');
   ok(d.getElementById('rotate-mode-converge').hidden,'converge choice hidden before Patch');
   pick('rotate-mode-patch'); await sleep(10);
   ok(!d.getElementById('rotate-mode-converge').hidden,'choosing Patch reveals the converge choice');
@@ -104,7 +104,7 @@ t('patch in place controls', async () => {
   const dia=w.blacksmithRotate.openInstanceDialog(host,{instanceId:'inst-valkey',instanceName:EVIL,certs:dc,capabilities:caps,preselect:new w.Set([K]),origin:'instance'});
   const prefix='rotate-dialog-inst-valkey';
   const pr=host.querySelector('#'+prefix+'-patch');
-  ok(pr&&!pr.disabled&&host.querySelector('#'+prefix+'-patch-note').textContent.includes('Temporary repair'),'dialog: Patch enabled with its note');
+  ok(pr&&!pr.disabled&&host.querySelector('#'+prefix+'-patch-note').textContent.includes('temporary repair'),'dialog: Patch enabled with its note');
   ok([...host.querySelectorAll('input[type=radio]')].every(r=>/^rotate-/.test(r.id)),'dialog: every radio id starts with rotate-');
   const dprev=host.querySelector('.cert-rotate-preview');
   pr.checked=true; fire(pr);

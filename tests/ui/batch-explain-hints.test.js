@@ -23,7 +23,7 @@ t('the timeout and the node limit are described by their hints',async()=>{
  expect(describedBy(d,'command-timeout')).toContain('The default is 600');
  expect(describedBy(d,'command-max-in-flight')).toContain('at most 3 with the default of four workers');
  expect(describedBy(d,'command-max-in-flight')).toContain('The review checks it');
- expect(describedBy(d,'command-text')).toContain('give service tools by their full path');
+ expect(describedBy(d,'command-text')).toContain('call service tools by their full path');
  expect(describedBy(d,'command-parallel')).toContain('a failure stops the run early');
 });
 

@@ -151,7 +151,7 @@
                 <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="No job limit" aria-describedby="upgrade-max-batch-jobs-help">
                 <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
               </div>
-              <p id="upgrade-max-batch-jobs-help">This limits how many batch jobs run at once across the broker, and a paused job still counts against it. Leave it empty for no job limit, and deploys stay capped by max_batch_connections, which is 10 unless an administrator changed it. Inside one deployment, BOSH’s update policy sets the rollout, and for Run command the parallel setting does.</p>
+              <p id="upgrade-max-batch-jobs-help">This limits how many batch jobs run at once across the broker, and a paused job still counts against it. Leave it empty for no job limit, and deploys stay capped by max_batch_connections, which is 10 unless an administrator changed it. Inside one deployment, BOSH’s update policy sets the rollout, except for Run command, where the parallel setting sets it.</p>
             </details>
             <div class="upgrade-tasks">
               <div class="no-tasks">No batch jobs yet. Choose New Operation to upgrade, rotate certificates, converge, or run a command.</div>
