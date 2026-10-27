@@ -65,17 +65,19 @@ func (l *cmdLogger) text() string {
 // waitVault does. Writes of command task records are counted from 1. A write
 // the refuse rule picks stores nothing and fails, and one the land rule picks
 // stores the record and fails anyway. While blind is set, every read of a
-// command task record fails, so the manager can't tell that a write landed.
+// command task record fails, so the manager can't tell that a write landed,
+// and blindAt keeps the write count at the latest such refused read.
 type cmdCreateVault struct {
 	*waitVault
 
 	records map[string]map[string]any
 
-	script sync.Mutex
-	writes int
-	refuse func(n int) bool
-	land   func(n int) bool
-	blind  bool
+	script  sync.Mutex
+	writes  int
+	refuse  func(n int) bool
+	land    func(n int) bool
+	blind   bool
+	blindAt int
 }
 
 // script sets the rules under the lock.
@@ -84,6 +86,16 @@ func (v *cmdCreateVault) setRules(refuse, land func(n int) bool, blind bool) {
 	defer v.script.Unlock()
 
 	v.refuse, v.land, v.blind = refuse, land, blind
+}
+
+// refusedReadAfter reports whether a read of a command task record was
+// refused once the Vault had seen n writes, as the read-back after a
+// refused nth write is.
+func (v *cmdCreateVault) refusedReadAfter(n int) bool {
+	v.script.Lock()
+	defer v.script.Unlock()
+
+	return v.blindAt >= n
 }
 
 // writeCount reports how many writes to a command task record the Vault
@@ -98,6 +110,10 @@ func (v *cmdCreateVault) writeCount() int {
 func (v *cmdCreateVault) Get(ctx context.Context, path string, result interface{}) (bool, error) {
 	v.script.Lock()
 	blind := v.blind && strings.HasPrefix(path, commandTasksVaultPath+"/")
+
+	if blind {
+		v.blindAt = v.writes
+	}
 	v.script.Unlock()
 
 	if blind {
@@ -890,11 +906,12 @@ func TestCreateCommandTaskLandedButUnconfirmedSecondSave(t *testing.T) {
 
 	// The create starts a background loop that tries to save the failed
 	// status at once, and it waits an hour after a refusal. Wait for that
-	// first attempt, the third write, to be refused before the Vault starts
-	// taking writes, or a late attempt would save the failed status before
-	// the checks below.
-	waitUntil(t, "the first attempt to save the failed status", func() bool {
-		return env.vault.writeCount() >= 3
+	// first attempt, the third write, to be refused and for its read-back to
+	// be refused too before the Vault starts taking writes and reads, or a
+	// read-back that saw the Vault open would write again and save the
+	// failed status before the checks below.
+	waitUntil(t, "the first attempt to save the failed status to give up", func() bool {
+		return env.vault.writeCount() >= 3 && env.vault.refusedReadAfter(3)
 	})
 
 	// The Vault now takes every write, so a retry that wrongly ran the create
