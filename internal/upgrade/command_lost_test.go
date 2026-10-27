@@ -284,7 +284,7 @@ func TestRunCommandNodeStrandsALostResultTheRecordDoesNotSettle(t *testing.T) {
 		unproven string
 		says     string
 	}{
-		{"cleanup started=yes exit=- killed=unknown", unprovenUnknown, "Use Resume cleanup to check the node again"},
+		{"cleanup started=yes exit=- killed=unknown", unprovenUnknown, "check the node again. Recreating the VM releases it"},
 		{"cleanup started=- exit=- killed=no", unprovenGone, "Recreating the VM releases it"},
 	} {
 		for _, storeFails := range []bool{false, true} {
@@ -348,8 +348,8 @@ func TestCommandUnprovenLostResultSettlesOnTheNextResume(t *testing.T) {
 	fix.queue()
 
 	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Paused })
-	if got := paused.Instances[0].Error; got != strandUnproven {
-		t.Fatalf("the instance says %q, want the unproven strand message", got)
+	if got := paused.Instances[0].Error; got != strandUnproven || !strings.Contains(got, "Recreating the VM releases it") {
+		t.Fatalf("the instance says %q, want the unproven strand message that says how the hold ends", got)
 	}
 
 	if !fix.holds() {
@@ -581,6 +581,7 @@ func TestCancelledHoldSaysWhyTheRecordProvesNothing(t *testing.T) {
 		says     string
 	}{
 		{"cleanup started=yes exit=- killed=unknown", unprovenUnknown, "could not check whether the command still runs on redis/0"},
+		{"cleanup started=yes exit=- killed=unknown", unprovenUnknown, "check the node again. Recreating the VM releases it"},
 		{"cleanup started=- exit=- killed=no", unprovenGone, "Recreating the VM releases it"},
 	}
 

@@ -1956,7 +1956,8 @@ const (
 	strandLost        = "The connection to a node ended before the command's result arrived, and cleanup could not reach the node, " +
 		"so the instance stays held and the task is paused. Once the node can be reached, use Resume cleanup to finish it."
 	strandUnproven = "Cleanup could not check whether the command still runs on a node, " +
-		"so the instance stays held and the task is paused. Use Resume cleanup to check the node again."
+		"so the instance stays held and the task is paused. Use Resume cleanup to check the node again. " +
+		"Recreating the VM releases it at the next Resume cleanup."
 	strandGone = "Cleanup found the command's directory already gone from a node, so nothing shows whether the command still runs there. " +
 		"The instance stays held and the task is paused. Recreating the VM releases it at the next Resume cleanup."
 )
@@ -2269,7 +2270,7 @@ func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 
 			return
 		case node.Unproven == unprovenUnknown:
-			inst.Error = fmt.Sprintf("%s, but cleanup could not check whether the command still runs on %s/%d, so instance %s stays held. Use Resume cleanup to check the node again.", ended, identity.Group, identity.Index, inst.InstanceID)
+			inst.Error = fmt.Sprintf("%s, but cleanup could not check whether the command still runs on %s/%d, so instance %s stays held. Use Resume cleanup to check the node again. Recreating the VM releases it at the next Resume cleanup.", ended, identity.Group, identity.Index, inst.InstanceID)
 
 			return
 		case node.Unproven == unprovenGone:
