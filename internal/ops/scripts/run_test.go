@@ -992,6 +992,7 @@ func TestPrepareReportsAFailedWriteAsAFailure(t *testing.T) {
 // reports killed=no only once it finds the group gone.
 func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 	t.Parallel()
+	needDoneRecords(t)
 
 	cases := []struct {
 		name  string

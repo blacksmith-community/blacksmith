@@ -4,9 +4,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
+
+// needDoneRecords skips a test that needs cleanup to write a done record,
+// which it renames into place with GNU mv -T, or to check a session, which
+// it reads from /proc. The wrapper runs only on Linux VMs.
+func needDoneRecords(t *testing.T) {
+	t.Helper()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("cleanup renames done records with GNU mv -T and reads /proc")
+	}
+}
 
 // donePath is where cleanup leaves the done record of a task.
 func (r *runTree) donePath(task string) string {
@@ -20,6 +32,7 @@ func (r *runTree) donePath(task string) string {
 // again and get the same evidence.
 func TestRunCleanupReplaysTheDoneRecord(t *testing.T) {
 	t.Parallel()
+	needDoneRecords(t)
 
 	tree := newRunTree(t)
 	tree.makeTask(t, runTask, map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"})
@@ -60,6 +73,7 @@ func TestRunCleanupReplaysTheDoneRecord(t *testing.T) {
 // record, and leaves no temporary file.
 func TestRunCleanupWritesTheRecordOverALeftoverTemporaryFile(t *testing.T) {
 	t.Parallel()
+	needDoneRecords(t)
 
 	tree := newRunTree(t)
 	tree.makeTask(t, runTask, map[string]string{"started": "", "exit": "5\n"})
@@ -185,6 +199,7 @@ func TestRunCleanupReplaysOnlyAWholeDoneRecord(t *testing.T) {
 // that cleanup kept may still hold a command it could not check.
 func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 	t.Parallel()
+	needDoneRecords(t)
 
 	tree := newRunTree(t)
 	tree.makeTask(t, "kept-task", map[string]string{"started": ""})
@@ -256,6 +271,7 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 // cleanup works the answer out again and writes the record then.
 func TestRunCleanupKeepsTheTaskWhenTheDoneRecordFails(t *testing.T) {
 	t.Parallel()
+	needDoneRecords(t)
 
 	for name, stub := range map[string]string{
 		"write":  `_rc_write() { head -c 10 > "$1"; return 1; }` + "\n",
