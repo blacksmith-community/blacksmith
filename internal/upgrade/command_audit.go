@@ -63,6 +63,11 @@ type CommandNodeAudit struct {
 	StderrTruncated bool              `json:"stderr_truncated,omitempty"`
 	Killed          bool              `json:"killed,omitempty"`
 	Survived        bool              `json:"survived,omitempty"`
+	// Reason says why the node was skipped or stopped, and Error what
+	// failed. Both are the broker's own words and are cleaned the way the
+	// record's other free text is.
+	Reason string `json:"reason,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // auditVaultPath returns the index a record is saved under.
@@ -258,6 +263,8 @@ func (m *Manager) commandNodeRecordLocked(task *UpgradeTask, inst *InstanceUpgra
 		StderrTruncated: node.StderrTruncated,
 		Killed:          node.Killed,
 		Survived:        node.Survived,
+		Reason:          auditText(node.Reason),
+		Error:           auditText(node.Error),
 	}
 
 	if node.ExitCode != nil {

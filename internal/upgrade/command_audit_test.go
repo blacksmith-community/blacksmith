@@ -947,3 +947,36 @@ func TestCommandAuditUnreadableIndexLineNamesTheCommandTrail(t *testing.T) {
 
 	fix.assertNoCommandText()
 }
+
+// A node event says why the node stopped and what failed, and the words
+// are cleaned like the record's other free text.
+func TestCommandNodeAuditCarriesReasonAndError(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	task := newCommandTask()
+	node := &task.Instances[0].Command.VMs[1]
+	node.Phase = CommandPhaseSettled
+	node.Status = CommandStatusFailed
+	node.Reason = "the task paused\nwhile the node was staged"
+	node.Error = "the node failed -----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"
+
+	fix.manager.mu.Lock()
+	rec := fix.manager.commandNodeRecordLocked(task, &task.Instances[0], 1, AuditNodeSettled)
+	fix.manager.mu.Unlock()
+
+	if rec.Node.Reason != "the task paused while the node was staged" {
+		t.Errorf("reason = %q", rec.Node.Reason)
+	}
+
+	if strings.Contains(rec.Node.Error, "PRIVATE KEY") || strings.Contains(rec.Node.Error, "\n") || !strings.HasPrefix(rec.Node.Error, "the node failed") {
+		t.Errorf("error = %q", rec.Node.Error)
+	}
+
+	raw, err := json.Marshal(rec.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(raw), commandSecretText) {
+		t.Error("the node audit holds the command text")
+	}
+}
