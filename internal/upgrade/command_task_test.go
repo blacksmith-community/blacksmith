@@ -910,6 +910,7 @@ func assertStrandedNodeSettlesThroughCleanupOnly(t *testing.T, phase CommandPhas
 	t.Helper()
 
 	fix := newTaskFixture(t, 1, 2)
+	fix.cleanups["dep-0/0"] = cleanupFailedExit
 
 	started := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	node := &fix.task.Instances[0].Command.VMs[0]

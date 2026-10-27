@@ -28,12 +28,13 @@ func strandNodes(fix *taskFixture, count int) {
 	fix.task.Instances[0].Status = InstanceStatusRunning
 }
 
-// Two nodes are stranded. The first is cleaned and settles failed, and the
-// cleanup of the second does not report cleanly. The instance must stay
+// Two nodes are stranded. The first is cleaned and settles failed on its
+// exit status, and the cleanup of the second does not report cleanly. The instance must stay
 // open with the second node still sent, so the next resume cleans it, and
 // the failure of the first still stops the deployment then.
 func TestASecondStrandedNodeIsCleanedByTheNextResume(t *testing.T) {
 	fix := newTaskFixture(t, 1, 3)
+	fix.cleanups["dep-0/0"] = cleanupFailedExit
 
 	fix.override = func(_ context.Context, deployment string, index int, op string) *opAnswer {
 		if deployment == "dep-0" && index == 1 && op == opRunCleanup {
@@ -193,6 +194,7 @@ func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fix := newTaskFixture(t, 1, 3)
 			last := tc.stranded - 1
+			fix.cleanups["dep-0/0"] = cleanupFailedExit
 
 			if tc.survivor >= 0 {
 				fix.cleanups[nodeKey("dep-0", tc.survivor)] = cleanupSurvived
@@ -262,4 +264,49 @@ func TestAnInstanceEndsWithoutTheStrandPauseMessage(t *testing.T) {
 			fix.assertNoCommandText()
 		})
 	}
+}
+
+// A stranded node whose cleanup holds an exit status of 0 settles as
+// succeeded and halts nothing. Resume cleanup still sends no command, so it
+// pauses before the pending node, and the resume after it runs that node
+// and ends the instance as a success.
+func TestAStrandedNodeThatSucceededLetsTheNextResumeGoOn(t *testing.T) {
+	fix := newTaskFixture(t, 1, 2)
+	strandNodes(fix, 1)
+
+	fix.resume()
+
+	paused := fix.waitFor("the cleanup to pause the task", func(task UpgradeTask) bool {
+		return task.Paused && nodeOf(task, 0, 0).Phase == CommandPhaseSettled
+	})
+	waitUntil(t, "the processor to let go of the task", func() bool { return !fix.owns() })
+
+	inst := paused.Instances[0]
+	if node := inst.Command.VMs[0]; node.Status != CommandStatusSucceeded || node.ExitCode == nil || *node.ExitCode != 0 {
+		t.Errorf("the stranded node is %s with exit %v, want succeeded with exit 0", node.Status, node.ExitCode)
+	}
+
+	if inst.Command.VMs[1].Phase != CommandPhasePending || inst.Error != cleanupOnlyDone {
+		t.Errorf("the pending node is %s and the instance says %q, want it pending and %q", inst.Command.VMs[1].Phase, inst.Error, cleanupOnlyDone)
+	}
+
+	if ops := fix.opsOf("dep-0", 1); len(ops) != 0 {
+		t.Errorf("Resume cleanup sent the pending node %v, want nothing", ops)
+	}
+
+	fix.resume()
+
+	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool {
+		return task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+	})
+
+	if got := done.Instances[0]; got.Status != InstanceStatusSuccess || got.Command.VMs[1].Status != CommandStatusSucceeded {
+		t.Errorf("the instance is %s with the second node %s, want success with it succeeded", got.Status, got.Command.VMs[1].Status)
+	}
+
+	if n := fix.countOps("dep-0", 1, opRunExec); n != 1 {
+		t.Errorf("the pending node was sent exec %d times, want once", n)
+	}
+
+	fix.waitReleased()
 }

@@ -41,6 +41,18 @@ func (f *taskFixture) store(task *UpgradeTask) {
 
 // restartedWith loads a broker whose stored task is running, with its first
 // instance running and its nodes in the phases given by index.
+// failedOnCleanup wraps a seed so that cleanup of each of the given nodes
+// of the first instance finds the command failed on its exit status.
+func failedOnCleanup(seed func(*taskFixture, *UpgradeTask), nodes ...int) func(*taskFixture, *UpgradeTask) {
+	return func(fix *taskFixture, task *UpgradeTask) {
+		for _, index := range nodes {
+			fix.cleanups[nodeKey("dep-0", index)] = cleanupFailedExit
+		}
+
+		seed(fix, task)
+	}
+}
+
 func restartedWith(phases map[int]CommandPhase) func(*taskFixture, *UpgradeTask) {
 	return func(_ *taskFixture, task *UpgradeTask) {
 		task.Status = TaskStatusRunning
@@ -158,8 +170,8 @@ func TestLoadedNodeIsSettledThroughCleanupOnly(t *testing.T) {
 			}
 
 			node := paused.Instances[0].Command.VMs[0]
-			if node.Phase != CommandPhaseSettled || node.Status != CommandStatusFailed || !strings.Contains(node.Reason, "outcome is not known") {
-				t.Errorf("the node is %s/%s with reason %q, want settled and failed with an unknown outcome", node.Phase, node.Status, node.Reason)
+			if node.Phase != CommandPhaseSettled || node.Status != CommandStatusFailed || !strings.Contains(node.Reason, "took this result from cleanup") || !strings.Contains(node.Reason, "status 7") {
+				t.Errorf("the node is %s/%s with reason %q, want settled and failed with the status cleanup found", node.Phase, node.Status, node.Reason)
 			}
 
 			if node.ExitCode == nil || *node.ExitCode != 7 {
@@ -181,7 +193,7 @@ func TestLoadedNodeIsSettledThroughCleanupOnly(t *testing.T) {
 }
 
 func TestLoadedParallelNodesEachGetTheirOwnCleanup(t *testing.T) {
-	fix := newTaskFixtureFrom(t, 1, 3, restartedWith(map[int]CommandPhase{0: CommandPhaseSent, 1: CommandPhaseSent}), withParallel(2))
+	fix := newTaskFixtureFrom(t, 1, 3, failedOnCleanup(restartedWith(map[int]CommandPhase{0: CommandPhaseSent, 1: CommandPhaseSent}), 0, 1), withParallel(2))
 
 	done := fix.waitFor("the task to finish", func(task UpgradeTask) bool { return task.Status == TaskStatusFailed })
 
@@ -911,7 +923,8 @@ func TestLoadedCancelledTaskWithAHeldNodeCleansItWithoutAResume(t *testing.T) {
 }
 
 func TestLoadedPausedTaskWithAStagedNodeSettlesItOnResumeOnly(t *testing.T) {
-	fix := newTaskFixtureFrom(t, 1, 2, func(_ *taskFixture, task *UpgradeTask) {
+	fix := newTaskFixtureFrom(t, 1, 2, func(fix *taskFixture, task *UpgradeTask) {
+		fix.cleanups["dep-0/0"] = cleanupFailedExit
 		task.CreationConfirmed = true
 		task.Status = TaskStatusPaused
 		task.Paused = true
@@ -956,7 +969,8 @@ func TestLoadedNodeLeftStagedByAFailedSentSaveIsCleanedOnly(t *testing.T) {
 		t.Fatalf("the first broker sent exec after the sent save failed: %v", ops)
 	}
 
-	fix := newTaskFixtureFrom(t, 1, 1, func(_ *taskFixture, task *UpgradeTask) {
+	fix := newTaskFixtureFrom(t, 1, 1, func(fix *taskFixture, task *UpgradeTask) {
+		fix.cleanups["dep-0/0"] = cleanupFailedExit
 		*task = stranded
 		task.CreationConfirmed = true
 		task.Status = TaskStatusRunning
@@ -1028,6 +1042,7 @@ func TestLoadedRefusedTaskResumeOnlyCleans(t *testing.T) {
 		task.Instances[0].Status = InstanceStatusRunning
 		task.Instances[0].Command.VMs[0].Phase = CommandPhaseSent
 		task.Instances[0].Command.VMs[0].StartedAt = &loadedStart
+		fix.cleanups["dep-0/0"] = cleanupFailedExit
 	})
 
 	paused := fix.snapshot()

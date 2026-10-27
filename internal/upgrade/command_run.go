@@ -1427,10 +1427,10 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 
 	for {
 		// A node an earlier run left staged or sent is settled before any
-		// pending node is driven. It settles as failed, which halts the
-		// deployment like any failed node, so the pass that found one
-		// drives nothing more. A node that failed in an earlier pass halts
-		// it too.
+		// pending node is driven. One that settles as failed halts the
+		// deployment like any failed node, so the pass that found it
+		// drives nothing more, and one that settles as succeeded lets the
+		// pass go on. A node that failed in an earlier pass halts it too.
 		stopped, halt, survived := m.settleStrandedNodes(ctx, sessions, task, inst)
 		stranded := stopped || halt
 
@@ -1913,17 +1913,17 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 
 // settleStrandedNodes settles each node an earlier run left staged or sent.
 // A resume never drives such a node again, because the command may have run
-// on it, so cleanup reports what it left and the node is recorded as an
-// outcome Blacksmith did not see. It reports whether the task stopped,
-// which it does when a node can't be reached or the save can't be
-// confirmed, and the node then stays as it was for the next resume, so
-// the pass ends there. It also reports whether the deployment halted,
+// on it, so cleanup reports what it left and the node settles from that, on
+// the command's exit status when the record holds one. It reports whether
+// the task stopped, which it does when a node can't be reached or the save
+// can't be confirmed, and the node then stays as it was for the next resume,
+// so the pass ends there. It also reports whether the deployment halted,
 // which a node that settled as a failure does, in this pass or an earlier
-// one. A node whose processes outlived KILL settles and stops the task,
-// and the pass goes on to clean the other stranded nodes, so survived is
-// set only when the task stopped and every stranded node settled. A task
-// that stopped on a node still staged or sent is never survived, and its
-// instance must stay open for the next resume.
+// one. A node whose processes outlived KILL settles and stops the task, and
+// the pass goes on to clean the other stranded nodes, so survived is set
+// only when the task stopped and every stranded node settled. A task that
+// stopped on a node still staged or sent is never survived, and its instance
+// must stay open for the next resume.
 func (m *Manager) settleStrandedNodes(ctx context.Context, sessions *patchSessions, task *UpgradeTask, inst *InstanceUpgrade) (stopped, halted, survived bool) {
 	m.clearStrandPause(inst)
 
@@ -2050,12 +2050,28 @@ func (m *Manager) settleStrandedNode(ctx context.Context, sessions *patchSession
 		pause:  record.Killed == "survived",
 	}
 
-	if code, convErr := strconv.Atoi(record.Exit); convErr == nil {
+	code, convErr := strconv.Atoi(record.Exit)
+
+	switch {
+	case convErr == nil && record.Started == "yes" && !outcome.pause:
+		// The command's exit status, which cleanup or its done record
+		// holds, settles the node as classifyCancelled settles it.
+		outcome = commandOutcome{
+			status: CommandStatusFailed,
+			reason: "Blacksmith took this result from cleanup, because the command's own result was lost " + why + ". The command exited with status " + strconv.Itoa(code) + ".",
+			exit:   &code,
+			killed: record.Killed == "yes",
+		}
+
+		if code == 0 {
+			outcome.status = CommandStatusSucceeded
+		}
+	case convErr == nil:
 		outcome.exit = &code
 	}
 
 	stopped := run.settle(ctx, outcome)
-	if m.commandNodeFailed(inst, vm) {
+	if m.commandNodePhase(inst, vm) == CommandPhaseSettled {
 		m.clearStrandCause(task, inst, vm)
 	}
 

@@ -14,7 +14,7 @@ func TestRestartSettlesStagedAndSentNodesThroughCleanupOnly(t *testing.T) {
 		{0: CommandPhaseStaged, 1: CommandPhaseSent, 2: CommandPhaseSent},
 		{0: CommandPhaseSent, 1: CommandPhaseStaged, 2: CommandPhaseSent},
 	} {
-		fix := newTaskFixtureFrom(t, 1, 4, restartedWith(layout), withParallel(3))
+		fix := newTaskFixtureFrom(t, 1, 4, failedOnCleanup(restartedWith(layout), 0, 2), withParallel(3))
 		fix.cleanups["dep-0/1"] = "cleanup started=yes exit=0 killed=no"
 
 		done := fix.waitFor("the task to finish", func(task UpgradeTask) bool { return task.Status == TaskStatusFailed })

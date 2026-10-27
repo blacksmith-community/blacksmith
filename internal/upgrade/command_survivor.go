@@ -294,11 +294,13 @@ func commandCleansOnlyLocked(task *UpgradeTask) bool {
 // pauseAfterCleanup pauses a task that a Resume cleanup resumed, before it
 // would send the command to the instance, and reports whether it did. The
 // resume that goes on sends the command and is gated as any such resume
-// is.
+// is. An instance with no pending node has no command left to send, so it
+// ends, and the task pauses before the next instance instead.
 func (m *Manager) pauseAfterCleanup(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) bool {
 	m.mu.Lock()
 
-	if !task.CleanupOnly {
+	pending := slices.ContainsFunc(inst.Command.VMs, func(node CommandVM) bool { return node.Phase == CommandPhasePending })
+	if !task.CleanupOnly || !pending {
 		m.mu.Unlock()
 
 		return false

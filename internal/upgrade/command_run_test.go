@@ -2683,6 +2683,9 @@ func TestCommandWorkerPanicPausesTheTask(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fix := newTaskFixture(t, 1, 3, tc.options...)
+			if tc.settles {
+				fix.cleanups["dep-0/1"] = cleanupFailedExit
+			}
 
 			var fired atomic.Bool
 

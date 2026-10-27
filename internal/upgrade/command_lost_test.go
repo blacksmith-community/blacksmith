@@ -121,6 +121,7 @@ func TestCommandLostResultWithUnreachableCleanupKeepsTheHold(t *testing.T) {
 		t.Fatal("a lost exec with a cleanup that failed released the instance")
 	}
 
+	fix.setCleanup("dep-0/0", cleanupFailedExit)
 	down.Store(false)
 	fix.resume()
 
@@ -406,21 +407,35 @@ func (f *taskFixture) strandUnprovenNode() {
 
 // Resume cleanup settles a stranded sent node only on evidence that nothing
 // the command started still runs: an exit status, killed=yes, killed=no, or
-// started=no. A record that says cleanup could not check keeps the hold for
-// another Resume cleanup, and started=- keeps it with a message that
-// recreating the VM releases it, because no later cleanup can find a record
-// that is gone.
+// started=no. A record with the command's exit status settles from it,
+// succeeded for 0 and failed with the status otherwise, and the reason says
+// cleanup gave the result. Any other record that settles fails the node as
+// one Blacksmith lost track of, including started=no, whose exit status is
+// the wrapper's and not the command's. A record that says cleanup could not check
+// keeps the hold for another Resume cleanup, and started=- keeps it with a
+// message that recreating the VM releases it, because no later cleanup can
+// find a record that is gone.
 func TestCommandResumeSettlesAStrandedNodeOnlyOnEvidence(t *testing.T) {
+	const lostTrack = "lost track"
+	const fromCleanup = "took this result from cleanup"
+
 	cases := []struct {
-		record   string
-		settles  bool
-		message  string
-		unproven string
+		record    string
+		settles   bool
+		status    string
+		reasonHas string
+		exit      *int
+		message   string
+		unproven  string
 	}{
-		{record: "cleanup started=yes exit=- killed=no", settles: true},
-		{record: "cleanup started=yes exit=- killed=yes", settles: true},
-		{record: "cleanup started=yes exit=4 killed=unknown", settles: true},
-		{record: "cleanup started=no exit=- killed=no", settles: true},
+		{record: "cleanup started=yes exit=- killed=no", settles: true, status: CommandStatusFailed, reasonHas: lostTrack},
+		{record: "cleanup started=yes exit=- killed=yes", settles: true, status: CommandStatusFailed, reasonHas: lostTrack},
+		{record: "cleanup started=no exit=- killed=no", settles: true, status: CommandStatusFailed, reasonHas: lostTrack},
+		{record: "cleanup started=no exit=125 killed=no", settles: true, status: CommandStatusFailed, reasonHas: lostTrack, exit: intPtr(125)},
+		{record: "cleanup started=yes exit=0 killed=no", settles: true, status: CommandStatusSucceeded, reasonHas: fromCleanup, exit: intPtr(0)},
+		{record: "cleanup started=yes exit=0 killed=yes", settles: true, status: CommandStatusSucceeded, reasonHas: fromCleanup, exit: intPtr(0)},
+		{record: "cleanup started=yes exit=4 killed=no", settles: true, status: CommandStatusFailed, reasonHas: "status 4", exit: intPtr(4)},
+		{record: "cleanup started=yes exit=4 killed=unknown", settles: true, status: CommandStatusFailed, reasonHas: "status 4", exit: intPtr(4)},
 		{record: "cleanup started=yes exit=- killed=unknown", message: strandUnproven, unproven: unprovenUnknown},
 		{record: "cleanup started=yes exit=- killed=maybe", message: strandUnproven, unproven: unprovenUnknown},
 		{record: "cleanup started=- exit=- killed=no", message: strandGone, unproven: unprovenGone},
@@ -438,8 +453,25 @@ func TestCommandResumeSettlesAStrandedNodeOnlyOnEvidence(t *testing.T) {
 
 			if tc.settles {
 				ended := fix.waitFor("the instance to end", func(task UpgradeTask) bool { return task.Instances[0].Status.settled() })
-				if node := nodeOf(ended, 0, 0); node.Phase != CommandPhaseSettled || node.Unproven != "" {
+
+				node := nodeOf(ended, 0, 0)
+				if node.Phase != CommandPhaseSettled || node.Unproven != "" {
 					t.Errorf("the node is %s unproven %q, want settled", node.Phase, node.Unproven)
+				}
+
+				if node.Status != tc.status || !strings.Contains(node.Reason, tc.reasonHas) {
+					t.Errorf("the node settled %s with reason %q, want %s with %q", node.Status, node.Reason, tc.status, tc.reasonHas)
+				}
+
+				if tc.reasonHas != lostTrack && strings.Contains(node.Reason, lostTrack) {
+					t.Errorf("the reason %q says Blacksmith lost track of a node with an exit status", node.Reason)
+				}
+
+				switch {
+				case tc.exit == nil && node.ExitCode != nil:
+					t.Errorf("exit %d taken as the command's", *node.ExitCode)
+				case tc.exit != nil && (node.ExitCode == nil || *node.ExitCode != *tc.exit):
+					t.Errorf("exit %v, want %d", node.ExitCode, *tc.exit)
 				}
 
 				fix.waitReleased()
@@ -561,6 +593,10 @@ func TestCommandRefusedSettleSaveSettlesFromTheReplayedRecord(t *testing.T) {
 	node := nodeOf(done, 0, 0)
 	if node.ExitCode == nil || *node.ExitCode != 0 || node.Unproven != "" || node.Survived {
 		t.Errorf("the node settled with exit %v, unproven %q, survived %v, want exit 0 from the replayed record", node.ExitCode, node.Unproven, node.Survived)
+	}
+
+	if node.Status != CommandStatusSucceeded || !strings.Contains(node.Reason, "took this result from cleanup") {
+		t.Errorf("the node settled %s with reason %q, want succeeded from cleanup's result", node.Status, node.Reason)
 	}
 
 	if stored := fix.vault.stored(t); stored.Phase != CommandPhaseSettled {

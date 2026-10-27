@@ -11,6 +11,9 @@ import (
 const (
 	cleanupSurvived = "cleanup started=yes exit=- killed=survived"
 	cleanupEnded    = "cleanup started=yes exit=137 killed=yes"
+	// cleanupFailedExit settles a stranded node as failed on its exit
+	// status.
+	cleanupFailedExit = "cleanup started=yes exit=3 killed=no"
 )
 
 // setCleanup changes what cleanup answers for a node.
