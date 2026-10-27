@@ -8233,10 +8233,11 @@
     const isRunning = task.status === 'running';
     const isPaused = task.status === 'paused';
     // A cancelled command task with a node still to clean waits for a
-    // resume that runs the cleanup alone. So does a paused one that holds
-    // a node no worker drives, which it can still cancel.
+    // resume that runs the cleanup alone, as does a completed or failed one
+    // an earlier build ended with a node held. So does a paused one that
+    // holds a node no worker drives, which it can still cancel.
     const cleansOnly = commandCleansOnly(task);
-    const awaitsCleanup = cleansOnly && task.status === 'cancelled';
+    const awaitsCleanup = cleansOnly && ['cancelled', 'completed', 'failed'].includes(task.status);
     const canControl = isRunning || isPaused || awaitsCleanup;
     // A paused certificate task is still finishing its current VM or deploy
     // while one of its instances runs. A command task is only still working
@@ -8416,15 +8417,18 @@
 
   // Whether a resume of the task is a Resume cleanup, which cleans the
   // nodes a command task still holds and sends no command, as the broker
-  // decides it: a cancelled task that waits for one, or a paused task with
-  // a staged, sent, or surviving node that no worker drives.
+  // decides it: a cancelled task that waits for one, a completed or failed
+  // task that waits with a staged, sent, or surviving node, or a paused task
+  // with such a node that no worker drives.
   const commandCleansOnly = (task) => {
     if (!task || task.kind !== 'command' || task.paused !== true) return false;
     if (task.status === 'cancelled') return true;
-    if (task.status !== 'paused') return false;
     const nodes = (task.instances || []).flatMap((instance) => (instance && instance.command && instance.command.vms) || []);
+    const held = nodes.some((node) => node && (node.phase === 'staged' || node.phase === 'sent' || node.survived === true));
+    if (task.status === 'completed' || task.status === 'failed') return held;
+    if (task.status !== 'paused') return false;
     if (nodes.some((node) => node && node.in_flight === true)) return false;
-    return nodes.some((node) => node && (node.phase === 'staged' || node.phase === 'sent' || node.survived === true));
+    return held;
   };
 
   // Sends pause, resume, or cancel for a task. A refusal comes back with an

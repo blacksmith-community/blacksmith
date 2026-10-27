@@ -1146,6 +1146,29 @@ t('a cancelled command task that waits for its cleanup offers Resume cleanup and
  }finally{w.close();}
 });
 
+t('a completed or failed command task that holds a survivor offers Resume cleanup alone and sends no key',async()=>{
+ for(const status of ['completed','failed']){
+  const held=`The task ${status}, but processes of the command survived KILL on node/0, so instance val-a stays held. Use Resume cleanup to check them again.`;
+  const detail=task({status,paused:true,failed_count:1,completed_count:0,instances:[inst('val-a',[node('node',0,{status:'failed',exit_code:undefined,survived:true})],{status:'failed',error:held})]});
+  const env=await setup({detail});const {w,d}=env;try{
+  await open(env);
+  expect(controlLabels(d)).toEqual(['Resume cleanup']);
+  expect(pageText(d).includes('(cleanup waits for a resume)')).toBe(true);
+  press(panel(d),'.resume-btn');await sleep(30);
+  expect(env.resumes.length).toBe(1);
+  expect(env.resumes[0].headers['X-Blacksmith-Command-Key']===undefined).toBe(true);
+  expect(panel(d).querySelector('.command-key-prompt')===null).toBe(true);
+  }finally{w.close();}
+ }
+});
+
+t('a completed command task that holds nothing offers no controls',async()=>{
+ const env=await setup({detail:task({status:'completed',paused:false})});const {w,d}=env;try{
+ await open(env);
+ expect(panel(d).querySelector('.job-control-buttons')===null).toBe(true);
+ }finally{w.close();}
+});
+
 t('a cancelled command task that waits for nothing offers no controls',async()=>{
  const env=await setup({detail:task({status:'cancelled',paused:false,instances:[inst('val-a',[node('node',0,{phase:'skipped'})],{status:'cancelled'})]})});const {w,d}=env;try{
  await open(env);
