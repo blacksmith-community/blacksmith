@@ -239,6 +239,29 @@ func TestCommandOutputRejectsBadSegments(t *testing.T) {
 	}
 }
 
+func TestCommandOutputAcceptsSegmentsAtTheBound(t *testing.T) {
+	t.Parallel()
+
+	m, vault := newOutputManager()
+
+	instance := strings.Repeat("a", 128)
+	group := strings.Repeat("g", 128)
+
+	path, err := m.storeCommandOutput(context.Background(), outputTaskID, instance,
+		CommandVMIdentity{Group: group, Index: 0}, ssh.Result{Stdout: []byte("x")})
+	if err != nil {
+		t.Fatalf("a 128-byte segment was refused: %v", err)
+	}
+
+	if want := "command-output/" + outputTaskID + "/" + instance + "/" + group + "-0"; path != want {
+		t.Errorf("path = %q, want %q", path, want)
+	}
+
+	if vault.savedCount() != 1 {
+		t.Errorf("saved %d entries, want one", vault.savedCount())
+	}
+}
+
 func TestCommandOutputConcurrentNodes(t *testing.T) {
 	t.Parallel()
 

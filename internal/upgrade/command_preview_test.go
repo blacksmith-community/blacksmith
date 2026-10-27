@@ -497,13 +497,12 @@ func TestMatchesCommand(t *testing.T) {
 	}
 
 	for name, got := range map[string]bool{
-		"digest":                  p.MatchesCommand("x", 5, "vcap", 600, true, 2),
-		"length":                  p.MatchesCommand("d", 6, "vcap", 600, true, 2),
-		"run as":                  p.MatchesCommand("d", 5, "root", 600, true, 2),
-		"timeout":                 p.MatchesCommand("d", 5, "vcap", 601, true, 2),
-		"parallel":                p.MatchesCommand("d", 5, "vcap", 600, false, 2),
-		"max":                     p.MatchesCommand("d", 5, "vcap", 600, true, 3),
-		"serial against parallel": p.MatchesCommand("d", 5, "vcap", 600, false, 2),
+		"digest":   p.MatchesCommand("x", 5, "vcap", 600, true, 2),
+		"length":   p.MatchesCommand("d", 6, "vcap", 600, true, 2),
+		"run as":   p.MatchesCommand("d", 5, "root", 600, true, 2),
+		"timeout":  p.MatchesCommand("d", 5, "vcap", 601, true, 2),
+		"parallel": p.MatchesCommand("d", 5, "vcap", 600, false, 2),
+		"max":      p.MatchesCommand("d", 5, "vcap", 600, true, 3),
 	} {
 		if got {
 			t.Errorf("a different %s must not match", name)
@@ -551,22 +550,22 @@ func TestPreviewCommandEmptyInputs(t *testing.T) {
 
 	env := newCmdEnv(t, nil)
 
-	for name, change := range map[string]func(*CommandPreviewRequest){
-		"empty command":      func(r *CommandPreviewRequest) { r.Command = "" },
-		"blank command":      func(r *CommandPreviewRequest) { r.Command = " \t\n" },
-		"only empty ID":      func(r *CommandPreviewRequest) { r.InstanceIDs = []string{""} },
-		"empty ID among IDs": func(r *CommandPreviewRequest) { r.InstanceIDs = []string{"i1", ""} },
-		"no IDs":             func(r *CommandPreviewRequest) { r.InstanceIDs = nil },
+	for _, tc := range []struct {
+		name   string
+		change func(*CommandPreviewRequest)
+		code   string
+	}{
+		{"empty command", func(r *CommandPreviewRequest) { r.Command = "" }, apierr.CodeInvalidRequest},
+		{"blank command", func(r *CommandPreviewRequest) { r.Command = " \t\n" }, apierr.CodeInvalidRequest},
+		{"only empty ID", func(r *CommandPreviewRequest) { r.InstanceIDs = []string{""} }, apierr.CodeNoSelections},
+		{"empty ID among IDs", func(r *CommandPreviewRequest) { r.InstanceIDs = []string{"i1", ""} }, apierr.CodeNoSelections},
+		{"no IDs", func(r *CommandPreviewRequest) { r.InstanceIDs = nil }, apierr.CodeNoSelections},
 	} {
 		req := cmdReq("i1")
-		change(&req)
+		tc.change(&req)
 
 		_, err := env.manager.PreviewCommand(context.Background(), req)
-		if name == "empty command" || name == "blank command" {
-			wantAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
-		} else {
-			wantAPIError(t, err, http.StatusBadRequest, apierr.CodeNoSelections)
-		}
+		wantAPIError(t, err, http.StatusBadRequest, tc.code)
 	}
 }
 
@@ -626,8 +625,7 @@ func TestSpendKinds(t *testing.T) {
 	_, err := store.Spend("pv-cert", PreviewKindCommand)
 	wantAPIError(t, err, http.StatusConflict, apierr.CodePreviewMismatch)
 
-	// The command spend of the certificate preview consumed nothing, and
-	// neither did the certificate spend of the command preview above.
+	// The command spend of the certificate preview consumed nothing.
 	spent, err := store.Spend("pv-cert", PreviewKindCertificate)
 	if err != nil || spent.Certificate == nil {
 		t.Fatalf("certificate spend: %v %+v", err, spent)
@@ -642,7 +640,6 @@ func TestSpendKinds(t *testing.T) {
 	_, err = store.Spend("pv-cmd", PreviewKindCertificate)
 	wantAPIError(t, err, http.StatusConflict, apierr.CodePreviewMismatch)
 
-	store.PutCommand(&CommandPreview{ID: "pv-cmd2"}, time.Minute)
 	now = now.Add(2 * time.Minute)
 
 	_, err = store.GetCommand("pv-cmd")

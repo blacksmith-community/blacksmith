@@ -580,7 +580,8 @@ func setBOSHDefaults(config *Config) error {
 	}
 
 	// The director's worker count bounds how many commands run at once, and
-	// that bound must be at least 1 and strictly below the count.
+	// max_in_flight must be at least 1 and strictly below it, so a count
+	// below 2 would leave no valid max_in_flight.
 	if config.BOSH.DirectorWorkers != 0 && config.BOSH.DirectorWorkers < 2 {
 		return fmt.Errorf("%w: it is %d, and it must be 2 or more, or 0 for the default of %d", ErrBOSHDirectorWorkersTooFew, config.BOSH.DirectorWorkers, defaultDirectorWorkers)
 	}

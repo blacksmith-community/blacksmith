@@ -131,11 +131,15 @@ func TestCopyTaskCommandDoesNotAlias(t *testing.T) {
 	vms[0].Reviewed.IPs[0] = "9.9.9.9"
 	vms[0].Matched.IPs[0] = "9.9.9.9"
 	vms[1].Reviewed.IPs[0] = "9.9.9.9"
-	copied.Instances[0].Command.VMs = append(vms[:1], vms[1:]...)
+	copied.Instances[0].Command.VMs = append(copied.Instances[0].Command.VMs, CommandVM{})
 	copied.Instances[0].Command.Deployment = "changed"
 	copied.Command.Command = "changed"
 
 	orig := original.Instances[0].Command
+
+	if len(orig.VMs) != 2 {
+		t.Fatalf("original gained a node: %d", len(orig.VMs))
+	}
 
 	if orig.Deployment != "dep-1" || orig.VMs[0].Phase != CommandPhasePending || *orig.VMs[0].ExitCode != 0 {
 		t.Fatalf("original changed: %+v", orig.VMs[0])
