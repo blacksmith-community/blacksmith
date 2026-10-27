@@ -1052,6 +1052,7 @@ func TestRunCommandNodeBoundsEachCallAndCleansUpAfterCancel(t *testing.T) {
 		<-execCtx.Done()
 	}
 	fix.execErr = fmt.Errorf("%w: context canceled", ssh.ErrRunnerClosed)
+	fix.cleanup = "cleanup started=yes exit=- killed=yes"
 
 	fix.run(ctx)
 
@@ -1085,12 +1086,14 @@ func TestRunCommandNodeBoundsEachCallAndCleansUpAfterCancel(t *testing.T) {
 	}
 }
 
-// An exec that never answers within its deadline is a timeout.
+// An exec that never answers within its deadline, and whose group cleanup
+// had to end, is a timeout.
 func TestRunCommandNodeTimesOutWhenExecOutlastsItsDeadline(t *testing.T) {
 	t.Parallel()
 
 	fix := newRunFixture(t)
 	fix.execErr = fmt.Errorf("%w: %w", ssh.ErrRunnerClosed, context.DeadlineExceeded)
+	fix.cleanup = "cleanup started=yes exit=- killed=yes"
 	fix.execTakes = runTimeoutSecs*time.Second + patchCleanupTimeout
 
 	fix.run(context.Background())
@@ -1101,13 +1104,14 @@ func TestRunCommandNodeTimesOutWhenExecOutlastsItsDeadline(t *testing.T) {
 	}
 }
 
-// A transport error before the exec result is a failure that keeps what
-// the node printed.
+// A transport error before the exec result, on a node whose group cleanup
+// had to end, is a failure that keeps what the node printed.
 func TestRunCommandNodeKeepsPartialOutputOnATransportError(t *testing.T) {
 	t.Parallel()
 
 	fix := newRunFixture(t)
 	fix.execErr = errors.New("connection lost")
+	fix.cleanup = "cleanup started=yes exit=- killed=yes"
 
 	fix.run(context.Background())
 

@@ -604,11 +604,13 @@ func (r *commandRun) execute(ctx context.Context) bool {
 	r.cancelled = wasCancelled(ctx) && !deadlineHit
 	record, survived, cleanErr := r.cleanup(ctx)
 
-	// Cleanup is how a cancelled node is known to have ended. When it
-	// can't tell, the command may still be running, so the node stays sent,
-	// the instance stays held, and a resume sends cleanup only. What the
-	// node wrote before the cancel is kept on the node meanwhile.
-	if r.cancelled && cleanErr != nil && !survived {
+	// With no exit status, whether exec ended with a cancel, a deadline, a
+	// stop, or a lost connection, cleanup is how the node is known to have
+	// ended. When it can't tell, the command may still be running, so the
+	// node stays sent, the instance stays held, the task waits for a
+	// resume, and the resume sends cleanup only. What the node wrote
+	// before exec ended is kept on the node meanwhile.
+	if execErr != nil && cleanErr != nil && !survived {
 		path, _ := r.storeOutput(ctx, result)
 
 		return r.settle(ctx, commandOutcome{strand: true, result: &result, path: path})
@@ -659,16 +661,47 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 	}
 
 	if execErr != nil {
-		if deadlineHit || errors.Is(execErr, context.DeadlineExceeded) {
-			return commandOutcome{status: CommandStatusTimedOut, reason: "The node did not finish within the timeout and the grace period.", err: execErr}
-		}
-
-		return commandOutcome{status: CommandStatusFailed, reason: "The connection to the node ended before the command's result was known.", err: execErr}
+		return r.classifyLost(execErr, deadlineHit, record, pastTimeout)
 	}
 
-	code := result.ExitCode
+	return r.classifyExit(result.ExitCode, record.Started == "yes", pastTimeout)
+}
+
+// classifyLost turns what cleanup found on a node whose exec ended without
+// an exit status, and not with the task's cancel, into an outcome. The
+// connection dropped, the deadline passed, or the broker is stopping, and
+// the record is the only witness, as it is for a cancel. A command that
+// had exited counts as the exit the record holds, and one cleanup had to
+// end failed, or timed out when the deadline passed.
+func (r *commandRun) classifyLost(execErr error, deadlineHit bool, record scripts.Cleanup, pastTimeout bool) commandOutcome {
+	if record.Started == "yes" && record.Killed != "yes" {
+		code, err := strconv.Atoi(record.Exit)
+		if err == nil {
+			return r.classifyExit(code, true, pastTimeout)
+		}
+	}
+
+	timedOut := deadlineHit || errors.Is(execErr, context.DeadlineExceeded)
+
+	switch {
+	case record.Killed == "yes" && timedOut:
+		return commandOutcome{status: CommandStatusTimedOut, reason: "The node did not finish within the timeout and the grace period, so cleanup ended the command's process group.", err: execErr}
+	case record.Killed == "yes":
+		return commandOutcome{status: CommandStatusFailed, reason: "The connection to the node ended before the command's result was known, so cleanup ended the command's process group.", err: execErr}
+	case record.Started == "no":
+		return commandOutcome{status: CommandStatusFailed, reason: "The connection to the node ended before the command started.", err: execErr}
+	case timedOut:
+		return commandOutcome{status: CommandStatusTimedOut, reason: "The node did not finish within the timeout and the grace period.", err: execErr}
+	}
+
+	return commandOutcome{status: CommandStatusFailed, reason: "The connection to the node ended before the command's result was known.", err: execErr}
+}
+
+// classifyExit turns the exit status of exec into an outcome, with the
+// started marker that separates a wrapper refusal from the command's own
+// exit.
+func (r *commandRun) classifyExit(code int, started, pastTimeout bool) commandOutcome {
 	exit := &code
-	started := record.Started == "yes"
 
 	switch {
 	case code == 0:
@@ -851,15 +884,27 @@ func recordOutput(node *CommandVM, outcome commandOutcome) {
 }
 
 // strand leaves the node in the phase it is in, because cleanup could not
-// remove what the node holds, and keeps the instance held. The task stays
-// cancelled and pauses, so a resume is what cleans the node. The output the
+// remove what the node holds, and keeps the instance held. A cancelled task
+// stays cancelled and pauses, and an unfinished one pauses with strandLost
+// on the instance, so a resume is what cleans the node. The output the
 // node wrote is recorded on it, so the resume does not lose it. It returns
 // true, because the task stopped.
 func (r *commandRun) strand(ctx context.Context, outcome commandOutcome) bool {
+	r.m.mu.Lock()
 	if outcome.result != nil {
-		r.m.mu.Lock()
 		recordOutput(&r.inst.Command.VMs[r.vm], outcome)
-		r.m.mu.Unlock()
+	}
+
+	if !taskEndedLocked(r.task) {
+		r.task.Status = TaskStatusPaused
+		r.task.Paused = true
+		r.inst.Error = strandLost
+		r.m.noteStrandCauseLocked(r.task, r.inst, r.vm, strandedByLostResult)
+	}
+	r.m.mu.Unlock()
+
+	if !r.m.taskCancelled(r.task) {
+		r.m.logger.Error("Command task %s paused, because exec on a node of instance %s ended without an exit status and cleanup could not reach the node", r.task.ID, r.inst.InstanceID)
 	}
 
 	r.m.holdAndSave(ctx, r.task, r.inst)
@@ -874,7 +919,7 @@ func (m *Manager) holdAndSave(ctx context.Context, task *UpgradeTask, inst *Inst
 
 	err := m.persistCertConfirmed(ctx, task)
 	if err != nil {
-		m.logger.Error("Command task %s is cancelled and holds instance %s, but the hold could not be confirmed in Vault", task.ID, inst.InstanceID)
+		m.logger.Error("Command task %s holds instance %s for a cleanup, but the hold could not be confirmed in Vault", task.ID, inst.InstanceID)
 
 		// The hold stands in memory. The text says that Vault may not
 		// have it, so the operator knows a restart can lose it.
@@ -1802,6 +1847,8 @@ func (m *Manager) settleStrandedNodes(ctx context.Context, sessions *patchSessio
 const (
 	strandUnreachable = "Blacksmith could not reach the node to clean up after an earlier run, so it is still waiting for a resume."
 	strandUnclean     = "The cleanup of a node an earlier run left behind did not report cleanly, so it is still waiting for a resume."
+	strandLost        = "The connection to a node ended before the command's result arrived, and cleanup could not reach the node, " +
+		"so the instance stays held and the task is paused. Once the node can be reached, use Resume cleanup to finish it."
 )
 
 // clearStrandPause takes back the message of a strand pause once a resume
@@ -1814,7 +1861,7 @@ func (m *Manager) clearStrandPause(inst *InstanceUpgrade) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if inst.Error != strandUnreachable && inst.Error != strandUnclean {
+	if inst.Error != strandUnreachable && inst.Error != strandUnclean && inst.Error != strandLost {
 		return
 	}
 
@@ -1884,6 +1931,9 @@ const (
 	strandedByCancel  = "when the task was cancelled"
 	strandedByRestart = "when Blacksmith restarted"
 	strandedByPanic   = "when a worker for the node hit an internal error"
+	// strandedByLostResult is a node whose exec ended without an exit
+	// status and whose cleanup could not reach it.
+	strandedByLostResult = "when the connection to it ended before the result arrived"
 )
 
 // strandKey names one node of a task for strandCauses.
