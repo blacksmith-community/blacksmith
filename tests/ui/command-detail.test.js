@@ -1184,3 +1184,28 @@ t('a keyless output read the broker answers lets holder reads ask for command ta
  expect(env.details.length>refused).toBe(true);
  }finally{w.close();}
 });
+
+t('a detail refusal other than the key gate never logs the key',async()=>{
+ const env=await setup({gated:true});const {w,d}=env;try{
+ await open(env);
+ typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>j(403,{success:false,error:'commands disabled',code:'commands_disabled'})]);
+ await open(env);
+ expect(env.logs.length>0).toBe(true);
+ expect(env.logs.some(hasKey)).toBe(false);
+ }finally{w.close();}
+});
+
+t('a poll whose detail read fails never logs the key',async()=>{
+ const env=await setup({gated:true});const {w,d}=env;try{
+ await open(env);
+ typeKey(panel(d));press(panel(d),'button.command-output-show');await sleep(40);
+ expect(panel(d).querySelector('pre.command-text')!==null).toBe(true);
+ w.__routes.unshift([new RegExp(DETAIL_URL+'$'),(u,o,j)=>j(500,{success:false,error:'broke',code:'internal_error'})]);
+ const before=env.logs.length;
+ await w.__T.fetchUpgradeTasks();await sleep(20);
+ expect(env.logs.length>before).toBe(true);
+ expect(env.logs.some(hasKey)).toBe(false);
+ }finally{w.close();}
+});

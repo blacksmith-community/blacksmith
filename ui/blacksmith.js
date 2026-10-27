@@ -3578,6 +3578,9 @@
   // It counts the times a held key was dropped. A read answers into the
   // page only if no key was dropped since it went out.
   let commandKeyGen = 0;
+  // It counts the keys the operator has entered, so a refusal clears the
+  // key it was sent with and never one entered since.
+  let commandKeySerial = 0;
   // Tasks the broker has asked a key for, so a read of one sends it.
   const commandTaskIds = new Set();
   // Whether the broker has refused a read of a command task for want of a
@@ -6883,6 +6886,15 @@
     return panel;
   };
 
+  // What a log line may say about a failed request: the status and code
+  // of a refusal, or the kind of error, and never a header, a body, or a
+  // message that might quote one.
+  const loggableError = (err) => ({
+    name: String((err && err.name) || 'Error'),
+    status: Number((err && err.status) || 0),
+    code: String((err && err.code) || '')
+  });
+
   // Reports a failed task action through the feedback panel.
   const reportTaskError = (summary, error) => {
     ensureTaskFeedback();
@@ -7090,17 +7102,20 @@
   };
 
   // Fetches one task's full record. It throws an Error with the API's status
-  // and code when the broker refuses.
+  // and code when the broker refuses. The error says whether a key went out
+  // and which one by its serial, and never carries the key itself.
   const loadUpgradeTask = async (taskId) => {
     const init = commandReadInit(taskId);
     // Only a key that went out in the headers counts as sent.
-    const sent = init ? commandOutputKey : '';
+    const sent = Boolean(init);
+    const serial = commandKeySerial;
     const gen = commandKeyGen;
     const response = await fetch(`/b/upgrade/tasks/${encodeURIComponent(taskId)}`, init);
     if (gen !== commandKeyGen) throw staleCommandRead();
     if (!response.ok) {
       const err = await readApiError(response);
       err.keySent = sent;
+      err.keySerial = serial;
       throw err;
     }
     const detail = await response.json();
@@ -7136,7 +7151,7 @@
     } catch (err) {
       if (err && err.stale) return false;
       if (denyCommandDetail(taskId, err)) return false;
-      console.error('Failed to fetch task details:', err);
+      console.error('Failed to fetch task details:', loggableError(err));
       if (options.throwOnError) throw err;
       reportTaskError('Could not load the task.', err);
       return false;
@@ -7272,7 +7287,7 @@
           redrawTaskDetail(task.id);
           focusDecisionTarget(key, 'error');
         } catch (refreshError) {
-          console.error('Failed to refresh the task after a decision:', refreshError);
+          console.error('Failed to refresh the task after a decision:', loggableError(refreshError));
         }
       }
       return false;
@@ -7798,6 +7813,7 @@
       input.value = '';
       if (!typed) { input.focus(); return; }
       commandOutputKey = typed;
+      commandKeySerial++;
       // The prompt waits for its request, so a second press sends nothing.
       input.disabled = true;
       submit.disabled = true;
@@ -7856,7 +7872,7 @@
     if (selectedTaskId !== taskId) return true;
     const refused = Boolean(err.keySent);
     commandKeyPrompt = { taskId, action: 'detail', refused };
-    if (refused && commandOutputKey === err.keySent) {
+    if (refused && commandOutputKey && err.keySerial === commandKeySerial) {
       commandKeyGen++;
       commandOutputKey = '';
       document.querySelectorAll('input.command-output-key').forEach((input) => { input.value = ''; });
@@ -8330,7 +8346,7 @@
       }
       throw refusal;
     } catch (err) {
-      console.error(`Failed to ${verb} task:`, err);
+      console.error(`Failed to ${verb} task:`, loggableError(err));
       reportTaskError(`Could not ${verb} the task.`, err);
       return false;
     }
@@ -8460,11 +8476,11 @@
       upgradePollFailed = false;
       upgradeTasksLastError = null;
       renderPollStatus();
-      refreshUpgradeHolders().catch((err) => console.error('Failed to read task holders:', err));
+      refreshUpgradeHolders().catch((err) => console.error('Failed to read task holders:', loggableError(err)));
       maybeRefreshRotateInventory();
       return true;
     } catch (err) {
-      console.error('Failed to fetch upgrade tasks:', err);
+      console.error('Failed to fetch upgrade tasks:', loggableError(err));
       upgradePollFailed = true;
       upgradeTasksLastError = err;
       renderPollStatus();
