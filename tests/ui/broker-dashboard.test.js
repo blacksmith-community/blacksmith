@@ -96,9 +96,9 @@ t('each entry is a button whose name says where it goes',()=>{
   expect(label('button[data-service="redis"][data-plan="large"]')).toBe('Show the 1 redis instance on plan large');
   expect(label('button[data-service="valkey"][data-plan="solo"]')).toBe('Show the 0 valkey instances on plan solo');
   for(const b of host.querySelectorAll('.entity-services button')){ expect(b.type).toBe('button'); expect(b.hasAttribute('data-services-filter')).toBe(true); }
-  // A type missing from the catalog cannot be chosen in the Services filter, so it is text.
-  expect(!!host.querySelector('.entity-services button[data-service="legacy"]')).toBe(false);
-  expect(rows(host)[0].textContent).toContain('legacy');
+  // A type missing from the catalog is a choice in the Services filter, so it links too.
+  expect(host.querySelector('button[data-service="legacy"]:not([data-plan])').getAttribute('aria-label')).toBe('Show the 1 legacy instance');
+  expect(host.querySelector('button[data-service="legacy"][data-plan="old"]').getAttribute('aria-label')).toBe('Show the 1 legacy instance on plan old');
   // The catalog type with a plan that has left the catalog can still be filtered.
   expect(!!host.querySelector('button[data-service="redis"][data-plan="gone"]')).toBe(true);
  }finally{w.close();}
@@ -211,5 +211,67 @@ t('a plan with no instances and a plan gone from the catalog both open an empty 
   await w.blacksmithViews.activate({screen:'services',service:'redis',plan:'gone'},{});
   expect(visible(d)).toEqual(['r5']);
   expect(d.getElementById('service-filter').value).toBe('redis');
+ }finally{w.close();}
+});
+
+const withRouter=async(env)=>{
+ const {w}=env;
+ w.eval(fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8'));
+ await sleep(60);
+ return w.blacksmithRouter;
+};
+const choose=(w,select,value)=>{ select.value=value; select.dispatchEvent(new w.Event('change',{bubbles:true})); };
+
+t('choosing a filter by hand updates the address without adding history entries',async()=>{
+ const env=await loaded(),{w,d}=env;try{
+  const router=await withRouter(env);
+  await router.navigate({screen:'services'});
+  const length=w.history.length;
+  choose(w,d.getElementById('service-filter'),'redis');await sleep(10);
+  expect(w.location.hash).toBe('#/instances?service=redis');
+  choose(w,d.getElementById('plan-filter'),'small');await sleep(10);
+  expect(w.location.hash).toBe('#/instances?service=redis&plan=small');
+  choose(w,d.getElementById('service-filter'),'');await sleep(10);
+  expect(w.location.hash).toBe('#/instances');
+  expect(w.history.length).toBe(length);
+ }finally{w.close();}
+});
+
+t('opening the page at a filtered address applies the filter',async()=>{
+ const env=await loaded(),{w,d}=env;try{
+  w.history.replaceState(null,'','#/instances?service=redis&plan=small');
+  await withRouter(env);
+  expect(d.getElementById('service-filter').value).toBe('redis');
+  expect(d.getElementById('plan-filter').value).toBe('small');
+  expect(visible(d)).toEqual(['r1','r2']);
+  expect(w.location.hash).toBe('#/instances?service=redis&plan=small');
+ }finally{w.close();}
+});
+
+t('opening the page at an address with an unknown service or plan falls back with the list unfiltered',async()=>{
+ for(const hash of ['#/instances?service=nope','#/instances?service=redis&plan=nope']){
+  const env=await loaded(),{w,d}=env;try{
+   w.history.replaceState(null,'',hash);
+   await withRouter(env);
+   expect(d.getElementById('service-filter').value).toBe('');
+   expect(d.getElementById('plan-filter').value).toBe('');
+   expect(w.location.hash).toBe('#/broker/summary');
+   expect(visible(d)).toEqual(['g1','r1','r2','r4','r5','v1']);
+  }finally{w.close();}
+ }
+});
+
+t('a type and plan missing from the catalog are marked in the filters and filter the list',async()=>{
+ const env=await loaded(),{w,d}=env;try{
+  const service=[...d.getElementById('service-filter').options].find(o=>o.value==='legacy');
+  expect(service.textContent).toBe('legacy (not in the catalog)');
+  expect([...d.getElementById('service-filter').options].find(o=>o.value==='redis').textContent).toBe('redis');
+  await w.blacksmithViews.activate({screen:'services',service:'legacy',plan:'old'},{});
+  const plan=[...d.getElementById('plan-filter').options].find(o=>o.value==='old');
+  expect(plan.textContent).toBe('old (not in the catalog)');
+  expect(visible(d)).toEqual(['g1']);
+  await w.blacksmithViews.activate({screen:'services',service:'redis'},{});
+  expect([...d.getElementById('plan-filter').options].find(o=>o.value==='gone').textContent).toBe('gone (not in the catalog)');
+  expect([...d.getElementById('plan-filter').options].find(o=>o.value==='small').textContent).toBe('small');
  }finally{w.close();}
 });

@@ -131,10 +131,13 @@
     if(!r){await apply({screen:'blacksmith',section:'details'},{replace:true});adapter.error?.(new Error('This destination is not available.'),null);return false;}
     return apply(r,{replace:true});
    },
-   record(route){
+   record(route,options={}){
     if(applying||!started)return;const clean=parse(format(route));
     if(!clean||current&&format(clean)===format(current))return;
-    remember();const old=win.history.state?.blacksmithRoute;current=clean;
+    const old=win.history.state?.blacksmithRoute;
+    // A replacing record rewrites the current entry, so refining a filter does not fill Back.
+    if(options.replace&&old?.session===session){current=clean;win.history.replaceState(metadata(old.id,old.previous),'',format(clean));currentEntryId=old.id;adapter.changed?.(clean,{history:false,record:true});return;}
+    remember();current=clean;
     const id=++entryId;win.history.pushState(metadata(id,old?.session===session?old.id:null),'',format(clean));currentEntryId=id;
     adapter.changed?.(clean,{history:false,record:true});
    },

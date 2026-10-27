@@ -2483,13 +2483,10 @@
     if (!types.length) return shell('<p class="no-data">The broker has no service plans or instances yet.</p>');
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     const note = (inCatalog) => inCatalog ? '' : ' <span class="entity-not-in-catalog">Not in the catalog</span>';
-    // A type outside the catalog is not a choice in the Services filter, so it stays text.
     const entry = (type, plan, text, count) => {
       const target = plan ? ` data-plan="${escapeAttribute(plan.name)}"` : '';
       const label = `Show the ${plural(count, type.name + ' instance')}${plan ? ` on plan ${plan.name}` : ''}`;
-      return type.inCatalog
-        ? `<button type="button" class="ghost entity-services-link" data-services-filter data-service="${escapeAttribute(type.name)}"${target} aria-label="${escapeAttribute(label)}">${escapeHtml(text)}</button>`
-        : escapeHtml(text);
+      return `<button type="button" class="ghost entity-services-link" data-services-filter data-service="${escapeAttribute(type.name)}"${target} aria-label="${escapeAttribute(label)}">${escapeHtml(text)}</button>`;
     };
     const counts = (item) => `<td data-count="instances">${plural(item.count, 'instance')}</td><td data-count="alerts">${item.alerts ? `${item.alerts} with VM alerts` : 'None'}</td>`;
     const body = types.map(type => `<tbody class="entity-service-group"><tr class="entity-type-row" data-service="${escapeAttribute(type.name)}"><th scope="row">${entry(type, null, type.name, type.count)}${note(type.inCatalog)}</th><td></td>${counts(type)}</tr>${type.plans.map(plan => {
@@ -2631,33 +2628,47 @@
   };
 
   // Service names are the filter values. Every catalog service and plan is a
-  // choice, and so is any plan an instance reports that the catalog lacks.
+  // choice, and so is any service or plan that instances use but the catalog
+  // lacks, which is listed as such.
+  const NOT_IN_CATALOG = ' (not in the catalog)';
   const buildServiceFilterIndex = (instances) => {
     const serviceIdToName = {};
     const plansPerService = {};
+    const missingServices = new Set();
+    const missingPlans = new Set();
     const plansFor = (name) => (plansPerService[name] = plansPerService[name] || new Set());
+    const catalogPlans = new Set();
     (window.plansData?.services || []).forEach(service => {
       if (!service || !service.id || !service.name) return;
       serviceIdToName[service.id] = service.name;
       const known = plansFor(service.name);
-      (service.plans || []).forEach(plan => { if (plan && plan.name) known.add(plan.name); });
+      (service.plans || []).forEach(plan => { if (plan && plan.name) { known.add(plan.name); catalogPlans.add(`${service.name}\u0000${plan.name}`); } });
     });
     Object.values(instances || {}).forEach(details => {
-      const serviceName = details && serviceIdToName[details.service_id];
-      if (serviceName && details.plan && details.plan.name) plansFor(serviceName).add(details.plan.name);
+      if (!details) return;
+      let serviceName = serviceIdToName[details.service_id];
+      if (!serviceName) {
+        if (details.deleted || !details.service_id) return;
+        serviceName = String(details.service_id);
+        missingServices.add(serviceName);
+      }
+      const planName = details.plan?.name || (serviceName === details.service_id ? details.plan_id : '');
+      if (!planName) return;
+      plansFor(serviceName).add(planName);
+      if (!catalogPlans.has(`${serviceName}\u0000${planName}`)) missingPlans.add(`${serviceName}\u0000${planName}`);
     });
-    return {serviceIdToName, plansPerService};
+    return {serviceIdToName, plansPerService, missingServices, missingPlans};
   };
 
   const renderServicesTemplate = (instances) => {
     const instancesList = isEmpty(instances) ? [] : Object.entries(instances);
 
     const hasCatalog = window.plansData && window.plansData.services && window.plansData.services.length > 0;
-    const {serviceIdToName, plansPerService} = buildServiceFilterIndex(instances);
+    const {serviceIdToName, plansPerService, missingServices} = buildServiceFilterIndex(instances);
     const services = new Set(Object.keys(plansPerService));
 
     const serviceOptions = Array.from(services).sort().map(s =>
-      `<option value="${escapeAttribute(String(s))}">${escapeAttribute(String(s))}</option>`
+      `<option value="${escapeAttribute(String(s))}">${escapeAttribute(String(s) + (missingServices.has(s) ? NOT_IN_CATALOG : ''))}</option>`
     ).join('');
 
     // Only show filter if we have catalog data and services
@@ -2738,7 +2749,7 @@
 
         // Use service name for display and data attribute
         // Only use mapped service names for filtering, show service_id for display if no mapping
-        const serviceName = serviceIdToName[details.service_id] || '';
+        const serviceName = serviceIdToName[details.service_id] || (details.deleted ? '' : String(details.service_id || ''));
         const displayServiceName = serviceName || details.service_id;
 
         return `
@@ -16245,6 +16256,7 @@
             if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
             if (hideDeletedFilter) hideDeletedFilter.checked = true;
             applyFilters();
+            window.blacksmithViews?.notify({replace: true});
           });
           applyFilters();
 
@@ -16548,7 +16560,7 @@
             return;
           }
 
-          const {plansPerService} = buildServiceFilterIndex(window.serviceInstances);
+          const {plansPerService, missingPlans} = buildServiceFilterIndex(window.serviceInstances);
 
           // Service filter change handler
           serviceFilter.addEventListener('change', (e) => {
@@ -16562,7 +16574,7 @@
               plans.forEach(plan => {
                 const option = document.createElement('option');
                 option.value = plan;
-                option.textContent = plan;
+                option.textContent = plan + (missingPlans.has(`${selectedService}\u0000${plan}`) ? NOT_IN_CATALOG : '');
                 planFilter.appendChild(option);
               });
               planFilter.disabled = false;
@@ -16572,11 +16584,13 @@
 
             // Apply filters
             applyFilters();
+            window.blacksmithViews?.notify({replace: true});
           });
 
           // Plan filter change handler
           planFilter.addEventListener('change', () => {
             applyFilters();
+            window.blacksmithViews?.notify({replace: true});
           });
 
           // Apply filters on initial load (to respect default checkbox state)
@@ -16892,9 +16906,9 @@
         if(route.section==='broker' && window.CFEndpointManager?.selectedEndpoint)route.endpoint=window.CFEndpointManager.selectedEndpoint;
         return route;
       };
-      let notifyQueued=false,routeFilterApplied=false;
+      let notifyQueued=false,notifyReplace=false,routeFilterApplied=false;
       const panelContexts=new Map();
-      window.blacksmithViews={read:readRoute,notify(){if(notifyQueued)return;notifyQueued=true;queueMicrotask(()=>{notifyQueued=false;window.blacksmithRouter?.record(readRoute());});},
+      window.blacksmithViews={read:readRoute,notify(options){notifyReplace=notifyReplace||!!options?.replace;if(notifyQueued)return;notifyQueued=true;queueMicrotask(()=>{notifyQueued=false;const replace=notifyReplace;notifyReplace=false;window.blacksmithRouter?.record(readRoute(),{replace});});},
         async activate(route,{signal,history:restoring}={}) {
           if(route.screen!=='upgrade'||route.view!=='activity')selectedTaskRevision++;
           if(batchFlow.submitting)throw new Error('Wait for the operation submission to finish before navigating.');
