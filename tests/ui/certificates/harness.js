@@ -41,6 +41,8 @@ function boot(opts={}){
   const show=(x)=>{ if(!x||typeof x!=='object') return String(x); if(typeof x.message==='string') return [x.name,x.message,x.stack,flat(x)].join(' '); return flat(x); };
   const logs=[]; const keep=(...a)=>logs.push(a.map(show).join(' '));
   w.console.log=keep; w.console.warn=keep; w.console.info=keep; w.console.debug=keep; w.console.error=(...a)=>{errors.push(a.map(show).join(' ')); keep(...a);};
+  w.console.trace=keep; w.console.dir=keep; w.console.table=keep; w.console.group=keep; w.console.groupCollapsed=keep;
+  w.console.assert=(ok,...a)=>{ if(!ok) keep(...a); };
   w.__routes=[];
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(typeof body==='string'?body:JSON.stringify(body))});
   w.fetch=(u,o={})=>{
