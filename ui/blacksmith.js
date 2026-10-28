@@ -2833,7 +2833,7 @@
   };
 
   const BATCH_PAGE_SIZE = 50;
-  const batchWorkspace = { page: 0, search: '', eligibility: '', expiring: 0, selectedOnly: false };
+  const batchWorkspace = { page: 0, search: '', eligibility: '', expiring: 0, expiringCustom: false, expiringFrom: '', expiringTo: '', selectedOnly: false };
 
   // The windows the Certificates tab's expiry table counts, in days.
   const EXPIRY_HORIZONS = [
@@ -2849,6 +2849,42 @@
   // Whether a certificate with this many days left expires within the
   // window. One that has already expired counts for every window.
   const expiresWithinDays = (daysLeft, days) => daysLeft !== null && daysLeft !== undefined && daysLeft <= days;
+
+  // The UTC day a custom range names, as the start of that day in epoch
+  // milliseconds, or null for an empty or malformed field. A native date
+  // input holds only the ISO form, so a stray value reads as empty.
+  const rangeDayStart = (value) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return null;
+    const t = Date.parse(`${value}T00:00:00Z`);
+    return Number.isNaN(t) ? null : t;
+  };
+
+  // Whether the instant falls inside the range. Both days are inclusive, so
+  // the To day runs to the end of that UTC day, and an empty end is open.
+  // A certificate with no readable date never falls inside a range.
+  const expiresInRange = (value, from, to) => {
+    const at = Date.parse(value);
+    if (Number.isNaN(at)) return false;
+    const lo = rangeDayStart(from);
+    const hi = rangeDayStart(to);
+    if (lo !== null && at < lo) return false;
+    if (hi !== null && at >= hi + 86400000) return false;
+    return true;
+  };
+
+  // Shows the From and To fields only while Custom range is chosen on the
+  // Rotate operation, as its row does for the other windows.
+  const syncExpiringRange = () => {
+    const row = document.getElementById('batch-expiring-range');
+    if (row) row.hidden = !(batchWorkspace.expiringCustom && upgradeOperation === 'rotate');
+  };
+
+  // Whether From is a later day than To. A range with an empty end is never reversed.
+  const rangeReversed = (from, to) => {
+    const lo = rangeDayStart(from);
+    const hi = rangeDayStart(to);
+    return lo !== null && hi !== null && lo > hi;
+  };
 
   // A single mounted draft: navigation changes visibility, never recreates inputs.
   const batchFlow = { installed: false, step: 0, furthest: 0, revision: 0, review: null, loading: false, frozenCount: null, submitting: false, jobName: '', drafts: {}, restoring: false };
@@ -3203,12 +3239,41 @@
       batchWorkspace.page = 0;
       refreshUpgradeInstanceList();
     });
+    const expiringFrom = document.getElementById('batch-expiring-from');
+    const expiringTo = document.getElementById('batch-expiring-to');
+    const expiringRangeError = document.getElementById('batch-expiring-range-error');
     document.getElementById('batch-expiring').addEventListener('change', (event) => {
       batchWorkspace.selectedOnly = false;
-      batchWorkspace.expiring = parseInt(event.target.value, 10) || 0;
+      batchWorkspace.expiringCustom = event.target.value === 'custom';
+      batchWorkspace.expiring = batchWorkspace.expiringCustom ? 0 : (parseInt(event.target.value, 10) || 0);
+      if (batchWorkspace.expiringCustom) {
+        batchWorkspace.expiringFrom = expiringFrom.value;
+        batchWorkspace.expiringTo = expiringTo.value;
+      } else {
+        batchWorkspace.expiringFrom = ''; batchWorkspace.expiringTo = '';
+        expiringFrom.value = ''; expiringTo.value = '';
+      }
+      expiringRangeError.textContent = '';
+      syncExpiringRange();
       batchWorkspace.page = 0;
       refreshUpgradeInstanceList();
     });
+    // A reversed range is reported beside the fields and not applied, so the
+    // list keeps the results of the last range that was.
+    const applyExpiringRange = () => {
+      if (rangeReversed(expiringFrom.value, expiringTo.value)) {
+        expiringRangeError.textContent = 'From is after To. Choose a From date on or before the To date.';
+        return;
+      }
+      expiringRangeError.textContent = '';
+      batchWorkspace.selectedOnly = false;
+      batchWorkspace.expiringFrom = expiringFrom.value;
+      batchWorkspace.expiringTo = expiringTo.value;
+      batchWorkspace.page = 0;
+      refreshUpgradeInstanceList();
+    };
+    expiringFrom.addEventListener('change', applyExpiringRange);
+    expiringTo.addEventListener('change', applyExpiringRange);
     panel.addEventListener('change', (event) => {
       if (['upgrade-service-filter', 'upgrade-plan-filter', 'upgrade-stemcell-floor', 'upgrade-release-floor'].includes(event.target.id)) {
         batchWorkspace.page = 0;
@@ -3222,7 +3287,8 @@
         batchWorkspace.search = ''; search.value = '';
         batchWorkspace.eligibility = ''; document.getElementById('batch-eligibility').value = '';
         batchWorkspace.expiring = 0; document.getElementById('batch-expiring').value = '';
-
+        batchWorkspace.expiringCustom = false; batchWorkspace.expiringFrom = ''; batchWorkspace.expiringTo = '';
+        syncExpiringRange();
       }
       refreshUpgradeInstanceList();
     });
@@ -3266,7 +3332,14 @@
       </div>
       <div class="filter-row" id="batch-expiring-row" hidden>
         <label for="batch-expiring">Certificates expiring</label>
-        <select id="batch-expiring"><option value="">Any</option>${EXPIRY_HORIZONS.map(h => `<option value="${h.days}">within ${h.label}</option>`).join('')}</select>
+        <select id="batch-expiring"><option value="">Any</option>${EXPIRY_HORIZONS.map(h => `<option value="${h.days}">within ${h.label}</option>`).join('')}<option value="custom">Custom range</option></select>
+      </div>
+      <div class="filter-row filter-row-range" id="batch-expiring-range" role="group" aria-label="Custom expiry range" hidden>
+        <label for="batch-expiring-from">From</label>
+        <input type="date" id="batch-expiring-from" aria-describedby="batch-expiring-range-error">
+        <label for="batch-expiring-to">To</label>
+        <input type="date" id="batch-expiring-to" aria-describedby="batch-expiring-range-error">
+        <span class="filter-range-error" id="batch-expiring-range-error" role="status"></span>
       </div>
       <div class="upgrade-actions">
         <button id="upgrade-select-all" class="btn-secondary">Select this page</button>
@@ -4022,6 +4095,9 @@
       if (upgradeOperation === 'converge' && !(row.entry && row.entry.divergent)) return false;
       if (!batchWorkspace.selectedOnly && upgradeOperation === 'rotate' && batchWorkspace.expiring > 0
         && !row.chips.some((cert) => expiresWithinDays(cert.daysLeft, batchWorkspace.expiring))) return false;
+      if (!batchWorkspace.selectedOnly && upgradeOperation === 'rotate' && batchWorkspace.expiringCustom
+        && (batchWorkspace.expiringFrom || batchWorkspace.expiringTo)
+        && !row.chips.some((cert) => expiresInRange(cert.expiry, batchWorkspace.expiringFrom, batchWorkspace.expiringTo))) return false;
       if (batchWorkspace.selectedOnly || !batchWorkspace.eligibility) return true;
       const eligible = !row.holder && (upgradeOperation === 'converge' || row.chips.length > 0);
       return (batchWorkspace.eligibility === 'eligible') === eligible;
@@ -5414,6 +5490,7 @@
     panel.dataset.operation = next;
     const expiringRow = document.getElementById('batch-expiring-row');
     if (expiringRow) expiringRow.hidden = next !== 'rotate';
+    syncExpiringRange();
     document.getElementById('batch-selection-review')?.replaceChildren();
     wrapUpgradePane(targets);
     wrapUpgradePane(footer);
@@ -5488,10 +5565,13 @@
     if (draft) Object.entries(draft.values).forEach(([id,value]) => {
       const field = document.getElementById(id); if (field && id !== 'upgrade-service-filter') field.value = value;
     });
-    Object.assign(batchWorkspace,draft?.workspace || {page:0,search:'',eligibility:'',expiring:0,selectedOnly:false});
+    Object.assign(batchWorkspace,draft?.workspace || {page:0,search:'',eligibility:'',expiring:0,expiringCustom:false,expiringFrom:'',expiringTo:'',selectedOnly:false});
     document.getElementById('batch-search').value = batchWorkspace.search;
     document.getElementById('batch-eligibility').value = batchWorkspace.eligibility;
-    document.getElementById('batch-expiring').value = batchWorkspace.expiring ? String(batchWorkspace.expiring) : '';
+    document.getElementById('batch-expiring').value = batchWorkspace.expiringCustom ? 'custom' : (batchWorkspace.expiring ? String(batchWorkspace.expiring) : '');
+    document.getElementById('batch-expiring-from').value = batchWorkspace.expiringFrom;
+    document.getElementById('batch-expiring-to').value = batchWorkspace.expiringTo;
+    syncExpiringRange();
     batchFlow.restoring = false;
     refreshUpgradeInstanceList();
     if (batchFlow.installed) { batchFlow.furthest = 1; setBatchStep(0,false); }
@@ -6331,11 +6411,12 @@
       }
       const plan = document.getElementById('upgrade-plan-filter');
       if (plan) plan.value = '';
-      Object.assign(batchWorkspace, { page: 0, search: '', eligibility: '', expiring: 0, selectedOnly: false });
-      ['batch-search', 'batch-eligibility', 'batch-expiring'].forEach((id) => {
+      Object.assign(batchWorkspace, { page: 0, search: '', eligibility: '', expiring: 0, expiringCustom: false, expiringFrom: '', expiringTo: '', selectedOnly: false });
+      ['batch-search', 'batch-eligibility', 'batch-expiring', 'batch-expiring-from', 'batch-expiring-to'].forEach((id) => {
         const field = document.getElementById(id);
         if (field) field.value = '';
       });
+      syncExpiringRange();
       // The list opens on the page that holds the first handed-over instance.
       const first = rotateVisibleRows().findIndex((row) => rotateSelection().has(row.id));
       if (first >= 0) batchWorkspace.page = Math.floor(first / BATCH_PAGE_SIZE);
@@ -24848,6 +24929,8 @@
       expires_after: '',
       expires_before: '',
       expires_within: 0,
+      range_from: '',
+      range_to: '',
       q: ''
     });
 
@@ -24864,6 +24947,7 @@
     const resetState = () => {
       const fresh = newFilterState();
       Object.keys(fresh).forEach((key) => { state[key] = fresh[key]; });
+      if (view) view.rangeOpen = false;
     };
 
     const toQuery = (filters, extra) => {
@@ -24884,6 +24968,16 @@
         const hi = new Date(base + f.expires_within * DAY_MS + 1).toISOString();
         if (!after || Date.parse(after) < Date.parse(lo)) after = lo;
         if (!before || Date.parse(before) > Date.parse(hi)) before = hi;
+      }
+      // A custom range names UTC days, both inclusive. The server treats
+      // expires_before as exclusive, so the To day ends at the next midnight.
+      if (f.range_from) {
+        const lo = rangeDayStart(f.range_from);
+        if (lo !== null && (!after || Date.parse(after) < lo)) after = new Date(lo).toISOString();
+      }
+      if (f.range_to) {
+        const hi = rangeDayStart(f.range_to);
+        if (hi !== null && (!before || Date.parse(before) > hi + DAY_MS)) before = new Date(hi + DAY_MS).toISOString();
       }
       if (after) params.set('expires_after', after);
       if (before) params.set('expires_before', before);
@@ -25106,6 +25200,16 @@
             <div class="cert-strip" id="cert-strip-expiry" role="group" aria-label="Expiry filters"></div>
           </div>
           <div id="cert-fleet-timeline" class="cert-timeline-wrap"></div>
+          <div class="cert-range-wrap">
+            <button type="button" class="cert-action-btn cert-range-toggle" id="cert-range-toggle" aria-expanded="false" aria-controls="cert-range">Custom range</button>
+            <div class="cert-range" id="cert-range" role="group" aria-label="Custom expiry range" hidden>
+              <label for="cert-range-from">From</label>
+              <input type="date" id="cert-range-from" aria-describedby="cert-range-error">
+              <label for="cert-range-to">To</label>
+              <input type="date" id="cert-range-to" aria-describedby="cert-range-error">
+              <span class="cert-range-error" id="cert-range-error" role="status"></span>
+            </div>
+          </div>
           <div class="cert-toolbar" id="cert-toolbar">
             <label class="cert-field cert-field-search">
               <span class="cert-field-label">Search</span>
@@ -25413,6 +25517,7 @@
           b.setAttribute('aria-label', `${plural(n, 'certificate')} ${n === 1 ? 'expires' : 'expire'} within ${h.label}. ${pressed ? `Showing ${them}; press to clear.` : `Show ${them}.`}`);
           b.addEventListener('click', () => {
             state.expires_within = pressed ? 0 : h.days;
+            if (!pressed) clearRange();
             changed();
           });
           td.appendChild(b);
@@ -25638,7 +25743,63 @@
       });
     };
 
+    // Custom range. Either end may be empty to leave that side open. A range
+    // that runs backwards is reported beside the fields and not applied, so
+    // the table keeps the results of the last range that was.
+    const clearRange = () => {
+      state.range_from = '';
+      state.range_to = '';
+      view.rangeOpen = false;
+    };
+
+    const buildRange = () => {
+      const { rangeToggle, rangeFrom, rangeTo, rangeError } = view.refs;
+      rangeToggle.addEventListener('click', () => {
+        if (view.rangeOpen) {
+          clearRange();
+        } else {
+          view.rangeOpen = true;
+          state.expires_within = 0;
+        }
+        view.rangeInvalid = false;
+        rangeError.textContent = '';
+        changed();
+      });
+      const apply = () => {
+        if (rangeDayStart(rangeFrom.value) !== null && rangeDayStart(rangeTo.value) !== null
+          && rangeDayStart(rangeFrom.value) > rangeDayStart(rangeTo.value)) {
+          view.rangeInvalid = true;
+          rangeError.textContent = 'From is after To. Choose a From date on or before the To date.';
+          return;
+        }
+        view.rangeInvalid = false;
+        rangeError.textContent = '';
+        state.range_from = rangeFrom.value;
+        state.range_to = rangeTo.value;
+        changed();
+      };
+      rangeFrom.addEventListener('change', apply);
+      rangeTo.addEventListener('change', apply);
+    };
+
+    const renderRange = () => {
+      const { rangeToggle, rangePanel, rangeFrom, rangeTo, rangeError } = view.refs;
+      const open = Boolean(view.rangeOpen);
+      rangeToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      rangePanel.hidden = !open;
+      if (!open) {
+        rangeFrom.value = '';
+        rangeTo.value = '';
+        rangeError.textContent = '';
+        view.rangeInvalid = false;
+      } else if (!view.rangeInvalid) {
+        if (rangeFrom.value !== state.range_from) rangeFrom.value = state.range_from;
+        if (rangeTo.value !== state.range_to) rangeTo.value = state.range_to;
+      }
+    };
+
     const renderToolbar = () => {
+      renderRange();
       collectFacets();
       fillSelect(view.refs.service, view.facets.service, state.service[0]);
       fillSelect(view.refs.plan, view.facets.plan, state.plan[0]);
@@ -25674,6 +25835,12 @@
         chips.push({
           text: `expires ${from} to ${to}`,
           remove: () => { state.expires_after = ''; state.expires_before = ''; }
+        });
+      }
+      if (state.range_from || state.range_to) {
+        chips.push({
+          text: `expires from ${state.range_from || 'any time'} to ${state.range_to || 'any time'}`,
+          remove: () => { clearRange(); }
         });
       }
       if (state.expires_within > 0) {
@@ -27435,6 +27602,11 @@
         stripExpiry: q('cert-strip-expiry'),
         nextExpiry: q('cert-next-expiry'),
         timeline: q('cert-fleet-timeline'),
+        rangeToggle: q('cert-range-toggle'),
+        rangePanel: q('cert-range'),
+        rangeFrom: q('cert-range-from'),
+        rangeTo: q('cert-range-to'),
+        rangeError: q('cert-range-error'),
         search: q('cert-search'),
         service: q('cert-filter-service'),
         plan: q('cert-filter-plan'),
@@ -27460,6 +27632,7 @@
 
       buildStrips();
       buildTimeline();
+      buildRange();
       buildGroupBy();
       buildMorePanel();
       buildHead();

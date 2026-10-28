@@ -25,7 +25,7 @@ t('the filter sits with the other filters and adds no heading or description',as
  expect(row.children.length).toBe(2);
  expect(f.value).toBe('');
  expect(f.options[0].textContent).toBe('Any');
- expect([...f.options].slice(1).map(o=>o.value)).toEqual(['7','14','30','60','90','180','365']);
+ expect([...f.options].slice(1).map(o=>o.value)).toEqual(['7','14','30','60','90','180','365','custom']);
  expect(row.hidden).toBe(false);
  }finally{w.close();}
 });

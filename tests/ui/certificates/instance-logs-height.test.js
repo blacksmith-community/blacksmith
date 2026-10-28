@@ -36,5 +36,5 @@ test('the VM tab row scrolls sideways and its tabs keep their width', () => {
 });
 
 test('the stylesheet reference carries the current cache-buster', () => {
-  expect(html).toContain('/blacksmith.css?v=20261026-command-discard-guard');
+  expect(html).toContain('/blacksmith.css?v=20261028-date-range');
 });

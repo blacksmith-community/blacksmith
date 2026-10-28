@@ -13990,3 +13990,50 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 #upgrade .command-output-key {
   margin-right: 8px;
 }
+
+/* Custom date ranges beside the fixed expiry windows */
+#upgrade .upgrade-filters .filter-row-range input[type="date"] {
+  flex: 1;
+  min-width: 0;
+}
+
+#upgrade .upgrade-filters .filter-row-range {
+  flex-wrap: wrap;
+}
+
+.filter-range-error,
+.cert-range-error {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-error, #b42318);
+}
+
+.filter-range-error:empty,
+.cert-range-error:empty {
+  display: none;
+}
+
+.cert-range-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cert-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cert-range[hidden] {
+  display: none;
+}
+
+.cert-range label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
