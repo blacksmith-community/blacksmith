@@ -177,7 +177,8 @@ func serveWiringConn(conn net.Conn, config *gossh.ServerConfig) {
 
 // The runner the production constructor gives a command task keeps what a
 // command prints out of the broker log, and the patch runner beside it,
-// which is the control, does not.
+// which is the control, does not. Each still writes its closing line to
+// the broker log, so a runner that logs nothing at all can't pass.
 func TestAPICommandRunnerKeepsOutputOutOfTheLog(t *testing.T) {
 	t.Parallel()
 
@@ -185,13 +186,15 @@ func TestAPICommandRunnerKeepsOutputOutOfTheLog(t *testing.T) {
 		name   string
 		runner func(*upgrade.Manager) func(context.Context, string, string, []int) (upgrade.PatchSession, error)
 		logged bool
+		line   string
 	}{
 		{name: "command runner", runner: func(m *upgrade.Manager) func(context.Context, string, string, []int) (upgrade.PatchSession, error) {
 			return m.Dependencies().CommandRunner
-		}},
+		}, line: fmt.Sprintf("ended with exit status 3, stdout %[1]d of %[1]d bytes, stderr %[2]d of %[2]d bytes",
+			len(wiringStdout), len(wiringStderr))},
 		{name: "patch runner", runner: func(m *upgrade.Manager) func(context.Context, string, string, []int) (upgrade.PatchSession, error) {
 			return m.Dependencies().PatchRunner
-		}, logged: true},
+		}, logged: true, line: "ended with exit status 3, truncated false, stdout "},
 	}
 
 	for _, tc := range cases {
@@ -236,6 +239,10 @@ func TestAPICommandRunnerKeepsOutputOutOfTheLog(t *testing.T) {
 
 			if held != tc.logged {
 				t.Errorf("log holds the output = %v, want %v (%d bytes of log)", held, tc.logged, len(logs))
+			}
+
+			if !strings.Contains(logs, tc.line) {
+				t.Errorf("no log line holds %q (%d bytes of log)", tc.line, len(logs))
 			}
 
 			if strings.Contains(logs, wiringStdin) {
