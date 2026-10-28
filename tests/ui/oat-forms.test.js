@@ -100,3 +100,24 @@ test('the assets changed by the Oat form work carry the oat-5 cache key',()=>{
  const html=read('index.html');
  ['blacksmith.css','forge-theme.css','blacksmith.js'].forEach((f)=>expect(html).toContain('/'+f+'?v=20261028-oat-5"'));
 });
+
+// tests/ui/asset-keys.json pins each keyed asset's key and content hash. An
+// asset whose content differs from its pin must take a new key in
+// index.html, and the pin is then updated with it. This needs no git, but
+// it cannot tell a pin refreshed without a key bump from a correct update.
+test('every keyed asset whose content changed has a new cache key',()=>{
+ const crypto=require('crypto');
+ const pins=JSON.parse(read('asset-keys.json'.replace(/^/,'../tests/ui/')));
+ const html=read('index.html');
+ const seen=new Set();
+ html.replace(/(?:href|src)="\/([^"?]+)\?v=([^"]+)"/g,(m,f,k)=>{
+  seen.add(f);
+  const pin=pins[f];
+  expect(pin ? 'pinned' : f+' is not pinned').toBe('pinned');
+  const sha=crypto.createHash('sha256').update(fs.readFileSync(path.join(UI,f))).digest('hex');
+  if(sha!==pin.sha256&&k===pin.key) expect(f+' changed but its key is still '+k).toBe(f+' changed with a new key');
+  expect(k+(sha===pin.sha256?'':' with changed content')).toBe(pin.key+(sha===pin.sha256?'':' with changed content'));
+  return m;
+ });
+ expect(Object.keys(pins).sort()).toEqual([...seen].sort());
+});

@@ -1,0 +1,50 @@
+{
+ "action-help.css": {
+  "key": "20261028-oat-3",
+  "sha256": "196bd032ff8ba11686e4a2234efe5f4e4778a65a65a940b37810ee13e9d1154f"
+ },
+ "action-help.js": {
+  "key": "20261026-context-help",
+  "sha256": "340c3ef4733b5aaf06fefe50f1dc7ab1edf5094cd2e28fe08f1c43203602dbe6"
+ },
+ "blacksmith.css": {
+  "key": "20261028-oat-5",
+  "sha256": "3b634c9ea52384ae94a5789e3c4da36fdde08b4da5f233a421236d81e292e052"
+ },
+ "blacksmith.js": {
+  "key": "20261028-oat-5",
+  "sha256": "0dd8aba20f3e8f46cc09f1eff0e17c3651445022c3327df2c7994dbf604625ec"
+ },
+ "console.css": {
+  "key": "20261024-rotate",
+  "sha256": "8bcda446b6a449233904a9ec1a052b51d698ec71a20f9f908b5770f37946c0d1"
+ },
+ "forge-theme.css": {
+  "key": "20261028-oat-5",
+  "sha256": "7bb8b3e214b7886bb5a387de0ddf89c4a0967aa1a5a5be25ffd84e4192a4f366"
+ },
+ "inspection-layout.css": {
+  "key": "20261025-navigation-history",
+  "sha256": "285baf1725dedc9b7f99796084c7d0391ee483da2e828f9d2726db613628716c"
+ },
+ "navigation.js": {
+  "key": "20261026-quicknav-scale",
+  "sha256": "807b646fafcacbb17506f3c72640ce23669cb01b0b53694e4dc11b90b6e6d86c"
+ },
+ "routes.css": {
+  "key": "20261028-oat-4",
+  "sha256": "9a966af690dcfcd844f2d4979a49f457f15c63af08cb87587f282e451bdf10e2"
+ },
+ "routes.js": {
+  "key": "20261028-oat-4",
+  "sha256": "54619f4709894e8b710c866c8a812eb8d8c70dd7d93aa3c9da3b80846e34ed99"
+ },
+ "view-guidance.css": {
+  "key": "20261027-batch-explain",
+  "sha256": "cda277a4be567d94721737fa26be9bcb4e48714ffa08442b9f78f73c70ed7a93"
+ },
+ "view-guidance.js": {
+  "key": "20261027-batch-explain",
+  "sha256": "66bfd232372f5fb34df0bfa89ba25c9c91c06364de01189c431d8e24c708d0f8"
+ }
+}
