@@ -20240,9 +20240,7 @@
     if (!modal) {
       // Create modal if it doesn't exist
       const modalHTML = `
-        <div id="cf-endpoint-modal" class="modal-overlay" style="display: none;" role="dialog" aria-labelledby="cf-endpoint-modal-title" aria-hidden="true">
-          <div class="modal">
-            <div class="modal-content">
+        <dialog id="cf-endpoint-modal" class="modal-dialog" aria-labelledby="cf-endpoint-modal-title">
               <div class="modal-header">
                 <h3 id="cf-endpoint-modal-title">${endpoint ? 'Edit' : 'Add'} CF Endpoint</h3>
                 <button class="modal-close" aria-label="Close modal">&times;</button>
@@ -20274,17 +20272,13 @@
               <button type="button" class="btn btn-secondary" id="discard-endpoint-draft">Discard draft</button>
               <button type="button" class="btn btn-primary" onclick="saveCFEndpoint()">${endpoint ? 'Update' : 'Add'} Endpoint</button>
             </div>
-            </div>
-          </div>
-        </div>
+        </dialog>
       `;
       document.body.insertAdjacentHTML('beforeend', modalHTML);
     }
 
     // Show the modal with proper overlay
     const newModal = document.getElementById('cf-endpoint-modal');
-    newModal.style.display = 'flex';
-    newModal.setAttribute('aria-hidden', 'false');
     const form = document.getElementById('cf-endpoint-form');
     const draftKey = endpoint ? `edit:${endpoint.name}` : 'add';
     form.dataset.draftKey = draftKey;
@@ -20309,7 +20303,7 @@
   // Hide CF endpoint form
   const hideCFEndpointForm = () => {
     const modal = document.getElementById('cf-endpoint-modal');
-    if (modal) { modal.setAttribute('aria-hidden', 'true'); ModalManager.closeModal(modal); }
+    if (modal) ModalManager.closeModal(modal);
   };
 
   // Save CF endpoint
@@ -20661,30 +20655,41 @@
         document.body.appendChild(modalElement);
       }
 
-      // A modal opened over the confirmation dialog has to sit above it.
-      const confirmDialog = document.getElementById('dialog-modal');
-      if (confirmDialog && confirmDialog.open) {
-        modalElement.style.zIndex = '10200';
+      const state = this.modalState.get(modalElement);
+      const native = this.isNative(modalElement);
+      state.native = native;
+      if (native) {
+        // A native modal joins the top layer, so it sits above whatever is open.
+        modalElement.showModal();
+      } else {
+        // A modal opened over the confirmation dialog has to sit above it.
+        const confirmDialog = document.getElementById('dialog-modal');
+        if (confirmDialog && confirmDialog.open) {
+          modalElement.style.zIndex = '10200';
+        }
       }
 
-      const state = this.modalState.get(modalElement);
       state.wasInert = modalElement.hasAttribute('inert');
       modalElement.removeAttribute('inert');
       state.restoreBackground = isolateDialog(modalElement);
-      const dialog = modalElement.matches('[role="dialog"]') ? modalElement : modalElement.querySelector('[role="dialog"]');
-      if (dialog) {
-        dialog.setAttribute('aria-modal', 'true');
-        dialog.tabIndex = -1;
+      if (!native) {
+        const dialog = modalElement.matches('[role="dialog"]') ? modalElement : modalElement.querySelector('[role="dialog"]');
+        if (dialog) {
+          dialog.setAttribute('aria-modal', 'true');
+          dialog.tabIndex = -1;
+        }
       }
 
       // Prevent body scroll
       document.body.style.overflow = 'hidden';
 
-      // Force reflow to ensure CSS transitions work
-      modalElement.offsetHeight;
+      if (!native) {
+        // Force reflow to ensure CSS transitions work
+        modalElement.offsetHeight;
 
-      // Show modal with animation
-      modalElement.classList.add('active');
+        // Show modal with animation
+        modalElement.classList.add('active');
+      }
 
       // Focus management
       this.trapFocus(modalElement);
@@ -20693,6 +20698,12 @@
       this.addModalListeners(modalElement);
 
       return true;
+    },
+
+    // A native dialog opens with showModal. The browser draws its backdrop,
+    // closes it on Escape, and keeps the page behind it out of reach.
+    isNative: function (modalElement) {
+      return modalElement.tagName === 'DIALOG' && typeof modalElement.showModal === 'function';
     },
 
     // Close a modal
@@ -20720,6 +20731,7 @@
 
       // Remove active class to trigger close animation
       modalElement.classList.remove('active');
+      if (state && state.native && modalElement.open) modalElement.close();
 
       // Remove modal from DOM after animation completes
       setTimeout(() => {
@@ -20769,6 +20781,19 @@
       // Close on overlay click
       modalElement.addEventListener('click', handlers.overlayClick);
 
+      if (state.native) {
+        // Escape reaches only the topmost surface. A close the dialog makes
+        // on its own, by Escape or a tap on the backdrop, ends the modal.
+        handlers.cancel = (event) => {
+          if (!window.blacksmithSurfaces.isTop(state.surface)) event.preventDefault();
+        };
+        handlers.closed = () => {
+          if (!modalElement.open) this.closeModal(modalElement);
+        };
+        modalElement.addEventListener('cancel', handlers.cancel);
+        modalElement.addEventListener('close', handlers.closed);
+      }
+
       // Close on close button click
       if (handlers.closeButton) {
         handlers.closeButton.addEventListener('click', handlers.closeClick);
@@ -20787,6 +20812,10 @@
       const state = this.modalState.get(modalElement);
       if (state && state.handlers) {
         modalElement.removeEventListener('click', state.handlers.overlayClick);
+        if (state.handlers.cancel) {
+          modalElement.removeEventListener('cancel', state.handlers.cancel);
+          modalElement.removeEventListener('close', state.handlers.closed);
+        }
         if (state.handlers.closeButton) {
           state.handlers.closeButton.removeEventListener('click', state.handlers.closeClick);
         }
@@ -20801,6 +20830,9 @@
     // Handle overlay click (close modal if clicked outside content)
     handleOverlayClick: function (event) {
       if (event.target.classList.contains('modal-overlay')) {
+        this.closeModal(event.target);
+      } else if (event.target.tagName === 'DIALOG' && this.modalState.get(event.target)?.native) {
+        // A click on a native modal's backdrop lands on the dialog itself.
         this.closeModal(event.target);
       }
     },
@@ -20818,6 +20850,8 @@
 
       switch (event.key) {
         case 'Escape':
+          // A native modal handles Escape through its own cancel event.
+          if (this.modalState.get(this.currentModal)?.native) break;
           event.preventDefault();
           this.closeModal(this.currentModal);
           break;

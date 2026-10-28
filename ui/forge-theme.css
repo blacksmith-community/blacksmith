@@ -635,7 +635,6 @@ body > footer p { margin: 0; }
 .broker-endpoint-header .connection-status { margin-left: auto; }
 .broker-endpoint-header .broker-endpoint-user { font-size: .875rem; color: var(--text-secondary); }
 .broker-details-container .broker-tabs-nav { margin-top: 0; }
-#cf-endpoint-modal .modal { display: flex; }
 
 /* Keep workspace navigation flush with the main tabs. */
 #upgrade.tab-panel { padding-top: 0; }
@@ -651,7 +650,6 @@ body > footer p { margin: 0; }
 #services .detail-content .table-controls-container { padding: 4px 0 8px; margin: 0; gap: 8px; }
 #services .detail-content .table-controls-container :is(input,select) { margin-top: 0; }
 
-#cf-endpoint-modal.active { transition: opacity .2s ease, visibility 0s; }
 
 /* Quick Navigation: only the results scroll; controls and hints stay visible. */
 #navigation-dialog { padding: 0; margin: 8dvh auto auto; width: min(860px, calc(100vw - 24px)); max-height: 84dvh; overflow: hidden; }

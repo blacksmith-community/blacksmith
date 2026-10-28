@@ -3998,6 +3998,19 @@ select[id*="connection-vhost"] {
   transform: scale(1);
 }
 
+/* A native modal dialog is its own box. Oat supplies the card and backdrop. */
+.modal-dialog {
+  width: 90vw;
+  max-width: 1200px;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.modal-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Modal header */
 .modal-header {
   display: flex;
