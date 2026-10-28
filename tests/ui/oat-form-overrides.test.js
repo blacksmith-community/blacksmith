@@ -117,3 +117,28 @@ test('the forge control fill sets background-color so the select chevron survive
  const hit=parse(read('forge-theme.css')).find((r)=>r.selectors.includes('select:where(:not([aria-invalid="true"]))'));
  expect(hit.body).toMatch(/background-color:\s*var\(--card\)/);
 });
+
+// Form controls take the theme's focus ring. The page-level 2px outlines
+// that used to repeat it for inputs and selects are gone, while buttons,
+// summaries, and links keep theirs.
+const OUTLINE_GONE={
+ 'blacksmith.css':[
+  '.dialog-modal-input:focus-visible','.dialog-modal-choice-option input:focus-visible',
+  '.cert-fleet input:focus-visible','.cert-fleet select:focus-visible',
+ ],
+ 'console.css':[
+  'input:focus-visible','select:focus-visible',
+  '#upgrade :is(button, input, select, summary):focus-visible',
+ ],
+};
+Object.entries(OUTLINE_GONE).forEach(([file,sels])=>{
+ test(file+' leaves form control focus to the theme ring',()=>{
+  const all=parse(read(file));
+  sels.forEach((sel)=>expect(all.filter((r)=>r.selectors.includes(sel)).length+' rule(s) for '+sel).toBe('0 rule(s) for '+sel));
+ });
+});
+test('the theme focus ring still covers inputs, selects, and textareas',()=>{
+ const hit=parse(read('forge-theme.css')).find((r)=>r.selectors.some((s)=>/^:is\(.*\binput\b.*\bselect\b.*\btextarea\b.*\):focus-visible$/.test(s)));
+ expect(hit).toBeTruthy();
+ expect(hit.body).toMatch(/outline:\s*3px/);
+});

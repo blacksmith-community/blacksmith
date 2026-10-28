@@ -11195,9 +11195,7 @@ span.config-type.resurrection {
   outline: none;
 }
 
-.dialog-modal-btn:focus-visible,
-.dialog-modal-input:focus-visible,
-.dialog-modal-choice-option input:focus-visible {
+.dialog-modal-btn:focus-visible {
   outline: 2px solid var(--border-active);
   outline-offset: 2px;
 }
@@ -11366,8 +11364,6 @@ span.config-type.resurrection {
 .cert-horizon-btn:focus-visible,
 .cert-chip:focus-visible,
 .cert-expand-btn:focus-visible,
-.cert-fleet input:focus-visible,
-.cert-fleet select:focus-visible,
 .cert-row:focus-visible {
   outline: 2px solid var(--border-active);
   outline-offset: 2px;
