@@ -20652,6 +20652,19 @@
       const active = document.activeElement;
       const inside = this.currentModal.contains(active);
 
+      // Code can select another tab while focus sits on the old one, which then
+      // leaves the tab order. The press continues from the selected tab of the
+      // same strip, so it neither restarts at the first control nor lands on
+      // the tab that was just selected.
+      const selectedTab = inside && active.getAttribute('role') === 'tab' && !focusableElements.includes(active)
+        ? active.closest('[role="tablist"]')?.querySelector('[role="tab"][aria-selected="true"]') : null;
+      if (selectedTab && focusableElements.includes(selectedTab)) {
+        const at = focusableElements.indexOf(selectedTab) + (event.shiftKey ? -1 : 1);
+        event.preventDefault();
+        focusableElements[(at + focusableElements.length) % focusableElements.length].focus();
+        return;
+      }
+
       if (!inside || !focusableElements.includes(active)) {
         event.preventDefault();
         (event.shiftKey ? lastElement : firstElement).focus();

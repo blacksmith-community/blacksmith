@@ -133,6 +133,38 @@ t('Shift+Tab from the first stop wraps to a tab that is in the tab order, and Ta
  expect(d.activeElement===close).toBe(true);
 });
 
+// The router can select another tab with code while focus sits on the old one. The old tab then leaves the tab order, and the next Tab
+// press has to continue from the tab that is now selected, not restart at the first control.
+t('Tab after the router switches tabs continues from the newly selected tab',async()=>{
+ const env=await start(); const {w,d,dialog}=env;
+ open(env);
+ const press=(shiftKey)=>d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',shiftKey,bubbles:true,cancelable:true}));
+ const tab=(name)=>dialog().querySelector('.cert-tab-btn[data-tab="'+name+'"]');
+ const pemCopy=dialog().querySelector('.cert-tab-pane[data-tab="pem"] button');
+ expect(pemCopy).not.toBeNull();
+ tab('details').focus();
+ dialog().querySelector('bs-tabs').select('pem');
+ expect(d.activeElement===tab('details')).toBe(true);
+ expect(tab('details').getAttribute('tabindex')).toBe('-1');
+ press(false);
+ expect(d.activeElement===pemCopy).toBe(true);
+ tab('details').focus();
+ press(true);
+ expect(d.activeElement===dialog().querySelector('.modal-close')).toBe(true);
+});
+
+t('Tab after the router switches to the last stop wraps to the first control',async()=>{
+ const env=await start(); const {w,d,dialog}=env;
+ open(env);
+ const press=(shiftKey)=>d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',shiftKey,bubbles:true,cancelable:true}));
+ dialog().querySelectorAll('.cert-copy-btn, .cert-tab-pane button').forEach(b=>b.remove());
+ const details=dialog().querySelector('.cert-tab-btn[data-tab="details"]');
+ details.focus();
+ dialog().querySelector('bs-tabs').select('text');
+ press(false);
+ expect(d.activeElement===dialog().querySelector('.modal-close')).toBe(true);
+});
+
 t('a confirmation opened over the inspector returns to it, still modal, and Escape closes only the confirmation',async()=>{
  const env=await start(); const {w,d,dialog,stubs,key}=env;
  open(env);
