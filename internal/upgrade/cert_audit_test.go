@@ -134,6 +134,10 @@ func TestAuditOnStartSettleAndDecisions(t *testing.T) {
 	eventuallyInstance(t, manager, InstanceStatusSuccess)
 	trail.waitFor(t, AuditInstanceSettled)
 
+	// The trail sees a record when its body is written, and its index entry
+	// is written after it, so the index is read once the writer is idle.
+	waitUntil(t, "the audit records", manager.auditIdle)
+
 	want := []string{AuditTaskStarted, AuditAdopted, AuditInstanceSettled}
 	if got := trail.events(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected the records %v, got %v", want, got)
