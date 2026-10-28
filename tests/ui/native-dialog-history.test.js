@@ -21,6 +21,7 @@ const start=async()=>{
   ['/b/tasks/42',(u,o,j)=>j(200,{task:{id:42,state:'done',description:'a task'}})],
   ['/b/configs/42',(u,o,j)=>j(200,{id:'42',name:'default',type:'cloud',team:'t',created_at:'2026-10-24T10:00:00Z',content:'azs: []',metadata:{}})],
   ['/b/configs/cloud/default/versions',(u,o,j)=>j(200,{configs:[{id:'42*',name:'default',type:'cloud'}],count:1})],
+  ['/b/certificates/items/c1',(u,o,j)=>j(200,{id:'c1',name:'Broker certificate',findings:[],owners:[]})],
   ['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],
   ['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});envs.push(env);
  const {w,d}=env;
@@ -101,6 +102,37 @@ kinds.forEach(({name,id,hash,open})=>{
   expect(d.querySelector('dialog[open]')).toBeNull();
   expect(snapshot()).toBe(before);
  });
+});
+
+// The certificate inspector is the fleet drawer, which the router opens and closes as an inspection too.
+t('Back closes the certificate inspector through the router, and Forward opens it again',async()=>{
+ const env=await start(); const {w,d,stubs,snapshot,traverse,events}=env;
+ const drawer=()=>d.getElementById('cert-fleet-drawer');
+ const shown=()=>!!drawer()&&!drawer().hidden&&drawer().classList.contains('cert-fleet-drawer--open');
+ const before=snapshot();
+ await w.blacksmithRouter.inspect({kind:'certificate',id:'c1'}); await sleep(100);
+ expect(shown()).toBe(true);
+ expect(w.location.hash).toContain('inspect=certificate&id=c1');
+ expect(w.blacksmithRouter.current.inspection).toBeTruthy();
+ expect(w.blacksmithSurfaces.size()).toBe(1);
+
+ await traverse('back'); await stubs.settle();
+ expect(events).toContain('popstate');
+ expect(w.location.hash).not.toContain('inspect=');
+ expect(shown()).toBe(false);
+ expect(w.blacksmithRouter.current.inspection).toBeUndefined();
+ expect(w.blacksmithSurfaces.size()).toBe(0);
+ expect(snapshot()).toBe(before);
+
+ await traverse('forward'); await stubs.settle();
+ expect(events).toContain('popstate');
+ expect(w.location.hash).toContain('inspect=certificate&id=c1');
+ expect(shown()).toBe(true);
+ expect(w.blacksmithSurfaces.size()).toBe(1);
+
+ await traverse('back'); await stubs.settle();
+ expect(shown()).toBe(false);
+ expect(snapshot()).toBe(before);
 });
 
 t('Back through the router closes the task details view but leaves the open terminal in place',async()=>{

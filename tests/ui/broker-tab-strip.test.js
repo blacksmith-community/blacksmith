@@ -96,3 +96,44 @@ t('broker strip is a bs-tabs element with the tab list and panels as its childre
  expect(panels.filter(x=>/display/.test(x.getAttribute('style')||''))).toEqual([]);
  expect(host.querySelector('.broker-tab-content')).toBeNull();
 });
+
+// Selecting a tab loads what that tab shows, once. loadTabContent is counted here, with an endpoint that is
+// connected, so a missing load and a doubled load both show up.
+const counting=async()=>{
+ const env=await start(); const {w}=env;
+ const M=w.CFEndpointManager;
+ const loads=[];
+ M.selectedEndpoint='lab'; M.connectionStates.lab={connected:true};
+ M.loadTabContent=(tab,endpoint)=>{ loads.push(tab+'@'+endpoint); };
+ return {...env,loads};
+};
+
+t('broker strip selecting a tab loads that tab for the selected endpoint',async()=>{
+ const {tabs,loads}=await counting();
+ tabs[1].click(); await sleep(5);
+ expect(loads).toEqual(['services@lab']);
+ tabs[0].click(); await sleep(5);
+ expect(loads).toEqual(['services@lab','marketplace@lab']);
+});
+
+t('broker strip shows a connection prompt in the selected tab when the endpoint is not connected',async()=>{
+ const {w,d,tabs,panels}=await start();
+ const M=w.CFEndpointManager;
+ M.selectedEndpoint='lab'; M.connectionStates.lab={connected:false};
+ tabs[1].click(); await sleep(5);
+ expect(panels[1].textContent).toContain('Connection Required');
+ expect(panels[1].textContent).toContain('services data');
+ expect(panels[0].textContent).not.toContain('Connection Required');
+});
+
+t('broker strip selecting the tab that is already shown does not reload it',async()=>{
+ const {w,tabs,loads}=await counting();
+ tabs[0].click(); await sleep(5);
+ expect(loads).toEqual([]);
+ tabs[1].click(); await sleep(5);
+ tabs[1].click(); await sleep(5);
+ expect(loads).toEqual(['services@lab']);
+ // A programmatic switch loads once too, even though it also selects the tab and so raises the tab event.
+ w.CFEndpointManager.switchToBrokerTab('marketplace'); await sleep(5);
+ expect(loads).toEqual(['services@lab','marketplace@lab']);
+});
