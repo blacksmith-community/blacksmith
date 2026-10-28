@@ -214,8 +214,8 @@ func TestPreviewCommandBlocksBusyInstance(t *testing.T) {
 	}
 
 	busy := preview.Instances[0].Blocked
-	if busy == nil || busy.Code != apierr.CodeInstanceBusy || !strings.Contains(busy.Message, mutation.ErrInstanceBusy.Error()) || !strings.Contains(busy.Message, `upgrade "nightly"`) {
-		t.Fatalf("expected a busy block built from ErrInstanceBusy, got %+v", busy)
+	if busy == nil || busy.Code != apierr.CodeInstanceBusy || !strings.Contains(busy.Message, `busy with upgrade "nightly"`) {
+		t.Fatalf("expected a busy block that names the holder, got %+v", busy)
 	}
 
 	if preview.Instances[1].Blocked != nil {
@@ -684,5 +684,87 @@ func TestSpendRaceHasOneWinner(t *testing.T) {
 
 	if wins.Load() != 1 {
 		t.Fatalf("exactly one spend must win, got %d", wins.Load())
+	}
+}
+
+func TestPreviewCommandRefusalMessagesSayWhatToDo(t *testing.T) {
+	t.Parallel()
+
+	env := newCmdEnv(t, nil)
+
+	tests := []struct {
+		name   string
+		change func(*CommandPreviewRequest)
+		want   string
+	}{
+		{"too long", func(r *CommandPreviewRequest) { r.Command = strings.Repeat("a", MaxCommandBytes+1) },
+			"The command is 65537 bytes, which is over the limit of 65536 bytes, so shorten it."},
+		{"unknown user", func(r *CommandPreviewRequest) { r.RunAs = "nobody" },
+			"A command runs as root or as vcap, so choose one of those."},
+		{"timeout too short", func(r *CommandPreviewRequest) { r.TimeoutSeconds = 9 },
+			"The timeout must be between 10 and 3600 seconds, so choose a value in that range."},
+		{"empty command", func(r *CommandPreviewRequest) { r.Command = "  " },
+			"The command is empty, so enter the command to run."},
+		{"too many nodes at once", func(r *CommandPreviewRequest) { r.Parallel = true; r.MaxInFlight = 4 },
+			"With 4 director workers, at most 3 nodes can run at once, because the SSH setup and cleanup for each node hold a director worker. Choose a number from 1 to 3."},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := cmdReq("i1")
+			test.change(&req)
+
+			_, err := env.manager.PreviewCommand(context.Background(), req)
+			wantMessage(t, err, test.want)
+		})
+	}
+}
+
+func TestPreviewCommandWithOneWorkerSaysToTurnParallelOff(t *testing.T) {
+	t.Parallel()
+
+	env := newCmdEnv(t, func(d *Deps) {
+		d.WorkerCount = func(context.Context) (int, bool) { return 1, true }
+		d.BOSH = func() config.BOSHConfig { return config.BOSHConfig{DirectorWorkers: 1} }
+	})
+
+	req := cmdReq("i1")
+	req.Parallel = true
+	req.MaxInFlight = 1
+
+	_, err := env.manager.PreviewCommand(context.Background(), req)
+	wantMessage(t, err, "Parallel runs need at least 2 director workers, and this director has 1, so turn parallel off.")
+}
+
+func TestPreviewCommandBlockedMessagesSayWhy(t *testing.T) {
+	t.Parallel()
+
+	env := newCmdEnv(t, nil)
+	env.manager.vault.(*cmdVault).records["i4"] = map[string]any{"service_id": "redis"}
+
+	release, err := env.manager.Guard().Acquire("i1", "redis-i1", mutation.Holder{
+		Kind: mutation.KindUpgrade, TaskID: "upgrade-9", Description: `upgrade "nightly"`,
+	})
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	t.Cleanup(release)
+
+	preview, err := env.manager.PreviewCommand(context.Background(), cmdReq("i1", "i4"))
+	if err != nil {
+		t.Fatalf("PreviewCommand: %v", err)
+	}
+
+	want := []string{
+		`This instance is busy with upgrade "nightly", so it can't take part until that finishes.`,
+		"The instance record names no deployment, so Blacksmith can't find its VMs.",
+	}
+
+	for i, inst := range preview.Instances {
+		if inst.Blocked == nil || inst.Blocked.Message != want[i] {
+			t.Errorf("instance %s is blocked with %+v, want %q", inst.InstanceID, inst.Blocked, want[i])
+		}
 	}
 }

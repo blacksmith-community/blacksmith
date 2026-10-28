@@ -281,3 +281,38 @@ func TestZeroValueAuthorizerFailsClosed(t *testing.T) {
 
 	wantAPIError(t, none.AuthorizeStored(ctx, CommandTaskSpec{RunAs: "vcap"}), 403, "commands_disabled")
 }
+
+// wantMessage fails unless err is an *apierr.Error with the message. The UI
+// shows these refusals word for word, so each one says why the request
+// failed and what the operator can do about it.
+func wantMessage(t *testing.T, err error, want string) {
+	t.Helper()
+
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error is %T, want an *apierr.Error saying %q", err, want)
+	}
+
+	if apiErr.Message != want {
+		t.Errorf("message is %q, want %q", apiErr.Message, want)
+	}
+}
+
+func TestCommandAuthorizerMessagesSayWhatToDo(t *testing.T) {
+	t.Parallel()
+
+	authorize := func(cfg config.CommandsConfig, runAs string, header *string) error {
+		authz := NewConfigAuthorizer(func() config.CommandsConfig { return cfg })
+
+		return authz.AuthorizeRequest(context.Background(), authzRequest(header), runAs)
+	}
+
+	wantMessage(t, authorize(commandsConfig(nil, boolPtr(false), ""), "root", nil),
+		"Running commands as root is switched off on this broker, so choose vcap. An administrator can turn it on with commands.allow_root in the broker configuration.")
+	wantMessage(t, authorize(commandsConfig(boolPtr(false), nil, ""), "vcap", nil),
+		"Running commands is switched off on this broker. An administrator turns it on with commands.enabled in the broker configuration.")
+	wantMessage(t, authorize(commandsConfig(nil, nil, testCommandKey), "vcap", strPtr(testCommandWrong)),
+		"This broker needs a valid command key in the X-Blacksmith-Command-Key header before it previews or runs a command.")
+	wantMessage(t, authorize(commandsConfig(nil, boolPtr(true), ""), "admin", nil),
+		"A command runs as root or as vcap, so choose one of those.")
+}

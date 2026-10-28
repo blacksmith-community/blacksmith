@@ -122,7 +122,7 @@ func checkFeatureAndCredential(cfg config.CommandsConfig, r *http.Request) error
 
 	if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
 		return apierr.New(http.StatusUnauthorized, apierr.CodeCommandCredentialRequired,
-			"a valid command key is required in the "+CommandKeyHeader+" header")
+			"This broker needs a valid command key in the "+CommandKeyHeader+" header before it previews or runs a command.")
 	}
 
 	return nil
@@ -140,13 +140,14 @@ func checkRunAs(cfg config.CommandsConfig, runAs string) error {
 		}
 
 		return apierr.New(http.StatusForbidden, apierr.CodeRootDisabled,
-			"running commands as root is disabled")
+			"Running commands as root is switched off on this broker, so choose vcap. An administrator can turn it on with commands.allow_root in the broker configuration.")
 	default:
 		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidRunUser,
-			"commands run as root or vcap")
+			"A command runs as root or as vcap, so choose one of those.")
 	}
 }
 
 func errCommandsDisabled() error {
-	return apierr.New(http.StatusForbidden, apierr.CodeCommandsDisabled, "running commands is disabled")
+	return apierr.New(http.StatusForbidden, apierr.CodeCommandsDisabled,
+		"Running commands is switched off on this broker. An administrator turns it on with commands.enabled in the broker configuration.")
 }

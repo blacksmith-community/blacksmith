@@ -18,7 +18,6 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/config"
-	"blacksmith/internal/mutation"
 )
 
 const (
@@ -154,27 +153,38 @@ func (m *Manager) commandWorkerCount(ctx context.Context) int {
 	return cfg.DirectorWorkerCount()
 }
 
+// maxInFlightRefusal says why the number of nodes to run at once was
+// refused, and names the range the director allows, or says to turn
+// parallel runs off when it allows none.
+func maxInFlightRefusal(workers, limit int, available bool) string {
+	if !available {
+		return fmt.Sprintf("Parallel runs need at least %d director workers, and this director has %d, so turn parallel off.", minParallelWorkers, workers)
+	}
+
+	return fmt.Sprintf("With %d director workers, at most %d nodes can run at once, because the SSH setup and cleanup for each node hold a director worker. Choose a number from 1 to %d.", workers, limit, limit)
+}
+
 // validateCommandSettings checks the request and returns the timeout to
 // use. It never puts the command text in an error.
 func validateCommandSettings(req CommandPreviewRequest) (int, error) {
 	if len(req.Command) > MaxCommandBytes {
 		return 0, apierr.New(http.StatusBadRequest, apierr.CodeCommandTooLong,
-			fmt.Sprintf("the command is %d bytes, and the limit is %d", len(req.Command), MaxCommandBytes))
+			fmt.Sprintf("The command is %d bytes, which is over the limit of %d bytes, so shorten it.", len(req.Command), MaxCommandBytes))
 	}
 
 	if req.RunAs != runAsRoot && req.RunAs != runAsVcap {
-		return 0, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRunUser, "commands run as root or vcap")
+		return 0, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRunUser, "A command runs as root or as vcap, so choose one of those.")
 	}
 
 	timeout := effectiveTimeout(req.TimeoutSeconds)
 
 	if timeout < CommandTimeoutMin || timeout > CommandTimeoutMax {
 		return 0, apierr.New(http.StatusBadRequest, apierr.CodeTimeoutOutOfRange,
-			fmt.Sprintf("the timeout is between %d and %d seconds", CommandTimeoutMin, CommandTimeoutMax))
+			fmt.Sprintf("The timeout must be between %d and %d seconds, so choose a value in that range.", CommandTimeoutMin, CommandTimeoutMax))
 	}
 
 	if strings.TrimSpace(req.Command) == "" {
-		return 0, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest, "the command is empty")
+		return 0, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest, "The command is empty, so enter the command to run.")
 	}
 
 	if len(req.InstanceIDs) == 0 {
@@ -216,8 +226,7 @@ func (m *Manager) PreviewCommand(ctx context.Context, req CommandPreviewRequest)
 
 	if req.Parallel {
 		if !available || req.MaxInFlight < 1 || req.MaxInFlight > limit {
-			return nil, apierr.New(http.StatusBadRequest, apierr.CodeMaxInFlightTooHigh,
-				fmt.Sprintf("max_in_flight must be between 1 and %d with %d director workers", limit, workers))
+			return nil, apierr.New(http.StatusBadRequest, apierr.CodeMaxInFlightTooHigh, maxInFlightRefusal(workers, limit, available))
 		}
 
 		maxInFlight = req.MaxInFlight
@@ -305,14 +314,14 @@ func (m *Manager) previewCommandInstance(ctx context.Context, instanceID string)
 	}
 
 	if inst.Deployment == "" {
-		inst.Blocked = &Blocked{Code: apierr.CodeInstanceNotFound, Message: "The instance record names no deployment."}
+		inst.Blocked = &Blocked{Code: apierr.CodeInstanceNotFound, Message: "The instance record names no deployment, so Blacksmith can't find its VMs."}
 
 		return inst, nil
 	}
 
 	holder, busy := m.busyHolder(certinventory.InstanceRef{ID: instanceID, Deployment: inst.Deployment}, "")
 	if busy {
-		inst.Blocked = &Blocked{Code: apierr.CodeInstanceBusy, Message: mutation.ErrInstanceBusy.Error() + ", held by " + holder.Description}
+		inst.Blocked = &Blocked{Code: apierr.CodeInstanceBusy, Message: "This instance is busy with " + holder.Description + ", so it can't take part until that finishes."}
 
 		return inst, nil
 	}
