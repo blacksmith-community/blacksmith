@@ -57,8 +57,11 @@ var ErrUnknownScript = errors.New("scripts: no embedded script")
 // not follow the key=value contract.
 var ErrMalformedOutput = errors.New("scripts: malformed script output")
 
-// Library returns the bytes of the base library lib.sh.
-func Library() []byte {
+// library holds lib.sh, read once when the package loads.
+var library = readLibrary()
+
+// readLibrary reads lib.sh from the embedded files.
+func readLibrary() []byte {
 	body, err := base.ReadFile(libName + ".sh")
 	if err != nil {
 		// The embed pattern matches lib.sh, so a build without it fails.
@@ -66,6 +69,13 @@ func Library() []byte {
 	}
 
 	return body
+}
+
+// Library returns the bytes of the base library lib.sh. Every call shares
+// one slice, so a caller must not change it. Its capacity ends at its
+// length, so an append copies it rather than writing past it.
+func Library() []byte {
+	return library[:len(library):len(library)]
 }
 
 // Script returns the text sent on stdin to run the named script, which is

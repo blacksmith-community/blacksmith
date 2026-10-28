@@ -160,6 +160,16 @@ func TestLibraryIsTheEmbeddedLib(t *testing.T) {
 	}
 }
 
+// AllocsPerRun counts the allocations of every goroutine, so a parallel
+// test would add its own.
+//
+//nolint:paralleltest // see above
+func TestLibraryDoesNotAllocate(t *testing.T) {
+	if allocs := testing.AllocsPerRun(10, func() { _ = scripts.Library() }); allocs != 0 {
+		t.Errorf("Library() allocates %v times a call, want 0", allocs)
+	}
+}
+
 func TestScriptJoinsLibsThenBody(t *testing.T) {
 	t.Parallel()
 
