@@ -17,6 +17,7 @@ The first option installs jsdom without touching `package.json`, so we never com
 Every suite shares `tests/ui/certificates/harness.js`, which reads the page code through relative paths, and `tests/ui/certificates/support.js` finds jsdom and collects the named checks.
 A suite reports every failed check by name at the end, so one failing test can list several broken behaviors.
 Most suites also assert that no script error or `alert`, `confirm`, or `prompt` call happened, which keeps the rendering and dialog rules enforced.
+The repository's `bunfig.toml` preloads `tests/ui/uncaught-guard.js`, which fails any test whose harness window raised an uncaught error, so the three harnesses enforce this whether or not a suite reads its own `errors` list.
 
 For browser regression checks, start a static server from the repository:
 

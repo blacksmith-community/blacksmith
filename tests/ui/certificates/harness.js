@@ -12,6 +12,16 @@ const { install: installStubs } = require('../dom-stubs.js');
 
 const UI = path.resolve(__dirname, '..', '..', '..', 'ui');
 
+// Every harness window reports its uncaught errors here. tests/ui/uncaught-guard.js
+// is preloaded by bunfig.toml, and its afterEach fails any test whose window
+// raised one, so no suite has to opt in. The same text also lands in the env's
+// errors list, which suites that assert on console output keep reading.
+const watchUncaught=(w,errors)=>{
+  const seen=[];
+  (globalThis.__uiUncaught=globalThis.__uiUncaught||[]).push(seen);
+  w.addEventListener('error',(e)=>{ const m='UNCAUGHT '+(e.message||e.error); seen.push(m); errors.push(m); });
+};
+
 const main=(()=>{
 const SRC=path.join(UI,'blacksmith.js');
 const src=fs.readFileSync(SRC,'utf8');
@@ -43,7 +53,7 @@ function boot(opts={}){
   const show=(x)=>{ if(!x||typeof x!=='object') return String(x); if(typeof x.message==='string') return [x.name,x.message,x.stack,flat(x)].join(' '); return flat(x); };
   const logs=[]; const keep=(...a)=>logs.push(a.map(show).join(' '));
   w.console.log=keep; w.console.warn=keep; w.console.info=keep; w.console.debug=keep; w.console.error=(...a)=>{errors.push(a.map(show).join(' ')); keep(...a);};
-  w.addEventListener('error',(e)=>{ errors.push('UNCAUGHT '+(e.message||e.error)); });
+  watchUncaught(w,errors);
   w.console.trace=keep; w.console.dir=keep; w.console.table=keep; w.console.group=keep; w.console.groupCollapsed=keep;
   w.console.assert=(ok,...a)=>{ if(!ok) keep(...a); };
   w.__routes=(opts.routes||[]).slice();
@@ -90,6 +100,7 @@ function boot(opts={}){
   w.CSS=w.CSS||{escape:(x)=>String(x).replace(/[^\w-]/g,'\\$&')};
   w.HTMLElement.prototype.scrollIntoView=function(){};
   const errors=[]; const calls=[];
+  watchUncaught(w,errors);
   w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(String).join(' ')); w.console.warn=()=>{};
   w.__routes=[];
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(JSON.stringify(body))});
@@ -167,6 +178,7 @@ async function boot(opts={}){
   w.CSS={escape:(x)=>String(x).replace(/[^\w-]/g,'\\$&')};
   w.HTMLElement.prototype.scrollIntoView=function(){};
   const log=[]; const errors=[];
+  watchUncaught(w,errors);
   w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(String).join(' '));
   const server={settings:{warning_days:30,critical_days:7,scan_interval_minutes:60,scan_concurrency:4,instance_scan_timeout_seconds:60,probe_enabled:true,pause_on_failure:true,preview_ttl_minutes:15},
     certs:fixture(), mode:'normal', calls:log, scan:{id:'s1',state:'idle',completed_at:iso(now-3600e3),next_at:iso(now+3600e3),progress:{done:5,total:5},errors:[]}, itemFail:false, caps:{credhub:{state:'not_configured',reason:'no credhub block'},director:{version:'282.0.5',force_latest_variables:true},rotation:{enabled:false,reason:'CredHub not configured'},patch_in_place:{enabled:false,reason:'x'},probe:{enabled:true}},
