@@ -4326,7 +4326,17 @@ select[id*="connection-vhost"] {
   box-shadow: var(--shadow-secondary);
 }
 
-.cert-tab-content {
+.cert-tab-pane {
+  display: none;
+}
+
+.cert-tab-pane.active {
+  display: block;
+}
+
+/* The panels sit directly inside the tabs element, so they carry the
+   content box themselves. */
+bs-tabs > .cert-tab-pane {
   background: var(--bg-secondary);
   border: 1px solid var(--border-table);
   border-radius: 0 0 8px 8px;
@@ -4338,12 +4348,8 @@ select[id*="connection-vhost"] {
   max-height: calc(100vh - 400px);
 }
 
-.cert-tab-pane {
+bs-tabs > .cert-tab-pane[hidden] {
   display: none;
-}
-
-.cert-tab-pane.active {
-  display: block;
 }
 
 /* Certificate details table */
@@ -4992,7 +4998,7 @@ select[id*="connection-vhost"] {
   box-shadow: var(--shadow-secondary);
 }
 
-[data-theme="dark"] .cert-tab-content {
+[data-theme="dark"] bs-tabs > .cert-tab-pane {
   background: var(--bg-secondary);
   border-color: var(--border-table);
 }

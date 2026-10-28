@@ -69,6 +69,12 @@ strips.serviceCert={
  tabs:(root)=>[...root.querySelectorAll('#service-cert-tablist-i1 [role=tab]')],
  panes:(root)=>[...root.querySelectorAll('[role=tabpanel]')]
 };
+strips.inspector={
+ min:3,keyboard:true,
+ render:({w,d})=>{ w.inspectCertificate({subject:'CN=broker.example',issuer:'CN=Example CA',pemEncoded:'-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----',textDetails:'Certificate:\n  Data:'}); return d.querySelector('dialog[id^="cert-modal-"]'); },
+ tabs:(root)=>[...root.querySelectorAll('.cert-tab-btn')],
+ panes:(root)=>[...root.querySelectorAll('.cert-tab-pane')]
+};
 
 Object.entries(strips).forEach(([name,strip])=>{
  const setup=async()=>{
@@ -119,7 +125,7 @@ Object.entries(strips).forEach(([name,strip])=>{
 
 // A strip on bs-tabs keeps its tab list and panels as direct children, in
 // the same order, so Oat can pair them by index.
-['manifest','config','certMain','serviceCert'].forEach((name)=>{
+['manifest','config','certMain','serviceCert','inspector'].forEach((name)=>{
  t(`${name} strip is a bs-tabs element with the tab list and panels as its children`,async()=>{
   const env=strips[name].boot?await strips[name].boot():await start(); const root=await strips[name].render(env); await sleep(20);
   const host=root.querySelector('bs-tabs');

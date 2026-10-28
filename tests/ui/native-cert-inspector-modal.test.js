@@ -96,8 +96,8 @@ t('the tab buttons still switch the visible pane',async()=>{
  const env=await start(); const {dialog,stubs}=env;
  open(env);
  dialog().querySelector('.cert-tab-btn[data-tab="pem"]').click();
- expect(dialog().querySelector('.cert-tab-pane[data-tab="pem"]').style.display).toBe('');
- expect(dialog().querySelector('.cert-tab-pane[data-tab="details"]').style.display).toBe('none');
+ expect(dialog().querySelector('.cert-tab-pane[data-tab="pem"]').hidden).toBe(false);
+ expect(dialog().querySelector('.cert-tab-pane[data-tab="details"]').hidden).toBe(true);
  expect(dialog().querySelector('.cert-tab-btn[data-tab="pem"]').getAttribute('aria-selected')).toBe('true');
  expect(dialog().open).toBe(true);
  dialog().querySelector('.modal-close').click(); await stubs.settle();

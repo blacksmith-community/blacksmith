@@ -819,114 +819,6 @@
     announce
   };
 
-  // Makes a group of tab buttons a proper ARIA tab list. The buttons carry
-  // data-tab and data-group, and the panes carry the same pair. Left,
-  // Right, Home, and End move between tabs, the active tab is the only one
-  // in the tab order, and a click or a key press shows the matching pane.
-  //
-  // Options:
-  //   root          where to look for panes (default: the document)
-  //   paneSelector  the panes' selector (default: '.manifest-tab-pane')
-  //   tabSelector   the tab buttons' selector (default: 'button[data-tab]')
-  //   paneDisplay   the display value for the shown pane (default: 'block')
-  //   label         the tab list's accessible name
-  //   onSelect      called with the tab name after a tab is shown
-  const bindTabs = (tablist, options = {}) => {
-    if (!tablist || tablist.dataset.tabsBound === 'true') return null;
-
-    const tabs = Array.from(tablist.querySelectorAll(options.tabSelector || 'button[data-tab]'));
-    if (tabs.length === 0) return null;
-
-    const group = tabs[0].dataset.group || '';
-    const root = options.root || document;
-    const panes = Array.from(root.querySelectorAll(options.paneSelector || '.manifest-tab-pane'))
-      .filter((pane) => (pane.dataset.group || '') === group);
-    const paneDisplay = options.paneDisplay === undefined ? 'block' : options.paneDisplay;
-    const idPart = (value) => String(value).replace(/[^A-Za-z0-9_-]/g, '_');
-
-    tablist.dataset.tabsBound = 'true';
-    tablist.setAttribute('role', 'tablist');
-    if (options.label) tablist.setAttribute('aria-label', options.label);
-
-    tabs.forEach((tab) => {
-      const name = tab.dataset.tab;
-      const tabId = `${idPart(group)}-tab-${idPart(name)}`;
-      const paneId = `${idPart(group)}-panel-${idPart(name)}`;
-      const pane = panes.find((candidate) => candidate.dataset.tab === name);
-      tab.id = tab.id || tabId;
-      tab.setAttribute('role', 'tab');
-      if (pane) {
-        pane.id = pane.id || paneId;
-        pane.setAttribute('role', 'tabpanel');
-        pane.setAttribute('aria-labelledby', tab.id);
-        tab.setAttribute('aria-controls', pane.id);
-      }
-    });
-
-    const activate = (tab, moveFocus) => {
-      const name = tab.dataset.tab;
-      tabs.forEach((candidate) => {
-        const selected = candidate === tab;
-        candidate.classList.toggle('active', selected);
-        candidate.setAttribute('aria-selected', selected ? 'true' : 'false');
-        candidate.setAttribute('tabindex', selected ? '0' : '-1');
-      });
-      panes.forEach((pane) => {
-        const shown = pane.dataset.tab === name;
-        pane.classList.toggle('active', shown);
-        pane.style.display = shown ? paneDisplay : 'none';
-      });
-      if (moveFocus) tab.focus();
-      if (typeof options.onSelect === 'function') options.onSelect(name);
-      notifyRoute();
-    };
-
-    tablist.blacksmithSelect = (name) => {
-      const tab = tabs.find(candidate => candidate.dataset.tab === name);
-      if (!tab) return false;
-      activate(tab, false);
-      return true;
-    };
-
-    // Set the starting state without touching the panes' inline styles
-    // until a tab is chosen.
-    const initial = tabs.find((tab) => tab.classList.contains('active')) || tabs[0];
-    tabs.forEach((tab) => {
-      const selected = tab === initial;
-      tab.setAttribute('aria-selected', selected ? 'true' : 'false');
-      tab.setAttribute('tabindex', selected ? '0' : '-1');
-    });
-
-    tabs.forEach((tab, index) => {
-      tab.addEventListener('click', () => activate(tab, false));
-      tab.addEventListener('keydown', (event) => {
-        let target = null;
-        switch (event.key) {
-          case 'ArrowRight':
-            target = tabs[(index + 1) % tabs.length];
-            break;
-          case 'ArrowLeft':
-            target = tabs[(index - 1 + tabs.length) % tabs.length];
-            break;
-          case 'Home':
-            target = tabs[0];
-            break;
-          case 'End':
-            target = tabs[tabs.length - 1];
-            break;
-          default:
-            return;
-        }
-        event.preventDefault();
-        activate(target, true);
-      });
-    });
-
-    return { activate: (name) => { const tab = tabs.find((t) => t.dataset.tab === name); if (tab) activate(tab, false); } };
-  };
-
-  window.blacksmithTabs = { bind: bindTabs };
-
   // bs-tabs extends Oat's ot-tabs. Oat's tabs lack Home and End and give a
   // disabled tab no special treatment, so this adds both. Oat keeps the ids,
   // aria-selected, the roving tabindex, and the ot-tab-change event. The
@@ -21966,16 +21858,16 @@
               </button>
             </div>
             <div class="modal-body">
-              <div class="cert-tabs-nav">
-                <button class="cert-tab-btn active" data-tab="details" data-group="cert-tabs-${modalId}">Details</button>
-                <button class="cert-tab-btn" data-tab="pem" data-group="cert-tabs-${modalId}">PEM</button>
-                <button class="cert-tab-btn" data-tab="text" data-group="cert-tabs-${modalId}">Text</button>
-              </div>
-              <div class="cert-tab-content">
-                <div class="cert-tab-pane active" data-tab="details" data-group="cert-tabs-${modalId}"></div>
-                <div class="cert-tab-pane" data-tab="pem" data-group="cert-tabs-${modalId}" style="display: none;"></div>
-                <div class="cert-tab-pane" data-tab="text" data-group="cert-tabs-${modalId}" style="display: none;"></div>
-              </div>
+              <bs-tabs>
+                <div class="cert-tabs-nav" role="tablist" aria-label="Certificate views">
+                  <button type="button" role="tab" class="cert-tab-btn active" data-tab="details">Details</button>
+                  <button type="button" role="tab" class="cert-tab-btn" data-tab="pem">PEM</button>
+                  <button type="button" role="tab" class="cert-tab-btn" data-tab="text">Text</button>
+                </div>
+                <div role="tabpanel" class="cert-tab-pane active" data-tab="details"></div>
+                <div role="tabpanel" class="cert-tab-pane" data-tab="pem"></div>
+                <div role="tabpanel" class="cert-tab-pane" data-tab="text"></div>
+              </bs-tabs>
             </div>
         </dialog>
       `;
@@ -21993,21 +21885,7 @@
       fillPane('pem', this.renderCertificatePEM(certificateData));
       fillPane('text', this.renderCertificateText(certificateData));
 
-      // Add tab switching functionality
-      this.setupTabSwitching(modal, modalId);
-
       return modal;
-    },
-
-    // Setup tab switching within the modal
-    setupTabSwitching: function (modal, modalId) {
-      window.blacksmithTabs.bind(modal.querySelector('.cert-tabs-nav'), {
-        root: modal,
-        tabSelector: '.cert-tab-btn',
-        paneSelector: '.cert-tab-pane',
-        paneDisplay: '',
-        label: 'Certificate views'
-      });
     },
 
     // Render certificate details tab
