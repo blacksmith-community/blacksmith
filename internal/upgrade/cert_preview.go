@@ -145,6 +145,10 @@ type PreviewStore struct {
 	// entry lapses, so a spent preview that is revoked meanwhile is not put
 	// back by restoreCommand.
 	revoked map[string]time.Time
+	// bound holds the request each bound command preview was made for,
+	// until the preview expires. It outlives a spend, so a create that
+	// spent the preview and may put it back keeps it bound.
+	bound map[string]previewBinding
 
 	// onSpend, when a test sets it before the store is shared, runs at the
 	// start of every Spend, so the test can tell a peek from a spend that
@@ -158,7 +162,19 @@ func NewPreviewStore(now func() time.Time) *PreviewStore {
 		now = time.Now
 	}
 
-	return &PreviewStore{now: now, previews: make(map[string]storedPreview), revoked: make(map[string]time.Time)}
+	return &PreviewStore{
+		now:      now,
+		previews: make(map[string]storedPreview),
+		revoked:  make(map[string]time.Time),
+		bound:    make(map[string]previewBinding),
+	}
+}
+
+// previewBinding is the request a command preview is bound to and the
+// moment the binding lapses with the preview.
+type previewBinding struct {
+	requestID string
+	expires   time.Time
 }
 
 // Put stores the preview for ttl, sets its ExpiresAt, and drops every
@@ -193,8 +209,18 @@ func (s *PreviewStore) PutCommand(p *CommandPreview, ttl time.Duration) {
 		}
 	}
 
+	for id, binding := range s.bound {
+		if !now.Before(binding.expires) {
+			delete(s.bound, id)
+		}
+	}
+
 	p.ExpiresAt = now.Add(ttl).UTC()
 	s.previews[p.ID] = storedPreview{kind: PreviewKindCommand, command: p, expires: p.ExpiresAt}
+
+	if p.clientRequestID != "" {
+		s.bound[p.ID] = previewBinding{requestID: p.clientRequestID, expires: p.ExpiresAt}
+	}
 }
 
 // restoreCommand puts a spent command preview back with the expiry it had,
@@ -224,8 +250,9 @@ func (s *PreviewStore) restoreCommand(p *CommandPreview) {
 // Revoke deletes the command preview with the ID, and remembers the ID for a
 // while so a create that had spent the preview cannot put it back. An ID
 // that is absent or has expired is no error, and a certificate preview is
-// left alone.
-func (s *PreviewStore) Revoke(id string) {
+// left alone. A preview bound to a request other than requestID, stored or
+// spent, is left alone too, and Revoke then returns false.
+func (s *PreviewStore) Revoke(id, requestID string) bool {
 	now := s.now()
 
 	s.mu.Lock()
@@ -238,12 +265,19 @@ func (s *PreviewStore) Revoke(id string) {
 	}
 
 	if stored, ok := s.previews[id]; ok && stored.kind != PreviewKindCommand {
-		return
+		return true
+	}
+
+	if binding, ok := s.bound[id]; ok && now.Before(binding.expires) && binding.requestID != requestID {
+		return false
 	}
 
 	delete(s.previews, id)
+	delete(s.bound, id)
 
 	s.revoked[id] = now.Add(defaultPreviewTTL)
+
+	return true
 }
 
 // SpentPreview is what Spend returns, with the field of its kind set.

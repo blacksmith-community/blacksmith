@@ -52,6 +52,10 @@ type CommandPreviewRequest struct {
 	TimeoutSeconds int      `json:"timeout_seconds"`
 	Parallel       bool     `json:"parallel"`
 	MaxInFlight    int      `json:"max_in_flight"`
+	// ClientRequestID, when set, binds the preview to the create request
+	// that will spend it, so only a discard that names that request can
+	// revoke the preview.
+	ClientRequestID string `json:"client_request_id,omitempty"`
 }
 
 // CommandPreviewVM is one VM row of a command preview.
@@ -89,6 +93,10 @@ type CommandPreview struct {
 	Services          []string                 `json:"services"`
 	Warnings          []string                 `json:"warnings"`
 	Instances         []CommandPreviewInstance `json:"instances"`
+
+	// clientRequestID is the request the preview is bound to, or empty
+	// for a preview that any discard may revoke.
+	clientRequestID string
 }
 
 // MatchesCommand says whether the settings are the ones the preview
@@ -195,6 +203,10 @@ func validateCommandSettings(req CommandPreviewRequest) (int, error) {
 		return 0, apierr.New(http.StatusBadRequest, apierr.CodeNoSelections, "Every selection must name an instance.")
 	}
 
+	if len(req.ClientRequestID) > maxClientRequestIDBytes {
+		return 0, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest, "The client_request_id is too long.")
+	}
+
 	return timeout, nil
 }
 
@@ -234,6 +246,7 @@ func (m *Manager) PreviewCommand(ctx context.Context, req CommandPreviewRequest)
 
 	preview := &CommandPreview{
 		ID:                previewIDPrefix + uuid.NewString(),
+		clientRequestID:   req.ClientRequestID,
 		CommandDigest:     commandDigest(req.Command),
 		CommandLength:     len(req.Command),
 		RunAs:             req.RunAs,

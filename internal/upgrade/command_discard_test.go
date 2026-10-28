@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -223,7 +224,7 @@ func TestRevokeBlocksRestoreOfSpentPreview(t *testing.T) {
 		t.Fatalf("Spend: %v", err)
 	}
 
-	store.Revoke(preview.ID)
+	store.Revoke(preview.ID, cmdRequestID)
 	store.restoreCommand(spent.Command)
 
 	_, err = store.GetCommand(preview.ID)
@@ -239,8 +240,8 @@ func TestRevokeLeavesCertificatePreviewAlone(t *testing.T) {
 	cert := &Preview{ID: "pv-cert"}
 	store.Put(cert, time.Minute)
 
-	store.Revoke("pv-cert")
-	store.Revoke("pv-absent")
+	store.Revoke("pv-cert", cmdRequestID)
+	store.Revoke("pv-absent", cmdRequestID)
 
 	if _, err := store.Get("pv-cert"); err != nil {
 		t.Fatalf("Revoke removed a certificate preview: %v", err)
@@ -255,9 +256,9 @@ func TestRevokeTombstoneLapses(t *testing.T) {
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	store := NewPreviewStore(func() time.Time { return now })
 
-	store.Revoke("pv-1")
+	store.Revoke("pv-1", cmdRequestID)
 	now = now.Add(2 * defaultPreviewTTL)
-	store.Revoke("pv-2")
+	store.Revoke("pv-2", cmdRequestID)
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -331,4 +332,93 @@ func TestDiscardCommandRequestFindsTaskOfAnyKind(t *testing.T) {
 	env.manager.mu.Lock()
 	delete(env.manager.tasks, "cert-task")
 	env.manager.mu.Unlock()
+}
+
+// boundCmdReq is cmdReq for a preview bound to the request ID.
+func boundCmdReq(requestID string, ids ...string) CommandPreviewRequest {
+	req := cmdReq(ids...)
+	req.ClientRequestID = requestID
+
+	return req
+}
+
+// A discard of a preview bound to another request is refused with a 409
+// preview_mismatch, and the preview stays, so one operator's discard can't
+// remove the preview another is about to create from.
+func TestDiscardCommandRequestRefusesAPreviewOfAnotherRequest(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	preview := env.previewFor(t, boundCmdReq("other-request", "i1"))
+
+	result, err := env.manager.DiscardCommandRequest(context.Background(), discardReq(preview.ID))
+	expectAPIError(t, err, http.StatusConflict, apierr.CodePreviewMismatch)
+
+	if result.Discarded {
+		t.Error("the refused discard says it discarded the preview")
+	}
+
+	if _, err := env.manager.certDeps().Previews.GetCommand(preview.ID); err != nil {
+		t.Fatalf("the refused discard removed the preview: %v", err)
+	}
+}
+
+// A discard that names the request a preview is bound to revokes it, as an
+// unbound discard does.
+func TestDiscardCommandRequestRevokesItsOwnBoundPreview(t *testing.T) {
+	t.Parallel()
+
+	env := newCreateCmdEnv(t, nil)
+	preview := env.previewFor(t, boundCmdReq(cmdRequestID, "i1"))
+
+	result, err := env.manager.DiscardCommandRequest(context.Background(), discardReq(preview.ID))
+	if err != nil || !result.Discarded {
+		t.Fatalf("expected the bound preview to be discarded, got %+v: %v", result, err)
+	}
+
+	_, err = env.manager.certDeps().Previews.GetCommand(preview.ID)
+	expectAPIError(t, err, http.StatusGone, apierr.CodePreviewExpired)
+}
+
+// The binding outlives a spend, so a discard naming another request can't
+// revoke a preview a create has spent and may still put back.
+func TestRevokeOfASpentBoundPreviewNeedsItsRequest(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	store := NewPreviewStore(func() time.Time { return now })
+	preview := &CommandPreview{ID: "pv-bound", clientRequestID: cmdRequestID}
+	store.PutCommand(preview, time.Minute)
+
+	spent, err := store.Spend(preview.ID, PreviewKindCommand)
+	if err != nil {
+		t.Fatalf("spend: %v", err)
+	}
+
+	if store.Revoke(preview.ID, "other-request") {
+		t.Fatal("a discard of another request revoked the spent preview")
+	}
+
+	store.restoreCommand(spent.Command)
+
+	if _, err := store.GetCommand(preview.ID); err != nil {
+		t.Fatalf("the refused revoke kept the spent preview from coming back: %v", err)
+	}
+}
+
+// A preview request takes an optional client_request_id, bounded like the
+// create's.
+func TestPreviewCommandTakesABoundedClientRequestID(t *testing.T) {
+	t.Parallel()
+
+	var req CommandPreviewRequest
+
+	if err := json.Unmarshal([]byte(`{"client_request_id":"7c1d"}`), &req); err != nil || req.ClientRequestID != "7c1d" {
+		t.Fatalf("the preview request read client_request_id as %q: %v", req.ClientRequestID, err)
+	}
+
+	env := newCreateCmdEnv(t, nil)
+
+	_, err := env.manager.PreviewCommand(context.Background(), boundCmdReq(strings.Repeat("r", maxClientRequestIDBytes+1), "i1"))
+	expectAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
 }

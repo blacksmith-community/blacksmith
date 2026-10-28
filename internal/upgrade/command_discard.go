@@ -61,8 +61,11 @@ func (m *Manager) DiscardCommandRequest(_ context.Context, req CommandDiscardReq
 		return CommandDiscardResult{TaskID: taskID}, nil
 	}
 
-	if store := m.certDeps().Previews; store != nil {
-		store.Revoke(req.PreviewID)
+	if store := m.certDeps().Previews; store != nil && !store.Revoke(req.PreviewID, req.ClientRequestID) {
+		m.logger.Info("Discard of command request %s refused, because preview %s is bound to another request", req.ClientRequestID, req.PreviewID)
+
+		return CommandDiscardResult{}, apierr.New(http.StatusConflict, apierr.CodePreviewMismatch,
+			"This preview was made for another request, so it was not discarded.")
 	}
 
 	m.logger.Info("Discard of command request %s with preview %s revoked the preview", req.ClientRequestID, req.PreviewID)
