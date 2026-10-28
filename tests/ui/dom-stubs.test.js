@@ -171,6 +171,23 @@ t('dismiss false turns off Escape and outside click handling', () => {
   expect(stubs.isOpen(p)).toBe(true);
 });
 
+t('installing twice returns the first stubs and a later dismiss option replaces the earlier one', () => {
+  const { w, d, stubs, key } = make('<div id="p" popover></div>');
+  const again = install(w, { dismiss: false });
+  expect(again).toBe(stubs);
+  const p = d.getElementById('p');
+  p.showPopover();
+  key(d.body, 'Escape');
+  expect(stubs.isOpen(p)).toBe(true);
+  install(w, { dismiss: true });
+  key(d.body, 'Escape');
+  expect(stubs.isOpen(p)).toBe(false);
+  expect(install(w)).toBe(stubs);
+  p.showPopover();
+  key(d.body, 'Escape');
+  expect(stubs.isOpen(p)).toBe(false);
+});
+
 t('the popover property reflects the attribute', () => {
   const { d } = make('<div id="a" popover></div><div id="b" popover="manual"></div><div id="c"></div>');
   expect(d.getElementById('a').popover).toBe('auto');

@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('./support.js');
+const { install: installStubs } = require('../dom-stubs.js');
 
 const UI = path.resolve(__dirname, '..', '..', '..', 'ui');
 
@@ -24,6 +25,7 @@ const NAMES=['formatManifestDetails','selectManifestView','renderBlacksmithSetti
 function boot(opts={}){
   const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
+  const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
   w.navigator.clipboard={writeText:()=>Promise.resolve()};
@@ -62,7 +64,7 @@ function boot(opts={}){
   try{ w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); errors.push('LOAD ERROR '+e.message); }
   // guidance loads ui/view-guidance.js after blacksmith.js, in the page's order.
   if(opts.guidance) w.eval(fs.readFileSync(path.join(UI,'view-guidance.js'),'utf8'));
-  return {w,d:w.document,errors,logs,calls,alerts,json};
+  return {w,d:w.document,errors,logs,calls,alerts,json,stubs};
 }
 return {boot,sleep,EVIL,day,now,iso};
 })();
@@ -77,6 +79,7 @@ const day=86400000, now=Date.now(), iso=(ms)=>new Date(ms).toISOString();
 function boot(){
   const dom=new JSDOM('<!DOCTYPE html><html><body><button class="tab-button" data-tab="blacksmith"></button><div id="blacksmith" class="tab-panel"></div><div id="services"></div><button id="opener">o</button></body></html>',{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
+  const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
   w.navigator.clipboard={writeText:(t)=>{w.__copied.push(t);return Promise.resolve();}};
@@ -96,7 +99,7 @@ function boot(){
   const idx=src.lastIndexOf('})(document, window)');
   const hooked=src.slice(0,idx)+';window.__T={renderServiceCertificatesTab,renderCertificatesTab,initializeCertificatesTab,bindCertificateActions,CertOverview,CertView};\n'+src.slice(idx);
   try{ w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); }
-  return {w,d:w.document,errors,calls,json};
+  return {w,d:w.document,errors,calls,json,stubs};
 }
 // Same sequence the service detail loader runs for the certificates tab.
 async function openInstanceTab(w,d,id){
@@ -154,6 +157,7 @@ function summarize(c){
 async function boot(opts={}){
   const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
+  const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
   w.navigator.clipboard={writeText:()=>Promise.resolve()};
@@ -213,7 +217,7 @@ async function boot(opts={}){
   await new Promise(r=>w.addEventListener('load',r,{once:w.document.readyState!=='complete'})||setTimeout(r,0));
   try{ w.eval(src); }catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); }
   await sleep(50);
-  return {w,d:w.document,server,log,errors};
+  return {w,d:w.document,server,log,errors,stubs};
 }
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 return {boot,sleep,EVIL,day,now,iso};

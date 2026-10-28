@@ -2,6 +2,10 @@
 // dialogs rely on. Install them on a jsdom window before the page code runs:
 //
 //   const stubs = require('./dom-stubs.js').install(window);
+//
+// Installing twice on one window returns the first stubs, so a suite can
+// install them again after the shared harness has. A dismiss option passed
+// the second time replaces the first.
 //   stubs.isOpen(element)    true while a popover is showing
 //   stubs.isModal(dialog)    true while a dialog is open as a modal
 //   await stubs.settle()     waits for queued toggle and close events
@@ -33,7 +37,12 @@
 // Not stubbed: focus moves into a dialog, :popover-open and :modal in
 // selectors (use isOpen and isModal), the top layer, and Tab trapping.
 
-function install(w, { dismiss = true } = {}) {
+function install(w, options = {}) {
+  if (w.__domStubs) {
+    if ('dismiss' in options) w.__domStubs.state.dismiss = options.dismiss;
+    return w.__domStubs.api;
+  }
+  const state = { dismiss: options.dismiss !== undefined ? options.dismiss : true };
   const { HTMLElement, document } = w;
   const dialogProto = (w.HTMLDialogElement || HTMLElement).prototype;
   const modals = new Set();
@@ -157,8 +166,9 @@ function install(w, { dismiss = true } = {}) {
 
   // ----- dismissal -----
 
-  if (dismiss) {
+  {
     document.addEventListener('click', (event) => {
+      if (!state.dismiss) return;
       [...popovers.keys()].forEach((el) => {
         if (el.popover !== 'auto' || el.contains(event.target)) return;
         const invoker = event.target.closest && event.target.closest('button[popovertarget]');
@@ -167,7 +177,7 @@ function install(w, { dismiss = true } = {}) {
       });
     }, true);
     document.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') return;
+      if (!state.dismiss || event.key !== 'Escape') return;
       const open = [
         ...[...popovers.entries()].filter(([el]) => el.popover === 'auto').map(([el, v]) => ({ el, order: v.order, popover: true })),
         ...[...modals].map((el) => ({ el, order: el.__stubOrder, popover: false }))
@@ -181,11 +191,13 @@ function install(w, { dismiss = true } = {}) {
     }, true);
   }
 
-  return {
+  const api = {
     isOpen,
     isModal: (dialog) => modals.has(dialog),
     settle: () => new Promise((resolve) => setTimeout(resolve, 5))
   };
+  w.__domStubs = { api, state };
+  return api;
 }
 
 module.exports = { install };
