@@ -22116,8 +22116,7 @@
       const modalId = `cert-modal-${++certModalCounter}`;
 
       const modalHtml = `
-        <div class="modal-overlay" id="${modalId}">
-          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="${modalId}-title">
+        <dialog id="${modalId}" class="modal-dialog" aria-labelledby="${modalId}-title">
             <div class="modal-header">
               <h2 class="modal-title" id="${modalId}-title">Certificate Inspector</h2>
               <button class="modal-close" aria-label="Close modal">
@@ -22138,8 +22137,7 @@
                 <div class="cert-tab-pane" data-tab="text" data-group="cert-tabs-${modalId}" style="display: none;"></div>
               </div>
             </div>
-          </div>
-        </div>
+        </dialog>
       `;
 
       // Create modal element
