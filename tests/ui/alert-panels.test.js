@@ -90,3 +90,29 @@ test('cert notice colors come from the variant, not from our own rules',()=>{
  const rule=(sel)=>{ const i=css.indexOf('\n'+sel+' {'); expect(i).toBeGreaterThan(-1); return css.slice(i,css.indexOf('}',i)); };
  expect(rule('.cert-error')).not.toMatch(/(^|[;{\s])(border|background|color):/);
 });
+
+// These panels are built deep inside long flows, so the test reads the source
+// and asks that each one sets the danger variant next to where it is made.
+test('single error panels set the danger variant where they are built',()=>{
+ const js=read('blacksmith.js').split('\n');
+ const near=(needle,span=5)=>{
+  const at=js.findIndex((l)=>l.includes(needle));
+  expect(at).toBeGreaterThan(-1);
+  return js.slice(at,at+span).join('\n');
+ };
+ ['rotateEl(\'div\', \'command-discard-unconfirmed\'','rotateEl(\'div\', \'cert-decision-error\'','make(\'div\', \'result-panel-error\'']
+  .forEach((needle)=>expect(near(needle)).toMatch(/data-variant|dataset\.variant/));
+ expect(near('id="cf-endpoint-form-error"',1)).toMatch(/data-variant="danger"/);
+ expect(read('routes.js')).toMatch(/node\.id='route-error';[^}]*data-variant/);
+ expect(near('view-refresh-error',2)).toMatch(/data-variant/);
+});
+
+test('single error panel colors come from the variant, not from our own rules',()=>{
+ const rule=(css,sel)=>{ const i=css.indexOf(sel+' {'); expect(i).toBeGreaterThan(-1); return css.slice(i,css.indexOf('}',i)); };
+ const colors=/(^|[;{\s])(border|border-left|background|color):/;
+ const css=read('blacksmith.css');
+ expect(rule(css,'\n.result-panel-error')).not.toMatch(colors);
+ expect(rule(css,'\n#upgrade .cert-decision-error')).not.toMatch(colors);
+ expect(rule(read('routes.css'),'#route-error')).not.toMatch(colors);
+ expect(rule(read('forge-theme.css'),'#upgrade .batch-flow-review .batch-review-warning[data-variant="danger"]')).not.toMatch(colors);
+});

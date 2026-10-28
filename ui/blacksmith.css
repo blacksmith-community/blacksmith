@@ -4677,6 +4677,11 @@ select[id*="connection-vhost"] {
 }
 
 /* Error states */
+.view-refresh-error {
+  padding: 1em;
+  margin: 1em 0;
+}
+
 .cert-error {
   padding: 20px;
   text-align: center;
@@ -12960,10 +12965,7 @@ span.config-type.resurrection {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border: 1px solid var(--cert-critical);
   border-radius: 6px;
-  color: var(--cert-critical-fg);
-  background: var(--cert-critical-bg);
 }
 
 .result-panel-error[hidden] {
@@ -13429,11 +13431,8 @@ span.config-type.resurrection {
 
 #upgrade .cert-decision-error {
   padding: 6px 10px;
-  border: 1px solid var(--cert-critical);
   border-radius: 6px;
   font-size: 12px;
-  color: var(--cert-critical-fg);
-  background: var(--cert-critical-bg);
   overflow-wrap: anywhere;
 }
 

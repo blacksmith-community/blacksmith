@@ -5047,6 +5047,7 @@
     discard.id = 'command-discard';
     const unconfirmed = rotateEl('div', 'command-discard-unconfirmed');
     unconfirmed.hidden = true;
+    unconfirmed.setAttribute('data-variant', 'danger');
     unconfirmed.setAttribute('role', 'alert');
     // The block is built empty and filled when it is shown, because a screen
     // reader announces an alert when its content arrives, not when it is unhidden.
@@ -7965,6 +7966,7 @@
     if (panel) wrap.appendChild(panel);
     if (error) {
       const box = rotateEl('div', 'cert-decision-error', error.text);
+      box.setAttribute('data-variant', 'danger');
       box.setAttribute('role', 'alert');
       box.tabIndex = -1;
       box.dataset.decisionError = decisionKey(task.id, instance.instance_id);
@@ -8789,6 +8791,7 @@
     }
 
     const errorBox = make('div', 'result-panel-error');
+    errorBox.setAttribute('data-variant', 'danger');
     errorBox.setAttribute('role', 'alert');
     errorBox.hidden = true;
     const errorText = make('span', 'result-panel-error-text');
@@ -15244,7 +15247,7 @@
     return {container, current, error(message) {
       if (!current()) return;
       let note = container.querySelector('.view-refresh-error');
-      if (!note) { note = document.createElement('p'); note.className = 'view-refresh-error error'; note.setAttribute('role', 'status'); container.prepend(note); }
+      if (!note) { note = document.createElement('p'); note.className = 'view-refresh-error'; note.setAttribute('data-variant', 'danger'); note.setAttribute('role', 'status'); container.prepend(note); }
       note.textContent = `${message} Existing results are retained; use Refresh to retry.`;
     }};
   };
@@ -20222,7 +20225,7 @@
             <div class="modal-body">
               <form id="cf-endpoint-form" aria-describedby="cf-endpoint-form-help">
                 <p id="cf-endpoint-form-help">Name this Cloud Foundry API endpoint and enter credentials to use when connecting. Closing keeps this draft in this browser tab; nothing is saved until you submit.</p>
-                <p id="cf-endpoint-form-error" role="alert" hidden></p>
+                <p id="cf-endpoint-form-error" role="alert" data-variant="danger" hidden></p>
                 <div class="form-group">
                   <label for="cf-endpoint-name">Name:</label>
                   <input type="text" id="cf-endpoint-name" name="name" required>

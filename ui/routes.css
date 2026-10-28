@@ -6,7 +6,7 @@
 .route-context a { text-decoration:underline; text-underline-offset:3px; }
 .route-context [aria-current] { font-weight:600; }
 .route-back { flex:none; padding:4px 9px; min-height:32px; }
-#route-error { padding:10px 14px; border-left:3px solid var(--danger); background:var(--card); }
+#route-error { padding:10px 14px; }
 .entity-navigation .detail-tab:not(.active):hover { background:transparent; text-decoration:underline; }
 .entity-navigation .detail-tab:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
 @media(max-width:540px){.route-context {align-items:flex-start;padding:8px;gap:8px;}.route-context ol{font-size:.8125rem;}}

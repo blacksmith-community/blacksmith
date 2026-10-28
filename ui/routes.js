@@ -176,7 +176,7 @@
   const heading=doc.getElementById('console-title');if(heading)heading.textContent=crumbs.map(c=>c.label).join(' / ');
   root.BlacksmithViewGuidance?.mount(bar,route);
  }
- function error(error){let node=doc.getElementById('route-error');if(!node){node=doc.createElement('div');node.id='route-error';node.setAttribute('role','alert');doc.querySelector('.tab-content')?.before(node);}node.textContent=error.message+' Use Back or select a destination from the navigation.';}
+ function error(error){let node=doc.getElementById('route-error');if(!node){node=doc.createElement('div');node.id='route-error';node.setAttribute('data-variant','danger');node.setAttribute('role','alert');doc.querySelector('.tab-content')?.before(node);}node.textContent=error.message+' Use Back or select a destination from the navigation.';}
  function start(){if(root.blacksmithRouter||!root.blacksmithViews)return;const router=create(root,{activate:(r,o)=>root.blacksmithViews.activate(r,o),changed:(r,o)=>{doc.getElementById('route-error')?.remove();render(r);root.blacksmithNav?.announce(doc.title.replace(' — Blacksmith',''));if(!r.inspection&&!o.history&&!o.record){const h=doc.querySelector('.tab-panel.active .detail-content')||doc.querySelector('.tab-panel.active');h?.setAttribute('tabindex','-1');h?.focus({preventScroll:true});}},error});root.blacksmithRouter=router;router.start();}
  doc.addEventListener('blacksmith:ready',start);if(root.blacksmithViews)start();
 })(globalThis);
