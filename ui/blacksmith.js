@@ -27575,9 +27575,10 @@
       // Tab closes the menu and focus moves on in the tab order, as in the
       // menu button pattern. Oat refocuses the button when the popover closes,
       // so the move waits for that toggle event, which Oat's handler sees first.
+      // A control with any negative tabindex is not in the tab order, so Tab skips it.
       const tabNeighbor = (backwards) => {
         const list = [...document.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
-          .filter((el) => !view.refs.exportMenu.contains(el) && !el.contains(view.refs.exportBtn) && !el.closest('[hidden]'));
+          .filter((el) => el.tabIndex >= 0 && !view.refs.exportMenu.contains(el) && !el.contains(view.refs.exportBtn) && !el.closest('[hidden]'));
         const after = list.filter((el) => view.refs.exportBtn.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
         const before = list.filter((el) => view.refs.exportBtn.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING);
         return backwards ? before[before.length - 1] : after[0];

@@ -165,18 +165,33 @@ t('after export is blocked and then allowed again the menu focuses the first ite
 });
 
 // Tab closes the menu and focus moves on in the tab order, as in the menu
-// button pattern. Shift+Tab moves to the previous element.
-const tabbables = (d, menu, btn) => [...d.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
-  .filter((el) => !menu.contains(el) && el !== btn && !el.contains(btn) && !el.closest('[hidden]'));
-const around = (x) => {
-  const list = tabbables(x.d, x.menu, x.btn);
-  const at = list.findIndex((el) => x.btn.compareDocumentPosition(el) & x.w.Node.DOCUMENT_POSITION_FOLLOWING);
-  return { next: list[at], previous: list[at - 1] };
+// button pattern. Shift+Tab moves to the previous element. Each test puts real
+// neighbors beside the export control, with controls that Tab cannot reach
+// between it and the one that should win, and expects focus on the winner.
+const control = (d, id, attrs = {}) => {
+  const el = d.createElement('button');
+  el.id = id; el.textContent = id;
+  Object.entries(attrs).forEach(([name, value]) => el.setAttribute(name, value));
+  return el;
 };
-t('Tab on an item closes the menu and moves focus to the next element after the button', async () => {
+const unreachable = (d, side) => {
+  const hiddenHost = d.createElement('div');
+  hiddenHost.hidden = true;
+  hiddenHost.append(control(d, side + '-in-hidden-container'));
+  return [control(d, side + '-hidden', { hidden: '' }), hiddenHost, control(d, side + '-disabled', { disabled: '' }),
+    control(d, side + '-tabindex-minus-one', { tabindex: '-1' }), control(d, side + '-tabindex-minus-two', { tabindex: '-2' })];
+};
+const withNeighbors = (x) => {
+  const wrap = x.btn.parentElement;
+  const next = control(x.d, 'neighbor-after');
+  const previous = control(x.d, 'neighbor-before');
+  wrap.after(...unreachable(x.d, 'after'), next);
+  wrap.before(previous, ...unreachable(x.d, 'before'));
+  return { next, previous };
+};
+t('Tab on an item closes the menu and moves focus to the next reachable element after the button', async () => {
   const x = await start();
-  const { next } = around(x);
-  expect(next).toBeTruthy();
+  const { next } = withNeighbors(x);
   x.btn.click(); await x.settle();
   const tab = new x.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
   x.csv.dispatchEvent(tab);
@@ -184,20 +199,19 @@ t('Tab on an item closes the menu and moves focus to the next element after the 
   await x.settle();
   expect(x.isOpen()).toBe(false);
   expect(x.btn.getAttribute('aria-expanded')).toBe('false');
-  expect(x.d.activeElement).toBe(next);
+  expect(x.d.activeElement.id).toBe(next.id);
 });
 
-t('Shift+Tab on an item closes the menu and moves focus to the element before the button', async () => {
+t('Shift+Tab on an item closes the menu and moves focus to the nearest reachable element before the button', async () => {
   const x = await start();
-  const { previous } = around(x);
-  expect(previous).toBeTruthy();
+  const { previous } = withNeighbors(x);
   x.btn.click(); await x.settle();
   const tab = new x.w.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
   x.json.dispatchEvent(tab);
   expect(tab.defaultPrevented).toBe(true);
   await x.settle();
   expect(x.isOpen()).toBe(false);
-  expect(x.d.activeElement).toBe(previous);
+  expect(x.d.activeElement.id).toBe(previous.id);
 });
 
 t('reopening the menu right after Tab does not let the late focus move steal focus from the menu', async () => {
