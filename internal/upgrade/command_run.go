@@ -1658,10 +1658,10 @@ func newCommandPool(workers int) *commandPool {
 
 // acquire waits for a free slot and reports whether it got one. It gets
 // none once a worker has stopped the task or halted the deployment. The
-// feed loop checks stopping after acquire as well, so a halt holds even
-// without the check here, but the check stays: it is acquire's own
-// promise, which TestCommandPoolRefusesASlotAfterAHaltingWorkerReports
-// pins, and it refuses the slot before the feed loop waits on a pause.
+// halted check here is defensive. The feed loop checks stopping after
+// acquire, and the suite shows a halt holds without this check, but it
+// costs one branch and refuses the slot before the feed loop waits on a
+// pause.
 func (p *commandPool) acquire() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
