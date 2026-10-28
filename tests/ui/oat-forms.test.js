@@ -84,7 +84,7 @@ test('an invalid control keeps the danger border over our control border rule',(
  const border=all.find((r)=>/^input:not\(\[type="checkbox"\]\)/.test(r.sel)&&/(^|[;\s])border:/.test(r.body));
  expect(border).toBeTruthy();
  expect(border.sel).toContain('aria-invalid');
- const invalid=all.find((r)=>/aria-invalid="true"/.test(r.sel)&&!/:not\(/.test(r.sel)&&/border-color:\s*var\(--danger\)/.test(r.body));
+ const invalid=all.find((r)=>/aria-invalid="true"/.test(r.sel)&&!/:where\(/.test(r.sel)&&/border-color:\s*var\(--danger\)/.test(r.body));
  expect(invalid).toBeTruthy();
 });
 
@@ -120,4 +120,35 @@ test('every keyed asset whose content changed has a new cache key',()=>{
   return m;
  });
  expect(Object.keys(pins).sort()).toEqual([...seen].sort());
+});
+
+// The invalid exclusion must add no specificity, or the valid control rule
+// outranks the earlier select and textarea rules it used to lose to, such as
+// select:focus. Specificity here is (ids, classes/attributes/pseudo-classes,
+// elements) of the selector with :where() removed and :not() read as its
+// argument.
+const specificity=(sel)=>{
+ let s=sel.replace(/:where\((?:[^()]|\([^()]*\))*\)/g,'');
+ s=s.replace(/:not\(([^()]*)\)/g,'$1');
+ const ids=(s.match(/#[\w-]+/g)||[]).length;
+ const cls=(s.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g)||[]).length;
+ const el=(s.replace(/\[[^\]]*\]/g,'').match(/(^|[\s>+~])[a-z][\w-]*/g)||[]).length;
+ return [ids,cls,el].join(',');
+};
+test('the invalid exclusion on the control border rule adds no specificity',()=>{
+ const rule=rules(read('forge-theme.css')).find((r)=>/^input:not\(\[type="checkbox"\]\)/.test(r.sel)&&/(^|[;\s])border:/.test(r.body));
+ const parts=rule.sel.split(/,(?![^(]*\))/).map((p)=>p.trim());
+ expect(parts.length).toBe(3);
+ parts.forEach((part)=>{
+  const bare=part.replace(/:not\(\[aria-invalid="true"\]\)/g,'');
+  expect(part).toContain('aria-invalid');
+  expect(specificity(part)).toBe(specificity(bare));
+ });
+ expect(specificity(parts[1])).toBe('0,0,1');
+ expect(specificity(parts[2])).toBe('0,0,1');
+});
+
+test('the invalid border rule skips checkboxes and radios like the valid rule',()=>{
+ const rule=rules(read('forge-theme.css')).find((r)=>/aria-invalid="true"\]/.test(r.sel)&&/border-color:\s*var\(--danger\)/.test(r.body)&&!/\bwhere\b/.test(r.sel));
+ expect(rule.sel).toContain('input:not([type="checkbox"]):not([type="radio"])[aria-invalid="true"]');
 });
