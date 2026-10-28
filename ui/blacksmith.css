@@ -1698,18 +1698,8 @@ td a {
 .settings-input {
   flex: 1;
   padding: 6px 10px;
-  border: 1px solid var(--border-table);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
   font-size: 13px;
   font-family: monospace;
-}
-
-.settings-input:focus {
-  outline: none;
-  border-color: var(--text-link);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
 
 .settings-apply-btn {
@@ -4232,20 +4222,8 @@ select[id*="connection-vhost"] {
 }
 
 .dialog-modal-input {
-  width: 100%;
   padding: 10px 12px;
   font-size: 14px;
-  border: 1px solid var(--border-primary);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.dialog-modal-input:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
 .dialog-modal-footer {
@@ -4306,10 +4284,6 @@ select[id*="connection-vhost"] {
 /* Dark theme adjustments */
 [data-theme="dark"] .dialog-modal {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-}
-
-[data-theme="dark"] .dialog-modal-input {
-  background: var(--bg-secondary);
 }
 
 /* Certificate tabs */

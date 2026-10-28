@@ -31,3 +31,12 @@ test('upgrade filter controls keep their sizes and leave the look to Oat',()=>{
  ['#upgrade .upgrade-filters select:focus','#upgrade .upgrade-filters select:disabled','#upgrade .upgrade-filters input[type="number"]:focus','#upgrade .upgrade-filters input[type="number"]::placeholder','#upgrade .upgrade-range-selection input[type="number"]:focus']
   .forEach((sel)=>expect(hasBlock(css,sel)).toBe(false));
 });
+
+test('the settings and dialog text fields keep their size and font and leave the look to Oat',()=>{
+ const css=read('blacksmith.css');
+ expect(block(css,'.settings-input')).not.toMatch(REPEATS);
+ expect(hasBlock(css,'.settings-input:focus')).toBe(false);
+ expect(block(css,'.dialog-modal-input')).not.toMatch(REPEATS);
+ expect(hasBlock(css,'.dialog-modal-input:focus')).toBe(false);
+ expect(hasBlock(css,'[data-theme="dark"] .dialog-modal-input')).toBe(false);
+});
