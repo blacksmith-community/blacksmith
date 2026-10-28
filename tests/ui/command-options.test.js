@@ -235,3 +235,23 @@ t('the command pane shows placeholders for commands, not certificates',async()=>
  expect(d.getElementById('rotate-name').placeholder).toBe('For example, October certificate renewal');
  }finally{w.close();}
 });
+
+// Oat lays a radio's label out inline, and the two Run as labels are built with no whitespace between them,
+// so without room of their own the first label's text runs into the second radio. The layout itself needs a
+// real browser. This pins the room the stylesheet gives each option.
+t('the Run as options keep room between them',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await openOptions(env);
+ const options=[...d.querySelectorAll('#batch-flow-options fieldset.command-user > label.command-user-option')];
+ expect(options.map(o=>o.querySelector('input').value)).toEqual(['vcap','root']);
+ expect(options[0].nextSibling).toBe(options[1]);
+ const css=require('fs').readFileSync(require('path').join(__dirname,'../../ui/forge-theme.css'),'utf8');
+ const rule=css.match(/(?:^|\n)#upgrade \.command-user-option\s*\{([^}]*)\}/);
+ expect(rule!==null).toBe(true);
+ const room=rule[1].match(/margin-inline-end:\s*(\d+)px/);
+ expect(room!==null).toBe(true);
+ expect(Number(room[1])).toBeGreaterThanOrEqual(16);
+ expect(rule[1]).not.toMatch(/(^|[;{\s])(border|border-color|border-radius|background|background-color|color|box-shadow|outline|transition):/);
+ expectNoAlerts(env);
+ }finally{w.close();}
+});
