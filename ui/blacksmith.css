@@ -7875,8 +7875,10 @@ body.terminal-minimized .tabs {
   box-shadow: var(--shadow-secondary);
 }
 
-/* Broker tab content (matching manifest content styling) */
-.broker-tab-content {
+/* The panels sit directly inside the tabs element, so each carries the
+   content box (matching the manifest content styling). */
+bs-tabs > .broker-tab-pane {
+  position: relative;
   background: var(--bg-secondary);
   border: 1px solid var(--border-table);
   border-radius: 0 0 8px 8px;
@@ -7888,16 +7890,8 @@ body.terminal-minimized .tabs {
   max-height: calc(100vh - 400px);
 }
 
-/* CF detail panels in broker tab */
-.broker-tab-content .cf-detail-panel {
-  position: relative;
+bs-tabs > .broker-tab-pane[hidden] {
   display: none;
-  padding: 0;
-  overflow: visible;
-}
-
-.broker-tab-content .cf-detail-panel.active {
-  display: block;
 }
 
 /* Responsive design for broker tab */

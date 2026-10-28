@@ -14560,7 +14560,6 @@
   };
 
   // Format manifest details with tabbed view
-  document.addEventListener('click',event=>{if(!(event.target instanceof Element))return;if(event.target.closest('.broker-tab-btn'))notifyRoute();});
   document.addEventListener('change',event=>{if(event.target.matches('#cf-endpoint-select'))notifyRoute();});
 
   let manifestRenderSequence = 0;
@@ -19985,14 +19984,14 @@
         <div class="feedback-panel" data-feedback-context="cf-endpoint" role="alert" aria-live="polite"></div>
 
         <!-- CF Detail Tabs (matching Manifest styling) -->
-        <div class="broker-tabs-nav">
-          <button class="broker-tab-btn active" data-cftab="marketplace">Marketplace</button>
-          <button class="broker-tab-btn" data-cftab="services">Services</button>
-        </div>
+        <bs-tabs>
+          <div class="broker-tabs-nav" role="tablist" aria-label="Cloud Foundry views">
+            <button type="button" role="tab" class="broker-tab-btn active" data-tab="marketplace" data-cftab="marketplace">Marketplace</button>
+            <button type="button" role="tab" class="broker-tab-btn" data-tab="services" data-cftab="services">Services</button>
+          </div>
 
-        <!-- CF Detail Content -->
-        <div class="broker-tab-content">
-          <div class="cf-detail-panel active" data-panel="marketplace">
+          <!-- CF Detail Content -->
+          <div role="tabpanel" class="cf-detail-panel broker-tab-pane active" data-panel="marketplace">
             <div class="cf-marketplace-content" id="cf-marketplace-content">
               <div class="empty-state">
                 <p>Select an endpoint from the dropdown above to view the service marketplace.</p>
@@ -20000,15 +19999,14 @@
             </div>
           </div>
 
-          <div class="cf-detail-panel" data-panel="services" style="display: none;">
+          <div role="tabpanel" class="cf-detail-panel broker-tab-pane" data-panel="services">
             <div class="cf-services-content" id="cf-services-content">
               <div class="empty-state">
                 <p>Select an endpoint from the dropdown above to view service instances.</p>
               </div>
             </div>
           </div>
-
-        </div>
+        </bs-tabs>
       </div>
     `;
   };
@@ -22717,62 +22715,56 @@
 
   // Initialize broker tab when it's selected
   const initBrokerTab = () => {
-    // Setup broker tab switching (using new broker-tab-btn class)
-    document.querySelectorAll('.broker-tab-btn').forEach(button => {
-      button.addEventListener('click', (e) => {
-        e.preventDefault();
-        const tabName = button.dataset.cftab;
-        if (tabName) {
-          switchCFDetailTab(tabName);
-        }
+    // The strip is a bs-tabs element, so clicks and keys select a tab by
+    // themselves and this only loads what the newly selected tab shows.
+    cfDetailTab = 'marketplace';
+    const tabset = document.querySelector('.broker-details-container bs-tabs');
+    if (tabset) {
+      tabset.addEventListener('ot-tab-change', (event) => {
+        const tabName = event.detail?.tab?.dataset.cftab;
+        if (!tabName || tabName === cfDetailTab) return;
+        cfDetailTab = tabName;
+        loadCFDetailTab(tabName);
       });
-    });
+    }
 
     // Load CF endpoints from configuration
     return CFEndpointManager.loadEndpoints();
   };
 
+  // The tab the strip shows, so a selection that changes nothing loads nothing
+  let cfDetailTab = 'marketplace';
+
+  // Show the selected tab's content when its endpoint is connected, or ask for a connection
+  const loadCFDetailTab = (tabName) => {
+    const targetPanel = document.querySelector(`[data-panel="${tabName}"]`);
+    if (!targetPanel) return;
+    const selectedEndpoint = CFEndpointManager.selectedEndpoint;
+    if (selectedEndpoint) {
+      const connectionState = CFEndpointManager.connectionStates[selectedEndpoint] || { connected: false };
+      if (connectionState.connected) {
+        return CFEndpointManager.loadTabContent(tabName, selectedEndpoint);
+      } else {
+        // Show message that connection is required
+        targetPanel.innerHTML = `
+          <div class="empty-state">
+            <h3>Connection Required</h3>
+            <p>Connect to ${escapeHtml(selectedEndpoint)} to view ${escapeHtml(tabName)} data. Selecting an endpoint does not connect it.</p>
+            <button class="btn btn-primary" onclick="CFEndpointManager.toggleConnection()">Connect Now</button>
+          </div>
+        `;
+      }
+    }
+  };
+
   // Switch between CF detail tabs
   const switchCFDetailTab = (tabName) => {
     if (!['marketplace', 'services'].includes(tabName)) return false;
-    // Remove active class from all broker tab buttons
-    document.querySelectorAll('.broker-tab-btn').forEach(btn => {
-      btn.classList.remove('active');
-    });
-
-    // Hide all detail panels
-    document.querySelectorAll('.cf-detail-panel').forEach(panel => {
-      panel.classList.remove('active');
-      panel.style.display = 'none';
-    });
-
-    // Add active class to target button and show target panel
-    const targetButton = document.querySelector(`[data-cftab="${tabName}"]`);
-    const targetPanel = document.querySelector(`[data-panel="${tabName}"]`);
-
-    if (targetButton && targetPanel) {
-      targetButton.classList.add('active');
-      targetPanel.classList.add('active');
-      targetPanel.style.display = 'block';
-
-      // Load content for the selected tab if endpoint is connected
-      const selectedEndpoint = CFEndpointManager.selectedEndpoint;
-      if (selectedEndpoint && tabName !== 'details') {
-        const connectionState = CFEndpointManager.connectionStates[selectedEndpoint] || { connected: false };
-        if (connectionState.connected) {
-          return CFEndpointManager.loadTabContent(tabName, selectedEndpoint);
-        } else {
-          // Show message that connection is required
-          targetPanel.innerHTML = `
-            <div class="empty-state">
-              <h3>Connection Required</h3>
-              <p>Connect to ${escapeHtml(selectedEndpoint)} to view ${escapeHtml(tabName)} data. Selecting an endpoint does not connect it.</p>
-              <button class="btn btn-primary" onclick="CFEndpointManager.toggleConnection()">Connect Now</button>
-            </div>
-          `;
-        }
-      }
-    }
+    const tabset = document.querySelector('.broker-details-container bs-tabs');
+    if (!tabset || !document.querySelector(`[data-panel="${tabName}"]`)) return;
+    cfDetailTab = tabName;
+    if (typeof tabset.select === 'function') tabset.select(tabName);
+    return loadCFDetailTab(tabName);
   };
 
   // Application-wide feedback helpers
