@@ -16,7 +16,7 @@ test('no source file under ui calls alert, confirm, or prompt',()=>{
   if(entry.isDirectory()){ if(entry.name!=='vendor'&&entry.name!=='node_modules') walk(full); return; }
   if(!/\.(js|mjs|html)$/.test(entry.name)||/\.min\.js$/.test(entry.name)) return;
   fs.readFileSync(full,'utf8').split('\n').forEach((line,i)=>{
-   if(/(^|[^.\w$])(?:(?:window|globalThis|self)\s*\.\s*)?(alert|confirm|prompt)\s*\(/.test(line)) found.push(`${path.relative(UI,full)}:${i+1}`);
+   if(/(^|[^.\w$])(?:(?:window|globalThis|self)\s*\.\s*)?(alert|confirm|prompt)\s*\(/.test(line)||/\[\s*['"`](alert|confirm|prompt)['"`]\s*\]\s*\(/.test(line)) found.push(`${path.relative(UI,full)}:${i+1}`);
   });
  });
  expect(found).toEqual([]);
@@ -80,6 +80,12 @@ flows.forEach((flow)=>{
   expect(hits(env)).toEqual([]);
   expect(overlayOf(d).classList.contains('active')).toBe(false);
   expect(d.activeElement).toBe(env.opener);
+ });
+ t(`${flow.name} does nothing on an overlay click`,async()=>{
+  const {env,done}=await open(); const {d}=env;
+  overlayOf(d).click(); await done; await sleep(10);
+  expect(hits(env)).toEqual([]);
+  expect(overlayOf(d).classList.contains('active')).toBe(false);
  });
  t(`${flow.name} does nothing on Escape`,async()=>{
   const {env,done}=await open(); const {w,d}=env;
@@ -149,4 +155,28 @@ t('the password goes only in the request body and never reaches the console or t
  expect(d.body.textContent).not.toContain('hunter2-secret');
  expect(input.value).toBe('');
  expect(input.getAttribute('type')).toBe('text');
+});
+t('an overlay click clears the password field and sends nothing',async()=>{
+ const env=start(); const {w,d}=env;
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const input=overlayOf(d).querySelector('.dialog-modal-input');
+ input.value='hunter2-secret';
+ overlayOf(d).click(); await done; await sleep(10);
+ expect(env.calls.filter(c=>/register/.test(c))).toEqual([]);
+ expect(input.value).toBe('');
+ expect(input.getAttribute('type')).toBe('text');
+});
+t('Enter confirms the password, sends it once, and clears the field',async()=>{
+ const env=start(); const {w,d}=env;
+ const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
+ const input=overlayOf(d).querySelector('.dialog-modal-input');
+ input.value='hunter2-secret';
+ input.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+ await done; await sleep(10);
+ const sent=env.calls.filter(c=>/registrations\/r1\/register/.test(c));
+ expect(sent.length).toBe(1);
+ expect(sent[0]).toContain('"password":"hunter2-secret"');
+ expect(input.value).toBe('');
+ expect(input.getAttribute('type')).toBe('text');
+ expect(env.logs.join('\n')).not.toContain('hunter2-secret');
 });
