@@ -875,9 +875,9 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 
 /* Oat colors an alert with a translucent tint, which falls under 4.5:1 in the
    dark themes. Every alert and notice takes a solid 12% mix into the card
-   color, the same as the badges. The cert notices and passive status panels
+   color, the same as the badges. The cert notices, error blocks, and passive status panels
    are not role=alert, so they take the same left bar and color from here. */
-:is([role="alert"], [role="status"], [role="note"], .cert-notice, .cert-state-panel):not(.toast)[data-variant]:is([data-variant="success"], [data-variant="warning"], [data-variant="danger"], [data-variant="error"]) {
+:is([role="alert"], [role="status"], [role="note"], .cert-notice, .cert-state-panel, .cert-error):not(.toast)[data-variant]:is([data-variant="success"], [data-variant="warning"], [data-variant="danger"], [data-variant="error"]) {
   color: var(--_variant-color);
   border-left: var(--space-2) solid var(--_variant-color);
   background-color: color-mix(in srgb, var(--_variant-color) 12%, var(--card));

@@ -66,3 +66,27 @@ test('alert text meets 4.5:1 for every variant in every theme',()=>{
   expect(ratio(t['--foreground'],t['--background'])).toBeGreaterThanOrEqual(4.5);
  });
 });
+
+t('cert notices and error blocks take the variant for their kind',()=>{
+ const {w}=start();
+ const V=w.CertView;
+ const want={info:null,warn:'warning',ok:'success',error:'danger'};
+ Object.keys(want).forEach((kind)=>{
+  const box=V.el('div','cert-notice');
+  V.setNoticeVariant(box,kind);
+  expect(box.getAttribute('data-variant')).toBe(want[kind]);
+ });
+ const stale=V.el('div','cert-notice'); stale.setAttribute('data-variant','danger');
+ V.setNoticeVariant(stale,'info');
+ expect(stale.hasAttribute('data-variant')).toBe(false);
+ expect(V.errorBlock({message:'No'}).getAttribute('data-variant')).toBe('danger');
+});
+
+test('cert notice colors come from the variant, not from our own rules',()=>{
+ const css=read('blacksmith.css');
+ expect(css).not.toMatch(/\.cert-notice--(warn|ok|error)\s*\{/);
+ expect(css).not.toMatch(/\.cert-state-error\s*\{/);
+ expect(css).not.toMatch(/\.cert-callout--warn\s*\{/);
+ const rule=(sel)=>{ const i=css.indexOf('\n'+sel+' {'); expect(i).toBeGreaterThan(-1); return css.slice(i,css.indexOf('}',i)); };
+ expect(rule('.cert-error')).not.toMatch(/(^|[;{\s])(border|background|color):/);
+});

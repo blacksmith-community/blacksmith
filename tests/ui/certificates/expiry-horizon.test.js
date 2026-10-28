@@ -203,6 +203,7 @@ t('the pressed label, focus, accent, and narrow scrolling', async () => {
   const { d } = await open(spread());
   const box = d.getElementById('cert-horizon');
   ok(box.classList.contains('cert-notice--error') && !box.classList.contains('cert-notice--ok'), 'the accent follows the fleet: ' + box.className);
+  ok(box.getAttribute('data-variant')==='danger', 'the red accent is the danger variant');
   ok(table(d).parentElement.classList.contains('cert-horizon-scroll'), 'the table scrolls inside its own box');
   const b = horizonBtn(d, 14);
   b.focus();
@@ -213,6 +214,7 @@ t('the pressed label, focus, accent, and narrow scrolling', async () => {
 
   const calm = await open([cert('a', 100), cert('b', 200)]);
   ok(calm.d.getElementById('cert-horizon').classList.contains('cert-notice--ok'), 'a calm fleet keeps the green accent');
+  ok(calm.d.getElementById('cert-horizon').getAttribute('data-variant')==='success', 'the green accent is the success variant');
   expect(failures).toEqual([]);
 }, 60000);
 

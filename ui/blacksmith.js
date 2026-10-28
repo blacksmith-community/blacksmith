@@ -21216,10 +21216,19 @@
 
     const RETRY_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
 
+    // Oat has no info variant, so an info notice carries none.
+    const NOTICE_VARIANTS = { warn: 'warning', ok: 'success', error: 'danger' };
+    const setNoticeVariant = (box, kind) => {
+      const variant = NOTICE_VARIANTS[kind];
+      if (variant) box.setAttribute('data-variant', variant);
+      else box.removeAttribute('data-variant');
+    };
+
     // Error block with an optional Retry button. The title and message
     // are plain text, whatever they contain.
     const errorBlock = (opts = {}) => {
       const box = el('div', 'cert-error');
+      box.setAttribute('data-variant', 'danger');
       if (opts.title) box.appendChild(el(opts.headingTag || 'h4', null, opts.title));
       box.appendChild(el('p', null, opts.message || ''));
       if (typeof opts.onRetry === 'function') {
@@ -21256,7 +21265,7 @@
       return box;
     };
 
-    return { expiryPill, healthPill, summary, detail, fieldRow, copyButton, formatName, formatDate, displayExpiry, setThresholds, el, errorBlock, setError, textPanel };
+    return { expiryPill, healthPill, summary, detail, fieldRow, copyButton, formatName, formatDate, displayExpiry, setThresholds, el, errorBlock, setError, textPanel, setNoticeVariant };
   })();
 
   // ================================================================
@@ -21367,6 +21376,7 @@
 
     const notice = (kind, role) => {
       const box = el('div', `cert-notice cert-notice--${kind}`);
+      CertView.setNoticeVariant(box, kind);
       if (role) box.setAttribute('role', role);
       return box;
     };
@@ -25326,6 +25336,7 @@
 
     const firstScanErrorPanel = (message) => {
       const box = el('div', 'cert-state-panel cert-state-error');
+      box.setAttribute('data-variant', 'danger');
       box.setAttribute('role', 'alert');
       box.appendChild(el('h3', null, 'The first certificate scan failed'));
       box.appendChild(el('p', null, message || 'The broker has no certificates to show yet.'));
@@ -25383,7 +25394,8 @@
       if (!credhub.state || credhub.state === 'configured') return null;
 
       const box = el('div', 'cert-notice cert-notice--info');
-      box.setAttribute('role', 'note');
+      CertView.setNoticeVariant(box, 'info');
+      box.setAttribute('role', 'status');
       const lead = el('p', 'cert-notice-text');
       if (credhub.state === 'not_configured') {
         lead.textContent = unknown > 0
@@ -25414,7 +25426,8 @@
       const missing = rotation.reason === 'BOSH director unavailable';
       if (!missing && !director.reason) return null;
       const box = el('div', 'cert-notice cert-notice--info');
-      box.setAttribute('role', 'note');
+      CertView.setNoticeVariant(box, 'info');
+      box.setAttribute('role', 'status');
       box.appendChild(el('p', 'cert-notice-text', missing
         ? 'The BOSH director is unavailable, so certificates on service instances may be missing from this list.'
         : director.reason));
@@ -25435,6 +25448,7 @@
       const shownAt = oldest || scan.completed_at;
 
       const box = el('div', 'cert-notice cert-notice--warn');
+      CertView.setNoticeVariant(box, 'warn');
       box.setAttribute('role', 'alert');
       const text = `${plural(errors.length, 'instance')} could not be scanned.${shownAt ? ` Showing data from ${clock(shownAt)}.` : ''}`;
       box.appendChild(el('p', 'cert-notice-text', text));
@@ -25460,6 +25474,7 @@
     const refreshErrorNotice = () => {
       if (!view.refreshError) return null;
       const box = el('div', 'cert-notice cert-notice--warn');
+      CertView.setNoticeVariant(box, 'warn');
       box.setAttribute('role', 'alert');
       const when = view.resp && view.resp.generated_at ? ` Showing data from ${clock(view.resp.generated_at)}.` : '';
       box.appendChild(el('p', 'cert-notice-text', `The inventory could not be refreshed. ${view.refreshError}${when}`));
@@ -25550,6 +25565,7 @@
       // The accent follows the fleet, so it is never green beside red rows.
       const tone = (s.expired || 0) + (s.critical || 0) > 0 ? 'error' : ((s.warning || 0) > 0 ? 'warn' : 'ok');
       const box = el('div', `cert-notice cert-notice--${tone} cert-horizon`);
+      CertView.setNoticeVariant(box, tone);
       box.id = 'cert-horizon';
 
       const table = el('table', 'cert-horizon-table');
@@ -26808,6 +26824,7 @@
       section.setAttribute('aria-label', 'Warnings and notices');
       const add = (kind, label, text) => {
         const box = el('div', `cert-notice cert-notice--${kind} cert-callout cert-callout--${kind}`);
+        CertView.setNoticeVariant(box, kind);
         box.appendChild(el('strong', 'cert-callout-label', label));
         box.appendChild(el('span', 'cert-callout-text', text));
         section.appendChild(box);

@@ -72,11 +72,13 @@ t('fleet tab', async () => {
   await w.blacksmithNav.switchTab('certificates'); await sleep(100);
   ok(!d.getElementById('cert-fleet-state').hidden && /first certificate scan failed/.test(d.getElementById('cert-fleet-state').textContent) && d.getElementById('cert-fleet-main').hidden,'first scan error panel');
   ok(d.getElementById('cert-fleet-summary').textContent==='' && !!d.querySelector('.cert-retry-button'),'no counts, retry button');
+  ok(d.querySelector('.cert-state-error').getAttribute('data-variant')==='danger' && d.querySelector('.cert-state-error').getAttribute('role')==='alert','first scan panel is a danger alert');
   ok(bad(d)===0,'no injected (first-error)');
   // ---- disabled ----
   ({w,d,server}=await boot()); server.mode='disabled';
   await w.blacksmithNav.switchTab('certificates'); await sleep(100);
   ok(/certificates\.inventory\.enabled/.test(d.getElementById('cert-fleet-state').textContent) && d.getElementById('certificates-badge').hidden,'disabled panel + no badge');
+  ok(d.querySelector('.cert-state-disabled').getAttribute('role')==='status' && !d.querySelector('.cert-state-disabled').hasAttribute('data-variant'),'disabled panel is a plain status');
   // ---- request failure ----
   ({w,d,server}=await boot()); server.mode='fail';
   await w.blacksmithNav.switchTab('certificates'); await sleep(100);

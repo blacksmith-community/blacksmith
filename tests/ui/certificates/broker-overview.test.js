@@ -43,7 +43,7 @@ t('broker certificate overview', async () => {
   ok(['BOSH director (served)','UAA (served)','CredHub (served)'].every(l=>labels.includes(l)),'director, UAA, CredHub rows');
   ok(ov.querySelectorAll('tbody tr').length===6&&ov.querySelectorAll('.cert-pill').length===6&&ov.querySelectorAll('.health-pill').length===6,'six rows, both axes');
   ok(/Warning, 21 days/.test(ov.textContent),'warning pill');
-  const drift=ov.querySelector('.cert-notice--error'); ok(drift&&drift.getAttribute('role')==='alert'&&/different CAs/.test(drift.textContent),'drift error card');
+  const drift=ov.querySelector('.cert-notice--error'); ok(drift&&drift.getAttribute('data-variant')==='danger','drift card is a danger variant'); ok(drift&&drift.getAttribute('role')==='alert'&&/different CAs/.test(drift.textContent),'drift error card');
   ok(drift.compareDocumentPosition(ov.querySelector('.cert-ov-runbooks'))&4,'drift card is above the runbooks');
   const rbs=ov.querySelectorAll('details.cert-ov-runbook'); ok(rbs.length===3,'three <details> runbooks');
   ok(rbs[0].querySelector('summary').textContent==='Runbook: renew the broker HTTPS certificate','runbook 1 title');

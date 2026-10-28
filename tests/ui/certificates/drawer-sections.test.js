@@ -56,6 +56,7 @@ t('each warning and each notice is its own callout, with warnings first', async 
     const boxes = Array.from(dr.querySelectorAll('.cert-drawer-callouts .cert-callout'));
     expect(boxes.map((b) => b.classList.contains('cert-callout--warn') ? 'warn' : 'info')).toEqual(['warn', 'warn', 'warn', 'info', 'info']);
     expect(boxes.map((b) => b.querySelector('.cert-callout-label').textContent)).toEqual(['Error', 'Warning', 'Warning', 'Notice', 'Notice']);
+    expect(boxes.map((b) => b.getAttribute('data-variant'))).toEqual(['warning', 'warning', 'warning', null, null]);
     expect(boxes.map((b) => b.querySelector('.cert-callout-text').textContent.split(' ').slice(0, 2).join(' '))).toEqual(['The error.', 'First warning.', 'Second warning.', 'First notice.', 'Second notice.']);
     boxes.forEach((b) => expect(b.querySelector('.cert-callout-label').textContent).toMatch(/^(Error|Warning|Notice)$/));
   } finally { w.close(); }

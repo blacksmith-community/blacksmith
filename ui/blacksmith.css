@@ -4680,9 +4680,6 @@ select[id*="connection-vhost"] {
 .cert-error {
   padding: 20px;
   text-align: center;
-  color: var(--error-text);
-  background: var(--error-bg);
-  border: 1px solid var(--error-border);
   border-radius: 6px;
   margin: 10px 0;
 }
@@ -11863,10 +11860,6 @@ span.config-type.resurrection {
   font-size: 16px;
 }
 
-.cert-state-error {
-  border-color: var(--cert-expired);
-}
-
 .cert-notices {
   display: flex;
   flex-direction: column;
@@ -11877,18 +11870,10 @@ span.config-type.resurrection {
 .cert-notice {
   padding: 10px 12px;
   border: 1px solid var(--border-primary);
-  border-left-width: 4px;
+  border-left: 4px solid var(--border-active);
   border-radius: 6px;
   font-size: 14px;
   background: var(--bg-secondary);
-}
-
-.cert-notice--info {
-  border-left-color: var(--border-active);
-}
-
-.cert-notice--warn {
-  border-left-color: var(--cert-warning);
 }
 
 .cert-notice-text {
@@ -12526,11 +12511,6 @@ span.config-type.resurrection {
   min-width: 0;
 }
 
-.cert-callout--warn {
-  background: var(--cert-warning-bg);
-  color: var(--cert-warning-fg);
-}
-
 .cert-callout--info {
   background: var(--bg-active);
 }
@@ -12588,10 +12568,6 @@ span.config-type.resurrection {
 /* ================================================================
    Certificate settings and coverage notice
    ================================================================ */
-
-.cert-notice--ok {
-  border-left-color: var(--cert-ok);
-}
 
 .cert-horizon {
   padding: 6px 12px;
@@ -12790,10 +12766,6 @@ span.config-type.resurrection {
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
-}
-
-.cert-notice--error {
-  border-left-color: var(--cert-expired);
 }
 
 .cert-ov-table {
