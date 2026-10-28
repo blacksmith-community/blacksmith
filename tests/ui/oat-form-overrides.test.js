@@ -185,3 +185,13 @@ test('role="button" takes the 3px focus ring and the theme sheet wins the tie',(
  expect(index.indexOf('/console.css')).toBeGreaterThan(-1);
  expect(index.indexOf('/console.css')).toBeLessThan(index.indexOf('/forge-theme.css'));
 });
+
+// Oat sets appearance none on checkboxes and draws them itself, so
+// accent-color has no effect on them.
+test('no stylesheet sets a dead accent-color on a checkbox',()=>{
+ const bad=[];
+ ['blacksmith.css','console.css','forge-theme.css','view-guidance.css'].forEach((file)=>parse(read(file)).forEach((r)=>{
+  if(declares(r.body,'accent-color')&&r.selectors.some((s)=>/checkbox/.test(s))) bad.push(file+' '+r.selectors.join(', '));
+ }));
+ expect(bad).toEqual([]);
+});
