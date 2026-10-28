@@ -81,3 +81,57 @@ t('a confirmation that was inert when it opened is inert again once it closes',a
  expect(dialog().hasAttribute('inert')).toBe(true);
 });
 
+// A real showModal() makes every node outside the dialog inert, and an inert
+// node is not announced. Toasts and the live region have to sit inside the
+// topmost open modal dialog, and go back to the body when it closes.
+const toastBox=(d)=>d.querySelector('.toast-container');
+const live=(d)=>d.getElementById('blacksmith-live-region');
+
+t('toasts and the live region move into an open confirmation and back to the body when it closes',async()=>{
+ const env=await start(); const {w,d,dialog,role,stubs}=env;
+ w.showNotification('Before','info');
+ w.blacksmithNav.announce('Hello'); await sleep(70);
+ expect(toastBox(d).parentNode).toBe(d.body);
+ expect(live(d).parentNode).toBe(d.body);
+ const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
+ await sleep(10);
+ expect(toastBox(d).parentNode).toBe(dialog());
+ expect(live(d).parentNode).toBe(dialog());
+ w.showNotification('During','error');
+ expect(toastBox(d).parentNode).toBe(dialog());
+ expect(toastBox(d).querySelectorAll('output.toast').length).toBe(2);
+ role('cancel').click(); await done; await stubs.settle();
+ expect(toastBox(d).parentNode).toBe(d.body);
+ expect(live(d).parentNode).toBe(d.body);
+ expect(toastBox(d).querySelectorAll('output.toast').length).toBe(2);
+});
+
+t('a toast container made while a modal is open is moved inside it, and a live region made then too',async()=>{
+ const env=await start(); const {w,d,dialog,role,stubs}=env;
+ expect(toastBox(d)).toBeNull();
+ const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
+ await sleep(10);
+ w.showNotification('First toast','success');
+ w.blacksmithNav.announce('Fresh region'); await sleep(70);
+ expect(toastBox(d).parentNode).toBe(dialog());
+ expect(live(d).parentNode).toBe(dialog());
+ expect(live(d).textContent).toBe('Fresh region');
+ role('cancel').click(); await done; await stubs.settle();
+ expect(toastBox(d).parentNode).toBe(d.body);
+ expect(live(d).parentNode).toBe(d.body);
+});
+
+t('with two native modals open the announcers sit in the topmost one and return to the one beneath',async()=>{
+ const env=await start(); const {w,d,role,stubs}=env;
+ w.showNotification('Base','info');
+ w.showCFEndpointForm();
+ const form=d.getElementById('cf-endpoint-modal');
+ expect(toastBox(d).parentNode).toBe(form);
+ const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
+ await sleep(10);
+ expect(toastBox(d).parentNode).toBe(d.getElementById('dialog-modal'));
+ role('cancel').click(); await done; await stubs.settle();
+ expect(toastBox(d).parentNode).toBe(form);
+ w.hideCFEndpointForm(); await stubs.settle();
+ expect(toastBox(d).parentNode).toBe(d.body);
+});

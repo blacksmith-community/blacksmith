@@ -320,6 +320,33 @@
     return () => changed.forEach(node => node.removeAttribute('inert'));
   };
 
+  // A modal dialog makes every node outside it inert, and an inert node is
+  // dropped from the accessibility tree (HTML Standard, "blocked by a modal
+  // dialog"). Toasts and the live region live outside the dialogs, so while a
+  // native modal is open they move inside the topmost one and move back
+  // when it closes.
+  const announcerModals = [];
+  const syncAnnouncers = () => {
+    const host = announcerModals.length ? announcerModals[announcerModals.length - 1] : document.body;
+    document.querySelectorAll('.toast-container, #blacksmith-live-region').forEach(node => {
+      if (node.parentNode === host) return;
+      host.appendChild(node);
+      // Moving a popover hides it, so a container holding toasts shows again.
+      if (node.hasAttribute('popover') && node.children.length && typeof node.showPopover === 'function') {
+        try { node.showPopover(); } catch (error) { /* already showing */ }
+      }
+    });
+  };
+  const trackAnnouncerModal = (dialog) => {
+    announcerModals.push(dialog);
+    syncAnnouncers();
+  };
+  const untrackAnnouncerModal = (dialog) => {
+    const at = announcerModals.indexOf(dialog);
+    if (at >= 0) announcerModals.splice(at, 1);
+    syncAnnouncers();
+  };
+
   // The run that now holds the shared dialog, so a second call can dismiss it.
   let sharedDialogRun = null;
   const dismissSharedDialog = () => {
@@ -361,6 +388,7 @@
       dialog.removeEventListener('close', onClose);
       if (dialog.open) dialog.close();
       restoreBackground();
+      untrackAnnouncerModal(dialog);
       if (wasInert) dialog.setAttribute('inert', '');
       window.blacksmithSurfaces.remove(surface);
       if (sharedDialogRun === run) sharedDialogRun = null;
@@ -374,6 +402,7 @@
     dialog.addEventListener('close', onClose);
     dialog.showModal();
     restoreBackground = isolateDialog(dialog);
+    trackAnnouncerModal(dialog);
     sharedDialogRun = run;
     return run;
   };
@@ -807,6 +836,7 @@
       region.setAttribute('aria-live', 'polite');
       region.setAttribute('aria-atomic', 'true');
       document.body.appendChild(region);
+      syncAnnouncers();
     }
     region.textContent = '';
     setTimeout(() => {
@@ -20677,6 +20707,7 @@
       state.wasInert = modalElement.hasAttribute('inert');
       modalElement.removeAttribute('inert');
       state.restoreBackground = isolateDialog(modalElement);
+      if (native) trackAnnouncerModal(modalElement);
       if (!native) {
         const dialog = modalElement.matches('[role="dialog"]') ? modalElement : modalElement.querySelector('[role="dialog"]');
         if (dialog) {
@@ -20737,6 +20768,7 @@
       // Remove active class to trigger close animation
       modalElement.classList.remove('active');
       if (state && state.native && modalElement.open) modalElement.close();
+      if (state && state.native) untrackAnnouncerModal(modalElement);
 
       // Remove modal from DOM after animation completes
       setTimeout(() => {
@@ -24886,6 +24918,8 @@
       body.textContent = String(message);
       toast.appendChild(body);
       window.ot.toast.el(toast, { duration: 3000 });
+      // Oat makes its container on the first toast, and puts it on the body.
+      syncAnnouncers();
       return;
     }
 
