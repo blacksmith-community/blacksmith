@@ -22115,6 +22115,7 @@
       document.getElementById('registration-progress').style.display = 'none';
 
       // Set title and populate form if editing
+      this.editingRegistration = registration;
       if (registration) {
         title.textContent = 'Edit CF Registration';
         document.getElementById('reg-name').value = registration.name || '';
@@ -22138,6 +22139,15 @@
       modal.querySelector('.modal-close').onclick = hide;
       const cancel = document.getElementById('cancel-registration');
       if (cancel) cancel.onclick = hide;
+      // Save is the form's submit button, so the browser checks the required
+      // fields first and this handler only runs for a valid form.
+      const form = document.getElementById('registration-form');
+      if (form) {
+        form.onsubmit = (event) => {
+          event.preventDefault();
+          this.saveRegistration();
+        };
+      }
     },
 
     // Hide registration modal with proper cleanup
@@ -22197,12 +22207,18 @@
       }
     },
 
-    // Save registration
+    // Save registration. A new registration is created under a client-made id,
+    // and an edited one replaces the stored record with the form's changes.
     async saveRegistration() {
+      if (this.savingRegistration) return;
       const form = document.getElementById('registration-form');
+      const saveButton = document.getElementById('save-registration-btn');
       const formData = new FormData(form);
+      const existing = this.editingRegistration;
 
       const registrationData = {
+        ...(existing || {}),
+        id: existing ? existing.id : newClientRequestId(),
         name: formData.get('name'),
         api_url: formData.get('api_url'),
         username: formData.get('username'),
@@ -22210,33 +22226,51 @@
         broker_name: formData.get('broker_name') || 'blacksmith',
         auto_register: formData.get('auto_register') === 'on'
       };
+      if (!existing) registrationData.created_at = new Date().toISOString();
+      const verb = existing ? 'update' : 'create';
+
+      const idleLabel = saveButton ? saveButton.textContent : '';
+      this.savingRegistration = true;
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = 'Saving\u2026';
+      }
+      form.setAttribute('aria-busy', 'true');
 
       try {
-        const response = await fetch('/b/cf/registrations', {
-          method: 'POST',
+        const url = existing ? `/b/cf/registrations/${encodeURIComponent(existing.id)}` : '/b/cf/registrations';
+        const response = await fetch(url, {
+          method: existing ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(registrationData)
         });
 
-        const result = await response.json();
+        const result = await response.json().catch(() => ({}));
 
         if (response.ok) {
-          this.showSuccess('Registration created successfully');
+          this.showSuccess(`Registration ${verb}d successfully`);
           this.hideRegistrationModal();
           this.loadRegistrations();
 
           // If auto-register was enabled, show progress
           if (registrationData.auto_register) {
             setTimeout(() => {
-              this.showProgressStream(result.id);
+              this.showProgressStream(registrationData.id);
             }, 500);
           }
         } else {
-          this.showError('Failed to create registration: ' + (result.error || 'Unknown error'));
+          this.showError(`Failed to ${verb} registration: ` + (result.error || 'Unknown error'));
         }
       } catch (error) {
         console.error('Save registration error:', error);
         this.showError('Failed to save registration: ' + error.message);
+      } finally {
+        this.savingRegistration = false;
+        form.removeAttribute('aria-busy');
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = idleLabel;
+        }
       }
     },
 
