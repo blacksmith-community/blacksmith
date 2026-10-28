@@ -60,7 +60,8 @@ body > footer img, .minimized-terminal-bar img { width: 24px; height: 24px; vert
 #blacksmith.active { flex-direction: column; }
 :is(button, input, select, textarea, summary, a, [tabindex]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
 button { min-height: 36px; }
-input:not([type="checkbox"]):not([type="radio"]), select, textarea { background: var(--card); color: var(--foreground); border: 1px solid var(--input); border-radius: var(--radius-medium, 6px); }
+input:not([type="checkbox"]):not([type="radio"]):not([aria-invalid="true"]), select:not([aria-invalid="true"]), textarea:not([aria-invalid="true"]) { background: var(--card); color: var(--foreground); border: 1px solid var(--input); border-radius: var(--radius-medium, 6px); }
+:is(input, select, textarea)[aria-invalid="true"] { background: var(--card); color: var(--foreground); border-radius: var(--radius-medium, 6px); border-color: var(--danger); }
 input::placeholder, textarea::placeholder { color: var(--muted-foreground); opacity: 1; }
 label { color: var(--foreground); }
 button svg { width: 18px; height: 18px; flex-shrink: 0; }

@@ -66,3 +66,19 @@ test('form control text, placeholder, border, and focus ring meet contrast in ev
   });
  });
 });
+
+// Our stylesheets have no cascade layer, so any rule of ours that sets a
+// control's border beats Oat's layered invalid-state border whatever its
+// specificity. The border rule must step aside for an invalid control, and
+// a rule of ours must give the invalid control the danger color. This reads
+// the rules; it cannot compute the cascade, so it cannot catch a new rule
+// elsewhere with a higher specificity.
+const rules=(css)=>{ const out=[]; css.replace(/([^{}]+)\{([^{}]*)\}/g,(m,sel,body)=>{ out.push({sel:sel.trim(),body}); return m; }); return out; };
+test('an invalid control keeps the danger border over our control border rule',()=>{
+ const all=rules(read('forge-theme.css'));
+ const border=all.find((r)=>/^input:not\(\[type="checkbox"\]\)/.test(r.sel)&&/(^|[;\s])border:/.test(r.body));
+ expect(border).toBeTruthy();
+ expect(border.sel).toContain('aria-invalid');
+ const invalid=all.find((r)=>/aria-invalid="true"/.test(r.sel)&&!/:not\(/.test(r.sel)&&/border-color:\s*var\(--danger\)/.test(r.body));
+ expect(invalid).toBeTruthy();
+});
