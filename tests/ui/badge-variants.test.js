@@ -1,0 +1,45 @@
+const {test,expect}=require('bun:test');
+const fs=require('fs');
+const path=require('path');
+
+const UI=path.resolve(__dirname,'..','..','ui');
+const read=(f)=>fs.readFileSync(path.join(UI,f),'utf8');
+
+test('badges use Oat badge with a data-variant and no badge-color class',()=>{
+ const js=read('blacksmith.js');
+ expect(js).not.toMatch(/class="badge badge-/);
+ expect(js).toContain('<span class="badge" data-variant="success">ACTIVE</span>');
+ expect(js).toContain('<span class="badge" data-variant="secondary">INACTIVE</span>');
+ expect(js).toContain('<span class="badge" data-variant="warning">Error</span>');
+});
+test('our stylesheet no longer redefines Oat badge',()=>{
+ const css=read('blacksmith.css');
+ expect(css).not.toMatch(/^\.badge\s*\{/m);
+ expect(css).not.toMatch(/\.badge-(success|secondary|warning)/);
+});
+
+// Badge text must reach 4.5:1 against its fill in every theme. The fill is
+// the variant color mixed into the card color, read from the real stylesheet.
+const lum=(hex)=>{ const c=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(v=>v<=0.03928?v/12.92:((v+0.055)/1.055)**2.4); return .2126*c[0]+.7152*c[1]+.0722*c[2]; };
+const ratio=(a,b)=>{ const [x,y]=[lum(a),lum(b)].sort((p,q)=>q-p); return (x+.05)/(y+.05); };
+const mix=(fg,bg,p)=>'#'+[1,3,5].map(i=>Math.round(parseInt(fg.slice(i,i+2),16)*p+parseInt(bg.slice(i,i+2),16)*(1-p)).toString(16).padStart(2,'0')).join('');
+const tokens=(css,selector)=>{
+ const start=css.indexOf('\n'+selector+' {');
+ expect(start).toBeGreaterThan(-1);
+ const out={}; css.slice(start,css.indexOf('}',start)).replace(/(--[a-z-]+): (#[0-9a-f]{6})/g,(m,k,v)=>{ out[k]=v; });
+ return out;
+};
+test('badge text meets 4.5:1 in every theme',()=>{
+ const css=read('forge-theme.css');
+ const rule=css.match(/\.badge:is\(\[data-variant="success"\], \[data-variant="warning"\], \[data-variant="danger"\]\) \{([^}]*)\}/);
+ expect(rule).not.toBeNull();
+ const pct=Number(rule[1].match(/var\(--_variant-color\) (\d+)%, var\(--card\)/)[1])/100;
+ const themes=[':root',':root[data-contrast="high"]','[data-theme="dark"]',':root[data-contrast="high"][data-theme="dark"]'];
+ themes.forEach((sel)=>{
+  const t=tokens(css,sel);
+  ['--success','--warning','--danger'].forEach((v)=>{
+   expect(ratio(t[v],mix(t[v],t['--card'],pct))).toBeGreaterThanOrEqual(4.5);
+  });
+  expect(ratio(t['--secondary-foreground'],t['--secondary'])).toBeGreaterThanOrEqual(4.5);
+ });
+});

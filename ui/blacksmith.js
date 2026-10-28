@@ -18131,8 +18131,8 @@
           const isActive = latestVersion.is_active || latestVersion.current ||
             (latestVersion.id && String(latestVersion.id).includes('*'));
           statusElem.innerHTML = isActive ?
-            '<span class="badge badge-success">ACTIVE</span>' :
-            '<span class="badge badge-secondary">INACTIVE</span>';
+            '<span class="badge" data-variant="success">ACTIVE</span>' :
+            '<span class="badge" data-variant="secondary">INACTIVE</span>';
         }
       } else {
         // Clear table if no versions
@@ -23642,7 +23642,7 @@
       } catch (error) {
         console.error(`Failed to load bindings for service ${serviceGuid}:`, error);
         if (current()) {
-          bindingsElement.innerHTML = `<span class="badge badge-warning">Error</span>`;
+          bindingsElement.innerHTML = `<span class="badge" data-variant="warning">Error</span>`;
           bindingsElement.title = 'Failed to load binding information';
         }
       }

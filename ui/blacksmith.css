@@ -10596,35 +10596,6 @@ span.config-type.resurrection {
   border-color: var(--border-color);
 }
 
-/* Badge styles for status indicators */
-.badge {
-  display: inline-block;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  border-radius: 4px;
-  letter-spacing: 0.5px;
-}
-
-.badge-success {
-  background: #22c55e;
-  color: white;
-}
-
-.badge-secondary {
-  background: #6b7280;
-  color: white;
-}
-
-[data-theme="dark"] .badge-success {
-  background: #16a34a;
-}
-
-[data-theme="dark"] .badge-secondary {
-  background: #4b5563;
-}
-
 /* Dark theme for diff controls */
 [data-theme="dark"] .diff-controls .form-control {
   background: rgba(0, 0, 0, 0.3);

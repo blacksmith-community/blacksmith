@@ -870,3 +870,8 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .entity-services-link { padding: 0; min-height: 0; border: 0; background: none; color: var(--primary); font: inherit; font-weight: inherit; text-align: left; text-decoration: underline; cursor: pointer; }
 .entity-services-link:hover { text-decoration: none; }
 .entity-not-in-catalog, .entity-plan-limit { font-size: .75rem; font-weight: 400; color: var(--muted-foreground); }
+
+/* Oat tints a status badge with a translucent mix, which is 30% in the dark
+   themes and drops the text under 4.5:1. A solid 12% mix into the card color
+   keeps every variant above that ratio in every theme and on every surface. */
+.badge:is([data-variant="success"], [data-variant="warning"], [data-variant="danger"]) { background-color: color-mix(in srgb, var(--_variant-color) 12%, var(--card)); }
