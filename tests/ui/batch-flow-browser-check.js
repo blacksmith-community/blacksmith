@@ -77,7 +77,7 @@ async (page) => {
   check(await page.locator('.upgrade-instances').isVisible(),'Activity returns to current step');
   await next.click();await page.locator('#batch-flow-ack').waitFor();
   check(creates.length===0,'review never creates a task');
-  check(!await page.locator('#dialog-modal-overlay.active').count(),'review is inline');
+  check(!await page.locator('#dialog-modal[open]').count(),'review is inline');
   check(await next.isDisabled(),'large rotation requires typed confirmation');
   await page.screenshot({path:'output/playwright/batch-flow-review.png'});
   const firstPreviewCount=previews;

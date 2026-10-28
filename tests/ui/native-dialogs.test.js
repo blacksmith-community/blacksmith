@@ -33,7 +33,7 @@ const start=()=>{
  opener.focus();
  return {...env,opener};
 };
-const overlayOf=(d)=>d.getElementById('dialog-modal-overlay');
+const overlayOf=(d)=>d.getElementById('dialog-modal');
 const press=(w,d,key)=>d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));
 
 const flows=[
@@ -68,7 +68,7 @@ flows.forEach((flow)=>{
  t(`${flow.name} asks in the page dialog and focuses Cancel`,async()=>{
   const {env,done}=await open(); const {d}=env;
   const overlay=overlayOf(d);
-  expect(overlay.classList.contains('active')).toBe(true);
+  expect(overlay.open).toBe(true);
   expect(overlay.querySelector('.dialog-modal-message').textContent).toMatch(flow.text);
   expect(d.activeElement).toBe(overlay.querySelector('[data-dialog-role="cancel"]'));
   expect(hits(env)).toEqual([]);
@@ -78,20 +78,20 @@ flows.forEach((flow)=>{
   const {env,done}=await open(); const {d}=env;
   overlayOf(d).querySelector('[data-dialog-role="cancel"]').click(); await done; await sleep(10);
   expect(hits(env)).toEqual([]);
-  expect(overlayOf(d).classList.contains('active')).toBe(false);
+  expect(overlayOf(d).open).toBe(false);
   expect(d.activeElement).toBe(env.opener);
  });
  t(`${flow.name} does nothing on an overlay click`,async()=>{
   const {env,done}=await open(); const {d}=env;
   overlayOf(d).click(); await done; await sleep(10);
   expect(hits(env)).toEqual([]);
-  expect(overlayOf(d).classList.contains('active')).toBe(false);
+  expect(overlayOf(d).open).toBe(false);
  });
  t(`${flow.name} does nothing on Escape`,async()=>{
   const {env,done}=await open(); const {w,d}=env;
   press(w,d,'Escape'); await done; await sleep(10);
   expect(hits(env)).toEqual([]);
-  expect(overlayOf(d).classList.contains('active')).toBe(false);
+  expect(overlayOf(d).open).toBe(false);
  });
  t(`${flow.name} runs only after Confirm`,async()=>{
   const {env,done}=await open(); const {d}=env;
@@ -105,7 +105,7 @@ t('the registration password is asked in a masked dialog field',async()=>{
  const env=start(); const {w,d}=env;
  const done=w.__T.CFRegistrationManager.startRegistration('r1'); await sleep(10);
  const overlay=overlayOf(d); const input=overlay.querySelector('.dialog-modal-input');
- expect(overlay.classList.contains('active')).toBe(true);
+ expect(overlay.open).toBe(true);
  expect(input.getAttribute('type')).toBe('password');
  expect(input.getAttribute('autocomplete')).toBe('off');
  expect(input.style.display).not.toBe('none');

@@ -26,9 +26,9 @@ t('instance rotation and overview', async () => {
   const R=w.blacksmithRotate;
   ok(!!R&&typeof R.openInstanceDialog==='function'&&typeof R.readHolders==='function'&&typeof R.availability==='function','blacksmithRotate exposes dialog, holders, availability');
   ok(!!w.blacksmithBatch&&typeof w.blacksmithBatch.openRotate==='function','blacksmithBatch.openRotate exists');
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal-overlay.active')) return true; await sleep(10);} return false; };
-  const confirmBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]');
-  const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
+  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
+  const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
   const live=()=>d.getElementById('blacksmith-live-region').textContent;
 
   // ---- availability

@@ -441,7 +441,7 @@ t('cancel of a command task names what it does',async()=>{
  const env=await setup({detail:running});const {w,d}=env;try{
  await open(env);
  d.querySelector('.cancel-btn').click();await sleep(20);
- const overlay=d.getElementById('dialog-modal-overlay');
+ const overlay=d.getElementById('dialog-modal');
  expect(overlay.querySelector('.dialog-modal-title').textContent).toBe('Cancel command task');
  expect(overlay.querySelector('.dialog-modal-message').textContent.includes('stay reserved')||overlay.querySelector('.dialog-modal-message').textContent.includes('stays reserved')).toBe(true);
  expect(overlay.querySelector('.dialog-modal-message').textContent.includes('BOSH')).toBe(false);
@@ -717,7 +717,7 @@ t('pause and cancel requests carry no key even while one is held',async()=>{
  await unlock(d);
  press(d,'.pause-btn');await sleep(40);
  press(d,'.cancel-btn');await sleep(20);
- const confirm=d.getElementById('dialog-modal-overlay').querySelector('[data-dialog-role="confirm"]');
+ const confirm=d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]');
  expect(confirm!==null).toBe(true);confirm.click();await sleep(40);
  expect(seen.map(s=>s.verb).sort()).toEqual(['cancel','pause']);
  expect(seen.every(s=>s.headers['X-Blacksmith-Command-Key']===undefined)).toBe(true);

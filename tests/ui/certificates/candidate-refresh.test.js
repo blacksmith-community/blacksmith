@@ -60,7 +60,7 @@ t('candidate refresh', async () => {
   const n0 = candidatePosts().length;
   btn('candidates').click(); btn('candidates').click(); await sleep(100);
   ok(candidatePosts().length === n0 + 1, 'refresh: one POST to the candidates route, even on a double click: ' + (candidatePosts().length - n0));
-  ok(!d.querySelector('#dialog-modal-overlay.active'), 'refresh: asks for no confirmation');
+  ok(!d.querySelector('#dialog-modal[open]'), 'refresh: asks for no confirmation');
   ok(!!btn('adopt:v-good-1234567890') && btn('adopt:v-good-1234567890').textContent === 'Adopt version v-good-1', 'refresh: the valid candidate gets an Adopt button');
   ok(!btn('adopt:v-bad-0987654321') && /failed a check/.test(reconcile().textContent), 'refresh: the failed candidate gets no Adopt button');
   ok(reconcile().textContent.includes('2026-10-21 15:05 UTC') && !/not checked CredHub/.test(reconcile().textContent), 'refresh: shows the new check time');

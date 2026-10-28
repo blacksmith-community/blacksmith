@@ -23,10 +23,10 @@ t('rotate preview and create', async () => {
   w.plansData={services:[{id:'svc1',name:'valkey'}]};
   d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(100);
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal-overlay.active')) return true; await sleep(10);} return false; };
-  const confirmBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]');
-  const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
-  const dlg=()=>d.querySelector('#dialog-modal-overlay');
+  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
+  const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
+  const dlg=()=>d.querySelector('#dialog-modal');
   const radio=d.getElementById('rotate-op-rotate'); radio.checked=true; radio.dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(120);
   const sel=w.blacksmithCerts.selection;
   ok(d.getElementById('rotate-mode-redeploy').checked&&d.getElementById('rotate-mode-patch').disabled,'Mode radio: Redeploy checked, Patch disabled');
@@ -45,7 +45,7 @@ t('rotate preview and create', async () => {
   ok(/Redeploy · 1 to change, 1 excluded · 3 VMs/.test(txt),'summary strip: mode, counts, VMs: '+txt.slice(0,120));
   ok(/VMs: 3/.test(body.querySelector('.rotate-preview-card').textContent)&&/Health check after each VM: valkey-cluster/.test(txt)&&/Service \/ plan: valkey \/ small/.test(txt)&&/Restarts one VM at a time\./.test(txt),'card: VMs, gate, impact');
   ok(d.activeElement===dlg().querySelector('.dialog-modal-title')&&dlg().querySelector('.dialog-modal-title').getAttribute('tabindex')==='-1','the dialog opens on its title');
-  ok(dlg().querySelector('.dialog-modal').firstElementChild.classList.contains('dialog-modal-header')&&dlg().querySelector('.dialog-modal-header + .rotate-preview-summary')&&!dlg().querySelector('.dialog-modal-body .rotate-preview-summary'),'summary sits above the scroller, outside the body');
+  ok(dlg().firstElementChild.classList.contains('dialog-modal-header')&&dlg().querySelector('.dialog-modal-header + .rotate-preview-summary')&&!dlg().querySelector('.dialog-modal-body .rotate-preview-summary'),'summary sits above the scroller, outside the body');
   ok(!!dlg().querySelector('.dialog-modal-body .dialog-modal-footnote-inline')&&!!dlg().querySelector('.dialog-modal-more'),'inline footnote and More below cue exist');
   ok(!/Review what we are about to change/.test(dlg().textContent),'generic sentence is gone');
   const rows=[...body.querySelectorAll('ul.rotate-preview-certs li')];
@@ -60,7 +60,7 @@ t('rotate preview and create', async () => {
   ok(/BOSH rolls the VMs/.test(txt)&&/failed health check pauses the task/.test(txt),'what it does, with the gate clause');
   ok(confirmBtn().textContent==='Rotate and redeploy'&&confirmBtn().classList.contains('dialog-modal-btn-confirm')&&!confirmBtn().classList.contains('dialog-modal-btn-danger'),'redeploy confirm: named action, primary style');
   ok(/creates a task/.test(dlg().querySelector('.dialog-modal-footnote').textContent),'line above the buttons');
-  ok(dlg().querySelector('.dialog-modal-icon').classList.contains('dialog-modal-icon--warning')&&!dlg().querySelector('.dialog-modal-icon').classList.contains('warning')&&/rotate-preview-summary/.test(dlg().querySelector('.dialog-modal').getAttribute('aria-describedby')),'warning icon, described by the summary');
+  ok(dlg().querySelector('.dialog-modal-icon').classList.contains('dialog-modal-icon--warning')&&!dlg().querySelector('.dialog-modal-icon').classList.contains('warning')&&/rotate-preview-summary/.test(dlg().getAttribute('aria-describedby')),'warning icon, described by the summary');
   ok(!!body.querySelector('ul.rotate-preview-certs[aria-label]'),'certificates are a labelled list');
   ok(!dlg().querySelector('.dialog-modal-ack-input'),'no typed confirmation for 1 instance');
   confirmBtn().click(); await sleep(80);
@@ -115,12 +115,12 @@ t('rotate preview and create', async () => {
   previewAnswer=()=>({status:403,body:{success:false,error:'Certificate rotation is turned off on this broker.',code:'rotation_disabled'}});
   d.getElementById('rotate-select-visible').click();
   d.getElementById('rotate-preview').click(); await sleep(80);
-  ok(!d.querySelector('#dialog-modal-overlay.active'),'no dialog on preview failure');
+  ok(!d.querySelector('#dialog-modal[open]'),'no dialog on preview failure');
   ok(d.getElementById('rotate-result').textContent.includes('Certificate rotation is turned off on this broker.')&&!!d.querySelector('#rotate-result .result-panel-retry'),'403 rotation_disabled message in panel with Retry');
   // all blocked
   previewAnswer=()=>({status:200,body:{preview_id:'pv-b',instances:[pvInst('inst-valkey',{blocked:{code:'instance_busy',message:'Held by a task.'}})],warnings:[]}});
   d.getElementById('rotate-preview').click(); await sleep(80);
-  ok(!d.querySelector('#dialog-modal-overlay.active')&&d.getElementById('rotate-result').textContent.includes('Every selected instance is excluded')&&d.getElementById('rotate-result').textContent.includes('Held by a task.'),'all blocked: reasons in panel, no dialog');
+  ok(!d.querySelector('#dialog-modal[open]')&&d.getElementById('rotate-result').textContent.includes('Every selected instance is excluded')&&d.getElementById('rotate-result').textContent.includes('Held by a task.'),'all blocked: reasons in panel, no dialog');
   // >10 instances
   previewAnswer=()=>({status:200,body:{preview_id:'pv-big',instances:Array.from({length:11},(_,i)=>pvInst('inst-'+i)),warnings:[]}});
   createAnswers=[];
@@ -128,7 +128,7 @@ t('rotate preview and create', async () => {
   d.getElementById('rotate-preview').click(); await waitDialog();
   ok(!!dlg().querySelector('.dialog-modal-ack-input')&&/Type redeploy to continue/.test(dlg().textContent),'11 instances require typing redeploy');
   confirmBtn().click(); await sleep(30);
-  ok(dlg().classList.contains('active')&&posts(/"kind":"certificates"/).length===bigBefore,'confirm without typing does not proceed');
+  ok(dlg().open&&posts(/"kind":"certificates"/).length===bigBefore,'confirm without typing does not proceed');
   dlg().querySelector('.dialog-modal-ack-input').value='redeploy'; confirmBtn().click(); await sleep(80);
   ok(posts(/"kind":"certificates"/).length===bigBefore+1,'typing redeploy proceeds');
   // exactly 10 does not
@@ -157,7 +157,7 @@ t('rotate preview and create', async () => {
   ok(rh.querySelectorAll('img,script').length===0&&rh.textContent.includes(EVIL)&&rh.querySelector('.result-panel').dataset.origin==='instance','hostile task id inert in the result panel');
   // converge flow from batch
   d.getElementById('rotate-op-converge').checked=true; d.getElementById('rotate-op-converge').dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(30);
-  if(dlg().classList.contains('active')){ confirmBtn().click(); await sleep(80); }
+  if(dlg().open){ confirmBtn().click(); await sleep(80); }
   sel.clear(); await sleep(10);
   ok(d.getElementById('rotate-preview').disabled&&d.getElementById('rotate-preview').title.length>0,'converge button disabled with reason when nothing selected');
   ok(alerts.length===0,'no alerts: '+alerts.join('|'));

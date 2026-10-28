@@ -21,10 +21,10 @@ t('patch in place controls', async () => {
   await sleep(50); w.plansData={services:[{id:'svc1',name:'valkey'}]};
   d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(100);
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal-overlay.active')) return true; await sleep(10);} return false; };
-  const confirmBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]');
-  const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
-  const dlg=()=>d.querySelector('#dialog-modal-overlay');
+  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
+  const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
+  const dlg=()=>d.querySelector('#dialog-modal');
   const fire=(el)=>el.dispatchEvent(new w.Event('change',{bubbles:true}));
   const pick=(id)=>{ const r=d.getElementById(id); r.checked=true; fire(r); };
 
@@ -61,17 +61,17 @@ t('patch in place controls', async () => {
   ok(confirmBtn().textContent==='Patch in place'&&confirmBtn().classList.contains('dialog-modal-btn-danger'),'patch keeps the danger button');
   const ack=dlg().querySelector('.dialog-modal-ack-input');
   ok(!!ack,'patch confirm requires typing even for one instance'); confirmBtn().click(); await sleep(40);
-  ok(posts(/"kind":"certificates"/).length===0&&dlg().classList.contains('active'),'confirm without the word creates nothing');
+  ok(posts(/"kind":"certificates"/).length===0&&dlg().open,'confirm without the word creates nothing');
   // Enter on Cancel never submits
   cancelBtn().focus(); ack.value='patch in place'; ack.dispatchEvent(new w.Event('input',{bubbles:true}));
   cancelBtn().dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})); await sleep(60);
   ok(posts(/"kind":"certificates"/).length===0,'Enter on Cancel creates nothing');
-  if(dlg().classList.contains('active')) cancelBtn().click(); await sleep(30);
+  if(dlg().open) cancelBtn().click(); await sleep(30);
   ok(posts(/"kind":"certificates"/).length===0,'Cancel creates no task');
   // typed confirm
   d.getElementById('rotate-preview').click(); await waitDialog();
   const ack2=dlg().querySelector('.dialog-modal-ack-input'); ack2.value='nope'; ack2.dispatchEvent(new w.Event('input',{bubbles:true}));
-  confirmBtn().click(); await sleep(40); ok(posts(/"kind":"certificates"/).length===0&&dlg().classList.contains('active'),'wrong word does not submit');
+  confirmBtn().click(); await sleep(40); ok(posts(/"kind":"certificates"/).length===0&&dlg().open,'wrong word does not submit');
   ack2.value='patch in place'; ack2.dispatchEvent(new w.Event('input',{bubbles:true}));
     confirmBtn().click(); await sleep(100);
   ok(posts(/"kind":"certificates"/).length===1,'patch create posted after typing');

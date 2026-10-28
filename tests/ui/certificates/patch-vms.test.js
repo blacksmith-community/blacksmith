@@ -24,9 +24,9 @@ t('partly patched instances', async () => {
   w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
   d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(80);
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal-overlay.active')) return true; await sleep(10);} return false; };
-  const confirmBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]');
-  const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
+  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
+  const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
   const panel=()=>d.querySelector('#upgrade .upgrade-tasks');
 
   // banner

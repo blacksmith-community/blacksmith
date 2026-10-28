@@ -8,28 +8,28 @@
   "sha256": "340c3ef4733b5aaf06fefe50f1dc7ab1edf5094cd2e28fe08f1c43203602dbe6"
  },
  "blacksmith.css": {
-  "key": "20261028-oat-6",
-  "sha256": "b9fd2eac727c18b4b85ba0e78400c9b6a89baa73df565f8b000bfbad1b4f5f50"
+  "key": "20261028-oat-7",
+  "sha256": "a18be291731fefd5034a1eb7c9dbc9dd17ece15364e83933283dacd4d3e66f5a"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-6",
-  "sha256": "7962897be4bf7d58bce2a099ba0efb005bed696e877618431b4c5039595088f3"
+  "key": "20261028-oat-7",
+  "sha256": "5c045ef51640bb22cff64961de02754720ba02d8982c6fc73da14bdd81310739"
  },
  "console.css": {
   "key": "20261024-rotate",
   "sha256": "8bcda446b6a449233904a9ec1a052b51d698ec71a20f9f908b5770f37946c0d1"
  },
  "forge-theme.css": {
-  "key": "20261028-oat-5",
-  "sha256": "b9c882bf5bb727a248788e19cd1e8e18255ec9c221203ade796fd2b061d65dbf"
+  "key": "20261028-oat-7",
+  "sha256": "05dd060b229f130f5ab22e51f6b7f033f26d17f3bd727f5a19bc68c313c1d152"
  },
  "inspection-layout.css": {
   "key": "20261025-navigation-history",
   "sha256": "285baf1725dedc9b7f99796084c7d0391ee483da2e828f9d2726db613628716c"
  },
  "navigation.js": {
-  "key": "20261026-quicknav-scale",
-  "sha256": "807b646fafcacbb17506f3c72640ce23669cb01b0b53694e4dc11b90b6e6d86c"
+  "key": "20261028-oat-7",
+  "sha256": "ed00a705772eff2ab83bfc6a223bacfa705f3bc5ce2c4ba877b805cc69093925"
  },
  "routes.css": {
   "key": "20261028-oat-4",

@@ -79,7 +79,7 @@ t('a toast stays announced and reachable while a modal is open',async()=>{
  w.showNotification('Before','info');
  const done=w.showConfirmDialog({title:'Sure?',message:'Really?'});
  await sleep(10);
- expect(d.getElementById('dialog-modal-overlay').classList.contains('active')).toBe(true);
+ expect(d.getElementById('dialog-modal').open).toBe(true);
  w.showNotification('During','error');
  const box=container(d);
  expect(box.hasAttribute('inert')).toBe(false);
@@ -92,7 +92,7 @@ t('a toast stays reachable while the password dialog is open',async()=>{
  w.showNotification('Before','info');
  const done=w.__T.CFRegistrationManager.startRegistration('r1');
  await sleep(10);
- expect(d.getElementById('dialog-modal-overlay').classList.contains('active')).toBe(true);
+ expect(d.getElementById('dialog-modal').open).toBe(true);
  w.showNotification('During','error');
  const box=container(d);
  expect(box.hasAttribute('inert')).toBe(false);

@@ -17,11 +17,11 @@ t('converge preview and create', async () => {
   d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(80);
   const sel=d.getElementById('upgrade-stemcell-filter'); const opt=d.createElement('option'); opt.value='ubuntu-noble/1.2'; opt.textContent='x'; sel.appendChild(opt); sel.value='ubuntu-noble/1.2';
   const posts=(re)=>calls.filter(c=>c.startsWith('POST')&&re.test(c)).map(c=>JSON.parse(c.slice(c.indexOf(' {')+1)));
-  const waitDialog=async()=>{ for(let i=0;i<60;i++){ if(d.querySelector('#dialog-modal-overlay.active')) return true; await sleep(10);} return false; };
+  const waitDialog=async()=>{ for(let i=0;i<60;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
   // A diverged upgrade asks for the typed word, so the helper types it when the field exists.
-  const confirmBtn=()=>{ const ack=d.querySelector('#dialog-modal-overlay .dialog-modal-ack-input'); if(ack) ack.value='upgrade'; return d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]'); };
-  const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
-  const dlgText=()=>d.querySelector('#dialog-modal-overlay').textContent;
+  const confirmBtn=()=>{ const ack=d.querySelector('#dialog-modal .dialog-modal-ack-input'); if(ack) ack.value='upgrade'; return d.querySelector('#dialog-modal [data-dialog-role="confirm"]'); };
+  const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
+  const dlgText=()=>d.querySelector('#dialog-modal').textContent;
   const run=async(n)=>{ T.selectedUpgradeInstances.clear(); T.selectedUpgradeInstances.add('inst-1'); const p=T.startUpgrade(); await waitDialog(); confirmBtn().click(); /* name prompt */ return p; };
   const div=(extra={})=>({instance_id:'inst-1',divergence:{state:'unconverged',task_id:'t1',since:'2026-10-21T14:00:00Z'},variables:['/s/a_crt'],additional:[{name:'/s/other_crt',deployed_version_id:'v1',latest_version_id:'v2'}],...extra});
 
@@ -33,7 +33,7 @@ t('converge preview and create', async () => {
 
   // 1: no diverged instance -> no dialog beyond the name prompt, create at once
   let p=run(); await sleep(150);
-  ok(!d.querySelector('#dialog-modal-overlay.active'),'empty diverged list opens no confirm dialog');
+  ok(!d.querySelector('#dialog-modal[open]'),'empty diverged list opens no confirm dialog');
   await p;
   const pv1=posts(/\/b\/upgrade\/preview/), cr1=posts(/"instance_ids"/).filter(b=>b.name);
   ok(pv1.length===1&&JSON.stringify(pv1[0])===JSON.stringify(cr1[0]),'preview body matches the create body');
@@ -43,9 +43,9 @@ t('converge preview and create', async () => {
   T.selectedUpgradeInstances.clear(); T.selectedUpgradeInstances.add('inst-1');
   const nBefore=posts(/"instance_ids"/).length;
   p=T.startUpgrade(); await waitDialog(); confirmBtn().click(); await sleep(100);
-  ok(d.querySelector('#dialog-modal-overlay.active')&&/not converged/.test(dlgText()),'confirm dialog opens for a diverged instance');
+  ok(d.querySelector('#dialog-modal[open]')&&/not converged/.test(dlgText()),'confirm dialog opens for a diverged instance');
   ok(/Type upgrade to continue/.test(dlgText()),'a diverged upgrade asks for the word upgrade');
-  ok(dlgText().includes('2026-10-21 14:00 UTC')&&!dlgText().includes('2026-10-21T14')&&dlgText().includes(EVIL)&&dlgText().includes('/s/other_crt')&&dlgText().includes('/s/a_crt')&&d.querySelectorAll('#dialog-modal-overlay img,#dialog-modal-overlay script').length===0,'dialog names the instance and its additional variables, hostile inert');
+  ok(dlgText().includes('2026-10-21 14:00 UTC')&&!dlgText().includes('2026-10-21T14')&&dlgText().includes(EVIL)&&dlgText().includes('/s/other_crt')&&dlgText().includes('/s/a_crt')&&d.querySelectorAll('#dialog-modal img,#dialog-modal script').length===0,'dialog names the instance and its additional variables, hostile inert');
   ok(posts(/"instance_ids"/).length===nBefore+1,'no create before confirm (preview only)');
   cancelBtn().click(); await p; await sleep(30);
   ok(posts(/"instance_ids"/).length===nBefore+1,'Cancel creates no task');
@@ -58,7 +58,7 @@ t('converge preview and create', async () => {
   previews=[{status:200,body:{id:'pv-C',diverged:[div()]}},{status:200,body:{id:'pv-D',diverged:[div()]}}];
   creates=[{status:409,body:{error:'preview needed',code:'upgrade_preview_required'}},{status:201,body:{id:'task-9'}}];
   p=run(); await sleep(80); await waitDialog(); confirmBtn().click(); await sleep(120);
-  ok(d.querySelector('#dialog-modal-overlay.active')&&/fresh one/.test(dlgText()),'409 re-previews and opens the dialog again with a note');
+  ok(d.querySelector('#dialog-modal[open]')&&/fresh one/.test(dlgText()),'409 re-previews and opens the dialog again with a note');
   confirmBtn().click(); await p; await sleep(30);
   const ids=posts(/"instance_ids"/).filter(b=>b.upgrade_preview_id).map(b=>b.upgrade_preview_id);
   ok(ids.slice(-2).join()==='pv-C,pv-D','second create uses the new preview id: '+ids.join());
@@ -66,14 +66,14 @@ t('converge preview and create', async () => {
   previews=[{status:200,body:{id:'pv-E',diverged:[div()]}},{status:200,body:{id:'pv-F',diverged:[]}}];
   creates=[{status:410,body:{error:'gone',code:'preview_expired'}},{status:201,body:{id:'task-10'}}];
   p=run(); await sleep(80); await waitDialog(); confirmBtn().click(); await p; await sleep(60);
-  ok(posts(/\/b\/upgrade\/preview/).length>=7&&!d.querySelector('#dialog-modal-overlay.active'),'410 re-previews; a clean second preview creates without a dialog');
+  ok(posts(/\/b\/upgrade\/preview/).length>=7&&!d.querySelector('#dialog-modal[open]'),'410 re-previews; a clean second preview creates without a dialog');
   // 6: bounded
   previews=[1,2,3,4].map(i=>({status:200,body:{id:'pv-G'+i,diverged:[div()]}}));
   creates=[1,2,3,4].map(()=>({status:409,body:{error:'need',code:'upgrade_preview_required'}}));
   const before=posts(/\/b\/upgrade\/preview/).length;
   p=run(); for(let i=0;i<3;i++){ await sleep(80); if(await waitDialog()) confirmBtn().click(); } await p; await sleep(60);
   ok(posts(/\/b\/upgrade\/preview/).length-before===3,'re-preview rounds are bounded at 3');
-  ok(!d.querySelector('#dialog-modal-overlay.active'),'no dialog left open');
+  ok(!d.querySelector('#dialog-modal[open]'),'no dialog left open');
   // 7: preview error 503
   previews=[{status:503,body:{error:'vault down',code:'vault_unavailable'}}]; creates=[];
   const nc=posts(/"instance_ids"/).length;

@@ -59,7 +59,7 @@ t('rotate selection on Batch Operations', async () => {
   // enter rotate mode, no selection
   radios[1].checked=true; radios[1].dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(150);
   ok(d.getElementById('upgrade').dataset.operation==='rotate','rotate mode active (no confirm needed)');
-  ok(!d.querySelector('.dialog-modal-overlay.active,#dialog-modal-overlay.active'),'no dialog with empty selection');
+  ok(!d.querySelector('#dialog-modal[open]'),'no dialog with empty selection');
   const startBtn=d.getElementById('upgrade-start');
   ok(startBtn.textContent==='Upgrade Selected (0)'&&!visible(startBtn),'#upgrade-start hidden, text unchanged');
   ok(d.getElementById('rotate-preview')&&!visible(d.getElementById('rotate-preview')),'legacy action stays hidden behind step navigation');

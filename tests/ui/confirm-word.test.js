@@ -86,7 +86,7 @@ t('the modal accepts the same forgiving input and names the word',async()=>{
  try{
   const p=w.__T.showConfirmDialog({title:'T',message:'m',requireText:'patch in place',confirmText:'Go',cancelText:'No'});
   await sleep(30);
-  const ov=d.querySelector('#dialog-modal-overlay');
+  const ov=d.querySelector('#dialog-modal');
   expect(ov.querySelector('.dialog-modal-ack-label').textContent).toBe('Type patch in place to continue');
   const input=ov.querySelector('.dialog-modal-ack-input');
   input.value='rotate';ov.querySelector('[data-dialog-role="confirm"]').click();await sleep(30);

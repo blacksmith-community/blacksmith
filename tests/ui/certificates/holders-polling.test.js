@@ -53,7 +53,7 @@ t('holder reads and polling', async () => {
   await T.fetchUpgradeTasks(); await sleep(50);
   ok(invGets()===g0+1,'I1: inventory refreshes when the tab is active in rotate mode');
   const u=d.getElementById('rotate-op-upgrade'); u.checked=true; u.dispatchEvent(new w.Event('change',{bubbles:true})); await sleep(80);
-  if(d.querySelector('#dialog-modal-overlay.active')){ d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]').click(); await sleep(50); }
+  if(d.querySelector('#dialog-modal[open]')){ d.querySelector('#dialog-modal [data-dialog-role="confirm"]').click(); await sleep(50); }
   T.rotateState.lastLoad=0; const g1=invGets();
   await T.fetchUpgradeTasks(); await sleep(50);
   ok(d.getElementById('upgrade').dataset.operation==='upgrade'&&invGets()===g1,'I1: inventory refresh stops after leaving Rotate mode');

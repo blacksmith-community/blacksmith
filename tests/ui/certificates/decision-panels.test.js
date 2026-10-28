@@ -31,10 +31,10 @@ t('decision panels', async () => {
     [/\/b\/upgrade\/tasks$/,(u,o,j)=>j(200,tasks.map(t=>({id:t.id,name:t.name,kind:t.kind,status:t.status,target:'Redeploy, 1 certificate',total_count:3,completed_count:0,failed_count:0,awaiting_decision_count:t.awaitingCount===undefined?3:t.awaitingCount,created_at:t.created_at})))]);
   w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
   d.getElementById('upgrade').classList.add('active'); await T.initUpgradeTab(); await sleep(100);
-  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal-overlay.active')) return true; await sleep(10);} return false; };
-  const confirmBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="confirm"]');
-  const cancelBtn=()=>d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]');
-  const dialogTitle=()=>d.querySelector('#dialog-modal-overlay .dialog-modal-title').textContent;
+  const waitDialog=async()=>{ for(let i=0;i<50;i++){ if(d.querySelector('#dialog-modal[open]')) return true; await sleep(10);} return false; };
+  const confirmBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="confirm"]');
+  const cancelBtn=()=>d.querySelector('#dialog-modal [data-dialog-role="cancel"]');
+  const dialogTitle=()=>d.querySelector('#dialog-modal .dialog-modal-title').textContent;
   const panel=()=>d.querySelector('#upgrade .upgrade-tasks');
   const btn=(key,action)=>[...panel().querySelectorAll('[data-decision-action]')].find(b=>b.dataset.decisionKey===key&&b.dataset.decisionAction===action);
   const live=()=>d.getElementById('blacksmith-live-region').textContent;
@@ -100,11 +100,11 @@ t('decision panels', async () => {
     previewResp={status:200,body:{preview_id:'pv-patch',instances:[{instance_id:'i-app',instance_name:'app',vms:1,gate:'g',selected:[{name:'/s/a_crt',days_left:5}],additional:[],blocked:null,impact:'x'}],warnings:[]}};
     const nA=posts().filter(c=>/\/approve( |$)/.test(c)).length;
     btn(app,'preview').click(); await waitDialog();
-    const ackA=d.querySelector('#dialog-modal-overlay .dialog-modal-ack-input');
+    const ackA=d.querySelector('#dialog-modal .dialog-modal-ack-input');
     ok(!!ackA&&confirmBtn().classList.contains('dialog-modal-btn-danger'),'patch approve requires the typed word');
-    ok(d.querySelector('#dialog-modal-overlay .dialog-modal-ack-label').textContent==='Type patch in place to continue'&&d.querySelector('#dialog-modal-overlay .dialog-modal-ack-label strong').textContent==='patch in place','patch approve asks for patch in place');
+    ok(d.querySelector('#dialog-modal .dialog-modal-ack-label').textContent==='Type patch in place to continue'&&d.querySelector('#dialog-modal .dialog-modal-ack-label strong').textContent==='patch in place','patch approve asks for patch in place');
     confirmBtn().click(); await sleep(40);
-    ok(posts().filter(c=>/\/approve( |$)/.test(c)).length===nA&&d.querySelector('#dialog-modal-overlay.active'),'patch approve without the word posts nothing');
+    ok(posts().filter(c=>/\/approve( |$)/.test(c)).length===nA&&d.querySelector('#dialog-modal[open]'),'patch approve without the word posts nothing');
     ackA.value='patch in place'; ackA.dispatchEvent(new w.Event('input',{bubbles:true})); confirmBtn().click(); await sleep(80);
     ok(posts().filter(c=>/\/approve( |$)/.test(c)).length===nA+1,'patch approve posts after the word');
     previewResp=null; }
@@ -117,7 +117,7 @@ t('decision panels', async () => {
   T.renderTaskDetail(mkTask());
   const n2=posts().length; btn(dep,'verify').click(); await sleep(80);
   b=bodyOf(lastPost(/\/resolve( |$)/));
-  ok(posts().length===n2+1&&!d.querySelector('#dialog-modal-overlay.active')&&b.action==='verify'&&UUID.test(b.client_request_id),'verify posts at once with no confirmation');
+  ok(posts().length===n2+1&&!d.querySelector('#dialog-modal[open]')&&b.action==='verify'&&UUID.test(b.client_request_id),'verify posts at once with no confirmation');
   for(const act of ['failed','abandon']){
     T.renderTaskDetail(mkTask());
     const n=posts().length; btn(dep,act).click(); await waitDialog();
@@ -187,14 +187,14 @@ t('decision panels', async () => {
   T.renderTaskDetail(failed);
   ok(panel().querySelector('.resume-btn').textContent==='Continue remaining instances'&&panel().textContent.includes('The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.'),'resume: Continue remaining instances with the failed-instance note');
   ok(btn('task-1|i-1','remediate').textContent==='Redeploy this instance'&&!btn('task-1|i-1','remediate').disabled,'failed redeploy instance offers Redeploy this instance, enabled');
-  { const b=btn('task-1|i-1','remediate'); const note=d.getElementById(b.getAttribute('aria-describedby')); ok(!!note&&/CredHub already holds/.test(note.textContent),'remediation note explains the redeploy as text'); const n=posts().length; b.click(); await sleep(60); ok(posts().length>n&&/rotation\/preview/.test(posts().slice(n)[0]||''),'enabled remediation requests a converge preview'); if(d.querySelector('#dialog-modal-overlay.active')) d.querySelector('#dialog-modal-overlay [data-dialog-role="cancel"]').click(); }
+  { const b=btn('task-1|i-1','remediate'); const note=d.getElementById(b.getAttribute('aria-describedby')); ok(!!note&&/CredHub already holds/.test(note.textContent),'remediation note explains the redeploy as text'); const n=posts().length; b.click(); await sleep(60); ok(posts().length>n&&/rotation\/preview/.test(posts().slice(n)[0]||''),'enabled remediation requests a converge preview'); if(d.querySelector('#dialog-modal[open]')) d.querySelector('#dialog-modal [data-dialog-role="cancel"]').click(); }
   { const r=d.getElementById('rotate-op-converge'); ok(r&&!r.disabled&&!d.getElementById('rotate-op-converge-reason'),'Batch Converge radio is enabled with no reason paragraph'); }
   { const noNew=mkTask({status:'paused',paused:true,failed_count:1,instances:[{instance_id:'i-1',instance_name:'one',status:'failed',error:'boom',certificates:{phase:'regenerate',variables:[{name:'/x/a',old_serial:'01',new_serial:''},{name:'/x/b',old_serial:'05',new_serial:'05'}]}}]}); T.renderTaskDetail(noNew); ok(!btn('task-1|i-1','remediate'),'failed redeploy with no new version offers no redeploy'); T.renderTaskDetail({...noNew,certificates:{mode:'patch'}}); ok(!!btn('task-1|i-1','remediate'),'failed patch instance still offers Converge without a new version'); }
   T.renderTaskDetail({...failed,certificates:{mode:'patch'}});
   ok(btn('task-1|i-1','remediate').textContent==='Converge this instance'&&!btn('task-1|i-1','remediate').disabled,'failed patch instance offers Converge this instance, enabled');
   T.renderTaskDetail(failed); 
   w.cancelTask('task-1'); await waitDialog();
-  const msg=d.querySelector('#dialog-modal-overlay .dialog-modal-message').textContent;
+  const msg=d.querySelector('#dialog-modal .dialog-modal-message').textContent;
   ok(/BOSH deploy is cancelled/.test(msg)&&/partly rolled/.test(msg),'cancel (redeploy) says the deploy is cancelled and the instance may be partly rolled'); cancelBtn().click(); await sleep(40);
   T.renderTaskDetail({...failed,certificates:{mode:'patch'}});
   w.cancelTask('task-1'); await waitDialog();

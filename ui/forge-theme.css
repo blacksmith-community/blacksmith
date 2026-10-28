@@ -810,7 +810,7 @@ button.version-item > span { display: block; }
 .terminal-tab > .tab-close { min-width: 28px; min-height: 28px; padding: 2px; opacity: 1; }
 
 /* Visibility changes synchronously so newly opened dialog controls accept focus. */
-.modal-overlay, .dialog-modal-overlay { transition-property: opacity; }
+.modal-overlay { transition-property: opacity; }
 
 /* Switch text and surfaces together; crossfading inherited text loses contrast. */
 body { transition: none; }

@@ -199,31 +199,31 @@
     }
   };
 
-  // Ensure dialog modal HTML exists in DOM
+  // Ensure the shared confirm and prompt dialog exists in the DOM, and return it.
   const ensureDialogModal = () => {
-    if (document.getElementById('dialog-modal-overlay')) return;
+    const existing = document.getElementById('dialog-modal');
+    if (existing) return existing;
 
     const modalHTML = `
-      <div id="dialog-modal-overlay" class="dialog-modal-overlay">
-        <div class="dialog-modal" role="dialog" aria-modal="true" aria-labelledby="dialog-modal-title" aria-describedby="dialog-modal-message" tabindex="-1">
-          <div class="dialog-modal-header">
-            <svg class="dialog-modal-icon dialog-modal-icon--warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
-              <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-            </svg>
-            <h3 class="dialog-modal-title" id="dialog-modal-title" tabindex="-1"></h3>
-          </div>
-          <div class="dialog-modal-body">
-            <p class="dialog-modal-message" id="dialog-modal-message"></p>
-            <input type="text" class="dialog-modal-input" style="display: none;" aria-labelledby="dialog-modal-message">
-          </div>
-          <div class="dialog-modal-footer">
-            <button type="button" class="dialog-modal-btn dialog-modal-btn-cancel" data-dialog-role="cancel">Cancel</button>
-            <button type="button" class="dialog-modal-btn dialog-modal-btn-confirm" data-dialog-role="confirm">Confirm</button>
-          </div>
+      <dialog id="dialog-modal" class="dialog-modal" aria-labelledby="dialog-modal-title" aria-describedby="dialog-modal-message" tabindex="-1">
+        <div class="dialog-modal-header">
+          <svg class="dialog-modal-icon dialog-modal-icon--warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
+            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+          </svg>
+          <h3 class="dialog-modal-title" id="dialog-modal-title" tabindex="-1"></h3>
         </div>
-      </div>
+        <div class="dialog-modal-body">
+          <p class="dialog-modal-message" id="dialog-modal-message"></p>
+          <input type="text" class="dialog-modal-input" style="display: none;" aria-labelledby="dialog-modal-message">
+        </div>
+        <div class="dialog-modal-footer">
+          <button type="button" class="dialog-modal-btn dialog-modal-btn-cancel" data-dialog-role="cancel">Cancel</button>
+          <button type="button" class="dialog-modal-btn dialog-modal-btn-confirm" data-dialog-role="confirm">Confirm</button>
+        </div>
+      </dialog>
     `;
     document.body.insertAdjacentHTML('beforeend', modalHTML);
+    return document.getElementById('dialog-modal');
   };
 
   // Builds the optional parts of a confirmation dialog. Every value from
@@ -320,6 +320,59 @@
     return () => changed.forEach(node => node.removeAttribute('inert'));
   };
 
+  // The run that now holds the shared dialog, so a second call can dismiss it.
+  let sharedDialogRun = null;
+  const dismissSharedDialog = () => {
+    if (sharedDialogRun) sharedDialogRun.dismiss();
+  };
+
+  // Opens the shared dialog as a native modal and joins it to the surface
+  // stack. Escape, a tap on the backdrop, and a backdrop click all close the
+  // dialog, and its close event ends the run. end(false) ends it for a
+  // caller that already knows the result. onDismiss runs only when the
+  // dialog closed on its own.
+  const openSharedDialog = (dialog, opener, onDismiss) => {
+    let ended = false;
+    let restoreBackground = () => {};
+    const surface = { close: () => dialog.close() };
+    // Escape reaches only the topmost surface.
+    const onCancel = (event) => {
+      if (!window.blacksmithSurfaces.isTop(surface)) event.preventDefault();
+    };
+    // A click on the backdrop lands on the dialog itself.
+    const onClick = (event) => {
+      if (event.target === dialog) dialog.close();
+    };
+    // An event queued by an earlier closing can arrive after a reopening.
+    const onClose = () => {
+      if (!dialog.open) end(true);
+    };
+    const run = { surface, end: (dismissed) => end(dismissed), dismiss: () => end(true) };
+
+    function end(dismissed) {
+      if (ended) return;
+      ended = true;
+      dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('click', onClick);
+      dialog.removeEventListener('close', onClose);
+      if (dialog.open) dialog.close();
+      restoreBackground();
+      window.blacksmithSurfaces.remove(surface);
+      if (sharedDialogRun === run) sharedDialogRun = null;
+      restoreFocus(opener);
+      if (dismissed) onDismiss();
+    }
+
+    window.blacksmithSurfaces.push(surface);
+    dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('click', onClick);
+    dialog.addEventListener('close', onClose);
+    dialog.showModal();
+    restoreBackground = isolateDialog(dialog);
+    sharedDialogRun = run;
+    return run;
+  };
+
   // Persistent legacy dialogs keep their DOM between openings.
   const persistentDialogState = new WeakMap();
   const activatePersistentDialog = (modal, close) => {
@@ -378,17 +431,17 @@
   // {confirmed: true, text, choice}, or false when the operator cancels.
   const showConfirmDialog = (options = {}) => {
     return new Promise((resolve) => {
-      ensureDialogModal();
-
-      const overlay = document.getElementById('dialog-modal-overlay');
-      const dialog = overlay.querySelector('.dialog-modal');
-      const titleEl = overlay.querySelector('.dialog-modal-title');
-      const messageEl = overlay.querySelector('.dialog-modal-message');
-      const inputEl = overlay.querySelector('.dialog-modal-input');
-      const cancelBtn = overlay.querySelector('[data-dialog-role="cancel"]');
-      const confirmBtn = overlay.querySelector('[data-dialog-role="confirm"]');
-      const iconEl = overlay.querySelector('.dialog-modal-icon');
-      const body = overlay.querySelector('.dialog-modal-body');
+      const dialog = ensureDialogModal();
+      // A call that arrives while another is open cancels the earlier one first,
+      // so focus returns to the earlier opener before this one records its own.
+      dismissSharedDialog();
+      const titleEl = dialog.querySelector('.dialog-modal-title');
+      const messageEl = dialog.querySelector('.dialog-modal-message');
+      const inputEl = dialog.querySelector('.dialog-modal-input');
+      const cancelBtn = dialog.querySelector('[data-dialog-role="cancel"]');
+      const confirmBtn = dialog.querySelector('[data-dialog-role="confirm"]');
+      const iconEl = dialog.querySelector('.dialog-modal-icon');
+      const body = dialog.querySelector('.dialog-modal-body');
 
       const opener = document.activeElement;
       const structured = Boolean(options.requireText || options.requireChoice || options.body ||
@@ -407,7 +460,7 @@
       inputEl.style.display = 'none';
       inputEl.value = '';
 
-      overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
+      dialog.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
       const extras = buildConfirmExtras(options);
       extras.nodes.forEach((node) => body.appendChild(node));
       // A summary the caller marks as pinned stays above the scroller.
@@ -423,7 +476,7 @@
         footnote.className = 'dialog-modal-footnote';
         footnote.setAttribute('data-dialog-extra', 'true');
         footnote.textContent = String(options.footnote);
-        dialog.insertBefore(footnote, overlay.querySelector('.dialog-modal-footer'));
+        dialog.insertBefore(footnote, dialog.querySelector('.dialog-modal-footer'));
         const inline = document.createElement('p');
         inline.className = 'dialog-modal-footnote-inline';
         inline.setAttribute('data-dialog-extra', 'true');
@@ -466,12 +519,10 @@
         ? options.icon : (options.danger ? 'warning' : 'info')}`);
 
       let settled = false;
-      const surface = { close: () => finish(false) };
-      window.blacksmithSurfaces.push(surface);
 
-      // Show modal
-      overlay.classList.add('active');
-      const restoreBackground = isolateDialog(overlay);
+      // Show modal. A close the dialog makes on its own, by Escape or a tap
+      // or click on the backdrop, is a cancel.
+      const shared = openSharedDialog(dialog, opener, () => finish(false));
 
       // A body dialog opens on its title, so the warnings stay in view and
       // the typed-word field scrolls into view only when the operator tabs to it.
@@ -480,25 +531,21 @@
       // Cleanup function
       function cleanup() {
         dialog.classList.remove('batch-release-dialog');
-        overlay.classList.remove('active');
-        restoreBackground();
         cancelBtn.removeEventListener('click', handleCancel);
         confirmBtn.removeEventListener('click', trySubmit);
-        overlay.removeEventListener('click', handleOverlayClick);
         document.removeEventListener('keydown', handleKeydown);
         document.removeEventListener('focusin', handleFocusIn);
         window.removeEventListener('resize', updateMore);
         body.onscroll = null;
         body.onclick = null;
-        overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
-        window.blacksmithSurfaces.remove(surface);
-        restoreFocus(opener);
+        dialog.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
       }
 
       function finish(result) {
         if (settled) return;
         settled = true;
         cleanup();
+        shared.end(false);
         resolve(result);
       }
 
@@ -543,17 +590,12 @@
         finish(structured ? { confirmed: true, text, choice } : true);
       }
 
-      function handleOverlayClick(e) {
-        if (e.target === overlay) {
-          finish(false);
-        }
-      }
-
       // The keydown handler acts only for the topmost surface, and only
       // while focus is inside the dialog. Tab keeps focus in the dialog.
+      // Escape is the dialog's own cancel, so it is not handled here.
       function handleKeydown(e) {
         if (e.defaultPrevented) return;
-        if (!window.blacksmithSurfaces.isTop(surface)) return;
+        if (!window.blacksmithSurfaces.isTop(shared.surface)) return;
 
         const active = document.activeElement;
         const inside = dialog.contains(active);
@@ -582,10 +624,7 @@
 
         if (!inside) return;
 
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          finish(false);
-        } else if (e.key === 'Enter') {
+        if (e.key === 'Enter') {
           if (active === confirmBtn || active === extras.ackInput) {
             e.preventDefault();
             trySubmit();
@@ -595,14 +634,13 @@
 
       // Pulls focus back when something moves it out of the topmost dialog.
       function handleFocusIn(e) {
-        if (window.blacksmithSurfaces.isTop(surface) && !dialog.contains(e.target)) {
+        if (window.blacksmithSurfaces.isTop(shared.surface) && !dialog.contains(e.target)) {
           initialFocus().focus();
         }
       }
 
       cancelBtn.addEventListener('click', handleCancel);
       confirmBtn.addEventListener('click', trySubmit);
-      overlay.addEventListener('click', handleOverlayClick);
       document.addEventListener('keydown', handleKeydown);
       document.addEventListener('focusin', handleFocusIn);
 
@@ -616,19 +654,19 @@
   // Show a prompt dialog (returns Promise<string|null>)
   const showPromptDialog = (options = {}) => {
     return new Promise((resolve) => {
-      ensureDialogModal();
-
-      const overlay = document.getElementById('dialog-modal-overlay');
-      const dialog = overlay.querySelector('.dialog-modal');
-      const titleEl = overlay.querySelector('.dialog-modal-title');
-      const messageEl = overlay.querySelector('.dialog-modal-message');
-      const inputEl = overlay.querySelector('.dialog-modal-input');
-      const cancelBtn = overlay.querySelector('[data-dialog-role="cancel"]');
-      const confirmBtn = overlay.querySelector('[data-dialog-role="confirm"]');
-      const iconEl = overlay.querySelector('.dialog-modal-icon');
+      const dialog = ensureDialogModal();
+      // A call that arrives while another is open cancels the earlier one first,
+      // so focus returns to the earlier opener before this one records its own.
+      dismissSharedDialog();
+      const titleEl = dialog.querySelector('.dialog-modal-title');
+      const messageEl = dialog.querySelector('.dialog-modal-message');
+      const inputEl = dialog.querySelector('.dialog-modal-input');
+      const cancelBtn = dialog.querySelector('[data-dialog-role="cancel"]');
+      const confirmBtn = dialog.querySelector('[data-dialog-role="confirm"]');
+      const iconEl = dialog.querySelector('.dialog-modal-icon');
       const opener = document.activeElement;
 
-      overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
+      dialog.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
 
       // Set content
       titleEl.textContent = options.title || 'Input';
@@ -655,45 +693,36 @@
       iconEl.classList.remove('dialog-modal-icon--warning', 'dialog-modal-icon--info');
       iconEl.classList.add('dialog-modal-icon--info');
 
-      const surface = { close: () => handleCancel() };
-      window.blacksmithSurfaces.push(surface);
-
-      // Show modal
-      overlay.classList.add('active');
-      const restoreBackground = isolateDialog(overlay);
+      // A close the dialog makes on its own, by Escape or a tap or click on
+      // the backdrop, is a cancel.
+      const shared = openSharedDialog(dialog, opener, () => handleCancel());
 
       // Cleanup function
       const cleanup = () => {
         inputEl.value = '';
         inputEl.setAttribute('type', 'text');
         inputEl.removeAttribute('autocomplete');
-        overlay.classList.remove('active');
-        restoreBackground();
         cancelBtn.removeEventListener('click', handleCancel);
         confirmBtn.removeEventListener('click', handleConfirm);
-        overlay.removeEventListener('click', handleOverlayClick);
         inputEl.removeEventListener('keydown', handleInputKeydown);
         document.removeEventListener('keydown', handleKeydown);
-        window.blacksmithSurfaces.remove(surface);
-        restoreFocus(opener);
+        shared.end(false);
       };
 
+      let settled = false;
       const handleCancel = () => {
+        if (settled) return;
+        settled = true;
         cleanup();
         resolve(null);
       };
 
       const handleConfirm = () => {
+        if (settled) return;
+        settled = true;
         const value = inputEl.value;
         cleanup();
         resolve(value);
-      };
-
-      const handleOverlayClick = (e) => {
-        if (e.target === overlay) {
-          cleanup();
-          resolve(null);
-        }
       };
 
       const handleInputKeydown = (e) => {
@@ -703,13 +732,11 @@
         }
       };
 
+      // Escape is the dialog's own cancel. Tab keeps focus in the dialog.
       const handleKeydown = (e) => {
         if (e.defaultPrevented) return;
-        if (!window.blacksmithSurfaces.isTop(surface)) return;
-        if (e.key === 'Escape') {
-          cleanup();
-          resolve(null);
-        } else if (e.key === 'Tab') {
+        if (!window.blacksmithSurfaces.isTop(shared.surface)) return;
+        if (e.key === 'Tab') {
           const items = focusableWithin(dialog);
           if (items.length === 0) return;
           const first = items[0];
@@ -726,7 +753,6 @@
 
       cancelBtn.addEventListener('click', handleCancel);
       confirmBtn.addEventListener('click', handleConfirm);
-      overlay.addEventListener('click', handleOverlayClick);
       inputEl.addEventListener('keydown', handleInputKeydown);
       document.addEventListener('keydown', handleKeydown);
 
@@ -3093,7 +3119,7 @@
       if (!panel.classList.contains('active') || event.defaultPrevented || event.repeat || event.isComposing ||
           !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || batchFlow.submitting) return;
       if (event.target.closest('textarea, [contenteditable]:not([contenteditable="false"]), input:not([type="radio"]):not([type="checkbox"])')) return;
-      if (window.blacksmithSurfaces.top() || document.querySelector('dialog[open], .modal-overlay.active, .dialog-modal-overlay.active')) return;
+      if (window.blacksmithSurfaces.top() || document.querySelector('dialog[open], .modal-overlay.active')) return;
       const code = event.code || event.key;
       if (!['KeyN','KeyA','KeyU','KeyR','KeyC','ArrowRight','ArrowLeft'].includes(code)) return;
       event.preventDefault();
@@ -20636,8 +20662,8 @@
       }
 
       // A modal opened over the confirmation dialog has to sit above it.
-      const dialogOverlay = document.getElementById('dialog-modal-overlay');
-      if (dialogOverlay && dialogOverlay.classList.contains('active')) {
+      const confirmDialog = document.getElementById('dialog-modal');
+      if (confirmDialog && confirmDialog.open) {
         modalElement.style.zIndex = '10200';
       }
 
