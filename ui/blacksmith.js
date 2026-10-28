@@ -188,9 +188,11 @@
 
   const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-  // The focusable elements inside a root that are actually visible.
+  // The focusable elements inside a root that are actually visible and in
+  // the tab order. A roving tab button with tabindex -1 is left out, so a
+  // focus trap never wraps onto a tab the keyboard cannot reach.
   const focusableWithin = (root) => Array.from(root.querySelectorAll(FOCUSABLE_SELECTOR))
-    .filter((node) => !node.hidden && !node.closest('[hidden]') && node.style.display !== 'none' && node.getClientRects().length > 0 && !node.closest('[inert]') && getComputedStyle(node).visibility !== 'hidden');
+    .filter((node) => node.getAttribute('tabindex') !== '-1' && !node.hidden && !node.closest('[hidden]') && node.style.display !== 'none' && node.getClientRects().length > 0 && !node.closest('[inert]') && getComputedStyle(node).visibility !== 'hidden');
 
   // Puts focus back on the element that opened a surface, when it is still on the page.
   const restoreFocus = (opener) => {
@@ -17112,7 +17114,7 @@
           if(route.subview) {
             const content=document.querySelector(`#${route.screen} .detail-content`);let handled=false;
             for(const group of content?.querySelectorAll('[role="tablist"]')||[])if(group.blacksmithSelect?.(route.subview)){handled=true;break;}
-            if(route.section==='manifest')handled=!!content?.querySelector('.manifest-details-container bs-tabs')?.select(route.subview);
+            if(route.section==='manifest')handled=!!content?.querySelector('.manifest-details-container bs-tabs')?.select?.(route.subview);
             if(route.section==='testing'){handled=window.switchTestingOperation(route.instance,route.subview)!==false;}
             if(route.section==='broker'&&['marketplace','services'].includes(route.subview)){await switchCFDetailTab(route.subview);handled=true;}
             if(!handled)throw new Error('This detail view is not available for the selected resource.');
@@ -17784,7 +17786,7 @@
   let restoringConfigTab = false;
   const selectConfigInspectionTab = tabName => {
     restoringConfigTab = true;
-    try { document.getElementById('config-details-modal')?.querySelector('bs-tabs')?.select(tabName); }
+    try { document.getElementById('config-details-modal')?.querySelector('bs-tabs')?.select?.(tabName); }
     finally { restoringConfigTab = false; }
   };
 

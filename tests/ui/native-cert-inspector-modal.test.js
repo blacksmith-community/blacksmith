@@ -117,6 +117,22 @@ t('Escape closes only the topmost surface when another surface sits above the in
  expect(w.blacksmithSurfaces.size()).toBe(0);
 });
 
+t('Shift+Tab from the first stop wraps to a tab that is in the tab order, and Tab from the last wraps back',async()=>{
+ const env=await start(); const {w,d,dialog}=env;
+ open(env);
+ const press=(shiftKey)=>d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Tab',shiftKey,bubbles:true,cancelable:true}));
+ // With no copy buttons in the Details panel the tabs are the only stops after the close button.
+ dialog().querySelectorAll('.cert-copy-btn').forEach(b=>b.remove());
+ const close=dialog().querySelector('.modal-close'); close.focus();
+ press(true);
+ const last=d.activeElement;
+ expect(dialog().contains(last)).toBe(true);
+ expect(last.getAttribute('tabindex')).not.toBe('-1');
+ expect(last.classList.contains('cert-tab-btn')&&last.classList.contains('active')).toBe(true);
+ press(false);
+ expect(d.activeElement===close).toBe(true);
+});
+
 t('a confirmation opened over the inspector returns to it, still modal, and Escape closes only the confirmation',async()=>{
  const env=await start(); const {w,d,dialog,stubs,key}=env;
  open(env);

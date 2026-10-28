@@ -14,10 +14,10 @@ afterEach(()=>{
 
 // The config details view is a native <dialog> opened with showModal. Every way out must leave the surface stack, inert, and
 // aria-hidden as they were, and must put focus back on the opener.
-const start=async()=>{
+const start=async(opts={})=>{
  const env=boot({noDialogs:true,routes:[['/b/configs/42',(u,o,j)=>j(200,{id:'42',name:'default',type:'cloud',team:'t',created_at:'2026-10-24T10:00:00Z',content:'azs: []',metadata:{}})],['/b/configs/cloud/default/versions',(u,o,j)=>j(200,{configs:[{id:'42*',name:'default',type:'cloud'}],count:1})],['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});envs.push(env);
  const {w,d}=env;
- w.eval(OAT);
+ if(!opts.noOat) w.eval(OAT);
  const opener=d.createElement('button');opener.id='config-opener';opener.textContent='Config';d.body.appendChild(opener);
  await sleep(60);
  opener.focus();
@@ -34,6 +34,18 @@ const start=async()=>{
 };
 const openIt=async(env)=>{ const p=env.w.showConfigVersions('cloud','default','42'); await sleep(60); return p; };
 const closeIt=(env)=>env.w.hideConfigVersionsModal();
+
+t('the config details view stays usable when the tabs element never loads',async()=>{
+ const env=await start({noOat:true}); const {w,d,dialog,stubs}=env;
+ expect(w.customElements.get('ot-tabs')).toBeUndefined();
+ await openIt(env);
+ expect(dialog().open).toBe(true);
+ expect(d.getElementById('versions-panel')).not.toBeNull();
+ expect(d.querySelector('#config-details-modal .config-versions, #config-details-modal table')).not.toBeNull();
+ w.blacksmithViews.activate({screen:'blacksmith',section:'manifest',subview:'versions'}).catch(()=>{});
+ closeIt(env); await stubs.settle();
+ expect(dialog().open).toBe(false);
+});
 
 t('the config details view opens as a native modal dialog on the surface stack',async()=>{
  const env=await start(); const {w,d,dialog,stubs,snapshot}=env;
