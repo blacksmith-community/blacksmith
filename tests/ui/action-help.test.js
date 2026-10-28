@@ -1,10 +1,11 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs');
 const {JSDOM}=require('./certificates/support.js');
+const {watchUncaught}=require('./watch-uncaught.js');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function boot(){
  const d=new JSDOM('<!doctype html><body><button id="copy" title="Copy to clipboard" aria-label="Copy deployment name"><svg></svg></button><button id="themeToggle">Anvil Light</button><dialog id="modal"><button id="inside" title="Copy certificate" aria-label="Copy certificate"><svg></svg></button></dialog></body>',{url:'http://localhost',runScripts:'outside-only',pretendToBeVisual:true});
- const w=d.window;
+ const w=watchUncaught(d.window);
  w.matchMedia=()=>({matches:false});
  w.HTMLElement.prototype.showModal=function(){this.setAttribute('open','')};
  w.HTMLElement.prototype.close=function(){this.removeAttribute('open');this.dispatchEvent(new w.Event('close'))};

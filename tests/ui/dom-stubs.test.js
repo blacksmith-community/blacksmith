@@ -1,13 +1,14 @@
 const { test, expect, afterEach } = require('bun:test');
 const { JSDOM } = require('./certificates/support.js');
 const { install } = require('./dom-stubs.js');
+const { watchUncaught } = require('./watch-uncaught.js');
 
 const t = JSDOM ? test : test.skip;
 const wins = [];
 afterEach(() => { wins.splice(0).forEach((w) => w.close()); });
 
 const make = (html, options) => {
-  const w = new JSDOM('<!doctype html><body>' + html + '</body>', { url: 'http://localhost/', pretendToBeVisual: true }).window;
+  const w = watchUncaught(new JSDOM('<!doctype html><body>' + html + '</body>', { url: 'http://localhost/', pretendToBeVisual: true }).window);
   wins.push(w);
   const stubs = install(w, options);
   return { w, d: w.document, stubs, key: (target, k) => target.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })) };

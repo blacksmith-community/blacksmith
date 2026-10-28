@@ -9,18 +9,14 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('./support.js');
 const { install: installStubs } = require('../dom-stubs.js');
+// Every harness window reports its uncaught errors through watchUncaught.
+// tests/ui/uncaught-guard.js is preloaded by bunfig.toml, and its afterEach
+// fails any test whose window raised one, so no suite has to opt in. The same
+// text also lands in the env's errors list, which suites that assert on
+// console output keep reading.
+const { watchUncaught } = require('../watch-uncaught.js');
 
 const UI = path.resolve(__dirname, '..', '..', '..', 'ui');
-
-// Every harness window reports its uncaught errors here. tests/ui/uncaught-guard.js
-// is preloaded by bunfig.toml, and its afterEach fails any test whose window
-// raised one, so no suite has to opt in. The same text also lands in the env's
-// errors list, which suites that assert on console output keep reading.
-const watchUncaught=(w,errors)=>{
-  const seen=[];
-  (globalThis.__uiUncaught=globalThis.__uiUncaught||[]).push(seen);
-  w.addEventListener('error',(e)=>{ const m='UNCAUGHT '+(e.message||e.error); seen.push(m); errors.push(m); });
-};
 
 const main=(()=>{
 const SRC=path.join(UI,'blacksmith.js');

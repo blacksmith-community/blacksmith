@@ -1,6 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
 const {main:{boot,sleep}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
+const {watchUncaught}=require('./watch-uncaught.js');
 const fs=require('fs'),path=require('path');
 const t=JSDOM?test:test.skip;
 
@@ -142,7 +143,7 @@ t('catalog text is escaped',()=>{
 });
 
 t('routes carry the Services filter and reject a plan without a service',()=>{
- const w=new JSDOM('<body></body>',{url:'http://localhost/',runScripts:'outside-only'}).window;
+ const w=watchUncaught(new JSDOM('<body></body>',{url:'http://localhost/',runScripts:'outside-only'}).window);
  w.eval(fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8'));
  const api=w.BlacksmithRoutes;
  expect(api.format({screen:'services'})).toBe('#/instances');

@@ -1,11 +1,12 @@
 const {test,expect}=require('bun:test');
 const {JSDOM}=require('./certificates/support.js');
+const {watchUncaught}=require('./watch-uncaught.js');
 const fs=require('fs'),path=require('path');
 const source=()=>fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8');
 
 function boot(hash){
  const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/'+(hash||''),runScripts:'outside-only',pretendToBeVisual:true});
- const w=dom.window;
+ const w=watchUncaught(dom.window);
  if(hash)w.blacksmithViews={activate:async r=>r};
  w.eval(source());
  return {w,api:w.BlacksmithRoutes};
