@@ -47,6 +47,16 @@ t('the config details view stays usable when the tabs element never loads',async
  expect(dialog().open).toBe(false);
 });
 
+t('a route subview names the missing detail view when the tabs element never loads',async()=>{
+ const env=await start({noOat:true}); const {w,d}=env;
+ w.__routes.push(['/b/deployments/blacksmith/manifest',(u,o,j)=>j(200,{text:'name: test',parsed:{name:'test',releases:[{name:'release',version:'1'}],stemcells:[],update:{canaries:1}}})]);
+ expect(w.customElements.get('bs-tabs')).toBeUndefined();
+ let failure=null;
+ try{ await w.blacksmithViews.activate({screen:'blacksmith',section:'manifest',subview:'versions'}); }catch(e){ failure=e; }
+ expect(d.querySelector('#blacksmith .manifest-details-container bs-tabs')).not.toBeNull();
+ expect(failure&&failure.message).toBe('This detail view is not available for the selected resource.');
+});
+
 t('the config details view opens as a native modal dialog on the surface stack',async()=>{
  const env=await start(); const {w,d,dialog,stubs,snapshot}=env;
  const before=snapshot();
