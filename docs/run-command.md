@@ -344,9 +344,9 @@ All routes sit under `/b/upgrade` and take the broker's basic auth. A command ke
 
 | Route | Purpose |
 |-------|---------|
-| `POST /b/upgrade/commands/preview` | Takes `instance_ids`, `command`, `run_as`, `timeout_seconds`, `parallel`, and `max_in_flight`, and an optional `client_request_id` of at most 128 bytes that binds the preview to the create request that will spend it. Answers with a `preview_id` that expires. |
+| `POST /b/upgrade/commands/preview` | Takes `instance_ids`, `command`, `run_as`, `timeout_seconds`, `parallel`, and `max_in_flight`, and an optional `client_request_id` of at most 128 bytes. That ID binds the preview for a discard only, so only a discard that names the same request can revoke it, and the create does not check it. Answers with a `preview_id` that expires. |
 | `POST /b/upgrade/tasks` | With `kind` set to `command`, takes `preview_id`, `client_request_id`, `command`, `run_as`, `timeout_seconds`, `parallel`, `max_in_flight`, `name`, and `reason`. |
-| `POST /b/upgrade/commands/discard` | Takes `client_request_id` and `preview_id`, applies the commands switch, and needs no command key. Answers 200 with `{"discarded": true}` after it revokes the preview, or with `{"discarded": false, "task_id": "..."}` when a task already exists for the request. A preview bound to a different `client_request_id` is left in place, and the discard answers 409 `preview_mismatch`. |
+| `POST /b/upgrade/commands/discard` | Takes `client_request_id` and `preview_id`, applies the commands switch, and needs no command key. Answers 200 with `{"discarded": true}` after it revokes the preview, or with `{"discarded": false, "task_id": "..."}` when a task already exists for the request. A preview bound to a different `client_request_id` is left in place, and the discard answers 409 `preview_bound`. |
 | `GET /b/upgrade/tasks/{id}/output?vm=<group>-<index>&instance=<instance-id>` | Answers with what one node printed. |
 
 The preview lists each instance with its deployment and service. It lists every VM as `{group, index, id, cid, az, ips, state, job_state, targeted, reason}`, and it carries `services`, `warnings`, `worker_count`, and `max_in_flight_limit`. The preview stores the command's SHA-256 and length and never the text. A preview expires after a short time, which is 15 minutes by default, and one kind of preview cannot be spent as the other.
@@ -367,6 +367,7 @@ The errors specific to this operation are these.
 | 403 | `commands_disabled` | The operation is turned off. |
 | 403 | `root_disabled` | A root run was requested while `allow_root` is off. |
 | 409 | `preview_mismatch` | The create does not match its preview. |
+| 409 | `preview_bound` | The discard names a preview bound to a different `client_request_id`, so the preview stays. |
 
 ## Node Scripts
 

@@ -52,9 +52,9 @@ type CommandPreviewRequest struct {
 	TimeoutSeconds int      `json:"timeout_seconds"`
 	Parallel       bool     `json:"parallel"`
 	MaxInFlight    int      `json:"max_in_flight"`
-	// ClientRequestID, when set, binds the preview to the create request
-	// that will spend it, so only a discard that names that request can
-	// revoke the preview.
+	// ClientRequestID, when set, binds the preview to that request for a
+	// discard, so only a discard that names the request can revoke the
+	// preview. The create does not check it.
 	ClientRequestID string `json:"client_request_id,omitempty"`
 }
 

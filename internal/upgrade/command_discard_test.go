@@ -343,7 +343,7 @@ func boundCmdReq(requestID string, ids ...string) CommandPreviewRequest {
 }
 
 // A discard of a preview bound to another request is refused with a 409
-// preview_mismatch, and the preview stays, so one operator's discard can't
+// preview_bound, and the preview stays, so one operator's discard can't
 // remove the preview another is about to create from.
 func TestDiscardCommandRequestRefusesAPreviewOfAnotherRequest(t *testing.T) {
 	t.Parallel()
@@ -352,7 +352,7 @@ func TestDiscardCommandRequestRefusesAPreviewOfAnotherRequest(t *testing.T) {
 	preview := env.previewFor(t, boundCmdReq("other-request", "i1"))
 
 	result, err := env.manager.DiscardCommandRequest(context.Background(), discardReq(preview.ID))
-	expectAPIError(t, err, http.StatusConflict, apierr.CodePreviewMismatch)
+	expectAPIError(t, err, http.StatusConflict, apierr.CodePreviewBound)
 
 	if result.Discarded {
 		t.Error("the refused discard says it discarded the preview")

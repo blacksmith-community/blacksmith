@@ -55,6 +55,7 @@ const (
 	CodeNotAwaitingDecision    = "not_awaiting_decision"
 	CodeInvalidTaskState       = "invalid_task_state"
 	CodePreviewMismatch        = "preview_mismatch"
+	CodePreviewBound           = "preview_bound"
 
 	// 410.
 	CodePreviewExpired = "preview_expired"
