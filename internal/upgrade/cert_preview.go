@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -147,9 +146,10 @@ type PreviewStore struct {
 	// back by restoreCommand.
 	revoked map[string]time.Time
 
-	// spends counts the calls of Spend, so a test can tell a peek from a
-	// spend that was put back.
-	spends atomic.Int64
+	// onSpend, when a test sets it before the store is shared, runs at the
+	// start of every Spend, so the test can tell a peek from a spend that
+	// was put back. It is nil in production.
+	onSpend func()
 }
 
 // NewPreviewStore returns an empty store that tells time with now.
@@ -257,7 +257,9 @@ type SpentPreview struct {
 // 409 preview_mismatch and stays in the store, and one that is unknown or
 // has expired answers 410 preview_expired.
 func (s *PreviewStore) Spend(id string, kind PreviewKind) (SpentPreview, error) {
-	s.spends.Add(1)
+	if s.onSpend != nil {
+		s.onSpend()
+	}
 
 	now := s.now()
 

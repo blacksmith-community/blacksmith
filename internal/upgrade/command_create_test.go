@@ -224,6 +224,8 @@ type cmdCreateEnv struct {
 	vault   *cmdCreateVault
 	log     *cmdLogger
 	now     *atomic.Value
+	// spends counts the calls of the preview store's Spend.
+	spends *atomic.Int64
 }
 
 // stubAuthorizer answers every stored check with one error.
@@ -305,6 +307,12 @@ func newCreateCmdEnvParked(t *testing.T, change func(*Deps), park bool) *cmdCrea
 		change(&deps)
 	}
 
+	spends := &atomic.Int64{}
+	if deps.Previews == nil {
+		deps.Previews = NewPreviewStore(deps.Now)
+		deps.Previews.onSpend = func() { spends.Add(1) }
+	}
+
 	if err := manager.Configure(deps); err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
@@ -322,7 +330,7 @@ func newCreateCmdEnvParked(t *testing.T, change func(*Deps), park bool) *cmdCrea
 		manager.jobSemaphore <- struct{}{}
 	}
 
-	return &cmdCreateEnv{manager: manager, vault: vault, log: log, now: now}
+	return &cmdCreateEnv{manager: manager, vault: vault, log: log, now: now, spends: spends}
 }
 
 // previewFor stores a command preview for the instances with the settings of
@@ -401,7 +409,7 @@ func expectPreviewKept(t *testing.T, e *cmdCreateEnv, previewID string) {
 func expectNoSpend(t *testing.T, e *cmdCreateEnv) {
 	t.Helper()
 
-	if spends := e.manager.certDeps().Previews.spends.Load(); spends != 0 {
+	if spends := e.spends.Load(); spends != 0 {
 		t.Fatalf("expected no spend, got %d", spends)
 	}
 }

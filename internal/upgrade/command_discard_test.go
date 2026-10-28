@@ -57,7 +57,7 @@ func TestDiscardCommandRequestAfterCreateReturnsTask(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	spends := env.manager.certDeps().Previews.spends.Load()
+	spends := env.spends.Load()
 
 	// The discard names the other preview, which must stay in the store.
 	result, err := env.manager.DiscardCommandRequest(context.Background(), discardReq(other.ID))
@@ -69,7 +69,7 @@ func TestDiscardCommandRequestAfterCreateReturnsTask(t *testing.T) {
 		t.Fatalf("a discard that found a task revoked the preview: %v", err)
 	}
 
-	if env.manager.certDeps().Previews.spends.Load() != spends {
+	if env.spends.Load() != spends {
 		t.Fatal("a discard spent a preview")
 	}
 }
