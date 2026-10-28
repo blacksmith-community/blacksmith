@@ -354,6 +354,115 @@ func TestRunCleanupReportsAGroupThatSurvivesKill(t *testing.T) {
 	}
 }
 
+// plantPassingKill puts a kill under the fake root that logs its
+// arguments and hands only the signals that match pass, a case pattern
+// such as -TERM, on to the real kill. It returns the log's path.
+func (r *runTree) plantPassingKill(t *testing.T, pass string) string {
+	t.Helper()
+
+	realKill, err := exec.LookPath("kill")
+	if err != nil {
+		t.Skip("no kill binary on this host")
+	}
+
+	log := r.path("kill-log")
+	plant := r.path("usr/bin/kill")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\ncase $1 in %s) exec %q \"$@\" ;; esac\n", log, pass, realKill)
+
+	// A link to the real kill must go, or the write would go through it.
+	err = os.Remove(plant)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+
+	err = os.WriteFile(plant, []byte(script), 0o755) //nolint:gosec // a test tool
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return log
+}
+
+// leaderEndsOnTerm is a command whose leader ends on TERM while its
+// background child ignores TERM, so the child outlives the leader and
+// only KILL can end it.
+func leaderEndsOnTerm(pidFile string) string {
+	return fmt.Sprintf("(trap '' TERM; exec sleep 60) &\necho $! > %q\nwait\n", pidFile)
+}
+
+// A leader that ends on TERM leaves a child that ignores it. Cleanup sends
+// TERM to the group, and KILL to the child once the window passes, and
+// reports the task killed once the session is empty.
+func TestRunCleanupKillsTheChildOfALeaderThatEndsOnTerm(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+	tree.env = []string{"RC_KILL_TICKS=10"}
+
+	pidFile := tree.path("sleeper-pid")
+	running := tree.startExec(t, "root", leaderEndsOnTerm(pidFile), pidFile)
+	log := tree.plantPassingKill(t, "-TERM|-KILL")
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	logged, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := fmt.Sprintf("-TERM -- -%d\n-KILL -- %d\n", running.pgid, running.sleepPID)
+	if string(logged) != want {
+		t.Errorf("signals sent = %q, want %q", logged, want)
+	}
+
+	if sessionLive(t, running.pgid) {
+		t.Error("the child that ignored TERM still lives")
+	}
+}
+
+// When the KILL that should end the child of a leader that ended on TERM
+// is lost, cleanup reports the child as a survivor, after sending TERM and
+// then KILL.
+func TestRunCleanupReportsTheChildOfALeaderThatEndsOnTermSurviving(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+	tree.linkKill(t)
+	tree.env = []string{"RC_KILL_TICKS=10"}
+
+	pidFile := tree.path("sleeper-pid")
+	running := tree.startExec(t, "root", leaderEndsOnTerm(pidFile), pidFile)
+	log := tree.plantPassingKill(t, "-TERM")
+
+	code, out := tree.cleanup(t, runTask)
+	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+		t.Errorf("exit = %d, output = %q", code, out)
+	}
+
+	logged, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := fmt.Sprintf("-TERM -- -%d\n-KILL -- %d\n", running.pgid, running.sleepPID)
+	if string(logged) != want {
+		t.Errorf("signals sent = %q, want %q", logged, want)
+	}
+
+	if !sessionLive(t, running.pgid) {
+		t.Error("the child ended although its KILL was lost")
+	}
+
+	record := tree.taskFile(t, "survivors")
+	if line := fmt.Sprintf("%d %s\n", running.sleepPID, startTime(t, running.sleepPID)); record != line {
+		t.Errorf("the survivors record is %q, want %q", record, line)
+	}
+}
+
 // survivorTree is a task whose cleanup found processes that outlived
 // KILL, with the planted kill that let them live still in place.
 func survivorTree(t *testing.T) (*runTree, runningCommand, string) {
