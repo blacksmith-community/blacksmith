@@ -10611,7 +10611,7 @@
             tableBody += `
               <tr data-config-type="${config.type}">
                 <td class="config-id">${configIdLink}</td>
-                <td class="config-type"><span class="config-type-badge ${config.type}">${config.type}</span></td>
+                <td class="config-type">${configTypeBadge(config.type)}</td>
                 <td class="config-name">${config.name || '-'}</td>
                 <td class="config-team">${teamDisplay}</td>
                 <td class="config-created">${createdAt}</td>
@@ -11311,6 +11311,18 @@
   // against these, and anything else gets one fixed class, so a level never
   // becomes part of a class attribute as it was written.
   const STYLED_LOG_LEVELS = ['error', 'warning', 'warn', 'info', 'debug'];
+  // Info takes Oat's default badge, and a level we do not style is secondary.
+  const LOG_LEVEL_VARIANTS = { error: 'danger', warning: 'warning', warn: 'warning', debug: 'secondary' };
+  const logLevelBadge = (levelName, text) => {
+    const variant = LOG_LEVEL_VARIANTS[levelName] || (levelName === 'info' ? '' : 'secondary');
+    return `<span class="badge"${variant ? ` data-variant="${variant}"` : ''}>${text}</span>`;
+  };
+  // Cloud takes Oat's default badge, and an unknown type is secondary.
+  const CONFIG_TYPE_VARIANTS = { runtime: 'secondary', cpi: 'success', resurrection: 'warning' };
+  const configTypeBadge = (type) => {
+    const variant = type === 'cloud' ? '' : (CONFIG_TYPE_VARIANTS[type] || 'secondary');
+    return `<span class="badge"${variant ? ` data-variant="${variant}"` : ''}>${type}</span>`;
+  };
 
   const renderLogRow = (logEntry, columns = null) => {
     // Default to showing all columns if no column config provided (backward compatibility)
@@ -11351,7 +11363,7 @@
     }
 
     if (activeColumns.level) {
-      cells.push(`<td class="log-level"><span class="level-badge ${levelClass}">${escapeHtml(level)}</span></td>`);
+      cells.push(`<td class="log-level">${logLevelBadge(levelName, escapeHtml(level))}</td>`);
     }
 
     if (activeColumns.component) {
@@ -24778,6 +24790,7 @@
     if (window.ot && window.ot.toast && typeof window.ot.toast.el === 'function') {
       // The roles are set on the element before Oat inserts it, so a screen
       // reader sees them on arrival. An error is assertive and the rest are polite.
+      // The markup below mirrors what ot.toast builds, so check it when Oat changes.
       const urgent = variant === 'error';
       const toast = document.createElement('output');
       toast.setAttribute('data-variant', variant);

@@ -2409,39 +2409,10 @@ td a {
   white-space: nowrap;
 }
 
-/* Level badges */
-.level-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-weight: 600;
-  font-size: 0.85em;
+/* Oat's badge keeps the case it is given, and log levels and config types read as capitals. */
+.log-level .badge,
+.config-type .badge {
   text-transform: uppercase;
-}
-
-.log-level-error .level-badge {
-  background: #fee;
-  color: #d73a49;
-  border: 1px solid #fdd;
-}
-
-.log-level-warning .level-badge,
-.log-level-warn .level-badge {
-  background: #fff8e6;
-  color: #e36209;
-  border: 1px solid #ffeaa7;
-}
-
-.log-level-info .level-badge {
-  background: #e6f3ff;
-  color: #0366d6;
-  border: 1px solid #c8e1ff;
-}
-
-.log-level-debug .level-badge {
-  background: #f6f8fa;
-  color: #6a737d;
-  border: 1px solid #e1e4e8;
 }
 
 /* Message formatting */
@@ -2560,31 +2531,6 @@ td a {
 [data-theme="dark"] .version {
   background: #0f2d0f;
   color: #85e89d;
-}
-
-[data-theme="dark"] .log-level-error .level-badge {
-  background: #4a1a1a;
-  color: #ff6b6b;
-  border: 1px solid #3d1212;
-}
-
-[data-theme="dark"] .log-level-warning .level-badge,
-[data-theme="dark"] .log-level-warn .level-badge {
-  background: #3d2f0f;
-  color: #ffab70;
-  border: 1px solid #2d1f0a;
-}
-
-[data-theme="dark"] .log-level-info .level-badge {
-  background: #0f2432;
-  color: #79b8ff;
-  border: 1px solid #081a28;
-}
-
-[data-theme="dark"] .log-level-debug .level-badge {
-  background: #1e1e1e;
-  color: #8b949e;
-  border: 1px solid #30363d;
 }
 
 /* Hidden source container */
@@ -10165,58 +10111,6 @@ span.config-type.resurrection {
   color: var(--text-secondary);
   font-style: italic;
   margin-top: 1rem;
-}
-
-/* Config type badge in table */
-.config-type-badge {
-  display: inline-block;
-  padding: 0.25rem 0.5rem;
-  border-radius: 3px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.config-type-badge.cloud {
-  background: #e3f2fd;
-  color: #1976d2;
-}
-
-.config-type-badge.runtime {
-  background: #f3e5f5;
-  color: #7b1fa2;
-}
-
-.config-type-badge.cpi {
-  background: #e8f5e8;
-  color: #388e3c;
-}
-
-.config-type-badge.resurrection {
-  background: #fff3e0;
-  color: #f57c00;
-}
-
-/* Dark theme config type badges */
-[data-theme="dark"] .config-type-badge.cloud {
-  background: #1e3a8a;
-  color: #93c5fd;
-}
-
-[data-theme="dark"] .config-type-badge.runtime {
-  background: #581c87;
-  color: #c4b5fd;
-}
-
-[data-theme="dark"] .config-type-badge.cpi {
-  background: #166534;
-  color: #86efac;
-}
-
-[data-theme="dark"] .config-type-badge.resurrection {
-  background: #c2410c;
-  color: #fed7aa;
 }
 
 /* Dark theme adjustments for config versions modal */

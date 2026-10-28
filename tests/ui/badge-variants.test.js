@@ -12,6 +12,16 @@ test('badges use Oat badge with a data-variant and no badge-color class',()=>{
  expect(js).toContain('<span class="badge" data-variant="secondary">INACTIVE</span>');
  expect(js).toContain('<span class="badge" data-variant="warning">Error</span>');
 });
+test('log levels and config types use Oat badge variants',()=>{
+ const js=read('blacksmith.js');
+ expect(js).not.toContain('level-badge');
+ expect(js).not.toContain('config-type-badge');
+ expect(js).toContain("const LOG_LEVEL_VARIANTS = { error: 'danger', warning: 'warning', warn: 'warning', debug: 'secondary' };");
+ expect(js).toContain("const CONFIG_TYPE_VARIANTS = { runtime: 'secondary', cpi: 'success', resurrection: 'warning' };");
+ for (const f of ['blacksmith.css','forge-theme.css']) {
+  expect(read(f)).not.toMatch(/level-badge|config-type-badge/);
+ }
+});
 test('our stylesheet no longer redefines Oat badge',()=>{
  const css=read('blacksmith.css');
  expect(css).not.toMatch(/^\.badge\s*\{/m);
@@ -41,5 +51,6 @@ test('badge text meets 4.5:1 in every theme',()=>{
    expect(ratio(t[v],mix(t[v],t['--card'],pct))).toBeGreaterThanOrEqual(4.5);
   });
   expect(ratio(t['--secondary-foreground'],t['--secondary'])).toBeGreaterThanOrEqual(4.5);
+  expect(ratio(t['--primary-foreground'],t['--primary'])).toBeGreaterThanOrEqual(4.5);
  });
 });
