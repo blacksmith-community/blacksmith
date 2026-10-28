@@ -200,6 +200,16 @@ t('Shift+Tab on an item closes the menu and moves focus to the element before th
   expect(x.d.activeElement).toBe(previous);
 });
 
+t('reopening the menu right after Tab does not let the late focus move steal focus from the menu', async () => {
+  const x = await start();
+  x.btn.click(); await x.settle();
+  x.csv.dispatchEvent(new x.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  x.btn.click();
+  await x.settle();
+  expect(x.isOpen()).toBe(true);
+  expect(x.d.activeElement).toBe(x.csv);
+});
+
 t('Tab with the menu closed is left alone', async () => {
   const x = await start();
   const tab = new x.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });

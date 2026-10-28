@@ -27771,7 +27771,7 @@
         else if (event.key === 'Tab') {
           event.preventDefault();
           const target = tabNeighbor(event.shiftKey);
-          view.refs.exportMenu.addEventListener('toggle', () => { if (target) target.focus(); }, { once: true });
+          view.refs.exportMenu.addEventListener('toggle', (toggle) => { if (toggle.newState === 'closed' && target) target.focus(); }, { once: true });
           view.refs.exportMenu.hidePopover();
         }
       });
