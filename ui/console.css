@@ -224,11 +224,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, input:focu
 #upgrade .upgrade-services select {
   width: 100%;
   min-height: 36px;
-  border: 1px solid var(--border-primary);
-  border-radius: 5px;
   padding: 6px 10px;
-  color: var(--text-primary);
-  background: var(--bg-primary);
 }
 #upgrade .upgrade-services .batch-search-row { flex: 2 1 260px; }
 #upgrade .upgrade-actions { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }

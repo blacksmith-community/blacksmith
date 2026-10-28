@@ -66,6 +66,10 @@ const STRIPPED={
   '.table-controls-container .log-file-dropdown':LOOK.concat('cursor'),
   '.diff-controls .form-control':LOOK,
  },
+ 'console.css':{
+  '#upgrade .upgrade-services input':LOOK,
+  '#upgrade .upgrade-services select':LOOK,
+ },
 };
 
 Object.entries(GONE).forEach(([file,sels])=>{
