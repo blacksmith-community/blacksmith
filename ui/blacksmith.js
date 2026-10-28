@@ -315,7 +315,7 @@
   const isolateDialog = (overlay) => {
     const changed = [...document.body.children].filter(node =>
       !node.contains(overlay) && !node.hasAttribute('inert') &&
-      !node.matches('script, style, #blacksmith-live-region'));
+      !node.matches('script, style, #blacksmith-live-region, .toast-container'));
     changed.forEach(node => node.setAttribute('inert', ''));
     return () => changed.forEach(node => node.removeAttribute('inert'));
   };
@@ -24770,9 +24770,19 @@
     if (deleteBtn) deleteBtn.style.display = rows.some(vm => vm.resurrection_config_exists) ? 'inline-flex' : 'none';
   };
 
-  // Helper function to show notifications
+  // Shows a notification. Oat's toast carries it when Oat is on the page,
+  // for three seconds as before. Without Oat the page banner shows it and
+  // the polite live region announces it.
   function showNotification(message, type = 'info') {
-    // Create notification element if it doesn't exist
+    if (window.ot && typeof window.ot.toast === 'function') {
+      const toast = window.ot.toast(String(message), '', { variant: type, duration: 3000 });
+      // Oat's toast is an output element, which is polite. An error is assertive.
+      const urgent = type === 'error';
+      toast.setAttribute('role', urgent ? 'alert' : 'status');
+      toast.setAttribute('aria-live', urgent ? 'assertive' : 'polite');
+      return;
+    }
+
     let notification = document.querySelector('.notification');
     if (!notification) {
       notification = document.createElement('div');
@@ -24780,15 +24790,15 @@
       document.body.appendChild(notification);
     }
 
-    // Set message and type
     notification.textContent = message;
     notification.className = `notification notification-${type} notification-show`;
+    announce(message);
 
-    // Auto-hide after 3 seconds
     setTimeout(() => {
       notification.classList.remove('notification-show');
     }, 3000);
   }
+  window.showNotification = showNotification;
 
   // Copy service instances table to clipboard
   window.copyServiceInstancesTable = async (event) => {
