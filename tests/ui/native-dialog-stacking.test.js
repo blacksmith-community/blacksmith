@@ -68,17 +68,20 @@ t('a confirmation opened over a modal that opened after the first one is usable 
  expect(snapshot()).toBe(before);
 });
 
-t('a confirmation that was inert when it opened is inert again once it closes',async()=>{
+t('a confirmation that was inert when it opened is inert again once it closes under an open surface',async()=>{
  const env=await start(); const {w,d,dialog,role,stubs}=env;
  const first=w.showConfirmDialog({title:'First',message:'First?'});
  await sleep(10);
  role('cancel').click(); await first; await stubs.settle();
+ const outer={close(){}};
+ w.blacksmithSurfaces.push(outer);
  dialog().setAttribute('inert','');
  const done=w.showConfirmDialog({title:'Second',message:'Second?'});
  await sleep(10);
  expect(dialog().hasAttribute('inert')).toBe(false);
  role('cancel').click(); await done; await stubs.settle();
  expect(dialog().hasAttribute('inert')).toBe(true);
+ w.blacksmithSurfaces.remove(outer);
 });
 
 // A real showModal() makes every node outside the dialog inert, and an inert

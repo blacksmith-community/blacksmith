@@ -322,6 +322,14 @@
     return () => changed.forEach(node => node.removeAttribute('inert'));
   };
 
+  // A dialog that opened over another modal clears the inert that modal set,
+  // and puts it back on close only while some surface is still open to need it.
+  // When the outer modal closed first, nothing is left to isolate, so a closed
+  // dialog is never left inert.
+  const restoreDialogInert = (dialog, wasInert) => {
+    if (wasInert && window.blacksmithSurfaces.size() > 0) dialog.setAttribute('inert', '');
+  };
+
   // A modal dialog makes every node outside it inert, and an inert node is
   // dropped from the accessibility tree (HTML Standard, "blocked by a modal
   // dialog"). Toasts and the live region live outside the dialogs, so while a
@@ -406,8 +414,8 @@
       if (dialog.open) dialog.close();
       restoreBackground();
       untrackAnnouncerModal(dialog);
-      if (wasInert) dialog.setAttribute('inert', '');
       window.blacksmithSurfaces.remove(surface);
+      restoreDialogInert(dialog, wasInert);
       if (sharedDialogRun === run) sharedDialogRun = null;
       restoreFocus(opener);
       if (dismissed) onDismiss();
@@ -20524,8 +20532,8 @@
 
       if (state) {
         state.restoreBackground?.();
-        if (state.wasInert) modalElement.setAttribute('inert', '');
         window.blacksmithSurfaces.remove(state.surface);
+        restoreDialogInert(modalElement, state.wasInert);
         this.modalState.delete(modalElement);
         if (restoreOpenerFocus) restoreFocus(state.opener);
       }
@@ -23761,8 +23769,10 @@
           if (this.sessions.size > 0) this.showDialog();
         });
       }
+      const wasInert = modal.hasAttribute('inert');
+      modal.removeAttribute('inert');
       modal.showModal();
-      this.dialogRun = {restoreBackground: isolateDialog(modal)};
+      this.dialogRun = {restoreBackground: isolateDialog(modal), wasInert};
       trackAnnouncerModal(modal);
     },
     releaseDialog() {
@@ -23771,7 +23781,10 @@
       if (!run) return;
       this.dialogRun = null;
       run.restoreBackground();
-      if (modal) untrackAnnouncerModal(modal);
+      if (modal) {
+        untrackAnnouncerModal(modal);
+        restoreDialogInert(modal, run.wasInert);
+      }
     },
     hideDialog() {
       const modal = document.getElementById('terminal-modal');
