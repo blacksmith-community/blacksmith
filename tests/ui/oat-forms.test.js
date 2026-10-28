@@ -47,3 +47,22 @@ test('the certificate settings number fields keep their size and leave the look 
  expect(hasBlock(css,'.cert-settings-field input[aria-invalid="true"]')).toBe(false);
  expect(hasBlock(css,'.cert-settings-field input:focus-visible')).toBe(false);
 });
+
+// Control text needs 4.5:1 and a control border needs 3:1 (WCAG 1.4.11),
+// against the surfaces the controls sit on, in all four themes.
+const lum=(hex)=>{ const c=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(v=>v<=0.03928?v/12.92:((v+0.055)/1.055)**2.4); return .2126*c[0]+.7152*c[1]+.0722*c[2]; };
+const ratio=(a,b)=>{ const [x,y]=[lum(a),lum(b)].sort((p,q)=>q-p); return (x+.05)/(y+.05); };
+test('form control text, placeholder, border, and focus ring meet contrast in every theme',()=>{
+ const css=read('forge-theme.css');
+ [':root',':root[data-contrast="high"]','[data-theme="dark"]',':root[data-contrast="high"][data-theme="dark"]'].forEach((sel)=>{
+  const start=css.indexOf('\n'+sel+' {');
+  expect(start).toBeGreaterThan(-1);
+  const t={}; css.slice(start,css.indexOf('}',start)).replace(/(--[a-z-]+): (#[0-9a-f]{6})/g,(m,k,v)=>{ t[k]=v; });
+  ['--card','--background'].forEach((surface)=>{
+   expect(ratio(t['--foreground'],t[surface])).toBeGreaterThanOrEqual(4.5);
+   expect(ratio(t['--muted-foreground'],t[surface])).toBeGreaterThanOrEqual(4.5);
+   expect(ratio(t['--input'],t[surface])).toBeGreaterThanOrEqual(3);
+   expect(ratio(t['--ring'],t[surface])).toBeGreaterThanOrEqual(3);
+  });
+ });
+});
