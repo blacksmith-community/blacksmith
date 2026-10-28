@@ -1,7 +1,8 @@
 const {test,expect,afterEach}=require('bun:test');
 const fs=require('fs');
 const path=require('path');
-const {main:{boot,sleep}}=require('./certificates/harness.js');
+const H=require('./certificates/harness.js');
+const {main:{boot,sleep}}=H;
 const {JSDOM}=require('./certificates/support.js');
 const t=JSDOM?test:test.skip;
 
@@ -9,7 +10,7 @@ const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','
 
 const envs=[];
 afterEach(()=>{
- while(envs.length){ const env=envs.pop(); try{ expect(env.alerts).toEqual([]); expect(env.errors).toEqual([]); } finally { env.w.close(); } }
+ while(envs.length){ const env=envs.pop(); try{ expect(env.alerts||[]).toEqual([]); expect(env.errors).toEqual([]); } finally { env.w.close(); } }
 });
 
 // Keyboard and activation behavior shared by every tab strip. The same
@@ -24,6 +25,7 @@ const start=async()=>{
 const press=(w,target,key)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));
 
 const manifest={text:'name: test',parsed:{name:'test',releases:[{name:'release',version:'1'}],stemcells:[{alias:'default',os:'ubuntu',version:'1'}],update:{canaries:1}}};
+const inventory=()=>({generated_at:new Date().toISOString(),summary:{certificates:0},scan:{state:'idle'},capabilities:{},certificates:[],rotatable_variables:[],instance:{id:'i1',name:'valkey-1',deployment:'d',service_name:'valkey',plan_name:'small'}});
 const strips={
  manifest:{
   min:4,keyboard:true,
@@ -43,9 +45,34 @@ const strips={
  }
 };
 
+strips.certMain={
+ min:4,keyboard:true,
+ boot:async()=>{ const env=H.instance.boot({oat:true}); envs.push(env); await sleep(60); env.errors.length=0; return env; },
+ render:async({w,d})=>{
+  w.blacksmithData={env:'ws'};
+  w.__routes.push([/certificates\/inventory/,(u,o,j)=>j(200,inventory())]);
+  const host=d.createElement('div'); host.id='strip-host'; d.body.appendChild(host);
+  host.innerHTML=w.__T.renderCertificatesTab(); w.__T.initializeCertificatesTab(); await sleep(80);
+  return host;
+ },
+ tabs:(root)=>[...root.querySelectorAll('#cert-main-tablist [role=tab]')],
+ panes:(root)=>[...root.querySelectorAll('[role=tabpanel]')]
+};
+strips.serviceCert={
+ min:4,keyboard:true,
+ boot:async()=>{ const env=H.instance.boot({oat:true}); envs.push(env); await sleep(60); env.errors.length=0; return env; },
+ render:async({w,d})=>{
+  w.__routes.push([/certificates\/instances\//,(u,o,j)=>j(200,inventory())]);
+  const host=await H.instance.openInstanceTab(w,d,'i1'); host.id='strip-host'; await sleep(80);
+  return host;
+ },
+ tabs:(root)=>[...root.querySelectorAll('#service-cert-tablist-i1 [role=tab]')],
+ panes:(root)=>[...root.querySelectorAll('[role=tabpanel]')]
+};
+
 Object.entries(strips).forEach(([name,strip])=>{
  const setup=async()=>{
-  const env=await start();
+  const env=strip.boot?await strip.boot():await start();
   const root=await strip.render(env); await sleep(20);
   const tabs=strip.tabs(root); const panes=strip.panes(root);
   const selected=()=>tabs.filter(x=>x.getAttribute('aria-selected')==='true').map(x=>tabs.indexOf(x));
@@ -92,9 +119,9 @@ Object.entries(strips).forEach(([name,strip])=>{
 
 // A strip on bs-tabs keeps its tab list and panels as direct children, in
 // the same order, so Oat can pair them by index.
-['manifest','config'].forEach((name)=>{
+['manifest','config','certMain'].forEach((name)=>{
  t(`${name} strip is a bs-tabs element with the tab list and panels as its children`,async()=>{
-  const env=await start(); const root=await strips[name].render(env); await sleep(20);
+  const env=strips[name].boot?await strips[name].boot():await start(); const root=await strips[name].render(env); await sleep(20);
   const host=root.querySelector('bs-tabs');
   expect(host).not.toBeNull();
   const kids=[...host.children];
@@ -107,7 +134,7 @@ Object.entries(strips).forEach(([name,strip])=>{
   expect(kids.filter(x=>/display/.test(x.getAttribute('style')||''))).toEqual([]);
  });
  t(`${name} strip hides inactive panels with the hidden attribute`,async()=>{
-  const env=await start(); const root=await strips[name].render(env); await sleep(20);
+  const env=strips[name].boot?await strips[name].boot():await start(); const root=await strips[name].render(env); await sleep(20);
   const panes=strips[name].panes(root);
   expect(panes.map(x=>x.hidden)).toEqual(panes.map((x,i)=>i!==0));
  });

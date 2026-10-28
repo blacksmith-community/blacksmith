@@ -17247,23 +17247,23 @@
     return `
       <div class="service-testing-container broker-certificates-workspace">
         <div class="manifest-details-container">
-          <div class="manifest-tabs-nav" id="cert-main-tablist">
-            <button class="manifest-tab-btn active" data-tab="overview" data-group="${tabGroupId}">Overview</button>
-            <button class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
-            <button class="manifest-tab-btn" data-tab="config" data-group="${tabGroupId}">Config</button>
-            <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
+          <bs-tabs>
+          <div class="manifest-tabs-nav" role="tablist" aria-label="Certificate sources" id="cert-main-tablist">
+            <button type="button" role="tab" class="manifest-tab-btn active" data-tab="overview" data-group="${tabGroupId}">Overview</button>
+            <button type="button" role="tab" class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
+            <button type="button" role="tab" class="manifest-tab-btn" data-tab="config" data-group="${tabGroupId}">Config</button>
+            <button type="button" role="tab" class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
           </div>
 
-          <div class="manifest-tab-content">
             <!-- Overview Tab -->
-            <div class="manifest-tab-pane active" data-tab="overview" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane active" data-tab="overview" data-group="${tabGroupId}">
               <div class="operation-content">
                 <div id="cert-broker-overview" class="cert-ov"></div>
               </div>
             </div>
 
             <!-- Trusted Certificates Tab -->
-            <div class="manifest-tab-pane" data-tab="trusted" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane" data-tab="trusted" data-group="${tabGroupId}">
               <div class="operation-content">
                 <table class="operation-form">
                   <tr>
@@ -17291,7 +17291,7 @@
             </div>
 
             <!-- Configuration Certificates Tab -->
-            <div class="manifest-tab-pane" data-tab="config" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane" data-tab="config" data-group="${tabGroupId}">
               <div class="operation-content">
                 <table class="operation-form">
                   <tr>
@@ -17317,7 +17317,7 @@
             </div>
 
             <!-- Endpoint Certificate Tab -->
-            <div class="manifest-tab-pane" data-tab="endpoint" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane" data-tab="endpoint" data-group="${tabGroupId}">
               <div class="operation-content">
                 <table class="operation-form">
                   <tr>
@@ -17355,7 +17355,7 @@
                 </table>
               </div>
             </div>
-          </div>
+          </bs-tabs>
         </div>
       </div>
     `;
@@ -17405,12 +17405,6 @@
 
     CertOverview.mountBroker(document.getElementById('cert-broker-overview'));
 
-    // Set up tab switching for certificates tabs
-    {
-      window.blacksmithTabs.bind(document.getElementById('cert-main-tablist'), {
-        label: 'Certificate sources'
-      });
-    }
   };
 
   // Initialize tasks tab functionality

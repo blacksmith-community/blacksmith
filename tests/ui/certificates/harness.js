@@ -78,7 +78,7 @@ const EVIL='"><img src=x onerror=alert(1)><script>alert(2)</script>\'';
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const day=86400000, now=Date.now(), iso=(ms)=>new Date(ms).toISOString();
 
-function boot(){
+function boot(opts={}){
   const dom=new JSDOM('<!DOCTYPE html><html><body><button class="tab-button" data-tab="blacksmith"></button><div id="blacksmith" class="tab-panel"></div><div id="services"></div><button id="opener">o</button></body></html>',{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
   const stubs=installStubs(w);
@@ -101,6 +101,7 @@ function boot(){
   const idx=src.lastIndexOf('})(document, window)');
   const hooked=src.slice(0,idx)+';window.__T={renderServiceCertificatesTab,renderCertificatesTab,initializeCertificatesTab,bindCertificateActions,CertOverview,CertView};\n'+src.slice(idx);
   try{ w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); }
+  if(opts.oat) w.eval(fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8'));
   return {w,d:w.document,errors,calls,json,stubs};
 }
 // Same sequence the service detail loader runs for the certificates tab.

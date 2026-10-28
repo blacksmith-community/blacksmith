@@ -699,6 +699,7 @@ body > footer p { margin: 0; }
 #blacksmith .broker-certificates-workspace { border: 0; border-radius: 0; padding: 0; margin: 0; height: auto; overflow: visible; }
 #blacksmith .broker-certificates-workspace .manifest-details-container { height: auto; margin: 0; }
 #blacksmith .broker-certificates-workspace .manifest-tab-content { border: 0; padding: 8px 0 0; }
+#blacksmith .broker-certificates-workspace bs-tabs > .manifest-tab-pane { border: 0; padding: 23px 15px 15px; }
 #blacksmith .broker-certificates-workspace .operation-content { border: 0; padding: 0; }
 #blacksmith .broker-certificates-workspace .cert-ov-bar { margin: 0 0 8px; padding: 0; }
 #blacksmith .broker-certificates-workspace .cert-ov-rescan { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 36px; padding: 6px; }
