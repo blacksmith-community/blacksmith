@@ -8771,70 +8771,20 @@ span.config-type.resurrection {
   }
 }
 
-/* Config Details Modal Styles - Apply same fixes as Task Details Modal */
+/* Config Details Modal Styles: a native dialog styled by Oat and .modal-dialog */
 #config-details-modal {
-  z-index: 10002 !important; /* Higher than standard modal overlay */
-}
-
-#config-details-modal.active {
-  z-index: 99999 !important; /* Extremely high z-index to ensure it's on top */
-  pointer-events: auto !important; /* Ensure modal can receive interactions */
-  opacity: 1 !important; /* Override any opacity issues */
-  visibility: visible !important; /* Override any visibility issues */
-}
-
-/* Override transform scaling to prevent stacking context issues */
-#config-details-modal.active .modal {
-  transform: scale(1) !important; /* Override the scale-95 when active */
-}
-
-/* Ensure all modal children inherit proper z-index and stay above main content */
-#config-details-modal > *,
-#config-details-modal .modal > *,
-#config-details-modal .modal-content > *,
-#config-details-modal .modal-body > *,
-#config-details-modal .manifest-tab-content > *,
-#config-details-modal .manifest-tab-pane > * {
-  z-index: inherit;
-  position: relative;
-}
-
-
-/* Ensure modal is not affected by any transform stacking contexts */
-#config-details-modal {
-  isolation: isolate; /* Create new stacking context */
-  will-change: auto; /* Prevent GPU layer promotion conflicts */
-}
-
-/* When modal is active, lower z-index of main content to prevent interference */
-#config-details-modal.active ~ *,
-#config-details-modal.active ~ .main-content,
-#config-details-modal.active ~ header,
-#config-details-modal.active ~ footer {
-  z-index: 1 !important;
-  position: relative;
-}
-
-#config-details-modal .modal {
   width: 95vw;
   height: 90vh;
   max-width: none;
   max-height: none;
-  display: flex;
-  flex-direction: column;
+  padding: 0;
   overflow: hidden;
   margin: auto;
-  z-index: inherit; /* Inherit the high z-index from parent */
 }
 
-#config-details-modal .modal-content {
-  width: 100%;
-  flex: 1;
+#config-details-modal[open] {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
-  z-index: inherit; /* Inherit the high z-index */
 }
 
 #config-details-modal .modal-body {
@@ -8846,7 +8796,6 @@ span.config-type.resurrection {
   gap: 0.75rem;
   padding: 0 1rem 1rem;
   height: calc(90vh - 60px); /* Explicit height constraint minus header */
-  z-index: inherit; /* Inherit the high z-index */
 }
 
 /* Config Details Content Container */
@@ -8966,7 +8915,7 @@ span.config-type.resurrection {
 
 /* Config Details Modal responsive adjustments */
 @media (max-width: 768px) {
-  #config-details-modal .modal {
+  #config-details-modal {
     width: 98vw;
     height: 95vh;
     margin: 1vh 1vw;

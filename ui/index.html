@@ -300,12 +300,10 @@
   </div>
 
   <!-- Config Details Modal -->
-  <div id="config-details-modal" class="modal-overlay is-hidden is-transparent is-invisible" role="dialog" aria-labelledby="config-details-modal-title" inert>
-    <div class="modal">
-      <div class="modal-content">
+  <dialog id="config-details-modal" class="modal-dialog" aria-labelledby="config-details-modal-title">
         <div class="modal-header">
           <h3 id="config-details-modal-title">Config Details</h3>
-          <button class="modal-close" onclick="hideConfigVersionsModal()" aria-label="Close modal">&times;</button>
+          <button class="modal-close" aria-label="Close modal">&times;</button>
         </div>
         <div class="modal-body">
           <div id="config-details-loading" class="loading">Loading config details...</div>
@@ -384,9 +382,7 @@
             </div>
           </div>
         </div>
-      </div>
-    </div>
-  </div>
+  </dialog>
 
   <div id="blacksmith-live-region" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 

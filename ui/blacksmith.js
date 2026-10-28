@@ -17837,6 +17837,24 @@
 
   // Retain inspection choices only; never cache configuration contents or credentials.
   const configInspectionStates = new Map();
+  // The config details dialog is a native modal. Escape and the backdrop
+  // close it, which ends the run and calls hideConfigVersionsModal.
+  let configDetailsRun = null;
+  const openConfigDialog = modal => {
+    if (!modal.dataset.closeWired) {
+      modal.dataset.closeWired = 'true';
+      modal.querySelector('.modal-close')?.addEventListener('click', () => window.hideConfigVersionsModal());
+    }
+    if (!modal.open) {
+      configDetailsRun = openSharedDialog(modal, document.activeElement, () => window.hideConfigVersionsModal(), false);
+      modal.querySelector('.modal-close')?.focus();
+    }
+    document.body.style.overflow = 'hidden';
+  };
+  const closeConfigDialog = () => {
+    if (configDetailsRun) configDetailsRun.end(false);
+    configDetailsRun = null;
+  };
   const configInspectionKey = (type, name) => JSON.stringify([type, name]);
   const rememberConfigInspection = () => {
     const info = window.currentConfigInfo;
@@ -17881,14 +17899,7 @@
       return;
     }
 
-    // Show the modal
-    modal.style.display = 'flex';
-    modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
-    modal.classList.add('active');
-    modal.removeAttribute('inert');
-    modal.setAttribute('aria-hidden', 'false');
-    document.body.style.overflow = 'hidden';
-    activatePersistentDialog(modal, window.hideConfigVersionsModal);
+    openConfigDialog(modal);
 
     // Show loading state
     const loadingDiv = document.getElementById('config-details-loading');
@@ -17947,10 +17958,7 @@
   window.hideConfigDetailsModal = () => {
     const modal = document.getElementById('config-details-modal');
     if (modal) {
-      deactivatePersistentDialog(modal);
-      modal.classList.remove('active');
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
+      closeConfigDialog();
       document.body.style.overflow = '';
     }
   };
@@ -18021,129 +18029,13 @@
 
     console.log('Opening config details modal for config:', configType, configName);
 
-    // Create or get the modal
-    let modal = document.getElementById('config-details-modal');
+    const modal = document.getElementById('config-details-modal');
     if (!modal) {
-      const modalHTML = `
-        <div id="config-details-modal" class="modal-overlay" role="dialog" aria-labelledby="config-details-modal-title" aria-hidden="true">
-          <div class="modal config-details-modal">
-            <div class="modal-header">
-              <h2 id="config-details-modal-title">Config Details</h2>
-              <button class="close-btn" onclick="hideConfigVersionsModal()" title="Close" aria-label="Close modal">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-            <div class="modal-body config-details-body">
-              <!-- Tab navigation -->
-              <div class="modal-tabs">
-                <button class="manifest-tab-btn active" data-tab="versions" data-group="config-details-tabs">Versions</button>
-                <button class="manifest-tab-btn" data-tab="diffs" data-group="config-details-tabs">Diffs</button>
-              </div>
-
-              <!-- Tab content -->
-              <div class="modal-tab-content">
-                <!-- Versions tab -->
-                <div id="config-versions-tab" class="manifest-tab-pane active" data-tab="versions" data-group="config-details-tabs">
-                  <div id="config-versions-loading" class="loading">
-                    <div class="loading-spinner"></div>
-                    <p>Loading config versions...</p>
-                  </div>
-                  <div id="config-versions-content" style="display: none;">
-                    <div class="config-versions-container">
-                      <div class="config-versions-sidebar">
-                        <h3>Versions</h3>
-                        <div id="config-versions-list" class="versions-list"></div>
-                      </div>
-                      <div class="config-version-details">
-                        <div class="version-details-header">
-                          <h3>Config Content</h3>
-                          <button id="copy-config-version-content" class="copy-btn" title="Copy content" aria-label="Copy config version content">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
-                          </button>
-                        </div>
-                        <pre id="config-version-content" class="config-content-pre"></pre>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Diffs tab -->
-                <div id="config-diffs-tab" class="manifest-tab-pane" data-tab="diffs" data-group="config-details-tabs">
-                  <div id="config-diffs-loading" class="loading" style="display: none;">
-                    <div class="loading-spinner"></div>
-                    <p>Loading diff...</p>
-                  </div>
-                  <div id="config-diffs-content">
-                    <div class="diff-navigation">
-                      <button id="diff-prev-btn" class="diff-nav-btn" onclick="navigateConfigDiff('prev')" disabled>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <polyline points="15 18 9 12 15 6"></polyline>
-                        </svg>
-                        Previous
-                      </button>
-                      <div class="diff-version-info">
-                        <span id="diff-from-version" class="diff-version">Select versions</span>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <polyline points="9 18 15 12 9 6"></polyline>
-                        </svg>
-                        <span id="diff-to-version" class="diff-version">to compare</span>
-                      </div>
-                      <button id="diff-next-btn" class="diff-nav-btn" onclick="navigateConfigDiff('next')">
-                        Next
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <polyline points="9 18 15 12 9 6"></polyline>
-                        </svg>
-                      </button>
-                    </div>
-                    <div class="diff-viewer">
-                      <div class="diff-panel diff-panel-left">
-                        <div class="diff-panel-header">
-                          <h4>Previous Version</h4>
-                          <span id="diff-left-version-info" class="version-info"></span>
-                        </div>
-                        <pre id="diff-left-content" class="diff-content"></pre>
-                      </div>
-                      <div class="diff-panel diff-panel-right">
-                        <div class="diff-panel-header">
-                          <h4>Current Version</h4>
-                          <span id="diff-right-version-info" class="version-info"></span>
-                        </div>
-                        <pre id="diff-right-content" class="diff-content"></pre>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      document.body.insertAdjacentHTML('beforeend', modalHTML);
-      modal = document.getElementById('config-details-modal');
-
-      // Setup tab switching for config details modal
-      setupConfigDetailsTabs();
+      console.error('Config details modal not found in DOM');
+      return;
     }
 
-    // Show the modal
-    modal.style.display = 'flex';
-    modal.classList.remove('is-hidden'); // Remove hidden class
-    modal.classList.remove('is-transparent'); // Remove opacity-0 state class
-    modal.classList.remove('is-invisible'); // Remove invisible state class
-    modal.classList.add('active');
-    modal.removeAttribute('inert'); // Remove inert attribute to make interactive
-    modal.setAttribute('aria-hidden', 'false');
-    document.body.style.overflow = 'hidden';
-    activatePersistentDialog(modal, window.hideConfigVersionsModal);
-
-    // Force z-index to ensure modal is on top
-    modal.style.zIndex = '99999';
+    openConfigDialog(modal);
 
     // Show loading state
     const loadingDiv = document.getElementById('config-details-loading');
@@ -18158,7 +18050,7 @@
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const data = await response.json();
-      if (inspectionRevision !== configInspectionRevision || !modal.classList.contains('active')) return;
+      if (inspectionRevision !== configInspectionRevision || !modal.open) return;
       const versions = data.configs || [];
 
       // Update modal title
@@ -18262,7 +18154,7 @@
         if (firstVersionItem && versions.length > 0) {
           // Small delay to ensure DOM is fully ready
           setTimeout(() => {
-            if (inspectionRevision === configInspectionRevision && modal.classList.contains('active')) {
+            if (inspectionRevision === configInspectionRevision && modal.open) {
               const selected = selectedVersionItem || firstVersionItem;
               loadConfigVersion(selected.dataset.versionId, selected);
             }
@@ -18286,7 +18178,7 @@
       if (retained?.tab === 'diffs') await window.initConfigDiffTab(configType, configName);
 
     } catch (error) {
-      if (inspectionRevision !== configInspectionRevision || !modal.classList.contains('active')) return;
+      if (inspectionRevision !== configInspectionRevision || !modal.open) return;
       console.error('Failed to load config versions:', error);
       if (loadingDiv) {
         loadingDiv.innerHTML = `<div class="error">Failed to load config versions: ${error.message}</div>`;
@@ -18357,15 +18249,7 @@
     configInspectionRevision++;
     const modal = document.getElementById('config-details-modal');
     if (modal) {
-      deactivatePersistentDialog(modal);
-      modal.classList.remove('active');
-      modal.classList.add('is-hidden'); // Add back hidden class
-      modal.classList.add('is-transparent'); // Add back opacity-0 state class
-      modal.classList.add('is-invisible'); // Add back invisible state class
-      modal.style.display = 'none';
-      modal.style.zIndex = ''; // Reset z-index
-      modal.setAttribute('inert', ''); // Add back inert attribute
-      modal.setAttribute('aria-hidden', 'true');
+      closeConfigDialog();
       document.body.style.overflow = '';
 
       // Clear stored config info

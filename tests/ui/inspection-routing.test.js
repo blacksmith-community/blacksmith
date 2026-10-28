@@ -23,7 +23,7 @@ test('a closed config ignores delayed versions',async()=>{
  w.__routes.push([/\/b\/configs\/cloud\/a%2Fb\/versions/,(u,o,j)=>new Promise(resolve=>{finish=()=>resolve(j(200,{configs:[{id:'7',content:'late config'}]}));})]);
  const pending=w.showConfigVersions('cloud','a/b','7');await sleep(10);
  expect(typeof finish).toBe('function');w.hideConfigVersionsModal();finish();await pending;
- expect(d.querySelector('#config-details-modal').getAttribute('aria-hidden')).toBe('true');
+ expect(d.querySelector('#config-details-modal').open).toBe(false);
  expect(w.currentConfigInfo).toBeNull();w.close();
 });
 
