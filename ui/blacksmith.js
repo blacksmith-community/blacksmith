@@ -334,6 +334,10 @@
   const openSharedDialog = (dialog, opener, onDismiss) => {
     let ended = false;
     let restoreBackground = () => {};
+    // A modal that opened earlier leaves this closed dialog inert. It has to
+    // be interactive while it is the topmost surface, and inert again after.
+    const wasInert = dialog.hasAttribute('inert');
+    dialog.removeAttribute('inert');
     const surface = { close: () => dialog.close() };
     // Escape reaches only the topmost surface.
     const onCancel = (event) => {
@@ -357,6 +361,7 @@
       dialog.removeEventListener('close', onClose);
       if (dialog.open) dialog.close();
       restoreBackground();
+      if (wasInert) dialog.setAttribute('inert', '');
       window.blacksmithSurfaces.remove(surface);
       if (sharedDialogRun === run) sharedDialogRun = null;
       restoreFocus(opener);
