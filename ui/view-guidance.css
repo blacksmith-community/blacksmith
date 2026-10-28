@@ -16,6 +16,12 @@
 .field-guidance-button { width: 24px; height: 24px; min-height: 24px; min-width: 24px; padding: 3px; }
 .field-guidance-button > svg { width: 16px; height: 16px; }
 .field-guidance-tip > div > p { margin: 6px 0 0; padding: 0; }
+/* A label or heading and its help share one row, and a legend holds the help beside its words. */
+.field-guidance-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.field-guidance-row > .field-guidance { flex: none; margin-left: 0; }
+/* The rotation mode strip has no visible heading, so its help sits in the strip's upper right corner. */
+.rotate-mode { position: relative; }
+.rotate-mode > .batch-mode-help { position: absolute; top: 8px; right: 8px; margin: 0; }
 
 #blacksmith .detail-content.plans-view { display: flex; align-items: flex-start; gap: 16px; min-width: 0; }
 #blacksmith .plans-view > .plans-list { flex: 0 0 16rem; width: 16rem; min-width: 0; max-width: 100%; padding: 0; border: 0; }

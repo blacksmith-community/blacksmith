@@ -4508,6 +4508,43 @@
     ['immediate', 'Converge right away', 'Choose this to make the repair permanent in the same job. Every job restarts a second time, when the deploy that follows the patch runs.']
   ];
 
+  // Builds the field help node for key, or returns null until view guidance
+  // has loaded.
+  const makeFieldHelp = (key) => {
+    const api = window.BlacksmithViewGuidance;
+    if (!api || typeof api.field !== 'function') return null;
+    return api.field(document.createDocumentFragment(), key);
+  };
+
+  // Puts the field help for key on the same line as anchor, outside any
+  // label, when view guidance has loaded. A legend holds the help inside
+  // itself, because a legend only renders as the fieldset's caption while it
+  // is the fieldset's first child, and the fieldset keeps its accessible
+  // name from the words alone. A heading goes into a flex row with the help.
+  // A label already sits in a flex row with its control, so the help follows
+  // it there.
+  const addFieldHelp = (anchor, key) => {
+    if (!anchor) return null;
+    const node = makeFieldHelp(key);
+    if (!node) return null;
+    if (anchor.tagName === 'LEGEND') {
+      const text = rotateEl('span', 'field-guidance-text');
+      text.append(...anchor.childNodes);
+      let id = `batch-label-${key}`;
+      for (let serial = 1; document.getElementById(id); serial++) id = `batch-label-${key}-${serial}`;
+      text.id = id;
+      if (anchor.parentElement) anchor.parentElement.setAttribute('aria-labelledby', id);
+      anchor.append(text, node);
+    } else if (/^H[1-6]$/.test(anchor.tagName) && anchor.parentNode) {
+      const row = rotateEl('div', 'field-guidance-row');
+      anchor.replaceWith(row);
+      row.append(anchor, node);
+    } else {
+      anchor.after(node);
+    }
+    return node;
+  };
+
   // The Mode choice that Batch Operations and the instance rotate dialog
   // share. The caller owns the state object, which holds mode and converge,
   // and blockReason() returns the sentence that disables Patch, or an empty
@@ -4515,24 +4552,14 @@
   // beside it, and choosing it reveals the converge choice with neither
   // option selected. Every id starts with the prefix, and the prefix starts
   // with rotate-.
-  // Puts the field help for key right after anchor, outside any label, when
-  // view guidance has loaded.
-  const addFieldHelp = (anchor, key) => {
-    const api = window.BlacksmithViewGuidance;
-    if (!anchor || !api || typeof api.field !== 'function') return null;
-    const holder = document.createDocumentFragment();
-    const node = api.field(holder, key);
-    if (node) anchor.after(holder);
-    return node;
-  };
-
   const buildModeControls = (ctx) => {
     const p = ctx.prefix;
     const group = rotateEl('fieldset', 'rotate-mode');
     group.id = p;
-    const modeLegend = rotateEl('legend', '', 'Mode');
-    group.appendChild(modeLegend);
-    addFieldHelp(modeLegend, 'rotate-mode');
+    // The strip itself says what the choice is, so the legend stays for the
+    // fieldset's accessible name and the info button sits in the strip's
+    // upper right corner.
+    group.appendChild(rotateEl('legend', 'visually-hidden', 'Mode'));
     const batchTabs = p === 'rotate-mode';
     const tabs = {};
     // The method tabs sit on a bs-tabs element with one panel per method. The
@@ -4586,6 +4613,11 @@
     reason.id = `${p}-patch-reason`;
     reason.hidden = true;
     modeHost.appendChild(reason);
+    const modeHelp = makeFieldHelp('rotate-mode');
+    if (modeHelp) {
+      modeHelp.classList.add('batch-mode-help');
+      group.appendChild(modeHelp);
+    }
 
     const converge = rotateEl('fieldset', 'rotate-converge');
     converge.id = `${p}-converge`;
