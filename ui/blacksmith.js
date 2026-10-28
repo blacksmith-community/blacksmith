@@ -27755,8 +27755,25 @@
       view.refs.exportMenu.addEventListener('click', (event) => {
         if (event.target.closest && event.target.closest('[role="menuitem"]')) view.refs.exportMenu.hidePopover();
       });
+      // Tab closes the menu and focus moves on in the tab order, as in the
+      // menu button pattern. Oat refocuses the button when the popover closes,
+      // so the move waits for that toggle event, which Oat's handler sees first.
+      const tabNeighbor = (backwards) => {
+        const list = [...document.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+          .filter((el) => !view.refs.exportMenu.contains(el) && !el.contains(view.refs.exportBtn) && !el.closest('[hidden]'));
+        const after = list.filter((el) => view.refs.exportBtn.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+        const before = list.filter((el) => view.refs.exportBtn.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING);
+        return backwards ? before[before.length - 1] : after[0];
+      };
       exportWrap.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && view.refs.exportBtn.getAttribute('aria-expanded') === 'true') event.stopPropagation();
+        if (view.refs.exportBtn.getAttribute('aria-expanded') !== 'true') return;
+        if (event.key === 'Escape') event.stopPropagation();
+        else if (event.key === 'Tab') {
+          event.preventDefault();
+          const target = tabNeighbor(event.shiftKey);
+          view.refs.exportMenu.addEventListener('toggle', () => { if (target) target.focus(); }, { once: true });
+          view.refs.exportMenu.hidePopover();
+        }
       });
 
       document.addEventListener('keydown', (event) => {

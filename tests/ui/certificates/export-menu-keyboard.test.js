@@ -144,6 +144,49 @@ t('when export is blocked both items are disabled, unfocusable, and skipped by t
   expect(x.d.activeElement).not.toBe(x.csv);
 });
 
+// Tab closes the menu and focus moves on in the tab order, as in the menu
+// button pattern. Shift+Tab moves to the previous element.
+const tabbables = (d, menu, btn) => [...d.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+  .filter((el) => !menu.contains(el) && el !== btn && !el.contains(btn) && !el.closest('[hidden]'));
+const around = (x) => {
+  const list = tabbables(x.d, x.menu, x.btn);
+  const at = list.findIndex((el) => x.btn.compareDocumentPosition(el) & x.w.Node.DOCUMENT_POSITION_FOLLOWING);
+  return { next: list[at], previous: list[at - 1] };
+};
+t('Tab on an item closes the menu and moves focus to the next element after the button', async () => {
+  const x = await start();
+  const { next } = around(x);
+  expect(next).toBeTruthy();
+  x.btn.click(); await x.settle();
+  const tab = new x.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+  x.csv.dispatchEvent(tab);
+  expect(tab.defaultPrevented).toBe(true);
+  await x.settle();
+  expect(x.isOpen()).toBe(false);
+  expect(x.btn.getAttribute('aria-expanded')).toBe('false');
+  expect(x.d.activeElement).toBe(next);
+});
+
+t('Shift+Tab on an item closes the menu and moves focus to the element before the button', async () => {
+  const x = await start();
+  const { previous } = around(x);
+  expect(previous).toBeTruthy();
+  x.btn.click(); await x.settle();
+  const tab = new x.w.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+  x.json.dispatchEvent(tab);
+  expect(tab.defaultPrevented).toBe(true);
+  await x.settle();
+  expect(x.isOpen()).toBe(false);
+  expect(x.d.activeElement).toBe(previous);
+});
+
+t('Tab with the menu closed is left alone', async () => {
+  const x = await start();
+  const tab = new x.w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+  x.btn.dispatchEvent(tab);
+  expect(tab.defaultPrevented).toBe(false);
+});
+
 t('the blocked note is outside the menu items and clicking a disabled item or the note keeps the menu open', async () => {
   const x = await start();
   await x.block();
