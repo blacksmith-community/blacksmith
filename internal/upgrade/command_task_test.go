@@ -1310,7 +1310,7 @@ func TestHaltedInstanceFailsAndPausesTheTask(t *testing.T) {
 
 	fix.manager.skipRemainingNodes(inst)
 
-	fix.manager.endCommandInstance(context.Background(), fix.task, inst, true)
+	fix.manager.endCommandInstance(context.Background(), fix.task, inst, true, false)
 
 	snap := fix.snapshot()
 	if snap.Instances[0].Status != InstanceStatusFailed || snap.Instances[0].Error == "" {

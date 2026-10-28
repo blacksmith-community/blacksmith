@@ -2,10 +2,13 @@ package upgrade
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -228,6 +231,109 @@ func TestCommandResumeCleanupPausesBeforeTheNextInstance(t *testing.T) {
 	done := fix.waitFor("the task to end", func(task UpgradeTask) bool { return task.Status == TaskStatusCompleted })
 	if done.Instances[1].Status != InstanceStatusSuccess {
 		t.Errorf("the second instance is %s, want success", done.Instances[1].Status)
+	}
+}
+
+var errSendGateRan = errors.New("the gate of a resume that sends the command ran")
+
+// A Resume cleanup that lands while the run saves the instance it ended
+// for the processes that outlived KILL stops the run there. The task is
+// processed again from that instance, so the survivors are checked before
+// the task pauses before the next instance.
+func TestCommandResumeCleanupDuringTheInstanceSaveChecksTheSurvivors(t *testing.T) {
+	fix := newTaskFixture(t, 2, 1)
+
+	var gated int
+
+	// A gate that runs refuses the resume, so the cleanup must not reach it.
+	gate := func(context.Context) error {
+		gated++
+
+		return errSendGateRan
+	}
+
+	resumed := make(chan error, 1)
+
+	var once sync.Once
+
+	// The resume starts inside the run's save of the ended instance, and
+	// the save waits until the resume has changed the task.
+	fix.vault.onPut = func(path string, raw []byte) {
+		var task UpgradeTask
+		if path != commandTasksVaultPath+"/"+fix.task.ID || json.Unmarshal(raw, &task) != nil {
+			return
+		}
+
+		if !task.Paused || task.Instances[0].Status != InstanceStatusFailed || !nodeOf(task, 0, 0).Survived {
+			return
+		}
+
+		once.Do(func() {
+			fix.setCleanup("dep-0/0", cleanupEnded)
+
+			go func() { resumed <- fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, gate) }()
+
+			for deadline := time.Now().Add(waitTimeout); fix.snapshot().Paused && time.Now().Before(deadline); {
+				time.Sleep(time.Millisecond)
+			}
+		})
+	}
+
+	fix.setCleanup("dep-0/0", cleanupSurvived)
+	fix.queue()
+
+	select {
+	case err := <-resumed:
+		if err != nil {
+			t.Fatalf("resume cleanup: %v", err)
+		}
+	case <-time.After(waitTimeout):
+		t.Fatal("the run never saved the instance the survivors failed")
+	}
+
+	if gated != 0 {
+		t.Error("Resume cleanup ran the gate of a resume that sends the command")
+	}
+
+	paused := fix.waitFor("the task to pause", func(task UpgradeTask) bool { return task.Paused })
+
+	if nodeOf(paused, 0, 0).Survived {
+		t.Error("the task paused with the survivors unchecked")
+	}
+
+	if got := paused.Instances[1].Error; !strings.Contains(got, "Resume to run the command") {
+		t.Errorf("the next instance says %q, want the Resume cleanup to pause before it", got)
+	}
+
+	if fix.sentTo("dep-1") {
+		t.Error("Resume cleanup sent the command to the next instance")
+	}
+}
+
+// A Resume cleanup that lands after a node's processes outlived KILL, and
+// before the run ends the instance, clears the pause the node recorded.
+// The instance ends without pausing the task again for its failure, and
+// the run stops there, so the task is processed again from the instance.
+func TestASurvivorInstanceEndedAfterAResumeCleanupStopsTheRun(t *testing.T) {
+	fix := newTaskFixture(t, 2, 1)
+	inst := &fix.task.Instances[0]
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusRunning
+	fix.task.CleanupOnly = true
+	inst.Status = InstanceStatusRunning
+	inst.Command.VMs[0].Phase = CommandPhaseSettled
+	inst.Command.VMs[0].Status = CommandStatusFailed
+	inst.Command.VMs[0].Survived = true
+	fix.manager.mu.Unlock()
+
+	if fix.manager.endCommandInstance(context.Background(), fix.task, inst, true, true) {
+		t.Error("the run went on past the instance whose processes outlived KILL")
+	}
+
+	snap := fix.snapshot()
+	if snap.Paused || snap.Status != TaskStatusRunning || snap.Instances[0].Status != InstanceStatusFailed {
+		t.Errorf("the task is %s paused=%v with its instance %s, want it running for the Resume cleanup and the instance failed", snap.Status, snap.Paused, snap.Instances[0].Status)
 	}
 }
 

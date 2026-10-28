@@ -1485,9 +1485,7 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 		// instance is ended first, and then the task stays paused rather
 		// than finishing, whatever instance it is in.
 		if !stopped || survived {
-			ended := m.endCommandInstance(persistCtx, task, inst, halted)
-
-			return ended && (!survived || !m.commandTaskPaused(task))
+			return m.endCommandInstance(persistCtx, task, inst, halted, survived)
 		}
 
 		// A stranded node that can't be settled yet leaves the task for its
@@ -1870,15 +1868,10 @@ func skipPendingNodesLocked(inst *InstanceUpgrade, reason string) bool {
 	return skipped
 }
 
-// endCommandInstance settles the instance from its nodes, counts it, and
-// saves it. The instance fails when any node ended in anything but success,
-// and a failure pauses the task when an instance is still pending. A save
-// that can't be confirmed pauses the task instead. A halted deployment is
-// one the loop stopped, which fails the instance even when no node recorded
-// a failure. It reports whether the task goes on to its next instance.
-func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, halted bool) bool {
-	m.mu.Lock()
-
+// commandNodeFailedLocked reports whether any node of the instance settled
+// in anything but success, and gives the instance the first such node's
+// reason when it has no error yet.
+func commandNodeFailedLocked(inst *InstanceUpgrade) bool {
 	failed := false
 
 	for i := range inst.Command.VMs {
@@ -1891,6 +1884,28 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 			}
 		}
 	}
+
+	return failed
+}
+
+// endCommandInstance settles the instance from its nodes, counts it, and
+// saves it. The instance fails when any node ended in anything but success,
+// and a failure pauses the task when an instance is still pending. A save
+// that can't be confirmed pauses the task instead. A halted deployment is
+// one the loop stopped, which fails the instance even when no node recorded
+// a failure. It reports whether the task goes on to its next instance.
+//
+// An instance whose processes survived KILL, as survived says, stops the
+// task while the pause its node recorded holds. A Resume cleanup that
+// lands while the processor still runs clears that pause, and the task
+// stops for it too, without pausing again for the failure, so the resume
+// finds the task owned, the task is processed again from this instance
+// once the processor stops, and the survivors are checked first. Both are
+// read under the lock that ends the instance.
+func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, halted, survived bool) bool {
+	m.mu.Lock()
+
+	failed := commandNodeFailedLocked(inst)
 
 	// A deployment halted by a node that could not be run fails even when
 	// no node recorded a failure.
@@ -1912,11 +1927,15 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 		task.CompletedCount++
 	}
 
-	pause := failed && task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
+	cleanup := survived && task.CleanupOnly
+
+	pause := failed && !cleanup && task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
 	if pause {
 		task.Paused = true
 		task.Status = TaskStatusPaused
 	}
+
+	stop := survived && (task.Paused || cleanup)
 
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
@@ -1932,7 +1951,7 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 		return false
 	}
 
-	return true
+	return !stop
 }
 
 // settleStrandedNodes settles each node an earlier run left staged or sent.
