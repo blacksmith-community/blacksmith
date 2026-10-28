@@ -171,21 +171,6 @@ t('dismiss false turns off Escape and outside click handling', () => {
   expect(stubs.isOpen(p)).toBe(true);
 });
 
-t('ARIA properties reflect to attributes, and null removes them', () => {
-  const { d } = make('<button id="b"></button>');
-  const b = d.getElementById('b');
-  b.ariaExpanded = 'true';
-  expect(b.getAttribute('aria-expanded')).toBe('true');
-  b.ariaLabel = 'Go';
-  expect(b.getAttribute('aria-label')).toBe('Go');
-  expect(b.ariaSelected).toBeNull();
-  b.ariaSelected = false;
-  expect(b.getAttribute('aria-selected')).toBe('false');
-  b.ariaExpanded = null;
-  expect(b.hasAttribute('aria-expanded')).toBe(false);
-  expect(b.ariaExpanded).toBeNull();
-});
-
 t('the popover property reflects the attribute', () => {
   const { d } = make('<div id="a" popover></div><div id="b" popover="manual"></div><div id="c"></div>');
   expect(d.getElementById('a').popover).toBe('auto');

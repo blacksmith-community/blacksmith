@@ -25,19 +25,16 @@
 //              outside an auto popover closes it. Pass { dismiss: false } to
 //              turn this off. Escape is handled in the capture phase, so it
 //              ignores defaultPrevented and stopPropagation, unlike a browser.
-//   ARIA       ariaExpanded, ariaSelected, ariaHidden, ariaLabel, and the
-//              other string properties reflect to their aria- attributes.
-//              Setting null removes the attribute.
+//   popover    The popover property reflects the popover attribute.
+//
+// ARIA properties such as ariaExpanded are not stubbed, because jsdom 26
+// reflects them to their aria- attributes itself.
 //
 // Not stubbed: focus moves into a dialog, :popover-open and :modal in
 // selectors (use isOpen and isModal), the top layer, and Tab trapping.
 
-const ARIA = ['Atomic', 'AutoComplete', 'Busy', 'Checked', 'ColCount', 'ColIndex', 'ColSpan', 'Current', 'Description', 'Disabled', 'Expanded', 'HasPopup', 'Hidden', 'KeyShortcuts', 'Label', 'Level', 'Live', 'Modal', 'MultiLine', 'MultiSelectable', 'Orientation', 'Placeholder', 'PosInSet', 'Pressed', 'ReadOnly', 'Relevant', 'Required', 'RoleDescription', 'RowCount', 'RowIndex', 'RowSpan', 'Selected', 'SetSize', 'Sort', 'ValueMax', 'ValueMin', 'ValueNow', 'ValueText'];
-
-const kebab = (name) => 'aria-' + name.toLowerCase();
-
 function install(w, { dismiss = true } = {}) {
-  const { Element, HTMLElement, document } = w;
+  const { HTMLElement, document } = w;
   const dialogProto = (w.HTMLDialogElement || HTMLElement).prototype;
   const modals = new Set();
   const popovers = new Map(); // element -> { order }
@@ -49,19 +46,6 @@ function install(w, { dismiss = true } = {}) {
     const handle = setTimeout(() => { tasks.delete(handle); fn(); }, 0);
     tasks.add(handle);
   };
-
-  ARIA.forEach((name) => {
-    const prop = 'aria' + name;
-    if (prop in Element.prototype) return;
-    Object.defineProperty(Element.prototype, prop, {
-      configurable: true,
-      get() { return this.getAttribute(kebab(name)); },
-      set(value) {
-        if (value === null || value === undefined) this.removeAttribute(kebab(name));
-        else this.setAttribute(kebab(name), String(value));
-      }
-    });
-  });
 
   if (!('popover' in HTMLElement.prototype)) {
     Object.defineProperty(HTMLElement.prototype, 'popover', {

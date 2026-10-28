@@ -11,14 +11,14 @@ const OAT = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'ui', 'ven
 
 const envs = [];
 afterEach(() => {
-  while (envs.length) { const env = envs.pop(); try { expect(env.alerts).toEqual([]); } finally { env.w.close(); } }
+  while (envs.length) { const env = envs.pop(); try { expect(env.alerts).toEqual([]); expect(env.errors).toEqual([]); } finally { env.w.close(); } }
 });
 
 // Boots the certificate fleet with the dialog and popover stubs and Oat's own
 // script, so the menu behaves the same whether it is hand built or an
-// ot-dropdown. The menu counts as open when it is not hidden or its popover shows.
+// ot-dropdown. The harness captures the console before boot, and afterEach
+// asserts that nothing reached console.error. The menu counts as open when it is not hidden or its popover shows.
 const start = async () => {
-  const consoleErrors = [];
   const env = boot({ noDialogs: true });
   envs.push(env);
   const { w, d } = env;
@@ -29,7 +29,7 @@ const start = async () => {
   w.eval(OAT);
   const T = w.__T;
   const mk = (i) => ({ id: 'c' + i, key: '/s/a' + i, variable: 'a' + i, kind: 'leaf', days_left: 3, expiry: 'critical', health: 'ok', owners: [{ kind: 'instance', instance_id: 'i' + i, instance_name: 'n' + i }], rotation: { allowed: true, reasons: [] }, findings: [] });
-  w.__routes.push(['/b/bosh/stemcells', (u, o, j) => j(200, [])], ['/b/bosh/releases', (u, o, j) => j(200, [])], ['/b/upgrade/settings', (u, o, j) => j(200, {})], ['/b/upgrade/tasks', (u, o, j) => j(200, [])],
+  w.__routes.push(['/b/config/ssh/ui-terminal-status', (u, o, j) => j(200, {})], ['/b/status', (u, o, j) => j(200, { env: 'test', deployment: 'blacksmith', instances: {}, plans: {} })], ['/v2/catalog', (u, o, j) => j(200, { services: [] })], ['/b/bosh/stemcells', (u, o, j) => j(200, [])], ['/b/bosh/releases', (u, o, j) => j(200, [])], ['/b/upgrade/settings', (u, o, j) => j(200, {})], ['/b/upgrade/tasks', (u, o, j) => j(200, [])],
     [/certificates\/inventory/, (u, o, j) => j(200, { certificates: [mk(1), mk(2)], capabilities: {}, settings: { warning_days: 30, critical_days: 7 }, scan: { state: 'idle' }, summary: { certificates: 2, needs_attention: 0 }, filtered: { certificates: 2 } })]);
   w.serviceInstances = {};
   await sleep(50);
@@ -51,7 +51,13 @@ const start = async () => {
     service.dispatchEvent(new w.Event('change'));
     await sleep(300);
   };
-  return { env, w, d, stubs, T, btn, menu, csv, json, note, isOpen, key, block, settle: () => stubs.settle(), errors: consoleErrors };
+  const unblock = async () => {
+    const st = T.CertsFleet.state;
+    st.attention = false; st.health = [];
+    T.CertsFleet.view.refs.service.dispatchEvent(new w.Event('change'));
+    await sleep(300);
+  };
+  return { env, w, d, stubs, T, btn, menu, csv, json, note, isOpen, key, block, unblock, settle: () => stubs.settle() };
 };
 
 t('a click opens the menu, marks the button expanded, and focuses the first item', async () => {
@@ -128,20 +134,34 @@ t('items keep their labels, order, and download files', async () => {
   expect(x.json.getAttribute('href')).toMatch(/^\/b\/certificates\/inventory\?.*format=json/);
 });
 
-t('when export is blocked both items are disabled, unfocusable, and skipped by the arrow keys', async () => {
+t('when export is blocked both items are disabled and out of the list Oat navigates', async () => {
   const x = await start();
   await x.block();
   [x.csv, x.json].forEach((a) => {
     expect(a.getAttribute('aria-disabled')).toBe('true');
     expect(a.hasAttribute('href')).toBe(false);
   });
+  expect(x.menu.querySelectorAll('[role="menuitem"]').length).toBe(0);
+  x.btn.focus();
   x.btn.click(); await x.settle();
   expect(x.isOpen()).toBe(true);
-  expect([x.csv, x.json]).not.toContain(x.d.activeElement);
-  x.key(x.btn, 'ArrowDown'); x.key(x.btn, 'ArrowUp');
-  expect([x.csv, x.json]).not.toContain(x.d.activeElement);
-  x.csv.focus();
-  expect(x.d.activeElement).not.toBe(x.csv);
+  expect(x.d.activeElement).toBe(x.btn);
+  ['ArrowDown', 'ArrowUp', 'Home', 'End'].forEach((k) => { x.key(x.btn, k); x.key(x.csv, k); x.key(x.json, k); });
+  expect(x.d.activeElement).toBe(x.btn);
+});
+
+t('after export is blocked and then allowed again the menu focuses the first item and the arrow keys work', async () => {
+  const x = await start();
+  await x.block();
+  await x.unblock();
+  expect(x.csv.getAttribute('role')).toBe('menuitem');
+  expect(x.csv.hasAttribute('href')).toBe(true);
+  x.btn.click(); await x.settle();
+  expect(x.d.activeElement).toBe(x.csv);
+  x.key(x.csv, 'ArrowDown');
+  expect(x.d.activeElement).toBe(x.json);
+  x.key(x.json, 'ArrowDown');
+  expect(x.d.activeElement).toBe(x.csv);
 });
 
 // Tab closes the menu and focus moves on in the tab order, as in the menu
