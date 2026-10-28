@@ -4647,10 +4647,16 @@
       choices.immediate.checked = patch && ctx.state.converge === 'immediate';
       if (batchTabs) {
         for (const [value,tab] of Object.entries(tabs)) {
-          const selected=radios[value].checked;tab.disabled=radios[value].disabled;
-          tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;
+          tab.disabled=radios[value].disabled;
         }
-        if (tabset.isConnected && typeof tabset.select === 'function' && tabset.activeIndex !== (patch ? 1 : 0)) tabset.activeIndex = patch ? 1 : 0;
+        // The element owns aria-selected, the tab order, and the panels, so
+        // the mode goes in through it. It is left alone when the panels
+        // already agree, which keeps a redraw from raising a route change.
+        if (tabset.isConnected && typeof tabset.select === 'function') {
+          const want = patch ? 1 : 0;
+          const shown = tabset.panels.map((panel) => !panel.hidden);
+          if (!shown[want] || shown.some((on, at) => on && at !== want)) tabset.activeIndex = want;
+        }
       }
     }
     update();

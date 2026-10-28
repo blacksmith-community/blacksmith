@@ -9,7 +9,7 @@ const {boot,sleep,EVIL} = H.main;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const mk=(id,key,variable,inst,name,days,exp,extra={})=>({id,key,variable,kind:'leaf',days_left:days,expiry:exp,health:'ok',owners:[{kind:'instance',instance_id:inst,instance_name:name}],rotation:{allowed:true,reasons:[]},findings:[],...extra});
 t('instance rotation and overview', async () => {
-  const env=boot(); const {w,d,errors,alerts,calls}=env; const T=w.__T;
+  const env=boot({oat:true}); const {w,d,errors,alerts,calls}=env; const T=w.__T;
   let itemGate=null; let caps={rotation:{enabled:true}}, holdTasks=[], previewStatus=200, createStatus=201;
   const certs=[mk('c1','/s/a_crt','a_crt','inst-a','a '+EVIL,5,'critical'),mk('c2','/s/b_crt','b_crt','inst-a','a '+EVIL,200,'ok'),mk('c3','/s/c_crt','c_crt','inst-b','b',3,'critical')];
   const posts=()=>calls.filter(c=>c.startsWith('POST'));
@@ -23,6 +23,10 @@ t('instance rotation and overview', async () => {
     [/\/b\/upgrade\/tasks\/[^/]+$/,(u,o,j)=>j(200,holdTasks[0])],
     [/\/b\/upgrade\/tasks$/,(u,o,j)=>o.method==='POST'?j(createStatus,{id:'t-new',name:'n',kind:'certificates',status:'pending'}):j(200,holdTasks.map(t=>({id:t.id,status:t.status,kind:t.kind,name:t.name})))]);
   w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
+  // The sub-tab strip of the instance, which the rotation watch listens to.
+  d.body.insertAdjacentHTML('beforeend','<bs-tabs id="watch-strip"><div role="tablist" aria-label="Fixture" id="service-cert-tablist-inst-a"><button type="button" role="tab" data-tab="one">One</button><button type="button" role="tab" data-tab="two">Two</button></div><div role="tabpanel">One</div><div role="tabpanel">Two</div></bs-tabs>');
+  await sleep(20);
+  const watchTabs=[...d.querySelectorAll('#watch-strip [role=tab]')];
   const R=w.blacksmithRotate;
   ok(!!R&&typeof R.openInstanceDialog==='function'&&typeof R.readHolders==='function'&&typeof R.availability==='function','blacksmithRotate exposes dialog, holders, availability');
   ok(!!w.blacksmithBatch&&typeof w.blacksmithBatch.openRotate==='function','blacksmithBatch.openRotate exists');
@@ -101,11 +105,15 @@ t('instance rotation and overview', async () => {
     await sleep(30); ok(instGets()===g0&&calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg0,'overview: no polling while the operator stays on the page');
     w.document.dispatchEvent(new w.Event('visibilitychange')); await sleep(60);
     ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg0+1&&instGets()===g0,'overview: returning reads the task once and keeps the view while it runs');
+    watchTabs[1].click(); await sleep(60);
+    ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg0+2&&instGets()===g0,'overview: changing the sub-tab reads the task once and keeps the view while it runs');
     st='completed'; w.document.dispatchEvent(new w.Event('visibilitychange')); await sleep(120);
     ok(instGets()===g0+1,'overview: returning after the task ended scans the instance again');
     const tg1=calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length;
     w.document.dispatchEvent(new w.Event('visibilitychange')); await sleep(60);
     ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg1,'overview: the watch is gone once it refreshed');
+    watchTabs[0].click(); await sleep(60);
+    ok(calls.filter(c=>/GET .*tasks\/t-new$/.test(c)).length===tg1,'overview: a sub-tab change after the watch ended reads nothing');
     w.__routes.shift(); }
   // overview busy / off
   holdTasks=[{id:'tk',name:'N',kind:'certificates',status:'running',instances:[{instance_id:'inst-a',status:'running'}]}];

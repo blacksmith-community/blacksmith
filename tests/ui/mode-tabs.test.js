@@ -50,6 +50,25 @@ t('an unavailable Patch tab stays visible, says why, and cannot be chosen',async
  expect(d.getElementById('blacksmith-live-region').textContent).toContain('mode is back to Redeploy');
  }finally{w.close();}
 });
+t('the panels follow the mode when it changes without a click',async()=>{
+ const {w,d,T,sleep}=await setupRotate({certs});try{
+ const panel=d.getElementById('rotate-mode-redeploy-panel');
+ const patchPanel=d.getElementById('rotate-mode-patch-panel');
+ const patch=d.getElementById('rotate-mode-patch-tab');
+ // the mode is set in code and the footer redraws
+ T.rotateState.mode='patch';T.rotateState.converge='pending';T.updateOperationFooter();await sleep(80);
+ expect(patch.getAttribute('aria-selected')).toBe('true');
+ expect([panel.hidden,patchPanel.hidden]).toEqual([true,false]);
+ expect(d.getElementById('rotate-mode-converge').hidden).toBe(false);
+ // Patch closes while chosen
+ T.rotateState.capabilities={...T.rotateState.capabilities,patch_in_place:{enabled:false,reason:'the switch is off'}};
+ T.updateOperationFooter();await sleep(80);
+ expect(T.rotateState.mode).toBe('redeploy');
+ expect([panel.hidden,patchPanel.hidden]).toEqual([false,true]);
+ expect(d.getElementById('rotate-mode-redeploy-tab').getAttribute('aria-selected')).toBe('true');
+ expect(d.getElementById('rotate-mode-redeploy-tab').tabIndex).toBe(0);
+ }finally{w.close();}
+});
 t('After patching reads as one required choice of two options',async()=>{
  const {w,d,T}=await setupRotate({certs});try{
  d.getElementById('rotate-mode-patch-tab').click();

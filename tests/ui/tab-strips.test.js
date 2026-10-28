@@ -123,6 +123,21 @@ Object.entries(strips).forEach(([name,strip])=>{
  });
 });
 
+// Disabled tabs are skipped by every strip on the tabs element. The older
+// strips had no disabled handling, so these have no before-run.
+['manifest','config','certMain','serviceCert','inspector'].forEach((name)=>{
+ t(`${name} strip arrow keys and End skip a disabled last tab`,async()=>{
+  const strip=strips[name]; const env=strip.boot?await strip.boot():await start(); const root=await strip.render(env); await sleep(20);
+  const tabs=strip.tabs(root); const last=tabs.length-1;
+  const selected=()=>tabs.filter(x=>x.getAttribute('aria-selected')==='true').map(x=>tabs.indexOf(x));
+  tabs[last].disabled=true; tabs[0].focus();
+  press(env.w,tabs[0],'End'); expect(selected()).toEqual([last-1]);
+  press(env.w,tabs[last-1],'Home'); expect(selected()).toEqual([0]);
+  press(env.w,tabs[0],'ArrowLeft'); expect(selected()).toEqual([last-1]);
+  tabs[last].click(); expect(selected()).toEqual([last-1]);
+ });
+});
+
 // A strip on bs-tabs keeps its tab list and panels as direct children, in
 // the same order, so Oat can pair them by index.
 ['manifest','config','certMain','serviceCert','inspector'].forEach((name)=>{

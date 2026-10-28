@@ -82,6 +82,14 @@ t('arrow keys, Home, End, and clicks skip tabs marked disabled or aria-disabled'
  expect(host.select('two')).toBe(true); expect(selected()).toEqual(['two']);
 });
 
+t('End skips a disabled last tab and Home skips a disabled first tab',async()=>{
+ const env=await start(strip({four:'disabled'})); const {tabs,press,selected}=env;
+ tabs[0].focus();
+ press('End'); expect(selected()).toEqual(['three']);
+ const env2=await start(strip({one:'aria-disabled="true"'})); env2.host.select('three'); env2.tabs[2].focus();
+ env2.press('Home'); expect(env2.selected()).toEqual(['two']);
+});
+
 t('select picks a tab by name, and the tab list answers blacksmithSelect',async()=>{
  const env=await start(strip()); const {host,selected}=env;
  expect(host.select('three')).toBe(true); expect(selected()).toEqual(['three']);
