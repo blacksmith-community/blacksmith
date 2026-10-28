@@ -118,26 +118,75 @@ func (p *freezingProxy) close() {
 
 func (p *freezingProxy) addr() string { return p.listener.Addr().String() }
 
-// watchedReader yields bytes without end, a little at a time, and counts
-// every read that starts once returned is set.
+// lateReadWatch is how long a test watches for a read of stdin that
+// starts after the read Run left under way has been let go. A gate that
+// lets that read through starts the next one at once.
+const lateReadWatch = 100 * time.Millisecond
+
+// watchedReader is stdin for a run. It serves its first serve bytes, and
+// then holds its next read until end lets it go, so a test can make sure
+// that read is under way when Run returns. The held read returns no bytes
+// and no error, which a copy of stdin reads past at once, so a gate that
+// let it through would start another read. Every read that starts after
+// end is late, and it ends the copy, so a broken gate can't spin on it.
 type watchedReader struct {
+	serve  int
+	served int
+
+	held    chan struct{}
+	release chan struct{}
+	hold    sync.Once
+	ended   sync.Once
+
 	returned atomic.Bool
 	late     atomic.Int32
+	lateRead chan struct{}
+	noted    sync.Once
+}
+
+// newWatchedReader returns a reader that serves serve bytes and then
+// holds, and lets any held read go when the test ends.
+func newWatchedReader(t *testing.T, serve int) *watchedReader {
+	t.Helper()
+
+	r := &watchedReader{serve: serve, held: make(chan struct{}), release: make(chan struct{}), lateRead: make(chan struct{})}
+
+	t.Cleanup(r.end)
+
+	return r
 }
 
 func (r *watchedReader) Read(buf []byte) (int, error) {
 	if r.returned.Load() {
 		r.late.Add(1)
+		r.noted.Do(func() { close(r.lateRead) })
+
+		return 0, io.EOF
 	}
 
-	time.Sleep(2 * time.Millisecond)
+	if r.served >= r.serve {
+		r.hold.Do(func() { close(r.held) })
+		<-r.release
 
-	n := min(len(buf), 1024)
+		return 0, nil
+	}
+
+	n := min(len(buf), r.serve-r.served)
 	for i := range n {
 		buf[i] = 'k'
 	}
 
+	r.served += n
+
 	return n, nil
+}
+
+// end marks Run as returned and lets the held read go.
+func (r *watchedReader) end() {
+	r.ended.Do(func() {
+		r.returned.Store(true)
+		close(r.release)
+	})
 }
 
 // runWithDeadline runs cat on runner with a 200ms deadline and fails the
@@ -194,16 +243,21 @@ func TestRunnerDeadlineWhenExecIsNeverAnswered(t *testing.T) {
 	}
 }
 
-// A VM that stops answering while its command reads a large stdin holds
-// the copy of stdin, and Run still returns at its deadline, and at most
-// the one read of the stdin reader that Run allows starts after it
-// returns.
+// A VM that stops answering while its command reads stdin, with a read of
+// stdin under way, does not hold Run past its deadline, and no read of
+// stdin starts after Run returns.
 func TestRunnerDeadlineWhenVMStopsMidRun(t *testing.T) {
 	t.Parallel()
 
+	stdin := newWatchedReader(t, 16<<10)
 	frozen := &atomic.Bool{}
 	fakeVM := startRunnerVM(t, func(_ string, channel ssh.Channel, stop <-chan struct{}) uint32 {
 		_, _ = io.CopyN(io.Discard, channel, 16<<10)
+
+		select {
+		case <-stdin.held:
+		case <-stop:
+		}
 
 		frozen.Store(true)
 
@@ -214,11 +268,10 @@ func TestRunnerDeadlineWhenVMStopsMidRun(t *testing.T) {
 	proxy := startFreezingProxy(t, fakeVM.listener.Addr().String(), frozen)
 
 	runner := boshssh.NewRunner(fakeVM.dialVia(t, proxy.addr()), &runnerLog{})
-	stdin := &watchedReader{}
 
 	runWithDeadline(t, runner, stdin)
 
-	expectAtMostOneLateRead(t, stdin, 100*time.Millisecond)
+	expectNoLateRead(t, stdin)
 }
 
 // A stdin reader whose read never returns does not hold Run past its
@@ -240,41 +293,55 @@ func TestRunnerDeadlineWhenStdinBlocks(t *testing.T) {
 	runWithDeadline(t, runner, stdin)
 }
 
-// A command that ends without reading all of its stdin leaves at most the
-// one read of the stdin reader that Run allows to start once it returns.
+// A command that ends without reading all of its stdin, with a read of
+// stdin under way, leaves no read of stdin to start after Run returns.
 func TestRunnerReadsNoStdinAfterItReturns(t *testing.T) {
 	t.Parallel()
 
-	fakeVM := startRunnerVM(t, func(_ string, channel ssh.Channel, _ <-chan struct{}) uint32 {
-		_, _ = io.CopyN(io.Discard, channel, 4<<10)
-
-		time.Sleep(50 * time.Millisecond)
-
-		return 0
-	})
-
 	for range 5 {
+		stdin := newWatchedReader(t, 4<<10)
+		fakeVM := startRunnerVM(t, func(_ string, channel ssh.Channel, stop <-chan struct{}) uint32 {
+			_, _ = io.CopyN(io.Discard, channel, 4<<10)
+
+			select {
+			case <-stdin.held:
+			case <-stop:
+			}
+
+			return 0
+		})
+
 		runner := boshssh.NewRunner(fakeVM.dial(t), &runnerLog{})
-		stdin := &watchedReader{}
 
-		_, _ = runner.Run(t.Context(), catProgram, nil, stdin, 0)
+		_, err := runner.Run(t.Context(), catProgram, nil, stdin, 0)
+		if err != nil {
+			t.Fatalf("Run returned %v", err)
+		}
 
-		expectAtMostOneLateRead(t, stdin, 50*time.Millisecond)
+		expectNoLateRead(t, stdin)
 	}
 }
 
-// expectAtMostOneLateRead marks stdin as returned, watches it for a
-// while, and fails the test when more than one read of it starts after
-// Run returned. Run allows one, a read whose stop check passed just before
-// Run stopped the gate, and the gate fails every read after that one, so
-// a second late read means the gate never stopped.
-func expectAtMostOneLateRead(t *testing.T, stdin *watchedReader, watch time.Duration) {
+// expectNoLateRead lets go the read of stdin that was under way when Run
+// returned, and fails the test when another read starts. That read began
+// before Run stopped the gate, so it is the only read a stop check could
+// have passed for, and the gate turns away what it brings back, which
+// ends the copy of stdin. Any read after it means the gate let a read
+// through after Run returned.
+func expectNoLateRead(t *testing.T, stdin *watchedReader) {
 	t.Helper()
 
-	stdin.returned.Store(true)
-	time.Sleep(watch)
+	select {
+	case <-stdin.held:
+	default:
+		t.Fatal("no read of stdin was under way when Run returned")
+	}
 
-	if late := stdin.late.Load(); late > 1 {
-		t.Errorf("the stdin reader was read %d times after Run returned, want at most once", late)
+	stdin.end()
+
+	select {
+	case <-stdin.lateRead:
+		t.Errorf("the stdin reader was read %d times after Run returned, want none", stdin.late.Load())
+	case <-time.After(lateReadWatch):
 	}
 }

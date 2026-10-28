@@ -151,3 +151,37 @@ func TestStdinGateStopDoesNotWaitForARead(t *testing.T) {
 		t.Errorf("the read under way delivered %q after stop", buf)
 	}
 }
+
+// countingReader counts its reads and fills each buffer with 'k'.
+type countingReader struct{ reads int }
+
+func (r *countingReader) Read(buf []byte) (int, error) {
+	r.reads++
+
+	for i := range buf {
+		buf[i] = 'k'
+	}
+
+	return len(buf), nil
+}
+
+// A read that starts once stop has run never reaches the caller's reader.
+func TestStdinGateReadAfterStopNeverReachesTheReader(t *testing.T) {
+	t.Parallel()
+
+	reader := &countingReader{}
+	gate := &stdinGate{reader: reader}
+
+	gate.stop()
+
+	buf := make([]byte, 16)
+
+	n, err := gate.Read(buf)
+	if n != 0 || !errors.Is(err, errStdinStopped) {
+		t.Errorf("a read after stop returned %d and %v, want 0 and errStdinStopped", n, err)
+	}
+
+	if reader.reads != 0 {
+		t.Errorf("a read after stop reached the caller's reader %d times, want none", reader.reads)
+	}
+}
