@@ -496,6 +496,14 @@ func (r *runTree) relinkKill(t *testing.T) {
 	r.linkKill(t)
 }
 
+// waitOutKill drops a shortened kill wait, so the next cleanup waits its
+// full time for the processes its KILL reaches. A process ends some time
+// after KILL reaches it, and a recheck with a shortened wait looks only
+// once or a few times, so a slow host can still find it alive.
+func (r *runTree) waitOutKill() {
+	r.env = nil
+}
+
 // A cleanup that reports survivors keeps the task directory and a record
 // of each live member of the session with its start time, so a later
 // cleanup can tell whether the same processes still live. The command's
@@ -559,6 +567,7 @@ func TestRunCleanupEndsTheSurvivorsAndRemovesTheRecord(t *testing.T) {
 
 	tree, running, _ := survivorTree(t)
 	tree.relinkKill(t)
+	tree.waitOutKill()
 
 	code, out := tree.cleanup(t, runTask)
 	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
@@ -668,6 +677,7 @@ func TestRunCleanupRechecksTheSessionAfterTheSurvivorsEnd(t *testing.T) {
 	}
 
 	tree.relinkKill(t)
+	tree.waitOutKill()
 
 	code, out = tree.cleanup(t, runTask)
 	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
@@ -707,6 +717,7 @@ func TestRunCleanupRecheckEndsTheChildrenOfALiveSurvivor(t *testing.T) {
 	// The loop forks children the record does not name.
 	time.Sleep(500 * time.Millisecond)
 	tree.relinkKill(t)
+	tree.waitOutKill()
 
 	code, out = tree.cleanup(t, runTask)
 	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
@@ -754,6 +765,7 @@ func TestRunCleanupRecheckSparesAReusedLeaderPid(t *testing.T) {
 	}
 
 	tree.relinkKill(t)
+	tree.waitOutKill()
 
 	code, out = tree.cleanup(t, runTask)
 	if code != 0 || !strings.HasSuffix(out, " killed=yes\n") {
