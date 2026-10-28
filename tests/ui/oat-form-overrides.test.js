@@ -167,3 +167,21 @@ test('the select option rule uses the theme variables',()=>{
  expect(hit.body).toMatch(/color:\s*var\(--foreground\)/);
  expect(hit.body).not.toMatch(/--bg-secondary|--text-primary/);
 });
+
+// A control with role="button" gets the same 3px ring as a real button, in
+// the normal and the high-contrast themes. The console's 2px ring for the
+// same element has equal specificity, so the theme sheet has to load after
+// it to win.
+test('role="button" takes the 3px focus ring and the theme sheet wins the tie',()=>{
+ const rules=parse(read('forge-theme.css'));
+ const ring=(pre)=>rules.find((r)=>r.selectors.some((s)=>s.startsWith(pre)&&/\):focus-visible$/.test(s)&&/\binput\b/.test(s)&&/\bselect\b/.test(s)));
+ [':is(',':root[data-contrast="high"] :is('].forEach((pre)=>{
+  const hit=ring(pre);
+  expect(hit).toBeTruthy();
+  expect(hit.selectors.some((s)=>s.startsWith(pre)&&/\[role="button"\]/.test(s))).toBe(true);
+  expect(hit.body).toMatch(/outline:\s*3px/);
+ });
+ const index=read('index.html');
+ expect(index.indexOf('/console.css')).toBeGreaterThan(-1);
+ expect(index.indexOf('/console.css')).toBeLessThan(index.indexOf('/forge-theme.css'));
+});

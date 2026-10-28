@@ -58,7 +58,7 @@ body > footer img, .minimized-terminal-bar img { width: 24px; height: 24px; vert
 .main-content .tab-button.active { color: var(--primary); border-bottom-color: var(--primary); background: var(--secondary); }
 .main-content .tab-panel.active { display: flex; flex: 1; min-height: 0; }
 #blacksmith.active { flex-direction: column; }
-:is(button, input, select, textarea, summary, a, [tabindex]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
+:is(button, input, select, textarea, summary, a, [tabindex], [role="button"]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
 button { min-height: 36px; }
 input:not([type="checkbox"]):not([type="radio"]):where(:not([aria-invalid="true"])), select:where(:not([aria-invalid="true"])), textarea:where(:not([aria-invalid="true"])) { background-color: var(--card); color: var(--foreground); border: 1px solid var(--input); }
 input:not([type="checkbox"]):not([type="radio"])[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] { background-color: var(--card); color: var(--foreground); border-color: var(--danger); }
@@ -775,7 +775,7 @@ body > footer p { margin: 0; }
 :root[data-contrast="high"] body > header button { border-color: #fff; }
 :root[data-contrast="high"] :is(.status-badge,.vm-status-badge,.task-kind-badge,.cert-pill,.cert-nav-badge) { background: var(--card) !important; color: var(--foreground) !important; border: 1px solid var(--foreground); }
 :root[data-contrast="high"] :is(a,.cert-link-btn) { text-decoration: underline; }
-:root[data-contrast="high"] :is(button,input,select,textarea,summary,a,[tabindex]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
+:root[data-contrast="high"] :is(button,input,select,textarea,summary,a,[tabindex],[role="button"]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
 :root[data-contrast="high"] body > header :focus-visible { outline-color: #fff; }
 :root[data-contrast="high"] .main-content .tab-button.active { border-bottom-width: 4px; font-weight: 700; }
 :root[data-contrast="high"] #navigation-results [aria-selected="true"] { outline: 2px solid var(--primary); outline-offset: -2px; }
