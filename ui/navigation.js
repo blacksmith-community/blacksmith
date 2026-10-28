@@ -224,6 +224,7 @@
       note.textContent = 'Batch shortcuts pause while typing or in a dialog. Final confirmation requires explicit activation.';
       if (panel?.id === 'upgrade') content.append(note);
       helpDialog.showModal();
+      window.blacksmithAnnouncers?.watch(helpDialog);
       helpDialog.querySelector('[data-close]').focus();
     }
     helpTrigger?.addEventListener('click', showKeyboardHelp);
@@ -240,6 +241,7 @@
       entries = inventory();
       input.value = '';
       dialog.showModal();
+      window.blacksmithAnnouncers?.watch(dialog);
       input.setAttribute('aria-expanded', 'true');
       render();
       input.focus();

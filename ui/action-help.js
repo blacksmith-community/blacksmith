@@ -106,7 +106,7 @@
     let preference = 'system';
     try { preference = root.localStorage.getItem('theme') || 'system'; } catch (_) { /* Storage may be blocked. */ }
     dialog.querySelectorAll('[data-theme-choice]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.themeChoice === preference)));
-    dialog.showModal(); dialog.querySelector('[aria-pressed="true"]')?.focus();
+    dialog.showModal(); root.blacksmithAnnouncers?.watch(dialog); dialog.querySelector('[aria-pressed="true"]')?.focus();
   }
   function addLabelToggle() {
     const content = document.querySelector('#keyboard-help-dialog .keyboard-help-content');

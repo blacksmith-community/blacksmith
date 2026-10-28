@@ -347,6 +347,20 @@
     syncAnnouncers();
   };
 
+  // Dialogs owned by other scripts call watch right after showModal. The
+  // dialog stays tracked until its close event arrives while it is shut.
+  const watchedAnnouncerDialogs = new WeakSet();
+  window.blacksmithAnnouncers = {
+    watch(dialog) {
+      if (!announcerModals.includes(dialog)) trackAnnouncerModal(dialog);
+      if (watchedAnnouncerDialogs.has(dialog)) return;
+      watchedAnnouncerDialogs.add(dialog);
+      dialog.addEventListener('close', () => {
+        if (!dialog.open) untrackAnnouncerModal(dialog);
+      });
+    }
+  };
+
   // The run that now holds the shared dialog, so a second call can dismiss it.
   let sharedDialogRun = null;
   const dismissSharedDialog = () => {

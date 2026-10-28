@@ -134,3 +134,17 @@ t('a confirmation opened over the task details view returns to it, still modal',
  expect(dialog().open).toBe(false);
  expect(w.blacksmithSurfaces.size()).toBe(0);
 });
+
+t('a slow load for an earlier task cannot restart polling after a later task has loaded',async()=>{
+ const env=await start(); const {w,d,stubs}=env;
+ let finish;
+ w.__routes.unshift(['/b/tasks/41',(u,o,j)=>new Promise(resolve=>{finish=()=>resolve(j(200,{task:{id:41,state:'processing',description:'earlier task'}}));})]);
+ w.__routes.unshift(['/b/tasks/42',(u,o,j)=>j(200,{task:{id:42,state:'done',description:'a task'}})]);
+ const first=w.showTaskDetails(41); await sleep(10);
+ await w.showTaskDetails(42); await sleep(30);
+ const handle=w.taskModalAutoRefresh;
+ expect(handle).toBeTruthy();
+ finish(); await first; await sleep(30);
+ expect(w.taskModalAutoRefresh).toBe(handle);
+ w.hideTaskDetailsModal(); await stubs.settle();
+});
