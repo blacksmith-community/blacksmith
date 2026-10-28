@@ -2208,7 +2208,7 @@
         const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
 
         // Format type with badge
-        const typeBadge = `<span class="config-type ${config.type}">${config.type}</span>`;
+        const typeBadge = `<span class="config-type ${config.type}" data-config-type="${config.type}">${config.type}</span>`;
 
         return `
           <tr>
@@ -11324,7 +11324,7 @@
   const CONFIG_TYPE_VARIANTS = { runtime: 'secondary', cpi: 'success', resurrection: 'warning' };
   const configTypeBadge = (type) => {
     const variant = type === 'cloud' ? '' : (CONFIG_TYPE_VARIANTS[type] || 'secondary');
-    return `<span class="badge"${variant ? ` data-variant="${variant}"` : ''}>${type}</span>`;
+    return `<span class="badge" data-config-type="${escapeAttribute(String(type || ''))}"${variant ? ` data-variant="${variant}"` : ''}>${type}</span>`;
   };
 
   const renderLogRow = (logEntry, columns = null) => {
@@ -17629,7 +17629,7 @@
     rows.forEach(row => {
       const typeCell = row.querySelector('.config-type span');
       if (typeCell) {
-        const configType = typeCell.classList[1]; // Second class is the type
+        const configType = typeCell.dataset.configType;
         if (checkedTypes.has(configType)) {
           row.style.display = '';
         } else {
