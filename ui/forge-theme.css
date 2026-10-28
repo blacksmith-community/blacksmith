@@ -264,7 +264,7 @@ body > footer p { margin: 0; }
 #upgrade .batch-field-help { font-size: .875rem; color: var(--muted-foreground); line-height: 1.6; margin: 8px 0 16px; max-width: 72ch; }
 #upgrade .upgrade-target-group .filter-row { display: grid; gap: 8px; margin-top: 18px; }
 #upgrade .filter-row label { font-weight: 600; text-align: left; }
-#upgrade .filter-row :is(input,select) { min-height: 44px; max-width: 100%; }
+#upgrade .filter-row :is(input:where(:not([type="checkbox"], [type="radio"])), select) { min-height: 44px; max-width: 100%; }
 #upgrade .rotate-mode { display: block; }
 #upgrade .rotate-mode > legend { margin-bottom: 12px; font-size: 1rem; }
 #upgrade .batch-mode-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }

@@ -226,3 +226,16 @@ test('no stylesheet sets a dead accent-color on a checkbox',()=>{
  }));
  expect(bad).toEqual([]);
 });
+
+// A checkbox or radio is a small box. The 44px height that keeps text
+// fields and selects easy to hit must not reach it, or Oat's 16px box
+// stretches into a tall narrow rectangle. The exclusion sits in :where() so
+// the rule keeps the specificity it had.
+test('the filter row control height skips checkboxes and radios',()=>{
+ const hit=parse(read('forge-theme.css')).filter((r)=>/\.filter-row\b/.test(r.selectors.join(' '))&&/min-height:\s*44px/.test(r.body));
+ expect(hit.length).toBe(1);
+ const sel=hit[0].selectors.join(', ');
+ expect(sel).toContain('input');
+ expect(sel).toMatch(/:where\(:not\([^)]*\[type="?checkbox"?\]/);
+ expect(sel).toMatch(/:where\(:not\([^)]*\[type="?radio"?\]/);
+});
