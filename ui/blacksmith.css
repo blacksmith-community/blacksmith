@@ -6700,9 +6700,9 @@ select[id*="connection-vhost"] {
   width: 95vw;
   max-width: 95vw;
   height: 90vh;
-  margin: 10px;
-  display: flex;
-  flex-direction: column;
+  max-height: 90vh;
+  margin: auto;
+  padding: 0;
 }
 
 .terminal-header {

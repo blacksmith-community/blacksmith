@@ -408,59 +408,6 @@
     return run;
   };
 
-  // Persistent legacy dialogs keep their DOM between openings.
-  const persistentDialogState = new WeakMap();
-  const activatePersistentDialog = (modal, close) => {
-    if (persistentDialogState.has(modal)) return;
-    const opener = document.activeElement;
-    const wasInert = modal.hasAttribute('inert');
-    modal.removeAttribute('inert');
-    const restoreBackground = isolateDialog(modal);
-    const surface = {close};
-    window.blacksmithSurfaces.push(surface);
-    modal.setAttribute('aria-modal', 'true');
-    modal.tabIndex = -1;
-    const onKey = event => {
-      if (!window.blacksmithSurfaces.isTop(surface)) return;
-      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(); }
-      if (event.key !== 'Tab') return;
-      const items = focusableWithin(modal);
-      const first = items[0] || modal, last = items[items.length - 1] || modal;
-      if (!items.length || !items.includes(document.activeElement) || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
-        event.preventDefault(); (event.shiftKey ? last : first).focus();
-      }
-    };
-    let lastFocused = null;
-    const onFocus = event => { lastFocused = event.target; };
-    modal.addEventListener('focusin', onFocus);
-    const observer = new MutationObserver(() => {
-      if (window.blacksmithSurfaces.isTop(surface) && lastFocused && !lastFocused.isConnected && document.activeElement === document.body) {
-        (focusableWithin(modal)[0] || modal).focus();
-      }
-    });
-    observer.observe(modal, {childList: true, subtree: true});
-    document.addEventListener('keydown', onKey, true);
-    persistentDialogState.set(modal, {opener, restoreBackground, surface, onKey, observer, onFocus, wasInert});
-    (focusableWithin(modal)[0] || modal).focus();
-    requestAnimationFrame(() => {
-      if (persistentDialogState.has(modal) && window.blacksmithSurfaces.isTop(surface) && (document.activeElement === document.body || document.activeElement === modal)) {
-        (focusableWithin(modal)[0] || modal).focus();
-      }
-    });
-  };
-  const deactivatePersistentDialog = modal => {
-    const state = persistentDialogState.get(modal);
-    if (!state) return;
-    document.removeEventListener('keydown', state.onKey, true);
-    state.observer.disconnect();
-    modal.removeEventListener('focusin', state.onFocus);
-    state.restoreBackground();
-    if (state.wasInert) modal.setAttribute('inert', '');
-    window.blacksmithSurfaces.remove(state.surface);
-    persistentDialogState.delete(modal);
-    restoreFocus(state.opener);
-  };
-
   // Show a confirm dialog. It resolves true or false for callers that pass
   // none of details, requireText, and requireChoice. Otherwise it resolves
   // {confirmed: true, text, choice}, or false when the operator cancels.
@@ -23851,6 +23798,50 @@
     maxSessions: 10,
     lastFocusBeforeModal: null,
 
+    // The terminal is a native modal dialog. Escape belongs to the shell, so
+    // it never closes the dialog, and neither does a click or tap on the
+    // backdrop. Only minimize, close all, and closing the last session do.
+    // Oat closes any dialog tapped on its padding, so the tap stops at the
+    // dialog. A close that still arrives while sessions remain reopens it.
+    dialogRun: null,
+    showDialog() {
+      const modal = document.getElementById('terminal-modal');
+      if (!modal || modal.open) return;
+      if (!modal.dataset.terminalWired) {
+        modal.dataset.terminalWired = 'true';
+        modal.querySelector('.modal-close')?.addEventListener('click', () => this.closeAll());
+        modal.addEventListener('cancel', event => event.preventDefault());
+        modal.addEventListener('keydown', event => {
+          if (event.key === 'Escape' && modal.open) event.preventDefault();
+        });
+        modal.addEventListener('touchstart', event => {
+          if (event.target === modal) event.stopPropagation();
+        });
+        modal.addEventListener('close', () => {
+          if (modal.open) return;
+          if (!this.dialogRun) return;
+          this.releaseDialog();
+          if (this.sessions.size > 0) this.showDialog();
+        });
+      }
+      modal.showModal();
+      this.dialogRun = {restoreBackground: isolateDialog(modal)};
+      trackAnnouncerModal(modal);
+    },
+    releaseDialog() {
+      const modal = document.getElementById('terminal-modal');
+      const run = this.dialogRun;
+      if (!run) return;
+      this.dialogRun = null;
+      run.restoreBackground();
+      if (modal) untrackAnnouncerModal(modal);
+    },
+    hideDialog() {
+      const modal = document.getElementById('terminal-modal');
+      this.releaseDialog();
+      if (modal && modal.open) modal.close();
+    },
+
     updateTitle(context) {
       try {
         const detailsEl = document.getElementById('terminal-title-details');
@@ -23912,17 +23903,7 @@
 
     createSession(sessionKey, context) {
       // Show modal
-      const modal = document.getElementById('terminal-modal');
-      if (modal) {
-        modal.style.display = 'flex';
-        modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
-        modal.classList.add('active');
-        modal.setAttribute('aria-hidden', 'false');
-        // Ensure modal is interactive: remove inert if present
-        if (modal.hasAttribute('inert')) {
-          modal.removeAttribute('inert');
-        }
-      }
+      this.showDialog();
 
       // Create terminal instance
       const terminal = new Terminal({
@@ -24224,16 +24205,7 @@
 
     switchToSession(sessionKey) {
       // Ensure modal is visible
-      const modal = document.getElementById('terminal-modal');
-      if (modal) {
-        modal.style.display = 'flex';
-        modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
-        modal.classList.add('active');
-        modal.setAttribute('aria-hidden', 'false');
-        if (modal.hasAttribute('inert')) {
-          modal.removeAttribute('inert');
-        }
-      }
+      this.showDialog();
 
       // Hide all terminals
       document.querySelectorAll('.terminal-instance').forEach(el => {
@@ -24314,22 +24286,7 @@
             this.switchToSession(remainingSessions[0]);
           } else {
             // No more sessions, hide modal
-            const modal = document.getElementById('terminal-modal');
-            if (modal) {
-              // Ensure focus is moved out before hiding to avoid a11y warnings
-              const active = document.activeElement;
-              if (active && modal.contains(active)) {
-                try { active.blur(); } catch (_) { }
-              }
-              modal.classList.remove('active');
-              modal.classList.add('is-transparent', 'is-invisible');
-              modal.setAttribute('aria-hidden', 'true');
-              modal.setAttribute('inert', '');
-              setTimeout(() => {
-                modal.style.display = 'none';
-                modal.classList.add('is-hidden');
-              }, 300);
-            }
+            this.hideDialog();
           }
         }
       }
@@ -24342,17 +24299,7 @@
       });
 
       // Hide modal
-      const modal = document.getElementById('terminal-modal');
-      if (modal) {
-        modal.classList.remove('active');
-        modal.classList.add('is-transparent', 'is-invisible');
-        modal.setAttribute('aria-hidden', 'true');
-        modal.setAttribute('inert', '');
-        setTimeout(() => {
-          modal.style.display = 'none';
-          modal.classList.add('is-hidden');
-        }, 300);
-      }
+      this.hideDialog();
 
       // Hide minimized bar
       this.hideMinimizedBar();
@@ -24376,8 +24323,10 @@
     },
 
     minimizeAll() {
-      // Show minimized bar with all sessions and move focus there first
+      // Show minimized bar with all sessions, close the dialog so the bar is
+      // reachable, then move focus to the restore button
       this.showMinimizedBar();
+      this.hideDialog();
       const restoreBtn = document.querySelector('#minimized-terminal-bar .terminal-control-btn[title="Restore Terminal"]');
       if (restoreBtn) {
         try { restoreBtn.focus(); } catch (_) { }
@@ -24385,39 +24334,11 @@
         try { document.body.focus(); } catch (_) { }
       }
 
-      // Now hide the main terminal modal and mark it aria-hidden/inert
-      const modal = document.getElementById('terminal-modal');
-      if (modal) {
-        // If focus is still inside the modal, blur it to avoid a11y warning
-        const active = document.activeElement;
-        if (active && modal.contains(active)) {
-          try { active.blur(); } catch (_) { }
-        }
-        modal.classList.remove('active');
-        modal.classList.add('is-transparent', 'is-invisible');
-        modal.setAttribute('aria-hidden', 'true');
-        modal.setAttribute('inert', '');
-        setTimeout(() => {
-          modal.style.display = 'none';
-          modal.classList.add('is-hidden');
-        }, 300);
-      }
     },
 
     restoreAll() {
       // Show the main terminal modal
-      const modal = document.getElementById('terminal-modal');
-      if (modal && this.sessions.size > 0) {
-        modal.style.display = 'flex';
-        modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
-        modal.setAttribute('aria-hidden', 'false');
-        if (modal.hasAttribute('inert')) {
-          modal.removeAttribute('inert');
-        }
-        setTimeout(() => {
-          modal.classList.add('active');
-        }, 10);
-      }
+      if (this.sessions.size > 0) this.showDialog();
 
       // Hide minimized bar
       this.hideMinimizedBar();
