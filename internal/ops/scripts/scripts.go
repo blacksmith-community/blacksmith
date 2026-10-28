@@ -7,6 +7,7 @@
 package scripts
 
 import (
+	"bytes"
 	"embed"
 	"errors"
 	"fmt"
@@ -71,11 +72,11 @@ func readLibrary() []byte {
 	return body
 }
 
-// Library returns the bytes of the base library lib.sh. Every call shares
-// one slice, so a caller must not change it. Its capacity ends at its
-// length, so an append copies it rather than writing past it.
+// Library returns a copy of the base library lib.sh, which is read once
+// when the package loads, so a caller that changes the bytes changes only
+// its own copy.
 func Library() []byte {
-	return library[:len(library):len(library)]
+	return bytes.Clone(library)
 }
 
 // Script returns the text sent on stdin to run the named script, which is

@@ -161,12 +161,32 @@ func TestLibraryIsTheEmbeddedLib(t *testing.T) {
 }
 
 // AllocsPerRun counts the allocations of every goroutine, so a parallel
-// test would add its own.
+// test would add its own. The one allocation is the copy, so lib.sh is
+// not read again.
 //
 //nolint:paralleltest // see above
-func TestLibraryDoesNotAllocate(t *testing.T) {
-	if allocs := testing.AllocsPerRun(10, func() { _ = scripts.Library() }); allocs != 0 {
-		t.Errorf("Library() allocates %v times a call, want 0", allocs)
+func TestLibraryAllocatesOnlyItsCopy(t *testing.T) {
+	if allocs := testing.AllocsPerRun(10, func() { _ = scripts.Library() }); allocs != 1 {
+		t.Errorf("Library() allocates %v times a call, want 1", allocs)
+	}
+}
+
+// A caller that changes the bytes Library returned leaves the next call's
+// bytes as lib.sh. It does not run in parallel, so a Library that shared
+// its bytes could not race the tests that read them, and the change is
+// undone before it ends.
+//
+//nolint:paralleltest // see above
+func TestLibraryReturnsACopy(t *testing.T) {
+	first := scripts.Library()
+	first[0] ^= 0xff
+
+	second := string(scripts.Library())
+
+	first[0] ^= 0xff
+
+	if second != readLib(t) {
+		t.Error("a change to the bytes Library returned reached the next call")
 	}
 }
 
