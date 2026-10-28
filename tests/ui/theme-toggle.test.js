@@ -17,8 +17,7 @@ const start = (setup) => {
   const env = boot({ noDialogs: true });
   envs.push(env);
   const { w, d } = env;
-  w.HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
-  w.HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); this.dispatchEvent(new w.Event('close')); };
+  require('./dom-stubs.js').install(w, { dismiss: false });
   if (setup) setup(w);
   w.eval(fs.readFileSync(path.join(UI, 'action-help.js'), 'utf8'));
   d.dispatchEvent(new w.Event('DOMContentLoaded'));

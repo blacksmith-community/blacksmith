@@ -16,8 +16,7 @@ const start=({oat=true}={})=>{
  const env=boot({noDialogs:true});envs.push(env);
  const {w}=env;
  if(oat){
-  w.HTMLElement.prototype.showPopover=function(){};
-  w.HTMLElement.prototype.hidePopover=function(){};
+  require('./dom-stubs.js').install(w,{dismiss:false});
   w.requestAnimationFrame=(fn)=>setTimeout(fn,0);
   w.eval(OAT);
  }
