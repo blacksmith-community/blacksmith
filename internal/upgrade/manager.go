@@ -1564,9 +1564,12 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 		return ErrTaskNotPaused
 	}
 
+	// The gate ran without the lock, and a worker in flight then may have
+	// left a node that outlived KILL, so the resume is a Resume cleanup if
+	// it is one now. A cleanup sends no command, so it needs no gate.
+	task.CleanupOnly = cleansOnly || commandCleansOnlyLocked(task)
 	task.Paused = false
 	task.Status = TaskStatusRunning
-	task.CleanupOnly = cleansOnly
 
 	if task.KindOrDefault() == TaskKindCertificates {
 		clearNeverStartedLocked(task)

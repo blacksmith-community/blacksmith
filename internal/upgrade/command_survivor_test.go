@@ -736,3 +736,64 @@ func TestCommandPanicKeepsAHeldTaskWaitingForResumeCleanup(t *testing.T) {
 		})
 	}
 }
+
+// A resume whose gate runs while a sibling of a node whose processes
+// outlived KILL is still in flight, and that is applied only once the
+// run has ended the instance, is a Resume cleanup by then. It checks the
+// survivors and pauses before the next instance, and sends nothing.
+func TestCommandResumeAppliedAfterTheSurvivorWindowCleansOnly(t *testing.T) {
+	fix := newTaskFixture(t, 2, 3, withParallel(2))
+	fix.setCleanup("dep-0/1", cleanupSurvived)
+	exec := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+	fix.queue()
+
+	exec.next()
+	exec.next()
+	exec.let("dep-0/1")
+
+	fix.waitFor("the survivor to pause the task", func(task UpgradeTask) bool {
+		return task.Paused && nodeOf(task, 0, 1).Survived
+	})
+
+	gated := 0
+
+	// The gate runs while dep-0/0 is still in flight, and it returns only
+	// once the run has ended the instance and let the task go.
+	err := fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, func(context.Context) error {
+		gated++
+
+		fix.setCleanup("dep-0/1", cleanupEnded)
+		exec.let("dep-0/0")
+
+		fix.waitFor("the run to end the instance", func(task UpgradeTask) bool {
+			return task.Paused && task.Instances[0].Status == InstanceStatusFailed && !fix.owned()
+		})
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	if gated != 1 {
+		t.Fatalf("the resume ran the gate %d times, want once", gated)
+	}
+
+	paused := fix.waitFor("the task to stop", func(task UpgradeTask) bool {
+		over := task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+
+		return (task.Paused || over) && !nodeOf(task, 0, 1).Survived && !fix.owned()
+	})
+
+	if paused.Status != TaskStatusPaused {
+		t.Errorf("the task is %s, want paused before the next instance", paused.Status)
+	}
+
+	if fix.sentTo("dep-1") {
+		t.Error("a resume applied after the window sent the command to the next instance")
+	}
+
+	if got := paused.Instances[1].Error; !strings.Contains(got, "Resume to run the command") {
+		t.Errorf("the next instance says %q, want the Resume cleanup to pause before it", got)
+	}
+}
