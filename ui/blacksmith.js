@@ -16936,9 +16936,6 @@
                   'fetch-vm': (id) => window.fetchServiceVMCertificates(id),
                   'fetch-service-endpoint': (id) => window.fetchServiceEndpointCertificate(id)
                 }, instanceId);
-                window.blacksmithTabs.bind(document.getElementById(`service-cert-tablist-${instanceId}`), {
-                  label: 'Service certificate sources'
-                });
                 CertOverview.mountInstance(document.getElementById(`service-cert-overview-${instanceId}`), instanceId);
               }
             }
@@ -19894,23 +19891,23 @@
     return `
       <div class="service-testing-container">
         <div class="manifest-details-container">
-          <div class="manifest-tabs-nav" id="service-cert-tablist-${safeId}">
-            <button class="manifest-tab-btn active" data-tab="overview" data-group="${tabGroupId}">Overview</button>
-            <button class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">Manifest</button>
-            <button class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
-            <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
+          <bs-tabs>
+          <div class="manifest-tabs-nav" role="tablist" aria-label="Service certificate sources" id="service-cert-tablist-${safeId}">
+            <button type="button" role="tab" class="manifest-tab-btn active" data-tab="overview" data-group="${tabGroupId}">Overview</button>
+            <button type="button" role="tab" class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">Manifest</button>
+            <button type="button" role="tab" class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
+            <button type="button" role="tab" class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
           </div>
 
-          <div class="manifest-tab-content">
             <!-- Overview Tab -->
-            <div class="manifest-tab-pane active" data-tab="overview" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane active" data-tab="overview" data-group="${tabGroupId}">
               <div class="operation-content">
                 <div id="service-cert-overview-${safeId}" class="cert-ov"></div>
               </div>
             </div>
 
             <!-- Manifest Certificates Tab -->
-            <div class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}">
 
               <div class="operation-content">
                 <table class="operation-form">
@@ -19945,7 +19942,7 @@
             </div>
 
             <!-- Trusted Certificates Tab -->
-            <div class="manifest-tab-pane" data-tab="trusted" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane" data-tab="trusted" data-group="${tabGroupId}">
               <div class="operation-content">
                 <table class="operation-form">
                   <tr>
@@ -19977,7 +19974,7 @@
             </div>
 
             <!-- Service Endpoint Certificate Tab -->
-            <div class="manifest-tab-pane" data-tab="endpoint" data-group="${tabGroupId}">
+            <div role="tabpanel" class="manifest-tab-pane" data-tab="endpoint" data-group="${tabGroupId}">
 
               <div class="operation-content">
                 <table class="operation-form">
@@ -20013,7 +20010,7 @@
                 </table>
               </div>
             </div>
-          </div>
+          </bs-tabs>
         </div>
       </div>
     `;
@@ -21526,7 +21523,7 @@
       const watch = rotationWatches.get(instanceId);
       if (!watch) return;
       rotationWatches.delete(instanceId);
-      if (watch.tablist) watch.tablist.removeEventListener('click', watch.onTab);
+      if (watch.tabset) watch.tabset.removeEventListener('ot-tab-change', watch.onTab);
       if (rotationWatches.size === 0) document.removeEventListener('visibilitychange', onRotationVisibility);
     };
 
@@ -21660,9 +21657,10 @@
       if (!taskId) return;
       dropRotationWatch(instanceId);
       const tablist = document.getElementById(`service-cert-tablist-${instanceId}`);
-      const watch = { taskId: String(taskId), container, reload, tablist, checking: false, onTab: null };
+      const tabset = tablist ? tablist.closest('bs-tabs') : null;
+      const watch = { taskId: String(taskId), container, reload, tabset, checking: false, onTab: null };
       watch.onTab = () => { checkRotationWatch(instanceId); };
-      if (tablist) tablist.addEventListener('click', watch.onTab);
+      if (tabset) tabset.addEventListener('ot-tab-change', watch.onTab);
       if (rotationWatches.size === 0) document.addEventListener('visibilitychange', onRotationVisibility);
       rotationWatches.set(instanceId, watch);
     };

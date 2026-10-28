@@ -27,7 +27,7 @@ function body(over){
 }
 t('instance certificates tab', async () => {
   // ---- normal ----
-  let {w,d,errors,json}=boot();
+  let {w,d,errors,json}=boot({oat:true});
   w.__routes=[[/certificates\/instances\//,()=>json(200,body())]];
   const h=await openInstanceTab(w,d,'i1');
   const ov=d.getElementById('service-cert-overview-i1');

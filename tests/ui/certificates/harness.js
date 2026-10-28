@@ -112,7 +112,6 @@ async function openInstanceTab(w,d,id){
     'fetch-manifest':(i)=>w.fetchManifestCertificates(i),
     'fetch-vm':(i)=>w.fetchServiceVMCertificates(i),
     'fetch-service-endpoint':(i)=>w.fetchServiceEndpointCertificate(i)},id);
-  w.blacksmithTabs.bind(d.getElementById('service-cert-tablist-'+id),{label:'Service certificate sources'});
   w.__T.CertOverview.mountInstance(d.getElementById('service-cert-overview-'+id),id);
   return box;
 }

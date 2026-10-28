@@ -119,7 +119,7 @@ Object.entries(strips).forEach(([name,strip])=>{
 
 // A strip on bs-tabs keeps its tab list and panels as direct children, in
 // the same order, so Oat can pair them by index.
-['manifest','config','certMain'].forEach((name)=>{
+['manifest','config','certMain','serviceCert'].forEach((name)=>{
  t(`${name} strip is a bs-tabs element with the tab list and panels as its children`,async()=>{
   const env=strips[name].boot?await strips[name].boot():await start(); const root=await strips[name].render(env); await sleep(20);
   const host=root.querySelector('bs-tabs');
