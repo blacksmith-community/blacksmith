@@ -638,6 +638,10 @@
       inputEl.style.display = 'block';
       inputEl.value = options.defaultValue || '';
       inputEl.placeholder = options.placeholder || '';
+      // A secret field is masked, opts out of autofill, and never keeps its value.
+      inputEl.setAttribute('type', options.secret ? 'password' : 'text');
+      if (options.secret) inputEl.setAttribute('autocomplete', 'off');
+      else inputEl.removeAttribute('autocomplete');
 
       // Set button text
       cancelBtn.textContent = options.cancelText || 'Cancel';
@@ -660,6 +664,9 @@
 
       // Cleanup function
       const cleanup = () => {
+        inputEl.value = '';
+        inputEl.setAttribute('type', 'text');
+        inputEl.removeAttribute('autocomplete');
         overlay.classList.remove('active');
         restoreBackground();
         cancelBtn.removeEventListener('click', handleCancel);
@@ -13029,7 +13036,7 @@
   window.executeRedisFlush = async (instanceId) => {
     const database = parseInt(document.getElementById(`redis-flush-db-${instanceId}`)?.value) || 0;
 
-    if (!confirm('Are you sure you want to flush the database? This will delete all data!')) {
+    if (!await showConfirmDialog({ title: 'Flush database', message: 'Are you sure you want to flush the database? This will delete all data!', confirmText: 'Flush database', cancelText: 'Cancel', danger: true })) {
       return;
     }
 
@@ -13113,11 +13120,11 @@
       return;
     }
 
-    if (operation === 'delete' && !confirm(`Are you sure you want to delete queue "${queue}"?`)) {
+    if (operation === 'delete' && !await showConfirmDialog({ title: 'Delete queue', message: `Are you sure you want to delete queue "${queue}"?`, confirmText: 'Delete queue', cancelText: 'Cancel', danger: true })) {
       return;
     }
 
-    if (operation === 'purge' && !confirm(`Are you sure you want to purge all messages from queue "${queue}"?`)) {
+    if (operation === 'purge' && !await showConfirmDialog({ title: 'Purge queue', message: `Are you sure you want to purge all messages from queue "${queue}"?`, confirmText: 'Purge messages', cancelText: 'Cancel', danger: true })) {
       return;
     }
 
@@ -13623,7 +13630,7 @@
   };
 
   window.clearRabbitMQCtlHistory = async (instanceId) => {
-    if (!confirm('Are you sure you want to clear all command history?')) {
+    if (!await showConfirmDialog({ title: 'Clear command history', message: 'Are you sure you want to clear all command history?', confirmText: 'Clear history', cancelText: 'Cancel', danger: true })) {
       return;
     }
 
@@ -14022,7 +14029,7 @@
   };
 
   window.clearRabbitMQPluginsHistory = async (instanceId) => {
-    if (confirm('Are you sure you want to clear the plugins command history?')) {
+    if (await showConfirmDialog({ title: 'Clear plugins history', message: 'Are you sure you want to clear the plugins command history?', confirmText: 'Clear history', cancelText: 'Cancel', danger: true })) {
       try {
         await fetch(`/b/${instanceId}/rabbitmq/plugins/history`, {
           method: 'DELETE'
@@ -19309,7 +19316,7 @@
 
   // Cancel task function
   const cancelTask = async (taskId) => {
-    if (!confirm(`Are you sure you want to cancel task ${taskId}?`)) {
+    if (!await showConfirmDialog({ title: 'Cancel task', message: `Are you sure you want to cancel task ${taskId}?`, confirmText: 'Cancel task', cancelText: 'Keep task', danger: true })) {
       return;
     }
 
@@ -22390,8 +22397,12 @@
     async startRegistration(registrationId) {
       if (!registrationId) return;
 
-      // Prompt for password
-      const password = prompt('Enter CF password to start registration:');
+      const password = await showPromptDialog({
+        title: 'Start registration',
+        message: 'Enter the CF password to start registration.',
+        secret: true,
+        confirmText: 'Start registration'
+      });
       if (!password) return;
 
       try {
@@ -22795,7 +22806,7 @@
       const registration = this.registrations.find(r => r.id === registrationId);
       const name = registration ? registration.name : 'this registration';
 
-      if (!confirm(`Are you sure you want to delete ${name}?`)) {
+      if (!await showConfirmDialog({ title: 'Delete registration', message: `Are you sure you want to delete ${name}?`, confirmText: 'Delete registration', cancelText: 'Cancel', danger: true })) {
         return;
       }
 
@@ -24703,7 +24714,7 @@
     }
 
     // Confirm deletion
-    if (!confirm('Are you sure you want to delete the resurrection config? This will revert to BOSH default resurrection behavior.')) {
+    if (!await showConfirmDialog({ title: 'Delete resurrection config', message: 'Are you sure you want to delete the resurrection config? This will revert to BOSH default resurrection behavior.', confirmText: 'Delete config', cancelText: 'Cancel', danger: true })) {
       return;
     }
 
