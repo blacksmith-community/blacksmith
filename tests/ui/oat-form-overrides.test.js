@@ -152,7 +152,12 @@ test('the theme focus ring still covers inputs, selects, and textareas',()=>{
 // come from every <select> tag in ui/*.js and ui/index.html. Selects are
 // only built as markup, so the second test fails if any script creates one
 // with createElement and so could add a name the first test cannot see.
-const uiSources=()=>fs.readdirSync(UI).filter((f)=>/\.(js|html)$/.test(f)).map((f)=>[f,read(f)]);
+const walk=(dir)=>fs.readdirSync(path.join(UI,dir),{withFileTypes:true}).flatMap((e)=>{
+ const rel=path.join(dir,e.name);
+ if(e.isDirectory()) return e.name==='vendor'&&dir===''?[]:walk(rel);
+ return /\.(js|html)$/.test(e.name)?[rel]:[];
+});
+const uiSources=()=>walk('').map((f)=>[f,read(f)]);
 const selectNames=()=>{
  const classes=new Set(), ids=new Set();
  uiSources().forEach(([,src])=>{
