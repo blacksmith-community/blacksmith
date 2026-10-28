@@ -9995,15 +9995,6 @@ span.config-type.resurrection {
   overflow: hidden;
 }
 
-.config-details-body .manifest-tab-pane {
-  display: none;
-  height: 100%;
-}
-
-.config-details-body .manifest-tab-pane.active {
-  display: block;
-}
-
 /* Diff Viewer Styles */
 .diff-navigation {
   display: flex;

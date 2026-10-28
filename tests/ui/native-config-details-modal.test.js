@@ -93,7 +93,7 @@ t('Back while the config details view is open closes it through the router and l
  const env=await start(); const {w,d,dialog,stubs,snapshot}=env;
  const before=snapshot();
  await openIt(env);
- w.blacksmithRouter={applying:true,current:{inspection:{kind:'config',id:'42'}},inspect:async()=>true,closeInspection:()=>{}};
+ w.blacksmithRouter={applying:true,current:{inspection:{kind:'config',id:'42'}},inspect:async()=>true,closeInspection:()=>{},record(){}};
  closeIt(env); await stubs.settle();
  expect(dialog().open).toBe(false);
  expect(snapshot()).toBe(before);
@@ -104,7 +104,7 @@ t('Forward to the config details view while a confirmation is open stacks the na
  const env=await start(); const {w,d,dialog,stubs,key}=env;
  const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
  await sleep(10);
- w.blacksmithRouter={applying:true,current:{inspection:{kind:'config',id:'42'}},inspect:async()=>true,closeInspection:()=>{}};
+ w.blacksmithRouter={applying:true,current:{inspection:{kind:'config',id:'42'}},inspect:async()=>true,closeInspection:()=>{},record(){}};
  await openIt(env);
  expect(dialog().open).toBe(true);
  expect(stubs.isModal(dialog())).toBe(true);
