@@ -224,8 +224,9 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
 #upgrade .upgrade-services select {
   width: 100%;
   min-height: 36px;
-  padding: 6px 10px;
 }
+#upgrade .upgrade-services input { padding: 6px 10px; }
+#upgrade .upgrade-services select { padding-block: 6px; padding-inline-start: 10px; }
 #upgrade .upgrade-services .batch-search-row { flex: 2 1 260px; }
 #upgrade .upgrade-actions { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
 #upgrade .upgrade-targets .upgrade-mode-pane { display: flex; flex-wrap: wrap; gap: 24px; }

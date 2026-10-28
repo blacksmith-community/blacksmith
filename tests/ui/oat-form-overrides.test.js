@@ -142,3 +142,19 @@ test('the theme focus ring still covers inputs, selects, and textareas',()=>{
  expect(hit).toBeTruthy();
  expect(hit.body).toMatch(/outline:\s*3px/);
 });
+
+// Oat reserves padding-inline-end on a select for its chevron. A padding
+// shorthand on a select resets that to the shorthand's own value, so the
+// chevron then sits on top of the text. A select rule sets longhands for
+// the sides it changes and leaves the end side alone.
+test('no select rule resets the end padding Oat keeps for the chevron',()=>{
+ const bad=[];
+ ['blacksmith.css','console.css','forge-theme.css','view-guidance.css','routes.css'].forEach((file)=>{
+  if(!fs.existsSync(path.join(UI,file))) return;
+  parse(read(file)).forEach((r)=>r.selectors.forEach((s)=>{
+   if(!/(^|[\s>+~])select(:[a-z-]+)*$/.test(s)&&!/^\.(instance-group|job)-select(:[a-z-]+)*$/.test(s)) return;
+   if(declares(r.body,'padding')||declares(r.body,'padding-right')||declares(r.body,'padding-inline')||declares(r.body,'padding-inline-end')) bad.push(file+' '+s);
+  }));
+ });
+ expect(bad).toEqual([]);
+});

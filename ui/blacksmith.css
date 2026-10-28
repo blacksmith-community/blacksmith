@@ -3012,7 +3012,8 @@ bs-tabs > .manifest-tab-pane {
 
 .instance-group-select,
 .job-select {
-  padding: 6px 12px;
+  padding-block: 6px;
+  padding-inline-start: 12px;
   font-size: 13px;
   min-width: 200px;
 }
@@ -3583,7 +3584,8 @@ select[id*="connection-vhost"] {
 .form-row textarea,
 .form-row select {
   width: 100%;
-  padding: 10px;
+  padding-block: 10px;
+  padding-inline-start: 10px;
 }
 
 .form-row textarea {
@@ -5819,7 +5821,8 @@ bs-tabs > .cert-tab-pane[hidden] {
 
 .plugins-command-details .command-selector select {
   width: 100%;
-  padding: 8px 12px;
+  padding-block: 8px;
+  padding-inline-start: 12px;
   font-size: 14px;
 }
 
@@ -7324,7 +7327,8 @@ body.terminal-minimized .tabs {
 }
 
 .org-space-table select {
-  padding: 0.5rem;
+  padding-block: 0.5rem;
+  padding-inline-start: 0.5rem;
   font-size: 0.9rem;
   width: 200px;
 }
@@ -7808,7 +7812,8 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .filter-group select {
-  padding: 0.375rem 0.75rem;
+  padding-block: 0.375rem;
+  padding-inline-start: 0.75rem;
   font-size: 14px;
 }
 
@@ -7875,7 +7880,8 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .compact-tasks-controls .filter-group select {
-  padding: 0 4px;
+  padding-block: 0;
+  padding-inline-start: 4px;
   font-size: 0.85em;
 }
 
@@ -11546,7 +11552,8 @@ span.config-type.resurrection {
 .cert-fleet input[type="number"],
 .cert-fleet select {
   min-width: 0;
-  padding: 6px 8px;
+  padding-block: 6px;
+  padding-inline-start: 8px;
   font-size: 14px;
 }
 

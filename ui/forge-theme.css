@@ -691,7 +691,7 @@ body > footer p { margin: 0; }
 #blacksmith .compact-tasks-controls .filter-group { flex-wrap: wrap; gap: 6px; margin: 0; }
 #blacksmith .compact-tasks-controls .search-filter-container { flex: 0 1 230px; min-width: 160px; max-width: 100%; }
 #blacksmith .compact-tasks-controls :is(input,select,label) { margin: 0; }
-#blacksmith .compact-tasks-controls select { min-height: 34px; padding: 4px 8px; max-width: 100%; }
+#blacksmith .compact-tasks-controls select { min-height: 34px; padding-block: 4px; padding-inline-start: 8px; max-width: 100%; }
 #blacksmith .compact-tasks-controls .tasks-action-buttons { order: 1; margin: 0 0 0 auto; }
 #blacksmith .compact-tasks-controls .checkbox-group { gap: 8px; }
 
