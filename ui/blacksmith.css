@@ -13521,10 +13521,7 @@ summary.rotate-preview-card-head:focus-visible {
 .rotate-preview-callout {
   margin: 0 0 10px 0;
   padding: 8px 12px;
-  border: 1px solid var(--border-primary);
-  border-left: 4px solid #f59e0b;
   border-radius: 4px;
-  background: var(--bg-secondary);
   line-height: 1.5;
 }
 

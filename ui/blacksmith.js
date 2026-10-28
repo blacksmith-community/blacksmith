@@ -5716,6 +5716,7 @@
 
   const previewCallout = (children) => {
     const box = rotateEl('div', 'rotate-preview-callout');
+    box.setAttribute('data-variant', 'warning');
     box.setAttribute('role', 'group');
     box.setAttribute('aria-label', 'Warning');
     children.forEach((child) => box.appendChild(child));

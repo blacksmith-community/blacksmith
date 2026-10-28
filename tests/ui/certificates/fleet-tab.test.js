@@ -90,11 +90,13 @@ t('fleet tab', async () => {
   // ---- stale banner + degraded ----
   ({w,d,server}=await boot());
   server.scan=Object.assign({},server.scan,{errors:[{instance_id:'inst1',error:'scan timed out'+EVIL,last_success_at:new Date(Date.now()-7200e3).toISOString()}]});
-  server.caps=Object.assign({},server.caps,{rotation:{enabled:false,reason:'BOSH director unavailable'},director:{version:''}});
+  server.caps=Object.assign({},server.caps,{rotation:{enabled:false,reason:'BOSH director unavailable'},director:{version:''},credhub:{state:'not_configured'}});
   await w.blacksmithNav.switchTab('certificates'); await sleep(100);
   const notices=d.getElementById('cert-fleet-notices').textContent;
   ok(/1 instance could not be scanned\. Showing data from/.test(notices) && /Show them/.test(notices),'stale banner');
   ok(/BOSH director is unavailable/.test(notices),'degraded notice');
+  const infos=Array.from(d.querySelectorAll('#cert-fleet-notices .cert-notice--info'));
+  ok(infos.length===2 && infos.every(n=>n.getAttribute('role')==='status' && !n.hasAttribute('data-variant')),'credhub and director info notices are status regions: '+infos.map(n=>n.getAttribute('role')).join());
   Array.from(d.querySelectorAll('.cert-link-btn')).find(b=>b.textContent==='Show them').click(); await sleep(80);
   ok(w.blacksmithCerts.state.instance.join()==='inst1','Show them filters instance');
   ok(bad(d)===0,'no injected (stale)');

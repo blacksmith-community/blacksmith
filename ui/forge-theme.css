@@ -311,7 +311,8 @@ body > footer p { margin: 0; }
 #upgrade .batch-flow-review { max-width: 1120px; width: 100%; }
 #upgrade .batch-flow-review p { line-height: 1.7; max-width: 80ch; }
 #upgrade .batch-flow-review .batch-review-section-title { margin: 28px 0 12px; font-size: 1.05rem; }
-#upgrade .batch-flow-review :is(.rotate-preview-note,.rotate-preview-callout) { margin: 20px 0; padding: 16px; border-left: 3px solid var(--warning); background: var(--secondary); border-radius: 4px; }
+#upgrade .batch-flow-review :is(.rotate-preview-note,.rotate-preview-callout) { margin: 20px 0; padding: 16px; border-radius: 4px; }
+#upgrade .batch-flow-review .rotate-preview-note { border-left: 3px solid var(--warning); background: var(--secondary); }
 #upgrade .batch-flow-review .batch-review-warning[data-variant="danger"] { margin: 20px 0; padding: 16px; border-radius: 4px; font-weight: 600; }
 #upgrade .batch-flow-review .command-review-text { margin: 16px 0; padding: 12px 16px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--secondary); border: 1px solid var(--border); border-radius: 6px; }
 #upgrade .batch-flow-review .command-review-table { width: 100%; margin: 16px 0; border-collapse: collapse; }
@@ -875,9 +876,9 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 
 /* Oat colors an alert with a translucent tint, which falls under 4.5:1 in the
    dark themes. Every alert and notice takes a solid 12% mix into the card
-   color, the same as the badges. The cert notices, error blocks, and passive status panels
+   color, the same as the badges. The cert notices, error blocks, rotate preview callout, and passive status panels
    are not role=alert, so they take the same left bar and color from here. */
-:is([role="alert"], [role="status"], [role="note"], .cert-notice, .cert-state-panel, .cert-error):not(.toast)[data-variant]:is([data-variant="success"], [data-variant="warning"], [data-variant="danger"], [data-variant="error"]) {
+:is([role="alert"], [role="status"], [role="note"], .cert-notice, .cert-state-panel, .cert-error, .rotate-preview-callout):not(.toast)[data-variant]:is([data-variant="success"], [data-variant="warning"], [data-variant="danger"], [data-variant="error"]) {
   color: var(--_variant-color);
   border-left: var(--space-2) solid var(--_variant-color);
   background-color: color-mix(in srgb, var(--_variant-color) 12%, var(--card));

@@ -57,6 +57,8 @@ test('alert text meets 4.5:1 for every variant in every theme',()=>{
  const css=read('forge-theme.css');
  const rule=css.match(/:is\(\[role="alert"\][^{]*\)\[data-variant\]:is\([^{]*\) \{([^}]*)\}/);
  expect(rule).not.toBeNull();
+ const selector=css.match(/(:is\(\[role="alert"\][^{]*\)\[data-variant\])/)[1];
+ ['.cert-notice','.cert-state-panel','.cert-error','.rotate-preview-callout'].forEach((cls)=>expect(selector).toContain(cls));
  const pct=Number(rule[1].match(/var\(--_variant-color\) (\d+)%, var\(--card\)/)[1])/100;
  [':root',':root[data-contrast="high"]','[data-theme="dark"]',':root[data-contrast="high"][data-theme="dark"]'].forEach((sel)=>{
   const t=tokens(css,sel);
@@ -64,6 +66,9 @@ test('alert text meets 4.5:1 for every variant in every theme',()=>{
    expect(ratio(t[v],mix(t[v],t['--card'],pct))).toBeGreaterThanOrEqual(4.5);
   });
   expect(ratio(t['--foreground'],t['--background'])).toBeGreaterThanOrEqual(4.5);
+  ['--success','--warning','--danger'].forEach((v)=>{
+   expect(ratio(t['--muted-foreground'],mix(t[v],t['--card'],pct))).toBeGreaterThanOrEqual(4.5);
+  });
  });
 });
 
@@ -115,4 +120,18 @@ test('single error panel colors come from the variant, not from our own rules',(
  expect(rule(css,'\n#upgrade .cert-decision-error')).not.toMatch(colors);
  expect(rule(read('routes.css'),'#route-error')).not.toMatch(colors);
  expect(rule(read('forge-theme.css'),'#upgrade .batch-flow-review .batch-review-warning[data-variant="danger"]')).not.toMatch(colors);
+});
+
+t('the rotate preview callout takes the warning variant and keeps its group role',()=>{
+ const js=read('blacksmith.js').split('\n');
+ const at=js.findIndex((l)=>l.includes("rotateEl('div', 'rotate-preview-callout')"));
+ expect(at).toBeGreaterThan(-1);
+ const body=js.slice(at,at+5).join('\n');
+ expect(body).toMatch(/data-variant', 'warning'/);
+ expect(body).toMatch(/'role', 'group'/);
+ const css=read('blacksmith.css');
+ const i=css.indexOf('\n.rotate-preview-callout {');
+ expect(css.slice(i,css.indexOf('}',i))).not.toMatch(/(^|[;{\s])(border|border-left|background|color):/);
+ const theme=read('forge-theme.css');
+ expect(theme).not.toMatch(/rotate-preview-note,\.rotate-preview-callout\) \{[^}]*border-left/);
 });
