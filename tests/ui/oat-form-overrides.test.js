@@ -44,7 +44,7 @@ const GONE={
   '[data-theme="dark"] .instance-group-select','[data-theme="dark"] .job-select',
   '[data-theme="dark"] .form-row input','[data-theme="dark"] .form-row textarea','[data-theme="dark"] .form-row select',
   '[data-theme="dark"] .connection-field select','[data-theme="dark"] .connection-field select:hover',
-  '.org-space-table select:disabled',
+  '.org-space-table select:disabled','select:disabled',
   '[data-theme="dark"] .compact-tasks-controls .filter-group select','[data-theme="dark"] .compact-tasks-controls .filter-group select:hover',
   '.filter-input::placeholder',
   '.table-controls-container .log-file-dropdown:hover',
@@ -58,7 +58,6 @@ const GONE={
 const LOOK=['border','border-color','border-radius','background','background-color','color'];
 const STRIPPED={
  'blacksmith.css':{
-  'select:disabled':['background-color','border','border-color','color'],
   '.instance-group-select':LOOK.concat('cursor'),
   '.job-select':LOOK.concat('cursor'),
   '.form-row input':['background'],
@@ -157,4 +156,14 @@ test('no select rule resets the end padding Oat keeps for the chevron',()=>{
   }));
  });
  expect(bad).toEqual([]);
+});
+
+// The option rule paints the open list, so it follows the theme variables
+// the rest of the stylesheet uses and none of the old palette names.
+test('the select option rule uses the theme variables',()=>{
+ const hit=parse(read('blacksmith.css')).find((r)=>r.selectors.includes('select option'));
+ expect(hit).toBeTruthy();
+ expect(hit.body).toMatch(/background:\s*var\(--card\)/);
+ expect(hit.body).toMatch(/color:\s*var\(--foreground\)/);
+ expect(hit.body).not.toMatch(/--bg-secondary|--text-primary/);
 });

@@ -422,16 +422,10 @@ table tbody {
   color: var(--text-primary);
 }
 
-/* Oat keeps the select look; a disabled select still needs its dimming. */
-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 select option {
   padding: 4px 8px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  background: var(--card);
+  color: var(--foreground);
 }
 
 /* Special overrides for log file dropdown - needs monospace font and wider width */
