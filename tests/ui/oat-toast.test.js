@@ -46,13 +46,33 @@ t('an error toast is announced assertively and the others politely',()=>{
  expect(good.getAttribute('role')).toBe('status');
  expect(good.getAttribute('aria-live')).toBe('polite');
 });
-t('a toast keeps the three second duration',async()=>{
- const {w,d}=start();
+t('a toast keeps the three second duration',()=>{
+ const {w}=start();
  const timers=[];const real=w.setTimeout;
  w.setTimeout=(fn,ms,...a)=>{ timers.push(ms); return real.call(w,fn,ms,...a); };
  w.showNotification('Saved it','success');
- expect(timers).toContain(3000);
- expect(timers).not.toContain(4000);
+ w.setTimeout=real;
+ expect(timers.filter(ms=>ms>=1000)).toEqual([3000]);
+});
+t('the roles are on the toast at the moment it enters the page',()=>{
+ const {w,d}=start();
+ w.showNotification('First','info');
+ const seen=[];
+ const observer=new w.MutationObserver(list=>list.forEach(r=>r.addedNodes.forEach(n=>{
+  if(n.matches&&n.matches('output.toast')) seen.push([n.getAttribute('role'),n.getAttribute('aria-live')]);
+ })));
+ observer.observe(container(d),{childList:true});
+ w.showNotification('It broke','error');
+ w.showNotification('Saved it','success');
+ return Promise.resolve().then(()=>{
+  observer.disconnect();
+  expect(seen).toEqual([['alert','assertive'],['status','polite']]);
+ });
+});
+t('an unknown type shows as info',()=>{
+ const {w,d}=start();
+ w.showNotification('Odd','mystery');
+ expect(container(d).querySelector('output.toast').getAttribute('data-variant')).toBe('info');
 });
 t('a toast stays announced and reachable while a modal is open',async()=>{
  const {w,d}=start();
@@ -66,6 +86,32 @@ t('a toast stays announced and reachable while a modal is open',async()=>{
  expect(box.hasAttribute('aria-hidden')).toBe(false);
  expect(box.querySelectorAll('output.toast').length).toBe(2);
  d.querySelector('[data-dialog-role="cancel"]').click(); await done;
+});
+t('a toast stays reachable while the password dialog is open',async()=>{
+ const {w,d}=start();
+ w.showNotification('Before','info');
+ const done=w.__T.CFRegistrationManager.startRegistration('r1');
+ await sleep(10);
+ expect(d.getElementById('dialog-modal-overlay').classList.contains('active')).toBe(true);
+ w.showNotification('During','error');
+ const box=container(d);
+ expect(box.hasAttribute('inert')).toBe(false);
+ expect(box.hasAttribute('aria-hidden')).toBe(false);
+ expect(box.querySelectorAll('output.toast').length).toBe(2);
+ d.querySelector('[data-dialog-role="cancel"]').click(); await done;
+});
+t('the fallback banner hides after three seconds',()=>{
+ const {w,d}=start({oat:false});
+ const timers=[];const real=w.setTimeout;
+ w.setTimeout=(fn,ms,...a)=>{ timers.push([ms,fn]); return real.call(w,fn,ms,...a); };
+ w.showNotification('Saved it','success');
+ w.setTimeout=real;
+ const hide=timers.find(([ms])=>ms===3000);
+ expect(hide).toBeDefined();
+ const banner=d.querySelector('.notification');
+ expect(banner.classList.contains('notification-show')).toBe(true);
+ hide[1]();
+ expect(banner.classList.contains('notification-show')).toBe(false);
 });
 t('without Oat the notification falls back to the page banner and live region',async()=>{
  const {w,d}=start({oat:false});

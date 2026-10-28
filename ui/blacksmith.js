@@ -24774,12 +24774,20 @@
   // for three seconds as before. Without Oat the page banner shows it and
   // the polite live region announces it.
   function showNotification(message, type = 'info') {
-    if (window.ot && typeof window.ot.toast === 'function') {
-      const toast = window.ot.toast(String(message), '', { variant: type, duration: 3000 });
-      // Oat's toast is an output element, which is polite. An error is assertive.
-      const urgent = type === 'error';
+    const variant = ['success', 'warning', 'error'].includes(type) ? type : 'info';
+    if (window.ot && window.ot.toast && typeof window.ot.toast.el === 'function') {
+      // The roles are set on the element before Oat inserts it, so a screen
+      // reader sees them on arrival. An error is assertive and the rest are polite.
+      const urgent = variant === 'error';
+      const toast = document.createElement('output');
+      toast.setAttribute('data-variant', variant);
       toast.setAttribute('role', urgent ? 'alert' : 'status');
       toast.setAttribute('aria-live', urgent ? 'assertive' : 'polite');
+      const body = document.createElement('div');
+      body.className = 'toast-message';
+      body.textContent = String(message);
+      toast.appendChild(body);
+      window.ot.toast.el(toast, { duration: 3000 });
       return;
     }
 
@@ -24791,7 +24799,7 @@
     }
 
     notification.textContent = message;
-    notification.className = `notification notification-${type} notification-show`;
+    notification.className = `notification notification-${variant} notification-show`;
     announce(message);
 
     setTimeout(() => {
