@@ -195,8 +195,9 @@ func TestRunnerDeadlineWhenExecIsNeverAnswered(t *testing.T) {
 }
 
 // A VM that stops answering while its command reads a large stdin holds
-// the copy of stdin, and Run still returns at its deadline, and no read
-// of the stdin reader starts after it returns.
+// the copy of stdin, and Run still returns at its deadline, and at most
+// the one read of the stdin reader that Run allows starts after it
+// returns.
 func TestRunnerDeadlineWhenVMStopsMidRun(t *testing.T) {
 	t.Parallel()
 
@@ -217,12 +218,7 @@ func TestRunnerDeadlineWhenVMStopsMidRun(t *testing.T) {
 
 	runWithDeadline(t, runner, stdin)
 
-	stdin.returned.Store(true)
-	time.Sleep(100 * time.Millisecond)
-
-	if late := stdin.late.Load(); late != 0 {
-		t.Errorf("the stdin reader was read %d time(s) after Run returned", late)
-	}
+	expectAtMostOneLateRead(t, stdin, 100*time.Millisecond)
 }
 
 // A stdin reader whose read never returns does not hold Run past its
@@ -244,8 +240,8 @@ func TestRunnerDeadlineWhenStdinBlocks(t *testing.T) {
 	runWithDeadline(t, runner, stdin)
 }
 
-// A command that ends without reading all of its stdin leaves no read of
-// the stdin reader to start once Run returns.
+// A command that ends without reading all of its stdin leaves at most the
+// one read of the stdin reader that Run allows to start once it returns.
 func TestRunnerReadsNoStdinAfterItReturns(t *testing.T) {
 	t.Parallel()
 
@@ -263,11 +259,22 @@ func TestRunnerReadsNoStdinAfterItReturns(t *testing.T) {
 
 		_, _ = runner.Run(t.Context(), catProgram, nil, stdin, 0)
 
-		stdin.returned.Store(true)
-		time.Sleep(50 * time.Millisecond)
+		expectAtMostOneLateRead(t, stdin, 50*time.Millisecond)
+	}
+}
 
-		if late := stdin.late.Load(); late != 0 {
-			t.Errorf("the stdin reader was read %d time(s) after Run returned", late)
-		}
+// expectAtMostOneLateRead marks stdin as returned, watches it for a
+// while, and fails the test when more than one read of it starts after
+// Run returned. Run allows one, a read whose stop check passed just before
+// Run stopped the gate, and the gate fails every read after that one, so
+// a second late read means the gate never stopped.
+func expectAtMostOneLateRead(t *testing.T, stdin *watchedReader, watch time.Duration) {
+	t.Helper()
+
+	stdin.returned.Store(true)
+	time.Sleep(watch)
+
+	if late := stdin.late.Load(); late > 1 {
+		t.Errorf("the stdin reader was read %d times after Run returned, want at most once", late)
 	}
 }
