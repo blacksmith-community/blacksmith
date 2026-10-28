@@ -596,8 +596,8 @@ func TestRunnerWithoutOutputLoggingLogsNoOutput(t *testing.T) {
 	}{
 		{name: "success", wantStatus: "exit status 0"},
 		{name: "non-zero exit", exit: 3, wantStatus: "exit status 3"},
-		{name: "cancelled context", cancel: true, wantErr: context.DeadlineExceeded},
-		{name: "dropped connection", drop: true, wantErr: boshssh.ErrNoExitStatus},
+		{name: "cancelled context", cancel: true, wantStatus: "ended without an exit status", wantErr: context.DeadlineExceeded},
+		{name: "dropped connection", drop: true, wantStatus: "ended without an exit status", wantErr: boshssh.ErrNoExitStatus},
 	}
 
 	for _, tc := range cases {

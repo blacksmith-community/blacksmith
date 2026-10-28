@@ -386,15 +386,22 @@ func (r *Runner) execute(ctx context.Context, session *ssh.Session, command, sho
 // finish turns what the session left behind into the run's result, and
 // logs it at debug level. The streams reach the log through ForLog, unless
 // the runner was built without output logging, and then the line holds
-// only the exit status, the byte counts, and the truncation flags.
+// only the exit status, the byte counts, and the truncation flags. A
+// session that ended without an exit status says so, rather than showing
+// the zero status the result carries.
 func (r *Runner) finish(shown string, stdout, stderr *boundedBuffer, end sessionEnd) (Result, error) {
 	result := snapshotResult(stdout, stderr, end.code)
 
+	ended := fmt.Sprintf("ended with exit status %d", result.ExitCode)
+	if end.err != nil {
+		ended = "ended without an exit status"
+	}
+
 	if r.logOutput {
-		r.log.Debugf("%s ended with exit status %d, truncated %t, stdout %s, stderr %s",
-			shown, result.ExitCode, result.Truncated, ForLog(result.Stdout), ForLog(result.Stderr))
+		r.log.Debugf("%s %s, truncated %t, stdout %s, stderr %s",
+			shown, ended, result.Truncated, ForLog(result.Stdout), ForLog(result.Stderr))
 	} else {
-		r.log.Debugf("%s ended with exit status %d, %s", shown, result.ExitCode, countsForLog(result))
+		r.log.Debugf("%s %s, %s", shown, ended, countsForLog(result))
 	}
 
 	return result, end.err
