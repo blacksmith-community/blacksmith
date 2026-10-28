@@ -58,7 +58,15 @@ t('task panel and API errors', async () => {
   ok(/Paused/.test(panel.textContent),'paused status is visible text');
   ok(/1 cancelled/.test(panel.textContent)&&/1 skipped/.test(panel.textContent)&&/1 outcome unknown/.test(panel.textContent),'all settled outcomes appear on activity cards');
   ok(!/undefined|NaN/.test(panel.textContent),'missing counters have safe defaults');
-  ok(panel.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')==='100','progress counts every settled outcome accessibly');
+  const bar=panel.querySelector('progress');
+  ok(!!bar&&bar.getAttribute('value')==='100'&&bar.getAttribute('max')==='100'&&bar.getAttribute('aria-label')==='Instances processed','progress is a native element that counts every settled outcome');
+  ok(!panel.querySelector('[role="progressbar"], .upgrade-task-progress-bar'),'no custom progress bar is left');
+  T._setTasks([{id:'unknown-total',kind:'upgrade',status:'queued'}]);
+  T.renderUpgradeTaskList();
+  const idle=panel.querySelector('progress');
+  ok(!!idle&&!idle.hasAttribute('value'),'a task with no known total is indeterminate');
+  T._setTasks([{id:'mixed',kind:'upgrade',status:'paused',total_count:4,completed_count:1,cancelled_count:1,skipped_count:1,unknown_count:1}]);
+  T.renderUpgradeTaskList();
   T._setTasks([]);T.renderUpgradeTaskList();
   ok(/New Operation/.test(panel.textContent)&&!/No upgrade tasks/.test(panel.textContent),'empty activity applies to every operation');
 

@@ -11008,25 +11008,15 @@ span.config-type.resurrection {
 }
 
 #upgrade .upgrade-task-progress {
-  height: 4px;
-  background-color: var(--bg-hover);
-  border-radius: 2px;
-  overflow: hidden;
   margin-bottom: 0.5rem;
 }
 
-#upgrade .upgrade-task-progress-bar {
-  height: 100%;
-  background-color: #2563eb;
-  transition: width 0.3s ease;
+#upgrade .upgrade-task-item.status-completed .upgrade-task-progress {
+  --primary: var(--success);
 }
 
-#upgrade .upgrade-task-item.status-completed .upgrade-task-progress-bar {
-  background-color: #10b981;
-}
-
-#upgrade .upgrade-task-item.status-failed .upgrade-task-progress-bar {
-  background-color: #ef4444;
+#upgrade .upgrade-task-item.status-failed .upgrade-task-progress {
+  --primary: var(--danger);
 }
 
 #upgrade .upgrade-task-stats {

@@ -7259,9 +7259,7 @@
             ${awaitingBadge}
           </div>
           ${targetLine}
-          <div class="upgrade-task-progress" role="progressbar" aria-label="Instances processed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}">
-            <div class="upgrade-task-progress-bar" style="width: ${Number(progress) || 0}%"></div>
-          </div>
+          <progress class="upgrade-task-progress" aria-label="Instances processed" max="100"${activityCount(task.total_count) ? ` value="${progress}"` : ''}></progress>
           <div class="upgrade-task-stats">
             <span class="success">${activityCount(task.completed_count)} succeeded</span>
             <span class="failed">${activityCount(task.failed_count)} failed</span>
