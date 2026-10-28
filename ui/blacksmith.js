@@ -24728,11 +24728,8 @@
         spanElement.textContent = 'Refreshing...';
       }
 
-      // Find the marketplace panel and reload it
-      const brokerTabContent = document.querySelector('.broker-tab-content[data-cftab="marketplace"]');
-      if (brokerTabContent) {
-        await CFEndpointManager.loadMarketplaceTab(brokerTabContent, endpointName);
-      }
+      // Read the marketplace again into its panel
+      await CFEndpointManager.loadTabContent('marketplace', endpointName);
     } catch (error) {
       console.error('Failed to refresh marketplace services:', error);
     } finally {
