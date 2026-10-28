@@ -93,3 +93,10 @@ test('our control border uses the same token the contrast test checks',()=>{
  expect(border.body).toMatch(/border:\s*1px solid var\(--input\)/);
  expect(border.body).toMatch(/color:\s*var\(--foreground\)/);
 });
+
+// Cached clients mix old styles with new markup when a changed asset keeps
+// its old key, so every asset changed in the Oat form work carries oat-5.
+test('the assets changed by the Oat form work carry the oat-5 cache key',()=>{
+ const html=read('index.html');
+ ['blacksmith.css','forge-theme.css','blacksmith.js'].forEach((f)=>expect(html).toContain('/'+f+'?v=20261028-oat-5"'));
+});
