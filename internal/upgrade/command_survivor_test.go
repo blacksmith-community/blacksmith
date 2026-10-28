@@ -337,6 +337,146 @@ func TestASurvivorInstanceEndedAfterAResumeCleanupStopsTheRun(t *testing.T) {
 	}
 }
 
+// An ordinary resume that clears the pause a node's surviving processes
+// recorded, before the run ends an instance that is not the last, keeps
+// the task running. The run stops there without pausing again for the
+// failure, so the task is processed again from the instance and the
+// survivors are checked first.
+func TestASurvivorInstanceEndedAfterAnOrdinaryResumeStopsTheRun(t *testing.T) {
+	fix := newTaskFixture(t, 2, 1)
+	inst := &fix.task.Instances[0]
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusRunning
+	inst.Status = InstanceStatusRunning
+	inst.Command.VMs[0].Phase = CommandPhaseSettled
+	inst.Command.VMs[0].Status = CommandStatusFailed
+	inst.Command.VMs[0].Survived = true
+	fix.manager.mu.Unlock()
+
+	if fix.manager.endCommandInstance(context.Background(), fix.task, inst, true, true) {
+		t.Error("the run went on past the instance whose processes outlived KILL")
+	}
+
+	snap := fix.snapshot()
+	if snap.Paused || snap.Status != TaskStatusRunning || snap.Instances[0].Status != InstanceStatusFailed {
+		t.Errorf("the task is %s paused=%v with its instance %s, want it running for the resume and the instance failed", snap.Status, snap.Paused, snap.Instances[0].Status)
+	}
+}
+
+// waitSurvivorWindow runs two instances of three nodes, two at a time,
+// until the processes of dep-0's second node outlive KILL while its first
+// node is still held before exec, and resumes the task there through the
+// gate a resume that sends the command needs. It returns the gate that
+// holds the first node, and how many cleanups the survivor has had.
+func (f *taskFixture) waitSurvivorWindow() (*nodeGate, int) {
+	f.t.Helper()
+
+	f.setCleanup("dep-0/1", cleanupSurvived)
+	exec := f.gate(opRunExec, "dep-0/0", "dep-0/1")
+	f.queue()
+
+	exec.next()
+	exec.next()
+	exec.let("dep-0/1")
+
+	f.waitFor("the survivor to pause the task", func(task UpgradeTask) bool {
+		return task.Paused && nodeOf(task, 0, 1).Survived
+	})
+
+	cleanups := f.countOps("dep-0", 1, opRunCleanup)
+
+	gated := 0
+
+	err := f.manager.ResumeTaskGated(context.Background(), f.task.ID, func(context.Context) error {
+		gated++
+
+		return nil
+	})
+	if err != nil {
+		f.t.Fatalf("resume: %v", err)
+	}
+
+	if snap := f.snapshot(); gated != 1 || snap.CleanupOnly || snap.Paused {
+		f.t.Fatalf("the resume ran the gate %d times, cleanup_only %v, paused %v, want an ordinary resume", gated, snap.CleanupOnly, snap.Paused)
+	}
+
+	return exec, cleanups
+}
+
+// An ordinary resume that lands while a sibling of a node whose processes
+// outlived KILL is still in flight is honored once the sibling ends. The
+// task is processed again from the instance, and the survivors are checked
+// first, so while they live the task pauses again for Resume cleanup and
+// nothing reaches the next instance.
+func TestCommandResumeDuringTheSurvivorWindowChecksTheSurvivorsFirst(t *testing.T) {
+	fix := newTaskFixture(t, 2, 3, withParallel(2))
+	exec, cleanups := fix.waitSurvivorWindow()
+
+	exec.let("dep-0/0")
+
+	paused := fix.waitFor("the task to stop", func(task UpgradeTask) bool { return task.Paused && !fix.owned() })
+
+	if n := fix.countOps("dep-0", 1, opRunCleanup) - cleanups; n != 1 {
+		t.Errorf("the survivor had %d cleanups after the resume, want one recheck", n)
+	}
+
+	if got := paused.Instances[0].Error; !strings.Contains(got, "still survive KILL on redis/1") || !strings.Contains(got, "Resume cleanup") {
+		t.Errorf("the instance says %q, want the recheck to name the survivor and Resume cleanup", got)
+	}
+
+	if paused.Status != TaskStatusPaused || !nodeOf(paused, 0, 1).Survived || !fix.holds() {
+		t.Errorf("the task is %s, survived %v, held %v, want paused and held", paused.Status, nodeOf(paused, 0, 1).Survived, fix.holds())
+	}
+
+	if fix.sentTo("dep-1") {
+		t.Error("the resume sent the command to the next instance while the survivors live")
+	}
+
+	fix.assertNoCommandText()
+}
+
+// An ordinary resume that lands while a sibling of a node whose processes
+// outlived KILL is still in flight goes on to the next instance once the
+// sibling ends and the recheck finds the survivors gone.
+func TestCommandResumeDuringTheSurvivorWindowGoesOnOnceTheSurvivorsAreGone(t *testing.T) {
+	fix := newTaskFixture(t, 2, 3, withParallel(2))
+	exec, cleanups := fix.waitSurvivorWindow()
+
+	fix.setCleanup("dep-0/1", cleanupEnded)
+	exec.let("dep-0/0")
+
+	done := fix.waitFor("the task to stop", func(task UpgradeTask) bool {
+		over := task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+
+		return (task.Paused || over) && !fix.owned()
+	})
+
+	if done.Paused || done.Status != TaskStatusCompleted {
+		t.Fatalf("the task is %s paused=%v, want it completed", done.Status, done.Paused)
+	}
+
+	if n := fix.countOps("dep-0", 1, opRunCleanup) - cleanups; n != 1 {
+		t.Errorf("the survivor had %d cleanups after the resume, want one recheck", n)
+	}
+
+	if nodeOf(done, 0, 1).Survived {
+		t.Error("the node still records survivors after the recheck found them gone")
+	}
+
+	if done.Instances[1].Status != InstanceStatusSuccess {
+		t.Errorf("the next instance is %s, want success", done.Instances[1].Status)
+	}
+
+	for index := range 3 {
+		if n := fix.countOps("dep-1", index, opRunExec); n != 1 {
+			t.Errorf("dep-1/%d was sent exec %d times, want once", index, n)
+		}
+	}
+
+	fix.assertNoCommandText()
+}
+
 // A survivor's VM that the director lists with another CID is gone, and so
 // is every process on it, so Resume cleanup releases the instance without
 // reaching the node.

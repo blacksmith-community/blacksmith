@@ -286,6 +286,8 @@ Each node has one timeout for the command, which the operator sets per run. It d
 
 When a node exits non-zero, is refused by the wrapper, times out, or loses its connection, the broker records the node as failed or as outcome unknown and starts no new node. Nodes already in flight run to their own end and are recorded. The remaining nodes of that deployment are marked skipped, and the instance is failed. The task then pauses rather than moving on, so the operator decides whether the next deployment should still get the command, and the "Continue remaining instances" control resumes it. A failed instance is never retried.
 
+A node whose processes outlive KILL pauses the task and keeps its instance held, and the run never moves past that instance while the survivors live. A resume that the operator presses while other nodes of the deployment are still in flight is honored once they finish. The task then runs `cleanup` on the survivors again before it does anything else, as Resume cleanup does, so it pauses again while they live and goes on to the next deployment only once that check finds them gone.
+
 ### Cancellation
 
 Cancellation reaches the running command and is not only checked between nodes. Each node's context is cancelled when the task is cancelled, and with parallel nodes every node in flight is cancelled at once. That closes the SSH connection, and the broker records the node as outcome unknown because no exit status arrived. `cleanup` then runs on a fresh context, ends the process group if the command is still running, and reports what happened. The record is corrected to failed or succeeded accordingly.

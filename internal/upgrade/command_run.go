@@ -1900,8 +1900,12 @@ func commandNodeFailedLocked(inst *InstanceUpgrade) bool {
 // lands while the processor still runs clears that pause, and the task
 // stops for it too, without pausing again for the failure, so the resume
 // finds the task owned, the task is processed again from this instance
-// once the processor stops, and the survivors are checked first. Both are
-// read under the lock that ends the instance.
+// once the processor stops, and the survivors are checked first. An
+// ordinary resume that clears the pause is honored the same way while an
+// instance is still pending, so the run goes on to the next instance only
+// once the recheck finds the survivors gone. In the last instance it lets
+// the task finish. All of it is read under the lock that ends the
+// instance.
 func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, halted, survived bool) bool {
 	m.mu.Lock()
 
@@ -1929,13 +1933,17 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 
 	cleanup := survived && task.CleanupOnly
 
-	pause := failed && !cleanup && task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
+	// An ordinary resume cleared the survivor's pause, with an instance
+	// still pending for the run to go on to.
+	resumed := survived && !cleanup && task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
+
+	pause := failed && !cleanup && !resumed && task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
 	if pause {
 		task.Paused = true
 		task.Status = TaskStatusPaused
 	}
 
-	stop := survived && (task.Paused || cleanup)
+	stop := survived && (task.Paused || cleanup || resumed)
 
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
