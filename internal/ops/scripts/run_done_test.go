@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -192,6 +193,42 @@ func TestRunCleanupReplayChecksADirectoryThatStarted(t *testing.T) {
 	}
 }
 
+// The done record is flushed to disk under its temporary name before the
+// rename, so a power loss after cleanup can't leave the record empty with
+// the task directory gone.
+func TestRunCleanupSyncsTheDoneRecordBeforeTheRename(t *testing.T) {
+	t.Parallel()
+	needDoneRecords(t)
+
+	tree := newRunTree(t)
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "0\n"}))
+
+	log := tree.path("sync-log")
+	stub := fmt.Sprintf(`sync() {
+	local state=pending
+	[ ! -e "${2%%.new}" ] || state=renamed
+	printf '%%s %%s %%s\n' "$1" "$2" "$state" >> %q
+	command sync "$@"
+}
+`, log)
+
+	want := "cleanup started=yes exit=0 killed=no\n"
+
+	code, out := tree.snippet(t, false, stub+"cleanup "+runTask+"\n")
+	if code != 0 || out != want {
+		t.Fatalf("exit = %d, output = %q, want %q", code, out, want)
+	}
+
+	got, err := os.ReadFile(log) //nolint:gosec // the test tree
+	if err != nil {
+		t.Fatalf("sync never ran: %v", err)
+	}
+
+	if line := "-- " + tree.donePath(runTask) + ".new pending\n"; string(got) != line {
+		t.Errorf("sync ran as %q, want %q", got, line)
+	}
+}
+
 // Only a done record that a cleanup which showed the command ended could
 // have written is replayed: a root-owned regular file of mode 0600 that
 // holds one whole line with killed=yes or no. Anything else proves nothing,
@@ -339,6 +376,7 @@ func TestRunCleanupKeepsTheTaskWhenTheDoneRecordFails(t *testing.T) {
 	for name, stub := range map[string]string{
 		"write":  `_rc_write() { head -c 10 > "$1"; return 1; }` + "\n",
 		"rename": `mv() { return 1; }` + "\n",
+		"sync":   `sync() { return 1; }` + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

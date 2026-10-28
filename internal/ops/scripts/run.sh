@@ -730,15 +730,17 @@ _rc_replay() {
 
 # _rc_write_done <base> <task> <line> writes the done record of a task. It
 # writes <task>.done.new, which it clears first of what an earlier failed
-# write left, and renames it to <task>.done, so the record never holds
-# part of a line under its own name. It fails, and leaves neither name,
-# when the write or the rename fails.
+# write left, flushes it to disk, and renames it to <task>.done, so the
+# record never holds part of a line under its own name, and a power loss
+# after cleanup can't leave it empty. It fails, and leaves neither name,
+# when the write, the flush, or the rename fails.
 _rc_write_done() {
 	local new=$1/$2.done.new
 
 	rm -f -- "$new" 2> /dev/null
 
 	if ! printf '%s\n' "$3" | _rc_write "$new" ||
+		! sync -- "$new" 2> /dev/null ||
 		! mv -fT -- "$new" "$1/$2.done" 2> /dev/null; then
 		rm -f -- "$new" 2> /dev/null
 		return 1
