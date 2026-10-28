@@ -175,8 +175,7 @@
   </footer>
 
   <!-- CF Registration Modal -->
-  <div id="registration-modal" class="modal is-hidden is-transparent is-invisible" role="dialog" aria-labelledby="registration-modal-title" aria-hidden="true">
-    <div class="modal-content">
+  <dialog id="registration-modal" class="modal-dialog" aria-labelledby="registration-modal-title">
       <div class="modal-header">
         <h3 id="registration-modal-title">New CF Registration</h3>
         <button class="modal-close" aria-label="Close modal">&times;</button>
@@ -270,8 +269,7 @@
         <button type="button" class="btn btn-primary" id="test-connection-btn">Test Connection</button>
         <button type="submit" class="btn btn-success" id="save-registration-btn" form="registration-form">Save Registration</button>
       </div>
-    </div>
-  </div>
+  </dialog>
 
   <!-- Terminal Modal -->
   <div id="terminal-modal" class="modal-overlay is-hidden is-transparent is-invisible" role="dialog" aria-label="SSH Terminal" aria-describedby="terminal-keyboard-help" inert>

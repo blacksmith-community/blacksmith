@@ -112,17 +112,15 @@ t('instance list escapes operator-controlled labels', () => {
  } finally {w.close();}
 });
 
-t('registration dialog can open after visibility utility migration',()=>{
+t('registration dialog opens as a native modal and closes again',()=>{
  const {w,d}=boot();
  try {
  w.__T.CFRegistrationManager.showRegistrationModal();
  const modal=d.getElementById('registration-modal');
- expect(modal.classList.contains('is-hidden')).toBe(false);
- expect(modal.classList.contains('is-transparent')).toBe(false);
- expect(modal.classList.contains('is-invisible')).toBe(false);
- expect(modal.getAttribute('aria-hidden')).toBe('false');
+ expect(modal.open).toBe(true);
+ expect(modal.hasAttribute('aria-hidden')).toBe(false);
  w.__T.CFRegistrationManager.hideRegistrationModal();
- expect(modal.style.display).toBe('none');
+ expect(modal.open).toBe(false);
  } finally {w.close();}
 });
 

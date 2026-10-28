@@ -357,8 +357,9 @@
   // stack. Escape, a tap on the backdrop, and a backdrop click all close the
   // dialog, and its close event ends the run. end(false) ends it for a
   // caller that already knows the result. onDismiss runs only when the
-  // dialog closed on its own.
-  const openSharedDialog = (dialog, opener, onDismiss) => {
+  // dialog closed on its own. The confirmation dialog is the only one a
+  // later call may dismiss, so other dialogs pass exclusive as false.
+  const openSharedDialog = (dialog, opener, onDismiss, exclusive = true) => {
     let ended = false;
     let restoreBackground = () => {};
     // A modal that opened earlier leaves this closed dialog inert. It has to
@@ -403,7 +404,7 @@
     dialog.showModal();
     restoreBackground = isolateDialog(dialog);
     trackAnnouncerModal(dialog);
-    sharedDialogRun = run;
+    if (exclusive) sharedDialogRun = run;
     return run;
   };
 
@@ -22402,22 +22403,26 @@
         title.textContent = 'New CF Registration';
       }
 
-      // Show modal
-      modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
-      modal.style.display = 'block';
-      modal.setAttribute('aria-hidden', 'false');
-
-      activatePersistentDialog(modal, () => this.hideRegistrationModal());
+      this.openRegistrationDialog(modal);
       document.getElementById('reg-name').focus();
+    },
+
+    // The dialog opens once, whether the form or the progress view asks.
+    openRegistrationDialog(modal) {
+      if (modal.open) return;
+      this.registrationRun = openSharedDialog(modal, document.activeElement, () => this.hideRegistrationModal(), false);
+      const hide = () => this.hideRegistrationModal();
+      modal.querySelector('.modal-close').onclick = hide;
+      const cancel = document.getElementById('cancel-registration');
+      if (cancel) cancel.onclick = hide;
     },
 
     // Hide registration modal with proper cleanup
     hideRegistrationModal() {
       const modal = document.getElementById('registration-modal');
       if (modal) {
-        deactivatePersistentDialog(modal);
-        modal.style.display = 'none';
-        modal.setAttribute('aria-hidden', 'true');
+        if (this.registrationRun) this.registrationRun.end(false);
+        this.registrationRun = null;
 
         // Cleanup any active streaming connections
         if (this.cleanupStreaming) {
@@ -22626,13 +22631,11 @@
       `;
 
       modalFooter.innerHTML = `
-        <button type="button" class="btn btn-secondary" onclick="CFRegistrationManager.hideRegistrationModal()">Close</button>
+        <button type="button" class="btn btn-secondary">Close</button>
       `;
+      modalFooter.querySelector('button').onclick = () => this.hideRegistrationModal();
 
-      // Show modal
-      modal.classList.remove('is-hidden', 'is-transparent', 'is-invisible');
-      modal.style.display = 'block';
-      modal.setAttribute('aria-hidden', 'false');
+      this.openRegistrationDialog(modal);
 
       // Start streaming progress
       this.streamProgress(registrationId);

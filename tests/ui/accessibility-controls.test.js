@@ -43,15 +43,16 @@ test('enhanced sort replaces generic handlers and reports one keyboard sort',()=
  expect(table.tBodies[0].rows[0].cells[0].textContent.trim()).toBe('1');
  }finally{w.close();}
 });
-test('registration Escape closes and restores focus to its opener',()=>{
- const {w,d}=boot();try{
+test('registration Escape closes and restores focus to its opener',async()=>{
+ const {w,d,stubs}=boot();try{
  const opener=d.createElement('button');d.body.append(opener);opener.focus();
  w.__T.CFRegistrationManager.showRegistrationModal();
  const modal=d.getElementById('registration-modal');
  expect(modal.contains(d.activeElement)).toBe(true);
  expect(opener.hasAttribute('inert')).toBe(true);
  d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
- expect(modal.getAttribute('aria-hidden')).toBe('true');
+ await stubs.settle();
+ expect(modal.open).toBe(false);
  expect(d.activeElement).toBe(opener);
  expect(opener.hasAttribute('inert')).toBe(false);
  }finally{w.close();}
