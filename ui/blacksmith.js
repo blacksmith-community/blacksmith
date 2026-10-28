@@ -27519,11 +27519,9 @@
     const unwrapSettings = (body) => (body && typeof body === 'object' && body.data && typeof body.data === 'object' ? body.data : body);
 
     const buildSettingsModal = () => {
-      const overlay = el('div', 'modal-overlay cert-settings-overlay');
-      overlay.id = 'cert-settings-modal';
-      const modal = el('div', 'modal cert-settings-modal');
-      modal.setAttribute('role', 'dialog');
-      modal.setAttribute('aria-modal', 'true');
+      const modal = document.createElement('dialog');
+      modal.id = 'cert-settings-modal';
+      modal.className = 'modal-dialog cert-settings-modal';
       modal.setAttribute('aria-labelledby', 'cert-settings-title');
 
       const header = el('div', 'modal-header');
@@ -27541,8 +27539,7 @@
 
       const body = el('div', 'modal-body');
       modal.appendChild(body);
-      overlay.appendChild(modal);
-      return { overlay, body };
+      return { modal, body };
     };
 
     const settingsForm = (current, onSaved) => {
@@ -27683,8 +27680,8 @@
 
     async function openSettings() {
       const ui = buildSettingsModal();
-      ModalManager.openModal(ui.overlay);
-      const closeIt = () => ModalManager.closeModal(ui.overlay);
+      ModalManager.openModal(ui.modal);
+      const closeIt = () => ModalManager.closeModal(ui.modal);
 
       const load = async () => {
         const status = el('p', 'cert-muted', 'Loading the settings...');

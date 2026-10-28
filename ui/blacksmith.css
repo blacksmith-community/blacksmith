@@ -12145,12 +12145,6 @@ span.config-type.resurrection {
   }
 }
 
-/* The settings dialog takes focus the moment it opens, so its overlay
-   becomes visible at once and only the fade takes time. */
-.cert-settings-overlay.active {
-  transition: opacity 0.3s ease, visibility 0s;
-}
-
 /* On a very narrow screen the header's keyboard hint is dropped so the
    page does not scroll sideways. */
 @media (max-width: 360px) {

@@ -6,7 +6,7 @@ const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
 
 const {boot,sleep,EVIL} = H.fleet;
-const bad=(d)=>d.querySelectorAll('#certificates img,#certificates script,#certificates [onerror],.modal-overlay img,.modal-overlay script,#blacksmith-live-region img,#toast-container img').length;
+const bad=(d)=>d.querySelectorAll('#certificates img,#certificates script,#certificates [onerror],.modal-overlay img,.modal-overlay script,dialog img,dialog script,#blacksmith-live-region img,#toast-container img').length;
 const fire=(w,el,type)=>el.dispatchEvent(new w.Event(type,{bubbles:true,cancelable:true}));
 const submit=async(w,d)=>{ const f=d.querySelector('#cert-settings-modal form'); f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true})); await sleep(80); };
 const setv=(d,k,v)=>{ d.getElementById('cert-setting-'+k).value=String(v); };
@@ -19,7 +19,7 @@ t('fleet settings and coverage line', async () => {
   // ---- settings modal ----
   const sb=d.getElementById('cert-settings-btn'); ok(!!sb && !sb.hidden,'Settings button');
   sb.focus(); sb.click(); await sleep(100);
-  const modal=d.getElementById('cert-settings-modal'); ok(!!modal && modal.classList.contains('active') && modal.querySelector('[role=dialog]').getAttribute('aria-modal')==='true','modal open');
+  const modal=d.getElementById('cert-settings-modal'); ok(!!modal && modal.open && modal.tagName==='DIALOG' && !modal.hasAttribute('aria-hidden'),'modal open');
   const inputs=modal.querySelectorAll('input'); ok(inputs.length===8,'8 fields: '+inputs.length);
   ok(Array.from(inputs).every(i=>modal.querySelector('label[for="'+i.id+'"]')),'every field has a label');
   ok(Array.from(inputs).every(i=>(i.getAttribute('aria-describedby')||'').split(' ').every(id=>d.getElementById(id))),'describedby ids resolve');
@@ -60,7 +60,7 @@ t('fleet settings and coverage line', async () => {
   // c3 is 24 days, c4 33: raise warning to 45 => c4 becomes warning
   const inv0=log.filter(l=>l.startsWith('GET /b/certificates/inventory')).length;
   setv(d,'warning_days',45); setv(d,'critical_days',20); await submit(w,d); await sleep(150);
-  ok(!d.getElementById('cert-settings-modal') || !d.getElementById('cert-settings-modal').classList.contains('active'),'modal closed after save');
+  ok(!d.getElementById('cert-settings-modal') || !d.getElementById('cert-settings-modal').open,'modal closed after save');
   ok(server.settings.warning_days===45 && server.settings.critical_days===20,'server holds new settings');
   ok(d.body.textContent.includes('Certificate settings saved.'),'success toast text in the page');
   ok(log.filter(l=>l.startsWith('GET /b/certificates/inventory')).length>inv0,'inventory re-fetched');
@@ -77,11 +77,11 @@ t('fleet settings and coverage line', async () => {
   server.settingsGet=null; m2.querySelector('.cert-retry-button').click(); await sleep(100);
   ok(m2.querySelectorAll('input').length===8,'Retry loads the form');
   d.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})); await sleep(50);
-  ok(!m2.classList.contains('active') && w.blacksmithSurfaces.size()===0,'Escape closes the modal');
+  ok(!m2.open && w.blacksmithSurfaces.size()===0,'Escape closes the modal');
   ok(d.activeElement===sb,'focus back on Settings');
   // cancel
   sb.click(); await sleep(80); Array.from(d.querySelectorAll('#cert-settings-modal .cert-settings-actions button')).find(b=>b.textContent==='Cancel').click(); await sleep(50);
-  ok(!d.getElementById('cert-settings-modal')||!d.getElementById('cert-settings-modal').classList.contains('active'),'Cancel closes');
+  ok(!d.getElementById('cert-settings-modal')||!d.getElementById('cert-settings-modal').open,'Cancel closes');
 
   // ---- reassurance variants ----
   const mk=(boot0,ex)=>boot0;
