@@ -35,7 +35,7 @@ const (
 	// needs no cluster check between VMs.
 	gateSingleVM = "single-vm"
 	hoursPerDay  = 24
-	patchWarning = "Temporary repair: BOSH can restore the old certificate until this instance converges."
+	patchWarning = "This is a temporary repair, because BOSH can restore the old certificate until this instance converges."
 )
 
 // Selection names an instance and the full CredHub names of the variables

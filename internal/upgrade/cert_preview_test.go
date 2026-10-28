@@ -701,7 +701,7 @@ func TestPreviewPatchBindsGateAndWarns(t *testing.T) {
 		t.Fatalf("expected a clear single-vm patch, got %+v", inst)
 	}
 
-	if len(preview.Warnings) != 1 || !strings.HasPrefix(preview.Warnings[0], "Temporary repair") {
+	if len(preview.Warnings) != 1 || preview.Warnings[0] != patchWarning {
 		t.Fatalf("expected the temporary repair warning, got %v", preview.Warnings)
 	}
 }
@@ -844,4 +844,12 @@ func (s *PreviewStore) count() int {
 	defer s.mu.Unlock()
 
 	return len(s.previews)
+}
+
+func TestCertificatePatchWarningIsASentence(t *testing.T) {
+	t.Parallel()
+
+	if patchWarning != "This is a temporary repair, because BOSH can restore the old certificate until this instance converges." {
+		t.Errorf("patchWarning is %q", patchWarning)
+	}
 }
