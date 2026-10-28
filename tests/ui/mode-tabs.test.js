@@ -11,19 +11,22 @@ t('mode tabs follow the ARIA tabs pattern with arrow keys',async()=>{
  expect(list.getAttribute('aria-label')).toBe('Certificate rotation method');
  expect(redeploy.textContent).toBe('Redeploy');expect(patch.textContent).toBe('Patch in place');
  expect(redeploy.getAttribute('aria-selected')).toBe('true');expect(redeploy.tabIndex).toBe(0);expect(patch.tabIndex).toBe(-1);
- // one panel serves both tabs and is labelled by the selected one
+ // each method has its own panel, labelled by its tab, and only the selected one shows
  const panel=d.getElementById(redeploy.getAttribute('aria-controls'));
- expect(patch.getAttribute('aria-controls')).toBe(panel.id);
+ const patchPanel=d.getElementById(patch.getAttribute('aria-controls'));
+ expect(patchPanel.id).not.toBe(panel.id);
  expect(panel.getAttribute('role')).toBe('tabpanel');
  expect(panel.getAttribute('aria-labelledby')).toBe(redeploy.id);
- // the description leads the panel and follows the selected method
+ expect(patchPanel.getAttribute('aria-labelledby')).toBe(patch.id);
+ expect([panel.hidden,patchPanel.hidden]).toEqual([false,true]);
+ // the description leads each panel and follows its method
  expect(panel.firstElementChild.className).toContain('batch-mode-description');
  expect(panel.querySelector('.batch-mode-description h3').textContent).toBe('Rotate certificates and redeploy');
+ expect(patchPanel.querySelector('.batch-mode-description h3').textContent).toBe('Replace certificates on the existing VMs');
  expect(d.querySelector('.rotate-op-hint:not(.rotate-mode-reason)').textContent).toContain('Choose how certificates will be applied');
  key(w,redeploy,'ArrowRight');
  expect(T.rotateState.mode).toBe('patch');expect(patch.getAttribute('aria-selected')).toBe('true');expect(d.activeElement).toBe(patch);
- expect(panel.getAttribute('aria-labelledby')).toBe(patch.id);
- expect(panel.querySelector('.batch-mode-description h3').textContent).toBe('Replace certificates on the existing VMs');
+ expect([panel.hidden,patchPanel.hidden]).toEqual([true,false]);
  expect(redeploy.tabIndex).toBe(-1);expect(patch.tabIndex).toBe(0);
  key(w,patch,'ArrowRight');expect(T.rotateState.mode).toBe('redeploy');expect(d.activeElement).toBe(redeploy);
  key(w,redeploy,'End');expect(T.rotateState.mode).toBe('patch');
@@ -51,7 +54,7 @@ t('After patching reads as one required choice of two options',async()=>{
  const {w,d,T}=await setupRotate({certs});try{
  d.getElementById('rotate-mode-patch-tab').click();
  const group=d.getElementById('rotate-mode-converge');
- expect(group.closest('[role="tabpanel"]').id).toBe('rotate-mode-panel');
+ expect(group.closest('[role="tabpanel"]').id).toBe('rotate-mode-patch-panel');
  expect(group.hidden).toBe(false);
  const options=[...group.querySelectorAll('.rotate-converge-option')];
  expect(options.length).toBe(2);

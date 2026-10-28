@@ -24,7 +24,7 @@ t('the Certificates tab label goes away on the first manual change',async()=>{
 });
 t('the unavailable Patch reason sits between the method tabs and their panel',async()=>{
  const {w,d}=await setupRotate({certs,caps:{rotation:{enabled:true},patch_in_place:{enabled:false,reason:'the switch is off'}}});try{
- const root=d.getElementById('rotate-mode');
+ const root=d.querySelector('#rotate-mode bs-tabs');
  const kids=[...root.children];
  const reason=d.getElementById('rotate-mode-patch-reason');
  const panel=d.getElementById(d.getElementById('rotate-mode-redeploy-tab').getAttribute('aria-controls'));

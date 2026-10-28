@@ -968,7 +968,7 @@
       onkeydown(event) {
         const current = event.target.closest('[role="tab"]');
         const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
-        if (!current || !keys.includes(event.key)) return;
+        if (!current || !keys.includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
         const tabs = this.tabs;
         const enabled = tabs.filter((tab) => !disabled(tab));
         event.preventDefault();
@@ -4638,12 +4638,21 @@
     addFieldHelp(modeLegend, 'rotate-mode');
     const batchTabs = p === 'rotate-mode';
     const tabs = {};
+    // The method tabs sit on a bs-tabs element with one panel per method. The
+    // radios below stay the source of truth, and the tabs follow them.
     const tablist = rotateEl('div','batch-mode-tabs');
     tablist.setAttribute('role','tablist');tablist.setAttribute('aria-label','Certificate rotation method');
-    const modePanel = rotateEl('section','batch-mode-panel');
-    modePanel.id = `${p}-panel`;modePanel.setAttribute('role','tabpanel');modePanel.tabIndex=0;
-    const modeDescription = rotateEl('div','batch-mode-description');modePanel.appendChild(modeDescription);
-    if (batchTabs) group.appendChild(tablist);
+    const tabset = document.createElement('bs-tabs');
+    const modePanels = {};
+    const modeValues = ['redeploy','patch'];
+    modeValues.forEach(value => {
+      const panel = rotateEl('section','batch-mode-panel');
+      panel.id = `${p}-${value}-panel`;panel.setAttribute('role','tabpanel');panel.tabIndex=0;
+      panel.appendChild(rotateEl('div','batch-mode-description'));
+      modePanels[value] = panel;
+    });
+    const modeHost = batchTabs ? tabset : group;
+    if (batchTabs) {tabset.appendChild(tablist);group.appendChild(tabset);}
     const radios = {};
     [['redeploy', 'Redeploy'], ['patch', 'Patch in place']].forEach(([value, text]) => {
       const label = rotateEl('label', 'rotate-mode-option');
@@ -4671,23 +4680,15 @@
       if (batchTabs) {
         label.hidden = true;
         const tab = rotateEl('button','',text);tab.type='button';tab.id=`${p}-${value}-tab`;
-        tab.setAttribute('role','tab');tab.setAttribute('aria-controls',modePanel.id);
-        tab.addEventListener('click',()=>radio.click());
-        tab.addEventListener('keydown',event=>{
-          if (event.altKey || event.ctrlKey || event.metaKey || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
-          event.preventDefault();const available=Object.values(tabs).filter(item=>!item.disabled);
-          const index=available.indexOf(tab);
-          const next=event.key==='Home'?available[0]:event.key==='End'?available.at(-1):available[(index+(event.key==='ArrowRight'?1:-1)+available.length)%available.length];
-          next.focus();next.click();
-        });
+        tab.setAttribute('role','tab');tab.setAttribute('aria-controls',modePanels[value].id);
         tabs[value]=tab;tablist.appendChild(tab);
       }
-      group.appendChild(label);
+      modeHost.appendChild(label);
     });
     const reason = rotateEl('p', 'rotate-op-hint rotate-mode-reason');
     reason.id = `${p}-patch-reason`;
     reason.hidden = true;
-    group.appendChild(reason);
+    modeHost.appendChild(reason);
 
     const converge = rotateEl('fieldset', 'rotate-converge');
     converge.id = `${p}-converge`;
@@ -4716,7 +4717,22 @@
       label.appendChild(hint);
       converge.appendChild(label);
     });
-    if (batchTabs) {modePanel.appendChild(converge);group.appendChild(modePanel);}
+    const modeDescription = (patch) => [
+          rotateEl('h3','',patch?'Replace certificates on the existing VMs':'Rotate certificates and redeploy'),
+          rotateEl('p','',patch?'Patch writes the new certificate files onto the running VMs and restarts the affected jobs, so the new certificates are in service without waiting for a deploy. Choose below when BOSH should deploy them.':'Redeploy issues new certificates and deploys them through BOSH with the deployment\'s update policy, so canaries and drains protect the service while it rolls.'),
+          rotateEl('p','batch-field-help',patch?PATCH_NOTE:'VMs and jobs may restart. Review the affected instances before confirming.')
+    ];
+    if (batchTabs) {
+      modePanels.patch.appendChild(converge);
+      modeValues.forEach(value => {
+        modePanels[value].querySelector('.batch-mode-description').replaceChildren(...modeDescription(value === 'patch'));
+        tabset.appendChild(modePanels[value]);
+      });
+      tabset.addEventListener('ot-tab-change', (event) => {
+        const radio = radios[modeValues[event.detail.index]];
+        if (radio && !radio.checked && !radio.disabled) radio.click();
+      });
+    }
     else group.appendChild(converge);
 
     // Brings the controls in line with the state and with what Patch allows
@@ -4742,12 +4758,7 @@
           const selected=radios[value].checked;tab.disabled=radios[value].disabled;
           tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;
         }
-        modePanel.setAttribute('aria-labelledby',`${p}-${patch?'patch':'redeploy'}-tab`);
-        modeDescription.replaceChildren(
-          rotateEl('h3','',patch?'Replace certificates on the existing VMs':'Rotate certificates and redeploy'),
-          rotateEl('p','',patch?'Patch writes the new certificate files onto the running VMs and restarts the affected jobs, so the new certificates are in service without waiting for a deploy. Choose below when BOSH should deploy them.':'Redeploy issues new certificates and deploys them through BOSH with the deployment\'s update policy, so canaries and drains protect the service while it rolls.'),
-          rotateEl('p','batch-field-help',patch?PATCH_NOTE:'VMs and jobs may restart. Review the affected instances before confirming.')
-        );
+        if (tabset.isConnected && typeof tabset.select === 'function' && tabset.activeIndex !== (patch ? 1 : 0)) tabset.activeIndex = patch ? 1 : 0;
       }
     }
     update();

@@ -3,7 +3,7 @@ const {main:{boot,sleep}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
 const t=JSDOM?test:test.skip;
 async function setup(){
- const env=boot(),{w,d}=env;
+ const env=boot({oat:true}),{w,d}=env;
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[{operating_system:'ubuntu',version:'1'}])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
  await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
  await w.__T.initUpgradeTab();return env;

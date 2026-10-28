@@ -9,7 +9,7 @@ const inst={service_id:'svc1',plan_id:'p1',plan:{id:'p1',name:'small'}};
 const mk=(id,key,variable,instId,name,days,exp)=>({id,key,variable,kind:'leaf',days_left:days,expiry:exp,health:'ok',owners:[{kind:'instance',instance_id:instId,instance_name:name}],rotation:{allowed:true,modes:['redeploy','patch'],reasons:[]},findings:[]});
 
 async function setup({multi=false}={}){
-  const env=boot(); const {w,d}=env;
+  const env=boot({oat:true}); const {w,d}=env;
   const certs=[...(multi?[{...mk('c0','/s/ca','ca','inst-a','cache-a',900,'ok'),kind:'leaf'}]:[]),mk('c1','/s/a_crt','a_crt','inst-a','cache-a',5,'critical'),mk('c2','/s/b_crt','b_crt','inst-b','cache-b',200,'ok'),mk('c3','/s/c_crt','c_crt','inst-c','cache-c',300,'ok')];
   w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],
     [/certificates\/inventory/,(u,o,j)=>j(200,{certificates:certs,capabilities:{rotation:{enabled:true},patch_in_place:{enabled:true}},settings:{warning_days:30,critical_days:7},scan:{state:'idle',completed_at:'2026-10-21T10:00:00Z'},summary:{certificates:3,needs_attention:0},filtered:{certificates:3,affected_instances:3}})],

@@ -100,3 +100,14 @@ t('a tab change after the strip is ready asks the route to update, and the first
  d.querySelectorAll("bs-tabs [role=tab]")[1].click();
  expect(notified).toBe(1);
 });
+
+t('arrow keys with Alt, Ctrl, or Meta held are left to the browser',async()=>{
+ const env=await start(strip()); const {w,tabs,selected}=env;
+ tabs[0].focus();
+ ['altKey','ctrlKey','metaKey'].forEach(mod=>{
+  const event=new w.KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true,cancelable:true,[mod]:true});
+  tabs[0].dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(false);
+  expect(selected()).toEqual(['one']);
+ });
+});
