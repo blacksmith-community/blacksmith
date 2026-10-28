@@ -170,8 +170,51 @@ func TestStagedScriptsKeepEveryLine(t *testing.T) {
 	}
 }
 
-// firstDifference names the first line at which two sorted line lists
-// differ.
+// TestStagedScriptsKeepTheirOwnLinesInOrder shows that, once the libraries
+// in front are taken off, each script Script stages is the script staged
+// before the split line for line, comments, blank lines, and order
+// included. Only the library in front of it changed.
+func TestStagedScriptsKeepTheirOwnLinesInOrder(t *testing.T) {
+	t.Parallel()
+
+	libs := string(scripts.Library()) + readSource(t, certLibScript)
+	before := readBeforeSplit(t, "lib-before-split.sh")
+
+	for _, name := range []string{"gate", "patch", "discover", "verify"} {
+		staged, err := certscripts.Script(name)
+		if err != nil {
+			t.Errorf("Script(%s): %v", name, err)
+
+			continue
+		}
+
+		original := readBeforeSplit(t, "staged-before-split", name+".sh")
+
+		own, cut := strings.CutPrefix(staged, libs)
+		if !cut {
+			t.Errorf("Script(%s) does not start with the base library and certlib.sh", name)
+
+			continue
+		}
+
+		ownBefore, cut := strings.CutPrefix(original, before)
+		if !cut {
+			t.Errorf("the script %s staged before the split does not start with the library of the time", name)
+
+			continue
+		}
+
+		got := strings.Split(own, "\n")
+		want := strings.Split(ownBefore, "\n")
+
+		if !slices.Equal(got, want) {
+			t.Errorf("Script(%s) holds %d lines of its own, the original %d; first difference: %s",
+				name, len(got), len(want), firstDifference(got, want))
+		}
+	}
+}
+
+// firstDifference names the first line at which two line lists differ.
 func firstDifference(got, want []string) string {
 	for index := range max(len(got), len(want)) {
 		var left, right string
