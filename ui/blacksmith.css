@@ -10917,6 +10917,11 @@ span.config-type.resurrection {
   color: var(--text-primary);
 }
 
+/* The note under a reason that holds hidden characters sits on its own line. */
+#upgrade .task-detail-summary .value .command-hidden-note {
+  display: block;
+}
+
 #upgrade .task-detail-summary .value.status-completed {
   color: #10b981;
 }

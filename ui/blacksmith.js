@@ -4930,6 +4930,15 @@
     ? `The broker answered with HTTP ${err.status || 'an error'}.`
     : apiErrorText(err));
 
+  // What the Outcome unknown review says. A refusal that came before the
+  // broker looked at the request ID (complete) says the run was not started
+  // by this attempt, but an earlier attempt that never answered may have started it.
+  const unknownCreateMessage = (result, mayHaveStarted) => {
+    if (!result.complete) return `${result.message} The broker may have started this run. Retry sends the same request, and the broker will not start it twice. Activity shows whether it started.`;
+    if (!mayHaveStarted) return result.message;
+    return `${result.message} An earlier attempt may have started this run, and Activity shows whether it did.`;
+  };
+
   // Sends the create and sorts the answer. Only a readable 2xx, or an
   // answer the broker gives at or after its client request ID lookup, settles
   // the outcome. Anything else, such as a rejected fetch, a 5xx, a 401, or a
@@ -4955,6 +4964,8 @@
       return { kind: 'unknown', message: `The broker refused the request for now. ${commandErrorText(err)} Retry sends the same request once it is allowed.`, complete: true };
     }
     if (response.status === 409 && err.code === 'request_id_conflict') return { kind: 'exists' };
+    // A 400 with no broker code, such as an empty or unreadable body, may come from a proxy in front of the broker, so it settles nothing.
+    if (response.status === 400 && !err.code) return { kind: 'unknown', message: 'The broker answered with an error we could not read.' };
     if (response.status === 400 || (response.status === 409 && (err.code === 'preview_mismatch' || err.code === 'instance_busy'))) return { kind: 'refused', error: err };
     return { kind: 'unknown', message: response.status === 401 ? 'The broker asked for a sign-in.' : commandErrorText(err) };
   };
@@ -5252,6 +5263,8 @@
         result = await attemptCommandCreate(createBody);
       }
 
+      // Set once an answer left it open whether the broker started the run
+      let mayHaveStarted = false;
       for (;;) {
         if (result.kind === 'unknown') {
           commandPending = { createBody, preview, values, nodes };
@@ -5262,12 +5275,13 @@
           const retry = await showBatchReview({
             title: 'Outcome unknown',
             showTitle: true,
-            message: result.complete ? result.message : `${result.message} The broker may have started this run. Retry sends the same request, and the broker will not start it twice. Activity shows whether it started.`,
+            message: unknownCreateMessage(result, mayHaveStarted),
             body: reviewBody,
             confirmText: 'Retry',
             danger: true,
             blocker: () => ''
           }, revision);
+          if (!result.complete) mayHaveStarted = true;
           if (retry && retry.discard === 'found') {
             // The list holds the run, so it settles as a 409 request_id_conflict does.
             result = { kind: 'exists', taskId: retry.taskId };
@@ -8351,7 +8365,7 @@
     if (spec.reason) {
       const reason = revealHiddenChars(spec.reason);
       const cell = add('Reason', reason.shown);
-      if (reason.hidden) cell.appendChild(rotateEl('p', 'command-hidden-note', 'The reason contains hidden control characters, shown here as \\u escapes.'));
+      if (reason.hidden) cell.appendChild(rotateEl('span', 'command-hidden-note', 'The reason contains hidden control characters, shown here as \\u escapes.'));
     }
     return rows;
   };
@@ -8517,15 +8531,16 @@
       cancel: (event) => window.cancelTask(task.id, event)
     };
     tasksContainer.querySelectorAll('[data-task-action]').forEach((button) => {
-      if (button.dataset.taskAction !== 'resume') {
-        button.addEventListener('click', actions[button.dataset.taskAction]);
+      if (button.dataset.taskAction === 'back') {
+        button.addEventListener('click', actions.back);
         return;
       }
-      // Continue waits for its request, so a second press sends nothing.
+      // Pause, Continue, and Cancel wait for their request, so a second press
+      // sends nothing. The button comes back whether the request worked or not.
       button.addEventListener('click', (event) => {
         if (button.disabled) return;
         button.disabled = true;
-        Promise.resolve(actions.resume(event)).finally(() => { if (button.isConnected) button.disabled = false; });
+        Promise.resolve(actions[button.dataset.taskAction](event)).finally(() => { if (button.isConnected) button.disabled = false; });
       });
     });
     tasksContainer.querySelectorAll('[data-bosh-task-id]').forEach((button) => {

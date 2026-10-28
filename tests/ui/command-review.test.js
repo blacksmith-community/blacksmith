@@ -1,6 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
 const {main:{boot,sleep}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
+const {expectNoAlerts}=require('./certificates/no-alerts.js');
 const t=JSDOM?test:test.skip;
 
 const SECRET='echo SECRET-COMMAND-TEXT-5520';
@@ -11,7 +12,7 @@ const CREATE_URL='/b/upgrade/tasks';
 // Every env a test boots, checked once the test ends so a dialog error that
 // the UI code swallows still fails it.
 const envs=[];
-afterEach(()=>{ while(envs.length){ const env=envs.pop(); expect(env.alerts).toEqual([]);
+afterEach(()=>{ while(envs.length){ const env=envs.pop(); expectNoAlerts(env);
  // Neither the command nor the key reaches any console method.
  expect(env.logs.some(l=>String(l).includes(SECRET)||String(l).includes(KEY))).toBe(false); } });
 
@@ -674,6 +675,49 @@ t('a 403 on Retry keeps the create pending and offers Retry again',async()=>{
  expect(unlocked(d)).toBe(true);
  }finally{w.close();}
 });
+
+// A 403 comes before the broker looks at the request ID, so it says nothing about an earlier attempt that never answered.
+t('a 403 on Retry after an unknown outcome says the earlier attempt may have started the run',async()=>{
+ const env=await setup({create:seq(reject,[403,{success:false,error:'Commands are switched off.',code:'commands_disabled'}],[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ next(env).click();await sleep(30);
+ const text=d.getElementById('batch-flow-review').textContent;
+ expect(text.includes('refused the request for now')).toBe(true);
+ expect(text.includes('An earlier attempt may have started this run')).toBe(true);
+ expect(text.includes('Activity shows whether it did')).toBe(true);
+ expect(text.includes('not started')).toBe(false);
+ }finally{w.close();}
+});
+
+t('a 403 on the first create does not claim a run may have started',async()=>{
+ const env=await setup({create:seq([403,{success:false,error:'Commands are switched off.',code:'commands_disabled'}],[201,{id:'task-9'}])});const {w,d}=env;try{
+ await review(env);await confirmRun(env);
+ const text=d.getElementById('batch-flow-review').textContent;
+ expect(text.includes('refused the request for now')).toBe(true);
+ expect(text.includes('may have started')).toBe(false);
+ expect(next(env).textContent).toBe('Retry');
+ }finally{w.close();}
+});
+
+// A 400 the broker did not write has no code, so it could be a proxy's, and it settles nothing.
+for(const [name,answer] of [['an empty body',[400,'']],['an HTML body',[400,'<html>Bad Request</html>']],['a body with no code',[400,{success:false,error:'bad'}]]]){
+ t(`a 400 with ${name} leaves the outcome unknown and Retry resends the same request`,async()=>{
+  const env=await setup({create:seq(answer,[201,{id:'task-9'}])});const {w,d}=env;try{
+  await review(env);await confirmRun(env);
+  const host=d.getElementById('batch-flow-review');
+  expect(w.__T.batchFlow.step).toBe(3);
+  expect(host.textContent.includes('could not read')).toBe(true);
+  expect(host.textContent.includes('may have started')).toBe(true);
+  expect(host.textContent.includes('not started')).toBe(false);
+  expect(host.textContent.includes('<html>')).toBe(false);
+  expect(next(env).textContent).toBe('Retry');
+  next(env).click();await sleep(30);
+  expect(creates(env).length).toBe(2);
+  expect(sameCreates(env)).toBe(true);
+  expect(previews(env).length).toBe(1);
+  }finally{w.close();}
+ });
+}
 
 for(const [name,answer] of [['a 400',[400,{success:false,error:'The command is empty.',code:'invalid_request'}]],['a preview_mismatch',[409,{success:false,error:'The settings changed.',code:'preview_mismatch'}]],['an instance_busy',[409,{success:false,error:'Another operation holds it.',code:'instance_busy'}]]]){
  t(`${name} on Retry is definite and frees the review`,async()=>{

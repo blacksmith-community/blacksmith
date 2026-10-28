@@ -1,6 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
 const {main:{boot,sleep}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
+const {expectNoAlerts}=require('./certificates/no-alerts.js');
 const t=JSDOM?test:test.skip;
 
 const SECRET='echo SECRET-COMMAND-TEXT-7733';
@@ -9,7 +10,7 @@ const PREVIEW_URL='/b/upgrade/commands/preview';
 // Every env a test boots, checked once the test ends so a dialog error that
 // the UI code swallows still fails it.
 const envs=[];
-afterEach(()=>{ while(envs.length){ const env=envs.pop(); expect(env.alerts).toEqual([]); expect(env.logs.some(l=>String(l).includes(SECRET))).toBe(false); } });
+afterEach(()=>{ while(envs.length){ const env=envs.pop(); expectNoAlerts(env); expect(env.logs.some(l=>String(l).includes(SECRET))).toBe(false); } });
 async function setup(){
  const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])],

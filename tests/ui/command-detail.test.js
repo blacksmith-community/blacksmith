@@ -1,6 +1,7 @@
 const {test,expect,afterEach}=require('bun:test');
 const {main:{boot,sleep}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
+const {expectNoAlerts}=require('./certificates/no-alerts.js');
 const t=JSDOM?test:test.skip;
 
 const SECRET='echo SECRET-COMMAND-TEXT-7731';
@@ -15,7 +16,7 @@ const LIST_ONLY=/\/b\/upgrade\/tasks(\?|$)/;
 // Every env a test boots, checked once the test ends so a dialog error that
 // the UI code swallows still fails it. Neither secret reaches a console method.
 const envs=[];
-afterEach(()=>{ while(envs.length){ const env=envs.pop(); expect(env.alerts).toEqual([]);
+afterEach(()=>{ while(envs.length){ const env=envs.pop(); expectNoAlerts(env);
  expect(env.logs.some(l=>String(l).includes(SECRET)||String(l).includes(KEY))).toBe(false); } });
 
 const hasSecret=(s)=>String(s).includes(SECRET);
@@ -400,6 +401,63 @@ t('the prompt and Continue buttons wait for their request, so a second press sen
  }finally{w.close();}
 });
 
+// Pause and Cancel wait for their request like Continue does. The button stays disabled until the request
+// settles, and comes back on success and on failure.
+const gated=(env,verb,status=200)=>{
+ let release;const gate=new Promise((r)=>{release=r;});const seen=[];
+ env.w.__routes.unshift([new RegExp('/'+TASK+'/'+verb+'$'),async(u,o,j)=>{seen.push(verb);await gate;return status===200?j(200,{success:true}):j(status,{success:false,error:'The broker could not do that.'});}]);
+ return {seen,release};
+};
+const confirmCancel=async(d)=>{await sleep(20);const confirm=d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]');expect(confirm!==null).toBe(true);confirm.click();await sleep(10);};
+
+for(const [name,status] of [['succeeds',200],['fails',500]]){
+ t(`a Pause that ${name} sends one request for a repeated press and frees the button afterwards`,async()=>{
+  const env=await setup({detail:task({status:'running'})});const {w,d}=env;try{
+  const {seen,release}=gated(env,'pause',status);
+  await open(env);
+  const btn=d.querySelector('.pause-btn');expect(btn!==null).toBe(true);
+  btn.click();await sleep(5);btn.click();await sleep(5);btn.click();await sleep(20);
+  expect(btn.disabled).toBe(true);
+  expect(seen.length).toBe(1);
+  release();await sleep(60);
+  const after=d.querySelector('.pause-btn');
+  expect(after!==null).toBe(true);
+  expect(after.disabled).toBe(false);
+  }finally{w.close();}
+ });
+ t(`a Cancel that ${name} opens one confirmation for a repeated press and frees the button afterwards`,async()=>{
+  const env=await setup({detail:task({status:'running'})});const {w,d}=env;try{
+  const {seen,release}=gated(env,'cancel',status);
+  await open(env);
+  const btn=d.querySelector('.cancel-btn');expect(btn!==null).toBe(true);
+  btn.click();await sleep(5);btn.click();await sleep(5);
+  expect(btn.disabled).toBe(true);
+  expect(w.blacksmithSurfaces.size()).toBe(1);
+  await confirmCancel(d);
+  btn.click();await sleep(10);
+  expect(btn.disabled).toBe(true);
+  expect(seen.length).toBe(1);
+  release();await sleep(60);
+  const after=d.querySelector('.cancel-btn');
+  expect(after!==null).toBe(true);
+  expect(after.disabled).toBe(false);
+  }finally{w.close();}
+ });
+}
+
+t('a Cancel that the operator backs out of frees the button with no request',async()=>{
+ const env=await setup({detail:task({status:'running'})});const {w,d}=env;try{
+ const {seen}=gated(env,'cancel');
+ await open(env);
+ const btn=d.querySelector('.cancel-btn');
+ btn.click();await sleep(20);
+ expect(btn.disabled).toBe(true);
+ d.getElementById('dialog-modal').querySelector('[data-dialog-role="cancel"]').click();await sleep(20);
+ expect(btn.disabled).toBe(false);
+ expect(seen.length).toBe(0);
+ }finally{w.close();}
+});
+
 t('hidden control and bidi characters in the command and reason show as escapes, in the detail and the review',async()=>{
  const text='echo a\u0007b\u001Bc‮d\ne\tf';
  const env=await setup({detail:task({command:{...task().command,command:text,reason:'why‮here'}})});const {w,d}=env;try{
@@ -606,6 +664,8 @@ t('every hidden character shows as an escape in the command, the reason, and the
  expect(reasonRow!==undefined).toBe(true);
  expect(reasonRow.textContent.includes(want)).toBe(true);
  expect(reasonRow.querySelector('.command-hidden-note')!==null).toBe(true);
+ expect(reasonRow.querySelector('p')).toBeNull();
+ expect(reasonRow.querySelector('.value .command-hidden-note').tagName).toBe('SPAN');
  expect(codes.some(c=>host.textContent.includes(String.fromCharCode(c)))).toBe(false);
  expect(host.querySelectorAll('.command-hidden-note').length).toBe(1);
  env.state.detail=task({command:{...task().command,command:raw,reason:'clean'}});
