@@ -112,7 +112,6 @@ func discoveryKinds() map[string]map[string]bool {
 var (
 	jobName     = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 	processName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:@+-]*$`)
-	hashValue   = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	ownerValue  = regexp.MustCompile(`^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$`)
 	modeValue   = regexp.MustCompile(`^[0-7]{4}$`)
 	// leadValue and tailValue are the forms discover.sh prints, - for
@@ -308,7 +307,7 @@ func (d *Discovery) file(pairs map[string]string, whole bool) (Match, error) {
 		return Match{}, &layoutError{job: match.Job, err: err}
 	}
 
-	if !hashValue.MatchString(match.Hash) {
+	if scripts.ValidHash(match.Hash) != nil {
 		return Match{}, errHash
 	}
 
@@ -322,7 +321,7 @@ func (d *Discovery) file(pairs map[string]string, whole bool) (Match, error) {
 	}
 
 	switch {
-	case !hashValue.MatchString(values[0]):
+	case scripts.ValidHash(values[0]) != nil:
 		return Match{}, errHash
 	case !leadValue.MatchString(values[1]), !tailValue.MatchString(values[2]):
 		return Match{}, errEdges
