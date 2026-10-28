@@ -24,6 +24,11 @@ const block=(css,selector)=>{
 const hasBlock=(css,selector)=>css.includes('\n'+selector+' {');
 const REPEATS=/(^|[;{\s])(border|border-color|border-radius|background|background-color|color|box-shadow|outline|transition):/;
 
+test('completed and failed task progress recolor Oat through its fill token',()=>{
+ const css=read('blacksmith.css');
+ ['completed','failed'].forEach((st)=>expect(block(css,'#upgrade .upgrade-task-item.status-'+st+' .upgrade-task-progress')).toMatch(/--primary:\s*var\(--/));
+});
+
 test('upgrade filter controls keep their sizes and leave the look to Oat',()=>{
  const css=read('blacksmith.css');
  ['#upgrade .upgrade-filters select','#upgrade .upgrade-filters input[type="number"]','#upgrade .upgrade-range-selection input[type="number"]']
@@ -81,4 +86,10 @@ test('an invalid control keeps the danger border over our control border rule',(
  expect(border.sel).toContain('aria-invalid');
  const invalid=all.find((r)=>/aria-invalid="true"/.test(r.sel)&&!/:not\(/.test(r.sel)&&/border-color:\s*var\(--danger\)/.test(r.body));
  expect(invalid).toBeTruthy();
+});
+
+test('our control border uses the same token the contrast test checks',()=>{
+ const border=rules(read('forge-theme.css')).find((r)=>/^input:not\(\[type="checkbox"\]\)/.test(r.sel)&&/(^|[;\s])border:/.test(r.body));
+ expect(border.body).toMatch(/border:\s*1px solid var\(--input\)/);
+ expect(border.body).toMatch(/color:\s*var\(--foreground\)/);
 });
