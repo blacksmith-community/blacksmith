@@ -7180,7 +7180,7 @@
   // Reports a failed task action through the feedback panel.
   const reportTaskError = (summary, error) => {
     ensureTaskFeedback();
-    window.Feedback.error(`${summary} ${apiErrorText(error)}`, { context: 'upgrade-tasks' });
+    window.Feedback.error(`${summary} ${commandErrorText(error)}`, { context: 'upgrade-tasks' });
   };
 
   const clockTime = (date) => {

@@ -445,6 +445,47 @@ for(const [name,status] of [['succeeds',200],['fails',500]]){
  });
 }
 
+// A request that dies before an answer, and an answer that is a proxy's HTML page, are failures too. The
+// button is held while the request is out, comes back once it settles, and the feedback panel says
+// what happened in words.
+const failures=[
+ ['the request is rejected',()=>Promise.reject(new TypeError('Failed to fetch')),'Failed to fetch'],
+ ['the answer is an HTML page',(u,o,j)=>j(502,'<html><body><h1>Bad Gateway</h1></body></html>'),'HTTP 502']
+];
+const held=(env,verb,answer)=>{
+ let release;const gate=new Promise((r)=>{release=r;});const seen=[];
+ env.w.__routes.unshift([new RegExp('/'+TASK+'/'+verb+'$'),async(u,o,j)=>{seen.push(verb);await gate;return answer(u,o,j);}]);
+ return {seen,release};
+};
+const feedback=(d)=>{const p=d.querySelector('.feedback-panel[data-feedback-context="upgrade-tasks"]');expect(p!==null).toBe(true);return p;};
+for(const [name,answer,words] of failures){
+ for(const verb of ['pause','cancel']){
+  t(`a ${verb[0].toUpperCase()+verb.slice(1)} where ${name} holds the button, frees it, and shows a readable error`,async()=>{
+   const env=await setup({detail:task({status:'running'})});const {w,d}=env;try{
+   const {seen,release}=held(env,verb,answer);
+   await open(env);env.errors.length=0;
+   const btn=d.querySelector('.'+verb+'-btn');expect(btn!==null).toBe(true);
+   btn.click();await sleep(5);
+   if(verb==='cancel')await confirmCancel(d);
+   expect(btn.disabled).toBe(true);
+   expect(seen.length).toBe(1);
+   release();await sleep(60);
+   const after=d.querySelector('.'+verb+'-btn');
+   expect(after!==null).toBe(true);
+   expect(after.disabled).toBe(false);
+   const text=feedback(d).textContent;
+   expect(text).toContain(`Could not ${verb} the task.`);
+   expect(text).toContain(words);
+   expect(text).not.toContain('<html>');
+   expect(text).not.toContain('<h1>');
+   expect(env.errors.length).toBe(1);
+   expect(env.errors[0]).toContain(`Failed to ${verb} task`);
+   env.errors.length=0;
+   }finally{w.close();}
+  });
+ }
+}
+
 t('a Cancel that the operator backs out of frees the button with no request',async()=>{
  const env=await setup({detail:task({status:'running'})});const {w,d}=env;try{
  const {seen}=gated(env,'cancel');
