@@ -14,7 +14,7 @@ import (
 )
 
 // ErrNoPasswordlessSudo is the error a driver reports, before anything is
-// regenerated, when SudoCheckCommand fails.
+// regenerated, when scripts.SudoCheckCommand fails.
 var ErrNoPasswordlessSudo = errors.New("passwordless sudo is not available for BOSH SSH users")
 
 // ErrPatchUnsafe is the error ParseDiscovery, BuildConsumers, and
@@ -155,7 +155,7 @@ func (e *layoutError) Unwrap() error { return e.err }
 
 // lineError wraps the fault in a line of discovery output. A job's layout
 // wraps ErrPatchUnsafe and names the job, so the operator is told to
-// redeploy, and every other fault wraps ErrMalformedOutput.
+// redeploy, and every other fault wraps scripts.ErrMalformedOutput.
 func lineError(line int, err error) error {
 	var layout *layoutError
 	if errors.As(err, &layout) {
@@ -172,8 +172,8 @@ func lineError(line int, err error) error {
 // job directory that is not /var/vcap/data/jobs/<job>/<version>, and a
 // path the script printed as ! reject the whole output with an error that
 // wraps ErrPatchUnsafe and names the job. Any other fault rejects it with
-// ErrMalformedOutput. Matches and embedded files come back sorted by job
-// and path.
+// scripts.ErrMalformedOutput. Matches and embedded files come back sorted
+// by job and path.
 func ParseDiscovery(out []byte) (*Discovery, error) {
 	records, err := scripts.ParseRecords(out, discoveryKinds())
 	if err != nil {
