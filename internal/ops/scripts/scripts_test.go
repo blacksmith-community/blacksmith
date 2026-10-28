@@ -314,20 +314,24 @@ func TestExitCodesMatchLib(t *testing.T) {
 		}
 	}
 
-	if runtime.GOOS != "linux" {
-		return
-	}
-
 	// Sourcing lib.sh shows the values the scripts really see.
-	out, err := exec.CommandContext(t.Context(), "bash", "-c",
-		`source lib.sh; echo "$EXIT_USAGE $EXIT_DRIFT $EXIT_BACKUP $EXIT_RESTART $EXIT_REFUSED $EXIT_INVALID"`).Output()
-	if err != nil {
-		t.Fatalf("sourcing lib.sh: %v", err)
-	}
+	t.Run("sourced", func(t *testing.T) {
+		t.Parallel()
 
-	sourced := fmt.Sprintf("%d %d %d %d %d %d\n", scripts.ExitUsage, scripts.ExitDrift,
-		scripts.ExitBackup, scripts.ExitRestart, scripts.ExitRefused, scripts.ExitInvalid)
-	if string(out) != sourced {
-		t.Errorf("sourced exit codes = %q, want %q", out, sourced)
-	}
+		if runtime.GOOS != "linux" {
+			t.Skipf("sourcing lib.sh needs the Linux bash the VMs run, and this host is %s", runtime.GOOS)
+		}
+
+		out, err := exec.CommandContext(t.Context(), "bash", "-c",
+			`source lib.sh; echo "$EXIT_USAGE $EXIT_DRIFT $EXIT_BACKUP $EXIT_RESTART $EXIT_REFUSED $EXIT_INVALID"`).Output()
+		if err != nil {
+			t.Fatalf("sourcing lib.sh: %v", err)
+		}
+
+		sourced := fmt.Sprintf("%d %d %d %d %d %d\n", scripts.ExitUsage, scripts.ExitDrift,
+			scripts.ExitBackup, scripts.ExitRestart, scripts.ExitRefused, scripts.ExitInvalid)
+		if string(out) != sourced {
+			t.Errorf("sourced exit codes = %q, want %q", out, sourced)
+		}
+	})
 }
