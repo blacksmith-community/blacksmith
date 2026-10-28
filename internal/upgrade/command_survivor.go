@@ -136,8 +136,8 @@ func (m *Manager) recheckSurvivor(ctx context.Context, sessions *patchSessions, 
 
 		return true
 	case record.Killed == "no":
-		// The wrapper checks the session of a command without a usable
-		// exit status, so killed=no means nothing of it was left to end.
+		// The wrapper checks the session of every command that started,
+		// so killed=no means nothing of it was left to end.
 		reason := "Processes of the command survived KILL on the node, and a later cleanup found nothing of the command left running."
 
 		return m.clearSurvivor(ctx, run, survivorEnd{reason: reason})

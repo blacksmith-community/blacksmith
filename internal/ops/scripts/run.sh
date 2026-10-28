@@ -664,10 +664,10 @@ _rc_recheck() {
 # KILL, which leaves the survivors record that _rc_note_survivors writes.
 # A session whose leader has gone and that still has a member _rc_ours
 # can't prove is the command's is unknown, because that member may be a
-# stranger's, and it gets no signal. A session that is
-# cleanup's own, or a group with a member outside the session, which only
-# a stranger that took the number can make, is unknown, as is a live
-# session when there is no kill tool. None of these is signalled.
+# stranger's, and it gets no signal. A session that is cleanup's own, or
+# a group with a member outside the session, which only a stranger that
+# took the number can make, is unknown, as is a live session when there
+# is no kill tool. None of these is signalled.
 _rc_kill_group() {
 	local dir=$1 pg want kill ticks i
 
@@ -982,18 +982,18 @@ execute() {
 	# written ends in 125 like a pgid write that fails. Keep both writes
 	# ahead of the exec in that same process. timeout then fails its own
 	# setpgid as a session leader, which is harmless, because the group is
-	# already the one to signal.
-	# --wait keeps setsid from forking and returning at once, which would
-	# hide the exit status of the command. A pgid write or cd that fails
-	# after started ends with 125 and one fixed line, so it is not taken
-	# for a command that exited 1, and it removes the started marker
-	# first, so cleanup reports started=no and the broker tells the failed
-	# launch from a command that ran and exited 125. The brace group sends the command's
-	# stderr through descriptor 3 and the shell's own job notice, such as
-	# "Killed", to /dev/null. The launch closes descriptor 3 for everything
-	# it starts, so the command cannot write to the notice channel. A
-	# command that outlives the kill-after is killed together with timeout,
-	# and shows up as 137, not 124.
+	# already the one to signal. --wait keeps setsid from forking and
+	# returning at once, which would hide the exit status of the command.
+	# A pgid write or cd that fails after started ends with 125 and one
+	# fixed line, so it is not taken for a command that exited 1, and it
+	# removes the started marker first, so cleanup reports started=no and
+	# the broker tells the failed launch from a command that ran and
+	# exited 125. The brace group sends the command's stderr through
+	# descriptor 3 and the shell's own job notice, such as "Killed", to
+	# /dev/null. The launch closes descriptor 3 for everything it starts,
+	# so the command cannot write to the notice channel. A command that
+	# outlives the kill-after is killed together with timeout, and shows
+	# up as 137, not 124.
 	# shellcheck disable=SC2016
 	{
 		"$setsid" --wait /bin/bash -c 'mark=$4; nostart() { rm -f -- "$mark"; echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; [ -n "${f[19]:-}" ] && echo "${f[19]}" > "$2" && echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 4; exec "$@"' \

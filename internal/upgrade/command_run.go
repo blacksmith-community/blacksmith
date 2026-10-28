@@ -679,8 +679,9 @@ func (r *commandRun) classify(result ssh.Result, execErr error, deadlineHit bool
 // the record is the only witness, as it is for a cancel. A command that
 // had exited counts as the exit the record holds, whatever cleanup then
 // found of its children, one cleanup had to end failed, or timed out when
-// the deadline passed, and one cleanup found already ended failed. A record that shows none of these strands the
-// node, as unprovenRecord says.
+// the deadline passed, and one cleanup found already ended failed. A
+// record that shows none of these strands the node, as unprovenRecord
+// says.
 func (r *commandRun) classifyLost(execErr error, deadlineHit bool, record scripts.Cleanup, pastTimeout bool) commandOutcome {
 	if record.Started == "yes" {
 		code, err := strconv.Atoi(record.Exit)
@@ -1082,12 +1083,12 @@ const commandRefusedMessage = "Running this command is no longer allowed, so the
 // do about the paused task.
 const commandRefusedNextStep = " Cancel the task, or continue it once the broker allows the command again."
 
-// pauseRefusedCommandLocked pauses a loaded or queued command task the authorizer
-// refuses, and says why on its first instance that has not ended. It
-// reports whether it paused the task. A manager that is not configured
-// asks nothing, because it can't tell yet. The task keeps its holds, since
-// a paused command task holds every instance that has not settled. The
-// caller holds mu.
+// pauseRefusedCommandLocked pauses a loaded or queued command task the
+// authorizer refuses, and says why on its first instance that has not
+// ended. It reports whether it paused the task. A manager that is not
+// configured asks nothing, because it can't tell yet. The task keeps its
+// holds, since a paused command task holds every instance that has not
+// settled. The caller holds mu.
 func (m *Manager) pauseRefusedCommandLocked(task *UpgradeTask) bool {
 	if !m.asksAboutCommandLocked(task) {
 		return false
@@ -2328,8 +2329,8 @@ func holdCancelledCommandLocked(task *UpgradeTask, inst *InstanceUpgrade) {
 
 // rewordHeldCommandsLocked gives the instances of a command task that
 // paused and then ended, by a cancel or as an earlier build ended it, the
-// text of a hold, in place of the text of the pause. A task that is not paused is left to its processor. The caller
-// holds mu.
+// text of a hold, in place of the text of the pause. A task that is not
+// paused is left to its processor. The caller holds mu.
 func rewordHeldCommandsLocked(task *UpgradeTask) {
 	if task.KindOrDefault() != TaskKindCommand || !task.Paused {
 		return
@@ -2413,15 +2414,15 @@ func (m *Manager) cancelUnownedCommandLocked(task *UpgradeTask) int {
 }
 
 // resumeCancelledCommandLocked starts the cleanup of each instance of a
-// command task that has ended, cancelled or else completed or failed with a
-// node an earlier build left unresolved, that has an unresolved node,
+// command task that has ended, cancelled or else completed or failed with
+// a node an earlier build left unresolved, that has an unresolved node,
 // whatever the instance's status, when nothing processes or settles the
-// task and it does not wait for a resume. Each instance counts as a settle
-// of the task, so nothing else ends it meanwhile, and the function it returns starts the cleanups, which the
-// caller runs once it lets go of mu. A manager that is stopping, or has no
-// director, starts none, and the task waits for Resume cleanup again, so
-// the hold it keeps still has a control that reaches it after a restart.
-// The caller holds mu.
+// task and it does not wait for a resume. Each instance counts as a
+// settle of the task, so nothing else ends it meanwhile, and the function
+// it returns starts the cleanups, which the caller runs once it lets go
+// of mu. A manager that is stopping, or has no director, starts none, and
+// the task waits for Resume cleanup again, so the hold it keeps still has
+// a control that reaches it after a restart. The caller holds mu.
 func (m *Manager) resumeCancelledCommandLocked(task *UpgradeTask) func() {
 	if !taskEndedLocked(task) || task.Paused || m.owned[task.ID] || m.settling[task.ID] > 0 {
 		return func() {}
