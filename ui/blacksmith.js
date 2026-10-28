@@ -17701,6 +17701,7 @@
   };
 
   let taskInspectionRevision = 0;
+  let taskDetailsRun = null;
   let configInspectionRevision = 0;
 
   // Show task details modal
@@ -17718,15 +17719,13 @@
     let modal = document.getElementById('task-details-modal');
     if (!modal) {
       const modalHTML = `
-        <div id="task-details-modal" class="modal-overlay" role="dialog" aria-labelledby="task-details-modal-title">
-          <div class="modal">
-            <div class="modal-content">
+        <dialog id="task-details-modal" class="modal-dialog" aria-labelledby="task-details-modal-title">
               <div class="modal-header">
                 <h3 id="task-details-modal-title">Task Details</h3>
                 <div class="task-actions">
                   <button id="cancel-task-btn" class="btn btn-secondary" style="display: none;" onclick="cancelTaskAndRefresh()">Cancel Task</button>
                 </div>
-                <button class="modal-close" onclick="hideTaskDetailsModal()" aria-label="Close modal">&times;</button>
+                <button class="modal-close" aria-label="Close modal">&times;</button>
               </div>
               <div class="modal-body">
                 <div id="task-details-loading" class="loading">Loading task details...</div>
@@ -17767,30 +17766,16 @@
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
+        </dialog>
       `;
 
       document.body.insertAdjacentHTML('beforeend', modalHTML);
       modal = document.getElementById('task-details-modal');
+      modal.querySelector('.modal-close').addEventListener('click', () => window.hideTaskDetailsModal());
 
       // Set up modal tab switching
       setupTaskModalTabs();
 
-      // Set up escape key handler
-      modal.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          hideTaskDetailsModal();
-        }
-      });
-
-      // Set up click outside to close
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-          hideTaskDetailsModal();
-        }
-      });
     }
 
     // Remember the element that triggered the modal so we can restore focus later
@@ -17799,17 +17784,12 @@
     // Store current task ID for refresh
     window.currentTaskId = taskId;
 
-    // Show modal using existing modal system
-    modal.style.display = 'flex';
-
-    // Force reflow to ensure CSS transitions work
-    modal.offsetHeight;
-
-    modal.classList.add('active');
-    modal.setAttribute('aria-hidden', 'false');
+    // Escape and the backdrop close the native dialog, which ends the run
+    // and calls hideTaskDetailsModal for the rest of the cleanup.
+    if (!modal.open) {
+      taskDetailsRun = openSharedDialog(modal, document.activeElement, () => window.hideTaskDetailsModal(), false);
+    }
     document.body.style.overflow = 'hidden';
-
-    activatePersistentDialog(modal, window.hideTaskDetailsModal);
 
     // Move focus to the modal close button for accessibility
     const closeButton = modal.querySelector('.modal-close');
@@ -17819,7 +17799,7 @@
 
     // Load task details
     await loadTaskDetails(taskId);
-    if (inspectionRevision !== taskInspectionRevision || !modal.classList.contains('active')) return;
+    if (inspectionRevision !== taskInspectionRevision || !modal.open) return;
 
     // Set up auto-refresh for running tasks
     startTaskModalAutoRefresh();
@@ -17836,10 +17816,8 @@
         activeElement.blur();
       }
 
-      deactivatePersistentDialog(modal);
-      modal.classList.remove('active');
-      modal.style.display = 'none';
-      modal.setAttribute('aria-hidden', 'true');
+      if (taskDetailsRun) taskDetailsRun.end(false);
+      taskDetailsRun = null;
       document.body.style.overflow = '';
     }
 

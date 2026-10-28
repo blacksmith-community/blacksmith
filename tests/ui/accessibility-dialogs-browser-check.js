@@ -19,7 +19,7 @@ async page => {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(350); // Let native top-layer closing transitions finish.
   await page.evaluate(()=>window.showTaskDetails(71));
-  await page.locator('#task-details-modal.active').waitFor();
+  await page.locator('#task-details-modal[open]').waitFor();
   await audit('task details',theme,width);
   await page.keyboard.press('Shift+Tab');
   if(!await page.locator('#task-details-modal').evaluate(el=>el.contains(document.activeElement))) throw new Error('Task focus escaped');

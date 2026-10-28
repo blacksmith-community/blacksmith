@@ -14,7 +14,7 @@ test('a closed task ignores delayed details and does not restart polling',async(
  const {w,d}=boot();let finish;
  w.__routes.push(['/b/tasks/42',(u,o,j)=>new Promise(resolve=>{finish=()=>resolve(j(200,{task:{id:42,state:'processing',description:'late response'}}));})]);
  const pending=w.showTaskDetails(42);await sleep(10);w.hideTaskDetailsModal();finish();await pending;
- expect(d.querySelector('#task-details-modal').getAttribute('aria-hidden')).toBe('true');
+ expect(d.querySelector('#task-details-modal').open).toBe(false);
  expect(d.querySelector('#task-description').textContent).not.toBe('late response');
  expect(w.taskModalAutoRefresh).toBeFalsy();w.close();
 });

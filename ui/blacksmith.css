@@ -9058,28 +9058,23 @@ span.config-type.resurrection {
 
 /* Task Details Modal Styles */
 
-/* The task-details-modal uses standard modal styles from .modal-overlay and .modal */
+/* The task-details-modal is a native dialog styled by Oat and .modal-dialog */
 /* We only need to override specific behaviors */
 
 /* Modal sizing & layout - proper flexbox approach */
-#task-details-modal .modal {
+#task-details-modal {
   width: 95vw;
   height: 90vh;
   max-width: none;
   max-height: none;
-  display: flex;
-  flex-direction: column;
+  padding: 0;
   overflow: hidden;
   margin: auto;
 }
 
-#task-details-modal .modal-content {
-  width: 100%;
-  flex: 1;
+#task-details-modal[open] {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  min-height: 0;
 }
 
 #task-details-modal .modal-header {
@@ -9767,7 +9762,7 @@ span.config-type.resurrection {
 
 /* Task modal responsive adjustments */
 @media (max-width: 768px) {
-  #task-details-modal .modal {
+  #task-details-modal {
     width: 98vw;
     height: 95vh;
     margin: 1vh 1vw;
