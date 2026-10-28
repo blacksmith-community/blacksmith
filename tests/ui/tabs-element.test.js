@@ -90,6 +90,19 @@ t('End skips a disabled last tab and Home skips a disabled first tab',async()=>{
  env2.press('Home'); expect(env2.selected()).toEqual(['two']);
 });
 
+t('a nested strip changes only its own active classes',async()=>{
+ const inner=`<bs-tabs id="inner"><div role="tablist" aria-label="Inner">${['a','b','c'].map(n=>`<button type="button" role="tab" data-tab="${n}">${n}</button>`).join('')}</div>${['a','b','c'].map(n=>`<div role="tabpanel" data-tab="${n}">${n}</div>`).join('')}</bs-tabs>`;
+ const outer=`<bs-tabs id="strip"><div role="tablist" aria-label="Outer"><button type="button" role="tab" data-tab="x">x</button><button type="button" role="tab" data-tab="y">y</button></div><div role="tabpanel" data-tab="x">${inner}</div><div role="tabpanel" data-tab="y">y</div></bs-tabs>`;
+ const env=await start(outer); const {d,host}=env;
+ const innerTabs=[...d.getElementById('inner').querySelectorAll('[role=tab]')];
+ innerTabs[2].click();
+ const outerTabs=[...host.querySelectorAll(':scope > [role=tablist] [role=tab]')];
+ const outerPanels=[...host.querySelectorAll(':scope > [role=tabpanel]')];
+ expect(outerTabs.map(x=>x.classList.contains('active'))).toEqual([true,false]);
+ expect(outerPanels.map(x=>x.classList.contains('active'))).toEqual([true,false]);
+ expect(innerTabs.map(x=>x.classList.contains('active'))).toEqual([false,false,true]);
+});
+
 t('select picks a tab by name, and the tab list answers blacksmithSelect',async()=>{
  const env=await start(strip()); const {host,selected}=env;
  expect(host.select('three')).toBe(true); expect(selected()).toEqual(['three']);

@@ -824,7 +824,10 @@
   // aria-selected, the roving tabindex, and the ot-tab-change event. The
   // tab list and the panels must be direct children of the element, in the
   // same order. The active class is mirrored onto the tabs and panels
-  // because the route reader and the stylesheet still key on it.
+  // because the route reader and the stylesheet still key on it. Oat reads
+  // its tabs and panels once when the element starts, so a tab added later
+  // can be focused by the arrow keys but is never selected. Build the full
+  // strip before it is connected.
   const defineBsTabs = () => {
     const Base = window.customElements && window.customElements.get('ot-tabs');
     if (!Base || window.customElements.get('bs-tabs')) return;
@@ -834,7 +837,7 @@
       get tabs() { return [...this.querySelectorAll(':scope > [role="tablist"] [role="tab"]')]; }
       get panels() { return [...this.querySelectorAll(':scope > [role="tabpanel"]')]; }
       init() {
-        this.addEventListener('ot-tab-change', (event) => this.#mirror(event.detail.index));
+        this.addEventListener('ot-tab-change', (event) => { if (event.target === this) this.#mirror(event.detail.index); });
         super.init();
         const list = this.querySelector(':scope > [role="tablist"]');
         if (list) list.blacksmithSelect = (name) => this.select(name);
