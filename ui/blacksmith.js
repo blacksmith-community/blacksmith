@@ -4528,9 +4528,8 @@
   // label, when view guidance has loaded. A legend holds the help inside
   // itself, because a legend only renders as the fieldset's caption while it
   // is the fieldset's first child, and the fieldset keeps its accessible
-  // name from the words alone. A heading goes into a flex row with the help.
-  // A label already sits in a flex row with its control, so the help follows
-  // it there.
+  // name from the words alone. A heading or a label goes into a flex row of
+  // its own with the help, and that row sets the space between them.
   const addFieldHelp = (anchor, key) => {
     if (!anchor) return null;
     const node = makeFieldHelp(key);
@@ -4543,7 +4542,7 @@
       text.id = id;
       if (anchor.parentElement) anchor.parentElement.setAttribute('aria-labelledby', id);
       anchor.append(text, node);
-    } else if (/^H[1-6]$/.test(anchor.tagName) && anchor.parentNode) {
+    } else if (/^(H[1-6]|LABEL)$/.test(anchor.tagName) && anchor.parentNode) {
       const row = rotateEl('div', 'field-guidance-row');
       anchor.replaceWith(row);
       row.append(anchor, node);

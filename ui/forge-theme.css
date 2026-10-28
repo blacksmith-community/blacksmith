@@ -209,7 +209,7 @@ body > footer p { margin: 0; }
 #upgrade .batch-flow-options { padding: 20px 24px 0; }
 #upgrade .batch-flow-options .filter-row { max-width: 560px; display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 12px; }
 #upgrade .batch-flow-options .filter-row label { flex: 0 0 auto; width: auto; min-width: 0; font-weight: 600; white-space: nowrap; }
-#upgrade .batch-flow-options .filter-row > label + .field-guidance { margin-left: -6px; }
+#upgrade .batch-flow-options .filter-row > .field-guidance-row { flex: 0 0 auto; }
 #upgrade .batch-flow-options .filter-row select { flex: 1 1 auto; width: auto; min-width: 0; }
 #upgrade .upgrade-targets-panel { margin: 20px 24px; padding: 20px; }
 #upgrade #batch-options-summary { margin: 0 0 16px; font-size: 1rem; }

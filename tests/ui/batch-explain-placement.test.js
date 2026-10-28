@@ -18,15 +18,15 @@ async function setupCommand(){
  return env;
 }
 // The info button for key, on the same line as anchor and outside any label
-// or tablist. A legend holds the button, a heading shares a flex row with it,
-// and a label in a filter row has it as the next sibling.
+// or tablist. A legend holds the button, and a heading or a label shares a
+// flex row with it.
 function infoAfter(anchor,key){
  expect(anchor===null).toBe(false);
  let node;
  if(anchor.tagName==='LEGEND'){
   node=anchor.querySelector(':scope > .field-guidance');
   expect(anchor.parentElement.getAttribute('aria-labelledby')).toBe(anchor.querySelector(':scope > .field-guidance-text').id);
- }else if(/^H[1-6]$/.test(anchor.tagName)){
+ }else if(/^(H[1-6]|LABEL)$/.test(anchor.tagName)){
   expect(anchor.parentElement.classList.contains('field-guidance-row')).toBe(true);
   node=anchor.nextElementSibling;
  }else node=anchor.nextElementSibling;
@@ -133,10 +133,28 @@ t('the stylesheet puts the Mode help in the strip corner and rows its headings',
  expect(/\.field-guidance-row\s*\{[^}]*display:\s*flex[^}]*align-items:\s*center/.test(css)).toBe(true);
 });
 
-t('the stylesheet reserves strip room for the corner help and closes the label gap in a flex row',()=>{
+t('the stylesheet reserves strip room for the corner help',()=>{
  const read=(f)=>require('fs').readFileSync(require('path').join(__dirname,'../../ui/'+f),'utf8');
  expect(/\.rotate-mode\s*>\s*bs-tabs\s*>\s*\[role=tablist\]\s*\{[^}]*padding-right:\s*40px/.test(read('view-guidance.css'))).toBe(true);
- expect(/\.filter-row\s*>\s*label\s*\+\s*\.field-guidance\s*\{[^}]*margin-left:\s*-6px/.test(read('forge-theme.css'))).toBe(true);
+});
+
+// A label and its help button share a .field-guidance-row, which sets the 6px between them itself. The
+// filter row's own gap then has no say in it, and no rule has to pull the button back with a negative margin.
+t('a label and its info button share a row that sets their gap, so no negative margin is needed',async()=>{
+ const env=await setupCommand();const {d}=env;
+ const labels=['label[for="command-text"]','label[for="command-timeout"]','label.command-parallel-option','label[for="upgrade-max-batch-jobs"]'].map(sel=>d.querySelector(sel));
+ expect(labels.every(Boolean)).toBe(true);
+ labels.forEach((label)=>{
+  const row=label.parentElement;
+  expect(row.classList.contains('field-guidance-row')).toBe(true);
+  expect([...row.children].map(c=>c.tagName+'.'+c.className)).toEqual([label.tagName+'.'+label.className,'SPAN.field-guidance']);
+  expect(row.parentElement.classList.contains('filter-row')).toBe(true);
+ });
+ const read=(f)=>require('fs').readFileSync(require('path').join(__dirname,'../../ui/'+f),'utf8');
+ const guidance=read('view-guidance.css');
+ expect(/\.field-guidance-row\s*\{[^}]*gap:\s*6px/.test(guidance)).toBe(true);
+ expect(/\.field-guidance-row\s*>\s*\.field-guidance\s*\{[^}]*margin-left:\s*0/.test(guidance)).toBe(true);
+ expect(read('forge-theme.css')).not.toMatch(/field-guidance[^{]*\{[^}]*margin-left:\s*-/);
 });
 
 t('upgrade options and Execution settings each get an info button',async()=>{
