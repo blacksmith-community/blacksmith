@@ -1931,6 +1931,7 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 		task.CompletedCount++
 	}
 
+	// survived is here for clarity, since a cleanup run has paused the task in settle by now.
 	cleanup := survived && task.CleanupOnly
 
 	// An ordinary resume cleared the survivor's pause, with an instance

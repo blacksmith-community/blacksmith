@@ -16,6 +16,11 @@ import (
 // split are kept, so the tests have the original bytes without git.
 const beforeSplit = "testdata"
 
+// stagedScripts names each script Script stages.
+func stagedScripts() []string {
+	return []string{"gate", "patch", "discover", "verify"}
+}
+
 // readBeforeSplit reads a file under testdata.
 func readBeforeSplit(t *testing.T, path ...string) string {
 	t.Helper()
@@ -152,7 +157,7 @@ func TestCertLibPassesSyntaxCheck(t *testing.T) {
 func TestStagedScriptsKeepEveryLine(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"gate", "patch", "discover", "verify"} {
+	for _, name := range stagedScripts() {
 		staged, err := certscripts.Script(name)
 		if err != nil {
 			t.Errorf("Script(%s): %v", name, err)
@@ -180,7 +185,7 @@ func TestStagedScriptsKeepTheirOwnLinesInOrder(t *testing.T) {
 	libs := string(scripts.Library()) + readSource(t, certLibScript)
 	before := readBeforeSplit(t, "lib-before-split.sh")
 
-	for _, name := range []string{"gate", "patch", "discover", "verify"} {
+	for _, name := range stagedScripts() {
 		staged, err := certscripts.Script(name)
 		if err != nil {
 			t.Errorf("Script(%s): %v", name, err)

@@ -3000,15 +3000,20 @@ func expectUnlockedAfterPanic(t *testing.T, manager *Manager, region func()) {
 		region()
 	}()
 
-	waitUntil(t, "taking the manager's lock after the panic", func() bool {
-		if !manager.mu.TryLock() {
-			return false
+	deadline := time.Now().Add(waitTimeout)
+
+	for !manager.mu.TryLock() {
+		if time.Now().After(deadline) {
+			// A sync.Mutex has no owner, so the test frees the lock the
+			// region leaked, and the fixture's Stop does not hang on it.
+			manager.mu.Unlock()
+			t.Fatal("the manager's lock is still held after the panic")
 		}
 
-		manager.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
 
-		return true
-	})
+	manager.mu.Unlock()
 }
 
 // A panic while connect records the matched VM leaves the lock free.

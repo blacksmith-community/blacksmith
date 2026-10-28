@@ -118,23 +118,55 @@ func startWiringVM(t *testing.T) *wiringDirector {
 	config := &gossh.ServerConfig{NoClientAuth: true}
 	config.AddHostKey(hostKey)
 
-	t.Cleanup(func() { _ = listener.Close() })
+	var (
+		served sync.WaitGroup
+		mu     sync.Mutex
+		closed bool
+		conns  []net.Conn
+	)
 
-	go func() {
+	// The cleanup closes the connections the server accepted as well as the
+	// listener, and waits for every goroutine of the server to end.
+	t.Cleanup(func() {
+		_ = listener.Close()
+
+		mu.Lock()
+		closed = true
+
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+		mu.Unlock()
+
+		served.Wait()
+	})
+
+	served.Go(func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
 
-			go serveWiringConn(conn, config)
+			mu.Lock()
+			if closed {
+				mu.Unlock()
+				_ = conn.Close()
+
+				return
+			}
+
+			conns = append(conns, conn)
+			mu.Unlock()
+
+			served.Go(func() { serveWiringConn(conn, config, &served) })
 		}
-	}()
+	})
 
 	return &wiringDirector{addr: listener.Addr().String(), hostKey: hostKey}
 }
 
-func serveWiringConn(conn net.Conn, config *gossh.ServerConfig) {
+func serveWiringConn(conn net.Conn, config *gossh.ServerConfig, served *sync.WaitGroup) {
 	defer func() { _ = conn.Close() }()
 
 	serverConn, channels, requests, err := gossh.NewServerConn(conn, config)
@@ -142,7 +174,7 @@ func serveWiringConn(conn net.Conn, config *gossh.ServerConfig) {
 		return
 	}
 
-	go gossh.DiscardRequests(requests)
+	served.Go(func() { gossh.DiscardRequests(requests) })
 
 	for newChannel := range channels {
 		channel, channelRequests, err := newChannel.Accept()
@@ -150,7 +182,7 @@ func serveWiringConn(conn net.Conn, config *gossh.ServerConfig) {
 			return
 		}
 
-		go func() {
+		served.Go(func() {
 			defer func() { _ = channel.Close() }()
 
 			for request := range channelRequests {
@@ -169,7 +201,7 @@ func serveWiringConn(conn net.Conn, config *gossh.ServerConfig) {
 
 				return
 			}
-		}()
+		})
 	}
 
 	_ = serverConn.Close()
