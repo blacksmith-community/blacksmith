@@ -54,20 +54,21 @@ t('a toast keeps the three second duration',()=>{
  w.setTimeout=real;
  expect(timers.filter(ms=>ms>=1000)).toEqual([3000]);
 });
+// Appending is what hands the toast to assistive technology, so the roles are
+// read inside the append itself, before any later statement can set them.
 t('the roles are on the toast at the moment it enters the page',()=>{
  const {w,d}=start();
  w.showNotification('First','info');
+ const box=container(d);
  const seen=[];
- const observer=new w.MutationObserver(list=>list.forEach(r=>r.addedNodes.forEach(n=>{
-  if(n.matches&&n.matches('output.toast')) seen.push([n.getAttribute('role'),n.getAttribute('aria-live')]);
- })));
- observer.observe(container(d),{childList:true});
+ const append=box.appendChild.bind(box);
+ box.appendChild=(node)=>{
+  if(node.matches&&node.matches('output.toast')) seen.push([node.getAttribute('role'),node.getAttribute('aria-live')]);
+  return append(node);
+ };
  w.showNotification('It broke','error');
  w.showNotification('Saved it','success');
- return Promise.resolve().then(()=>{
-  observer.disconnect();
-  expect(seen).toEqual([['alert','assertive'],['status','polite']]);
- });
+ expect(seen).toEqual([['alert','assertive'],['status','polite']]);
 });
 t('an unknown type shows as info',()=>{
  const {w,d}=start();
