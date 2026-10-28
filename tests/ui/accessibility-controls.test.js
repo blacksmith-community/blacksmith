@@ -17,10 +17,9 @@ test('managed dialogs isolate background and handle an empty focus list',()=>{
  const {w,d}=boot();try{
  const opener=d.createElement('button');d.body.append(opener);opener.focus();
  const previouslyInert=d.createElement('div');previouslyInert.setAttribute('inert','');d.body.append(previouslyInert);
- const overlay=d.createElement('div');overlay.className='modal-overlay';overlay.innerHTML='<div role="dialog" aria-label="Test details">Details</div>';
+ const overlay=d.createElement('dialog');overlay.setAttribute('aria-label','Test details');overlay.textContent='Details';d.body.append(overlay);
  w.ModalManager.openModal(overlay);
  expect(opener.hasAttribute('inert')).toBe(true);
- expect(overlay.querySelector('[role="dialog"]').getAttribute('aria-modal')).toBe('true');
  expect(overlay.contains(d.activeElement)).toBe(true);
  const event=new w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});d.activeElement.dispatchEvent(event);
  expect(event.defaultPrevented).toBe(true);
@@ -71,7 +70,7 @@ test('terminal tabs have separate named selection and close buttons',()=>{
 
 test('reopening a managed dialog cancels stale delayed removal',async()=>{
  const {w,d}=boot();try{
- const overlay=d.createElement('div');overlay.className='modal-overlay';overlay.innerHTML='<div role="dialog" aria-label="Reopened"><button>Close</button></div>';
+ const overlay=d.createElement('dialog');overlay.setAttribute('aria-label','Reopened');overlay.innerHTML='<button>Close</button>';d.body.append(overlay);
  w.ModalManager.openModal(overlay);w.ModalManager.closeModal(overlay);w.ModalManager.openModal(overlay);
  await sleep(330);
  expect(overlay.isConnected).toBe(true);

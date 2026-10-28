@@ -176,7 +176,7 @@
     more.addEventListener('click',()=>{appendPage();if(more.hidden)input.focus();});
     list.addEventListener('scroll',()=>{if(rendered<results.length&&list.scrollHeight-list.scrollTop-list.clientHeight<80)appendPage();});
     function blocked() {
-      return [...document.querySelectorAll('dialog[open], .modal, .modal-overlay, [role="dialog"], .terminal-modal')]
+      return [...document.querySelectorAll('dialog[open], [role="dialog"], .terminal-modal')]
         .some(el => el !== dialog && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none') ||
         document.activeElement?.closest('.xterm, #terminal-modal');
     }

@@ -75,7 +75,7 @@
     tooltip.textContent = text;
     // An identical accessible name is already announced; do not repeat it as a description.
     // Supplementary help is described while existing field descriptions remain intact.
-    const host = control.closest('dialog[open], [role="dialog"], .modal-overlay, .terminal-modal') || document.body;
+    const host = control.closest('dialog[open], [role="dialog"], .terminal-modal') || document.body;
     host.append(tooltip); describe(); position();
   }
   function maybeHide() {

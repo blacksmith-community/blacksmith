@@ -143,7 +143,7 @@ t('a second confirmation dismisses the first, and a late close event from the fi
 
 t('closing a confirmation opened over a modal returns to that modal, still modal and focused',async()=>{
  const env=await start(); const {w,d,role,stubs,snapshot}=env;
- d.body.insertAdjacentHTML('beforeend','<div id="outer" class="modal-overlay" role="dialog" aria-label="Outer"><button id="outer-btn">Inside</button></div>');
+ d.body.insertAdjacentHTML('beforeend','<dialog id="outer" aria-label="Outer"><button id="outer-btn">Inside</button></dialog>');
  const outer=d.getElementById('outer');
  const before=snapshot();
  expect(w.ModalManager.openModal(outer)).toBe(true);

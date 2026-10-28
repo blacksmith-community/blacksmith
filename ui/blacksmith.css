@@ -3970,49 +3970,6 @@ select[id*="connection-vhost"] {
    CERTIFICATE INSPECTOR MODAL STYLES
    ================================================================= */
 
-/* Modal overlay */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.3s ease, visibility 0.3s ease;
-}
-
-.modal-overlay.active {
-  opacity: 1;
-  visibility: visible;
-  z-index: 10001;
-}
-
-/* Modal container */
-.modal {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  width: 90vw;
-  max-width: 1200px;
-  max-height: 90vh;
-  margin: 20px;
-  display: flex;
-  flex-direction: column;
-  transform: scale(0.8);
-  transition: transform 0.3s ease;
-}
-
-.modal-overlay.active .modal {
-  transform: scale(1);
-}
-
 /* A native modal dialog is its own box. Oat supplies the card and backdrop. */
 .modal-dialog {
   width: 90vw;
@@ -4726,12 +4683,6 @@ bs-tabs > .cert-tab-pane[hidden] {
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
-  .modal {
-    width: 95vw;
-    max-width: none;
-    margin: 10px;
-  }
-
   .cert-tabs-nav {
     flex-direction: column;
   }
@@ -4756,14 +4707,6 @@ bs-tabs > .cert-tab-pane[hidden] {
 }
 
 /* Dark theme specific adjustments */
-[data-theme="dark"] .modal-overlay {
-  background: rgba(0, 0, 0, 0.7);
-}
-
-[data-theme="dark"] .modal {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-}
-
 [data-theme="dark"] .cert-pem-text,
 [data-theme="dark"] .cert-text-output {
   background: var(--bg-tertiary);
@@ -12053,8 +11996,6 @@ span.config-type.resurrection {
   .cert-fleet *,
   .cert-fleet-drawer,
   .cert-fleet-drawer *,
-  .modal-overlay,
-  .modal-overlay .modal,
   .dialog-modal,
   .dialog-modal-btn {
     animation: none !important;

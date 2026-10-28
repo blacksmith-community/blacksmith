@@ -4,32 +4,32 @@
   "sha256": "196bd032ff8ba11686e4a2234efe5f4e4778a65a65a940b37810ee13e9d1154f"
  },
  "action-help.js": {
-  "key": "20261028-oat-8",
-  "sha256": "0b1af6b4c457374a0ea10802266781416f09adaebcc0fea4f48be8d14486abe7"
+  "key": "20261028-oat-14",
+  "sha256": "857c9eb0a2423866f3cf07658bad8ca4853610bfa2e5f989e12a8b50094f9f36"
  },
  "blacksmith.css": {
-  "key": "20261028-oat-8",
-  "sha256": "db9d853c4e8e83b5a491afe5ee9045da5f8be42796a82fda58be029f2257a1e2"
+  "key": "20261028-oat-14",
+  "sha256": "07500890fc555cbcbc39b4b374cf291f7b4d2721c1fcf864bf5d2224d19bddb9"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-13",
-  "sha256": "6a4505fe9601a412bf97b7c1f7479fb32befd06b555dbf0d74b4f4743c015d13"
+  "key": "20261028-oat-14",
+  "sha256": "80f6f885b096bcd3c742a198b1a871a2365e9c95c21574f1ce57b175b27f144b"
  },
  "console.css": {
   "key": "20261024-rotate",
   "sha256": "8bcda446b6a449233904a9ec1a052b51d698ec71a20f9f908b5770f37946c0d1"
  },
  "forge-theme.css": {
-  "key": "20261028-oat-9",
-  "sha256": "68cd1edd0f3dcfac34e42917ee1e338319bbc3d5e0f8d646327a55e02a3b65bd"
+  "key": "20261028-oat-14",
+  "sha256": "5ab5c8d2fc44da2966af5cb64d4ff533398862b40a1d97b07dcfb43ca5e38cd2"
  },
  "inspection-layout.css": {
   "key": "20261025-navigation-history",
   "sha256": "285baf1725dedc9b7f99796084c7d0391ee483da2e828f9d2726db613628716c"
  },
  "navigation.js": {
-  "key": "20261028-oat-8",
-  "sha256": "f5c01b1e812cdbc0a5bd80231f4df408b8403c11748ec13813809dffadcb6fc7"
+  "key": "20261028-oat-14",
+  "sha256": "6e377c28661b7654a4902db00c044a398a52f26138017e0737260f5444cb458c"
  },
  "routes.css": {
   "key": "20261028-oat-4",

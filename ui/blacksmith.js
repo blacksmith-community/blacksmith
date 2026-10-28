@@ -3086,7 +3086,7 @@
       if (!panel.classList.contains('active') || event.defaultPrevented || event.repeat || event.isComposing ||
           !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || batchFlow.submitting) return;
       if (event.target.closest('textarea, [contenteditable]:not([contenteditable="false"]), input:not([type="radio"]):not([type="checkbox"])')) return;
-      if (window.blacksmithSurfaces.top() || document.querySelector('dialog[open], .modal-overlay.active')) return;
+      if (window.blacksmithSurfaces.top() || document.querySelector('dialog[open]')) return;
       const code = event.code || event.key;
       if (!['KeyN','KeyA','KeyU','KeyR','KeyC','ArrowRight','ArrowLeft'].includes(code)) return;
       event.preventDefault();
@@ -20408,6 +20408,12 @@
         return false;
       }
 
+      // Every modal is a native dialog, which the browser draws and isolates.
+      if (!this.isNative(modalElement)) {
+        console.error('ModalManager.openModal: a native dialog element is required');
+        return false;
+      }
+
       // Opening a modal that is already open changes nothing.
       if (this.modalState.has(modalElement)) {
         return true;
@@ -20436,41 +20442,16 @@
       }
 
       const state = this.modalState.get(modalElement);
-      const native = this.isNative(modalElement);
-      state.native = native;
-      if (native) {
-        // A native modal joins the top layer, so it sits above whatever is open.
-        modalElement.showModal();
-      } else {
-        // A modal opened over the confirmation dialog has to sit above it.
-        const confirmDialog = document.getElementById('dialog-modal');
-        if (confirmDialog && confirmDialog.open) {
-          modalElement.style.zIndex = '10200';
-        }
-      }
+      // A native modal joins the top layer, so it sits above whatever is open.
+      modalElement.showModal();
 
       state.wasInert = modalElement.hasAttribute('inert');
       modalElement.removeAttribute('inert');
       state.restoreBackground = isolateDialog(modalElement);
-      if (native) trackAnnouncerModal(modalElement);
-      if (!native) {
-        const dialog = modalElement.matches('[role="dialog"]') ? modalElement : modalElement.querySelector('[role="dialog"]');
-        if (dialog) {
-          dialog.setAttribute('aria-modal', 'true');
-          dialog.tabIndex = -1;
-        }
-      }
+      trackAnnouncerModal(modalElement);
 
       // Prevent body scroll
       document.body.style.overflow = 'hidden';
-
-      if (!native) {
-        // Force reflow to ensure CSS transitions work
-        modalElement.offsetHeight;
-
-        // Show modal with animation
-        modalElement.classList.add('active');
-      }
 
       // Focus management
       this.trapFocus(modalElement);
@@ -20510,17 +20491,15 @@
       // Update current modal
       this.currentModal = this.modalStack.length > 0 ? this.modalStack[this.modalStack.length - 1] : null;
 
-      // Remove active class to trigger close animation
-      modalElement.classList.remove('active');
-      if (state && state.native && modalElement.open) modalElement.close();
-      if (state && state.native) untrackAnnouncerModal(modalElement);
+      if (state && modalElement.open) modalElement.close();
+      if (state) untrackAnnouncerModal(modalElement);
 
-      // Remove modal from DOM after animation completes
+      // Remove the dialog from the page shortly after it closes, unless it was reopened.
       setTimeout(() => {
         if (!this.modalState.has(modalElement) && modalElement.parentNode) {
           modalElement.parentNode.removeChild(modalElement);
         }
-      }, 300); // Match CSS transition duration
+      }, 300);
 
       // Restore body scroll if no modals remaining
       if (this.modalStack.length === 0) {
@@ -20560,21 +20539,19 @@
       };
       state.handlers = handlers;
 
-      // Close on overlay click
+      // A click on the backdrop lands on the dialog itself and closes it.
       modalElement.addEventListener('click', handlers.overlayClick);
 
-      if (state.native) {
-        // Escape reaches only the topmost surface. A close the dialog makes
-        // on its own, by Escape or a tap on the backdrop, ends the modal.
-        handlers.cancel = (event) => {
-          if (!window.blacksmithSurfaces.isTop(state.surface)) event.preventDefault();
-        };
-        handlers.closed = () => {
-          if (!modalElement.open) this.closeModal(modalElement);
-        };
-        modalElement.addEventListener('cancel', handlers.cancel);
-        modalElement.addEventListener('close', handlers.closed);
-      }
+      // Escape reaches only the topmost surface. A close the dialog makes
+      // on its own, by Escape or a tap on the backdrop, ends the modal.
+      handlers.cancel = (event) => {
+        if (!window.blacksmithSurfaces.isTop(state.surface)) event.preventDefault();
+      };
+      handlers.closed = () => {
+        if (!modalElement.open) this.closeModal(modalElement);
+      };
+      modalElement.addEventListener('cancel', handlers.cancel);
+      modalElement.addEventListener('close', handlers.closed);
 
       // Close on close button click
       if (handlers.closeButton) {
@@ -20594,10 +20571,8 @@
       const state = this.modalState.get(modalElement);
       if (state && state.handlers) {
         modalElement.removeEventListener('click', state.handlers.overlayClick);
-        if (state.handlers.cancel) {
-          modalElement.removeEventListener('cancel', state.handlers.cancel);
-          modalElement.removeEventListener('close', state.handlers.closed);
-        }
+        modalElement.removeEventListener('cancel', state.handlers.cancel);
+        modalElement.removeEventListener('close', state.handlers.closed);
         if (state.handlers.closeButton) {
           state.handlers.closeButton.removeEventListener('click', state.handlers.closeClick);
         }
@@ -20609,12 +20584,9 @@
       }
     },
 
-    // Handle overlay click (close modal if clicked outside content)
+    // A click on a native modal's backdrop lands on the dialog itself.
     handleOverlayClick: function (event) {
-      if (event.target.classList.contains('modal-overlay')) {
-        this.closeModal(event.target);
-      } else if (event.target.tagName === 'DIALOG' && this.modalState.get(event.target)?.native) {
-        // A click on a native modal's backdrop lands on the dialog itself.
+      if (event.target.tagName === 'DIALOG' && this.modalState.has(event.target)) {
         this.closeModal(event.target);
       }
     },
@@ -20626,21 +20598,11 @@
       return Boolean(state) && window.blacksmithSurfaces.isTop(state.surface);
     },
 
-    // Handle keyboard navigation. Escape closes only the topmost surface.
+    // Handle keyboard navigation. A native modal handles Escape through its
+    // own cancel event, so only Tab is handled here.
     handleKeydown: function (event) {
       if (!this.currentModal || !this.isTopmost()) return;
-
-      switch (event.key) {
-        case 'Escape':
-          // A native modal handles Escape through its own cancel event.
-          if (this.modalState.get(this.currentModal)?.native) break;
-          event.preventDefault();
-          this.closeModal(this.currentModal);
-          break;
-        case 'Tab':
-          this.handleTabKey(event);
-          break;
-      }
+      if (event.key === 'Tab') this.handleTabKey(event);
     },
 
     // Handle tab key for focus trapping
@@ -20691,7 +20653,7 @@
 
     // Trap focus within modal
     trapFocus: function (modalElement) {
-      const target = focusableWithin(modalElement)[0] || modalElement.querySelector('[role="dialog"]') || modalElement;
+      const target = focusableWithin(modalElement)[0] || modalElement;
       if (!target.hasAttribute('tabindex') && !target.matches(FOCUSABLE_SELECTOR)) target.tabIndex = -1;
       target.focus();
     }
