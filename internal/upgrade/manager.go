@@ -176,6 +176,16 @@ type Manager struct {
 	// Cancellation tracking - maps taskID to cancel channel
 	taskCancelCh   map[string]chan struct{}
 	taskCancelLock sync.RWMutex
+	// taskDoneCh maps the ID of a task that runTask processes to a channel
+	// that CancelTask closes, under taskCancelLock. Unlike the cancel
+	// channel it never carries a value, so a node's watcher waits on it
+	// without taking a pause or a resume meant for the processor. It stays
+	// registered, closed, until runTask returns.
+	taskDoneCh map[string]chan struct{}
+
+	// pausePoll is how often a paused processor looks at its task again
+	// without a signal, which a test lengthens.
+	pausePoll time.Duration
 
 	// Settings
 	settings     Settings
@@ -356,6 +366,8 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		taskQueue:      make(chan *UpgradeTask, taskQueueCapacity),
 		stopCh:         make(chan struct{}),
 		taskCancelCh:   make(map[string]chan struct{}),
+		taskDoneCh:     make(map[string]chan struct{}),
+		pausePoll:      time.Second,
 		settling:       make(map[string]int),
 		loaded:         make(chan struct{}),
 		owned:          make(map[string]bool),
@@ -1686,6 +1698,10 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 		close(cancelCh)
 		delete(m.taskCancelCh, taskID)
 	}
+
+	if done, exists := m.taskDoneCh[taskID]; exists {
+		closeOnce(done)
+	}
 	m.taskCancelLock.Unlock()
 
 	// Persist the cancelled state
@@ -1886,15 +1902,21 @@ func (m *Manager) runTask(task *UpgradeTask) {
 	// The buffer keeps a signal sent while the processor isn't waiting on
 	// the channel, so a pause or a resume is never lost.
 	cancelCh := make(chan struct{}, 1)
+	done := make(chan struct{})
 
 	m.taskCancelLock.Lock()
 	m.taskCancelCh[task.ID] = cancelCh
+	m.taskDoneCh[task.ID] = done
 	m.taskCancelLock.Unlock()
 
 	defer func() {
 		m.taskCancelLock.Lock()
 		if m.taskCancelCh[task.ID] == cancelCh {
 			delete(m.taskCancelCh, task.ID)
+		}
+
+		if m.taskDoneCh[task.ID] == done {
+			delete(m.taskDoneCh, task.ID)
 		}
 		m.taskCancelLock.Unlock()
 
@@ -1971,6 +1993,25 @@ func (m *Manager) acquireSlot(task *UpgradeTask, cancelCh <-chan struct{}) (func
 
 			return nil, false
 		}
+	}
+}
+
+// taskDone returns the channel CancelTask closes for the task that runTask
+// processes, and nil, which never closes, for a task it does not.
+func (m *Manager) taskDone(taskID string) <-chan struct{} {
+	m.taskCancelLock.RLock()
+	defer m.taskCancelLock.RUnlock()
+
+	return m.taskDoneCh[taskID]
+}
+
+// closeOnce closes the channel unless it is closed already. The caller
+// holds the lock that guards every close of it.
+func closeOnce(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+		close(ch)
 	}
 }
 
@@ -2280,7 +2321,7 @@ func (m *Manager) waitWhilePaused(ctx context.Context, task *UpgradeTask, cancel
 			m.logger.Info("Manager stopping while task %s is paused", task.ID)
 
 			return false, waited
-		case <-time.After(1 * time.Second):
+		case <-time.After(m.pausePoll):
 			// Periodic check
 		}
 	}

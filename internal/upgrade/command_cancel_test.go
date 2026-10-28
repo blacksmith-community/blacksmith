@@ -869,9 +869,9 @@ func (f *taskFixture) signalsPending() int {
 	return len(f.manager.taskCancelCh[f.task.ID])
 }
 
-// A pause lets the nodes in flight run on. The value it puts on the task's
-// channel is read by every node's watcher, and none of them ends its node,
-// so a command running as root is never killed by a pause.
+// A pause lets the nodes in flight run on, so a command running as root is
+// never killed by a pause. The value the pause puts on the task's channel
+// stays there for the processor, because no node's watcher reads it.
 func TestCommandPauseLeavesTheNodesInFlightRunning(t *testing.T) {
 	fix := newTaskFixture(t, 1, 3, withParallel(2))
 	release := make(chan struct{})
@@ -914,13 +914,10 @@ func TestCommandPauseLeavesTheNodesInFlightRunning(t *testing.T) {
 		t.Fatalf("pause: %v", err)
 	}
 
-	waitUntil(t, "the watchers to read the pause", func() bool { return fix.signalsPending() == 0 })
-
-	// Two more values give a watcher that wrongly cancels on any value
-	// every chance to act before the nodes are released.
-	for range 2 {
-		fix.manager.signalTask(fix.task.ID)
-		waitUntil(t, "the watchers to read the value", func() bool { return fix.signalsPending() == 0 })
+	// The processor waits for a slot, not on the channel, so only a
+	// watcher could have taken the value.
+	if got := fix.signalsPending(); got != 1 {
+		t.Errorf("%d values wait on the task's channel after the pause, want 1", got)
 	}
 
 	close(release)
@@ -1278,5 +1275,80 @@ func TestCommandResumeOfAPausedTaskStillNeedsAuthorization(t *testing.T) {
 
 			fix.assertNoCommandText()
 		})
+	}
+}
+
+// parkedIn counts the goroutines blocked in a select whose stack names fn.
+func parkedIn(fn string) int {
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+
+	count := 0
+
+	for _, stack := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(stack, "[select") && strings.Contains(stack, "."+fn+"(") {
+			count++
+		}
+	}
+
+	return count
+}
+
+// A resume wakes a paused processor at once while a node of the task is
+// still in flight. The node's watcher parks first, so on a channel they
+// shared it would take the resume's signal, and the processor would wait
+// for its next poll, which here is an hour away.
+func TestCommandResumeWithANodeInFlightWakesTheProcessorAtOnce(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	manager := fix.manager
+	manager.pausePoll = time.Hour
+
+	cancelCh := make(chan struct{}, 1)
+
+	manager.taskCancelLock.Lock()
+	manager.taskCancelCh[fix.task.ID] = cancelCh
+	manager.taskDoneCh[fix.task.ID] = make(chan struct{})
+	manager.taskCancelLock.Unlock()
+
+	manager.mu.Lock()
+	fix.task.Status = TaskStatusPaused
+	fix.task.Paused = true
+	manager.mu.Unlock()
+
+	watchers := parkedIn("watchNodeCancel")
+
+	nodeCtx, stop := manager.commandNodeContext(context.Background(), fix.task)
+	defer stop()
+
+	waitUntil(t, "the node's watcher to park", func() bool { return parkedIn("watchNodeCancel") > watchers })
+
+	waiters := parkedIn("waitWhilePaused")
+	woke := make(chan bool, 1)
+
+	go func() {
+		goOn, _ := manager.waitWhilePaused(context.Background(), fix.task, cancelCh)
+		woke <- goOn
+	}()
+
+	waitUntil(t, "the processor to wait for the resume", func() bool { return parkedIn("waitWhilePaused") > waiters })
+
+	manager.mu.Lock()
+	fix.task.Status = TaskStatusRunning
+	fix.task.Paused = false
+	manager.mu.Unlock()
+
+	manager.signalTask(fix.task.ID)
+
+	select {
+	case goOn := <-woke:
+		if !goOn {
+			t.Error("the processor stopped after the resume, want it to go on")
+		}
+	case <-time.After(waitTimeout):
+		t.Fatal("the processor never woke for the resume")
+	}
+
+	if err := nodeCtx.Err(); err != nil {
+		t.Errorf("the resume ended the node's context: %v", err)
 	}
 }

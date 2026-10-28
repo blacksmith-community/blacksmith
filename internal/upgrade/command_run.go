@@ -147,17 +147,17 @@ func wasCancelled(ctx context.Context) bool {
 }
 
 // commandNodeContext derives the context one node runs on from the task's.
-// The context ends when the task is cancelled, which a close of the cancel
-// channel says, so every node in flight is cancelled together. A value sent
-// on the channel is a pause or a resume, and the watcher reads the task to
-// tell a cancel from those. The function it returns stops the node's
-// context and waits for the watcher to end, so no goroutine outlives its
-// node.
-func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask, cancelCh <-chan struct{}) (context.Context, func()) {
+// The context ends when the task is cancelled, which a close of the task's
+// done channel says, so every node in flight is cancelled together. The
+// watcher waits on that channel rather than on the cancel channel, so it
+// never takes a pause or a resume that the processor waits for. The
+// function it returns stops the node's context and waits for the watcher
+// to end, so no goroutine outlives its node.
+func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask) (context.Context, func()) {
 	nodeCtx, cancel := context.WithCancelCause(ctx)
 	watcherDone := make(chan struct{})
 
-	go m.watchNodeCancel(nodeCtx, cancel, task, cancelCh, watcherDone)
+	go watchNodeCancel(nodeCtx, cancel, m.taskDone(task.ID), watcherDone)
 
 	return nodeCtx, func() {
 		cancel(nil)
@@ -166,23 +166,16 @@ func (m *Manager) commandNodeContext(ctx context.Context, task *UpgradeTask, can
 }
 
 // watchNodeCancel ends the node's context with errCommandCancelled when
-// the task is cancelled, and returns when the node's context ends. It
-// closes done on the way out. It is the goroutine's own entry frame, so a
-// dump of the goroutines names it.
-func (m *Manager) watchNodeCancel(nodeCtx context.Context, cancel context.CancelCauseFunc, task *UpgradeTask, cancelCh <-chan struct{}, done chan<- struct{}) {
+// taskDone closes, and returns when the node's context ends. It closes
+// done on the way out. It is the goroutine's own entry frame, so a dump of
+// the goroutines names it.
+func watchNodeCancel(nodeCtx context.Context, cancel context.CancelCauseFunc, taskDone <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
 
-	for {
-		select {
-		case _, open := <-cancelCh:
-			if !open || m.taskCancelled(task) {
-				cancel(errCommandCancelled)
-
-				return
-			}
-		case <-nodeCtx.Done():
-			return
-		}
+	select {
+	case <-taskDone:
+		cancel(errCommandCancelled)
+	case <-nodeCtx.Done():
 	}
 }
 
@@ -1567,7 +1560,7 @@ func (m *Manager) feedCommandNodes(ctx, persistCtx context.Context, pool *comman
 		}
 
 		pool.start(func() (bool, bool) {
-			nodeCtx, stop := m.commandNodeContext(ctx, task, cancelCh)
+			nodeCtx, stop := m.commandNodeContext(ctx, task)
 			defer stop()
 
 			return m.driveNodeInLoop(nodeCtx, sessions, task, inst, vm)
