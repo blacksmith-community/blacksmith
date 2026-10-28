@@ -29,6 +29,12 @@ const declares=(body,prop)=>new RegExp('(^|[;{\\s])'+prop+'\\s*:').test(body);
 // Oat styles them. Each entry names a selector that used to restyle a form
 // control, so a later edit that brings one back fails here.
 const GONE={
+ 'forge-theme.css':[
+  '#upgrade input[type="radio"]',
+  '.compact-configs-controls .checkbox-group input',
+  '#blacksmith .compact-tasks-controls .checkbox-group input',
+  '#blacksmith .compact-configs-controls .checkbox-group input',
+ ],
  'blacksmith.css':[
   'select','select:hover:not(:disabled)','select:focus',
   'input','textarea','[data-theme="dark"] input','[data-theme="dark"] textarea',
@@ -66,6 +72,13 @@ const STRIPPED={
   '.table-controls-container .log-file-dropdown':LOOK.concat('cursor'),
   '.diff-controls .form-control':LOOK,
  },
+ 'forge-theme.css':{
+  'select:where(:not([aria-invalid="true"]))':['background','border-radius'],
+  'select[aria-invalid="true"]':['background','border-radius'],
+  'input::placeholder':['color'],
+  '#upgrade .rotate-operation-option input':['appearance','accent-color'],
+  '.batch-release-picker .batch-release-selected-filter input':['appearance','accent-color'],
+ },
  'console.css':{
   '#upgrade .upgrade-services input':LOOK,
   '#upgrade .upgrade-services select':LOOK,
@@ -96,4 +109,11 @@ test('a checkbox in a form row is sized back to Oat, not stretched by the field 
  expect(hit).toBeTruthy();
  expect(hit.body).toMatch(/width:\s*1rem/);
  expect(hit.body).toMatch(/padding:\s*0/);
+});
+
+// The control fill must be a background-color, because the shorthand wipes
+// the chevron Oat draws on a select as a background-image.
+test('the forge control fill sets background-color so the select chevron survives',()=>{
+ const hit=parse(read('forge-theme.css')).find((r)=>r.selectors.includes('select:where(:not([aria-invalid="true"]))'));
+ expect(hit.body).toMatch(/background-color:\s*var\(--card\)/);
 });
