@@ -22939,6 +22939,13 @@
       VALID_TYPES.includes(type) ? type : 'info'
     );
 
+    // Oat colors an alert by its data-variant. Info has no variant of its own.
+    const VARIANTS = { error: 'danger', success: 'success', warning: 'warning' };
+    const setVariant = (panel, type) => {
+      if (VARIANTS[type]) panel.setAttribute('data-variant', VARIANTS[type]);
+      else panel.removeAttribute('data-variant');
+    };
+
     const getContainer = (context) => {
       if (!context) return null;
       return document.querySelector(`.feedback-panel[data-feedback-context="${context}"]`);
@@ -22949,6 +22956,7 @@
       if (!container) return;
 
       container.classList.remove('is-visible', 'is-info', 'is-success', 'is-error', 'is-warning');
+      container.removeAttribute('data-variant');
       container.innerHTML = '';
     };
 
@@ -22972,6 +22980,7 @@
         container.appendChild(icon);
         container.appendChild(text);
         container.classList.add('is-visible', `is-${normalizedType}`);
+        setVariant(container, normalizedType);
       }
 
       const shouldToast = toast === true || (!container && toast !== false);
@@ -22995,6 +23004,7 @@
     const clearAll = () => {
       document.querySelectorAll('.feedback-panel').forEach(panel => {
         panel.classList.remove('is-visible', 'is-info', 'is-success', 'is-error', 'is-warning');
+        panel.removeAttribute('data-variant');
         panel.innerHTML = '';
       });
     };
