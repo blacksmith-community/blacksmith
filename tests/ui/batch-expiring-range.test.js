@@ -13,8 +13,8 @@ const certs=[
 ];
 const dateOf=(days)=>new Date(Date.now()+days*86400000).toISOString().slice(0,10);
 const shown=(d)=>[...d.querySelectorAll('#upgrade .upgrade-instances [data-instance-id]')].map(r=>r.dataset.instanceId).sort();
-const open=async()=>{
- const env=await setupRotate({certs,bootOptions:{noDialogs:true}});envs.push(env);
+const open=async(list=certs)=>{
+ const env=await setupRotate({certs:list,bootOptions:{noDialogs:true}});envs.push(env);
  env.T.setBatchStep(2,false);
  return env;
 };
@@ -50,6 +50,29 @@ t('both ends are inclusive UTC dates and a range narrows the list',async()=>{
  expect(shown(d)).toEqual(['inst-b','inst-c']);
  await range(env,dateOf(21),dateOf(99));
  expect(shown(d)).toEqual([]);
+});
+t('the boundaries are the first and last instants of the From and To days',async()=>{
+ const at=(day,time)=>`${day}T${time}Z`;
+ const edge=(key,name,id,when)=>cert(key,name,40,id,id,{effective_not_after:when,expiry:when});
+ const list=[
+  edge('/s/f_crt','f_crt','inst-from-start',at(dateOf(50),'00:00:00.000')),
+  edge('/s/g_crt','g_crt','inst-before-from',at(dateOf(49),'23:59:59.999')),
+  edge('/s/h_crt','h_crt','inst-to-end',at(dateOf(60),'23:59:59.000')),
+  edge('/s/i_crt','i_crt','inst-after-to',at(dateOf(61),'00:00:00.000'))
+ ];
+ const env=await open(list);const {d}=env;
+ await choose(env,'custom');
+ await range(env,dateOf(50),dateOf(60));
+ expect(shown(d)).toEqual(['inst-from-start','inst-to-end']);
+});
+t('a reversed range marks both fields invalid until it is fixed',async()=>{
+ const env=await open();const {d}=env;
+ const from=d.getElementById('batch-expiring-from'),to=d.getElementById('batch-expiring-to');
+ await choose(env,'custom');
+ await range(env,dateOf(200),dateOf(100));
+ expect([from.getAttribute('aria-invalid'),to.getAttribute('aria-invalid')]).toEqual(['true','true']);
+ await range(env,dateOf(100),dateOf(200));
+ expect([from.hasAttribute('aria-invalid'),to.hasAttribute('aria-invalid')]).toEqual([false,false]);
 });
 t('an open end leaves that side open',async()=>{
  const env=await open();const {d}=env;

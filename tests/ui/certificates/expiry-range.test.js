@@ -5,10 +5,10 @@ const { JSDOM } = require('./support.js');
 const t = JSDOM ? test : test.skip;
 const { boot, sleep, now, day, iso } = H.fleet;
 
-const cert = (id, days) => ({
+const cert = (id, days, when) => ({
   id, key: `/secret/${id}`, variable: `var_${id}`, kind: 'leaf', common_name: `cn-${id}`, issuer: 'CN=Services CA',
   owners: [{ kind: 'instance', instance_id: `inst-${id}`, instance_name: `owner ${id}`, service_name: 'valkey', plan_name: 'small' }],
-  affected_instances: 1, effective_not_after: iso(now + days * day), days_left: days,
+  affected_instances: 1, effective_not_after: when || iso(now + days * day), days_left: days,
   expiry: days < 0 ? 'expired' : (days < 7 ? 'critical' : (days < 30 ? 'warning' : 'ok')), health: 'ok', attention: false, observations: [], findings: [],
   coverage: { expected_listeners: 1, observed_listeners: 1, failed_listeners: 0, complete: true, stale: false },
   rotation: { allowed: false, reasons: [] },
@@ -22,6 +22,7 @@ afterEach(() => { while (envs.length) { const env = envs.pop(); expect(env.dialo
 const open = async () => {
   const env = await boot();
   env.dialogs = [];
+  // The fleet harness boots without a noDialogs option, so the dialogs are replaced once it is up.
   ['alert', 'confirm', 'prompt'].forEach((kind) => { env.w[kind] = (m) => { env.dialogs.push(`${kind}:${m}`); throw new Error(`window.${kind} called`); }; });
   envs.push(env);
   env.server.certs = spread();
@@ -85,6 +86,29 @@ t('an open end leaves that side open and an expired certificate counts only by i
   expect(rows(d)).toEqual(['gone']);
   await type(env, dateOf(0), dateOf(30));
   expect(rows(d)).toEqual(['a3', 'b10', 'c20']);
+}, 60000);
+
+t('the boundaries are the first and last instants of the From and To days', async () => {
+  const env = await open();
+  const { d } = env;
+  env.server.certs = [
+    cert('fromStart', 40, `${dateOf(50)}T00:00:00.000Z`), cert('beforeFrom', 40, `${dateOf(49)}T23:59:59.999Z`),
+    cert('toEnd', 40, `${dateOf(60)}T23:59:59.000Z`), cert('afterTo', 40, `${dateOf(61)}T00:00:00.000Z`),
+  ];
+  toggle(d).click();
+  await type(env, dateOf(50), dateOf(60));
+  expect(rows(d)).toEqual(['fromStart', 'toEnd']);
+}, 60000);
+
+t('a reversed range marks both fields invalid until it is fixed', async () => {
+  const env = await open();
+  const { d } = env;
+  toggle(d).click();
+  await type(env, dateOf(100), dateOf(45));
+  const from = d.getElementById('cert-range-from'), to = d.getElementById('cert-range-to');
+  expect([from.getAttribute('aria-invalid'), to.getAttribute('aria-invalid')]).toEqual(['true', 'true']);
+  await type(env, dateOf(20), dateOf(45));
+  expect([from.hasAttribute('aria-invalid'), to.hasAttribute('aria-invalid')]).toEqual([false, false]);
 }, 60000);
 
 t('a From after To shows a status message, sends no request, and keeps the results', async () => {

@@ -3254,6 +3254,7 @@
         expiringFrom.value = ''; expiringTo.value = '';
       }
       expiringRangeError.textContent = '';
+      expiringFrom.removeAttribute('aria-invalid'); expiringTo.removeAttribute('aria-invalid');
       syncExpiringRange();
       batchWorkspace.page = 0;
       refreshUpgradeInstanceList();
@@ -3263,9 +3264,11 @@
     const applyExpiringRange = () => {
       if (rangeReversed(expiringFrom.value, expiringTo.value)) {
         expiringRangeError.textContent = 'From is after To. Choose a From date on or before the To date.';
+        expiringFrom.setAttribute('aria-invalid', 'true'); expiringTo.setAttribute('aria-invalid', 'true');
         return;
       }
       expiringRangeError.textContent = '';
+      expiringFrom.removeAttribute('aria-invalid'); expiringTo.removeAttribute('aria-invalid');
       batchWorkspace.selectedOnly = false;
       batchWorkspace.expiringFrom = expiringFrom.value;
       batchWorkspace.expiringTo = expiringTo.value;
@@ -25763,6 +25766,7 @@
         }
         view.rangeInvalid = false;
         rangeError.textContent = '';
+        rangeFrom.removeAttribute('aria-invalid'); rangeTo.removeAttribute('aria-invalid');
         changed();
       });
       const apply = () => {
@@ -25770,10 +25774,12 @@
           && rangeDayStart(rangeFrom.value) > rangeDayStart(rangeTo.value)) {
           view.rangeInvalid = true;
           rangeError.textContent = 'From is after To. Choose a From date on or before the To date.';
+          rangeFrom.setAttribute('aria-invalid', 'true'); rangeTo.setAttribute('aria-invalid', 'true');
           return;
         }
         view.rangeInvalid = false;
         rangeError.textContent = '';
+        rangeFrom.removeAttribute('aria-invalid'); rangeTo.removeAttribute('aria-invalid');
         state.range_from = rangeFrom.value;
         state.range_to = rangeTo.value;
         changed();
@@ -25791,6 +25797,7 @@
         rangeFrom.value = '';
         rangeTo.value = '';
         rangeError.textContent = '';
+        rangeFrom.removeAttribute('aria-invalid'); rangeTo.removeAttribute('aria-invalid');
         view.rangeInvalid = false;
       } else if (!view.rangeInvalid) {
         if (rangeFrom.value !== state.range_from) rangeFrom.value = state.range_from;
