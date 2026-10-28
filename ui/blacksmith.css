@@ -422,39 +422,10 @@ table tbody {
   color: var(--text-primary);
 }
 
-/* Universal select dropdown styles */
-select {
-  padding: 8px 12px;
-  font-size: 14px;
-  font-family: system-ui, -apple-system, sans-serif;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.2s;
-  appearance: none;
-  background-image: url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"%3e%3cpath fill="%23999" d="M10.293 3.293L6 7.586 1.707 3.293A1 1 0 00.293 4.707l5 5a1 1 0 001.414 0l5-5a1 1 0 10-1.414-1.414z"/%3e%3c/svg%3e');
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 35px;
-}
-
-select:hover:not(:disabled) {
-  border-color: var(--border-active);
-  background-color: var(--bg-hover);
-}
-
-select:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
-}
-
+/* Oat keeps the select look; a disabled select still needs its dimming. */
 select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background-color: var(--bg-tertiary);
 }
 
 select option {
@@ -615,40 +586,6 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Base input and textarea styles */
-input,
-textarea {
-  background: white;
-  color: var(--text-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  font-family: inherit;
-  font-size: 0.9em;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-[data-theme="dark"] input,
-[data-theme="dark"] textarea {
-  background: black;
-}
-
-input:focus,
-textarea:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
-}
-
-[data-theme="dark"] input:focus,
-[data-theme="dark"] textarea:focus {
-  box-shadow: 0 0 0 2px rgba(102, 178, 255, 0.1);
-}
-
-input::placeholder,
-textarea::placeholder {
-  color: var(--text-secondary);
-  opacity: 0.6;
-}
 
 .wrap {
   width: calc(100% - 40px);
