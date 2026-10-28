@@ -2723,7 +2723,8 @@ th[style*="cursor: pointer"]:hover {
 
 .table-controls-container .log-file-dropdown {
   min-width: 200px;
-  padding: 6px 10px;
+  padding-block: 6px;
+  padding-inline-start: 10px;
   font-size: 0.9em;
 }
 
@@ -9933,7 +9934,8 @@ span.config-type.resurrection {
 .diff-controls .form-control {
   flex: 1;
   max-width: 500px;
-  padding: 0.5rem;
+  padding-block: 0.5rem;
+  padding-inline-start: 0.5rem;
 }
 
 .diff-output-box {

@@ -146,12 +146,43 @@ test('the theme focus ring still covers inputs, selects, and textareas',()=>{
 // shorthand on a select resets that to the shorthand's own value, so the
 // chevron then sits on top of the text. A select rule sets longhands for
 // the sides it changes and leaves the end side alone.
+//
+// A rule styles a select when its last compound selector is the select
+// element or names a class or id that the UI puts on a select. Those names
+// come from every <select> tag in ui/*.js and ui/index.html. Selects are
+// only built as markup, so the second test fails if any script creates one
+// with createElement and so could add a name the first test cannot see.
+const uiSources=()=>fs.readdirSync(UI).filter((f)=>/\.(js|html)$/.test(f)).map((f)=>[f,read(f)]);
+const selectNames=()=>{
+ const classes=new Set(), ids=new Set();
+ uiSources().forEach(([,src])=>{
+  (src.match(/<select\b[^>]*>/g)||[]).forEach((tag)=>{
+   const cls=tag.match(/\bclass="([^"]*)"/);
+   if(cls) cls[1].split(/\s+/).filter((c)=>c&&!c.includes('$')).forEach((c)=>classes.add(c));
+   const id=tag.match(/\bid="([^"$]*)"/);
+   if(id&&id[1]) ids.add(id[1]);
+  });
+ });
+ return {classes,ids};
+};
+test('the UI only builds selects as markup, so the names scan is complete',()=>{
+ const dynamic=uiSources().filter(([,src])=>/createElement\(\s*['"`]select['"`]\s*\)/.test(src)).map(([f])=>f);
+ expect(dynamic).toEqual([]);
+ const {classes}=selectNames();
+ ['log-file-dropdown','form-control','filter-select','job-select'].forEach((c)=>expect(classes.has(c)).toBe(true));
+});
 test('no select rule resets the end padding Oat keeps for the chevron',()=>{
+ const {classes,ids}=selectNames();
+ const isSelect=(sel)=>{
+  const last=sel.split(/\s*[>+~]\s*|\s+/).pop();
+  if(/^select(?![\w-])/.test(last)) return true;
+  return (last.match(/\.[\w-]+/g)||[]).some((c)=>classes.has(c.slice(1)))||(last.match(/#[\w-]+/g)||[]).some((i)=>ids.has(i.slice(1)));
+ };
  const bad=[];
  ['blacksmith.css','console.css','forge-theme.css','view-guidance.css','routes.css'].forEach((file)=>{
   if(!fs.existsSync(path.join(UI,file))) return;
   parse(read(file)).forEach((r)=>r.selectors.forEach((s)=>{
-   if(!/(^|[\s>+~])select(:[a-z-]+)*$/.test(s)&&!/^\.(instance-group|job)-select(:[a-z-]+)*$/.test(s)) return;
+   if(!isSelect(s)) return;
    if(declares(r.body,'padding')||declares(r.body,'padding-right')||declares(r.body,'padding-inline')||declares(r.body,'padding-inline-end')) bad.push(file+' '+s);
   }));
  });
