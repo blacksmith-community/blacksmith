@@ -13638,3 +13638,5 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
   font-weight: 600;
   color: var(--text-secondary);
 }
+
+bs-tabs { display: contents; }

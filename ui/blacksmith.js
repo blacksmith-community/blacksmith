@@ -927,6 +927,71 @@
 
   window.blacksmithTabs = { bind: bindTabs };
 
+  // bs-tabs extends Oat's ot-tabs. Oat's tabs lack Home and End and give a
+  // disabled tab no special treatment, so this adds both. Oat keeps the ids,
+  // aria-selected, the roving tabindex, and the ot-tab-change event. The
+  // tab list and the panels must be direct children of the element, in the
+  // same order. The active class is mirrored onto the tabs and panels
+  // because the route reader and the stylesheet still key on it.
+  const defineBsTabs = () => {
+    const Base = window.customElements && window.customElements.get('ot-tabs');
+    if (!Base || window.customElements.get('bs-tabs')) return;
+    const disabled = (tab) => tab.disabled || tab.getAttribute('aria-disabled') === 'true';
+    window.customElements.define('bs-tabs', class extends Base {
+      #ready = false;
+      get tabs() { return [...this.querySelectorAll(':scope > [role="tablist"] [role="tab"]')]; }
+      get panels() { return [...this.querySelectorAll(':scope > [role="tabpanel"]')]; }
+      init() {
+        this.addEventListener('ot-tab-change', (event) => this.#mirror(event.detail.index));
+        super.init();
+        const list = this.querySelector(':scope > [role="tablist"]');
+        if (list) list.blacksmithSelect = (name) => this.select(name);
+        this.#ready = true;
+      }
+      #mirror(index) {
+        this.tabs.forEach((tab, at) => tab.classList.toggle('active', at === index));
+        this.panels.forEach((panel, at) => panel.classList.toggle('active', at === index));
+        if (this.#ready) notifyRoute();
+      }
+      select(name) {
+        const tabs = this.tabs;
+        const at = tabs.findIndex((tab) => tab.dataset.tab === name);
+        if (at < 0 || disabled(tabs[at])) return false;
+        this.activeIndex = at;
+        return true;
+      }
+      onclick(event) {
+        const tab = event.target.closest('[role="tab"]');
+        if (tab && disabled(tab)) { event.preventDefault(); return; }
+        super.onclick(event);
+      }
+      onkeydown(event) {
+        const current = event.target.closest('[role="tab"]');
+        const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+        if (!current || !keys.includes(event.key)) return;
+        const tabs = this.tabs;
+        const enabled = tabs.filter((tab) => !disabled(tab));
+        event.preventDefault();
+        if (!enabled.length) return;
+        const from = tabs.indexOf(current);
+        let target;
+        if (event.key === 'Home') target = enabled[0];
+        else if (event.key === 'End') target = enabled[enabled.length - 1];
+        else {
+          const step = event.key === 'ArrowRight' ? 1 : -1;
+          for (let count = 1; count <= tabs.length && !target; count++) {
+            const candidate = tabs[(from + step * count + tabs.length * count) % tabs.length];
+            if (!disabled(candidate)) target = candidate;
+          }
+        }
+        if (!target) return;
+        this.activeIndex = tabs.indexOf(target);
+        target.focus();
+      }
+    });
+  };
+  if (window.customElements) window.customElements.whenDefined('ot-tabs').then(defineBsTabs);
+
   // Universal Table Initialization - Auto-sort functionality
   const initializeAllTables = () => {
     // Find all tables in the document
