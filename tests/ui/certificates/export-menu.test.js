@@ -1,6 +1,10 @@
 const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
+const fs = require('fs');
+const path = require('path');
+const { install } = require('../dom-stubs.js');
+const OAT = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'ui', 'vendor', 'oat', 'oat.min.js'), 'utf8');
 
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
@@ -8,6 +12,8 @@ const t = JSDOM ? test : test.skip;
 const {boot,sleep} = H.main;
 t('fleet export menu', async () => {
   const env=boot(); const {w,d,errors}=env; const T=w.__T;
+  const stubs=install(w); w.requestAnimationFrame=(fn)=>setTimeout(fn,0); w.eval(OAT);
+  d.addEventListener('click',(e)=>{ if(e.target.closest&&e.target.closest('a[href]')) e.preventDefault(); });
   const mk=(i,svc)=>({id:'c'+i,key:'/s/a'+i,variable:'a'+i,kind:'leaf',days_left:3,expiry:'critical',health:'ok',owners:[{kind:'instance',instance_id:'i'+i,instance_name:'n'+i}],rotation:{allowed:true,reasons:[]},findings:[]});
   w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])],
    [/certificates\/inventory/,(u,o,j)=>j(200,{certificates:[mk(1),mk(2)],capabilities:{},settings:{warning_days:30,critical_days:7},scan:{state:'idle'},summary:{certificates:2,needs_attention:0},filtered:{certificates:2}})]);
@@ -21,7 +27,7 @@ t('fleet export menu', async () => {
   const sel=T.CertsFleet.view.refs.service; 
   const q=T.CertsFleet.toQuery(st);
   btn.click(); await sleep(20);
-  ok(!menu.hidden&&btn.getAttribute('aria-expanded')==='true','click opens menu');
+  ok(stubs.isOpen(menu)&&btn.getAttribute('aria-expanded')==='true','click opens menu');
   const csv=d.getElementById('cert-export-csv'), json=d.getElementById('cert-export-json');
   const mkEv=(k)=>new w.KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true});
   ok(d.activeElement===csv,'focus moves to first link');
@@ -29,11 +35,11 @@ t('fleet export menu', async () => {
   json.dispatchEvent(mkEv('ArrowDown')); ok(d.activeElement===csv,'wraps');
   let docEsc=false; d.addEventListener('keydown',()=>{docEsc=true});
   csv.dispatchEvent(mkEv('Escape')); await sleep(10);
-  ok(menu.hidden&&btn.getAttribute('aria-expanded')==='false'&&d.activeElement===btn,'Escape closes and refocuses button');
+  ok(!stubs.isOpen(menu)&&btn.getAttribute('aria-expanded')==='false'&&d.activeElement===btn,'Escape closes and refocuses button');
   ok(!docEsc,'Escape does not reach other surfaces');
-  btn.click(); await sleep(10); ok(!menu.hidden,'reopens');
-  d.body.click(); ok(menu.hidden,'outside click closes');
-  btn.click(); csv.click(); ok(menu.hidden&&d.activeElement===btn,'choosing a link closes, focus to button');
+  btn.click(); await sleep(10); ok(stubs.isOpen(menu),'reopens');
+  d.body.click(); await sleep(10); ok(!stubs.isOpen(menu),'outside click closes');
+  btn.click(); await sleep(10); csv.click(); await sleep(10); ok(!stubs.isOpen(menu)&&d.activeElement===btn,'choosing a link closes, focus to button');
   { const s=T.CertsFleet.view.refs.service; const o=d.createElement("option"); o.value="valkey"; o.textContent="valkey"; s.appendChild(o); s.value="valkey"; s.dispatchEvent(new w.Event("change")); await sleep(300); }
   st.expiry=['critical']; st.service=['valkey'];
   const exp=T.CertsFleet.toQuery(st,{format:'csv'});

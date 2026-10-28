@@ -11717,8 +11717,7 @@ span.config-type.resurrection {
 .cert-expand-btn:focus-visible,
 .cert-fleet input:focus-visible,
 .cert-fleet select:focus-visible,
-.cert-row:focus-visible,
-.cert-export-link:focus-visible {
+.cert-row:focus-visible {
   outline: 2px solid var(--border-active);
   outline-offset: 2px;
 }
@@ -11728,37 +11727,19 @@ span.config-type.resurrection {
 }
 
 .cert-export-menu {
-  position: absolute;
-  right: 0;
   z-index: 20;
-  display: flex;
-  flex-direction: column;
-  min-width: 160px;
-  margin-top: 4px;
-  border: 1px solid var(--border-primary);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  box-shadow: var(--shadow-primary);
 }
 
 .cert-export-link {
-  padding: 8px 12px;
   font-size: 13px;
   color: var(--text-primary);
   text-decoration: none;
 }
 
-.cert-export-link:hover {
-  background: var(--bg-hover);
-}
-
 .cert-export-link--disabled {
+  padding: 8px 12px;
   color: var(--text-secondary);
   cursor: not-allowed;
-}
-
-.cert-export-link--disabled:hover {
-  background: transparent;
 }
 
 .cert-export-note {

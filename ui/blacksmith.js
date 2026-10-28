@@ -25248,14 +25248,16 @@
           <div class="cert-fleet-actions" id="cert-fleet-actions">
             <button type="button" class="cert-action-btn cert-icon-action" id="cert-scan-btn" title="Scan certificates now" aria-label="Scan certificates now"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17"/></svg></button>
             <button type="button" class="cert-action-btn cert-icon-action" id="cert-settings-btn" aria-haspopup="dialog" title="Certificate settings" aria-label="Certificate settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 2-1 3 2 3-2 2 1 3-2-1-3 2-2-2-3-3-1-1-3Z"/></svg></button>
-            <div class="cert-export">
-              <button type="button" class="cert-action-btn cert-icon-action" id="cert-export-btn" aria-expanded="false" aria-controls="cert-export-menu" title="Export certificates" aria-label="Export certificates"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/></svg></button>
-              <div class="cert-export-menu" id="cert-export-menu" hidden>
+            <ot-dropdown class="cert-export">
+              <button type="button" class="cert-action-btn cert-icon-action" id="cert-export-btn" popovertarget="cert-export-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="cert-export-menu" title="Export certificates" aria-label="Export certificates"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/></svg></button>
+              <div class="cert-export-menu" id="cert-export-menu" popover>
                 <p class="cert-export-note" id="cert-export-note" hidden></p>
-                <a class="cert-export-link" id="cert-export-csv" download>Download CSV</a>
-                <a class="cert-export-link" id="cert-export-json" download>Download JSON</a>
+                <div role="menu" aria-label="Export certificates">
+                  <a class="cert-export-link" id="cert-export-csv" role="menuitem" download>Download CSV</a>
+                  <a class="cert-export-link" id="cert-export-json" role="menuitem" download>Download JSON</a>
+                </div>
               </div>
-            </div>
+            </ot-dropdown>
           </div>
         </div>
         <div id="cert-fleet-state" class="cert-fleet-state" hidden></div>
@@ -26328,11 +26330,13 @@
         if (blocked) {
           link.removeAttribute('href');
           link.setAttribute('aria-disabled', 'true');
+          link.removeAttribute('role');
           link.classList.add('cert-export-link--disabled');
           link.setAttribute('title', EXPORT_BLOCKED_TEXT);
         } else {
           link.href = `/b/certificates/inventory?${toQuery(state, { format })}`;
           link.removeAttribute('aria-disabled');
+          link.setAttribute('role', 'menuitem');
           link.classList.remove('cert-export-link--disabled');
           link.removeAttribute('title');
         }
@@ -27743,49 +27747,16 @@
         view.refs.moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
 
-      const exportLinks = () => [view.refs.exportCsv, view.refs.exportJson].filter((link) => link.hasAttribute('href'));
-      const setExportOpen = (open, focusTarget) => {
-        view.refs.exportMenu.hidden = !open;
-        view.refs.exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-        if (focusTarget === 'button') view.refs.exportBtn.focus();
-        else if (open && focusTarget === 'first') {
-          const links = exportLinks();
-          if (links.length) links[0].focus();
-        }
-      };
-      view.refs.exportBtn.addEventListener('click', () => {
-        const opening = view.refs.exportMenu.hidden;
-        setExportOpen(opening, opening ? 'first' : null);
-      });
-      view.refs.exportMenu.addEventListener('click', (event) => {
-        if (event.target.closest && event.target.closest('[aria-disabled="true"], .cert-export-note')) return;
-        setExportOpen(false, 'button');
-      });
+      // ot-dropdown opens and closes the popover, focuses the first menu item,
+      // moves between items with the arrow keys, closes on Escape or an
+      // outside click, and returns focus to the button. A disabled link has no
+      // menuitem role, so it is skipped. Choosing an enabled item closes the menu.
       const exportWrap = view.refs.exportBtn.parentElement;
+      view.refs.exportMenu.addEventListener('click', (event) => {
+        if (event.target.closest && event.target.closest('[role="menuitem"]')) view.refs.exportMenu.hidePopover();
+      });
       exportWrap.addEventListener('keydown', (event) => {
-        if (view.refs.exportMenu.hidden) return;
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          setExportOpen(false, 'button');
-          return;
-        }
-        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-        const links = exportLinks();
-        if (!links.length) return;
-        event.preventDefault();
-        const at = links.indexOf(document.activeElement);
-        const next = event.key === 'ArrowDown' ? (at + 1) % links.length : (at <= 0 ? links.length - 1 : at - 1);
-        links[next].focus();
-      });
-      exportWrap.addEventListener('focusout', (event) => {
-        if (view.refs.exportMenu.hidden || !event.relatedTarget) return;
-        if (exportWrap.contains(event.relatedTarget)) return;
-        setExportOpen(false, null);
-      });
-      document.addEventListener('click', (event) => {
-        if (view.refs.exportMenu.hidden || exportWrap.contains(event.target)) return;
-        setExportOpen(false, null);
+        if (event.key === 'Escape' && view.refs.exportBtn.getAttribute('aria-expanded') === 'true') event.stopPropagation();
       });
 
       document.addEventListener('keydown', (event) => {

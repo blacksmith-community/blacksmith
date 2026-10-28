@@ -57,7 +57,7 @@ t('fleet accessibility and announcements', async () => {
   rotationEnabled=false; await T.CertsFleet.refresh({silent:true}); await sleep(100);
   ok(!d.querySelector('.cert-group-why')&&!d.querySelector('tr.cert-group-row input:disabled[aria-describedby]'),'rotation off: group header adds no reason, like rows');
   rotationEnabled=true;
-  const eb=d.getElementById('cert-export-btn'); ok(eb&&!eb.hasAttribute('aria-haspopup')&&eb.getAttribute('aria-controls')==='cert-export-menu'&&eb.hasAttribute('aria-expanded'),'export button is a plain disclosure');
+  const eb=d.getElementById('cert-export-btn'); ok(eb&&eb.getAttribute('aria-haspopup')==='menu'&&eb.getAttribute('aria-controls')==='cert-export-menu'&&eb.hasAttribute('aria-expanded')&&eb.getAttribute('popovertarget')==='cert-export-menu','export button is a menu button for the ot-dropdown popover');
   T.CertsFleet.view.groupBy='flat';
   // announcements
   const live=()=>d.getElementById('blacksmith-live-region').textContent;
