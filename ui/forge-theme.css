@@ -729,6 +729,7 @@ body > footer p { margin: 0; }
 #blacksmith .deployment-manifest-workspace { height: auto; margin: 0; min-width: 0; }
 #blacksmith .deployment-manifest-workspace > .manifest-tab-content { padding: 8px 0 0; margin: 0; border: 0; border-radius: 0; min-height: 0; max-height: none; overflow: visible; }
 #blacksmith .deployment-manifest-workspace .manifest-tab-pane { padding: 0; overflow: visible; }
+#blacksmith .deployment-manifest-workspace bs-tabs > .manifest-tab-pane { padding: 8px 0 0; margin: 0; border: 0; border-radius: 0; min-height: 0; max-height: none; overflow: visible; }
 #blacksmith .deployment-manifest-workspace .manifest-tab-pane > div { overflow: visible; flex: none; }
 #blacksmith .deployment-manifest-workspace .manifest-table { margin: 0 0 12px; }
 #blacksmith .deployment-manifest-workspace .manifest-table :is(th,td) { padding: 6px 12px; }

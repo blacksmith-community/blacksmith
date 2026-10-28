@@ -9,19 +9,19 @@
  },
  "blacksmith.css": {
   "key": "20261028-oat-8",
-  "sha256": "3a7bdafc4eb20de56778009ad82faeb3991aa49f7ebb41b759dc93a13d0c8c8b"
+  "sha256": "343cdbaa4f8e8f9e36acebca33061051263bbd71cb2873480fc49bd38f07871a"
  },
  "blacksmith.js": {
   "key": "20261028-oat-8",
-  "sha256": "5673ea04492f811e0a7775ec2e91f5962d72131c6d068d8d5becc300044cb3f4"
+  "sha256": "01b5060a12cf272d7c469aa26dee82199140e3e4f81c0456c82bf60e04316d0e"
  },
  "console.css": {
   "key": "20261024-rotate",
   "sha256": "8bcda446b6a449233904a9ec1a052b51d698ec71a20f9f908b5770f37946c0d1"
  },
  "forge-theme.css": {
-  "key": "20261028-oat-7",
-  "sha256": "fb1572560f69631894862e08b09bc99d9490a839932d35d0aad62cfce75e363c"
+  "key": "20261028-oat-8",
+  "sha256": "5bcc9ed41911e36a4df3e5bcc867eb6ddcf75d7edff4031d7a19f7b80f0a71ee"
  },
  "inspection-layout.css": {
   "key": "20261025-navigation-history",

@@ -3020,6 +3020,21 @@ th[style*="cursor: pointer"]:hover {
   margin-bottom: 10px;
 }
 
+/* The panels of a bs-tabs strip are its direct children, so the box that
+   .manifest-tab-content draws around them is drawn on each panel. The
+   padding adds the 20px of the old box to the 15px of a panel. */
+bs-tabs > .manifest-tab-pane {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-table);
+  border-radius: 0 0 8px 8px;
+  padding: 35px;
+  min-height: 300px;
+  overflow: auto;
+  flex: 1 1 auto;
+  max-height: calc(100% - 60px);
+  margin-bottom: 10px;
+}
+
 /* Handled by generic tab-table-container rules below */
 
 .manifest-table {
@@ -9313,29 +9328,35 @@ span.config-type.resurrection {
 
 /* In the main Manifest view, allow the active pane to fully stretch
    to the parent height without the generic 28em cap. */
-.manifest-details-container .manifest-tab-content .manifest-tab-pane {
+.manifest-details-container .manifest-tab-content .manifest-tab-pane,
+.manifest-details-container bs-tabs > .manifest-tab-pane {
   flex: 1 1 auto;
 }
 
-.manifest-details-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls) {
+.manifest-details-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls),
+.manifest-details-container bs-tabs > .manifest-tab-pane > div:not(.search-filter):not(.controls) {
   max-height: none;
 }
 
 /* Ensure Broker > Manifest panes also stretch fully */
-.broker-details-container .manifest-tab-content .manifest-tab-pane {
+.broker-details-container .manifest-tab-content .manifest-tab-pane,
+.broker-details-container bs-tabs > .manifest-tab-pane {
   flex: 1 1 auto;
 }
 
-.broker-details-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls) {
+.broker-details-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls),
+.broker-details-container bs-tabs > .manifest-tab-pane > div:not(.search-filter):not(.controls) {
   max-height: none;
 }
 
 /* Ensure any Manifest tab rendered inside generic service-testing container also stretches */
-.service-testing-container .manifest-tab-content .manifest-tab-pane {
+.service-testing-container .manifest-tab-content .manifest-tab-pane,
+.service-testing-container bs-tabs > .manifest-tab-pane {
   flex: 1 1 auto;
 }
 
-.service-testing-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls) {
+.service-testing-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls),
+.service-testing-container bs-tabs > .manifest-tab-pane > div:not(.search-filter):not(.controls) {
   max-height: none;
 }
 

@@ -1,7 +1,11 @@
 const {test,expect}=require('bun:test');
+const fs=require('fs');
+const path=require('path');
+const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 const {main:{boot,sleep}}=require('./certificates/harness.js');
 const data={text:'name: test',parsed:{name:'test',releases:[{name:'release',version:'1'}]}};
-test('manifest tabs have linked panels and keyboard selection',()=>{const {w,d}=boot();try{
+test('manifest tabs have linked panels and keyboard selection',async()=>{const {w,d}=boot();try{
+w.eval(OAT);await sleep(40);
 d.body.innerHTML=w.__T.formatManifestDetails(data,'instance');
 const tabs=[...d.querySelectorAll('[role=tab]')];expect(tabs.length).toBe(3);
 expect(d.querySelector('[role=tablist]').getAttribute('aria-label')).toBe('Manifest sections');

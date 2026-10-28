@@ -14606,27 +14606,8 @@
   };
 
   // Format manifest details with tabbed view
-  // Delegate manifest navigation so newly rendered tabs work immediately.
-  const selectManifestView = (container, name) => {
-    const button=Array.from(container?.querySelectorAll('[data-manifest-navigation]')||[]).find(tab=>tab.dataset.tab===name);
-    if(!button)return false;
-    container.querySelectorAll('[data-manifest-navigation]').forEach(tab=>{const active=tab===button;tab.classList.toggle('active',active);tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;});
-    container.querySelectorAll('.manifest-tab-pane').forEach(pane=>{if(pane.dataset.group===button.dataset.group)pane.style.display=pane.dataset.tab===name?'block':'none';});
-    notifyRoute();return true;
-  };
-  document.addEventListener('click',event=>{if(!(event.target instanceof Element))return;const button=event.target.closest('[data-manifest-navigation]');if(button)selectManifestView(button.closest('.manifest-details-container'),button.dataset.tab);if(event.target.closest('.broker-tab-btn'))notifyRoute();});
+  document.addEventListener('click',event=>{if(!(event.target instanceof Element))return;if(event.target.closest('.broker-tab-btn'))notifyRoute();});
   document.addEventListener('change',event=>{if(event.target.matches('#cf-endpoint-select'))notifyRoute();});
-  document.addEventListener('keydown', event => {
-    if (!(event.target instanceof Element)) return;
-    const tab = event.target.closest('[data-manifest-navigation]');
-    if (!tab || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
-    const container = tab.closest('.manifest-details-container');
-    const tabs = [...container.querySelectorAll('[data-manifest-navigation]')];
-    const index = tabs.indexOf(tab);
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-    event.preventDefault(); selectManifestView(container, tabs[next].dataset.tab); tabs[next].focus();
-  });
-
 
   let manifestRenderSequence = 0;
   const formatManifestDetails = (manifestData, instanceId) => {
@@ -14688,19 +14669,19 @@
     // Create HTML for tabs
     let html = `
       <div class="manifest-details-container deployment-manifest-workspace">
+        <bs-tabs>
         <div class="manifest-tabs-nav" role="tablist" aria-label="Manifest sections">
-          <button type="button" role="tab" id="${tabGroupId}-tab-global" aria-controls="${tabGroupId}-panel-global" aria-selected="true" tabindex="0" data-manifest-navigation class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
-          ${instanceGroups.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-instance-groups" aria-controls="${tabGroupId}-panel-instance-groups" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
-          ${releases.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-releases" aria-controls="${tabGroupId}-panel-releases" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
-          ${stemcells.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-stemcells" aria-controls="${tabGroupId}-panel-stemcells" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
-          ${Object.keys(features).length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-features" aria-controls="${tabGroupId}-panel-features" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
-          ${Object.keys(update).length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-update" aria-controls="${tabGroupId}-panel-update" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="update" data-group="${tabGroupId}">Update</button>` : ''}
-          ${variables.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-variables" aria-controls="${tabGroupId}-panel-variables" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="variables" data-group="${tabGroupId}">Variables</button>` : ''}
-          ${addons.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-addons" aria-controls="${tabGroupId}-panel-addons" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="addons" data-group="${tabGroupId}">Addons</button>` : ''}
-          <button type="button" role="tab" id="${tabGroupId}-tab-manifest" aria-controls="${tabGroupId}-panel-manifest" aria-selected="false" tabindex="-1" data-manifest-navigation class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">YAML</button>
+          <button type="button" role="tab" id="${tabGroupId}-tab-global" aria-controls="${tabGroupId}-panel-global" aria-selected="true" tabindex="0" class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
+          ${instanceGroups.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-instance-groups" aria-controls="${tabGroupId}-panel-instance-groups" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
+          ${releases.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-releases" aria-controls="${tabGroupId}-panel-releases" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
+          ${stemcells.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-stemcells" aria-controls="${tabGroupId}-panel-stemcells" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
+          ${Object.keys(features).length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-features" aria-controls="${tabGroupId}-panel-features" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
+          ${Object.keys(update).length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-update" aria-controls="${tabGroupId}-panel-update" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="update" data-group="${tabGroupId}">Update</button>` : ''}
+          ${variables.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-variables" aria-controls="${tabGroupId}-panel-variables" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="variables" data-group="${tabGroupId}">Variables</button>` : ''}
+          ${addons.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-addons" aria-controls="${tabGroupId}-panel-addons" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="addons" data-group="${tabGroupId}">Addons</button>` : ''}
+          <button type="button" role="tab" id="${tabGroupId}-tab-manifest" aria-controls="${tabGroupId}-panel-manifest" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">YAML</button>
         </div>
 
-        <div class="manifest-tab-content">
           <!-- Global Tab -->
           <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-global" aria-labelledby="${tabGroupId}-tab-global" class="manifest-tab-pane active" data-tab="global" data-group="${tabGroupId}">
             <table class="manifest-table">
@@ -14741,7 +14722,7 @@
 
           <!-- Instance Groups Tab -->
           ${instanceGroups.length > 0 ? `
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-instance-groups" aria-labelledby="${tabGroupId}-tab-instance-groups" class="manifest-tab-pane" data-tab="instance-groups" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-instance-groups" aria-labelledby="${tabGroupId}-tab-instance-groups" class="manifest-tab-pane" data-tab="instance-groups" data-group="${tabGroupId}">
             <div class="instance-groups-container">
               <div class="instance-group-selector">
                 <label for="instance-group-select-${manifestId}">Select Instance Group:</label>
@@ -14918,7 +14899,7 @@
 
           <!-- Releases Tab -->
           ${releases.length > 0 ? `
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-releases" aria-labelledby="${tabGroupId}-tab-releases" class="manifest-tab-pane" data-tab="releases" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-releases" aria-labelledby="${tabGroupId}-tab-releases" class="manifest-tab-pane" data-tab="releases" data-group="${tabGroupId}">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -14980,7 +14961,7 @@
 
           <!-- Stemcells Tab -->
           ${stemcells.length > 0 ? `
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-stemcells" aria-labelledby="${tabGroupId}-tab-stemcells" class="manifest-tab-pane" data-tab="stemcells" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-stemcells" aria-labelledby="${tabGroupId}-tab-stemcells" class="manifest-tab-pane" data-tab="stemcells" data-group="${tabGroupId}">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -15028,7 +15009,7 @@
 
           <!-- Features Tab -->
           ${Object.keys(features).length > 0 ? `
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-features" aria-labelledby="${tabGroupId}-tab-features" class="manifest-tab-pane" data-tab="features" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-features" aria-labelledby="${tabGroupId}-tab-features" class="manifest-tab-pane" data-tab="features" data-group="${tabGroupId}">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -15050,7 +15031,7 @@
 
           <!-- Update Tab -->
           ${Object.keys(update).length > 0 ? `
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-update" aria-labelledby="${tabGroupId}-tab-update" class="manifest-tab-pane" data-tab="update" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-update" aria-labelledby="${tabGroupId}-tab-update" class="manifest-tab-pane" data-tab="update" data-group="${tabGroupId}">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -15072,7 +15053,7 @@
 
           <!-- Variables Tab -->
           ${variables.length > 0 ? `
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-variables" aria-labelledby="${tabGroupId}-tab-variables" class="manifest-tab-pane" data-tab="variables" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-variables" aria-labelledby="${tabGroupId}-tab-variables" class="manifest-tab-pane" data-tab="variables" data-group="${tabGroupId}">
             <table class="manifest-table">
               <thead>
                 <tr>
@@ -15096,7 +15077,7 @@
 
           <!-- Addons Tab -->
           ${addons.length > 0 ? `
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-addons" aria-labelledby="${tabGroupId}-tab-addons" class="manifest-tab-pane" data-tab="addons" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-addons" aria-labelledby="${tabGroupId}-tab-addons" class="manifest-tab-pane" data-tab="addons" data-group="${tabGroupId}">
             <div class="addons-list">
               ${addons.map((addon, idx) => `
                 <div class="addon-item">
@@ -15126,7 +15107,7 @@
           ` : ''}
 
           <!-- Manifest Tab -->
-          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-manifest" aria-labelledby="${tabGroupId}-tab-manifest" class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}" style="display: none;">
+          <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-manifest" aria-labelledby="${tabGroupId}-tab-manifest" class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}">
             <div class="manifest-container">
               <div class="manifest-header">
                 <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
@@ -15137,7 +15118,7 @@
               <pre>${escapeHtml(manifestData.text)}</pre>
             </div>
           </div>
-        </div>
+        </bs-tabs>
       </div>
     `;
 
@@ -17222,7 +17203,7 @@
           if(route.subview) {
             const content=document.querySelector(`#${route.screen} .detail-content`);let handled=false;
             for(const group of content?.querySelectorAll('[role="tablist"]')||[])if(group.blacksmithSelect?.(route.subview)){handled=true;break;}
-            if(route.section==='manifest')handled=selectManifestView(content?.querySelector('.manifest-details-container'),route.subview);
+            if(route.section==='manifest')handled=!!content?.querySelector('.manifest-details-container bs-tabs')?.select(route.subview);
             if(route.section==='testing'){handled=window.switchTestingOperation(route.instance,route.subview)!==false;}
             if(route.section==='broker'&&['marketplace','services'].includes(route.subview)){await switchCFDetailTab(route.subview);handled=true;}
             if(!handled)throw new Error('This detail view is not available for the selected resource.');
