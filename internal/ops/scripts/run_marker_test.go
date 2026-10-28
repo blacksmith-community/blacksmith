@@ -119,6 +119,7 @@ func TestRunCleanupProvesEachMemberOfALeaderlessSession(t *testing.T) {
 	}{
 		{name: "a stranger with no marker", env: []string{path}, want: "unknown"},
 		{name: "a stranger with another task's marker", env: []string{path, "BLACKSMITH_RUN_TASK=1a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"}, want: "unknown"},
+		{name: "a stranger whose marker runs on past the task", env: []string{path, runMarker + "0"}, want: "unknown"},
 		{name: "a child with the marker", env: []string{path, runMarker}, want: "yes"},
 		{name: "a child that cleared its environment", env: []string{path, runMarker}, prefix: "env -i", want: "unknown"},
 		{name: "an old directory without the marker file", env: []string{path, runMarker}, noMarker: true, want: "unknown"},
