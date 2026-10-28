@@ -269,3 +269,57 @@ func TestACancelledTaskDroppedAtDispatchCleansItsSentNode(t *testing.T) {
 	fix.waitReleased()
 	fix.assertNoCommandText()
 }
+
+// A cancelled task dropped at dispatch has one instance with a sent node
+// and one that holds nothing. dropFromQueue must end the unheld instance
+// before it counts the cleanup of the held one as a settle, which would
+// otherwise make the end a no-op, and the held instance must stay held
+// while its cleanup runs.
+func TestADroppedCancelledTaskEndsTheUnheldInstanceFirst(t *testing.T) {
+	fix := newTaskFixture(t, 2, 2)
+
+	fix.authHook = func(context.Context) error {
+		return errors.New("the authorizer refuses the stored task")
+	}
+
+	strandNodes(fix, 1)
+
+	gate := fix.gate(opRunCleanup)
+
+	fix.manager.mu.Lock()
+	fix.task.Status = TaskStatusRunning
+	fix.task.Paused = false
+	fix.task.Instances[1].Status = InstanceStatusRunning
+	fix.manager.owned[fix.task.ID] = true
+	fix.manager.mu.Unlock()
+
+	fix.cancel()
+	fix.manager.enqueue(fix.task)
+
+	// The cleanup starts only after dropFromQueue lets go of the lock.
+	gate.wantNext("dep-0/0")
+
+	mid := fix.snapshot()
+	if inst := mid.Instances[1]; inst.Status != InstanceStatusCancelled || !slices.Equal(phases(inst), []CommandPhase{CommandPhaseSkipped, CommandPhaseSkipped}) {
+		t.Errorf("the unheld instance is %s with nodes %v, want cancelled with both skipped", inst.Status, phases(inst))
+	}
+
+	if inst := mid.Instances[0]; inst.Status != InstanceStatusRunning {
+		t.Errorf("the held instance is %s while its cleanup runs, want running", inst.Status)
+	}
+
+	fix.wantBusy()
+
+	gate.let("dep-0/0")
+
+	done := fix.waitFor("the sent node to be cleaned", func(task UpgradeTask) bool {
+		return task.Instances[0].Status.settled()
+	})
+
+	if inst := done.Instances[0]; inst.Status != InstanceStatusCancelled {
+		t.Errorf("the held instance ended %s, want cancelled", inst.Status)
+	}
+
+	fix.waitReleased()
+	fix.assertNoCommandText()
+}
