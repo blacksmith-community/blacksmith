@@ -433,13 +433,21 @@ func (r *commandRun) connect(ctx context.Context, live CommandVMIdentity) error 
 		return err
 	}
 
-	r.m.mu.Lock()
-	r.inst.Command.VMs[r.vm].Matched = live.clone()
-	r.m.mu.Unlock()
+	r.recordMatched(live)
 
 	r.sess, r.host, r.identity = sess, host, live
 
 	return nil
+}
+
+// recordMatched records the matched tuple on the node. The unlock is
+// deferred, so a panic here leaves the lock free for the worker's panic
+// handler.
+func (r *commandRun) recordMatched(live CommandVMIdentity) {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+
+	r.inst.Command.VMs[r.vm].Matched = live.clone()
 }
 
 // matchHost finds the node's host in the session.
@@ -832,10 +840,7 @@ func (r *commandRun) cleanup(ctx context.Context) (scripts.Cleanup, bool, error)
 // confirmed the node goes back to what it was, so memory agrees with the
 // last confirmed record, and nothing is audited.
 func (r *commandRun) advance(ctx context.Context, change func(*CommandVM)) error {
-	r.m.mu.Lock()
-	before := r.inst.Command.clone().VMs[r.vm]
-	change(&r.inst.Command.VMs[r.vm])
-	r.m.mu.Unlock()
+	before := r.applyChange(change)
 
 	err := r.m.persistCertConfirmed(ctx, r.task)
 
@@ -853,6 +858,19 @@ func (r *commandRun) advance(ctx context.Context, change func(*CommandVM)) error
 	r.m.auditCommandNodeLocked(r.task, r.inst, r.vm)
 
 	return nil
+}
+
+// applyChange applies change to the node under the lock and returns the node
+// as it was before. The unlock is deferred, so a panic in change leaves
+// the lock free for the worker's panic handler.
+func (r *commandRun) applyChange(change func(*CommandVM)) CommandVM {
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+
+	before := r.inst.Command.clone().VMs[r.vm]
+	change(&r.inst.Command.VMs[r.vm])
+
+	return before
 }
 
 // settle records how the node ended. It returns true when the task

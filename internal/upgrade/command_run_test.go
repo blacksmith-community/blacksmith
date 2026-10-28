@@ -2983,3 +2983,57 @@ func TestCommandTaskRefusedBeforeAnyNodeSaysWhatToDo(t *testing.T) {
 
 	fix.assertNoCommandText()
 }
+
+// expectUnlockedAfterPanic runs region, which must panic, and fails the
+// test unless the manager's lock is free afterwards, so the worker's panic
+// handler can still take it.
+func expectUnlockedAfterPanic(t *testing.T, manager *Manager, region func()) {
+	t.Helper()
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the region did not panic")
+			}
+		}()
+
+		region()
+	}()
+
+	waitUntil(t, "taking the manager's lock after the panic", func() bool {
+		if !manager.mu.TryLock() {
+			return false
+		}
+
+		manager.mu.Unlock()
+
+		return true
+	})
+}
+
+// A panic while connect records the matched VM leaves the lock free.
+func TestCommandConnectPanicLeavesTheLockFree(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	run := &commandRun{
+		m: fix.manager, sessions: fix.sessions, task: fix.task, inst: fix.inst,
+		vm: len(fix.inst.Command.VMs), identity: fix.inst.Command.VMs[0].Reviewed, indices: []int{0},
+	}
+
+	expectUnlockedAfterPanic(t, fix.manager, func() {
+		_ = run.connect(context.Background(), run.identity)
+	})
+}
+
+// A panic in the change advance makes to a node leaves the lock free.
+func TestCommandAdvancePanicLeavesTheLockFree(t *testing.T) {
+	t.Parallel()
+
+	fix := newRunFixture(t)
+	run := &commandRun{m: fix.manager, task: fix.task, inst: fix.inst}
+
+	expectUnlockedAfterPanic(t, fix.manager, func() {
+		_ = run.advance(context.Background(), func(*CommandVM) { panic("the change failed") })
+	})
+}
