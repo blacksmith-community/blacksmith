@@ -21,12 +21,14 @@
 # it, and vcap can open cmd.sh by name but cannot list, replace, write,
 # or remove anything on the way to it. The task directory also holds the
 # files a later operation writes, which are marker, started, starttime,
-# pgid, and exit, and the survivors record of processes that outlived
-# KILL. Beside
-# the task directories, runcmd holds the done records that cleanup leaves,
-# a root-owned file of mode 0600 named <task>.done, as cleanup describes.
+# pgid, and exit, the fence that cleanup leaves for a command that never
+# started, and the survivors record of processes that outlived KILL.
+# Beside the task directories, runcmd holds the done records that cleanup
+# leaves, a root-owned file of mode 0600 named <task>.done, as cleanup
+# describes.
 #
 # The wrapper needs GNU coreutils for mv -T, which the stemcell has.
+# It needs util-linux flock too, for the lock that _rc_lock explains.
 #
 # CERTPATCH_ROOT lets the tests put the VM's files under a temporary
 # directory, as lib.sh explains.
@@ -53,6 +55,9 @@ readonly RC_MARK=BLACKSMITH_RUN_TASK
 # it is done. prepare sets it while the directory is half made, and
 # cleanup sets it while the directory is being removed.
 _RC_DROP=
+
+# The descriptor of the task directory that _rc_lock holds the lock on.
+_RC_LOCK=
 
 # The EXIT trap calls this, which shellcheck does not follow.
 # shellcheck disable=SC2329
@@ -176,6 +181,46 @@ _rc_write() {
 		set -C
 		cat > "$1"
 	) 2> /dev/null
+}
+
+# _rc_lock <dir> opens the task directory on descriptor _RC_LOCK and takes
+# an exclusive flock on it. exec holds the lock from its last checks until
+# it has written started, and cleanup holds it while it reads started and,
+# when there is none, fences the task. So either exec writes started
+# first and cleanup checks the command's session, or cleanup fences the
+# task first and exec refuses. It fails when flock is missing or the lock
+# can't be taken, and the caller then refuses.
+_rc_lock() {
+	local flock held now
+
+	flock=$(_rc_tool flock) || return 1
+	command -v -- "$flock" > /dev/null || return 1
+	{ exec {_RC_LOCK}< "$1"; } 2> /dev/null || return 1
+	"$flock" -x "$_RC_LOCK" 2> /dev/null || return 1
+
+	# A directory removed or replaced while the lock was awaited is not
+	# the one the caller checked. The inode number tells them apart,
+	# because the open descriptor keeps the old one from being reused.
+	held=$(stat -c %i -L -- "/dev/fd/$_RC_LOCK" 2> /dev/null) || return 1
+	now=$(stat -c %i -- "$1" 2> /dev/null) || return 1
+	[ "$held" = "$now" ]
+}
+
+# _rc_unlock closes the descriptor that _rc_lock opened, which releases
+# the lock, so nothing started after it inherits the descriptor.
+_rc_unlock() {
+	exec {_RC_LOCK}<&-
+	_RC_LOCK=
+}
+
+# _rc_fence <dir> marks a task whose command never started, so an exec that
+# comes later refuses it. It writes the fence file, or removes cmd.sh when
+# the fence can't be written, and fails when neither is done.
+_rc_fence() {
+	[ -f "$1/fence" ] && [ ! -L "$1/fence" ] && return 0
+	_rc_write "$1/fence" < /dev/null && return 0
+	rm -f -- "$1/cmd.sh" 2> /dev/null
+	[ ! -e "$1/cmd.sh" ] && [ ! -L "$1/cmd.sh" ]
 }
 
 # prepare writes the command on stdin to cmd.sh in a new directory for
@@ -709,15 +754,18 @@ _rc_prune_done() {
 # cleanup prints whether the command started and how it ended, and then
 # replaces the task directory with a done record of what it printed.
 # started is yes when exec left its marker, and exit is the code exec
-# recorded, or - when there is none. An exit file that is empty or holds
-# anything but a status, as a write on a full disk can leave, counts as
-# none. Whenever the command started, cleanup checks its session, whatever
-# the exit file holds, because a command with no exit is still running or
-# was left by a wrapper that died, and one with an exit may have left
-# children behind. It ends what it finds before it reports, so killed is
-# yes, or survived when the session outlives KILL. killed is no when
-# cleanup found the command's session empty, or the command never
-# started, and unknown when it could not look, as _rc_kill_group says.
+# recorded, or - when there is none. It reads started under the lock that
+# _rc_lock takes, and fences a task without it before it lets the lock go,
+# so a command it reports as never started can't start afterwards. An exit
+# file that is empty or holds anything but a status, as a write on a full
+# disk can leave, counts as none. Whenever the command started, cleanup
+# checks its session, whatever the exit file holds, because a command with
+# no exit is still running or was left by a wrapper that died, and one
+# with an exit may have left children behind. It ends what it finds before
+# it reports, so killed is yes, or survived when the session outlives
+# KILL. killed is no when cleanup found the command's session empty, or
+# the command never started, and unknown when it could not look, as
+# _rc_kill_group says.
 #
 # An unknown keeps the directory without cmd.sh, as survivors do, so the
 # next cleanup looks again and removes the directory once it can tell.
@@ -736,14 +784,19 @@ _rc_prune_done() {
 # save it. When the record can't be written, cleanup prints the line and
 # keeps the directory as it was, so the next cleanup works the answer out
 # again. A done record that is not one cleanup could have written is
-# ignored. Every cleanup first removes done records older than seven
-# days, as _rc_prune_done does, and never a task directory.
+# ignored. A done record whose task directory still holds started is not
+# replayed, because only a check of the session shows that command ended,
+# so cleanup answers from the directory as if there were no record. Every
+# cleanup first removes done records older than seven days, as
+# _rc_prune_done does, and never a task directory.
 #
-# It always prints exactly one record. A task with neither a done record
-# nor a directory prints started=- and succeeds, because the directory may
-# be missing either because prepare never arrived or because its done
-# record was pruned, and the caller must treat the outcome as unknown. A directory that is a symlink, or is not root's, is refused and
-# never removed.
+# It prints exactly one record unless it refuses. A task with neither a
+# done record nor a directory prints started=- and succeeds, because the
+# directory may be missing either because prepare never arrived or
+# because its done record was pruned, and the caller must treat the
+# outcome as unknown. A directory that is a symlink, or is not root's, is
+# refused and never removed, and so is a task whose lock can't be taken,
+# which includes a VM without flock.
 cleanup() {
 	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
@@ -760,12 +813,21 @@ cleanup() {
 		_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
 		_rc_prune_done "$base"
 
-		if _rc_replay "$base/$task.done"; then
-			if _rc_check_dir "$dir" 0 - -; then
-				rm -rf -- "$dir" 2> /dev/null || true
+		if line=$(_rc_replay "$base/$task.done"); then
+			if ! _rc_check_dir "$dir" 0 - -; then
+				printf '%s\n' "$line"
+				return 0
 			fi
 
-			return 0
+			_rc_lock "$dir" || return "$EXIT_REFUSED"
+
+			if [ ! -e "$dir/started" ] && [ ! -L "$dir/started" ]; then
+				printf '%s\n' "$line"
+				rm -rf -- "$dir" 2> /dev/null || true
+				return 0
+			fi
+
+			_rc_unlock
 		fi
 	fi
 
@@ -775,10 +837,15 @@ cleanup() {
 	fi
 
 	_rc_check_dir "$dir" 0 - - || return "$EXIT_REFUSED"
+	_rc_lock "$dir" || return "$EXIT_REFUSED"
 
 	if [ -f "$dir/started" ] && [ ! -L "$dir/started" ]; then
 		started=yes
+	else
+		_rc_fence "$dir" || return "$EXIT_REFUSED"
 	fi
+
+	_rc_unlock
 
 	if [ -f "$dir/exit" ] && [ ! -L "$dir/exit" ]; then
 		IFS= read -r code < "$dir/exit" || true
@@ -817,17 +884,20 @@ cleanup() {
 # execute runs the staged command as root or vcap. It checks again
 # everything prepare made, compares the digest of cmd.sh with the one the
 # broker measured, and refuses without leaving a started marker when
-# anything is off. The refusal never names the command or its digest. For
-# vcap it also refuses an account that getent does not know, one with uid
-# or gid 0, a home that is missing, a symlink, or owned by anyone but the
-# uid and gid of the account, and a home whose parent directories are not
-# all root-owned and closed to writes by anyone else. The command gets a
-# new session, a deadline, an empty environment with fixed values, umask
-# 022, stdin at end of file, and the home of its user as its working
-# directory. The vcap command runs under setpriv, inside timeout, with no
-# supplementary groups and no way to gain privileges through setuid
-# programs. The wrapper exits with the code the command ended with, which
-# it also records in the exit file.
+# anything is off. It makes those checks and writes started under the lock
+# that _rc_lock takes, and it also refuses there a task that cleanup
+# fenced or wrote a done record for, so a command never starts after a
+# cleanup reported that it had not. The refusal never names the command or
+# its digest. For vcap it also refuses an account that getent does not
+# know, one with uid or gid 0, a home that is missing, a symlink, or owned
+# by anyone but the uid and gid of the account, and a home whose parent
+# directories are not all root-owned and closed to writes by anyone else.
+# The command gets a new session, a deadline, an empty environment with
+# fixed values, umask 022, stdin at end of file, and the home of its user
+# as its working directory. The vcap command runs under setpriv, inside
+# timeout, with no supplementary groups and no way to gain privileges
+# through setuid programs. The wrapper exits with the code the command
+# ended with, which it also records in the exit file.
 execute() {
 	[ "$#" -eq 4 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
@@ -863,14 +933,6 @@ execute() {
 		gid=$(_rc_vcap_gid) || return "$EXIT_REFUSED"
 	fi
 
-	_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
-	_rc_check_dir "$dir" 0 "$gid" 710 || return "$EXIT_REFUSED"
-	_rc_check_file "$file" 0 "$gid" 640 || return "$EXIT_REFUSED"
-	[ -d "$home" ] || return "$EXIT_REFUSED"
-
-	digest=$(raw_hash "$file") || return "$EXIT_REFUSED"
-	[ "$digest" = "$want" ] || return "$EXIT_REFUSED"
-
 	setsid=$(_rc_tool setsid) || return "$EXIT_REFUSED"
 	timeout=$(_rc_tool timeout) || return "$EXIT_REFUSED"
 	command -v -- "$setsid" > /dev/null || return "$EXIT_REFUSED"
@@ -882,11 +944,28 @@ execute() {
 		priv=("$setpriv" "--reuid=$uid" "--regid=$gid" --clear-groups --no-new-privs --)
 	fi
 
+	_rc_check_dir "$base" 0 - 711 || return "$EXIT_REFUSED"
+	_rc_check_dir "$dir" 0 "$gid" 710 || return "$EXIT_REFUSED"
+
+	# A refusal below leaves the lock to the exit of the wrapper, which
+	# starts nothing first.
+	_rc_lock "$dir" || return "$EXIT_REFUSED"
+	[ ! -e "$dir/fence" ] && [ ! -L "$dir/fence" ] || return "$EXIT_REFUSED"
+	[ ! -e "$base/$task.done" ] && [ ! -L "$base/$task.done" ] || return "$EXIT_REFUSED"
+	_rc_check_dir "$dir" 0 "$gid" 710 || return "$EXIT_REFUSED"
+	_rc_check_file "$file" 0 "$gid" 640 || return "$EXIT_REFUSED"
+	[ -d "$home" ] || return "$EXIT_REFUSED"
+
+	digest=$(raw_hash "$file") || return "$EXIT_REFUSED"
+	[ "$digest" = "$want" ] || return "$EXIT_REFUSED"
+
 	# The marker file says the command gets the RC_MARK entry, so it goes
 	# in ahead of started, and a started directory without it is one from
-	# before the entry, whose members _rc_ours can't prove.
+	# before the entry, whose members _rc_ours can't prove. The lock goes
+	# before the launch, so the command never holds it.
 	_rc_write "$dir/marker" < /dev/null || return "$EXIT_REFUSED"
 	_rc_write "$dir/started" < /dev/null || return "$EXIT_REFUSED"
+	_rc_unlock
 
 	# The pid that bash -c records is the process group ID only because
 	# setsid makes that process a session leader, and a session leader's

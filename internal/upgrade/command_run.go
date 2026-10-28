@@ -733,8 +733,11 @@ func (r *commandRun) classifyExit(code int, started, pastTimeout bool) commandOu
 // the task's cancel into an outcome. No exit status reached Blacksmith, so
 // the record is the only witness. A command that had exited already counts
 // as the exit the record holds, whatever cleanup then found of its
-// children, and one cleanup had to end, or found already ended, is failed. A record that shows none of these strands the
-// node, as unprovenRecord says, the same as a lost result.
+// children, and one cleanup had to end, or found already ended, is
+// failed. A record that shows none of these strands the node, as
+// unprovenRecord says, the same as a lost result. started=no comes only
+// from a cleanup that fenced the task under the lock it shares with exec,
+// so the command can't have started after it.
 func (r *commandRun) classifyCancelled(execErr error, record scripts.Cleanup) commandOutcome {
 	if record.Started == "yes" {
 		code, err := strconv.Atoi(record.Exit)

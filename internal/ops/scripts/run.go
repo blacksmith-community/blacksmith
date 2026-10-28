@@ -81,6 +81,13 @@ var (
 // show that nothing the command started still runs, and killed=unknown
 // and started=- show nothing.
 //
+// Exec and cleanup share a lock on the task directory. Cleanup reads the
+// started marker under it, and when there is none it fences the task
+// before it lets the lock go, and exec refuses a fenced task. So a
+// cleanup that reports started=no has made sure that the command can't
+// start afterwards. A VM without flock refuses both operations, and the
+// broker holds the node on the cleanup that printed no record.
+//
 // A cleanup that shows the command ended leaves a done record in place of
 // the task directory, and a repeat cleanup for the task returns the same
 // line from it. started=- therefore means that prepare never arrived or

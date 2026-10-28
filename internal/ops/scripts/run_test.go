@@ -217,6 +217,7 @@ func newRunTree(t *testing.T) *runTree {
 	}
 
 	tree := &runTree{root: root, gid: os.Getgid()}
+	tree.linkFlock(t)
 
 	if os.Geteuid() == 0 {
 		tree.gid = vcapGID
@@ -228,6 +229,34 @@ func newRunTree(t *testing.T) *runTree {
 	}
 
 	return tree
+}
+
+// linkFlock puts the real flock under the fake root, where exec and
+// cleanup look for it. macOS has no flock, so there it is a stand-in that
+// takes no lock, and the tests of the lock itself run only on Linux.
+func (r *runTree) linkFlock(t *testing.T) {
+	t.Helper()
+
+	plant := r.path("usr/bin/flock")
+
+	if runtime.GOOS != "linux" {
+		err := os.WriteFile(plant, []byte("#!/bin/sh\nexit 0\n"), 0o755) //nolint:gosec // a test tool
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return
+	}
+
+	path, err := exec.LookPath("flock")
+	if err != nil {
+		t.Skip("no flock on this host")
+	}
+
+	err = os.Symlink(path, plant)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (r *runTree) path(parts ...string) string {

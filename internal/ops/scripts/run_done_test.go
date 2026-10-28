@@ -103,14 +103,14 @@ func TestRunCleanupWritesTheRecordOverALeftoverTemporaryFile(t *testing.T) {
 	}
 }
 
-// A done record whose task directory is still there, as a cleanup that
-// died between the rename and the removal leaves it, is replayed, and the
-// directory goes.
+// A done record whose task directory is still there without started, as
+// a cleanup whose removal failed part way can leave it, is replayed, and
+// the directory goes.
 func TestRunCleanupReplayRemovesALeftoverDirectory(t *testing.T) {
 	t.Parallel()
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, map[string]string{"started": ""})
+	tree.makeTask(t, runTask, map[string]string{"exit": "0\n", "starttime": "5\n"})
 
 	line := "cleanup started=yes exit=0 killed=no\n"
 
@@ -126,6 +126,69 @@ func TestRunCleanupReplayRemovesALeftoverDirectory(t *testing.T) {
 
 	if _, err := os.Lstat(tree.path(runOps, runTask)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the task directory stayed: %v", err)
+	}
+}
+
+// A done record whose task directory still holds started is not replayed,
+// because a directory with started may belong to a command that runs.
+// Cleanup answers from the directory instead, as it would with no record,
+// and removes it only once it has checked the command's session.
+func TestRunCleanupReplayChecksADirectoryThatStarted(t *testing.T) {
+	t.Parallel()
+	needDoneRecords(t)
+
+	old := "cleanup started=yes exit=0 killed=no\n"
+
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  string
+		kept  bool
+	}{
+		{
+			name:  "a session found ended",
+			files: withGoneGroup(t, map[string]string{"marker": "", "started": "", "exit": "5\n"}),
+			want:  "cleanup started=yes exit=5 killed=no\n",
+		},
+		{
+			name:  "a session that can't be checked",
+			files: map[string]string{"marker": "", "started": ""},
+			want:  "cleanup started=yes exit=- killed=unknown\n",
+			kept:  true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newRunTree(t)
+			tree.makeTask(t, runTask, tc.files)
+			writeTestFile(t, tree.donePath(runTask), old, 0o600)
+
+			code, out := tree.cleanup(t, runTask)
+			if code != 0 || out != tc.want {
+				t.Errorf("exit = %d, output = %q, want %q", code, out, tc.want)
+			}
+
+			_, err := os.Lstat(tree.path(runOps, runTask, "started"))
+			if tc.kept && err != nil {
+				t.Errorf("the directory of an unchecked command lost started: %v", err)
+			}
+
+			if !tc.kept && !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the checked directory stayed: %v", err)
+			}
+
+			record := old
+			if !tc.kept {
+				record = tc.want
+			}
+
+			if got, _ := os.ReadFile(tree.donePath(runTask)); string(got) != record { //nolint:gosec // the test tree
+				t.Errorf("the done record holds %q, want %q", got, record)
+			}
+		})
 	}
 }
 
