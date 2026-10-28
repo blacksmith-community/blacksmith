@@ -40,3 +40,10 @@ test('the settings and dialog text fields keep their size and font and leave the
  expect(hasBlock(css,'.dialog-modal-input:focus')).toBe(false);
  expect(hasBlock(css,'[data-theme="dark"] .dialog-modal-input')).toBe(false);
 });
+
+test('the certificate settings number fields keep their size and leave the look to Oat',()=>{
+ const css=read('blacksmith.css');
+ expect(block(css,'.cert-settings-field input[type="number"]')).not.toMatch(REPEATS);
+ expect(hasBlock(css,'.cert-settings-field input[aria-invalid="true"]')).toBe(false);
+ expect(hasBlock(css,'.cert-settings-field input:focus-visible')).toBe(false);
+});

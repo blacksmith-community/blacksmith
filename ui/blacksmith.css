@@ -12589,20 +12589,7 @@ span.config-type.resurrection {
 .cert-settings-field input[type="number"] {
   max-width: 180px;
   padding: 6px 8px;
-  border: 1px solid var(--cert-control-border);
-  border-radius: 6px;
   font-size: 14px;
-  color: var(--text-primary);
-  background: var(--bg-primary);
-}
-
-.cert-settings-field input[aria-invalid="true"] {
-  border-color: var(--cert-expired);
-}
-
-.cert-settings-field input:focus-visible {
-  outline: 2px solid var(--border-active);
-  outline-offset: 2px;
 }
 
 .cert-settings-help {
