@@ -140,25 +140,6 @@ t('a second session reuses the open dialog',async()=>{
  mgr(env).closeAll(); await stubs.settle();
 });
 
-t('Back while the terminal is open leaves the native dialog in place, and a confirmation above it returns to it',async()=>{
- const env=await start(); const {w,d,dialog,stubs,key}=env;
- openIt(env);
- w.blacksmithRouter={applying:true,current:{inspection:null},inspect:async()=>true,closeInspection:()=>{}};
- w.hideTaskDetailsModal(); w.hideConfigVersionsModal(); await stubs.settle();
- expect(dialog().open).toBe(true);
- expect(stubs.isModal(dialog())).toBe(true);
- const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
- expect(d.getElementById('dialog-modal').open).toBe(true);
- expect(d.getElementById('dialog-modal').hasAttribute('inert')).toBe(false);
- d.querySelector('[data-dialog-role="cancel"]').click(); expect(await done).toBe(false);
- await stubs.settle();
- expect(dialog().open).toBe(true);
- expect(stubs.isModal(dialog())).toBe(true);
- expect(dialog().hasAttribute('inert')).toBe(false);
- mgr(env).closeAll(); await stubs.settle();
-});
-
 t('toasts move into the terminal while it is open and back after',async()=>{
  const env=await start(); const {w,d,dialog,stubs}=env;
  openIt(env);

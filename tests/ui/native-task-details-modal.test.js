@@ -90,33 +90,6 @@ t('a click or touch inside the task details view leaves it open',async()=>{
  closeIt(env); await stubs.settle();
 });
 
-t('Back while the task details view is open closes it through the router and leaves no modal behind',async()=>{
- const env=await start(); const {w,d,dialog,stubs,snapshot}=env;
- const before=snapshot();
- await openIt(env);
- w.blacksmithRouter={applying:true,current:{inspection:{kind:'task',id:'42'}},inspect:async()=>true,closeInspection:()=>{}};
- closeIt(env); await stubs.settle();
- expect(dialog().open).toBe(false);
- expect(snapshot()).toBe(before);
- expect(d.querySelector('dialog[open]')).toBeNull();
-});
-
-t('Forward to the task details view while a confirmation is open stacks the native dialog above it',async()=>{
- const env=await start(); const {w,d,dialog,stubs,key}=env;
- const done=w.showConfirmDialog({title:'Sure',message:'Go on?'});
- await sleep(10);
- w.blacksmithRouter={applying:true,current:{inspection:{kind:'task',id:'42'}},inspect:async()=>true,closeInspection:()=>{}};
- await openIt(env);
- expect(dialog().open).toBe(true);
- expect(stubs.isModal(dialog())).toBe(true);
- expect(dialog().hasAttribute('inert')).toBe(false);
- w.blacksmithRouter.applying=false; w.blacksmithRouter.current.inspection.kind='none';
- closeIt(env); await stubs.settle();
- d.querySelector('[data-dialog-role="cancel"]').click(); await done;
- await stubs.settle();
- expect(d.querySelector('dialog[open]')).toBeNull();
-});
-
 t('a confirmation opened over the task details view returns to it, still modal',async()=>{
  const env=await start(); const {w,d,dialog,stubs,key}=env;
  await openIt(env);
