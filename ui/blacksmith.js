@@ -4624,7 +4624,9 @@
     const modeHelp = makeFieldHelp('rotate-mode');
     if (modeHelp) {
       modeHelp.classList.add('batch-mode-help');
-      group.appendChild(modeHelp);
+      // Ahead of the strip in the DOM so Tab reaches it first; CSS puts it
+      // in the corner.
+      group.insertBefore(modeHelp, batchTabs ? tabset : null);
     }
 
     const converge = rotateEl('fieldset', 'rotate-converge');

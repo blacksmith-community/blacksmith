@@ -12,16 +12,16 @@
   "sha256": "0e8c055c0d985c9caa81f2f1d5c0d401c94f50fb79d3a71a48de9d7c165e01ae"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-16",
-  "sha256": "428603e7d2a07870cdda790a8f30eaa04da3905157657edc67980a3f7327186f"
+  "key": "20261028-oat-17",
+  "sha256": "50b0030afc3e3166458e5b860f2453267df10323f957cdfec470dd065163b1c5"
  },
  "console.css": {
   "key": "20261024-rotate",
   "sha256": "8bcda446b6a449233904a9ec1a052b51d698ec71a20f9f908b5770f37946c0d1"
  },
  "forge-theme.css": {
-  "key": "20261028-oat-14",
-  "sha256": "5ab5c8d2fc44da2966af5cb64d4ff533398862b40a1d97b07dcfb43ca5e38cd2"
+  "key": "20261028-oat-17",
+  "sha256": "09165b77947898303ad1ad7d377a719fc22d242a625c077a62eed6101bc7eda8"
  },
  "inspection-layout.css": {
   "key": "20261025-navigation-history",
@@ -40,8 +40,8 @@
   "sha256": "54619f4709894e8b710c866c8a812eb8d8c70dd7d93aa3c9da3b80846e34ed99"
  },
  "view-guidance.css": {
-  "key": "20261028-oat-9",
-  "sha256": "b4226bfefbf1f9d99f8cd389afd679fbcec5cc8c1506ca3d5fbf51f91b79b7ad"
+  "key": "20261028-oat-17",
+  "sha256": "556c3292eeeddc560cb0e5c85c343eb7d9cef9a8ab299730c46dac4fc9fe2718"
  },
  "view-guidance.js": {
   "key": "20261027-batch-explain",

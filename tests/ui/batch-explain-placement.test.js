@@ -91,6 +91,18 @@ t('Rotate options hide the Mode legend and keep its info button in the tab strip
  expect(tabs.some(t=>t.contains(button))).toBe(false);
 });
 
+t('the Mode info button comes before the tab strip in the DOM',async()=>{
+ const env=await setupRotate({certs:[cert('/s/a_crt','a_crt',5,'inst-a','cache-a')],bootOptions:{noDialogs:true,guidance:true,routes:QUIET}});envs.push(env);
+ const {d}=env;
+ const mode=d.getElementById('rotate-mode');
+ const help=mode.querySelector(':scope > .batch-mode-help');
+ const strip=mode.querySelector(':scope > bs-tabs');
+ expect(help.nextElementSibling).toBe(strip);
+ expect(Boolean(help.compareDocumentPosition(strip)&4)).toBe(true);
+ const focusable=[...mode.querySelectorAll('button, [role=tab]')].map(e=>e.matches('[data-context-help]')?'help':'tab');
+ expect(focusable.slice(0,3)).toEqual(['help','tab','tab']);
+});
+
 t('the Mode strip without tabs keeps a hidden legend and the same info button',async()=>{
  const env=boot({noDialogs:true,guidance:true,oat:true,routes:QUIET});envs.push(env);
  const {w}=env;await sleep(30);
@@ -119,6 +131,12 @@ t('the stylesheet puts the Mode help in the strip corner and rows its headings',
  expect(/\.rotate-mode\s*>\s*\.batch-mode-help\s*\{[^}]*position:\s*absolute[^}]*top:[^}]*right:/.test(css)).toBe(true);
  expect(/\.rotate-mode\s*\{[^}]*position:\s*relative/.test(css)).toBe(true);
  expect(/\.field-guidance-row\s*\{[^}]*display:\s*flex[^}]*align-items:\s*center/.test(css)).toBe(true);
+});
+
+t('the stylesheet reserves strip room for the corner help and closes the label gap in a flex row',()=>{
+ const read=(f)=>require('fs').readFileSync(require('path').join(__dirname,'../../ui/'+f),'utf8');
+ expect(/\.rotate-mode\s*>\s*bs-tabs\s*>\s*\[role=tablist\]\s*\{[^}]*padding-right:\s*40px/.test(read('view-guidance.css'))).toBe(true);
+ expect(/\.filter-row\s*>\s*label\s*\+\s*\.field-guidance\s*\{[^}]*margin-left:\s*-6px/.test(read('forge-theme.css'))).toBe(true);
 });
 
 t('upgrade options and Execution settings each get an info button',async()=>{

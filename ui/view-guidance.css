@@ -22,6 +22,8 @@
 /* The rotation mode strip has no visible heading, so its help sits in the strip's upper right corner. */
 .rotate-mode { position: relative; }
 .rotate-mode > .batch-mode-help { position: absolute; top: 8px; right: 8px; margin: 0; }
+/* The corner button never covers the last tab, so the strip keeps its own room. */
+.rotate-mode > bs-tabs > [role=tablist] { padding-right: 40px; }
 
 #blacksmith .detail-content.plans-view { display: flex; align-items: flex-start; gap: 16px; min-width: 0; }
 #blacksmith .plans-view > .plans-list { flex: 0 0 16rem; width: 16rem; min-width: 0; max-width: 100%; padding: 0; border: 0; }
