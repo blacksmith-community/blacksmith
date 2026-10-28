@@ -450,7 +450,9 @@ for(const [name,status] of [['succeeds',200],['fails',500]]){
 // what happened in words.
 const failures=[
  ['the request is rejected',()=>Promise.reject(new TypeError('Failed to fetch')),'Failed to fetch'],
- ['the answer is an HTML page',(u,o,j)=>j(502,'<html><body><h1>Bad Gateway</h1></body></html>'),'HTTP 502']
+ ['the answer is an HTML page',(u,o,j)=>j(502,'<html><body><h1>Bad Gateway</h1></body></html>'),'HTTP 502'],
+ ['the answer is an HTML page after a doctype and blank lines',(u,o,j)=>j(502,'\n  <!DOCTYPE html><html><body><h1>Bad Gateway</h1></body></html>'),'HTTP 502'],
+ ['the answer is plain text with angle brackets',(u,o,j)=>j(400,'expected <name> to be a task ID'),'expected <name> to be a task ID']
 ];
 const held=(env,verb,answer)=>{
  let release;const gate=new Promise((r)=>{release=r;});const seen=[];

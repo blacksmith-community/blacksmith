@@ -4926,8 +4926,11 @@
     return { status: response.status, body: await response.json() };
   };
 
-  // An error for a toast. A proxy's HTML page never shows as markup.
-  const commandErrorText = (err) => (/<[a-z!/]/i.test(String((err && err.message) || ''))
+  // An error for a toast. A proxy's HTML page never shows as markup, but a
+  // plain message that happens to contain angle brackets still shows.
+  const isHtmlPage = (err) => /^\s*<(!doctype|html)\b/i.test(String((err && err.message) || ''))
+    || /text\/html/i.test(String((err && err.contentType) || ''));
+  const commandErrorText = (err) => (isHtmlPage(err)
     ? `The broker answered with HTTP ${err.status || 'an error'}.`
     : apiErrorText(err));
 
@@ -7111,6 +7114,7 @@
     const message = (body && (body.error || body.message)) || String(text || '').trim() || `HTTP ${response.status}`;
     const error = new Error(String(message));
     error.status = response.status;
+    error.contentType = (response.headers && response.headers.get && response.headers.get('Content-Type')) || '';
     error.code = body && typeof body.code === 'string' ? body.code : '';
     return error;
   };
