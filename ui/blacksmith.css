@@ -10636,43 +10636,10 @@ span.config-type.resurrection {
 
 #upgrade .upgrade-filters select {
   width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-primary);
-  border-radius: 0.375rem;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-#upgrade .upgrade-filters select:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-}
-
-#upgrade .upgrade-filters select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 #upgrade .upgrade-filters input[type="number"] {
   width: 120px;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-primary);
-  border-radius: 0.375rem;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-#upgrade .upgrade-filters input[type="number"]:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-}
-
-#upgrade .upgrade-filters input[type="number"]::placeholder {
-  color: var(--text-secondary);
 }
 
 #upgrade .upgrade-filters .filter-row {
@@ -10781,18 +10748,7 @@ span.config-type.resurrection {
 #upgrade .upgrade-range-selection input[type="number"] {
   width: 70px;
   padding: 0.375rem 0.5rem;
-  border: 1px solid var(--border-primary);
-  border-radius: 0.375rem;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 0.875rem;
   text-align: center;
-}
-
-#upgrade .upgrade-range-selection input[type="number"]:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
 
 #upgrade .upgrade-range-selection .range-separator {
