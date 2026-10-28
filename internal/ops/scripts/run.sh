@@ -397,17 +397,21 @@ _rc_led() {
 # that entry, so a directory from before the entry existed proves nothing.
 # Cleanup reads the environment as root, and a read that fails proves
 # nothing, nor does a process that cleared its environment or exec'd with
-# another one.
+# another one. The read takes the memory lock of the process, which one
+# stuck on a hung filesystem can hold, so it runs under timeout, and a
+# read that does not finish within two seconds proves nothing either.
 _rc_ours() {
 	local entry=$RC_MARK=${1##*/} e
+	local -a vars=()
 
 	[ -f "$1/marker" ] && [ ! -L "$1/marker" ] || return 1
 
-	{
-		while IFS= read -r -d '' e || [ -n "$e" ]; do
-			[ "$e" != "$entry" ] || return 0
-		done < "/proc/$2/environ"
-	} 2> /dev/null
+	mapfile -d '' -t vars < <(timeout -s KILL 2 cat -- "/proc/$2/environ" 2> /dev/null)
+	wait "$!" || return 1
+
+	for e in "${vars[@]}"; do
+		[ "$e" != "$entry" ] || return 0
+	done
 
 	return 1
 }

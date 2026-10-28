@@ -372,3 +372,66 @@ printf '%%s %%s\n' "$rc" "$got"
 		})
 	}
 }
+
+// _rc_ours reads a member's environment under timeout, because the read
+// takes the member's memory lock, which a process stuck on a hung
+// filesystem can hold. A read that hangs is ended after two seconds and
+// proves nothing, even when what it read before it hung holds the marker,
+// so the node stays held. A stub cat that prints the marker and hangs
+// stands in for the blocked read.
+func TestRunOursBoundsTheEnvironmentRead(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("_rc_ours reads /proc")
+	}
+
+	tree := newRunTree(t)
+	tree.makeTask(t, runTask, map[string]string{"started": "", "marker": ""})
+
+	stubs := tree.path("stubs")
+	flag := tree.path("stub-ran")
+
+	err := os.Mkdir(stubs, 0o755) //nolint:gosec // a test tree
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hang := fmt.Sprintf("#!/bin/sh\n: > %q\nprintf '%%s\\0' %q\nexec sleep 60\n", flag, runMarker)
+
+	err = os.WriteFile(stubs+"/cat", []byte(hang), 0o755) //nolint:gosec // a test tool
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	script := fmt.Sprintf(`env -i %s sleep 60 &
+m=$!
+c=
+until [ "$c" = sleep ]; do
+	sleep 0.01
+	{ IFS= read -r -d '' c < "/proc/$m/cmdline"; } 2> /dev/null
+done
+_rc_ours %q "$m"
+real=$?
+PATH=%q:$PATH
+start=$SECONDS
+_rc_ours %q "$m"
+stub=$?
+took=$((SECONDS - start))
+kill -KILL "$m"
+printf '%%s %%s %%s\n' "$real" "$stub" "$took"
+`, runMarker, tree.path(runOps, runTask), stubs, tree.path(runOps, runTask))
+
+	code, out := tree.snippet(t, false, script)
+
+	var real, stub, took int
+
+	_, scanErr := fmt.Sscanf(out, "%d %d %d", &real, &stub, &took)
+	if code != 0 || scanErr != nil || real != 0 || stub == 0 || took > 5 {
+		t.Errorf("exit = %d, output = %q, want the real read proven, the hung one not, within five seconds", code, out)
+	}
+
+	if _, err := os.Stat(flag); err != nil {
+		t.Errorf("the hanging stub never stood in for the read: %v", err)
+	}
+}

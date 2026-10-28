@@ -71,15 +71,16 @@ var (
 // file is missing or invalid, the kill tool is missing while the session
 // has members, the session can't be judged, or the session's leader is
 // gone and a live member's environment doesn't hold the task's
-// BLACKSMITH_RUN_TASK entry, which may make it a stranger's. Such a
-// member gets no signal. ParseCleanup reads any
-// other killed value as "unknown" too. On a recheck of recorded
-// survivors, Killed is "yes" once none of them lives and the session has
-// no member but zombies, or the leader's pid is held by another process,
-// and "survived" otherwise, also while a member lives that cleanup could
-// not prove was the command's and so did not signal. So killed=yes, killed=no, and started=no each
-// show that nothing the command started still runs, and killed=unknown
-// and started=- show nothing.
+// BLACKSMITH_RUN_TASK entry, or can't be read within two seconds, which
+// leaves it possibly a stranger's. Such a member gets no signal.
+// ParseCleanup reads any other killed value as "unknown" too. On a
+// recheck of recorded survivors, Killed is "yes" once none of them lives
+// and the session has no member but zombies, or the leader's pid is held
+// by another process, and "survived" otherwise, also while a member lives
+// that cleanup could not prove was the command's and so did not signal.
+// So killed=yes, killed=no, and started=no each show that nothing the
+// command started still runs, and killed=unknown and started=- show
+// nothing.
 //
 // Exec and cleanup share a lock on the task directory. Cleanup reads the
 // started marker under it, and when there is none it fences the task
