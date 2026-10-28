@@ -20,7 +20,7 @@ const start=async(markup)=>{
  await sleep(30);
  d.body.insertAdjacentHTML('beforeend',markup);
  await sleep(10);
- const host=d.querySelector('bs-tabs');
+ const host=d.getElementById('strip');
  const tabs=[...host.querySelectorAll('[role=tab]')];
  const panels=[...host.querySelectorAll('[role=tabpanel]')];
  const press=(key,target=d.activeElement)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));
@@ -97,7 +97,7 @@ t('a tab change after the strip is ready asks the route to update, and the first
  d.body.insertAdjacentHTML('beforeend',strip()); await sleep(10);
  
  expect(notified).toBe(0);
- d.querySelectorAll("bs-tabs [role=tab]")[1].click();
+ d.querySelectorAll("#strip [role=tab]")[1].click();
  expect(notified).toBe(1);
 });
 

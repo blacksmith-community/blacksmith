@@ -336,12 +336,12 @@
             
             <!-- Config Details tabs -->
             <div class="manifest-details-container">
+              <bs-tabs>
               <div class="manifest-tabs-nav" role="tablist" aria-label="Config details navigation">
-                <button class="manifest-tab-btn active" data-tab="versions" data-group="config-tabs" role="tab" aria-selected="true" aria-controls="versions-panel">Versions</button>
-                <button class="manifest-tab-btn" data-tab="diffs" data-group="config-tabs" role="tab" aria-selected="false" aria-controls="diffs-panel">Diffs</button>
+                <button class="manifest-tab-btn active" id="versions-tab" data-tab="versions" data-group="config-tabs" role="tab" aria-selected="true" aria-controls="versions-panel">Versions</button>
+                <button class="manifest-tab-btn" id="diffs-tab" data-tab="diffs" data-group="config-tabs" role="tab" aria-selected="false" aria-controls="diffs-panel">Diffs</button>
               </div>
-              
-              <div class="manifest-tab-content">
+
                 <!-- Versions Tab -->
                 <div id="versions-panel" class="manifest-tab-pane active" data-tab="versions" data-group="config-tabs" role="tabpanel" aria-labelledby="versions-tab">
                   <div class="config-versions-container">
@@ -376,7 +376,7 @@
                     </div>
                   </div>
                 </div>
-              </div>
+              </bs-tabs>
             </div>
           </div>
         </div>

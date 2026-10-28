@@ -17887,19 +17887,13 @@
     });
     while (configInspectionStates.size > 30) configInspectionStates.delete(configInspectionStates.keys().next().value);
   };
+  // Restoring a tab is not a request to load its content, so the change
+  // listener stays quiet while it runs.
+  let restoringConfigTab = false;
   const selectConfigInspectionTab = tabName => {
-    const modal = document.getElementById('config-details-modal');
-    modal?.querySelectorAll('.manifest-tab-btn').forEach(button => {
-      const active = button.dataset.tab === tabName;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', String(active));
-      button.tabIndex = active ? 0 : -1;
-    });
-    modal?.querySelectorAll('.manifest-tab-pane').forEach(pane => {
-      const active = pane.dataset.tab === tabName;
-      pane.classList.toggle('active', active);
-      pane.style.display = active ? '' : 'none';
-    });
+    restoringConfigTab = true;
+    try { document.getElementById('config-details-modal')?.querySelector('bs-tabs')?.select(tabName); }
+    finally { restoringConfigTab = false; }
   };
 
   // Show config details modal
@@ -17958,9 +17952,6 @@
         contentDiv.style.display = 'block';
       }
 
-      // Set up modal tab switching for this config modal
-      setupConfigModalTabs();
-
       // Set up copy functionality
       setupConfigCopyFunctionality();
 
@@ -17979,35 +17970,6 @@
       closeConfigDialog();
       document.body.style.overflow = '';
     }
-  };
-
-  // Set up config modal tab switching
-  const setupConfigModalTabs = () => {
-    const tabGroupId = 'config-tabs';
-    const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
-    const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
-
-    tabButtons.forEach(button => {
-      button.addEventListener('click', () => {
-        const tabName = button.dataset.tab;
-
-        // Update active states
-        tabButtons.forEach(btn => btn.classList.remove('active'));
-        button.classList.add('active');
-
-        // Show/hide content panes
-        tabPanes.forEach(pane => {
-          pane.classList.remove('active');
-          pane.style.display = 'none';
-        });
-
-        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
-        if (targetPane) {
-          targetPane.classList.add('active');
-          targetPane.style.display = '';
-        }
-      });
-    });
   };
 
   // Set up config copy functionality
@@ -18309,54 +18271,22 @@
 
   // Set up config details modal tab switching
   const setupConfigDetailsTabs = () => {
-    // Support both config-tabs and config-details-tabs (for different modal instances)
-    const tabGroupIds = ['config-tabs', 'config-details-tabs'];
-    let tabButtons = [];
-    let tabPanes = [];
-
-    tabGroupIds.forEach(tabGroupId => {
-      const buttons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
-      const panes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
-      tabButtons.push(...buttons);
-      tabPanes.push(...panes);
-    });
-
-    tabButtons.forEach(button => {
-      if (button._configTabHandler) button.removeEventListener('click', button._configTabHandler);
-      button._configTabHandler = () => {
+    const tabset = document.getElementById('config-details-modal')?.querySelector('bs-tabs');
+    if (tabset && !tabset._configTabsBound) {
+      tabset._configTabsBound = true;
+      tabset.addEventListener('ot-tab-change', (event) => {
+        if (restoringConfigTab) return;
         rememberConfigInspection();
-        const tabName = button.dataset.tab;
-        const buttonGroupId = button.dataset.group;
-
-        // Update active states (only within the same group)
-        const sameGroupButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${buttonGroupId}"]`);
-        sameGroupButtons.forEach(btn => btn.classList.remove('active'));
-        button.classList.add('active');
-
-        // Show/hide content panes (only within the same group)
-        const sameGroupPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${buttonGroupId}"]`);
-        sameGroupPanes.forEach(pane => {
-          pane.classList.remove('active');
-          pane.style.display = 'none';
-        });
-
-        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${buttonGroupId}"]`);
-        if (targetPane) {
-          targetPane.classList.add('active');
-          targetPane.style.display = '';
-        }
-
-        // Initialize diff tab when clicked
-        if (tabName === 'diffs' && window.currentConfigInfo) {
+        // Initialize the diff tab when it is chosen
+        if (event.detail.tab?.dataset.tab === 'diffs' && window.currentConfigInfo) {
           // Small delay to ensure DOM elements are available after tab switch
           const revision = configInspectionRevision;
           setTimeout(() => {
             if (revision === configInspectionRevision && window.currentConfigInfo) initConfigDiffTab(window.currentConfigInfo.type, window.currentConfigInfo.name);
           }, 10);
         }
-      };
-      button.addEventListener('click', button._configTabHandler);
-    });
+      });
+    }
 
     // Set up diff version selector
     const diffSelector = document.getElementById('diff-version-selector');

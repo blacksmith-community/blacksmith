@@ -28,7 +28,7 @@ test('a closed config ignores delayed versions',async()=>{
 });
 
 test('config inspection restores version, tab and diff pair per config without mutations',async()=>{
- const {w,d,calls}=boot();try{
+ const {w,d,calls}=boot({oat:true});try{
  w.__routes.push([/\/b\/configs\/cloud\/[^/]+\/versions/,(u,o,j)=>j(200,{configs:[{id:'3'},{id:'2'},{id:'1'}]})]);
  w.__routes.push([/\/b\/configs\/cloud\/[^/]+\/diff/,(u,o,j)=>j(200,{diff:'restored comparison'})]);
  w.__routes.push([/\/b\/configs\/[123]$/,(u,o,j)=>j(200,{content:'version '+u.split('/').pop()})]);

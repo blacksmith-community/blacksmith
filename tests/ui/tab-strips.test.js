@@ -26,16 +26,27 @@ const press=(w,target,key)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{
 const manifest={text:'name: test',parsed:{name:'test',releases:[{name:'release',version:'1'}],stemcells:[{alias:'default',os:'ubuntu',version:'1'}],update:{canaries:1}}};
 const strips={
  manifest:{
+  min:4,keyboard:true,
   render:({w,d})=>{ d.body.insertAdjacentHTML('beforeend','<div id="strip-host">'+w.__T.formatManifestDetails(manifest,'instance')+'</div>'); return d.getElementById('strip-host'); },
   tabs:(root)=>[...root.querySelectorAll('[role=tab]')],
   panes:(root)=>[...root.querySelectorAll('[role=tabpanel]')]
+ },
+ config:{
+  min:2,keyboard:true,
+  render:async({w,d})=>{
+   w.__routes.push([/\/b\/configs\/cloud\/[^/]+\/versions/,(u,o,j)=>j(200,{configs:[{id:'3'},{id:'2'},{id:'1'}]})],[/\/b\/configs\/[123]$/,(u,o,j)=>j(200,{content:'version '+u.split('/').pop()})]);
+   await w.showConfigVersions('cloud','alpha','3'); await sleep(40);
+   return d.getElementById('config-details-modal');
+  },
+  tabs:(root)=>[...root.querySelectorAll('.manifest-details-container [role=tab]')],
+  panes:(root)=>[...root.querySelectorAll('.manifest-details-container [role=tabpanel]')]
  }
 };
 
 Object.entries(strips).forEach(([name,strip])=>{
  const setup=async()=>{
   const env=await start();
-  const root=strip.render(env); await sleep(20);
+  const root=await strip.render(env); await sleep(20);
   const tabs=strip.tabs(root); const panes=strip.panes(root);
   const selected=()=>tabs.filter(x=>x.getAttribute('aria-selected')==='true').map(x=>tabs.indexOf(x));
   // The older strips show a pane with an inline display, the newer ones with the active class and the hidden attribute.
@@ -45,20 +56,21 @@ Object.entries(strips).forEach(([name,strip])=>{
  };
  t(`${name} strip starts with the first tab selected and one active pane`,async()=>{
   const {tabs,active,selected}=await setup();
-  expect(tabs.length).toBeGreaterThan(3);
+  expect(tabs.length).toBeGreaterThanOrEqual(strip.min);
   expect(selected()).toEqual([0]);
   expect(tabs.map(x=>x.tabIndex)).toEqual(tabs.map((x,i)=>i===0?0:-1));
   expect(active()).toEqual([0]);
  });
  t(`${name} strip clicks activate the tab and its pane`,async()=>{
   const {tabs,active,selected}=await setup();
-  tabs[2].click(); await sleep(5);
-  expect(selected()).toEqual([2]);
-  expect(tabs[2].classList.contains('active')).toBe(true);
+  const at=tabs.length>2?2:1;
+  tabs[at].click(); await sleep(5);
+  expect(selected()).toEqual([at]);
+  expect(tabs[at].classList.contains('active')).toBe(true);
   expect(tabs[0].classList.contains('active')).toBe(false);
-  expect(active()).toEqual([2]);
+  expect(active()).toEqual([at]);
  });
- t(`${name} strip arrow keys move and wrap, with focus following`,async()=>{
+ (strip.keyboard?t:test.skip)(`${name} strip arrow keys move and wrap, with focus following`,async()=>{
   const {w,d,tabs,selected}=await setup();
   tabs[0].focus();
   press(w,tabs[0],'ArrowLeft');
@@ -68,10 +80,10 @@ Object.entries(strips).forEach(([name,strip])=>{
   press(w,tabs[0],'ArrowRight');
   expect(selected()).toEqual([1]); expect(d.activeElement===tabs[1]).toBe(true);
  });
- t(`${name} strip Home and End go to the first and last tab`,async()=>{
+ (strip.keyboard?t:test.skip)(`${name} strip Home and End go to the first and last tab`,async()=>{
   const {w,d,tabs,selected}=await setup();
-  tabs[1].click(); tabs[1].focus();
-  press(w,tabs[1],'End');
+  tabs[0].focus();
+  press(w,tabs[0],'End');
   expect(selected()).toEqual([tabs.length-1]); expect(d.activeElement===tabs[tabs.length-1]).toBe(true);
   press(w,tabs[tabs.length-1],'Home');
   expect(selected()).toEqual([0]); expect(d.activeElement===tabs[0]).toBe(true);
@@ -80,9 +92,9 @@ Object.entries(strips).forEach(([name,strip])=>{
 
 // A strip on bs-tabs keeps its tab list and panels as direct children, in
 // the same order, so Oat can pair them by index.
-['manifest'].forEach((name)=>{
+['manifest','config'].forEach((name)=>{
  t(`${name} strip is a bs-tabs element with the tab list and panels as its children`,async()=>{
-  const env=await start(); const root=strips[name].render(env); await sleep(20);
+  const env=await start(); const root=await strips[name].render(env); await sleep(20);
   const host=root.querySelector('bs-tabs');
   expect(host).not.toBeNull();
   const kids=[...host.children];
@@ -92,10 +104,10 @@ Object.entries(strips).forEach(([name,strip])=>{
   expect(kids.length-1).toBe(tabs.length);
   tabs.forEach((tab,i)=>expect(kids[i+1].id===tab.getAttribute('aria-controls')).toBe(true));
   expect(root.querySelector('.manifest-tab-content')).toBeNull();
-  expect(root.querySelector('[style*="display"]')).toBeNull();
+  expect(kids.filter(x=>/display/.test(x.getAttribute('style')||''))).toEqual([]);
  });
  t(`${name} strip hides inactive panels with the hidden attribute`,async()=>{
-  const env=await start(); const root=strips[name].render(env); await sleep(20);
+  const env=await start(); const root=await strips[name].render(env); await sleep(20);
   const panes=strips[name].panes(root);
   expect(panes.map(x=>x.hidden)).toEqual(panes.map((x,i)=>i!==0));
  });

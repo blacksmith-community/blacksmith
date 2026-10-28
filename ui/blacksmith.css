@@ -8867,6 +8867,18 @@ span.config-type.resurrection {
   padding: 0.75rem;
 }
 
+/* The panels carry the box of the old content wrapper, which was this tall. */
+#config-details-modal bs-tabs > .manifest-tab-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(90vh - 200px);
+  height: calc(90vh - 200px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: calc(20px + 0.75rem);
+  margin-bottom: 10px;
+}
+
 /* Config versions container */
 #config-details-modal .config-versions-container {
   display: flex;
@@ -8942,7 +8954,8 @@ span.config-type.resurrection {
   }
 
   /* Adjust content heights for mobile */
-  #config-details-modal .manifest-tab-content {
+  #config-details-modal .manifest-tab-content,
+  #config-details-modal bs-tabs > .manifest-tab-pane {
     max-height: calc(95vh - 180px) !important;
     height: calc(95vh - 180px) !important;
   }
