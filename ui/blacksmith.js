@@ -23572,30 +23572,6 @@
     }
   };
 
-  // Sub-tab switching for broker tab
-  const switchSubTab = (subtabId) => {
-    // Remove active class from all sub-tab buttons and panels
-    document.querySelectorAll('.sub-tab-button').forEach(btn => {
-      btn.classList.remove('active');
-      btn.setAttribute('aria-selected', 'false');
-    });
-    document.querySelectorAll('.sub-tab-panel').forEach(panel => {
-      panel.classList.remove('active');
-      panel.setAttribute('aria-hidden', 'true');
-    });
-
-    // Add active class to target button and panel
-    const targetButton = document.querySelector(`[data-subtab="${subtabId}"]`);
-    const targetPanel = document.getElementById(subtabId);
-
-    if (targetButton && targetPanel) {
-      targetButton.classList.add('active');
-      targetButton.setAttribute('aria-selected', 'true');
-      targetPanel.classList.add('active');
-      targetPanel.setAttribute('aria-hidden', 'false');
-    }
-  };
-
   // Copy to clipboard functionality
   window.copyToClipboard = function (text, buttonElement) {
     if (!text) {
