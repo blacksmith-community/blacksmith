@@ -1075,6 +1075,10 @@ func (m *Manager) commandRefusalLocked(task *UpgradeTask) error {
 // when the authorizer refuses it, whether at a restart or at the queue.
 const commandRefusedMessage = "Running this command is no longer allowed, so the task paused. "
 
+// commandRefusedNextStep ends a refusal message with what the operator can
+// do about the paused task.
+const commandRefusedNextStep = " Cancel the task, or continue it once the broker allows the command again."
+
 // pauseRefusedCommandLocked pauses a loaded or queued command task the authorizer
 // refuses, and says why on its first instance that has not ended. It
 // reports whether it paused the task. A manager that is not configured
@@ -1120,7 +1124,7 @@ func (m *Manager) pauseCommandForRefusalLocked(task *UpgradeTask, err error) boo
 			continue
 		}
 
-		inst.Error = commandRefusedMessage + commandErrorText(err)
+		inst.Error = commandRefusedMessage + commandErrorText(err) + commandRefusedNextStep
 
 		break
 	}
@@ -1772,7 +1776,7 @@ func (m *Manager) refusedBeforeStart(ctx context.Context, task *UpgradeTask, ins
 		task.Paused = true
 	}
 
-	inst.Error = "Running this command is no longer allowed, so the task paused before any node started. " + commandErrorText(err)
+	inst.Error = "Running this command is no longer allowed, so the task paused before any node started. " + commandErrorText(err) + commandRefusedNextStep
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
@@ -1873,7 +1877,8 @@ func (m *Manager) endCommandInstance(ctx context.Context, task *UpgradeTask, ins
 	// no node recorded a failure.
 	if halted && !failed {
 		failed = true
-		inst.Error = "Blacksmith could not run a node of the deployment, so the deployment stopped."
+		inst.Error = "Blacksmith couldn't run a node of this deployment, so the rest of the deployment was skipped. " +
+			"The node rows show why, and the Continue remaining instances button moves on to the instances still waiting."
 	}
 
 	ended := m.certNowLocked()

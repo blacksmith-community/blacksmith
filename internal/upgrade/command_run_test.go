@@ -2953,5 +2953,33 @@ func TestCommandHaltBeforeAStopFailsTheInstanceAfterTheResume(t *testing.T) {
 		t.Errorf("the instance is %s, want failed", got)
 	}
 
+	halted := "Blacksmith couldn't run a node of this deployment, so the rest of the deployment was skipped. " +
+		"The node rows show why, and the Continue remaining instances button moves on to the instances still waiting."
+	if got := done.Instances[0].Error; got != halted {
+		t.Errorf("the instance says %q, want %q", got, halted)
+	}
+
+	fix.assertNoCommandText()
+}
+
+// Root can be turned off after the task is queued and before its first
+// node starts, which is the window refusedBeforeStart covers.
+func TestCommandTaskRefusedBeforeAnyNodeSaysWhatToDo(t *testing.T) {
+	fix := newTaskFixture(t, 2, 1, withRoot())
+	fix.setRoot(false)
+
+	if !fix.manager.refusedBeforeStart(context.Background(), fix.task, &fix.task.Instances[0]) {
+		t.Fatal("the refused task did not pause")
+	}
+
+	paused := fix.snapshot()
+
+	want := "Running this command is no longer allowed, so the task paused before any node started. " +
+		"403 root_disabled: Running commands as root is switched off on this broker, so choose vcap. " +
+		"An administrator can turn it on with commands.allow_root in the broker configuration." + commandRefusedNextStep
+	if got := paused.Instances[0].Error; got != want {
+		t.Errorf("the first instance says %q, want %q", got, want)
+	}
+
 	fix.assertNoCommandText()
 }

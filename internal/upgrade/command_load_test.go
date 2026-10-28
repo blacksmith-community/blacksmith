@@ -342,6 +342,10 @@ func TestLoadedTaskTheAuthorizerRefusesPausesWithAReason(t *testing.T) {
 		t.Errorf("the second instance says %q, want the refusal", paused.Instances[1].Error)
 	}
 
+	if !strings.HasSuffix(paused.Instances[1].Error, commandRefusedNextStep) {
+		t.Errorf("the second instance says %q, want it to end with what to do next", paused.Instances[1].Error)
+	}
+
 	if paused.Instances[1].Status != InstanceStatusPending {
 		t.Errorf("the second instance is %s, want pending, so a resume runs what is left", paused.Instances[1].Status)
 	}
