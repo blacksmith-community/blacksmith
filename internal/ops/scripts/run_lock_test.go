@@ -629,3 +629,70 @@ func writeTestFile(t *testing.T, path, text string, mode os.FileMode) {
 		t.Fatal(err)
 	}
 }
+
+// The lock is safe only if cleanup writes the fence, and exec writes
+// started, before either lets the lock go. The other tests stop one side
+// and resume it after the other finishes, so they never see where inside
+// its own critical section a side writes. This one wraps the two writes
+// so that each first tries a non-blocking flock on the task directory and
+// logs whether the lock was still held.
+func TestRunFenceAndStartedAreWrittenUnderTheLock(t *testing.T) {
+	t.Parallel()
+	needDoneRecords(t)
+
+	const probe = `
+_probe() {
+	local flock
+
+	flock=$(_rc_tool flock)
+
+	if ( exec {p}< "$2" && "$flock" -n -x "$p" ) 2> /dev/null; then
+		printf '%s free\n' "$1" >> "$CERTPATCH_ROOT/probe.log"
+	else
+		printf '%s held\n' "$1" >> "$CERTPATCH_ROOT/probe.log"
+	fi
+}
+eval "$(declare -f _rc_write | sed '1s/_rc_write/_rc_write_real/')"
+eval "$(declare -f _rc_fence | sed '1s/_rc_fence/_rc_fence_real/')"
+_rc_write() {
+	case $1 in
+	*/started) _probe started "${1%/*}" ;;
+	esac
+	_rc_write_real "$@"
+}
+_rc_fence() {
+	_probe fence "$1"
+	_rc_fence_real "$@"
+}
+`
+
+	command := []byte("exit 0\n")
+
+	for name, tc := range map[string]struct{ call, want string }{
+		"exec writes started":  {"execute " + runTask + " root 30 " + digestOf(command) + " < /dev/null\n", "started held\n"},
+		"cleanup writes fence": {"cleanup " + runTask + "\n", "fence held\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			tree := newRunTree(t)
+			tree.linkRunTools(t)
+
+			code, _ := tree.prepare(t, runTask, "root", command)
+			if code != 0 {
+				t.Fatalf("prepare exited %d", code)
+			}
+
+			tree.snippet(t, false, probe+tc.call)
+
+			got, err := os.ReadFile(tree.path("probe.log")) //nolint:gosec // the test tree
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if string(got) != tc.want {
+				t.Errorf("probe log is %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
