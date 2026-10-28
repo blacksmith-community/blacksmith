@@ -34,11 +34,37 @@ const GONE={
   'input','textarea','[data-theme="dark"] input','[data-theme="dark"] textarea',
   'input:focus','textarea:focus','[data-theme="dark"] input:focus','[data-theme="dark"] textarea:focus',
   'input::placeholder','textarea::placeholder',
+  '.instance-group-select:hover','.job-select:hover',
+  '[data-theme="dark"] .instance-group-select','[data-theme="dark"] .job-select',
+  '[data-theme="dark"] .form-row input','[data-theme="dark"] .form-row textarea','[data-theme="dark"] .form-row select',
+  '[data-theme="dark"] .connection-field select','[data-theme="dark"] .connection-field select:hover',
+  '.org-space-table select:disabled',
+  '[data-theme="dark"] .compact-tasks-controls .filter-group select','[data-theme="dark"] .compact-tasks-controls .filter-group select:hover',
+  '.filter-input::placeholder',
+  '.table-controls-container .log-file-dropdown:hover',
+  '[data-theme="dark"] .table-controls-container .log-file-dropdown','[data-theme="dark"] .table-controls-container .log-file-dropdown:hover',
+  '[data-theme="dark"] .diff-controls .form-control',
+  '#services .filter-row .checkbox-label input[type="checkbox"]',
+  '.checkbox-group input[type="checkbox"]','.compact-tasks-controls .checkbox-group input[type="checkbox"]','.compact-configs-controls .checkbox-group input[type="checkbox"]',
+  '.checkbox-label input[type="checkbox"]',
  ],
 };
+const LOOK=['border','border-color','border-radius','background','background-color','color'];
 const STRIPPED={
  'blacksmith.css':{
   'select:disabled':['background-color','border','border-color','color'],
+  '.instance-group-select':LOOK.concat('cursor'),
+  '.job-select':LOOK.concat('cursor'),
+  '.form-row input':['background'],
+  '.plugins-command-details .command-selector select':LOOK,
+  '.plugins-table .argument-group input':['border-radius'],
+  '.org-space-table select':LOOK,
+  '.filter-group select':LOOK,
+  '.compact-tasks-controls .filter-group select':LOOK.concat('cursor'),
+  '.cert-fleet input[type="search"]':LOOK,
+  '.form-group input[type="text"]':['border-radius'],
+  '.table-controls-container .log-file-dropdown':LOOK.concat('cursor'),
+  '.diff-controls .form-control':LOOK,
  },
 };
 
@@ -57,4 +83,13 @@ Object.entries(STRIPPED).forEach(([file,map])=>{
    hits.forEach((r)=>props.forEach((p)=>expect(declares(r.body,p)?sel+' sets '+p:'ok').toBe('ok')));
   });
  });
+});
+
+// The form row's full-width field rule would stretch a checkbox, and a
+// checkbox otherwise takes Oat's size.
+test('a checkbox in a form row is sized back to Oat, not stretched by the field rule',()=>{
+ const hit=parse(read('blacksmith.css')).find((r)=>r.selectors.includes('.form-row .checkbox-label input[type="checkbox"]'));
+ expect(hit).toBeTruthy();
+ expect(hit.body).toMatch(/width:\s*1rem/);
+ expect(hit.body).toMatch(/padding:\s*0/);
 });
