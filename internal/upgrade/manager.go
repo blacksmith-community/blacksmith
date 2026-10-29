@@ -1564,10 +1564,10 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 		return ErrTaskNotPaused
 	}
 
-	// The gate ran without the lock, and a worker in flight then may have
-	// left a node that outlived KILL, so the resume is a Resume cleanup if
-	// it is one now. A cleanup sends no command, so it needs no gate.
-	task.CleanupOnly = cleansOnly || commandCleansOnlyLocked(task)
+	// The gate's answer stands. A resume that ran the gate may send the
+	// command, and the run rechecks any survivors before it does. A resume
+	// that skipped the gate stays a cleanup and never sends.
+	task.CleanupOnly = cleansOnly
 	task.Paused = false
 	task.Status = TaskStatusRunning
 

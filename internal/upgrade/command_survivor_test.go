@@ -738,62 +738,117 @@ func TestCommandPanicKeepsAHeldTaskWaitingForResumeCleanup(t *testing.T) {
 }
 
 // A resume whose gate runs while a sibling of a node whose processes
-// outlived KILL is still in flight, and that is applied only once the
-// run has ended the instance, is a Resume cleanup by then. It checks the
-// survivors and pauses before the next instance, and sends nothing.
-func TestCommandResumeAppliedAfterTheSurvivorWindowCleansOnly(t *testing.T) {
-	fix := newTaskFixture(t, 2, 3, withParallel(2))
-	fix.setCleanup("dep-0/1", cleanupSurvived)
-	exec := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
-	fix.queue()
+// outlived KILL is still in flight, and that is applied only once the run
+// has ended the instance, stays an ordinary resume. The run checks the
+// survivors first, so it goes on to the next instance once they are gone,
+// and while they live it pauses again for Resume cleanup and sends nothing.
+func TestCommandResumeAppliedAfterTheSurvivorWindowIsHonored(t *testing.T) {
+	cases := []struct {
+		name   string
+		record string
+		gone   bool
+	}{
+		{name: "survivors gone", record: cleanupEnded, gone: true},
+		{name: "survivors alive", record: cleanupSurvived},
+	}
 
-	exec.next()
-	exec.next()
-	exec.let("dep-0/1")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fix := newTaskFixture(t, 2, 3, withParallel(2))
+			fix.setCleanup("dep-0/1", cleanupSurvived)
+			exec := fix.gate(opRunExec, "dep-0/0", "dep-0/1")
+			fix.queue()
 
-	fix.waitFor("the survivor to pause the task", func(task UpgradeTask) bool {
-		return task.Paused && nodeOf(task, 0, 1).Survived
-	})
+			exec.next()
+			exec.next()
+			exec.let("dep-0/1")
 
-	gated := 0
+			fix.waitFor("the survivor to pause the task", func(task UpgradeTask) bool {
+				return task.Paused && nodeOf(task, 0, 1).Survived
+			})
 
-	// The gate runs while dep-0/0 is still in flight, and it returns only
-	// once the run has ended the instance and let the task go.
-	err := fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, func(context.Context) error {
-		gated++
+			cleanups := fix.countOps("dep-0", 1, opRunCleanup)
+			gated := 0
 
-		fix.setCleanup("dep-0/1", cleanupEnded)
-		exec.let("dep-0/0")
+			// The gate runs while dep-0/0 is still in flight, and it
+			// returns only once the run has ended the instance and let
+			// the task go.
+			err := fix.manager.ResumeTaskGated(context.Background(), fix.task.ID, func(context.Context) error {
+				gated++
 
-		fix.waitFor("the run to end the instance", func(task UpgradeTask) bool {
-			return task.Paused && task.Instances[0].Status == InstanceStatusFailed && !fix.owned()
+				fix.setCleanup("dep-0/1", tc.record)
+				exec.let("dep-0/0")
+
+				fix.waitFor("the run to end the instance", func(task UpgradeTask) bool {
+					return task.Paused && task.Instances[0].Status == InstanceStatusFailed && !fix.owned()
+				})
+
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("resume: %v", err)
+			}
+
+			if gated != 1 {
+				t.Fatalf("the resume ran the gate %d times, want once", gated)
+			}
+
+			done := fix.waitFor("the task to stop", func(task UpgradeTask) bool {
+				over := task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+				rechecked := fix.countOps("dep-0", 1, opRunCleanup) > cleanups
+
+				return rechecked && (task.Paused || over) && !fix.owned()
+			})
+
+			if n := fix.countOps("dep-0", 1, opRunCleanup) - cleanups; n != 1 {
+				t.Errorf("the survivor had %d cleanups after the resume, want one recheck", n)
+			}
+
+			if tc.gone {
+				expectHonoredResumeRan(t, fix, done)
+			} else {
+				expectHonoredResumeHeld(t, fix, done)
+			}
+
+			fix.assertNoCommandText()
 		})
+	}
+}
 
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("resume: %v", err)
+// expectHonoredResumeRan fails the test unless the run went on to the next
+// instance and completed the task once the survivors were gone.
+func expectHonoredResumeRan(t *testing.T, fix *taskFixture, done UpgradeTask) {
+	t.Helper()
+
+	if done.Paused || done.Status != TaskStatusCompleted {
+		t.Fatalf("the task is %s paused=%v, want it completed", done.Status, done.Paused)
 	}
 
-	if gated != 1 {
-		t.Fatalf("the resume ran the gate %d times, want once", gated)
+	if nodeOf(done, 0, 1).Survived {
+		t.Error("the node still records survivors after the recheck found them gone")
 	}
 
-	paused := fix.waitFor("the task to stop", func(task UpgradeTask) bool {
-		over := task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed
+	for index := range 3 {
+		if n := fix.countOps("dep-1", index, opRunExec); n != 1 {
+			t.Errorf("dep-1/%d was sent exec %d times, want once", index, n)
+		}
+	}
+}
 
-		return (task.Paused || over) && !nodeOf(task, 0, 1).Survived && !fix.owned()
-	})
+// expectHonoredResumeHeld fails the test unless the recheck found the
+// survivors alive, paused the task for Resume cleanup, and kept the hold.
+func expectHonoredResumeHeld(t *testing.T, fix *taskFixture, done UpgradeTask) {
+	t.Helper()
 
-	if paused.Status != TaskStatusPaused {
-		t.Errorf("the task is %s, want paused before the next instance", paused.Status)
+	if got := done.Instances[0].Error; !strings.Contains(got, "still survive KILL on redis/1") || !strings.Contains(got, "Resume cleanup") {
+		t.Errorf("the instance says %q, want the recheck to name the survivor and Resume cleanup", got)
+	}
+
+	if done.Status != TaskStatusPaused || !nodeOf(done, 0, 1).Survived || !fix.holds() {
+		t.Errorf("the task is %s, survived %v, held %v, want paused and held", done.Status, nodeOf(done, 0, 1).Survived, fix.holds())
 	}
 
 	if fix.sentTo("dep-1") {
-		t.Error("a resume applied after the window sent the command to the next instance")
-	}
-
-	if got := paused.Instances[1].Error; !strings.Contains(got, "Resume to run the command") {
-		t.Errorf("the next instance says %q, want the Resume cleanup to pause before it", got)
+		t.Error("the resume sent the command to the next instance while the survivors live")
 	}
 }
