@@ -135,9 +135,12 @@ func (r *Runner) WithoutOutputLogging() *Runner {
 // read are not one atomic step. What any such read returns is wiped and
 // dropped, never sent. A reader whose read never returns keeps one
 // goroutine of the SSH library alive, so stdin should be an in-memory
-// reader, such as a bytes.Reader. A caller that wipes the buffer behind
-// stdin calls Close on the runner first, so that no late read races the
-// wipe.
+// reader, such as a bytes.Reader. Neither Run nor Close waits for a read
+// of stdin that is under way, so a caller that wipes the buffer behind
+// stdin as soon as Run returns can overlap that read. The gate wipes what
+// the read copied, so nothing is sent, but a caller that must not share
+// the buffer during the wipe gives Run a reader whose Read takes a lock
+// the wipe also takes.
 func (r *Runner) Run(ctx context.Context, program string, args []string, stdin io.Reader, limit int64) (Result, error) {
 	command, err := r.prepare(ctx, program, args)
 	if err != nil {
