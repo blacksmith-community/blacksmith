@@ -134,7 +134,7 @@ When the broker has a second credential configured, the task detail asks for the
 
 Each node has a collapsed Output element that fetches that node's output the first time the operator opens it and shows stdout and stderr in separate blocks. The text is rendered as plain text, with control characters other than newline and tab removed. The summary line reads like "Output (stdout 1.2 KiB, stderr 0 B)", and a stream that was cut reads like "stdout 64.0 KiB of 130.0 KiB (truncated)". A node that settled without running anything has no stored output, so its summary reads "Output (none kept)", it sends no request, and it says the node produced no output along with the reason when there is one.
 
-A paused command task offers the "Continue remaining instances" control that the certificate tasks already have.
+A paused command task offers the "Continue remaining instances" control that the certificate tasks already have. When the broker can't confirm that the command has ended on every node, for example because a node's processes outlived KILL or a lost answer left a node stranded, the control reads Resume cleanup instead. Resume cleanup runs `cleanup` again on those nodes and sends no command, so the operator uses it to release a held instance once its processes have ended, and the task then pauses before the nodes that haven't run the command.
 
 ## How the Command Reaches the VM
 
@@ -286,7 +286,7 @@ Each node has one timeout for the command, which the operator sets per run. It d
 
 When a node exits non-zero, is refused by the wrapper, times out, or loses its connection, the broker records the node as failed or as outcome unknown and starts no new node. Nodes already in flight run to their own end and are recorded. The remaining nodes of that deployment are marked skipped, and the instance is failed. The task then pauses rather than moving on, so the operator decides whether the next deployment should still get the command, and the "Continue remaining instances" control resumes it. A failed instance is never retried.
 
-A node whose processes outlive KILL pauses the task and keeps its instance held, and the run never moves past that instance while the survivors live. A resume that the operator presses while other nodes of the deployment are still in flight is honored once they finish. The task then runs `cleanup` on the survivors again before it does anything else, as Resume cleanup does, so it pauses again while they live and goes on to the next deployment only once that check finds them gone.
+A node whose processes outlive KILL pauses the task and keeps its instance held, and the run never moves past that instance while the survivors live. A resume that the operator presses while other nodes of the deployment are still in flight is honored once they finish. The task then runs `cleanup` on the survivors again before it does anything else, as Resume cleanup does, so it pauses again while they live and goes on to the next deployment only once that check finds them gone. In the last deployment there is no next one, so the task ends failed and the survivors' instance stays held.
 
 ### Cancellation
 
