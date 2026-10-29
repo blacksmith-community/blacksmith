@@ -88,7 +88,8 @@ t('the preview posts the entered values and the review shows them',async()=>{
  const {w,d}=env;try{
  await review(env,['val-a','val-b']);
  expect(previews(env).length).toBe(1);
- expect(same(previews(env)[0].body,{instance_ids:['val-a','val-b'],command:SECRET,run_as:'vcap',timeout_seconds:600,parallel:false,max_in_flight:0})).toBe(true);
+ expect(typeof previews(env)[0].body.client_request_id).toBe('string');
+ expect(same({...previews(env)[0].body,client_request_id:''},{instance_ids:['val-a','val-b'],command:SECRET,run_as:'vcap',timeout_seconds:600,parallel:false,max_in_flight:0,client_request_id:''})).toBe(true);
  expect(w.__T.batchFlow.step).toBe(3);
  const host=d.getElementById('batch-flow-review');
  const pre=host.querySelector('pre');

@@ -5111,8 +5111,10 @@
     const anyway = rotateEl('button', 'btn-sm dialog-modal-btn-danger', 'Discard anyway');
     anyway.type = 'button';
     anyway.id = 'command-discard-anyway';
-    const showUnconfirmed = () => {
-      unconfirmed.replaceChildren(rotateEl('p', 'batch-review-note', 'The broker could not confirm whether this request started a run. Check Activity before you run the command again.'), anyway);
+    const UNCONFIRMED_TEXT = 'The broker could not confirm whether this request started a run. Check Activity before you run the command again.';
+    const BOUND_TEXT = 'This preview belongs to another request, so nothing was discarded. Check Activity before you run the command again.';
+    const showUnconfirmed = (text) => {
+      unconfirmed.replaceChildren(rotateEl('p', 'batch-review-note', text), anyway);
       unconfirmed.hidden = false;
     };
     area.appendChild(discard);
@@ -5137,7 +5139,8 @@
       renderCommandDiscardNote();
     };
     // Asks the broker. Only a 200 with a boolean discarded, and a task ID when
-    // it is false, settles the question. Anything else is unknown.
+    // it is false, settles the question. A 409 preview_bound means the preview
+    // belongs to another request and was left in place. Anything else is unknown.
     const ask = async () => {
       try {
         const response = await fetch(COMMAND_DISCARD_URL, {
@@ -5145,6 +5148,10 @@
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({ client_request_id: clientRequestId, preview_id: previewId })
         });
+        if (response.status === 409) {
+          const refusal = await readApiError(response);
+          return refusal.code === 'preview_bound' ? { bound: true } : null;
+        }
         if (response.status !== 200) return null;
         const answer = await response.json();
         if (!answer || typeof answer.discarded !== 'boolean') return null;
@@ -5163,9 +5170,9 @@
       const answer = force ? null : await ask();
       if (!stillOpen(open)) { if (commandDiscarding === open) commandDiscarding = null; updateBatchFlow(); return; }
       if (answer && answer.taskId) { finish(open, answer.taskId, false); return; }
-      if (answer || force) { finish(open, '', Boolean(force)); return; }
+      if ((answer && !answer.bound) || force) { finish(open, '', Boolean(force)); return; }
       commandDiscarding = null;
-      showUnconfirmed();
+      showUnconfirmed(answer && answer.bound ? BOUND_TEXT : UNCONFIRMED_TEXT);
       updateBatchFlow();
     };
     discard.addEventListener('click', () => run(false));
@@ -5193,7 +5200,8 @@
     let resume = commandPending;
     if (!resume) { commandDiscardNote = ''; renderCommandDiscardNote(); }
     const values = resume ? resume.values : commandValues();
-    // One ID for this review, which every retry and every fresh preview of it reuses.
+    // One ID for this review. The preview, the create, the discard, every retry,
+    // and every fresh preview of it send the same one.
     const clientRequestId = resume ? resume.createBody.client_request_id : newClientRequestId();
     let note = '';
     let expired = 0;
@@ -5209,7 +5217,7 @@
         result = { kind: 'unknown', message: 'The last attempt to start this run didn\'t finish, so check Activity before you run it again.' };
       } else {
         try {
-          preview = (await commandPost(COMMAND_PREVIEW_URL, values)).body;
+          preview = (await commandPost(COMMAND_PREVIEW_URL, { ...values, client_request_id: clientRequestId })).body;
         } catch (err) {
           if (revision !== batchFlow.revision) return;
           if (err.status === 401 && err.code === 'command_credential_required') {
