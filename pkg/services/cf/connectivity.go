@@ -24,7 +24,8 @@ const (
 	// ConnectionTestBodyLimit is the most of any one response the test reads.
 	ConnectionTestBodyLimit = 64 << 10
 
-	// connectionTestRedirects is how many same-host redirects the API root may take.
+	// connectionTestRedirects is how many same-host redirects the API root
+	// may take. ErrAPITooManyRedirects names the same number.
 	connectionTestRedirects = 3
 )
 
@@ -42,10 +43,13 @@ var (
 	ErrAPIURLScheme         = errors.New("API URL must start with https:// or http://")
 	ErrAPIURLHasCredentials = errors.New("API URL must not contain a username or password")
 
-	errRedirectedOffHost = errors.New("redirected to a different host")
-	errTooManyRedirects  = errors.New("too many redirects")
-	errResponseTooLarge  = errors.New("response too large")
-	errNoAuthEndpoint    = errors.New("no authentication endpoint")
+	ErrAPIRedirectedOffHost    = errors.New("the API answered with a redirect to a different host or to plain http, which is not followed")
+	ErrAPITooManyRedirects     = errors.New("the API redirected more than 3 times")
+	ErrTokenEndpointNotHTTPS   = errors.New("the API's authentication endpoint does not use https://, so the credentials were not sent")
+	ErrTokenEndpointRedirected = errors.New("the authentication endpoint answered with a redirect, which is not followed")
+
+	errResponseTooLarge = errors.New("response too large")
+	errNoAuthEndpoint   = errors.New("no authentication endpoint")
 )
 
 // ConnectionCheck is the result of one step of a connection test. The
@@ -117,8 +121,9 @@ func parseAPIURL(raw string) (*url.URL, error) {
 }
 
 // Run tests the connection and returns every check in order. It stops at the
-// first failure and marks the checks after it skipped. The token is read only
-// to see that one was issued, and is never kept.
+// first failure and marks the checks after it skipped. The token is decoded
+// only as whether one was issued, and the answer that held it is dropped
+// when the check ends.
 func (t *ConnectionTester) Run(ctx context.Context, req *RegistrationTest) []ConnectionCheck {
 	timeout := t.Timeout
 	if timeout <= 0 {
@@ -166,8 +171,7 @@ func (t *ConnectionTester) bodyLimit() int64 {
 // transport is the default transport, as registration's client uses, with
 // the tester's roots.
 func (t *ConnectionTester) transport() *http.Transport {
-	base, _ := http.DefaultTransport.(*http.Transport)
-	transport := base.Clone()
+	transport := baseTransport(http.DefaultTransport)
 	transport.TLSClientConfig = &tls.Config{
 		RootCAs:    t.RootCAs,
 		MinVersion: tls.VersionTLS12,
@@ -175,6 +179,17 @@ func (t *ConnectionTester) transport() *http.Transport {
 	transport.DisableKeepAlives = true
 
 	return transport
+}
+
+// baseTransport clones defaultTransport, or starts a fresh transport that
+// honors the proxy settings when something has replaced the default with
+// another kind of RoundTripper.
+func baseTransport(defaultTransport http.RoundTripper) *http.Transport {
+	if base, ok := defaultTransport.(*http.Transport); ok {
+		return base.Clone()
+	}
+
+	return &http.Transport{Proxy: http.ProxyFromEnvironment}
 }
 
 type connectionRun struct {
@@ -217,7 +232,7 @@ func (r *connectionRun) finish() []ConnectionCheck {
 // TLS checks on the way. A certificate that does not verify still means the
 // API answered, so it fails TLS and not reachable.
 func (r *connectionRun) reach(ctx context.Context, transport *http.Transport, apiURL *url.URL) (*http.Response, bool) {
-	client := &http.Client{Transport: transport, CheckRedirect: sameOrigin(apiURL)}
+	client := rootClient(&http.Client{Transport: transport}, apiURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL.String()+"/", nil)
 	if err != nil {
@@ -233,13 +248,12 @@ func (r *connectionRun) reach(ctx context.Context, transport *http.Transport, ap
 
 	switch {
 	case err == nil:
-	case errors.Is(err, errRedirectedOffHost), errors.Is(err, errTooManyRedirects):
-		r.pass(CheckReachable, "The API answered.")
-		r.passTLS(apiURL)
+	case errors.Is(err, ErrAPIRedirectedOffHost):
+		r.redirected(apiURL, "The API answered with a redirect to a different host or to plain http, which the test does not follow.")
 
-		if !r.failed {
-			r.fail(CheckCloudFoundry, "The API answered with a redirect to a different host, which the test does not follow.")
-		}
+		return nil, false
+	case errors.Is(err, ErrAPITooManyRedirects):
+		r.redirected(apiURL, fmt.Sprintf("The API redirected more than %d times, so the test stopped following it.", connectionTestRedirects))
 
 		return nil, false
 	case isCertificateError(err):
@@ -253,7 +267,7 @@ func (r *connectionRun) reach(ctx context.Context, transport *http.Transport, ap
 
 		return nil, false
 	default:
-		r.fail(CheckReachable, "The API did not answer: "+r.networkReason(ctx, err)+".")
+		r.fail(CheckReachable, "The API did not answer: "+networkReason(ctx, err, r.timeout)+".")
 
 		return nil, false
 	}
@@ -268,6 +282,17 @@ func (r *connectionRun) reach(ctx context.Context, transport *http.Transport, ap
 	}
 
 	return resp, true
+}
+
+// redirected settles the checks for a root that answered with a redirect
+// the test does not follow. The API answered, so it fails cloud_foundry.
+func (r *connectionRun) redirected(apiURL *url.URL, message string) {
+	r.pass(CheckReachable, "The API answered.")
+	r.passTLS(apiURL)
+
+	if !r.failed {
+		r.fail(CheckCloudFoundry, message)
+	}
 }
 
 func (r *connectionRun) passTLS(apiURL *url.URL) {
@@ -324,7 +349,7 @@ func (r *connectionRun) identify(resp *http.Response) (*url.URL, bool) {
 // password grant that registration sends. It follows no redirect, so the
 // credentials go to the advertised endpoint and nowhere else.
 func (r *connectionRun) authenticate(ctx context.Context, transport *http.Transport, authURL *url.URL, username, password string) {
-	if authURL.Scheme != "https" {
+	if checkTokenEndpoint(authURL) != nil {
 		r.fail(CheckToken, "The API's authentication endpoint does not use HTTPS, so the test did not send the credentials.")
 
 		return
@@ -337,17 +362,12 @@ func (r *connectionRun) authenticate(ctx context.Context, transport *http.Transp
 		return
 	}
 
-	client := &http.Client{
-		Transport: transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := tokenClient(&http.Client{Transport: transport})
 
 	// The API the operator typed names this endpoint, and registration uses it too.
 	resp, err := client.Do(req)
 	if err != nil {
-		r.fail(CheckToken, "The authentication endpoint did not answer: "+r.endpointReason(ctx, err)+".")
+		r.fail(CheckToken, "The authentication endpoint did not answer: "+endpointReason(ctx, err, r.timeout)+".")
 
 		return
 	}
@@ -371,14 +391,11 @@ func (r *connectionRun) authenticate(ctx context.Context, transport *http.Transp
 	}
 
 	var token struct {
-		AccessToken string `json:"access_token"`
+		AccessToken tokenPresent `json:"access_token"`
 	}
 
 	err = r.readJSON(resp, &token)
-	issued := err == nil && token.AccessToken != ""
-	token.AccessToken = ""
-
-	if !issued {
+	if err != nil || !token.AccessToken {
 		r.fail(CheckToken, "The authentication endpoint answered HTTP 200 without a token.")
 
 		return
@@ -402,15 +419,56 @@ func (r *connectionRun) readJSON(resp *http.Response, target interface{}) error 
 	return nil
 }
 
-// sameOrigin follows a redirect only to the scheme and host the operator typed.
+// tokenPresent decodes an access token only as whether one was issued, so
+// the token is never copied out of the answer the check reads.
+type tokenPresent bool
+
+func (p *tokenPresent) UnmarshalJSON(data []byte) error {
+	*p = len(data) > len(`""`) && data[0] == '"'
+
+	return nil
+}
+
+// rootClient is base with the redirect rule for the API root, which
+// registration and the connection test share.
+func rootClient(base *http.Client, origin *url.URL) *http.Client {
+	client := *base
+	client.CheckRedirect = sameOrigin(origin)
+
+	return &client
+}
+
+// tokenClient is base following no redirect, so a password grant goes to
+// the endpoint the API root names and nowhere else.
+func tokenClient(base *http.Client) *http.Client {
+	client := *base
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	return &client
+}
+
+// checkTokenEndpoint refuses an authentication endpoint that would get the
+// credentials in plaintext.
+func checkTokenEndpoint(authURL *url.URL) error {
+	if authURL.Scheme != "https" {
+		return ErrTokenEndpointNotHTTPS
+	}
+
+	return nil
+}
+
+// sameOrigin follows up to connectionTestRedirects redirects, and only to
+// the scheme and host the operator typed.
 func sameOrigin(origin *url.URL) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
-			return errRedirectedOffHost
+			return ErrAPIRedirectedOffHost
 		}
 
-		if len(via) >= connectionTestRedirects {
-			return errTooManyRedirects
+		if len(via) > connectionTestRedirects {
+			return ErrAPITooManyRedirects
 		}
 
 		return nil
@@ -457,10 +515,10 @@ func isHandshakeError(err error) bool {
 }
 
 // networkReason says why a request got no answer, without quoting the error,
-// whose text holds the request URL.
-func (r *connectionRun) networkReason(ctx context.Context, err error) string {
+// whose text holds the request URL. Timeout is the limit ctx was given.
+func networkReason(ctx context.Context, err error, timeout time.Duration) string {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		return "no answer within " + r.timeout.String()
+		return "no answer within " + timeout.String()
 	}
 
 	var dnsErr *net.DNSError
@@ -485,14 +543,14 @@ func (r *connectionRun) networkReason(ctx context.Context, err error) string {
 }
 
 // endpointReason adds certificate and handshake failures to networkReason,
-// because the authentication endpoint is a host of its own.
-func (r *connectionRun) endpointReason(ctx context.Context, err error) string {
+// for a host whose TLS no earlier check has settled.
+func endpointReason(ctx context.Context, err error, timeout time.Duration) string {
 	switch {
 	case isCertificateError(err):
 		return "its certificate did not verify, because " + certificateReason(err)
 	case isHandshakeError(err):
 		return "it did not complete a TLS handshake"
 	default:
-		return r.networkReason(ctx, err)
+		return networkReason(ctx, err, timeout)
 	}
 }

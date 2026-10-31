@@ -377,6 +377,56 @@ func TestConnectionTestFollowsARedirectOnTheSameHost(t *testing.T) {
 	expectOutcome(t, checks, allPass)
 }
 
+func TestConnectionTestFollowsThreeRedirectsOnTheSameHost(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t)
+
+	var api *httptest.Server
+
+	hops := map[string]string{"/": "/one", "/one": "/two", "/two": "/three"}
+
+	api = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if next, ok := hops[req.URL.Path]; ok {
+			http.Redirect(writer, req, next, http.StatusFound)
+
+			return
+		}
+
+		_, _ = writer.Write([]byte(rootDocument(api.URL, uaa.URL)))
+	}))
+	t.Cleanup(api.Close)
+
+	checks := runChecks(t, &ConnectionTester{RootCAs: trust(api)}, probe(api.URL))
+	expectOutcome(t, checks, allPass)
+}
+
+func TestConnectionTestStopsARedirectLoopOnTheSameHost(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t)
+
+	var hits atomic.Int32
+
+	api := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		hits.Add(1)
+		http.Redirect(writer, req, "/", http.StatusFound)
+	}))
+	t.Cleanup(api.Close)
+
+	checks := runChecks(t, &ConnectionTester{RootCAs: trust(api)}, probe(api.URL))
+	expectOutcome(t, checks, cfFails)
+
+	message := failed(checks).Message
+	if !strings.Contains(message, "more than 3") || strings.Contains(message, "different host") {
+		t.Fatalf("message = %q, want it to say the API redirected more than 3 times", message)
+	}
+
+	if hits.Load() != 4 || uaa.hits.Load() != 0 {
+		t.Fatalf("the API got %d requests and the token endpoint %d, want 4 and 0", hits.Load(), uaa.hits.Load())
+	}
+}
+
 func TestConnectionTestReportsRefusedCredentials(t *testing.T) {
 	t.Parallel()
 

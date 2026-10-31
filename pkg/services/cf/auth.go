@@ -17,7 +17,22 @@ var (
 	ErrCFInfoRequestFailed  = errors.New("CF info request failed with status")
 	ErrAuthenticationFailed = errors.New("authentication failed")
 	ErrCFAPIReturnedError   = errors.New("CF API returned error status")
+	ErrCFAPIUnreachable     = errors.New("the CF API did not answer")
+	ErrAPIURLNotHTTPS       = errors.New("API URL must start with https://, because the API's answer decides where the password is sent")
 )
+
+// oauthErrorCodes are the token endpoint error codes RFC 6749 section 5.2
+// fixes. An error is repeated only when it is one of these, because any
+// other text the endpoint sends, such as error_description, could echo the
+// request.
+var oauthErrorCodes = map[string]bool{
+	"invalid_request":        true,
+	"invalid_client":         true,
+	"invalid_grant":          true,
+	"unauthorized_client":    true,
+	"unsupported_grant_type": true,
+	"invalid_scope":          true,
+}
 
 // AuthInfo represents CF authentication information.
 type AuthInfo struct {
@@ -53,15 +68,37 @@ func NewCFAuthClient(apiURL, username, password string) *CFAuthClient {
 
 // Authenticate performs CF authentication and obtains access token.
 func (c *CFAuthClient) Authenticate() error {
-	ctx, cancel := context.WithTimeout(context.Background(), AuthContextTimeout)
-	defer cancel()
-
-	authURL, err := c.authEndpoint(ctx)
+	authURL, err := c.connect()
 	if err != nil {
 		return err
 	}
 
 	return c.requestToken(authURL)
+}
+
+// connect asks the API root for its authentication endpoint, within
+// AuthContextTimeout, and sends no credentials.
+func (c *CFAuthClient) connect() (*url.URL, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), AuthContextTimeout)
+	defer cancel()
+
+	return c.authEndpoint(ctx)
+}
+
+// registrationAPIURL parses the API URL registration connects to. It must
+// use https, because the root document it answers names the endpoint the
+// password goes to.
+func registrationAPIURL(raw string) (*url.URL, error) {
+	parsed, err := parseAPIURL(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	if parsed.Scheme != "https" {
+		return nil, ErrAPIURLNotHTTPS
+	}
+
+	return parsed, nil
 }
 
 // authEndpoint asks the API root where the API signs operators in, the
@@ -80,18 +117,25 @@ func (c *CFAuthClient) authEndpoint(ctx context.Context) (*url.URL, error) {
 	return authURL, nil
 }
 
-// getPublic reads an endpoint of the API that needs no token.
+// getPublic reads an endpoint of the API that needs no token. It follows
+// redirects the way the connection test does, only on the typed scheme and
+// host.
 func (c *CFAuthClient) getPublic(ctx context.Context, path string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.APIURL+path, nil)
+	origin, err := registrationAPIURL(c.APIURL)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin.String()+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := rootClient(c.httpClient, origin).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, rootRequestError(ctx, err)
 	}
 
 	defer func() { _ = resp.Body.Close() }()
@@ -103,11 +147,34 @@ func (c *CFAuthClient) getPublic(ctx context.Context, path string) ([]byte, erro
 	return readLimited(resp.Body, ConnectionTestBodyLimit)
 }
 
-// requestToken sends the password grant to authURL and keeps the token.
-func (c *CFAuthClient) requestToken(authURL *url.URL) error {
-	const authTimeoutSeconds = 30
+// rootRequestError says why a request to the API root got no answer,
+// without quoting the request. A redirect the client refused comes back as
+// it is, and anything else as ErrCFAPIUnreachable with a reason.
+func rootRequestError(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(err, ErrAPIRedirectedOffHost):
+		return ErrAPIRedirectedOffHost
+	case errors.Is(err, ErrAPITooManyRedirects):
+		return ErrAPITooManyRedirects
+	default:
+		return fmt.Errorf("%w: %s", ErrCFAPIUnreachable, endpointReason(ctx, err, AuthContextTimeout))
+	}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), authTimeoutSeconds*time.Second)
+// requestToken sends the password grant to authURL and keeps the token. It
+// sends nothing without a password or to an http endpoint, and it follows
+// no redirect, the same rules the connection test applies.
+func (c *CFAuthClient) requestToken(authURL *url.URL) error {
+	if c.Password == "" {
+		return ErrPasswordRequired
+	}
+
+	err := checkTokenEndpoint(authURL)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), AuthContextTimeout)
 	defer cancel()
 
 	req, err := newPasswordGrant(ctx, authURL, c.Username, c.Password)
@@ -115,30 +182,29 @@ func (c *CFAuthClient) requestToken(authURL *url.URL) error {
 		return fmt.Errorf("failed to create auth request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := tokenClient(c.httpClient).Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to authenticate: %w", err)
+		return fmt.Errorf("%w: the authentication endpoint did not answer: %s", ErrAuthenticationFailed, endpointReason(ctx, err, AuthContextTimeout))
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		var errorResp struct {
-			Error            string `json:"error"`
-			ErrorDescription string `json:"error_description"`
-		}
+	switch {
+	case resp.StatusCode == http.StatusOK:
+	case resp.StatusCode >= http.StatusMultipleChoices && resp.StatusCode < http.StatusBadRequest:
+		return fmt.Errorf("%w (HTTP %d)", ErrTokenEndpointRedirected, resp.StatusCode)
+	default:
+		return tokenRefusal(resp)
+	}
 
-		err := json.NewDecoder(resp.Body).Decode(&errorResp)
-		if err != nil {
-			return fmt.Errorf("authentication failed (%d): failed to decode error response: %w", resp.StatusCode, err)
-		}
-
-		return fmt.Errorf("%w (%d): %s - %s", ErrAuthenticationFailed, resp.StatusCode, errorResp.Error, errorResp.ErrorDescription)
+	body, err := readLimited(resp.Body, ConnectionTestBodyLimit)
+	if err != nil {
+		return fmt.Errorf("failed to read auth response: %w", err)
 	}
 
 	var authInfo AuthInfo
 
-	err = json.NewDecoder(resp.Body).Decode(&authInfo)
+	err = json.Unmarshal(body, &authInfo)
 	if err != nil {
 		return fmt.Errorf("failed to decode auth response: %w", err)
 	}
@@ -148,6 +214,21 @@ func (c *CFAuthClient) requestToken(authURL *url.URL) error {
 	c.authInfo = &authInfo
 
 	return nil
+}
+
+// tokenRefusal names the HTTP status of a refused password grant, and the
+// OAuth error code when it is one RFC 6749 fixes.
+func tokenRefusal(resp *http.Response) error {
+	var refusal struct {
+		Error string `json:"error"`
+	}
+
+	body, err := readLimited(resp.Body, ConnectionTestBodyLimit)
+	if err == nil && json.Unmarshal(body, &refusal) == nil && oauthErrorCodes[refusal.Error] {
+		return fmt.Errorf("%w: the authentication endpoint answered HTTP %d (%s)", ErrAuthenticationFailed, resp.StatusCode, refusal.Error)
+	}
+
+	return fmt.Errorf("%w: the authentication endpoint answered HTTP %d", ErrAuthenticationFailed, resp.StatusCode)
 }
 
 // GetAuthToken returns a valid access token, refreshing if necessary.
@@ -181,7 +262,7 @@ func (c *CFAuthClient) TestConnection() (*CFInfo, error) {
 	// Test authentication
 	err = c.requestToken(authURL)
 	if err != nil {
-		return nil, fmt.Errorf("authentication failed: %w", err)
+		return nil, err
 	}
 
 	cfInfo := c.info(ctx)

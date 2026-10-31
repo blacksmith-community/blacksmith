@@ -3,6 +3,7 @@ package cf
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"blacksmith/pkg/services/common"
@@ -23,6 +24,9 @@ type Handler struct {
 	brokerUser string
 	brokerPass string
 	logger     func(string, ...interface{})
+	// httpClient, when set, is the client every CF client the handler builds
+	// uses. Nil keeps NewCFAuthClient's.
+	httpClient *http.Client
 }
 
 // NewHandler creates a new CF operations handler.
@@ -35,11 +39,21 @@ func NewHandler(brokerURL, brokerUser, brokerPass string, logger func(string, ..
 	}
 }
 
+// client builds a CF client for one API URL and set of credentials.
+func (h *Handler) client(apiURL, username, password string) *Client {
+	client := NewClient(apiURL, username, password, h.brokerURL, h.brokerUser, h.brokerPass)
+	if h.httpClient != nil {
+		client.authClient.httpClient = h.httpClient
+	}
+
+	return client
+}
+
 // TestConnection tests connection to a CF environment.
 func (h *Handler) TestConnection(req *RegistrationTest) (*RegistrationTestResult, error) {
 	h.logger("Testing CF connection to %s", req.APIURL)
 
-	client := NewClient(req.APIURL, req.Username, req.Password, h.brokerURL, h.brokerUser, h.brokerPass)
+	client := h.client(req.APIURL, req.Username, req.Password)
 
 	result, err := client.TestConnection()
 	if err != nil {
@@ -81,12 +95,13 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 		brokerName = "blacksmith"
 	}
 
-	client := NewClient(req.APIURL, req.Username, req.Password, h.brokerURL, h.brokerUser, h.brokerPass)
+	client := h.client(req.APIURL, req.Username, req.Password)
 
-	// Test connection
+	// Connect: the API root must answer and name its authentication
+	// endpoint. No credentials are sent yet.
 	h.sendProgress(progressChan, StepConnecting, ProgressStatusRunning, "Connecting to Cloud Foundry")
 
-	_, err = client.TestConnection()
+	authURL, err := client.authClient.connect()
 	if err != nil {
 		h.sendProgress(progressChan, StepConnecting, ProgressStatusError, fmt.Sprintf("Connection failed: %s", err))
 
@@ -95,10 +110,10 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 
 	h.sendProgress(progressChan, StepConnecting, ProgressStatusSuccess, "Connected to Cloud Foundry")
 
-	// Authenticate
+	// Authenticate with one password grant to the endpoint the root named.
 	h.sendProgress(progressChan, StepAuthenticating, ProgressStatusRunning, "Authenticating with Cloud Foundry")
 
-	err = client.authClient.Authenticate()
+	err = client.authClient.requestToken(authURL)
 	if err != nil {
 		h.sendProgress(progressChan, StepAuthenticating, ProgressStatusError, fmt.Sprintf("Authentication failed: %s", err))
 
@@ -165,24 +180,21 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistration) (*SyncResult, error) {
 	h.logger("Syncing registration %s with CF", req.RegistrationID)
 
-	client := NewClient(registration.APIURL, registration.Username, "", h.brokerURL, h.brokerUser, h.brokerPass)
+	// The broker keeps no CF password for a registration, so sync checks
+	// that the API answers and is Cloud Foundry without a password grant.
+	client := h.client(registration.APIURL, registration.Username, "")
 
-	// Test connection first
-	testResult, testErr := client.TestConnection()
-	if testErr != nil {
-		// Unexpected error during test execution
-		return nil, fmt.Errorf("failed to execute connection test: %w", testErr)
-	}
-
-	if !testResult.Success {
+	_, connectErr := client.authClient.connect()
+	if connectErr != nil {
 		return &SyncResult{
 			Success: false,
 			Message: "Failed to connect to CF during sync",
-			Error:   testResult.Error,
+			Error:   connectErr.Error(),
 		}, nil
 	}
 
-	// Get broker info
+	// Reading the broker needs a token, and requestToken refuses the empty
+	// password without sending it, so this fails with ErrPasswordRequired.
 	brokerInfo, brokerErr := client.FindServiceBroker(registration.BrokerName)
 	if brokerErr != nil {
 		return nil, fmt.Errorf("failed to find service broker: %w", brokerErr)
@@ -254,7 +266,9 @@ func (h *Handler) validateRegistrationRequest(req *RegistrationRequest) error {
 		return ErrPasswordRequired
 	}
 
-	return nil
+	_, err := registrationAPIURL(req.APIURL)
+
+	return err
 }
 
 // enableServiceAccess enables access to all services from the broker.

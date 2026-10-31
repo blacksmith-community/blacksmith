@@ -22,11 +22,16 @@ const (
 type v3OnlyFoundation struct {
 	*httptest.Server
 
-	root       string
-	v2Hits     atomic.Int32
-	uaaHits    atomic.Int32
-	loginHits  atomic.Int32
-	tokenPaths []string
+	root   string
+	v2Hits atomic.Int32
+	// rootRedirect, when set, is where the root answers 302.
+	rootRedirect string
+	// tokenAnswer, when set, answers the token requests in place of the
+	// password check.
+	tokenAnswer http.HandlerFunc
+	uaaHits     atomic.Int32
+	loginHits   atomic.Int32
+	tokenPaths  []string
 }
 
 func newV3OnlyFoundation(t *testing.T) *v3OnlyFoundation {
@@ -48,6 +53,8 @@ func (f *v3OnlyFoundation) serve(writer http.ResponseWriter, req *http.Request) 
 		f.v2Hits.Add(1)
 		writer.WriteHeader(http.StatusNotFound)
 		_, _ = writer.Write([]byte(`{"errors":[{"title":"CF-V2Disabled","detail":"V2 endpoints are disabled"}]}`))
+	case req.URL.Path == "/" && req.Method == http.MethodGet && f.rootRedirect != "":
+		http.Redirect(writer, req, f.rootRedirect, http.StatusFound)
 	case req.URL.Path == "/" && req.Method == http.MethodGet:
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(f.root))
@@ -66,6 +73,12 @@ func (f *v3OnlyFoundation) serve(writer http.ResponseWriter, req *http.Request) 
 }
 
 func (f *v3OnlyFoundation) token(writer http.ResponseWriter, req *http.Request) {
+	if f.tokenAnswer != nil {
+		f.tokenAnswer(writer, req)
+
+		return
+	}
+
 	clientID, clientSecret, basicOK := req.BasicAuth()
 
 	parseErr := req.ParseForm()
@@ -280,6 +293,16 @@ func TestAuthEndpointFromRoot(t *testing.T) {
 			name: "not JSON",
 			root: `<html>hello</html>`,
 			err:  errNotCloudFoundry,
+		},
+		{
+			name: "query and fragment on the link",
+			root: `{"links":{"cloud_controller_v3":{"href":"https://api.example.com/v3"},"uaa":{"href":"https://uaa.example.com/?x=1#top"}}}`,
+			want: "https://uaa.example.com",
+		},
+		{
+			name: "query on a link with a path",
+			root: `{"links":{"cloud_controller_v3":{"href":"https://api.example.com/v3"},"uaa":{"href":"https://example.com/uaa/?x=1"}}}`,
+			want: "https://example.com/uaa",
 		},
 		{
 			name: "credentials in the link",

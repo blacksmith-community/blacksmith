@@ -52,10 +52,19 @@ func authEndpoint(advertised string) (*url.URL, error) {
 		return nil, errNoAuthEndpoint
 	}
 
-	parsed, err := url.Parse(strings.TrimSuffix(advertised, "/"))
+	parsed, err := url.Parse(advertised)
 	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
 		return nil, ErrAPIURLMalformed
 	}
+
+	// The token path goes after the endpoint's own path, so a query or
+	// fragment on the link would swallow it.
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
+	parsed.RawPath = strings.TrimSuffix(parsed.RawPath, "/")
 
 	return parsed, nil
 }
