@@ -124,6 +124,8 @@ t('a Retry resends the same ID on the same preview',async()=>{
  }finally{w.close();}
 });
 
+// The first create answers 409 preview_mismatch, which ends that review and
+// lets the operator start a second one through Next.
 t('a new review sends a new ID on its preview',async()=>{
  const env=await setup({create:seq([409,{success:false,error:'The settings changed.',code:'preview_mismatch'}],[201,{id:'task-9'}])});const {w}=env;try{
  await review(env);await confirmRun(env);
@@ -161,6 +163,25 @@ t('a preview_bound discard says nothing was discarded and still offers Discard a
  expect(anywayBtn(env)!==null).toBe(true);
  expect(anywayBtn(env).disabled).toBe(false);
  expect(w.__T.batchFlow.step).toBe(3);
+ // The server text carries markup. None of it may reach the page.
+ expect(env.d.body.innerHTML.includes('<b>bound</b>')).toBe(false);
+ expect(env.d.body.textContent.includes('bound</b>')).toBe(false);
+ expect(env.d.querySelector('.command-discard-unconfirmed b')).toBe(null);
+ }finally{w.close();}
+});
+
+t('a 409 with a non-JSON body keeps the unknown-outcome message and Discard anyway',async()=>{
+ const env=await setup();const {w}=env;try{
+ pendingRoutes(env,()=>({raw:Promise.resolve({ok:false,status:409,headers:{get:()=>'text/html'},json:()=>Promise.reject(new Error('not json')),text:()=>Promise.resolve('<html><b>Conflict</b></html>')})}));
+ await review(env);await confirmRun(env);
+ discardBtn(env).click();await sleep(40);
+ expect(unconfirmedText(env).includes(UNKNOWN_TEXT)).toBe(true);
+ expect(unconfirmedText(env).includes(BOUND_TEXT)).toBe(false);
+ expect(anywayBtn(env)!==null).toBe(true);
+ expect(anywayBtn(env).disabled).toBe(false);
+ expect(w.__T.batchFlow.step).toBe(3);
+ expect(env.d.body.innerHTML.includes('<b>Conflict</b>')).toBe(false);
+ expect(env.d.body.textContent.includes('Conflict')).toBe(false);
  }finally{w.close();}
 });
 
