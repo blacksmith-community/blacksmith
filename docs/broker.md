@@ -339,12 +339,34 @@ The task that the create returns, and every later read of it, carries `pause_on_
 When an instance of a job that pauses on a failure fails while another instance is still pending, the job pauses before it starts anything more. A deploy that is already in flight, such as one the broker picked up again after a restart, runs to its own end and is recorded. The paused task carries a `pause_reason` that names the failed instance, and the task detail shows it. An upgrade whose deploy outcome the broker can't learn pauses the same way, and its reason says that the outcome is unknown. An upgrade saves the failure and the pause together, so a broker that restarts in between finds the job paused rather than starting its next instance. A certificate job still saves them one after the other, so if the broker stops in the moment between a certificate instance's failure and its pause, the next instance can start after the restart. The "Continue remaining instances" control resumes the job with the instances that haven't run, and it never retries the failed one. Pause, Resume, and Cancel otherwise work as they do for any job, and a resume or a cancel clears `pause_reason`. A job whose last instance fails has nothing left to protect, so it finishes rather than pausing.
 
 ### CF Registration API
-- `GET /api/cf/registrations` - List CF registrations
-- `POST /api/cf/registrations` - Create CF registration
-- `GET /api/cf/registrations/{id}` - Get registration details
-- `PUT /api/cf/registrations/{id}` - Update registration
-- `DELETE /api/cf/registrations/{id}` - Delete registration
-- `POST /api/cf/test-connection` - Test CF API connection
+- `GET /b/cf/registrations` - List CF registrations
+- `POST /b/cf/registrations` - Create CF registration
+- `GET /b/cf/registrations/{id}` - Get registration details
+- `PUT /b/cf/registrations/{id}` - Update registration
+- `DELETE /b/cf/registrations/{id}` - Delete registration
+- `POST /b/cf/test-connection` - Test a CF API URL, username, and password before saving them
+
+`POST /b/cf/test-connection` takes the registration form's `api_url`, `username`, and `password` as JSON. A missing field, or an API URL that is not an `http://` or `https://` URL with a host, gets a 400 answer with the code `invalid_request`.
+
+The test runs four checks in order and stops at the first one that fails. The `reachable` check asks the API root for an answer, and the `tls` check needs the API's certificate to verify against the system roots, as registration does. Registration has no way to skip certificate verification, so the test has none either. The `cloud_foundry` check needs the root to be a Cloud Foundry v3 root document that names an authentication endpoint. The `token` check sends the password grant that registration sends to that endpoint's `/oauth/token`, and passes when a token comes back. The test throws the token away at once.
+
+The whole test has a 10-second limit, and it reads at most 64 KiB of any response. It follows a redirect from the API root only to the same scheme and host, and it follows no redirect from the token endpoint. It sends the credentials only over HTTPS.
+
+A test that ran answers 200, whether or not a check failed. The answer lists every check with its `name`, `passed`, and `message`, and marks the checks after a failure `skipped`. A failed test also carries `"success": false`, the failed check's message in `error`, and one of the codes `cf_unreachable`, `cf_tls_failed`, `cf_not_cloud_foundry`, or `cf_auth_failed` in `code`. Messages name the step and any HTTP status, and the broker never logs or answers the credentials or the token.
+
+```json
+{
+  "success": false,
+  "error": "The API's certificate did not verify: the certificate is not signed by a trusted authority.",
+  "code": "cf_tls_failed",
+  "checks": [
+    {"name": "reachable", "passed": true, "message": "The API answered."},
+    {"name": "tls", "passed": false, "message": "The API's certificate did not verify: the certificate is not signed by a trusted authority."},
+    {"name": "cloud_foundry", "passed": false, "skipped": true, "message": "Not run, because an earlier check failed."},
+    {"name": "token", "passed": false, "skipped": true, "message": "Not run, because an earlier check failed."}
+  ]
+}
+```
 
 ### WebSocket APIs
 - `GET /b/instance/{instance_id}/ssh/ws` - SSH WebSocket endpoint
