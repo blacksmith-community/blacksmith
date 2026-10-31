@@ -13501,3 +13501,290 @@ bs-tabs { display: contents; }
 .empty-value {
   color: var(--text-muted);
 }
+
+/* Command runner, shared by the rabbitmqctl and rabbitmq-plugins Testing
+   tabs. The picker and filter sit on top, the chosen command reads as one
+   shell line ending in Run, and the output and its history follow. */
+.command-runner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px;
+}
+
+.command-runner [hidden] {
+  display: none;
+}
+
+.command-runner-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.command-runner-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.command-runner-choice {
+  flex: 1 1 20rem;
+}
+
+.command-runner-filter {
+  flex: 0 1 16rem;
+}
+
+.command-runner-field label,
+.command-runner-arg label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.command-runner-field :is(select, input),
+.command-runner-arg input {
+  margin-block-start: 0;
+}
+
+.command-runner-count {
+  padding-bottom: 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.command-runner-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.command-runner-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.command-runner-command {
+  padding: 8px 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.command-runner-arg {
+  display: flex;
+  flex: 1 1 10rem;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 8rem;
+}
+
+.command-runner-arg input {
+  font-family: var(--font-mono);
+}
+
+.command-runner-optional {
+  font-weight: 400;
+}
+
+.command-runner-option {
+  padding-bottom: 8px;
+  font-size: 13px;
+}
+
+.command-runner-option code {
+  padding: 0;
+  background: none;
+}
+
+.command-runner-run {
+  margin-left: auto;
+}
+
+.command-runner-description {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+.command-runner-danger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.command-runner-help > summary,
+.command-runner-history > summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.command-runner-help > summary {
+  color: var(--muted-foreground);
+}
+
+.command-runner-help dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.command-runner-help dt {
+  font-weight: 600;
+}
+
+.command-runner-help dd {
+  margin: 0;
+}
+
+.command-runner-help ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.command-runner-output {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.command-runner-output-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.command-runner-ran {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.command-runner-meta {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.command-runner-tools {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.command-runner-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.command-runner-icon-btn:is(:hover, :focus-visible) {
+  background: var(--secondary);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.command-runner-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.command-runner-pre {
+  max-height: 480px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.command-runner-output[data-status="failure"] .command-runner-pre {
+  border-color: var(--danger);
+}
+
+.command-runner-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+.command-runner-history {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.command-runner-history > summary {
+  font-weight: 600;
+}
+
+.command-runner-history-count {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+
+.command-runner-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.command-runner-history-entry {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--foreground);
+  font-weight: 400;
+}
+
+.command-runner-history-entry:is(:hover, :focus-visible) {
+  background: var(--secondary);
+  border-color: var(--border);
+}
+
+.command-runner-history-entry code {
+  overflow: hidden;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+
+.command-runner-history-entry time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}

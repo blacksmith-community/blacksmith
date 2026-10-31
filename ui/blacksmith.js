@@ -12705,150 +12705,6 @@
     `;
   };
 
-  const renderRabbitMQCtlOperation = (instanceId) => {
-    // Initialize the rabbitmqctl state for this instance if it doesn't exist
-    window.rabbitmqCtl = window.rabbitmqCtl || {};
-    window.rabbitmqCtl[instanceId] = window.rabbitmqCtl[instanceId] || {
-      categories: [],
-      selectedCategory: null,
-      selectedCommand: null,
-      commandHistory: [],
-      activeExecution: null,
-      websocket: null
-    };
-
-    // When switching to rabbitmqctl tab, hide the regular response history
-    setTimeout(() => {
-      const regularHistory = document.querySelector('.testing-history');
-      if (regularHistory) {
-        regularHistory.style.display = 'none';
-      }
-    }, 0);
-
-    return `
-      <div class="rabbitmqctl-container">
-        <div class="rabbitmqctl-layout">
-          <div class="rabbitmqctl-categories">
-            <h5>Command Categories</h5>
-            <div id="rabbitmqctl-categories-${instanceId}" class="categories-list">
-              <div class="loading">Loading categories...</div>
-            </div>
-          </div>
-          <div class="rabbitmqctl-command-details">
-            <div id="rabbitmqctl-command-section-${instanceId}" class="command-section">
-              <div class="no-data">Select a category to view available commands</div>
-            </div>
-            <div id="rabbitmqctl-execution-section-${instanceId}" class="execution-section">
-              <div id="rabbitmqctl-command-help-${instanceId}" class="command-help"></div>
-              <div id="rabbitmqctl-command-table-${instanceId}" class="command-table-container">
-                <div class="no-data">Select a category and command to configure execution</div>
-              </div>
-            </div>
-            <div class="rabbitmqctl-output-container">
-              <div class="output-header">
-                <h5>Command Output</h5>
-                <div class="output-controls">
-                  <button onclick="clearRabbitMQCtlOutput('${instanceId}')" class="clear-btn">Clear</button>
-                  <button onclick="toggleRabbitMQCtlHistory('${instanceId}')" class="history-btn">History</button>
-                </div>
-              </div>
-              <div id="rabbitmqctl-output-${instanceId}" class="command-output">
-                <div class="no-data">No command executed yet</div>
-              </div>
-            </div>
-            <div id="rabbitmqctl-history-${instanceId}" class="rabbitmqctl-history" style="display: none;">
-              <h5>Command History</h5>
-              <div id="rabbitmqctl-history-content-${instanceId}" class="history-content">
-                <div class="no-data">No command history available</div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="testing-history" id="rabbitmqctl-response-history-${instanceId}">
-          <div class="history-header">
-            <h5>Response History</h5>
-            <button class="clear-history-btn" onclick="clearRabbitMQCtlResponseHistory('${instanceId}');">Clear History</button>
-          </div>
-          <div class="history-entries" id="history-entries-rabbitmqctl-${instanceId}">
-            <div class="no-data">No commands executed yet</div>
-          </div>
-        </div>
-      </div>
-    `;
-  };
-
-  const renderRabbitMQPluginsOperation = (instanceId) => {
-    // Initialize the rabbitmq-plugins state for this instance if it doesn't exist
-    window.rabbitmqPlugins = window.rabbitmqPlugins || {};
-    window.rabbitmqPlugins[instanceId] = window.rabbitmqPlugins[instanceId] || {
-      categories: [],
-      selectedCategory: null,
-      selectedCommand: null,
-      commandHistory: [],
-      activeExecution: null,
-      websocket: null
-    };
-
-    // When switching to plugins tab, hide the regular response history
-    setTimeout(() => {
-      const regularHistory = document.querySelector('.testing-history');
-      if (regularHistory) {
-        regularHistory.style.display = 'none';
-      }
-    }, 0);
-
-    return `
-      <div class="plugins-container">
-        <div class="plugins-layout">
-          <div class="plugins-categories">
-            <h5>Plugin Categories</h5>
-            <div id="plugins-categories-${instanceId}" class="categories-list">
-              <div class="loading">Loading categories...</div>
-            </div>
-          </div>
-          <div class="plugins-command-details">
-            <div id="plugins-command-section-${instanceId}" class="command-section">
-              <div class="no-data">Select a category to view available commands</div>
-            </div>
-            <div id="plugins-execution-section-${instanceId}" class="execution-section">
-              <div id="plugins-command-help-${instanceId}" class="command-help"></div>
-              <div id="plugins-command-table-${instanceId}" class="command-table-container">
-                <div class="no-data">Select a category and command to configure execution</div>
-              </div>
-            </div>
-            <div class="plugins-output-container">
-              <div class="output-header">
-                <h5>Command Output</h5>
-                <div class="output-controls">
-                  <button onclick="clearRabbitMQPluginsOutput('${instanceId}')" class="clear-btn">Clear</button>
-                  <button onclick="toggleRabbitMQPluginsHistory('${instanceId}')" class="history-btn">History</button>
-                </div>
-              </div>
-              <div id="plugins-output-${instanceId}" class="command-output">
-                <div class="no-data">No command executed yet</div>
-              </div>
-            </div>
-            <div id="plugins-history-${instanceId}" class="plugins-history" style="display: none;">
-              <h5>Command History</h5>
-              <div id="plugins-history-content-${instanceId}" class="history-content">
-                <div class="no-data">No command history available</div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="testing-history" id="plugins-response-history-${instanceId}">
-          <div class="history-header">
-            <h5>Response History</h5>
-            <button class="clear-history-btn" onclick="clearRabbitMQPluginsResponseHistory('${instanceId}');">Clear History</button>
-          </div>
-          <div class="history-entries" id="history-entries-plugins-${instanceId}">
-            <div class="no-data">No commands executed yet</div>
-          </div>
-        </div>
-      </div>
-    `;
-  };
-
   // Service Testing Execution Functions
 
   // Global history storage
@@ -13362,208 +13218,367 @@
     }
   };
 
-  // RabbitMQCtl Functions
-  window.loadRabbitMQCtlCategories = async (instanceId) => {
+  // Command runners. The rabbitmqctl and rabbitmq-plugins tabs share one
+  // runner: a picker grouped by category, the chosen command laid out as a
+  // shell line with one input per argument, and one output panel with its
+  // history underneath. Each runner keeps its state in its own window store,
+  // and its execute function builds the same request the earlier screens sent.
+  const commandRunners = {
+    rabbitmqctl: { tool: 'rabbitmqctl', route: 'rabbitmqctl', store: 'rabbitmqCtl', run: 'executeRabbitMQCtlCommand', clearHistory: 'clearRabbitMQCtlHistory', dangerText: 'This is a dangerous command that may affect the system' },
+    plugins: { tool: 'rabbitmq-plugins', route: 'plugins', store: 'rabbitmqPlugins', run: 'executeRabbitMQPluginsCommand', clearHistory: 'clearRabbitMQPluginsHistory', dangerText: 'This is a dangerous command. Use with caution.' }
+  };
+  const RUNNER_HISTORY_LIMIT = 20;
+
+  const countLabel = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
+  const runnerState = (kind, instanceId) => {
+    const store = commandRunners[kind].store;
+    window[store] = window[store] || {};
+    window[store][instanceId] = window[store][instanceId] || {
+      categories: [],
+      selectedCategory: null,
+      selectedCommand: null,
+      commandHistory: [],
+      running: false,
+      pick: 0
+    };
+    return window[store][instanceId];
+  };
+
+  // The runner's root, found in the page. Callers that await keep the root
+  // they started with, so a run that ends after the operator switched tabs
+  // still lands in its own panel.
+  const runnerRoot = (kind, instanceId) => document.getElementById(`operation-content-${instanceId}`)?.querySelector(`.command-runner[data-runner="${kind}"]`) || null;
+  const runnerPart = (root, part) => root ? root.querySelector(`[data-runner-part="${part}"]`) : null;
+
+  // Quotes an argument the way a shell needs it, so the line that ran reads
+  // as something the operator could type.
+  const shellWord = (word) => /^[\w@%+=:,./^*\\-]+$/.test(word) ? word : `'${String(word).replace(/'/g, `'\\''`)}'`;
+  const runnerLine = (kind, commandName, args) => [commandRunners[kind].tool, commandName, ...args.map(shellWord)].join(' ');
+  const formatRunDuration = (ms) => ms < 1000 ? `${Math.max(0, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`;
+
+  const RUN_STATUS = {
+    running: ['secondary', 'Running'],
+    success: ['success', 'Success'],
+    failure: ['danger', 'Failure']
+  };
+  const runStatusPill = (status) => {
+    const [variant, label] = RUN_STATUS[status];
+    return `<span class="badge" data-variant="${variant}">${label}</span>`;
+  };
+
+  const renderCommandRunner = (kind, instanceId) => {
+    const prefix = kind;
+    return `
+      <div class="command-runner" data-runner="${kind}">
+        <div class="command-runner-picker">
+          <div class="command-runner-field command-runner-choice">
+            <label for="${prefix}-command-picker-${instanceId}">Command</label>
+            <select id="${prefix}-command-picker-${instanceId}" data-runner-picker disabled>
+              <option value="">Loading commands…</option>
+            </select>
+          </div>
+          <div class="command-runner-field command-runner-filter">
+            <label for="${prefix}-command-filter-${instanceId}">Filter</label>
+            <input type="search" id="${prefix}-command-filter-${instanceId}" data-runner-filter placeholder="Name or description" autocomplete="off" spellcheck="false" disabled>
+          </div>
+          <span class="command-runner-count" data-runner-part="count" aria-live="polite"></span>
+        </div>
+        <div class="command-runner-form" id="${prefix}-command-form-${instanceId}" data-runner-part="form" hidden></div>
+        <section class="command-runner-output" data-runner-part="output" aria-label="Command output">
+          <div class="command-runner-output-header" data-runner-part="output-header" hidden></div>
+          <p class="command-runner-empty" data-runner-part="output-empty">Choose a command and select Run.</p>
+          <pre class="command-runner-pre" id="${prefix}-output-${instanceId}" data-runner-part="output-text" hidden></pre>
+        </section>
+        <details class="command-runner-history" data-runner-part="history" hidden>
+          <summary>History <span class="command-runner-history-count" data-runner-part="history-count"></span></summary>
+          <ol class="command-runner-history-list" data-runner-part="history-list"></ol>
+          <button type="button" class="btn btn-secondary" data-variant="secondary" data-runner-action="clear-history">Clear history</button>
+        </details>
+      </div>
+    `;
+  };
+
+  const renderRabbitMQCtlOperation = (instanceId) => renderCommandRunner('rabbitmqctl', instanceId);
+  const renderRabbitMQPluginsOperation = (instanceId) => renderCommandRunner('plugins', instanceId);
+
+  // Lists every category's commands in the picker, narrowed by the filter.
+  // The chosen command always stays listed, so filtering never drops it.
+  const renderRunnerPicker = (kind, root) => {
+    const picker = root.querySelector('[data-runner-picker]');
+    const filter = root.querySelector('[data-runner-filter]');
+    const count = runnerPart(root, 'count');
+    const state = runnerState(kind, root.dataset.instance);
+    const query = filter.value.trim().toLowerCase();
+    const selected = picker.value;
+    let total = 0;
+    let shown = 0;
+    const groups = state.categories.map(category => {
+      const commands = Array.isArray(category.commands) ? category.commands : [];
+      total += commands.length;
+      const matches = commands.filter(cmd => !query || `${category.name}/${cmd.name}` === selected ||
+        `${cmd.name}\n${cmd.description || ''}`.toLowerCase().includes(query));
+      shown += matches.length;
+      if (matches.length === 0) return '';
+      const label = `${category.display_name || category.name} (${countLabel(commands.length, 'command')})`;
+      return `<optgroup label="${escapeAttribute(label)}">${matches.map(cmd => `<option value="${escapeAttribute(`${category.name}/${cmd.name}`)}" data-category="${escapeAttribute(category.name)}" data-command="${escapeAttribute(cmd.name)}" title="${escapeAttribute(cmd.description || '')}">${escapeHtml(cmd.name)}</option>`).join('')}</optgroup>`;
+    }).join('');
+    picker.innerHTML = `<option value="">${shown > 0 ? 'Choose a command' : 'No commands match the filter'}</option>${groups}`;
+    picker.value = selected;
+    picker.disabled = false;
+    filter.disabled = false;
+    count.textContent = query ? `${shown} of ${countLabel(total, 'command')}` : countLabel(total, 'command');
+  };
+
+  const loadRunnerCategories = async (kind, root) => {
+    const instanceId = root.dataset.instance;
+    const state = runnerState(kind, instanceId);
     try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/categories`);
+      const response = await fetch(`/b/${instanceId}/rabbitmq/${commandRunners[kind].route}/categories`);
       const categories = await response.json();
-
-      window.rabbitmqCtl[instanceId].categories = categories;
-
-      const container = document.getElementById(`rabbitmqctl-categories-${instanceId}`);
-      if (container) {
-        container.innerHTML = categories.map(category =>
-          `<div class="category-item" onclick="selectRabbitMQCtlCategory('${instanceId}', '${category.name}')">
-            <div class="category-name">${category.display_name}</div>
-            <div class="category-description">${category.description}</div>
-            <div class="category-command-count">${category.commands.length} commands</div>
-          </div>`
-        ).join('');
-      }
+      state.categories = Array.isArray(categories) ? categories : [];
+      renderRunnerPicker(kind, root);
     } catch (error) {
-      console.error('Failed to load rabbitmqctl categories:', error);
-      const container = document.getElementById(`rabbitmqctl-categories-${instanceId}`);
-      if (container) {
-        container.innerHTML = '<div class="error">Failed to load categories</div>';
-      }
+      console.error(`Failed to load ${commandRunners[kind].tool} categories:`, error);
+      root.querySelector('[data-runner-picker]').innerHTML = '<option value="">Failed to load commands</option>';
+      runnerPart(root, 'count').textContent = '';
     }
   };
 
-  window.selectRabbitMQCtlCategory = async (instanceId, categoryName) => {
-    const state = window.rabbitmqCtl[instanceId];
-    state.selectedCategory = categoryName;
+  // The chosen command as a shell line: the tool and command, one labeled
+  // input per argument in catalog order, any plugin options, and Run. The
+  // description, any danger note, and the help sit under the line.
+  const renderRunnerForm = (kind, instanceId, command, running) => {
+    const runner = commandRunners[kind];
+    const args = Array.isArray(command.arguments) ? command.arguments : [];
+    const options = Array.isArray(command.options) ? command.options : [];
+    const examples = Array.isArray(command.examples) ? command.examples : [];
+    const argInput = (arg) => {
+      const inputId = `${kind}-arg-${arg.name}-${instanceId}`;
+      const placeholder = arg.description || arg.name;
+      return `
+        <div class="command-runner-arg">
+          <label for="${inputId}">${escapeHtml(arg.name)}${arg.required ? '' : ' <span class="command-runner-optional">optional</span>'}</label>
+          <input type="text" id="${inputId}" data-runner-arg placeholder="${escapeAttribute(arg.type === 'string[]' ? `${placeholder}, space-separated` : placeholder)}" autocomplete="off" spellcheck="false"${arg.required ? ' required' : ''}>
+        </div>`;
+    };
+    // Only rabbitmq-plugins ever offered its options, as checkboxes. The
+    // rabbitmqctl screen sends only arguments, so it shows none.
+    const optionBoxes = kind === 'plugins' ? options.map(opt => `
+        <label class="command-runner-option checkbox-label" title="${escapeAttribute(opt.description || '')}">
+          <input type="checkbox" id="plugins-opt-${opt.name}-${instanceId}" value="${escapeAttribute(opt.name)}">
+          <code>--${escapeHtml(opt.name)}</code>
+        </label>`).join('') : '';
+    const helpRows = [
+      command.usage ? `<dt>Usage</dt><dd><code>${escapeHtml(command.usage)}</code></dd>` : '',
+      examples.length > 0 ? `<dt>Examples</dt><dd><ul>${examples.map(ex => `<li><code>${escapeHtml(ex)}</code></li>`).join('')}</ul></dd>` : '',
+      args.length > 0 ? `<dt>Arguments</dt><dd><ul>${args.map(arg => `<li><code>${escapeHtml(arg.name)}</code> ${escapeHtml(arg.type || '')}, ${arg.required ? 'required' : 'optional'}. ${escapeHtml(arg.description || '')}${arg.default ? ` Default ${escapeHtml(String(arg.default))}.` : ''}</li>`).join('')}</ul></dd>` : '',
+      kind === 'plugins' && options.length > 0 ? `<dt>Options</dt><dd><ul>${options.map(opt => `<li><code>--${escapeHtml(opt.name)}</code>${opt.short ? ` (<code>-${escapeHtml(opt.short)}</code>)` : ''} ${escapeHtml(opt.description || '')}</li>`).join('')}</ul></dd>` : ''
+    ].join('');
+    return `
+      <div class="command-runner-line">
+        <code class="command-runner-command">${escapeHtml(`${runner.tool} ${command.name}`)}</code>
+        ${args.map(argInput).join('')}
+        ${optionBoxes}
+        <button type="button" class="btn btn-primary command-runner-run" id="${kind}-execute-btn-${instanceId}" data-runner-action="run"${running ? ' disabled' : ''}>${running ? 'Executing...' : 'Run'}</button>
+      </div>
+      <p class="command-runner-description">${[command.description, countLabel(args.length, 'argument')].filter(Boolean).map(escapeHtml).join(' · ')}</p>
+      ${command.dangerous ? `<div class="command-runner-danger" role="note" data-variant="warning">${blacksmithIcon('triangle-alert', { size: 16 })}<span>${runner.dangerText}</span></div>` : ''}
+      ${helpRows ? `<details class="command-runner-help"><summary>Usage and examples</summary><dl>${helpRows}</dl></details>` : ''}
+    `;
+  };
+
+  // Loads the chosen command and lays out its form. A later choice wins over
+  // an earlier one still loading.
+  const chooseRunnerCommand = async (kind, root, option) => {
+    const instanceId = root.dataset.instance;
+    const state = runnerState(kind, instanceId);
+    const form = runnerPart(root, 'form');
+    const pick = ++state.pick;
     state.selectedCommand = null;
-
-    // Update category selection
-    document.querySelectorAll(`#rabbitmqctl-categories-${instanceId} .category-item`).forEach(item => {
-      item.classList.remove('active');
-    });
-    event.target.closest('.category-item').classList.add('active');
-
-    try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/category/${categoryName}`);
-      const category = await response.json();
-
-      // Update command selector
-      const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
-      if (commandSelect) {
-        commandSelect.innerHTML = '<option value="">Select a command...</option>' +
-          category.commands.map(cmd =>
-            `<option value="${cmd.name}">${cmd.name} - ${cmd.description}</option>`
-          ).join('');
-      }
-
-      // Update command details section
-      const commandSection = document.getElementById(`rabbitmqctl-command-section-${instanceId}`);
-      if (commandSection) {
-        commandSection.innerHTML = `
-          <div class="category-info">
-            <h6>${category.display_name}</h6>
-            <p>${category.description}</p>
-            <div class="commands-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Command</th>
-                    <th>Description</th>
-                    <th>Arguments</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${category.commands.map(cmd => `
-                    <tr class="command-row" onclick="selectRabbitMQCtlCommandFromTable('${instanceId}', '${cmd.name}')">
-                      <td class="command-name">${cmd.name}</td>
-                      <td class="command-desc">${cmd.description}</td>
-                      <td class="command-args">${cmd.arguments.length} args</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        `;
-      }
-    } catch (error) {
-      console.error('Failed to load category commands:', error);
+    if (!option || !option.value) {
+      state.selectedCategory = null;
+      form.innerHTML = '';
+      form.hidden = true;
+      return;
     }
-  };
-
-  window.selectRabbitMQCtlCommand = async (instanceId) => {
-    const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
-    const commandName = commandSelect.value;
-
-    if (!commandName) return;
-
-    await loadRabbitMQCtlCommandDetails(instanceId, commandName);
-  };
-
-  window.selectRabbitMQCtlCommandFromTable = async (instanceId, commandName) => {
-    const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
-    if (commandSelect) {
-      commandSelect.value = commandName;
-    }
-
-    await loadRabbitMQCtlCommandDetails(instanceId, commandName);
-  };
-
-  const loadRabbitMQCtlCommandDetails = async (instanceId, commandName) => {
-    const state = window.rabbitmqCtl[instanceId];
-    const categoryName = state.selectedCategory;
-
-    if (!categoryName) return;
-
+    const categoryName = option.dataset.category;
+    const commandName = option.dataset.command;
+    state.selectedCategory = categoryName;
+    if (kind === 'plugins') state.selectedCommand = commandName;
+    form.hidden = false;
+    form.innerHTML = '<p class="command-runner-loading">Loading command…</p>';
     try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/category/${categoryName}/command/${commandName}`);
+      const response = await fetch(`/b/${instanceId}/rabbitmq/${commandRunners[kind].route}/category/${categoryName}/command/${commandName}`);
       const command = await response.json();
-
-      state.selectedCommand = command;
-
-      // Update command help
-      const helpContainer = document.getElementById(`rabbitmqctl-command-help-${instanceId}`);
-      if (helpContainer) {
-        helpContainer.innerHTML = `
-          <div class="command-help-content">
-            <div class="command-usage">
-              <strong>Usage:</strong> <code>${command.usage}</code>
-            </div>
-            <div class="command-description">
-              <strong>Description:</strong> ${command.description}
-            </div>
-            ${command.examples.length > 0 ? `
-              <div class="command-examples">
-                <strong>Examples:</strong>
-                ${command.examples.map(ex => `<code>${ex}</code>`).join('<br>')}
-              </div>
-            ` : ''}
-            ${command.dangerous ? `<div class="warning">${blacksmithIcon('triangle-alert', { size: 16, style: 'vertical-align: -3px; margin-right: 4px;' })}This is a dangerous command that may affect the system</div>` : ''}
-          </div>
-        `;
-      }
-
-      // Update command table section
-      const tableContainer = document.getElementById(`rabbitmqctl-command-table-${instanceId}`);
-      if (tableContainer) {
-        tableContainer.innerHTML = `
-          <div class="command-execution-table">
-            <table class="rabbitmqctl-table">
-              <thead>
-                <tr>
-                  <th>rabbitmqctl</th>
-                  <th>Command</th>
-                  <th>Command Arguments</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td class="command-base">rabbitmqctl</td>
-                  <td class="command-name-cell">${command.name}</td>
-                  <td>
-                    <input type="text"
-                           id="rabbitmqctl-command-args-${instanceId}"
-                           placeholder="${command.arguments.map(arg => arg.required ? `<${arg.name}>` : `[${arg.name}]`).join(' ')}"
-                           class="command-args-input" />
-                  </td>
-                  <td>
-                    <button id="rabbitmqctl-execute-btn-${instanceId}"
-                            class="execute-btn"
-                            onclick="executeRabbitMQCtlCommand('${instanceId}')">
-                      Run
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          ${command.arguments.length > 0 ? `
-            <div class="arguments-help">
-              <h6>Available Arguments:</h6>
-              <div class="arguments-list">
-                ${command.arguments.map(arg => `
-                  <div class="argument-help">
-                    <strong>${arg.name}</strong> (${arg.type})${arg.required ? ' - Required' : ' - Optional'}
-                    <br><small>${arg.description}${arg.default ? ` (default: ${arg.default})` : ''}</small>
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          ` : ''}
-        `;
-      }
-
+      if (pick !== state.pick) return;
+      if (kind === 'rabbitmqctl') state.selectedCommand = command;
+      form.innerHTML = renderRunnerForm(kind, instanceId, command, state.running);
     } catch (error) {
-      console.error('Failed to load command details:', error);
+      if (pick !== state.pick) return;
+      console.error(`Failed to load ${commandRunners[kind].tool} command details:`, error);
+      form.innerHTML = `<div role="alert" data-variant="danger">Failed to load ${escapeHtml(commandName)}.</div>`;
     }
+  };
+
+  // Shows one run in the output panel, or the empty line when run is null.
+  const showRunnerOutput = (root, run) => {
+    const header = runnerPart(root, 'output-header');
+    const empty = runnerPart(root, 'output-empty');
+    const text = runnerPart(root, 'output-text');
+    if (!header || !empty || !text) return;
+    if (!run) {
+      header.hidden = true;
+      header.innerHTML = '';
+      text.hidden = true;
+      text.textContent = '';
+      empty.hidden = false;
+      delete runnerPart(root, 'output').dataset.status;
+      return;
+    }
+    const meta = [
+      run.exitCode !== undefined && run.exitCode !== null ? `<span class="command-runner-meta">Exit code ${escapeHtml(String(run.exitCode))}</span>` : '',
+      run.duration !== undefined ? `<span class="command-runner-meta">${formatRunDuration(run.duration)}</span>` : ''
+    ].join('');
+    const tools = run.status === 'running' ? '' : `
+      <span class="command-runner-tools">
+        <button type="button" class="command-runner-icon-btn" data-runner-action="copy" aria-label="Copy output" title="Copy output">${COPY_ICON_SVG}</button>
+        <button type="button" class="command-runner-icon-btn" data-runner-action="clear" aria-label="Clear output" title="Clear output">${blacksmithIcon('trash-2', { size: 14 })}</button>
+      </span>`;
+    header.innerHTML = `<code class="command-runner-ran">${escapeHtml(run.line)}</code>${runStatusPill(run.status)}${meta}${tools}`;
+    header.hidden = false;
+    empty.hidden = true;
+    text.textContent = run.output;
+    text.hidden = false;
+    runnerPart(root, 'output').dataset.status = run.status;
+  };
+
+  const renderRunnerHistory = (kind, root, instanceId) => {
+    const history = runnerPart(root, 'history');
+    if (!history) return;
+    const entries = runnerState(kind, instanceId).commandHistory;
+    runnerPart(root, 'history-count').textContent = entries.length > 0 ? `(${countLabel(entries.length, 'run')})` : '';
+    runnerPart(root, 'history-list').innerHTML = entries.map((entry, index) => `
+      <li>
+        <button type="button" class="command-runner-history-entry" data-runner-action="restore" data-index="${index}">
+          <code>${escapeHtml(entry.line)}</code>
+          ${runStatusPill(entry.status)}
+          <time datetime="${new Date(entry.at).toISOString()}">${escapeHtml(new Date(entry.at).toLocaleTimeString())}</time>
+        </button>
+      </li>`).join('');
+    history.hidden = entries.length === 0;
+    if (entries.length === 0) history.open = false;
+  };
+
+  // Records a finished run: the panel shows it and it leads the history.
+  const recordRunnerRun = (kind, root, instanceId, run) => {
+    const state = runnerState(kind, instanceId);
+    const entry = { ...run, at: Date.now() };
+    state.commandHistory.unshift(entry);
+    if (state.commandHistory.length > RUNNER_HISTORY_LIMIT) {
+      state.commandHistory = state.commandHistory.slice(0, RUNNER_HISTORY_LIMIT);
+    }
+    showRunnerOutput(root, entry);
+    renderRunnerHistory(kind, root, instanceId);
+  };
+
+  const finishRunnerRun = (kind, root, instanceId, line, started, result) => {
+    recordRunnerRun(kind, root, instanceId, {
+      line,
+      status: result && result.success ? 'success' : 'failure',
+      exitCode: result ? result.exit_code : undefined,
+      duration: Date.now() - started,
+      output: (result && (result.output || result.error)) || 'No output'
+    });
+  };
+
+  const failRunnerRun = (kind, root, instanceId, line, started, message) => {
+    recordRunnerRun(kind, root, instanceId, {
+      line,
+      status: 'failure',
+      duration: Date.now() - started,
+      output: `Execution error: ${message}`
+    });
+  };
+
+  const setRunnerRunning = (kind, root, instanceId, running) => {
+    runnerState(kind, instanceId).running = running;
+    const button = root ? root.querySelector(`#${kind}-execute-btn-${instanceId}`) : document.getElementById(`${kind}-execute-btn-${instanceId}`);
+    if (button) {
+      button.disabled = running;
+      button.textContent = running ? 'Executing...' : 'Run';
+    }
+  };
+
+  const copyRunnerOutput = async (root, button) => {
+    try {
+      await navigator.clipboard.writeText(runnerPart(root, 'output-text').textContent);
+      announce('Copied to clipboard');
+      flashCopyIcon(button);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      announce('Copy failed');
+    }
+  };
+
+  // Binds the runner's controls and loads its catalog. The listeners sit on
+  // the runner's root, so a retained view keeps them when it comes back.
+  const mountCommandRunner = (kind, instanceId) => {
+    const root = runnerRoot(kind, instanceId);
+    if (!root) return;
+    root.dataset.instance = instanceId;
+    const state = runnerState(kind, instanceId);
+    state.selectedCategory = null;
+    state.selectedCommand = null;
+    root.addEventListener('change', (event) => {
+      const picker = event.target.closest('[data-runner-picker]');
+      if (picker) chooseRunnerCommand(kind, root, picker.selectedOptions[0]);
+    });
+    root.addEventListener('input', (event) => {
+      if (event.target.matches('[data-runner-filter]')) renderRunnerPicker(kind, root);
+    });
+    root.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || !event.target.matches('[data-runner-arg]')) return;
+      event.preventDefault();
+      const run = root.querySelector('[data-runner-action="run"]');
+      if (run && !run.disabled) run.click();
+    });
+    root.addEventListener('click', (event) => {
+      const control = event.target.closest('[data-runner-action]');
+      if (!control || !root.contains(control) || control.disabled) return;
+      const action = control.dataset.runnerAction;
+      if (action === 'run') window[commandRunners[kind].run](instanceId);
+      else if (action === 'copy') copyRunnerOutput(root, control);
+      else if (action === 'clear') showRunnerOutput(root, null);
+      else if (action === 'clear-history') window[commandRunners[kind].clearHistory](instanceId);
+      else if (action === 'restore') {
+        const entry = runnerState(kind, instanceId).commandHistory[Number(control.dataset.index)];
+        if (entry) showRunnerOutput(root, entry);
+      }
+    });
+    renderRunnerHistory(kind, root, instanceId);
+    loadRunnerCategories(kind, root);
+  };
+
+  const clearRunnerHistory = (kind, instanceId) => {
+    runnerState(kind, instanceId).commandHistory = [];
+    const root = runnerRoot(kind, instanceId);
+    if (root) renderRunnerHistory(kind, root, instanceId);
   };
 
   window.executeRabbitMQCtlCommand = async (instanceId) => {
-    const state = window.rabbitmqCtl[instanceId];
+    const state = runnerState('rabbitmqctl', instanceId);
     const command = state.selectedCommand;
 
     if (!command) return;
 
-    // Gather command arguments
-    const commandArgs = document.getElementById(`rabbitmqctl-command-args-${instanceId}`)?.value || '';
+    // Gather the argument inputs in catalog order. An input may hold several
+    // words, so the values join and split on whitespace, the same as the one
+    // arguments field this form replaced.
+    const commandArgs = (Array.isArray(command.arguments) ? command.arguments : [])
+      .map(arg => (document.getElementById(`rabbitmqctl-arg-${arg.name}-${instanceId}`)?.value || '').trim())
+      .filter(value => value)
+      .join(' ');
 
     // Build arguments array from command arguments
     const args = [];
@@ -13571,10 +13586,14 @@
       args.push(...commandArgs.trim().split(/\s+/));
     }
 
+    if (state.running) return;
+    const root = runnerRoot('rabbitmqctl', instanceId);
+    const line = runnerLine('rabbitmqctl', command.name, args);
+    const started = Date.now();
+
     try {
-      const executeBtn = document.getElementById(`rabbitmqctl-execute-btn-${instanceId}`);
-      executeBtn.disabled = true;
-      executeBtn.textContent = 'Executing...';
+      setRunnerRunning('rabbitmqctl', root, instanceId, true);
+      showRunnerOutput(root, { line, status: 'running', output: 'Executing command...' });
 
       const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/execute`, {
         method: 'POST',
@@ -13590,246 +13609,13 @@
 
       const result = await response.json();
 
-      displayRabbitMQCtlResult(instanceId, result);
+      finishRunnerRun('rabbitmqctl', root, instanceId, line, started, result);
 
     } catch (error) {
       console.error('Command execution failed:', error);
-      displayRabbitMQCtlError(instanceId, error.message);
+      failRunnerRun('rabbitmqctl', root, instanceId, line, started, error.message);
     } finally {
-      const executeBtn = document.getElementById(`rabbitmqctl-execute-btn-${instanceId}`);
-      executeBtn.disabled = false;
-      executeBtn.textContent = 'Run';
-    }
-  };
-
-  // Streaming functionality removed as requested
-
-  const displayRabbitMQCtlResult = (instanceId, result) => {
-    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
-    if (outputContainer) {
-      outputContainer.innerHTML = `
-        <div class="command-result ${result.success ? 'success' : 'error'}">
-          <div class="result-header">
-            <span class="result-status">${result.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
-            <span class="result-command">${result.command}</span>
-            <span class="result-time">${new Date(result.timestamp * 1000).toLocaleString()}</span>
-            <span class="result-exit-code">Exit Code: ${result.exit_code}</span>
-          </div>
-          <div class="result-output">
-            <pre>${result.output || 'No output'}</pre>
-          </div>
-        </div>
-      `;
-    }
-
-    // Add to command history
-    const state = window.rabbitmqCtl[instanceId];
-    if (state) {
-      const historyEntry = {
-        category: state.selectedCategory,
-        command: result.command,
-        arguments: result.arguments || [],
-        timestamp: result.timestamp,
-        success: result.success,
-        exit_code: result.exit_code,
-        output: result.output || 'No output'
-      };
-
-      state.commandHistory.unshift(historyEntry);
-
-      // Keep only last 20 entries
-      if (state.commandHistory.length > 20) {
-        state.commandHistory = state.commandHistory.slice(0, 20);
-      }
-
-      // Update history display if visible
-      updateRabbitMQCtlHistory(instanceId);
-
-      // Also update the response history section
-      updateRabbitMQCtlResponseHistory(instanceId, historyEntry);
-    }
-  };
-
-  const displayRabbitMQCtlError = (instanceId, error) => {
-    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
-    if (outputContainer) {
-      outputContainer.innerHTML = `
-        <div class="command-result error">
-          <div class="result-header">
-            <span class="result-status">${blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
-            <span class="result-error">Execution Error</span>
-          </div>
-          <div class="result-error">${error}</div>
-        </div>
-      `;
-    }
-  };
-
-  window.clearRabbitMQCtlOutput = (instanceId) => {
-    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
-    if (outputContainer) {
-      outputContainer.innerHTML = '<div class="no-data">Output cleared</div>';
-    }
-  };
-
-  const appendRabbitMQCtlOutput = (instanceId, text) => {
-    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
-    if (outputContainer) {
-      if (outputContainer.querySelector('.no-data')) {
-        outputContainer.innerHTML = '<pre class="stream-output"></pre>';
-      }
-      const pre = outputContainer.querySelector('.stream-output');
-      if (pre) {
-        pre.textContent += text;
-        pre.scrollTop = pre.scrollHeight;
-      }
-    }
-  };
-
-  window.toggleRabbitMQCtlHistory = (instanceId) => {
-    const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
-    if (historyContainer) {
-      if (historyContainer.style.display === 'none') {
-        historyContainer.style.display = 'block';
-        updateRabbitMQCtlHistory(instanceId);
-      } else {
-        historyContainer.style.display = 'none';
-      }
-    }
-  };
-
-  const updateRabbitMQCtlHistory = (instanceId) => {
-    const state = window.rabbitmqCtl[instanceId];
-    const historyContent = document.getElementById(`rabbitmqctl-history-content-${instanceId}`);
-
-    if (historyContent && state) {
-      const history = state.commandHistory;
-
-      if (history.length > 0) {
-        historyContent.innerHTML = `
-          ${history.map(entry => `
-            <div class="history-entry">
-              <div class="history-header">
-                <span class="history-command">${entry.category}.${entry.command}</span>
-                <span class="history-time">${new Date(entry.timestamp * 1000).toLocaleString()}</span>
-                <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
-              </div>
-              ${entry.arguments.length > 0 ? `<div class="history-args">Args: ${entry.arguments.join(' ')}</div>` : ''}
-              <div class="history-output">
-                <pre>${entry.output.substring(0, 200)}${entry.output.length > 200 ? '...' : ''}</pre>
-              </div>
-            </div>
-          `).join('')}
-          <button onclick="clearRabbitMQCtlHistory('${instanceId}')" class="clear-btn">Clear History</button>
-        `;
-      } else {
-        historyContent.innerHTML = '<div class="no-data">No command history available</div>';
-      }
-    }
-  };
-
-  window.showRabbitMQCtlHistory = async (instanceId) => {
-    // Now just toggle the history visibility
-    toggleRabbitMQCtlHistory(instanceId);
-  };
-
-  window.clearRabbitMQCtlHistory = (instanceId) => {
-    const state = window.rabbitmqCtl[instanceId];
-    if (state) {
-      state.commandHistory = [];
-      updateRabbitMQCtlHistory(instanceId);
-    }
-  };
-
-  // Functions for the Response History section in rabbitmqctl
-  const updateRabbitMQCtlResponseHistory = (instanceId, entry) => {
-    const historyContainer = document.getElementById(`history-entries-rabbitmqctl-${instanceId}`);
-    if (!historyContainer) return;
-
-    const timestamp = new Date(entry.timestamp * 1000).toLocaleString();
-    const statusClass = entry.success ? 'success' : 'error';
-    const statusIcon = entry.success ? blacksmithIcon('check', { size: 14, label: 'Succeeded' }) : blacksmithIcon('x', { size: 14, label: 'Failed' });
-
-    const newEntry = document.createElement('div');
-    newEntry.className = `history-entry ${statusClass}`;
-    newEntry.innerHTML = `
-      <div class="history-entry-header">
-        <span class="history-operation">${statusIcon} ${entry.category}.${entry.command}</span>
-        <span class="history-timestamp">${timestamp}</span>
-      </div>
-      <div class="history-entry-body">
-        <div class="history-params">
-          <strong>Arguments:</strong>
-          <pre>${entry.arguments.length > 0 ? entry.arguments.join(' ') : 'None'}</pre>
-        </div>
-        <div class="history-result">
-          <strong>Output:</strong>
-          <pre>${entry.output}</pre>
-        </div>
-      </div>
-    `;
-
-    // Remove "no data" message if present
-    const noData = historyContainer.querySelector('.no-data');
-    if (noData) {
-      noData.remove();
-    }
-
-    // Insert at the beginning
-    historyContainer.insertBefore(newEntry, historyContainer.firstChild);
-
-    // Keep only last 20 entries
-    const entries = historyContainer.querySelectorAll('.history-entry');
-    if (entries.length > 20) {
-      entries[entries.length - 1].remove();
-    }
-  };
-
-  window.clearRabbitMQCtlResponseHistory = (instanceId) => {
-    const historyContainer = document.getElementById(`history-entries-rabbitmqctl-${instanceId}`);
-    if (historyContainer) {
-      historyContainer.innerHTML = '<div class="no-data">No commands executed yet</div>';
-    }
-  };
-
-  // Legacy function for compatibility
-  window.showRabbitMQCtlHistoryOld = async (instanceId) => {
-    try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/history`);
-      const history = await response.json();
-
-      const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
-      if (historyContainer) {
-        if (history.length > 0) {
-          historyContainer.innerHTML = `
-            <h5>Command History</h5>
-            <div class="history-content">
-              ${history.map(entry => `
-                <div class="history-entry">
-                  <div class="history-header">
-                    <span class="history-command">${entry.category}.${entry.command}</span>
-                    <span class="history-time">${new Date(entry.timestamp * 1000).toLocaleString()}</span>
-                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
-                  </div>
-                  <div class="history-args">${entry.arguments.join(' ')}</div>
-                  <div class="history-output">
-                    <pre>${entry.output.substring(0, 200)}${entry.output.length > 200 ? '...' : ''}</pre>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-            <button onclick="clearRabbitMQCtlHistory('${instanceId}')" class="clear-btn">Clear History</button>
-          `;
-        } else {
-          historyContainer.innerHTML = `
-            <h5>Command History</h5>
-            <div class="no-data">No command history available</div>
-          `;
-        }
-        historyContainer.style.display = 'block';
-      }
-    } catch (error) {
-      console.error('Failed to load history:', error);
+      setRunnerRunning('rabbitmqctl', root, instanceId, false);
     }
   };
 
@@ -13843,214 +13629,14 @@
         method: 'DELETE'
       });
 
-      const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
-      if (historyContainer) {
-        historyContainer.innerHTML = `
-          <h5>Command History</h5>
-          <div class="no-data">Command history cleared</div>
-        `;
-      }
+      clearRunnerHistory('rabbitmqctl', instanceId);
     } catch (error) {
       console.error('Failed to clear history:', error);
     }
   };
 
-  // RabbitMQ Plugins Functions
-  window.loadRabbitMQPluginsCategories = async (instanceId) => {
-    try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/categories`);
-      const categories = await response.json();
-
-      window.rabbitmqPlugins[instanceId].categories = categories;
-
-      const container = document.getElementById(`plugins-categories-${instanceId}`);
-      if (container) {
-        container.innerHTML = categories.map(category =>
-          `<div class="category-item" onclick="selectRabbitMQPluginsCategory('${instanceId}', '${category.name}')">
-            <div class="category-name">${category.display_name}</div>
-            <div class="category-description">${category.description}</div>
-            <div class="category-command-count">${category.commands.length} commands</div>
-          </div>`
-        ).join('');
-      }
-    } catch (error) {
-      console.error('Failed to load plugins categories:', error);
-      const container = document.getElementById(`plugins-categories-${instanceId}`);
-      if (container) {
-        container.innerHTML = '<div class="error">Failed to load categories</div>';
-      }
-    }
-  };
-
-  window.selectRabbitMQPluginsCategory = async (instanceId, categoryName) => {
-    const state = window.rabbitmqPlugins[instanceId];
-    state.selectedCategory = categoryName;
-    state.selectedCommand = null;
-
-    // Update category selection
-    document.querySelectorAll(`#plugins-categories-${instanceId} .category-item`).forEach(item => {
-      item.classList.remove('active');
-    });
-    event.target.closest('.category-item').classList.add('active');
-
-    try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/category/${categoryName}`);
-      const category = await response.json();
-
-      // Check if response is valid and has commands
-      if (!category || !category.commands || !Array.isArray(category.commands)) {
-        throw new Error(`Invalid category response: ${JSON.stringify(category)}`);
-      }
-
-      // Update command section
-      const commandSection = document.getElementById(`plugins-command-section-${instanceId}`);
-      if (commandSection) {
-        commandSection.innerHTML = `
-          <div class="category-info">
-            <h6>${category.display_name}</h6>
-            <p>${category.description}</p>
-            <div class="commands-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Command</th>
-                    <th>Description</th>
-                    <th>Arguments</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${category.commands.map(cmd => `
-                    <tr class="command-row" onclick="selectRabbitMQPluginsCommandFromTable('${instanceId}', '${cmd.name}')">
-                      <td class="command-name">${cmd.name}</td>
-                      <td class="command-desc">${cmd.description}</td>
-                      <td class="command-args">${cmd.arguments ? cmd.arguments.length : 0} args</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        `;
-      }
-    } catch (error) {
-      console.error('Failed to load plugins commands:', error);
-      // Show error in UI
-      const commandSection = document.getElementById(`plugins-command-section-${instanceId}`);
-      if (commandSection) {
-        commandSection.innerHTML = `
-          <div class="error-message">
-            <p>Failed to load commands for category "${categoryName}". Please try again.</p>
-          </div>
-        `;
-      }
-    }
-  };
-
-  window.selectRabbitMQPluginsCommand = async (instanceId) => {
-    const select = document.getElementById(`plugins-command-select-${instanceId}`);
-    const commandName = select.value;
-
-    if (!commandName) return;
-
-    selectRabbitMQPluginsCommandFromTable(instanceId, commandName);
-  };
-
-  window.selectRabbitMQPluginsCommandFromTable = async (instanceId, commandName) => {
-    const state = window.rabbitmqPlugins[instanceId];
-    state.selectedCommand = commandName;
-
-    await loadRabbitMQPluginsCommandDetails(instanceId, commandName);
-  };
-
-  const loadRabbitMQPluginsCommandDetails = async (instanceId, commandName) => {
-    try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/category/${window.rabbitmqPlugins[instanceId].selectedCategory}/command/${commandName}`);
-      const command = await response.json();
-
-      // Display command help
-      const helpContainer = document.getElementById(`plugins-command-help-${instanceId}`);
-      if (helpContainer) {
-        helpContainer.innerHTML = `
-          <div class="command-help-content">
-            <h6>${command.name}</h6>
-            <p>${command.description}</p>
-            <div class="command-usage">
-              <strong>Usage:</strong> <code>${command.usage}</code>
-            </div>
-            ${command.examples && command.examples.length > 0 ? `
-              <div class="command-examples">
-                <strong>Examples:</strong>
-                <ul>
-                  ${command.examples.map(ex => `<li><code>${ex}</code></li>`).join('')}
-                </ul>
-              </div>
-            ` : ''}
-            ${command.dangerous ? `<div class="warning">${blacksmithIcon('triangle-alert', { size: 16, style: 'vertical-align: -3px; margin-right: 4px;' })}This is a dangerous command. Use with caution.</div>` : ''}
-          </div>
-        `;
-      }
-
-      // Update command table section
-      const tableContainer = document.getElementById(`plugins-command-table-${instanceId}`);
-      if (tableContainer) {
-        tableContainer.innerHTML = `
-          <div class="command-execution-table">
-            <table class="plugins-table">
-              <thead>
-                <tr>
-                  <th>rabbitmq-plugins</th>
-                  <th>Command</th>
-                  <th>Arguments</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr id="plugins-command-row-${instanceId}">
-                  <td>rabbitmq-plugins</td>
-                  <td>${command.name}</td>
-                  <td>
-                    <div class="argument-inputs">
-                      ${command.arguments ? command.arguments.map(arg => `
-                        <div class="argument-group">
-                          <label>${arg.name}${arg.required ? '*' : ''}:</label>
-                          <input type="${arg.type === 'string[]' ? 'text' : 'text'}"
-                                 id="plugins-arg-${arg.name}-${instanceId}"
-                                 placeholder="${arg.description}"
-                                 ${arg.required ? 'required' : ''}>
-                          ${arg.type === 'string[]' ? '<small>Space-separated for multiple values</small>' : ''}
-                        </div>
-                      `).join('') : ''}
-                      ${command.options ? command.options.map(opt => `
-                        <div class="option-group">
-                          <label>
-                            <input type="checkbox"
-                                   id="plugins-opt-${opt.name}-${instanceId}"
-                                   value="${opt.name}">
-                            --${opt.name}${opt.short ? ` (-${opt.short})` : ''}
-                          </label>
-                          <small>${opt.description}</small>
-                        </div>
-                      `).join('') : ''}
-                    </div>
-                  </td>
-                  <td>
-                    <div class="command-actions">
-                      <button onclick="executeRabbitMQPluginsCommand('${instanceId}')" class="btn btn-primary">Run</button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        `;
-      }
-    } catch (error) {
-      console.error('Failed to load plugins command details:', error);
-    }
-  };
-
   window.executeRabbitMQPluginsCommand = async (instanceId) => {
-    const state = window.rabbitmqPlugins[instanceId];
+    const state = runnerState('plugins', instanceId);
     if (!state.selectedCommand) {
       window.Feedback.warning('Please select a command first.', { toast: true });
       return;
@@ -14090,12 +13676,14 @@
       }
     }
 
+    if (state.running) return;
+    const root = runnerRoot('plugins', instanceId);
+    const line = runnerLine('plugins', state.selectedCommand, cmdArguments);
+    const started = Date.now();
+
     try {
-      displayRabbitMQPluginsResult(instanceId, {
-        output: 'Executing command...',
-        success: true,
-        loading: true
-      });
+      setRunnerRunning('plugins', root, instanceId, true);
+      showRunnerOutput(root, { line, status: 'running', output: 'Executing command...' });
 
       const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/execute`, {
         method: 'POST',
@@ -14110,125 +13698,12 @@
       });
 
       const result = await response.json();
-      displayRabbitMQPluginsResult(instanceId, result);
-
-      // Add to response history
-      updateRabbitMQPluginsResponseHistory(instanceId, {
-        category: state.selectedCategory,
-        command: state.selectedCommand,
-        arguments: cmdArguments,
-        result: result,
-        timestamp: Date.now()
-      });
+      finishRunnerRun('plugins', root, instanceId, line, started, result);
 
     } catch (error) {
-      displayRabbitMQPluginsError(instanceId, error.message);
-    }
-  };
-
-  const displayRabbitMQPluginsResult = (instanceId, result) => {
-    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
-    if (outputContainer) {
-      if (result.loading) {
-        outputContainer.innerHTML = `
-          <div class="loading-output">
-            <div class="loading-spinner"></div>
-            <span>Executing command...</span>
-          </div>
-        `;
-      } else {
-        const statusClass = result.success ? 'success' : 'error';
-        const statusIcon = result.success ? blacksmithIcon('circle-check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('circle-x', { size: 16, label: 'Failed' });
-
-        outputContainer.innerHTML = `
-          <div class="command-result ${statusClass}">
-            <div class="result-header">
-              <span class="status">${statusIcon} ${result.success ? 'Success' : 'Failed'}</span>
-              ${result.exit_code !== undefined ? `<span class="exit-code">Exit Code: ${result.exit_code}</span>` : ''}
-            </div>
-            <div class="result-output">
-              <pre>${result.output || (result.error || 'No output')}</pre>
-            </div>
-          </div>
-        `;
-      }
-
-      outputContainer.scrollTop = outputContainer.scrollHeight;
-    }
-  };
-
-  const displayRabbitMQPluginsError = (instanceId, error) => {
-    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
-    if (outputContainer) {
-      outputContainer.innerHTML = `
-        <div class="command-result error">
-          <div class="result-header">
-            <span class="status">${blacksmithIcon('circle-x', { size: 16 })} Error</span>
-          </div>
-          <div class="result-output">
-            <pre>${error}</pre>
-          </div>
-        </div>
-      `;
-    }
-  };
-
-  window.clearRabbitMQPluginsOutput = (instanceId) => {
-    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
-    if (outputContainer) {
-      outputContainer.innerHTML = '<div class="no-data">No command executed yet</div>';
-    }
-  };
-
-  window.toggleRabbitMQPluginsHistory = (instanceId) => {
-    const historyContainer = document.getElementById(`plugins-history-${instanceId}`);
-
-    if (historyContainer) {
-      const isVisible = historyContainer.style.display !== 'none';
-      historyContainer.style.display = isVisible ? 'none' : 'block';
-
-      if (!isVisible) {
-        showRabbitMQPluginsHistory(instanceId);
-      }
-    }
-  };
-
-  window.showRabbitMQPluginsHistory = async (instanceId) => {
-    try {
-      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/history`);
-      const history = await response.json();
-
-      const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
-      if (historyContent) {
-        if (history && history.length > 0) {
-          historyContent.innerHTML = `
-            <div class="history-entries">
-              ${history.map(entry => `
-                <div class="history-entry">
-                  <div class="history-header">
-                    <span class="history-command">${entry.category}.${entry.command}</span>
-                    <span class="history-time">${new Date(entry.timestamp).toLocaleString()}</span>
-                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
-                  </div>
-                  <div class="history-args">${(entry.arguments || []).join(' ')}</div>
-                  <div class="history-output">
-                    <pre>${(entry.output_sample || '').substring(0, 200)}${(entry.output_sample || '').length > 200 ? '...' : ''}</pre>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-            <button onclick="clearRabbitMQPluginsHistory('${instanceId}')" class="clear-btn">Clear History</button>
-          `;
-        } else {
-          historyContent.innerHTML = '<div class="no-data">No command history available</div>';
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load plugins history:', error);
-      const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
-      if (historyContent) {
-        historyContent.innerHTML = '<div class="error">Failed to load history</div>';
-      }
+      failRunnerRun('plugins', root, instanceId, line, started, error.message);
+    } finally {
+      setRunnerRunning('plugins', root, instanceId, false);
     }
   };
 
@@ -14239,215 +13714,19 @@
           method: 'DELETE'
         });
 
-        const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
-        if (historyContent) {
-          historyContent.innerHTML = '<div class="no-data">No command history available</div>';
-        }
+        clearRunnerHistory('plugins', instanceId);
       } catch (error) {
         console.error('Failed to clear plugins history:', error);
       }
     }
   };
 
-  const updateRabbitMQPluginsResponseHistory = (instanceId, entry) => {
-    const historyContainer = document.getElementById(`history-entries-plugins-${instanceId}`);
-    if (!historyContainer) return;
-
-    // Remove no-data message if present
-    const noData = historyContainer.querySelector('.no-data');
-    if (noData) {
-      historyContainer.innerHTML = '';
-    }
-
-    const timestamp = new Date(entry.timestamp).toLocaleString();
-    const statusClass = entry.result?.success ? 'success' : 'error';
-    const statusIcon = entry.result?.success ? blacksmithIcon('circle-check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('circle-x', { size: 16, label: 'Failed' });
-
-    const entryElement = document.createElement('div');
-    entryElement.className = 'response-entry';
-    entryElement.innerHTML = `
-      <div class="response-header">
-        <span class="response-command">${entry.category}.${entry.command}</span>
-        <span class="response-time">${timestamp}</span>
-        <span class="response-status ${statusClass}">${statusIcon}</span>
-      </div>
-      <div class="response-args">Arguments: ${entry.arguments.join(' ') || 'none'}</div>
-      <div class="response-output">
-        <pre>${(entry.result?.output || entry.result?.error || 'No output').substring(0, 300)}${((entry.result?.output || entry.result?.error || '').length > 300) ? '...' : ''}</pre>
-      </div>
-    `;
-
-    historyContainer.insertBefore(entryElement, historyContainer.firstChild);
-
-    // Keep only last 50 entries
-    const entries = historyContainer.querySelectorAll('.response-entry');
-    if (entries.length > 50) {
-      for (let i = 50; i < entries.length; i++) {
-        entries[i].remove();
-      }
-    }
-  };
-
-  window.clearRabbitMQPluginsResponseHistory = (instanceId) => {
-    const historyContainer = document.getElementById(`history-entries-plugins-${instanceId}`);
-    if (historyContainer) {
-      historyContainer.innerHTML = '<div class="no-data">No commands executed yet</div>';
-    }
-  };
-
-  window.streamRabbitMQPluginsCommand = async (instanceId) => {
-    const state = window.rabbitmqPlugins[instanceId];
-    if (!state.selectedCommand) {
-      window.Feedback.warning('Please select a command first.', { toast: true });
-      return;
-    }
-
-    // Collect arguments (same as execute)
-    const command = state.categories
-      .find(cat => cat.name === state.selectedCategory)
-      ?.commands.find(cmd => cmd.name === state.selectedCommand);
-
-    const cmdArguments = [];
-
-    // Collect argument inputs
-    if (command.arguments) {
-      for (const arg of command.arguments) {
-        const input = document.getElementById(`plugins-arg-${arg.name}-${instanceId}`);
-        if (input && input.value) {
-          if (arg.type === 'string[]') {
-            cmdArguments.push(...input.value.split(/\s+/).filter(v => v));
-          } else {
-            cmdArguments.push(input.value);
-          }
-        } else if (arg.required) {
-          window.Feedback.warning(`${arg.name} is required.`, { toast: true });
-          return;
-        }
-      }
-    }
-
-    // Collect option checkboxes
-    if (command.options) {
-      for (const opt of command.options) {
-        const checkbox = document.getElementById(`plugins-opt-${opt.name}-${instanceId}`);
-        if (checkbox && checkbox.checked) {
-          cmdArguments.push(`--${opt.name}`);
-        }
-      }
-    }
-
-    // Clear output and show connecting message
-    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
-    if (outputContainer) {
-      outputContainer.innerHTML = `
-        <div class="streaming-output">
-          <div class="streaming-header">
-            <span>${blacksmithIcon('refresh-cw', { size: 16 })} Connecting to stream...</span>
-          </div>
-          <pre class="streaming-content"></pre>
-        </div>
-      `;
-    }
-
-    // Close existing websocket if any
-    if (state.websocket) {
-      state.websocket.close();
-    }
-
-    try {
-      // Create WebSocket connection
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/b/${instanceId}/rabbitmq/plugins/stream`;
-      state.websocket = new WebSocket(wsUrl);
-
-      state.websocket.onopen = () => {
-        console.log('Plugins WebSocket connected');
-        const headerElement = outputContainer.querySelector('.streaming-header span');
-        if (headerElement) {
-          headerElement.innerHTML = blacksmithIcon('radio', { size: 16 }) + ' Streaming...';
-        }
-
-        // Send execute command
-        state.websocket.send(JSON.stringify({
-          type: 'execute',
-          category: state.selectedCategory,
-          command: state.selectedCommand,
-          arguments: cmdArguments
-        }));
-      };
-
-      state.websocket.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-        const contentElement = outputContainer.querySelector('.streaming-content');
-
-        switch (message.type) {
-          case 'execution_started':
-            if (contentElement) {
-              contentElement.textContent += `Starting execution: ${message.command}\n`;
-            }
-            break;
-          case 'output':
-            if (contentElement) {
-              contentElement.textContent += message.data;
-              contentElement.scrollTop = contentElement.scrollHeight;
-            }
-            break;
-          case 'execution_completed':
-            const headerElement = outputContainer.querySelector('.streaming-header span');
-            if (headerElement) {
-              const statusIcon = message.success ? blacksmithIcon('circle-check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('circle-x', { size: 16, label: 'Failed' });
-              headerElement.innerHTML = statusIcon + ' ';
-              headerElement.append(`Completed (exit code: ${message.exit_code})`);
-            }
-            if (contentElement) {
-              contentElement.textContent += `\n--- Execution completed ---\n`;
-            }
-            // Add to response history
-            updateRabbitMQPluginsResponseHistory(instanceId, {
-              category: state.selectedCategory,
-              command: state.selectedCommand,
-              arguments: cmdArguments,
-              result: {
-                success: message.success,
-                exit_code: message.exit_code,
-                output: contentElement?.textContent || ''
-              },
-              timestamp: Date.now()
-            });
-            break;
-          case 'error':
-            if (contentElement) {
-              contentElement.textContent += `\nError: ${message.error}\n`;
-            }
-            const errorHeaderElement = outputContainer.querySelector('.streaming-header span');
-            if (errorHeaderElement) {
-              errorHeaderElement.innerHTML = blacksmithIcon('circle-x', { size: 16 }) + ' Error occurred';
-            }
-            break;
-        }
-      };
-
-      state.websocket.onerror = (error) => {
-        console.error('Plugins WebSocket error:', error);
-        const headerElement = outputContainer.querySelector('.streaming-header span');
-        if (headerElement) {
-          headerElement.innerHTML = blacksmithIcon('circle-x', { size: 16 }) + ' Connection error';
-        }
-      };
-
-      state.websocket.onclose = () => {
-        console.log('Plugins WebSocket connection closed');
-        const headerElement = outputContainer.querySelector('.streaming-header span');
-        if (headerElement && headerElement.textContent.includes('Connecting')) {
-          headerElement.innerHTML = blacksmithIcon('circle-x', { size: 16 }) + ' Connection failed';
-        }
-        state.websocket = null;
-      };
-
-    } catch (error) {
-      console.error('Failed to create plugins WebSocket:', error);
-      displayRabbitMQPluginsError(instanceId, 'Failed to establish streaming connection');
-    }
+  // The runner tabs keep their own history under the output, so the shared
+  // Response History hides while one of them is open.
+  const syncTestingHistory = (instanceId, operation) => {
+    const container = document.getElementById(`operation-content-${instanceId}`)?.closest('.service-testing-container');
+    const history = container && container.querySelector(':scope > .testing-history');
+    if (history) history.style.display = Object.hasOwn(commandRunners, operation) ? 'none' : '';
   };
 
   // Operation Tab Switching
@@ -14475,8 +13754,12 @@
     const contentContainer = document.getElementById(`operation-content-${instanceId}`);
     if (contentContainer) {
       const restored=retainView(contentContainer,JSON.stringify(['testing',instanceId,operation]));
+      syncTestingHistory(instanceId, operation);
       if(restored){notifyRoute();return true;}
       contentContainer.innerHTML = getOperationContent(testingInstance.serviceType, operation, instanceId);
+      if (testingInstance.serviceType === 'rabbitmq' && Object.hasOwn(commandRunners, operation)) {
+        mountCommandRunner(operation, instanceId);
+      }
       notifyRoute();
 
       // After content is loaded, restore connection state for connection tab
@@ -14495,16 +13778,6 @@
               restoreConnectionParams(instanceId, connectionState.connectionParams);
             }
           }
-        }
-
-        // Initialize rabbitmqctl tab
-        if (operation === 'rabbitmqctl') {
-          loadRabbitMQCtlCategories(instanceId);
-        }
-
-        // Initialize plugins tab
-        if (operation === 'plugins') {
-          loadRabbitMQPluginsCategories(instanceId);
         }
       }, 50);
     }
@@ -14540,33 +13813,9 @@
         case 'consume': return renderRabbitMQConsumeOperation(instanceId);
         case 'queues': return renderRabbitMQQueuesOperation(instanceId);
         case 'queue-ops': return renderRabbitMQQueueOpsOperation(instanceId);
-        case 'management':
-          // Show regular history for non-rabbitmqctl tabs
-          setTimeout(() => {
-            const regularHistory = document.querySelector('.testing-history');
-            if (regularHistory && !regularHistory.id?.includes('rabbitmqctl')) {
-              regularHistory.style.display = 'block';
-            }
-          }, 0);
-          return renderRabbitMQManagementOperation(instanceId);
-        case 'rabbitmqctl':
-          // Show regular history for other tabs
-          setTimeout(() => {
-            const regularHistory = document.querySelector('.testing-history');
-            if (regularHistory && !regularHistory.id?.includes('rabbitmqctl')) {
-              regularHistory.style.display = 'block';
-            }
-          }, 0);
-          return renderRabbitMQCtlOperation(instanceId);
-        case 'plugins':
-          // Hide regular history for plugins tab
-          setTimeout(() => {
-            const regularHistory = document.querySelector('.testing-history');
-            if (regularHistory && !regularHistory.id?.includes('plugins')) {
-              regularHistory.style.display = 'none';
-            }
-          }, 0);
-          return renderRabbitMQPluginsOperation(instanceId);
+        case 'management': return renderRabbitMQManagementOperation(instanceId);
+        case 'rabbitmqctl': return renderRabbitMQCtlOperation(instanceId);
+        case 'plugins': return renderRabbitMQPluginsOperation(instanceId);
       }
     }
 
