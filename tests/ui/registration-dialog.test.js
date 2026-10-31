@@ -42,7 +42,8 @@ t('Save posts the registration with an id and closes the dialog',async()=>{
  const {method,url,body}=sent[0];
  expect(method).toBe('POST');expect(url).toContain('/b/cf/registrations');
  expect(body.id).toMatch(UUID);
- expect(body).toMatchObject({name:'lab-cf',api_url:'https://api.cf.example.com',username:'admin',password:'s3cret',broker_name:'blacksmith',auto_register:false});
+ expect(body).toMatchObject({name:'lab-cf',api_url:'https://api.cf.example.com',username:'admin',broker_name:'blacksmith',auto_register:false});
+ expect(body).not.toHaveProperty('password');
  expect(toasts(d)).toContain('Registration created successfully');
  expect(d.getElementById('registration-modal').open).toBe(false);
 });
@@ -110,7 +111,8 @@ t('Save on an edited registration puts the merged record under its own id',async
  save(d).click();await settle();
  expect(sent.length).toBe(1);
  expect(sent[0].method).toBe('PUT');expect(sent[0].url).toContain('/b/cf/registrations/reg-1');
- expect(sent[0].body).toMatchObject({id:'reg-1',name:'renamed',status:'active',created_at:'2026-10-01T00:00:00Z',password:'s3cret'});
+ expect(sent[0].body).toMatchObject({id:'reg-1',name:'renamed',status:'active',created_at:'2026-10-01T00:00:00Z'});
+ expect(sent[0].body).not.toHaveProperty('password');
  expect(toasts(d)).toContain('Registration updated successfully');
  expect(d.getElementById('registration-modal').open).toBe(false);
 });

@@ -22359,12 +22359,15 @@
 
     // Save registration. A new registration is created under a client-made id,
     // and an edited one replaces the stored record with the form's changes.
+    // The broker stores no CF password, so the save leaves it out, and the
+    // form's password goes only to the register request Auto-register makes.
     async saveRegistration() {
       if (this.savingRegistration) return;
       const form = document.getElementById('registration-form');
       const saveButton = document.getElementById('save-registration-btn');
       const formData = new FormData(form);
       const existing = this.editingRegistration;
+      const password = formData.get('password') || '';
 
       const registrationData = {
         ...(existing || {}),
@@ -22372,10 +22375,10 @@
         name: formData.get('name'),
         api_url: formData.get('api_url'),
         username: formData.get('username'),
-        password: formData.get('password'),
         broker_name: formData.get('broker_name') || 'blacksmith',
         auto_register: formData.get('auto_register') === 'on'
       };
+      delete registrationData.password;
       if (!existing) registrationData.created_at = new Date().toISOString();
       const verb = existing ? 'update' : 'create';
 
@@ -22402,10 +22405,11 @@
           this.hideRegistrationModal();
           this.loadRegistrations();
 
-          // If auto-register was enabled, show progress
+          // Auto-register starts the registration with the form's password,
+          // and its progress view follows from the register answer.
           if (registrationData.auto_register) {
             setTimeout(() => {
-              this.showProgressStream(registrationData.id);
+              this.startRegistration(registrationData.id, password);
             }, 500);
           }
         } else {
@@ -22424,11 +22428,12 @@
       }
     },
 
-    // Start registration process
-    async startRegistration(registrationId) {
+    // Start registration process. The password comes from the caller when it
+    // has one, and otherwise from a masked dialog, because the broker keeps none.
+    async startRegistration(registrationId, formPassword = '') {
       if (!registrationId) return;
 
-      const password = await showPromptDialog({
+      const password = formPassword || await showPromptDialog({
         title: 'Start registration',
         message: 'Enter the CF password to start registration.',
         secret: true,
