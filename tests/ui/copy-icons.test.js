@@ -155,7 +155,8 @@ t('the certificate copy button draws the shared icon and swaps to the check', as
 t('copy buttons are named for what they copy and share one icon', () => {
   const sources = ['blacksmith.js', 'index.html'].map((f) => fs.readFileSync(path.join(ui, f), 'utf8')).join('\n');
   expect(sources).not.toContain('aria-label="Copy value"');
-  expect(sources).toContain('aria-label="Copy VM CID"');
+  expect(sources).toContain("cidCopy(vm.vm_cid, 'VM CID')");
+  expect(sources).toContain('aria-label="Copy ${label}"');
   expect(sources).toContain('aria-label="Copy release SHA1"');
   expect(sources).not.toContain('<rect x="9" y="9"');
   expect(sources).not.toContain('M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1');

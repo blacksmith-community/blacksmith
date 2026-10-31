@@ -1073,6 +1073,13 @@
   // Name a VM job_name/index. A VM the director lists without an index
   // comes back with a negative index, so it is named job_name/id instead,
   // because job_name/-1 names no instance.
+  // CIDs run to about 180 characters on the Proxmox CPI, so a cell shows the
+  // start of each one, keeps the whole value in its title, and copies it whole.
+  const cidText = (value) => `<span class="cid-value" title="${escapeAttribute(String(value))}">${escapeHtml(String(value))}</span>`;
+  const cidCopy = (value, label) => `<span class="copy-wrapper">${cidText(value)}<button class="copy-btn-inline" onclick="window.copyValue(event, '${value}')" title="Copy to clipboard" aria-label="Copy ${label}">${blacksmithIcon('copy', { size: 14 })}</button></span>`;
+  const cidList = (values, label, withCopy) => `<div class="cid-list">${values.map(value => `<div class="cid-line">${withCopy ? cidCopy(value, label) : cidText(value)}</div>`).join('')}</div>`;
+  const vmDiskCids = (vm) => (vm.disk_cids && vm.disk_cids.length > 0 ? vm.disk_cids : (vm.disk_cid ? [vm.disk_cid] : []));
+
   const vmInstanceName = (vm) => {
     if (!vm.job_name || vm.index === undefined) {
       return vm.id || '-';
@@ -2043,7 +2050,7 @@
         const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : '-';
         const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : '-';
         const bootstrap = vm.bootstrap ? 'Yes' : 'No';
-        const diskCids = vm.disk_cids && vm.disk_cids.length > 0 ? vm.disk_cids.join(', ') : (vm.disk_cid || '-');
+        const diskCids = vmDiskCids(vm);
 
         let stateClass = '';
         if (vm.state === 'running') {
@@ -2104,10 +2111,10 @@
             <td class="vm-bootstrap">${bootstrap}</td>
             <td class="vm-ips">${ips}</td>
             <td class="vm-dns">${dns}</td>
-            <td class="vm-cid">${vm.vm_cid || '-'}</td>
-            <td class="vm-agent-id">${agentId}</td>
+            <td class="vm-cid">${vm.vm_cid ? cidText(vm.vm_cid) : '-'}</td>
+            <td class="vm-agent-id">${vm.agent_id ? cidText(vm.agent_id) : '-'}</td>
             <td class="vm-created-at">${vmCreatedAt}</td>
-            <td class="vm-disk-cids">${diskCids}</td>
+            <td class="vm-disk-cids">${diskCids.length > 0 ? cidList(diskCids, 'disk CID', false) : '-'}</td>
             <td class="vm-resurrection">${resurrection}</td>
           </tr>
         `;
@@ -11761,7 +11768,7 @@
       const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : '-';
       const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : '-';
       const bootstrap = vm.bootstrap ? 'Yes' : 'No';
-      const diskCids = vm.disk_cids && vm.disk_cids.length > 0 ? vm.disk_cids.join(', ') : (vm.disk_cid || '-');
+      const diskCids = vmDiskCids(vm);
 
       // Add class based on state
       let stateClass = '';
@@ -11855,37 +11862,17 @@
                 <td class="vm-dns">${dns}</td>
                 <td class="vm-cid">
                   ${vm.vm_cid ? `
-                    <span class="copy-wrapper">
-                      <span>${vm.vm_cid}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.vm_cid}')"
-                        title="Copy to clipboard" aria-label="Copy VM CID">
-                  ${blacksmithIcon('copy', { size: 14 })}
-                </button>
-                    </span>
+                    ${cidCopy(vm.vm_cid, 'VM CID')}
                   ` : '-'}
                 </td>
                 <td class="vm-agent-id">
                   ${agentId !== '-' ? `
-                    <span class="copy-wrapper">
-                      <span>${agentId}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${agentId}')"
-                        title="Copy to clipboard" aria-label="Copy agent ID">
-                  ${blacksmithIcon('copy', { size: 14 })}
-                </button>
-                    </span>
+                    ${cidCopy(agentId, 'agent ID')}
                   ` : '-'}
                 </td>
                 <td class="vm-created-at">${vmCreatedAt}</td>
                 <td class="vm-disk-cids">
-                  ${diskCids !== '-' ? `
-                    <span class="copy-wrapper">
-                      <span>${diskCids}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${diskCids}')"
-                        title="Copy to clipboard" aria-label="Copy disk CIDs">
-                  ${blacksmithIcon('copy', { size: 14 })}
-                </button>
-                    </span>
-                  ` : '-'}
+                  ${diskCids.length > 0 ? cidList(diskCids, 'disk CID', true) : '-'}
                 </td>
                 <td class="vm-resurrection">${resurrection}</td>
               </tr>

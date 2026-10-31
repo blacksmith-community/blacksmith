@@ -157,6 +157,21 @@ table tbody td {
   color: var(--text-primary);
 }
 
+.vms-table .cid-value {
+  display: inline-block;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.vms-table .cid-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
 /* Preserve state coloring but keep normal weight */
 .vms-table td.vm-state.vm-state-running,
 .vms-table td.vm-state.vm-state-error,
