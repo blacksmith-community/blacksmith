@@ -7410,9 +7410,9 @@
           <progress class="upgrade-task-progress" aria-label="Instances processed" max="100"${activityCount(task.total_count) ? ` value="${progress}"` : ''}></progress>
           <div class="upgrade-task-stats">
             <span class="success">${activityCount(task.completed_count)} succeeded</span>
-            <span class="failed">${activityCount(task.failed_count)} failed</span>
+            <span class="${activityCount(task.failed_count) > 0 ? 'failed' : 'total'}">${activityCount(task.failed_count)} failed</span>
             ${[['cancelled_count', 'cancelled'], ['skipped_count', 'skipped'], ['unknown_count', 'outcome unknown']].filter(([key]) => activityCount(task[key])).map(([key, label]) => `<span>${activityCount(task[key])} ${label}</span>`).join('')}
-            <span class="total">${activityCount(task.total_count)} instances</span>
+            <span class="total">${activityCount(task.total_count)} ${activityCount(task.total_count) === 1 ? 'instance' : 'instances'}</span>
           </div>
           <div class="upgrade-task-time">${escapeHtml(formatTaskTime(task.created_at))}</div>
         </div>

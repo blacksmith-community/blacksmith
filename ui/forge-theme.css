@@ -501,10 +501,12 @@ body > footer p { margin: 0; }
 #upgrade .upgrade-task-name { min-width: 0; overflow-wrap: anywhere; }
 #upgrade .activity-status-label {
   border: 1px solid var(--border-primary);
-  border-radius: .25rem;
-  padding: .125rem .5rem;
-  color: var(--text-primary);
-  font-size: .875rem;
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 #upgrade .upgrade-task-stats { flex-wrap: wrap; gap: .5rem 1rem; }
 #upgrade .upgrade-task-item:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
