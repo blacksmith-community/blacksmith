@@ -2464,7 +2464,10 @@
 
   const entityCopy = (value, label) => `<button type="button" class="copy-btn-inline entity-copy" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}" title="Copy ${escapeAttribute(label)}">${COPY_ICON_SVG}</button>`;
   const entityFacts = (pairs) => `<dl class="entity-facts">${pairs.map(([label,value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value ?? 'Not reported'))}${value ? entityCopy(value,label) : ''}</dd></div>`).join('')}</dl>`;
-  const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(label.toLowerCase())} →</span></button>`;
+  // The link reads "View service plans", so the label's first letter drops to
+  // lowercase unless its first word is an acronym such as VM.
+  const metricLinkLabel = (label) => (/^[A-Z]{2,}\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1));
+  const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(metricLinkLabel(label))} →</span></button>`;
   const entityMetadata = (pairs, title = 'Technical details') => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span>${escapeHtml(typeof value === 'object' ? JSON.stringify(value,null,2) : String(value ?? 'Not reported'))}</span>${entityCopy(typeof value === 'object' ? JSON.stringify(value,null,2) : value,label)}</span></td></tr>`).join('')}</tbody></table></details>`;
 
   const hasVmAlert = (instance) => !!instance.vm_status && instance.vm_status !== 'running';
