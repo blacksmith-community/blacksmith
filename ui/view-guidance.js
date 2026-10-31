@@ -52,20 +52,20 @@
   };
   const testOperations = {
     test: help('connection testing', 'Check connectivity to the selected instance using its configured credentials. A successful connection is not a complete application health check.'),
-    info: help('INFO', 'Read server information from the selected service. Results describe the response at the time the operation ran.'),
-    get: help('GET', 'Read the value for a key. Check the database and key before running the request.'),
-    keys: help('KEYS', 'Find keys matching the supplied pattern. A broad pattern may inspect many keys; narrow the pattern on large databases.'),
-    set: help('SET', 'Write a value to a key. This can replace existing data; check the database, key, and value before running it.'),
-    delete: help('DELETE', 'Delete the selected key. Check the target database and key before confirming the operation.'),
-    command: help('COMMAND', 'Run a command against the service. Commands may modify data or service behavior; inspect the complete command and target before execution.'),
-    flush: help('FLUSH', 'This operation can delete many keys. Review the database or server scope and the confirmation carefully before executing it.'),
-    publish: help('PUBLISH', 'Publish a message to the selected exchange and routing key. Check the target and payload before sending.'),
-    consume: help('CONSUME', 'Retrieve messages from the selected queue. Acknowledgement options can remove messages; review those options before running the request.'),
-    queues: help('QUEUE INFO', 'Read queue information for the selected service. Counts describe the response at the time the request ran.'),
-    'queue-ops': help('QUEUE OPS', 'Queue operations may declare, purge, or delete queues. Inspect the chosen action, queue, and options before executing it.'),
-    management: help('MANAGEMENT', 'Management requests can inspect or change RabbitMQ configuration. Check the method, path, and payload before execution.'),
-    rabbitmqctl: help('RABBITMQCTL', 'Administrative commands can change RabbitMQ behavior. Review the complete command and target before execution.'),
-    plugins: help('PLUGINS', 'Plugin operations can change available RabbitMQ features. Review the action and plugin names before applying changes.')
+    info: help('Info', 'Read server information from the selected service. Results describe the response at the time the operation ran.'),
+    get: help('Get', 'Read the value for a key. Check the database and key before running the request.'),
+    keys: help('Keys', 'Find keys matching the supplied pattern. A broad pattern may inspect many keys; narrow the pattern on large databases.'),
+    set: help('Set', 'Write a value to a key. This can replace existing data; check the database, key, and value before running it.'),
+    delete: help('Delete', 'Delete the selected key. Check the target database and key before confirming the operation.'),
+    command: help('Command', 'Run a command against the service. Commands may modify data or service behavior; inspect the complete command and target before execution.'),
+    flush: help('Flush', 'This operation can delete many keys. Review the database or server scope and the confirmation carefully before executing it.'),
+    publish: help('Publish', 'Publish a message to the selected exchange and routing key. Check the target and payload before sending.'),
+    consume: help('Consume', 'Retrieve messages from the selected queue. Acknowledgement options can remove messages; review those options before running the request.'),
+    queues: help('Queue info', 'Read queue information for the selected service. Counts describe the response at the time the request ran.'),
+    'queue-ops': help('Queue ops', 'Queue operations may declare, purge, or delete queues. Inspect the chosen action, queue, and options before executing it.'),
+    management: help('Management', 'Management requests can inspect or change RabbitMQ configuration. Check the method, path, and payload before execution.'),
+    rabbitmqctl: help('rabbitmqctl', 'Administrative commands can change RabbitMQ behavior. Review the complete command and target before execution.'),
+    plugins: help('Plugins', 'Plugin operations can change available RabbitMQ features. Review the action and plugin names before applying changes.')
   };
   const batch = {
     operation: help('batch operations', 'Pick the operation that matches the job you need done. Choose Upgrade to move instances to a newer stemcell or service release. Choose Rotate certificates when certificates are expiring or need replacing. Choose Converge after a patch in place, so that BOSH deploys the patched certificates and a recreate can\'t bring the old ones back. Choose Run command for one-off maintenance on every VM of the selected instances, such as turning on a RabbitMQ feature flag. Nothing starts until you confirm on the Review step.'),

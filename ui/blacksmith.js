@@ -12396,8 +12396,8 @@
 
         <div class="testing-history">
           <div class="history-header">
-            <h5>Response History</h5>
-            <button class="clear-history-btn" onclick="clearTestingHistory('${instanceId}')">Clear History</button>
+            <h5>Response history</h5>
+            <button class="btn btn-secondary" data-variant="secondary" onclick="clearTestingHistory('${instanceId}')">Clear history</button>
           </div>
           <div class="history-entries" id="history-entries-${instanceId}">
             <div class="no-data">No operations performed yet</div>
@@ -12407,32 +12407,18 @@
     `;
   };
 
-  const getOperationTabs = (serviceType, instanceId) => {
-    if (serviceType === 'redis') {
-      return `
-        <button class="operation-tab active" aria-pressed="true" data-operation="test" data-instance="${instanceId}">Connection</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="info" data-instance="${instanceId}">INFO</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="set" data-instance="${instanceId}">SET</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="get" data-instance="${instanceId}">GET</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="delete" data-instance="${instanceId}">DELETE</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="keys" data-instance="${instanceId}">KEYS</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="command" data-instance="${instanceId}">COMMAND</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="flush" data-instance="${instanceId}">FLUSH</button>
-      `;
-    } else if (serviceType === 'rabbitmq') {
-      return `
-        <button class="operation-tab active" aria-pressed="true" data-operation="test" data-instance="${instanceId}">Connection</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="publish" data-instance="${instanceId}">PUBLISH</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="consume" data-instance="${instanceId}">CONSUME</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="queues" data-instance="${instanceId}">QUEUE INFO</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="queue-ops" data-instance="${instanceId}">QUEUE OPS</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="management" data-instance="${instanceId}">MANAGEMENT</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="rabbitmqctl" data-instance="${instanceId}">RABBITMQCTL</button>
-        <button class="operation-tab" aria-pressed="false" data-operation="plugins" data-instance="${instanceId}">PLUGINS</button>
-      `;
-    }
-    return '';
+  // The Testing tabs for each service, in order. Labels are sentence case,
+  // and tool names keep their own spelling.
+  const TESTING_TABS = {
+    redis: [['test', 'Connection'], ['info', 'Info'], ['set', 'Set'], ['get', 'Get'], ['delete', 'Delete'], ['keys', 'Keys'], ['command', 'Command'], ['flush', 'Flush']],
+    rabbitmq: [['test', 'Connection'], ['publish', 'Publish'], ['consume', 'Consume'], ['queues', 'Queue info'], ['queue-ops', 'Queue ops'], ['management', 'Management'], ['rabbitmqctl', 'rabbitmqctl'], ['plugins', 'Plugins']]
   };
+  const CONNECTION_STATES = { idle: 'Not connected', connected: 'Connected', disconnected: 'Disconnected' };
+
+  const getOperationTabs = (serviceType, instanceId) => (TESTING_TABS[serviceType] || []).map(([operation, label], index) => {
+    const connection = operation === 'test';
+    return `<button class="operation-tab${index === 0 ? ' active' : ''}" aria-pressed="${index === 0}" data-operation="${operation}" data-instance="${instanceId}"${connection ? ` title="${CONNECTION_STATES.idle}"` : ''}>${connection ? '<span class="connection-status-indicator" data-state="idle" aria-hidden="true"></span>' : ''}${label}</button>`;
+  }).join('\n');
 
   const getDefaultOperationContent = (serviceType, instanceId) => {
     if (serviceType === 'redis') {
@@ -12457,7 +12443,7 @@
             </div>
           </td>
           <td>
-            <button class="execute-btn" id="connect-btn-${instanceId}" onclick="executeRedisTest('${instanceId}')">Connect</button>
+            <button class="btn btn-primary" id="connect-btn-${instanceId}" onclick="executeRedisTest('${instanceId}')">Connect</button>
           </td>
         </tr>
       </table>
@@ -12469,7 +12455,7 @@
       <div class="operation-form">
         <h5>${redisFamilyLabel()} INFO</h5>
         <p>Get ${redisFamilyLabel()} server information and statistics.</p>
-        <button class="execute-btn" onclick="executeRedisInfo('${instanceId}')">Get Server Info</button>
+        <button class="btn btn-primary" onclick="executeRedisInfo('${instanceId}')">Get server info</button>
       </div>
     `;
   };
@@ -12479,18 +12465,18 @@
       <div class="operation-form">
         <h5>${redisFamilyLabel()} SET</h5>
         <div class="form-row">
-          <label for="redis-key-${instanceId}">Key:</label>
+          <label for="redis-key-${instanceId}">Key</label>
           <input type="text" id="redis-key-${instanceId}" placeholder="Enter key name" />
         </div>
         <div class="form-row">
-          <label for="redis-value-${instanceId}">Value:</label>
+          <label for="redis-value-${instanceId}">Value</label>
           <textarea id="redis-value-${instanceId}" placeholder="Enter value" rows="3"></textarea>
         </div>
         <div class="form-row">
-          <label for="redis-ttl-${instanceId}">TTL (seconds, optional):</label>
+          <label for="redis-ttl-${instanceId}">TTL (seconds, optional)</label>
           <input type="number" id="redis-ttl-${instanceId}" placeholder="0 for no expiration" min="0" />
         </div>
-        <button class="execute-btn" onclick="executeRedisSet('${instanceId}')">SET</button>
+        <button class="btn btn-primary" onclick="executeRedisSet('${instanceId}')">Set</button>
       </div>
     `;
   };
@@ -12500,10 +12486,10 @@
       <div class="operation-form">
         <h5>${redisFamilyLabel()} GET</h5>
         <div class="form-row">
-          <label for="redis-get-key-${instanceId}">Key:</label>
+          <label for="redis-get-key-${instanceId}">Key</label>
           <input type="text" id="redis-get-key-${instanceId}" placeholder="Enter key name" />
         </div>
-        <button class="execute-btn" onclick="executeRedisGet('${instanceId}')">GET</button>
+        <button class="btn btn-primary" onclick="executeRedisGet('${instanceId}')">Get</button>
       </div>
     `;
   };
@@ -12513,10 +12499,10 @@
       <div class="operation-form">
         <h5>${redisFamilyLabel()} DELETE</h5>
         <div class="form-row">
-          <label for="redis-delete-keys-${instanceId}">Keys (one per line):</label>
+          <label for="redis-delete-keys-${instanceId}">Keys (one per line)</label>
           <textarea id="redis-delete-keys-${instanceId}" placeholder="Enter key names, one per line" rows="3"></textarea>
         </div>
-        <button class="execute-btn" onclick="executeRedisDelete('${instanceId}')">DELETE</button>
+        <button class="btn btn-primary" onclick="executeRedisDelete('${instanceId}')">Delete</button>
       </div>
     `;
   };
@@ -12526,10 +12512,10 @@
       <div class="operation-form">
         <h5>${redisFamilyLabel()} KEYS</h5>
         <div class="form-row">
-          <label for="redis-pattern-${instanceId}">Pattern:</label>
+          <label for="redis-pattern-${instanceId}">Pattern</label>
           <input type="text" id="redis-pattern-${instanceId}" placeholder="* (default)" value="*" />
         </div>
-        <button class="execute-btn" onclick="executeRedisKeys('${instanceId}')">List Keys</button>
+        <button class="btn btn-primary" onclick="executeRedisKeys('${instanceId}')">List keys</button>
       </div>
     `;
   };
@@ -12539,14 +12525,14 @@
       <div class="operation-form">
         <h5>${redisFamilyLabel()} COMMAND</h5>
         <div class="form-row">
-          <label for="redis-cmd-${instanceId}">Command:</label>
+          <label for="redis-cmd-${instanceId}">Command</label>
           <input type="text" id="redis-cmd-${instanceId}" placeholder="e.g., PING, DBSIZE, TYPE" />
         </div>
         <div class="form-row">
-          <label for="redis-args-${instanceId}">Arguments (JSON array, optional):</label>
+          <label for="redis-args-${instanceId}">Arguments (JSON array, optional)</label>
           <textarea id="redis-args-${instanceId}" placeholder='["arg1", "arg2"]' rows="2"></textarea>
         </div>
-        <button class="execute-btn" onclick="executeRedisCommand('${instanceId}')">Execute</button>
+        <button class="btn btn-primary" onclick="executeRedisCommand('${instanceId}')">Run</button>
       </div>
     `;
   };
@@ -12555,12 +12541,12 @@
     return `
       <div class="operation-form">
         <h5>${redisFamilyLabel()} FLUSH</h5>
-        <p><strong>Warning:</strong> This will delete all data in the database!</p>
+        <p role="note" data-variant="danger">This will delete all data in the database.</p>
         <div class="form-row">
-          <label for="redis-flush-db-${instanceId}">Database:</label>
+          <label for="redis-flush-db-${instanceId}">Database</label>
           <input type="number" id="redis-flush-db-${instanceId}" value="0" min="0" />
         </div>
-        <button class="execute-btn warning" onclick="executeRedisFlush('${instanceId}')">FLUSH DATABASE</button>
+        <button class="btn btn-primary" data-variant="danger" onclick="executeRedisFlush('${instanceId}')">Flush database</button>
       </div>
     `;
   };
@@ -12579,7 +12565,7 @@
             </div>
           </td>
           <td>
-            <button class="execute-btn" id="connect-btn-${instanceId}" onclick="executeRabbitMQTest('${instanceId}')">Connect</button>
+            <button class="btn btn-primary" id="connect-btn-${instanceId}" onclick="executeRabbitMQTest('${instanceId}')">Connect</button>
           </td>
         </tr>
       </table>
@@ -12589,26 +12575,26 @@
   const renderRabbitMQPublishOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Publish Message</h5>
+        <h5>Publish message</h5>
         <div class="form-row">
-          <label for="rabbitmq-queue-${instanceId}">Queue Name:</label>
+          <label for="rabbitmq-queue-${instanceId}">Queue name</label>
           <input type="text" id="rabbitmq-queue-${instanceId}" placeholder="test-queue" />
         </div>
         <div class="form-row">
-          <label for="rabbitmq-exchange-${instanceId}">Exchange (optional):</label>
+          <label for="rabbitmq-exchange-${instanceId}">Exchange (optional)</label>
           <input type="text" id="rabbitmq-exchange-${instanceId}" placeholder="Leave empty for default exchange" />
         </div>
         <div class="form-row">
-          <label for="rabbitmq-message-${instanceId}">Message:</label>
+          <label for="rabbitmq-message-${instanceId}">Message</label>
           <textarea id="rabbitmq-message-${instanceId}" placeholder="Enter message content" rows="3"></textarea>
         </div>
         <div class="form-row">
           <label class="checkbox-label">
             <input type="checkbox" id="rabbitmq-persistent-${instanceId}" />
-            <span>Persistent Message</span>
+            <span>Persistent message</span>
           </label>
         </div>
-        <button class="execute-btn" onclick="executeRabbitMQPublish('${instanceId}')">Publish</button>
+        <button class="btn btn-primary" onclick="executeRabbitMQPublish('${instanceId}')">Publish</button>
       </div>
     `;
   };
@@ -12616,26 +12602,26 @@
   const renderRabbitMQConsumeOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Consume Messages</h5>
+        <h5>Consume messages</h5>
         <div class="form-row">
-          <label for="rabbitmq-consume-queue-${instanceId}">Queue Name:</label>
+          <label for="rabbitmq-consume-queue-${instanceId}">Queue name</label>
           <input type="text" id="rabbitmq-consume-queue-${instanceId}" placeholder="test-queue" />
         </div>
         <div class="form-row">
-          <label for="rabbitmq-count-${instanceId}">Message Count:</label>
+          <label for="rabbitmq-count-${instanceId}">Message count</label>
           <input type="number" id="rabbitmq-count-${instanceId}" value="5" min="1" max="100" />
         </div>
         <div class="form-row">
-          <label for="rabbitmq-timeout-${instanceId}">Timeout (ms):</label>
+          <label for="rabbitmq-timeout-${instanceId}">Timeout (ms)</label>
           <input type="number" id="rabbitmq-timeout-${instanceId}" value="5000" min="1000" max="30000" />
         </div>
         <div class="form-row">
           <label class="checkbox-label">
             <input type="checkbox" id="rabbitmq-auto-ack-${instanceId}" checked />
-            <span>Auto Acknowledge</span>
+            <span>Auto acknowledge</span>
           </label>
         </div>
-        <button class="execute-btn" onclick="executeRabbitMQConsume('${instanceId}')">Consume</button>
+        <button class="btn btn-primary" onclick="executeRabbitMQConsume('${instanceId}')">Consume</button>
       </div>
     `;
   };
@@ -12643,9 +12629,9 @@
   const renderRabbitMQQueuesOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Queue Information</h5>
+        <h5>Queue information</h5>
         <p>List all queues and their current status.</p>
-        <button class="execute-btn" onclick="executeRabbitMQQueues('${instanceId}')">Get Queue Info</button>
+        <button class="btn btn-primary" onclick="executeRabbitMQQueues('${instanceId}')">Get queue info</button>
       </div>
     `;
   };
@@ -12653,17 +12639,17 @@
   const renderRabbitMQQueueOpsOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Queue Operations</h5>
+        <h5>Queue operations</h5>
         <div class="form-row">
-          <label for="rabbitmq-queue-ops-name-${instanceId}">Queue Name:</label>
+          <label for="rabbitmq-queue-ops-name-${instanceId}">Queue name</label>
           <input type="text" id="rabbitmq-queue-ops-name-${instanceId}" placeholder="queue-name" />
         </div>
         <div class="form-row">
-          <label for="rabbitmq-operation-${instanceId}">Operation:</label>
+          <label for="rabbitmq-operation-${instanceId}">Operation</label>
           <select id="rabbitmq-operation-${instanceId}">
-            <option value="create">Create Queue</option>
-            <option value="delete">Delete Queue</option>
-            <option value="purge">Purge Queue</option>
+            <option value="create">Create queue</option>
+            <option value="delete">Delete queue</option>
+            <option value="purge">Purge queue</option>
           </select>
         </div>
         <div class="form-row">
@@ -12672,7 +12658,7 @@
             <span>Durable (for create operation)</span>
           </label>
         </div>
-        <button class="execute-btn" onclick="executeRabbitMQQueueOps('${instanceId}')">Execute</button>
+        <button class="btn btn-primary" onclick="executeRabbitMQQueueOps('${instanceId}')">Run</button>
       </div>
     `;
   };
@@ -12682,11 +12668,11 @@
       <div class="operation-form">
         <h5>Management API</h5>
         <div class="form-row">
-          <label for="rabbitmq-mgmt-path-${instanceId}">API Path:</label>
+          <label for="rabbitmq-mgmt-path-${instanceId}">API path</label>
           <input type="text" id="rabbitmq-mgmt-path-${instanceId}" placeholder="/b/overview" />
         </div>
         <div class="form-row">
-          <label for="rabbitmq-mgmt-method-${instanceId}">Method:</label>
+          <label for="rabbitmq-mgmt-method-${instanceId}">Method</label>
           <select id="rabbitmq-mgmt-method-${instanceId}">
             <option value="GET">GET</option>
             <option value="POST">POST</option>
@@ -12700,7 +12686,7 @@
             <span>Use SSL</span>
           </label>
         </div>
-        <button class="execute-btn" onclick="executeRabbitMQManagement('${instanceId}')">Execute</button>
+        <button class="btn btn-primary" onclick="executeRabbitMQManagement('${instanceId}')">Send request</button>
       </div>
     `;
   };
@@ -12932,29 +12918,21 @@
     }
   };
 
+  // Colors the status dot on the Connection tab. Every Connection tab draws
+  // its dot when it renders, and the tab's title names the state.
   const updateConnectionStatus = (instanceId, connected) => {
-    // Find the Connection tab and add status indicator
     const connectionTab = document.querySelector(`.operation-tab[data-operation="test"][data-instance="${instanceId}"]`);
     if (connectionTab) {
-      // Remove existing status indicators
-      const existingIndicator = connectionTab.querySelector('.connection-status-indicator');
-      if (existingIndicator) {
-        existingIndicator.remove();
+      let indicator = connectionTab.querySelector('.connection-status-indicator');
+      if (!indicator) {
+        indicator = document.createElement('span');
+        indicator.className = 'connection-status-indicator';
+        indicator.setAttribute('aria-hidden', 'true');
+        connectionTab.insertBefore(indicator, connectionTab.firstChild);
       }
-
-      // Add new status indicator
-      const indicator = document.createElement('span');
-      indicator.className = 'connection-status-indicator';
-      indicator.style.cssText = `
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 6px;
-        background-color: ${connected ? '#28a745' : '#dc3545'};
-      `;
-
-      connectionTab.insertBefore(indicator, connectionTab.firstChild);
+      const state = connected ? 'connected' : 'disconnected';
+      indicator.dataset.state = state;
+      connectionTab.title = CONNECTION_STATES[state];
     }
   };
 

@@ -161,6 +161,9 @@
  root.BlacksmithRoutes={parse,format,parent,create,broker,instance};
  if(!root.document)return;
  const doc=root.document;
+ // Testing tabs whose label is not their id in sentence case. Tool names
+ // keep their own spelling.
+ const testingViews={test:'Connection',queues:'Queue info','queue-ops':'Queue ops',rabbitmqctl:'rabbitmqctl'};
  function render(route){
   let bar=doc.getElementById('route-context');if(!bar){bar=doc.createElement('div');bar.id='route-context';bar.className='route-context';doc.querySelector('.tab-content')?.before(bar);}
   if(!bar)return;bar.replaceChildren();const back=doc.createElement('button');back.type='button';back.className='route-back';back.textContent='← Back';back.addEventListener('click',()=>root.blacksmithRouter.back());bar.append(back);
@@ -172,7 +175,7 @@
   if(route.plan){const s=root.plansData?.services?.find(s=>s.id===route.service);push(s?.name||route.service,{screen:'blacksmith',section:'plans'});push(s?.plans?.find(p=>p.id===route.plan)?.name||route.plan,route);}
   if(route.screen==='upgrade'){if(route.view==='activity'){push('Activity',{screen:'upgrade',view:'activity'});if(route.task)push(root.blacksmithJobTitle?.(route.task)||'Job '+route.task,route);}else{push(({upgrade:'Upgrade',rotate:'Rotate certificates',converge:'Converge',command:'Run command'})[route.operation]||'New Operation',route);push(steps[route.step||0].replace(/^./,c=>c.toUpperCase()),route);}}
   if(route.inspection)push(({task:'BOSH task ',config:'Config version ',certificate:'Certificate '})[route.inspection.kind]+route.inspection.id,route);
-  if(route.subview)push(route.subview.replaceAll('-',' ').replace(/^./,c=>c.toUpperCase()),route);
+  if(route.subview)push((route.section==='testing'&&testingViews[route.subview])||route.subview.replaceAll('-',' ').replace(/^./,c=>c.toUpperCase()),route);
   crumbs.forEach((c,i)=>{const li=doc.createElement('li');if(i===crumbs.length-1){const span=doc.createElement('span');span.textContent=c.label;span.setAttribute('aria-current','page');li.append(span);}else{const a=doc.createElement('a');a.textContent=c.label;a.href=format(c.r);a.addEventListener('click',e=>{if(e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;e.preventDefault();root.blacksmithRouter.navigate(c.r);});li.append(a);}list.append(li);});
   doc.title=crumbs.map(c=>c.label).reverse().join(' · ')+' — Blacksmith';
   const heading=doc.getElementById('console-title');if(heading)heading.textContent=crumbs.map(c=>c.label).join(' / ');

@@ -8,12 +8,12 @@
   "sha256": "14a3204831052b49eed5ecbdf29e48a34ba0ddb84eac825b83736815cf61a39c"
  },
  "blacksmith.css": {
-  "key": "20261028-oat-213",
-  "sha256": "e08cca6d5cb82322c645af1b849488f32751a1830f6d8eb64e995fee94c2aa5a"
+  "key": "20261028-oat-216",
+  "sha256": "f7eddfaeaa528ca5708cc6c2aba4aaf3545f0b33471dffa7fe4103fa4c992867"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-214",
-  "sha256": "b78015560e59dcd2c20667cc2365f4b0ddec9a1a7a4ee214e9d0adc959d94004"
+  "key": "20261028-oat-217",
+  "sha256": "50d29426d1e8837159829544d05ddee67160e557bc2a8445fb8a9b591f67b618"
  },
  "console.css": {
   "key": "20261028-oat-95",
@@ -40,15 +40,15 @@
   "sha256": "9a966af690dcfcd844f2d4979a49f457f15c63af08cb87587f282e451bdf10e2"
  },
  "routes.js": {
-  "key": "20261028-oat-113",
-  "sha256": "ed89ba6a42fda1018625639bf40f13a9ae5e21fc1fb42e1df0b4e8d4e7c5d6ff"
+  "key": "20261028-oat-218",
+  "sha256": "9b090f91559a717dbdff1682b878e5c6fcd42877d479b4faa312ffe7c19ebf52"
  },
  "view-guidance.css": {
   "key": "20261028-oat-17",
   "sha256": "556c3292eeeddc560cb0e5c85c343eb7d9cef9a8ab299730c46dac4fc9fe2718"
  },
  "view-guidance.js": {
-  "key": "20261028-oat-103",
-  "sha256": "9cc7a3b18d74ff26a2d6e49cc845af81a684f79858b491007fe7950e2f6b9687"
+  "key": "20261028-oat-219",
+  "sha256": "b8db0bb35dca88369c4d44536b21f500d8fd7d296d1d82904cf376000b146e1e"
  }
 }
