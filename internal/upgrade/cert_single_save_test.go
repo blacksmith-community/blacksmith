@@ -285,3 +285,41 @@ func TestStoredCertificateTaskWithoutTheChoiceFollowsTheSettings(t *testing.T) {
 		}
 	}
 }
+
+// A success never holds a certificate task that pauses on a failure. No
+// save carries a reason to hold, and the task goes on past its first
+// instance and completes. Its second instance's preflight fails, since
+// the env's one leaf moved on with the first, but as the last instance it
+// leaves nothing to hold for.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateSuccessDoesNotHoldATaskThatPausesOnFailure(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.settingsPausing(false)
+
+	task := env.twoInstanceTask()
+	task.PauseOnFailure = new(true)
+
+	manager := env.startLoaded(task)
+
+	waitUntil(t, "the task to complete or hold", func() bool {
+		task := current(t, manager)
+
+		return task.Status == TaskStatusCompleted || task.PauseReason != ""
+	})
+
+	done := current(t, manager)
+	if done.Status != TaskStatusCompleted || done.Instances[0].Status != InstanceStatusSuccess {
+		t.Fatalf("expected the task to complete after its first instance succeeds, got %s with %s and reason %q", done.Status, done.Instances[0].Status, done.PauseReason)
+	}
+
+	env.vault.script.Lock()
+	saves := slices.Clone(env.vault.records)
+	env.vault.script.Unlock()
+
+	for _, saved := range saves {
+		if saved.PauseReason != "" {
+			t.Fatalf("expected no save to hold the task, got reason %q", saved.PauseReason)
+		}
+	}
+}
