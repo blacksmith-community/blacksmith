@@ -128,22 +128,6 @@ type PlanInfo struct {
 	Active      bool   `json:"active"`
 }
 
-// SyncRequest represents a request to sync registration status.
-type SyncRequest struct {
-	RegistrationID string `json:"registration_id"`
-	Force          bool   `json:"force,omitempty"`
-}
-
-// SyncResult represents sync operation results.
-type SyncResult struct {
-	Success       bool          `json:"success"`
-	Message       string        `json:"message"`
-	BrokerInfo    *BrokerInfo   `json:"broker_info,omitempty"`
-	Services      []ServiceInfo `json:"services,omitempty"`
-	ServicesCount int           `json:"services_count"`
-	Error         string        `json:"error,omitempty"`
-}
-
 // Registration status constants.
 const (
 	StatusPending    = "pending"

@@ -22097,7 +22097,6 @@
           </div>
 
           <div class="registration-actions">
-            <button class="btn btn-sm btn-primary sync-registration-btn" data-id="${registration.id}">Sync</button>
             <button class="btn btn-sm btn-success register-btn" data-id="${registration.id}"
               ${statusClass === 'registering' ? 'disabled' : ''}>
               ${statusClass === 'active' ? 'Re-register' : 'Register'}
@@ -22118,14 +22117,6 @@
 
     // Setup event handlers for registration cards
     setupRegistrationHandlers() {
-      // Sync buttons
-      document.querySelectorAll('.sync-registration-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const registrationId = e.target.dataset.id;
-          this.syncRegistration(registrationId);
-        });
-      });
-
       // Register buttons
       document.querySelectorAll('.register-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -22464,31 +22455,6 @@
       } catch (error) {
         console.error('Start registration error:', error);
         this.showError('Failed to start registration: ' + error.message);
-      }
-    },
-
-    // Sync registration with CF
-    async syncRegistration(registrationId) {
-      if (!registrationId) return;
-
-      try {
-        const response = await fetch(`/b/cf/registrations/${registrationId}/sync`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}'
-        });
-
-        const result = await response.json();
-
-        if (response.ok && result.success) {
-          this.showSuccess('Registration synced successfully');
-          this.loadRegistrations(); // Refresh list
-        } else {
-          this.showError('Sync failed: ' + (result.error || result.message || 'Unknown error'));
-        }
-      } catch (error) {
-        console.error('Sync registration error:', error);
-        this.showError('Failed to sync registration: ' + error.message);
       }
     },
 

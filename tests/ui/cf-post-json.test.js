@@ -41,14 +41,6 @@ t('connecting a saved endpoint posts JSON',async()=>{
  expect(manager.connectionStates.lab.connected).toBe(true);
 });
 
-t('syncing a registration posts JSON',async()=>{
- const {w,posts}=await page();
- w.__routes.push([/\/b\/cf\/registrations\/reg-1\/sync$/,(u,o,j)=>j(200,{success:true})],
-  [/\/b\/cf\/registrations$/,(u,o,j)=>j(200,{registrations:[],count:0})]);
- await w.__T.CFRegistrationManager.syncRegistration('reg-1');await sleep(20);
- expect(posts).toEqual([{url:'/b/cf/registrations/reg-1/sync',type:'application/json'}]);
-});
-
 t('saving a registration posts JSON',async()=>{
  const {w,d,posts}=await page();
  w.__routes.push([/\/b\/cf\/registrations$/,(u,o,j)=>(o.method||'GET')==='POST'?j(200,{message:'ok'}):j(200,{registrations:[],count:0})]);
@@ -75,6 +67,6 @@ t('every POST to a /b/cf literal declares a JSON body',()=>{
   const call=src.slice(match.index,end+1);
   if(/method:\s*['"]POST['"]/.test(call)) posts.push(call);
  }
- expect(posts.length).toBeGreaterThanOrEqual(5);
+ expect(posts.length).toBeGreaterThanOrEqual(4);
  for(const call of posts) expect({call,json:/['"]Content-Type['"]:\s*['"]application\/json['"]/.test(call)}).toEqual({call,json:true});
 });

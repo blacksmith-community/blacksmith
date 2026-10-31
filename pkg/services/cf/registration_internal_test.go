@@ -367,39 +367,6 @@ func TestPerformRegistrationReportsAConnectionFailure(t *testing.T) {
 	}
 }
 
-func TestSyncRegistrationSendsNoPasswordGrant(t *testing.T) {
-	t.Parallel()
-
-	foundation := newV3OnlyFoundation(t)
-	registration := &CFRegistration{APIURL: foundation.URL, Username: foundationUser, BrokerName: "blacksmith"}
-
-	_, err := registrationHandler(t, foundation).SyncRegistration(&SyncRequest{RegistrationID: "lab"}, registration)
-	if !errors.Is(err, ErrPasswordRequired) {
-		t.Fatalf("SyncRegistration() without a stored password = %v, want ErrPasswordRequired", err)
-	}
-
-	if hits := foundation.uaaHits.Load() + foundation.loginHits.Load(); hits != 0 {
-		t.Fatalf("sync sent %d password grants, want 0", hits)
-	}
-}
-
-func TestSyncRegistrationChecksTheCloudFoundryRoot(t *testing.T) {
-	t.Parallel()
-
-	foundation := newV3OnlyFoundation(t)
-	foundation.root = `{"links":{}}`
-	registration := &CFRegistration{APIURL: foundation.URL, Username: foundationUser, BrokerName: "blacksmith"}
-
-	result, err := registrationHandler(t, foundation).SyncRegistration(&SyncRequest{RegistrationID: "lab"}, registration)
-	if err != nil || result.Success || !strings.Contains(result.Error, errNotCloudFoundry.Error()) {
-		t.Fatalf("SyncRegistration() against an API that is not Cloud Foundry = %+v, %v, want a failed result", result, err)
-	}
-
-	if foundation.uaaHits.Load() != 0 {
-		t.Fatalf("sync sent %d password grants, want 0", foundation.uaaHits.Load())
-	}
-}
-
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

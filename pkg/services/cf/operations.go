@@ -176,62 +176,6 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 	return nil
 }
 
-// SyncRegistration syncs the registration status with CF.
-func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistration) (*SyncResult, error) {
-	h.logger("Syncing registration %s with CF", req.RegistrationID)
-
-	// The broker keeps no CF password for a registration, so sync checks
-	// that the API answers and is Cloud Foundry without a password grant.
-	client := h.client(registration.APIURL, registration.Username, "")
-
-	_, connectErr := client.authClient.connect()
-	if connectErr != nil {
-		return &SyncResult{
-			Success: false,
-			Message: "Failed to connect to CF during sync",
-			Error:   connectErr.Error(),
-		}, nil
-	}
-
-	// Reading the broker needs a token, and requestToken refuses the empty
-	// password without sending it, so this fails with ErrPasswordRequired.
-	brokerInfo, brokerErr := client.FindServiceBroker(registration.BrokerName)
-	if brokerErr != nil {
-		return nil, fmt.Errorf("failed to find service broker: %w", brokerErr)
-	}
-
-	if brokerInfo == nil {
-		return &SyncResult{
-			Success: false,
-			Message: "Service broker not found in CF",
-			Error:   fmt.Sprintf("Broker '%s' not found", registration.BrokerName),
-		}, nil
-	}
-
-	// Get service offerings
-	services, servicesErr := client.GetServiceOfferings()
-	if servicesErr != nil {
-		return nil, fmt.Errorf("failed to get service offerings: %w", servicesErr)
-	}
-
-	// Filter services from our broker
-	var brokerServices []ServiceInfo
-
-	for _, service := range services {
-		if service.BrokerID == brokerInfo.ID {
-			brokerServices = append(brokerServices, service)
-		}
-	}
-
-	return &SyncResult{
-		Success:       true,
-		Message:       "Sync completed successfully",
-		BrokerInfo:    brokerInfo,
-		Services:      brokerServices,
-		ServicesCount: len(brokerServices),
-	}, nil
-}
-
 // Capabilities returns the capabilities of this service handler.
 func (h *Handler) Capabilities() []common.Capability {
 	return []common.Capability{
