@@ -23,6 +23,10 @@
   "key": "20261028-oat-43",
   "sha256": "af993167087607a7c75cdfc9d8509ecb58c27ff9060501334f176ed136f61120"
  },
+ "icons.js": {
+  "key": "20261028-oat-60",
+  "sha256": "07f40bd59d986a4b469250a704e98ae7aaa10a90aeee69e943f8f4db39c50c26"
+ },
  "inspection-layout.css": {
   "key": "20261025-navigation-history",
   "sha256": "285baf1725dedc9b7f99796084c7d0391ee483da2e828f9d2726db613628716c"

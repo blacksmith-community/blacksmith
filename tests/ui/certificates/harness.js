@@ -17,6 +17,8 @@ const { install: installStubs } = require('../dom-stubs.js');
 const { watchUncaught } = require('../watch-uncaught.js');
 
 const UI = path.resolve(__dirname, '..', '..', '..', 'ui');
+// icons.js loads before blacksmith.js in the page, so every boot evaluates it first.
+const ICONS = fs.readFileSync(path.join(UI, 'icons.js'), 'utf8');
 
 const main=(()=>{
 const SRC=path.join(UI,'blacksmith.js');
@@ -68,7 +70,7 @@ function boot(opts={}){
   _setHolder:(id,detail)=>{ holderDetails.set(id,{detail,signature:'x',readAt:Date.now()}); },
   _setSelectedTask:(id)=>{ selectedTaskId=id; },
   _getSelectedTask:()=>selectedTaskId};\n`+src.slice(idx);
-  try{ w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); errors.push('LOAD ERROR '+e.message); }
+  try{ w.eval(ICONS); w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); errors.push('LOAD ERROR '+e.message); }
   // guidance loads ui/view-guidance.js after blacksmith.js, in the page's order.
   if(opts.guidance) w.eval(fs.readFileSync(path.join(UI,'view-guidance.js'),'utf8'));
   // Oat loads after the page's own script, and defines the tabs element's base class.
@@ -108,7 +110,7 @@ function boot(opts={}){
   };
   const idx=src.lastIndexOf('})(document, window)');
   const hooked=src.slice(0,idx)+';window.__T={renderServiceCertificatesTab,renderCertificatesTab,initializeCertificatesTab,bindCertificateActions,CertOverview,CertView};\n'+src.slice(idx);
-  try{ w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); }
+  try{ w.eval(ICONS); w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); }
   if(opts.oat) w.eval(fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8'));
   return {w,d:w.document,errors,calls,json,stubs};
 }
@@ -226,7 +228,7 @@ async function boot(opts={}){
     return Promise.resolve({ok:false,status:404,statusText:'nf',json:()=>Promise.resolve({}),text:()=>Promise.resolve('')});
   };
   await new Promise(r=>w.addEventListener('load',r,{once:w.document.readyState!=='complete'})||setTimeout(r,0));
-  try{ w.eval(src); }catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); }
+  try{ w.eval(ICONS); w.eval(src); }catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); }
   await sleep(50);
   return {w,d:w.document,server,log,errors,stubs};
 }
