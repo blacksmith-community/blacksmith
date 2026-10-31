@@ -1,6 +1,7 @@
 package cf
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -115,7 +116,7 @@ func TestCFClientErrorsDoNotQuoteTheAnswer(t *testing.T) {
 		{"a created broker of the wrong JSON", refusal(http.StatusCreated, `{"guid":`+answerMarker+`}`),
 			func(c *Client) error { _, err := c.CreateServiceBroker("blacksmith"); return err }, "failed to decode broker creation response"},
 		{"a creation refused in the API's words", refusal(http.StatusUnprocessableEntity,
-			`{"errors":[{"title":"CF-UnprocessableEntity","code":10008,"detail":"`+answerMarker+` broker-pw-7d1f"}]}`),
+			`{"errors":[{"title":"CF-UnprocessableEntity","code":10008,"detail":"broker-pw-7d1f is not allowed"}]}`),
 			func(c *Client) error { _, err := c.CreateServiceBroker("blacksmith"); return err }, "CF-UnprocessableEntity (10008)"},
 		{"a creation refused with a code too big to read", refusal(http.StatusUnprocessableEntity,
 			`{"errors":[{"title":"CF-UnprocessableEntity","code":`+answerMarker+answerMarker+answerMarker+`}]}`),
@@ -123,7 +124,7 @@ func TestCFClientErrorsDoNotQuoteTheAnswer(t *testing.T) {
 		{"a creation refused without JSON", refusal(http.StatusBadGateway, `<html>`+answerMarker+`</html>`),
 			func(c *Client) error { _, err := c.CreateServiceBroker("blacksmith"); return err }, "(502)"},
 		{"an update refused in the API's words", refusal(http.StatusUnprocessableEntity,
-			`{"errors":[{"title":"CF-ServiceBrokerNameTaken","code":270002,"detail":"`+answerMarker+`"}]}`),
+			`{"errors":[{"title":"CF-ServiceBrokerNameTaken","code":270002,"detail":"Name must be unique"}]}`),
 			func(c *Client) error { _, err := c.UpdateServiceBroker("guid-1", "blacksmith"); return err }, "CF-ServiceBrokerNameTaken (270002)"},
 		{"an update refused with a title that is free text", refusal(http.StatusUnprocessableEntity,
 			`{"errors":[{"title":"`+answerMarker+` says no","code":1}]}`),
@@ -150,6 +151,64 @@ func TestCFClientErrorsDoNotQuoteTheAnswer(t *testing.T) {
 					if strings.Contains(text, quoted) {
 						t.Errorf("the %s repeats %q: %s", where, quoted, text)
 					}
+				}
+			}
+		})
+	}
+}
+
+// A refusal's detail is the reason an operator can act on, so it is shown,
+// but only on one line, at most refusalDetailLimit characters, and with
+// every secret the client holds replaced, in case CF echoes the request.
+func TestCFRefusalsShowASafeDetail(t *testing.T) {
+	t.Parallel()
+
+	refuse := func(detail string) http.HandlerFunc {
+		return func(writer http.ResponseWriter, _ *http.Request) {
+			answer, _ := json.Marshal(map[string]any{"errors": []map[string]any{{"title": "CF-UnprocessableEntity", "code": 10008, "detail": detail}}})
+
+			writer.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = writer.Write(answer)
+		}
+	}
+
+	create := func(c *Client) error { _, err := c.CreateServiceBroker("blacksmith"); return err }
+	update := func(c *Client) error { _, err := c.UpdateServiceBroker("guid-1", "blacksmith"); return err }
+	long := strings.Repeat("a", 300) + "tail-marker"
+
+	cases := []struct {
+		name   string
+		detail string
+		call   func(*Client) error
+		want   string
+		absent []string
+	}{
+		{"a creation's detail", "Name must be unique", create, "CF-UnprocessableEntity (10008): Name must be unique", nil},
+		{"an update's detail", "Name must be unique", update, "CF-UnprocessableEntity (10008): Name must be unique", nil},
+		{"a long detail", long, create, ": " + strings.Repeat("a", refusalDetailLimit), []string{strings.Repeat("a", refusalDetailLimit+1), "tail-marker"}},
+		{"a detail over several lines", "Name\r\nX-Injected: 1\tnow\x1b[31m red", create, ": NameX-Injected: 1now[31m red", []string{"\n", "\r", "\t", "\x1b"}},
+		{"the CF password", "bad login " + foundationPassword, create, ": bad login [redacted]", []string{foundationPassword}},
+		{"the broker password", "bad url " + brokerPassword + " given", update, ": bad url [redacted] given", []string{brokerPassword}},
+		{"the token", "token bearer " + foundationToken + " seen", create, ": token bearer [redacted] seen", []string{foundationToken}},
+		{"a secret split by a newline", "pw " + brokerPassword[:4] + "\n" + brokerPassword[4:], update, ": pw [redacted]", []string{brokerPassword}},
+		{"a secret past the limit", strings.Repeat("b", refusalDetailLimit-4) + brokerPassword, create, ": " + strings.Repeat("b", refusalDetailLimit-4), []string{"b" + brokerPassword[:4]}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			foundation := newV3OnlyFoundation(t)
+			foundation.brokersAnswer = refuse(tc.detail)
+
+			err := tc.call(brokerClient(foundation))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the call = %v, want an error containing %q", err, tc.want)
+			}
+
+			for _, quoted := range tc.absent {
+				if strings.Contains(err.Error(), quoted) {
+					t.Errorf("the error contains %q: %q", quoted, err.Error())
 				}
 			}
 		})

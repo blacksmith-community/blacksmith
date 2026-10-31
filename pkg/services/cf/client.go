@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
+	"unicode"
 )
 
 // Static errors for err113 compliance.
@@ -26,6 +28,10 @@ var (
 // as CF-ServiceBrokerNameTaken. An error is repeated only by its title and
 // code, because its detail can echo the request.
 var cfErrorTitle = regexp.MustCompile(`^CF-[A-Za-z]+$`)
+
+// refusalDetailLimit is how many characters of a refusal's detail the
+// broker repeats.
+const refusalDetailLimit = 256
 
 // Logger interface for logging.
 type Logger interface {
@@ -78,12 +84,14 @@ func (c *Client) TestConnection() (*RegistrationTestResult, error) {
 
 // refusal is the error for an answer the API gave with an error status. It
 // names the API's error by its title and code when they have the shape CF
-// gives them, and never repeats the answer's other text.
+// gives them, followed by its detail as safeDetail makes it, and repeats
+// nothing else from the answer.
 func (c *Client) refusal(failed error, resp *http.Response) error {
 	var answer struct {
 		Errors []struct {
-			Title string `json:"title"`
-			Code  int    `json:"code"`
+			Title  string `json:"title"`
+			Code   int    `json:"code"`
+			Detail string `json:"detail"`
 		} `json:"errors"`
 	}
 
@@ -92,11 +100,58 @@ func (c *Client) refusal(failed error, resp *http.Response) error {
 		c.logger.Warnf("The CF API's error answer (HTTP %d) was not the JSON the broker expects", resp.StatusCode)
 	}
 
-	if err == nil && len(answer.Errors) > 0 && cfErrorTitle.MatchString(answer.Errors[0].Title) {
-		return fmt.Errorf("%w (%d): %s (%d)", failed, resp.StatusCode, answer.Errors[0].Title, answer.Errors[0].Code)
+	if err != nil || len(answer.Errors) == 0 {
+		return fmt.Errorf("%w (%d)", failed, resp.StatusCode)
 	}
 
-	return fmt.Errorf("%w (%d)", failed, resp.StatusCode)
+	var reason []string
+
+	first := answer.Errors[0]
+	if cfErrorTitle.MatchString(first.Title) {
+		reason = append(reason, fmt.Sprintf("%s (%d)", first.Title, first.Code))
+	}
+
+	if detail := c.safeDetail(first.Detail); detail != "" {
+		reason = append(reason, detail)
+	}
+
+	if len(reason) == 0 {
+		return fmt.Errorf("%w (%d)", failed, resp.StatusCode)
+	}
+
+	return fmt.Errorf("%w (%d): %s", failed, resp.StatusCode, strings.Join(reason, ": "))
+}
+
+// safeDetail makes a refusal's detail fit to show, because CF can echo the
+// request in it. It drops control characters and line breaks first, so a
+// secret split across lines is still found, then replaces the CF password,
+// the broker password, and the token with "[redacted]", and only then cuts
+// the detail to refusalDetailLimit characters.
+func (c *Client) safeDetail(detail string) string {
+	detail = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return -1
+		}
+
+		return r
+	}, strings.ToValidUTF8(detail, ""))
+
+	secrets := []string{c.authClient.Password, c.brokerPass}
+	if c.authClient.authInfo != nil {
+		secrets = append(secrets, c.authClient.authInfo.AccessToken)
+	}
+
+	for _, secret := range secrets {
+		if secret != "" {
+			detail = strings.ReplaceAll(detail, secret, "[redacted]")
+		}
+	}
+
+	if runes := []rune(detail); len(runes) > refusalDetailLimit {
+		detail = string(runes[:refusalDetailLimit])
+	}
+
+	return detail
 }
 
 // GetServiceBrokers retrieves all service brokers from CF.
