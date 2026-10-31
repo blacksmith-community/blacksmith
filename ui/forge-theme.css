@@ -662,8 +662,10 @@ body > footer p { margin: 0; }
 #navigation-dialog { padding: 0; margin: 8dvh auto auto; width: min(860px, calc(100vw - 24px)); max-height: 84dvh; overflow: hidden; }
 #navigation-dialog[open] { display: flex; flex-direction: column; gap: 0; }
 #navigation-dialog .navigation-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; margin: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+/* Every dialog draws its close button the way Quick Navigation does. */
+dialog button.dialog-close { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 36px; height: 36px; min-width: 36px; min-height: 36px; padding: 6px; color: var(--text-secondary); background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: 5px; box-shadow: none; cursor: pointer; }
+dialog button.dialog-close:hover { color: var(--text-primary); background: var(--bg-hover); }
 #navigation-dialog #navigation-title { padding: 0; margin: 0; border: 0; background: transparent; font-size: 1.125rem; line-height: 1.4; }
-#navigation-dialog [data-close] { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 6px; }
 #navigation-dialog #navigation-search { width: calc(100% - 32px); margin: 12px 16px 0; padding: 9px 12px; flex-shrink: 0; }
 #navigation-dialog .navigation-count { margin: 0; padding: 6px 16px; flex-shrink: 0; }
 #navigation-dialog #navigation-results { margin: 0; padding: 0 8px 8px; min-height: 0; max-height: none; overflow-y: auto; flex: 0 1 auto; }
@@ -686,7 +688,6 @@ body > footer p { margin: 0; }
 #keyboard-help-dialog::backdrop { background: #0b1428a6; }
 #keyboard-help-dialog .keyboard-help-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 #keyboard-help-dialog h2 { font-size: 1.125rem; margin: 0; padding: 0; border: 0; background: transparent; }
-#keyboard-help-dialog [data-close] { min-width: 36px; height: 36px; padding: 4px; }
 #keyboard-help-dialog .keyboard-help-content { overflow: auto; min-height: 0; padding: 12px 16px; }
 #keyboard-help-dialog h3 { margin: 0 0 8px; padding: 0; font-size: .875rem; overflow-wrap: anywhere; }
 #keyboard-help-dialog table { margin: 0 0 16px; }

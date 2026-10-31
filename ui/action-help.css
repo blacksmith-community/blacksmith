@@ -15,7 +15,6 @@
 .theme-choice-dialog > p, .theme-choice-dialog > div { padding: 0; overflow: visible; }
 .theme-choice-dialog h2 { margin: 0; font-size: 1.125rem; }
 .theme-choice-dialog p { margin: 0 0 12px; }
-.theme-choice-dialog [data-close] { min-width: 32px; min-height: 32px; padding: 2px 8px; }
 .theme-choices { display: grid; gap: 6px; }
 .theme-choices button { text-align: left; white-space: normal; }
 .theme-choices [aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 3px 0 var(--primary); font-weight: 700; }
