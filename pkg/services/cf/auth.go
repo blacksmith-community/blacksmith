@@ -300,8 +300,16 @@ func (c *CFAuthClient) info(ctx context.Context) *CFInfo {
 	}
 }
 
-// MakeAuthenticatedRequest makes an authenticated request to CF API.
+// MakeAuthenticatedRequest makes an authenticated request to CF API. The
+// request carries the token, and some carry the broker's password, so it
+// follows redirects only on the API's own scheme and host, as getPublic
+// does.
 func (c *CFAuthClient) MakeAuthenticatedRequest(method, path string, body interface{}) (*http.Response, error) {
+	origin, err := registrationAPIURL(c.APIURL)
+	if err != nil {
+		return nil, err
+	}
+
 	token, err := c.GetAuthToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get auth token: %w", err)
@@ -315,7 +323,7 @@ func (c *CFAuthClient) MakeAuthenticatedRequest(method, path string, body interf
 		}
 	}
 
-	url := fmt.Sprintf("%s%s", c.APIURL, path)
+	url := origin.String() + path
 
 	ctx, cancel := context.WithTimeout(context.Background(), AuthContextTimeout)
 	defer cancel()
@@ -329,9 +337,9 @@ func (c *CFAuthClient) MakeAuthenticatedRequest(method, path string, body interf
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := rootClient(c.httpClient, origin).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("request failed: %w", rootRequestError(ctx, err))
 	}
 
 	return resp, nil

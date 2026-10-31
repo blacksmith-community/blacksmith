@@ -29,6 +29,10 @@ type v3OnlyFoundation struct {
 	// tokenAnswer, when set, answers the token requests in place of the
 	// password check.
 	tokenAnswer http.HandlerFunc
+	// brokersRedirect, when set, is where every /v3/service_brokers
+	// request is answered 307, keeping its path.
+	brokersRedirect string
+	brokerHits      atomic.Int32
 	uaaHits     atomic.Int32
 	loginHits   atomic.Int32
 	tokenPaths  []string
@@ -58,6 +62,9 @@ func (f *v3OnlyFoundation) serve(writer http.ResponseWriter, req *http.Request) 
 	case req.URL.Path == "/" && req.Method == http.MethodGet:
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(f.root))
+	case strings.HasPrefix(req.URL.Path, "/v3/service_brokers") && f.brokersRedirect != "":
+		f.brokerHits.Add(1)
+		http.Redirect(writer, req, f.brokersRedirect+req.URL.Path, http.StatusTemporaryRedirect)
 	case req.URL.Path == "/v3/info" && req.Method == http.MethodGet:
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"name":"lab-cf","version":56,"description":"cf-deployment v56","build":"abc"}`))
