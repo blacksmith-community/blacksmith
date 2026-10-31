@@ -291,48 +291,26 @@ func (r *connectionRun) identify(resp *http.Response) (*url.URL, bool) {
 		return nil, false
 	}
 
-	var root struct {
-		Links struct {
-			CloudControllerV3 struct {
-				Href string `json:"href"`
-			} `json:"cloud_controller_v3"`
-			UAA struct {
-				Href string `json:"href"`
-			} `json:"uaa"`
-			Login struct {
-				Href string `json:"href"`
-			} `json:"login"`
-		} `json:"links"`
-	}
-
-	err := r.readJSON(resp, &root)
-
-	switch {
-	case errors.Is(err, errResponseTooLarge):
+	body, err := readLimited(resp.Body, r.tester.bodyLimit())
+	if errors.Is(err, errResponseTooLarge) {
 		r.fail(CheckCloudFoundry, fmt.Sprintf("The API root's answer is larger than %d bytes, so it is not a Cloud Foundry root document.", r.tester.bodyLimit()))
 
 		return nil, false
-	case err != nil || root.Links.CloudControllerV3.Href == "":
-		r.fail(CheckCloudFoundry, "The API root's answer is not a Cloud Foundry root document.")
-
-		return nil, false
 	}
 
-	// The UAA link is the token endpoint that /v2/info used to name.
-	advertised := root.Links.UAA.Href
-	if advertised == "" {
-		advertised = root.Links.Login.Href
-	}
-
-	authURL, err := authEndpoint(advertised)
+	authURL, err := authEndpointFromRoot(body)
 
 	switch {
 	case errors.Is(err, errNoAuthEndpoint):
 		r.fail(CheckCloudFoundry, "The API is Cloud Foundry, but it names no authentication endpoint.")
 
 		return nil, false
-	case err != nil:
+	case errors.Is(err, ErrAPIURLMalformed):
 		r.fail(CheckCloudFoundry, "The API is Cloud Foundry, but its authentication endpoint is not a valid URL.")
+
+		return nil, false
+	case err != nil:
+		r.fail(CheckCloudFoundry, "The API root's answer is not a Cloud Foundry root document.")
 
 		return nil, false
 	}
@@ -340,19 +318,6 @@ func (r *connectionRun) identify(resp *http.Response) (*url.URL, bool) {
 	r.pass(CheckCloudFoundry, "The API identifies itself as Cloud Foundry.")
 
 	return authURL, true
-}
-
-func authEndpoint(advertised string) (*url.URL, error) {
-	if advertised == "" {
-		return nil, errNoAuthEndpoint
-	}
-
-	parsed, err := url.Parse(strings.TrimSuffix(advertised, "/"))
-	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
-		return nil, ErrAPIURLMalformed
-	}
-
-	return parsed, nil
 }
 
 // authenticate asks the authentication endpoint for a token with the
@@ -365,21 +330,12 @@ func (r *connectionRun) authenticate(ctx context.Context, transport *http.Transp
 		return
 	}
 
-	form := url.Values{}
-	form.Set("grant_type", "password")
-	form.Set("username", username)
-	form.Set("password", password)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authURL.String()+"/oauth/token", strings.NewReader(form.Encode()))
+	req, err := newPasswordGrant(ctx, authURL, username, password)
 	if err != nil {
 		r.fail(CheckToken, "The API's authentication endpoint is not a valid URL.")
 
 		return
 	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.SetBasicAuth("cf", "")
 
 	client := &http.Client{
 		Transport: transport,
@@ -433,15 +389,9 @@ func (r *connectionRun) authenticate(ctx context.Context, transport *http.Transp
 
 // readJSON decodes at most the body limit of resp into target.
 func (r *connectionRun) readJSON(resp *http.Response, target interface{}) error {
-	limit := r.tester.bodyLimit()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	body, err := readLimited(resp.Body, r.tester.bodyLimit())
 	if err != nil {
-		return fmt.Errorf("reading the response: %w", err)
-	}
-
-	if int64(len(body)) > limit {
-		return errResponseTooLarge
+		return err
 	}
 
 	err = json.Unmarshal(body, target)
