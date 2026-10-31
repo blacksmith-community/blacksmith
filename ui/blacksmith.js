@@ -22551,7 +22551,7 @@
       const miss = (cause) => {
         run.misses += 1;
         if (run.misses >= this.progressMissLimit) {
-          stop(`Registration progress stopped, because ${run.misses} checks in a row failed, the last with ${cause}. Check the registration's status in the list.`);
+          stop(`Registration progress stopped, because ${run.misses} checks in a row failed, and the last one failed with ${cause}. Check the registration's status in the list.`);
         }
       };
 
