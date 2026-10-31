@@ -126,16 +126,106 @@ t('a new registration after an edit posts as a create again',async()=>{
  expect(sent[0].method).toBe('POST');expect(sent[0].body.id).toMatch(UUID);expect(sent[0].body.id).not.toBe('reg-1');
 });
 
-// The broker has no route that tests a connection. The only CF route that
-// resembles one is /b/cf/endpoints/{id}/connect, which takes a configured
-// endpoint's key, never a URL and credentials from this form, and always
-// reports success. Until the broker grows a real route, Test Connection stays
-// unwired and sends nothing.
-t('Test Connection sends nothing because the broker has no route for it',async()=>{
- const env=await setup();const {d,manager,calls}=env;
- manager.showRegistrationModal();fill(d);
- const before=calls.length;
+// Test Connection posts the form's URL and credentials to the broker, which
+// answers 200 with every check, so the form can show which step failed.
+const CHECKS_PASS=[{name:'reachable',passed:true,message:'The API answered with HTTP 200.'},{name:'tls',passed:true,message:"The API's certificate verified."},{name:'cloud_foundry',passed:true,message:'The API identifies itself as Cloud Foundry.'},{name:'token',passed:true,message:"The credentials got a token from the API's authentication endpoint."}];
+const SKIP={passed:false,skipped:true,message:'Not run, because an earlier check failed.'};
+const CHECKS_TLS=[{name:'reachable',passed:true,message:'The API answered.'},{name:'tls',passed:false,message:"The API's certificate did not verify: the certificate is not signed by a trusted authority."},{name:'cloud_foundry',...SKIP},{name:'token',...SKIP}];
+async function testSetup(handler){
+ const env=await setup();const tests=[];
+ env.w.__routes.push([/\/b\/cf\/test-connection$/,(u,o,j)=>{tests.push({method:o.method,body:o.body?JSON.parse(o.body):null});return handler(u,o,j);}]);
+ env.manager.showRegistrationModal();fill(env.d);
+ return {...env,tests};
+}
+const results=(d)=>d.getElementById('test-connection-results');
+const rows=(d)=>[...results(d).querySelectorAll('li')].map(li=>({check:li.dataset.check,state:li.dataset.state,text:li.textContent}));
+const summary=(d)=>results(d).querySelector('.test-connection-summary').textContent;
+
+t('Test Connection posts the form credentials and shows every check passing',async()=>{
+ const env=await testSetup((u,o,j)=>j(200,{success:true,message:'Connected to Cloud Foundry, and the credentials got a token.',checks:CHECKS_PASS}));const {d,tests,sent}=env;
  test_(d).click();await settle();
- expect(calls.length).toBe(before);
+ expect(tests).toEqual([{method:'POST',body:{api_url:'https://api.cf.example.com',username:'admin',password:'s3cret'}}]);
+ expect(sent.length).toBe(0);
+ expect(results(d).hidden).toBe(false);
+ expect(summary(d)).toBe('Connection test passed. Connected to Cloud Foundry, and the credentials got a token.');
+ expect(rows(d).map(r=>r.check+'='+r.state)).toEqual(['reachable=passed','tls=passed','cloud_foundry=passed','token=passed']);
+ expect(rows(d)[1].text).toContain("The API's certificate verified.");
  expect(d.getElementById('registration-modal').open).toBe(true);
+ expect(env.logs.join('\n')).not.toContain('s3cret');
+});
+
+t('Test Connection names the failed check and the checks it did not run',async()=>{
+ const env=await testSetup((u,o,j)=>j(200,{success:false,error:CHECKS_TLS[1].message,code:'cf_tls_failed',checks:CHECKS_TLS}));const {d}=env;
+ test_(d).click();await settle();
+ expect(summary(d)).toBe('Connection test failed. '+CHECKS_TLS[1].message);
+ expect(rows(d).map(r=>r.check+'='+r.state)).toEqual(['reachable=passed','tls=failed','cloud_foundry=skipped','token=skipped']);
+ expect(rows(d)[1].text).toContain('Failed');expect(rows(d)[1].text).toContain('not signed by a trusted authority');
+ expect(rows(d)[2].text).toContain('Not run');
+ expect(results(d).getAttribute('role')).toBe(null);
+ expect(test_(d).disabled).toBe(false);
+});
+
+t('Test Connection is disabled while its request is in flight',async()=>{
+ let release;const gate=new Promise((r)=>{release=r;});
+ const env=await testSetup((u,o,j)=>gate.then(()=>j(200,{success:true,checks:CHECKS_PASS})));const {d,tests}=env;
+ test_(d).click();await settle();
+ expect(test_(d).disabled).toBe(true);
+ expect(test_(d).textContent).toBe('Testing…');
+ expect(results(d).getAttribute('aria-busy')).toBe('true');
+ test_(d).click();await settle();
+ expect(tests.length).toBe(1);
+ release();await settle();
+ expect(test_(d).disabled).toBe(false);
+ expect(test_(d).textContent).toBe('Test Connection');
+ expect(results(d).hasAttribute('aria-busy')).toBe(false);
+});
+
+t('Test Connection shows a readable error when the request fails',async()=>{
+ let fail=true;
+ const env=await testSetup((u,o,j)=>fail?Promise.reject(new TypeError('Failed to fetch')):j(200,{success:true,checks:CHECKS_PASS}));const {d,tests}=env;
+ test_(d).click();await settle();
+ expect(summary(d)).toBe('Connection test failed. The broker could not be reached: Failed to fetch');
+ expect(rows(d)).toEqual([]);
+ expect(test_(d).disabled).toBe(false);
+ fail=false;
+ test_(d).click();await settle();
+ expect(tests.length).toBe(2);
+ expect(summary(d)).toBe('Connection test passed.');
+});
+
+t('Test Connection shows a readable error for an HTML answer and never the HTML',async()=>{
+ const page='<html><body><h1>Bad Gateway</h1><script>window.__owned=1</script></body></html>';
+ const env=await testSetup(()=>Promise.resolve({ok:false,status:502,statusText:'Bad Gateway',headers:{get:()=>'text/html'},json:()=>Promise.reject(new SyntaxError('Unexpected token <')),text:()=>Promise.resolve(page)}));const {d,w}=env;
+ test_(d).click();await settle();
+ expect(summary(d)).toBe('Connection test failed. The broker answered HTTP 502 with a page, not a test result.');
+ expect(results(d).textContent).not.toContain('<');
+ expect(results(d).textContent).not.toContain('Bad Gateway');
+ expect(results(d).querySelector('h1,script')).toBe(null);
+ expect(w.__owned).toBe(undefined);
+});
+
+t('Test Connection shows the broker refusal for an invalid field',async()=>{
+ const env=await testSetup((u,o,j)=>j(400,{success:false,error:'CF API URL is required',code:'invalid_request'}));const {d}=env;
+ test_(d).click();await settle();
+ expect(summary(d)).toBe('Connection test failed. CF API URL is required');
+ expect(rows(d)).toEqual([]);
+});
+
+t('Test Connection results clear when the dialog opens again',async()=>{
+ const env=await testSetup((u,o,j)=>j(200,{success:true,checks:CHECKS_PASS}));const {d,manager}=env;
+ test_(d).click();await settle();
+ expect(results(d).hidden).toBe(false);
+ manager.hideRegistrationModal();manager.showRegistrationModal();
+ expect(results(d).hidden).toBe(true);
+ expect(results(d).textContent).toBe('');
+});
+
+t('a result that lands after the dialog reopens is not shown',async()=>{
+ let release;const gate=new Promise((r)=>{release=r;});
+ const env=await testSetup((u,o,j)=>gate.then(()=>j(200,{success:true,checks:CHECKS_PASS})));const {d,manager}=env;
+ test_(d).click();await settle();
+ manager.hideRegistrationModal();manager.showRegistrationModal();
+ release();await settle();
+ expect(results(d).hidden).toBe(true);
+ expect(test_(d).disabled).toBe(false);
 });

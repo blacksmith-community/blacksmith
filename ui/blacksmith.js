@@ -22170,6 +22170,7 @@
       // Reset form and progress
       form.reset();
       document.getElementById('registration-progress').style.display = 'none';
+      this.clearConnectionResult();
 
       // Set title and populate form if editing
       this.editingRegistration = registration;
@@ -22196,6 +22197,8 @@
       modal.querySelector('.modal-close').onclick = hide;
       const cancel = document.getElementById('cancel-registration');
       if (cancel) cancel.onclick = hide;
+      const testButton = document.getElementById('test-connection-btn');
+      if (testButton) testButton.onclick = () => this.testConnection();
       // Save is the form's submit button, so the browser checks the required
       // fields first and this handler only runs for a valid form.
       const form = document.getElementById('registration-form');
@@ -22230,12 +22233,24 @@
           form.reset();
           form.style.display = 'block';
         }
+        this.clearConnectionResult();
       }
     },
 
-    // Test CF connection
+    // Drop the shown test result and any result still on its way.
+    clearConnectionResult() {
+      this.connectionTestRun = (this.connectionTestRun || 0) + 1;
+      this.showConnectionResult(null);
+    },
+
+    // Test CF connection. The broker runs its checks in order and answers 200
+    // with all of them, so the form shows which step failed. A result that
+    // lands after the dialog closed or opened again is dropped.
     async testConnection() {
+      if (this.testingConnection) return;
       const form = document.getElementById('registration-form');
+      const button = document.getElementById('test-connection-btn');
+      if (!form) return;
       const formData = new FormData(form);
 
       const testData = {
@@ -22244,24 +22259,96 @@
         password: formData.get('password')
       };
 
+      const run = this.connectionTestRun = (this.connectionTestRun || 0) + 1;
+      const idleLabel = button ? button.textContent : '';
+      this.testingConnection = true;
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Testing\u2026';
+      }
+      this.showConnectionResult({ pending: true });
+
+      let result;
       try {
         const response = await fetch('/b/cf/test-connection', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(testData)
         });
-
-        const result = await response.json();
-
-        if (result.success) {
-          this.showSuccess('Connection test successful');
-        } else {
-          this.showError('Connection test failed: ' + (result.error || result.message));
-        }
+        result = await this.readConnectionAnswer(response);
       } catch (error) {
-        console.error('Connection test error:', error);
-        this.showError('Connection test failed: ' + error.message);
+        result = { success: false, error: `The broker could not be reached: ${(error && error.message) || 'the request failed'}` };
+      } finally {
+        this.testingConnection = false;
+        if (button) {
+          button.disabled = false;
+          button.textContent = idleLabel;
+        }
       }
+      if (run === this.connectionTestRun) this.showConnectionResult(result);
+    },
+
+    // The broker's answer as a test result. An answer that is not JSON, such
+    // as a proxy's error page, becomes a sentence and is never shown.
+    async readConnectionAnswer(response) {
+      let body = null;
+      try {
+        body = JSON.parse(await response.text());
+      } catch (parseError) {
+        body = null;
+      }
+      if (!body || typeof body !== 'object') {
+        return { success: false, error: `The broker answered HTTP ${response.status} with a page, not a test result.` };
+      }
+      if (!response.ok) {
+        return { success: false, error: String(body.error || body.message || `The broker answered HTTP ${response.status}.`) };
+      }
+      return {
+        success: body.success === true,
+        message: typeof body.message === 'string' ? body.message : '',
+        error: typeof body.error === 'string' ? body.error : '',
+        checks: Array.isArray(body.checks) ? body.checks : []
+      };
+    },
+
+    // Show a connection test's state in the form: pending, cleared, or a
+    // result with a line per check. Everything is set as text.
+    showConnectionResult(result) {
+      const panel = document.getElementById('test-connection-results');
+      if (!panel) return;
+      panel.replaceChildren();
+      panel.removeAttribute('aria-busy');
+      if (!result) {
+        panel.hidden = true;
+        return;
+      }
+      panel.hidden = false;
+      const summary = document.createElement('p');
+      summary.className = 'test-connection-summary';
+      panel.appendChild(summary);
+      if (result.pending) {
+        panel.setAttribute('aria-busy', 'true');
+        summary.textContent = 'Testing the connection\u2026';
+        return;
+      }
+      const detail = result.success ? result.message : (result.error || 'A check failed.');
+      summary.textContent = (result.success ? 'Connection test passed.' : 'Connection test failed.') + (detail ? ` ${detail}` : '');
+      const checks = result.checks || [];
+      if (!checks.length) return;
+      const labels = { reachable: 'API answers', tls: 'TLS certificate', cloud_foundry: 'Cloud Foundry API', token: 'Credentials' };
+      const list = document.createElement('ul');
+      list.className = 'test-connection-checks';
+      checks.forEach((check) => {
+        const state = check.skipped ? 'skipped' : (check.passed ? 'passed' : 'failed');
+        const item = document.createElement('li');
+        item.dataset.check = String(check.name || '');
+        item.dataset.state = state;
+        const label = labels[check.name] || String(check.name || 'Check');
+        const word = { passed: 'Passed', failed: 'Failed', skipped: 'Not run' }[state];
+        item.textContent = `${label}: ${word}. ${check.message || ''}`.trim();
+        list.appendChild(item);
+      });
+      panel.appendChild(list);
     },
 
     // Save registration. A new registration is created under a client-made id,
