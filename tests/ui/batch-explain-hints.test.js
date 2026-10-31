@@ -70,7 +70,8 @@ t('Execution settings say what an empty job limit means',async()=>{
 t('the pause on failure setting explains all three kinds of job',()=>{
  const src=require('fs').readFileSync(require('path').join(__dirname,'../../ui/blacksmith.js'),'utf8');
  const line=src.split('\n').find(l=>l.includes("key: 'pause_on_failure'"));
- expect(line.includes('Upgrades carry on after a failure')).toBe(true);
+ expect(line.includes('each job can change it on its Options step')).toBe(true);
+ expect(line.includes('An upgrade goes on after a failure unless its job turns pausing on')).toBe(true);
  expect(line.includes('Run command always pauses')).toBe(true);
 });
 

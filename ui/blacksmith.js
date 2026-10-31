@@ -3030,6 +3030,11 @@
       });
       host.appendChild(details);
     }
+    if (Object.prototype.hasOwnProperty.call(batchPause, upgradeOperation)) {
+      const pause = rotateEl('p', 'batch-review-pause', pauseOnFailureReview(upgradeOperation));
+      pause.id = 'batch-review-pause';
+      host.appendChild(pause);
+    }
     if (upgradeOperation === 'upgrade') {
       const label = rotateEl('label', 'batch-job-name', 'Job name (optional)');
       const input = document.createElement('input'); input.id = 'batch-flow-job-name'; input.value = batchFlow.jobName; input.placeholder = 'Use the generated job name';
@@ -3852,6 +3857,9 @@
     converge: '',
     name: '',
     reason: '',
+    // The certificate settings' pause_on_failure, which a new certificate
+    // job starts from. It is on until the inventory says otherwise.
+    pauseOnFailure: true,
     busy: false,
     reviewOpen: false,
     reviewPage: 0,
@@ -4480,6 +4488,8 @@
       const settings = inventory.settings || {};
       if (settings.warning_days > 0) rotateState.warningDays = settings.warning_days;
       if (settings.critical_days > 0) rotateState.criticalDays = settings.critical_days;
+      rotateState.pauseOnFailure = settings.pause_on_failure !== false;
+      syncPauseOnFailure();
       rotateState.loadState = 'ready';
       rotateState.loadError = '';
       rotateState.refreshError = '';
@@ -4736,6 +4746,53 @@
   let rotateModeControls = null;
 
   // The optional job name and reason inputs that every operation shares.
+  // Whether a failed instance pauses the job, chosen per operation. A choice
+  // the operator hasn't made is null, so an upgrade starts off and a
+  // certificate job starts from the certificate settings. A command job
+  // always pauses and has no choice.
+  const batchPause = { upgrade: null, rotate: null, converge: null };
+  const pauseOnFailureFor = (operation) => {
+    const chosen = batchPause[operation];
+    if (typeof chosen === 'boolean') return chosen;
+    return operation === 'upgrade' ? false : rotateState.pauseOnFailure !== false;
+  };
+  const PAUSE_ON_FAILURE_LABEL = 'Pause the job if an instance fails';
+  const PAUSE_ON_FAILURE_HELP = {
+    upgrade: 'When this is on and an instance fails, the job lets any deploy already running finish, starts no other instance, and pauses so you can look at the failure. When it\'s off, the job records the failure and goes on to the next instance. It starts off for every upgrade.',
+    certificates: 'When this is on and an instance fails, the job lets any deploy already running finish and pauses before more certificates change. When it\'s off, the job records the failure and goes on to the next instance. It starts from the broker\'s certificate setting, and your choice applies to this job only.'
+  };
+  // The checkbox of the operation's choice, with its hint and its field help.
+  const buildPauseOnFailure = (operation) => {
+    const id = operation === 'upgrade' ? 'upgrade-pause-on-failure' : 'rotate-pause-on-failure';
+    const row = rotateEl('div', 'filter-row batch-pause-row');
+    const label = rotateEl('label', 'batch-pause-option');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.id = id;
+    box.dataset.operation = operation;
+    box.checked = pauseOnFailureFor(operation);
+    box.setAttribute('aria-describedby', `${id}-help`);
+    box.addEventListener('change', () => { batchPause[box.dataset.operation] = box.checked; });
+    label.append(box, rotateEl('span', '', PAUSE_ON_FAILURE_LABEL));
+    row.appendChild(label);
+    addFieldHelp(label, 'pause-on-failure');
+    const hint = rotateEl('p', 'batch-field-help', PAUSE_ON_FAILURE_HELP[operation === 'upgrade' ? 'upgrade' : 'certificates']);
+    hint.id = `${id}-help`;
+    row.appendChild(hint);
+    return row;
+  };
+  // Draws each checkbox from its operation's choice, so a certificate job the
+  // operator hasn't decided on follows the settings once the inventory loads.
+  const syncPauseOnFailure = () => {
+    document.querySelectorAll('#upgrade-pause-on-failure, #rotate-pause-on-failure').forEach((box) => {
+      box.checked = pauseOnFailureFor(box.dataset.operation);
+    });
+  };
+  // The review's sentence about what a failure does to the job.
+  const pauseOnFailureReview = (operation) => pauseOnFailureFor(operation)
+    ? 'If an instance fails, the job pauses before its next instance, and any deploy already running finishes first.'
+    : 'If an instance fails, the job records the failure and goes on to the next instance.';
+
   const buildBatchMetadata = (namePlaceholder = 'For example, October certificate renewal', reasonPlaceholder = 'For example, scheduled renewal for change CHG-1234', reasonText = 'Explain why you\'re running this operation, such as a maintenance window, an incident, or a change ticket. The reason is saved with the job and shown in its details, so anyone reading Activity later knows why it ran. It\'s optional.') => {
     const nameRow = rotateEl('div', 'filter-row rotate-name-row');
     const nameLabel = rotateEl('label', '', 'Job name');
@@ -4809,6 +4866,7 @@
       pane.appendChild(rotateModeControls.root);
     }
 
+    pane.appendChild(buildPauseOnFailure(upgradeOperation));
     const metadata = buildBatchMetadata();
     pane.appendChild(metadata);
     container.appendChild(pane);
@@ -5447,6 +5505,11 @@
     limitRow.appendChild(limitHelp);
     parallelRow.appendChild(limitRow);
     pane.appendChild(parallelRow);
+
+    const pauseRow = rotateEl('div', 'filter-row batch-pause-row');
+    pauseRow.appendChild(rotateEl('p', 'batch-pause-fixed', 'If a node fails, this job always pauses before the next deployment, so you can decide whether the rest should still get the command. Run command has no option to go on past a failure.'));
+    pauseRow.firstChild.id = 'command-pause-on-failure';
+    pane.appendChild(pauseRow);
 
     pane.appendChild(buildBatchMetadata('For example, check disk usage on valkey nodes', 'For example, investigating an incident for change CHG-1234', 'Explain why you\'re running this command, such as an incident or a change ticket. The reason is saved in the audit record with the command.'));
     container.appendChild(pane);
@@ -6195,6 +6258,8 @@
         name: String(options.name || '').trim() || defaultName,
         reason: String(options.reason || '').trim()
       };
+      // Only Batch Operations asks, so another origin takes the settings.
+      if (typeof options.pauseOnFailure === 'boolean') createBody.pause_on_failure = options.pauseOnFailure;
 
       const outcome = await submitRotationCreate(createBody, converge, origin, host, report, () => previewAndCreate({ ...options, _note: PREVIEW_EXPIRED_NOTE }), included, options.onCreated);
       if (outcome.expired) {
@@ -6571,6 +6636,7 @@
         selections: Array.from(grouped.entries()).map(([instanceId, names]) => ({ instance_id: instanceId, variables: Array.from(names) })),
         name: rotateState.name,
         reason: rotateState.reason,
+        pauseOnFailure: pauseOnFailureFor(converge ? 'converge' : 'rotate'),
         origin: 'batch',
         confirmReview: flowReview ? options => showBatchReview(options, reviewRevision) : undefined,
         onCreated: (task, included) => {
@@ -6681,6 +6747,7 @@
     document.getElementById('batch-edit-releases').addEventListener('click', openAdvancedReleasePicker);
     addFieldHelp(document.getElementById('batch-additional-title'), 'additional-releases');
     addFieldHelp(upgradePanel.querySelector('label[for="upgrade-max-batch-jobs"]'), 'concurrent-jobs');
+    targetsContainer.querySelector('.batch-upgrade-options')?.appendChild(buildPauseOnFailure('upgrade'));
     installOperationSelector();
     installBatchWorkspace();
     installBatchFlow();
@@ -8384,6 +8451,15 @@
   };
 
   // Render task detail view
+  // What a failed instance does to an upgrade or certificate task. A task
+  // saved before tasks carried pause_on_failure has none: such an upgrade
+  // goes on, and such a certificate task follows the certificate settings.
+  const taskFailureText = (task) => {
+    if (task.pause_on_failure === true) return 'Pauses before its next instance';
+    if (task.pause_on_failure === false || task.kind !== 'certificates') return 'Goes on to the next instance';
+    return 'Follows the broker\'s certificate setting';
+  };
+
   const renderTaskDetail = (task) => {
     const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
     if (!tasksContainer) return;
@@ -8437,7 +8513,10 @@
     // paused state inside a running instance.
     const commandNodeInFlight = (instance) => ((instance && instance.command && instance.command.vms) || []).some((node) => node && (node.in_flight === true || node.phase === 'staged' || node.phase === 'sent'));
     const pauseRequested = isPaused && !cleansOnly && instances.some((instance) => instance && instance.status === 'running' && (isCertificates || (isCommand && commandNodeInFlight(instance))));
-    const hasFailedInstance = (isCertificates || isCommand) && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
+    // An upgrade that paused after a failure offers the same Continue as
+    // the certificate and command tasks.
+    const pausedOnFailure = isPaused && Boolean(task.pause_reason);
+    const hasFailedInstance = (isCertificates || isCommand || pausedOnFailure) && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
 
     // Build control buttons based on task status
     let controlButtonsHtml = '';
@@ -8478,6 +8557,11 @@
             <span class="label">Releases:</span>
             <span class="value">${escapeHtml(targets.releases.join(', '))}</span>
           </div>` : ''}`;
+    const failureRow = isCommand ? '' : `
+          <div class="summary-row">
+            <span class="label">After a failure:</span>
+            <span class="value task-pause-on-failure">${escapeHtml(taskFailureText(task))}</span>
+          </div>`;
 
     rerenderTaskPanel(tasksContainer, `detail:${task.id}`, () => {
       tasksContainer.innerHTML = `
@@ -8488,11 +8572,15 @@
           ${controlButtonsHtml}
         </div>
         <div class="task-detail-summary">
-          ${targetRows}
+          ${targetRows}${failureRow}
           <div class="summary-row">
             <span class="label">Status:</span>
             <span class="value status-${escapeAttribute(task.status)}">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : `${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : awaitsCleanup ? ' (cleanup waits for a resume)' : ''}`}</span>
-          </div>${(isCertificates || isCommand) && isPaused && hasFailedInstance ? `
+          </div>${pausedOnFailure ? `
+          <div class="summary-row">
+            <span class="label">Paused because:</span>
+            <span class="value task-pause-reason">${escapeHtml(task.pause_reason)}</span>
+          </div>` : ''}${(isCertificates || isCommand || pausedOnFailure) && isPaused && hasFailedInstance ? `
           <div class="summary-row">
             <span class="label">Resume:</span>
             <span class="value">The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.</span>
@@ -9060,7 +9148,7 @@
         }
 
         const diverged = Array.isArray(preview && preview.diverged) ? preview.diverged.filter(Boolean) : [];
-        const createBody = { ...requestBody };
+        const createBody = { ...requestBody, pause_on_failure: pauseOnFailureFor('upgrade') };
         if (diverged.length > 0 || flowReview || instanceIds.length > TYPED_CONFIRM_THRESHOLD) {
           const body = flowReview ? buildUpgradeFlowSummary(instanceIds, targetParts) : undefined;
           const answer = await (flowReview ? options => showBatchReview(options, reviewRevision) : showConfirmDialog)({
@@ -27260,7 +27348,7 @@
       { key: 'instance_scan_timeout_seconds', label: 'Instance scan timeout (seconds)', type: 'number', help: 'Seconds we wait on one instance before we give up on it, at least 1.' },
       { key: 'preview_ttl_minutes', label: 'Preview lifetime (minutes)', type: 'number', help: 'Minutes a preview stays valid before we need a fresh one, from 5 to 60.' },
       { key: 'probe_enabled', label: 'Probe live listeners', type: 'checkbox', help: 'Connect to each listener and read the certificate it serves, so we can compare it with the stored one.' },
-      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. The setting is on by default. Turn it off only for routine rotations you\'ll watch from Activity. Upgrades carry on after a failure, and Run command always pauses.' }
+      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. The setting is on by default. Turn it off only for routine rotations you\'ll watch from Activity. This is the default for new certificate jobs, and each job can change it on its Options step. An upgrade goes on after a failure unless its job turns pausing on, and Run command always pauses.' }
     ];
 
     const settingKeys = () => SETTINGS_FIELDS.map((f) => f.key);

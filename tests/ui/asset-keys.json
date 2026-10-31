@@ -12,8 +12,8 @@
   "sha256": "4c9f70f069cc02333f1f018813f642540ee43f53a52c7aa3accbbd4fb05d3352"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-36",
-  "sha256": "d60635ddc552f0509f7ee28e670153ad08031bd7d12e9a14ee0138f4a70f01ef"
+  "key": "20261028-oat-68",
+  "sha256": "635befb966d92a396ba20afcb8cae1b523b3b4c92b256b4b72ce3821995adca6"
  },
  "console.css": {
   "key": "20261028-oat-28",
@@ -44,7 +44,7 @@
   "sha256": "556c3292eeeddc560cb0e5c85c343eb7d9cef9a8ab299730c46dac4fc9fe2718"
  },
  "view-guidance.js": {
-  "key": "20261027-batch-explain",
-  "sha256": "66bfd232372f5fb34df0bfa89ba25c9c91c06364de01189c431d8e24c708d0f8"
+  "key": "20261028-oat-41",
+  "sha256": "4f68463c4292010bd355ac49f80412a1559165d8f372425e7606f96d22c3f40a"
  }
 }
