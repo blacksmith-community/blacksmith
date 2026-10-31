@@ -14,6 +14,7 @@ const usedNames = () => {
     read(f).replace(/blacksmithIcon\(\s*'([^']+)'/g, (m, name) => { names.add(name); return m; });
   });
   read('index.html').replace(/class="lucide lucide-([a-z0-9-]+)/g, (m, name) => { names.add(name); return m; });
+  read('blacksmith.css').replace(/\/\* lucide-icon: ([a-z0-9-]+) \*\//g, (m, name) => { names.add(name); return m; });
   return names;
 };
 
@@ -32,7 +33,7 @@ test('no hand-pasted Feather markup comes back', () => {
   const pages = sourceFiles().concat('index.html');
   pages.forEach((f) => {
     const src = read(f);
-    expect(f + ' has an svg literal' + (/<svg\b(?![^>]*\bclass="lucide )/.test(src) ? ' without a lucide class' : '')).toBe(f + ' has an svg literal');
+    expect(src.match(/<svg\b(?![^>]*\bclass="lucide )/g) || []).toEqual([]);
     expect(src).not.toMatch(/<polyline\b/);
     expect(src).not.toMatch(/<line\s+x1=/);
     expect(src).not.toContain('<rect x="9" y="9" width="13" height="13"');

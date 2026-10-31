@@ -8201,7 +8201,9 @@
       container.replaceChildren();
       const wrap = rotateEl('div', 'upgrade-task-detail');
       const header = rotateEl('div', 'task-detail-header');
-      const back = rotateEl('button', 'back-to-list', '\u2190 Back to Jobs');
+      const back = rotateEl('button', 'back-to-list');
+      back.insertAdjacentHTML('afterbegin', blacksmithIcon('arrow-left', { size: 16 }));
+      back.append('Back to Jobs');
       back.type = 'button';
       back.addEventListener('click', () => window.backToTaskList());
       header.append(back, rotateEl('h3', '', 'Command task'));
@@ -8571,7 +8573,7 @@
       tasksContainer.innerHTML = `
       <div class="upgrade-task-detail">
         <div class="task-detail-header">
-          <button type="button" class="back-to-list" data-task-action="back" data-keep-key="action:back">&#8592; Back to Jobs</button>
+          <button type="button" class="back-to-list" data-task-action="back" data-keep-key="action:back">${blacksmithIcon('arrow-left', { size: 16 })}Back to Jobs</button>
           <h3 tabindex="-1" data-keep-key="task-heading">${escapeHtml(jobName)}</h3>
           ${controlButtonsHtml}
         </div>
@@ -22404,35 +22406,35 @@
           </div>
           <div class="progress-steps">
             <div class="progress-step" id="step-validating">
-              <div class="step-icon"></div>
+              <div class="step-icon">${blacksmithIcon('check', { size: 12 })}${blacksmithIcon('x', { size: 12 })}</div>
               <div class="step-content">
                 <div class="step-title">Validating</div>
                 <div class="step-message">Validating registration request</div>
               </div>
             </div>
             <div class="progress-step" id="step-connecting">
-              <div class="step-icon"></div>
+              <div class="step-icon">${blacksmithIcon('check', { size: 12 })}${blacksmithIcon('x', { size: 12 })}</div>
               <div class="step-content">
                 <div class="step-title">Connecting</div>
                 <div class="step-message">Connecting to Cloud Foundry</div>
               </div>
             </div>
             <div class="progress-step" id="step-authenticating">
-              <div class="step-icon"></div>
+              <div class="step-icon">${blacksmithIcon('check', { size: 12 })}${blacksmithIcon('x', { size: 12 })}</div>
               <div class="step-content">
                 <div class="step-title">Authenticating</div>
                 <div class="step-message">Authenticating with Cloud Foundry</div>
               </div>
             </div>
             <div class="progress-step" id="step-creating-broker">
-              <div class="step-icon"></div>
+              <div class="step-icon">${blacksmithIcon('check', { size: 12 })}${blacksmithIcon('x', { size: 12 })}</div>
               <div class="step-content">
                 <div class="step-title">Creating Broker</div>
                 <div class="step-message">Creating service broker</div>
               </div>
             </div>
             <div class="progress-step" id="step-enabling-services">
-              <div class="step-icon"></div>
+              <div class="step-icon">${blacksmithIcon('check', { size: 12 })}${blacksmithIcon('x', { size: 12 })}</div>
               <div class="step-content">
                 <div class="step-title">Enabling Services</div>
                 <div class="step-message">Enabling service access</div>

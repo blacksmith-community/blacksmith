@@ -40,22 +40,49 @@ table thead th:hover {
   background-color: var(--bg-table-hover);
 }
 
-/* Sort indicators for table headers */
+/* Sort indicators for table headers. Each arrow is a Lucide icon used as a
+   mask, so it takes its color from the element. A test compares each data URI
+   to the vendored file. */
+:root {
+  /* lucide-icon: arrow-up-down */
+  --icon-arrow-up-down: url("data:image/svg+xml,%3C!--%20%40license%20lucide-static%20v1.65.0%20-%20ISC%20--%3E%0A%3Csvg%0A%20%20class%3D%22lucide%20lucide-arrow-up-down%22%0A%20%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%0A%20%20width%3D%2224%22%0A%20%20height%3D%2224%22%0A%20%20viewBox%3D%220%200%2024%2024%22%0A%20%20fill%3D%22none%22%0A%20%20stroke%3D%22currentColor%22%0A%20%20stroke-width%3D%222%22%0A%20%20stroke-linecap%3D%22round%22%0A%20%20stroke-linejoin%3D%22round%22%0A%3E%0A%20%20%3Cpath%20d%3D%22m21%2016-4%204-4-4%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M17%2020V4%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22m3%208%204-4%204%204%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M7%204v16%22%20%2F%3E%0A%3C%2Fsvg%3E%0A");
+  /* lucide-icon: arrow-up */
+  --icon-arrow-up: url("data:image/svg+xml,%3C!--%20%40license%20lucide-static%20v1.65.0%20-%20ISC%20--%3E%0A%3Csvg%0A%20%20class%3D%22lucide%20lucide-arrow-up%22%0A%20%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%0A%20%20width%3D%2224%22%0A%20%20height%3D%2224%22%0A%20%20viewBox%3D%220%200%2024%2024%22%0A%20%20fill%3D%22none%22%0A%20%20stroke%3D%22currentColor%22%0A%20%20stroke-width%3D%222%22%0A%20%20stroke-linecap%3D%22round%22%0A%20%20stroke-linejoin%3D%22round%22%0A%3E%0A%20%20%3Cpath%20d%3D%22m5%2012%207-7%207%207%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22M12%2019V5%22%20%2F%3E%0A%3C%2Fsvg%3E%0A");
+  /* lucide-icon: arrow-down */
+  --icon-arrow-down: url("data:image/svg+xml,%3C!--%20%40license%20lucide-static%20v1.65.0%20-%20ISC%20--%3E%0A%3Csvg%0A%20%20class%3D%22lucide%20lucide-arrow-down%22%0A%20%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%0A%20%20width%3D%2224%22%0A%20%20height%3D%2224%22%0A%20%20viewBox%3D%220%200%2024%2024%22%0A%20%20fill%3D%22none%22%0A%20%20stroke%3D%22currentColor%22%0A%20%20stroke-width%3D%222%22%0A%20%20stroke-linecap%3D%22round%22%0A%20%20stroke-linejoin%3D%22round%22%0A%3E%0A%20%20%3Cpath%20d%3D%22M12%205v14%22%20%2F%3E%0A%20%20%3Cpath%20d%3D%22m19%2012-7%207-7-7%22%20%2F%3E%0A%3C%2Fsvg%3E%0A");
+}
+
+table thead th.sortable::after,
+table thead th.sort-asc::after,
+table thead th.sort-desc::after,
+.sort-icon::after {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  background-color: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+
 table thead th.sortable::after {
-  content: '↕';
+  mask-image: var(--icon-arrow-up-down);
+  -webkit-mask-image: var(--icon-arrow-up-down);
   opacity: 0.3;
   margin-left: 8px;
-  font-size: 12px;
 }
 
 table thead th.sort-asc::after {
-  content: '↑';
+  mask-image: var(--icon-arrow-up);
+  -webkit-mask-image: var(--icon-arrow-up);
   opacity: 1;
   color: var(--text-link);
 }
 
 table thead th.sort-desc::after {
-  content: '↓';
+  mask-image: var(--icon-arrow-down);
+  -webkit-mask-image: var(--icon-arrow-down);
   opacity: 1;
   color: var(--text-link);
 }
@@ -2479,16 +2506,19 @@ td a {
 }
 
 .sort-icon.unsorted::after {
-  content: '⇅';
+  mask-image: var(--icon-arrow-up-down);
+  -webkit-mask-image: var(--icon-arrow-up-down);
   color: #6b7280;
 }
 
 .sort-icon.asc::after {
-  content: '▲';
+  mask-image: var(--icon-arrow-up);
+  -webkit-mask-image: var(--icon-arrow-up);
 }
 
 .sort-icon.desc::after {
-  content: '▼';
+  mask-image: var(--icon-arrow-down);
+  -webkit-mask-image: var(--icon-arrow-down);
 }
 
 /* Dark theme sorting indicators */
@@ -5010,30 +5040,26 @@ bs-tabs > .cert-tab-pane[hidden] {
   background: var(--success-bg);
 }
 
-.progress-step.success .step-icon::after {
-  content: "✓";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: var(--success-text);
-  font-size: 12px;
-  font-weight: bold;
-}
-
 .progress-step.error .step-icon {
   background: var(--error-bg);
 }
 
-.progress-step.error .step-icon::after {
-  content: "✗";
+.step-icon svg {
+  display: none;
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+}
+
+.progress-step.success .step-icon .lucide-check {
+  display: block;
+  color: var(--success-text);
+}
+
+.progress-step.error .step-icon .lucide-x {
+  display: block;
   color: var(--error-text);
-  font-size: 12px;
-  font-weight: bold;
 }
 
 .step-content {
@@ -10685,6 +10711,9 @@ span.config-type.resurrection {
 }
 
 #upgrade .back-to-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
   background: none;
   border: none;
   color: #2563eb;
