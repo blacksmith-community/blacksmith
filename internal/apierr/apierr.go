@@ -60,6 +60,9 @@ const (
 	// 410.
 	CodePreviewExpired = "preview_expired"
 
+	// 415.
+	CodeUnsupportedMediaType = "unsupported_media_type"
+
 	// 200, in the answer of a Cloud Foundry connection test whose check
 	// failed. The test ran, so the request itself succeeded.
 	CodeCFUnreachable     = "cf_unreachable"

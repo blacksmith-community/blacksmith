@@ -2,9 +2,11 @@ package cf
 
 import (
 	"context"
+	"mime"
 	"net/http"
 	"strings"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 	cfservices "blacksmith/pkg/services/cf"
@@ -69,6 +71,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	path := strings.TrimPrefix(req.URL.Path, "/b/cf")
 	logger.Debug("handling CF registration endpoint: %s %s", req.Method, path)
 
+	if req.Method == http.MethodPost && !requireJSON(writer, req) {
+		return
+	}
+
 	// Handle different endpoint categories
 	if h.handleCFRegistrationRoutes(writer, req, path) {
 		return
@@ -81,6 +87,23 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// No route matched
 	logger.Debug("unknown CF registration endpoint: %s %s", req.Method, path)
 	response.WriteError(writer, http.StatusNotFound, "endpoint not found")
+}
+
+// requireJSON answers 415 and reports false unless the request declares a
+// JSON body. A page on another site can send a form or a text/plain body
+// with the operator's cached credentials, but it can't send
+// application/json without a CORS preflight, and the broker answers no
+// preflight, so this keeps every POST route to same-origin callers.
+func requireJSON(writer http.ResponseWriter, req *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	if err == nil && mediaType == "application/json" {
+		return true
+	}
+
+	apierr.Write(writer, apierr.New(http.StatusUnsupportedMediaType, apierr.CodeUnsupportedMediaType,
+		"The request body must be JSON, sent with Content-Type: application/json."), http.StatusUnsupportedMediaType)
+
+	return false
 }
 
 // handleCFRegistrationRoutes handles CF registration management routes.

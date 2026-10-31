@@ -22473,7 +22473,9 @@
 
       try {
         const response = await fetch(`/b/cf/registrations/${registrationId}/sync`, {
-          method: 'POST'
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}'
         });
 
         const result = await response.json();
@@ -23703,7 +23705,11 @@
         this.connectionStates[endpointName] = { connected: false, testing: true };
         this.updateConnectionStatus(endpointName);
         try {
-          const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/connect`, { method: 'POST' });
+          const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/connect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+          });
           const result = await response.json();
           this.connectionStates[endpointName] = { connected: response.ok && result.success === true, testing: false };
           if (this.selectedEndpoint === endpointName && !this.connectionStates[endpointName].connected) {

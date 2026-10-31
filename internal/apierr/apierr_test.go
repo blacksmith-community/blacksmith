@@ -106,6 +106,7 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeCommandCredentialRequired, "command_credential_required"},
 		{apierr.CodePreviewMismatch, "preview_mismatch"},
 		{apierr.CodePreviewBound, "preview_bound"},
+		{apierr.CodeUnsupportedMediaType, "unsupported_media_type"},
 		{apierr.CodeCommandTooLong, "command_too_long"},
 		{apierr.CodeInvalidRunUser, "invalid_run_user"},
 		{apierr.CodeTimeoutOutOfRange, "timeout_out_of_range"},
@@ -116,8 +117,8 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeCFAuthFailed, "cf_auth_failed"},
 	}
 
-	if len(table) != 45 {
-		t.Fatalf("table has %d codes, want 45", len(table))
+	if len(table) != 46 {
+		t.Fatalf("table has %d codes, want 46", len(table))
 	}
 
 	for _, row := range table {
