@@ -4788,6 +4788,12 @@
       box.checked = pauseOnFailureFor(box.dataset.operation);
     });
   };
+  // Puts the operation's checkbox back to its default once its job is made,
+  // so a choice made for one job never carries over to the next.
+  const resetPauseOnFailure = (operation) => {
+    batchPause[operation] = null;
+    syncPauseOnFailure();
+  };
   // The review's sentence about what a failure does to the job.
   const pauseOnFailureReview = (operation) => pauseOnFailureFor(operation)
     ? 'If an instance fails, the job pauses before its next instance, and any deploy already running finishes first.'
@@ -6640,6 +6646,7 @@
         origin: 'batch',
         confirmReview: flowReview ? options => showBatchReview(options, reviewRevision) : undefined,
         onCreated: (task, included) => {
+          resetPauseOnFailure(converge ? 'converge' : 'rotate');
           // Clear only what the task took. An instance the preview left out
           // keeps its selection so the operator can see why and retry.
           const taken = new Set((included || []).map((instance) => instance && instance.instance_id));
@@ -9178,6 +9185,7 @@
         if (response.ok) {
           const task = await response.json();
           console.log('Upgrade task created:', task.id);
+          resetPauseOnFailure('upgrade');
 
           // Clear selection
           selectedUpgradeInstances.clear();

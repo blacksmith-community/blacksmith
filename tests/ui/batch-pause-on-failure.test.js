@@ -72,6 +72,16 @@ t('an upgrade create sends pause_on_failure true once the box is ticked',async()
  expect('pause_on_failure' in preview[0]).toBe(false);
  }finally{w.close();}
 });
+t('a ticked upgrade box goes back to off for the next upgrade once the job is made',async()=>{
+ const env=await setupUpgrade();const {w,d}=env;try{
+ tick(w,d.getElementById('upgrade-pause-on-failure'),true);
+ const first=await createUpgrade(env);
+ expect(first.map(b=>b.pause_on_failure)).toEqual([true]);
+ expect(d.getElementById('upgrade-pause-on-failure').checked).toBe(false);
+ const both=await createUpgrade(env);
+ expect(both.map(b=>b.pause_on_failure)).toEqual([true,false]);
+ }finally{w.close();}
+});
 t('the upgrade review says what a failure does to the job',async()=>{
  const env=await setupUpgrade();const {w,d}=env;try{
  tick(w,d.getElementById('upgrade-pause-on-failure'),true);
@@ -138,6 +148,18 @@ t('unticking the box sends false for this job and leaves the setting alone',asyn
  expect(created[0].pause_on_failure).toBe(false);
  expect(T.rotateState.pauseOnFailure).toBe(true);
  expect(calls.some(c=>/^(PUT|POST|PATCH) \/b\/(certificates|upgrade)\/settings/.test(c))).toBe(false);
+ }finally{w.close();}
+});
+
+t('an unticked certificate box goes back to the setting for the next job once the job is made',async()=>{
+ const env=await openRotate({pause_on_failure:true});const {w,d}=env;try{
+ tick(w,d.getElementById('rotate-pause-on-failure'),false);
+ const first=await createRotate(env);
+ expect(first.map(b=>b.pause_on_failure)).toEqual([false]);
+ await w.__T.requestOperation('rotate');await sleep(80);
+ expect(d.getElementById('rotate-pause-on-failure').checked).toBe(true);
+ const both=await createRotate(env);
+ expect(both.map(b=>b.pause_on_failure)).toEqual([false,true]);
  }finally{w.close();}
 });
 
