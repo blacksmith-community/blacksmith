@@ -3084,7 +3084,7 @@
   const installBatchKeyboard = () => {
     const panel = document.getElementById('upgrade');
     const shortcuts = {'batch-new':'N','batch-activity':'A','batch-flow-next':'ArrowRight','batch-flow-back':'ArrowLeft',
-      'rotate-op-upgrade':'U','rotate-op-rotate':'R','rotate-op-converge':'C'};
+      'rotate-op-upgrade':'U','rotate-op-rotate':'R','rotate-op-converge':'C','rotate-op-command':'X'};
     Object.entries(shortcuts).forEach(([id,key]) => {
       const control = document.getElementById(id);
       control?.setAttribute('aria-keyshortcuts', 'Alt+Shift+' + key);
@@ -3095,7 +3095,7 @@
       if (event.target.closest('textarea, [contenteditable]:not([contenteditable="false"]), input:not([type="radio"]):not([type="checkbox"])')) return;
       if (window.blacksmithSurfaces.top() || document.querySelector('dialog[open]')) return;
       const code = event.code || event.key;
-      if (!['KeyN','KeyA','KeyU','KeyR','KeyC','ArrowRight','ArrowLeft'].includes(code)) return;
+      if (!['KeyN','KeyA','KeyU','KeyR','KeyC','KeyX','ArrowRight','ArrowLeft'].includes(code)) return;
       event.preventDefault();
       if (code === 'KeyA') {
         setBatchView('activity');
@@ -3103,8 +3103,10 @@
       } else if (code === 'KeyN') {
         setBatchView('new'); setBatchStep(0);
         document.querySelector('#rotate-operation input:checked')?.focus();
-      } else if (['KeyU','KeyR','KeyC'].includes(code)) {
-        await requestOperation({KeyU:'upgrade',KeyR:'rotate',KeyC:'converge'}[code]);
+      } else if (['KeyU','KeyR','KeyC','KeyX'].includes(code)) {
+        // Run command can be switched off, and then its key does nothing.
+        if (code === 'KeyX' && commandState.unavailable) return;
+        await requestOperation({KeyU:'upgrade',KeyR:'rotate',KeyC:'converge',KeyX:'command'}[code]);
         setBatchView('new'); setBatchStep(1);
       } else if (!panel.querySelector('.upgrade-main').hidden) {
         // The forward shortcut navigates only; final submission requires

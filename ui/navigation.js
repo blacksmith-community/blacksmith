@@ -213,7 +213,7 @@
         ['Arrow keys', 'Choose radio, mode, or select options']];
       const names = {'batch-new':'New Operation (keeps your draft)', 'batch-activity':'Activity',
         'batch-flow-next':'Next step; on Review, focus confirmation', 'batch-flow-back':'Previous step',
-        'rotate-op-upgrade':'Upgrade options', 'rotate-op-rotate':'Rotate certificate options', 'rotate-op-converge':'Converge options'};
+        'rotate-op-upgrade':'Upgrade options', 'rotate-op-rotate':'Rotate certificate options', 'rotate-op-converge':'Converge options', 'rotate-op-command':'Run command options'};
       panel?.querySelectorAll('[aria-keyshortcuts]').forEach(control => {
         if (!names[control.id] && (!control.getClientRects().length || control.disabled)) return;
         rows.push([control.getAttribute('aria-keyshortcuts').replaceAll('Alt','Alt/Option'),

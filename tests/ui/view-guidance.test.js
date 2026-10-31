@@ -80,7 +80,7 @@ test('keyboard button toggles aria-expanded, keeps kbd and dl markup, and closes
  key.focus();expect(key.getAttribute('aria-expanded')).toBe('true');expect(tip.hidden).toBe(false);
  key.click();key.blur();expect(tip.hidden).toBe(false);
  expect(tip.querySelectorAll('kbd').length).toBeGreaterThan(5);
- expect([...tip.querySelectorAll('dt')].map(e=>e.textContent)).toEqual(['N','A','U / R / C','→ / ←']);
+ expect([...tip.querySelectorAll('dt')].map(e=>e.textContent)).toEqual(['N','A','U / R / C / X','→ / ←']);
  expect(tip.querySelectorAll('dd').length).toBe(4);
  expect(tip.textContent).toContain('Shortcuts pause in text fields and dialogs');
  host.setAttribute('tabindex','-1');host.focus();

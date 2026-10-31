@@ -103,7 +103,7 @@
     const kbds = (parts) => parts.map(part => part.k ? el('kbd', part.k) : doc.createTextNode(part));
     const para = (...parts) => {const p = el('p'); p.append(...kbds(parts)); return p;};
     const list = el('dl');
-    [['N', 'New Operation (keeps your draft)'], ['A', 'Activity'], ['U / R / C', 'Upgrade / Rotate / Converge options'], ['→ / ←', 'Next / Back']]
+    [['N', 'New Operation (keeps your draft)'], ['A', 'Activity'], ['U / R / C / X', 'Upgrade / Rotate / Converge / Run command options'], ['→ / ←', 'Next / Back']]
       .forEach(([key, action]) => list.append(el('dt', key), el('dd', action)));
     return [
       para('On this screen, hold ', {k: 'Alt / Option'}, ' + ', {k: 'Shift'}, ' and press:'),
