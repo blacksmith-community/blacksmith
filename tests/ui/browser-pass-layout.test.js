@@ -39,3 +39,11 @@ test('a header with its own sort icon does not draw the th icon too',()=>{
 test('tables without the span keep the th sort icon',()=>{
  expect(bodies('blacksmith.css','table thead th.sortable::after')).toMatch(/mask-image:\s*var\(--icon-arrow-up-down\)/);
 });
+
+// The generic filter-row label is full width, which pushed the help button
+// of the pause checkbox to the far edge of its row.
+test('the pause checkbox label is only as wide as its text',()=>{
+ const b=bodies('forge-theme.css','#upgrade .upgrade-filters .filter-row label.batch-pause-option');
+ expect(b).toMatch(/width:\s*auto/);
+ expect(b).toMatch(/flex:\s*0 1 auto/);
+});
