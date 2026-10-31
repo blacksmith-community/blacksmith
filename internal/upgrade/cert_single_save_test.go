@@ -412,3 +412,29 @@ func TestCertificateInstanceReservedOnLoadGoesOn(t *testing.T) {
 		}
 	}
 }
+
+// A certificate task stored before tasks carried pause_on_failure fails
+// the instance another task reserves at load and goes on to its next
+// instance, though the certificate settings pause, and no save carries
+// a reason to hold.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestStoredCertificateTaskWithoutTheChoiceReservedOnLoadGoesOn(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.settingsPausing(true)
+
+	manager := env.loadReserved(env.withPending(env.deployedTask(), "instance-2"))
+
+	first := env.firstFailedSave(waitInstanceID)
+	if first.Paused || first.PauseReason != "" {
+		t.Fatalf("expected the save of the failure not to hold the task, got paused %v with reason %q", first.Paused, first.PauseReason)
+	}
+
+	expectWentOn(t, manager)
+
+	for _, saved := range env.failedSaves(waitInstanceID) {
+		if saved.PauseReason != "" {
+			t.Fatalf("expected no save to hold the task, got reason %q", saved.PauseReason)
+		}
+	}
+}
