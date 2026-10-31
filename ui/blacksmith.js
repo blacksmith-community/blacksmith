@@ -209,9 +209,7 @@
     const modalHTML = `
       <dialog id="dialog-modal" class="dialog-modal" aria-labelledby="dialog-modal-title" aria-describedby="dialog-modal-message" tabindex="-1">
         <div class="dialog-modal-header">
-          <svg class="dialog-modal-icon dialog-modal-icon--warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
-            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-          </svg>
+          ${blacksmithIcon('triangle-alert', { size: 24, className: 'dialog-modal-icon dialog-modal-icon--warning' })}
           <h3 class="dialog-modal-title" id="dialog-modal-title" tabindex="-1"></h3>
         </div>
         <div class="dialog-modal-body">
@@ -776,8 +774,8 @@
 
   // The copy icon and its confirming check. Every icon-only copy button
   // draws the same stroke icon in currentColor, and the theme colors it.
-  const COPY_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-  const CHECK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+  const COPY_ICON_SVG = blacksmithIcon('copy', { size: 14 });
+  const CHECK_ICON_SVG = blacksmithIcon('check', { size: 14 });
 
   // Swaps the copy icon of a copy button to the check for a moment. Only
   // the icon changes, so a button that also shows a label keeps it.
@@ -1273,10 +1271,7 @@
   const createSearchFilter = (tableId, placeholder = 'Search...') => {
     return `
       <div class="table-search-container">
-        <svg class="table-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"></circle>
-          <path d="m21 21-4.35-4.35"></path>
-        </svg>
+        ${blacksmithIcon('search', { size: 16, className: 'table-search-icon' })}
         <input type="text"
                class="table-search-input"
                id="search-${tableId}"
@@ -1285,10 +1280,7 @@
         <button class="clear-search-btn"
                 id="clear-${tableId}"
                 title="Clear search">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
+          ${blacksmithIcon('x', { size: 14 })}
         </button>
       </div>
     `;
@@ -1837,7 +1829,7 @@
     const container = document.createElement('div');
     container.className = 'filter-container';
     container.innerHTML = `
-      <span class="filter-icon" title="Filter logs">🔍</span>
+      <span class="filter-icon" title="Filter logs">${blacksmithIcon('search', { size: 16 })}</span>
       <input type="text" class="filter-input" placeholder="Filter..." />
       <span class="filter-count" style="display: none;"></span>
     `;
@@ -2079,7 +2071,7 @@
                   <span>${instanceName}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
                           title="Copy to clipboard" aria-label="Copy instance name">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    ${blacksmithIcon('copy', { size: 14 })}
                   </button>
                 </span>
               ` : '-'}
@@ -2092,7 +2084,7 @@
                   <span>${vm.az}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
                           title="Copy to clipboard" aria-label="Copy availability zone">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    ${blacksmithIcon('copy', { size: 14 })}
                   </button>
                 </span>
               ` : '-'}
@@ -2103,7 +2095,7 @@
                   <span>${vmType}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
                           title="Copy to clipboard" aria-label="Copy VM type">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    ${blacksmithIcon('copy', { size: 14 })}
                   </button>
                 </span>
               ` : '-'}
@@ -2729,13 +2721,13 @@
         </div>
         <div class="filter-buttons">
           <button id="refresh-services" type="button" class="copy-deployment-names-btn" title="Refresh service instances" aria-label="Refresh service instances">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            ${blacksmithIcon('refresh-cw', { size: 14 })}
           </button>
           <button id="copy-deployment-names" type="button" class="copy-deployment-names-btn" title="Copy deployment names for matching instances" aria-label="Copy deployment names for matching instances">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            ${blacksmithIcon('copy', { size: 14 })}
           </button>
           <button id="clear-filters" type="button" class="clear-filters-btn" title="Clear instance filters" aria-label="Clear instance filters">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 4h18l-7 8v7l-4 2V12L3 4z"></path><path d="m17 15 5 5m0-5-5 5"></path></svg>
+            ${blacksmithIcon('funnel-x', { size: 18 })}
           </button>
         </div>
         <div class="filter-status">
@@ -2797,7 +2789,7 @@
     return `
       <div class="services-list" role="region" aria-label="Service instances">
         ${filterSection}
-        <nav class="instance-pagination" aria-label="Instance pages"><button id="instance-prev" type="button" class="outline small" aria-label="Previous page of instances" title="Previous page of instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="15 18 9 12 15 6"></polyline></svg></button><span id="instance-page"></span><button id="instance-next" type="button" class="outline small" aria-label="Next page of instances" title="Next page of instances"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="9 18 15 12 9 6"></polyline></svg></button></nav>
+        <nav class="instance-pagination" aria-label="Instance pages"><button id="instance-prev" type="button" class="outline small" aria-label="Previous page of instances" title="Previous page of instances">${blacksmithIcon('chevron-left', { size: 16 })}</button><span id="instance-page"></span><button id="instance-next" type="button" class="outline small" aria-label="Next page of instances" title="Next page of instances">${blacksmithIcon('chevron-right', { size: 16 })}</button></nav>
         <div class="services-items-container">
           ${listHtml}
         </div>
@@ -4245,7 +4237,9 @@
     }
     const days = cert.daysLeft === null ? '' : (cert.daysLeft < 0 ? 'expired' : `${cert.daysLeft}d`);
     chip.title = `${cert.key}${cert.expiry ? `, expires ${cert.expiry}` : ''}`;
-    chip.appendChild(rotateEl('span', 'rotate-chip-mark', on ? '✓' : ''));
+    const mark = rotateEl('span', 'rotate-chip-mark');
+    if (on) mark.innerHTML = blacksmithIcon('check', { size: 12 });
+    chip.appendChild(mark);
     chip.appendChild(rotateEl('span', 'rotate-chip-name', cert.variable));
     if (days) chip.appendChild(rotateEl('span', 'rotate-chip-days', days));
     chip.addEventListener('click', (event) => {
@@ -6022,7 +6016,8 @@
         if (compact) {
           card.open = expandPreviewCards;
           const head = rotateEl('summary', 'rotate-preview-card-head rotate-preview-row');
-          const chevron = rotateEl('span', 'rotate-preview-chevron', '▸');
+          const chevron = rotateEl('span', 'rotate-preview-chevron');
+          chevron.innerHTML = blacksmithIcon('chevron-right', { size: 14 });
           chevron.setAttribute('aria-hidden', 'true');
           head.appendChild(chevron);
           head.appendChild(rotateEl('strong', 'rotate-preview-name', name));
@@ -7436,10 +7431,10 @@
   // Get icon for task status
   const getTaskStatusIcon = (status) => {
     switch (status) {
-      case 'completed': return '<span class="status-icon success">&#10003;</span>';
-      case 'running': return '<span class="status-icon running">&#8635;</span>';
-      case 'failed': return '<span class="status-icon failed">&#10007;</span>';
-      case 'pending': return '<span class="status-icon pending">&#8987;</span>';
+      case 'completed': return `<span class="status-icon success">${blacksmithIcon('check', { size: 12, label: 'Succeeded' })}</span>`;
+      case 'running': return `<span class="status-icon running">${blacksmithIcon('refresh-cw', { size: 12, label: 'Running' })}</span>`;
+      case 'failed': return `<span class="status-icon failed">${blacksmithIcon('x', { size: 12, label: 'Failed' })}</span>`;
+      case 'pending': return `<span class="status-icon pending">${blacksmithIcon('hourglass', { size: 12, label: 'Pending' })}</span>`;
       default: return '';
     }
   };
@@ -8661,15 +8656,15 @@
   // Get icon for instance status
   const getInstanceStatusIcon = (status) => {
     switch (status) {
-      case 'success': return '<span class="status-icon success">&#10003;</span>';
-      case 'running': return '<span class="status-icon running">&#8635;</span>';
-      case 'failed': return '<span class="status-icon failed">&#10007;</span>';
-      case 'pending': return '<span class="status-icon pending">&#8987;</span>';
-      case 'cancelled': return '<span class="status-icon cancelled">&#10006;</span>';
-      case 'skipped': return '<span class="status-icon skipped">&#8594;</span>';
-      case 'outcome_unknown': return '<span class="status-icon outcome-unknown">?</span>';
-      case 'interrupted': return '<span class="status-icon interrupted">&#8214;</span>';
-      case 'awaiting_decision': return '<span class="status-icon awaiting-decision" role="img" aria-label="Awaiting decision" title="Awaiting decision">!</span>';
+      case 'success': return `<span class="status-icon success">${blacksmithIcon('check', { size: 12, label: 'Succeeded' })}</span>`;
+      case 'running': return `<span class="status-icon running">${blacksmithIcon('refresh-cw', { size: 12, label: 'Running' })}</span>`;
+      case 'failed': return `<span class="status-icon failed">${blacksmithIcon('x', { size: 12, label: 'Failed' })}</span>`;
+      case 'pending': return `<span class="status-icon pending">${blacksmithIcon('hourglass', { size: 12, label: 'Pending' })}</span>`;
+      case 'cancelled': return `<span class="status-icon cancelled">${blacksmithIcon('ban', { size: 12, label: 'Cancelled' })}</span>`;
+      case 'skipped': return `<span class="status-icon skipped">${blacksmithIcon('skip-forward', { size: 12, label: 'Skipped' })}</span>`;
+      case 'outcome_unknown': return `<span class="status-icon outcome-unknown">${blacksmithIcon('circle-question-mark', { size: 12, label: 'Outcome unknown' })}</span>`;
+      case 'interrupted': return `<span class="status-icon interrupted">${blacksmithIcon('pause', { size: 12, label: 'Interrupted' })}</span>`;
+      case 'awaiting_decision': return `<span class="status-icon awaiting-decision" role="img" aria-label="Awaiting decision" title="Awaiting decision">${blacksmithIcon('triangle-alert', { size: 12 })}</span>`;
       default: return '';
     }
   };
@@ -9365,7 +9360,7 @@
               <span>${displayValue}</span>
               <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
                       title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(item.key))}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                ${blacksmithIcon('copy', { size: 14 })}
               </button>
             </span>
           </td>
@@ -9832,11 +9827,11 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.deployment-log-table', event)"
                   title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            ${blacksmithIcon('copy', { size: 16 })}
           </button>
           ${instanceId ? `<button class="refresh-btn-logs" onclick="${refreshFunction}"
                   title="Refresh deployment logs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
           </button>` : ''}
         </div>
         <div class="deployment-log-table-container">
@@ -9913,11 +9908,11 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.debug-log-table', event)"
                   title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            ${blacksmithIcon('copy', { size: 16 })}
           </button>
           ${instanceId ? `<button class="refresh-btn-logs" onclick="${refreshFunction}"
                   title="Refresh debug logs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
           </button>` : ''}
         </div>
         <div class="debug-log-table-container">
@@ -10019,7 +10014,7 @@
     }
 
     const id = `log-notice-${++logNoticeSequence}`;
-    return `<button type="button" class="log-info-toggle" data-log-notice="${id}" aria-controls="${id}" aria-expanded="false" aria-label="Log collection details" title="Some logs are incomplete. Show collection details">ⓘ</button><div id="${id}" class="instance-logs-notice" hidden>${parts.join('')}</div>`;
+    return `<button type="button" class="log-info-toggle" data-log-notice="${id}" aria-controls="${id}" aria-expanded="false" aria-label="Log collection details" title="Some logs are incomplete. Show collection details">${blacksmithIcon('info', { size: 16 })}</button><div id="${id}" class="instance-logs-notice" hidden>${parts.join('')}</div>`;
   };
 
   const mountLogNotice = container => {
@@ -10170,11 +10165,11 @@
                     </div>
                     <button class="copy-btn-logs" data-job="${jobAttribute}" data-instance-log="copy"
                             title="Copy filtered table rows" aria-label="Copy filtered table rows">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      ${blacksmithIcon('copy', { size: 16 })}
                     </button>
                     <button class="refresh-btn-logs" data-job="${jobAttribute}" data-instance-log="refresh"
                             title="Refresh logs">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                      ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
                     </button>
                   </div>
         ${preferredFile && preferredFile !== defaultFile ? `<p class="log-file-fallback" role="status">${escapeHtml(preferredFile)} is not available on this node. Showing ${escapeHtml(defaultFile)}.</p>` : ''}
@@ -10557,11 +10552,11 @@
         </div>
         <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
                 title="Copy filtered table rows" aria-label="Copy filtered table rows">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          ${blacksmithIcon('copy', { size: 16 })}
         </button>
         <button class="refresh-btn-logs" onclick="${refreshFunction}"
                 title="Refresh events">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
         </button>
       </div>
       <div class="events-table-container">
@@ -10646,11 +10641,11 @@
           </div>
           <div class="tasks-action-buttons">
             <button id="refresh-tasks-btn" class="refresh-btn" title="Refresh tasks">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
             </button>
             <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
                     title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              ${blacksmithIcon('copy', { size: 16 })}
             </button>
           </div>
         </div>
@@ -10807,11 +10802,11 @@
           </div>
           <div class="configs-action-buttons">
             <button id="refresh-configs-btn" type="button" class="refresh-btn" title="Refresh configs" aria-label="Refresh configs">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
             </button>
             <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
                     title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              ${blacksmithIcon('copy', { size: 16 })}
             </button>
           </div>
         </div>
@@ -11674,11 +11669,11 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.logs-table', event)"
                   title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            ${blacksmithIcon('copy', { size: 16 })}
           </button>
           <button class="refresh-btn-logs" onclick="window.refreshBlacksmithLogs(event)"
                   title="Refresh logs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
           </button>
         </div>
         <div class="logs-table-container" id="blacksmith-logs-display">
@@ -11710,11 +11705,11 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.vms-table', event)"
                   title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            ${blacksmithIcon('copy', { size: 16 })}
           </button>
           <button class="refresh-btn-logs" onclick="${refreshFunction}"
                   title="Refresh VMs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
           </button>
           <div class="resurrection-toggle-container">
             <span class="resurrection-label-text" title="Automatically recreate failed VMs">Resurrection</span>
@@ -11727,12 +11722,7 @@
                     onclick="window.deleteResurrectionConfig('${instanceId || 'blacksmith'}', event)"
                     title="Delete resurrection config"
                     style="display: none;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3,6 5,6 21,6"></polyline>
-                <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
-                <line x1="10" y1="11" x2="10" y2="17"></line>
-                <line x1="14" y1="11" x2="14" y2="17"></line>
-              </svg>
+              ${blacksmithIcon('trash-2', { size: 16 })}
             </button>
           </div>
         </div>
@@ -11809,11 +11799,7 @@
                 <td class="vm-ssh">
                   <button class="ssh-btn ${sshButtonClass}"
                           ${sshButtonAction}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                      <line x1="8" y1="21" x2="16" y2="21"></line>
-                      <line x1="12" y1="17" x2="12" y2="21"></line>
-                    </svg>
+                    ${blacksmithIcon('terminal', { size: 16 })}
                   </button>
                 </td>
                 <td class="vm-instance">
@@ -11822,7 +11808,7 @@
                       <span>${instanceName}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
                               title="Copy to clipboard" aria-label="Copy instance name">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                     </span>
                   ` : '-'}
@@ -11835,7 +11821,7 @@
                       <span>${vm.az}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
                               title="Copy to clipboard" aria-label="Copy availability zone">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                     </span>
                   ` : '-'}
@@ -11846,7 +11832,7 @@
                       <span>${vmType}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
                               title="Copy to clipboard" aria-label="Copy VM type">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                     </span>
                   ` : '-'}
@@ -11859,7 +11845,7 @@
                       <span>${ips}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
                         title="Copy to clipboard" aria-label="Copy IP addresses">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  ${blacksmithIcon('copy', { size: 14 })}
                 </button>
                     </span>
                   ` : '-'}
@@ -11871,7 +11857,7 @@
                       <span>${vm.vm_cid}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.vm_cid}')"
                         title="Copy to clipboard" aria-label="Copy VM CID">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  ${blacksmithIcon('copy', { size: 14 })}
                 </button>
                     </span>
                   ` : '-'}
@@ -11882,7 +11868,7 @@
                       <span>${agentId}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${agentId}')"
                         title="Copy to clipboard" aria-label="Copy agent ID">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  ${blacksmithIcon('copy', { size: 14 })}
                 </button>
                     </span>
                   ` : '-'}
@@ -11894,7 +11880,7 @@
                       <span>${diskCids}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${diskCids}')"
                         title="Copy to clipboard" aria-label="Copy disk CIDs">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  ${blacksmithIcon('copy', { size: 14 })}
                 </button>
                     </span>
                   ` : '-'}
@@ -12868,7 +12854,7 @@
     const historyHtml = history.map(entry => {
       const timestamp = new Date(entry.timestamp).toLocaleString();
       const statusClass = entry.success ? 'success' : 'error';
-      const statusIcon = entry.success ? '✓' : '✗';
+      const statusIcon = entry.success ? blacksmithIcon('check', { size: 14, label: 'Succeeded' }) : blacksmithIcon('x', { size: 14, label: 'Failed' });
 
       return `
         <div class="history-entry ${statusClass}">
@@ -13473,7 +13459,7 @@
                 ${command.examples.map(ex => `<code>${ex}</code>`).join('<br>')}
               </div>
             ` : ''}
-            ${command.dangerous ? '<div class="warning">⚠️ This is a dangerous command that may affect the system</div>' : ''}
+            ${command.dangerous ? `<div class="warning">${blacksmithIcon('triangle-alert', { size: 16, style: 'vertical-align: -3px; margin-right: 4px;' })}This is a dangerous command that may affect the system</div>` : ''}
           </div>
         `;
       }
@@ -13588,7 +13574,7 @@
       outputContainer.innerHTML = `
         <div class="command-result ${result.success ? 'success' : 'error'}">
           <div class="result-header">
-            <span class="result-status">${result.success ? '✓' : '✗'}</span>
+            <span class="result-status">${result.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
             <span class="result-command">${result.command}</span>
             <span class="result-time">${new Date(result.timestamp * 1000).toLocaleString()}</span>
             <span class="result-exit-code">Exit Code: ${result.exit_code}</span>
@@ -13634,7 +13620,7 @@
       outputContainer.innerHTML = `
         <div class="command-result error">
           <div class="result-header">
-            <span class="result-status">✗</span>
+            <span class="result-status">${blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
             <span class="result-error">Execution Error</span>
           </div>
           <div class="result-error">${error}</div>
@@ -13690,7 +13676,7 @@
               <div class="history-header">
                 <span class="history-command">${entry.category}.${entry.command}</span>
                 <span class="history-time">${new Date(entry.timestamp * 1000).toLocaleString()}</span>
-                <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</span>
+                <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
               </div>
               ${entry.arguments.length > 0 ? `<div class="history-args">Args: ${entry.arguments.join(' ')}</div>` : ''}
               <div class="history-output">
@@ -13726,7 +13712,7 @@
 
     const timestamp = new Date(entry.timestamp * 1000).toLocaleString();
     const statusClass = entry.success ? 'success' : 'error';
-    const statusIcon = entry.success ? '✓' : '✗';
+    const statusIcon = entry.success ? blacksmithIcon('check', { size: 14, label: 'Succeeded' }) : blacksmithIcon('x', { size: 14, label: 'Failed' });
 
     const newEntry = document.createElement('div');
     newEntry.className = `history-entry ${statusClass}`;
@@ -13787,7 +13773,7 @@
                   <div class="history-header">
                     <span class="history-command">${entry.category}.${entry.command}</span>
                     <span class="history-time">${new Date(entry.timestamp * 1000).toLocaleString()}</span>
-                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</span>
+                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
                   </div>
                   <div class="history-args">${entry.arguments.join(' ')}</div>
                   <div class="history-output">
@@ -13963,7 +13949,7 @@
                 </ul>
               </div>
             ` : ''}
-            ${command.dangerous ? '<div class="warning">⚠️ This is a dangerous command. Use with caution.</div>' : ''}
+            ${command.dangerous ? `<div class="warning">${blacksmithIcon('triangle-alert', { size: 16, style: 'vertical-align: -3px; margin-right: 4px;' })}This is a dangerous command. Use with caution.</div>` : ''}
           </div>
         `;
       }
@@ -14116,7 +14102,7 @@
         `;
       } else {
         const statusClass = result.success ? 'success' : 'error';
-        const statusIcon = result.success ? '✅' : '❌';
+        const statusIcon = result.success ? blacksmithIcon('circle-check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('circle-x', { size: 16, label: 'Failed' });
 
         outputContainer.innerHTML = `
           <div class="command-result ${statusClass}">
@@ -14141,7 +14127,7 @@
       outputContainer.innerHTML = `
         <div class="command-result error">
           <div class="result-header">
-            <span class="status">❌ Error</span>
+            <span class="status">${blacksmithIcon('circle-x', { size: 16 })} Error</span>
           </div>
           <div class="result-output">
             <pre>${error}</pre>
@@ -14186,7 +14172,7 @@
                   <div class="history-header">
                     <span class="history-command">${entry.category}.${entry.command}</span>
                     <span class="history-time">${new Date(entry.timestamp).toLocaleString()}</span>
-                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</span>
+                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? blacksmithIcon('check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('x', { size: 16, label: 'Failed' })}</span>
                   </div>
                   <div class="history-args">${(entry.arguments || []).join(' ')}</div>
                   <div class="history-output">
@@ -14239,7 +14225,7 @@
 
     const timestamp = new Date(entry.timestamp).toLocaleString();
     const statusClass = entry.result?.success ? 'success' : 'error';
-    const statusIcon = entry.result?.success ? '✅' : '❌';
+    const statusIcon = entry.result?.success ? blacksmithIcon('circle-check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('circle-x', { size: 16, label: 'Failed' });
 
     const entryElement = document.createElement('div');
     entryElement.className = 'response-entry';
@@ -14320,7 +14306,7 @@
       outputContainer.innerHTML = `
         <div class="streaming-output">
           <div class="streaming-header">
-            <span>🔄 Connecting to stream...</span>
+            <span>${blacksmithIcon('refresh-cw', { size: 16 })} Connecting to stream...</span>
           </div>
           <pre class="streaming-content"></pre>
         </div>
@@ -14342,7 +14328,7 @@
         console.log('Plugins WebSocket connected');
         const headerElement = outputContainer.querySelector('.streaming-header span');
         if (headerElement) {
-          headerElement.textContent = '🔴 Streaming...';
+          headerElement.innerHTML = blacksmithIcon('radio', { size: 16 }) + ' Streaming...';
         }
 
         // Send execute command
@@ -14373,8 +14359,9 @@
           case 'execution_completed':
             const headerElement = outputContainer.querySelector('.streaming-header span');
             if (headerElement) {
-              const statusIcon = message.success ? '✅' : '❌';
-              headerElement.textContent = `${statusIcon} Completed (exit code: ${message.exit_code})`;
+              const statusIcon = message.success ? blacksmithIcon('circle-check', { size: 16, label: 'Succeeded' }) : blacksmithIcon('circle-x', { size: 16, label: 'Failed' });
+              headerElement.innerHTML = statusIcon + ' ';
+              headerElement.append(`Completed (exit code: ${message.exit_code})`);
             }
             if (contentElement) {
               contentElement.textContent += `\n--- Execution completed ---\n`;
@@ -14398,7 +14385,7 @@
             }
             const errorHeaderElement = outputContainer.querySelector('.streaming-header span');
             if (errorHeaderElement) {
-              errorHeaderElement.textContent = '❌ Error occurred';
+              errorHeaderElement.innerHTML = blacksmithIcon('circle-x', { size: 16 }) + ' Error occurred';
             }
             break;
         }
@@ -14408,7 +14395,7 @@
         console.error('Plugins WebSocket error:', error);
         const headerElement = outputContainer.querySelector('.streaming-header span');
         if (headerElement) {
-          headerElement.textContent = '❌ Connection error';
+          headerElement.innerHTML = blacksmithIcon('circle-x', { size: 16 }) + ' Connection error';
         }
       };
 
@@ -14416,7 +14403,7 @@
         console.log('Plugins WebSocket connection closed');
         const headerElement = outputContainer.querySelector('.streaming-header span');
         if (headerElement && headerElement.textContent.includes('Connecting')) {
-          headerElement.textContent = '❌ Connection failed';
+          headerElement.innerHTML = blacksmithIcon('circle-x', { size: 16 }) + ' Connection failed';
         }
         state.websocket = null;
       };
@@ -14777,7 +14764,7 @@
                     <span class="copy-wrapper">
                       <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(directorUuid)))})"
                               title="Copy to clipboard" aria-label="Copy director UUID">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                       <code>${escapeHtml(String(directorUuid))}</code>
                     </span>
@@ -14789,7 +14776,7 @@
                     <span class="copy-wrapper">
                       <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((parsed.name || 'Not specified'))))})"
                               title="Copy to clipboard" aria-label="Copy manifest name">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                       <code>${escapeHtml(String(parsed.name || 'Not specified'))}</code>
                     </span>
@@ -14833,7 +14820,7 @@
                                 <span>${escapeHtml(String(ig.instances || 1))}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(ig.instances || 1)))})"
                         title="Copy to clipboard" aria-label="Copy instance count">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  ${blacksmithIcon('copy', { size: 14 })}
                 </button>
                               </span>
                             </td>
@@ -14844,7 +14831,7 @@
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(((ig.azs || []).join(', ') || 'None'))))})"
                                         title="Copy to clipboard" aria-label="Copy availability zones">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                  ${blacksmithIcon('copy', { size: 14 })}
                                 </button>
                                 <span>${escapeHtml(String((ig.azs || []).join(', ') || 'None'))}</span>
                               </span>
@@ -14856,7 +14843,7 @@
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(((ig.networks || []).map(n => n.name || n).join(', ') || 'None'))))})"
                                         title="Copy to clipboard" aria-label="Copy networks">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                  ${blacksmithIcon('copy', { size: 14 })}
                                 </button>
                                 <span>${escapeHtml(String((ig.networks || []).map(n => n.name || n).join(', ') || 'None'))}</span>
                               </span>
@@ -14868,7 +14855,7 @@
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.vm_type || 'Not specified'))))})"
                                         title="Copy to clipboard" aria-label="Copy VM type">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                  ${blacksmithIcon('copy', { size: 14 })}
                                 </button>
                                 <span>${escapeHtml(String(ig.vm_type || 'Not specified'))}</span>
                               </span>
@@ -14880,7 +14867,7 @@
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.persistent_disk_type || 'None'))))})"
                                         title="Copy to clipboard" aria-label="Copy persistent disk type">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                  ${blacksmithIcon('copy', { size: 14 })}
                                 </button>
                                 <span>${escapeHtml(String(ig.persistent_disk_type || 'None'))}</span>
                               </span>
@@ -14892,7 +14879,7 @@
                               <span class="copy-wrapper">
                                 <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.stemcell || 'default'))))})"
                                         title="Copy to clipboard" aria-label="Copy stemcell">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                  ${blacksmithIcon('copy', { size: 14 })}
                                 </button>
                                 <span>${escapeHtml(String(ig.stemcell || 'default'))}</span>
                               </span>
@@ -14936,7 +14923,7 @@
                                           <span class="copy-wrapper">
                                             <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((job.release || 'Not specified'))))})"
                                                     title="Copy to clipboard" aria-label="Copy release">
-                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                              ${blacksmithIcon('copy', { size: 14 })}
                                             </button>
                                             <span>${escapeHtml(String(job.release || 'Not specified'))}</span>
                                           </span>
@@ -14952,7 +14939,7 @@
                                             <span class="copy-wrapper">
                                               <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(copyValue)))})"
                                                       title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(key))}">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                                ${blacksmithIcon('copy', { size: 14 })}
                                               </button>
                                               <span>${formatValue(value)}</span>
                                             </span>
@@ -14995,7 +14982,7 @@
                       <span class="copy-wrapper">
                         <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.name)))})"
                                 title="Copy to clipboard" aria-label="Copy release name">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          ${blacksmithIcon('copy', { size: 14 })}
                         </button>
                         <span>${escapeHtml(String(release.name))}</span>
                       </span>
@@ -15005,7 +14992,7 @@
                         <span>${escapeHtml(String(release.version || 'latest'))}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((release.version || 'latest'))))})"
                                 title="Copy to clipboard" aria-label="Copy release version">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          ${blacksmithIcon('copy', { size: 14 })}
                         </button>
                       </span>
                     </td>
@@ -15015,7 +15002,7 @@
                           ${/^https?:\/\//i.test(String(release.url)) ? `<a href="${escapeAttribute(String(release.url))}" target="_blank" rel="noopener noreferrer" style="word-break: break-all;">${escapeHtml(String(release.url))}</a>` : escapeHtml(String(release.url))}
                           <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.url)))})"
                                   title="Copy URL" aria-label="Copy release URL">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            ${blacksmithIcon('copy', { size: 14 })}
                           </button>
                         </span>
                       ` : 'N/A'}
@@ -15025,7 +15012,7 @@
                         <span class="copy-wrapper">
                           <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.sha1)))})"
                                   title="Copy SHA1" aria-label="Copy release SHA1">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            ${blacksmithIcon('copy', { size: 14 })}
                           </button>
                           <code style="font-size: 0.8em;">${escapeHtml(String(release.sha1))}</code>
                         </span>
@@ -15057,7 +15044,7 @@
                         <span>${escapeHtml(String(stemcell.alias || 'default'))}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((stemcell.alias || 'default'))))})"
                                 title="Copy to clipboard" aria-label="Copy stemcell alias">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          ${blacksmithIcon('copy', { size: 14 })}
                         </button>
                       </span>
                     </td>
@@ -15066,7 +15053,7 @@
                         <span>${escapeHtml(String(stemcell.os || 'Not specified'))}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((stemcell.os || 'Not specified'))))})"
                                 title="Copy to clipboard" aria-label="Copy stemcell OS">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          ${blacksmithIcon('copy', { size: 14 })}
                         </button>
                       </span>
                     </td>
@@ -15075,7 +15062,7 @@
                         <span>${escapeHtml(String(stemcell.version || 'latest'))}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(String(stemcell.version || 'latest'))))})"
                                 title="Copy to clipboard" aria-label="Copy stemcell version">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          ${blacksmithIcon('copy', { size: 14 })}
                         </button>
                       </span>
                     </td>
@@ -15191,7 +15178,7 @@
               <div class="manifest-header">
                 <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
                         title="Copy manifest to clipboard" aria-label="Copy manifest to clipboard">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  ${blacksmithIcon('copy', { size: 16 })}
                 </button>
               </div>
               <pre>${escapeHtml(manifestData.text)}</pre>
@@ -17335,11 +17322,7 @@
                     <td>
                       <div class="form-row">
                         <button class="execute-btn" data-cert-action="fetch-trusted">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                            <polyline points="3.27,6.96 12,12.01 20.73,6.96"/>
-                            <line x1="12" y1="22.08" x2="12" y2="12"/>
-                          </svg>
+                          ${blacksmithIcon('package', { size: 16 })}
                           Fetch Trusted Certificates
                         </button>
                         <p>Inspect certificates from the VM's trusted certificate store (/etc/ssl/certs/bosh-trusted-cert-*.pem</p>
@@ -17363,9 +17346,7 @@
                     <td>
                       <div class="form-row">
                         <button class="execute-btn" data-cert-action="fetch-config">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                          </svg>
+                          ${blacksmithIcon('wrench', { size: 16 })}
                           Fetch Configuration Certificates
                         </button>
                         Configuration Certificates
@@ -17396,14 +17377,7 @@
                       </div>
                       <div class="form-row">
                         <button class="execute-btn" data-cert-action="fetch-endpoint">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
-                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
-                            <path d="M12 11h4"/>
-                            <path d="M12 16h4"/>
-                            <path d="M8 11h.01"/>
-                            <path d="M8 16h.01"/>
-                          </svg>
+                          ${blacksmithIcon('clipboard-list', { size: 16 })}
                           Fetch Certificate
                         </button>
                       </div>
@@ -17802,7 +17776,7 @@
                 <div class="task-actions">
                   <button id="cancel-task-btn" class="btn btn-secondary" style="display: none;" onclick="cancelTaskAndRefresh()">Cancel Task</button>
                 </div>
-                <button class="modal-close" aria-label="Close modal">&times;</button>
+                <button class="modal-close" aria-label="Close modal">${blacksmithIcon('x', { size: 20 })}</button>
               </div>
               <div class="modal-body">
                 <div id="task-details-loading" class="loading">Loading task details...</div>
@@ -18993,7 +18967,7 @@
             <div class="manifest-header">
               <button class="copy-btn-manifest" onclick="window.copyTaskRaw('${taskId}', event)"
                       title="Copy raw data to clipboard" aria-label="Copy raw data to clipboard">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                ${blacksmithIcon('copy', { size: 16 })}
               </button>
             </div>
             <pre>${rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
@@ -19124,7 +19098,7 @@
             </div>
             <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
                     title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              ${blacksmithIcon('copy', { size: 16 })}
             </button>
           </div>
           <div class="task-tab-scroll">
@@ -19169,7 +19143,7 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
                   title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            ${blacksmithIcon('copy', { size: 16 })}
           </button>
         </div>
         <div class="task-tab-scroll">
@@ -19203,7 +19177,7 @@
             </div>
             <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
                     title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              ${blacksmithIcon('copy', { size: 16 })}
             </button>
           </div>
           <div class="task-tab-scroll">
@@ -19238,7 +19212,7 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
                   title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            ${blacksmithIcon('copy', { size: 16 })}
           </button>
         </div>
         <div class="task-tab-scroll">
@@ -19489,7 +19463,7 @@
       head.appendChild(CertView.el('div', 'cert-file-name', file.name));
       const loadButton = CertView.el('button', 'cert-file-load-btn');
       loadButton.type = 'button';
-      loadButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
+      loadButton.innerHTML = blacksmithIcon('file-text', { size: 16 });
       loadButton.appendChild(document.createTextNode(' Load Certificate'));
       loadButton.addEventListener('click', () => {
         window.loadTrustedCertificateFile(file.path, file.name, index);
@@ -19593,7 +19567,7 @@
       const actionsBox = CertView.el('div', 'cert-actions');
       const inspectBtn = CertView.el('button', 'cert-inspect-btn');
       inspectBtn.type = 'button';
-      inspectBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+      inspectBtn.innerHTML = blacksmithIcon('search', { size: 16 });
       inspectBtn.appendChild(document.createTextNode(' Inspect Certificate'));
       actionsBox.appendChild(inspectBtn);
       summaryBox.appendChild(actionsBox);
@@ -19613,9 +19587,7 @@
 
       // Update button to success state
       button.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="20,6 9,17 4,12"/>
-        </svg>
+        ${blacksmithIcon('check', { size: 16 })}
         Loaded
       `;
       button.classList.add('success');
@@ -19637,11 +19609,7 @@
 
       // Update button to error state
       button.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="15" y1="9" x2="9" y2="15"/>
-          <line x1="9" y1="9" x2="15" y2="15"/>
-        </svg>
+        ${blacksmithIcon('circle-x', { size: 16 })}
         Failed
       `;
       button.classList.add('error');
@@ -19985,13 +19953,7 @@
                       <p>Read the certificates in the manifest the director has deployed for this instance.</p>
                       <div class="form-row">
                         <button class="execute-btn" data-cert-action="fetch-manifest" data-instance-id="${safeId}">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14,2 14,8 20,8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                            <polyline points="10,9 9,9 8,9"/>
-                          </svg>
+                          ${blacksmithIcon('file-text', { size: 16 })}
                           Scan Manifest
                         </button>
                       </div>
@@ -20019,11 +19981,7 @@
                       <p>Access the trusted certificate store on service instance virtual machines.</p>
                       <div class="form-row">
                         <button class="execute-btn" data-cert-action="fetch-vm" data-instance-id="${safeId}">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                            <line x1="8" y1="21" x2="16" y2="21"/>
-                            <line x1="12" y1="17" x2="12" y2="21"/>
-                          </svg>
+                          ${blacksmithIcon('monitor', { size: 16 })}
                           Fetch VM Certificates
                         </button>
                       </div>
@@ -20058,10 +20016,7 @@
                       </div>
                       <div class="form-row">
                         <button class="execute-btn" data-cert-action="fetch-service-endpoint" data-instance-id="${safeId}">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                          </svg>
+                          ${blacksmithIcon('link', { size: 16 })}
                           Fetch Service Certificate
                         </button>
                       </div>
@@ -20096,7 +20051,7 @@
           <label for="cf-endpoint-select">Endpoint:</label>
           <select id="cf-endpoint-select" aria-label="Cloud Foundry endpoint" class="cf-endpoint-dropdown"><option value="">Loading endpoints...</option></select>
           <div class="endpoint-controls">
-            <button type="button" class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh endpoints" aria-label="Refresh endpoints">↻</button>
+            <button type="button" class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh endpoints" aria-label="Refresh endpoints">${blacksmithIcon('refresh-cw', { size: 16 })}</button>
             <button type="button" class="btn btn-icon btn-sm" onclick="showCFEndpointForm()" title="Add Endpoint" aria-label="Add endpoint">+</button>
             <button type="button" class="btn btn-sm btn-primary" onclick="CFEndpointManager.showRegistrationModal()" title="Register broker" id="register-btn" style="display: none;">Register</button>
           </div>
@@ -20147,7 +20102,7 @@
         <dialog id="cf-endpoint-modal" class="modal-dialog" aria-labelledby="cf-endpoint-modal-title">
               <div class="modal-header">
                 <h3 id="cf-endpoint-modal-title">${endpoint ? 'Edit' : 'Add'} CF Endpoint</h3>
-                <button class="modal-close" aria-label="Close modal">&times;</button>
+                <button class="modal-close" aria-label="Close modal">${blacksmithIcon('x', { size: 20 })}</button>
               </div>
             <div class="modal-body">
               <form id="cf-endpoint-form" aria-describedby="cf-endpoint-form-help">
@@ -20348,7 +20303,7 @@
 
       const loadButton = CertView.el('button', 'load-cert-btn');
       loadButton.type = 'button';
-      loadButton.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>';
+      loadButton.innerHTML = blacksmithIcon('file', { size: 14 });
       loadButton.appendChild(document.createTextNode(' Load Certificate'));
       loadButton.addEventListener('click', (event) => {
         window.loadCertificateFile(event, instanceId, file.path, file.name);
@@ -20390,9 +20345,7 @@
     try {
       // Show loading state
       button.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
-          <path d="M21 12a9 9 0 11-6.219-8.56"/>
-        </svg>
+        ${blacksmithIcon('loader-circle', { size: 14, className: 'spinning' })}
         Loading...
       `;
       button.disabled = true;
@@ -20430,9 +20383,7 @@
 
       // Update button state
       button.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="20,6 9,17 4,12"/>
-        </svg>
+        ${blacksmithIcon('check', { size: 14 })}
         Loaded
       `;
 
@@ -20442,10 +20393,7 @@
 
       // Reset button state
       button.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14,2 14,8 20,8"/>
-        </svg>
+        ${blacksmithIcon('file', { size: 14 })}
         Load Certificate
       `;
     } finally {
@@ -20795,7 +20743,7 @@
 
   const CertView = (() => {
     const COPY_ICON = COPY_ICON_SVG;
-    const INSPECT_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false" style="margin-right: 4px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
+    const INSPECT_ICON = blacksmithIcon('search', { size: 12, style: 'margin-right: 4px;' });
 
     // The copy map is bounded so long sessions do not hold every PEM that
     // was ever rendered.
@@ -20860,11 +20808,11 @@
     };
 
     const EXPIRY = {
-      expired: { icon: '✕' },
-      critical: { icon: '!' },
-      warning: { icon: '▲' },
-      ok: { icon: '✓' },
-      unknown: { icon: '?' }
+      expired: { icon: blacksmithIcon('x', { size: 12 }) },
+      critical: { icon: blacksmithIcon('triangle-alert', { size: 12 }) },
+      warning: { icon: blacksmithIcon('triangle-alert', { size: 12 }) },
+      ok: { icon: blacksmithIcon('check', { size: 12 }) },
+      unknown: { icon: blacksmithIcon('circle-question-mark', { size: 12 }) }
     };
 
     const expiryText = (status, daysLeft) => {
@@ -20893,7 +20841,8 @@
     const expiryPill = (status, daysLeft, notAfter) => {
       const known = Object.prototype.hasOwnProperty.call(EXPIRY, status) ? status : 'unknown';
       const pill = el('span', `cert-pill cert-pill--${known}`);
-      const icon = el('span', 'cert-pill-icon', EXPIRY[known].icon);
+      const icon = el('span', 'cert-pill-icon');
+      icon.innerHTML = EXPIRY[known].icon;
       icon.setAttribute('aria-hidden', 'true');
       pill.appendChild(icon);
       pill.appendChild(el('span', 'cert-pill-text', expiryText(known, daysLeft)));
@@ -20908,16 +20857,17 @@
     };
 
     const HEALTH = {
-      error: { icon: '✕', text: 'Health error' },
-      warning: { icon: '▲', text: 'Health warning' },
-      unknown: { icon: '?', text: 'Health unknown' },
-      ok: { icon: '✓', text: 'Health OK' }
+      error: { icon: blacksmithIcon('x', { size: 12 }), text: 'Health error' },
+      warning: { icon: blacksmithIcon('triangle-alert', { size: 12 }), text: 'Health warning' },
+      unknown: { icon: blacksmithIcon('circle-question-mark', { size: 12 }), text: 'Health unknown' },
+      ok: { icon: blacksmithIcon('check', { size: 12 }), text: 'Health OK' }
     };
 
     const healthPill = (health) => {
       const known = Object.prototype.hasOwnProperty.call(HEALTH, health) ? health : 'unknown';
       const pill = el('span', `health-pill health-pill--${known}`);
-      const icon = el('span', 'health-pill-icon', HEALTH[known].icon);
+      const icon = el('span', 'health-pill-icon');
+      icon.innerHTML = HEALTH[known].icon;
       icon.setAttribute('aria-hidden', 'true');
       pill.appendChild(icon);
       pill.appendChild(el('span', 'health-pill-text', HEALTH[known].text));
@@ -21157,7 +21107,7 @@
       return table;
     };
 
-    const RETRY_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+    const RETRY_ICON = blacksmithIcon('rotate-ccw', { size: 16 });
 
     // Oat has no info variant, so an info notice carries none.
     const NOTICE_VARIANTS = { warn: 'warning', ok: 'success', error: 'danger' };
@@ -21911,7 +21861,7 @@
         rescan.textContent = '';
         rescan.title = 'Rescan broker and platform certificates';
         rescan.setAttribute('aria-label', rescan.title);
-        rescan.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 3l1 3M4 12l1 3a8 8 0 0 0 13 3"/></svg>';
+        rescan.innerHTML = blacksmithIcon('refresh-cw', { size: 18 });
 
         rescan.disabled = busy;
         if (busy) rescan.setAttribute('aria-busy', 'true');
@@ -22002,9 +21952,7 @@
             <div class="modal-header">
               <h2 class="modal-title" id="${modalId}-title">Certificate Inspector</h2>
               <button class="modal-close" aria-label="Close modal">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
-                </svg>
+                ${blacksmithIcon('x', { size: 16 })}
               </button>
             </div>
             <div class="modal-body">
@@ -22897,10 +22845,10 @@
   window.Feedback = window.Feedback || (() => {
     const VALID_TYPES = ['info', 'success', 'error', 'warning'];
     const ICON_MAP = {
-      success: '✅',
-      error: '⚠️',
-      warning: '⚠️',
-      info: 'ℹ️'
+      success: blacksmithIcon('circle-check', { size: 24 }),
+      error: blacksmithIcon('circle-x', { size: 24 }),
+      warning: blacksmithIcon('triangle-alert', { size: 24 }),
+      info: blacksmithIcon('info', { size: 24 })
     };
 
     const normalizeType = (type) => (
@@ -22939,7 +22887,7 @@
 
         const icon = document.createElement('span');
         icon.className = 'feedback-panel-icon';
-        icon.textContent = ICON_MAP[normalizedType] || ICON_MAP.info;
+        icon.innerHTML = ICON_MAP[normalizedType] || ICON_MAP.info;
 
         const text = document.createElement('div');
         text.className = 'feedback-panel-text';
@@ -23350,11 +23298,11 @@
                           </div>
                           <button class="copy-btn-logs" onclick="window.copyMarketplaceServicesTable(event)"
                                   title="Copy table data" aria-label="Copy table data">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            ${blacksmithIcon('copy', { size: 16 })}
                           </button>
                           <button class="refresh-btn-logs" onclick="window.refreshMarketplaceServices(${escapeAttribute(JSON.stringify(endpointName))}, event)"
                                   title="Refresh marketplace services">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
                           </button>
                         </div>
                       </th>
@@ -23413,9 +23361,7 @@
                 </td>
                 <td>
                   <button class="refresh-btn" onclick="window.CFEndpointManager && window.CFEndpointManager.refreshOrgsSpaces(${escapeAttribute(JSON.stringify(endpointName))})" title="Refresh organizations and spaces">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-                    </svg>
+                    ${blacksmithIcon('refresh-ccw', { size: 16 })}
                   </button>
                 </td>
               </tr>
@@ -23547,11 +23493,11 @@
                           </div>
                           <button class="copy-btn-logs" onclick="window.copyServiceInstancesTable(event)"
                                   title="Copy table data" aria-label="Copy table data">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            ${blacksmithIcon('copy', { size: 16 })}
                           </button>
                           <button class="refresh-btn-logs" onclick="window.refreshServiceInstances(${escapeAttribute(JSON.stringify(endpointName))}, ${escapeAttribute(JSON.stringify(orgGuid))}, ${escapeAttribute(JSON.stringify(spaceGuid))}, event)"
                                   title="Refresh service instances">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
                           </button>
                         </div>
                       </th>
@@ -24226,7 +24172,7 @@
       const close = document.createElement('button');
       close.type = 'button';
       close.className = 'tab-close';
-      close.textContent = '×';
+      close.innerHTML = blacksmithIcon('x', { size: 14 });
       close.setAttribute('aria-label', `Close terminal ${name}`);
       close.addEventListener('click', event => this.closeSession(sessionKey, event));
       tab.append(select, close);
@@ -24409,7 +24355,7 @@
           status.textContent = connected ? 'Connected' : 'Disconnected';
           const close = document.createElement('button');
           close.type = 'button'; close.className = 'tab-close';
-          close.textContent = '×';
+          close.innerHTML = blacksmithIcon('x', { size: 14 });
           close.title = `Close terminal ${identity}`;
           close.setAttribute('aria-label', close.title);
           close.addEventListener('click', event => this.closeSession(sessionKey, event));
@@ -25156,10 +25102,10 @@
             <p class="cert-fleet-summary" id="cert-fleet-summary"></p>
           </div>
           <div class="cert-fleet-actions" id="cert-fleet-actions">
-            <button type="button" class="cert-action-btn cert-icon-action" id="cert-scan-btn" title="Scan certificates now" aria-label="Scan certificates now"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-2L20 8M4 16l2.3 3A7 7 0 0 0 17.9 17"/></svg></button>
-            <button type="button" class="cert-action-btn cert-icon-action" id="cert-settings-btn" aria-haspopup="dialog" title="Certificate settings" aria-label="Certificate settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 2-1 3 2 3-2 2 1 3-2-1-3 2-2-2-3-3-1-1-3Z"/></svg></button>
+            <button type="button" class="cert-action-btn cert-icon-action" id="cert-scan-btn" title="Scan certificates now" aria-label="Scan certificates now">${blacksmithIcon('refresh-cw', { size: 18 })}</button>
+            <button type="button" class="cert-action-btn cert-icon-action" id="cert-settings-btn" aria-haspopup="dialog" title="Certificate settings" aria-label="Certificate settings">${blacksmithIcon('settings', { size: 18 })}</button>
             <ot-dropdown class="cert-export">
-              <button type="button" class="cert-action-btn cert-icon-action" id="cert-export-btn" popovertarget="cert-export-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="cert-export-menu" title="Export certificates" aria-label="Export certificates"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/></svg></button>
+              <button type="button" class="cert-action-btn cert-icon-action" id="cert-export-btn" popovertarget="cert-export-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="cert-export-menu" title="Export certificates" aria-label="Export certificates">${blacksmithIcon('download', { size: 18 })}</button>
               <div class="cert-export-menu" id="cert-export-menu" popover>
                 <p class="cert-export-note" id="cert-export-note" hidden></p>
                 <div role="menu" aria-label="Export certificates">
@@ -25202,7 +25148,7 @@
               <span class="cert-field-label">Plan</span>
               <select id="cert-filter-plan"></select>
             </label>
-            <button type="button" class="cert-action-btn cert-icon-action" id="cert-more-btn" aria-expanded="false" aria-controls="cert-more-panel" title="More filters" aria-label="More filters"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 3v6m8 0v6m-8 0v6"/></svg><span class="cert-filter-count" hidden aria-hidden="true"></span></button>
+            <button type="button" class="cert-action-btn cert-icon-action" id="cert-more-btn" aria-expanded="false" aria-controls="cert-more-panel" title="More filters" aria-label="More filters">${blacksmithIcon('sliders-horizontal', { size: 18 })}<span class="cert-filter-count" hidden aria-hidden="true"></span></button>
           </div>
           <div class="cert-more-panel" id="cert-more-panel" hidden></div>
           <div class="cert-chips" id="cert-chips" aria-label="Active filters"></div>
@@ -25854,7 +25800,8 @@
       chips.forEach((chip) => {
         const b = button('cert-chip');
         b.appendChild(el('span', 'cert-chip-text', chip.text));
-        const x = el('span', 'cert-chip-x', '×');
+        const x = el('span', 'cert-chip-x');
+        x.innerHTML = blacksmithIcon('x', { size: 12 });
         x.setAttribute('aria-hidden', 'true');
         b.appendChild(x);
         b.setAttribute('aria-label', `Remove filter ${chip.text}`);
@@ -26092,7 +26039,8 @@
       toggle.dataset.certExpand = cert.id;
       toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       toggle.setAttribute('aria-label', `${expanded ? 'Hide' : 'Show'} observations for ${certName(cert)}`);
-      const chevron = el('span', 'cert-chevron', expanded ? '▾' : '▸');
+      const chevron = el('span', 'cert-chevron');
+      chevron.innerHTML = expanded ? blacksmithIcon('chevron-down', { size: 14 }) : blacksmithIcon('chevron-right', { size: 14 });
       chevron.setAttribute('aria-hidden', 'true');
       toggle.appendChild(chevron);
       toggle.appendChild(el('span', 'cert-name', certName(cert)));
@@ -26598,7 +26546,8 @@
       toggle.dataset.groupToggle = group.id;
       toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       toggle.setAttribute('aria-label', `${group.label}, ${plural(group.certs.length, 'certificate')}`);
-      const chevron = el('span', 'cert-chevron', collapsed ? '▸' : '▾');
+      const chevron = el('span', 'cert-chevron');
+      chevron.innerHTML = collapsed ? blacksmithIcon('chevron-right', { size: 14 }) : blacksmithIcon('chevron-down', { size: 14 });
       chevron.setAttribute('aria-hidden', 'true');
       toggle.appendChild(chevron);
       toggle.appendChild(el('span', 'cert-group-name', group.label));
@@ -27383,7 +27332,8 @@
       const close = el('button', 'modal-close');
       close.type = 'button';
       close.setAttribute('aria-label', 'Close modal');
-      const x = el('span', null, '×');
+      const x = el('span', null);
+      x.innerHTML = blacksmithIcon('x', { size: 20 });
       x.setAttribute('aria-hidden', 'true');
       close.appendChild(x);
       header.appendChild(close);

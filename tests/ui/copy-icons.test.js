@@ -3,7 +3,8 @@ const { main: { boot, sleep } } = require('./certificates/harness.js');
 const { JSDOM } = require('./certificates/support.js');
 const t = JSDOM ? test : test.skip;
 
-const POLYLINE = 'polyline';
+// The copied state swaps the copy icon for the Lucide check.
+const CHECK = 'svg.lucide-check';
 
 // Mounts rendered markup in the document so the delegated click handler runs.
 const mount = (d, html) => {
@@ -43,7 +44,7 @@ t('the broker overview copy buttons are icon buttons that copy their value', asy
     await sleep(120);
     expect(copied).toEqual(['ocfp-lab']);
     expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied to clipboard');
-    expect(environment.querySelector(POLYLINE)).not.toBeNull();
+    expect(environment.querySelector(CHECK)).not.toBeNull();
     expect(environment.getAttribute('aria-label')).toBe('Copy Environment');
   } finally { w.close(); }
 });
@@ -76,7 +77,7 @@ t('inline copy buttons keep their icon and copy through copyValue', async () => 
     await w.copyValue({ preventDefault() {}, stopPropagation() {}, currentTarget: button }, 'vm-1');
     expect(copied).toEqual(['vm-1']);
     expect(button.classList.contains('copied')).toBe(true);
-    expect(button.querySelector(POLYLINE)).not.toBeNull();
+    expect(button.querySelector(CHECK)).not.toBeNull();
   } finally { w.close(); }
 });
 
@@ -94,12 +95,12 @@ t('every copy button in the markup uses the one icon and has a name', () => {
   });
   expect(buttons.length).toBeGreaterThan(15);
   buttons.forEach((markup) => {
-    const open = markup.split(/>\s*(?:<svg|\$\{COPY_ICON_SVG)/)[0];
+    const open = markup.split(/>\s*(?:<svg|\$\{COPY_ICON_SVG|\$\{blacksmithIcon\()/)[0];
     expect(open).toMatch(/aria-label="[^"]+"/);
     if (markup.includes('${COPY_ICON_SVG}')) return;
-    expect(markup).toContain('<rect x="9" y="9" width="13" height="13" rx="2" ry="2">');
-    expect(markup).toContain('stroke="currentColor"');
-    expect(markup).toContain('aria-hidden="true"');
+    // Static markup carries the helper's output, and generated markup calls the helper.
+    expect(markup).toMatch(/blacksmithIcon\('copy', \{ size: 1[46] \}\)|<svg class="lucide lucide-copy"/);
+    expect(markup).not.toContain('<rect x="9" y="9"');
     expect(markup).not.toMatch(/<svg[^>]*aria-label=/);
   });
 });
@@ -115,13 +116,13 @@ t('table, manifest, and certificate copy buttons keep their label and swap to th
     await w.copyTableRowsAsText('.demo-table', { currentTarget: logs, preventDefault() {}, stopPropagation() {} });
     expect(copied).toEqual(['Name\nalpha']);
     expect(logs.classList.contains('copied')).toBe(true);
-    expect(logs.querySelector(POLYLINE)).not.toBeNull();
+    expect(logs.querySelector(CHECK)).not.toBeNull();
     expect(logs.getAttribute('aria-label')).toBe('Copy filtered table rows');
 
     // A button with a visible label keeps it beside the icon.
     const labeled = mount(d, '<button class="copy-btn-logs" aria-label="Copy table"><svg stroke="currentColor"></svg><span>Table</span></button>').querySelector('button');
     await w.copyTableRowsAsText('.demo-table', { currentTarget: labeled, preventDefault() {}, stopPropagation() {} });
-    expect(labeled.querySelector(POLYLINE)).not.toBeNull();
+    expect(labeled.querySelector(CHECK)).not.toBeNull();
     expect(labeled.querySelector('span').textContent).toBe('Copied!');
   } finally { w.close(); }
 });
@@ -137,7 +138,7 @@ t('the certificate copy button draws the shared icon and swaps to the check', as
   d.body.appendChild(labeled);
   d.body.appendChild(iconOnly);
   [labeled, iconOnly].forEach((b) => {
-    expect(b.querySelector('svg rect')).not.toBeNull();
+    expect(b.querySelector('svg.lucide-copy')).not.toBeNull();
     expect(b.querySelector('svg').getAttribute('stroke')).toBe('currentColor');
     expect(b.getAttribute('aria-label')).toMatch(/^Copy/);
   });
@@ -147,20 +148,23 @@ t('the certificate copy button draws the shared icon and swaps to the check', as
   await sleep(120);
   expect(copied).toEqual(['CN=demo']);
   expect(iconOnly.classList.contains('copied')).toBe(true);
-  expect(iconOnly.querySelector(POLYLINE)).not.toBeNull();
+  expect(iconOnly.querySelector(CHECK)).not.toBeNull();
   w.close();
 });
 
-t('copy buttons are named for what they copy and share one icon path', () => {
+t('copy buttons are named for what they copy and share one icon', () => {
   const sources = ['blacksmith.js', 'index.html'].map((f) => fs.readFileSync(path.join(ui, f), 'utf8')).join('\n');
   expect(sources).not.toContain('aria-label="Copy value"');
   expect(sources).toContain('aria-label="Copy VM CID"');
   expect(sources).toContain('aria-label="Copy release SHA1"');
-  const paths = new Set();
-  const re = /<rect x="9" y="9" width="13" height="13" rx="2" ry="2"><\/rect>\s*<path d="([^"]+)"/g;
-  let m;
-  while ((m = re.exec(sources))) paths.add(m[1]);
-  expect(Array.from(paths)).toEqual(['M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1']);
+  expect(sources).not.toContain('<rect x="9" y="9"');
+  expect(sources).not.toContain('M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1');
+  const { blacksmithIcon } = require(path.join(ui, 'icons.js'));
+  const staticCopies = sources.match(/<svg class="lucide lucide-copy"[^>]*>[\s\S]*?<\/svg>/g) || [];
+  staticCopies.forEach((markup) => {
+    const size = /width="(\d+)"/.exec(markup)[1];
+    expect(markup).toBe(blacksmithIcon('copy', { size: Number(size) }));
+  });
 });
 
 t('a copy calls flashCopyIcon once per success path', () => {

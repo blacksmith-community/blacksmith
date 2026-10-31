@@ -36,18 +36,14 @@
       </div>
       <div>
         <button type="button" id="navigation-trigger" aria-haspopup="dialog" aria-controls="navigation-dialog">Go to… <kbd>Ctrl K</kbd></button>
-        <button type="button" id="keyboard-help-trigger" aria-haspopup="dialog" aria-controls="keyboard-help-dialog" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (Ctrl/Cmd+/)">⌨</button>
+        <button type="button" id="keyboard-help-trigger" aria-haspopup="dialog" aria-controls="keyboard-help-dialog" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (Ctrl/Cmd+/)"><svg class="lucide lucide-keyboard" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 8h.01" /><path d="M12 12h.01" /><path d="M14 8h.01" /><path d="M16 12h.01" /><path d="M18 8h.01" /><path d="M6 8h.01" /><path d="M7 16h10" /><path d="M8 12h.01" /><rect width="20" height="16" x="2" y="4" rx="2" /></svg></button>
         <span class="header-deployment"><span id="deployment-name"></span><button type="button" id="copy-header-deployment" class="copy-btn-inline" title="Copy deployment name" aria-label="Copy deployment name">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <svg class="lucide lucide-copy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg>
         </button></span>
         <span id="ident"></span>
         <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
-          <svg id="themeIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-            <!-- Sun icon (light mode) -->
-            <path class="sun-icon" d="M12 17.5C9.5 17.5 7.5 15.5 7.5 13S9.5 8.5 12 8.5 16.5 10.5 16.5 13 14.5 17.5 12 17.5M12 7C8.7 7 6 9.7 6 13S8.7 19 12 19 18 16.3 18 13 15.3 7 12 7M12 2L14.4 6.4L19 5.7L16.2 9.8L18.6 14L14 12.6L10 15L11.4 10.4L7.2 8L11.8 5.6L12 2M3.3 7L7.7 5.6L5.6 9.7L3.3 7M7.7 18.4L3.3 17L5.6 14.3L7.7 18.4M16.3 14.3L18.4 17L14 18.4L16.3 14.3M18.4 7L16.3 9.7L14 5.6L18.4 7Z"/>
-            <!-- Moon icon (dark mode) -->
-            <path class="moon-icon" d="M17.75,4.09L15.22,6.03L16.13,9.09L13.5,7.28L10.87,9.09L11.78,6.03L9.25,4.09L12.44,4L13.5,1L14.56,4L17.75,4.09M21.25,11L19.61,12.25L20.2,14.23L18.5,13.06L16.8,14.23L17.39,12.25L15.75,11L17.81,10.95L18.5,9L19.19,10.95L21.25,11M18.97,15.95C19.8,15.87 20.69,17.05 20.16,17.8C19.84,18.25 19.5,18.67 19.08,19.07C15.17,23 8.84,23 4.94,19.07C1.03,15.17 1.03,8.83 4.94,4.93C5.34,4.53 5.76,4.17 6.21,3.85C6.96,3.32 8.14,4.21 8.06,5.04C7.79,7.9 8.75,10.87 10.95,13.06C13.14,15.26 16.1,16.22 18.97,15.95M17.33,17.97C14.5,17.81 11.7,16.64 9.53,14.5C7.36,12.31 6.2,9.5 6.04,6.68C3.23,9.82 3.34,14.64 6.35,17.66C9.37,20.67 14.19,20.78 17.33,17.97Z"/>
-          </svg>
+          <svg class="lucide lucide-sun sun-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></svg>
+          <svg class="lucide lucide-moon moon-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></svg>
           <span id="themeText">Anvil Light</span>
         </button>
       </div>
@@ -62,15 +58,10 @@
     </div>
     <div>
       <button class="terminal-control-btn" title="Restore Terminal" onclick="window.TerminalManager && window.TerminalManager.restoreAll()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M8 3H5a2 2 0 0 0-2 2v3m18-3v3a2 2 0 0 1-2 2h-3m0 8h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
-        </svg>
+        <svg class="lucide lucide-maximize" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M21 8V5a2 2 0 0 0-2-2h-3" /><path d="M3 16v3a2 2 0 0 0 2 2h3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" /></svg>
       </button>
       <button class="terminal-control-btn" title="Close All Terminals" onclick="window.TerminalManager && window.TerminalManager.closeAll()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="6" x2="6" y2="18"/>
-          <line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
+        <svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
       </button>
     </div>
   </div>
@@ -145,7 +136,7 @@
           <div class="upgrade-right-panel">
             <h2>Activity</h2>
             <details class="batch-execution-settings">
-              <summary><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" focusable="false"><path d="m9.5 3-.5 3-2 1-2.8-1-2.5 4.3L4 12l-.1 2.2-2.2 1.5 2.5 4.3 2.8-1 2 1 .5 3h5l.5-3 2-1 2.8 1 2.5-4.3-2.2-1.5L20 12l2.3-1.7L19.8 6 17 7l-2-1-.5-3Z"/><circle cx="12" cy="13" r="3"/></svg><span>Execution settings</span></summary>
+              <summary><svg class="lucide lucide-settings" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /><circle cx="12" cy="12" r="3" /></svg><span>Execution settings</span></summary>
               <div class="filter-row">
                 <label for="upgrade-max-batch-jobs">Concurrent batch jobs</label>
                 <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="No job limit" aria-describedby="upgrade-max-batch-jobs-help">
@@ -178,7 +169,7 @@
   <dialog id="registration-modal" class="modal-dialog" aria-labelledby="registration-modal-title">
       <div class="modal-header">
         <h3 id="registration-modal-title">New CF Registration</h3>
-        <button class="modal-close" aria-label="Close modal">&times;</button>
+        <button class="modal-close" aria-label="Close modal"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button>
       </div>
       <div class="modal-body">
         <form id="registration-form">
@@ -281,16 +272,12 @@
         </div>
         <div class="terminal-header-controls">
           <button class="terminal-control-btn" id="reconnect-btn" title="Reconnect" onclick="window.TerminalManager && window.TerminalManager.reconnectActive()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-            </svg>
+            <svg class="lucide lucide-refresh-ccw" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" /><path d="M16 16h5v5" /></svg>
           </button>
           <button class="terminal-control-btn" id="minimize-btn" aria-keyshortcuts="Control+Shift+F6" title="Minimize terminal (Ctrl+Shift+F6 to focus controls)" onclick="window.TerminalManager && window.TerminalManager.minimizeAll()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="6" y1="19" x2="18" y2="19"/>
-            </svg>
+            <svg class="lucide lucide-minus" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14" /></svg>
           </button>
-          <button class="modal-close" aria-label="Close all terminals">&times;</button>
+          <button class="modal-close" aria-label="Close all terminals"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button>
         </div>
       </div>
       <div class="terminal-tabs min-h-10" id="terminal-tabs"></div>
@@ -301,7 +288,7 @@
   <dialog id="config-details-modal" class="modal-dialog" aria-labelledby="config-details-modal-title">
         <div class="modal-header">
           <h3 id="config-details-modal-title">Config Details</h3>
-          <button class="modal-close" aria-label="Close modal">&times;</button>
+          <button class="modal-close" aria-label="Close modal"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button>
         </div>
         <div class="modal-body">
           <div id="config-details-loading" class="loading">Loading config details...</div>
@@ -353,7 +340,7 @@
                       <div class="config-content-header">
                         <h4>Config Content</h4>
                         <button class="btn btn-secondary copy-btn" id="copy-config-content" title="Copy content to clipboard" aria-label="Copy config content">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          <svg class="lucide lucide-copy" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg>
                         </button>
                       </div>
                       <pre id="config-content-text" class="config-content"></pre>
@@ -385,11 +372,11 @@
   <div id="blacksmith-live-region" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <dialog id="keyboard-help-dialog" aria-labelledby="keyboard-help-title">
-    <div class="keyboard-help-heading"><h2 id="keyboard-help-title">Keyboard shortcuts</h2><button type="button" data-close aria-label="Close keyboard shortcuts">×</button></div>
+    <div class="keyboard-help-heading"><h2 id="keyboard-help-title">Keyboard shortcuts</h2><button type="button" data-close aria-label="Close keyboard shortcuts"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button></div>
     <div class="keyboard-help-content"></div>
   </dialog>
   <dialog id="navigation-dialog" aria-labelledby="navigation-title">
-    <div class="navigation-heading"><h2 id="navigation-title">Quick Navigation</h2><button type="button" data-close aria-label="Close navigation" title="Close navigation (Esc)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <div class="navigation-heading"><h2 id="navigation-title">Quick Navigation</h2><button type="button" data-close aria-label="Close navigation" title="Close navigation (Esc)"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button></div>
     <label class="visually-hidden" for="navigation-search">Search screens, instances, or themes</label>
     <input id="navigation-search" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="navigation-results" autocomplete="off" spellcheck="false" placeholder="Search screens, instances, or themes…">
     <p class="navigation-count" role="status" aria-live="polite"></p>
@@ -399,7 +386,7 @@
   </dialog>
   <script type="text/javascript" src="/xterm.min.js"></script>
   <script type="text/javascript" src="/icons.js?v=20261028-oat-60"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261028-oat-70"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261028-oat-72"></script>
   <script src="/routes.js?v=20261028-oat-4"></script>
   <script src="/view-guidance.js?v=20261028-oat-71"></script>
   <script src="/action-help.js?v=20261028-oat-61"></script>
