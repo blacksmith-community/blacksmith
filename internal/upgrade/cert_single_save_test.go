@@ -11,6 +11,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
+	"blacksmith/internal/mutation"
 )
 
 // failedSaves returns each record the vault stored with the instance
@@ -320,6 +321,94 @@ func TestCertificateSuccessDoesNotHoldATaskThatPausesOnFailure(t *testing.T) {
 	for _, saved := range saves {
 		if saved.PauseReason != "" {
 			t.Fatalf("expected no save to hold the task, got reason %q", saved.PauseReason)
+		}
+	}
+}
+
+// reservingTaskID is the task that holds the env's instance in
+// loadReserved's guard.
+const reservingTaskID = "reserving-task"
+
+// loadReserved stores the task and starts a manager over a guard in which
+// another task holds the env's instance, so the load fails the stored
+// task's in-flight instance as reserved by that task.
+func (e *redeployEnv) loadReserved(task UpgradeTask) *Manager {
+	e.t.Helper()
+
+	guard := mutation.NewGuard(time.Now)
+
+	_, err := guard.Acquire(waitInstanceID, waitDeployment, mutation.Holder{Kind: mutation.KindCertificates, TaskID: reservingTaskID, Description: "certificate rotation task " + reservingTaskID})
+	if err != nil {
+		e.t.Fatalf("holding the instance: %v", err)
+	}
+
+	storeCertificateTask(e.t, e.vault.waitVault, task)
+
+	manager := e.newManager()
+	manager.SetGuard(guard)
+	manager.Start()
+	waitForLoad(e.t, manager)
+
+	return manager
+}
+
+// A restart that finds a certificate task's in-flight instance reserved
+// by another task fails the instance, and when the task pauses on a
+// failure, the save of that failure carries the pause, so the next
+// instance doesn't start. The certificate settings don't pause, so only
+// the task's own choice can hold it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateInstanceReservedOnLoadPausesTheTask(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.settingsPausing(false)
+
+	task := env.withPending(env.deployedTask(), "instance-2")
+	task.PauseOnFailure = new(true)
+
+	manager := env.loadReserved(task)
+
+	first := env.firstFailedSave(waitInstanceID)
+	if first.Instances[0].Error != "instance reserved by task "+reservingTaskID {
+		t.Fatalf("expected the instance to fail naming %s, got %q", reservingTaskID, first.Instances[0].Error)
+	}
+
+	if first.Status != TaskStatusPaused || !first.Paused || first.PauseReason != failurePauseReason(&first.Instances[0]) {
+		t.Fatalf("expected the save of the failure to carry the pause, got %s paused %v with reason %q", first.Status, first.Paused, first.PauseReason)
+	}
+
+	time.Sleep(quietPeriod)
+
+	again := current(t, manager)
+	if again.Status != TaskStatusPaused || again.Instances[1].Status != InstanceStatusPending || env.director.deploysSent() != 0 {
+		t.Fatalf("expected the task to stay paused before the next instance, got %s with %s and %d deploys", again.Status, again.Instances[1].Status, env.director.deploysSent())
+	}
+}
+
+// A certificate task that goes on after a failure fails the instance
+// another task reserves and goes on to its next instance, though the
+// certificate settings pause.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateInstanceReservedOnLoadGoesOn(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.settingsPausing(true)
+
+	task := env.withPending(env.deployedTask(), "instance-2")
+	task.PauseOnFailure = new(false)
+
+	manager := env.loadReserved(task)
+
+	first := env.firstFailedSave(waitInstanceID)
+	if first.Paused || first.PauseReason != "" {
+		t.Fatalf("expected the save of the failure not to hold the task, got paused %v with reason %q", first.Paused, first.PauseReason)
+	}
+
+	expectWentOn(t, manager)
+
+	for _, saved := range env.failedSaves(waitInstanceID) {
+		if saved.PauseReason != "" {
+			t.Fatalf("expected no save to hold a task that goes on, got reason %q", saved.PauseReason)
 		}
 	}
 }

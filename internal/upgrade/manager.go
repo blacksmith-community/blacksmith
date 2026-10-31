@@ -4029,7 +4029,8 @@ func heldByTask(holder mutation.Holder) bool {
 }
 
 // failReservedLocked fails a loaded task's instance that another task
-// holds, naming that task. The caller holds mu.
+// holds, naming that task. A task that pauses on a failure by its own
+// choice pauses with it, so one save records both. The caller holds mu.
 func (m *Manager) failReservedLocked(task *UpgradeTask, inst *InstanceUpgrade, holder mutation.Holder) {
 	name := "task " + holder.TaskID
 	if holder.TaskID == "" {
@@ -4042,6 +4043,7 @@ func (m *Manager) failReservedLocked(task *UpgradeTask, inst *InstanceUpgrade, h
 	inst.CompletedAt = &completedAt
 	task.FailedCount++
 	m.holdUpgradeForFailureLocked(task, inst)
+	m.holdCertificateForFailureLocked(task, inst)
 
 	m.logger.Error("Upgrade task %s failed instance %s, because %s already holds it", task.ID, inst.InstanceID, name)
 }
