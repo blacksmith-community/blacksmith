@@ -28,3 +28,14 @@ test('the Appearance dialog drops the padding Oat adds around its paragraph and 
  const b=bodies('action-help.css','.theme-choice-dialog > div');
  expect(b).toMatch(/padding:\s*0/);
 });
+
+// Task headers carry a .sort-icon span, and the th pseudo-element drew a
+// second icon beside it.
+test('a header with its own sort icon does not draw the th icon too',()=>{
+ const b=bodies('blacksmith.css','table thead th:has(> .sort-icon)::after');
+ expect(b).toMatch(/content:\s*none/);
+ expect(bodies('blacksmith.css','table thead th:has(> .sort-icon)')).toMatch(/white-space:\s*nowrap/);
+});
+test('tables without the span keep the th sort icon',()=>{
+ expect(bodies('blacksmith.css','table thead th.sortable::after')).toMatch(/mask-image:\s*var\(--icon-arrow-up-down\)/);
+});

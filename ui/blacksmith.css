@@ -73,6 +73,16 @@ table thead th.sortable::after {
   margin-left: 8px;
 }
 
+/* A header that carries its own .sort-icon span draws that one icon, so the
+   th pseudo-element stays off and the label keeps the icon on its line. */
+table thead th:has(> .sort-icon)::after {
+  content: none;
+}
+
+table thead th:has(> .sort-icon) {
+  white-space: nowrap;
+}
+
 table thead th.sort-asc::after {
   mask-image: var(--icon-arrow-up);
   -webkit-mask-image: var(--icon-arrow-up);
