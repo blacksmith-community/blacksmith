@@ -2037,6 +2037,7 @@ func (m *Manager) deployWithContext(ctx context.Context, task *UpgradeTask, inst
 		inst.Status = InstanceStatusFailed
 		inst.Error = fmt.Sprintf("BOSH task failed: %v", err)
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, inst)
 		m.releaseUnheldLocked(task)
 		m.logger.Error("Update failed for %s: %v", inst.DeploymentName, err)
 		m.mu.Unlock()
@@ -2059,6 +2060,7 @@ func (m *Manager) deployWithContext(ctx context.Context, task *UpgradeTask, inst
 		inst.Status = InstanceStatusFailed
 		inst.Error = "the director named no task for the deploy"
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, inst)
 		m.releaseUnheldLocked(task)
 		m.logger.Error("The director named no task for the deploy of %s", inst.DeploymentName)
 		m.mu.Unlock()
