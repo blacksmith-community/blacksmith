@@ -283,6 +283,11 @@ body > footer p { margin: 0; }
 #upgrade .rotate-name-row { display: grid; gap: 8px; margin-top: 24px; max-width: 640px; }
 #upgrade .rotate-name-row input { width: 100%; }
 #upgrade .rotate-name-row .batch-field-help { margin: 0; }
+/* The pause choice stacks its checkbox line above its hint, as the name and reason rows do, rather than squeezing the hint beside the label. */
+#upgrade .upgrade-filters .filter-row.batch-pause-row { display: grid; gap: 8px; max-width: 640px; margin: 0; }
+#upgrade .upgrade-filters .filter-row.batch-pause-row:last-child { margin-bottom: 16px; }
+#upgrade .upgrade-filters .filter-row label.batch-pause-option { display: inline-flex; align-items: center; gap: 8px; min-width: 0; white-space: normal; }
+#upgrade .batch-pause-row .batch-field-help { margin: 0; }
 /* Keep native checkbox semantics without the misleading decorative box. */
 #upgrade .upgrade-instance-checkbox { position: relative; flex-shrink: 0; margin: 0; grid-column: 1; }
 #upgrade .upgrade-instance-checkbox input { position: absolute; width: 1px; height: 1px; padding: 0; clip-path: inset(50%); overflow: hidden; }
