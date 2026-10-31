@@ -95,7 +95,7 @@ t('a click or touch on the form leaves the registration dialog open',async()=>{
 t('the progress view opens the dialog natively once, and its Close button closes it',async()=>{
  const env=await start(); const {w,d,dialog,stubs,snapshot}=env;
  const before=snapshot();
- mgr(env).streamProgress=()=>{};
+ mgr(env).pollProgress=()=>{};
  mgr(env).showProgressStream('r1');
  expect(dialog().open).toBe(true);
  expect(w.blacksmithSurfaces.size()).toBe(1);

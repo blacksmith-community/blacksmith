@@ -158,7 +158,6 @@ func (h *Handler) handleCFRegistrationRoutes(writer http.ResponseWriter, req *ht
 		}
 	}
 
-	// TODO: Add the registration progress stream route
 	return false
 }
 

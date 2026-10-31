@@ -35,9 +35,7 @@ t('the page never posts to a registration sync route',()=>{
 // request that follows the save.
 const SAVES=(u,o,j)=>{ const get=(o.method||'GET')==='GET'; if(/\/register$/.test(u)) return j(202,{message:'started'}); return j(get?200:201,get?{registrations:[]}:{ok:true}); };
 const fillAndSave=async(env,fields)=>{
- const {w,d}=env;
- // The progress view after a register opens a stream that this suite stubs.
- w.EventSource=class{ close(){} };
+ const {d}=env;
  Object.entries(fields).forEach(([id,value])=>{ const input=d.getElementById(id); if(input.type==='checkbox') input.checked=value; else input.value=value; });
  d.getElementById('registration-form').requestSubmit();
  await sleep(700);

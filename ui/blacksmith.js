@@ -22208,10 +22208,7 @@
         if (this.registrationRun) this.registrationRun.end(false);
         this.registrationRun = null;
 
-        // Cleanup any active streaming connections
-        if (this.cleanupStreaming) {
-          this.cleanupStreaming();
-        }
+        this.stopProgress();
 
         // Reset modal content to default state
         const progressContainer = document.getElementById('registration-progress');
@@ -22463,7 +22460,7 @@
       }
     },
 
-    // Show progress stream in modal
+    // Show registration progress in the modal
     showProgressStream(registrationId) {
       if (!registrationId) return;
 
@@ -22526,212 +22523,67 @@
 
       this.openRegistrationDialog(modal);
 
-      // Start streaming progress
-      this.streamProgress(registrationId);
+      this.pollProgress(registrationId);
     },
 
-    // Stream progress updates
-    streamProgress(registrationId) {
-      let eventSource = null;
-      let reconnectAttempts = 0;
-      let maxReconnectAttempts = 3;
-      let reconnectDelay = 2000; // Start with 2 seconds
-      let pollingFallback = false;
-      let pollingInterval = null;
+    // How often the progress view asks for the registration's status, and
+    // how long it keeps asking before it gives up.
+    progressPollMs: 3000,
+    progressLimitMs: 120000,
+    progressRun: null,
 
-      const connectEventSource = () => {
+    // Poll the registration until it reaches a final status. The broker
+    // records only the registration's overall status, so the steps move
+    // together as it changes. Closing the view or navigating away stops it.
+    pollProgress(registrationId) {
+      this.stopProgress();
+      const run = {};
+      this.progressRun = run;
+
+      const poll = async () => {
+        let registration = null;
         try {
-          eventSource = new EventSource(`/b/cf/registrations/${registrationId}/stream`);
-
-          eventSource.onopen = () => {
-            console.log('SSE connection opened for registration:', registrationId);
-            reconnectAttempts = 0; // Reset on successful connection
-            reconnectDelay = 2000; // Reset delay
-          };
-
-          eventSource.onmessage = (event) => {
-            try {
-              const progress = JSON.parse(event.data);
-              this.updateProgressStep(progress);
-
-              // Close stream when completed
-              if (progress.step === 'completed' || progress.status === 'timeout') {
-                this.cleanupStreaming();
-
-                // Refresh registrations list after completion
-                setTimeout(() => {
-                  this.loadRegistrations();
-                }, 1000);
-              }
-            } catch (error) {
-              console.error('Error parsing progress event:', error);
-              this.showError('Failed to parse progress update');
-            }
-          };
-
-          eventSource.onerror = (error) => {
-            console.error('EventSource error:', error);
-
-            if (eventSource.readyState === EventSource.CLOSED) {
-              // Connection closed, attempt reconnection
-              if (reconnectAttempts < maxReconnectAttempts) {
-                reconnectAttempts++;
-                console.log(`Attempting SSE reconnection ${reconnectAttempts}/${maxReconnectAttempts}`);
-
-                setTimeout(() => {
-                  connectEventSource();
-                }, reconnectDelay);
-
-                // Exponential backoff
-                reconnectDelay = Math.min(reconnectDelay * 2, 10000);
-              } else {
-                console.log('Max SSE reconnection attempts reached, falling back to polling');
-                this.fallbackToPolling(registrationId);
-              }
-            }
-          };
-
+          const response = await fetch(`/b/cf/registrations/${encodeURIComponent(registrationId)}`);
+          const body = await response.json().catch(() => ({}));
+          if (response.ok && body && body.registration) registration = body.registration;
         } catch (error) {
-          console.error('Failed to create EventSource:', error);
-          this.fallbackToPolling(registrationId);
+          registration = null;
+        }
+        // A view closed or replaced while the answer was on its way ignores it.
+        if (this.progressRun !== run || !registration) return;
+
+        const status = String(registration.status || '');
+        if (status === 'active' || status === 'failed') {
+          this.stopProgress();
+          const error = status === 'failed' ? String(registration.last_error || 'the broker recorded no reason') : '';
+          this.handleProgressCompletion({ status, error });
+          setTimeout(() => this.loadRegistrations(), 1000);
+        } else if (status) {
+          this.updateOverallStatus({ status });
         }
       };
 
-      // Cleanup function
-      this.cleanupStreaming = () => {
-        if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
-          eventSource.close();
-          eventSource = null;
-        }
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
-          pollingInterval = null;
-        }
-      };
-
-      // Start SSE connection
-      connectEventSource();
-
-      // Overall timeout (2 minutes)
-      setTimeout(() => {
-        this.cleanupStreaming();
-        this.showError('Progress monitoring timed out');
-      }, 120000);
+      run.stopOnNavigation = () => this.stopProgress();
+      window.addEventListener('popstate', run.stopOnNavigation);
+      window.addEventListener('hashchange', run.stopOnNavigation);
+      run.interval = setInterval(poll, this.progressPollMs);
+      run.limit = setTimeout(() => {
+        if (this.progressRun !== run) return;
+        this.stopProgress();
+        this.handleProgressTimeout();
+      }, this.progressLimitMs);
+      poll();
     },
 
-    // Polling fallback when SSE fails
-    fallbackToPolling(registrationId) {
-      console.log('Starting polling fallback for registration:', registrationId);
-
-      const pollProgress = async () => {
-        try {
-          const response = await fetch(`/b/cf/registrations/${registrationId}`);
-          if (response.ok) {
-            const registration = await response.json();
-
-            // Create a progress event similar to SSE format
-            const progress = {
-              step: 'status_update',
-              status: registration.status,
-              message: `Status: ${registration.status}`,
-              timestamp: new Date().toISOString()
-            };
-
-            if (registration.last_error) {
-              progress.error = registration.last_error;
-            }
-
-            this.updateProgressStep(progress);
-
-            // Stop polling if completed
-            if (registration.status === 'active' || registration.status === 'failed') {
-              if (pollingInterval) {
-                clearInterval(pollingInterval);
-                pollingInterval = null;
-              }
-
-              // Send completion event
-              const completionProgress = {
-                step: 'completed',
-                status: registration.status,
-                message: `Registration ${registration.status}`,
-                timestamp: new Date().toISOString()
-              };
-
-              if (registration.status === 'failed' && registration.last_error) {
-                completionProgress.error = registration.last_error;
-              }
-
-              this.updateProgressStep(completionProgress);
-
-              // Refresh registrations list after completion
-              setTimeout(() => {
-                this.loadRegistrations();
-              }, 1000);
-            }
-          } else {
-            console.error('Failed to poll registration status:', response.status);
-          }
-        } catch (error) {
-          console.error('Polling error:', error);
-        }
-      };
-
-      // Poll every 3 seconds
-      pollingInterval = setInterval(pollProgress, 3000);
-
-      // Initial poll
-      pollProgress();
-    },
-
-    // Enhanced progress step UI updates
-    updateProgressStep(progress) {
-      // Handle different progress step types
-      if (progress.step === 'status' || progress.step === 'status_update') {
-        this.updateOverallStatus(progress);
-        return;
-      }
-
-      if (progress.step === 'completed') {
-        this.handleProgressCompletion(progress);
-        return;
-      }
-
-      if (progress.step === 'timeout') {
-        this.handleProgressTimeout(progress);
-        return;
-      }
-
-      // Handle specific registration steps
-      const stepId = `step-${progress.step.replace('_', '-')}`;
-      const stepElement = document.getElementById(stepId);
-
-      if (stepElement) {
-        const statusClass = progress.status.toLowerCase();
-
-        // Remove existing status classes
-        stepElement.classList.remove('running', 'success', 'error');
-
-        // Add new status class
-        if (statusClass === 'running' || statusClass === 'registering') {
-          stepElement.classList.add('running');
-        } else if (statusClass === 'success' || statusClass === 'active') {
-          stepElement.classList.add('success');
-        } else if (statusClass === 'error' || statusClass === 'failed') {
-          stepElement.classList.add('error');
-        }
-
-        // Update message
-        const messageElement = stepElement.querySelector('.step-message');
-        if (messageElement) {
-          messageElement.textContent = progress.message;
-
-          // Add error details if available
-          if (progress.error && statusClass === 'error') {
-            messageElement.textContent += ` (${progress.error})`;
-          }
-        }
-      }
+    // Stop the progress poll, its time limit, and its navigation listeners.
+    stopProgress() {
+      const run = this.progressRun;
+      this.progressRun = null;
+      if (!run) return;
+      clearInterval(run.interval);
+      clearTimeout(run.limit);
+      window.removeEventListener('popstate', run.stopOnNavigation);
+      window.removeEventListener('hashchange', run.stopOnNavigation);
     },
 
     // Update overall status display
@@ -22793,7 +22645,7 @@
     },
 
     // Handle progress timeout
-    handleProgressTimeout(progress) {
+    handleProgressTimeout() {
       const progressContainer = document.getElementById('registration-progress');
       if (!progressContainer) return;
 
