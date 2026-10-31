@@ -159,6 +159,39 @@ func TestCancelClearsTheFailurePauseReason(t *testing.T) {
 	}
 }
 
+// A deploy that fails after its upgrade was cancelled leaves the task
+// cancelled, rather than pausing it with a reason a resume could act on.
+//
+//nolint:paralleltest // the upgrade waits on a shared test director
+func TestCancelledUpgradeStaysCancelledAfterALateFailure(t *testing.T) {
+	director := newResumeDirector()
+	director.holdThroughCancel()
+	director.holdTask(101)
+
+	manager, task := createUpgrade(t, director, new(true), "instance-1", "instance-2")
+	director.waitForWaitOn(t, 101)
+
+	err := manager.CancelTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	director.failDeploy(101)
+	director.release(101)
+
+	settled := eventuallyWithin(t, manager, task.ID, waitTimeout, "the late failure of instance-1", func(current UpgradeTask) bool {
+		return current.Instances[0].Status == InstanceStatusFailed
+	})
+
+	if settled.Status != TaskStatusCancelled || settled.Paused || settled.PauseReason != "" {
+		t.Fatalf("expected the task to stay cancelled with no pause, got %s paused %v with reason %q", settled.Status, settled.Paused, settled.PauseReason)
+	}
+
+	if director.deployCount("redis-instance-2") != 0 {
+		t.Fatalf("expected nothing more deployed, got %v", director.allDeploys())
+	}
+}
+
 // An upgrade saved before tasks carried pause_on_failure goes on past a
 // failed instance, as it always did.
 //
@@ -637,6 +670,49 @@ func TestFailedDecisionNamesTheFailedInstance(t *testing.T) {
 	}
 }
 
+// A decision that fails an instance follows the task's own choice over
+// the certificate settings, whichever way the two disagree.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestFailedDecisionFollowsTheTaskChoice(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings bool
+		task     bool
+	}{
+		{name: "the task pauses where the settings don't", settings: false, task: true},
+		{name: "the task goes on where the settings pause", settings: true, task: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			env.settings = func() certinventory.Settings {
+				settings := certinventory.DefaultSettings()
+				settings.PauseOnFailure = tc.settings
+
+				return settings
+			}
+
+			stored := env.withPending(env.awaitingOutcome(), "instance-2")
+			stored.PauseOnFailure = new(tc.task)
+			manager := env.load(stored)
+
+			err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "failed"})
+			if err != nil {
+				t.Fatalf("ResolveDeployOutcome: %v", err)
+			}
+
+			saved := env.stored()
+			if saved.Instances[0].Status != InstanceStatusFailed {
+				t.Fatalf("expected the instance saved as failed, got %s", saved.Instances[0].Status)
+			}
+
+			if named := strings.Contains(saved.PauseReason, waitInstanceID); named != tc.task {
+				t.Fatalf("expected a reason naming %s to be %v with the task's choice %v, got %q", waitInstanceID, tc.task, tc.task, saved.PauseReason)
+			}
+		})
+	}
+}
+
 // A task paused after a failure stays paused when a later decision settles
 // another instance well, so its pending instance waits for Continue.
 //
@@ -668,7 +744,9 @@ func TestFailurePauseOutlastsALaterDecision(t *testing.T) {
 }
 
 // A decision that lets a task go on clears a failure's reason once no
-// instance is left for it to hold.
+// instance is left for it to hold. The engine never stores a reason with
+// no pending instance, since the hold needs one, so withFailedFirst builds
+// that state by hand to guard resumeAfterDecision's defensive clear.
 //
 //nolint:paralleltest // the manager's loader shares test seams
 func TestDecisionResumeClearsAnIdleFailureReason(t *testing.T) {
