@@ -1,6 +1,19 @@
 (function (document, window) {
   'use strict';
 
+  // An empty value reads the same everywhere, as one em dash in the muted
+  // color. EMPTY is the text, EMPTY_HTML is the markup for a table cell or a
+  // detail value, showEmpty turns a held EMPTY into that markup, and
+  // setCellText writes a value into an element, or the markup when it is empty.
+  const EMPTY = '—';
+  const EMPTY_HTML = `<span class="empty-value">${EMPTY}</span>`;
+  const isEmptyValue = (value) => value === null || value === undefined || value === '' || value === '-' || value === EMPTY;
+  const showEmpty = (value) => (value === EMPTY ? EMPTY_HTML : value);
+  const setCellText = (element, value) => {
+    if (isEmptyValue(value)) element.innerHTML = EMPTY_HTML;
+    else element.textContent = value;
+  };
+
   // The typed confirmation names the action itself. Two spellings of the
   // word match when they agree after trimming, folding case, and collapsing
   // runs of spaces.
@@ -1082,10 +1095,10 @@
 
   const vmInstanceName = (vm) => {
     if (!vm.job_name || vm.index === undefined) {
-      return vm.id || '-';
+      return vm.id || EMPTY;
     }
     if (vm.index < 0) {
-      return `${vm.job_name}/${vm.id || '-'}`;
+      return `${vm.job_name}/${vm.id || EMPTY}`;
     }
     return `${vm.job_name}/${vm.index}`;
   };
@@ -1428,7 +1441,7 @@
 
   // Determine data type for sorting
   const detectDataType = (value) => {
-    if (value === null || value === undefined || value === '-') return 'null';
+    if (isEmptyValue(value)) return 'null';
 
     // Check if it's a date
     const datePatterns = [
@@ -1456,9 +1469,9 @@
 
   // Compare values based on data type
   const compareValues = (a, b, dataType, direction) => {
-    // Handle null/undefined/'-' values
-    if (a === null || a === undefined || a === '-') a = null;
-    if (b === null || b === undefined || b === '-') b = null;
+    // Handle null/undefined/empty values
+    if (isEmptyValue(a)) a = null;
+    if (isEmptyValue(b)) b = null;
 
     if (a === null && b === null) return 0;
     if (a === null) return direction === 'asc' ? 1 : -1;
@@ -1565,7 +1578,7 @@
     let dataType = 'string';
     for (const item of data) {
       const value = getNestedValue(item, key);
-      if (value !== null && value !== undefined && value !== '-') {
+      if (!isEmptyValue(value)) {
         dataType = detectDataType(value);
         break;
       }
@@ -2009,30 +2022,30 @@
     if (tableClass === 'events-table') {
       tbody.innerHTML = data.map(event => {
         const time = formatTimestamp(event.time);
-        let objectInfo = '-';
+        let objectInfo = EMPTY;
         if (event.object_type && event.object_name) {
           objectInfo = `${event.object_type}: ${event.object_name}`;
         } else if (event.object_type || event.object_name) {
           objectInfo = event.object_type || event.object_name;
         }
         const taskId = event.task_id || event.task;
-        let taskInfo = '-';
+        let taskInfo = EMPTY;
 
         // Make task ID clickable if it exists and is numeric
         if (taskId && taskId !== '-' && !isNaN(taskId)) {
           taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
-        } else if (taskId) {
+        } else if (!isEmptyValue(taskId)) {
           taskInfo = taskId;
         }
 
         return `
           <tr class="${event.error ? 'error-row' : ''}">
-            <td class="event-timestamp">${time}</td>
-            <td class="event-user">${event.user || '-'}</td>
-            <td class="event-action">${event.action || '-'}</td>
-            <td class="event-object">${objectInfo}</td>
-            <td class="event-task">${taskInfo}</td>
-            <td class="event-error">${event.error || '-'}</td>
+            <td class="event-timestamp">${showEmpty(time)}</td>
+            <td class="event-user">${event.user || EMPTY_HTML}</td>
+            <td class="event-action">${event.action || EMPTY_HTML}</td>
+            <td class="event-object">${showEmpty(objectInfo)}</td>
+            <td class="event-task">${showEmpty(taskInfo)}</td>
+            <td class="event-error">${event.error || EMPTY_HTML}</td>
           </tr>
         `;
       }).join('');
@@ -2042,13 +2055,13 @@
       tbody.innerHTML = data.map(vm => {
         // Use the correct field names from our enhanced VM struct
         const instanceName = vmInstanceName(vm);
-        const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
-        const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
-        const vmType = vm.vm_type || vm.resource_pool || '-';
+        const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : EMPTY;
+        const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : EMPTY;
+        const vmType = vm.vm_type || vm.resource_pool || EMPTY;
         const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
-        const agentId = vm.agent_id || '-';
-        const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : '-';
-        const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : '-';
+        const agentId = vm.agent_id || EMPTY;
+        const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : EMPTY;
+        const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : EMPTY;
         const bootstrap = vm.bootstrap ? 'Yes' : 'No';
         const diskCids = vmDiskCids(vm);
 
@@ -2073,7 +2086,7 @@
         return `
           <tr>
             <td class="vm-instance">
-              ${instanceName !== '-' ? `
+              ${instanceName !== EMPTY ? `
                 <span class="copy-wrapper">
                   <span>${instanceName}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
@@ -2081,12 +2094,12 @@
                     ${blacksmithIcon('copy', { size: 14 })}
                   </button>
                 </span>
-              ` : '-'}
+              ` : EMPTY_HTML}
             </td>
-            <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
-            <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
+            <td class="vm-state ${stateClass}">${vm.state || EMPTY_HTML}</td>
+            <td class="vm-job-state ${jobStateClass}">${vm.job_state || EMPTY_HTML}</td>
             <td class="vm-az">
-              ${vm.az && vm.az !== '-' ? `
+              ${!isEmptyValue(vm.az) ? `
                 <span class="copy-wrapper">
                   <span>${vm.az}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
@@ -2094,10 +2107,10 @@
                     ${blacksmithIcon('copy', { size: 14 })}
                   </button>
                 </span>
-              ` : '-'}
+              ` : EMPTY_HTML}
             </td>
             <td class="vm-type">
-              ${vmType !== '-' ? `
+              ${vmType !== EMPTY ? `
                 <span class="copy-wrapper">
                   <span>${vmType}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
@@ -2105,16 +2118,16 @@
                     ${blacksmithIcon('copy', { size: 14 })}
                   </button>
                 </span>
-              ` : '-'}
+              ` : EMPTY_HTML}
             </td>
-            <td class="vm-active">${active}</td>
+            <td class="vm-active">${showEmpty(active)}</td>
             <td class="vm-bootstrap">${bootstrap}</td>
-            <td class="vm-ips">${ips}</td>
-            <td class="vm-dns">${dns}</td>
-            <td class="vm-cid">${vm.vm_cid ? cidText(vm.vm_cid) : '-'}</td>
-            <td class="vm-agent-id">${vm.agent_id ? cidText(vm.agent_id) : '-'}</td>
-            <td class="vm-created-at">${vmCreatedAt}</td>
-            <td class="vm-disk-cids">${diskCids.length > 0 ? cidList(diskCids, 'disk CID', false) : '-'}</td>
+            <td class="vm-ips">${showEmpty(ips)}</td>
+            <td class="vm-dns">${showEmpty(dns)}</td>
+            <td class="vm-cid">${vm.vm_cid ? cidText(vm.vm_cid) : EMPTY_HTML}</td>
+            <td class="vm-agent-id">${vm.agent_id ? cidText(vm.agent_id) : EMPTY_HTML}</td>
+            <td class="vm-created-at">${showEmpty(vmCreatedAt)}</td>
+            <td class="vm-disk-cids">${diskCids.length > 0 ? cidList(diskCids, 'disk CID', false) : EMPTY_HTML}</td>
             <td class="vm-resurrection">${resurrection}</td>
           </tr>
         `;
@@ -2122,8 +2135,8 @@
     } else if (tableClass === 'deployment-log-table' || tableClass === 'debug-log-table') {
       tbody.innerHTML = data.map(log => {
         const time = formatTimestamp(log.time);
-        const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
-        let status = '-';
+        const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : EMPTY;
+        let status = EMPTY;
         if (log.data && log.data.status) {
           status = log.data.status;
         }
@@ -2139,14 +2152,14 @@
 
         return `
           <tr>
-            <td class="log-timestamp">${time}</td>
-            <td class="log-stage">${log.stage || '-'}</td>
-            <td class="log-task">${log.task || '-'}</td>
-            <td class="log-index">${log.index || '-'}</td>
-            <td class="log-state ${stateClass}">${log.state || '-'}</td>
-            <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : '-'}</td>
-            <td class="log-tags">${tags}</td>
-            <td class="log-status">${status}</td>
+            <td class="log-timestamp">${showEmpty(time)}</td>
+            <td class="log-stage">${log.stage || EMPTY_HTML}</td>
+            <td class="log-task">${log.task || EMPTY_HTML}</td>
+            <td class="log-index">${log.index || EMPTY_HTML}</td>
+            <td class="log-state ${stateClass}">${log.state || EMPTY_HTML}</td>
+            <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : EMPTY_HTML}</td>
+            <td class="log-tags">${showEmpty(tags)}</td>
+            <td class="log-status">${showEmpty(status)}</td>
           </tr>
         `;
       }).join('');
@@ -2158,7 +2171,7 @@
         const startedAt = formatTimestamp(task.started_at);
 
         // Calculate duration
-        let duration = '-';
+        let duration = EMPTY;
         if (task.started_at) {
           const start = new Date(task.started_at);
           const end = task.ended_at ? new Date(task.ended_at) : new Date();
@@ -2184,11 +2197,11 @@
           <tr>
             <td class="task-id">${taskIdLink}</td>
             <td class="task-state">${stateBadge}</td>
-            <td class="task-description">${task.description || '-'}</td>
-            <td class="task-deployment">${task.deployment || '-'}</td>
-            <td class="task-user">${task.user || '-'}</td>
-            <td class="task-started">${startedAt}</td>
-            <td class="task-duration">${duration}</td>
+            <td class="task-description">${task.description || EMPTY_HTML}</td>
+            <td class="task-deployment">${task.deployment || EMPTY_HTML}</td>
+            <td class="task-user">${task.user || EMPTY_HTML}</td>
+            <td class="task-started">${showEmpty(startedAt)}</td>
+            <td class="task-duration">${showEmpty(duration)}</td>
           </tr>
         `;
       }).join('');
@@ -2205,10 +2218,10 @@
         return `
           <tr>
             <td class="config-id">${configIdLink}</td>
-            <td class="config-name">${config.name || '-'}</td>
+            <td class="config-name">${config.name || EMPTY_HTML}</td>
             <td class="config-type">${typeBadge}</td>
-            <td class="config-team">${config.team || '-'}</td>
-            <td class="config-created">${createdAt}</td>
+            <td class="config-team">${config.team || EMPTY_HTML}</td>
+            <td class="config-created">${showEmpty(createdAt)}</td>
           </tr>
         `;
       }).join('');
@@ -2264,7 +2277,7 @@
   const formatTimestamp = (timestamp) => {
     // Return '-' for missing, null, undefined, or 0 timestamps
     if (!timestamp || timestamp === 0) {
-      return '-';
+      return EMPTY;
     }
 
     try {
@@ -2289,13 +2302,13 @@
 
       // Check if the date is valid
       if (isNaN(date.getTime())) {
-        return '-';
+        return EMPTY;
       }
 
       return date.toLocaleString();
     } catch (error) {
       console.warn('Error formatting timestamp:', timestamp, error);
-      return '-';
+      return EMPTY;
     }
   };
 
@@ -9865,8 +9878,8 @@
         <tbody>
           ${logs.map(log => {
       const time = formatTimestamp(log.time);
-      const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
-      let status = '-';
+      const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : EMPTY;
+      let status = EMPTY;
       if (log.data && log.data.status) {
         status = log.data.status;
       }
@@ -9883,14 +9896,14 @@
 
       return `
               <tr>
-                <td class="log-timestamp">${time}</td>
-                <td class="log-stage">${log.stage || '-'}</td>
-                <td class="log-task">${log.task || '-'}</td>
-                <td class="log-index">${log.index || '-'}</td>
-                <td class="log-state ${stateClass}">${log.state || '-'}</td>
-                <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : '-'}</td>
-                <td class="log-tags">${tags}</td>
-                <td class="log-status">${status}</td>
+                <td class="log-timestamp">${showEmpty(time)}</td>
+                <td class="log-stage">${log.stage || EMPTY_HTML}</td>
+                <td class="log-task">${log.task || EMPTY_HTML}</td>
+                <td class="log-index">${log.index || EMPTY_HTML}</td>
+                <td class="log-state ${stateClass}">${log.state || EMPTY_HTML}</td>
+                <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : EMPTY_HTML}</td>
+                <td class="log-tags">${showEmpty(tags)}</td>
+                <td class="log-status">${showEmpty(status)}</td>
               </tr>
             `;
     }).join('')}
@@ -9946,8 +9959,8 @@
         <tbody>
           ${logs.map(log => {
       const time = formatTimestamp(log.time);
-      const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
-      let status = '-';
+      const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : EMPTY;
+      let status = EMPTY;
       if (log.data && log.data.status) {
         status = log.data.status;
       }
@@ -9964,14 +9977,14 @@
 
       return `
               <tr>
-                <td class="log-timestamp">${time}</td>
-                <td class="log-stage">${log.stage || '-'}</td>
-                <td class="log-task">${log.task || '-'}</td>
-                <td class="log-index">${log.index || '-'}</td>
-                <td class="log-state ${stateClass}">${log.state || '-'}</td>
-                <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : '-'}</td>
-                <td class="log-tags">${tags}</td>
-                <td class="log-status">${status}</td>
+                <td class="log-timestamp">${showEmpty(time)}</td>
+                <td class="log-stage">${log.stage || EMPTY_HTML}</td>
+                <td class="log-task">${log.task || EMPTY_HTML}</td>
+                <td class="log-index">${log.index || EMPTY_HTML}</td>
+                <td class="log-state ${stateClass}">${log.state || EMPTY_HTML}</td>
+                <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : EMPTY_HTML}</td>
+                <td class="log-tags">${showEmpty(tags)}</td>
+                <td class="log-status">${showEmpty(status)}</td>
               </tr>
             `;
     }).join('')}
@@ -10589,7 +10602,7 @@
             ${events.map(event => {
       const time = formatTimestamp(event.time);
       // Handle object info - check if it's already a combined string or separate fields
-      let objectInfo = '-';
+      let objectInfo = EMPTY;
       if (event.object_type && event.object_name) {
         objectInfo = `${event.object_type}: ${event.object_name}`;
       } else if (event.object_type || event.object_name) {
@@ -10597,23 +10610,23 @@
       }
 
       const taskId = event.task_id || event.task;
-      let taskInfo = '-';
+      let taskInfo = EMPTY;
 
       // Make task ID clickable if it exists and is numeric
       if (taskId && taskId !== '-' && !isNaN(taskId)) {
         taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
-      } else if (taskId) {
+      } else if (!isEmptyValue(taskId)) {
         taskInfo = taskId;
       }
 
       return `
                 <tr class="${event.error ? 'error-row' : ''}">
-                  <td class="event-timestamp">${time}</td>
-                  <td class="event-user">${event.user || '-'}</td>
-                  <td class="event-action">${event.action || '-'}</td>
-                  <td class="event-object">${objectInfo}</td>
-                  <td class="event-task">${taskInfo}</td>
-                  <td class="event-error">${event.error || '-'}</td>
+                  <td class="event-timestamp">${showEmpty(time)}</td>
+                  <td class="event-user">${event.user || EMPTY_HTML}</td>
+                  <td class="event-action">${event.action || EMPTY_HTML}</td>
+                  <td class="event-object">${showEmpty(objectInfo)}</td>
+                  <td class="event-task">${showEmpty(taskInfo)}</td>
+                  <td class="event-error">${event.error || EMPTY_HTML}</td>
                 </tr>
               `;
     }).join('')}
@@ -10694,7 +10707,7 @@
       const startedAt = formatTimestamp(task.started_at);
 
       // Calculate duration
-      let duration = '-';
+      let duration = EMPTY;
       if (task.started_at) {
         const start = new Date(task.started_at);
         const end = task.ended_at ? new Date(task.ended_at) : new Date();
@@ -10720,11 +10733,11 @@
                 <tr>
                   <td class="task-id">${taskIdLink}</td>
                   <td class="task-state">${stateBadge}</td>
-                  <td class="task-description">${task.description || '-'}</td>
-                  <td class="task-deployment">${task.deployment || '-'}</td>
-                  <td class="task-user">${task.user || '-'}</td>
-                  <td class="task-started">${startedAt}</td>
-                  <td class="task-duration">${duration}</td>
+                  <td class="task-description">${task.description || EMPTY_HTML}</td>
+                  <td class="task-deployment">${task.deployment || EMPTY_HTML}</td>
+                  <td class="task-user">${task.user || EMPTY_HTML}</td>
+                  <td class="task-started">${showEmpty(startedAt)}</td>
+                  <td class="task-duration">${showEmpty(duration)}</td>
                 </tr>
               `;
     }).join('') : `
@@ -10785,15 +10798,15 @@
             const configIdLink = `<a href="#" class="config-link" data-config-id="${escapeAttribute(cleanId)}" data-config-type="${escapeAttribute(String(config.type || ''))}" data-config-name="${escapeAttribute(String(config.name || ''))}" onclick="showConfigVersions(${argumentsHtml}, event); return false;">${escapeHtml(cleanId)}</a>${isActive ? '<span class="config-active-label">Active</span>' : ''}`;
 
             // Format team, show dash for empty
-            const teamDisplay = config.team || '-';
+            const teamDisplay = config.team || EMPTY;
 
             tableBody += `
               <tr data-config-type="${config.type}">
                 <td class="config-id">${configIdLink}</td>
                 <td class="config-type">${configTypeBadge(config.type)}</td>
-                <td class="config-name">${config.name || '-'}</td>
-                <td class="config-team">${teamDisplay}</td>
-                <td class="config-created">${createdAt}</td>
+                <td class="config-name">${config.name || EMPTY_HTML}</td>
+                <td class="config-team">${showEmpty(teamDisplay)}</td>
+                <td class="config-created">${showEmpty(createdAt)}</td>
               </tr>
             `;
           });
@@ -11519,7 +11532,7 @@
     const formattedMessage = formatLogMessage(logEntry.message);
 
     // Handle different timestamp formats
-    let displayTimestamp = '-';
+    let displayTimestamp = EMPTY;
     if (logEntry.timestamp) {
       // Use timestamp if available (ISO format)
       displayTimestamp = logEntry.timestamp;
@@ -11538,7 +11551,7 @@
     const cells = [];
 
     if (activeColumns.timestamp) {
-      cells.push(`<td class="log-timestamp">${escapeHtml(String(displayTimestamp))}</td>`);
+      cells.push(`<td class="log-timestamp">${displayTimestamp === EMPTY ? EMPTY_HTML : escapeHtml(String(displayTimestamp))}</td>`);
     }
 
     if (activeColumns.level) {
@@ -11765,13 +11778,13 @@
           ${vms.map(vm => {
       // Use the correct field names from our enhanced VM struct
       const instanceName = vmInstanceName(vm);
-      const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
-      const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
-      const vmType = vm.vm_type || vm.resource_pool || '-';
+      const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : EMPTY;
+      const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : EMPTY;
+      const vmType = vm.vm_type || vm.resource_pool || EMPTY;
       const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
-      const agentId = vm.agent_id || '-';
-      const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : '-';
-      const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : '-';
+      const agentId = vm.agent_id || EMPTY;
+      const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : EMPTY;
+      const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : EMPTY;
       const bootstrap = vm.bootstrap ? 'Yes' : 'No';
       const diskCids = vmDiskCids(vm);
 
@@ -11817,7 +11830,7 @@
                   </button>
                 </td>
                 <td class="vm-instance">
-                  ${instanceName !== '-' ? `
+                  ${instanceName !== EMPTY ? `
                     <span class="copy-wrapper">
                       <span>${instanceName}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
@@ -11825,12 +11838,12 @@
                         ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                     </span>
-                  ` : '-'}
+                  ` : EMPTY_HTML}
                 </td>
-                <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
-                <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
+                <td class="vm-state ${stateClass}">${vm.state || EMPTY_HTML}</td>
+                <td class="vm-job-state ${jobStateClass}">${vm.job_state || EMPTY_HTML}</td>
                 <td class="vm-az">
-                  ${vm.az && vm.az !== '-' ? `
+                  ${!isEmptyValue(vm.az) ? `
                     <span class="copy-wrapper">
                       <span>${vm.az}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
@@ -11838,10 +11851,10 @@
                         ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                     </span>
-                  ` : '-'}
+                  ` : EMPTY_HTML}
                 </td>
                 <td class="vm-type">
-                  ${vmType !== '-' ? `
+                  ${vmType !== EMPTY ? `
                     <span class="copy-wrapper">
                       <span>${vmType}</span>
                       <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
@@ -11849,12 +11862,12 @@
                         ${blacksmithIcon('copy', { size: 14 })}
                       </button>
                     </span>
-                  ` : '-'}
+                  ` : EMPTY_HTML}
                 </td>
-                <td class="vm-active">${active}</td>
+                <td class="vm-active">${showEmpty(active)}</td>
                 <td class="vm-bootstrap">${bootstrap}</td>
                 <td class="vm-ips">
-                  ${ips !== '-' ? `
+                  ${ips !== EMPTY ? `
                     <span class="copy-wrapper">
                       <span>${ips}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
@@ -11862,22 +11875,22 @@
                   ${blacksmithIcon('copy', { size: 14 })}
                 </button>
                     </span>
-                  ` : '-'}
+                  ` : EMPTY_HTML}
                 </td>
-                <td class="vm-dns">${dns}</td>
+                <td class="vm-dns">${showEmpty(dns)}</td>
                 <td class="vm-cid">
                   ${vm.vm_cid ? `
                     ${cidCopy(vm.vm_cid, 'VM CID')}
-                  ` : '-'}
+                  ` : EMPTY_HTML}
                 </td>
                 <td class="vm-agent-id">
-                  ${agentId !== '-' ? `
+                  ${agentId !== EMPTY ? `
                     ${cidCopy(agentId, 'agent ID')}
-                  ` : '-'}
+                  ` : EMPTY_HTML}
                 </td>
-                <td class="vm-created-at">${vmCreatedAt}</td>
+                <td class="vm-created-at">${showEmpty(vmCreatedAt)}</td>
                 <td class="vm-disk-cids">
-                  ${diskCids.length > 0 ? cidList(diskCids, 'disk CID', true) : '-'}
+                  ${diskCids.length > 0 ? cidList(diskCids, 'disk CID', true) : EMPTY_HTML}
                 </td>
                 <td class="vm-resurrection">${resurrection}</td>
               </tr>
@@ -17962,7 +17975,7 @@
       document.getElementById('config-name').textContent = config.name;
       document.getElementById('config-type').textContent = config.type;
       document.getElementById('config-team').textContent = config.team || 'N/A';
-      document.getElementById('config-created-at').textContent = formatTimestamp(config.created_at);
+      setCellText(document.getElementById('config-created-at'), formatTimestamp(config.created_at));
       document.getElementById('config-status').textContent = config.id.endsWith('*') ? 'Active' : 'Inactive';
 
       // Populate content tab
@@ -18068,14 +18081,14 @@
       if (latestVersion) {
         const setElementText = (id, value) => {
           const elem = document.getElementById(id);
-          if (elem) elem.textContent = value || '-';
+          if (elem) setCellText(elem, value);
         };
 
-        setElementText('config-id', latestVersion.id || '-');
+        setElementText('config-id', latestVersion.id);
         setElementText('config-name', configName);
         setElementText('config-type', configType);
-        setElementText('config-team', latestVersion.team || '-');
-        setElementText('config-created-at', latestVersion.created_at || '-');
+        setElementText('config-team', latestVersion.team);
+        setElementText('config-created-at', latestVersion.created_at);
 
         // Set status with active indicator
         const statusElem = document.getElementById('config-status');
@@ -18092,7 +18105,7 @@
         ['config-id', 'config-name', 'config-type', 'config-team', 'config-created-at', 'config-status']
           .forEach(id => {
             const elem = document.getElementById(id);
-            if (elem) elem.textContent = '-';
+            if (elem) setCellText(elem, '');
           });
       }
 
@@ -18140,7 +18153,7 @@
           if (String(version.id).replace('*', '') === String(retained?.version || currentId).replace('*', '')) selectedVersionItem = versionItem;
           versionItem.innerHTML = `
             <span class="version-id">${version.id}${isActive ? ' *' : ''}</span>
-            <span class="version-date">${formatTimestamp(version.created_at)}</span>
+            <span class="version-date">${showEmpty(formatTimestamp(version.created_at))}</span>
             ${version.team ? `<span class="version-team">Team: ${escapeHtml(version.team)}</span>` : ''}
           `;
 
@@ -18798,15 +18811,15 @@
 
       // Update task summary and modal title
       document.getElementById('task-details-modal-title').textContent = `Task Details - Task # ${task.id}`;
-      document.getElementById('task-description').textContent = task.description || '-';
-      document.getElementById('task-deployment').textContent = task.deployment || '-';
-      document.getElementById('task-user').textContent = task.user || '-';
-      document.getElementById('task-context-id').textContent = task.context_id || '-';
-      document.getElementById('task-started').textContent = formatTimestamp(task.started_at);
-      document.getElementById('task-finished').textContent = task.ended_at ? formatTimestamp(task.ended_at) : '-';
+      setCellText(document.getElementById('task-description'), task.description);
+      setCellText(document.getElementById('task-deployment'), task.deployment);
+      setCellText(document.getElementById('task-user'), task.user);
+      setCellText(document.getElementById('task-context-id'), task.context_id);
+      setCellText(document.getElementById('task-started'), formatTimestamp(task.started_at));
+      setCellText(document.getElementById('task-finished'), task.ended_at ? formatTimestamp(task.ended_at) : EMPTY);
 
       // Calculate and set duration
-      let duration = '-';
+      let duration = EMPTY;
       if (task.started_at) {
         const start = new Date(task.started_at);
         const end = task.ended_at ? new Date(task.ended_at) : new Date();
@@ -18817,7 +18830,7 @@
           duration = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
         }
       }
-      document.getElementById('task-duration').textContent = duration;
+      setCellText(document.getElementById('task-duration'), duration);
 
       // Set state badge
       const stateBadge = document.getElementById('task-state-badge');
@@ -19052,23 +19065,23 @@
           <tbody>
             ${events.map(event => {
       const time = formatTimestamp(event.time);
-      const progress = event.progress ? `${event.progress}%` : '-';
-      const error = event.error ? event.error.message : '-';
+      const progress = event.progress ? `${event.progress}%` : EMPTY;
+      const error = event.error ? event.error.message : EMPTY;
 
       // Make task field clickable if it's a valid task ID
-      let taskInfo = event.task || '-';
+      let taskInfo = isEmptyValue(event.task) ? EMPTY : event.task;
       if (event.task && !isNaN(event.task) && event.task !== '-') {
         taskInfo = `<a href="#" class="task-link" data-task-id="${event.task}" onclick="showTaskDetails(${event.task}, event); return false;">${event.task}</a>`;
       }
 
       return `
                 <tr>
-                  <td>${time}</td>
-                  <td>${event.stage || '-'}</td>
-                  <td>${taskInfo}</td>
-                  <td><span class="event-state ${event.state}">${event.state || '-'}</span></td>
-                  <td>${progress}</td>
-                  <td class="event-error">${error}</td>
+                  <td>${showEmpty(time)}</td>
+                  <td>${event.stage || EMPTY_HTML}</td>
+                  <td>${showEmpty(taskInfo)}</td>
+                  <td><span class="event-state ${event.state}">${event.state || EMPTY_HTML}</span></td>
+                  <td>${showEmpty(progress)}</td>
+                  <td class="event-error">${showEmpty(error)}</td>
                 </tr>
               `;
     }).join('')}
@@ -19116,7 +19129,7 @@
     }
 
     const rows = events.map(event => {
-      const timestamp = event.date && event.time ? `${event.date} ${event.time}` : (event.time || '-');
+      const timestamp = event.date && event.time ? `${event.date} ${event.time}` : (event.time || EMPTY);
       const level = event.level || 'INFO';
       const message = event.message || '';
 

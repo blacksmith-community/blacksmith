@@ -13479,3 +13479,8 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 }
 
 bs-tabs { display: contents; }
+
+/* One muted em dash stands for every empty table cell or detail value. */
+.empty-value {
+  color: var(--text-muted);
+}
