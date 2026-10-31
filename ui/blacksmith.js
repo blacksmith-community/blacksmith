@@ -27295,7 +27295,7 @@
       { key: 'instance_scan_timeout_seconds', label: 'Instance scan timeout (seconds)', type: 'number', help: 'Seconds we wait on one instance before we give up on it, at least 1.' },
       { key: 'preview_ttl_minutes', label: 'Preview lifetime (minutes)', type: 'number', help: 'Minutes a preview stays valid before we need a fresh one, from 5 to 60.' },
       { key: 'probe_enabled', label: 'Probe live listeners', type: 'checkbox', help: 'Connect to each listener and read the certificate it serves, so we can compare it with the stored one.' },
-      { key: 'pause_on_failure', label: 'Stop a batch after the first failure', type: 'checkbox', help: 'A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. The setting is on by default. Turn it off only for routine rotations you\'ll watch from Activity. This is the default for new certificate jobs, and each job can change it on its Options step. An upgrade goes on after a failure unless its job turns pausing on, and Run command always pauses.' }
+      { key: 'pause_on_failure', label: 'Pause certificate jobs when an instance fails', type: 'checkbox', help: 'A certificate job pauses after a failed instance, so you can look at the failure before more certificates change. The setting is on by default. Turn it off only for routine rotations you\'ll watch from Activity. This is the default for new certificate jobs, and each job can change it on its Options step. An upgrade goes on after a failure unless its job turns pausing on, and Run command always pauses.' }
     ];
 
     const settingKeys = () => SETTINGS_FIELDS.map((f) => f.key);
