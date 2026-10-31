@@ -270,12 +270,17 @@ func (h *Handler) UpdateRegistration(writer http.ResponseWriter, req *http.Reque
 	}
 
 	// The edit stores no password. A record saved before the broker
-	// stopped storing them keeps the one it has, untouched.
+	// stopped storing them keeps the one it has, untouched, while the
+	// record still names the API and user the password belongs to. An
+	// edit that changes either drops it, so it is never sent elsewhere.
 	regReq = withoutPassword(regReq)
 
-	for key, value := range existingReg {
-		if strings.EqualFold(key, "password") {
-			regReq[key] = value
+	if getStringFromMap(regReq, "api_url") == getStringFromMap(existingReg, "api_url") &&
+		getStringFromMap(regReq, "username") == getStringFromMap(existingReg, "username") {
+		for key, value := range existingReg {
+			if strings.EqualFold(key, "password") {
+				regReq[key] = value
+			}
 		}
 	}
 

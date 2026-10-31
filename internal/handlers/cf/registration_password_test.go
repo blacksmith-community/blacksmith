@@ -222,20 +222,64 @@ func TestNewRegistrationsStoreNoPassword(t *testing.T) {
 
 // A record saved before the broker stopped storing passwords keeps its
 // password through an edit, because nothing migrates it.
+// legacyRecord is a registration saved by a broker that still stored the
+// CF password.
+func legacyRecord() map[string]interface{} {
+	return map[string]interface{}{
+		"id": "reg-1", "name": "lab-cf", "status": "pending",
+		"api_url": "https://api.cf.example.com", "username": "admin", "password": "legacy-pw-5m2x",
+	}
+}
+
 func TestEditingALegacyRegistrationKeepsItsPassword(t *testing.T) {
 	t.Parallel()
 
-	vault := &memoryVault{registrations: map[string]map[string]interface{}{
-		"reg-1": {"id": "reg-1", "name": "lab-cf", "password": "legacy-pw-5m2x"},
-	}}
+	vault := &memoryVault{registrations: map[string]map[string]interface{}{"reg-1": legacyRecord()}}
 	handler := NewHandler(logger.Get().Named("cf-registration-password-test"), nil, nil, vault)
 
 	serveRegistration(t, handler, http.MethodPut, "/b/cf/registrations/reg-1",
-		`{"id":"reg-1","name":"lab-cf-renamed","password":"`+registrationPassword+`"}`)
+		`{"id":"reg-1","name":"lab-cf-renamed","api_url":"https://api.cf.example.com","username":"admin","password":"`+registrationPassword+`"}`)
 
 	record := vault.stored("reg-1")
 	if record["password"] != "legacy-pw-5m2x" || record["name"] != "lab-cf-renamed" {
 		t.Fatalf("the edited legacy record = %v, want the new name and the old password", record)
+	}
+}
+
+// A legacy password belongs to the foundation and user it was saved for, so
+// an edit that points the record elsewhere drops it, and register then needs
+// the password in its body.
+func TestEditingALegacyRegistrationsFoundationDropsItsPassword(t *testing.T) {
+	t.Parallel()
+
+	for name, edit := range map[string]string{
+		"another API URL":  `{"id":"reg-1","name":"lab-cf","status":"pending","api_url":"https://api.other.example.com","username":"admin"}`,
+		"another username": `{"id":"reg-1","name":"lab-cf","status":"pending","api_url":"https://api.cf.example.com","username":"someone-else"}`,
+		"no API URL":       `{"id":"reg-1","name":"lab-cf","status":"pending","username":"admin"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			vault := &memoryVault{registrations: map[string]map[string]interface{}{"reg-1": legacyRecord()}}
+			handler, ops := registerHandler(vault)
+
+			serveRegistration(t, handler, http.MethodPut, "/b/cf/registrations/reg-1", edit)
+
+			if password, kept := storedPassword(vault.stored("reg-1")); kept {
+				t.Fatalf("the edited record kept the password %v, want none", password)
+			}
+
+			recorder := startRegistration(handler, `{}`)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("register with no body password answered %d %s, want 400", recorder.Code, recorder.Body.String())
+			}
+
+			select {
+			case password := <-ops.passwords:
+				t.Fatalf("the registration ran with %q, want it not to run", password)
+			default:
+			}
+		})
 	}
 }
 
