@@ -22526,31 +22526,84 @@
       this.pollProgress(registrationId);
     },
 
-    // How often the progress view asks for the registration's status, and
-    // how long it keeps asking before it gives up.
+    // How often the progress view asks for the registration's status, how
+    // long it keeps asking before it gives up, and how many checks in a row
+    // may fail before it stops.
     progressPollMs: 3000,
     progressLimitMs: 120000,
+    progressMissLimit: 3,
     progressRun: null,
 
     // Poll the registration until it reaches a final status. The broker
     // records only the registration's overall status, so the steps move
     // together as it changes. Closing the view or navigating away stops it.
+    // A network error or a 5xx may pass, so only several in a row stop the
+    // poll, and any other answer it can't use stops it at once.
     pollProgress(registrationId) {
       this.stopProgress();
-      const run = {};
+      const run = { misses: 0 };
       this.progressRun = run;
 
+      const stop = (message) => {
+        this.stopProgress();
+        this.handleProgressStopped(message);
+      };
+      const miss = (cause) => {
+        run.misses += 1;
+        if (run.misses >= this.progressMissLimit) {
+          stop(`Registration progress stopped, because ${run.misses} checks in a row failed, the last with ${cause}. Check the registration's status in the list.`);
+        }
+      };
+
       const poll = async () => {
-        let registration = null;
+        let response = null;
         try {
-          const response = await fetch(`/b/cf/registrations/${encodeURIComponent(registrationId)}`);
-          const body = await response.json().catch(() => ({}));
-          if (response.ok && body && body.registration) registration = body.registration;
+          response = await fetch(`/b/cf/registrations/${encodeURIComponent(registrationId)}`);
         } catch (error) {
-          registration = null;
+          response = null;
         }
         // A view closed or replaced while the answer was on its way ignores it.
-        if (this.progressRun !== run || !registration) return;
+        if (this.progressRun !== run) return;
+        if (!response) {
+          miss('a network error');
+          return;
+        }
+        if (!response.ok) {
+          const err = await readApiError(response);
+          if (this.progressRun !== run) return;
+          if (response.status >= 500) {
+            miss(`HTTP ${response.status}`);
+          } else {
+            stop(this.progressStopText(err));
+          }
+          return;
+        }
+
+        let text = '';
+        try {
+          text = await response.text();
+        } catch (error) {
+          text = '';
+        }
+        if (this.progressRun !== run) return;
+        const contentType = (response.headers && response.headers.get && response.headers.get('Content-Type')) || '';
+        const page = { status: response.status, message: text, contentType };
+        if (isHtmlPage(page)) {
+          stop(this.progressStopText(page));
+          return;
+        }
+        let body = null;
+        try {
+          body = JSON.parse(text);
+        } catch (error) {
+          body = null;
+        }
+        const registration = body && body.registration;
+        if (!registration || typeof registration !== 'object') {
+          miss('an unreadable answer');
+          return;
+        }
+        run.misses = 0;
 
         const status = String(registration.status || '');
         if (status === 'active' || status === 'failed') {
@@ -22642,6 +22695,33 @@
       } else if (progress.status === 'active') {
         this.showSuccess('Registration completed successfully!');
       }
+    },
+
+    // Why the progress view stopped on an answer it can't use. A web page,
+    // such as a proxy's sign-in page, never shows as markup.
+    progressStopText(err) {
+      const status = err && err.status;
+      if (isHtmlPage(err)) {
+        return `Registration progress stopped, because the broker answered with a web page (HTTP ${status}) instead of the registration's status.`;
+      }
+      if (status === 401 || status === 403) {
+        return `Registration progress stopped, because the broker refused the check (HTTP ${status}). Sign in again, then check the registration's status.`;
+      }
+      if (status === 404) {
+        return 'Registration progress stopped, because the broker no longer has this registration (HTTP 404). It may have been deleted.';
+      }
+      return `Registration progress stopped (HTTP ${status}). ${apiErrorText(err)}`;
+    },
+
+    // Show that the progress view stopped before a final status.
+    handleProgressStopped(message) {
+      const progressContainer = document.getElementById('registration-progress');
+      if (progressContainer) {
+        const header = progressContainer.querySelector('.progress-header h4');
+        if (header) header.textContent = 'Registration Progress - STOPPED';
+        progressContainer.querySelectorAll('.progress-step').forEach(step => step.classList.remove('running'));
+      }
+      this.showError(message);
     },
 
     // Handle progress timeout
