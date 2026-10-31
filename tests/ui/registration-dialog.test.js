@@ -229,3 +229,12 @@ t('a result that lands after the dialog reopens is not shown',async()=>{
  expect(results(d).hidden).toBe(true);
  expect(test_(d).disabled).toBe(false);
 });
+
+// The saved-endpoint test posted to a route the broker never had.
+t('the saved-endpoint connection test is gone',async()=>{
+ const env=boot({noDialogs:true,oat:true,routes:QUIET});envs.push(env);await sleep(40);
+ expect(env.w.CFEndpointManager).toBeDefined();
+ expect(env.w.CFEndpointManager.testConnection).toBe(undefined);
+ const src=require('fs').readFileSync(require('path').join(__dirname,'../../ui/blacksmith.js'),'utf8');
+ expect(src).not.toContain('/test`');
+});

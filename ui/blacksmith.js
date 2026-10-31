@@ -23467,31 +23467,6 @@
     },
 
 
-    // Test connection to a CF endpoint
-    async testConnection(endpointName) {
-      try {
-        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/test`, {
-          method: 'POST'
-        });
-        const result = await response.json();
-
-        if (result.success) {
-          const details = [
-            'Connection test successful',
-            `Endpoint: ${result.endpoint}`,
-            `Duration: ${result.duration_ms}ms`,
-            `CF Version: ${result.cf_info?.version || 'Unknown'}`,
-            `CF Name: ${result.cf_info?.name || 'Unknown'}`
-          ].join('\n');
-          window.Feedback.success(details, { context: 'cf-endpoint', toast: true });
-        } else {
-          window.Feedback.error(`Connection test failed: ${result.error || 'Unknown error'}`, { context: 'cf-endpoint', toast: true });
-        }
-      } catch (error) {
-        window.Feedback.error(`Connection test failed: ${error.message}`, { context: 'cf-endpoint', toast: true });
-      }
-    },
-
     // Load organizations for services tab
     async loadOrganizations(endpointName, selection = {}) {
       const orgSelector = document.getElementById('org-selector');
