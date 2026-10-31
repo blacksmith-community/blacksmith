@@ -399,9 +399,13 @@ func TestUpgradeSavesTheFailureAndThePauseTogether(t *testing.T) {
 	director.failDeploy(101)
 
 	var (
-		mu    sync.Mutex
+		once  sync.Once
 		first []byte
 	)
+
+	// The pause shows in memory before the save that carries it runs, so
+	// the test waits for the save itself rather than for the pause.
+	firstSaved := make(chan struct{})
 
 	vault := newWaitVault()
 	vault.onPut = func(path string, raw []byte) {
@@ -414,12 +418,10 @@ func TestUpgradeSavesTheFailureAndThePauseTogether(t *testing.T) {
 			return
 		}
 
-		mu.Lock()
-		defer mu.Unlock()
-
-		if first == nil {
+		once.Do(func() {
 			first = raw
-		}
+			close(firstSaved)
+		})
 	}
 
 	manager := loadManager(t, director, vault)
@@ -435,13 +437,15 @@ func TestUpgradeSavesTheFailureAndThePauseTogether(t *testing.T) {
 
 	expectFailurePause(t, manager, task.ID, "instance-1")
 
-	mu.Lock()
-	raw := first
-	mu.Unlock()
+	select {
+	case <-firstSaved:
+	case <-time.After(waitTimeout):
+		t.Fatal("the failed instance was never saved")
+	}
 
 	var stored UpgradeTask
 
-	err = json.Unmarshal(raw, &stored)
+	err = json.Unmarshal(first, &stored)
 	if err != nil {
 		t.Fatalf("expected a save of the failed instance, got %v", err)
 	}
