@@ -594,9 +594,10 @@ func (m *Manager) pauseSaved(ctx context.Context, task *UpgradeTask, inst *Insta
 	return saveErr
 }
 
-// failRotation fails the instance with the message, releases what the
-// task no longer holds, saves the record as well as it can, and returns the
-// message as an error.
+// failRotation fails the instance with the message, holds a task that
+// pauses on a failure by its own choice, releases what the task no longer
+// holds, saves the record as well as it can, and returns the message as an
+// error.
 func (m *Manager) failRotation(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, message string) error {
 	now := m.certNow()
 
@@ -606,6 +607,7 @@ func (m *Manager) failRotation(ctx context.Context, task *UpgradeTask, inst *Ins
 		inst.Status = InstanceStatusFailed
 		inst.CompletedAt = &now
 		task.FailedCount++
+		m.holdCertificateForFailureLocked(task, inst)
 	}
 
 	inst.Error = message

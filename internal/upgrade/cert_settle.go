@@ -15,8 +15,9 @@ import (
 // listeners show the new certificates, which the rotation's runner
 // checks next. A task that ended in any other state fails the instance
 // with the note unappliedNoteLocked gives. A wait that returned no task
-// leaves the outcome unknown, so the instance waits for a decision. The
-// caller holds mu, and releases what the task no longer holds.
+// leaves the outcome unknown, so the instance waits for a decision. A
+// failure holds a task that pauses on one by its own choice. The caller
+// holds mu, and releases what the task no longer holds.
 func (m *Manager) settleCertificateDeployLocked(task *UpgradeTask, instance *InstanceUpgrade, taskID int, finished *bosh.Task) {
 	if finished == nil {
 		m.awaitDeployDecisionLocked(task, instance,
@@ -76,6 +77,7 @@ func (m *Manager) settleCertificateDeployLocked(task *UpgradeTask, instance *Ins
 	}
 
 	task.FailedCount++
+	m.holdCertificateForFailureLocked(task, instance)
 
 	m.logger.Error("Instance %s of %s: %s", instance.InstanceID, instance.DeploymentName, instance.Error)
 }

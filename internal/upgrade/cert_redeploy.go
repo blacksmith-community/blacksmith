@@ -1147,7 +1147,11 @@ func (m *Manager) awaitVerifyDecision(ctx context.Context, task *UpgradeTask, in
 // instances go on. A deploy already in flight goes on, and no pending
 // instance starts until a resume. The pause's reason names the failed
 // instance. A resume goes on with the remaining instances and never
-// retries the failed one, which is settled. It saves the pause.
+// retries the failed one, which is settled. It saves the pause. A
+// certificate task that carries its own choice was already held in the
+// change that failed the instance, as holdCertificateForFailureLocked
+// does, so this changes and saves nothing for it, and only a task saved
+// before tasks carried the choice pauses here, in a save of its own.
 func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
 	if !m.taskPausesOnFailure(task) {
 		return
@@ -1182,6 +1186,23 @@ func (m *Manager) holdUpgradeForFailureLocked(task *UpgradeTask, inst *InstanceU
 
 	if holdForFailureLocked(task, inst) {
 		m.logger.Info("Instance %s of upgrade %s ended %s, so the upgrade pauses before its remaining instances", inst.InstanceID, task.ID, inst.Status)
+	}
+}
+
+// holdCertificateForFailureLocked holds a certificate task that pauses on
+// a failure by its own choice once the instance failed, in the change that
+// fails the instance. The save that records the failure then records the
+// pause too, so a stop or a crash before a later save never leaves a
+// stored task that a restart carries on past the failure. A task saved
+// before tasks carried the choice follows the certificate settings, whose
+// read takes mu, so it is left to pauseAfterFailure. The caller holds mu.
+func (m *Manager) holdCertificateForFailureLocked(task *UpgradeTask, inst *InstanceUpgrade) {
+	if task.KindOrDefault() != TaskKindCertificates || task.PauseOnFailure == nil || !*task.PauseOnFailure || inst.Status != InstanceStatusFailed {
+		return
+	}
+
+	if holdForFailureLocked(task, inst) {
+		m.logger.Info("Instance %s of certificate task %s failed, so the task pauses before its remaining instances", inst.InstanceID, task.ID)
 	}
 }
 
@@ -1516,9 +1537,11 @@ func (m *Manager) settleCertificateInstance(task *UpgradeTask, inst *InstanceUpg
 // settleCertificateInstanceLocked records the outcome as
 // settleCertificateInstance describes, and returns the function that
 // starts the inventory's scan, which the caller runs once it lets go of
-// mu, and the instance's status. The caller holds mu.
+// mu, and the instance's status. A failure holds a task that pauses on
+// one by its own choice. The caller holds mu.
 func (m *Manager) settleCertificateInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade, ok bool, message string) (func(), InstanceStatus) {
 	settleOutcomeLocked(task, inst, ok, message, m.certNowLocked())
+	m.holdCertificateForFailureLocked(task, inst)
 
 	return m.endCertificateInstanceLocked(task, inst), inst.Status
 }
