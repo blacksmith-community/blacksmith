@@ -20130,8 +20130,10 @@
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary" onclick="hideCFEndpointForm()">Close</button>
-              <button type="button" class="btn btn-secondary" id="discard-endpoint-draft">Discard draft</button>
-              <button type="button" class="btn btn-primary" onclick="saveCFEndpoint()">${endpoint ? 'Update' : 'Add'} Endpoint</button>
+              <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" id="discard-endpoint-draft">Discard draft</button>
+                <button type="button" class="btn btn-primary" onclick="saveCFEndpoint()">${endpoint ? 'Update' : 'Add'} Endpoint</button>
+              </div>
             </div>
         </dialog>
       `;

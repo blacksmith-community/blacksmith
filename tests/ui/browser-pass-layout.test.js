@@ -47,3 +47,36 @@ test('the pause checkbox label is only as wide as its text',()=>{
  expect(b).toMatch(/width:\s*auto/);
  expect(b).toMatch(/flex:\s*0 1 auto/);
 });
+
+// Only #upgrade styled .btn-secondary, so every modal footer button read as
+// a filled primary button.
+test('.btn-secondary and .btn-success have global styles',()=>{
+ const sec=bodies('blacksmith.css','.btn-secondary');
+ expect(sec).toMatch(/background-color:\s*var\(--bg-hover\)/);
+ expect(sec).toMatch(/border:\s*1px solid var\(--border-primary\)/);
+ expect(sec).toMatch(/color:\s*var\(--text-primary\)/);
+ expect(bodies('blacksmith.css','.btn-secondary:hover')).toMatch(/background-color:\s*var\(--bg-secondary\)/);
+ const ok=bodies('blacksmith.css','.btn-success');
+ expect(ok).toMatch(/background-color:\s*var\(--primary\)/);
+ expect(ok).toMatch(/color:\s*var\(--primary-foreground\)/);
+});
+test('a modal footer groups its actions on the right',()=>{
+ expect(bodies('blacksmith.css','.modal-footer .modal-actions')).toMatch(/display:\s*flex/);
+});
+test('the registration footer dismisses on the left and groups its actions',()=>{
+ const html=read('index.html');
+ const footer=html.slice(html.indexOf('<div class="modal-footer">',html.indexOf('id="registration-modal"')));
+ const end=footer.slice(0,footer.indexOf('</dialog>'));
+ const ids=[...end.matchAll(/<button[^>]*id="([^"]+)"/g)].map((m)=>m[1]);
+ expect(ids).toEqual(['cancel-registration','test-connection-btn','save-registration-btn']);
+ expect(end).toMatch(/<div class="modal-actions">\s*<button[^>]*id="test-connection-btn"[\s\S]*id="save-registration-btn"[\s\S]*<\/div>\s*<\/div>/);
+ expect(end).toMatch(/class="btn btn-secondary" id="test-connection-btn"/);
+ expect(end).toMatch(/class="btn btn-success" id="save-registration-btn"/);
+ expect(end).toMatch(/class="btn btn-secondary" id="cancel-registration"/);
+});
+test('the endpoint footer dismisses on the left and groups its actions',()=>{
+ const js=read('blacksmith.js');
+ const i=js.indexOf('<div class="modal-footer">',js.indexOf('id="cf-endpoint-modal"'));
+ const footer=js.slice(i,js.indexOf('</dialog>',i));
+ expect(footer).toMatch(/Close<\/button>\s*<div class="modal-actions">\s*<button[^>]*id="discard-endpoint-draft">Discard draft<\/button>\s*<button[^>]*btn-primary[^>]*saveCFEndpoint/);
+});

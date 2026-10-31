@@ -7754,6 +7754,29 @@ body.terminal-minimized .tabs {
   text-decoration: underline;
 }
 
+.btn-secondary {
+  background-color: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-secondary);
+}
+
+.btn-success {
+  background-color: var(--primary);
+  border: 1px solid var(--primary);
+  color: var(--primary-foreground);
+}
+
+/* A modal footer puts the dismiss button on the left and its actions on the right. */
+.modal-footer .modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .btn-icon {
   padding: 0.375rem;
   min-width: auto;
