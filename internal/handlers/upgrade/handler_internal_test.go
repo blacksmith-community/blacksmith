@@ -518,3 +518,70 @@ func TestCreateHandlerSetsCreatedFromFromActor(t *testing.T) {
 		t.Fatalf("expected the actor's origin, got %v", answer)
 	}
 }
+
+// upgradeTasks is a taskManager that records each upgrade create request.
+type upgradeTasks struct {
+	taskManager
+
+	mu       sync.Mutex
+	requests []upgrade.CreateTaskRequest
+}
+
+func (u *upgradeTasks) CreateTask(_ context.Context, req upgrade.CreateTaskRequest) (*upgrade.UpgradeTask, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	u.requests = append(u.requests, req)
+
+	return &upgrade.UpgradeTask{ID: "task-1"}, nil
+}
+
+// The upgrade and certificate creates pass pause_on_failure on as the
+// body gives it, and leave it nil when the body leaves it out.
+func TestCreateHandlerPassesPauseOnFailure(t *testing.T) {
+	t.Parallel()
+
+	const upgradeBody = `{"instance_ids":["7a1b"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}`
+
+	for _, tc := range []struct {
+		name string
+		with string
+		want *bool
+	}{
+		{name: "left out"},
+		{name: "on", with: `,"pause_on_failure":true`, want: new(true)},
+		{name: "off", with: `,"pause_on_failure":false`, want: new(false)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			upgrades := &upgradeTasks{}
+			handler := &Handler{logger: logger.NewNoOpLogger(), tasks: upgrades}
+
+			status, answer := postCertificateTask(t, handler, upgradeBody+tc.with+"}")
+			if status != http.StatusOK || len(upgrades.requests) != 1 || !samePause(upgrades.requests[0].PauseOnFailure, tc.want) {
+				t.Fatalf("upgrade create: status %d, body %v, requests %+v", status, answer, upgrades.requests)
+			}
+
+			certs := &certTasks{}
+			handler = &Handler{logger: logger.NewNoOpLogger(), tasks: certs}
+
+			body := strings.Replace(certificateCreateBody, `"reason"`, strings.TrimPrefix(tc.with+`,"reason"`, ","), 1)
+
+			status, answer = postCertificateTask(t, handler, body)
+			if status != http.StatusCreated || len(certs.requests) != 1 || !samePause(certs.requests[0].PauseOnFailure, tc.want) {
+				t.Fatalf("certificate create: status %d, body %v, requests %+v", status, answer, certs.requests)
+			}
+		})
+	}
+}
+
+// samePause reports whether two pause_on_failure values are both left out
+// or both the same value.
+func samePause(got, want *bool) bool {
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+
+	return *got == *want
+}

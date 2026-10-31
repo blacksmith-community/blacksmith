@@ -284,7 +284,7 @@ Each node has one timeout for the command, which the operator sets per run. It d
 
 ### Failure
 
-When a node exits non-zero, is refused by the wrapper, times out, or loses its connection, the broker records the node as failed or as outcome unknown and starts no new node. Nodes already in flight run to their own end and are recorded. The remaining nodes of that deployment are marked skipped, and the instance is failed. The task then pauses rather than moving on, so the operator decides whether the next deployment should still get the command, and the "Continue remaining instances" control resumes it. A failed instance is never retried.
+When a node exits non-zero, is refused by the wrapper, times out, or loses its connection, the broker records the node as failed or as outcome unknown and starts no new node. Nodes already in flight run to their own end and are recorded. The remaining nodes of that deployment are marked skipped, and the instance is failed. The task then pauses rather than moving on, so the operator decides whether the next deployment should still get the command, and the "Continue remaining instances" control resumes it. A failed instance is never retried. Upgrade and certificate jobs let the operator choose whether a failure pauses them, but a command job has no such option, and the options step says that it always pauses.
 
 A node whose processes outlive KILL pauses the task and keeps its instance held, and the run never moves past that instance while the survivors live. A resume that the operator presses while other nodes of the deployment are still in flight is honored once they finish. The task then runs `cleanup` on the survivors again before it does anything else, as Resume cleanup does, so it pauses again while they live and goes on to the next deployment only once that check finds them gone. In the last deployment there is no next one, so the task ends failed and the survivors' instance stays held.
 
@@ -345,7 +345,7 @@ All routes sit under `/b/upgrade` and take the broker's basic auth. A command ke
 | Route | Purpose |
 |-------|---------|
 | `POST /b/upgrade/commands/preview` | Takes `instance_ids`, `command`, `run_as`, `timeout_seconds`, `parallel`, and `max_in_flight`, and an optional `client_request_id` of at most 128 bytes. That ID binds the preview for a discard only, so only a discard that names the same request can revoke it, and the create does not check it. Answers with a `preview_id` that expires. |
-| `POST /b/upgrade/tasks` | With `kind` set to `command`, takes `preview_id`, `client_request_id`, `command`, `run_as`, `timeout_seconds`, `parallel`, `max_in_flight`, `name`, and `reason`. |
+| `POST /b/upgrade/tasks` | With `kind` set to `command`, takes `preview_id`, `client_request_id`, `command`, `run_as`, `timeout_seconds`, `parallel`, `max_in_flight`, `name`, and `reason`. A body that also sends `pause_on_failure` answers 400 `invalid_request`, because a command task always pauses after a failure. |
 | `POST /b/upgrade/commands/discard` | Takes `client_request_id` and `preview_id`, applies the commands switch, and needs no command key. Answers 200 with `{"discarded": true}` after it revokes the preview, or with `{"discarded": false, "task_id": "..."}` when a task already exists for the request. A preview bound to a different `client_request_id` is left in place, and the discard answers 409 `preview_bound`. |
 | `GET /b/upgrade/tasks/{id}/output?vm=<group>-<index>&instance=<instance-id>` | Answers with what one node printed. |
 

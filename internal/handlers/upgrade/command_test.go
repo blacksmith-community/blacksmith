@@ -440,6 +440,30 @@ func TestCreateCommandRouteAuthorizesBeforeSpendingPreview(t *testing.T) {
 	expectCode(t, send(t, off.handler, http.MethodPost, "/b/upgrade/tasks", createBody("p-1", "vcap"), ""), http.StatusForbidden, apierr.CodeCommandsDisabled)
 }
 
+// A command task always pauses after a failure, so a create that sends
+// pause_on_failure is refused, and the refusal leaves the preview unspent.
+func TestCreateCommandRouteRefusesPauseOnFailure(t *testing.T) {
+	t.Parallel()
+
+	env := commandHandler(t, commandsOn("", false))
+	id := previewID(t, env.handler, "vcap", "")
+
+	for _, pause := range []string{"true", "false"} {
+		body := strings.Replace(createBody(id, "vcap"), `"name"`, `"pause_on_failure":`+pause+`,"name"`, 1)
+
+		refused := send(t, env.handler, http.MethodPost, "/b/upgrade/tasks", body, "")
+		expectCode(t, refused, http.StatusBadRequest, apierr.CodeInvalidRequest)
+
+		if !strings.Contains(refused.Body.String(), "always pauses") {
+			t.Fatalf("expected the refusal to say a command task always pauses, got %s", refused.Body.String())
+		}
+	}
+
+	if created := send(t, env.handler, http.MethodPost, "/b/upgrade/tasks", createBody(id, "vcap"), ""); created.Code != http.StatusCreated {
+		t.Fatalf("expected the preview to be unspent and the create to answer 201, got %d", created.Code)
+	}
+}
+
 func TestCanHandleCommandPaths(t *testing.T) {
 	t.Parallel()
 

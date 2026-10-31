@@ -320,6 +320,24 @@ forges:
 - `GET /b/vm-status` - VM health monitoring
 - `POST /b/vm-refresh` - Trigger health check
 
+### Batch Operations API
+
+Batch Operations creates every job through `POST /b/upgrade/tasks`, and the body's `kind` picks the job. A body with no `kind` creates an upgrade, `certificates` creates a certificate job, and `command` creates a Run command job, which [Run Command](run-command.md#http-api) describes.
+
+| Kind | Body |
+|------|------|
+| Upgrade | Takes `instance_ids`, `target_stemcell`, `target_releases`, an optional `upgrade_preview_id`, and an optional boolean `pause_on_failure`. |
+| `certificates` | Takes `preview_id`, `client_request_id`, `name`, `reason`, and an optional boolean `pause_on_failure`. |
+| `command` | Takes the fields in [Run Command](run-command.md#http-api). It refuses `pause_on_failure` with 400 `invalid_request`, because a command job always pauses after a failure. |
+
+The value of `pause_on_failure` applies to the job it creates and never changes a broker-wide setting. An upgrade that leaves it out doesn't pause, as upgrades never did before the option existed. A certificate job that leaves it out takes the `pause_on_failure` of the certificate settings (`GET /b/certificates/settings`) as it stands when the job is created, so a later change to the settings leaves the job as it was. A certificate create that repeats a `client_request_id` with a different `pause_on_failure` is a different request and answers 409 `request_id_conflict`.
+
+The task that the create returns, and every later read of it, carries `pause_on_failure` as the job runs with it. A job stored by a broker from before the option existed has no `pause_on_failure`, and it behaves as it always did. Such an upgrade never pauses, and such a certificate job follows the certificate settings as they stand when its instance fails.
+
+#### Pausing After a Failure
+
+When an instance of a job that pauses on a failure fails while another instance is still pending, the job pauses before it starts anything more. A deploy that is already in flight, such as one the broker picked up again after a restart, runs to its own end and is recorded. The paused task carries a `pause_reason` that names the failed instance, and the task detail shows it. The "Continue remaining instances" control resumes the job with the instances that haven't run, and it never retries the failed one. Pause, Resume, and Cancel otherwise work as they do for any job, and a resume or a cancel clears `pause_reason`. A job whose last instance fails has nothing left to protect, so it finishes rather than pausing.
+
 ### CF Registration API
 - `GET /api/cf/registrations` - List CF registrations
 - `POST /api/cf/registrations` - Create CF registration
