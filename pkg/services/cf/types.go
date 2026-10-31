@@ -134,7 +134,6 @@ const (
 	StatusConnecting = "connecting"
 	StatusRegistered = "registered"
 	StatusFailed     = "failed"
-	StatusSyncing    = "syncing"
 	StatusUnknown    = "unknown"
 )
 
