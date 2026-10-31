@@ -94,3 +94,7 @@ test('the Logs info button is an outlined circle like the guidance buttons',()=>
  expect(b).toMatch(/margin-left:\s*auto/);
  expect(bodies('forge-theme.css','.log-info-toggle:hover')).toMatch(/background:\s*var\(--secondary\)/);
 });
+
+test('the footer carries the current copyright year',()=>{
+ expect(read('index.html')).toContain('Copyright &copy; 2026 Blacksmith Community');
+});
