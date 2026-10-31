@@ -1152,7 +1152,7 @@ func (m *Manager) resumeAfterDecision(ctx context.Context, task *UpgradeTask, fa
 		}
 	}
 
-	holdForFailure := failed && m.pausesOnFailure()
+	holdForFailure := failed && m.taskPausesOnFailure(task)
 
 	m.mu.Lock()
 
@@ -1164,6 +1164,7 @@ func (m *Manager) resumeAfterDecision(ctx context.Context, task *UpgradeTask, fa
 	}
 
 	task.Paused = false
+	task.PauseReason = ""
 	task.Status = TaskStatusRunning
 	clearNeverStartedLocked(task)
 	m.noteResumeLocked(task)
@@ -1179,6 +1180,20 @@ func (m *Manager) resumeAfterDecision(ctx context.Context, task *UpgradeTask, fa
 
 	m.signalTask(task.ID)
 	m.resumeIfReady(task) //nolint:contextcheck // the resume outlives the request, so it runs under the manager's context
+}
+
+// taskPausesOnFailure reports whether a failed instance pauses the task.
+// A task that carries the choice follows it. One saved before tasks
+// carried it pauses when it is a certificate task and the certificate
+// settings say so, and an upgrade of that age never does. PauseOnFailure
+// is set before the task is shared and never changes, so it is read
+// without the lock.
+func (m *Manager) taskPausesOnFailure(task *UpgradeTask) bool {
+	if task.PauseOnFailure != nil {
+		return *task.PauseOnFailure
+	}
+
+	return task.KindOrDefault() == TaskKindCertificates && m.pausesOnFailure()
 }
 
 // pausesOnFailure reads pause_on_failure, which is on unless the

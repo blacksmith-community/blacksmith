@@ -568,6 +568,9 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		CompletedCount: 0,
 		FailedCount:    0,
 		CreatedAt:      time.Now(),
+		// An upgrade that doesn't ask to pause on a failure goes on past
+		// one, as upgrades always have.
+		PauseOnFailure: new(req.PauseOnFailure != nil && *req.PauseOnFailure),
 	}
 	stampActor(ctx, task)
 
@@ -1569,6 +1572,7 @@ func (m *Manager) ResumeTaskGated(ctx context.Context, taskID string, gate func(
 	// that skipped the gate stays a cleanup and never sends.
 	task.CleanupOnly = cleansOnly
 	task.Paused = false
+	task.PauseReason = ""
 	task.Status = TaskStatusRunning
 
 	if task.KindOrDefault() == TaskKindCertificates {
@@ -1654,6 +1658,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	task.CompletedAt = &completedAt
 
 	task.CleanupOnly = false
+	task.PauseReason = ""
 
 	rewordHeldCommandsLocked(task)
 	m.forgetStrandCausesLocked(task)
@@ -2164,6 +2169,12 @@ func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		m.logger.Info("Manager stopping during task %s, so its remaining instances stay pending", task.ID)
 
 		return false
+	}
+
+	// The next instance's pause wait holds the upgrade when this failure
+	// paused it.
+	if m.instanceFailed(instance) {
+		m.pauseAfterFailure(context.WithoutCancel(m.ctx), task, instance)
 	}
 
 	return true
@@ -3028,11 +3039,11 @@ func (m *Manager) settleLoadedDeploy(deploy loadedDeploy) {
 
 	failedBefore := m.instanceFailed(deploy.instance)
 
-	// A certificate instance whose settle fails it pauses the task as a
-	// failure its processor records does, before endSettling moves the
-	// task on.
+	// An instance whose settle fails it pauses a task that pauses on a
+	// failure, as a failure its processor records does, before endSettling
+	// moves the task on. The task's other deploys still settle.
 	defer func() {
-		if !failedBefore && m.instanceFailed(deploy.instance) && deploy.task.KindOrDefault() == TaskKindCertificates {
+		if !failedBefore && m.instanceFailed(deploy.instance) {
 			m.pauseAfterFailure(context.WithoutCancel(m.ctx), deploy.task, deploy.instance)
 		}
 	}()
@@ -3268,6 +3279,10 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 	copied.CompletedAt = copyTime(task.CompletedAt)
 	copied.Certificates = task.Certificates.Clone()
 	copied.Command = task.Command.clone()
+
+	if task.PauseOnFailure != nil {
+		copied.PauseOnFailure = new(*task.PauseOnFailure)
+	}
 
 	if task.Instances != nil {
 		copied.Instances = make([]InstanceUpgrade, len(task.Instances))

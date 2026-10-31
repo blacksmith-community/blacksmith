@@ -156,6 +156,16 @@ type UpgradeTask struct {
 	// save was confirmed. The loader fails a certificate task without it,
 	// since its create never finished.
 	CreationConfirmed bool `json:"creation_confirmed,omitempty"`
+	// PauseOnFailure is whether the task pauses once an instance fails
+	// while another is still pending. A new upgrade or certificate task
+	// always carries it. It is nil on a task saved before tasks carried
+	// it, and then an upgrade never pauses and a certificate task follows
+	// the broker's certificate settings. A command task leaves it nil,
+	// because it always pauses.
+	PauseOnFailure *bool `json:"pause_on_failure,omitempty"`
+	// PauseReason says why the task paused after a failure and names the
+	// failed instance. A resume or a cancel clears it.
+	PauseReason string `json:"pause_reason,omitempty"`
 	// CleanupOnly is true on a command task whose last resume was a Resume
 	// cleanup, which runs cleanup on the nodes that hold something and
 	// sends no command, so it needs no second credential. The task pauses
@@ -199,6 +209,10 @@ type CreateTaskRequest struct {
 	// An upgrade that includes an instance with a divergence record needs
 	// one, and any other upgrade ignores it.
 	UpgradePreviewID string `json:"upgrade_preview_id,omitempty"`
+	// PauseOnFailure pauses the upgrade once an instance fails, before
+	// its next instance starts. An upgrade that leaves it out never
+	// pauses on a failure.
+	PauseOnFailure *bool `json:"pause_on_failure,omitempty"`
 }
 
 // DescribeTargets names the request's targets for the log. A request that

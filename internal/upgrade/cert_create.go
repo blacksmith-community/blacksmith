@@ -35,6 +35,11 @@ type CreateCertificateTaskRequest struct {
 	ClientRequestID string `json:"client_request_id"`
 	Name            string `json:"name"`
 	Reason          string `json:"reason"`
+	// PauseOnFailure pauses the task once an instance fails, before its
+	// next instance starts. A request that leaves it out takes the
+	// certificate settings' pause_on_failure as it stands now, and the
+	// value given never changes those settings.
+	PauseOnFailure *bool `json:"pause_on_failure,omitempty"`
 }
 
 // certNow reads the configured clock, or the system clock on a manager
@@ -243,6 +248,8 @@ func (m *Manager) createPreview(previewID string) (*Preview, error) {
 // newCertificateTask builds a pending task with one instance for each
 // instance of the preview that is not blocked. Each instance copies the
 // effects the preview bound for it, so the approval outlives the preview.
+// The task pauses on a failure as the request asks, or as the
+// certificate settings say now when the request doesn't.
 func (m *Manager) newCertificateTask(req CreateCertificateTaskRequest, digest string, preview *Preview) *UpgradeTask {
 	instances := make([]InstanceUpgrade, 0, len(preview.Instances))
 
@@ -278,11 +285,17 @@ func (m *Manager) newCertificateTask(req CreateCertificateTaskRequest, digest st
 		})
 	}
 
+	pause := m.pausesOnFailure()
+	if req.PauseOnFailure != nil {
+		pause = *req.PauseOnFailure
+	}
+
 	return &UpgradeTask{
-		ID:     uuid.New().String(),
-		Name:   req.Name,
-		Kind:   TaskKindCertificates,
-		Status: TaskStatusPending,
+		ID:             uuid.New().String(),
+		Name:           req.Name,
+		Kind:           TaskKindCertificates,
+		Status:         TaskStatusPending,
+		PauseOnFailure: new(pause),
 		Certificates: &CertificateTaskSpec{
 			Mode:      preview.mode,
 			Converge:  preview.converge,

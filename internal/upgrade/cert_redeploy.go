@@ -1141,13 +1141,15 @@ func (m *Manager) awaitVerifyDecision(ctx context.Context, task *UpgradeTask, in
 	}
 }
 
-// pauseAfterFailure pauses a running certificate task once one of its
-// instances failed, when pause_on_failure is on and an instance is still
-// pending, so the operator decides whether the remaining instances go on.
-// A resume goes on with them and never retries the failed one, which is
-// settled. It saves the pause.
+// pauseAfterFailure pauses a running upgrade or certificate task once one
+// of its instances failed, when the task pauses on a failure and an
+// instance is still pending, so the operator decides whether the remaining
+// instances go on. A deploy already in flight goes on, and no pending
+// instance starts until a resume. The pause's reason names the failed
+// instance. A resume goes on with the remaining instances and never
+// retries the failed one, which is settled. It saves the pause.
 func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
-	if !m.pausesOnFailure() {
+	if !m.taskPausesOnFailure(task) {
 		return
 	}
 
@@ -1157,6 +1159,7 @@ func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst
 	if pause {
 		task.Paused = true
 		task.Status = TaskStatusPaused
+		task.PauseReason = failurePauseReason(inst)
 	}
 
 	m.mu.Unlock()
@@ -1165,12 +1168,25 @@ func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst
 		return
 	}
 
-	m.logger.Info("Instance %s of certificate task %s failed, so the task pauses before its remaining instances", inst.InstanceID, task.ID)
+	m.logger.Info("Instance %s of task %s failed, so the task pauses before its remaining instances", inst.InstanceID, task.ID)
 
 	err := m.persistTask(ctx, task)
 	if err != nil {
-		m.logger.Error("Failed to save certificate task %s paused after a failure: %v", task.ID, err)
+		m.logger.Error("Failed to save task %s paused after a failure: %v", task.ID, err)
 	}
+}
+
+// failurePauseReason is the reason a task that paused after the
+// instance's failure shows, naming the instance by its name when it has
+// one.
+func failurePauseReason(inst *InstanceUpgrade) string {
+	name := inst.InstanceID
+	if inst.InstanceName != "" {
+		name = fmt.Sprintf("%s (%s)", inst.InstanceName, inst.InstanceID)
+	}
+
+	return fmt.Sprintf("Instance %s failed, so the job paused before its remaining instances. "+
+		"Continue remaining instances moves on to them without retrying %s.", name, inst.InstanceID)
 }
 
 // certResumeAllowed refuses the resume of a paused certificate task while
