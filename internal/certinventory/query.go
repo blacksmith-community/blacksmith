@@ -332,9 +332,12 @@ func (c Capabilities) rotationState() (bool, string) {
 }
 
 // ThresholdsView is the part of the settings an inventory response repeats.
+// PauseOnFailure is the default a new certificate job's pause_on_failure
+// takes.
 type ThresholdsView struct {
-	WarningDays  int `json:"warning_days"`
-	CriticalDays int `json:"critical_days"`
+	WarningDays    int  `json:"warning_days"`
+	CriticalDays   int  `json:"critical_days"`
+	PauseOnFailure bool `json:"pause_on_failure"`
 }
 
 // InventoryResponse is the body of GET /b/certificates/inventory.
@@ -360,7 +363,7 @@ func BuildResponse(f *Fleet, filter Filter, s Settings, caps Capabilities, state
 		GeneratedAt:  now,
 		Scan:         state,
 		Capabilities: caps.View(),
-		Settings:     ThresholdsView{WarningDays: s.WarningDays, CriticalDays: s.CriticalDays},
+		Settings:     ThresholdsView{WarningDays: s.WarningDays, CriticalDays: s.CriticalDays, PauseOnFailure: s.PauseOnFailure},
 		Certificates: []Certificate{},
 	}
 

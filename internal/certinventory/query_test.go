@@ -327,8 +327,17 @@ func TestResponseJSONShape(t *testing.T) {
 		t.Errorf("patch block %v", p)
 	}
 
-	if s := asMap(t, got["settings"]); s["warning_days"] != float64(30) || s["critical_days"] != float64(7) {
+	if s := asMap(t, got["settings"]); s["warning_days"] != float64(30) || s["critical_days"] != float64(7) || s["pause_on_failure"] != true {
 		t.Errorf("settings block %v", s)
+	}
+
+	// The settings block repeats pause_on_failure as it stands, so the
+	// batch flow starts its checkbox from it.
+	off := DefaultSettings()
+	off.PauseOnFailure = false
+
+	if resp := BuildResponse(nil, Filter{}, off, caps, ScanState{State: ScanIdle}, fleetNow); resp.Settings.PauseOnFailure {
+		t.Errorf("settings block %+v, want pause_on_failure off", resp.Settings)
 	}
 }
 
