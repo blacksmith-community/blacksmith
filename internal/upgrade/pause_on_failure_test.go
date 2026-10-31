@@ -3,14 +3,17 @@ package upgrade
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 )
 
@@ -384,4 +387,302 @@ func savedTask(t *testing.T, manager *Manager, taskID string) UpgradeTask {
 	}
 
 	return saved
+}
+
+// The save that records an upgrade's failed instance records the pause
+// with it, so a restart from that save, as after a stop or a crash before
+// any later save, starts no other instance.
+//
+//nolint:paralleltest // the upgrade waits on a shared test director
+func TestUpgradeSavesTheFailureAndThePauseTogether(t *testing.T) {
+	director := newResumeDirector()
+	director.failDeploy(101)
+
+	var (
+		mu    sync.Mutex
+		first []byte
+	)
+
+	vault := newWaitVault()
+	vault.onPut = func(path string, raw []byte) {
+		if !strings.HasPrefix(path, upgradeTasksVaultPath+"/") {
+			return
+		}
+
+		var saved UpgradeTask
+		if json.Unmarshal(raw, &saved) != nil || len(saved.Instances) == 0 || saved.Instances[0].Status != InstanceStatusFailed {
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		if first == nil {
+			first = raw
+		}
+	}
+
+	manager := loadManager(t, director, vault)
+
+	task, err := manager.CreateTask(context.Background(), CreateTaskRequest{
+		InstanceIDs:    []string{"instance-1", "instance-2"},
+		TargetStemcell: StemcellTarget{OS: targetStemcellOS, Version: targetStemcellVersion},
+		PauseOnFailure: new(true),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	expectFailurePause(t, manager, task.ID, "instance-1")
+
+	mu.Lock()
+	raw := first
+	mu.Unlock()
+
+	var stored UpgradeTask
+
+	err = json.Unmarshal(raw, &stored)
+	if err != nil {
+		t.Fatalf("expected a save of the failed instance, got %v", err)
+	}
+
+	if stored.Status != TaskStatusPaused || !stored.Paused || !strings.Contains(stored.PauseReason, "instance-1") {
+		t.Fatalf("expected the save of the failure to carry the pause, got %s paused %v with reason %q", stored.Status, stored.Paused, stored.PauseReason)
+	}
+
+	restarted := newResumeDirector()
+	restartVault := newWaitVault()
+	storeUpgrade(t, restartVault, stored)
+
+	again := loadManager(t, restarted, restartVault)
+
+	expectQuiet(t, again, restarted, task.ID, TaskStatusPaused, "redis-instance-2")
+}
+
+// An upgrade that pauses on a failure pauses when an instance's deploy
+// outcome is unknown too, with a reason that says so, and Resume goes on
+// with the rest.
+//
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeOutcomeUnknownPausesWhenAsked(t *testing.T) {
+	director := newLostDirector()
+	director.abandonWaits = 1
+
+	manager := loadManager(t, director, newWaitVault())
+
+	task, err := manager.CreateTask(context.Background(), CreateTaskRequest{
+		InstanceIDs:    []string{waitInstanceID, secondInstanceID},
+		TargetStemcell: StemcellTarget{OS: "ubuntu-noble", Version: "1.2"},
+		PauseOnFailure: new(true),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	paused := expectFailurePause(t, manager, task.ID, waitInstanceID)
+
+	if !strings.Contains(paused.PauseReason, "unknown") {
+		t.Fatalf("expected the reason to say the outcome is unknown, got %q", paused.PauseReason)
+	}
+
+	if paused.Instances[0].Status != InstanceStatusOutcomeUnknown || paused.Instances[1].Status != InstanceStatusPending {
+		t.Fatalf("expected an unknown outcome and a pending instance, got %+v", paused.Instances)
+	}
+
+	if saved := savedTask(t, manager, task.ID); saved.Status != TaskStatusPaused || saved.PauseReason != paused.PauseReason {
+		t.Fatalf("expected the pause and its reason saved, got %+v", saved)
+	}
+
+	time.Sleep(quietPeriod)
+
+	if sent := director.contextIDs(); len(sent) != 1 {
+		t.Fatalf("expected one deploy before the pause, got %q", sent)
+	}
+
+	err = manager.ResumeTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	waitForTheDeployWait(t, director.waitDirector)
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskDone}
+
+	done := expectCompleted(t, manager, task.ID)
+
+	if done.PauseReason != "" || done.Instances[1].Status != InstanceStatusSuccess {
+		t.Fatalf("expected the second instance deployed and the reason cleared, got %+v", done)
+	}
+}
+
+// An upgrade an operator paused while a deploy ran takes the failure's
+// reason when that deploy fails, so the detail says why it waits.
+//
+//nolint:paralleltest // the upgrade waits on a shared test director
+func TestUpgradePausedByHandTakesTheFailureReason(t *testing.T) {
+	director := newResumeDirector()
+	director.failDeploy(101)
+	director.holdTask(101)
+
+	manager, task := createUpgrade(t, director, new(true), "instance-1", "instance-2")
+
+	waitUntil(t, "the first deploy", func() bool { return director.deployCount("redis-instance-1") == 1 })
+
+	err := manager.PauseTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("PauseTask: %v", err)
+	}
+
+	director.release(101)
+
+	held := eventuallyWithin(t, manager, task.ID, waitTimeout, "the failure's reason", func(current UpgradeTask) bool {
+		return current.Instances[0].Status == InstanceStatusFailed && current.PauseReason != ""
+	})
+
+	if held.Status != TaskStatusPaused || !strings.Contains(held.PauseReason, "instance-1") {
+		t.Fatalf("expected the paused upgrade to name instance-1, got %s with %q", held.Status, held.PauseReason)
+	}
+
+	expectQuiet(t, manager, director, task.ID, TaskStatusPaused, "redis-instance-2")
+}
+
+// withPending appends a pending instance on its own deployment to the
+// certificate task.
+func (e *redeployEnv) withPending(task UpgradeTask, instanceID string) UpgradeTask {
+	next := e.task().Instances[0]
+	next.InstanceID = instanceID
+	next.DeploymentName = "redis-" + instanceID
+
+	task.Instances = append(task.Instances, next)
+	task.TotalCount = len(task.Instances)
+
+	return task
+}
+
+// withFailedFirst puts a failed instance ahead of the certificate task's
+// others, and the reason it paused the task with.
+func (e *redeployEnv) withFailedFirst(task UpgradeTask) UpgradeTask {
+	completed := validateNow
+	failed := e.task().Instances[0]
+	failed.InstanceID = "instance-0"
+	failed.DeploymentName = "redis-instance-0"
+	failed.Status = InstanceStatusFailed
+	failed.Error = "The deploy failed."
+	failed.CompletedAt = &completed
+	failed.Certificates.Phase = RotationPhaseDone
+
+	task.Instances = append([]InstanceUpgrade{failed}, task.Instances...)
+	task.TotalCount = len(task.Instances)
+	task.FailedCount++
+	task.PauseReason = failurePauseReason(&failed)
+
+	return task
+}
+
+// A decision that fails an instance pauses the task with a reason that
+// names it, in the same save as the decision.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestFailedDecisionNamesTheFailedInstance(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stored func(*redeployEnv) UpgradeTask
+		decide func(*Manager) error
+	}{
+		{
+			name:   "resolve failed",
+			stored: (*redeployEnv).awaitingOutcome,
+			decide: func(manager *Manager) error {
+				return manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "failed"})
+			},
+		},
+		{
+			name: "abandon the regeneration",
+			stored: func(env *redeployEnv) UpgradeTask {
+				env.madeNewVersion()
+
+				return env.awaitingReconcile(nil)
+			},
+			decide: func(manager *Manager) error {
+				return manager.ReconcileRegeneration(context.Background(), certTaskID, waitInstanceID, ReconcileRequest{Variable: regenLeaf, Action: "abandon"})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			manager := env.load(env.withPending(tc.stored(env), "instance-2"))
+
+			err := tc.decide(manager)
+			if err != nil {
+				t.Fatalf("the decision: %v", err)
+			}
+
+			task := current(t, manager)
+			if task.Status != TaskStatusPaused || task.Instances[0].Status != InstanceStatusFailed || task.Instances[1].Status != InstanceStatusPending {
+				t.Fatalf("expected a paused task with a failed and a pending instance, got %s with %+v", task.Status, task.Instances)
+			}
+
+			if !strings.Contains(task.PauseReason, waitInstanceID) {
+				t.Fatalf("expected a reason naming %s, got %q", waitInstanceID, task.PauseReason)
+			}
+
+			if saved := env.stored(); saved.PauseReason != task.PauseReason || saved.Instances[0].Status != InstanceStatusFailed {
+				t.Fatalf("expected the reason saved with the decision, got %q with %s", saved.PauseReason, saved.Instances[0].Status)
+			}
+		})
+	}
+}
+
+// A task paused after a failure stays paused when a later decision settles
+// another instance well, so its pending instance waits for Continue.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestFailurePauseOutlastsALaterDecision(t *testing.T) {
+	env := newRedeployEnv(t)
+	stored := env.withPending(env.withFailedFirst(env.awaitingOutcome()), "instance-2")
+	manager := env.load(stored)
+
+	err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "verify"})
+	if err != nil {
+		t.Fatalf("ResolveDeployOutcome: %v", err)
+	}
+
+	time.Sleep(quietPeriod)
+
+	task := current(t, manager)
+	if task.Instances[1].Status != InstanceStatusSuccess || task.Instances[2].Status != InstanceStatusPending {
+		t.Fatalf("expected the verified instance and a pending one, got %+v", task.Instances)
+	}
+
+	if task.Status != TaskStatusPaused || task.PauseReason != stored.PauseReason {
+		t.Fatalf("expected the task to stay paused for instance-0, got %s with %q", task.Status, task.PauseReason)
+	}
+
+	if deploys := env.director.deploys(); len(deploys) != 0 {
+		t.Fatalf("expected no deploy, got %d", len(deploys))
+	}
+}
+
+// A decision that lets a task go on clears a failure's reason once no
+// instance is left for it to hold.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestDecisionResumeClearsAnIdleFailureReason(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.load(env.withFailedFirst(env.awaitingOutcome()))
+
+	err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "verify"})
+	if err != nil {
+		t.Fatalf("ResolveDeployOutcome: %v", err)
+	}
+
+	waitUntil(t, "the task to finish", func() bool { return current(t, manager).Status != TaskStatusPaused })
+
+	if task := current(t, manager); task.PauseReason != "" {
+		t.Fatalf("expected the reason cleared, got %s with %q", task.Status, task.PauseReason)
+	}
+
+	if saved := env.stored(); saved.PauseReason != "" {
+		t.Fatalf("expected the cleared reason saved, got %q", saved.PauseReason)
+	}
 }

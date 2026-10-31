@@ -279,6 +279,9 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 		return err
 	}
 
+	// The settings are read before mu, which their read takes too.
+	settingsPause := m.pausesOnFailure()
+
 	m.mu.Lock()
 
 	task, inst, replayed, err := m.awaitedLocked(taskID, instanceID, DecisionReconcileRegeneration, req.ClientRequestID, digest)
@@ -298,6 +301,7 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 
 		err = m.applyConfirmedLocked(ctx, task, inst, func(task *UpgradeTask, inst *InstanceUpgrade) {
 			abandonRegenerationLocked(task, inst, now)
+			holdDecidedFailureLocked(task, inst, settingsPause)
 			recordDecisionLocked(inst, req.ClientRequestID, digest, decision)
 		})
 		if err != nil {
@@ -474,6 +478,9 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 		return err
 	}
 
+	// The settings are read before mu, which their read takes too.
+	settingsPause := m.pausesOnFailure()
+
 	m.mu.Lock()
 
 	task, inst, replayed, err := m.awaitedLocked(taskID, instanceID, DecisionResolveDeployOutcome, req.ClientRequestID, digest)
@@ -550,6 +557,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 			abandonOutcomeLocked(task, inst, now)
 		} else {
 			settleOutcomeLocked(task, inst, ok, message, now)
+			holdDecidedFailureLocked(task, inst, settingsPause)
 		}
 
 		recordDecisionLocked(inst, req.ClientRequestID, digest, decision)
@@ -1134,7 +1142,11 @@ func (m *Manager) saveDecision(ctx context.Context, task *UpgradeTask, failed bo
 // instance of it waits for one. A task that still has an instance to run
 // stays paused while the switches refuse its writes, and so does one whose
 // decision failed an instance while pause_on_failure is on and an instance
-// is still pending, since a failed instance pauses the task.
+// is still pending, since a failed instance pauses the task. A task paused
+// after a failure stays paused while an instance is pending, whatever the
+// decision, so only Continue moves it on. A failure's reason with nothing
+// pending left to hold no longer says why the task waits, so a resume
+// clears it.
 func (m *Manager) resumeAfterDecision(ctx context.Context, task *UpgradeTask, failed bool) {
 	m.mu.RLock()
 
@@ -1157,7 +1169,7 @@ func (m *Manager) resumeAfterDecision(ctx context.Context, task *UpgradeTask, fa
 	m.mu.Lock()
 
 	if task.Status != TaskStatusPaused || !task.Paused || anyWaitsLocked(task) ||
-		(holdForFailure && anyPendingLocked(task)) {
+		((holdForFailure || task.PauseReason != "") && anyPendingLocked(task)) {
 		m.mu.Unlock()
 
 		return
@@ -1180,6 +1192,23 @@ func (m *Manager) resumeAfterDecision(ctx context.Context, task *UpgradeTask, fa
 
 	m.signalTask(task.ID)
 	m.resumeIfReady(task) //nolint:contextcheck // the resume outlives the request, so it runs under the manager's context
+}
+
+// holdDecidedFailureLocked gives a task the reason of its pause when the
+// decision just failed the instance, the task pauses on a failure, and an
+// instance is still pending, so the save of the decision carries the
+// reason. settingsPause is the certificate settings' pause_on_failure,
+// which a task saved before tasks carried the choice follows. The caller
+// holds mu.
+func holdDecidedFailureLocked(task *UpgradeTask, inst *InstanceUpgrade, settingsPause bool) {
+	pauses := task.KindOrDefault() == TaskKindCertificates && settingsPause
+	if task.PauseOnFailure != nil {
+		pauses = *task.PauseOnFailure
+	}
+
+	if pauses && inst.Status == InstanceStatusFailed {
+		holdForFailureLocked(task, inst)
+	}
 }
 
 // taskPausesOnFailure reports whether a failed instance pauses the task.

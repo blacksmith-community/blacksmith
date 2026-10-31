@@ -796,6 +796,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = "deployment name is missing"
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, instance)
 		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 		m.logger.Error("Instance %s has no deployment name", instance.InstanceID)
@@ -817,6 +818,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("failed to get deployment: %v", err)
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, instance)
 		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 		m.logger.Error("Failed to get deployment %s: %v", instance.DeploymentName, err)
@@ -829,6 +831,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		instance.Status = InstanceStatusFailed
 		instance.Error = "deployment returned nil without error"
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, instance)
 		m.releaseUnheldLocked(task)
 		m.mu.Unlock()
 		m.logger.Error("Deployment %s returned nil without error", instance.DeploymentName)
@@ -1016,6 +1019,7 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("stopped waiting for BOSH task %d, which may still be running: %v", taskID, err)
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, instance)
 		m.releaseUnheldLocked(task)
 		m.logger.Error("Stopped waiting for BOSH task %d of %s: %v", taskID, instance.DeploymentName, err)
 		m.mu.Unlock()
@@ -1184,6 +1188,7 @@ func (m *Manager) settleLostAnswer(task *UpgradeTask, instance *InstanceUpgrade,
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("no BOSH task with context ID %s turned up within %v after the deploy's answer was lost", contextID, bosh.UnknownOutcomeGrace)
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, instance)
 		m.releaseUnheldLocked(task)
 
 		m.logger.Error("Instance %s: %s: %v", instance.InstanceID, instance.Error, err)
@@ -1197,7 +1202,8 @@ func (m *Manager) settleLostAnswer(task *UpgradeTask, instance *InstanceUpgrade,
 // settleOutcomeUnknown records that Blacksmith stopped following the
 // instance's deploy before its outcome was known. The instance counts as
 // finished, so the upgrade moves on, and it neither fails the upgrade nor
-// counts as a success. taskID is the BOSH task that was followed, or 0
+// counts as a success. An upgrade that pauses on a failure pauses here as
+// it would on one, since nobody knows what the deploy did. taskID is the BOSH task that was followed, or 0
 // when none was, and reason says why the following stopped, for the log.
 func (m *Manager) settleOutcomeUnknown(task *UpgradeTask, instance *InstanceUpgrade, taskID int, reason string) {
 	m.mu.Lock()
@@ -1221,6 +1227,7 @@ func (m *Manager) settleOutcomeUnknown(task *UpgradeTask, instance *InstanceUpgr
 	instance.Error = fmt.Sprintf("Blacksmith stopped following the deploy with context ID %s%s before its outcome was known. "+
 		"Check the director's task list for that context ID.", instance.ContextID, followed)
 	task.UnknownCount++
+	m.holdUpgradeForFailureLocked(task, instance)
 	m.releaseUnheldLocked(task)
 
 	m.logger.Error("Instance %s of %s: %s: %s", instance.InstanceID, instance.DeploymentName, instance.Error, reason)
@@ -1323,6 +1330,7 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("the director returned no task when Blacksmith waited on BOSH task %d, which may still be running", taskID)
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, instance)
 
 		m.logger.Error("The director returned no task for BOSH task %d of %s", taskID, instance.DeploymentName)
 
@@ -1349,6 +1357,7 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("BOSH task %d ended in state %s: %s", finished.ID, finished.State, finished.Result)
 		task.FailedCount++
+		m.holdUpgradeForFailureLocked(task, instance)
 		m.logger.Error("Update failed for %s: BOSH task %d ended in state %s: %s", instance.DeploymentName, finished.ID, finished.State, finished.Result)
 	}
 }
@@ -2171,12 +2180,8 @@ func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		return false
 	}
 
-	// The next instance's pause wait holds the upgrade when this failure
-	// paused it.
-	if m.instanceFailed(instance) {
-		m.pauseAfterFailure(context.WithoutCancel(m.ctx), task, instance)
-	}
-
+	// The next instance's pause wait holds the upgrade when its failure
+	// paused it, which the save of the failure already recorded.
 	return true
 }
 
@@ -3520,6 +3525,7 @@ func (m *Manager) failInstance(ctx context.Context, task *UpgradeTask, instance 
 	instance.Status = InstanceStatusFailed
 	instance.Error = message
 	task.FailedCount++
+	m.holdUpgradeForFailureLocked(task, instance)
 	m.releaseUnheldLocked(task)
 	m.mu.Unlock()
 
@@ -4035,6 +4041,7 @@ func (m *Manager) failReservedLocked(task *UpgradeTask, inst *InstanceUpgrade, h
 	inst.Error = "instance reserved by " + name
 	inst.CompletedAt = &completedAt
 	task.FailedCount++
+	m.holdUpgradeForFailureLocked(task, inst)
 
 	m.logger.Error("Upgrade task %s failed instance %s, because %s already holds it", task.ID, inst.InstanceID, name)
 }

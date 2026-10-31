@@ -1154,14 +1154,7 @@ func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst
 	}
 
 	m.mu.Lock()
-
-	pause := task.Status == TaskStatusRunning && !task.Paused && anyPendingLocked(task)
-	if pause {
-		task.Paused = true
-		task.Status = TaskStatusPaused
-		task.PauseReason = failurePauseReason(inst)
-	}
-
+	pause := holdForFailureLocked(task, inst)
 	m.mu.Unlock()
 
 	if !pause {
@@ -1176,13 +1169,57 @@ func (m *Manager) pauseAfterFailure(ctx context.Context, task *UpgradeTask, inst
 	}
 }
 
+// holdUpgradeForFailureLocked holds an upgrade that pauses on a failure
+// once the instance failed or its outcome is unknown, in the change that
+// settles the instance. The save that records the instance then records
+// the pause too, so a stop or a crash before a later save never leaves a
+// stored upgrade that a restart carries on past the failure. Any other
+// kind of task is left as it is. The caller holds mu.
+func (m *Manager) holdUpgradeForFailureLocked(task *UpgradeTask, inst *InstanceUpgrade) {
+	if task.KindOrDefault() != TaskKindUpgrade || task.PauseOnFailure == nil || !*task.PauseOnFailure {
+		return
+	}
+
+	if holdForFailureLocked(task, inst) {
+		m.logger.Info("Instance %s of upgrade %s ended %s, so the upgrade pauses before its remaining instances", inst.InstanceID, task.ID, inst.Status)
+	}
+}
+
+// holdForFailureLocked pauses a running task after the instance failed or
+// ended with its outcome unknown, when an instance is still pending, with
+// a reason that names the instance. A task that an operator or a decision
+// already paused stays paused and takes the reason, so its detail says why
+// the next instance waits. A task that already holds for a failure keeps
+// the first reason. It reports whether it changed the task. The caller
+// holds mu.
+func holdForFailureLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
+	if task.PauseReason != "" || !anyPendingLocked(task) {
+		return false
+	}
+
+	if task.Status != TaskStatusRunning && task.Status != TaskStatusPaused {
+		return false
+	}
+
+	task.Paused = true
+	task.Status = TaskStatusPaused
+	task.PauseReason = failurePauseReason(inst)
+
+	return true
+}
+
 // failurePauseReason is the reason a task that paused after the
-// instance's failure shows, naming the instance by its name when it has
-// one.
+// instance's failure, or after its deploy's outcome was lost, shows,
+// naming the instance by its name when it has one.
 func failurePauseReason(inst *InstanceUpgrade) string {
 	name := inst.InstanceID
 	if inst.InstanceName != "" {
 		name = fmt.Sprintf("%s (%s)", inst.InstanceName, inst.InstanceID)
+	}
+
+	if inst.Status == InstanceStatusOutcomeUnknown {
+		return fmt.Sprintf("The outcome of instance %s's deploy is unknown, so the job paused before its remaining instances. "+
+			"Check the instance, then Continue remaining instances moves on to them without retrying %s.", name, inst.InstanceID)
 	}
 
 	return fmt.Sprintf("Instance %s failed, so the job paused before its remaining instances. "+
