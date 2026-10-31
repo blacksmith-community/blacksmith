@@ -452,6 +452,9 @@ const failures=[
  ['the request is rejected',()=>Promise.reject(new TypeError('Failed to fetch')),'Failed to fetch'],
  ['the answer is an HTML page',(u,o,j)=>j(502,'<html><body><h1>Bad Gateway</h1></body></html>'),'HTTP 502'],
  ['the answer is an HTML page after a doctype and blank lines',(u,o,j)=>j(502,'\n  <!DOCTYPE html><html><body><h1>Bad Gateway</h1></body></html>'),'HTTP 502'],
+ ['the answer is a page that opens with head',(u,o,j)=>j(502,'<head><title>502</title></head><h1>Bad Gateway</h1>'),'HTTP 502'],
+ ['the answer is a page that opens with body',(u,o,j)=>j(502,'<body><h1>Bad Gateway</h1></body>'),'HTTP 502'],
+ ['the answer is a page that opens with an xml prolog',(u,o,j)=>j(502,'<?xml version="1.0"?><h1>Bad Gateway</h1>'),'HTTP 502'],
  ['the answer is marked text/html but does not open like a page',()=>Promise.resolve({ok:false,status:502,headers:{get:(k)=>String(k).toLowerCase()==='content-type'?'text/html; charset=utf-8':null},text:()=>Promise.resolve('Bad gateway from <b>upstream</b>'),json:()=>Promise.reject(new Error('not json'))}),'HTTP 502'],
  ['the answer is plain text with angle brackets',(u,o,j)=>j(400,'expected <name> to be a task ID'),'expected <name> to be a task ID']
 ];

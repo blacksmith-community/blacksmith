@@ -4928,7 +4928,7 @@
 
   // An error for a toast. A proxy's HTML page never shows as markup, but a
   // plain message that happens to contain angle brackets still shows.
-  const isHtmlPage = (err) => /^\s*<(!doctype|html)\b/i.test(String((err && err.message) || ''))
+  const isHtmlPage = (err) => /^\s*<(!doctype|html|head|body|\?xml)\b/i.test(String((err && err.message) || ''))
     || /text\/html/i.test(String((err && err.contentType) || ''));
   const commandErrorText = (err) => (isHtmlPage(err)
     ? `The broker answered with HTTP ${err.status || 'an error'}.`

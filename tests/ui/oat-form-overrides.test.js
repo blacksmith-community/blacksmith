@@ -158,11 +158,12 @@ const walk=(dir)=>fs.readdirSync(path.join(UI,dir),{withFileTypes:true}).flatMap
  return /\.(js|html)$/.test(e.name)?[rel]:[];
 });
 const uiSources=()=>walk('').map((f)=>[f,read(f)]);
+const classAttr=(tag)=>tag.match(/(?<![\w-])class="([^"]*)"/);
 const selectNames=()=>{
  const classes=new Set(), ids=new Set();
  uiSources().forEach(([,src])=>{
   (src.match(/<select\b[^>]*>/g)||[]).forEach((tag)=>{
-   const cls=tag.match(/\bclass="([^"]*)"/);
+   const cls=classAttr(tag);
    if(cls) cls[1].split(/\s+/).filter((c)=>c&&!c.includes('$')).forEach((c)=>classes.add(c));
    const id=tag.match(/\bid="([^"$]*)"/);
    if(id&&id[1]) ids.add(id[1]);
@@ -170,6 +171,10 @@ const selectNames=()=>{
  });
  return {classes,ids};
 };
+test('the select class scan reads class= and not data-class=',()=>{
+ expect(classAttr('<select data-class="no" class="yes">')[1]).toBe('yes');
+ expect(classAttr('<select data-class="no">')).toBe(null);
+});
 test('the UI only builds selects as markup, so the names scan is complete',()=>{
  const dynamic=uiSources().filter(([,src])=>/createElement\(\s*['"`]select['"`]\s*\)/.test(src)).map(([f])=>f);
  expect(dynamic).toEqual([]);
@@ -189,6 +194,23 @@ test('no select rule resets the end padding Oat keeps for the chevron',()=>{
   parse(read(file)).forEach((r)=>r.selectors.forEach((s)=>{
    if(!isSelect(s)) return;
    if(declares(r.body,'padding')||declares(r.body,'padding-right')||declares(r.body,'padding-inline')||declares(r.body,'padding-inline-end')) bad.push(file+' '+s);
+  }));
+ });
+ expect(bad).toEqual([]);
+});
+
+// Oat owns the look of a bare select, input, or textarea, and only the
+// theme sheet may restyle them by element name. A rule elsewhere that sets
+// a border or background on one would override Oat under a selector the
+// lists above do not name.
+test('no stylesheet but the theme sets a border or background on a bare form element',()=>{
+ const bad=[];
+ ['blacksmith.css','console.css','view-guidance.css','routes.css'].forEach((file)=>{
+  if(!fs.existsSync(path.join(UI,file))) return;
+  parse(read(file)).forEach((r)=>r.selectors.forEach((s)=>{
+   const last=s.split(/\s*[>+~]\s*|\s+/).pop();
+   if(!/^(select|input|textarea)(:[\w-]+(\([^)]*\))?)*$/.test(last)) return;
+   if(['border','border-color','background','background-color'].some((p)=>declares(r.body,p))) bad.push(file+' '+s);
   }));
  });
  expect(bad).toEqual([]);
