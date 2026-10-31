@@ -4993,6 +4993,54 @@ bs-tabs > .cert-tab-pane[hidden] {
   font-weight: normal;
 }
 
+/* Connection test result: a summary, then a row per check with its name,
+   a status badge, and its message. The panel is shown and hidden with the
+   hidden attribute, so it sets no display. */
+.test-connection-results {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+}
+
+.test-connection-summary {
+  margin: 0;
+  font-weight: var(--font-medium);
+}
+
+.test-connection-results[data-result="passed"] .test-connection-summary {
+  color: var(--success);
+}
+
+.test-connection-results[data-result="failed"] .test-connection-summary {
+  color: var(--danger);
+}
+
+.test-connection-checks {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+}
+
+.test-connection-checks li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+
+.test-connection-check-name {
+  font-weight: var(--font-medium);
+}
+
+.test-connection-check-message {
+  grid-column: 1 / -1;
+  font-size: var(--text-8);
+  color: var(--muted-foreground);
+}
+
 /* Progress display styling */
 .progress-container {
   margin-top: 24px;

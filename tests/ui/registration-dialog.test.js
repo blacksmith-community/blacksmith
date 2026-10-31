@@ -238,3 +238,34 @@ t('the saved-endpoint connection test is gone',async()=>{
  const src=require('fs').readFileSync(require('path').join(__dirname,'../../ui/blacksmith.js'),'utf8');
  expect(src).not.toContain('/test`');
 });
+
+// Each check reads as a row: its name, a status badge in the theme's
+// colors, and its message. Hidden punctuation keeps the row's text a
+// sentence for a screen reader.
+t('each check is a row with a status badge',async()=>{
+ const env=await testSetup((u,o,j)=>j(200,{success:false,error:CHECKS_TLS[1].message,code:'cf_tls_failed',checks:CHECKS_TLS}));const {d}=env;
+ test_(d).click();await settle();
+ const items=[...results(d).querySelectorAll('.test-connection-checks > li')];
+ expect(items.map(li=>li.querySelector('.test-connection-check-name')?.textContent)).toEqual(['API answers','TLS certificate','Cloud Foundry API','Credentials']);
+ expect(items.map(li=>{const b=li.querySelector('.badge');return b&&b.dataset.variant+':'+b.textContent;})).toEqual(['success:Passed','danger:Failed','secondary:Not run','secondary:Not run']);
+ expect(items[1].querySelector('.test-connection-check-message').textContent).toBe(CHECKS_TLS[1].message);
+ expect(items[1].textContent).toBe('TLS certificate: Failed. '+CHECKS_TLS[1].message);
+ expect(results(d).dataset.result).toBe('failed');
+});
+
+t('the summary carries the result for its color',async()=>{
+ const env=await testSetup((u,o,j)=>j(200,{success:true,checks:CHECKS_PASS}));const {d}=env;
+ test_(d).click();await settle();
+ expect(results(d).dataset.result).toBe('passed');
+ expect(rows(d)[0].text).toBe('API answers: Passed. The API answered with HTTP 200.');
+});
+
+t('the results styling uses only theme colors',()=>{
+ const css=require('fs').readFileSync(require('path').join(__dirname,'../../ui/blacksmith.css'),'utf8');
+ const rules=css.match(/[^{}]*\.test-connection-[^{}]*\{[^}]*\}/g)||[];
+ expect(rules.some(r=>r.includes('.test-connection-checks'))).toBe(true);
+ for(const rule of rules)expect(rule).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(/i);
+ // The panel is shown and hidden with the hidden attribute, which a display rule would override.
+ const panel=rules.filter(r=>/\.test-connection-results\s*\{/.test(r));
+ for(const rule of panel)expect(rule).not.toMatch(/[{;\s]display\s*:/);
+});

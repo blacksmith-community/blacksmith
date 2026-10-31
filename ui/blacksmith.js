@@ -22318,6 +22318,7 @@
       if (!panel) return;
       panel.replaceChildren();
       panel.removeAttribute('aria-busy');
+      delete panel.dataset.result;
       if (!result) {
         panel.hidden = true;
         return;
@@ -22331,6 +22332,7 @@
         summary.textContent = 'Testing the connection\u2026';
         return;
       }
+      panel.dataset.result = result.success ? 'passed' : 'failed';
       const detail = result.success ? result.message : (result.error || 'A check failed.');
       summary.textContent = (result.success ? 'Connection test passed.' : 'Connection test failed.') + (detail ? ` ${detail}` : '');
       const checks = result.checks || [];
@@ -22343,9 +22345,22 @@
         const item = document.createElement('li');
         item.dataset.check = String(check.name || '');
         item.dataset.state = state;
-        const label = labels[check.name] || String(check.name || 'Check');
-        const word = { passed: 'Passed', failed: 'Failed', skipped: 'Not run' }[state];
-        item.textContent = `${label}: ${word}. ${check.message || ''}`.trim();
+        const part = (tag, className, text) => {
+          const node = document.createElement(tag);
+          node.className = className;
+          node.textContent = text;
+          return node;
+        };
+        const badge = part('span', 'badge', { passed: 'Passed', failed: 'Failed', skipped: 'Not run' }[state]);
+        badge.dataset.variant = { passed: 'success', failed: 'danger', skipped: 'secondary' }[state];
+        // The hidden punctuation reads the row as one sentence.
+        item.append(
+          part('span', 'test-connection-check-name', labels[check.name] || String(check.name || 'Check')),
+          part('span', 'visually-hidden', ': '),
+          badge,
+          part('span', 'visually-hidden', '. '),
+          part('span', 'test-connection-check-message', String(check.message || ''))
+        );
         list.appendChild(item);
       });
       panel.appendChild(list);
