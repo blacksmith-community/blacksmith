@@ -74,3 +74,31 @@ test('direct inspection closes by replacing its entry and nested inspection retu
  await router.inspect({kind:'task',id:'42'});await router.inspect({kind:'task',id:'43'});router.closeInspection();await new Promise(r=>setTimeout(r,35));expect(router.current.inspection.id).toBe('42');
  router.destroy();w.close();
 });
+
+test('an instance section shows in the breadcrumb and title before its data loads',async()=>{
+ const {api,w}=boot();const d=w.document;let release;
+ const pending=[];
+ const router=api.create(w,{activate:async r=>{if(r.section==='instance-logs')await new Promise(resolve=>release=resolve);return r;},pending:r=>pending.push(r.section)});
+ await router.start();
+ const moved=router.navigate({screen:'services',instance:'abc',section:'instance-logs'});
+ expect(pending).toEqual(['instance-logs']);
+ release();await moved;
+ await router.navigate({screen:'blacksmith',section:'plans'});
+ expect(pending).toEqual(['instance-logs']);
+ router.destroy();w.close();
+});
+test('the console renders the chosen instance section while the section loads',async()=>{
+ const {w}=boot();const d=w.document;let release;
+ d.body.insertAdjacentHTML('beforeend','<div class="tab-content"></div>');
+ w.blacksmithViews={activate:async r=>{if(r.section==='instance-logs')await new Promise(resolve=>release=resolve);return r;}};
+ d.dispatchEvent(new w.Event('blacksmith:ready'));
+ await new Promise(resolve=>setTimeout(resolve,10));
+ await w.blacksmithRouter.navigate({screen:'services',instance:'abc',section:'certificates'});
+ const last=()=>d.querySelector('#route-context nav li:last-child').textContent;
+ expect(last()).toBe('Certificates');expect(d.title).toContain('Certificates');
+ const moved=w.blacksmithRouter.navigate({screen:'services',instance:'abc',section:'instance-logs'});
+ expect(last()).toBe('Logs');expect(d.title.startsWith('Logs')).toBe(true);
+ release();await moved;
+ expect(last()).toBe('Logs');
+ w.blacksmithRouter.destroy();w.close();
+});
