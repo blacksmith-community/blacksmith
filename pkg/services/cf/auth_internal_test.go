@@ -32,10 +32,12 @@ type v3OnlyFoundation struct {
 	// brokersRedirect, when set, is where every /v3/service_brokers
 	// request is answered 307, keeping its path.
 	brokersRedirect string
-	brokerHits      atomic.Int32
-	uaaHits         atomic.Int32
-	loginHits       atomic.Int32
-	tokenPaths      []string
+	// brokersAnswer, when set, answers every /v3/service_brokers request.
+	brokersAnswer http.HandlerFunc
+	brokerHits    atomic.Int32
+	uaaHits       atomic.Int32
+	loginHits     atomic.Int32
+	tokenPaths    []string
 }
 
 func newV3OnlyFoundation(t *testing.T) *v3OnlyFoundation {
@@ -62,6 +64,9 @@ func (f *v3OnlyFoundation) serve(writer http.ResponseWriter, req *http.Request) 
 	case req.URL.Path == "/" && req.Method == http.MethodGet:
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(f.root))
+	case strings.HasPrefix(req.URL.Path, "/v3/service_brokers") && f.brokersAnswer != nil:
+		f.brokerHits.Add(1)
+		f.brokersAnswer(writer, req)
 	case strings.HasPrefix(req.URL.Path, "/v3/service_brokers") && f.brokersRedirect != "":
 		f.brokerHits.Add(1)
 		http.Redirect(writer, req, f.brokersRedirect+req.URL.Path, http.StatusTemporaryRedirect)

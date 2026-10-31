@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 )
 
 // Static errors for err113 compliance.
@@ -19,6 +21,11 @@ var (
 	ErrDisableServiceAccessNotImplemented = errors.New("disable service access not yet implemented")
 	ErrServiceBrokerNotFound              = errors.New("service broker not found")
 )
+
+// cfErrorTitle is the shape of the title the CF API gives its errors, such
+// as CF-ServiceBrokerNameTaken. An error is repeated only by its title and
+// code, because its detail can echo the request.
+var cfErrorTitle = regexp.MustCompile(`^CF-[A-Za-z]+$`)
 
 // Logger interface for logging.
 type Logger interface {
@@ -69,6 +76,29 @@ func (c *Client) TestConnection() (*RegistrationTestResult, error) {
 	return result, nil
 }
 
+// refusal is the error for an answer the API gave with an error status. It
+// names the API's error by its title and code when they have the shape CF
+// gives them, and never repeats the answer's other text.
+func (c *Client) refusal(failed error, resp *http.Response) error {
+	var answer struct {
+		Errors []struct {
+			Title string `json:"title"`
+			Code  int    `json:"code"`
+		} `json:"errors"`
+	}
+
+	err := json.NewDecoder(io.LimitReader(resp.Body, maxAPIAnswerBytes)).Decode(&answer)
+	if err != nil {
+		c.logger.Warnf("The CF API's error answer (HTTP %d) was not the JSON the broker expects", resp.StatusCode)
+	}
+
+	if err == nil && len(answer.Errors) > 0 && cfErrorTitle.MatchString(answer.Errors[0].Title) {
+		return fmt.Errorf("%w (%d): %s (%d)", failed, resp.StatusCode, answer.Errors[0].Title, answer.Errors[0].Code)
+	}
+
+	return fmt.Errorf("%w (%d)", failed, resp.StatusCode)
+}
+
 // GetServiceBrokers retrieves all service brokers from CF.
 func (c *Client) GetServiceBrokers() ([]BrokerInfo, error) {
 	resp, err := c.authClient.MakeAuthenticatedRequest("GET", "/v3/service_brokers", nil)
@@ -96,7 +126,7 @@ func (c *Client) GetServiceBrokers() ([]BrokerInfo, error) {
 
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode brokers response: %w", err)
+		return nil, fmt.Errorf("failed to decode brokers response: %w", ErrAPIAnswerUnreadable)
 	}
 
 	brokers := make([]BrokerInfo, len(response.Resources))
@@ -147,25 +177,7 @@ func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
-		var errorResp struct {
-			Errors []struct {
-				Detail string `json:"detail"`
-				Title  string `json:"title"`
-				Code   int    `json:"code"`
-			} `json:"errors"`
-		}
-
-		err := json.NewDecoder(resp.Body).Decode(&errorResp)
-		if err != nil {
-			c.logger.Warnf("Failed to decode error response: %v", err)
-		}
-
-		errorMsg := "Unknown error"
-		if len(errorResp.Errors) > 0 {
-			errorMsg = errorResp.Errors[0].Detail
-		}
-
-		return nil, fmt.Errorf("%w (%d): %s", ErrFailedToCreateServiceBroker, resp.StatusCode, errorMsg)
+		return nil, c.refusal(ErrFailedToCreateServiceBroker, resp)
 	}
 
 	var brokerResponse struct {
@@ -178,7 +190,7 @@ func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 
 	err = json.NewDecoder(resp.Body).Decode(&brokerResponse)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode broker creation response: %w", err)
+		return nil, fmt.Errorf("failed to decode broker creation response: %w", ErrAPIAnswerUnreadable)
 	}
 
 	return &BrokerInfo{
@@ -209,23 +221,7 @@ func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		var errorResp struct {
-			Errors []struct {
-				Detail string `json:"detail"`
-			} `json:"errors"`
-		}
-
-		err := json.NewDecoder(resp.Body).Decode(&errorResp)
-		if err != nil {
-			c.logger.Warnf("Failed to decode error response: %v", err)
-		}
-
-		errorMsg := "Unknown error"
-		if len(errorResp.Errors) > 0 {
-			errorMsg = errorResp.Errors[0].Detail
-		}
-
-		return nil, fmt.Errorf("%w (%d): %s", ErrFailedToUpdateServiceBroker, resp.StatusCode, errorMsg)
+		return nil, c.refusal(ErrFailedToUpdateServiceBroker, resp)
 	}
 
 	var brokerResponse struct {
@@ -238,7 +234,7 @@ func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error)
 
 	err = json.NewDecoder(resp.Body).Decode(&brokerResponse)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode broker update response: %w", err)
+		return nil, fmt.Errorf("failed to decode broker update response: %w", ErrAPIAnswerUnreadable)
 	}
 
 	return &BrokerInfo{
@@ -299,7 +295,7 @@ func (c *Client) GetServiceOfferings() ([]ServiceInfo, error) {
 
 	err = json.NewDecoder(resp.Body).Decode(&response)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode service offerings response: %w", err)
+		return nil, fmt.Errorf("failed to decode service offerings response: %w", ErrAPIAnswerUnreadable)
 	}
 
 	services := make([]ServiceInfo, len(response.Resources))
@@ -344,7 +340,7 @@ func (c *Client) EnableServiceAccess(serviceOfferingGUID string) error {
 
 	err = json.NewDecoder(resp.Body).Decode(&plansResponse)
 	if err != nil {
-		return fmt.Errorf("failed to decode service plans response: %w", err)
+		return fmt.Errorf("failed to decode service plans response: %w", ErrAPIAnswerUnreadable)
 	}
 
 	// Enable access for each plan

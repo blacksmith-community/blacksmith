@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,7 +20,13 @@ var (
 	ErrCFAPIReturnedError   = errors.New("CF API returned error status")
 	ErrCFAPIUnreachable     = errors.New("the CF API did not answer")
 	ErrAPIURLNotHTTPS       = errors.New("API URL must start with https://, because the API's answer decides where the password is sent")
+	ErrAPIAnswerTooLarge    = errors.New("the CF API's answer was larger than the broker reads")
+	ErrAPIAnswerUnreadable  = errors.New("the CF API's answer was not the JSON the broker expects")
 )
+
+// maxAPIAnswerBytes bounds how much of an authenticated answer the broker
+// reads. A foundation's full broker or plan list fits well inside it.
+const maxAPIAnswerBytes = 8 << 20
 
 // oauthErrorCodes are the token endpoint error codes RFC 6749 section 5.2
 // fixes. An error is repeated only when it is one of these, because any
@@ -303,7 +310,9 @@ func (c *CFAuthClient) info(ctx context.Context) *CFInfo {
 // MakeAuthenticatedRequest makes an authenticated request to CF API. The
 // request carries the token, and some carry the broker's password, so it
 // follows redirects only on the API's own scheme and host, as getPublic
-// does.
+// does. It reads the whole answer, up to maxAPIAnswerBytes, before the
+// request's deadline is released, and hands it back in memory, so callers
+// decode it without the connection.
 func (c *CFAuthClient) MakeAuthenticatedRequest(method, path string, body interface{}) (*http.Response, error) {
 	origin, err := registrationAPIURL(c.APIURL)
 	if err != nil {
@@ -341,6 +350,18 @@ func (c *CFAuthClient) MakeAuthenticatedRequest(method, path string, body interf
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", rootRequestError(ctx, err))
 	}
+
+	data, err := readLimited(resp.Body, maxAPIAnswerBytes)
+	_ = resp.Body.Close()
+
+	switch {
+	case errors.Is(err, errResponseTooLarge):
+		return nil, fmt.Errorf("request failed: %w", ErrAPIAnswerTooLarge)
+	case err != nil:
+		return nil, fmt.Errorf("request failed: %w", rootRequestError(ctx, err))
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(data))
 
 	return resp, nil
 }
