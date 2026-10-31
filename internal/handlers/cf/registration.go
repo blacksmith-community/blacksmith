@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"blacksmith/internal/interfaces"
@@ -50,9 +51,14 @@ func (h *Handler) ListRegistrations(writer http.ResponseWriter, req *http.Reques
 		return
 	}
 
+	answered := make([]map[string]interface{}, len(registrations))
+	for i, registration := range registrations {
+		answered[i] = withoutPassword(registration)
+	}
+
 	logger.Debug("found %d CF registrations", len(registrations))
 	response.HandleJSON(writer, map[string]interface{}{
-		"registrations": registrations,
+		"registrations": answered,
 		"count":         len(registrations),
 	}, nil)
 }
@@ -157,8 +163,23 @@ func (h *Handler) CreateRegistration(writer http.ResponseWriter, req *http.Reque
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"message":      "Registration created successfully",
-		"registration": regReq,
+		"registration": withoutPassword(regReq),
 	}, nil)
+}
+
+// withoutPassword is a copy of a stored registration for an answer. The
+// record keeps the CF admin password, because register reads it, but no
+// answer gives it back, under any spelling of the key.
+func withoutPassword(registration map[string]interface{}) map[string]interface{} {
+	answer := make(map[string]interface{}, len(registration))
+
+	for key, value := range registration {
+		if !strings.EqualFold(key, "password") {
+			answer[key] = value
+		}
+	}
+
+	return answer
 }
 
 // GetRegistration handles GET /b/cf/registrations/{id}.
@@ -191,7 +212,7 @@ func (h *Handler) GetRegistration(writer http.ResponseWriter, req *http.Request,
 
 	logger.Debug("retrieved CF registration: %s", registrationID)
 	response.HandleJSON(writer, map[string]interface{}{
-		"registration": registration,
+		"registration": withoutPassword(registration),
 	}, nil)
 }
 
@@ -256,7 +277,7 @@ func (h *Handler) UpdateRegistration(writer http.ResponseWriter, req *http.Reque
 	logger.Info("updated CF registration: %s", registrationID)
 	response.HandleJSON(writer, map[string]interface{}{
 		"message":      "Registration updated successfully",
-		"registration": regReq,
+		"registration": withoutPassword(regReq),
 	}, nil)
 }
 

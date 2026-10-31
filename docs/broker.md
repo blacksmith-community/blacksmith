@@ -350,6 +350,8 @@ When an instance of a job that pauses on a failure fails while another instance 
 
 Every `POST` under `/b/cf` needs the header `Content-Type: application/json`, even when it sends no fields, so send `{}` as the body then. Any other content type gets a 415 answer with the code `unsupported_media_type`, before the route does anything. A page on another site can't send that content type without a CORS preflight, and the broker answers none, so this keeps these routes to the broker's own UI and to clients that call it directly.
 
+A registration's CF admin password is stored in Vault with the rest of the record, at `secret/blacksmith/registrations/{id}`, because `POST /b/cf/registrations/{id}/register` uses the stored password when there is one, and otherwise the `password` in its own JSON body. No answer ever gives the password back. The create and update answers, `GET /b/cf/registrations`, and `GET /b/cf/registrations/{id}` leave the field out entirely, under any spelling of the key.
+
 Registering the broker follows the same connection rules as the test below. The registration's API URL must start with `https://`, and the validating step fails with a readable message when it doesn't, because the API root's answer decides where the password goes.
 
 `POST /b/cf/test-connection` takes the registration form's `api_url`, `username`, and `password` as JSON. A missing field, or an API URL that is not an `http://` or `https://` URL with a host, gets a 400 answer with the code `invalid_request`.
