@@ -91,7 +91,7 @@
       dialog = document.createElement('dialog');
       dialog.id = 'theme-choice-dialog'; dialog.className = 'theme-choice-dialog';
       dialog.setAttribute('aria-labelledby', 'theme-choice-title');
-      dialog.innerHTML = '<header><h2 id="theme-choice-title">Appearance</h2><button type="button" data-close aria-label="Close appearance" title="Close appearance">×</button></header><p>Choose the theme that is easiest for you to read.</p><div class="theme-choices"></div>';
+      dialog.innerHTML = '<header><h2 id="theme-choice-title">Appearance</h2><button type="button" data-close aria-label="Close appearance" title="Close appearance">' + root.blacksmithIcon('x', { size: 18 }) + '</button></header><p>Choose the theme that is easiest for you to read.</p><div class="theme-choices"></div>';
       for (const [value, name] of [['light','Anvil Light'],['dark','Anvil Dark'],['high-contrast-light','High Contrast Light'],['high-contrast-dark','High Contrast Dark'],['system','System — follow device appearance']]) {
         const button = document.createElement('button'); button.type = 'button';
         button.dataset.themeChoice = value; button.textContent = name;

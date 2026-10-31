@@ -10,7 +10,7 @@ function boot(){
  w.HTMLElement.prototype.showModal=function(){this.setAttribute('open','')};
  w.HTMLElement.prototype.close=function(){this.removeAttribute('open');this.dispatchEvent(new w.Event('close'))};
  const src=fs.existsSync('ui/action-help.js')?fs.readFileSync('ui/action-help.js','utf8'):'';
- w.eval(src);w.document.dispatchEvent(new w.Event('DOMContentLoaded'));return w;
+ w.eval(fs.readFileSync('ui/icons.js','utf8'));w.eval(src);w.document.dispatchEvent(new w.Event('DOMContentLoaded'));return w;
 }
 test('icon help opens on focus, uses specific name, and restores title before activation',async()=>{
  const w=boot();try{

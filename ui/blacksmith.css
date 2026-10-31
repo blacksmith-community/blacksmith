@@ -650,7 +650,8 @@ header span#ident {
 .theme-toggle svg {
   width: 14px;
   height: 14px;
-  fill: var(--text-header);
+  fill: none;
+  stroke: currentColor;
   transition: transform 0.3s ease;
 }
 
@@ -7539,6 +7540,7 @@ body.terminal-minimized .tabs {
   line-height: 1;
   flex-shrink: 0;
   margin-top: 0.1rem;
+  margin-right: 0.5rem;
 }
 
 .feedback-panel-text {

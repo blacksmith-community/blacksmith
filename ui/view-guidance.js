@@ -125,8 +125,7 @@
     'concurrent-jobs': help('concurrent batch jobs', 'This limit decides how many batch jobs run at the same time across the whole broker, and the rest wait their turn. Each job works through its instances one at a time, so the limit is how many instances can be changing at once. Keep it low, such as 1 or 2, when the director is busy or when you want changes to land in a predictable order. Raise it when you have several independent jobs and the director has room for them. A paused job keeps its place, so with a limit of 1, one paused job holds every other job back. When the field is empty, any number of jobs can run, and deploys are still capped by the broker\'s batch connection limit, which is 10 unless an administrator changed it.')
   };
   const getField = name => Object.prototype.hasOwnProperty.call(batchFields, name) ? batchFields[name] : null;
-  const icon=paths=>`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${paths}</svg>`;
-  const infoIcon=icon('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/>');
+  const infoIcon=blacksmithIcon('info',{size:18});
   // Keeps a fixed tip beside its button and inside the viewport.
   function place(button, tip){
     if(tip.hidden)return;
@@ -241,7 +240,7 @@
       disposers.push(()=>{hide();tip.remove();doc.removeEventListener('keydown',escape,true);doc.removeEventListener('pointerdown',outside,true);root.removeEventListener('resize',position);doc.removeEventListener('scroll',position,true);});
     }
     if(value)attach({dataset:'contextHelp',id:'view-guidance-tip',name:`About ${value.label}`,heading:`About ${value.label}`,icon:infoIcon,content:()=>{const text=doc.createElement('p');text.textContent=value.body;return [text];}});
-    if(keys)attach({titled:true,dataset:'keyboardHelp',id:'keyboard-shortcuts-tip',name:keys.label,heading:'Keyboard shortcuts',icon:icon('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),content:()=>shortcutBody(doc)});
+    if(keys)attach({titled:true,dataset:'keyboardHelp',id:'keyboard-shortcuts-tip',name:keys.label,heading:'Keyboard shortcuts',icon:blacksmithIcon('keyboard',{size:18}),content:()=>shortcutBody(doc)});
     host.append(node);
     dispose=()=>{disposers.forEach(fn=>fn());node.remove();};
     return node;
