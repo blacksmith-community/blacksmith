@@ -108,11 +108,11 @@ func requireRun(t *testing.T) {
 	t.Helper()
 
 	switch runtime.GOOS {
-	case "linux":
+	case osLinux:
 		if os.Geteuid() != 0 {
 			t.Skip("run.sh checks for root ownership, so this test must run as root")
 		}
-	case "darwin":
+	case osDarwin:
 	default:
 		t.Skip("run.sh needs a Unix with bash")
 	}
@@ -123,7 +123,7 @@ func requireRun(t *testing.T) {
 func bashPath(t *testing.T) string {
 	t.Helper()
 
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == osLinux {
 		return "/bin/bash"
 	}
 
@@ -158,7 +158,7 @@ func runBody(t *testing.T) []byte {
 func stdinFor(t *testing.T, command []byte) io.Reader {
 	t.Helper()
 
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != osDarwin {
 		stdin, err := scripts.RunInput(command)
 		if err != nil {
 			t.Fatal(err)
@@ -209,7 +209,7 @@ func newRunTree(t *testing.T) *runTree {
 		t.Fatal(err)
 	}
 
-	for _, dir := range []string{"var/vcap/data", "home/vcap", "usr/bin", "root"} {
+	for _, dir := range []string{"var/vcap/data", "home/vcap", "usr/bin", wordRoot} {
 		err = os.MkdirAll(filepath.Join(root, dir), 0o755) //nolint:gosec // a test tree
 		if err != nil {
 			t.Fatal(err)
@@ -239,7 +239,7 @@ func (r *runTree) linkFlock(t *testing.T) {
 
 	plant := r.path("usr/bin/flock")
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		err := os.WriteFile(plant, []byte("#!/bin/sh\nexit 0\n"), 0o755) //nolint:gosec // a test tool
 		if err != nil {
 			t.Fatal(err)
@@ -342,7 +342,7 @@ func (r *runTree) snippet(t *testing.T, noRoot bool, text string) (int, string) 
 
 	script.Write(scripts.Library())
 
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == osDarwin {
 		script.WriteString(darwinShim)
 	}
 
@@ -409,7 +409,7 @@ func (r *runTree) requireNoCanary(t *testing.T) {
 
 // cmdFile is the path of a task's staged command.
 func (r *runTree) cmdFile(task string) string {
-	return r.path(runOps, task, "cmd.sh")
+	return r.path(runOps, task, scriptName)
 }
 
 // makeTask builds a task directory by hand, as prepare and exec leave it.
@@ -574,7 +574,7 @@ func TestRunValidators(t *testing.T) {
 		ok    []string
 		bad   []string
 	}{
-		{"user", scripts.ValidRunUser, []string{"root", "vcap"}, []string{"", "Root", "vcap ", "bosh_admin", "root\n", "0"}},
+		{"user", scripts.ValidRunUser, []string{wordRoot, wordVcap}, []string{"", "Root", "vcap ", "bosh_admin", "root\n", "0"}},
 		{
 			"seconds", scripts.ValidRunSeconds,
 			[]string{"10", "600", "3600"},
@@ -610,13 +610,13 @@ func TestRunOperationsBuildInvocations(t *testing.T) {
 
 	hash := strings.Repeat("cd", 32)
 
-	got, argv, err := scripts.OpRunPrepare(runTask, "vcap")
-	if err != nil || got != program || !slices.Equal(argv, []string{"prepare", runTask, "vcap"}) {
+	got, argv, err := scripts.OpRunPrepare(runTask, wordVcap)
+	if err != nil || got != program || !slices.Equal(argv, []string{"prepare", runTask, wordVcap}) {
 		t.Errorf("prepare = %q %q %v", got, argv, err)
 	}
 
-	got, argv, err = scripts.OpRunExec(runTask, "root", "600", hash)
-	if err != nil || got != program || !slices.Equal(argv, []string{"exec", runTask, "root", "600", hash}) {
+	got, argv, err = scripts.OpRunExec(runTask, wordRoot, "600", hash)
+	if err != nil || got != program || !slices.Equal(argv, []string{wordExec, runTask, wordRoot, "600", hash}) {
 		t.Errorf("exec = %q %q %v", got, argv, err)
 	}
 
@@ -625,7 +625,7 @@ func TestRunOperationsBuildInvocations(t *testing.T) {
 		t.Errorf("cleanup = %q %q %v", got, argv, err)
 	}
 
-	_, _, err = scripts.OpRunPrepare("not-a-task", "vcap")
+	_, _, err = scripts.OpRunPrepare("not-a-task", wordVcap)
 	if !errors.Is(err, scripts.ErrRefused) {
 		t.Errorf("a bad task: %v", err)
 	}
@@ -635,12 +635,12 @@ func TestRunOperationsBuildInvocations(t *testing.T) {
 		t.Errorf("a bad user: %v", err)
 	}
 
-	_, _, err = scripts.OpRunExec(runTask, "vcap", "9", hash)
+	_, _, err = scripts.OpRunExec(runTask, wordVcap, "9", hash)
 	if !errors.Is(err, scripts.ErrRefused) {
 		t.Errorf("a bad timeout: %v", err)
 	}
 
-	_, _, err = scripts.OpRunExec(runTask, "vcap", "60", "abc")
+	_, _, err = scripts.OpRunExec(runTask, wordVcap, "60", "abc")
 	if !errors.Is(err, scripts.ErrRefused) {
 		t.Errorf("a bad digest: %v", err)
 	}
@@ -662,8 +662,8 @@ func TestRunRecordsParse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(records) != 3 || records[0].Kind != scripts.RecordStaged || records[1].Fields["exit"] != "7" ||
-		records[2].Fields["started"] != "no" {
+	if len(records) != 3 || records[0].Kind != scripts.RecordStaged || records[1].Fields[wordExit] != "7" ||
+		records[2].Fields[wordStarted] != "no" {
 		t.Errorf("records = %+v", records)
 	}
 
@@ -693,7 +693,7 @@ func TestPrepareStagesTheCommandByteForByte(t *testing.T) {
 
 			tree := newRunTree(t)
 
-			code, out := tree.prepare(t, runTask, "vcap", command)
+			code, out := tree.prepare(t, runTask, wordVcap, command)
 			if code != 0 {
 				t.Fatalf("exit = %d", code)
 			}
@@ -730,7 +730,7 @@ func TestPrepareSetsModesAndGroup(t *testing.T) {
 
 	tree := newRunTree(t)
 
-	if code, _ := tree.prepare(t, runTask, "root", []byte("true\n")); code != 0 {
+	if code, _ := tree.prepare(t, runTask, wordRoot, []byte("true\n")); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 
@@ -772,7 +772,7 @@ func TestPrepareRefusals(t *testing.T) {
 		tree := newRunTree(t)
 
 		for _, task := range []string{"", "../x", "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D", runTask + "x", "a b"} {
-			code, _ := tree.prepare(t, task, "vcap", canaryCommand)
+			code, _ := tree.prepare(t, task, wordVcap, canaryCommand)
 			if code != scripts.ExitUsage {
 				t.Errorf("task %q exited %d, want %d", task, code, scripts.ExitUsage)
 			}
@@ -815,7 +815,7 @@ func TestPrepareRefusals(t *testing.T) {
 
 		tree := newRunTree(t)
 
-		code, _, _ := tree.run(t, stdinFor(t, nil), "exec", runTask)
+		code, _, _ := tree.run(t, stdinFor(t, nil), wordExec, runTask)
 		if code != scripts.ExitUsage {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitUsage)
 		}
@@ -825,9 +825,9 @@ func TestPrepareRefusals(t *testing.T) {
 		t.Parallel()
 
 		tree := newRunTree(t)
-		tree.makeTask(t, runTask, map[string]string{"cmd.sh": "first\n"})
+		tree.makeTask(t, runTask, map[string]string{scriptName: "first\n"})
 
-		code, out := tree.prepare(t, runTask, "vcap", canaryCommand)
+		code, out := tree.prepare(t, runTask, wordVcap, canaryCommand)
 		if code != scripts.ExitRefused {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
 		}
@@ -860,7 +860,7 @@ func TestPrepareRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		code, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
+		code, _ := tree.prepare(t, runTask, wordVcap, []byte("true\n"))
 		if code != scripts.ExitRefused {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
 		}
@@ -881,7 +881,7 @@ func TestPrepareRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		code, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
+		code, _ := tree.prepare(t, runTask, wordVcap, []byte("true\n"))
 		if code != scripts.ExitRefused {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
 		}
@@ -903,7 +903,7 @@ func TestPrepareRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		code, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
+		code, _ := tree.prepare(t, runTask, wordVcap, []byte("true\n"))
 		if code != scripts.ExitRefused {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
 		}
@@ -919,7 +919,7 @@ func TestPrepareRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		code, out := tree.prepare(t, runTask, "vcap", canaryCommand)
+		code, out := tree.prepare(t, runTask, wordVcap, canaryCommand)
 		if code != scripts.ExitRefused || out != "" {
 			t.Errorf("exit = %d, output %q; want %d and none", code, out, scripts.ExitRefused)
 		}
@@ -945,7 +945,7 @@ func TestPrepareRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		code, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
+		code, _ := tree.prepare(t, runTask, wordVcap, []byte("true\n"))
 		if code != scripts.ExitRefused {
 			t.Errorf("exit = %d, want %d", code, scripts.ExitRefused)
 		}
@@ -980,7 +980,7 @@ func TestPrepareRemovesWhatItMadeWhenItStopsEarly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
+	got, _ := tree.prepare(t, runTask, wordVcap, []byte("true\n"))
 	if got != scripts.ExitRefused {
 		t.Errorf("exit = %d, want %d", got, scripts.ExitRefused)
 	}
@@ -1032,14 +1032,14 @@ func TestCleanupReportsWhatTheFilesSay(t *testing.T) {
 		kept  bool
 		want  string
 	}{
-		{name: "exec never ran", files: map[string]string{"cmd.sh": "true\n"}, want: "cleanup started=no exit=- killed=no\n"},
-		{name: "it ran and exited 7", files: map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}, gone: true, want: "cleanup started=yes exit=7 killed=no\n"},
-		{name: "an exit and no pgid file", files: map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}, kept: true, want: "cleanup started=yes exit=7 killed=unknown\n"},
-		{name: "an exit file with junk", files: map[string]string{"started": "", "exit": "7; id\n"}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
-		{name: "an exit file that is empty", files: map[string]string{"started": "", "exit": ""}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
-		{name: "an exit of 255", files: map[string]string{"started": "", "exit": "255\n"}, gone: true, want: "cleanup started=yes exit=255 killed=no\n"},
-		{name: "an exit of 256", files: map[string]string{"started": "", "exit": "256\n"}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
-		{name: "an exit of four digits", files: map[string]string{"started": "", "exit": "1000\n"}, gone: true, want: "cleanup started=yes exit=- killed=no\n"},
+		{name: "exec never ran", files: map[string]string{scriptName: "true\n"}, want: cleanupNoKilledNo},
+		{name: "it ran and exited 7", files: map[string]string{scriptName: "x", wordStarted: "", wordExit: "7\n"}, gone: true, want: cleanupYesExit7KilledNo},
+		{name: "an exit and no pgid file", files: map[string]string{scriptName: "x", wordStarted: "", wordExit: "7\n"}, kept: true, want: "cleanup started=yes exit=7 killed=unknown\n"},
+		{name: "an exit file with junk", files: map[string]string{wordStarted: "", wordExit: "7; id\n"}, gone: true, want: cleanupYesKilledNo},
+		{name: "an exit file that is empty", files: map[string]string{wordStarted: "", wordExit: ""}, gone: true, want: cleanupYesKilledNo},
+		{name: "an exit of 255", files: map[string]string{wordStarted: "", wordExit: "255\n"}, gone: true, want: "cleanup started=yes exit=255 killed=no\n"},
+		{name: "an exit of 256", files: map[string]string{wordStarted: "", wordExit: "256\n"}, gone: true, want: cleanupYesKilledNo},
+		{name: "an exit of four digits", files: map[string]string{wordStarted: "", wordExit: "1000\n"}, gone: true, want: cleanupYesKilledNo},
 	}
 
 	for _, tc := range cases {
@@ -1105,8 +1105,8 @@ func withGoneGroup(t *testing.T, files map[string]string) map[string]string {
 	t.Helper()
 
 	files = maps.Clone(files)
-	files["pgid"] = strconv.Itoa(goneGroup(t)) + "\n"
-	files["starttime"] = "5\n"
+	files[wordPgid] = strconv.Itoa(goneGroup(t)) + "\n"
+	files[wordStarttime] = "5\n"
 
 	return files
 }
@@ -1131,7 +1131,7 @@ func TestCleanupGuards(t *testing.T) {
 		tree := newRunTree(t)
 
 		code, out := tree.cleanup(t, runTask)
-		if code != 0 || out != "cleanup started=- exit=- killed=no\n" {
+		if code != 0 || out != cleanupNoneKilledNo {
 			t.Errorf("exit = %d, output = %q; want the unknown record", code, out)
 		}
 
@@ -1272,7 +1272,7 @@ func TestRCToolResolvesUnderTheFakeRoot(t *testing.T) {
 
 	tree := newRunTree(t)
 
-	for _, name := range []string{"getent", "setpriv", "setsid", "timeout"} {
+	for _, name := range []string{"getent", "setpriv", "setsid", wordTimeout} {
 		code, out := tree.snippet(t, false, `printf '%s' "$(_rc_tool `+name+`)"`+"\n")
 		if code != 0 || out != tree.root+"/usr/bin/"+name {
 			t.Errorf("with the root, %s = %q (exit %d), want %s/usr/bin/%s", name, out, code, tree.root, name)
@@ -1369,7 +1369,7 @@ func TestPrepareChecksTheFileBeforeChangingIt(t *testing.T) {
 func TestPrepareClearsSetgidFromTheParent(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("macOS does not pass the setgid bit to new directories")
 	}
 
@@ -1380,7 +1380,7 @@ func TestPrepareClearsSetgidFromTheParent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, _ := tree.prepare(t, runTask, "vcap", []byte("true\n"))
+	code, _ := tree.prepare(t, runTask, wordVcap, []byte("true\n"))
 	if code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
@@ -1396,11 +1396,11 @@ func TestParseCleanupChecksValues(t *testing.T) {
 	t.Parallel()
 
 	for _, ok := range []string{
-		"cleanup started=yes exit=7 killed=no\n",
-		"cleanup started=no exit=- killed=no\n",
-		"cleanup started=- exit=- killed=no\n",
+		cleanupYesExit7KilledNo,
+		cleanupNoKilledNo,
+		cleanupNoneKilledNo,
 		"cleanup started=yes exit=255 killed=yes\n",
-		"cleanup started=yes exit=- killed=survived\n",
+		cleanupYesKilledSurvived,
 	} {
 		_, err := scripts.ParseCleanup([]byte(ok))
 		if err != nil {
@@ -1425,12 +1425,12 @@ func TestParseCleanupChecksValues(t *testing.T) {
 	// A killed value outside the ones run.sh prints says nothing about
 	// whether the command still runs, so it reads as unknown.
 	for record, want := range map[string]string{
-		"cleanup started=yes exit=- killed=unknown\n": "unknown",
-		"cleanup started=yes exit=- killed=-\n":       "unknown",
-		"cleanup started=yes exit=- killed=maybe\n":   "unknown",
-		"cleanup started=yes exit=- killed=NO\n":      "unknown",
-		"cleanup started=yes exit=- killed=no\n":      "no",
-		"cleanup started=yes exit=- killed=yes\n":     "yes",
+		cleanupYesKilledUnknown:                     wordUnknown,
+		"cleanup started=yes exit=- killed=-\n":     wordUnknown,
+		"cleanup started=yes exit=- killed=maybe\n": wordUnknown,
+		"cleanup started=yes exit=- killed=NO\n":    wordUnknown,
+		cleanupYesKilledNo:                          "no",
+		cleanupYesKilledYes:                         wordYes,
 	} {
 		result, err := scripts.ParseCleanup([]byte(record))
 		if err != nil || result.Killed != want {
@@ -1444,11 +1444,11 @@ func TestParseCleanupChecksValues(t *testing.T) {
 func (r *runTree) linkRunTools(t *testing.T) {
 	t.Helper()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("setsid and timeout need Linux")
 	}
 
-	for _, tool := range []string{"setsid", "timeout"} {
+	for _, tool := range []string{"setsid", wordTimeout} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Skipf("no %s on this host", tool)
@@ -1473,7 +1473,7 @@ func (r *runTree) execRoot(t *testing.T, seconds, digest string) (int, string, s
 
 	// The bytes after the script stay unread, as the command's would on
 	// an SSH channel that is still open, and must never reach the command.
-	return r.run(t, stdinFor(t, []byte("trailing bytes\n")), "exec", runTask, "root", seconds, digest)
+	return r.run(t, stdinFor(t, []byte("trailing bytes\n")), wordExec, runTask, wordRoot, seconds, digest)
 }
 
 // stageAndExec stages command with prepare and runs it as root.
@@ -1481,7 +1481,7 @@ func (r *runTree) stageAndExec(t *testing.T, command string) (int, string, strin
 	t.Helper()
 	r.linkRunTools(t)
 
-	code, _ := r.prepare(t, runTask, "root", []byte(command))
+	code, _ := r.prepare(t, runTask, wordRoot, []byte(command))
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -1518,17 +1518,17 @@ func TestRunExecRootPassesOutputAndExitCode(t *testing.T) {
 				t.Errorf("stdout %q, stderr %q", out, errOut)
 			}
 
-			if got := tree.taskFile(t, "started"); got != "" {
+			if got := tree.taskFile(t, wordStarted); got != "" {
 				t.Errorf("started holds %q", got)
 			}
 
-			if got := tree.taskFile(t, "exit"); got != strconv.Itoa(want)+"\n" {
+			if got := tree.taskFile(t, wordExit); got != strconv.Itoa(want)+"\n" {
 				t.Errorf("exit file holds %q", got)
 			}
 
-			pgid, err := strconv.Atoi(strings.TrimSpace(tree.taskFile(t, "pgid")))
+			pgid, err := strconv.Atoi(strings.TrimSpace(tree.taskFile(t, wordPgid)))
 			if err != nil || pgid <= 1 {
-				t.Errorf("pgid file holds %q, %v", tree.taskFile(t, "pgid"), err)
+				t.Errorf("pgid file holds %q, %v", tree.taskFile(t, wordPgid), err)
 			}
 		})
 	}
@@ -1562,7 +1562,7 @@ pwd -P
 		"TMPDIR=/var/vcap/data/tmp",
 		"BLACKSMITH_RUN_TASK HOME LANG LC_ALL LOGNAME PATH SHELL TMPDIR USER ",
 		"0022",
-		tree.path("root"),
+		tree.path(wordRoot),
 	}, "\n") + "\n"
 	if out != want {
 		t.Errorf("the command saw\n%s\nwant\n%s", out, want)
@@ -1588,7 +1588,7 @@ func TestRunExecRootTimeoutExits124(t *testing.T) {
 
 	command := []byte("sleep 30\n")
 
-	code, _ := tree.prepare(t, runTask, "root", command)
+	code, _ := tree.prepare(t, runTask, wordRoot, command)
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -1604,7 +1604,7 @@ func TestRunExecRootTimeoutExits124(t *testing.T) {
 		t.Errorf("the deadline took %v", time.Since(start))
 	}
 
-	if got := tree.taskFile(t, "exit"); got != "124\n" {
+	if got := tree.taskFile(t, wordExit); got != "124\n" {
 		t.Errorf("exit file holds %q", got)
 	}
 }
@@ -1667,7 +1667,7 @@ func TestRunExecRootRefusals(t *testing.T) {
 
 			command := canaryExec(tree)
 
-			code, _ := tree.prepare(t, runTask, "root", command)
+			code, _ := tree.prepare(t, runTask, wordRoot, command)
 			if code != 0 {
 				t.Fatalf("prepare exited %d", code)
 			}
@@ -1685,7 +1685,7 @@ func TestRunExecRootRefusals(t *testing.T) {
 
 			tree.requireExecCanary(t, false)
 
-			for _, name := range []string{"started", "pgid", "exit"} {
+			for _, name := range []string{wordStarted, wordPgid, wordExit} {
 				_, err := os.Lstat(tree.path(runOps, runTask, name))
 				if err == nil {
 					t.Errorf("a refusal left %s behind", name)
@@ -1703,7 +1703,7 @@ func TestRunExecRootCanaryControl(t *testing.T) {
 
 	command := canaryExec(tree)
 
-	code, _ := tree.prepare(t, runTask, "root", command)
+	code, _ := tree.prepare(t, runTask, wordRoot, command)
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -1723,12 +1723,12 @@ func TestRunExecRootUsageErrors(t *testing.T) {
 	good := strings.Repeat("a", 64)
 
 	for _, args := range [][]string{
-		{"exec", runTask, "root", "30"},
-		{"exec", "nope", "root", "30", good},
-		{"exec", runTask, "nobody", "30", good},
-		{"exec", runTask, "root", "0", good},
-		{"exec", runTask, "root", "x", good},
-		{"exec", runTask, "root", "30", "ABC"},
+		{wordExec, runTask, wordRoot, "30"},
+		{wordExec, "nope", wordRoot, "30", good},
+		{wordExec, runTask, "nobody", "30", good},
+		{wordExec, runTask, wordRoot, "0", good},
+		{wordExec, runTask, wordRoot, "x", good},
+		{wordExec, runTask, wordRoot, "30", "ABC"},
 	} {
 		code, _, _ := tree.run(t, stdinFor(t, nil), args...)
 		if code != scripts.ExitUsage {
@@ -1765,7 +1765,7 @@ echo "$pgrp $sid" >&2
 		t.Fatalf("exit = %d; stderr %q", code, errOut)
 	}
 
-	pgid := strings.TrimSpace(tree.taskFile(t, "pgid"))
+	pgid := strings.TrimSpace(tree.taskFile(t, wordPgid))
 
 	if errOut != pgid+" "+pgid+"\n" {
 		t.Errorf("the command reported group and session %q, the pgid file holds %q", errOut, pgid)
@@ -1800,13 +1800,13 @@ func TestRunExecRootWaitsWhenTheWrapperLeadsItsGroup(t *testing.T) {
 		t.Fatalf("exit = %d, want 7; stderr %q", code, errOut)
 	}
 
-	if got := tree.taskFile(t, "exit"); got != "7\n" {
+	if got := tree.taskFile(t, wordExit); got != "7\n" {
 		t.Errorf("exit file holds %q", got)
 	}
 
-	pgid, err := strconv.Atoi(strings.TrimSpace(tree.taskFile(t, "pgid")))
+	pgid, err := strconv.Atoi(strings.TrimSpace(tree.taskFile(t, wordPgid)))
 	if err != nil || pgid <= 1 {
-		t.Errorf("pgid file holds %q, %v", tree.taskFile(t, "pgid"), err)
+		t.Errorf("pgid file holds %q, %v", tree.taskFile(t, wordPgid), err)
 	}
 }
 
@@ -1818,12 +1818,12 @@ func TestRunExecRootLaunchFailureExits125(t *testing.T) {
 
 	command := canaryExec(tree)
 
-	code, _ := tree.prepare(t, runTask, "root", command)
+	code, _ := tree.prepare(t, runTask, wordRoot, command)
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
 
-	err := os.WriteFile(tree.path(runOps, runTask, "pgid"), nil, 0o600)
+	err := os.WriteFile(tree.path(runOps, runTask, wordPgid), nil, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1835,13 +1835,13 @@ func TestRunExecRootLaunchFailureExits125(t *testing.T) {
 
 	tree.requireExecCanary(t, false)
 
-	if got := tree.taskFile(t, "exit"); got != "125\n" {
+	if got := tree.taskFile(t, wordExit); got != "125\n" {
 		t.Errorf("exit file holds %q", got)
 	}
 
 	// The launch takes back the started marker, so cleanup tells it from a
 	// command that ran and exited 125.
-	if _, statErr := os.Stat(tree.path(runOps, runTask, "started")); statErr == nil {
+	if _, statErr := os.Stat(tree.path(runOps, runTask, wordStarted)); statErr == nil {
 		t.Error("the started marker stayed although the command was not started")
 	}
 
@@ -1859,7 +1859,7 @@ func TestRunExecRootCommandExiting125KeepsStarted(t *testing.T) {
 
 	command := []byte("exit 125\n")
 
-	code, _ := tree.prepare(t, runTask, "root", command)
+	code, _ := tree.prepare(t, runTask, wordRoot, command)
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -1883,12 +1883,12 @@ func TestRunExecRootKeepsTheCommandsCodeWhenTheExitFileFails(t *testing.T) {
 
 	command := []byte("exit 5\n")
 
-	code, _ := tree.prepare(t, runTask, "root", command)
+	code, _ := tree.prepare(t, runTask, wordRoot, command)
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
 
-	err := os.WriteFile(tree.path(runOps, runTask, "exit"), []byte("old\n"), 0o600)
+	err := os.WriteFile(tree.path(runOps, runTask, wordExit), []byte("old\n"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1907,7 +1907,7 @@ func TestRunExecRootKilledAfterTheDeadlineKeepsStderrClean(t *testing.T) {
 	command := "echo err >&2\ntrap '' TERM\nsleep 30\n"
 	tree.linkRunTools(t)
 
-	code, _ := tree.prepare(t, runTask, "root", []byte(command))
+	code, _ := tree.prepare(t, runTask, wordRoot, []byte(command))
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -1949,7 +1949,7 @@ func TestRunExecRootLaunchesThroughSetsidWait(t *testing.T) {
 
 	command := []byte("exit 3\n")
 
-	code, _ := tree.prepare(t, runTask, "root", command)
+	code, _ := tree.prepare(t, runTask, wordRoot, command)
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -2015,14 +2015,14 @@ func (r *runTree) fakeVcapTools(t *testing.T, entry string) {
 	r.linkRunTools(t)
 	r.fakeGetent(t, entry)
 
-	real, err := exec.LookPath("timeout")
+	real, err := exec.LookPath(wordTimeout)
 	if err != nil {
 		t.Skip("no timeout on this host")
 	}
 
 	for name, script := range map[string]string{
-		"timeout": fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nexec %q \"$@\"\n", r.path("timeout-args"), real),
-		"setpriv": fmt.Sprintf("#!/bin/sh\npwd -P > %q\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n", r.path("setpriv-pwd")),
+		wordTimeout: fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nexec %q \"$@\"\n", r.path("timeout-args"), real),
+		"setpriv":   fmt.Sprintf("#!/bin/sh\npwd -P > %q\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n", r.path("setpriv-pwd")),
 	} {
 		plant := r.path("usr/bin", name)
 
@@ -2042,7 +2042,7 @@ func (r *runTree) fakeVcapTools(t *testing.T, entry string) {
 func (r *runTree) execVcap(t *testing.T, seconds, digest string) (int, string, string) {
 	t.Helper()
 
-	return r.run(t, stdinFor(t, []byte("trailing bytes\n")), "exec", runTask, "vcap", seconds, digest)
+	return r.run(t, stdinFor(t, []byte("trailing bytes\n")), wordExec, runTask, wordVcap, seconds, digest)
 }
 
 // stageAndExecVcap stages command and runs it as vcap through the fakes.
@@ -2052,7 +2052,7 @@ func (r *runTree) stageAndExecVcap(t *testing.T, command string) (int, string, s
 	uid, gid := r.vcapIDs()
 	r.fakeVcapTools(t, vcapEntry(uid, gid, "/home/vcap"))
 
-	code, _ := r.prepare(t, runTask, "vcap", []byte(command))
+	code, _ := r.prepare(t, runTask, wordVcap, []byte(command))
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -2095,7 +2095,7 @@ func TestRunExecVcapLaunchLine(t *testing.T) {
 		t.Errorf("setpriv started in %q, %v; want the vcap home", pwd, err)
 	}
 
-	if got := tree.taskFile(t, "exit"); got != "4\n" {
+	if got := tree.taskFile(t, wordExit); got != "4\n" {
 		t.Errorf("exit file holds %q", got)
 	}
 }
@@ -2176,7 +2176,7 @@ func TestRunExecVcapRefusals(t *testing.T) {
 
 			tree.fakeVcapTools(t, vcapEntry(uid, gid, "/home/vcap"))
 
-			code, _ := tree.prepare(t, runTask, "vcap", command)
+			code, _ := tree.prepare(t, runTask, wordVcap, command)
 			if code != 0 {
 				t.Fatalf("prepare exited %d", code)
 			}
@@ -2198,7 +2198,7 @@ func TestRunExecVcapRefusals(t *testing.T) {
 
 			tree.requireExecCanary(t, false)
 
-			for _, name := range []string{"started", "pgid", "exit"} {
+			for _, name := range []string{wordStarted, wordPgid, wordExit} {
 				_, err := os.Lstat(tree.path(runOps, runTask, name))
 				if err == nil {
 					t.Errorf("a refusal left %s behind", name)
@@ -2280,7 +2280,7 @@ func TestRunExecRefusesOtherUsers(t *testing.T) {
 	tree := newRunTree(t)
 
 	for _, user := range []string{"nobody", "VCAP", "vcap2", "root:vcap", ""} {
-		code, _, _ := tree.run(t, stdinFor(t, nil), "exec", runTask, user, "30", strings.Repeat("a", 64))
+		code, _, _ := tree.run(t, stdinFor(t, nil), wordExec, runTask, user, "30", strings.Repeat("a", 64))
 		if code != scripts.ExitUsage {
 			t.Errorf("user %q exited %d, want %d", user, code, scripts.ExitUsage)
 		}
@@ -2292,7 +2292,7 @@ func TestRunExecCommandHasNoDescriptor3(t *testing.T) {
 
 	const command = "if { : >&3; } 2> /dev/null; then echo open; else echo closed; fi\n"
 
-	for _, user := range []string{"root", "vcap"} {
+	for _, user := range []string{wordRoot, wordVcap} {
 		t.Run(user, func(t *testing.T) {
 			t.Parallel()
 
@@ -2304,7 +2304,7 @@ func TestRunExecCommandHasNoDescriptor3(t *testing.T) {
 				errOut string
 			)
 
-			if user == "root" {
+			if user == wordRoot {
 				code, out, errOut = tree.stageAndExec(t, command)
 			} else {
 				code, out, errOut = tree.stageAndExecVcap(t, command)
@@ -2325,11 +2325,11 @@ func TestRunExecCommandHasNoDescriptor3(t *testing.T) {
 func TestRunExecVcapRealAccount(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+	if runtime.GOOS != osLinux || os.Geteuid() != 0 {
 		t.Skip("the real vcap test needs Linux and root")
 	}
 
-	account, err := user.Lookup("vcap")
+	account, err := user.Lookup(wordVcap)
 	if err != nil {
 		t.Skipf("no vcap account on this host: %v", err)
 	}
@@ -2391,7 +2391,7 @@ func TestRunExecVcapRealAccount(t *testing.T) {
 	taskDir := tree.path(runOps, runTask)
 	command := fmt.Sprintf("id -u\nid -g\nid -G\ngrep ^NoNewPrivs: /proc/self/status\ncat %[1]q\n(echo more >> %[1]q) 2> /dev/null || echo append-denied\nrm -rf %[2]q 2> /dev/null\n[ -e %[2]q ] && echo remove-denied\n", taskDir+"/cmd.sh", taskDir)
 
-	code, _ := tree.prepare(t, runTask, "vcap", []byte(command))
+	code, _ := tree.prepare(t, runTask, wordVcap, []byte(command))
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -2415,12 +2415,12 @@ func TestRunExecRootStarttimeWriteFailureExits125(t *testing.T) {
 
 	command := canaryExec(tree)
 
-	code, _ := tree.prepare(t, runTask, "root", command)
+	code, _ := tree.prepare(t, runTask, wordRoot, command)
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
 
-	err := os.WriteFile(tree.path(runOps, runTask, "starttime"), nil, 0o600)
+	err := os.WriteFile(tree.path(runOps, runTask, wordStarttime), nil, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2432,11 +2432,11 @@ func TestRunExecRootStarttimeWriteFailureExits125(t *testing.T) {
 
 	tree.requireExecCanary(t, false)
 
-	if _, statErr := os.Stat(tree.path(runOps, runTask, "pgid")); statErr == nil {
+	if _, statErr := os.Stat(tree.path(runOps, runTask, wordPgid)); statErr == nil {
 		t.Error("a pgid was written although the start time was not")
 	}
 
-	if _, statErr := os.Stat(tree.path(runOps, runTask, "started")); statErr == nil {
+	if _, statErr := os.Stat(tree.path(runOps, runTask, wordStarted)); statErr == nil {
 		t.Error("the started marker stayed although the command was not started")
 	}
 }

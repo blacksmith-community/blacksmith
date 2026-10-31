@@ -221,21 +221,21 @@ func TestRunExecAndCleanupTakeTheTaskLockInEitherOrder(t *testing.T) {
 			tree := newRunTree(t)
 			tree.linkRunTools(t)
 			tree.linkKill(t)
-			tree.env = []string{"RC_KILL_TICKS=3"}
+			tree.env = []string{killTicks3}
 
 			pidFile := tree.path("sleeper-pid")
 			killFromFile(t, pidFile)
 
 			command := sleeperCommand(pidFile)
 
-			code, _ := tree.prepare(t, runTask, "root", []byte(command))
+			code, _ := tree.prepare(t, runTask, wordRoot, []byte(command))
 			if code != 0 {
 				t.Fatalf("prepare exited %d", code)
 			}
 
 			release := tree.holdTaskLock(t)
 
-			execRun := tree.startOp(t, stdinFor(t, []byte("trailing bytes\n")), "exec", runTask, "root", "300", digestOf([]byte(command)))
+			execRun := tree.startOp(t, stdinFor(t, []byte("trailing bytes\n")), wordExec, runTask, wordRoot, "300", digestOf([]byte(command)))
 			execWaiter := lockWaiter(t, execRun.cmd.Process.Pid)
 
 			cleanRun := tree.startOp(t, stdinFor(t, nil), "cleanup", runTask)
@@ -251,7 +251,7 @@ func TestRunExecAndCleanupTakeTheTaskLockInEitherOrder(t *testing.T) {
 
 			if execFirst {
 				if !waitFor(10*time.Second, func() bool {
-					return fileExists(pidFile) && fileExists(tree.path(runOps, runTask, "pgid"))
+					return fileExists(pidFile) && fileExists(tree.path(runOps, runTask, wordPgid))
 				}) {
 					t.Fatal("exec did not start the command after it took the lock")
 				}
@@ -268,7 +268,7 @@ func TestRunExecAndCleanupTakeTheTaskLockInEitherOrder(t *testing.T) {
 			execCode, _ := execRun.wait(t)
 
 			if execFirst {
-				if cleanCode != 0 || cleanOut != "cleanup started=yes exit=- killed=yes\n" {
+				if cleanCode != 0 || cleanOut != cleanupYesKilledYes {
 					t.Errorf("cleanup exited %d with %q, want started=yes with the session ended", cleanCode, cleanOut)
 				}
 
@@ -282,7 +282,7 @@ func TestRunExecAndCleanupTakeTheTaskLockInEitherOrder(t *testing.T) {
 				return
 			}
 
-			if cleanCode != 0 || cleanOut != "cleanup started=no exit=- killed=no\n" {
+			if cleanCode != 0 || cleanOut != cleanupNoKilledNo {
 				t.Errorf("cleanup exited %d with %q, want started=no", cleanCode, cleanOut)
 			}
 
@@ -312,7 +312,7 @@ func TestRunExecChecksTheTaskUnderTheLock(t *testing.T) {
 		},
 		"a done record": func(t *testing.T, tree *runTree) {
 			t.Helper()
-			writeTestFile(t, tree.donePath(runTask), "cleanup started=no exit=- killed=no\n", 0o600)
+			writeTestFile(t, tree.donePath(runTask), cleanupNoKilledNo, 0o600)
 		},
 		"cmd.sh gone": func(t *testing.T, tree *runTree) {
 			t.Helper()
@@ -373,14 +373,14 @@ func TestRunExecChecksTheTaskUnderTheLock(t *testing.T) {
 
 			command := []byte(fmt.Sprintf("echo ran > %q\n", tree.path("ran")))
 
-			code, _ := tree.prepare(t, runTask, "root", command)
+			code, _ := tree.prepare(t, runTask, wordRoot, command)
 			if code != 0 {
 				t.Fatalf("prepare exited %d", code)
 			}
 
 			release := tree.holdTaskLock(t)
 
-			execRun := tree.startOp(t, stdinFor(t, []byte("trailing bytes\n")), "exec", runTask, "root", "30", digestOf(command))
+			execRun := tree.startOp(t, stdinFor(t, []byte("trailing bytes\n")), wordExec, runTask, wordRoot, "30", digestOf(command))
 			lockWaiter(t, execRun.cmd.Process.Pid)
 
 			change(t, tree)
@@ -395,7 +395,7 @@ func TestRunExecChecksTheTaskUnderTheLock(t *testing.T) {
 				t.Error("the command ran")
 			}
 
-			if fileExists(tree.path(runOps, runTask, "started")) {
+			if fileExists(tree.path(runOps, runTask, wordStarted)) {
 				t.Error("exec wrote started")
 			}
 		})
@@ -411,7 +411,7 @@ func TestRunCleanupReadsStartedUnderTheLock(t *testing.T) {
 
 	tree := newRunTree(t)
 
-	code, _ := tree.prepare(t, runTask, "root", []byte("exit 0\n"))
+	code, _ := tree.prepare(t, runTask, wordRoot, []byte("exit 0\n"))
 	if code != 0 {
 		t.Fatalf("prepare exited %d", code)
 	}
@@ -421,14 +421,14 @@ func TestRunCleanupReadsStartedUnderTheLock(t *testing.T) {
 	cleanRun := tree.startOp(t, stdinFor(t, nil), "cleanup", runTask)
 	lockWaiter(t, cleanRun.cmd.Process.Pid)
 
-	for name, text := range withGoneGroup(t, map[string]string{"marker": "", "started": ""}) {
+	for name, text := range withGoneGroup(t, map[string]string{wordMarker: "", wordStarted: ""}) {
 		writeTestFile(t, tree.path(runOps, runTask, name), text, 0o600)
 	}
 
 	release()
 
 	code, out := cleanRun.wait(t)
-	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+	if code != 0 || out != cleanupYesKilledNo {
 		t.Errorf("cleanup exited %d with %q, want started=yes with the session checked", code, out)
 	}
 }
@@ -452,13 +452,13 @@ func TestRunExecRefusesATaskThatCleanupFenced(t *testing.T) {
 
 			command := []byte(fmt.Sprintf("echo ran > %q\n", tree.path("ran")))
 
-			code, _ := tree.prepare(t, runTask, "root", command)
+			code, _ := tree.prepare(t, runTask, wordRoot, command)
 			if code != 0 {
 				t.Fatalf("prepare exited %d", code)
 			}
 
 			code, out := tree.snippet(t, false, stub+"cleanup "+runTask+"\n")
-			if code != 0 || out != "cleanup started=no exit=- killed=no\n" {
+			if code != 0 || out != cleanupNoKilledNo {
 				t.Fatalf("cleanup exited %d with %q, want started=no", code, out)
 			}
 
@@ -499,7 +499,7 @@ func TestRunWithoutFlockRefusesExecAndCleanup(t *testing.T) {
 
 			command := []byte(fmt.Sprintf("echo ran > %q\n", tree.path("ran")))
 
-			code, _ := tree.prepare(t, runTask, "root", command)
+			code, _ := tree.prepare(t, runTask, wordRoot, command)
 			if code != 0 {
 				t.Fatalf("prepare exited %d", code)
 			}
@@ -521,7 +521,7 @@ func TestRunWithoutFlockRefusesExecAndCleanup(t *testing.T) {
 				t.Errorf("exec exited %d, want %d", code, scripts.ExitRefused)
 			}
 
-			if fileExists(tree.path("ran")) || fileExists(tree.path(runOps, runTask, "started")) {
+			if fileExists(tree.path("ran")) || fileExists(tree.path(runOps, runTask, wordStarted)) {
 				t.Error("exec started the command without the lock")
 			}
 
@@ -545,22 +545,22 @@ func TestRunCleanupReplayReadsStartedUnderTheLock(t *testing.T) {
 	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, map[string]string{"exit": "0\n"})
-	writeTestFile(t, tree.donePath(runTask), "cleanup started=yes exit=0 killed=no\n", 0o600)
+	tree.makeTask(t, runTask, map[string]string{wordExit: "0\n"})
+	writeTestFile(t, tree.donePath(runTask), cleanupYesExit0KilledNo, 0o600)
 
 	release := tree.holdTaskLock(t)
 
 	cleanRun := tree.startOp(t, stdinFor(t, nil), "cleanup", runTask)
 	lockWaiter(t, cleanRun.cmd.Process.Pid)
 
-	for name, text := range withGoneGroup(t, map[string]string{"marker": "", "started": ""}) {
+	for name, text := range withGoneGroup(t, map[string]string{wordMarker: "", wordStarted: ""}) {
 		writeTestFile(t, tree.path(runOps, runTask, name), text, 0o600)
 	}
 
 	release()
 
 	code, out := cleanRun.wait(t)
-	if code != 0 || out != "cleanup started=yes exit=0 killed=no\n" {
+	if code != 0 || out != cleanupYesExit0KilledNo {
 		t.Errorf("cleanup exited %d with %q, want the directory's answer", code, out)
 	}
 
@@ -590,7 +590,7 @@ func TestRunFenceFallsBackToRemovingTheCommand(t *testing.T) {
 			t.Parallel()
 
 			tree := newRunTree(t)
-			tree.makeTask(t, runTask, map[string]string{"cmd.sh": "x"})
+			tree.makeTask(t, runTask, map[string]string{scriptName: "x"})
 
 			dir := tree.path(runOps, runTask)
 			script := fmt.Sprintf("%s_rc_fence %q\nrc=$?\nstate=kept\n[ -e %q ] || state=gone\nprintf '%%s %%s\\n' \"$rc\" \"$state\"\n", tc.stub, dir, dir+"/cmd.sh")
@@ -606,7 +606,7 @@ func TestRunFenceFallsBackToRemovingTheCommand(t *testing.T) {
 		t.Parallel()
 
 		tree := newRunTree(t)
-		tree.makeTask(t, runTask, map[string]string{"cmd.sh": "x"})
+		tree.makeTask(t, runTask, map[string]string{scriptName: "x"})
 
 		code, out := tree.snippet(t, false, "_rc_fence() { return 1; }\ncleanup "+runTask+"\n")
 		if code != scripts.ExitRefused || out != "" {
@@ -678,7 +678,7 @@ _rc_fence() {
 			tree := newRunTree(t)
 			tree.linkRunTools(t)
 
-			code, _ := tree.prepare(t, runTask, "root", command)
+			code, _ := tree.prepare(t, runTask, wordRoot, command)
 			if code != 0 {
 				t.Fatalf("prepare exited %d", code)
 			}

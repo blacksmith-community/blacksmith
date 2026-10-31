@@ -51,7 +51,7 @@ func TestInvocation(t *testing.T) {
 func TestParseLines(t *testing.T) {
 	t.Parallel()
 
-	allowed := map[string]bool{"path": true, "hash": true, "state": true}
+	allowed := map[string]bool{wordPath: true, "hash": true, "state": true}
 	out := []byte("path=/var/vcap/data/jobs/valkey/abc/x hash=abc123\n\nstate=ok\n")
 
 	got, err := scripts.ParseLines(out, allowed)
@@ -63,7 +63,7 @@ func TestParseLines(t *testing.T) {
 		t.Fatalf("got %d lines, want 2: %v", len(got), got)
 	}
 
-	if got[0]["path"] != "/var/vcap/data/jobs/valkey/abc/x" || got[0]["hash"] != "abc123" || got[1]["state"] != "ok" {
+	if got[0][wordPath] != "/var/vcap/data/jobs/valkey/abc/x" || got[0]["hash"] != "abc123" || got[1]["state"] != "ok" {
 		t.Errorf("parsed %v", got)
 	}
 
@@ -76,7 +76,7 @@ func TestParseLines(t *testing.T) {
 func TestParseLinesRejectsUnknownKeys(t *testing.T) {
 	t.Parallel()
 
-	allowed := map[string]bool{"path": true, "hash": true}
+	allowed := map[string]bool{wordPath: true, "hash": true}
 	keyText := "MIIBszCCAVmgAwIBAgIUQ"
 
 	bad := map[string]string{
@@ -133,7 +133,7 @@ func TestParseLinesRejectsUnknownKeys(t *testing.T) {
 func TestParseRecords(t *testing.T) {
 	t.Parallel()
 
-	kinds := map[string]map[string]bool{"match": {"job": true, "path": true}}
+	kinds := map[string]map[string]bool{"match": {"job": true, wordPath: true}}
 
 	got, err := scripts.ParseRecords([]byte("match job=valkey path=/x\n\nmatch job=redis\n"), kinds)
 	if err != nil {
@@ -348,7 +348,7 @@ func TestExitCodesMatchLib(t *testing.T) {
 	t.Run("sourced", func(t *testing.T) {
 		t.Parallel()
 
-		if runtime.GOOS != "linux" {
+		if runtime.GOOS != osLinux {
 			t.Skipf("sourcing lib.sh needs the Linux bash the VMs run, and this host is %s", runtime.GOOS)
 		}
 

@@ -20,7 +20,7 @@ const runMarker = "BLACKSMITH_RUN_TASK=" + runTask
 
 // leaderlessSession starts a session whose leader starts one sleeper and
 // exits, which leaves the sleeper in a session with no leader. The leader
-// runs with env, and the sleeper starts through prefix, such as "env -i".
+// runs with env, and the sleeper starts through prefix, such as envDashI.
 // It returns the session's ID, the leader's start time, and the sleeper's
 // pid.
 func leaderlessSession(t *testing.T, tree *runTree, env []string, prefix string) (int, string, int) {
@@ -117,16 +117,16 @@ func TestRunCleanupProvesEachMemberOfALeaderlessSession(t *testing.T) {
 		survivors bool
 		want      string
 	}{
-		{name: "a stranger with no marker", env: []string{path}, want: "unknown"},
-		{name: "a stranger with another task's marker", env: []string{path, "BLACKSMITH_RUN_TASK=1a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"}, want: "unknown"},
-		{name: "a stranger whose marker runs on past the task", env: []string{path, runMarker + "0"}, want: "unknown"},
-		{name: "a child with the marker", env: []string{path, runMarker}, want: "yes"},
-		{name: "a child that cleared its environment", env: []string{path, runMarker}, prefix: "env -i", want: "unknown"},
-		{name: "an old directory without the marker file", env: []string{path, runMarker}, noMarker: true, want: "unknown"},
-		{name: "a recheck of a stranger", env: []string{path}, survivors: true, want: "survived"},
-		{name: "a recheck of a child with the marker", env: []string{path, runMarker}, survivors: true, want: "yes"},
-		{name: "a recheck of a child that cleared its environment", env: []string{path, runMarker}, prefix: "env -i", survivors: true, want: "survived"},
-		{name: "a recheck in an old directory", env: []string{path, runMarker}, noMarker: true, survivors: true, want: "survived"},
+		{name: "a stranger with no marker", env: []string{path}, want: wordUnknown},
+		{name: "a stranger with another task's marker", env: []string{path, "BLACKSMITH_RUN_TASK=1a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"}, want: wordUnknown},
+		{name: "a stranger whose marker runs on past the task", env: []string{path, runMarker + "0"}, want: wordUnknown},
+		{name: "a child with the marker", env: []string{path, runMarker}, want: wordYes},
+		{name: "a child that cleared its environment", env: []string{path, runMarker}, prefix: envDashI, want: wordUnknown},
+		{name: "an old directory without the marker file", env: []string{path, runMarker}, noMarker: true, want: wordUnknown},
+		{name: "a recheck of a stranger", env: []string{path}, survivors: true, want: wordSurvived},
+		{name: "a recheck of a child with the marker", env: []string{path, runMarker}, survivors: true, want: wordYes},
+		{name: "a recheck of a child that cleared its environment", env: []string{path, runMarker}, prefix: envDashI, survivors: true, want: wordSurvived},
+		{name: "a recheck in an old directory", env: []string{path, runMarker}, noMarker: true, survivors: true, want: wordSurvived},
 	}
 
 	for _, tc := range cases {
@@ -135,18 +135,18 @@ func TestRunCleanupProvesEachMemberOfALeaderlessSession(t *testing.T) {
 
 			tree := newRunTree(t)
 			tree.linkKill(t)
-			tree.env = []string{"RC_KILL_TICKS=3"}
+			tree.env = []string{killTicks3}
 
 			sid, starttime, sleeper := leaderlessSession(t, tree, tc.env, tc.prefix)
 
 			files := map[string]string{
-				"started":   "",
-				"pgid":      strconv.Itoa(sid) + "\n",
-				"starttime": starttime + "\n",
+				wordStarted:   "",
+				wordPgid:      strconv.Itoa(sid) + "\n",
+				wordStarttime: starttime + "\n",
 			}
 
 			if !tc.noMarker {
-				files["marker"] = ""
+				files[wordMarker] = ""
 			}
 
 			if tc.survivors {
@@ -166,7 +166,7 @@ func TestRunCleanupProvesEachMemberOfALeaderlessSession(t *testing.T) {
 
 			_, dirErr := os.Stat(tree.path(runOps, runTask))
 
-			if tc.want == "yes" {
+			if tc.want == wordYes {
 				if sessionLive(t, sid) {
 					t.Error("a member that holds the marker outlived cleanup")
 				}
@@ -199,10 +199,10 @@ func TestRunCleanupEndsTheGroupOfALiveLeaderWithoutTheMarker(t *testing.T) {
 	tree.linkKill(t)
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", fmt.Sprintf("env -i sleep 60 &\necho $! > %q\nwait\n", pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, fmt.Sprintf("env -i sleep 60 &\necho $! > %q\nwait\n", pidFile), pidFile)
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != cleanupYesKilledYes {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -224,7 +224,7 @@ func TestRunExecGivesTheCommandTheTaskMarker(t *testing.T) {
 		t.Errorf("exit = %d, stdout %q, stderr %q; want the task ID", code, out, errOut)
 	}
 
-	if got := tree.taskFile(t, "marker"); got != "" {
+	if got := tree.taskFile(t, wordMarker); got != "" {
 		t.Errorf("the marker file holds %q, want nothing", got)
 	}
 }
@@ -243,16 +243,16 @@ func TestRunCleanupWaitsForNoMemberItCannotSignal(t *testing.T) {
 	sid, starttime, _ := leaderlessSession(t, tree, []string{"PATH=" + os.Getenv("PATH")}, "")
 
 	tree.makeTask(t, runTask, map[string]string{
-		"started":   "",
-		"marker":    "",
-		"pgid":      strconv.Itoa(sid) + "\n",
-		"starttime": starttime + "\n",
+		wordStarted:   "",
+		wordMarker:    "",
+		wordPgid:      strconv.Itoa(sid) + "\n",
+		wordStarttime: starttime + "\n",
 	})
 
 	began := time.Now()
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
+	if code != 0 || out != cleanupYesKilledUnknown {
 		t.Errorf("exit = %d, output = %q, want killed=unknown", code, out)
 	}
 
@@ -270,7 +270,7 @@ func TestRunCleanupRecheckProvesASurvivorBehindAReusedLeaderPid(t *testing.T) {
 
 	tree := newRunTree(t)
 	tree.linkKill(t)
-	tree.env = []string{"RC_KILL_TICKS=3"}
+	tree.env = []string{killTicks3}
 
 	stranger := exec.Command("sleep", "60")
 	stranger.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -285,15 +285,15 @@ func TestRunCleanupRecheckProvesASurvivorBehindAReusedLeaderPid(t *testing.T) {
 	pid := stranger.Process.Pid
 
 	tree.makeTask(t, runTask, map[string]string{
-		"started":   "",
-		"marker":    "",
-		"pgid":      strconv.Itoa(pid) + "\n",
-		"starttime": "1\n",
-		"survivors": strconv.Itoa(pid) + " " + startTime(t, pid) + "\n",
+		wordStarted:   "",
+		wordMarker:    "",
+		wordPgid:      strconv.Itoa(pid) + "\n",
+		wordStarttime: "1\n",
+		"survivors":   strconv.Itoa(pid) + " " + startTime(t, pid) + "\n",
 	})
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Errorf("exit = %d, output = %q, want killed=survived", code, out)
 	}
 
@@ -309,7 +309,7 @@ func TestRunCleanupRecheckProvesASurvivorBehindAReusedLeaderPid(t *testing.T) {
 func TestRunProvenReadsTheMemberAgain(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("_rc_proven reads /proc")
 	}
 
@@ -330,9 +330,9 @@ func TestRunProvenReadsTheMemberAgain(t *testing.T) {
 			t.Parallel()
 
 			tree := newRunTree(t)
-			tree.makeTask(t, runTask, map[string]string{"started": "", "marker": ""})
+			tree.makeTask(t, runTask, map[string]string{wordStarted: "", wordMarker: ""})
 
-			env := "env -i"
+			env := envDashI
 			if tc.marker {
 				env += " " + runMarker
 			}
@@ -383,12 +383,12 @@ printf '%%s %%s\n' "$rc" "$got"
 func TestRunOursBoundsTheEnvironmentRead(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("_rc_ours reads /proc")
 	}
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, map[string]string{"started": "", "marker": ""})
+	tree.makeTask(t, runTask, map[string]string{wordStarted: "", wordMarker: ""})
 
 	stubs := tree.path("stubs")
 	flag := tree.path("stub-ran")

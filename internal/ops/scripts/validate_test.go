@@ -163,7 +163,7 @@ func TestValidatorShapeParityWithBash(t *testing.T) {
 func requireLinux(t *testing.T) {
 	t.Helper()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("the helper scripts need Linux tools; run this test in the golang container")
 	}
 

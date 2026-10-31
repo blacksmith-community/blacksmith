@@ -157,7 +157,7 @@ func (r *runTree) startExec(t *testing.T, user, command, pidFile string) running
 
 	var wrapper *exec.Cmd
 
-	if user == "vcap" {
+	if user == wordVcap {
 		uid, gid := r.vcapIDs()
 		r.fakeVcapTools(t, vcapEntry(uid, gid, "/home/vcap"))
 	} else {
@@ -174,7 +174,7 @@ func (r *runTree) startExec(t *testing.T, user, command, pidFile string) running
 	freeSlot := takeRunSlot(t)
 	defer freeSlot()
 
-	wrapper = exec.Command(bashPath(t), "-s", "--", "exec", runTask, user, "300", digestOf([]byte(command))) //nolint:gosec // the script under test
+	wrapper = exec.Command(bashPath(t), "-s", "--", wordExec, runTask, user, "300", digestOf([]byte(command))) //nolint:gosec // the script under test
 	wrapper.Env = append([]string{"CERTPATCH_ROOT=" + r.root, "HOME=" + r.root}, r.env...)
 	wrapper.Stdin = stdinFor(t, []byte("trailing bytes\n"))
 	wrapper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -202,7 +202,7 @@ func (r *runTree) startExec(t *testing.T, user, command, pidFile string) running
 	})
 
 	if !waitFor(10*time.Second, func() bool {
-		raw, readErr := os.ReadFile(r.path(runOps, runTask, "pgid"))
+		raw, readErr := os.ReadFile(r.path(runOps, runTask, wordPgid))
 		pgid, convErr := strconv.Atoi(strings.TrimSpace(string(raw)))
 
 		if readErr != nil || convErr != nil {
@@ -227,14 +227,14 @@ func (r *runTree) startExec(t *testing.T, user, command, pidFile string) running
 		t.Fatal("the command did not start")
 	}
 
-	stamp, err := os.ReadFile(r.path(runOps, runTask, "starttime"))
+	stamp, err := os.ReadFile(r.path(runOps, runTask, wordStarttime))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	running.starttime = strings.TrimSpace(string(stamp))
 
-	_, err = os.Stat(r.path(runOps, runTask, "started"))
+	_, err = os.Stat(r.path(runOps, runTask, wordStarted))
 	if err != nil {
 		t.Fatalf("no started marker: %v", err)
 	}
@@ -249,7 +249,7 @@ func sleeperCommand(pidFile string) string {
 func TestRunCleanupKillsARunningCommand(t *testing.T) {
 	t.Parallel()
 
-	for _, user := range []string{"root", "vcap"} {
+	for _, user := range []string{wordRoot, wordVcap} {
 		t.Run(user, func(t *testing.T) {
 			t.Parallel()
 
@@ -274,7 +274,7 @@ func TestRunCleanupKillsARunningCommand(t *testing.T) {
 			}
 
 			code, out := tree.cleanup(t, runTask)
-			if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+			if code != 0 || out != cleanupYesKilledYes {
 				t.Errorf("exit = %d, output = %q", code, out)
 			}
 
@@ -298,12 +298,12 @@ func TestRunCleanupWaitsTheWindowBeforeKill(t *testing.T) {
 	tree.env = []string{"RC_KILL_TICKS=8"}
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", "trap '' TERM\n"+sleeperCommand(pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, "trap '' TERM\n"+sleeperCommand(pidFile), pidFile)
 
 	start := time.Now()
 	code, out := tree.cleanup(t, runTask)
 
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != cleanupYesKilledYes {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -321,16 +321,16 @@ func TestRunCleanupReportsAGroupThatSurvivesKill(t *testing.T) {
 
 	tree := newRunTree(t)
 	tree.linkKill(t)
-	tree.env = []string{"RC_KILL_TICKS=3"}
+	tree.env = []string{killTicks3}
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", sleeperCommand(pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, sleeperCommand(pidFile), pidFile)
 
 	// The planted kill logs and signals nothing, so the group stays.
 	log := tree.plantKill(t)
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -398,14 +398,14 @@ func TestRunCleanupKillsTheChildOfALeaderThatEndsOnTerm(t *testing.T) {
 
 	tree := newRunTree(t)
 	tree.linkKill(t)
-	tree.env = []string{"RC_KILL_TICKS=10"}
+	tree.env = []string{killTicks10}
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", leaderEndsOnTerm(pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, leaderEndsOnTerm(pidFile), pidFile)
 	log := tree.plantPassingKill(t, "-TERM|-KILL")
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != cleanupYesKilledYes {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -432,14 +432,14 @@ func TestRunCleanupReportsTheChildOfALeaderThatEndsOnTermSurviving(t *testing.T)
 
 	tree := newRunTree(t)
 	tree.linkKill(t)
-	tree.env = []string{"RC_KILL_TICKS=10"}
+	tree.env = []string{killTicks10}
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", leaderEndsOnTerm(pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, leaderEndsOnTerm(pidFile), pidFile)
 	log := tree.plantPassingKill(t, "-TERM")
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -470,14 +470,14 @@ func survivorTree(t *testing.T) (*runTree, runningCommand, string) {
 
 	tree := newRunTree(t)
 	tree.linkKill(t)
-	tree.env = []string{"RC_KILL_TICKS=3"}
+	tree.env = []string{killTicks3}
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", sleeperCommand(pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, sleeperCommand(pidFile), pidFile)
 	log := tree.plantKill(t)
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Fatalf("exit = %d, output = %q", code, out)
 	}
 
@@ -513,7 +513,7 @@ func TestRunCleanupKeepsARecordOfTheSurvivors(t *testing.T) {
 
 	tree, running, _ := survivorTree(t)
 
-	if _, err := os.Stat(tree.path(runOps, runTask, "cmd.sh")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(tree.path(runOps, runTask, scriptName)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("cmd.sh stayed beside the survivors: %v", err)
 	}
 
@@ -540,7 +540,7 @@ func TestRunCleanupReportsTheSurvivorsAgainWhileTheyLive(t *testing.T) {
 	}
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -570,7 +570,7 @@ func TestRunCleanupEndsTheSurvivorsAndRemovesTheRecord(t *testing.T) {
 	tree.waitOutKill()
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != cleanupYesKilledYes {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -638,15 +638,15 @@ func TestRunCleanupRechecksTheSessionAfterTheSurvivorsEnd(t *testing.T) {
 
 	tree := newRunTree(t)
 	tree.linkKill(t)
-	tree.env = []string{"RC_KILL_TICKS=3"}
+	tree.env = []string{killTicks3}
 
 	pidFile := tree.path("sleeper-pid")
 	command := fmt.Sprintf("sleep 60 &\necho $! > %q\nwhile true; do sleep 600 & sleep 0.1; done\n", pidFile)
-	running := tree.startExec(t, "root", command, pidFile)
+	running := tree.startExec(t, wordRoot, command, pidFile)
 	tree.plantKill(t)
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Fatalf("exit = %d, output = %q", code, out)
 	}
 
@@ -702,15 +702,15 @@ func TestRunCleanupRecheckEndsTheChildrenOfALiveSurvivor(t *testing.T) {
 
 	tree := newRunTree(t)
 	tree.linkKill(t)
-	tree.env = []string{"RC_KILL_TICKS=10"}
+	tree.env = []string{killTicks10}
 
 	pidFile := tree.path("sleeper-pid")
 	command := fmt.Sprintf("sleep 60 &\necho $! > %q\nwhile true; do sleep 600 & sleep 0.1; done\n", pidFile)
-	running := tree.startExec(t, "root", command, pidFile)
+	running := tree.startExec(t, wordRoot, command, pidFile)
 	tree.plantKill(t)
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Fatalf("exit = %d, output = %q", code, out)
 	}
 
@@ -752,7 +752,7 @@ func TestRunCleanupRecheckSparesAReusedLeaderPid(t *testing.T) {
 
 	defer func() { _ = other.Process.Kill(); _ = other.Wait() }()
 
-	err = os.WriteFile(tree.path(runOps, runTask, "pgid"), []byte(strconv.Itoa(other.Process.Pid)+"\n"), 0o600)
+	err = os.WriteFile(tree.path(runOps, runTask, wordPgid), []byte(strconv.Itoa(other.Process.Pid)+"\n"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -760,7 +760,7 @@ func TestRunCleanupRecheckSparesAReusedLeaderPid(t *testing.T) {
 	// The planted kill still signals nothing, so the recorded survivors
 	// live on.
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Errorf("exit = %d, output = %q; want the survivors reported while they live", code, out)
 	}
 
@@ -784,10 +784,12 @@ func TestRunCleanupRecheckNeedsTheGroupFiles(t *testing.T) {
 	t.Parallel()
 
 	for name, change := range map[string]func(dir string) error{
-		"an invalid starttime": func(dir string) error { return os.WriteFile(filepath.Join(dir, "starttime"), []byte("junk\n"), 0o600) },
-		"no starttime":         func(dir string) error { return os.Remove(filepath.Join(dir, "starttime")) },
-		"an invalid pgid":      func(dir string) error { return os.WriteFile(filepath.Join(dir, "pgid"), []byte("1\n"), 0o600) },
-		"no pgid":              func(dir string) error { return os.Remove(filepath.Join(dir, "pgid")) },
+		"an invalid starttime": func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, wordStarttime), []byte("junk\n"), 0o600)
+		},
+		"no starttime":    func(dir string) error { return os.Remove(filepath.Join(dir, wordStarttime)) },
+		"an invalid pgid": func(dir string) error { return os.WriteFile(filepath.Join(dir, wordPgid), []byte("1\n"), 0o600) },
+		"no pgid":         func(dir string) error { return os.Remove(filepath.Join(dir, wordPgid)) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -834,7 +836,7 @@ func TestRunCleanupKeepsAnUnreadableSurvivorsRecord(t *testing.T) {
 	}
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+	if code != 0 || out != cleanupYesKilledSurvived {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -851,7 +853,7 @@ func TestRunCleanupDistrustsAnIncompleteSurvivorsRecord(t *testing.T) {
 	t.Parallel()
 
 	for name, record := range map[string]func(runningCommand) string{
-		"empty": func(runningCommand) string { return "" },
+		wordEmpty: func(runningCommand) string { return "" },
 		"unterminated": func(running runningCommand) string {
 			return fmt.Sprintf("%d %s", running.sleepPID, startTime(t, running.sleepPID))
 		},
@@ -872,7 +874,7 @@ func TestRunCleanupDistrustsAnIncompleteSurvivorsRecord(t *testing.T) {
 			}
 
 			code, out := tree.cleanup(t, runTask)
-			if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+			if code != 0 || out != cleanupYesKilledSurvived {
 				t.Errorf("exit = %d, output = %q", code, out)
 			}
 
@@ -895,7 +897,7 @@ func TestRunCleanupDistrustsAnIncompleteSurvivorsRecord(t *testing.T) {
 func TestRunCleanupKeepsTheTaskWhenTheSurvivorsRecordFails(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("cleanup reads /proc")
 	}
 
@@ -910,14 +912,14 @@ func TestRunCleanupKeepsTheTaskWhenTheSurvivorsRecordFails(t *testing.T) {
 
 			tree := newRunTree(t)
 			tree.linkKill(t)
-			tree.env = []string{"RC_KILL_TICKS=3"}
+			tree.env = []string{killTicks3}
 
 			pidFile := tree.path("sleeper-pid")
-			running := tree.startExec(t, "root", sleeperCommand(pidFile), pidFile)
+			running := tree.startExec(t, wordRoot, sleeperCommand(pidFile), pidFile)
 			log := tree.plantKill(t)
 
 			code, out := tree.snippet(t, false, "RC_KILL_TICKS=3\n"+stub+"cleanup "+runTask+"\n")
-			if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+			if code != 0 || out != cleanupYesKilledSurvived {
 				t.Fatalf("exit = %d, output = %q", code, out)
 			}
 
@@ -928,7 +930,7 @@ func TestRunCleanupKeepsTheTaskWhenTheSurvivorsRecordFails(t *testing.T) {
 			tree.relinkKill(t)
 
 			code, out = tree.cleanup(t, runTask)
-			if code != 0 || out != "cleanup started=yes exit=- killed=survived\n" {
+			if code != 0 || out != cleanupYesKilledSurvived {
 				t.Errorf("the later cleanup exited %d with %q, want the survivors reported again", code, out)
 			}
 
@@ -962,10 +964,10 @@ func TestRunCleanupExitedGroupReportsKilledNo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": strconv.Itoa(done.Process.Pid) + "\n", "starttime": "5\n"})
+	tree.makeTask(t, runTask, map[string]string{wordStarted: "", wordPgid: strconv.Itoa(done.Process.Pid) + "\n", wordStarttime: "5\n"})
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+	if code != 0 || out != cleanupYesKilledNo {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -986,8 +988,8 @@ func TestRunCleanupChecksTheGroupWhenTheExitFileIsEmpty(t *testing.T) {
 	tree.linkKill(t)
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", fmt.Sprintf("sleep 60 &\necho $! > %q\n", pidFile), pidFile)
-	exitFile := tree.path(runOps, runTask, "exit")
+	running := tree.startExec(t, wordRoot, fmt.Sprintf("sleep 60 &\necho $! > %q\n", pidFile), pidFile)
+	exitFile := tree.path(runOps, runTask, wordExit)
 
 	if !waitFor(10*time.Second, func() bool {
 		raw, err := os.ReadFile(exitFile) //nolint:gosec // the test tree
@@ -1006,7 +1008,7 @@ func TestRunCleanupChecksTheGroupWhenTheExitFileIsEmpty(t *testing.T) {
 	}
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != cleanupYesKilledYes {
 		t.Errorf("exit = %d, output = %q; want killed=yes", code, out)
 	}
 
@@ -1029,10 +1031,10 @@ func TestRunCleanupEndsTheChildrenOfACommandThatExited(t *testing.T) {
 	tree.linkKill(t)
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", fmt.Sprintf("sleep 60 &\necho $! > %q\nexit 4\n", pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, fmt.Sprintf("sleep 60 &\necho $! > %q\nexit 4\n", pidFile), pidFile)
 
 	if !waitFor(10*time.Second, func() bool {
-		raw, err := os.ReadFile(tree.path(runOps, runTask, "exit")) //nolint:gosec // the test tree
+		raw, err := os.ReadFile(tree.path(runOps, runTask, wordExit)) //nolint:gosec // the test tree
 		return err == nil && string(raw) == "4\n"
 	}) {
 		t.Fatal("the command never recorded its exit")
@@ -1055,27 +1057,27 @@ func TestRunCleanupEndsTheChildrenOfACommandThatExited(t *testing.T) {
 func TestRunCleanupNeverSignalsOnABadPgid(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("kill_group reads /proc")
 	}
 
 	// Every case has a well formed starttime that the stubbed leader
 	// matches, and the group stubbed live, so only the pgid refuses.
 	for name, pgid := range map[string]string{
-		"missing": "", "empty": "\n", "zero": "0\n", "one": "1\n", "minus one": "-1\n",
+		"missing": "", wordEmpty: "\n", "zero": "0\n", "one": "1\n", "minus one": "-1\n",
 		"leading 0": "01\n", "two numbers": "12 34\n", "junk": "2; id\n",
 		"too long": "99999999999\n", "wrap": "4294967295\n", "spaces": " 123\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			files := map[string]string{"started": "", "starttime": "777\n"}
+			files := map[string]string{wordStarted: "", wordStarttime: pidSevenSevenSeven}
 			if name != "missing" {
-				files["pgid"] = pgid
+				files[wordPgid] = pgid
 			}
 
 			out, sent := killGroup(t, files, nil, liveStubs)
-			if out != "unknown" || sent {
+			if out != wordUnknown || sent {
 				t.Errorf("output = %q, signal sent = %v", out, sent)
 			}
 		})
@@ -1085,7 +1087,7 @@ func TestRunCleanupNeverSignalsOnABadPgid(t *testing.T) {
 func TestRunCleanupSendsNoKillWhenTheLeaderChangesAfterTerm(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("kill_group reads /proc")
 	}
 
@@ -1099,7 +1101,7 @@ RC_KILL_TICKS=2
 
 	tree := newRunTree(t)
 	log := tree.plantKill(t)
-	tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"})
+	tree.makeTask(t, runTask, map[string]string{wordStarted: "", wordPgid: pidFourTwoFourTwo, wordStarttime: pidSevenSevenSeven})
 
 	dir := tree.path(runOps, runTask)
 
@@ -1113,7 +1115,7 @@ RC_KILL_TICKS=2
 		t.Fatal(err)
 	}
 
-	if string(logged) != "-TERM -- -4242\n" || strings.TrimSpace(out) != "yes" {
+	if string(logged) != "-TERM -- -4242\n" || strings.TrimSpace(out) != wordYes {
 		t.Errorf("signals sent = %q, output = %q; want TERM only and yes", logged, out)
 	}
 }
@@ -1121,7 +1123,7 @@ RC_KILL_TICKS=2
 func TestRunCleanupLeavesAGroupOutsideTheCommandsSession(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("process groups are read from /proc")
 	}
 
@@ -1144,13 +1146,13 @@ func TestRunCleanupLeavesAGroupOutsideTheCommandsSession(t *testing.T) {
 	})
 
 	tree.makeTask(t, runTask, map[string]string{
-		"started":   "",
-		"pgid":      strconv.Itoa(stranger.Process.Pid) + "\n",
-		"starttime": startTime(t, stranger.Process.Pid) + "\n",
+		wordStarted:   "",
+		wordPgid:      strconv.Itoa(stranger.Process.Pid) + "\n",
+		wordStarttime: startTime(t, stranger.Process.Pid) + "\n",
 	})
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
+	if code != 0 || out != cleanupYesKilledUnknown {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -1164,7 +1166,7 @@ func TestRunCleanupLeavesAGroupOutsideTheCommandsSession(t *testing.T) {
 func TestRunCleanupLeavesItsOwnGroupAndSession(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("process groups are read from /proc")
 	}
 
@@ -1188,7 +1190,7 @@ func TestRunCleanupLeavesACommandThatHasExited(t *testing.T) {
 
 	tree := newRunTree(t)
 	log := tree.plantKill(t)
-	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "3\n"}))
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{wordStarted: "", wordExit: "3\n"}))
 
 	code, out := tree.cleanup(t, runTask)
 	if code != 0 || out != "cleanup started=yes exit=3 killed=no\n" {
@@ -1237,7 +1239,7 @@ _rc_stat() { printf -v "$2" 'S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 777 0'; }
 func TestRunCleanupValidatorAloneRefusesLowPgids(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("kill_group reads /proc")
 	}
 
@@ -1245,16 +1247,16 @@ func TestRunCleanupValidatorAloneRefusesLowPgids(t *testing.T) {
 		t.Run(pgid, func(t *testing.T) {
 			t.Parallel()
 
-			out, sent := killGroup(t, map[string]string{"started": "", "pgid": pgid + "\n", "starttime": "777\n"}, nil, liveStubs)
-			if out != "unknown" || sent {
+			out, sent := killGroup(t, map[string]string{wordStarted: "", wordPgid: pgid + "\n", wordStarttime: pidSevenSevenSeven}, nil, liveStubs)
+			if out != wordUnknown || sent {
 				t.Errorf("output = %q, signal sent = %v", out, sent)
 			}
 		})
 	}
 
 	// The control is a good pgid under the same stubs.
-	out, sent := killGroup(t, map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"}, nil, liveStubs+"_n=0\n_rc_alive() { ((_n++ < 1)); }\n")
-	if out != "yes" || !sent {
+	out, sent := killGroup(t, map[string]string{wordStarted: "", wordPgid: pidFourTwoFourTwo, wordStarttime: pidSevenSevenSeven}, nil, liveStubs+"_n=0\n_rc_alive() { ((_n++ < 1)); }\n")
+	if out != wordYes || !sent {
 		t.Errorf("control: output = %q, signal sent = %v", out, sent)
 	}
 }
@@ -1262,7 +1264,7 @@ func TestRunCleanupValidatorAloneRefusesLowPgids(t *testing.T) {
 func TestRunCleanupGroupStateRefusesLowPgids(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("group state reads /proc")
 	}
 
@@ -1277,35 +1279,35 @@ func TestRunCleanupGroupStateRefusesLowPgids(t *testing.T) {
 func TestRunCleanupPgidFileMustBeARegularFile(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("kill_group reads /proc")
 	}
 
-	files := map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"}
+	files := map[string]string{wordStarted: "", wordPgid: pidFourTwoFourTwo, wordStarttime: pidSevenSevenSeven}
 
 	for name, setup := range map[string]func(dir string){
 		"a symlink": func(dir string) {
 			target := filepath.Join(dir, "target")
-			_ = os.WriteFile(target, []byte("4242\n"), 0o600)
-			_ = os.Remove(filepath.Join(dir, "pgid"))
-			_ = os.Symlink(target, filepath.Join(dir, "pgid"))
+			_ = os.WriteFile(target, []byte(pidFourTwoFourTwo), 0o600)
+			_ = os.Remove(filepath.Join(dir, wordPgid))
+			_ = os.Symlink(target, filepath.Join(dir, wordPgid))
 		},
 		"a directory": func(dir string) {
-			_ = os.Remove(filepath.Join(dir, "pgid"))
-			_ = os.Mkdir(filepath.Join(dir, "pgid"), 0o700)
+			_ = os.Remove(filepath.Join(dir, wordPgid))
+			_ = os.Mkdir(filepath.Join(dir, wordPgid), 0o700)
 		},
 		"a starttime symlink": func(dir string) {
 			target := filepath.Join(dir, "target")
-			_ = os.WriteFile(target, []byte("777\n"), 0o600)
-			_ = os.Remove(filepath.Join(dir, "starttime"))
-			_ = os.Symlink(target, filepath.Join(dir, "starttime"))
+			_ = os.WriteFile(target, []byte(pidSevenSevenSeven), 0o600)
+			_ = os.Remove(filepath.Join(dir, wordStarttime))
+			_ = os.Symlink(target, filepath.Join(dir, wordStarttime))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			out, sent := killGroup(t, files, setup, liveStubs)
-			if out != "unknown" || sent {
+			if out != wordUnknown || sent {
 				t.Errorf("output = %q, signal sent = %v", out, sent)
 			}
 		})
@@ -1315,7 +1317,7 @@ func TestRunCleanupPgidFileMustBeARegularFile(t *testing.T) {
 func TestRunCleanupNeverSignalsItsOwnGroupThroughTheKillPath(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("kill_group reads /proc")
 	}
 
@@ -1332,7 +1334,7 @@ _rc_stat() { printf -v "$2" '%s' "$own"; }
 	tree := newRunTree(t)
 	tree.newSession = true
 	log := tree.plantKill(t)
-	tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": "x", "starttime": "1"})
+	tree.makeTask(t, runTask, map[string]string{wordStarted: "", wordPgid: "x", wordStarttime: "1"})
 
 	dir := tree.path(runOps, runTask)
 	text := "_dir=" + dir + "\n" + stub + "printf '%s\\n' \"$(_rc_kill_group \"$_dir\")\"\n"
@@ -1351,7 +1353,7 @@ _rc_stat() { printf -v "$2" '%s' "$own"; }
 func TestRunCleanupIgnoresAForgedCommName(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("process names are read from /proc")
 	}
 
@@ -1359,7 +1361,7 @@ func TestRunCleanupIgnoresAForgedCommName(t *testing.T) {
 	tree.linkKill(t)
 
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", sleeperCommand(pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, sleeperCommand(pidFile), pidFile)
 
 	// A process outside the command whose name holds a newline and a
 	// ")", so a line-by-line read of its stat file takes the group and
@@ -1393,7 +1395,7 @@ func TestRunCleanupIgnoresAForgedCommName(t *testing.T) {
 	}
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != cleanupYesKilledYes {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -1424,7 +1426,7 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"a malformed one", "unknown", func(t *testing.T, path, _ string) {
+		{"a malformed one", wordUnknown, func(t *testing.T, path, _ string) {
 			t.Helper()
 
 			err := os.WriteFile(path, []byte("12 34\n"), 0o600)
@@ -1432,7 +1434,7 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"a missing one", "unknown", func(t *testing.T, path, _ string) {
+		{"a missing one", wordUnknown, func(t *testing.T, path, _ string) {
 			t.Helper()
 
 			err := os.Remove(path)
@@ -1447,7 +1449,7 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 			tree := newRunTree(t)
 
 			pidFile := tree.path("sleeper-pid")
-			running := tree.startExec(t, "root", sleeperCommand(pidFile), pidFile)
+			running := tree.startExec(t, wordRoot, sleeperCommand(pidFile), pidFile)
 
 			// The planted kill logs and signals nothing.
 			log := tree.plantKill(t)
@@ -1456,7 +1458,7 @@ func TestRunCleanupRefusesAStarttimeThatDoesNotMatch(t *testing.T) {
 				t.Errorf("starttime file holds %q, the leader's is %q", running.starttime, startTime(t, running.pgid))
 			}
 
-			tc.change(t, tree.path(runOps, runTask, "starttime"), running.starttime)
+			tc.change(t, tree.path(runOps, runTask, wordStarttime), running.starttime)
 
 			code, out := tree.cleanup(t, runTask)
 			if code != 0 || out != "cleanup started=yes exit=- killed="+tc.want+"\n" {
@@ -1481,7 +1483,7 @@ func TestRunCleanupEndsAChildInAGroupOfItsOwn(t *testing.T) {
 	// command's session. A child that calls setsid again leaves the
 	// session and is out of reach of cleanup.
 	pidFile := tree.path("sleeper-pid")
-	running := tree.startExec(t, "root", "set -m\n"+sleeperCommand(pidFile), pidFile)
+	running := tree.startExec(t, wordRoot, "set -m\n"+sleeperCommand(pidFile), pidFile)
 
 	fields := procFields(running.sleepPID)
 	if len(fields) < 4 || fields[2] == strconv.Itoa(running.pgid) || fields[3] != strconv.Itoa(running.pgid) {
@@ -1489,7 +1491,7 @@ func TestRunCleanupEndsAChildInAGroupOfItsOwn(t *testing.T) {
 	}
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=yes\n" {
+	if code != 0 || out != cleanupYesKilledYes {
 		t.Errorf("exit = %d, output = %q", code, out)
 	}
 
@@ -1508,11 +1510,11 @@ func TestRunCleanupEndsAChildInAGroupOfItsOwn(t *testing.T) {
 func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
 	t.Parallel()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("kill_group reads /proc")
 	}
 
-	good := map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"}
+	good := map[string]string{wordStarted: "", wordPgid: pidFourTwoFourTwo, wordStarttime: pidSevenSevenSeven}
 	gone := `_rc_stat() { return 1; }` + "\n"
 	other := `_rc_stat() { printf -v "$2" 'S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 888 0'; }` + "\n"
 	group := func(state string) string { return `_rc_group_state() { printf '` + state + `'; }` + "\n" }
@@ -1523,16 +1525,16 @@ func TestRunCleanupReportsUnknownWhenItCannotCheckTheGroup(t *testing.T) {
 		stub  string
 		want  string
 	}{
-		{"no pgid file", map[string]string{"started": "", "starttime": "777\n"}, liveStubs, "unknown"},
-		{"no starttime file", map[string]string{"started": "", "pgid": "4242\n"}, liveStubs, "unknown"},
-		{"an invalid pgid", map[string]string{"started": "", "pgid": "x\n", "starttime": "777\n"}, liveStubs, "unknown"},
-		{"an invalid starttime", map[string]string{"started": "", "pgid": "4242\n", "starttime": "07\n"}, liveStubs, "unknown"},
-		{"a gone leader with a group outside the session", good, gone + group("other"), "unknown"},
-		{"a gone leader in cleanup's own session", good, gone + group("self"), "unknown"},
+		{"no pgid file", map[string]string{wordStarted: "", wordStarttime: pidSevenSevenSeven}, liveStubs, wordUnknown},
+		{"no starttime file", map[string]string{wordStarted: "", wordPgid: pidFourTwoFourTwo}, liveStubs, wordUnknown},
+		{"an invalid pgid", map[string]string{wordStarted: "", wordPgid: "x\n", wordStarttime: pidSevenSevenSeven}, liveStubs, wordUnknown},
+		{"an invalid starttime", map[string]string{wordStarted: "", wordPgid: pidFourTwoFourTwo, wordStarttime: "07\n"}, liveStubs, wordUnknown},
+		{"a gone leader with a group outside the session", good, gone + group("other"), wordUnknown},
+		{"a gone leader in cleanup's own session", good, gone + group("self"), wordUnknown},
 		{"another leader with a live session", good, other + group("live"), "no"},
 		{"another leader with a group outside the session", good, other + group("other"), "no"},
-		{"the leader in a group outside the session", good, liveStubs + group("other"), "unknown"},
-		{"the leader in cleanup's own session", good, liveStubs + group("self"), "unknown"},
+		{"the leader in a group outside the session", good, liveStubs + group("other"), wordUnknown},
+		{"the leader in cleanup's own session", good, liveStubs + group("self"), wordUnknown},
 		{"a gone leader with nothing left", good, gone + group("none"), "no"},
 		{"another leader with nothing left", good, other + group("none"), "no"},
 		{"the leader a zombie with nothing left", good, liveStubs + group("none"), "no"},
@@ -1563,12 +1565,12 @@ func TestRunCleanupReportsUnknownWithoutAKillTool(t *testing.T) {
 			t.Parallel()
 
 			tree := newRunTree(t)
-			tree.makeTask(t, runTask, map[string]string{"started": "", "pgid": "4242\n", "starttime": "777\n"})
+			tree.makeTask(t, runTask, map[string]string{wordStarted: "", wordPgid: pidFourTwoFourTwo, wordStarttime: pidSevenSevenSeven})
 
 			dir := tree.path(runOps, runTask)
 
 			code, out := tree.snippet(t, false, "CERTPATCH_ROOT="+tree.root+"\n"+liveStubs+stubs+"printf '%s\\n' \"$(_rc_kill_group \""+dir+"\")\"\n")
-			if code != 0 || strings.TrimSpace(out) != "unknown" {
+			if code != 0 || strings.TrimSpace(out) != wordUnknown {
 				t.Errorf("exit = %d, output = %q; want unknown", code, out)
 			}
 		})
@@ -1584,29 +1586,29 @@ func TestRunCleanupKeepsTheTaskWhenItCannotCheckTheGroup(t *testing.T) {
 
 	tree := newRunTree(t)
 	tree.plantKill(t)
-	tree.makeTask(t, runTask, map[string]string{"cmd.sh": "sleep 60\n", "started": ""})
+	tree.makeTask(t, runTask, map[string]string{scriptName: "sleep 60\n", wordStarted: ""})
 
 	for range 2 {
 		code, out := tree.cleanup(t, runTask)
-		if code != 0 || out != "cleanup started=yes exit=- killed=unknown\n" {
+		if code != 0 || out != cleanupYesKilledUnknown {
 			t.Fatalf("exit = %d, output = %q", code, out)
 		}
 
-		if _, err := os.Stat(tree.path(runOps, runTask, "started")); err != nil {
+		if _, err := os.Stat(tree.path(runOps, runTask, wordStarted)); err != nil {
 			t.Fatalf("the task directory went: %v", err)
 		}
 
-		if _, err := os.Stat(tree.path(runOps, runTask, "cmd.sh")); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(tree.path(runOps, runTask, scriptName)); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("the command's text stayed: %v", err)
 		}
 	}
 
-	result, err := scripts.ParseCleanup([]byte("cleanup started=yes exit=- killed=unknown\n"))
-	if err != nil || result.Killed != "unknown" {
+	result, err := scripts.ParseCleanup([]byte(cleanupYesKilledUnknown))
+	if err != nil || result.Killed != wordUnknown {
 		t.Errorf("the record parses as %+v, %v", result, err)
 	}
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		return
 	}
 
@@ -1618,7 +1620,7 @@ func TestRunCleanupKeepsTheTaskWhenItCannotCheckTheGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for name, text := range map[string]string{"pgid": strconv.Itoa(done.Process.Pid) + "\n", "starttime": "5\n"} {
+	for name, text := range map[string]string{wordPgid: strconv.Itoa(done.Process.Pid) + "\n", wordStarttime: "5\n"} {
 		err = os.WriteFile(tree.path(runOps, runTask, name), []byte(text), 0o600)
 		if err != nil {
 			t.Fatal(err)
@@ -1626,7 +1628,7 @@ func TestRunCleanupKeepsTheTaskWhenItCannotCheckTheGroup(t *testing.T) {
 	}
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=- killed=no\n" {
+	if code != 0 || out != cleanupYesKilledNo {
 		t.Errorf("the cleanup that could check exited %d with %q, want killed=no", code, out)
 	}
 

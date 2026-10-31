@@ -16,7 +16,7 @@ import (
 func needDoneRecords(t *testing.T) {
 	t.Helper()
 
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != osLinux {
 		t.Skip("cleanup renames done records with GNU mv -T and reads /proc")
 	}
 }
@@ -36,9 +36,9 @@ func TestRunCleanupReplaysTheDoneRecord(t *testing.T) {
 	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"cmd.sh": "x", "started": "", "exit": "7\n"}))
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{scriptName: "x", wordStarted: "", wordExit: "7\n"}))
 
-	want := "cleanup started=yes exit=7 killed=no\n"
+	want := cleanupYesExit7KilledNo
 
 	for round := 1; round <= 2; round++ {
 		code, out := tree.cleanup(t, runTask)
@@ -77,7 +77,7 @@ func TestRunCleanupWritesTheRecordOverALeftoverTemporaryFile(t *testing.T) {
 	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "5\n"}))
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{wordStarted: "", wordExit: "5\n"}))
 
 	err := os.WriteFile(tree.donePath(runTask)+".new", []byte("cleanup st"), 0o600)
 	if err != nil {
@@ -111,9 +111,9 @@ func TestRunCleanupReplayRemovesALeftoverDirectory(t *testing.T) {
 	t.Parallel()
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, map[string]string{"exit": "0\n", "starttime": "5\n"})
+	tree.makeTask(t, runTask, map[string]string{wordExit: "0\n", wordStarttime: "5\n"})
 
-	line := "cleanup started=yes exit=0 killed=no\n"
+	line := cleanupYesExit0KilledNo
 
 	err := os.WriteFile(tree.donePath(runTask), []byte(line), 0o600)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestRunCleanupReplayChecksADirectoryThatStarted(t *testing.T) {
 	t.Parallel()
 	needDoneRecords(t)
 
-	old := "cleanup started=yes exit=0 killed=no\n"
+	old := cleanupYesExit0KilledNo
 
 	cases := []struct {
 		name  string
@@ -148,13 +148,13 @@ func TestRunCleanupReplayChecksADirectoryThatStarted(t *testing.T) {
 	}{
 		{
 			name:  "a session found ended",
-			files: withGoneGroup(t, map[string]string{"marker": "", "started": "", "exit": "5\n"}),
+			files: withGoneGroup(t, map[string]string{wordMarker: "", wordStarted: "", wordExit: "5\n"}),
 			want:  "cleanup started=yes exit=5 killed=no\n",
 		},
 		{
 			name:  "a session that can't be checked",
-			files: map[string]string{"marker": "", "started": ""},
-			want:  "cleanup started=yes exit=- killed=unknown\n",
+			files: map[string]string{wordMarker: "", wordStarted: ""},
+			want:  cleanupYesKilledUnknown,
 			kept:  true,
 		},
 	}
@@ -172,7 +172,7 @@ func TestRunCleanupReplayChecksADirectoryThatStarted(t *testing.T) {
 				t.Errorf("exit = %d, output = %q, want %q", code, out, tc.want)
 			}
 
-			_, err := os.Lstat(tree.path(runOps, runTask, "started"))
+			_, err := os.Lstat(tree.path(runOps, runTask, wordStarted))
 			if tc.kept && err != nil {
 				t.Errorf("the directory of an unchecked command lost started: %v", err)
 			}
@@ -201,7 +201,7 @@ func TestRunCleanupSyncsTheDoneRecordBeforeTheRename(t *testing.T) {
 	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "0\n"}))
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{wordStarted: "", wordExit: "0\n"}))
 
 	log := tree.path("sync-log")
 	stub := fmt.Sprintf(`sync() {
@@ -212,7 +212,7 @@ func TestRunCleanupSyncsTheDoneRecordBeforeTheRename(t *testing.T) {
 }
 `, log)
 
-	want := "cleanup started=yes exit=0 killed=no\n"
+	want := cleanupYesExit0KilledNo
 
 	code, out := tree.snippet(t, false, stub+"cleanup "+runTask+"\n")
 	if code != 0 || out != want {
@@ -243,13 +243,13 @@ func TestRunCleanupReplaysOnlyAWholeDoneRecord(t *testing.T) {
 	}{
 		"unterminated":    {text: "cleanup started=yes exit=0 killed=no", mode: 0o600},
 		"two lines":       {text: "cleanup started=yes exit=0 killed=no\ncleanup started=yes exit=0 killed=no\n", mode: 0o600},
-		"killed=unknown":  {text: "cleanup started=yes exit=- killed=unknown\n", mode: 0o600},
-		"killed=survived": {text: "cleanup started=yes exit=- killed=survived\n", mode: 0o600},
-		"started=-":       {text: "cleanup started=- exit=- killed=no\n", mode: 0o600},
+		"killed=unknown":  {text: cleanupYesKilledUnknown, mode: 0o600},
+		"killed=survived": {text: cleanupYesKilledSurvived, mode: 0o600},
+		"started=-":       {text: cleanupNoneKilledNo, mode: 0o600},
 		"junk":            {text: "cleanup started=yes exit=0 killed=no; id\n", mode: 0o600},
-		"empty":           {text: "", mode: 0o600},
-		"mode 0644":       {text: "cleanup started=yes exit=0 killed=no\n", mode: 0o644},
-		"a symlink":       {text: "cleanup started=yes exit=0 killed=no\n", mode: 0o600, link: true},
+		wordEmpty:         {text: "", mode: 0o600},
+		"mode 0644":       {text: cleanupYesExit0KilledNo, mode: 0o644},
+		"a symlink":       {text: cleanupYesExit0KilledNo, mode: 0o600, link: true},
 	}
 
 	for name, tc := range cases {
@@ -286,7 +286,7 @@ func TestRunCleanupReplaysOnlyAWholeDoneRecord(t *testing.T) {
 			}
 
 			code, out := tree.cleanup(t, runTask)
-			if code != 0 || out != "cleanup started=- exit=- killed=no\n" {
+			if code != 0 || out != cleanupNoneKilledNo {
 				t.Errorf("exit = %d, output = %q, want the directory reported gone", code, out)
 			}
 		})
@@ -302,8 +302,8 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 	needDoneRecords(t)
 
 	tree := newRunTree(t)
-	tree.makeTask(t, "kept-task", map[string]string{"started": ""})
-	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"started": "", "exit": "0\n"}))
+	tree.makeTask(t, "kept-task", map[string]string{wordStarted: ""})
+	tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{wordStarted: "", wordExit: "0\n"}))
 
 	old := time.Now().Add(-8 * 24 * time.Hour)
 	young := time.Now().Add(-6 * 24 * time.Hour)
@@ -315,7 +315,7 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 	}
 
 	for path, when := range files {
-		err := os.WriteFile(path, []byte("cleanup started=yes exit=0 killed=no\n"), 0o600)
+		err := os.WriteFile(path, []byte(cleanupYesExit0KilledNo), 0o600)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -332,7 +332,7 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, dir := range []string{tree.path(runOps, "kept-task"), tree.path(runOps, "kept-task", "started"), tree.donePath("dir-task")} {
+	for _, dir := range []string{tree.path(runOps, "kept-task"), tree.path(runOps, "kept-task", wordStarted), tree.donePath("dir-task")} {
 		err := os.Chtimes(dir, old, old)
 		if err != nil {
 			t.Fatal(err)
@@ -340,7 +340,7 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 	}
 
 	code, out := tree.cleanup(t, runTask)
-	if code != 0 || out != "cleanup started=yes exit=0 killed=no\n" {
+	if code != 0 || out != cleanupYesExit0KilledNo {
 		t.Fatalf("exit = %d, output = %q", code, out)
 	}
 
@@ -351,7 +351,7 @@ func TestRunCleanupPrunesOnlyOldDoneRecords(t *testing.T) {
 		}
 	}
 
-	if _, err := os.Stat(tree.path(runOps, "kept-task", "started")); err != nil {
+	if _, err := os.Stat(tree.path(runOps, "kept-task", wordStarted)); err != nil {
 		t.Errorf("pruning removed a task directory: %v", err)
 	}
 
@@ -382,7 +382,7 @@ func TestRunCleanupKeepsTheTaskWhenTheDoneRecordFails(t *testing.T) {
 			t.Parallel()
 
 			tree := newRunTree(t)
-			tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{"cmd.sh": "x", "started": "", "exit": "3\n"}))
+			tree.makeTask(t, runTask, withGoneGroup(t, map[string]string{scriptName: "x", wordStarted: "", wordExit: "3\n"}))
 
 			// A temporary file that an earlier failed write left behind
 			// does not stop the next write.
@@ -404,7 +404,7 @@ func TestRunCleanupKeepsTheTaskWhenTheDoneRecordFails(t *testing.T) {
 				}
 			}
 
-			for _, name := range []string{"cmd.sh", "started", "exit"} {
+			for _, name := range []string{scriptName, wordStarted, wordExit} {
 				if _, err := os.Stat(tree.path(runOps, runTask, name)); err != nil {
 					t.Errorf("the task directory lost %s: %v", name, err)
 				}
