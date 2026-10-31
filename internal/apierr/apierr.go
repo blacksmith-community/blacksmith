@@ -60,6 +60,13 @@ const (
 	// 410.
 	CodePreviewExpired = "preview_expired"
 
+	// 200, in the answer of a Cloud Foundry connection test whose check
+	// failed. The test ran, so the request itself succeeded.
+	CodeCFUnreachable     = "cf_unreachable"
+	CodeCFTLSFailed       = "cf_tls_failed"
+	CodeCFNotCloudFoundry = "cf_not_cloud_foundry"
+	CodeCFAuthFailed      = "cf_auth_failed"
+
 	// 500.
 	CodeInternal = "internal_error"
 

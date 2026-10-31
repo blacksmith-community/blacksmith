@@ -22,8 +22,9 @@ type Handler struct {
 	cfManager interfaces.CFManager
 	vault     interfaces.Vault
 
-	newCFOperations func() cfOperations
-	persistProgress func(ctx context.Context, registrationID string, progress cfservices.RegistrationProgress) error
+	newCFOperations  func() cfOperations
+	persistProgress  func(ctx context.Context, registrationID string, progress cfservices.RegistrationProgress) error
+	connectionTester *cfservices.ConnectionTester
 }
 
 // NewHandler creates a new CF registration handler.
@@ -33,6 +34,8 @@ func NewHandler(logger interfaces.Logger, config interfaces.Config, cfManager in
 		config:    config,
 		cfManager: cfManager,
 		vault:     vault,
+
+		connectionTester: &cfservices.ConnectionTester{Timeout: cfservices.ConnectionTestTimeout},
 	}
 
 	handler.newCFOperations = func() cfOperations {
@@ -96,6 +99,12 @@ func (h *Handler) handleCFRegistrationRoutes(writer http.ResponseWriter, req *ht
 		return true
 	}
 
+	if path == "/test-connection" && req.Method == http.MethodPost {
+		h.TestConnection(writer, req)
+
+		return true
+	}
+
 	// Handle /registrations/{id} routes
 	if strings.HasPrefix(path, "/registrations/") {
 		remainder := strings.TrimPrefix(path, "/registrations/")
@@ -126,7 +135,7 @@ func (h *Handler) handleCFRegistrationRoutes(writer http.ResponseWriter, req *ht
 		}
 	}
 
-	// TODO: Add other registration routes like test, sync, stream progress
+	// TODO: Add other registration routes like sync and stream progress
 	return false
 }
 

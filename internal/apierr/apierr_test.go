@@ -110,10 +110,14 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeInvalidRunUser, "invalid_run_user"},
 		{apierr.CodeTimeoutOutOfRange, "timeout_out_of_range"},
 		{apierr.CodeMaxInFlightTooHigh, "max_in_flight_too_high"},
+		{apierr.CodeCFUnreachable, "cf_unreachable"},
+		{apierr.CodeCFTLSFailed, "cf_tls_failed"},
+		{apierr.CodeCFNotCloudFoundry, "cf_not_cloud_foundry"},
+		{apierr.CodeCFAuthFailed, "cf_auth_failed"},
 	}
 
-	if len(table) != 41 {
-		t.Fatalf("table has %d codes, want 41", len(table))
+	if len(table) != 45 {
+		t.Fatalf("table has %d codes, want 45", len(table))
 	}
 
 	for _, row := range table {
