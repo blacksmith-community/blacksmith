@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 	cfservices "blacksmith/pkg/services/cf"
@@ -26,12 +27,11 @@ const (
 
 // Static errors for err113 linter compliance.
 var (
-	errFailedToReadRequestBody      = errors.New("failed to read request body")
-	errRegistrationIDRequired       = errors.New("registration ID is required")
-	errRegistrationNotFound         = errors.New("registration not found")
-	errCFOperationsNotConfigured    = errors.New("cf operations not configured")
-	errCFRegistrationDisabled       = errors.New("cf registration is disabled")
-	errPasswordRequiredRegistration = errors.New("password is required to start registration")
+	errFailedToReadRequestBody   = errors.New("failed to read request body")
+	errRegistrationIDRequired    = errors.New("registration ID is required")
+	errRegistrationNotFound      = errors.New("registration not found")
+	errCFOperationsNotConfigured = errors.New("cf operations not configured")
+	errCFRegistrationDisabled    = errors.New("cf registration is disabled")
 )
 
 type cfOperations interface {
@@ -150,6 +150,10 @@ func (h *Handler) CreateRegistration(writer http.ResponseWriter, req *http.Reque
 		return
 	}
 
+	// Register takes the CF password in its own request, so the record
+	// never holds it.
+	regReq = withoutPassword(regReq)
+
 	// Store registration in Vault
 	err = h.vault.SaveCFRegistration(req.Context(), regReq)
 	if err != nil {
@@ -167,9 +171,9 @@ func (h *Handler) CreateRegistration(writer http.ResponseWriter, req *http.Reque
 	}, nil)
 }
 
-// withoutPassword is a copy of a stored registration for an answer. The
-// record keeps the CF admin password, because register reads it, but no
-// answer gives it back, under any spelling of the key.
+// withoutPassword is a copy of a registration without the CF admin
+// password, under any spelling of the key. New records are stored this way,
+// and no answer gives back the password an older record may still hold.
 func withoutPassword(registration map[string]interface{}) map[string]interface{} {
 	answer := make(map[string]interface{}, len(registration))
 
@@ -263,6 +267,16 @@ func (h *Handler) UpdateRegistration(writer http.ResponseWriter, req *http.Reque
 		response.HandleJSON(writer, nil, fmt.Errorf("invalid request format: %w", err))
 
 		return
+	}
+
+	// The edit stores no password. A record saved before the broker
+	// stopped storing them keeps the one it has, untouched.
+	regReq = withoutPassword(regReq)
+
+	for key, value := range existingReg {
+		if strings.EqualFold(key, "password") {
+			regReq[key] = value
+		}
 	}
 
 	// Update registration in Vault
@@ -436,21 +450,27 @@ func (h *Handler) buildRegistrationRequest(writer http.ResponseWriter, req *http
 		regReq.BrokerName = "blacksmith"
 	}
 
-	regReq.Password = getStringFromMap(registration, "password")
-	if regReq.Password == "" && req.Body != nil {
-		var requestData map[string]interface{}
+	// The password comes from the request. A record saved before the broker
+	// stopped storing passwords may still hold one, which is used only when
+	// the request brings none.
+	if req.Body != nil {
+		var requestData struct {
+			Password string `json:"password"`
+		}
 
-		err := json.NewDecoder(req.Body).Decode(&requestData)
-		if err == nil {
-			if password, ok := requestData["password"].(string); ok {
-				regReq.Password = password
-			}
+		if json.NewDecoder(req.Body).Decode(&requestData) == nil {
+			regReq.Password = requestData.Password
 		}
 	}
 
 	if regReq.Password == "" {
+		regReq.Password = getStringFromMap(registration, "password")
+	}
+
+	if regReq.Password == "" {
 		logger.Error("registration %s missing password for CF authentication", registrationID)
-		response.HandleJSON(writer, nil, errPasswordRequiredRegistration)
+		apierr.Write(writer, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			"Enter the CF password to start this registration. The broker doesn't store it."), http.StatusBadRequest)
 
 		return nil, false
 	}

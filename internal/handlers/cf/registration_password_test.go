@@ -8,9 +8,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"blacksmith/internal/apierr"
+	"blacksmith/internal/config"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/logger"
+	cfservices "blacksmith/pkg/services/cf"
 )
 
 const registrationPassword = "cf-admin-pw-93kq"
@@ -61,6 +65,84 @@ func (v *memoryVault) ListCFRegistrations(context.Context) ([]map[string]interfa
 	}
 
 	return registrations, nil
+}
+
+func (v *memoryVault) UpdateCFRegistrationStatus(_ context.Context, registrationID, status, _ string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	v.registrations[registrationID]["status"] = status
+
+	return nil
+}
+
+// stored is a copy of the stored record, safe to read while a
+// registration runs.
+func (v *memoryVault) stored(registrationID string) map[string]interface{} {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	record := map[string]interface{}{}
+	for key, value := range v.registrations[registrationID] {
+		record[key] = value
+	}
+
+	return record
+}
+
+// storedPassword reports a password the record holds under any spelling of
+// the key.
+func storedPassword(record map[string]interface{}) (interface{}, bool) {
+	for key, value := range record {
+		if strings.EqualFold(key, "password") {
+			return value, true
+		}
+	}
+
+	return nil, false
+}
+
+// brokerConfig is a broker with CF registration on and no default name.
+type brokerConfig struct {
+	interfaces.Config
+}
+
+func (brokerConfig) GetBrokerConfig() config.BrokerConfig { return config.BrokerConfig{} }
+
+// passwordOperations records the password a registration ran with.
+type passwordOperations struct {
+	passwords chan string
+}
+
+func (ops *passwordOperations) PerformRegistration(req *cfservices.RegistrationRequest, progressChan chan<- cfservices.RegistrationProgress) error {
+	close(progressChan)
+	ops.passwords <- req.Password
+
+	return nil
+}
+
+// registerHandler is a handler over vault whose registrations report the
+// password they ran with to ops.
+func registerHandler(vault *memoryVault) (*Handler, *passwordOperations) {
+	ops := &passwordOperations{passwords: make(chan string, 1)}
+	handler := NewHandler(logger.Get().Named("cf-registration-password-test"), brokerConfig{}, nil, vault)
+	handler.newCFOperations = func() cfOperations { return ops }
+	handler.persistProgress = nil
+
+	return handler, ops
+}
+
+func (ops *passwordOperations) password(t *testing.T) string {
+	t.Helper()
+
+	select {
+	case password := <-ops.passwords:
+		return password
+	case <-time.After(5 * time.Second):
+		t.Fatal("the registration never ran")
+
+		return ""
+	}
 }
 
 func serveRegistration(t *testing.T, handler *Handler, method, path, body string) string {
@@ -115,18 +197,126 @@ func TestRegistrationAnswersNeverContainThePassword(t *testing.T) {
 	}
 }
 
-// Register reads the stored password when the request brings none, so
-// leaving it out of the answers must not drop it from the record.
-func TestRegistrationStillStoresThePassword(t *testing.T) {
+// Register takes the password in its own body, so neither creating nor
+// editing a registration stores one.
+func TestNewRegistrationsStoreNoPassword(t *testing.T) {
 	t.Parallel()
 
 	vault := &memoryVault{registrations: map[string]map[string]interface{}{}}
 	handler := NewHandler(logger.Get().Named("cf-registration-password-test"), nil, nil, vault)
 
 	serveRegistration(t, handler, http.MethodPost, "/b/cf/registrations",
+		`{"id":"reg-1","name":"lab-cf","password":"`+registrationPassword+`","Password":"`+registrationPassword+`"}`)
+
+	if password, found := storedPassword(vault.stored("reg-1")); found {
+		t.Fatalf("creating the registration stored the password %v, want none", password)
+	}
+
+	serveRegistration(t, handler, http.MethodPut, "/b/cf/registrations/reg-1",
 		`{"id":"reg-1","name":"lab-cf","password":"`+registrationPassword+`"}`)
 
-	if got := vault.registrations["reg-1"]["password"]; got != registrationPassword {
-		t.Fatalf("the stored registration's password = %v, want the posted one", got)
+	if password, found := storedPassword(vault.stored("reg-1")); found {
+		t.Fatalf("editing the registration stored the password %v, want none", password)
+	}
+}
+
+// A record saved before the broker stopped storing passwords keeps its
+// password through an edit, because nothing migrates it.
+func TestEditingALegacyRegistrationKeepsItsPassword(t *testing.T) {
+	t.Parallel()
+
+	vault := &memoryVault{registrations: map[string]map[string]interface{}{
+		"reg-1": {"id": "reg-1", "name": "lab-cf", "password": "legacy-pw-5m2x"},
+	}}
+	handler := NewHandler(logger.Get().Named("cf-registration-password-test"), nil, nil, vault)
+
+	serveRegistration(t, handler, http.MethodPut, "/b/cf/registrations/reg-1",
+		`{"id":"reg-1","name":"lab-cf-renamed","password":"`+registrationPassword+`"}`)
+
+	record := vault.stored("reg-1")
+	if record["password"] != "legacy-pw-5m2x" || record["name"] != "lab-cf-renamed" {
+		t.Fatalf("the edited legacy record = %v, want the new name and the old password", record)
+	}
+}
+
+func startRegistration(handler *Handler, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/b/cf/registrations/reg-1/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	return recorder
+}
+
+func TestRegisterUsesThePasswordInItsBody(t *testing.T) {
+	t.Parallel()
+
+	for name, record := range map[string]map[string]interface{}{
+		"new record":    {"id": "reg-1", "name": "lab-cf", "status": "pending"},
+		"legacy record": {"id": "reg-1", "name": "lab-cf", "status": "pending", "password": "legacy-pw-5m2x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, ops := registerHandler(&memoryVault{registrations: map[string]map[string]interface{}{"reg-1": record}})
+
+			recorder := startRegistration(handler, `{"password":"`+registrationPassword+`"}`)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("register answered %d: %s", recorder.Code, recorder.Body.String())
+			}
+
+			if got := ops.password(t); got != registrationPassword {
+				t.Fatalf("the registration ran with %q, want the password in the request body", got)
+			}
+		})
+	}
+}
+
+func TestRegisterFallsBackToALegacyStoredPassword(t *testing.T) {
+	t.Parallel()
+
+	handler, ops := registerHandler(&memoryVault{registrations: map[string]map[string]interface{}{
+		"reg-1": {"id": "reg-1", "name": "lab-cf", "status": "pending", "password": "legacy-pw-5m2x"},
+	}})
+
+	recorder := startRegistration(handler, `{}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("register answered %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if got := ops.password(t); got != "legacy-pw-5m2x" {
+		t.Fatalf("the registration ran with %q, want the legacy stored password", got)
+	}
+}
+
+func TestRegisterWithoutAPasswordIsABadRequest(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{`{}`, `{"password":""}`, `{"password":42}`, `not json`} {
+		handler, ops := registerHandler(&memoryVault{registrations: map[string]map[string]interface{}{
+			"reg-1": {"id": "reg-1", "name": "lab-cf", "status": "pending"},
+		}})
+
+		recorder := startRegistration(handler, body)
+
+		var answer struct {
+			Success *bool  `json:"success"`
+			Error   string `json:"error"`
+			Code    string `json:"code"`
+		}
+
+		err := json.Unmarshal(recorder.Body.Bytes(), &answer)
+		if recorder.Code != http.StatusBadRequest || err != nil || answer.Code != apierr.CodeInvalidRequest ||
+			answer.Success == nil || *answer.Success || !strings.Contains(answer.Error, "password") {
+			t.Fatalf("register with the body %s answered %d %s, want 400 invalid_request naming the password",
+				body, recorder.Code, recorder.Body.String())
+		}
+
+		select {
+		case password := <-ops.passwords:
+			t.Fatalf("the registration ran with %q, want it not to run", password)
+		default:
+		}
 	}
 }
