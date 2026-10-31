@@ -11,7 +11,8 @@
 }
 .theme-choice-dialog { width: min(26rem, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 16px; border-radius: 10px; }
 .theme-choice-dialog::backdrop { background: #0007; }
-.theme-choice-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0; margin: 0 0 10px; background: transparent; color: inherit; }
+.theme-choice-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0; margin: 0 0 10px; flex-direction: row; height: auto; position: static; box-shadow: none; background: transparent; color: inherit; }
+.theme-choice-dialog > p, .theme-choice-dialog > div { padding: 0; overflow: visible; }
 .theme-choice-dialog h2 { margin: 0; font-size: 1.125rem; }
 .theme-choice-dialog p { margin: 0 0 12px; }
 .theme-choice-dialog [data-close] { min-width: 32px; min-height: 32px; padding: 2px 8px; }
