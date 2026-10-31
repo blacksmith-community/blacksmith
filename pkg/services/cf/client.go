@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Static errors for err113 compliance.
@@ -123,35 +125,76 @@ func (c *Client) refusal(failed error, resp *http.Response) error {
 }
 
 // safeDetail makes a refusal's detail fit to show, because CF can echo the
-// request in it. It drops control characters and line breaks first, so a
-// secret split across lines is still found, then replaces the CF password,
-// the broker password, and the token with "[redacted]", and only then cuts
-// the detail to refusalDetailLimit characters.
+// request in it. It drops control characters and line breaks from the
+// detail and from each secret alike, so a secret split across lines is
+// still found. It cuts the detail to refusalDetailLimit characters plus the
+// longest secret's length, so a cut can't split a secret and redaction
+// never runs on more than that. It then replaces the CF password, the
+// broker password, and the token with "[redacted]" in one pass, the longest
+// first, so a secret inside another can't leave part of the longer one,
+// and only then cuts the detail to refusalDetailLimit characters.
 func (c *Client) safeDetail(detail string) string {
-	detail = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
-			return -1
-		}
-
-		return r
-	}, strings.ToValidUTF8(detail, ""))
-
 	secrets := []string{c.authClient.Password, c.brokerPass}
 	if c.authClient.authInfo != nil {
 		secrets = append(secrets, c.authClient.authInfo.AccessToken)
 	}
 
+	var cleaned []string
+
 	for _, secret := range secrets {
-		if secret != "" {
-			detail = strings.ReplaceAll(detail, secret, "[redacted]")
+		if secret = printable(secret); secret != "" {
+			cleaned = append(cleaned, secret)
 		}
 	}
 
-	if runes := []rune(detail); len(runes) > refusalDetailLimit {
-		detail = string(runes[:refusalDetailLimit])
+	sort.SliceStable(cleaned, func(i, j int) bool {
+		return utf8.RuneCountInString(cleaned[i]) > utf8.RuneCountInString(cleaned[j])
+	})
+
+	longest := 0
+	if len(cleaned) > 0 {
+		longest = utf8.RuneCountInString(cleaned[0])
 	}
 
-	return detail
+	detail = firstRunes(printable(detail), refusalDetailLimit+longest)
+
+	if len(cleaned) > 0 {
+		pairs := make([]string, 0, 2*len(cleaned))
+		for _, secret := range cleaned {
+			pairs = append(pairs, secret, "[redacted]")
+		}
+
+		detail = strings.NewReplacer(pairs...).Replace(detail)
+	}
+
+	return firstRunes(detail, refusalDetailLimit)
+}
+
+// printable is text without its control characters and line breaks, and
+// without bytes that aren't UTF-8.
+func printable(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return -1
+		}
+
+		return r
+	}, strings.ToValidUTF8(text, ""))
+}
+
+// firstRunes is at most the first limit characters of text.
+func firstRunes(text string, limit int) string {
+	count := 0
+
+	for index := range text {
+		if count == limit {
+			return text[:index]
+		}
+
+		count++
+	}
+
+	return text
 }
 
 // GetServiceBrokers retrieves all service brokers from CF.

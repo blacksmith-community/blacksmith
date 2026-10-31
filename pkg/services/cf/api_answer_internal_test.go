@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -212,5 +213,81 @@ func TestCFRefusalsShowASafeDetail(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// refusingClient is brokerClient with its own broker password, against a
+// foundation whose every broker request is refused with detail.
+func refusingClient(t *testing.T, brokerPass, detail string) *Client {
+	t.Helper()
+
+	foundation := newV3OnlyFoundation(t)
+	foundation.brokersAnswer = func(writer http.ResponseWriter, _ *http.Request) {
+		answer, _ := json.Marshal(map[string]any{"errors": []map[string]any{{"title": "CF-UnprocessableEntity", "code": 10008, "detail": detail}}})
+
+		writer.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = writer.Write(answer)
+	}
+
+	client := NewClient(foundation.URL, foundationUser, foundationPassword, "https://broker.example.com", "broker", brokerPass)
+	client.authClient.httpClient = foundation.Client()
+
+	return client
+}
+
+func TestCFRefusalsRedactSecretsAsTheDetailIsCleaned(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		brokerPass string
+		detail     string
+		want       string
+		absent     []string
+	}{
+		{"a secret holding a tab", "broker\tpw-77", "bad broker\tpw-77 here", ": bad [redacted] here", []string{"brokerpw-77", "pw-77"}},
+		{"a secret inside a longer one", foundationPassword + "-broker", "echo " + foundationPassword + "-broker end", ": echo [redacted] end", []string{"-broker end"}},
+		{"an empty broker password", "", "a bad name", "CF-UnprocessableEntity (10008): a bad name", []string{"[redacted]"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := refusingClient(t, tc.brokerPass, tc.detail).CreateServiceBroker("blacksmith")
+			if err == nil || !strings.HasSuffix(err.Error(), tc.want) {
+				t.Fatalf("the call = %v, want an error ending %q", err, tc.want)
+			}
+
+			for _, quoted := range tc.absent {
+				if strings.Contains(err.Error(), quoted) {
+					t.Errorf("the error contains %q: %q", quoted, err.Error())
+				}
+			}
+		})
+	}
+}
+
+// Redaction runs on a detail already cut close to the limit, so a short
+// secret in a large answer can't grow the text far past the answer itself.
+func TestSafeDetailCutsBeforeItRedacts(t *testing.T) {
+	client := NewClient("https://api.cf.example.com", "admin", "a", "https://broker.example.com", "broker", "e")
+	detail := strings.Repeat("e", 2<<20)
+
+	var before, after runtime.MemStats
+
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	cleaned := client.safeDetail(detail)
+
+	runtime.ReadMemStats(&after)
+
+	if got := after.TotalAlloc - before.TotalAlloc; got > 16<<20 {
+		t.Errorf("safeDetail allocated %d bytes for a 2 MiB detail, want at most 16 MiB", got)
+	}
+
+	if want := strings.Repeat("[redacted]", 25) + "[redac"; cleaned != want {
+		t.Errorf("safeDetail() = %q, want %q", cleaned, want)
 	}
 }
