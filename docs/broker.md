@@ -344,13 +344,21 @@ When an instance of a job that pauses on a failure fails while another instance 
 - `GET /b/cf/registrations/{id}` - Get registration details
 - `PUT /b/cf/registrations/{id}` - Update registration
 - `DELETE /b/cf/registrations/{id}` - Delete registration
+- `POST /b/cf/registrations/{id}/register` - Register the broker with the saved CF
+- `POST /b/cf/endpoints/{name}/connect` - Connect to a configured CF endpoint
 - `POST /b/cf/test-connection` - Test a CF API URL, username, and password before saving them
+
+Every `POST` under `/b/cf` needs the header `Content-Type: application/json`, even when it sends no fields, so send `{}` as the body then. Any other content type gets a 415 answer with the code `unsupported_media_type`, before the route does anything. A page on another site can't send that content type without a CORS preflight, and the broker answers none, so this keeps these routes to the broker's own UI and to clients that call it directly.
+
+Registering the broker follows the same connection rules as the test below. The registration's API URL must start with `https://`, and the validating step fails with a readable message when it doesn't, because the API root's answer decides where the password goes.
 
 `POST /b/cf/test-connection` takes the registration form's `api_url`, `username`, and `password` as JSON. A missing field, or an API URL that is not an `http://` or `https://` URL with a host, gets a 400 answer with the code `invalid_request`.
 
 The test runs four checks in order and stops at the first one that fails. The `reachable` check asks the API root for an answer, and the `tls` check needs the API's certificate to verify against the system roots, as registration does. Registration has no way to skip certificate verification, so the test has none either. The `cloud_foundry` check needs the root to be a Cloud Foundry v3 root document that names an authentication endpoint. The `token` check sends the password grant that registration sends to that endpoint's `/oauth/token`, and passes when a token comes back. The test throws the token away at once.
 
-The whole test has a 10-second limit, and it reads at most 64 KiB of any response. It follows a redirect from the API root only to the same scheme and host, and it follows no redirect from the token endpoint. It sends the credentials only over HTTPS.
+The token request goes to the host that the API root names as its authentication endpoint, which is usually a different host from the one you typed, such as `uaa.` beside `api.`. The broker trusts the root's answer for that host and applies no domain rule to it, so the API URL you type decides where the password goes. That's why the root must answer over verified HTTPS before the password is sent anywhere.
+
+The whole test has a 10-second limit, and it reads at most 64 KiB of any response. It follows up to 3 redirects from the API root, each only to the same scheme and host, and it follows no redirect from the token endpoint. It sends the credentials only over HTTPS.
 
 A test that ran answers 200, whether or not a check failed. The answer lists every check with its `name`, `passed`, and `message`, and marks the checks after a failure `skipped`. A failed test also carries `"success": false`, the failed check's message in `error`, and one of the codes `cf_unreachable`, `cf_tls_failed`, `cf_not_cloud_foundry`, or `cf_auth_failed` in `code`. Messages name the step and any HTTP status, and the broker never logs or answers the credentials or the token.
 

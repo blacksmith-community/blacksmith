@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -106,19 +108,39 @@ func probe(apiURL string) *RegistrationTest {
 	return &RegistrationTest{APIURL: apiURL, Username: probeUser, Password: probePassword}
 }
 
-// runChecks runs the tester and fails the test if any message repeats a
-// credential or the token.
+// checkBound is how long a single connection test may run before the test
+// that started it fails instead of waiting for go test to time out.
+const checkBound = 5 * time.Second
+
+// runChecks runs the tester and fails the test if it takes longer than
+// checkBound, or if any message repeats a credential, the token, or the
+// host the request went to.
 func runChecks(t *testing.T, tester *ConnectionTester, req *RegistrationTest) []ConnectionCheck {
 	t.Helper()
 
-	checks := tester.Run(context.Background(), req)
+	done := make(chan []ConnectionCheck, 1)
+
+	go func() { done <- tester.Run(context.Background(), req) }()
+
+	var checks []ConnectionCheck
+
+	select {
+	case checks = <-done:
+	case <-time.After(checkBound):
+		t.Fatalf("the connection test was still running after %s", checkBound)
+	}
 
 	encoded, err := json.Marshal(checks)
 	if err != nil {
 		t.Fatalf("checks do not encode: %v", err)
 	}
 
-	for _, secret := range []string{probeUser, probePassword, probeToken} {
+	secrets := []string{probeUser, probePassword, probeToken}
+	if parsed, parseErr := url.Parse(strings.TrimSpace(req.APIURL)); parseErr == nil && parsed.Host != "" {
+		secrets = append(secrets, parsed.Host)
+	}
+
+	for _, secret := range secrets {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("a check repeats %q: %s", secret, encoded)
 		}
@@ -214,6 +236,32 @@ func TestConnectionTestReportsAnAPIThatDoesNotAnswer(t *testing.T) {
 	closed.Close()
 
 	checks := runChecks(t, &ConnectionTester{RootCAs: pool}, probe(url))
+	expectOutcome(t, checks, reachFails)
+}
+
+func TestConnectionTestReportsAnAnswerThatIsNotHTTP(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+
+			_, _ = conn.Write([]byte("not http at all\r\n\r\n"))
+			_ = conn.Close()
+		}
+	}()
+
+	checks := runChecks(t, &ConnectionTester{}, probe("http://"+listener.Addr().String()))
 	expectOutcome(t, checks, reachFails)
 }
 
@@ -377,6 +425,36 @@ func TestConnectionTestFollowsARedirectOnTheSameHost(t *testing.T) {
 	expectOutcome(t, checks, allPass)
 }
 
+func TestConnectionTestDoesNotFollowARedirectToPlainHTTPOnTheSameHost(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t)
+
+	var api *httptest.Server
+
+	api = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		if req.TLS != nil {
+			http.Redirect(writer, req, "http://"+req.Host+"/", http.StatusFound)
+
+			return
+		}
+
+		_, _ = writer.Write([]byte(rootDocument(api.URL, uaa.URL)))
+	}))
+	t.Cleanup(api.Close)
+
+	checks := runChecks(t, &ConnectionTester{RootCAs: trust(api)}, probe(api.URL))
+	expectOutcome(t, checks, cfFails)
+
+	if !strings.Contains(failed(checks).Message, "redirect") {
+		t.Fatalf("message does not mention the redirect: %q", failed(checks).Message)
+	}
+
+	if uaa.hits.Load() != 0 {
+		t.Fatalf("the token endpoint got %d requests after a redirect to http, want 0", uaa.hits.Load())
+	}
+}
+
 func TestConnectionTestFollowsThreeRedirectsOnTheSameHost(t *testing.T) {
 	t.Parallel()
 
@@ -425,6 +503,21 @@ func TestConnectionTestStopsARedirectLoopOnTheSameHost(t *testing.T) {
 	if hits.Load() != 4 || uaa.hits.Load() != 0 {
 		t.Fatalf("the API got %d requests and the token endpoint %d, want 4 and 0", hits.Load(), uaa.hits.Load())
 	}
+}
+
+func TestConnectionTestLimitsTheTokenAnswerItReads(t *testing.T) {
+	t.Parallel()
+
+	uaa := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		_, _ = io.Copy(io.Discard, req.Body)
+		_, _ = fmt.Fprintf(writer, `{"access_token":%q}%s`, probeToken, strings.Repeat(" ", 4096))
+	}))
+	t.Cleanup(uaa.Close)
+
+	api, _ := newFakeAPI(t, uaa.URL)
+
+	checks := runChecks(t, &ConnectionTester{RootCAs: trust(api), BodyLimit: 1024}, probe(api.URL))
+	expectOutcome(t, checks, tokenFails)
 }
 
 func TestConnectionTestReportsRefusedCredentials(t *testing.T) {
@@ -516,6 +609,9 @@ func TestConnectionTestStopsAtItsTimeout(t *testing.T) {
 
 	api := httptest.NewTLSServer(http.HandlerFunc(hang))
 	t.Cleanup(api.Close)
+	// Cleanups run last first, so a run that never gives up cannot hold
+	// Close open on its request.
+	t.Cleanup(api.CloseClientConnections)
 
 	started := time.Now()
 	checks := runChecks(t, &ConnectionTester{RootCAs: trust(api), Timeout: testTimeout}, probe(api.URL))
@@ -536,6 +632,7 @@ func TestConnectionTestTimeoutCoversTheTokenRequest(t *testing.T) {
 
 	uaa := httptest.NewTLSServer(http.HandlerFunc(hang))
 	t.Cleanup(uaa.Close)
+	t.Cleanup(uaa.CloseClientConnections)
 
 	api, _ := newFakeAPI(t, uaa.URL)
 
