@@ -195,6 +195,15 @@ t('an upgrade paused after a failure shows its reason and offers Continue remain
  expect(buttons.includes('Resume')).toBe(false);
  }finally{w.close();}
 });
+const UNKNOWN='The outcome of instance cache-a (inst-a)\'s deploy is unknown, so the job paused before its remaining instances. Check the instance, then Continue remaining instances moves on to them without retrying inst-a.';
+t('an upgrade paused for an unknown outcome offers Continue remaining instances',async()=>{
+ const env=await renderDetail(detail({pause_on_failure:true,pause_reason:UNKNOWN,failed_count:0,unknown_count:1,instances:[{instance_id:'inst-a',instance_name:'cache-a',status:'outcome_unknown'},{instance_id:'inst-b',instance_name:'cache-b',status:'pending'}]}));const {w,summary,buttons}=env;try{
+ expect(summary.querySelector('.task-pause-reason').textContent).toBe(UNKNOWN);
+ expect(buttons.includes('Continue remaining instances')).toBe(true);
+ expect(buttons.includes('Resume')).toBe(false);
+ expect(summary.textContent).toContain('The Continue remaining instances button never retries the failed instance.');
+ }finally{w.close();}
+});
 t('an upgrade an operator paused keeps the plain Resume',async()=>{
  const env=await renderDetail(detail({pause_on_failure:true,failed_count:0,instances:[{instance_id:'inst-a',status:'success'},{instance_id:'inst-b',status:'pending'}]}));const {w,summary,buttons}=env;try{
  expect(summary.querySelector('.task-pause-reason')).toBe(null);

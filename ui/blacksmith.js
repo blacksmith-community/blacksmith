@@ -8521,9 +8521,11 @@
     const commandNodeInFlight = (instance) => ((instance && instance.command && instance.command.vms) || []).some((node) => node && (node.in_flight === true || node.phase === 'staged' || node.phase === 'sent'));
     const pauseRequested = isPaused && !cleansOnly && instances.some((instance) => instance && instance.status === 'running' && (isCertificates || (isCommand && commandNodeInFlight(instance))));
     // An upgrade that paused after a failure offers the same Continue as
-    // the certificate and command tasks.
+    // the certificate and command tasks. The broker sets a pause reason
+    // only for a failure pause, which covers an instance whose outcome is
+    // unknown as well as one that failed.
     const pausedOnFailure = isPaused && Boolean(task.pause_reason);
-    const hasFailedInstance = (isCertificates || isCommand || pausedOnFailure) && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
+    const hasFailedInstance = pausedOnFailure || ((isCertificates || isCommand) && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed')));
 
     // Build control buttons based on task status
     let controlButtonsHtml = '';
