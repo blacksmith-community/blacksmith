@@ -173,9 +173,9 @@ func (c *certTasks) CreateCertificateTask(_ context.Context, req upgrade.CreateC
 	return &upgrade.UpgradeTask{ID: "task-1", Kind: upgrade.TaskKindCertificates, Name: req.Name, ClientRequestID: req.ClientRequestID, CreatedFrom: c.createdFrom}, existing, nil
 }
 
-// postCertificateTask sends the body to POST /b/upgrade/tasks and returns
-// the status and the task the answer carries.
-func postCertificateTask(t *testing.T, handler *Handler, body string) (int, map[string]interface{}) {
+// postCreate sends the body to POST /b/upgrade/tasks and returns the
+// status and the task or the error the answer carries.
+func postCreate(t *testing.T, handler *Handler, body string) (int, map[string]interface{}) {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
@@ -198,12 +198,12 @@ func TestCreateHandlerAnswers200OnRetry(t *testing.T) {
 
 	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: &certTasks{}}
 
-	status, first := postCertificateTask(t, handler, certificateCreateBody)
+	status, first := postCreate(t, handler, certificateCreateBody)
 	if status != http.StatusCreated || first["id"] != "task-1" {
 		t.Fatalf("first create: status %d, body %v", status, first)
 	}
 
-	status, retried := postCertificateTask(t, handler, certificateCreateBody)
+	status, retried := postCreate(t, handler, certificateCreateBody)
 	if status != http.StatusOK || retried["id"] != "task-1" {
 		t.Fatalf("retried create: status %d, body %v", status, retried)
 	}
@@ -217,7 +217,7 @@ func TestCreateHandlerIgnoresClientCreatedFrom(t *testing.T) {
 
 	body := strings.Replace(certificateCreateBody, `"reason"`, `"created_from":"spoofed","reason"`, 1)
 
-	status, answer := postCertificateTask(t, handler, body)
+	status, answer := postCreate(t, handler, body)
 	if status != http.StatusCreated {
 		t.Fatalf("status %d, body %v", status, answer)
 	}
@@ -257,7 +257,7 @@ func TestCreateHandlerMapsCertificateErrors(t *testing.T) {
 
 			handler := &Handler{logger: logger.NewNoOpLogger(), tasks: &failingCertTasks{err: test.err}}
 
-			status, answer := postCertificateTask(t, handler, certificateCreateBody)
+			status, answer := postCreate(t, handler, certificateCreateBody)
 			if status != test.status || answer["code"] != test.code || answer["success"] != false || answer["error"] != test.err.Error() {
 				t.Fatalf("status %d, body %v", status, answer)
 			}
@@ -266,7 +266,7 @@ func TestCreateHandlerMapsCertificateErrors(t *testing.T) {
 
 	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: &certTasks{}}
 
-	status, answer := postCertificateTask(t, handler, `{"kind":"certificates","name":5}`)
+	status, answer := postCreate(t, handler, `{"kind":"certificates","name":5}`)
 	if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidRequest {
 		t.Fatalf("a body that does not decode: status %d, body %v", status, answer)
 	}
@@ -537,7 +537,8 @@ func (u *upgradeTasks) CreateTask(_ context.Context, req upgrade.CreateTaskReque
 }
 
 // The upgrade and certificate creates pass pause_on_failure on as the
-// body gives it, and leave it nil when the body leaves it out.
+// body gives it, and leave it nil when the body leaves it out or sends
+// null.
 func TestCreateHandlerPassesPauseOnFailure(t *testing.T) {
 	t.Parallel()
 
@@ -549,6 +550,7 @@ func TestCreateHandlerPassesPauseOnFailure(t *testing.T) {
 		want *bool
 	}{
 		{name: "left out"},
+		{name: "null", with: `,"pause_on_failure":null`},
 		{name: "on", with: `,"pause_on_failure":true`, want: new(true)},
 		{name: "off", with: `,"pause_on_failure":false`, want: new(false)},
 	} {
@@ -558,7 +560,7 @@ func TestCreateHandlerPassesPauseOnFailure(t *testing.T) {
 			upgrades := &upgradeTasks{}
 			handler := &Handler{logger: logger.NewNoOpLogger(), tasks: upgrades}
 
-			status, answer := postCertificateTask(t, handler, upgradeBody+tc.with+"}")
+			status, answer := postCreate(t, handler, upgradeBody+tc.with+"}")
 			if status != http.StatusOK || len(upgrades.requests) != 1 || !samePause(upgrades.requests[0].PauseOnFailure, tc.want) {
 				t.Fatalf("upgrade create: status %d, body %v, requests %+v", status, answer, upgrades.requests)
 			}
@@ -568,8 +570,40 @@ func TestCreateHandlerPassesPauseOnFailure(t *testing.T) {
 
 			body := strings.Replace(certificateCreateBody, `"reason"`, strings.TrimPrefix(tc.with+`,"reason"`, ","), 1)
 
-			status, answer = postCertificateTask(t, handler, body)
+			status, answer = postCreate(t, handler, body)
 			if status != http.StatusCreated || len(certs.requests) != 1 || !samePause(certs.requests[0].PauseOnFailure, tc.want) {
+				t.Fatalf("certificate create: status %d, body %v, requests %+v", status, answer, certs.requests)
+			}
+		})
+	}
+}
+
+// The upgrade and certificate creates answer 400 invalid_request for a
+// pause_on_failure that isn't a boolean, and create nothing.
+func TestCreateHandlerRefusesPauseOnFailureThatIsNotABoolean(t *testing.T) {
+	t.Parallel()
+
+	const upgradeBody = `{"instance_ids":["7a1b"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}`
+
+	for _, value := range []string{`"true"`, `"false"`, `1`, `0`, `{}`, `[]`} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+
+			upgrades := &upgradeTasks{}
+			handler := &Handler{logger: logger.NewNoOpLogger(), tasks: upgrades}
+
+			status, answer := postCreate(t, handler, upgradeBody+`,"pause_on_failure":`+value+"}")
+			if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidRequest || len(upgrades.requests) != 0 {
+				t.Fatalf("upgrade create: status %d, body %v, requests %+v", status, answer, upgrades.requests)
+			}
+
+			certs := &certTasks{}
+			handler = &Handler{logger: logger.NewNoOpLogger(), tasks: certs}
+
+			body := strings.Replace(certificateCreateBody, `"reason"`, `"pause_on_failure":`+value+`,"reason"`, 1)
+
+			status, answer = postCreate(t, handler, body)
+			if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidRequest || len(certs.requests) != 0 {
 				t.Fatalf("certificate create: status %d, body %v, requests %+v", status, answer, certs.requests)
 			}
 		})

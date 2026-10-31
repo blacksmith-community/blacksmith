@@ -441,14 +441,15 @@ func TestCreateCommandRouteAuthorizesBeforeSpendingPreview(t *testing.T) {
 }
 
 // A command task always pauses after a failure, so a create that sends
-// pause_on_failure is refused, and the refusal leaves the preview unspent.
+// pause_on_failure is refused whatever its value, null included, and the
+// refusal leaves the preview unspent.
 func TestCreateCommandRouteRefusesPauseOnFailure(t *testing.T) {
 	t.Parallel()
 
 	env := commandHandler(t, commandsOn("", false))
 	id := previewID(t, env.handler, "vcap", "")
 
-	for _, pause := range []string{"true", "false"} {
+	for _, pause := range []string{"true", "false", "null", `"true"`, `"false"`, "1", "0", "{}", "[]"} {
 		body := strings.Replace(createBody(id, "vcap"), `"name"`, `"pause_on_failure":`+pause+`,"name"`, 1)
 
 		refused := send(t, env.handler, http.MethodPost, "/b/upgrade/tasks", body, "")

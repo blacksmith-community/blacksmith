@@ -634,8 +634,9 @@ func (h *Handler) DiscardCommand(w http.ResponseWriter, r *http.Request) {
 // the second credential can't spend a preview. A new task answers 201 and a
 // retry that found the task its request ID already made answers 200, both
 // with the task, which carries the command text and never any output. A body
-// with pause_on_failure answers 400, since a command task always pauses after
-// a failure. Nothing here logs the command.
+// with pause_on_failure answers 400 whatever its value, null included, since
+// a command task always pauses after a failure. Nothing here logs the
+// command.
 func (h *Handler) createCommandTask(w http.ResponseWriter, r *http.Request, body []byte) {
 	var req upgrade.CommandCreateRequest
 
@@ -647,13 +648,12 @@ func (h *Handler) createCommandTask(w http.ResponseWriter, r *http.Request, body
 	}
 
 	// A command task always pauses after a failed node, so a request that
-	// asks for something else is refused rather than quietly ignored.
-	var pause struct {
-		PauseOnFailure *bool `json:"pause_on_failure"`
-	}
+	// sends the field at all, whatever its value, is refused rather than
+	// quietly ignored.
+	var fields map[string]json.RawMessage
 
-	err = json.Unmarshal(body, &pause)
-	if err == nil && pause.PauseOnFailure != nil {
+	err = json.Unmarshal(body, &fields)
+	if _, sent := fields["pause_on_failure"]; err == nil && sent {
 		writeInvalidRequest(w, "a command task always pauses after a failure, so it takes no pause_on_failure")
 
 		return
