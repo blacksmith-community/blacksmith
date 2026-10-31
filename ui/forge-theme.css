@@ -561,7 +561,8 @@ body > footer p { margin: 0; }
 .log-node-select { flex: 0 1 20rem; width: 20rem; min-width: 10rem; max-width: 100%; }
 .job-logs-container .search-filter-container, .logs-controls-row .search-filter-container { flex: 0 1 16rem; min-width: 10rem; }
 .job-logs-container .log-file-selector, .logs-controls-row .log-file-selector { flex: 0 1 22rem; min-width: 10rem; }
-.log-info-toggle { margin-left: auto; flex: 0 0 auto; min-width: 2.5rem; min-height: 2.5rem; padding: .25rem; font-size: 1.25rem; }
+.log-info-toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; flex: 0 0 auto; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 6px; background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 50%; box-shadow: none; }
+.log-info-toggle:hover, .log-info-toggle[aria-expanded="true"] { color: var(--foreground); background: var(--secondary); }
 .instance-logs-notice[hidden] { display: none; }
 @media (max-width: 640px) {
   .log-node-select { flex-basis: 100%; width: 100%; }

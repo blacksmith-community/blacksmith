@@ -80,3 +80,17 @@ test('the endpoint footer dismisses on the left and groups its actions',()=>{
  const footer=js.slice(i,js.indexOf('</dialog>',i));
  expect(footer).toMatch(/Close<\/button>\s*<div class="modal-actions">\s*<button[^>]*id="discard-endpoint-draft">Discard draft<\/button>\s*<button[^>]*btn-primary[^>]*saveCFEndpoint/);
 });
+
+// The Logs toolbar's info button was a filled square. Every other info button
+// is the outlined circle that view-guidance.css draws.
+test('the Logs info button is an outlined circle like the guidance buttons',()=>{
+ const guide=bodies('view-guidance.css','.view-guidance-button');
+ const b=bodies('forge-theme.css','.log-info-toggle');
+ for(const prop of ['width','height','padding','background','color','border','border-radius']){
+  const get=(css)=>(css.match(new RegExp('(?:^|[;\\s])'+prop+':\\s*([^;]+)'))||[])[1];
+  expect(get(b)).toBeDefined();
+  expect(get(b).trim()).toBe(get(guide).trim());
+ }
+ expect(b).toMatch(/margin-left:\s*auto/);
+ expect(bodies('forge-theme.css','.log-info-toggle:hover')).toMatch(/background:\s*var\(--secondary\)/);
+});
