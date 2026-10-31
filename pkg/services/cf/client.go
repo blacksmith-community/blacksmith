@@ -127,12 +127,12 @@ func (c *Client) refusal(failed error, resp *http.Response) error {
 // safeDetail makes a refusal's detail fit to show, because CF can echo the
 // request in it. It drops control characters and line breaks from the
 // detail and from each secret alike, so a secret split across lines is
-// still found. It cuts the detail to refusalDetailLimit characters plus the
-// longest secret's length, so a cut can't split a secret and redaction
-// never runs on more than that. It then replaces the CF password, the
-// broker password, and the token with "[redacted]" in one pass, the longest
-// first, so a secret inside another can't leave part of the longer one,
-// and only then cuts the detail to refusalDetailLimit characters.
+// still found. It then walks the detail once. At each character it tries
+// the CF password, the broker password, and the token, longest first,
+// against the whole rest of the detail, and writes "[redacted]" for a match
+// or the character otherwise. It stops once refusalDetailLimit characters
+// are written and cuts there, so the work is bounded and no secret is ever
+// matched against a copy already cut short.
 func (c *Client) safeDetail(detail string) string {
 	secrets := []string{c.authClient.Password, c.brokerPass}
 	if c.authClient.authInfo != nil {
@@ -151,23 +151,40 @@ func (c *Client) safeDetail(detail string) string {
 		return utf8.RuneCountInString(cleaned[i]) > utf8.RuneCountInString(cleaned[j])
 	})
 
-	longest := 0
-	if len(cleaned) > 0 {
-		longest = utf8.RuneCountInString(cleaned[0])
-	}
+	rest := printable(detail)
 
-	detail = firstRunes(printable(detail), refusalDetailLimit+longest)
+	var shown strings.Builder
 
-	if len(cleaned) > 0 {
-		pairs := make([]string, 0, 2*len(cleaned))
-		for _, secret := range cleaned {
-			pairs = append(pairs, secret, "[redacted]")
+	for written := 0; rest != "" && written < refusalDetailLimit; {
+		secret := matchingSecret(rest, cleaned)
+		if secret != "" {
+			shown.WriteString("[redacted]")
+
+			written += len("[redacted]")
+			rest = rest[len(secret):]
+
+			continue
 		}
 
-		detail = strings.NewReplacer(pairs...).Replace(detail)
+		r, size := utf8.DecodeRuneInString(rest)
+		shown.WriteRune(r)
+
+		written++
+		rest = rest[size:]
 	}
 
-	return firstRunes(detail, refusalDetailLimit)
+	return firstRunes(shown.String(), refusalDetailLimit)
+}
+
+// matchingSecret is the first of secrets that text starts with, or "".
+func matchingSecret(text string, secrets []string) string {
+	for _, secret := range secrets {
+		if strings.HasPrefix(text, secret) {
+			return secret
+		}
+	}
+
+	return ""
 }
 
 // printable is text without its control characters and line breaks, and

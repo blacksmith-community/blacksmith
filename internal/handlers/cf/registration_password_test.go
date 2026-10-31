@@ -220,8 +220,6 @@ func TestNewRegistrationsStoreNoPassword(t *testing.T) {
 	}
 }
 
-// A record saved before the broker stopped storing passwords keeps its
-// password through an edit, because nothing migrates it.
 // legacyRecord is a registration saved by a broker that still stored the
 // CF password.
 func legacyRecord() map[string]interface{} {
@@ -231,6 +229,8 @@ func legacyRecord() map[string]interface{} {
 	}
 }
 
+// A record saved before the broker stopped storing passwords keeps its
+// password through an edit, because nothing migrates it.
 func TestEditingALegacyRegistrationKeepsItsPassword(t *testing.T) {
 	t.Parallel()
 

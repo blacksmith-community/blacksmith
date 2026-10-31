@@ -268,9 +268,9 @@ func TestCFRefusalsRedactSecretsAsTheDetailIsCleaned(t *testing.T) {
 	}
 }
 
-// Redaction runs on a detail already cut close to the limit, so a short
-// secret in a large answer can't grow the text far past the answer itself.
-func TestSafeDetailCutsBeforeItRedacts(t *testing.T) {
+// Redaction stops once the limit is written, so a short secret in a large
+// answer can't grow the text far past the answer itself.
+func TestSafeDetailStopsAtTheLimit(t *testing.T) {
 	client := NewClient("https://api.cf.example.com", "admin", "a", "https://broker.example.com", "broker", "e")
 	detail := strings.Repeat("e", 2<<20)
 
@@ -289,5 +289,46 @@ func TestSafeDetailCutsBeforeItRedacts(t *testing.T) {
 
 	if want := strings.Repeat("[redacted]", 25) + "[redac"; cleaned != want {
 		t.Errorf("safeDetail() = %q, want %q", cleaned, want)
+	}
+}
+
+// A detail that repeats a long secret past the limit shows only markers,
+// because each secret is matched against the whole remaining detail, not a
+// copy already cut short.
+func TestSafeDetailNeverShowsTheFrontOfACutSecret(t *testing.T) {
+	t.Parallel()
+
+	secret := "cf-pw-0123456789-abcdefghijklm"
+	if len(secret) != 30 {
+		t.Fatalf("the secret is %d characters, want 30", len(secret))
+	}
+
+	client := NewClient("https://api.cf.example.com", "admin", secret, "https://broker.example.com", "broker", "broker-pw-7d1f")
+
+	cases := []struct {
+		name   string
+		detail string
+		want   string
+	}{
+		{"ten copies of a 30-character secret", strings.Repeat(secret, 10), strings.Repeat("[redacted]", 10)},
+		{"a secret straddling character 256", strings.Repeat("x", 250) + secret + "tail", strings.Repeat("x", 250) + "[redac"},
+		{"a secret starting at character 256", strings.Repeat("x", 256) + secret, strings.Repeat("x", 256)},
+		{"a secret starting at character 255", strings.Repeat("x", 255) + secret, strings.Repeat("x", 255) + "["},
+		{"copies after a long prefix", strings.Repeat("y", 200) + strings.Repeat(secret, 9), strings.Repeat("y", 200) + strings.Repeat("[redacted]", 5) + "[redac"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := client.safeDetail(tc.detail)
+			if got != tc.want {
+				t.Errorf("safeDetail() = %q, want %q", got, tc.want)
+			}
+
+			if strings.Contains(got, secret[:3]) {
+				t.Errorf("safeDetail() = %q, which shows the front of the secret", got)
+			}
+		})
 	}
 }
