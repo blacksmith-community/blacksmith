@@ -8065,8 +8065,9 @@
     rows.forEach(values => {
       const row = document.createElement('tr');
       values.forEach((value, index) => {
-        const cell = rotateEl('td', null, value instanceof Node ? undefined : String(value ?? '—'));
+        const cell = rotateEl('td', null);
         if (value instanceof Node) cell.appendChild(value);
+        else setCellText(cell, value === null || value === undefined ? value : String(value));
         cell.dataset.label = headers[index]; cell.setAttribute('role', 'cell');
         row.appendChild(cell);
       });
@@ -8103,7 +8104,7 @@
         [target.variable || 'target', target.port ? `port ${target.port}` : ''].filter(Boolean).join(' '),
         target.method === 'none' ? 'No external probe' : humanize(target.method),
         target.method === 'none' && target.ok ? 'Applied; not externally verified' : target.ok ? 'passed' : 'failed',
-        target.detail || '—'
+        target.detail || EMPTY
       ])));
       if (gateText) body.appendChild(evidenceTable('Health gate', ['Result'], [[gateText]]));
       if (vm.error) body.appendChild(rotateEl('p', 'cert-task-vm-error', String(vm.error)));
@@ -8139,7 +8140,7 @@
             validation.dataset.keepKey = `validation:${task.id}:${instance.instance_id}:${variable.name}`;
             validation.open = failed > 0;
             validation.appendChild(rotateEl('summary', null, `Validation: ${checks.length - failed} passed${failed ? `, ${failed} failed` : ''}`));
-            validation.appendChild(evidenceTable('Validation checks', ['Check', 'Result', 'Details'], checks.map(check => [certCheckName(check.name), certCheckResult(check), check.detail || '—']), 'cert-validation-table'));
+            validation.appendChild(evidenceTable('Validation checks', ['Check', 'Result', 'Details'], checks.map(check => [certCheckName(check.name), certCheckResult(check), check.detail || EMPTY]), 'cert-validation-table'));
             item.appendChild(validation);
           }
           list.appendChild(item);
