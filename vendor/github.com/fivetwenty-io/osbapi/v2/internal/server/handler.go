@@ -5,6 +5,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,7 +113,7 @@ func (h *handler) applyMiddleware(next http.Handler) http.Handler {
 		// 2. Basic auth check (if configured).
 		if h.username != "" || h.password != "" {
 			u, p, ok := r.BasicAuth()
-			if !ok || u != h.username || p != h.password {
+			if !ok || !credentialsMatch(u, p, h.username, h.password) {
 				w.Header().Set("WWW-Authenticate", `Basic realm="Service Broker"`)
 				writeError(w, http.StatusUnauthorized, &osbapi.OSBError{
 					Description: "unauthorized",
@@ -137,6 +139,21 @@ func (h *handler) applyMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// credentialsMatch reports whether the supplied basic-auth credentials equal
+// the configured ones. Both pairs are hashed first so the comparison takes the
+// same time whatever their lengths, and subtle.ConstantTimeCompare keeps the
+// time independent of where the values differ. The username and password are
+// always both compared, so the answer never reveals which one was wrong.
+func credentialsMatch(gotUser, gotPass, wantUser, wantPass string) bool {
+	gu := sha256.Sum256([]byte(gotUser))
+	wu := sha256.Sum256([]byte(wantUser))
+	gp := sha256.Sum256([]byte(gotPass))
+	wp := sha256.Sum256([]byte(wantPass))
+	userOK := subtle.ConstantTimeCompare(gu[:], wu[:])
+	passOK := subtle.ConstantTimeCompare(gp[:], wp[:])
+	return userOK&passOK == 1
 }
 
 // versionLessThan returns true when a < b using simple major.minor comparison.

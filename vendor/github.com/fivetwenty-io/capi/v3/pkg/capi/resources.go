@@ -47,6 +47,20 @@ type AppRelationships struct {
 }
 
 // Lifecycle represents app lifecycle configuration.
+//
+// Data is passed through untyped. For the buildpack and cnb lifecycles it
+// may carry a "credentials" key (buildpack: CF API 3.236.0; cnb: earlier),
+// an object keyed by host whose entries are {"username", "password"} or,
+// for cnb, {"token"}. The API accepts that object on create and update but
+// never returns it. In responses the key is absent while no credentials
+// are stored and holds the redacted string "***" once they are, so decode
+// the value as any, never as a map.
+//
+// An update that omits the key keeps stored credentials. To clear them,
+// send the key with a nil value, for example
+// Data: map[string]any{"credentials": nil} in AppUpdateRequest.Lifecycle,
+// which marshals as an explicit null. Manifests carry the same value
+// through ManifestApplication.Credentials.
 type Lifecycle struct {
 	Type string         `json:"type" yaml:"type"`
 	Data map[string]any `json:"data" yaml:"data"`

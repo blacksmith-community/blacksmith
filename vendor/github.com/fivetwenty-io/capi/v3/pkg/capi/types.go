@@ -54,7 +54,15 @@ type Relationship struct {
 
 // RelationshipData contains the GUID of the related resource.
 type RelationshipData struct {
-	GUID string `json:"guid" yaml:"guid"`
+	// GUID identifies the related resource. Omitted from the wire when empty so
+	// a role's user can be given by Username + Origin instead.
+	GUID string `json:"guid,omitempty" yaml:"guid,omitempty"`
+	// Username and Origin identify a user by name for POST /v3/roles (CF API
+	// "create a role by username and origin"). Org managers may assign org
+	// roles this way without being able to list the user first. Only
+	// meaningful on a role's user relationship; leave empty elsewhere.
+	Username string `json:"username,omitempty" yaml:"username,omitempty"`
+	Origin   string `json:"origin,omitempty"   yaml:"origin,omitempty"`
 }
 
 // ToManyRelationship represents a to-many relationship.
