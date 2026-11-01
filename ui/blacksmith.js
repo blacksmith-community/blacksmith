@@ -16559,7 +16559,7 @@
           const activity = document.getElementById('batch-activity')?.getAttribute('aria-pressed') === 'true';
           return activity ? {screen,view:'activity',...(selectedTaskId ? {task:selectedTaskId} : {})} : {screen,view:'new',operation:upgradeOperation,step:batchFlow.step||0};
         }
-        if(screen === 'certificates') return {screen};
+        if(screen === 'certificates') { const attention = window.blacksmithCerts.routeAttention(); return attention === undefined ? {screen} : {screen, attention}; }
         const route={screen};
         if(screen==='services') {
           if(!document.getElementById('services').classList.contains('instance-open')) {
@@ -16606,6 +16606,7 @@
           if(oldScreen!==route.screen){panelContexts.set(oldScreen,captureInspectionContext());restoreInspectionContext(panelContexts.get(route.screen));}
           blacksmithRequestSequence++;window.cancelInstanceSection?.();
           if(signal?.aborted)return null;
+          if(route.screen==='certificates')window.blacksmithCerts.setAttention(route.attention);
           if(await switchTab(route.screen)===false||signal?.aborted)return null;
           const selected=(screen,section)=>document.querySelectorAll(`#${screen} .detail-tab`).forEach(tab=>{const on=tab.dataset.tab===section;tab.classList.toggle('active',on);tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
           if(route.screen==='blacksmith') {selected('blacksmith',route.section||'details');await loadBlacksmithDetailTab(route.section||'details');}
@@ -24341,6 +24342,8 @@
       timer: null,
       signature: '',
       defaultsApplied: false,
+      routeAttention: undefined,
+      lastAttention: undefined,
       facets: { service: new Set(), plan: new Set() },
       facetSignature: '',
       lastProgress: '',
@@ -26540,6 +26543,7 @@
       try {
         if (!opts.silent) await applyDefaults();
         if (seq !== view.seq) return;
+        if (view.lastAttention === undefined) view.lastAttention = state.attention;
 
         const query = toQuery(state);
         const requests = [fetchInventory(state)];
@@ -26610,6 +26614,12 @@
     }
 
     function changed() {
+      // The address follows the Needs attention chip once it has been used or named.
+      if (view.lastAttention !== undefined && state.attention !== view.lastAttention) {
+        view.lastAttention = state.attention;
+        view.routeAttention = state.attention;
+        if (window.blacksmithViews) window.blacksmithViews.notify();
+      }
       view.signature = '';
       refresh({ announce: true });
       if (view.built) {
@@ -27053,6 +27063,23 @@
       await refresh({ announce: false });
     };
 
+    // A route that names the Needs attention filter replaces the default, and
+    // a route that does not name it restores the default for the next read.
+    const setAttention = (value) => {
+      if (typeof value === 'boolean') {
+        view.defaultsApplied = true;
+        view.routeAttention = value;
+        view.lastAttention = value;
+        state.attention = value;
+      } else if (view.routeAttention !== undefined) {
+        view.routeAttention = undefined;
+        view.lastAttention = undefined;
+        view.defaultsApplied = false;
+        state.attention = false;
+      }
+    };
+    const routeAttention = () => view.routeAttention;
+
     let itemOpenRevision = 0;
     const openItem = async (id, {signal} = {}) => {
       const revision = ++itemOpenRevision;
@@ -27073,7 +27100,7 @@
       openDrawer(cert, document.querySelector(`[data-cert-id="${CSS.escape(id)}"]`));
       return true;
     };
-    return { openItem, state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
+    return { setAttention, routeAttention, openItem, state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
   })();
 
   window.blacksmithCerts = {
@@ -27082,6 +27109,8 @@
     refresh: CertsFleet.refresh,
     selection: CertsFleet.selection,
     openItem: CertsFleet.openItem,
+    setAttention: CertsFleet.setAttention,
+    routeAttention: CertsFleet.routeAttention,
     closeDrawer: CertsFleet.closeDrawer
   };
 

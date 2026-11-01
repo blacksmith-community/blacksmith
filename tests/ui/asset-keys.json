@@ -12,8 +12,8 @@
   "sha256": "38001b45c67817f30b2d6946a660fab17b8e14e3219d9d018c7082e47e0100a6"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-318",
-  "sha256": "74ea614c85eb253ad6f0d85e17af3a033c9aded1f4707021ce36ab022b5a3f40"
+  "key": "20261028-oat-320",
+  "sha256": "385029125aaecad73a84441f394155ff902a76e24f05eeef394803826550346e"
  },
  "console.css": {
   "key": "20261028-oat-309",
@@ -40,8 +40,8 @@
   "sha256": "368c3a3bde5e3c7d4c3eaa1704007edd19ebe1e7dde85c97797031b3bf5f2e65"
  },
  "routes.js": {
-  "key": "20261028-oat-315",
-  "sha256": "4420c9fb8a00216893c451aed3127c56672cb5aa0bd070fab088e9bfa3ac1525"
+  "key": "20261028-oat-321",
+  "sha256": "56ab01a613a0544b4592e54af67eea9233d864adce5b73ef85594a3282363746"
  },
  "view-guidance.css": {
   "key": "20261028-oat-17",
