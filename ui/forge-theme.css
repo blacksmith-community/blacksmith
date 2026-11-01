@@ -996,9 +996,9 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .config-toolbar .table-toolbar-actions button { min-height: 28px; padding: 2px 10px; font-size: .8125rem; }
 .config-container .config-table :is(th, td) { padding-top: 4px; padding-bottom: 4px; }
 .config-container .config-table td { line-height: 1.25; }
-.config-container .config-table .copy-btn-inline { width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 0; }
+#blacksmith .config-container .config-table .copy-btn-inline { width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 0; }
 .config-table .config-group th { text-align: left; font-size: .875rem; font-weight: 600; padding-top: 4px; padding-bottom: 4px; background: transparent; color: var(--foreground); }
-.config-table .config-group-toggle { display: flex; align-items: center; gap: .5rem; width: 100%; min-height: 24px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+#blacksmith .config-table .config-group-toggle { display: flex; align-items: center; justify-content: flex-start; gap: .5rem; width: 100%; min-height: 24px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .config-table .config-group-toggle:is(:hover, :focus-visible) { color: var(--primary); }
 .config-table .config-group-toggle:focus-visible { outline-offset: -2px; }
 .config-table .config-group-chevron { width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; flex-shrink: 0; }

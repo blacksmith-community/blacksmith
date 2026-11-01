@@ -225,3 +225,40 @@ test('Collapse all while filtering leaves the saved choices intact',async()=>{
  expect(s.visible()).toEqual(['# bosh','# broker','port','debug','note','# credhub','# general']);
  s.w.close();
 });
+
+// Specificity as [ids, classes, types]; :is() counts as its strongest argument.
+function specificity(sel){
+ const split=(s)=>{const out=[];let d=0,cur='';for(const c of s){if(c==='('||c==='[')d++;if(c===')'||c===']')d--;if(c===','&&d===0){out.push(cur);cur='';}else cur+=c;}out.push(cur);return out;};
+ const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+ const cmp=(a,b)=>a[0]-b[0]||a[1]-b[1]||a[2]-b[2];
+ const one=(s)=>{
+  let r=[0,0,0];
+  s=s.replace(/:(?:is|not|where)\(((?:[^()]|\([^()]*\))*)\)/g,(m,inner)=>{
+   if(m.startsWith(':where'))return '';
+   r=add(r,split(inner).map(one).reduce((a,b)=>cmp(a,b)>=0?a:b));
+   return '';
+  });
+  s=s.replace(/\[[^\]]*\]/g,()=>{r[1]++;return '';});
+  s=s.replace(/#[\w-]+/g,()=>{r[0]++;return '';});
+  s=s.replace(/\.[\w-]+/g,()=>{r[1]++;return '';});
+  s=s.replace(/::[\w-]+/g,()=>{r[2]++;return '';});
+  s=s.replace(/:[\w-]+/g,()=>{r[1]++;return '';});
+  s=s.replace(/(^|[\s>+~])([a-zA-Z][\w-]*)/g,()=>{r[2]++;return '';});
+  return r;
+ };
+ return one(sel.trim());
+}
+const beats=(a,b)=>{const x=specificity(a),y=specificity(b);return (x[0]-y[0]||x[1]-y[1]||x[2]-y[2])>0;};
+
+test('the settings table rules out-rank the generic rules they override',()=>{
+ const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
+ const generic=css.match(/^(button:is\(\.copy-btn-inline[^{]*)\{/m)[1];
+ const copy=css.match(/^([^{\n]*\.config-table \.copy-btn-inline)\s*\{/m)[1];
+ expect(beats(copy,generic)).toBe(true);
+ const oat=fs.readFileSync(path.join(__dirname,'../../ui/vendor/oat/oat.min.css'),'utf8');
+ const oatButton=':is(button,[type=submit],[type=reset],[type=button],a.button)';
+ expect(oat).toContain(oatButton);
+ const toggleMatch=css.match(/^([^{\n]*\.config-group-toggle)\s*\{([^}]*)\}/m);
+ expect(toggleMatch[2]).toContain('justify-content: flex-start');
+ expect(beats(toggleMatch[1],oatButton)).toBe(true);
+});
