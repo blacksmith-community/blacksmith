@@ -19956,7 +19956,7 @@
     const safeId = escapeAttribute(instanceId);
     const tabGroupId = escapeAttribute(`service-cert-tabs-${instanceId}`);
     return `
-      <div class="service-testing-container">
+      <div class="cert-sources-container">
         <div class="manifest-details-container">
           <bs-tabs>
           <div class="manifest-tabs-nav" role="tablist" aria-label="Service certificate sources" id="service-cert-tablist-${safeId}">
@@ -19968,100 +19968,67 @@
 
             <!-- Overview Tab -->
             <div role="tabpanel" class="manifest-tab-pane active" data-tab="overview" data-group="${tabGroupId}">
-              <div class="operation-content">
-                <div id="service-cert-overview-${safeId}" class="cert-ov"></div>
-              </div>
+              <div id="service-cert-overview-${safeId}" class="cert-ov"></div>
             </div>
 
             <!-- Manifest Certificates Tab -->
-            <div role="tabpanel" class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}">
-
-              <div class="operation-content">
-                <table class="operation-form">
-                  <tr>
-                    <td>
-                      <h5>Deployment Manifest Certificates</h5>
-                      <p>Read the certificates in the manifest the director has deployed for this instance.</p>
-                      <div class="form-row">
-                        <button class="execute-btn" data-cert-action="fetch-manifest" data-instance-id="${safeId}">
-                          ${blacksmithIcon('file-text', { size: 16 })}
-                          Scan Manifest
-                        </button>
-                      </div>
-                      <div id="manifest-certificates-results-${safeId}" class="testing-history" style="display: none;">
-                        <div class="history-header">
-                          <h5>Manifest Certificates</h5>
-                        </div>
-                        <div id="manifest-certificates-list-${safeId}" class="cert-list-container">
-                          <!-- Certificate list will be populated here -->
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                </table>
+            <div role="tabpanel" class="manifest-tab-pane cert-source-pane" data-tab="manifest" data-group="${tabGroupId}">
+              <div class="cert-source-head">
+                <h5>Deployment Manifest Certificates</h5>
+                <p>Read the certificates in the manifest the director has deployed for this instance.</p>
+                <div class="cert-source-actions">
+                  <button class="execute-btn" data-cert-action="fetch-manifest" data-instance-id="${safeId}">
+                    ${blacksmithIcon('file-text', { size: 16 })}
+                    Scan Manifest
+                  </button>
+                </div>
+              </div>
+              <div id="manifest-certificates-results-${safeId}" class="cert-source-results" style="display: none;">
+                <div id="manifest-certificates-list-${safeId}" class="cert-list-container">
+                  <!-- Certificate list will be populated here -->
+                </div>
               </div>
             </div>
 
             <!-- Trusted Certificates Tab -->
-            <div role="tabpanel" class="manifest-tab-pane" data-tab="trusted" data-group="${tabGroupId}">
-              <div class="operation-content">
-                <table class="operation-form">
-                  <tr>
-                    <td>
-                      <h5>Service VM Certificate Store</h5>
-                      <p>Access the trusted certificate store on service instance virtual machines.</p>
-                      <div class="form-row">
-                        <button class="execute-btn" data-cert-action="fetch-vm" data-instance-id="${safeId}">
-                          ${blacksmithIcon('monitor', { size: 16 })}
-                          Fetch VM Certificates
-                        </button>
-                      </div>
-                      <div id="vm-certificates-results-${safeId}" class="testing-history" style="display: none;">
-                        <div class="history-header">
-                          <h5>VM Certificates</h5>
-                        </div>
-                        <div id="vm-certificates-list-${safeId}" class="cert-list-container">
-                          <!-- Certificate list will be populated here -->
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                </table>
+            <div role="tabpanel" class="manifest-tab-pane cert-source-pane" data-tab="trusted" data-group="${tabGroupId}">
+              <div class="cert-source-head">
+                <h5>Service VM Certificate Store</h5>
+                <p>Access the trusted certificate store on service instance virtual machines.</p>
+                <div class="cert-source-actions">
+                  <button class="execute-btn" data-cert-action="fetch-vm" data-instance-id="${safeId}">
+                    ${blacksmithIcon('monitor', { size: 16 })}
+                    Fetch VM Certificates
+                  </button>
+                </div>
+              </div>
+              <div id="vm-certificates-results-${safeId}" class="cert-source-results" style="display: none;">
+                <div id="vm-certificates-list-${safeId}" class="cert-list-container">
+                  <!-- Certificate list will be populated here -->
+                </div>
               </div>
             </div>
 
             <!-- Service Endpoint Certificate Tab -->
-            <div role="tabpanel" class="manifest-tab-pane" data-tab="endpoint" data-group="${tabGroupId}">
-
-              <div class="operation-content">
-                <table class="operation-form">
-                  <tr>
-                    <td>
-                      <h5>Service Endpoint Certificate</h5>
-                      <p>Connect to the service instance endpoint and retrieve its certificate.</p>
-                      <div class="form-row">
-                        <label>Service Endpoint:</label>
-                        <input type="text" id="service-endpoint-address-${safeId}"
-                               placeholder="service-ip:port or service.domain.com:443"
-                               value="" />
-                      </div>
-                      <div class="form-row">
-                        <button class="execute-btn" data-cert-action="fetch-service-endpoint" data-instance-id="${safeId}">
-                          ${blacksmithIcon('link', { size: 16 })}
-                          Fetch Service Certificate
-                        </button>
-                      </div>
-                      <div id="service-endpoint-results-${safeId}" class="testing-history" style="display: none;">
-                        <div class="history-header">
-                          <h5>Service Endpoint Certificate</h5>
-                        </div>
-                        <div id="service-endpoint-details-${safeId}" class="cert-list-container">
-                          <!-- Certificate details will be populated here -->
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                </table>
+            <div role="tabpanel" class="manifest-tab-pane cert-source-pane" data-tab="endpoint" data-group="${tabGroupId}">
+              <div class="cert-source-head">
+                <h5>Service Endpoint Certificate</h5>
+                <p>Connect to the service instance endpoint and retrieve its certificate.</p>
+                <div class="cert-source-actions">
+                  <label for="service-endpoint-address-${safeId}">Service Endpoint:</label>
+                  <input type="text" id="service-endpoint-address-${safeId}"
+                         placeholder="service-ip:port or service.domain.com:443"
+                         value="" />
+                  <button class="execute-btn" data-cert-action="fetch-service-endpoint" data-instance-id="${safeId}">
+                    ${blacksmithIcon('link', { size: 16 })}
+                    Fetch Service Certificate
+                  </button>
+                </div>
+              </div>
+              <div id="service-endpoint-results-${safeId}" class="cert-source-results" style="display: none;">
+                <div id="service-endpoint-details-${safeId}" class="cert-list-container">
+                  <!-- Certificate details will be populated here -->
+                </div>
               </div>
             </div>
           </bs-tabs>
@@ -20317,42 +20284,55 @@
 
   // Render certificate files list for selection
   const renderCertificateFilesList = (container, files, instanceId) => {
-    const wrapper = CertView.el('div', 'cert-files-list');
-    const head = CertView.el('div', 'cert-files-header');
-    head.appendChild(CertView.el('h6', null, `Certificate Files (${files.length})`));
-    head.appendChild(CertView.el('p', null, 'Select a certificate file to load its content and details'));
-    wrapper.appendChild(head);
+    const table = CertView.el('table', 'cert-files-table');
+    table.appendChild(CertView.el('caption', 'visually-hidden', `Certificate files (${files.length})`));
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    ['File', 'Path', 'Actions'].forEach((label) => {
+      const th = CertView.el('th', null, label);
+      th.scope = 'col';
+      headRow.appendChild(th);
+    });
+    head.appendChild(headRow);
+    table.appendChild(head);
 
     files.forEach((file) => {
-      const item = CertView.el('div', 'cert-file-item');
+      const item = CertView.el('tbody', 'cert-file-item');
       item.setAttribute('data-file-path', file.path);
 
-      const header = CertView.el('div', 'cert-file-header');
-      header.appendChild(CertView.el('div', 'cert-file-name', file.name));
-      header.appendChild(CertView.el('div', 'cert-file-path', file.path));
+      const header = CertView.el('tr', 'cert-file-header');
+      header.appendChild(CertView.el('td', 'cert-file-name', file.name));
+      header.appendChild(CertView.el('td', 'cert-file-path', file.path));
       header.addEventListener('click', () => {
         window.toggleCertificateFile(header, instanceId, file.path);
       });
 
-      const loadButton = CertView.el('button', 'load-cert-btn');
+      const actions = CertView.el('td', 'cert-file-actions');
+      const loadButton = CertView.el('button', 'load-cert-btn btn-secondary btn-sm');
       loadButton.type = 'button';
       loadButton.innerHTML = blacksmithIcon('file', { size: 14 });
       loadButton.appendChild(document.createTextNode(' Load Certificate'));
       loadButton.addEventListener('click', (event) => {
         window.loadCertificateFile(event, instanceId, file.path, file.name);
       });
-      header.appendChild(loadButton);
+      actions.appendChild(loadButton);
+      header.appendChild(actions);
       item.appendChild(header);
 
+      const expansion = CertView.el('tr', 'cert-file-expansion');
+      const cell = CertView.el('td');
+      cell.colSpan = 3;
       const content = CertView.el('div', 'cert-file-content');
       content.style.display = 'none';
       content.appendChild(CertView.el('div', 'cert-loading-placeholder', 'Click "Load Certificate" to fetch certificate content...'));
-      item.appendChild(content);
+      cell.appendChild(content);
+      expansion.appendChild(cell);
+      item.appendChild(expansion);
 
-      wrapper.appendChild(item);
+      table.appendChild(item);
     });
 
-    container.replaceChildren(wrapper);
+    container.replaceChildren(table);
   };
 
   // Toggle certificate file expansion

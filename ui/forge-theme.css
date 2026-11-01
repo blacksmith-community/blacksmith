@@ -902,3 +902,28 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
   border-left: var(--space-2) solid var(--_variant-color);
   background-color: color-mix(in srgb, var(--_variant-color) 12%, var(--card));
 }
+
+/* Each source sub-tab of an instance's Certificates is one frame, the tab panel itself. */
+.cert-sources-container { width: 100%; }
+.cert-sources-container bs-tabs > .cert-source-pane { padding: 16px 20px; min-height: 0; max-height: none; flex: 1 1 auto; }
+.cert-source-pane > div { flex: none; overflow: visible; max-height: none; }
+.cert-source-head h5 { margin: 0 0 4px; font-size: 1.05em; color: var(--text-primary); }
+.cert-source-head p { margin: 0 0 12px; color: var(--text-secondary); font-size: .9em; }
+.cert-source-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 16px; }
+.cert-source-actions input[type="text"] { flex: 1 1 18rem; min-width: 0; }
+.cert-source-pane .cert-list-container { border: 0; border-radius: 0; margin: 0; overflow: visible; }
+
+/* The files of the trusted store are one table, and a loaded certificate opens in the row under its file. */
+.cert-files-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+.cert-files-table th, .cert-files-table td { text-align: left; vertical-align: middle; white-space: normal; overflow-wrap: anywhere; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--border-primary); }
+.cert-files-table th { color: var(--text-secondary); font-weight: 600; }
+.cert-files-table th:last-child, .cert-files-table td.cert-file-actions { width: 1%; white-space: nowrap; text-align: right; }
+.cert-files-table .cert-file-item { display: table-row-group; background: none; border: 0; border-radius: 0; padding: 0; }
+.cert-files-table .cert-file-item:hover { border-color: transparent; }
+.cert-files-table .cert-file-header { display: table-row; margin: 0; cursor: pointer; }
+.cert-files-table .cert-file-name { font-size: inherit; }
+.cert-files-table .cert-file-path { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace; font-size: .8125rem; color: var(--text-secondary); margin: 0; }
+.cert-files-table .cert-file-expansion td { padding: 0; border-bottom: 0; }
+.cert-files-table .cert-file-content { margin: 0; padding: 8px 10px 12px; background: none; border: 0; border-radius: 0; }
+.cert-files-table .load-cert-btn.btn-secondary { min-width: 0; padding: 4px 10px; font-size: 13px; font-weight: 500; background-color: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 6px; }
+.cert-files-table .load-cert-btn.btn-secondary:hover:not(:disabled) { background-color: var(--bg-secondary); transform: none; }
