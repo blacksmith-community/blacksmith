@@ -23,11 +23,14 @@
   try{
    const [raw,query='']=hash.replace(/^#\/?/,'').split('?');const p=raw.split('/').filter(Boolean).map(decodeURIComponent);const q=new URLSearchParams(query);let r;
    if(!p.length)r={screen:'blacksmith',section:'details'};
+   else if(p[0]==='broker'&&p.length===1)r={screen:'blacksmith',section:'details'};
    else if(p[0]==='broker'&&broker[p[1]]&&(p.length===2||(p[1]==='plans'&&p.length===4))){r={screen:'blacksmith',section:broker[p[1]]};if(p.length===4){r.service=p[2];r.plan=p[3];}}
-   else if(p[0]==='instances'&&(p.length===1||(p.length===3&&instance[p[2]]))){r={screen:'services'};if(p.length===3){r.instance=p[1];r.section=instance[p[2]];}}
+   else if(p[0]==='instances'&&(p.length<=3)&&(p.length!==3||instance[p[2]])){r={screen:'services'};if(p.length>=2){r.instance=p[1];r.section=instance[p[2]||'summary'];}}
    else if(p[0]==='certificates'&&p.length===1)r={screen:'certificates'};
    else if(p[0]==='batch'&&p[1]==='activity'&&p.length<=3){r={screen:'upgrade',view:'activity'};if(p[2])r.task=p[2];}
    else if(p[0]==='batch'&&p[1]==='new'&&['upgrade','rotate','converge','command'].includes(p[2])&&steps.includes(p[3])&&p.length===4)r={screen:'upgrade',view:'new',operation:p[2],step:steps.indexOf(p[3])};
+   else if(p[0]==='batch'&&p.length===1||p[0]==='batch'&&p[1]==='new'&&p.length===2)r={screen:'upgrade',view:'new',operation:'upgrade',step:0};
+   else if(p[0]==='batch'&&p[1]==='new'&&['upgrade','rotate','converge','command'].includes(p[2])&&p.length===3)r={screen:'upgrade',view:'new',operation:p[2],step:0};
    else return null;
    if(r.screen==='services'&&!r.instance&&q.get('service')){r.service=q.get('service');if(q.get('plan'))r.plan=q.get('plan');}
    if(q.has('view'))r.subview=q.get('view');if(q.has('endpoint')&&r.section==='broker')r.endpoint=q.get('endpoint');if(q.has('inspect')){if(!['task','config','certificate'].includes(q.get('inspect'))||!q.get('id'))return null;r.inspection={kind:q.get('inspect'),id:q.get('id')};if(r.inspection.kind==='task'&&!/^\d+$/.test(r.inspection.id))return null;if(r.inspection.kind==='config'){if(!q.get('type')||!q.get('name'))return null;r.inspection.type=q.get('type');r.inspection.name=q.get('name');}}return r;
@@ -76,7 +79,7 @@
   }
   async function apply(route,options={}){
    if(!route||options.signal?.aborted)return false;
-   if(!applying&&current&&format(current)===format(route)&&!options.replace&&!options.cancelRestore)return true;
+   if(!applying&&current&&format(current)===format(route)&&!options.replace&&!options.cancelRestore){adapter.settled?.();return true;}
    pendingHash=format(route);if(!options.cancelRestore)remember();controller?.abort();controller=new win.AbortController();
    const requestController=controller,signal=controller.signal,revision=++sequence;applying=true;
    const cancel=()=>{
@@ -135,7 +138,9 @@
    },
    record(route,options={}){
     if(applying||!started)return;const clean=parse(format(route));
-    if(!clean||current&&format(clean)===format(current))return;
+    if(!clean)return;
+    adapter.settled?.();
+    if(current&&format(clean)===format(current))return;
     const old=win.history.state?.blacksmithRoute;
     // A replacing record rewrites the current entry, so refining a filter does not fill Back.
     if(options.replace&&old?.session===session){current=clean;win.history.replaceState(metadata(old.id,old.previous),'',format(clean));currentEntryId=old.id;adapter.changed?.(clean,{history:false,record:true});return;}
@@ -183,6 +188,6 @@
  }
  root.blacksmithRefreshContext=()=>{const current=root.blacksmithRouter?.current;if(current&&current.view==='activity'&&current.task)render(current);};
  function error(error){let node=doc.getElementById('route-error');if(!node){node=doc.createElement('div');node.id='route-error';node.setAttribute('data-variant','danger');node.setAttribute('role','alert');doc.querySelector('.tab-content')?.before(node);}node.textContent=error.message+' Use Back or select a destination from the navigation.';}
- function start(){if(root.blacksmithRouter||!root.blacksmithViews)return;const router=create(root,{activate:(r,o)=>root.blacksmithViews.activate(r,o),pending:r=>render(r),changed:(r,o)=>{doc.getElementById('route-error')?.remove();render(r);root.blacksmithNav?.announce(doc.title.replace(' — Blacksmith',''));if(!r.inspection&&!o.history&&!o.record){const h=doc.querySelector('.tab-panel.active .detail-content')||doc.querySelector('.tab-panel.active');h?.setAttribute('tabindex','-1');h?.focus({preventScroll:true});}},error});root.blacksmithRouter=router;router.start();}
+ function start(){if(root.blacksmithRouter||!root.blacksmithViews)return;const router=create(root,{activate:(r,o)=>root.blacksmithViews.activate(r,o),settled:()=>doc.getElementById('route-error')?.remove(),pending:r=>render(r),changed:(r,o)=>{doc.getElementById('route-error')?.remove();render(r);root.blacksmithNav?.announce(doc.title.replace(' — Blacksmith',''));if(!r.inspection&&!o.history&&!o.record){const h=doc.querySelector('.tab-panel.active .detail-content')||doc.querySelector('.tab-panel.active');h?.setAttribute('tabindex','-1');h?.focus({preventScroll:true});}},error});root.blacksmithRouter=router;router.start();}
  doc.addEventListener('blacksmith:ready',start);if(root.blacksmithViews)start();
 })(globalThis);

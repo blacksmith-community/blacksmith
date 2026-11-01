@@ -16659,7 +16659,7 @@
               if(route.service||routeFilterApplied){window.applyServicesFilter?.(route.service,route.plan);routeFilterApplied=!!route.service;}
               return finish(route);
             }
-            if(!await window.navigateToInstance(route.instance,signal))throw new Error('This service instance is no longer available.');
+            if(!await window.navigateToInstance(route.instance,signal))throw new Error(`Service instance ${route.instance} was not found.`);
             if(signal?.aborted)return null;selected('services',route.section||'details');await window.loadInstanceSection(route.instance,route.section||'details');
           }
           if(signal?.aborted)return null;
