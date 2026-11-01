@@ -13617,6 +13617,9 @@
     empty: 'No command history available'
   };
 
+  const RUNNER_HISTORY_EMPTY = 'No operations performed yet';
+  const RUNNER_HISTORY_UNREAD = 'Open Runs to load the history.';
+
   const renderRunnerHistory = (kind, root, instanceId) => {
     const history = runnerPart(root, 'history');
     if (!history) return;
@@ -13646,8 +13649,13 @@
     const block = runnerPart(root, 'history-block');
     const empty = entries.length === 0;
     runnerPart(root, 'history-entries').classList.toggle('is-empty', empty);
-    runnerPart(root, 'history-empty').hidden = !empty || !!noteKey;
-    block.querySelector('[data-runner-action="clear-history"]').disabled = empty;
+    // A runner whose history lives on the server has not read it until the
+    // list opens, so an empty list says how to load it and Clear stays on.
+    const unread = fromServer && !state.historyStatus;
+    const emptyLine = runnerPart(root, 'history-empty');
+    emptyLine.textContent = unread ? RUNNER_HISTORY_UNREAD : RUNNER_HISTORY_EMPTY;
+    emptyLine.hidden = !empty || !!noteKey;
+    block.querySelector('[data-runner-action="clear-history"]').disabled = empty && !unread;
   };
 
   // Reads the server's history each time the list opens, the way the old

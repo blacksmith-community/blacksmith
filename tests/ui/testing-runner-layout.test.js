@@ -397,11 +397,14 @@ for(const tab of ['rabbitmqctl','plugins']){
   expect(text(block.querySelector('.history-header h5'))).toBe('Response history');
   const entries=block.querySelector('.history-entries');
   expect(entries.classList.contains('is-empty')).toBe(true);
-  expect(text(entries.querySelector('.history-empty'))).toBe('No operations performed yet');
+  // The plugins history sits on the server and is read when Runs opens, so
+  // before that the block must not claim nothing has been done.
+  const unread=tab==='plugins';
+  expect(text(entries.querySelector('.history-empty'))).toBe(unread?'Open Runs to load the history.':'No operations performed yet');
   expect(entries.querySelector('.history-empty').hidden).toBe(false);
   const clear=block.querySelector('.history-header [data-runner-action="clear-history"]');
   expect(clear.textContent).toBe('Clear history');
-  expect(clear.disabled).toBe(true);
+  expect(clear.disabled).toBe(!unread);
   if(tab==='rabbitmqctl') await choose(s,'nodes','ping'); else await choose(s,'monitoring','list');
   runButton(s).click(); await sleep(30);
   expect(entries.classList.contains('is-empty')).toBe(false);
@@ -409,3 +412,13 @@ for(const tab of ['rabbitmqctl','plugins']){
   expect(clear.disabled).toBe(false);
  });
 }
+
+t('opening Runs on an empty plugins history replaces the load prompt with the empty note',async()=>{
+ const s=await screen([],[]);
+ await openTab(s,'plugins');
+ const block=s.content().querySelector('.testing-history');
+ block.querySelector('summary').click(); await sleep(30);
+ expect(block.querySelector('.history-empty').hidden).toBe(true);
+ expect(text(block.querySelector('.command-runner-history-note'))).toBe('No command history available');
+ expect(block.querySelector('[data-runner-action="clear-history"]').disabled).toBe(true);
+});
