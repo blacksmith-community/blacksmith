@@ -62,7 +62,7 @@ test('form control text, placeholder, border, and focus ring meet contrast in ev
  [':root',':root[data-contrast="high"]','[data-theme="dark"]',':root[data-contrast="high"][data-theme="dark"]'].forEach((sel)=>{
   const start=css.indexOf('\n'+sel+' {');
   expect(start).toBeGreaterThan(-1);
-  const t={}; css.slice(start,css.indexOf('}',start)).replace(/(--[a-z-]+): (#[0-9a-f]{6})/g,(m,k,v)=>{ t[k]=v; });
+  const t={}; css.slice(start,css.indexOf('}',start)).replace(/(--[a-z-]+): (#[0-9a-f]{6}|var\(--[a-z-]+\))/g,(m,k,v)=>{ t[k]=v; }); for(const k of Object.keys(t)){ const m=t[k].match(/^var\((--[a-z-]+)\)$/); if(m) t[k]=t[m[1]]; }
   ['--card','--background'].forEach((surface)=>{
    expect(ratio(t['--foreground'],t[surface])).toBeGreaterThanOrEqual(4.5);
    expect(ratio(t['--muted-foreground'],t[surface])).toBeGreaterThanOrEqual(4.5);
@@ -98,7 +98,7 @@ test('our control border uses the same token the contrast test checks',()=>{
 // its old key, so every asset changed in the Oat work carries its current key.
 test('the assets changed by the Oat form work carry their cache keys',()=>{
  const html=read('index.html');
- [['blacksmith.css','oat-283'],['forge-theme.css','oat-285'],['blacksmith.js','oat-281']].forEach(([f,k])=>expect(html).toContain('/'+f+'?v=20261028-'+k+'"'));
+ [['blacksmith.css','oat-286'],['forge-theme.css','oat-287'],['blacksmith.js','oat-281']].forEach(([f,k])=>expect(html).toContain('/'+f+'?v=20261028-'+k+'"'));
 });
 
 // tests/ui/asset-keys.json pins each keyed asset's key and content hash. An

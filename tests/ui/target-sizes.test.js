@@ -89,7 +89,9 @@ const ratio = (a, b) => {
 test('muted text keeps 4.5 to 1 against every surface in both Anvil themes', () => {
   const css = read('forge-theme.css');
   for (const [theme, selector] of [['light', /:root \{([^}]*)\}/], ['dark', /\[data-theme="dark"\] \{([^}]*)\}/]]) {
-    const tokens = Object.fromEntries([...css.match(selector)[1].matchAll(/--([\w-]+):\s*(#[0-9a-f]{6})/g)].map((m) => [m[1], m[2]]));
+    const raw = Object.fromEntries([...css.match(selector)[1].matchAll(/--([\w-]+):\s*(#[0-9a-f]{6}|var\(--[\w-]+\))/g)].map((m) => [m[1], m[2]]));
+    const resolve = (v) => (v.startsWith('var(') ? resolve(raw[v.slice(6, -1)]) : v);
+    const tokens = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, resolve(v)]));
     for (const surface of ['background', 'card', 'secondary', 'muted']) {
       expect(ratio(tokens['muted-foreground'], tokens[surface])).toBeGreaterThanOrEqual(4.5);
     }

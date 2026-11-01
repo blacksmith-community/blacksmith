@@ -37,7 +37,7 @@ const mix=(fg,bg,p)=>'#'+[1,3,5].map(i=>Math.round(parseInt(fg.slice(i,i+2),16)*
 const tokens=(css,selector)=>{
  const start=css.indexOf('\n'+selector+' {');
  expect(start).toBeGreaterThan(-1);
- const out={}; css.slice(start,css.indexOf('}',start)).replace(/(--[a-z-]+): (#[0-9a-f]{6})/g,(m,k,v)=>{ out[k]=v; });
+ const out={}; css.slice(start,css.indexOf('}',start)).replace(/(--[a-z-]+): (#[0-9a-f]{6}|var\(--[a-z-]+\))/g,(m,k,v)=>{ out[k]=v; }); for(const k of Object.keys(out)){ const m=out[k].match(/^var\((--[a-z-]+)\)$/); if(m) out[k]=out[m[1]]; }
  return out;
 };
 test('badge text meets 4.5:1 in every theme',()=>{

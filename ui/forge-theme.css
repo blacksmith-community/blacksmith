@@ -15,17 +15,19 @@
 }
 [data-theme="dark"] {
   color-scheme: dark;
-  --background: #171b20; --foreground: #f7f3ea;
-  --card: #20262c; --card-foreground: #f7f3ea;
-  --secondary: #2b3239; --secondary-foreground: #f7f3ea;
-  --muted: #2b3239; --muted-foreground: #c5beb4;
-  --faint: #171b20; --faint-foreground: #c5beb4;
+  --surface-page: #171b20; --surface-nav: #1d2329; --surface-content: #20262c;
+  --surface-raised: #2f373f; --surface-border: #565f68; --surface-muted-text: #c5beb4;
+  --background: var(--surface-page); --foreground: #f7f3ea;
+  --card: var(--surface-content); --card-foreground: #f7f3ea;
+  --secondary: var(--surface-raised); --secondary-foreground: #f7f3ea;
+  --muted: var(--surface-raised); --muted-foreground: var(--surface-muted-text);
+  --faint: var(--surface-page); --faint-foreground: var(--surface-muted-text);
   --primary: #e8934a; --primary-foreground: #171b20;
   --accent: #e8934a; --accent-foreground: #171b20;
   --danger: #ff9990; --danger-foreground: #171b20;
   --success: #8cdbac; --success-foreground: #171b20;
   --warning: #f0c469; --warning-foreground: #171b20;
-  --border: #565f68; --input: #939da7; --ring: #e8934a;
+  --border: var(--surface-border); --input: #939da7; --ring: #e8934a;
 }
 :root, [data-theme="dark"] {
   --bg-primary: var(--background); --bg-secondary: var(--card);
@@ -82,6 +84,12 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .main-content table :is(td, th) { padding: 10px 12px; font-size: .875rem; color: var(--foreground); border-color: var(--border); }
 .main-content table th { background: var(--secondary); }
 .main-content table td { background: var(--card); }
+[data-theme="dark"] .main-content table td { background: var(--surface-page); }
+[data-theme="dark"] .entity-metric.card { background: var(--surface-raised); }
+[data-theme="dark"] #blacksmith .entity-navigation, [data-theme="dark"] #services .entity-navigation { background: var(--surface-nav); }
+[data-theme="dark"] #blacksmith .entity-navigation .detail-tab.active, [data-theme="dark"] #services .entity-navigation .detail-tab.active { background: var(--surface-raised); color: var(--primary); border-left-color: var(--primary); }
+[data-theme="dark"] .manifest-tab-btn.active { background: var(--surface-raised); color: var(--text-primary); box-shadow: inset 0 -2px 0 var(--primary); }
+[data-theme="dark"] .cert-tab-btn.active { background: var(--surface-raised); color: var(--text-primary); box-shadow: inset 0 -2px 0 var(--primary); }
 .entity-header.service-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 24px; background: var(--card); color: var(--foreground); border-bottom: 1px solid var(--border); height: auto; flex-shrink: 0; box-shadow: none; }
 .entity-header h2 { color: var(--foreground); font-size: 1.25rem; margin: 2px 0; overflow-wrap: anywhere; }
 .entity-header p { margin: 0; }

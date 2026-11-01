@@ -2821,8 +2821,8 @@ th[style*="cursor: pointer"]:hover {
 }
 
 [data-theme="dark"] .no-results-msg {
-  background: #0d1117;
-  color: #8b949e;
+  background: var(--surface-page);
+  color: var(--surface-muted-text);
 }
 
 
@@ -2917,17 +2917,17 @@ th[style*="cursor: pointer"]:hover {
 
 
 [data-theme="dark"] .table-controls-header {
-  background: #0d1117 !important;
+  background: var(--surface-content) !important;
 }
 
 [data-theme="dark"] .table-controls-container {
-  background: #0d1117;
+  background: var(--surface-content);
 }
 
 [data-theme="dark"] .table-controls-container .copy-btn-logs,
 [data-theme="dark"] .table-controls-container .refresh-btn-logs {
-  background: #161b22;
-  border-color: #30363d;
+  background: var(--surface-raised);
+  border-color: var(--surface-border);
   color: #c9d1d9;
 }
 
@@ -2940,7 +2940,7 @@ th[style*="cursor: pointer"]:hover {
 
 /* Dark theme styles for compact tasks controls */
 [data-theme="dark"] .compact-tasks-controls {
-  background: #0d1117;
+  background: var(--surface-content);
 }
 
 [data-theme="dark"] .compact-tasks-controls .filter-group label {
@@ -2952,8 +2952,8 @@ th[style*="cursor: pointer"]:hover {
 }
 
 [data-theme="dark"] .compact-tasks-controls .tasks-action-buttons button {
-  background: #161b22;
-  border-color: #30363d;
+  background: var(--surface-raised);
+  border-color: var(--surface-border);
   color: #c9d1d9;
 }
 
@@ -2977,8 +2977,8 @@ th[style*="cursor: pointer"]:hover {
 }
 
 [data-theme="dark"] .compact-configs-controls .configs-action-buttons button {
-  background: #161b22;
-  border-color: #30363d;
+  background: var(--surface-raised);
+  border-color: var(--surface-border);
   color: #c9d1d9;
 }
 

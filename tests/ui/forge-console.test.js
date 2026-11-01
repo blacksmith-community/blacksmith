@@ -75,7 +75,9 @@ test('forge reading and control palettes meet contrast targets in both themes',(
   const css=fs.readFileSync(path.join(ui,'forge-theme.css'),'utf8');
   for(const selector of [':root','[data-theme="dark"]']) {
     const block=css.slice(css.indexOf(selector)).match(/\{([^}]+)\}/)[1];
-    const vars=Object.fromEntries([...block.matchAll(/--([\w-]+):\s*(#[\da-f]{6})/gi)].map(m=>[m[1],m[2]]));
+    const raw=Object.fromEntries([...block.matchAll(/--([\w-]+):\s*(#[\da-f]{6}|var\(--[\w-]+\))/gi)].map(m=>[m[1],m[2]]));
+    const settle=v=>v.startsWith('var(')?settle(raw[v.slice(6,-1)]):v;
+    const vars=Object.fromEntries(Object.entries(raw).map(([k,v])=>[k,settle(v)]));
     for(const bg of ['background','card','secondary']) {
       expect(contrast(vars.foreground,vars[bg])).toBeGreaterThanOrEqual(7);
       expect(contrast(vars['muted-foreground'],vars[bg])).toBeGreaterThanOrEqual(4.5);
@@ -181,7 +183,9 @@ test('high contrast palettes meet stronger text and visible boundary targets',()
  const css=fs.readFileSync(path.join(ui,'forge-theme.css'),'utf8');
  for(const selector of [':root[data-contrast="high"] {',':root[data-contrast="high"][data-theme="dark"] {']){
   const block=css.slice(css.indexOf(selector)).match(/\{([^}]+)\}/)[1];
-  const vars=Object.fromEntries([...block.matchAll(/--([\w-]+):\s*(#[\da-f]{6})/gi)].map(m=>[m[1],m[2]]));
+  const raw=Object.fromEntries([...block.matchAll(/--([\w-]+):\s*(#[\da-f]{6}|var\(--[\w-]+\))/gi)].map(m=>[m[1],m[2]]));
+    const settle=v=>v.startsWith('var(')?settle(raw[v.slice(6,-1)]):v;
+    const vars=Object.fromEntries(Object.entries(raw).map(([k,v])=>[k,settle(v)]));
   for(const bg of ['background','card','secondary']){
    for(const text of ['foreground','muted-foreground','primary']) expect(contrast(vars[text],vars[bg])).toBeGreaterThanOrEqual(7);
    expect(contrast(vars.border,vars[bg])).toBeGreaterThanOrEqual(3);
