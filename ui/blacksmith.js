@@ -11330,6 +11330,23 @@
       };
     }
 
+    // Valkey and Redis signal handler lines carry the time as an epoch in
+    // parentheses: PID:signal-handler (1767225600) Received SIGTERM ...
+    const epochPattern = /^(\d+):[\w-]+\s+\((\d{9,11})\)\s+(.*)$/;
+    match = originalLine.match(epochPattern);
+    if (match) {
+      const when = new Date(Number(match[2]) * 1000).toISOString();
+      const message = stripAnsiCodes(originalLine);
+      const found = message.match(/\b(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\b/i);
+      return {
+        date: when.slice(0, 10),
+        time: when.slice(11, 23),
+        level: found ? found[1].toUpperCase() : 'INFO',
+        component: '',
+        message
+      };
+    }
+
     // Handle lines that don't match any pattern (continuation lines, etc.)
     // Use original line for fallback processing
     let fallbackLevel = '';
@@ -11535,7 +11552,9 @@
     const cells = [];
 
     if (activeColumns.timestamp) {
-      cells.push(`<td class="log-timestamp">${displayTimestamp === EMPTY ? EMPTY_HTML : escapeHtml(String(displayTimestamp))}</td>`);
+      cells.push(displayTimestamp === EMPTY
+        ? `<td class="log-timestamp" title="No timestamp in this log line">${EMPTY_HTML}</td>`
+        : `<td class="log-timestamp">${escapeHtml(String(displayTimestamp))}</td>`);
     }
 
     if (activeColumns.level) {
@@ -25018,17 +25037,31 @@
       count.textContent = hiddenFilters > 0 ? String(hiddenFilters) : '';
     };
 
+    // A chip reads the way its control does. The URL value stays in the
+    // query string and is never shown.
+    const CHIP_VALUE_LABELS = {
+      expiry: { expired: 'Expired', critical: 'Expiry critical', warning: 'Expiry warning', ok: 'Expiry OK', unknown: 'Expiry unknown' },
+      health: { error: 'Health errors', warning: 'Health warning', ok: 'Health OK', unknown: 'Health unknown' },
+      finding: { unconverged: 'Deployment mismatch' }
+    };
+    const CHIP_FIELD_LABELS = { kind: 'Kind', source: 'Source', owner: 'Owner', service: 'Service', plan: 'Plan', instance: 'Instance', finding: 'Finding' };
+    const chipLabel = (field, value) => {
+      const known = CHIP_VALUE_LABELS[field] && CHIP_VALUE_LABELS[field][value];
+      if (known) return known;
+      return `${CHIP_FIELD_LABELS[field] || field}: ${field === 'finding' ? String(value).replace(/_/g, ' ') : value}`;
+    };
+
     const chipDefs = () => {
       const chips = [];
       LIST_FIELDS.forEach((field) => {
         state[field].forEach((value) => {
           chips.push({
-            text: `${field}=${value}`,
+            text: chipLabel(field, value),
             remove: () => { state[field] = state[field].filter((v) => v !== value); }
           });
         });
       });
-      if (state.attention) chips.push({ text: 'attention=true', remove: () => { state.attention = false; } });
+      if (state.attention) chips.push({ text: 'Needs attention', remove: () => { state.attention = false; } });
       if (state.expires_after || state.expires_before) {
         const from = state.expires_after ? shortDate(state.expires_after) : 'any time';
         const to = state.expires_before ? shortDate(state.expires_before) : 'any time';
