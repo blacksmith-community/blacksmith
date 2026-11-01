@@ -134,6 +134,13 @@ t('a task that failed, was cancelled, or timed out summarizes where it stopped',
  }
 });
 
+t('an end summary shows the stage once when the last event has no error',async()=>{
+ const {d}=await start('error',[line(),line({time:T0+1,stage:'Compiling packages',task:'ruby',state:'failed'})]);
+ const text=d.querySelector('#task-task-content .task-end-summary').textContent;
+ expect(text.split('Compiling packages').length-1).toBe(1);
+ expect(text).toContain('ruby');
+});
+
 t('a finished task shows no summary',async()=>{
  const {d}=await start('done',ALL);
  expect(d.querySelector('#task-details-content .task-end-summary')).toBeNull();

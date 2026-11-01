@@ -7214,6 +7214,7 @@
   // The title a job carries on its Activity card, on its own page, and in
   // the breadcrumb, so the three always agree.
   const jobTitle = (task) => task.name || task.target || (task.kind === 'certificates' ? 'Certificate operation' : task.kind === 'command' ? 'Run command' : `Upgrade to ${describeUpgradeTargets(task).label}`);
+  let lastRefreshedCrumb = '';
   window.blacksmithJobTitle = (id) => {
     const known = taskDetailCache.get(id) || upgradeTasks.find((task) => task && task.id === id);
     return known ? jobTitle(known) : '';
@@ -8698,7 +8699,13 @@
       }
     });
 
-    if (typeof window.blacksmithRefreshContext === 'function') window.blacksmithRefreshContext();
+    // The route bar only changes when the job or its title does. Rebuilding it
+    // on every poll would drop the keyboard focus the operator holds.
+    const crumbKey = `${task.id}\u0000${jobTitle(task)}`;
+    if (crumbKey !== lastRefreshedCrumb) {
+      lastRefreshedCrumb = crumbKey;
+      if (typeof window.blacksmithRefreshContext === 'function') window.blacksmithRefreshContext();
+    }
 
     const actions = {
       back: () => window.backToTaskList(),
@@ -18486,9 +18493,12 @@
   const taskEndSummary = (events, taskState) => {
     if (!['error', 'cancelled', 'timeout'].includes(taskState) || !events.length) return '';
     const last = events[events.length - 1];
-    const detail = last.error || last.message || '';
+    const stage = String(last.stage || 'Last event');
+    // A fallback message usually begins with the stage, so show the stage once.
+    const message = String(last.error || last.message || '');
+    const detail = message.startsWith(stage) ? message.slice(stage.length).replace(/^:?\s*/, '') : message;
     const variant = taskState === 'cancelled' ? 'warning' : 'danger';
-    return `<div class="task-end-summary" role="status" data-variant="${variant}"><strong>${escapeHtml(String(last.stage || 'Last event'))}</strong>${detail ? `: ${escapeHtml(String(detail))}` : ''}</div>`;
+    return `<div class="task-end-summary" role="status" data-variant="${variant}"><strong>${escapeHtml(stage)}</strong>${detail ? `: ${escapeHtml(detail)}` : ''}</div>`;
   };
 
   const formatTaskEventsAsLogs = (events, outputType, taskState) => {
@@ -26060,7 +26070,7 @@
       if (errors.length + warnings.length + notices.length === 0) return null;
 
       // One list carries the shared rule, so each item is a plain line.
-      const section = el('ul', `cert-drawer-callouts cert-drawer-callouts--${errors.length + warnings.length > 0 ? 'warn' : 'info'}`);
+      const section = el('ul', `cert-drawer-callouts cert-drawer-callouts--${errors.length > 0 ? 'danger' : warnings.length > 0 ? 'warn' : 'info'}`);
       section.setAttribute('aria-label', 'Warnings and notices');
       const add = (kind, label, text) => {
         const box = el('li', `cert-callout cert-callout--${kind}`);

@@ -48,6 +48,31 @@ t('the warnings and notices of a row are one list with one shared rule', async (
   } finally { w.close(); }
 });
 
+t('a row with an error finding draws the rule in the danger color', async () => {
+  const { w, box } = await expand('c2', (c) => {
+    c.findings = [
+      { code: 'a', severity: 'error', message: 'An error.' },
+      { code: 'b', severity: 'warning', message: 'A warning.' }
+    ];
+  });
+  try {
+    const list = box.querySelector('ul.cert-drawer-callouts');
+    expect(list.classList.contains('cert-drawer-callouts--danger')).toBe(true);
+    expect(bodies('blacksmith.css', '.cert-drawer-callouts--danger')).toMatch(/border-left-color:\s*var\(--danger\)/);
+  } finally { w.close(); }
+});
+
+t('a row with only warnings keeps the amber rule', async () => {
+  const { w, box } = await expand('c2', (c) => {
+    c.findings = [{ code: 'b', severity: 'warning', message: 'A warning.' }];
+  });
+  try {
+    const list = box.querySelector('ul.cert-drawer-callouts');
+    expect(list.classList.contains('cert-drawer-callouts--danger')).toBe(false);
+    expect(list.classList.contains('cert-drawer-callouts--warn')).toBe(true);
+  } finally { w.close(); }
+});
+
 t('CredHub Details reads as the label and value grid of the task header', () => {
   const grid = bodies('forge-theme.css', '.cert-expansion .cert-credhub-table tbody');
   const facts = bodies('forge-theme.css', '.entity-facts');

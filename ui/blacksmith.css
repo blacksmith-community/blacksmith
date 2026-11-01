@@ -7762,9 +7762,9 @@ body.terminal-minimized .tabs {
   cursor: not-allowed;
 }
 
-.btn-secondary:focus-visible,
-.btn-success:focus-visible {
-  outline: 2px solid var(--border-active);
+:is(button, a, [role="button"]).btn-secondary:focus-visible,
+:is(button, a, [role="button"]).btn-success:focus-visible {
+  outline: 3px solid var(--ring);
   outline-offset: 3px;
 }
 
@@ -9339,21 +9339,6 @@ span.config-type.resurrection {
   overflow-wrap: anywhere;
 }
 
-#task-details-modal .task-tab-content {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  min-height: 0;
-  flex: 1 1 0%;
-  max-height: calc(90vh - 200px); /* Explicit max height constraint */
-  height: calc(90vh - 200px); /* Explicit height constraint */
-  margin: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
 #task-details-modal .task-tab-pane .loading {
   display: flex;
   align-items: center;
@@ -9601,11 +9586,6 @@ span.config-type.resurrection {
   }
 
   /* Adjust content heights for mobile */
-  #task-details-modal .task-tab-content {
-    max-height: calc(95vh - 180px) !important;
-    height: calc(95vh - 180px) !important;
-  }
-
   #task-debug-content,
   #task-raw-content,
   #task-cpi-content,
@@ -12209,6 +12189,10 @@ span.config-type.resurrection {
 
 .cert-drawer-callouts--info {
   border-left-color: var(--border-primary);
+}
+
+.cert-drawer-callouts--danger {
+  border-left-color: var(--danger);
 }
 
 .cert-callout {

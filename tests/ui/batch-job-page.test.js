@@ -159,6 +159,20 @@ t('the breadcrumb refreshes once the page learns the title',async()=>{
  w.blacksmithRouter.destroy();w.close();
 });
 
+t('a running job re-renders without rebuilding the route bar unless the title changes',async()=>{
+ const {w}=await start();
+ let rebuilds=0;
+ w.blacksmithRefreshContext=()=>{rebuilds++;};
+ const running=()=>({...task(),status:'running',completed_count:0});
+ w.__T.renderTaskDetail(running());
+ const first=rebuilds;
+ w.__T.renderTaskDetail({...running(),completed_count:1});
+ w.__T.renderTaskDetail({...running(),completed_count:2});
+ expect(rebuilds).toBe(first);
+ w.__T.renderTaskDetail({...running(),name:'A new title'});
+ expect(rebuilds).toBe(first+1);
+});
+
 t('the job page publishes its title for the breadcrumb',async()=>{
  const {w}=await start();
  expect(w.blacksmithJobTitle('job-1')).toBe(TITLE);

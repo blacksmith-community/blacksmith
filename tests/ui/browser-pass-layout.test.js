@@ -106,9 +106,30 @@ test('disabled and focused .btn-secondary and .btn-success are styled',()=>{
  const held=bodies('blacksmith.css','.btn-success:disabled:hover');
  expect(held).toMatch(/background-color:\s*var\(--primary\)/);
  expect(held).toMatch(/color:\s*var\(--primary-foreground\)/);
- for(const sel of ['.btn-secondary:focus-visible','.btn-success:focus-visible']){
-  expect(bodies('blacksmith.css',sel)).toMatch(/outline:\s*2px solid var\(--border-active\)/);
+ const ring=strip(read('blacksmith.css')).match(/:is\(button, a, \[role="button"\]\)\.btn-secondary:focus-visible,\s*:is\(button, a, \[role="button"\]\)\.btn-success:focus-visible\s*\{([^}]*)\}/);
+ expect(ring).not.toBeNull();
+ expect(ring[1]).toMatch(/outline:\s*3px solid var\(--ring\)/);
+});
+// Specificity of a selector as [ids, classes and pseudo-classes, types].
+const specificity=(sel)=>{
+ let rest=sel;let a=0,b=0,c=0;
+ rest=rest.replace(/:is\(([^)]*)\)/g,(m,inner)=>{
+  const best=inner.split(',').map((x)=>specificity(x.trim())).sort((x,y)=>y[0]-x[0]||y[1]-x[1]||y[2]-x[2])[0];
+  a+=best[0];b+=best[1];c+=best[2];return '';
+ });
+ a+=(rest.match(/#[\w-]+/g)||[]).length;
+ b+=(rest.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g)||[]).length;
+ c+=(rest.replace(/\[[^\]]*\]/g,'').match(/(^|[\s>+~])[a-z][\w-]*/gi)||[]).length;
+ return [a,b,c];
+};
+const beats=(x,y)=>x[0]-y[0]||x[1]-y[1]||x[2]-y[2];
+test('the secondary and success focus ring wins over the global ring in forge-theme.css',()=>{
+ const global=':is(button, input, select, textarea, summary, a, [tabindex], [role="button"]):focus-visible';
+ expect(read('forge-theme.css')).toContain(global+' { outline: 3px solid var(--ring);');
+ for(const sel of [':is(button, a, [role="button"]).btn-secondary:focus-visible',':is(button, a, [role="button"]).btn-success:focus-visible']){
+  expect(beats(specificity(sel),specificity(global))).toBeGreaterThan(0);
  }
+ expect(read('blacksmith.css')).not.toMatch(/\.btn-(secondary|success):focus-visible[^{]*\{[^}]*!important/);
 });
 test('a narrow modal footer wraps its actions with a gap',()=>{
  const b=bodies('blacksmith.css','.modal-footer .modal-actions');
