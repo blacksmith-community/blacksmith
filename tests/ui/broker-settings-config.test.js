@@ -94,3 +94,12 @@ test('the Runtime settings form is unchanged',async()=>{
  expect(s.host.querySelector('#apply-reconciler-interval').textContent).toBe('Apply');
  s.w.close();
 });
+
+test('the second guard masks a connection string and a list holding one',async()=>{
+ const env=boot();await sleep(100);
+ const host=env.d.createElement('div');env.d.body.appendChild(host);
+ host.innerHTML=env.w.__T.renderBlacksmithSettings({}, {redis:{uri:'redis://:s3cr3t-test@h:6379',peers:['amqp://u:s3cr3t-test@h','amqp://h']}});
+ expect(host.innerHTML).not.toContain('s3cr3t-test');
+ expect(host.querySelectorAll('.config-table button[aria-pressed]').length).toBe(2);
+ env.w.close();
+});

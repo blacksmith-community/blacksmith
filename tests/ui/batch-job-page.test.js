@@ -177,3 +177,18 @@ t('the job page publishes its title for the breadcrumb',async()=>{
  const {w}=await start();
  expect(w.blacksmithJobTitle('job-1')).toBe(TITLE);
 });
+
+t('returning to the same job rebuilds the route bar',async()=>{
+ const {w}=await start();
+ let rebuilds=0;
+ w.blacksmithRefreshContext=()=>{rebuilds++;};
+ const running=()=>({...task(),status:'running',completed_count:0});
+ w.__T.renderTaskDetail(running());
+ const first=rebuilds;
+ w.backToTaskList();
+ w.__T.renderTaskDetail(running());
+ expect(rebuilds).toBe(first+1);
+ w.dispatchEvent(new w.Event('hashchange'));
+ w.__T.renderTaskDetail(running());
+ expect(rebuilds).toBe(first+2);
+});

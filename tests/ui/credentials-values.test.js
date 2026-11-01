@@ -104,3 +104,39 @@ test('empty values show the shared empty value with no copy button',async()=>{
  expect(t.row('e').textContent).toContain('0');
  t.w.close();
 });
+
+// Review fixes: connection strings, camelCase names, and array items.
+test('a URI with an embedded password is masked and a plain URL is not',async()=>{
+ const t=await table({uri:'redis://:s3cr3t-test@10.0.0.5:6379',amqp_uri:'amqps://admin:s3cr3t-test@h:5671/vhost',url:'https://h:8443/path',host_port:'redis://h:6379'});
+ for(const name of ['uri','amqp_uri']){
+  const cell=t.row(name);
+  expect(cell.querySelector('button[aria-pressed]')).not.toBeNull();
+  expect(cell.textContent).toContain('••••••••');
+ }
+ expect(t.host.innerHTML).not.toContain('s3cr3t-test');
+ expect(await copyOf(t,t.row('uri').querySelector('button[aria-label="Copy uri"]'))).toBe('redis://:s3cr3t-test@10.0.0.5:6379');
+ for(const name of ['url','host_port']) expect(t.row(name).querySelector('button[aria-pressed]')).toBeNull();
+ t.w.close();
+});
+
+test('camelCase key names are masked like snake_case ones',async()=>{
+ const t=await table({apiKey:'s3cr3t-a',privateKey:'s3cr3t-b',clientSecret:'s3cr3t-c',authToken:'s3cr3t-d',passphrase:'s3cr3t-e',displayName:'x'});
+ for(const name of ['apiKey','privateKey','clientSecret','authToken','passphrase']) expect(t.row(name).querySelector('button[aria-pressed]')).not.toBeNull();
+ expect(t.row('displayName').querySelector('button[aria-pressed]')).toBeNull();
+ expect(t.host.innerHTML).not.toContain('s3cr3t-');
+ t.w.close();
+});
+
+test('array items collapse certificates and mask secrets one by one',async()=>{
+ const t=await table({chain:[CERT,CERT],uris:['redis://:s3cr3t-test@h:6379','redis://h:6379']});
+ const chain=t.row('chain');
+ expect(chain.querySelectorAll('details').length).toBe(2);
+ expect(chain.querySelectorAll('.credential-pem-summary')[0].textContent).toBe('PEM certificate · 1 certificate');
+ const uris=t.row('uris');
+ expect(uris.innerHTML).not.toContain('s3cr3t-test');
+ expect(uris.querySelectorAll('button[aria-pressed]').length).toBe(1);
+ expect(uris.querySelectorAll('code.credential-array-item')[0].textContent).toBe('redis://h:6379');
+ const secretCopy=uris.querySelector('button[aria-label="Copy uris"]');
+ expect(await copyOf(t,secretCopy)).toBe('redis://:s3cr3t-test@h:6379');
+ t.w.close();
+});

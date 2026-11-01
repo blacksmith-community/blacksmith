@@ -7215,6 +7215,7 @@
   // the breadcrumb, so the three always agree.
   const jobTitle = (task) => task.name || task.target || (task.kind === 'certificates' ? 'Certificate operation' : task.kind === 'command' ? 'Run command' : `Upgrade to ${describeUpgradeTargets(task).label}`);
   let lastRefreshedCrumb = '';
+  window.addEventListener('hashchange', () => { lastRefreshedCrumb = ''; });
   window.blacksmithJobTitle = (id) => {
     const known = taskDetailCache.get(id) || upgradeTasks.find((task) => task && task.id === id);
     return known ? jobTitle(known) : '';
@@ -7542,6 +7543,7 @@
   const selectUpgradeTask = async (taskId, options = {}) => {
     const revision=++selectedTaskRevision;
     setBatchView('activity');
+    if (selectedTaskId !== taskId) lastRefreshedCrumb = '';
     selectedTaskId = taskId;
     commandKeyPrompt = null;
 
@@ -8766,6 +8768,7 @@
   // Go back to task list from detail view
   window.backToTaskList = () => {
     const previousTaskId = selectedTaskId;
+    lastRefreshedCrumb = '';
     selectedTaskRevision++;
     selectedTaskId = null;
     commandKeyPrompt = null;
@@ -9346,11 +9349,15 @@
   // Secrets stay out of the markup. The rendered cell carries an id, and the
   // real value waits here until the person reveals or copies it.
   const SECRET_MASK = '••••••••';
-  const SECRET_KEY = /password|secret|token|private_key|_key$/i;
+  const SECRET_KEY = /pass(word|wd|phrase)|secret|token|private_key|_key$/;
+  const URI_PASSWORD = /^[a-z][a-z0-9+.-]*:\/\/[^\/\s@]*:[^\/\s@]+@/i;
+  const JSON_URI_PASSWORD = /[a-z][a-z0-9+.-]*:\/\/[^\/\s@"]*:[^\/\s@"]+@/i;
   const secretValues = new Map();
   let secretCounter = 0;
 
-  const isSecretEntry = (key, text) => SECRET_KEY.test(String(key)) || text.includes('PRIVATE KEY-----');
+  // camelCase and dashed key names read as snake_case before the test.
+  const snakeKey = (key) => String(key).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toLowerCase();
+  const isSecretEntry = (key, text) => SECRET_KEY.test(snakeKey(key)) || text.includes('PRIVATE KEY-----') || URI_PASSWORD.test(text);
 
   // A secret value as a masked cell with a reveal button and a copy button.
   // The copy button always copies the real value.
@@ -9391,27 +9398,38 @@
 
   // A PEM certificate or chain as a one-line summary with the full text behind
   // a disclosure. The copy button copies the whole PEM.
-  const pemCertificate = (text, label) => {
+  const pemCertificate = (text) => {
     const count = (text.match(/-----BEGIN CERTIFICATE-----/g) || []).length;
     return `<span class="credential-pem"><span class="credential-pem-summary">PEM certificate · ${count} ${count === 1 ? 'certificate' : 'certificates'}</span>`
       + `<details><summary>Show PEM</summary><pre class="credential-multiline">${escapeHtml(text)}</pre></details></span>`;
   };
 
-  // An array as one item per line in the monospace face.
-  const arrayLines = (items) => `<span class="credential-array">${items.map((item) => `<code class="credential-array-item">${escapeHtml(item)}</code>`).join('')}</span>`;
+  // An array as one item per line in the monospace face. A certificate item
+  // collapses and a secret item is masked, each with its own copy button.
+  const arrayItem = (key, item) => {
+    if (isSecretEntry(key, item)) return `<div class="credential-array-item">${secretValue(item, key)}</div>`;
+    if (item.includes('-----BEGIN CERTIFICATE-----')) return `<div class="credential-array-item">${entityCopy(item, key)}${pemCertificate(item)}</div>`;
+    return `<code class="credential-array-item">${escapeHtml(item)}</code>`;
+  };
+  const arrayLines = (key, items) => `<span class="credential-array">${items.map((item) => arrayItem(key, item)).join('')}</span>`;
 
   // One credentials table cell. Secrets are masked, certificates collapse, and
   // a missing value is the shared empty value with no copy button.
   const credentialCell = (key, value) => {
     const isArray = Array.isArray(value);
-    const text = value == null ? '' : isArray
-      ? value.map((item) => (item !== null && typeof item === 'object' ? JSON.stringify(item) : String(item ?? ''))).join('\n')
+    const items = isArray ? value.map((item) => (item !== null && typeof item === 'object' ? JSON.stringify(item) : String(item ?? ''))) : [];
+    const text = value == null ? '' : isArray ? items.join('\n')
       : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
     if (text === '') return EMPTY_HTML;
+    // An array copies whole only when no item is a secret, so a secret never
+    // reaches the markup through the group copy button.
+    if (isArray) {
+      const hasSecret = items.some((item) => isSecretEntry(key, item));
+      return `<div class="credential-value-layout">${hasSecret ? '' : entityCopy(text, key)}<div class="credential-value-text">${arrayLines(key, items)}</div></div>`;
+    }
     if (isSecretEntry(key, text)) return `<div class="credential-value-layout">${secretValue(text, key)}</div>`;
     let display;
-    if (isArray) display = arrayLines(text.split('\n'));
-    else if (text.includes('-----BEGIN CERTIFICATE-----')) display = pemCertificate(text, key);
+    if (text.includes('-----BEGIN CERTIFICATE-----')) display = pemCertificate(text);
     else if (text.includes('\n')) display = `<pre class="credential-multiline">${escapeHtml(text)}</pre>`;
     else display = `<code>${escapeHtml(text)}</code>`;
     return `<div class="credential-value-layout">${entityCopy(text, key)}<div class="credential-value-text">${display}</div></div>`;
@@ -9456,14 +9474,14 @@
 
     const valueCell = (item) => {
       if (item.value === '') return EMPTY_HTML;
-      if (isSecretEntry(item.key, item.value)) return secretValue(item.value, item.key);
+      if (isSecretEntry(item.key, item.value) || JSON_URI_PASSWORD.test(item.value)) return secretValue(item.value, item.key);
       if (item.value.includes('-----BEGIN CERTIFICATE-----')) {
-        return `<span class="manifest-value">${pemCertificate(item.value, item.key)}${entityCopy(item.value, item.key)}</span>`;
+        return `<span class="manifest-value">${pemCertificate(item.value)}${entityCopy(item.value, item.key)}</span>`;
       }
       return manifestValue(item.value, item.key);
     };
     const filterText = (item) => {
-      const plain = item.value === '' || isSecretEntry(item.key, item.value) || item.value.includes('-----BEGIN CERTIFICATE-----') ? '' : item.value;
+      const plain = item.value === '' || isSecretEntry(item.key, item.value) || JSON_URI_PASSWORD.test(item.value) || item.value.includes('-----BEGIN CERTIFICATE-----') ? '' : item.value;
       return `${item.key} ${plain}`.toLowerCase();
     };
 
