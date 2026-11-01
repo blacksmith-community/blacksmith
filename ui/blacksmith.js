@@ -9586,14 +9586,21 @@
     };
 
     const filterId = `config-filter-${++configFilterCounter}`;
-    const body = [...groups.keys()].sort().map((group) => {
+    const body = [...groups.keys()].sort().map((group, g) => {
       const items = groups.get(group);
-      return `<tr class="config-group" data-group="${escapeAttribute(group)}"><th colspan="2" scope="rowgroup"><span class="config-group-name">${escapeHtml(group)}</span> <span class="config-group-count">${items.length}</span></th></tr>`
-        + items.map((item) => `<tr data-group="${escapeAttribute(group)}" data-filter="${escapeAttribute(filterText(item))}"><td class="config-key">${escapeHtml(item.rest)}</td><td class="config-value">${valueCell(item)}</td></tr>`).join('');
+      const rowIds = items.map((_, r) => `${filterId}-g${g}-r${r}`);
+      return `<tr class="config-group" data-group="${escapeAttribute(group)}"><th colspan="2" scope="rowgroup"><button type="button" class="config-group-toggle" aria-expanded="false" aria-controls="${rowIds.join(' ')}"><span class="config-group-chevron" aria-hidden="true"></span><span class="config-group-name">${escapeHtml(group)}</span> <span class="config-group-count">${items.length}</span></button></th></tr>`
+        + items.map((item, r) => `<tr id="${rowIds[r]}" hidden data-group="${escapeAttribute(group)}" data-filter="${escapeAttribute(filterText(item))}"><td class="config-key">${escapeHtml(item.rest)}</td><td class="config-value">${valueCell(item)}</td></tr>`).join('');
     }).join('');
 
     return `<div class="config-container">
-      <div class="config-filter-row"><label for="${filterId}">Filter settings</label><input type="search" id="${filterId}" class="config-filter" autocomplete="off" /></div>
+      <div class="config-toolbar">
+        <div class="config-filter-row"><label for="${filterId}">Filter settings</label><input type="search" id="${filterId}" class="config-filter" autocomplete="off" /></div>
+        <div class="table-toolbar-actions">
+          <button type="button" class="config-expand-all">Expand all</button>
+          <button type="button" class="config-collapse-all">Collapse all</button>
+        </div>
+      </div>
       <table class="config-table" data-sortable="false">
         <thead><tr><th>Property</th><th>Value</th></tr></thead>
         <tbody>${body}</tbody>
@@ -9602,22 +9609,51 @@
     </div>`;
   };
 
-  // Narrow the configuration rows as the operator types, and hide a group
-  // whose rows are all hidden.
-  document.addEventListener('input', (event) => {
-    const input = event.target.closest && event.target.closest('input.config-filter');
-    const container = input && input.closest('.config-container');
-    if (!container) return;
+  // Show the configuration rows. With no filter text a group shows its rows
+  // when the operator opened it. With filter text every matching row shows,
+  // every group with a match opens, and the others hide. The operator's own
+  // choices are kept apart so clearing the filter restores them.
+  const applyConfigView = (container) => {
+    const input = container.querySelector('input.config-filter');
     const needle = input.value.trim().toLowerCase();
+    const chosen = container.__configOpen || (container.__configOpen = new Set());
     let shown = 0;
     const live = new Set();
     container.querySelectorAll('tbody tr:not(.config-group)').forEach((row) => {
       const match = needle === '' || row.dataset.filter.includes(needle);
-      row.hidden = !match;
-      if (match) { shown++; live.add(row.dataset.group); }
+      if (match) live.add(row.dataset.group);
+      const visible = match && (needle !== '' || chosen.has(row.dataset.group));
+      row.hidden = !visible;
+      if (match) shown++;
     });
-    container.querySelectorAll('tr.config-group').forEach((row) => { row.hidden = !live.has(row.dataset.group); });
+    container.querySelectorAll('tr.config-group').forEach((row) => {
+      const group = row.dataset.group;
+      row.hidden = !live.has(group);
+      row.querySelector('.config-group-toggle').setAttribute('aria-expanded', String(needle !== '' ? live.has(group) : chosen.has(group)));
+    });
     container.querySelector('.config-no-match').hidden = shown > 0;
+  };
+
+  document.addEventListener('input', (event) => {
+    const input = event.target.closest && event.target.closest('input.config-filter');
+    const container = input && input.closest('.config-container');
+    if (container) applyConfigView(container);
+  });
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest && event.target.closest('.config-group-toggle, .config-expand-all, .config-collapse-all');
+    const container = button && button.closest('.config-container');
+    if (!container) return;
+    const chosen = container.__configOpen || (container.__configOpen = new Set());
+    const groups = [...container.querySelectorAll('tr.config-group')].map((row) => row.dataset.group);
+    if (button.classList.contains('config-expand-all')) groups.forEach((g) => chosen.add(g));
+    else if (button.classList.contains('config-collapse-all')) chosen.clear();
+    else {
+      const group = button.closest('tr.config-group').dataset.group;
+      if (container.querySelector('input.config-filter').value.trim() !== '') return;
+      if (chosen.has(group)) chosen.delete(group); else chosen.add(group);
+    }
+    applyConfigView(container);
   });
 
   // Render Blacksmith settings form + read-only config
@@ -9658,8 +9694,7 @@
     // Read-only Configuration Section
     html += `
       <div class="settings-section">
-        <h3 class="settings-section-header">Current configuration</h3>
-        <p class="settings-hint">Read-only. The broker redacts secret values.</p>
+        <div class="settings-section-heading"><h3 class="settings-section-header">Current configuration</h3><span class="settings-hint">Read-only. The broker redacts secret values.</span></div>
         ${formatConfig(config)}
       </div>
     `;

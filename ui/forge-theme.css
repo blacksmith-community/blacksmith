@@ -988,13 +988,41 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .credentials-table .credential-array-item { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
 
 /* Broker configuration: grouped rows, a filter box, and left-aligned values. */
-.config-filter-row { display: flex; flex-direction: column; gap: .25rem; margin: 0 0 12px; max-width: 24rem; }
-.config-filter-row label { font-size: .75rem; color: var(--muted-foreground); }
-.config-table .config-group th { text-align: left; font-size: .875rem; font-weight: 600; padding-top: 16px; background: transparent; color: var(--foreground); }
-.config-table .config-group-count { margin-left: .5rem; font-size: .75rem; font-weight: 400; color: var(--muted-foreground); }
+.config-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.config-filter-row { display: flex; align-items: center; gap: .5rem; margin: 0; flex: 1 1 16rem; max-width: 28rem; }
+.config-filter-row label { font-size: .75rem; color: var(--muted-foreground); white-space: nowrap; }
+.config-filter-row input { flex: 1; min-width: 0; }
+.config-toolbar .table-toolbar-actions { margin-left: auto; }
+.config-toolbar .table-toolbar-actions button { min-height: 28px; padding: 2px 10px; font-size: .8125rem; }
+.config-container .config-table :is(th, td) { padding-top: 4px; padding-bottom: 4px; }
+.config-container .config-table td { line-height: 1.25; }
+.config-container .config-table .copy-btn-inline { width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 0; }
+.config-table .config-group th { text-align: left; font-size: .875rem; font-weight: 600; padding-top: 4px; padding-bottom: 4px; background: transparent; color: var(--foreground); }
+.config-table .config-group-toggle { display: flex; align-items: center; gap: .5rem; width: 100%; min-height: 24px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.config-table .config-group-toggle:is(:hover, :focus-visible) { color: var(--primary); }
+.config-table .config-group-chevron { width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; flex-shrink: 0; }
+.config-table .config-group-toggle[aria-expanded="true"] .config-group-chevron { transform: rotate(45deg); }
+.config-table .config-group-count { margin-left: .25rem; font-size: .75rem; font-weight: 400; color: var(--muted-foreground); }
 .config-table .config-key { padding-left: 1.5rem; }
 .config-table .config-value code, .config-table .config-value .manifest-value-text { color: var(--foreground); }
 .config-table .config-value .credential-pem { display: inline-flex; flex-direction: column; gap: .25rem; min-width: 0; }
+/* Runtime settings: one line per setting. The empty feedback span takes no room. */
+.blacksmith-settings .settings-section { padding: 8px 16px; }
+.blacksmith-settings .settings-section-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 8px; }
+.blacksmith-settings .settings-section-heading .settings-section-header { margin: 0; }
+.blacksmith-settings .settings-section-heading .settings-hint { margin: 0; color: var(--muted-foreground); }
+.blacksmith-settings .settings-section > .settings-section-header { margin: 0 0 8px; }
+.blacksmith-settings .settings-row { display: grid; grid-template-columns: 12rem minmax(12rem, 22rem) minmax(0, 1fr); align-items: center; gap: 2px 12px; margin: 0 0 6px; }
+.blacksmith-settings .settings-label { margin: 0; }
+.blacksmith-settings .settings-input-group { max-width: none; }
+.blacksmith-settings .settings-hint { margin: 0; color: var(--muted-foreground); }
+.blacksmith-settings .settings-feedback { grid-column: 2 / -1; margin: 0; min-height: 0; }
+.blacksmith-settings .settings-feedback:empty { display: none; }
+.blacksmith-settings .settings-divider { margin: 0 16px; }
+@media (max-width: 900px) {
+  .blacksmith-settings .settings-row { grid-template-columns: minmax(0, 1fr); }
+  .blacksmith-settings .settings-feedback { grid-column: 1; }
+}
 .config-no-match { margin: 12px 0 0; color: var(--muted-foreground); }
 
 /* The right-hand end of every table toolbar. Refresh and Copy share one box so

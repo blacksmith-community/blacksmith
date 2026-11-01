@@ -21,7 +21,8 @@ async function screen(){
  host.innerHTML=env.w.__T.renderBlacksmithSettings({vault_max_versions:5},config);
  const type=(text)=>{const input=host.querySelector('input.config-filter');input.value=text;input.dispatchEvent(new env.w.Event('input',{bubbles:true}));};
  const visible=()=>[...host.querySelectorAll('.config-table tbody tr')].filter(r=>!r.hidden).map(r=>r.classList.contains('config-group')?'# '+r.querySelector('.config-group-name').textContent:r.querySelector('.config-key').textContent);
- return {...env,host,type,visible};
+ const expandAll=()=>host.querySelector('.config-expand-all').click();
+ return {...env,host,type,visible,expandAll};
 }
 
 test('the two section headings use sentence case and the read-only line explains redaction',async()=>{
@@ -37,6 +38,7 @@ test('the two section headings use sentence case and the read-only line explains
 
 test('rows group by the first key segment in alphabetical order with counts',async()=>{
  const s=await screen();
+ s.expandAll();
  const groups=[...s.host.querySelectorAll('.config-table tr.config-group')].map(r=>[r.querySelector('.config-group-name').textContent,r.querySelector('.config-group-count').textContent]);
  expect(groups).toEqual([['bosh','3'],['broker','3'],['credhub','1'],['general','1']]);
  expect(s.visible()).toEqual(['# bosh','address','cacert','password','# broker','port','debug','note','# credhub','ca_cert','# general','debug']);
@@ -76,7 +78,7 @@ test('the filter narrows rows by key or value and hides empty groups',async()=>{
  expect(s.host.querySelector('.config-no-match').hidden).toBe(false);
  expect(s.host.querySelector('.config-no-match').textContent).toBe('No settings match.');
  s.type('');
- expect(s.visible().length).toBe(12);
+ expect(s.visible()).toEqual(['# bosh','# broker','# credhub','# general']);
  s.w.close();
 });
 
@@ -111,4 +113,79 @@ test('the Settings guard masks a secret nested inside a list of objects',async()
  expect(host.innerHTML).not.toContain('s3cr3t-test');
  expect(host.querySelectorAll('.config-table button[aria-pressed]').length).toBe(3);
  env.w.close();
+});
+
+test('every group starts collapsed',async()=>{
+ const s=await screen();
+ expect(s.visible()).toEqual(['# bosh','# broker','# credhub','# general']);
+ const toggles=[...s.host.querySelectorAll('.config-group-toggle')];
+ expect(toggles.length).toBe(4);
+ for(const t of toggles){expect(t.tagName).toBe('BUTTON');expect(t.getAttribute('aria-expanded')).toBe('false');}
+ s.w.close();
+});
+
+test('a group toggle opens and closes its rows and sets aria-expanded',async()=>{
+ const s=await screen();
+ const toggle=s.host.querySelector('tr[data-group="bosh"] .config-group-toggle');
+ const ids=toggle.getAttribute('aria-controls').split(' ');
+ expect(ids.length).toBe(3);
+ for(const id of ids)expect(s.host.querySelector('#'+id).dataset.group).toBe('bosh');
+ toggle.click();
+ expect(toggle.getAttribute('aria-expanded')).toBe('true');
+ expect(s.visible()).toEqual(['# bosh','address','cacert','password','# broker','# credhub','# general']);
+ toggle.click();
+ expect(toggle.getAttribute('aria-expanded')).toBe('false');
+ expect(s.visible().length).toBe(4);
+ s.w.close();
+});
+
+test('Expand all and Collapse all open and close every group',async()=>{
+ const s=await screen();
+ s.host.querySelector('.config-expand-all').click();
+ expect(s.visible().length).toBe(12);
+ expect([...s.host.querySelectorAll('.config-group-toggle')].every(t=>t.getAttribute('aria-expanded')==='true')).toBe(true);
+ s.host.querySelector('.config-collapse-all').click();
+ expect(s.visible().length).toBe(4);
+ s.w.close();
+});
+
+test('the filter opens matching groups and clearing it restores the earlier choices',async()=>{
+ const s=await screen();
+ s.host.querySelector('tr[data-group="broker"] .config-group-toggle').click();
+ s.type('ca');
+ expect(s.visible()).toEqual(['# bosh','cacert','# credhub','ca_cert']);
+ expect(s.host.querySelector('tr[data-group="bosh"] .config-group-toggle').getAttribute('aria-expanded')).toBe('true');
+ s.type('');
+ expect(s.visible()).toEqual(['# bosh','# broker','port','debug','note','# credhub','# general']);
+ expect(s.host.querySelector('tr[data-group="bosh"] .config-group-toggle').getAttribute('aria-expanded')).toBe('false');
+ s.w.close();
+});
+
+test('the filter, Expand all and Collapse all share one toolbar line',async()=>{
+ const s=await screen();
+ const bar=s.host.querySelector('.config-toolbar');
+ expect(bar.querySelector('input.config-filter')).not.toBeNull();
+ expect(bar.querySelector('.table-toolbar-actions .config-expand-all')).not.toBeNull();
+ expect(bar.querySelector('.table-toolbar-actions .config-collapse-all')).not.toBeNull();
+ expect(s.host.querySelector('.settings-section-heading .settings-hint').textContent).toBe('Read-only. The broker redacts secret values.');
+ s.w.close();
+});
+
+test('an empty feedback span stays in the DOM and takes no space',async()=>{
+ const s=await screen();
+ const fb=s.host.querySelector('#feedback-max-versions');
+ expect(fb.getAttribute('role')).toBe('status');
+ expect(fb.textContent).toBe('');
+ const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
+ expect(css).toMatch(/\.settings-feedback:empty\s*\{\s*display:\s*none/);
+ expect(css.match(/\.blacksmith-settings \.settings-feedback\s*\{([^}]*)\}/)[1]).toMatch(/min-height:\s*0/);
+ s.w.close();
+});
+
+test('the settings table is dense and its copy target is 24 pixels, scoped to the config container',()=>{
+ const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
+ expect(css).toMatch(/\.config-container \.config-table :is\(th, td\)\s*\{[^}]*padding-top:\s*4px;\s*padding-bottom:\s*4px/);
+ expect(css).toMatch(/\.config-container \.config-table \.copy-btn-inline\s*\{[^}]*width:\s*24px;\s*height:\s*24px/);
+ expect(css).not.toMatch(/^\.copy-btn-inline\s*\{[^}]*height:\s*2[0-3]px/m);
+ expect(css).not.toMatch(/\.manifest[^{]*\{[^}]*padding-top:\s*4px/);
 });
