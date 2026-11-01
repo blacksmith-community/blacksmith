@@ -3913,29 +3913,6 @@ select[id*="connection-vhost"] {
   margin: 0;
 }
 
-.modal-close {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  transition: background-color 0.2s, color 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-close:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.modal-close svg {
-  width: 20px;
-  height: 20px;
-}
-
 /* Modal body */
 .modal-body {
   padding: 0;
@@ -8924,27 +8901,6 @@ span.config-type.resurrection {
 
 #task-details-modal .modal-header .task-actions button:hover {
   background: var(--bg-secondary);
-}
-
-#task-details-modal .modal-close {
-  background: none;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-#task-details-modal .modal-close:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
 }
 
 #task-details-modal .modal-body {
