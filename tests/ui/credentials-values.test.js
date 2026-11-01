@@ -174,3 +174,14 @@ test('Show PEM is a plain disclosure with a leading chevron',async()=>{
  expect(css).toMatch(/\.credential-pem-disclosure > summary \{[^}]*border: 0[^}]*background: none/);
  t.w.close();
 });
+
+// Broker settings draws the same disclosure, so its rules belong to the
+// disclosure's own class and not to the Credentials table.
+test('the Show PEM rules do not depend on the Credentials table',()=>{
+ const fs=require('fs');
+ const path=require('path');
+ const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','forge-theme.css'),'utf8');
+ const rules=css.split('\n').filter(l=>/credential-pem-(disclosure|chevron)/.test(l));
+ expect(rules.length).toBeGreaterThan(5);
+ expect(rules.filter(l=>/\.credentials-table/.test(l))).toEqual([]);
+});
