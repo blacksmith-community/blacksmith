@@ -262,3 +262,11 @@ test('the settings table rules out-rank the generic rules they override',()=>{
  expect(toggleMatch[2]).toContain('justify-content: flex-start');
  expect(beats(toggleMatch[1],oatButton)).toBe(true);
 });
+
+test('the group toggle hover and focus colour out-ranks the base toggle rule',()=>{
+ const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
+ const base=css.match(/^([^{\n]*\.config-group-toggle)\s*\{/m)[1];
+ const hover=css.match(/^([^{\n]*\.config-group-toggle:is\(:hover, :focus-visible\))\s*\{([^}]*)\}/m);
+ expect(hover[2]).toContain('color: var(--primary)');
+ expect(beats(hover[1],base)).toBe(true);
+});
