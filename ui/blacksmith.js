@@ -10445,6 +10445,7 @@
       const text = await response.text();
       const logsData = JSON.parse(text);
       if (!refresh.current()) return;
+      refresh.fetched();
 
       // Update the global logs data
       window.instanceLogsData = logsData;
@@ -22671,6 +22672,7 @@
           </div>
         `;
         panel.innerHTML = html;
+        markFetched(panel.closest('.detail-content'));
 
         // Initialize table features
         attachSearchFilter('marketplace-services-table');
@@ -22835,6 +22837,7 @@
             </div>
           `;
           resultsContainer.innerHTML = html;
+          markFetched(resultsContainer.closest('.detail-content'));
 
           // Initialize table features
           attachSearchFilter('service-instances-table');
