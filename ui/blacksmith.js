@@ -9954,14 +9954,7 @@
           <div class="search-filter-container">
             ${createSearchFilter('deployment-log-table', 'Search deployment logs...')}
           </div>
-          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.deployment-log-table', event)"
-                  title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            ${blacksmithIcon('copy', { size: 16 })}
-          </button>
-          ${instanceId ? `<button class="refresh-btn-logs" onclick="${refreshFunction}"
-                  title="Refresh deployment logs">
-            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-          </button>` : ''}
+          ${tableToolbarActions({ tableSelector: '.deployment-log-table', noun: 'deployment logs', refresh: instanceId ? `onclick="${refreshFunction}"` : '' })}
         </div>
         <div class="deployment-log-table-container">
         <table class="deployment-log-table">
@@ -10035,14 +10028,7 @@
           <div class="search-filter-container">
             ${createSearchFilter('debug-log-table', 'Search debug logs...')}
           </div>
-          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.debug-log-table', event)"
-                  title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            ${blacksmithIcon('copy', { size: 16 })}
-          </button>
-          ${instanceId ? `<button class="refresh-btn-logs" onclick="${refreshFunction}"
-                  title="Refresh debug logs">
-            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-          </button>` : ''}
+          ${tableToolbarActions({ tableSelector: '.debug-log-table', noun: 'debug logs', refresh: instanceId ? `onclick="${refreshFunction}"` : '' })}
         </div>
         <div class="debug-log-table-container">
         <table class="debug-log-table">
@@ -10292,21 +10278,14 @@
                         ${fileOptions}
                       </select>
                     </div>
-                    <button class="copy-btn-logs" data-job="${jobAttribute}" data-instance-log="copy"
-                            title="Copy filtered table rows" aria-label="Copy filtered table rows">
-                      ${blacksmithIcon('copy', { size: 16 })}
-                    </button>
-                    <button class="refresh-btn-logs" data-job="${jobAttribute}" data-instance-log="refresh"
-                            title="Refresh logs">
-                      ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-                    </button>
+                    ${tableToolbarActions({ noun: 'logs', copyLabel: 'Copy logs', refresh: `data-job="${jobAttribute}" data-instance-log="refresh"`, copy: `data-job="${jobAttribute}" data-instance-log="copy"` })}
                   </div>
         ${preferredFile && preferredFile !== defaultFile ? `<p class="log-file-fallback" role="status">${escapeHtml(preferredFile)} is not available on this node. Showing ${escapeHtml(defaultFile)}.</p>` : ''}
         <div class="logs-table-container" id="log-display-${domKey}">
           <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}">
             <thead>
               <tr>
-                <th class="log-col-timestamp">Timestamp</th>
+                <th class="log-col-timestamp">Timestamp (UTC)</th>
                 <th class="log-col-level">Level</th>
                 <th class="log-col-message">Message</th>
               </tr>
@@ -10456,6 +10435,7 @@
       // Visual feedback
       button.classList.add('copied');
       flashCopyIcon(button);
+      announce(copiedMessage(button));
       const originalTitle = button.title;
       button.title = 'Copied!';
       const spanElement = button.querySelector('span');
@@ -10483,6 +10463,7 @@
         document.execCommand('copy');
         button.classList.add('copied');
         flashCopyIcon(button);
+        announce(copiedMessage(button));
         const spanElement = button.querySelector('span');
         const originalButtonText = spanElement ? spanElement.textContent : '';
         if (spanElement) {
@@ -11642,12 +11623,12 @@
   // left, and the Refresh and Copy icon buttons sit here in that order.
   // refresh holds the attributes of the Refresh button, such as an id or an
   // onclick, and noun names the table for the Copy button's label.
-  const tableToolbarActions = ({ tableSelector, noun, refresh, wrapperClass = '' }) => `<div class="table-toolbar-actions${wrapperClass ? ` ${wrapperClass}` : ''}">
-          <button type="button" class="refresh-btn-logs" ${refresh} title="Refresh ${noun}" aria-label="Refresh ${noun}">
+  const tableToolbarActions = ({ tableSelector, noun, refresh, copy, copyLabel, wrapperClass = '' }) => `<div class="table-toolbar-actions${wrapperClass ? ` ${wrapperClass}` : ''}">
+          ${refresh ? `<button type="button" class="refresh-btn-logs" ${refresh} title="Refresh ${noun}" aria-label="Refresh ${noun}">
             ${blacksmithIcon('refresh-cw', { size: 16 })}
-          </button>
-          <button type="button" class="copy-btn-logs" onclick="window.copyTableRowsAsText('${tableSelector}', event)"
-                  title="Copy ${noun} table" aria-label="Copy ${noun} table">
+          </button>` : ''}
+          <button type="button" class="copy-btn-logs" ${copy || `onclick="window.copyTableRowsAsText('${tableSelector}', event)"`}
+                  title="${copyLabel || `Copy shown ${noun}`}" aria-label="${copyLabel || `Copy shown ${noun}`}">
             ${blacksmithIcon('copy', { size: 16 })}
           </button>
         </div>`;
@@ -11711,7 +11692,7 @@
     const headers = [];
 
     if (columns.timestamp) {
-      headers.push('<th class="log-col-timestamp">Timestamp</th>');
+      headers.push('<th class="log-col-timestamp">Timestamp (UTC)</th>');
     }
 
     if (columns.level) {
@@ -11830,14 +11811,7 @@
               ${logFileOptions}
             </select>
           </div>
-          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.logs-table', event)"
-                  title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            ${blacksmithIcon('copy', { size: 16 })}
-          </button>
-          <button class="refresh-btn-logs" onclick="window.refreshBlacksmithLogs(event)"
-                  title="Refresh logs">
-            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-          </button>
+          ${tableToolbarActions({ tableSelector: '.logs-table', noun: 'logs', refresh: 'onclick="window.refreshBlacksmithLogs(event)"' })}
         </div>
         <div class="logs-table-container" id="blacksmith-logs-display">
           ${loadMoreHTML}
@@ -14177,6 +14151,7 @@
       // Visual feedback
       button.classList.add('copied');
       flashCopyIcon(button);
+      announce(copiedMessage(button));
       const originalTitle = button.title;
       button.title = 'Copied!';
       const spanElement = button.querySelector('span');
@@ -14204,6 +14179,7 @@
         document.execCommand('copy');
         button.classList.add('copied');
         flashCopyIcon(button);
+        announce(copiedMessage(button));
         const spanElement = button.querySelector('span');
         const originalText = spanElement ? spanElement.textContent : '';
         if (spanElement) {
@@ -18535,10 +18511,7 @@
             <div class="search-filter-container">
               ${createSearchFilter(tableClass, 'Search task events...')}
             </div>
-            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
-                    title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              ${blacksmithIcon('copy', { size: 16 })}
-            </button>
+            ${tableToolbarActions({ tableSelector: `.${tableClass}`, noun: 'task events' })}
           </div>
           <div class="task-tab-scroll">
             <table class="${tableClass}">
@@ -18581,10 +18554,7 @@
           <div class="search-filter-container">
             ${createSearchFilter(tableClass, 'Search task events...')}
           </div>
-          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
-                  title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            ${blacksmithIcon('copy', { size: 16 })}
-          </button>
+          ${tableToolbarActions({ tableSelector: `.${tableClass}`, noun: 'task events' })}
         </div>
         <div class="task-tab-scroll">
           <table class="${tableClass}">
@@ -18615,10 +18585,7 @@
             <div class="search-filter-container">
               ${createSearchFilter(tableClass, `Search ${outputType}...`)}
             </div>
-            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
-                    title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              ${blacksmithIcon('copy', { size: 16 })}
-            </button>
+            ${tableToolbarActions({ tableSelector: `.${tableClass}`, noun: 'task events' })}
           </div>
           <div class="task-tab-scroll">
             <table class="${tableClass}">
@@ -18650,10 +18617,7 @@
           <div class="search-filter-container">
             ${createSearchFilter(tableClass, `Search ${outputType}...`)}
           </div>
-          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
-                  title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            ${blacksmithIcon('copy', { size: 16 })}
-          </button>
+          ${tableToolbarActions({ tableSelector: `.${tableClass}`, noun: 'task events' })}
         </div>
         <div class="task-tab-scroll">
           <table class="${tableClass}">
@@ -22737,14 +22701,7 @@
                           <div class="search-filter-container">
                             ${createSearchFilter('marketplace-services-table', 'Search marketplace...')}
                           </div>
-                          <button class="copy-btn-logs" onclick="window.copyMarketplaceServicesTable(event)"
-                                  title="Copy table data" aria-label="Copy table data">
-                            ${blacksmithIcon('copy', { size: 16 })}
-                          </button>
-                          <button class="refresh-btn-logs" onclick="window.refreshMarketplaceServices(${escapeAttribute(JSON.stringify(endpointName))}, event)"
-                                  title="Refresh marketplace services">
-                            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-                          </button>
+                          ${tableToolbarActions({ noun: 'marketplace services', refresh: `onclick="window.refreshMarketplaceServices(${escapeAttribute(JSON.stringify(endpointName))}, event)"`, copy: 'onclick="window.copyMarketplaceServicesTable(event)"' })}
                         </div>
                       </th>
                     </tr>
@@ -22907,14 +22864,7 @@
                           <div class="search-filter-container">
                             ${createSearchFilter('service-instances-table', 'Search services...')}
                           </div>
-                          <button class="copy-btn-logs" onclick="window.copyServiceInstancesTable(event)"
-                                  title="Copy table data" aria-label="Copy table data">
-                            ${blacksmithIcon('copy', { size: 16 })}
-                          </button>
-                          <button class="refresh-btn-logs" onclick="window.refreshServiceInstances(${escapeAttribute(JSON.stringify(endpointName))}, ${escapeAttribute(JSON.stringify(orgGuid))}, ${escapeAttribute(JSON.stringify(spaceGuid))}, event)"
-                                  title="Refresh service instances">
-                            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-                          </button>
+                          ${tableToolbarActions({ noun: 'service instances', refresh: `onclick="window.refreshServiceInstances(${escapeAttribute(JSON.stringify(endpointName))}, ${escapeAttribute(JSON.stringify(orgGuid))}, ${escapeAttribute(JSON.stringify(spaceGuid))}, event)"`, copy: 'onclick="window.copyServiceInstancesTable(event)"' })}
                         </div>
                       </th>
                     </tr>

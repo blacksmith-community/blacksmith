@@ -22,6 +22,9 @@ t('fleet accessibility and announcements', async () => {
     expect(action.title).toBe(action.getAttribute('aria-label'));
     expect(action.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
   }
+  // The fleet header runs Scan, Settings, then Export, together on the right.
+  const actionIds = [...d.getElementById('cert-scan-btn').parentElement.querySelectorAll('#cert-scan-btn, #cert-settings-btn, #cert-export-btn')].map((b) => b.id);
+  expect(actionIds).toEqual(['cert-scan-btn', 'cert-settings-btn', 'cert-export-btn']);
   const more = d.getElementById('cert-more-btn');
   more.click();
   expect(more.getAttribute('aria-expanded')).toBe('true');

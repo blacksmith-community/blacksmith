@@ -93,7 +93,7 @@ t('every copy button in the markup uses the one icon and has a name', () => {
     let m;
     while ((m = re.exec(src))) buttons.push(m[0]);
   });
-  expect(buttons.length).toBeGreaterThan(15);
+  expect(buttons.length).toBeGreaterThan(8);
   buttons.forEach((markup) => {
     const open = markup.split(/>\s*(?:<svg|\$\{COPY_ICON_SVG|\$\{blacksmithIcon\()/)[0];
     expect(open).toMatch(/aria-label="[^"]+"/);
