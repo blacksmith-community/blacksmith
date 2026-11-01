@@ -43,7 +43,7 @@ t('the broker overview copy buttons are icon buttons that copy their value', asy
     environment.click();
     await sleep(120);
     expect(copied).toEqual(['ocfp-lab']);
-    expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied to clipboard');
+    expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied Environment');
     expect(environment.querySelector(CHECK)).not.toBeNull();
     expect(environment.getAttribute('aria-label')).toBe('Copy Environment');
   } finally { w.close(); }
@@ -63,7 +63,7 @@ t('the instance overview copy buttons are icon buttons that copy their value', a
     first.click();
     await sleep(120);
     expect(copied).toEqual([expected]);
-    expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied to clipboard');
+    expect(d.getElementById('blacksmith-live-region').textContent).toBe('Copied ' + first.getAttribute('aria-label').slice(5));
   } finally { w.close(); }
 });
 

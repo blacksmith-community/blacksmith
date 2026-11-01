@@ -872,6 +872,14 @@
     }, 2000);
   };
 
+  // What a copy button announces. The button's label reads "Copy <field>",
+  // so the message is "Copied <field>" and never carries the value itself.
+  const copiedMessage = (button) => {
+    const label = button && button.getAttribute ? button.getAttribute('aria-label') : '';
+    const match = /^Copy (.+)$/.exec(label || '');
+    return match ? `Copied ${match[1]}` : 'Copied';
+  };
+
   // Writes a message to the polite live region so assistive technology
   // announces it. The region is cleared first so a repeated message is
   // announced again.
@@ -1452,7 +1460,7 @@
       const originalTitle = button.title;
       button.classList.add('copied');
       button.title = 'Copied!';
-      announce('Copied');
+      announce(copiedMessage(button));
       flashCopyIcon(button);
       setTimeout(() => {
         button.classList.remove('copied');
@@ -1469,7 +1477,7 @@
       textarea.select();
       try {
         document.execCommand('copy');
-        announce('Copied');
+        announce(copiedMessage(button));
         button.classList.add('copied');
         flashCopyIcon(button);
         setTimeout(() => button.classList.remove('copied'), 2000);
@@ -2618,7 +2626,7 @@
     }
     const copy = event.target.closest('[data-entity-copy]');
     if (copy) {
-      try { await navigator.clipboard.writeText(copy.dataset.entityCopy); announce('Copied to clipboard'); flashCopyIcon(copy); }
+      try { await navigator.clipboard.writeText(copy.dataset.entityCopy); announce(copiedMessage(copy)); flashCopyIcon(copy); }
       catch (_) { announce('Clipboard unavailable. Select the value to copy it.'); }
       return;
     }
@@ -5944,7 +5952,7 @@
       try {
         await navigator.clipboard.writeText(String(variable.name || ''));
         copy.classList.add('copied');
-        announce('Copied to clipboard');
+        announce(copiedMessage(copy));
         flashCopyIcon(copy);
         setTimeout(() => copy.classList.remove('copied'), 2000);
       } catch (_) { announce('Clipboard unavailable. Select the path to copy it.'); }
@@ -9407,7 +9415,7 @@
     const text = cell ? secretValues.get(cell.dataset.secretId) : undefined;
     if (text === undefined) return;
     if (button.hasAttribute('data-secret-copy')) {
-      try { await navigator.clipboard.writeText(text); announce('Copied to clipboard'); flashCopyIcon(button); }
+      try { await navigator.clipboard.writeText(text); announce(copiedMessage(button)); flashCopyIcon(button); }
       catch (_) { announce('Clipboard unavailable. Reveal the value to copy it.'); }
       return;
     }
@@ -14175,6 +14183,7 @@
       button.classList.add('copied');
       const originalTitle = button.title;
       button.title = 'Copied!';
+      announce(copiedMessage(button));
       flashCopyIcon(button);
       setTimeout(() => {
         button.classList.remove('copied');
@@ -14191,6 +14200,7 @@
       textarea.select();
       try {
         document.execCommand('copy');
+        announce(copiedMessage(button));
         button.classList.add('copied');
         flashCopyIcon(button);
         setTimeout(() => button.classList.remove('copied'), 2000);
@@ -14627,7 +14637,7 @@
                 ${variables.map(variable => `
                   <tr>
                     <td>${escapeHtml(String(variable.name))}</td>
-                    <td>${manifestValue(variable.type, 'variable type')}</td>
+                    <td>${manifestValue(variable.type, 'variable type', { plain: true })}</td>
                     <td>${manifestOptions(variable.options)}</td>
                   </tr>
                 `).join('')}
