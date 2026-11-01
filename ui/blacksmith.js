@@ -26684,10 +26684,11 @@
       }
       if (errors.length + warnings.length + notices.length === 0) return null;
 
-      const section = el('section', 'cert-drawer-callouts');
+      // One list carries the shared rule, so each item is a plain line.
+      const section = el('ul', `cert-drawer-callouts cert-drawer-callouts--${errors.length + warnings.length > 0 ? 'warn' : 'info'}`);
       section.setAttribute('aria-label', 'Warnings and notices');
       const add = (kind, label, text) => {
-        const box = el('div', `cert-notice cert-notice--${kind} cert-callout cert-callout--${kind}`);
+        const box = el('li', `cert-callout cert-callout--${kind}`);
         CertView.setNoticeVariant(box, kind);
         box.appendChild(el('strong', 'cert-callout-label', label));
         box.appendChild(el('span', 'cert-callout-text', text));
@@ -26750,6 +26751,14 @@
       section.appendChild(el('h4', null, 'CredHub Details'));
       const table = el('table', 'cert-details-table cert-credhub-table');
       table.appendChild(body);
+      // The grid layout drops the table semantics, so they are set by hand.
+      table.setAttribute('role', 'table');
+      body.setAttribute('role', 'rowgroup');
+      body.querySelectorAll('tr').forEach((row) => {
+        row.setAttribute('role', 'row');
+        row.querySelector('th')?.setAttribute('role', 'rowheader');
+        row.querySelector('td')?.setAttribute('role', 'cell');
+      });
       section.appendChild(table);
       return section;
     };

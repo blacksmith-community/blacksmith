@@ -12200,7 +12200,14 @@ span.config-type.resurrection {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 12px;
+  margin: 0 0 12px;
+  padding: 4px 0 4px 12px;
+  list-style: none;
+  border-left: 4px solid var(--cert-warning);
+}
+
+.cert-drawer-callouts--info {
+  border-left-color: var(--border-primary);
 }
 
 .cert-callout {
@@ -12218,9 +12225,6 @@ span.config-type.resurrection {
   min-width: 0;
 }
 
-.cert-callout--info {
-  background: var(--bg-active);
-}
 
 .cert-probe-wrap {
   max-width: 100%;

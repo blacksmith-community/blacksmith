@@ -927,3 +927,13 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .cert-files-table .cert-file-content { margin: 0; padding: 8px 10px 12px; background: none; border: 0; border-radius: 0; }
 .cert-files-table .load-cert-btn.btn-secondary { min-width: 0; padding: 4px 10px; font-size: 13px; font-weight: 500; background-color: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 6px; }
 .cert-files-table .load-cert-btn.btn-secondary:hover:not(:disabled) { background-color: var(--bg-secondary); transform: none; }
+
+/* CredHub Details in an expanded row uses the label and value grid of the task header. */
+.cert-expansion .cert-credhub-table, .cert-expansion .cert-credhub-table tbody { display: block; width: 100%; }
+.cert-expansion .cert-credhub-table tbody { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 24px; }
+.cert-expansion .cert-credhub-table tr { display: block; background: none; border: 0; }
+.cert-expansion .cert-credhub-table th { display: block; width: auto; padding: 0; border: 0; background: none; font-size: .75rem; font-weight: 400; color: var(--muted-foreground); text-align: left; }
+.cert-expansion .cert-credhub-table td { display: block; padding: 0; border: 0; margin: 2px 0 0; }
+@media (max-width: 600px) {
+  .cert-expansion .cert-credhub-table tbody { grid-template-columns: minmax(0,1fr); }
+}
