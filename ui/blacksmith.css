@@ -13871,3 +13871,44 @@ bs-tabs { display: contents; }
 .connection-status-indicator[data-state="disconnected"] {
   background-color: var(--danger);
 }
+
+/* The Connection tab: the picks and the button share one row, the button
+   sits level with the bottom of the controls, and the target and the result
+   of the last attempt follow. */
+.connection-selector.connection-row {
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+
+.connection-operation .connection-target {
+  margin: 0 0 16px;
+}
+
+.operation-form .connection-status-line {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.9em;
+}
+
+.connection-status-text[data-result="connected"] {
+  color: var(--success);
+}
+
+.connection-status-text[data-result="failed"] {
+  color: var(--danger);
+}
+
+/* With nothing in it, the response history is one muted line. */
+.history-entries.is-empty {
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  background: none;
+}
+
+.history-empty {
+  margin: 0;
+  color: var(--muted-foreground);
+}

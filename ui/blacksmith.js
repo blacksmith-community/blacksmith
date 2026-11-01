@@ -12047,7 +12047,8 @@
         connected: false,
         connectionParams: null,
         connectedAt: null,
-        timeout: null
+        timeout: null,
+        line: null
       };
 
       return renderServiceTestingInterface(instanceId, serviceType, enhancedCreds);
@@ -12356,7 +12357,7 @@
       return `
         <div class="connection-field">
           <label for="connection-type-${instanceId}">Type</label>
-          <select id="connection-type-${instanceId}" name="connection-type">
+          <select id="connection-type-${instanceId}" name="connection-type" onchange="refreshConnectionTarget('${instanceId}')">
             <option value="standard">Standard</option>
             <option value="tls">TLS</option>
           </select>
@@ -12380,20 +12381,20 @@
       return `
         <div class="connection-field">
           <label for="connection-type-${instanceId}">Type</label>
-          <select id="connection-type-${instanceId}" name="connection-type">
+          <select id="connection-type-${instanceId}" name="connection-type" onchange="refreshConnectionTarget('${instanceId}')">
             <option value="amqp">AMQP</option>
             <option value="amqps">AMQPS</option>
           </select>
         </div>
         <div class="connection-field">
           <label for="connection-user-${instanceId}">User</label>
-          <select id="connection-user-${instanceId}" name="connection-user">
+          <select id="connection-user-${instanceId}" name="connection-user" onchange="refreshConnectionTarget('${instanceId}')">
             ${userOptions}
           </select>
         </div>
         <div class="connection-field">
           <label for="connection-vhost-${instanceId}">VHost</label>
-          <select id="connection-vhost-${instanceId}" name="connection-vhost">
+          <select id="connection-vhost-${instanceId}" name="connection-vhost" onchange="refreshConnectionTarget('${instanceId}')">
             ${vhostOptions}
           </select>
         </div>
@@ -12419,10 +12420,10 @@
         <div class="testing-history">
           <div class="history-header">
             <h5>Response history</h5>
-            <button class="btn btn-secondary" data-variant="secondary" onclick="clearTestingHistory('${instanceId}')">Clear history</button>
+            <button class="btn btn-secondary" data-variant="secondary" id="clear-history-${instanceId}" onclick="clearTestingHistory('${instanceId}')" disabled>Clear history</button>
           </div>
-          <div class="history-entries" id="history-entries-${instanceId}">
-            <div class="no-data">No operations performed yet</div>
+          <div class="history-entries is-empty" id="history-entries-${instanceId}">
+            <p class="history-empty">No operations performed yet</p>
           </div>
         </div>
       </div>
@@ -12451,26 +12452,87 @@
     return '<div class="no-data">No operations available</div>';
   };
 
-  // Redis Operation Renderers
-  const renderRedisTestOperation = (instanceId) => {
+  // The Connection tab, shared by every service. It says what Connect does,
+  // lays the picks out in one row that ends in the button, shows the target
+  // those picks reach, and keeps the result of the last attempt in one line.
+  const CONNECTION_LINE_IDLE = { state: 'idle', text: 'Not tested yet' };
+  const connectionLine = (instanceId) => (window.serviceConnections && window.serviceConnections[instanceId] && window.serviceConnections[instanceId].line) || CONNECTION_LINE_IDLE;
+
+  // The picks a fresh form starts on, which match the selected options.
+  const defaultConnectionPicks = (serviceType, info) => {
+    const first = (list, preferred) => (list.includes(preferred) ? preferred : list[0]);
+    if (serviceType === 'rabbitmq') return { type: 'amqp', user: first(info.users, 'binding.user'), vhost: first(info.vhosts, 'binding.vhost') };
+    return { type: 'standard', user: '', vhost: '/' };
+  };
+
+  // Host, port, and for RabbitMQ the user and vhost a Connect would use. It
+  // reads names only, and a password is never part of it.
+  const connectionTargetRows = (testingInstance, picks) => {
+    const creds = testingInstance.credentials || {};
+    const info = extractConnectionInfo(creds, testingInstance.serviceType, testingInstance.manifestData);
+    if (testingInstance.serviceType === 'rabbitmq') {
+      const secure = picks.type === 'amqps';
+      const protocol = (creds.protocols && (secure ? creds.protocols.amqps : creds.protocols.amqp)) || {};
+      const user = info.userCredentials[picks.user];
+      return [
+        ['Host', protocol.host || creds.host || creds.hostname],
+        ['Port', protocol.port || (secure ? creds.tls_port || creds.amqps_port : creds.port)],
+        ['User', user ? user.username : picks.user],
+        ['VHost', info.vhostCredentials[picks.vhost] !== undefined ? info.vhostCredentials[picks.vhost] : picks.vhost]
+      ];
+    }
+    return [
+      ['Host', creds.host || creds.hostname],
+      ['Port', picks.type === 'tls' ? creds.tls_port : creds.port]
+    ];
+  };
+
+  const connectionTargetHtml = (rows) => rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${manifestValue(value === undefined || value === null ? '' : String(value), label.toLowerCase(), { plain: true })}</dd></div>`).join('');
+
+  const connectionLineHtml = (line) => `<span class="connection-status-indicator" data-state="${escapeAttribute(line.state)}" aria-hidden="true"></span><span class="connection-status-text" data-result="${escapeAttribute(line.result || line.state)}">${escapeHtml(line.text)}</span>`;
+
+  const renderConnectionOperation = (instanceId, handler) => {
     const testingInstance = window.currentTestingInstance;
-    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials, testingInstance.manifestData) : '';
+    if (!testingInstance) return '<div class="no-data">No operations available</div>';
+    const connectionFields = generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials, testingInstance.manifestData);
+    const info = extractConnectionInfo(testingInstance.credentials || {}, testingInstance.serviceType, testingInstance.manifestData);
+    const rows = connectionTargetRows(testingInstance, defaultConnectionPicks(testingInstance.serviceType, info));
+    const connectionState = window.serviceConnections && window.serviceConnections[instanceId];
+    const connected = !!(connectionState && connectionState.connected);
 
     return `
-      <table class="operation-form">
-        <tr>
-          <td>
-            <div class="connection-selector">
-              ${connectionFields}
-            </div>
-          </td>
-          <td>
-            <button class="btn btn-primary" id="connect-btn-${instanceId}" onclick="executeRedisTest('${instanceId}')">Connect</button>
-          </td>
-        </tr>
-      </table>
+      <div class="operation-form connection-operation">
+        <h5>Test connection</h5>
+        <p>Test a connection to this instance with its own credentials.</p>
+        <div class="connection-selector connection-row">
+          ${connectionFields}
+          <button class="btn btn-primary" id="connect-btn-${instanceId}" onclick="${handler}('${instanceId}')">${connected ? 'Disconnect' : 'Connect'}</button>
+        </div>
+        <dl class="entity-facts connection-target" id="connection-target-${instanceId}" aria-label="Connection target">${connectionTargetHtml(rows)}</dl>
+        <p class="connection-status-line" id="connection-status-${instanceId}" role="status">${connectionLineHtml(connectionLine(instanceId))}</p>
+      </div>
     `;
   };
+
+  // Redraws the target after a pick changes.
+  window.refreshConnectionTarget = (instanceId) => {
+    const target = document.getElementById(`connection-target-${instanceId}`);
+    const testingInstance = window.currentTestingInstance;
+    if (!target || !testingInstance || testingInstance.id !== instanceId) return;
+    const picks = getConnectionInfo(instanceId);
+    target.innerHTML = connectionTargetHtml(connectionTargetRows(testingInstance, picks));
+  };
+
+  // Records the result of the last attempt and shows it under the button.
+  const setConnectionLine = (instanceId, state, text, result = state) => {
+    const connectionState = window.serviceConnections && window.serviceConnections[instanceId];
+    if (connectionState) connectionState.line = { state, text, result };
+    const line = document.getElementById(`connection-status-${instanceId}`);
+    if (line) line.innerHTML = connectionLineHtml({ state, text, result });
+  };
+
+  // Redis Operation Renderers
+  const renderRedisTestOperation = (instanceId) => renderConnectionOperation(instanceId, 'executeRedisTest');
 
   const renderRedisInfoOperation = (instanceId) => {
     return `
@@ -12574,25 +12636,7 @@
   };
 
   // RabbitMQ Operation Renderers
-  const renderRabbitMQTestOperation = (instanceId) => {
-    const testingInstance = window.currentTestingInstance;
-    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials, testingInstance.manifestData) : '';
-
-    return `
-      <table class="operation-form">
-        <tr>
-          <td>
-            <div class="connection-selector">
-              ${connectionFields}
-            </div>
-          </td>
-          <td>
-            <button class="btn btn-primary" id="connect-btn-${instanceId}" onclick="executeRabbitMQTest('${instanceId}')">Connect</button>
-          </td>
-        </tr>
-      </table>
-    `;
-  };
+  const renderRabbitMQTestOperation = (instanceId) => renderConnectionOperation(instanceId, 'executeRabbitMQTest');
 
   const renderRabbitMQPublishOperation = (instanceId) => {
     return `
@@ -12746,8 +12790,11 @@
     if (!historyContainer) return;
 
     const history = window.serviceTestingHistory[instanceId] || [];
+    const clearButton = document.getElementById(`clear-history-${instanceId}`);
+    if (clearButton) clearButton.disabled = history.length === 0;
+    historyContainer.classList.toggle('is-empty', history.length === 0);
     if (history.length === 0) {
-      historyContainer.innerHTML = '<div class="no-data">No operations performed yet</div>';
+      historyContainer.innerHTML = '<p class="history-empty">No operations performed yet</p>';
       return;
     }
 
@@ -12783,6 +12830,7 @@
     window.serviceTestingHistory[instanceId] = [];
     updateTestingHistoryDisplay(instanceId);
   };
+  window.clearTestingHistory = clearTestingHistory;
 
   // Updated to get connection info from dropdowns
   const getConnectionInfo = (instanceId) => {
@@ -12912,6 +12960,7 @@
 
     updateConnectionUI(instanceId, true);
     updateConnectionStatus(instanceId, true);
+    setConnectionLine(instanceId, 'connected', 'Connected');
   };
 
   const disconnectFromService = (instanceId) => {
@@ -12928,6 +12977,7 @@
 
     updateConnectionUI(instanceId, false);
     updateConnectionStatus(instanceId, false);
+    setConnectionLine(instanceId, 'disconnected', 'Disconnected');
   };
 
   const updateConnectionUI = (instanceId, connected) => {
@@ -12976,6 +13026,7 @@
     } catch (error) {
       console.error('Connection failed:', error);
       updateConnectionStatus(instanceId, false);
+      setConnectionLine(instanceId, 'disconnected', `Connection failed. ${error.message}`, 'failed');
     }
   };
 
@@ -13909,6 +13960,7 @@
             if (connectionState.connected && connectionState.connectionParams) {
               restoreConnectionParams(instanceId, connectionState.connectionParams);
             }
+            window.refreshConnectionTarget(instanceId);
           }
         }
       }, 50);
@@ -14106,6 +14158,7 @@
     if (text.includes('\n')) shown = `<pre class="manifest-value-text manifest-value-multiline">${escapeHtml(text)}</pre>`;
     else if (options.link && /^https?:\/\//i.test(text)) shown = `<a class="manifest-value-text" href="${title}" target="_blank" rel="noopener noreferrer" title="${title}">${escapeHtml(text)}</a>`;
     else shown = `<span class="manifest-value-text" title="${title}">${escapeHtml(text)}</span>`;
+    if (options.plain) return `<span class="manifest-value">${shown}</span>`;
     return `<span class="manifest-value">${shown}<button type="button" class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(copy))})" title="Copy ${escapeAttribute(label)}" aria-label="Copy ${escapeAttribute(label)}">${blacksmithIcon('copy', { size: 14 })}</button></span>`;
   };
 
