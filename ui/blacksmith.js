@@ -2288,75 +2288,8 @@
     return stampDate(timestamp);
   };
 
-  // A broker timestamp as text, or EMPTY when there is none.
-
   // A broker timestamp as table-cell markup with the ISO value in its title.
   const timestampHtml = (timestamp) => stampHtml(timestampMoment(timestamp));
-
-  // Strftime implementation
-  const strftime = (fmt, d) => {
-    if (!(d instanceof Date)) {
-      const _d = new Date();
-      if (!isNaN(d)) {
-        _d.setTime(d * 1000); // epoch s -> ms
-      }
-      d = _d;
-    }
-    if (typeof (d) === 'undefined') {
-      return "";
-    }
-
-    const en_US = {
-      weekday: {
-        abbr: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
-        full: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-      },
-      month: {
-        abbr: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
-        full: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-      },
-      zero: ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09',
-        '10', '11', '12', '13', '14', '15', '16', '17', '18', '19',
-        '20', '21', '22', '23', '24', '25', '26', '27', '28', '29',
-        '30', '31', '32', '33', '34', '35', '36', '37', '38', '39',
-        '40', '41', '42', '43', '44', '45', '46', '47', '48', '49',
-        '50', '51', '52', '53', '54', '55', '56', '57', '58', '59'],
-      space: [' 0', ' 1', ' 2', ' 3', ' 4', ' 5', ' 6', ' 7', ' 8', ' 9',
-        '10', '11', '12', '13', '14', '15', '16', '17', '18', '19',
-        '20', '21', '22', '23', '24', '25', '26', '27', '28', '29',
-        '30', '31', '32', '33', '34', '35', '36', '37', '38', '39',
-        '40', '41', '42', '43', '44', '45', '46', '47', '48', '49',
-        '50', '51', '52', '53', '54', '55', '56', '57', '58', '59']
-    };
-
-    const lc = en_US;
-    let s = '';
-    let inspec = false;
-
-    for (let i = 0; i < fmt.length; i++) {
-      const c = fmt.charCodeAt(i);
-      if (inspec) {
-        switch (c) {
-          case 37: s += '%'; break; // %%
-          case 89: s += d.getFullYear(); break; // %Y
-          case 109: s += lc.zero[d.getMonth() + 1]; break; // %m
-          case 100: s += lc.zero[d.getDate()]; break; // %d
-          case 72: s += lc.zero[d.getHours()]; break; // %H
-          case 77: s += lc.zero[d.getMinutes()]; break; // %M
-          case 83: s += lc.zero[d.getSeconds()]; break; // %S
-          default: throw "unrecognized strftime sequence '%" + fmt[i] + "'";
-        }
-        inspec = false;
-        continue;
-      }
-      if (c == 37) { // %
-        inspec = true;
-        continue;
-      }
-      s += fmt[i];
-    }
-    return s;
-  };
 
   // Helper function to get creation timestamp from instance details
   // Tries multiple fields: created (Unix timestamp), created_at (RFC3339 string), requested_at (RFC3339 string)
@@ -2382,13 +2315,10 @@
     return null;
   };
 
-  // Format creation timestamp for display
+  // The creation time as an ISO value, which the metadata table shows through the shared formatter.
   const formatCreatedTimestamp = (details) => {
     const timestamp = getCreatedTimestamp(details);
-    if (timestamp) {
-      return strftime("%Y-%m-%d %H:%M:%S", timestamp);
-    }
-    return 'Unknown';
+    return timestamp ? stampIso(timestamp * 1000) : EMPTY;
   };
 
   // Retain live view nodes in memory. Nothing here is serialized to storage/history.
@@ -2477,7 +2407,7 @@
   // lowercase unless its first word is an acronym such as VM.
   const metricLinkLabel = (label) => (/[A-Z]/.test(label.split(/\s/)[0].slice(1)) ? label : label.charAt(0).toLowerCase() + label.slice(1));
   const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(metricLinkLabel(label))} →</span></button>`;
-  const entityMetadata = (pairs, title = 'Technical details') => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span>${escapeHtml(typeof value === 'object' ? JSON.stringify(value,null,2) : String(value ?? 'Not reported'))}</span>${entityCopy(typeof value === 'object' ? JSON.stringify(value,null,2) : value,label)}</span></td></tr>`).join('')}</tbody></table></details>`;
+  const entityMetadata = (pairs, title = 'Technical details', titles = {}) => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span${titles[label] ? ` title="${escapeAttribute(titles[label])}"` : ''}>${escapeHtml(typeof value === 'object' ? JSON.stringify(value,null,2) : String(value ?? 'Not reported'))}</span>${entityCopy(typeof value === 'object' ? JSON.stringify(value,null,2) : value,label)}</span></td></tr>`).join('')}</tbody></table></details>`;
 
   const hasVmAlert = (instance) => !!instance.vm_status && instance.vm_status !== 'running';
 
@@ -7567,7 +7497,7 @@
     return Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971 ? null : date;
   };
 
-  // A time as "2026-10-21 14:00:00 UTC", or an empty string when it is not a time.
+  // A time in the shared stamp format, such as "2026-10-21 14:00:00 EDT", or an empty string when it is not a time.
   const certTimeText = (value) => {
     const date = certDate(value);
     return date ? formatStamp(date) : '';
@@ -7585,28 +7515,20 @@
     return date ? formatDay(date) : '';
   };
 
-  // The same timestamp format, kept as its own name where a same-day pair needs it.
-  const certMinute = (value) => certTimeText(value);
-
   // Shows days, or minutes when both values fall on the same day so a change stays visible.
   const certExpiryPair = (oldValue, newValue) => {
     const oldDay = certDay(oldValue);
     const newDay = certDay(newValue);
-    if (oldDay && oldDay === newDay) return [certMinute(oldValue), certMinute(newValue)];
+    if (oldDay && oldDay === newDay) return [certTimeText(oldValue), certTimeText(newValue)];
     return [oldDay, newDay];
   };
 
-  // A day such as 2026-10-21, so the text sorts in date order.
-  const certDayText = (value) => certDay(value);
 
   // The epoch milliseconds that sort a date cell, or an empty string when there is no date.
   const certSortValue = (value) => {
     const date = certDate(value);
     return date ? String(date.getTime()) : '';
   };
-
-  // A scan time in the shared timestamp format.
-  const certClockText = (value) => certTimeText(value);
 
   const confirmedAnswer = (answer) => answer === true || Boolean(answer && answer.confirmed);
 
@@ -9313,13 +9235,14 @@
     const deployment = metadata.deployment_name || details.deployment_name || `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${id}`;
     const status = details.deleted ? 'Deleted' : (details.vm_status || 'Not reported');
     const skip = new Set(['context','bosh_properties','bosh_manifest','bosh_vms','history','bosh_releases','bosh_stemcells','manifest']);
-    const pairs = Object.entries(metadata).filter(([key]) => !skip.has(key)).map(([key,value]) => [key.replaceAll('_',' '),value]);
+    const pairs = Object.entries(metadata).filter(([key]) => !skip.has(key)).map(([key,value]) => [key.replaceAll('_',' '),key === 'created_at' && formatStamp(value) ? formatStamp(value) : value]);
+    const createdIso = stampIso(metadata.created_at);
     window.serviceInstanceDetailsContent = window.serviceInstanceDetailsContent || {};
     window.serviceInstanceDetailsContent[id] = `<section class="entity-overview" aria-label="Instance overview">
       <div class="entity-metrics">${entityMetric(status,'VM status','vms')}${entityMetric(details.vm_count ?? 'Not reported','Virtual machines','vms')}${entityMetric(details.plan?.name || details.plan_id || 'Not reported','Plan','manifest')}</div>
       <article class="card entity-context"><h3>Instance context</h3>${entityFacts([['Name',name],['Service',details.service_id],['Deployment',deployment],['Instance ID',id],['Organization',metadata.organization_name],['Space',metadata.space_name]])}</article>
       <p class="entity-status-note">Use Certificates for expiry and trust, or Events and Logs to investigate changes.</p>
-      ${entityMetadata(pairs,'Instance metadata')}
+      ${entityMetadata(pairs,'Instance metadata',createdIso ? {'created at': createdIso} : {})}
     </section>`;
     return renderEntityShell('instance',name,`${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'}`);
   };
@@ -20646,7 +20569,7 @@
       return node;
     };
 
-    const dayText = certDayText;
+    const dayText = certDay;
     const timeText = certTimeText;
 
     // A JSON request that never throws. It resolves to the status and the
@@ -22248,7 +22171,7 @@
           <div class="empty-state">
             <h3>Connection required</h3>
             <p>Connect to ${escapeHtml(selectedEndpoint)} to view ${escapeHtml(tabName)} data. Selecting an endpoint does not connect it.</p>
-            <button class="btn btn-primary" onclick="CFEndpointManager.toggleConnection()">Connect Now</button>
+            <button class="btn btn-primary" onclick="CFEndpointManager.toggleConnection()">Connect now</button>
           </div>
         `;
       }
@@ -24405,8 +24328,7 @@
     // ----- small helpers -----
 
     const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-    const clock = certClockText;
-    const shortDate = (value) => certDayText(value) || 'Unknown';
+    const shortDate = (value) => certDay(value) || 'Unknown';
 
     const isActive = () => Boolean(view.root && view.root.classList.contains('active'));
 
@@ -24634,8 +24556,8 @@
         const progress = scan.progress || {};
         parts.push(`Scanning ${progress.done || 0} of ${progress.total || 0} instances.`);
       } else if (scan.completed_at) {
-        let line = `Scanned ${clock(scan.completed_at)}`;
-        if (scan.next_at) line += `, next ${clock(scan.next_at)}`;
+        let line = `Scanned ${certTimeText(scan.completed_at)}`;
+        if (scan.next_at) line += `, next ${certTimeText(scan.next_at)}`;
         parts.push(`${line}.`);
       }
       summaryEl.textContent = parts.join(' ');
@@ -24707,7 +24629,7 @@
       const box = el('div', 'cert-notice cert-notice--warn');
       CertView.setNoticeVariant(box, 'warn');
       box.setAttribute('role', 'alert');
-      const text = `${plural(errors.length, 'instance')} could not be scanned.${shownAt ? ` Showing data from ${clock(shownAt)}.` : ''}`;
+      const text = `${plural(errors.length, 'instance')} could not be scanned.${shownAt ? ` Showing data from ${certTimeText(shownAt)}.` : ''}`;
       box.appendChild(el('p', 'cert-notice-text', text));
 
       const ids = errors.map((entry) => entry.instance_id).filter(Boolean);
@@ -24733,7 +24655,7 @@
       const box = el('div', 'cert-notice cert-notice--warn');
       CertView.setNoticeVariant(box, 'warn');
       box.setAttribute('role', 'alert');
-      const when = view.resp && view.resp.generated_at ? ` Showing data from ${clock(view.resp.generated_at)}.` : '';
+      const when = view.resp && view.resp.generated_at ? ` Showing data from ${certTimeText(view.resp.generated_at)}.` : '';
       box.appendChild(el('p', 'cert-notice-text', `The inventory could not be refreshed. ${view.refreshError}${when}`));
       const retry = button('cert-link-btn', 'Retry');
       retry.addEventListener('click', () => { refresh({ announce: true }); });
@@ -25345,7 +25267,7 @@
       if (obs.matches) bits.push(`matches ${obs.matches}`);
       if (obs.not_after) bits.push(`expires ${shortDate(obs.not_after)}`);
       if (obs.state === 'failed') bits.push(obs.error ? `failed: ${obs.error}` : 'failed');
-      else if (obs.state === 'stale') bits.push(`stale, last seen ${clock(obs.observed_at)}${obs.error ? `: ${obs.error}` : ''}`);
+      else if (obs.state === 'stale') bits.push(`stale, last seen ${certTimeText(obs.observed_at)}${obs.error ? `: ${obs.error}` : ''}`);
       else if (obs.state && obs.state !== 'ok') bits.push(obs.state);
       li.appendChild(el('span', 'cert-obs-result', bits.join(', ')));
       return li;
@@ -25464,7 +25386,7 @@
 
       const expiresCell = el('td', 'cert-col-expires', cert.effective_not_after ? shortDate(cert.effective_not_after) : 'Unknown');
       if (cert.effective_not_after) {
-        expiresCell.setAttribute('title', certMinute(cert.effective_not_after));
+        expiresCell.setAttribute('title', certTimeText(cert.effective_not_after));
         expiresCell.setAttribute('data-sort-value', certSortValue(cert.effective_not_after));
       }
       tr.appendChild(expiresCell);
@@ -26155,7 +26077,7 @@
         add(`Listener serves${tag}`, matchText(obs.matches));
         if (obs.not_after) add(`Expires${tag}`, shortDate(obs.not_after));
         add(`Status${tag}`, credhubStateText(obs));
-        if (obs.observed_at) add(`Last read${tag}`, `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}`);
+        if (obs.observed_at) add(`Last read${tag}`, certTimeText(obs.observed_at) || 'Unknown');
       });
       if (!body.hasChildNodes()) return null;
 
@@ -26209,7 +26131,7 @@
         const endpoint = el('td');
         const value = el('div', 'cert-field-value');
         value.appendChild(el('span', 'cert-field-text', obs.locator || 'listener'));
-        if (obs.locator) value.appendChild(CertView.copyButton(`Copy endpoint ${obs.locator}`, obs.locator));
+        if (obs.locator) value.appendChild(CertView.copyButton('Copy endpoint', obs.locator));
         endpoint.appendChild(value);
         tr.appendChild(endpoint);
         tr.appendChild(el('td', obs.state === 'failed' ? 'cert-probe-failed' : null, probeResultText(obs)));
@@ -26229,7 +26151,7 @@
         const probeExpires = el('td', null, obs.not_after ? shortDate(obs.not_after) : 'Not seen');
         if (obs.not_after) probeExpires.setAttribute('data-sort-value', certSortValue(obs.not_after));
         tr.appendChild(probeExpires);
-        const probeRead = el('td', null, obs.observed_at ? `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}` : 'Unknown');
+        const probeRead = el('td', null, obs.observed_at ? certTimeText(obs.observed_at) || 'Unknown' : 'Unknown');
         if (obs.observed_at) probeRead.setAttribute('data-sort-value', certSortValue(obs.observed_at));
         tr.appendChild(probeRead);
         body.appendChild(tr);
@@ -26252,7 +26174,7 @@
         { title: 'Listener serves', has: (o) => o.matches, text: (o) => matchText(o.matches) },
         { title: 'Expires', has: (o) => o.not_after, text: (o) => shortDate(o.not_after), sort: (o) => certSortValue(o.not_after) },
         { title: 'Status', text: credhubStateText },
-        { title: 'Last read', has: (o) => o.observed_at, text: (o) => `${shortDate(o.observed_at)} ${clock(o.observed_at)}`, sort: (o) => certSortValue(o.observed_at) }
+        { title: 'Last read', has: (o) => o.observed_at, text: (o) => certTimeText(o.observed_at) || 'Unknown', sort: (o) => certSortValue(o.observed_at) }
       ].filter((c) => !c.has || obs.some(c.has));
 
       const section = el('section', 'cert-drawer-others');
@@ -26275,7 +26197,7 @@
           if (c.copy && c.copy(o)) {
             const box = el('div', 'cert-field-value');
             box.appendChild(el('span', 'cert-field-text', value));
-            box.appendChild(CertView.copyButton(`Copy ${c.label} ${c.copy(o)}`, c.copy(o)));
+            box.appendChild(CertView.copyButton(`Copy ${c.label}`, c.copy(o)));
             td.appendChild(box);
           } else {
             td.textContent = value;

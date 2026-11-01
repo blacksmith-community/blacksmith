@@ -10,7 +10,7 @@ test('inline certificate details reuse drawer sections and copy controls',async(
  expect(!!box.querySelector('.cert-drawer-callouts')).toBe(true);expect(!!box.querySelector('.cert-credhub-table')).toBe(true);expect(!!box.querySelector('.cert-probe-table')).toBe(true);
  expect(box.querySelectorAll('.cert-obs-list,.cert-findings').length).toBe(0);
  const copied=[];w.navigator.clipboard.writeText=async value=>copied.push(value);
- box.querySelector('[aria-label="Copy endpoint node/0 10.0.0.1:6379"]').click();await sleep(5);expect(copied).toEqual(['node/0 10.0.0.1:6379']);
+ box.querySelector('[aria-label="Copy endpoint"]').click();await sleep(5);expect(copied).toEqual(['node/0 10.0.0.1:6379']);
  expect(d.getElementById('cert-fleet-drawer').hidden).toBe(true);
  }finally{w.close();}
 });

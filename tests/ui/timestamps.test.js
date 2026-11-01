@@ -39,7 +39,6 @@ t('a certificate timestamp and a scan line use the same format', () => {
   const { w } = boot();
   try {
     expect(w.__T.certTimeText(moment)).toBe('2026-10-31 23:06:32 EDT');
-    expect(w.__T.certClockText(moment)).toBe('2026-10-31 23:06:32 EDT');
     expect(w.__T.certDay('2029-10-24T09:14:30Z')).toBe('2029-10-24');
   } finally { w.close(); }
 });
@@ -47,7 +46,7 @@ t('a certificate timestamp and a scan line use the same format', () => {
 t('no UI code formats a time with the browser locale', () => {
   const fs = require('fs');
   const path = require('path');
-  for (const file of ['blacksmith.js', 'navigation.js', 'action-help.js']) {
+  for (const file of ['blacksmith.js', 'navigation.js', 'action-help.js', 'routes.js', 'view-guidance.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', '..', 'ui', file), 'utf8');
     // Date and time methods are never allowed on any receiver, with or without arguments.
     expect(src).not.toMatch(/\.toLocale(Time|Date)String\s*\(/);
@@ -118,4 +117,33 @@ t('a registration card dates itself with the ISO value in a title', () => {
     const html = w.__T.CFRegistrationManager.renderRegistrationCard({ id: 'r1', name: 'cf', status: 'active', created_at: '2026-11-01T03:06:32Z' });
     expect(html).toContain('<time datetime="2026-11-01T03:06:32.000Z" title="2026-11-01T03:06:32.000Z">2026-10-31</time>');
   } finally { w.close(); }
+});
+
+t('the instance creation time uses the shared formatter with an ISO title', () => {
+  const { w } = boot();
+  try {
+    const render = (details) => {
+      w.__T.renderServiceDetail('i1', Object.assign({ service_id: 'redis', plan: { name: 'small' } }, details));
+      const host = w.document.createElement('div');
+      host.innerHTML = w.serviceInstanceDetailsContent.i1;
+      const row = Array.from(host.querySelectorAll('tr')).find((tr) => tr.querySelector('th').textContent === 'created at');
+      return row.querySelector('.copy-wrapper > span');
+    };
+    const created = render({ created_at: moment });
+    expect(created.textContent).toBe('2026-10-31 23:06:32 EDT');
+    expect(created.getAttribute('title')).toBe('2026-11-01T03:06:32.000Z');
+    const epoch = render({ created: Date.parse(moment) / 1000 });
+    expect(epoch.textContent).toBe('2026-10-31 23:06:32 EDT');
+    const none = render({});
+    expect(none.textContent).toBe('—');
+    expect(none.hasAttribute('title')).toBe(false);
+  } finally { w.close(); }
+});
+
+t('the endpoint empty state writes its button in sentence case', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'ui', 'blacksmith.js'), 'utf8');
+  expect(src).toContain('>Connect now</button>');
+  expect(src).not.toContain('Connect Now');
 });
