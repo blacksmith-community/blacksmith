@@ -108,3 +108,63 @@ test('the fetched time follows a Refresh that completes after the first mount', 
     expect(content.querySelector('.data-fetched-note time').getAttribute('datetime')).toBe('2026-11-01T10:30:02.000Z');
   } finally { w.close(); }
 });
+
+test('a child added after the load does not restamp the fetched time', async () => {
+  const { w, d } = boot();
+  try {
+    let now = Date.parse('2026-11-01T10:00:00Z');
+    w.Date.now = () => now;
+    const host = d.createElement('section');
+    const content = d.createElement('div');
+    content.className = 'detail-content';
+    host.appendChild(content);
+    d.body.appendChild(host);
+    const microtask = () => new Promise((resolve) => setTimeout(resolve, 0));
+    expect(w.__T.retainView(content, 'A')).toBe(false);
+    content.innerHTML = '<div class="loading">Loading...</div>';
+    now = Date.parse('2026-11-01T10:00:05Z');
+    content.innerHTML = TOOLBAR;
+    await microtask();
+    now = Date.parse('2026-11-01T10:20:00Z');
+    const banner = d.createElement('div');
+    banner.className = 'toast';
+    content.appendChild(banner);
+    await microtask();
+    expect(w.__T.retainView(content, 'B')).toBe(false);
+    content.innerHTML = '<p>Other</p>';
+    expect(w.__T.retainView(content, 'A')).toBe(true);
+    expect(content.querySelector('.data-fetched-note time').getAttribute('datetime')).toBe('2026-11-01T10:00:05.000Z');
+  } finally { w.close(); }
+});
+
+test('the watcher is disconnected once its container is replaced or leaves the DOM', async () => {
+  const { w, d } = boot();
+  try {
+    const disconnected = [];
+    const original = w.MutationObserver.prototype.disconnect;
+    w.MutationObserver.prototype.disconnect = function disconnect() { disconnected.push(this); return original.call(this); };
+    const mount = () => {
+      const host = d.createElement('section');
+      const content = d.createElement('div');
+      content.className = 'detail-content';
+      host.appendChild(content);
+      d.body.appendChild(host);
+      return { host, content };
+    };
+    const microtask = () => new Promise((resolve) => setTimeout(resolve, 0));
+    // A container replaced by a new one is dropped when the new one is watched.
+    const first = mount();
+    w.__T.retainView(first.content, 'A');
+    first.host.remove();
+    const second = mount();
+    w.__T.retainView(second.content, 'B');
+    expect(disconnected.length).toBe(1);
+    // A container that leaves the DOM is dropped by its own next mutation.
+    second.host.remove();
+    second.content.innerHTML = '<p>late</p>';
+    await microtask();
+    expect(disconnected.length).toBe(2);
+    expect(new Set(disconnected).size).toBe(2);
+    w.MutationObserver.prototype.disconnect = original;
+  } finally { w.close(); }
+});

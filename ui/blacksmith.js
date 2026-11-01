@@ -2419,13 +2419,22 @@
     const refresh = event.target.closest?.('.refresh-btn-logs');
     refresh?.closest('.detail-content')?.querySelectorAll('.data-fetched-note').forEach(note => note.remove());
   });
-  // A load finishes when the loading placeholder is replaced by content, so
-  // the fetch time is stamped then, after the first mount and after Refresh.
-  const loadWatchers = new WeakMap();
+  // A load finishes when the loading placeholder is removed and content takes
+  // its place, so the fetch time is stamped then, after the first mount and
+  // after Refresh. Any other child added later never restamps it.
+  const loadWatchers = new Map();
+  const dropLoadWatcher = (container) => {
+    loadWatchers.get(container)?.disconnect();
+    loadWatchers.delete(container);
+  };
   const watchLoads = (container) => {
+    // A replaced container, or one that left the DOM, no longer needs a watcher.
+    loadWatchers.forEach((_, other) => { if (other !== container && !other.isConnected) dropLoadWatcher(other); });
     if (loadWatchers.has(container)) return loadWatchers.get(container);
-    const watcher = new MutationObserver(() => {
-      if (container.firstChild && !container.querySelector(':scope > .loading')) fetchedAtByContainer.set(container, Date.now());
+    const watcher = new MutationObserver((records) => {
+      if (!container.isConnected) { dropLoadWatcher(container); return; }
+      const removedLoading = records.some(record => [...record.removedNodes].some(node => node.classList?.contains('loading')));
+      if (removedLoading && container.firstChild && !container.querySelector(':scope > .loading')) fetchedAtByContainer.set(container, Date.now());
     });
     watcher.observe(container, { childList: true });
     loadWatchers.set(container, watcher);
@@ -20422,12 +20431,13 @@
       return row;
     };
 
-    const fieldRow = (label, text, copyValue) => {
+    const fieldRow = (label, text, copyValue, title) => {
       const tr = el('tr');
       tr.appendChild(el('th', null, label));
       const td = el('td');
       const wrap = el('div', 'cert-field-value');
       const span = el('span', 'cert-field-text');
+      if (title) span.setAttribute('title', title);
       const missing = text === EMPTY || copyValue === EMPTY;
       if (text instanceof Node) {
         span.appendChild(text);
@@ -20471,7 +20481,7 @@
       body.appendChild(fieldRow('Serial number', na(displaySerial(cert.serialNumber)), raw(displaySerial(cert.serialNumber))));
       body.appendChild(fieldRow('Subject', formatName(cert.subject), formatName(cert.subject)));
       body.appendChild(fieldRow('Issuer', formatName(cert.issuer), formatName(cert.issuer)));
-      body.appendChild(fieldRow('Valid from', formatDate(cert.notBefore), formatDate(cert.notBefore)));
+      body.appendChild(fieldRow('Valid from', formatDate(cert.notBefore), formatDate(cert.notBefore), certIso(cert.notBefore)));
 
       const validTo = el('span');
       if (cert.notAfter) validTo.appendChild(document.createTextNode(`${formatDate(cert.notAfter)} `));
@@ -20480,7 +20490,7 @@
         const shown = displayExpiry(cert.notAfter);
         validTo.appendChild(expiryPill(shown.status, shown.daysLeft, cert.notAfter));
       }
-      body.appendChild(fieldRow('Valid to', validTo, formatDate(cert.notAfter)));
+      body.appendChild(fieldRow('Valid to', validTo, formatDate(cert.notAfter), certIso(cert.notAfter)));
 
       body.appendChild(fieldRow('Signature algorithm', na(cert.signatureAlgorithm), raw(cert.signatureAlgorithm)));
 
@@ -21134,7 +21144,10 @@
         const lastGood = timeText(scan.last_success_at);
         let text = `The scan${scannedAt ? ` at ${scannedAt}` : ''} failed. ${scan.error}`;
         text += lastGood ? ` The certificates below are from the last good scan at ${lastGood} and are marked stale.` : ' The certificates below are marked stale.';
-        warn.appendChild(el('span', 'cert-notice-text', text));
+        const sentence = el('span', 'cert-notice-text', text);
+        const isoTimes = [scan.scanned_at && `Scan ${certIso(scan.scanned_at)}`, scan.last_success_at && `last good scan ${certIso(scan.last_success_at)}`].filter(Boolean);
+        if (isoTimes.length) sentence.setAttribute('title', isoTimes.join(', '));
+        warn.appendChild(sentence);
         const retry = button('cert-action-btn', 'Retry');
         retry.addEventListener('click', reload);
         warn.appendChild(retry);
@@ -24612,6 +24625,7 @@
       const summaryEl = view.refs.summary;
       if (!resp || view.mode === 'first-error' || view.mode === 'loading') {
         summaryEl.textContent = '';
+        summaryEl.removeAttribute('title');
         return;
       }
       const s = resp.summary || {};
@@ -24621,6 +24635,7 @@
         summaryEl.textContent = scan.state === 'running'
           ? `Scanning ${progress.done || 0} of ${progress.total || 0} instances.`
           : 'Waiting for the first scan to finish.';
+        summaryEl.removeAttribute('title');
         return;
       }
       const parts = [`${plural(s.certificates || 0, 'certificate')} on ${plural(s.affected_instances || 0, 'instance')}.`];
