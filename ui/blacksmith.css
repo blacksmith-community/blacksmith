@@ -3000,7 +3000,6 @@ bs-tabs > .manifest-tab-pane {
   border-bottom: 2px solid var(--border-table);
   font-weight: 600;
   font-size: 12px;
-  text-transform: uppercase;
   color: var(--text-secondary);
 }
 

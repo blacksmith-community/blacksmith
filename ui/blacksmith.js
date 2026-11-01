@@ -2501,7 +2501,7 @@
     blacksmith: [
       ['Overview', [['details', 'Summary']]],
       ['Operate', [['vms', 'Blacksmith VM'], ['tasks', 'Tasks'], ['events', 'Events'], ['blacksmith-logs', 'Logs'], ['certificates', 'Certificates']]],
-      ['Configure', [['plans', 'Service plans'], ['broker', 'Endpoints'], ['configs', 'BOSH configs'], ['config', 'Broker Settings'], ['manifest', 'Manifest']]]
+      ['Configure', [['plans', 'Service plans'], ['broker', 'Endpoints'], ['configs', 'BOSH configs'], ['config', 'Broker settings'], ['manifest', 'Manifest']]]
     ],
     instance: [
       ['Overview', [['details', 'Summary']]],
@@ -11004,7 +11004,7 @@
               <th>Type</th>
               <th>Name</th>
               <th>Team</th>
-              <th>Created At</th>
+              <th>Created at</th>
             </tr>
           </thead>
           <tbody>
@@ -11905,17 +11905,17 @@
           <tr>
             <th>SSH</th>
             <th>Instance</th>
-            <th>VM State</th>
-            <th>Job State</th>
+            <th>VM state</th>
+            <th>Job state</th>
             <th>AZ</th>
-            <th>VM Type</th>
+            <th>VM type</th>
             <th>Active</th>
             <th>Bootstrap</th>
             <th>IPs</th>
             <th>DNS</th>
             <th>VM CID</th>
             <th>Agent ID</th>
-            <th>Created At</th>
+            <th>Created at</th>
             <th>Disk CIDs</th>
             <th>Resurrection</th>
           </tr>
@@ -14348,7 +14348,7 @@
         <bs-tabs>
         <div class="manifest-tabs-nav" role="tablist" aria-label="Manifest sections">
           <button type="button" role="tab" id="${tabGroupId}-tab-global" aria-controls="${tabGroupId}-panel-global" aria-selected="true" tabindex="0" class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
-          ${instanceGroups.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-instance-groups" aria-controls="${tabGroupId}-panel-instance-groups" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
+          ${instanceGroups.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-instance-groups" aria-controls="${tabGroupId}-panel-instance-groups" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance groups</button>` : ''}
           ${releases.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-releases" aria-controls="${tabGroupId}-panel-releases" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
           ${stemcells.length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-stemcells" aria-controls="${tabGroupId}-panel-stemcells" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
           ${Object.keys(features).length > 0 ? `<button type="button" role="tab" id="${tabGroupId}-tab-features" aria-controls="${tabGroupId}-panel-features" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
@@ -14618,7 +14618,7 @@
                     <table class="manifest-table">
                       <thead>
                         <tr>
-                          <th>Job Name</th>
+                          <th>Job name</th>
                           <th>Release</th>
                         </tr>
                       </thead>
@@ -22273,7 +22273,7 @@
         // Show message that connection is required
         targetPanel.innerHTML = `
           <div class="empty-state">
-            <h3>Connection Required</h3>
+            <h3>Connection required</h3>
             <p>Connect to ${escapeHtml(selectedEndpoint)} to view ${escapeHtml(tabName)} data. Selecting an endpoint does not connect it.</p>
             <button class="btn btn-primary" onclick="CFEndpointManager.toggleConnection()">Connect Now</button>
           </div>

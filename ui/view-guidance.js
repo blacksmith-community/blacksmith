@@ -19,7 +19,7 @@
     plans: help('service plans', 'Plans are grouped by service. Each row shows the current instance count and configured limit; Unlimited means no plan limit is configured. Select a plan to inspect its description and VM configuration. Not reported means the value is unavailable.'),
     broker: help('endpoints', 'Choose the Cloud Foundry endpoint to inspect. Connect and Disconnect change the connection explicitly; Marketplace lists its offerings and Services lists its service instances. Register adds this broker to the selected endpoint.'),
     configs: help('BOSH configs', 'Filter configuration records by type or name. The active version is marked in the list. Open a config ID to inspect its versions or compare changes; viewing a version does not apply it.'),
-    config: help('Broker Settings', 'Runtime settings can be changed using their Apply buttons. Each field explains its scope and units. Current Configuration is read-only. A failed save leaves your entered value available to correct and retry.'),
+    config: help('Broker settings', 'Runtime settings can be changed using their Apply buttons. Each field explains its scope and units. Current Configuration is read-only. A failed save leaves your entered value available to correct and retry.'),
     manifest: shared.manifest
   };
   const instance = {

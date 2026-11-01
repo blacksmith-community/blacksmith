@@ -121,9 +121,9 @@ t('broker strip shows a connection prompt in the selected tab when the endpoint 
  const M=w.CFEndpointManager;
  M.selectedEndpoint='lab'; M.connectionStates.lab={connected:false};
  tabs[1].click(); await sleep(5);
- expect(panels[1].textContent).toContain('Connection Required');
+ expect(panels[1].textContent).toContain('Connection required');
  expect(panels[1].textContent).toContain('services data');
- expect(panels[0].textContent).not.toContain('Connection Required');
+ expect(panels[0].textContent).not.toContain('Connection required');
 });
 
 t('broker strip selecting the tab that is already shown does not reload it',async()=>{
