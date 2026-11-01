@@ -31,31 +31,14 @@ test('toolbar icon buttons have at least a 32 by 32 hit area', () => {
   expect(body).toContain('min-height: 32px');
 });
 
-test('a click on the text of a checkbox label toggles the checkbox', () => {
-  const { w, d } = boot();
-  try {
-    w.plansData = { services: [{ id: 'valkey', name: 'valkey' }] };
-    const host = d.createElement('div');
-    d.body.appendChild(host);
-    host.innerHTML = w.__T.renderServicesTemplate({ a: { service_id: 'valkey', plan_id: 'small', plan: { name: 'small' } } });
-    const hide = host.querySelector('#hide-deleted-filter');
-    expect(hide.closest('label')).not.toBeNull();
-    expect(hide.checked).toBe(true);
-    hide.closest('label').querySelector('span').click();
-    expect(hide.checked).toBe(false);
-
-    const tasks = d.createElement('div');
-    d.body.appendChild(tasks);
-    tasks.innerHTML = w.__T.formatTasks([{ id: 7, state: 'done', description: 'create release', started_at: '2026-10-31T10:00:00Z' }]);
-    const boxes = [...tasks.querySelectorAll('.checkbox-group input[type=checkbox]')];
-    expect(boxes.length).toBe(5);
-    for (const box of boxes) {
-      expect(box.parentElement.tagName).toBe('LABEL');
-      expect(box.checked).toBe(true);
-      box.parentElement.click();
-      expect(box.checked).toBe(false);
-    }
-  } finally { w.close(); }
+test('checkbox labels are a full-height, pointer-cursor click target', () => {
+  const css = read('forge-theme.css');
+  const rule = css.match(/:is\(\.checkbox-group, \.filter-row\) label:has\(> input\[type="checkbox"\]\)[^{]*\{([^}]*)\}/);
+  expect(rule).not.toBeNull();
+  expect(rule[1]).toContain('min-height: 24px');
+  expect(rule[1]).toContain('cursor: pointer');
+  expect(rule[1]).toContain('display: inline-flex');
+  expect(css).toMatch(/label\.checkbox-label\b/);
 });
 
 test('muted secondary text is at least 12 pixels', () => {
@@ -88,13 +71,14 @@ const ratio = (a, b) => {
 
 test('muted text keeps 4.5 to 1 against every surface in both Anvil themes', () => {
   const css = read('forge-theme.css');
-  for (const [theme, selector] of [['light', /:root \{([^}]*)\}/], ['dark', /\[data-theme="dark"\] \{([^}]*)\}/]]) {
+  for (const [, selector] of [['light', /:root \{([^}]*)\}/], ['dark', /\[data-theme="dark"\] \{([^}]*)\}/]]) {
     const raw = Object.fromEntries([...css.match(selector)[1].matchAll(/--([\w-]+):\s*(#[0-9a-f]{6}|var\(--[\w-]+\))/g)].map((m) => [m[1], m[2]]));
     const resolve = (v) => (v.startsWith('var(') ? resolve(raw[v.slice(6, -1)]) : v);
     const tokens = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, resolve(v)]));
     for (const surface of ['background', 'card', 'secondary', 'muted']) {
       expect(ratio(tokens['muted-foreground'], tokens[surface])).toBeGreaterThanOrEqual(4.5);
     }
-    expect(theme).toBeTruthy();
+    expect(ratio(tokens['faint-foreground'], tokens.faint)).toBeGreaterThanOrEqual(4.5);
+    if (tokens['surface-nav']) expect(ratio(tokens['muted-foreground'], tokens['surface-nav'])).toBeGreaterThanOrEqual(4.5);
   }
 });

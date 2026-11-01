@@ -23,21 +23,47 @@ const hex = (value) => {
 const lum = (value) => { const [r, g, b] = hex(value); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
 
+const surfaces = (css, selector) => {
+  const out = {};
+  for (const name of ['page', 'nav', 'content', 'raised', 'border', 'muted-text']) {
+    const m = block(css, selector).match(new RegExp(`--surface-${name}:\\s*(#[0-9a-f]{6})`, 'i'));
+    expect(m).not.toBeNull();
+    out[name] = m[1];
+  }
+  return out;
+};
+
 test('the dark theme defines its surface tokens in one block', () => {
   const dark = block(theme, '[data-theme="dark"]');
-  const tokens = {};
-  for (const name of ['page', 'nav', 'content', 'raised', 'border', 'muted-text']) {
-    const m = dark.match(new RegExp(`--surface-${name}:\\s*(#[0-9a-f]{6})`, 'i'));
-    expect(m).not.toBeNull();
-    tokens[name] = m[1];
+  const tokens = surfaces(theme, '[data-theme="dark"]');
+  // Each surface is visibly separate from the page, and the raised one most of all.
+  expect(ratio(tokens.content, tokens.page)).toBeGreaterThanOrEqual(1.2);
+  expect(ratio(tokens.nav, tokens.page)).toBeGreaterThanOrEqual(1.2);
+  expect(ratio(tokens.raised, tokens.page)).toBeGreaterThan(ratio(tokens.content, tokens.page));
+  expect(ratio(tokens.raised, tokens.page)).toBeGreaterThan(ratio(tokens.nav, tokens.page));
+  for (const surface of ['page', 'nav', 'content', 'raised']) {
+    expect(ratio(tokens['muted-text'], tokens[surface])).toBeGreaterThanOrEqual(4.5);
   }
-  expect(new Set([tokens.page, tokens.nav, tokens.content, tokens.raised]).size).toBe(4);
-  expect(ratio(tokens['muted-text'], tokens.raised)).toBeGreaterThanOrEqual(4.5);
   expect(dark).toMatch(/--background:\s*var\(--surface-page\)/);
   expect(dark).toMatch(/--card:\s*var\(--surface-content\)/);
   expect(dark).toMatch(/--secondary:\s*var\(--surface-raised\)/);
   expect(dark).toMatch(/--border:\s*var\(--surface-border\)/);
   expect(dark).toMatch(/--muted-foreground:\s*var\(--surface-muted-text\)/);
+});
+
+test('high-contrast dark redefines the surface tokens with its own values', () => {
+  const tokens = surfaces(theme, ':root[data-contrast="high"][data-theme="dark"]');
+  expect(tokens.page).toBe('#000000');
+  expect(tokens.content).toBe('#000000');
+  expect(ratio(tokens.border, tokens.page)).toBeGreaterThanOrEqual(3);
+  expect(ratio(tokens['muted-text'], tokens.page)).toBeGreaterThanOrEqual(7);
+});
+
+test('the dark clear-search icon and bar colors come from tokens', () => {
+  const rule = block(blacksmith, '[data-theme="dark"] .clear-search-btn');
+  expect(rule).toMatch(/color:\s*var\(--surface-muted-text\)/);
+  const dark = blacksmith.split('\n').filter((l) => /^\s*(color|background|border-color):\s*#(6e7681|8b949e)/i.test(l));
+  expect(dark).toEqual([]);
 });
 
 test('the Tasks toolbar has no one-off near-black background', () => {

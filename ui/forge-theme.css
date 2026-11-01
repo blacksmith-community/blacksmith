@@ -15,7 +15,7 @@
 }
 [data-theme="dark"] {
   color-scheme: dark;
-  --surface-page: #171b20; --surface-nav: #1d2329; --surface-content: #20262c;
+  --surface-page: #0f1317; --surface-nav: #1e252b; --surface-content: #20262c;
   --surface-raised: #2f373f; --surface-border: #565f68; --surface-muted-text: #c5beb4;
   --background: var(--surface-page); --foreground: #f7f3ea;
   --card: var(--surface-content); --card-foreground: #f7f3ea;
@@ -817,6 +817,8 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
   --success: #99ffb3; --success-foreground: #000000;
   --warning: #ffe066; --warning-foreground: #000000;
   --border: #aaaaaa; --input: #ffffff; --ring: #66ddff;
+  --surface-page: #000000; --surface-nav: #000000; --surface-content: #000000;
+  --surface-raised: #1a1a1a; --surface-border: #aaaaaa; --surface-muted-text: #eeeeee;
 }
 :root[data-contrast="high"] body > header { background: #000; color: #fff; border-bottom: 1px solid #fff; }
 :root[data-contrast="high"] body > header :is(button, #logo, span) { color: #fff; }

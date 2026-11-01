@@ -2632,7 +2632,7 @@ td a {
 }
 
 [data-theme="dark"] .sort-icon.unsorted::after {
-  color: #8b949e;
+  color: var(--surface-muted-text);
 }
 
 /* Table headers with sorting */
@@ -2812,7 +2812,7 @@ th[style*="cursor: pointer"]:hover {
 /* Dark theme adjustments for search filter */
 
 [data-theme="dark"] .clear-search-btn {
-  color: #6e7681;
+  color: var(--surface-muted-text);
 }
 
 [data-theme="dark"] .clear-search-btn:hover {
@@ -2943,7 +2943,7 @@ th[style*="cursor: pointer"]:hover {
 }
 
 [data-theme="dark"] .compact-tasks-controls .filter-group label {
-  color: #8b949e;
+  color: var(--surface-muted-text);
 }
 
 [data-theme="dark"] .compact-tasks-controls .checkbox-group label {
@@ -2968,7 +2968,7 @@ th[style*="cursor: pointer"]:hover {
 }
 
 [data-theme="dark"] .compact-configs-controls .filter-group label {
-  color: #8b949e;
+  color: var(--surface-muted-text);
 }
 
 [data-theme="dark"] .compact-configs-controls .checkbox-group label {
