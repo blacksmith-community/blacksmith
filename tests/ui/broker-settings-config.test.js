@@ -1,0 +1,96 @@
+const {test,expect}=require('bun:test');
+const fs=require('fs');
+const path=require('path');
+const {main:{boot,sleep}}=require('./certificates/harness.js');
+
+// The broker Settings screen groups the read-only configuration by its first
+// key segment, filters it as the operator types, and shows each value with the
+// shared value cell.
+
+const CERT='-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n';
+const config={
+ bosh:{address:'https://10.0.0.6:25555',cacert:CERT,password:'s3cr3t-test'},
+ broker:{port:3000,debug:false,note:''},
+ credhub:{ca_cert:CERT+CERT},
+ debug:true
+};
+
+async function screen(){
+ const env=boot();await sleep(100);
+ const host=env.d.createElement('div');env.d.body.appendChild(host);
+ host.innerHTML=env.w.__T.renderBlacksmithSettings({vault_max_versions:5},config);
+ const type=(text)=>{const input=host.querySelector('input.config-filter');input.value=text;input.dispatchEvent(new env.w.Event('input',{bubbles:true}));};
+ const visible=()=>[...host.querySelectorAll('.config-table tbody tr')].filter(r=>!r.hidden).map(r=>r.classList.contains('config-group')?'# '+r.querySelector('.config-group-name').textContent:r.querySelector('.config-key').textContent);
+ return {...env,host,type,visible};
+}
+
+test('the two section headings use sentence case and the read-only line explains redaction',async()=>{
+ const s=await screen();
+ const heads=[...s.host.querySelectorAll('.settings-section-header')].map(h=>h.textContent);
+ expect(heads).toEqual(['Runtime settings','Current configuration']);
+ expect(s.host.textContent).toContain('Read-only. The broker redacts secret values.');
+ const css=fs.readFileSync(path.join(__dirname,'../../ui/blacksmith.css'),'utf8');
+ const rule=css.match(/\.settings-section-header\s*\{([^}]*)\}/)[1];
+ expect(rule).not.toMatch(/uppercase/);
+ s.w.close();
+});
+
+test('rows group by the first key segment in alphabetical order with counts',async()=>{
+ const s=await screen();
+ const groups=[...s.host.querySelectorAll('.config-table tr.config-group')].map(r=>[r.querySelector('.config-group-name').textContent,r.querySelector('.config-group-count').textContent]);
+ expect(groups).toEqual([['bosh','3'],['broker','3'],['credhub','1'],['general','1']]);
+ expect(s.visible()).toEqual(['# bosh','address','cacert','password','# broker','port','debug','note','# credhub','ca_cert','# general','debug']);
+ expect(s.host.querySelector('details')).not.toBeNull();
+ s.w.close();
+});
+
+test('values use the shared cell, PEMs collapse, and secrets stay masked',async()=>{
+ const s=await screen();
+ const row=(k,g)=>[...s.host.querySelectorAll('.config-table tbody tr:not(.config-group)')].find(r=>r.querySelector('.config-key').textContent===k&&r.dataset.group===g);
+ expect(row('address','bosh').querySelector('.manifest-value .manifest-value-text').textContent).toBe('https://10.0.0.6:25555');
+ expect(row('address','bosh').querySelector('button[aria-label="Copy bosh.address"]')).not.toBeNull();
+ expect(row('cacert','bosh').textContent).toContain('PEM certificate · 1 certificate');
+ expect(row('ca_cert','credhub').textContent).toContain('PEM certificate · 2 certificates');
+ expect(row('password','bosh').textContent).toContain('••••••••');
+ expect(s.host.innerHTML).not.toContain('s3cr3t-test');
+ expect(row('note','broker').querySelector('.empty-value')).not.toBeNull();
+ expect(row('note','broker').querySelector('button')).toBeNull();
+ expect(row('debug','broker').textContent).toContain('false');
+ expect(s.host.querySelector('.config-table em')).toBeNull();
+ s.w.close();
+});
+
+test('the filter narrows rows by key or value and hides empty groups',async()=>{
+ const s=await screen();
+ const input=s.host.querySelector('input.config-filter');
+ expect(s.host.querySelector(`label[for="${input.id}"]`).textContent).toBe('Filter settings');
+ s.type('3000');
+ expect(s.visible()).toEqual(['# broker','port']);
+ s.type('CA');
+ expect(s.visible()).toEqual(['# bosh','cacert','# credhub','ca_cert']);
+ s.type('10.0.0.6');
+ expect(s.visible()).toEqual(['# bosh','address']);
+ expect(s.host.querySelector('.config-no-match').hidden).toBe(true);
+ s.type('zzz');
+ expect(s.visible()).toEqual([]);
+ expect(s.host.querySelector('.config-no-match').hidden).toBe(false);
+ expect(s.host.querySelector('.config-no-match').textContent).toBe('No settings match.');
+ s.type('');
+ expect(s.visible().length).toBe(12);
+ s.w.close();
+});
+
+test('the filter does not match a masked secret value',async()=>{
+ const s=await screen();
+ s.type('s3cr3t');
+ expect(s.visible()).toEqual([]);
+ s.w.close();
+});
+
+test('the Runtime settings form is unchanged',async()=>{
+ const s=await screen();
+ expect(s.host.querySelector('#settings-max-versions').value).toBe('5');
+ expect(s.host.querySelector('#apply-max-versions').textContent).toBe('Apply');
+ expect(s.host.querySelector('#apply-reconciler-interval').textContent).toBe('Apply');
+ s.w.close();
+});

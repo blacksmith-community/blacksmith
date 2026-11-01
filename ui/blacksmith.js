@@ -9427,98 +9427,80 @@
       ${rows.map(([key, value]) => `<tr><td class="cred-key">${escapeHtml(key)}</td><td class="cred-value">${credentialCell(key, value)}</td></tr>`).join('')}</tbody></table></div>`;
   };
 
-  // Format config as a hierarchical table similar to credentials
+  // Format config as a read-only table grouped by the first segment of each
+  // key. Keys with no dot sit in a general group. Every value goes through the
+  // shared value cell, certificates collapse, and a secret the broker failed to
+  // redact is masked. The filter box narrows rows by key or value.
+  let configFilterCounter = 0;
   const formatConfig = (config) => {
     if (!config || Object.keys(config).length === 0) {
       return '<div class="no-data">No configuration available</div>';
     }
 
-    let html = '<div class="config-container">';
-    html += `
-      <table class="config-table">
-        <thead>
-          <tr>
-            <th>Property</th>
-            <th>Value</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
+    // Flatten nested objects into dotted keys. Arrays become JSON text.
+    const flattenConfig = (obj, prefix = '') => Object.entries(obj).flatMap(([key, value]) => {
+      const fullKey = prefix ? `${prefix}.${key}` : key;
+      if (value === null || value === undefined) return [{ key: fullKey, value: '' }];
+      if (Array.isArray(value)) return [{ key: fullKey, value: JSON.stringify(value) }];
+      if (typeof value === 'object') return flattenConfig(value, fullKey);
+      return [{ key: fullKey, value: String(value) }];
+    });
 
-    // Recursive function to flatten nested objects with hierarchical keys
-    const flattenConfig = (obj, prefix = '') => {
-      const result = [];
-
-      for (const [key, value] of Object.entries(obj)) {
-        const fullKey = prefix ? `${prefix}.${key}` : key;
-
-        if (value === null || value === undefined) {
-          result.push({ key: fullKey, value: '' });
-        } else if (typeof value === 'object' && !Array.isArray(value)) {
-          // Recursively flatten nested objects
-          result.push(...flattenConfig(value, fullKey));
-        } else if (Array.isArray(value)) {
-          // Handle arrays - display as JSON string
-          result.push({ key: fullKey, value: JSON.stringify(value) });
-        } else {
-          // Handle primitive values
-          result.push({ key: fullKey, value: value.toString() });
-        }
-      }
-
-      return result;
-    };
-
-    // Flatten the config and create table rows
-    const flatConfig = flattenConfig(config);
-
-    for (const item of flatConfig) {
-      let displayValue;
-      if (item.value === '' || item.value === null || item.value === undefined) {
-        displayValue = '<em>empty</em>';
-      } else if (item.value.startsWith('[') || item.value.startsWith('{')) {
-        // Format JSON strings with code styling
-        try {
-          const parsed = JSON.parse(item.value);
-          displayValue = `<code>${JSON.stringify(parsed, null, 2)}</code>`;
-        } catch {
-          displayValue = `<code>${item.value}</code>`;
-        }
-      } else if (item.value === 'true' || item.value === 'false') {
-        // Boolean values
-        displayValue = `<code>${item.value}</code>`;
-      } else if (!isNaN(item.value) && item.value !== '') {
-        // Numeric values
-        displayValue = `<code>${item.value}</code>`;
-      } else {
-        // String values
-        displayValue = `<code>${item.value}</code>`;
-      }
-
-      const copyValue = item.value || '';
-      html += `
-        <tr>
-          <td class="config-key">${item.key}</td>
-          <td class="config-value">
-            <span class="copy-wrapper">
-              <span>${displayValue}</span>
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
-                      title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(item.key))}">
-                ${blacksmithIcon('copy', { size: 14 })}
-              </button>
-            </span>
-          </td>
-        </tr>
-      `;
+    const groups = new Map();
+    for (const item of flattenConfig(config)) {
+      const dot = item.key.indexOf('.');
+      const group = dot > 0 ? item.key.slice(0, dot) : 'general';
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push({ ...item, rest: dot > 0 ? item.key.slice(dot + 1) : item.key });
     }
 
-    html += `
-        </tbody>
+    const valueCell = (item) => {
+      if (item.value === '') return EMPTY_HTML;
+      if (isSecretEntry(item.key, item.value)) return secretValue(item.value, item.key);
+      if (item.value.includes('-----BEGIN CERTIFICATE-----')) {
+        return `<span class="manifest-value">${pemCertificate(item.value, item.key)}${entityCopy(item.value, item.key)}</span>`;
+      }
+      return manifestValue(item.value, item.key);
+    };
+    const filterText = (item) => {
+      const plain = item.value === '' || isSecretEntry(item.key, item.value) || item.value.includes('-----BEGIN CERTIFICATE-----') ? '' : item.value;
+      return `${item.key} ${plain}`.toLowerCase();
+    };
+
+    const filterId = `config-filter-${++configFilterCounter}`;
+    const body = [...groups.keys()].sort().map((group) => {
+      const items = groups.get(group);
+      return `<tr class="config-group" data-group="${escapeAttribute(group)}"><th colspan="2" scope="rowgroup"><span class="config-group-name">${escapeHtml(group)}</span> <span class="config-group-count">${items.length}</span></th></tr>`
+        + items.map((item) => `<tr data-group="${escapeAttribute(group)}" data-filter="${escapeAttribute(filterText(item))}"><td class="config-key">${escapeHtml(item.rest)}</td><td class="config-value">${valueCell(item)}</td></tr>`).join('');
+    }).join('');
+
+    return `<div class="config-container">
+      <div class="config-filter-row"><label for="${filterId}">Filter settings</label><input type="search" id="${filterId}" class="config-filter" autocomplete="off" /></div>
+      <table class="config-table" data-sortable="false">
+        <thead><tr><th>Property</th><th>Value</th></tr></thead>
+        <tbody>${body}</tbody>
       </table>
-    `;
-    html += '</div>';
-    return html;
+      <p class="config-no-match" hidden>No settings match.</p>
+    </div>`;
   };
+
+  // Narrow the configuration rows as the operator types, and hide a group
+  // whose rows are all hidden.
+  document.addEventListener('input', (event) => {
+    const input = event.target.closest && event.target.closest('input.config-filter');
+    const container = input && input.closest('.config-container');
+    if (!container) return;
+    const needle = input.value.trim().toLowerCase();
+    let shown = 0;
+    const live = new Set();
+    container.querySelectorAll('tbody tr:not(.config-group)').forEach((row) => {
+      const match = needle === '' || row.dataset.filter.includes(needle);
+      row.hidden = !match;
+      if (match) { shown++; live.add(row.dataset.group); }
+    });
+    container.querySelectorAll('tr.config-group').forEach((row) => { row.hidden = !live.has(row.dataset.group); });
+    container.querySelector('.config-no-match').hidden = shown > 0;
+  });
 
   // Render Blacksmith settings form + read-only config
   const renderBlacksmithSettings = (settings, config) => {
@@ -9530,7 +9512,7 @@
     // Editable Settings Section
     html += `
       <div class="settings-section">
-        <h3 class="settings-section-header">Runtime Settings</h3>
+        <h3 class="settings-section-header">Runtime settings</h3>
         <div class="settings-row">
           <label class="settings-label" for="settings-max-versions">Vault Max Versions</label>
           <div class="settings-input-group">
@@ -9558,7 +9540,8 @@
     // Read-only Configuration Section
     html += `
       <div class="settings-section">
-        <h3 class="settings-section-header">Current Configuration (read-only)</h3>
+        <h3 class="settings-section-header">Current configuration</h3>
+        <p class="settings-hint">Read-only. The broker redacts secret values.</p>
         ${formatConfig(config)}
       </div>
     `;

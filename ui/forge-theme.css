@@ -945,3 +945,13 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .credentials-table .credential-pem, .credentials-table .credential-array { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
 .credentials-table .credential-pem summary { cursor: pointer; }
 .credentials-table .credential-array-item { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+
+/* Broker configuration: grouped rows, a filter box, and left-aligned values. */
+.config-filter-row { display: flex; flex-direction: column; gap: .25rem; margin: 0 0 12px; max-width: 24rem; }
+.config-filter-row label { font-size: .75rem; color: var(--muted-foreground); }
+.config-table .config-group th { text-align: left; font-size: .875rem; font-weight: 600; padding-top: 16px; background: transparent; color: var(--foreground); }
+.config-table .config-group-count { margin-left: .5rem; font-size: .75rem; font-weight: 400; color: var(--muted-foreground); }
+.config-table .config-key { padding-left: 1.5rem; }
+.config-table .config-value code, .config-table .config-value .manifest-value-text { color: var(--foreground); }
+.config-table .config-value .credential-pem { display: inline-flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.config-no-match { margin: 12px 0 0; color: var(--muted-foreground); }

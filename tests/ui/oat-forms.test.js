@@ -98,7 +98,7 @@ test('our control border uses the same token the contrast test checks',()=>{
 // its old key, so every asset changed in the Oat work carries its current key.
 test('the assets changed by the Oat form work carry their cache keys',()=>{
  const html=read('index.html');
- [['blacksmith.css','oat-231'],['forge-theme.css','oat-236'],['blacksmith.js','oat-237']].forEach(([f,k])=>expect(html).toContain('/'+f+'?v=20261028-'+k+'"'));
+ [['blacksmith.css','oat-238'],['forge-theme.css','oat-239'],['blacksmith.js','oat-240']].forEach(([f,k])=>expect(html).toContain('/'+f+'?v=20261028-'+k+'"'));
 });
 
 // tests/ui/asset-keys.json pins each keyed asset's key and content hash. An
