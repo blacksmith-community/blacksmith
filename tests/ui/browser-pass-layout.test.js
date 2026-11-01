@@ -98,3 +98,20 @@ test('the Logs info button is an outlined circle like the guidance buttons',()=>
 test('the footer carries the current copyright year',()=>{
  expect(read('index.html')).toContain('Copyright &copy; 2026 Blacksmith Community');
 });
+
+test('disabled and focused .btn-secondary and .btn-success are styled',()=>{
+ const off=bodies('blacksmith.css','.btn-secondary:disabled')+bodies('blacksmith.css','.btn-success:disabled');
+ expect(off).toMatch(/opacity:\s*0\.6/);
+ expect(off).toMatch(/cursor:\s*not-allowed/);
+ const held=bodies('blacksmith.css','.btn-success:disabled:hover');
+ expect(held).toMatch(/background-color:\s*var\(--primary\)/);
+ expect(held).toMatch(/color:\s*var\(--primary-foreground\)/);
+ for(const sel of ['.btn-secondary:focus-visible','.btn-success:focus-visible']){
+  expect(bodies('blacksmith.css',sel)).toMatch(/outline:\s*2px solid var\(--border-active\)/);
+ }
+});
+test('a narrow modal footer wraps its actions with a gap',()=>{
+ const b=bodies('blacksmith.css','.modal-footer .modal-actions');
+ expect(b).toMatch(/flex-wrap:\s*wrap/);
+ expect(b).toMatch(/gap:/);
+});

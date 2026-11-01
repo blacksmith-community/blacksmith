@@ -7756,9 +7756,27 @@ body.terminal-minimized .tabs {
   background-color: var(--bg-secondary);
 }
 
+.btn-secondary:disabled,
+.btn-success:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary:focus-visible,
+.btn-success:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 3px;
+}
+
 .btn-success {
   background-color: var(--primary);
   border: 1px solid var(--primary);
+  color: var(--primary-foreground);
+}
+
+.btn-success:disabled:hover {
+  background-color: var(--primary);
+  border-color: var(--primary);
   color: var(--primary-foreground);
 }
 
@@ -7766,6 +7784,7 @@ body.terminal-minimized .tabs {
 .modal-footer .modal-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
