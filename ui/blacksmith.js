@@ -13455,13 +13455,14 @@
   // server keeps a sample of the output, not all of it.
   const serverRunnerRun = (kind, entry) => {
     const args = Array.isArray(entry.arguments) ? entry.arguments.map(String) : [];
-    const at = Number(entry.timestamp);
+    // A timestamp no Date can hold has no time to show, so it is kept as null.
+    const at = Number.isNaN(new Date(Number(entry.timestamp)).getTime()) ? null : Number(entry.timestamp);
     return {
       line: runnerLine(kind, String(entry.command || ''), args),
       status: entry.success ? 'success' : 'failure',
       duration: Number(entry.duration_ms) > 0 ? Number(entry.duration_ms) : undefined,
       output: entry.output_sample || 'No output',
-      at: Number.isFinite(at) ? at : 0,
+      at,
       category: entry.category,
       command: entry.command,
       arguments: args
@@ -13482,7 +13483,9 @@
   const runnerHistoryEntries = (kind, state) => {
     if (!commandRunners[kind].serverHistory) return state.commandHistory;
     const server = state.serverHistory.filter(entry => !state.commandHistory.some(run => sameRunnerRun(run, entry)));
-    return [...state.commandHistory, ...server].sort((a, b) => b.at - a.at);
+    // A run with no time sorts last.
+    const when = (run) => (run.at === null ? -Infinity : run.at);
+    return [...state.commandHistory, ...server].sort((a, b) => (when(a) === when(b) ? 0 : (when(b) > when(a) ? 1 : -1)));
   };
 
   const formatRunTime = (at) => {
@@ -13509,7 +13512,9 @@
         <button type="button" class="command-runner-history-entry" data-runner-action="restore" data-index="${index}">
           <code>${escapeHtml(entry.line)}</code>
           ${runStatusPill(entry.status)}
-          <time datetime="${new Date(entry.at).toISOString()}">${escapeHtml(formatRunTime(entry.at))}</time>
+          ${entry.at === null
+            ? '<span class="command-runner-history-time">—</span>'
+            : `<time class="command-runner-history-time" datetime="${new Date(entry.at).toISOString()}">${escapeHtml(formatRunTime(entry.at))}</time>`}
         </button>
       </li>`).join('');
     const note = runnerPart(root, 'history-note');

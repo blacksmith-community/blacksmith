@@ -13815,7 +13815,7 @@ bs-tabs { display: contents; }
   text-overflow: ellipsis;
 }
 
-.command-runner-history-entry time {
+.command-runner-history-entry .command-runner-history-time {
   margin-left: auto;
   font-size: 12px;
   color: var(--muted-foreground);

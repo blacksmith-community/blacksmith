@@ -270,6 +270,25 @@ t('the plugins history shows the server entries beside this session\'s runs',asy
  expect(s.content().querySelector('.command-runner-output pre').textContent).toBe('listed here');
 });
 
+// A server entry whose timestamp no Date can hold keeps its place in the
+// list with a dash for its time, and the entries around it still render.
+t('a plugins history entry with an out-of-range timestamp shows a dash',async()=>{
+ const s=await screen([],[
+  {timestamp:Date.UTC(2026,9,30,12),category:'monitoring',command:'list',arguments:[],success:true,duration_ms:20,execution_id:'e1',output_sample:'listed'},
+  {timestamp:1e20,category:'plugin_management',command:'enable',arguments:['rabbitmq_shovel'],success:false,duration_ms:10,execution_id:'e2',output_sample:'far future'}]);
+ await openTab(s,'plugins');
+ const history=s.content().querySelector('details.command-runner-history');
+ history.querySelector('summary').click(); await sleep(30);
+ expect(text(history.querySelector('summary'))).toBe('History (2 runs)');
+ const entries=[...history.querySelectorAll('[data-runner-action="restore"]')];
+ expect(entries.map(e=>text(e.querySelector('code')))).toEqual(['rabbitmq-plugins list','rabbitmq-plugins enable rabbitmq_shovel']);
+ expect(entries[0].querySelector('time').getAttribute('datetime')).toBe('2026-10-30T12:00:00.000Z');
+ expect(entries[1].querySelector('time')).toBeNull();
+ expect(text(entries[1].querySelector('.command-runner-history-time'))).toBe('—');
+ entries[1].click();
+ expect(s.content().querySelector('.command-runner-output pre').textContent).toBe('far future');
+});
+
 t('an empty plugins history says so once it loads',async()=>{
  const s=await screen();
  await openTab(s,'plugins');
