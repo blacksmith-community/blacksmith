@@ -112,20 +112,33 @@ function fill(s,values){
 const runButton=(s)=>[...s.content().querySelectorAll('button')].find(b=>b.textContent.trim()==='Run');
 const requests=(s,pattern)=>s.sent.filter(r=>pattern.test(r.url)&&r.options?.method&&r.options.method!=='GET');
 const jsonPost=(url,body)=>({url,options:{method:'POST',headers:{'Content-Type':'application/json'},body}});
+const dialog=(s)=>s.d.getElementById('dialog-modal');
+const dialogOpen=(s)=>dialog(s)?.open||false;
+// A dangerous command asks first. Nothing is sent while the dialog is open,
+// and its title and command line name exactly what Run will send.
+async function confirmRun(s,pattern,c){
+ expect(dialogOpen(s)).toBe(true);
+ expect(requests(s,pattern)).toEqual([]);
+ expect(dialog(s).querySelector('.dialog-modal-title').textContent).toBe(c.title);
+ expect(dialog(s).querySelector('.dialog-modal-command').textContent).toBe(c.line);
+ dialog(s).querySelector('[data-dialog-role="confirm"]').click(); await sleep(30);
+}
 
 const ctlCases=[
  {name:'a command with no arguments',cat:'nodes',cmd:'ping',values:[],body:'{"category":"nodes","command":"ping","arguments":[]}'},
  {name:'a command with several arguments',cat:'access',cmd:'set_permissions',values:['guest','.*','^amq\\.','.*'],body:'{"category":"access","command":"set_permissions","arguments":["guest",".*","^amq\\\\.",".*"]}'},
  {name:'a command with its optional argument left empty',cat:'users',cmd:'set_user_tags',values:['guest',''],body:'{"category":"users","command":"set_user_tags","arguments":["guest"]}'},
  {name:'a command with a space-separated argument',cat:'users',cmd:'set_user_tags',values:['guest','administrator monitoring'],body:'{"category":"users","command":"set_user_tags","arguments":["guest","administrator","monitoring"]}'},
- {name:'a dangerous command, which the page runs without a confirmation',cat:'cluster',cmd:'join_cluster',values:['rabbit@server1'],body:'{"category":"cluster","command":"join_cluster","arguments":["rabbit@server1"]}'}
+ {name:'a dangerous command, once the operator confirms it',cat:'cluster',cmd:'join_cluster',values:['rabbit@server1'],confirm:true,title:'Run rabbitmqctl join_cluster?',line:'rabbitmqctl join_cluster rabbit@server1',body:'{"category":"cluster","command":"join_cluster","arguments":["rabbit@server1"]}'}
 ];
 ctlCases.forEach(c=>t(`rabbitmqctl sends ${c.name} unchanged`,async()=>{
  const s=await screen(rabbitCreds);
  await openTab(s,'rabbitmqctl'); await choose(s,c.cat,c.cmd); fill(s,c.values);
  press(s.w,runButton(s)); await sleep(30);
+ if(c.confirm) await confirmRun(s,/rabbitmqctl/,c);
+ else expect(dialogOpen(s)).toBe(false);
  expect(requests(s,/rabbitmqctl/)).toStrictEqual([jsonPost('/b/i1/rabbitmq/rabbitmqctl/execute',c.body)]);
- expect(s.d.getElementById('dialog-modal')?.open||false).toBe(false);
+ expect(dialogOpen(s)).toBe(false);
 }));
 
 t('rabbitmqctl disables Run while a command runs and enables it after',async()=>{
@@ -144,15 +157,60 @@ const pluginCases=[
  {name:'a command with no arguments',cat:'plugin_management',cmd:'directories',values:[],flags:[],body:'{"category":"plugin_management","command":"directories","arguments":[]}'},
  {name:'a command with an optional argument left empty and an option',cat:'monitoring',cmd:'list',values:[''],flags:['enabled'],body:'{"category":"monitoring","command":"list","arguments":["--enabled"]}'},
  {name:'a command with an argument and two options',cat:'monitoring',cmd:'list',values:[' rabbit '],flags:['verbose','enabled'],body:'{"category":"monitoring","command":"list","arguments":[" rabbit ","--verbose","--enabled"]}'},
- {name:'a dangerous command with a list argument',cat:'plugin_management',cmd:'enable',values:['rabbitmq_shovel  rabbitmq_federation'],flags:['online'],body:'{"category":"plugin_management","command":"enable","arguments":["rabbitmq_shovel","rabbitmq_federation","--online"]}'}
+ {name:'a dangerous command with a list argument, once the operator confirms it',cat:'plugin_management',cmd:'enable',values:['rabbitmq_shovel  rabbitmq_federation'],flags:['online'],confirm:true,title:'Run rabbitmq-plugins enable?',line:'rabbitmq-plugins enable rabbitmq_shovel rabbitmq_federation --online',body:'{"category":"plugin_management","command":"enable","arguments":["rabbitmq_shovel","rabbitmq_federation","--online"]}'}
 ];
 pluginCases.forEach(c=>t(`plugins sends ${c.name} unchanged`,async()=>{
  const s=await screen(rabbitCreds);
  await openTab(s,'plugins'); await choose(s,c.cat,c.cmd); fill(s,c.values);
  c.flags.forEach(f=>{ s.d.getElementById(`plugins-opt-${f}-i1`).checked=true; });
  press(s.w,runButton(s)); await sleep(30);
+ if(c.confirm) await confirmRun(s,/plugins/,c);
+ else expect(dialogOpen(s)).toBe(false);
  expect(requests(s,/plugins/)).toStrictEqual([jsonPost('/b/i1/rabbitmq/plugins/execute',c.body)]);
+ expect(dialogOpen(s)).toBe(false);
 }));
+
+// Cancel, Escape, and the close button each dismiss the dangerous-command
+// dialog. None of them sends anything, changes the inputs, or adds a run.
+const dismissals=[
+ ['Cancel',(s)=>dialog(s).querySelector('[data-dialog-role="cancel"]').click()],
+ ['Escape',(s)=>s.d.activeElement.dispatchEvent(new s.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))],
+ ['the close button',(s)=>dialog(s).querySelector('.dialog-modal-header button.dialog-close').click()]
+];
+const dangerous=[
+ ['rabbitmqctl','cluster','join_cluster',['rabbit@server1']],
+ ['plugins','plugin_management','enable',['rabbitmq_shovel']]
+];
+for(const [tab,cat,cmd,values] of dangerous){
+ for(const [how,dismiss] of dismissals){
+  t(`${tab} sends nothing when ${how} dismisses the ${cmd} dialog`,async()=>{
+   const s=await screen(rabbitCreds);
+   await openTab(s,tab); await choose(s,cat,cmd); fill(s,values);
+   const before=s.sent.length;
+   press(s.w,runButton(s)); await sleep(30);
+   expect(dialogOpen(s)).toBe(true);
+   dismiss(s); await sleep(30);
+   expect(dialogOpen(s)).toBe(false);
+   expect(s.sent.slice(before)).toEqual([]);
+   expect([...s.content().querySelectorAll('input[type="text"]')].map(i=>i.value)).toEqual(values);
+   expect(s.content().querySelectorAll('.command-runner-history li').length).toBe(0);
+   expect(s.content().querySelector('.command-runner-empty').hidden).toBe(false);
+   expect(runButton(s).disabled).toBe(false);
+  });
+ }
+}
+
+t('a command the catalog does not mark dangerous runs with no dialog',async()=>{
+ const s=await screen(rabbitCreds);
+ await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping');
+ press(s.w,runButton(s)); await sleep(30);
+ expect(dialogOpen(s)).toBe(false);
+ expect(requests(s,/rabbitmqctl/).length).toBe(1);
+ await openTab(s,'plugins'); await choose(s,'plugin_management','directories');
+ press(s.w,runButton(s)); await sleep(30);
+ expect(dialogOpen(s)).toBe(false);
+ expect(requests(s,/plugins/).length).toBe(1);
+});
 
 // The old History button read the server's plugins history each time it
 // opened, with a bare fetch and no options. Opening the history list does
@@ -187,6 +245,7 @@ t('plugins refuses a missing required argument with the same message',async()=>{
  press(s.w,runButton(s)); await sleep(30);
  expect(requests(s,/plugins/)).toEqual([]);
  expect(s.warnings).toEqual(['plugin_names is required.']);
+ expect(dialogOpen(s)).toBe(false);
 });
 
 t('plugins refuses to run before a command is chosen',async()=>{

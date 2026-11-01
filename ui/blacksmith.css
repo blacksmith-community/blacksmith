@@ -11350,6 +11350,32 @@ span.config-type.resurrection {
   overflow-wrap: anywhere;
 }
 
+/* The dangerous-command dialog: the line that will run, then its warning. */
+.dialog-modal-header .dialog-close {
+  margin-left: auto;
+}
+
+.dialog-modal-command {
+  display: block;
+  margin: 0 0 12px 0;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+}
+
+.dialog-modal-run-warning {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 .dialog-modal-choice {
   margin: 0 0 16px 0;
   padding: 0;

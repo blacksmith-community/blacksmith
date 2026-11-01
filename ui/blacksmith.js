@@ -480,6 +480,19 @@
       dialog.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
       const extras = buildConfirmExtras(options);
       extras.nodes.forEach((node) => body.appendChild(node));
+      // A caller can add the shared close button to the header. It cancels.
+      if (options.closeButton) {
+        const label = typeof options.closeButton === 'string' ? options.closeButton : 'Close';
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'dialog-close';
+        closeBtn.setAttribute('data-dialog-extra', 'true');
+        closeBtn.setAttribute('aria-label', label);
+        closeBtn.title = label;
+        closeBtn.innerHTML = blacksmithIcon('x', { size: 18 });
+        closeBtn.addEventListener('click', () => handleCancel());
+        dialog.querySelector('.dialog-modal-header').appendChild(closeBtn);
+      }
       // A summary the caller marks as pinned stays above the scroller.
       const pinned = options.body && options.body.pinnedNode;
       if (pinned) {
@@ -543,7 +556,9 @@
 
       // A body dialog opens on its title, so the warnings stay in view and
       // the typed-word field scrolls into view only when the operator tabs to it.
-      const initialFocus = () => (hasBody ? titleEl : (extras.ackInput || cancelBtn));
+      // A caller can ask for Cancel instead.
+      const initialFocus = () => (options.initialFocus === 'cancel' ? cancelBtn
+        : (hasBody ? titleEl : (extras.ackInput || cancelBtn)));
 
       // Cleanup function
       function cleanup() {
@@ -13561,6 +13576,35 @@
     });
   };
 
+  // A command the catalog marks dangerous runs only once the operator
+  // confirms it in the page's dialog, which shows the line as it will run.
+  // Every other command resolves at once, with no dialog.
+  const confirmDangerousRun = async (kind, command, line) => {
+    if (!command || !command.dangerous) return true;
+    const runner = commandRunners[kind];
+    const body = document.createElement('div');
+    body.className = 'dialog-modal-run';
+    body.id = 'dialog-modal-run';
+    const code = document.createElement('code');
+    code.className = 'dialog-modal-command';
+    code.textContent = line;
+    const warning = document.createElement('p');
+    warning.className = 'dialog-modal-run-warning';
+    warning.textContent = runner.dangerText;
+    body.append(code, warning);
+    const result = await showConfirmDialog({
+      title: `Run ${runner.tool} ${command.name}?`,
+      body,
+      describedBy: 'dialog-modal-run',
+      confirmText: 'Run',
+      cancelText: 'Cancel',
+      danger: true,
+      closeButton: 'Close',
+      initialFocus: 'cancel'
+    });
+    return Boolean(result);
+  };
+
   const setRunnerRunning = (kind, root, instanceId, running) => {
     runnerState(kind, instanceId).running = running;
     const button = root ? root.querySelector(`#${kind}-execute-btn-${instanceId}`) : document.getElementById(`${kind}-execute-btn-${instanceId}`);
@@ -13662,6 +13706,7 @@
     if (state.running) return;
     const root = runnerRoot('rabbitmqctl', instanceId);
     const line = runnerLine('rabbitmqctl', command.name, args);
+    if (!await confirmDangerousRun('rabbitmqctl', command, line) || state.running) return;
     const started = Date.now();
 
     try {
@@ -13753,6 +13798,7 @@
     const root = runnerRoot('plugins', instanceId);
     const line = runnerLine('plugins', state.selectedCommand, cmdArguments);
     const request = { category: state.selectedCategory, command: state.selectedCommand, arguments: [...cmdArguments] };
+    if (!await confirmDangerousRun('plugins', command, line) || state.running) return;
     const started = Date.now();
 
     try {

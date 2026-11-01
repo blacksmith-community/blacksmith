@@ -280,6 +280,43 @@ t('an empty plugins history says so once it loads',async()=>{
  expect(text(history.querySelector('.command-runner-history-note'))).toBe('No command history available');
 });
 
+// A dangerous command opens the page's own dialog: the command line as it
+// will run in monospace, the catalog's warning under it, Cancel focused, a
+// danger Run button, and the shared close button. Nothing else gets it.
+t('a dangerous command asks first in the page dialog',async()=>{
+ const s=await screen();
+ await openTab(s,'rabbitmqctl'); await choose(s,'cluster','join_cluster');
+ s.d.getElementById('rabbitmqctl-arg-node-i1').value='rabbit@server1';
+ runButton(s).click(); await sleep(30);
+ const dialog=s.d.getElementById('dialog-modal');
+ expect(dialog.open).toBe(true);
+ expect(dialog.querySelector('.dialog-modal-title').textContent).toBe('Run rabbitmqctl join_cluster?');
+ const line=dialog.querySelector('.dialog-modal-body code.dialog-modal-command');
+ expect(line.textContent).toBe('rabbitmqctl join_cluster rabbit@server1');
+ expect(line.nextElementSibling.textContent).toBe('This is a dangerous command that may affect the system');
+ const cancel=dialog.querySelector('[data-dialog-role="cancel"]');
+ const run=dialog.querySelector('[data-dialog-role="confirm"]');
+ expect(cancel.textContent).toBe('Cancel');
+ expect(s.d.activeElement).toBe(cancel);
+ expect(run.textContent).toBe('Run');
+ expect(run.classList.contains('dialog-modal-btn-danger')).toBe(true);
+ const close=dialog.querySelector('.dialog-modal-header button.dialog-close');
+ expect(close.getAttribute('aria-label')).toBe('Close');
+ expect(close.querySelector('svg')).not.toBeNull();
+ expect(dialog.getAttribute('aria-describedby')).toContain('dialog-modal-run');
+ run.click(); await sleep(30);
+ expect(dialog.open).toBe(false);
+ expect(dialog.querySelector('.dialog-close, .dialog-modal-command')).toBeNull();
+ expect(text(s.content().querySelector('.command-runner-output-header code'))).toBe('rabbitmqctl join_cluster rabbit@server1');
+ const history=s.content().querySelector('details.command-runner-history');
+ history.querySelector('[data-runner-action="clear-history"]').click(); await sleep(10);
+ expect(dialog.open).toBe(true);
+ expect(dialog.querySelector('.dialog-close')).toBeNull();
+ dialog.querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+ const css=fs.readFileSync(path.join(__dirname,'../../ui/blacksmith.css'),'utf8');
+ expect(css).toMatch(/\.dialog-modal-command\s*\{[^}]*font-family:\s*var\(--font-mono\)/);
+});
+
 t('plugins uses the same runner with its options as checkboxes',async()=>{
  const s=await screen();
  await openTab(s,'plugins');
