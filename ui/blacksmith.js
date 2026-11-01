@@ -2471,32 +2471,45 @@
   const dirtyViews = new WeakSet();
   document.addEventListener('input',event=>{const host=event.target.closest('.detail-content');if(host&&!event.target.matches('[type=search],.table-search-input')){dirtyViews.add(host);host.dataset.hasDraft='true';}});
   const trimRetainedViews = () => {if(retainedViews.size<=32)return;for(const [key,value] of retainedViews){if(value.dirty)continue;retainedViews.delete(key);if(retainedViews.size<=32)break;}};
-  const showRetainedContext = (container, savedAt) => {
-    if (!container.classList.contains('detail-content')) return;
-    let note = container.parentElement?.querySelector(':scope > .retained-view-note');
-    if (!savedAt) { note?.remove(); delete container.dataset.retainedAt; return; }
-    if (!note) { note = document.createElement('p'); note.className = 'retained-view-note'; container.before(note); }
-    note.textContent = `Restored your view saved at ${formatStamp(savedAt)}. Data may have changed; use Refresh where available.`;
+  // A restored view comes back silently with its filters, selection, and
+  // scroll position. Only a table toolbar says when the rows were fetched,
+  // and only for a view put back from memory without a new request.
+  const fetchedAtByContainer = new WeakMap();
+  const showRetainedContext = (container, fetchedAt) => {
+    container.parentElement?.querySelector(':scope > .retained-view-note')?.remove();
+    container.querySelectorAll('.data-fetched-note').forEach(note => note.remove());
+    if (!fetchedAt) { delete container.dataset.retainedAt; return; }
+    const actions = container.querySelector('.table-toolbar-actions');
+    if (!actions) return;
+    const note = document.createElement('span');
+    note.className = 'data-fetched-note';
+    note.innerHTML = `Data fetched ${stampHtml(fetchedAt)}`;
+    actions.before(note);
   };
+  document.addEventListener('click', event => {
+    const refresh = event.target.closest?.('.refresh-btn-logs');
+    refresh?.closest('.detail-content')?.querySelectorAll('.data-fetched-note').forEach(note => note.remove());
+  });
   const retainView = (container, key) => {
     const previous = mountedViews.get(container);
     if (previous === key && !container.querySelector(':scope > .loading')) return true;
     if (previous && !container.querySelector(':scope > .loading')) {
       const fragment = document.createDocumentFragment();
       while (container.firstChild) fragment.appendChild(container.firstChild);
-      retainedViews.set(previous, {fragment, plans: container.classList.contains('plans-view'), savedAt: Date.now(),context:captureInspectionContext(),dirty:dirtyViews.has(container)});
+      retainedViews.set(previous, {fragment, plans: container.classList.contains('plans-view'), savedAt: Date.now(), fetchedAt: fetchedAtByContainer.get(container) || Date.now(),context:captureInspectionContext(),dirty:dirtyViews.has(container)});
       trimRetainedViews();
     }
     mountedViews.set(container, key);
     dirtyViews.delete(container);
     delete container.dataset.hasDraft;
     const saved = retainedViews.get(key);
-    showRetainedContext(container, saved?.savedAt);
-    if (!saved) return false;
+    if (!saved) { fetchedAtByContainer.set(container, Date.now()); showRetainedContext(container, null); return false; }
     restoreInspectionContext(saved.context);
     if(saved.dirty){dirtyViews.add(container);container.dataset.hasDraft='true';}
     container.replaceChildren(saved.fragment);
     container.dataset.retainedAt=String(saved.savedAt);
+    fetchedAtByContainer.set(container, saved.fetchedAt);
+    showRetainedContext(container, saved.fetchedAt);
     container.querySelectorAll('table[class]').forEach(table=>{const cls=[...table.classList].find(c=>c.includes('table'));if(cls)initializeSorting(cls);});
     container.classList.toggle('plans-view', saved.plans);
     retainedViews.delete(key);
