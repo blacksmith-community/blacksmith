@@ -2606,7 +2606,7 @@
         const counted = Number.isFinite(count) && count >= 0;
         const limited = Number.isFinite(limit) && limit >= 0;
         const topology = planTopology(plan);
-        return `<tr class="row-link" tabindex="0" data-plan-row data-service-index="${serviceIndex}" data-plan-index="${planIndex}" title="Open ${escapeAttribute(`${serviceName} / ${planName}`)}"><td>${escapeHtml(serviceName)}</td><td>${escapeHtml(planName)}</td><td>${topology ? escapeHtml(topology) : EMPTY_HTML}</td><td${counted ? ` data-sort-value="${count}"` : ''}>${counted ? count : EMPTY_HTML}</td><td${limited ? ` data-sort-value="${limit === 0 ? Number.MAX_SAFE_INTEGER : limit}"` : ''}>${limited ? (limit === 0 ? 'Unlimited' : limit) : EMPTY_HTML}</td></tr>`;
+        return `<tr class="row-link" data-plan-row data-service-index="${serviceIndex}" data-plan-index="${planIndex}" title="Open ${escapeAttribute(`${serviceName} / ${planName}`)}"><td>${escapeHtml(serviceName)}</td><td><a class="row-link-anchor" href="${escapeAttribute(planHref(service, plan))}">${escapeHtml(planName)}</a></td><td>${topology ? escapeHtml(topology) : EMPTY_HTML}</td><td${counted ? ` data-sort-value="${count}"` : ''}>${counted ? count : EMPTY_HTML}</td><td${limited ? ` data-sort-value="${limit === 0 ? Number.MAX_SAFE_INTEGER : limit}"` : ''}>${limited ? (limit === 0 ? 'Unlimited' : limit) : EMPTY_HTML}</td></tr>`;
       }).join('');
     }).join('');
     if (!rows) return '<div class="no-data">No service plans are configured.</div>';
@@ -2618,6 +2618,7 @@
       <div class="plans-overview-scroll" role="region" tabindex="0" aria-label="Service plan comparison"><table class="plans-overview-table"><caption class="visually-hidden">Every service plan with its topology, instance count, and limit. Choose a row to open the plan.</caption><thead><tr><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">Topology</th><th scope="col">Instances</th><th scope="col">Limit</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   };
+  const planHref = (service, plan) => window.BlacksmithRoutes?.format({screen: 'blacksmith', section: 'plans', service: String(service.id), plan: String(plan.id)}) || '#/broker/plans';
   const mountPlansOverview = (detail) => {
     if (!detail) return;
     detail.innerHTML = renderPlansOverview(window.plansData);
@@ -2625,13 +2626,12 @@
     initializeAllTables();
   };
   const openOverviewPlan = (row) => document.querySelector(`.plans-list .plan-item[data-service-index="${row.dataset.serviceIndex}"][data-plan-index="${row.dataset.planIndex}"]`)?.click();
+  // The name is a real link for the keyboard and for assistive technology.
+  // The row click is a convenience for the pointer, so it leaves links and buttons alone.
   document.addEventListener('click', (event) => {
+    if (event.target.closest?.('a, button')) return;
     const row = event.target.closest?.('tr[data-plan-row]');
     if (row) openOverviewPlan(row);
-  });
-  document.addEventListener('keydown', (event) => {
-    const row = event.target.closest?.('tr[data-plan-row]');
-    if (row && event.target === row && event.key === 'Enter') { event.preventDefault(); openOverviewPlan(row); }
   });
 
   const renderPlansTemplate = (data) => {
@@ -2782,13 +2782,14 @@
 
   // With no instance open, the detail pane lists every instance. A row opens
   // its instance exactly as the card in the list beside it does.
+  const instanceHref = (id) => window.BlacksmithRoutes?.format({screen: 'services', instance: String(id), section: 'details'}) || `#/instances/${encodeURIComponent(String(id))}/details`;
   const renderInstancesOverview = (instancesList, serviceIdToName) => {
     const rows = instancesList.filter(([, details]) => details && details.deleted !== true).map(([id, details]) => {
       const name = String(details.instance_name || id);
       const service = String(serviceIdToName[details.service_id] || details.service_id || '');
       const plan = String(details.plan?.name || details.plan_id || '');
       const status = details.vm_status ? String(details.vm_status) : '';
-      return `<tr class="row-link" tabindex="0" data-instance-row data-instance-id="${escapeAttribute(String(id))}" title="Open ${escapeAttribute(name)}"><td>${escapeHtml(name)}</td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">Unknown</td></tr>`;
+      return `<tr class="row-link" data-instance-row data-instance-id="${escapeAttribute(String(id))}" title="Open ${escapeAttribute(name)}"><td><a class="row-link-anchor" href="${escapeAttribute(instanceHref(id))}">${escapeHtml(name)}</a></td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">Unknown</td></tr>`;
     }).join('');
     if (!rows) return '<div class="no-data">No services have been provisioned yet.</div>';
     return `<div class="instances-overview">
@@ -2796,7 +2797,7 @@
         <div class="search-filter-container">${createSearchFilter('instances-overview-table', 'Search instances...')}</div>
         ${tableToolbarActions({ tableSelector: '.instances-overview-table', noun: 'instances' })}
       </div>
-      <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table"><caption class="visually-hidden">Every service instance with its service, plan, VM status, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">VM status</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table"><caption class="visually-hidden">Every service instance with its service, plan, VM job state, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">VM job state</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   };
   const openOverviewInstance = (row) => {
@@ -2805,13 +2806,20 @@
     else window.navigateToInstance?.(id);
   };
   document.addEventListener('click', (event) => {
+    if (event.target.closest?.('a, button')) return;
     const row = event.target.closest?.('tr[data-instance-row]');
     if (row) openOverviewInstance(row);
   });
-  document.addEventListener('keydown', (event) => {
-    const row = event.target.closest?.('tr[data-instance-row]');
-    if (row && event.target === row && event.key === 'Enter') { event.preventDefault(); openOverviewInstance(row); }
-  });
+  // The overview comes back whenever no instance is open, from the current list.
+  const mountInstancesOverview = (host) => {
+    if (!host) return;
+    const instances = window.serviceInstances || {};
+    const {serviceIdToName} = buildServiceFilterIndex(instances);
+    host.innerHTML = renderInstancesOverview(Object.entries(instances), serviceIdToName);
+    attachSearchFilter('instances-overview-table');
+    initializeAllTables();
+    fillInstanceCertificates();
+  };
 
   const renderServicesTemplate = (instances) => {
     const instancesList = isEmpty(instances) ? [] : Object.entries(instances);
@@ -13135,7 +13143,7 @@
     try {
       const testingInstance = window.currentTestingInstance;
       if (!testingInstance || testingInstance.id !== instanceId) {
-        throw new Error('Testing instance not found');
+        throw new Error('Operations instance not found');
       }
 
       const result = await executeServiceOperation(instanceId, testingInstance.serviceType, 'test');
@@ -14064,7 +14072,7 @@
     // Get service type from global storage
     const testingInstance = window.currentTestingInstance;
     if (!testingInstance || testingInstance.id !== instanceId) {
-      console.error('Testing instance not found');
+      console.error('Operations instance not found');
       return;
     }
 
@@ -15901,6 +15909,13 @@
         const instanceShells = new Map();
         let mountedInstance = null;
         const trimInstanceShells=()=>{if(instanceShells.size<=8)return;for(const [id,cached] of instanceShells){if(cached.fragment.querySelector('[data-has-draft="true"]'))continue;instanceShells.delete(id);for(const key of retainedViews.keys()){let parts;try{parts=JSON.parse(key);}catch(_){continue;}if(parts[1]===id)retainedViews.delete(key);}if(instanceShells.size<=8)break;}};
+        // With no instance in the route, the open instance is set aside with its drafts and the overview returns.
+        window.showInstancesOverview = () => {
+          const detailHost = document.querySelector('#services .service-detail');
+          if (!detailHost) return;
+          if (mountedInstance) { const fragment = document.createDocumentFragment(); while (detailHost.firstChild) fragment.appendChild(detailHost.firstChild); instanceShells.set(mountedInstance, {fragment, info: window.currentInstanceInfo, context: captureInspectionContext()}); mountedInstance = null; }
+          if (!detailHost.querySelector('.instances-overview')) mountInstancesOverview(detailHost);
+        };
         window.navigateToInstance = async (instanceId, signal) => {
           const item = window.serviceInstanceElements?.get(instanceId);
           const details = window.serviceInstances?.[instanceId];
@@ -16757,6 +16772,7 @@
           if(route.screen==='services') {
             if(!route.instance){
               document.getElementById('services').classList.remove('instance-open');
+              window.showInstancesOverview?.();
               // A route without a filter clears one only when the route being left carried it.
               if(route.service||routeFilterApplied){window.applyServicesFilter?.(route.service,route.plan);routeFilterApplied=!!route.service;}
               return finish(route);
@@ -16778,7 +16794,7 @@
             document.querySelector('#blacksmith .plan-detail').innerHTML=renderPlanDetail(svc,plan);
             document.querySelector('#blacksmith .plans-view')?.classList.add('plan-selected');
           }
-          if(route.screen==='blacksmith'&&route.section==='plans'&&!route.plan){document.querySelector('#blacksmith .plans-view')?.classList.remove('plan-selected');document.querySelectorAll('#blacksmith .plan-item').forEach(item=>item.classList.remove('active'));mountPlansOverview(document.querySelector('#blacksmith .plan-detail'));}
+          if(route.screen==='blacksmith'&&route.section==='plans'&&!route.plan){document.querySelector('#blacksmith .plans-view')?.classList.remove('plan-selected');document.querySelectorAll('#blacksmith .plan-item').forEach(item=>item.classList.remove('active'));{const detail=document.querySelector('#blacksmith .plan-detail');if(detail&&!detail.querySelector('.plans-overview'))mountPlansOverview(detail);}}
           if(route.screen==='upgrade') {
             if(batchFlow.submitting)throw new Error('The operation is being submitted. Wait for its task before navigating.');
             if(route.view==='activity'){setBatchView('activity');if(route.task){if(!await selectUpgradeTask(route.task,{throwOnError:true}))return null;}else{selectedTaskId=null;renderUpgradeTaskList();}return finish(route);}

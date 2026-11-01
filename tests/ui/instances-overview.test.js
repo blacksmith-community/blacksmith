@@ -26,7 +26,7 @@ test('with no instance open the detail pane lists the instances in a searchable 
   expect(pane.querySelector('.no-selection')).toBeNull();
   expect(pane.textContent).not.toContain('Select a service instance');
   const table=pane.querySelector('table.instances-overview-table');
-  expect([...table.querySelectorAll('thead th')].map(th=>th.textContent)).toEqual(['Name','Service','Plan','VM status','Certificates']);
+  expect([...table.querySelectorAll('thead th')].map(th=>th.textContent)).toEqual(['Name','Service','Plan','VM job state','Certificates']);
   expect([...table.querySelectorAll('tbody tr')].map(cells).map(r=>r.slice(0,4))).toEqual([
    ['cache-a','Redis','small','running'],
    ['b2','Redis','large','failing'],
@@ -43,11 +43,11 @@ test('a row opens its instance the way the card does',()=>{
   const routed=[];
   w.blacksmithRouter={navigate:(route)=>{routed.push(route);return Promise.resolve(true);}};
   const rows=[...host.querySelectorAll('.instances-overview-table tbody tr')];
-  expect(rows.every(r=>r.tabIndex===0)).toBe(true);
+  expect(rows.every(r=>!r.hasAttribute('tabindex'))).toBe(true);
+  expect(rows.map(r=>r.querySelector('td a').getAttribute('href'))).toEqual(['#/instances/a1/details','#/instances/b2/details','#/instances/c3/details']);
   rows[1].querySelector('td').dispatchEvent(new w.MouseEvent('click',{bubbles:true}));
-  rows[2].dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
-  rows[0].dispatchEvent(new w.KeyboardEvent('keydown',{key:'x',bubbles:true}));
-  expect(routed).toEqual([{screen:'services',instance:'b2',section:'details'},{screen:'services',instance:'c3',section:'details'}]);
+  rows[0].querySelector('a').dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
+  expect(routed).toEqual([{screen:'services',instance:'b2',section:'details'}]);
  }finally{w.close();}
 });
 
@@ -117,5 +117,30 @@ test('instance names and services are escaped in the table',()=>{
   host.innerHTML=w.__T.renderServicesTemplate({e1:{service_id:evil,plan:{name:evil},instance_name:evil,vm_status:evil}});
   expect(host.querySelector('.instances-overview-table img')).toBeNull();
   expect(host.querySelector('.instances-overview-table tbody td').textContent).toBe(evil);
+ }finally{w.close();}
+});
+
+test('All instances brings the overview back after an instance was open',async()=>{
+ const {w,d,calls}=boot({noDialogs:true,routes:[
+  ['/b/certificates/inventory',(u,o,json)=>json(200,{certificates:[],scan:scanned,summary:{certificates:0}})],
+  ['/v2/catalog',(u,o,json)=>json(200,catalog)],
+  ['/b/status',(u,o,json)=>json(200,{env:'lab',deployment:'blacksmith',plans:{},instances:instances()})]]});
+ try{
+  await sleep(150);
+  await w.blacksmithViews.activate({screen:'services'},{});
+  const table=()=>d.querySelectorAll('#services .instances-overview-table tbody tr').length;
+  expect(table()).toBe(3);
+  await w.blacksmithViews.activate({screen:'services',instance:'a1',section:'details'},{}).catch(()=>{});
+  await sleep(100);
+  expect(d.getElementById('services').classList.contains('instance-open')).toBe(true);
+  expect(table()).toBe(0);
+  await w.blacksmithViews.activate({screen:'services'},{});
+  expect(d.getElementById('services').classList.contains('instance-open')).toBe(false);
+  expect(table()).toBe(3);
+  await sleep(100);
+  expect([...d.querySelectorAll('#services .instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim())).toEqual(['0','0','0']);
+  // The open instance is kept, so opening it again brings its screen back.
+  await w.blacksmithViews.activate({screen:'services',instance:'a1',section:'details'},{}).catch(()=>{});
+  expect(d.getElementById('services').classList.contains('instance-open')).toBe(true);
  }finally{w.close();}
 });
