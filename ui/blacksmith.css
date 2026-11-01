@@ -12,9 +12,6 @@ table tbody tr {
 
 table thead {
   background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
 }
 
 table thead th {
@@ -13790,8 +13787,10 @@ bs-tabs { display: contents; }
 }
 
 /* The comparison tables shown in place of an empty selection. */
-.plans-overview, .instances-overview { flex: 1; min-height: 0; overflow: auto; padding: 1rem; }
-.plans-overview-scroll, .instances-overview-scroll { overflow-x: auto; }
+/* The overview is a column that never scrolls itself. The wrapper under the toolbar does,
+   so the sticky header cells pin to the box that moves. */
+.plans-overview, .instances-overview { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; padding: 1rem; }
+.plans-overview-scroll, .instances-overview-scroll { flex: 1; min-height: 0; overflow: auto; }
 .plans-overview-table, .instances-overview-table { width: 100%; }
 tr.row-link { cursor: pointer; }
 .main-content tr.row-link:hover > td { background: var(--secondary); }

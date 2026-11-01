@@ -44,7 +44,25 @@ test('data table headers stay visible on an opaque surface token',()=>{
  expect(b).toMatch(/position:\s*sticky/);
  expect(b).toMatch(/top:\s*0/);
  expect(b).toMatch(/background:\s*var\(--secondary\)/);
+ expect(b).toMatch(/box-shadow:\s*inset 0 -1px 0 var\(--border\)/);
  expect(bodies('forge-theme.css','.main-content table thead')).not.toMatch(/position:\s*sticky/);
+});
+test('no stylesheet pins the general table thead, and the overview scrolls inside its wrapper',()=>{
+ for(const f of ['blacksmith.css','console.css','forge-theme.css']){
+  const css=strip(read(f));
+  for(const m of css.matchAll(/([^{}]*)\{([^}]*)\}/g)){
+   const general=m[1].split(',').some(sel=>/^\s*(\.main-content\s+)?table\s+thead\s*$/.test(sel));
+   if(general) expect(m[2]).not.toMatch(/position:\s*sticky/);
+  }
+ }
+ const frame=bodies('blacksmith.css','.plans-overview')+bodies('blacksmith.css','.instances-overview');
+ expect(frame).toMatch(/display:\s*flex/);
+ expect(frame).toMatch(/flex-direction:\s*column/);
+ expect(frame).toMatch(/overflow:\s*hidden/);
+ const scroll=bodies('blacksmith.css','.plans-overview-scroll')+bodies('blacksmith.css','.instances-overview-scroll');
+ expect(scroll).toMatch(/flex:\s*1/);
+ expect(scroll).toMatch(/min-height:\s*0/);
+ expect(scroll).toMatch(/overflow:\s*auto/);
 });
 test('the header surface token is opaque in dark and high contrast',()=>{
  const css=read('forge-theme.css');
