@@ -828,9 +828,11 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 :root[data-contrast="high"] :is(a,.cert-link-btn) { text-decoration: underline; }
 :root[data-contrast="high"] :is(button,input,select,textarea,summary,a,[tabindex],[role="button"]):focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; }
 :root[data-contrast="high"] body > header :focus-visible { outline-color: #fff; }
-/* The router focuses the active panel so screen readers start at its content. It is not operable, so the ring would only draw a rule across its edges. */
-.detail-content[tabindex="-1"]:focus-visible, .tab-panel[tabindex="-1"]:focus-visible { outline: none; }
-:root[data-contrast="high"] .detail-content[tabindex="-1"]:focus-visible, :root[data-contrast="high"] .tab-panel[tabindex="-1"]:focus-visible { outline: none; }
+/* The router marks the panel it focuses so screen readers start at its content. That move draws no ring. A keyboard Tab into the panel draws an inset ring, because the scroll box clips an outer one on every edge but the bottom. */
+.detail-content:focus-visible, .tab-panel:focus-visible { outline-offset: -3px; }
+:root[data-contrast="high"] .detail-content:focus-visible, :root[data-contrast="high"] .tab-panel:focus-visible { outline-offset: -3px; }
+.detail-content[data-route-focus]:focus-visible, .tab-panel[data-route-focus]:focus-visible { outline: none; }
+:root[data-contrast="high"] .detail-content[data-route-focus]:focus-visible, :root[data-contrast="high"] .tab-panel[data-route-focus]:focus-visible { outline: none; }
 :root[data-contrast="high"] .main-content .tab-button.active { border-bottom-width: 4px; font-weight: 700; }
 :root[data-contrast="high"] #navigation-results [aria-selected="true"] { outline: 2px solid var(--primary); outline-offset: -2px; }
 body > header > .wrap > div:last-child { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
