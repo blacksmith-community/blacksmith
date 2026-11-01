@@ -19,6 +19,7 @@ const build = () => {
     ['c', '11 Oct 2027', Date.parse('2027-10-11T00:00:00Z')],
     ['a', '9 Mar 2026', Date.parse('2026-03-09T00:00:00Z')],
     ['u', 'Unknown', null],
+    ['e', '', null],
   ];
   table.innerHTML = '<thead><tr><th>Name</th><th>Expires</th></tr></thead><tbody></tbody>';
   rows.forEach(([name, text, value]) => {
@@ -35,11 +36,11 @@ const build = () => {
 };
 const order = (table) => [...table.querySelectorAll('tbody tr')].map((r) => r.cells[0].textContent).join('');
 
-t('the sorter orders dates by data-sort-value, Unknown last when ascending', () => {
+t('the sorter orders dates by data-sort-value, then empty, then Unknown when ascending', () => {
   const { table } = build();
   const header = table.querySelectorAll('th')[1];
   header.click();
-  expect(order(table)).toBe('abcu');
+  expect(order(table)).toBe('abceu');
   header.click();
-  expect(order(table)).toBe('ucba');
+  expect(order(table)).toBe('uecba');
 });

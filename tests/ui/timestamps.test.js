@@ -49,11 +49,13 @@ t('no UI code formats a time with the browser locale', () => {
   const path = require('path');
   for (const file of ['blacksmith.js', 'navigation.js', 'action-help.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', '..', 'ui', file), 'utf8');
-    // Date and time methods are never allowed, with or without arguments.
+    // Date and time methods are never allowed on any receiver, with or without arguments.
     expect(src).not.toMatch(/\.toLocale(Time|Date)String\s*\(/);
-    // toLocaleString is for counts. A date-like receiver is not allowed.
-    const lines = src.split('\n').filter((line) => /(new Date\([^)]*\)|\b\w*([dD]ate|[tT]ime|[sS]tamp|[mM]oment)\w*)\.toLocaleString\s*\(/.test(line));
-    expect(lines).toEqual([]);
+    // toLocaleString is for counts only, called with no arguments on a number.
+    const calls = src.split('\n').filter((line) => /\.toLocaleString\s*\(/.test(line));
+    const counts = /(\.length|\b(?:loaded|total|rendered)|\.total_lines|\.totalLines|\bNumber\([^)]*\))\.toLocaleString\(\)/g;
+    const other = calls.filter((line) => line.replace(counts, '').match(/\.toLocaleString\s*\(/));
+    expect(other).toEqual([]);
   }
 });
 

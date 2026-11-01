@@ -2289,7 +2289,6 @@
   };
 
   // A broker timestamp as text, or EMPTY when there is none.
-  const formatTimestamp = (timestamp) => formatStamp(timestampMoment(timestamp)) || EMPTY;
 
   // A broker timestamp as table-cell markup with the ISO value in its title.
   const timestampHtml = (timestamp) => stampHtml(timestampMoment(timestamp));

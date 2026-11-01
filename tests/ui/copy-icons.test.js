@@ -93,7 +93,25 @@ t('every copy button in the markup uses the one icon and has a name', () => {
     let m;
     while ((m = re.exec(src))) buttons.push(m[0]);
   });
-  expect(buttons.length).toBeGreaterThan(8);
+  // The set of literal copy sites is pinned by action hook, so a lost button fails here.
+  const hooks = [
+    ['copyValue(event, \'${value}\')', 'copyValue(event, \'${value}\')'],
+    ['data-entity-copy', 'data-entity-copy'],
+    ['id="copy-deployment-names"', 'copy-deployment-names'],
+    ['data-secret-copy', 'data-secret-copy'],
+    ['copyTableRowsAsText(', 'copyTableRowsAsText'],
+    ['copyValue(event, ${escapeAttribute(JSON.stringify(copy))})', 'copyValue(event, copy)'],
+    ['copyManifest(', 'copyManifest'],
+    ['copyTaskRaw(', 'copyTaskRaw'],
+    ['id="copy-header-deployment"', 'copy-header-deployment'],
+    ['id="copy-config-content"', 'copy-config-content'],
+  ];
+  const found = buttons.map((markup) => (hooks.find(([needle]) => markup.includes(needle)) || [null, 'unknown'])[1]).sort();
+  expect(found).toEqual([
+    'copy-config-content', 'copy-deployment-names', 'copy-header-deployment', 'copyManifest', 'copyTableRowsAsText',
+    'copyTaskRaw', 'copyValue(event, \'${value}\')', 'copyValue(event, \'${value}\')', 'copyValue(event, copy)',
+    'data-entity-copy', 'data-secret-copy',
+  ].sort());
   buttons.forEach((markup) => {
     const open = markup.split(/>\s*(?:<svg|\$\{COPY_ICON_SVG|\$\{blacksmithIcon\()/)[0];
     expect(open).toMatch(/aria-label="[^"]+"/);

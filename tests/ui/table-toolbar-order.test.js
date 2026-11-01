@@ -64,9 +64,13 @@ t('every other table toolbar uses the same helper, so Refresh comes before Copy'
   expect(raw.length).toBe(2);
   expect(raw[0]).toContain('refresh-btn-logs');
   expect(raw[1]).toContain('copy-btn-logs');
-  for (const noun of ['deployment logs', 'debug logs', 'logs', 'task events', 'marketplace services', 'service instances']) {
-    expect(src).toContain(`noun: '${noun}'`);
-  }
+  // Every caller is pinned by noun, so a caller that loses its copy button fails.
+  const callers = [...src.matchAll(/\$\{tableToolbarActions\(\{[^\n]*?noun: '([^']+)'/g)].map((m) => m[1]).sort();
+  expect(callers).toEqual([
+    'configs', 'debug logs', 'deployment logs', 'events', 'logs', 'logs', 'marketplace services', 'service instances',
+    'task events', 'task events', 'task events', 'task events', 'tasks', 'VMs',
+  ].sort());
+  expect(src.match(/\$\{tableToolbarActions\(/g).length).toBe(callers.length);
 });
 
 t('a copy button that copies only the shown rows says so and announces the same words', async () => {

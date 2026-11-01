@@ -209,6 +209,18 @@ t('an instance route says not found only once the list has loaded',async()=>{
  }finally{w.close();}
 });
 
+t('an instance route waits for a late list and opens an instance that is in it',async()=>{
+ const env=await loaded(),{w,d}=env;try{
+  const list=w.serviceInstances;w.serviceInstances=undefined;
+  const opening=w.blacksmithViews.activate({screen:'services',instance:'r1',section:'details'},{});
+  const outcome=opening.then(()=>'opened',(e)=>e.message);
+  await sleep(150);w.serviceInstances=list;
+  expect(await outcome).toBe('opened');
+  expect(d.getElementById('services').classList.contains('instance-open')).toBe(true);
+  expect(d.getElementById('services').textContent).not.toContain('was not found');
+ }finally{w.close();}
+});
+
 t('the overview in the loaded page links through the real router to the filtered list',async()=>{
  const env=await loaded(),{w,d}=env;try{
   w.eval(fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8'));
