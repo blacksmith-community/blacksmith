@@ -2549,6 +2549,53 @@
     return renderEntityShell('blacksmith', path || 'Blacksmith');
   };
 
+  // With no plan open, the detail pane compares every plan in one table. A
+  // row opens its plan through the matching entry in the list beside it.
+  const planTopology = (plan) => {
+    const vms = Array.isArray(plan?.vms) ? plan.vms.filter(vm => vm && vm.name) : [];
+    return vms.map(vm => `${Number.isFinite(vm.instances) ? vm.instances : 1} ${vm.name}`).join(', ');
+  };
+  const renderPlansOverview = (data) => {
+    const services = Array.isArray(data?.services) ? data.services : [];
+    const rows = services.map((service, serviceIndex) => {
+      if (!service || !Array.isArray(service.plans)) return '';
+      const serviceName = String(service.name || service.id || 'Unnamed service');
+      return service.plans.map((plan, planIndex) => {
+        if (!plan) return '';
+        const planName = String(plan.name || plan.id || 'Unnamed plan');
+        const count = plan.blacksmith?.instances;
+        const limit = plan.blacksmith?.limit;
+        const counted = Number.isFinite(count) && count >= 0;
+        const limited = Number.isFinite(limit) && limit >= 0;
+        const topology = planTopology(plan);
+        return `<tr class="row-link" tabindex="0" data-plan-row data-service-index="${serviceIndex}" data-plan-index="${planIndex}" title="Open ${escapeAttribute(`${serviceName} / ${planName}`)}"><td>${escapeHtml(serviceName)}</td><td>${escapeHtml(planName)}</td><td>${topology ? escapeHtml(topology) : EMPTY_HTML}</td><td${counted ? ` data-sort-value="${count}"` : ''}>${counted ? count : EMPTY_HTML}</td><td${limited ? ` data-sort-value="${limit === 0 ? Number.MAX_SAFE_INTEGER : limit}"` : ''}>${limited ? (limit === 0 ? 'Unlimited' : limit) : EMPTY_HTML}</td></tr>`;
+      }).join('');
+    }).join('');
+    if (!rows) return '<div class="no-data">No service plans are configured.</div>';
+    return `<div class="plans-overview">
+      <div class="table-controls-container">
+        <div class="search-filter-container">${createSearchFilter('plans-overview-table', 'Search plans...')}</div>
+        ${tableToolbarActions({ tableSelector: '.plans-overview-table', noun: 'service plans' })}
+      </div>
+      <div class="plans-overview-scroll" role="region" tabindex="0" aria-label="Service plan comparison"><table class="plans-overview-table"><caption class="visually-hidden">Every service plan with its topology, instance count, and limit. Choose a row to open the plan.</caption><thead><tr><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">Topology</th><th scope="col">Instances</th><th scope="col">Limit</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`;
+  };
+  const mountPlansOverview = (detail) => {
+    if (!detail) return;
+    detail.innerHTML = renderPlansOverview(window.plansData);
+    attachSearchFilter('plans-overview-table');
+    initializeAllTables();
+  };
+  const openOverviewPlan = (row) => document.querySelector(`.plans-list .plan-item[data-service-index="${row.dataset.serviceIndex}"][data-plan-index="${row.dataset.planIndex}"]`)?.click();
+  document.addEventListener('click', (event) => {
+    const row = event.target.closest?.('tr[data-plan-row]');
+    if (row) openOverviewPlan(row);
+  });
+  document.addEventListener('keydown', (event) => {
+    const row = event.target.closest?.('tr[data-plan-row]');
+    if (row && event.target === row && event.key === 'Enter') { event.preventDefault(); openOverviewPlan(row); }
+  });
+
   const renderPlansTemplate = (data) => {
     const services = Array.isArray(data?.services) ? data.services : [];
     const groups = services.map((service, serviceIndex) => {
@@ -2570,7 +2617,7 @@
     }).join('');
     if (!groups) return '<div class="no-data">No service plans are configured.</div>';
     return `<div class="plans-list" aria-label="Plans by service">${groups}</div>
-      <div class="plan-detail"><div class="no-selection">Select a service plan to inspect its configuration and instance limits.</div></div>`;
+      <div class="plan-detail">${renderPlansOverview(data)}</div>`;
   };
 
   const renderPlanDetail = (service = {}, plan = {}) => {
@@ -16370,6 +16417,8 @@
             // Use the existing plans data if available, or load it
             if (window.plansData && window.plansData.services && window.plansData.services.length > 0) {
               contentContainer.innerHTML = renderPlansTemplate(window.plansData);
+              attachSearchFilter('plans-overview-table');
+              initializeAllTables();
 
               // Set up plan click handlers
               document.querySelectorAll('#blacksmith .plan-item').forEach(item => {
@@ -16584,7 +16633,7 @@
             document.querySelector('#blacksmith .plan-detail').innerHTML=renderPlanDetail(svc,plan);
             document.querySelector('#blacksmith .plans-view')?.classList.add('plan-selected');
           }
-          if(route.screen==='blacksmith'&&route.section==='plans'&&!route.plan){document.querySelector('#blacksmith .plans-view')?.classList.remove('plan-selected');document.querySelectorAll('#blacksmith .plan-item').forEach(item=>item.classList.remove('active'));const detail=document.querySelector('#blacksmith .plan-detail');if(detail)detail.innerHTML='<p class="no-selection">Select a service plan to inspect its configuration and instance limits.</p>';}
+          if(route.screen==='blacksmith'&&route.section==='plans'&&!route.plan){document.querySelector('#blacksmith .plans-view')?.classList.remove('plan-selected');document.querySelectorAll('#blacksmith .plan-item').forEach(item=>item.classList.remove('active'));mountPlansOverview(document.querySelector('#blacksmith .plan-detail'));}
           if(route.screen==='upgrade') {
             if(batchFlow.submitting)throw new Error('The operation is being submitted. Wait for its task before navigating.');
             if(route.view==='activity'){setBatchView('activity');if(route.task){if(!await selectUpgradeTask(route.task,{throwOnError:true}))return null;}else{selectedTaskId=null;renderUpgradeTaskList();}return finish(route);}

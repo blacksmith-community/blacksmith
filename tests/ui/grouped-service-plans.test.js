@@ -19,7 +19,7 @@ test('plans group by service with stable identity and explicit capacity', () => 
  expect(plans[2].textContent).toContain('Instances not reported');
  expect(plans[2].textContent).toContain('Limit not reported');
  expect(host.querySelector('.plans-list h2')).toBeNull();
- expect(host.querySelector('.no-selection').textContent).toContain('instance limits');
+ expect(host.querySelector('.plan-detail .plans-overview-table')).not.toBeNull();
  w.close();
 });
 

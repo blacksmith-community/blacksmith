@@ -67,7 +67,7 @@ t('every other table toolbar uses the same helper, so Refresh comes before Copy'
   // Every caller is pinned by noun, so a caller that loses its copy button fails.
   const callers = [...src.matchAll(/\$\{tableToolbarActions\(\{[^\n]*?noun: '([^']+)'/g)].map((m) => m[1]).sort();
   expect(callers).toEqual([
-    'configs', 'debug logs', 'deployment logs', 'events', 'logs', 'logs', 'marketplace services', 'service instances',
+    'configs', 'debug logs', 'deployment logs', 'events', 'logs', 'logs', 'marketplace services', 'service instances', 'service plans',
     'task events', 'task events', 'task events', 'task events', 'tasks', 'VMs',
   ].sort());
   expect(src.match(/\$\{tableToolbarActions\(/g).length).toBe(callers.length);

@@ -13788,3 +13788,10 @@ bs-tabs { display: contents; }
   border-top: 0;
   padding-top: 0;
 }
+
+/* The comparison tables shown in place of an empty selection. */
+.plans-overview, .instances-overview { flex: 1; min-height: 0; overflow: auto; padding: 1rem; }
+.plans-overview-scroll, .instances-overview-scroll { overflow-x: auto; }
+.plans-overview-table, .instances-overview-table { width: 100%; }
+tr.row-link { cursor: pointer; }
+.main-content tr.row-link:hover > td { background: var(--secondary); }
