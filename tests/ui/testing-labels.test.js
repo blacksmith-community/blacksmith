@@ -38,12 +38,12 @@ const label=(tab)=>tab.textContent.replace(/\s+/g,' ').trim();
 
 t('the RabbitMQ Testing tabs read in sentence case',async()=>{
  const s=await screen(rabbitCreds);
- expect(tabs(s).map(label)).toEqual(['Connection','Publish','Consume','Queue info','Queue ops','Management','rabbitmqctl','Plugins']);
+ expect(tabs(s).map(label)).toEqual(['Connection','Queue info','Publish','Consume','Queue ops','Management','rabbitmqctl','Plugins']);
 });
 
 t('the Valkey and Redis Testing tabs read in sentence case',async()=>{
  const s=await screen(redisCreds,{service_name:'redis'});
- expect(tabs(s).map(label)).toEqual(['Connection','Info','Set','Get','Delete','Keys','Command','Flush']);
+ expect(tabs(s).map(label)).toEqual(['Connection','Info','Get','Keys','Set','Delete','Command','Flush']);
 });
 
 for(const [service,creds,details,connect] of [['RabbitMQ',rabbitCreds,{},'executeRabbitMQTest'],['Redis',redisCreds,{service_name:'redis'},'executeRedisTest']]){

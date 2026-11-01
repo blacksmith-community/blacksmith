@@ -2388,7 +2388,7 @@
     instance: [
       ['Overview', [['details', 'Summary']]],
       ['Operate', [['vms', 'VMs'], ['events', 'Events'], ['instance-logs', 'Logs'], ['certificates', 'Certificates']]],
-      ['Connect', [['credentials', 'Credentials'], ['testing', 'Testing']]],
+      ['Connect', [['credentials', 'Credentials'], ['testing', 'Operations']]],
       ['Inspect', [['manifest', 'Manifest']]]
     ]
   };
@@ -12346,18 +12346,36 @@
     `;
   };
 
-  // The Testing tabs for each service, in order. Labels are sentence case,
-  // and tool names keep their own spelling.
+  // The Operations tabs for each service, in order. Labels are sentence case,
+  // and tool names keep their own spelling. The connection check is read-only,
+  // the inspection tabs only read, and every tab after them can change the
+  // instance, so the strip groups them under those three headings.
+  const OPERATION_GROUPS = [
+    ['Connection check', ['test']],
+    ['Read-only inspection', ['info', 'get', 'keys', 'queues']]
+  ];
+  const OPERATION_CHANGES_HEADING = 'Changes the instance';
   const TESTING_TABS = {
-    redis: [['test', 'Connection'], ['info', 'Info'], ['set', 'Set'], ['get', 'Get'], ['delete', 'Delete'], ['keys', 'Keys'], ['command', 'Command'], ['flush', 'Flush']],
-    rabbitmq: [['test', 'Connection'], ['publish', 'Publish'], ['consume', 'Consume'], ['queues', 'Queue info'], ['queue-ops', 'Queue ops'], ['management', 'Management'], ['rabbitmqctl', 'rabbitmqctl'], ['plugins', 'Plugins']]
+    redis: [['test', 'Connection'], ['info', 'Info'], ['get', 'Get'], ['keys', 'Keys'], ['set', 'Set'], ['delete', 'Delete'], ['command', 'Command'], ['flush', 'Flush']],
+    rabbitmq: [['test', 'Connection'], ['queues', 'Queue info'], ['publish', 'Publish'], ['consume', 'Consume'], ['queue-ops', 'Queue ops'], ['management', 'Management'], ['rabbitmqctl', 'rabbitmqctl'], ['plugins', 'Plugins']]
   };
   const CONNECTION_STATES = { idle: 'Not connected', connected: 'Connected', disconnected: 'Disconnected' };
 
-  const getOperationTabs = (serviceType, instanceId) => (TESTING_TABS[serviceType] || []).map(([operation, label], index) => {
+  const getOperationTabs = (serviceType, instanceId) => {
+    const tabs = TESTING_TABS[serviceType] || [];
+    const headingOf = (operation) => (OPERATION_GROUPS.find(([, operations]) => operations.includes(operation)) || [OPERATION_CHANGES_HEADING])[0];
+    const headings = [...new Set(tabs.map(([operation]) => headingOf(operation)))];
+    return headings.map((heading, group) => {
+      const buttons = tabs.map((tab, index) => [tab, index]).filter(([[operation]]) => headingOf(operation) === heading)
+        .map(([[operation, label], index]) => operationTabButton(instanceId, operation, label, index)).join('\n');
+      return `<div class="operation-tab-group" role="group" aria-labelledby="operation-group-${group}-${instanceId}"><h4 class="operation-group-label" id="operation-group-${group}-${instanceId}">${heading}</h4>${buttons}</div>`;
+    }).join('\n');
+  };
+
+  const operationTabButton = (instanceId, operation, label, index) => {
     const connection = operation === 'test';
     return `<button class="operation-tab${index === 0 ? ' active' : ''}" aria-pressed="${index === 0}" data-operation="${operation}" data-instance="${instanceId}"${connection ? ` title="${CONNECTION_STATES.idle}"` : ''}>${connection ? '<span class="connection-status-indicator" data-state="idle" aria-hidden="true"></span>' : ''}${label}</button>`;
-  }).join('\n');
+  };
 
   const getDefaultOperationContent = (serviceType, instanceId) => {
     if (serviceType === 'redis') {

@@ -4,9 +4,9 @@
   const instanceSections = [
     ['details', 'Summary'], ['events', 'Events'], ['vms', 'VMs'],
     ['manifest', 'Manifest'], ['certificates', 'Certificates'],
-    ['credentials', 'Credentials'], ['instance-logs', 'Logs'], ['testing', 'Testing']
+    ['credentials', 'Credentials'], ['instance-logs', 'Logs'], ['testing', 'Operations']
   ];
-  const aliases = { upgrade: 'upgrade releases stemcells jobs', configs: 'bosh configuration', config: 'settings configuration', vms: 'vms virtual machines ssh terminal', details: 'details overview context', testing: 'testing connection tests' };
+  const aliases = { upgrade: 'upgrade releases stemcells jobs', configs: 'bosh configuration', config: 'settings configuration', vms: 'vms virtual machines ssh terminal', details: 'details overview context', testing: 'operations testing connection tests commands' };
   function destinations(screens, instances, catalog) {
     const entries = [];
     for (const screen of screens) {

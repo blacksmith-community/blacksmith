@@ -200,7 +200,7 @@ t('instance identity omits redundant eyebrow and keeps context beside the name',
  expect(host.querySelector('.entity-eyebrow')).toBeNull();
  expect(host.querySelector('.entity-identity h2').textContent).toBe('Cache <one>');
  expect(host.querySelector('.entity-identity .entity-context-line').textContent).toBe('valkey / cluster');
- expect(host.querySelector('[data-tab="testing"]').textContent).toBe('Testing');
+ expect(host.querySelector('[data-tab="testing"]').textContent).toBe('Operations');
  expect(host.querySelector('[data-tab="details"]').textContent).toBe('Summary');
  }finally{w.close();}
 });

@@ -16,7 +16,7 @@ Target: WCAG 2.2 A/AA (https://www.w3.org/TR/WCAG22/).
 - Dialog visibility transitions delayed initial focus. Visibility now changes
   synchronously while opacity can animate.
 - Config versions were clickable divs. They are now native buttons with selected
-  state. Testing operations and endpoint choices expose their selected state.
+  state. Operations tab choices and endpoint choices expose their selected state.
 - Terminal session close controls were mouse-only spans. They are separate,
   named buttons. The terminal dialog is named; xterm screen-reader mode is on,
   cursor blink is off, and Control+Shift+F6 returns focus to terminal controls.
@@ -31,7 +31,7 @@ Automated axe checks use WCAG 2.0/2.1/2.2 A/AA rules, all four Anvil/High Contra
 palettes, populated local fixtures, and desktop/narrow viewports. Coverage includes
 all 19 broker/instance sections, all three batch operations and four steps,
 advanced release selection, fleet certificates, activity evidence, Quick
-Navigation, keyboard help, task/config dialogs, and Valkey/RabbitMQ testing forms.
+Navigation, keyboard help, task/config dialogs, and Valkey/RabbitMQ Operations forms.
 Keyboard regression tests cover sorting, modal focus/isolation/restoration,
 registration Escape, config-version controls, and terminal session buttons.
 Existing UI regressions cover selection persistence, destructive-action review,

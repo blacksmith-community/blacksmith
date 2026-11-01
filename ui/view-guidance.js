@@ -29,7 +29,7 @@
     'instance-logs': shared.logs,
     certificates: shared.certificates,
     credentials: help('credentials', 'Connection fields and certificate material belong to this instance. Copy controls copy the named field. Certificate blocks preserve their original line breaks. Treat passwords and private keys as sensitive when copying or sharing them.'),
-    testing: help('Testing', 'Choose an operation before entering its inputs. Connection checks inspect connectivity; commands that write, delete, publish, consume, or administer a service may change its data or behavior. Review the selected operation and target before running it.'),
+    testing: help('Operations', 'Choose an operation before entering its inputs. Connection checks inspect connectivity; commands that write, delete, publish, consume, or administer a service may change its data or behavior. Review the selected operation and target before running it.'),
     manifest: shared.manifest
   };
   const certificateSources = {

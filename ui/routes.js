@@ -3,7 +3,7 @@
  'use strict';
  const broker={summary:'details',vms:'vms',tasks:'tasks',events:'events',logs:'blacksmith-logs',certificates:'certificates',plans:'plans',endpoints:'broker',configs:'configs',settings:'config',manifest:'manifest'};
  const instance={summary:'details',vms:'vms',events:'events',logs:'instance-logs',certificates:'certificates',credentials:'credentials',testing:'testing',manifest:'manifest'};
- const labels={blacksmith:'Blacksmith Broker',services:'Service Instances',certificates:'Certificates',upgrade:'Batch Operations',details:'Summary',vms:'VMs',tasks:'Tasks',events:'Events','blacksmith-logs':'Logs','instance-logs':'Logs',plans:'Service plans',broker:'Endpoints',configs:'BOSH configs',config:'Broker settings',manifest:'Manifest',credentials:'Credentials',testing:'Testing',upgrade:'Batch Operations'};
+ const labels={blacksmith:'Blacksmith Broker',services:'Service Instances',certificates:'Certificates',upgrade:'Batch Operations',details:'Summary',vms:'VMs',tasks:'Tasks',events:'Events','blacksmith-logs':'Logs','instance-logs':'Logs',plans:'Service plans',broker:'Endpoints',configs:'BOSH configs',config:'Broker settings',manifest:'Manifest',credentials:'Credentials',testing:'Operations',upgrade:'Batch Operations'};
  const steps=['operation','options','instances','review'];
  const encode=encodeURIComponent;
  const key=(map,value)=>Object.keys(map).find(k=>map[k]===value);
