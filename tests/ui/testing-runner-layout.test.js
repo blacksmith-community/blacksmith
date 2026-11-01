@@ -45,7 +45,7 @@ const creds={host:'h',username:'u',password:'p',vhost:'v',service_type:'rabbitmq
 
 // Opens the Testing screen for i1. results answers execute calls in turn;
 // a result of 'hold' stays unanswered until release() runs.
-async function screen(results=[]){
+async function screen(results=[],pluginsHistory=[]){
  const env=boot({noDialogs:true}); envs.push(env);
  const {w,d}=env;
  const held={};
@@ -61,6 +61,7 @@ async function screen(results=[]){
   ['/rabbitmq/plugins/categories',(u,o,json)=>json(200,pluginsCatalog)],
   [/\/rabbitmq\/plugins\/category\/([^/]+)\/command\/([^/?]+)$/,(u,o,json)=>{const m=u.match(/category\/([^/]+)\/command\/([^/?]+)$/);return json(200,findCmd(pluginsCatalog,m[1],m[2]));}],
   ['/rabbitmq/plugins/execute',(u,o,json)=>answer(json)],
+  ['/rabbitmq/plugins/history',(u,o,json)=>json(200,typeof pluginsHistory==='function'?pluginsHistory():pluginsHistory)],
   [/\/b\/i1\/(redis|rabbitmq)\/[a-z-]+/,(u,o,json)=>json(200,{success:true})]);
  const html=await w.__T.renderServiceTesting('i1');
  const host=d.createElement('div'); host.className='detail-content'; host.innerHTML=html; d.body.appendChild(host);
@@ -239,6 +240,44 @@ t('clearing the history asks first, then empties the list',async()=>{
  dialog.querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
  expect(history.querySelectorAll('li').length).toBe(0);
  expect(visible(history)).toBe(false);
+});
+
+// The server's plugins history joins this session's runs in the list. A run
+// the server also recorded shows once, and every entry restores its output.
+t('the plugins history shows the server entries beside this session\'s runs',async()=>{
+ const s=await screen([{success:true,output:'listed here',exit_code:0}],()=>[
+  {timestamp:Date.now(),category:'monitoring',command:'list',arguments:['--enabled'],success:true,duration_ms:40,execution_id:'e2',output_sample:'listed on the server'},
+  {timestamp:Date.UTC(2026,9,30,12),category:'plugin_management',command:'enable',arguments:['rabbitmq_shovel'],success:false,duration_ms:900,execution_id:'e1',output_sample:'enable failed'}]);
+ await openTab(s,'plugins');
+ const history=s.content().querySelector('details.command-runner-history');
+ expect(visible(history)).toBe(true);
+ expect(history.open).toBe(false);
+ expect(text(history.querySelector('summary'))).toBe('History');
+ await choose(s,'monitoring','list');
+ s.d.getElementById('plugins-opt-enabled-i1').checked=true;
+ runButton(s).click(); await sleep(30);
+ history.querySelector('summary').click(); await sleep(30);
+ expect(history.open).toBe(true);
+ expect(text(history.querySelector('summary'))).toBe('History (2 runs)');
+ const entries=[...history.querySelectorAll('[data-runner-action="restore"]')];
+ expect(entries.map(e=>text(e.querySelector('code')))).toEqual(['rabbitmq-plugins list --enabled','rabbitmq-plugins enable rabbitmq_shovel']);
+ expect(entries.map(e=>text(e.querySelector('.badge')))).toEqual(['Success','Failure']);
+ entries[1].click();
+ expect(s.content().querySelector('.command-runner-output pre').textContent).toBe('enable failed');
+ expect(text(s.content().querySelector('.command-runner-output-header code'))).toBe('rabbitmq-plugins enable rabbitmq_shovel');
+ expect(text(s.content().querySelector('.command-runner-output-header'))).toContain('900 ms');
+ entries[0].click();
+ expect(s.content().querySelector('.command-runner-output pre').textContent).toBe('listed here');
+});
+
+t('an empty plugins history says so once it loads',async()=>{
+ const s=await screen();
+ await openTab(s,'plugins');
+ const history=s.content().querySelector('details.command-runner-history');
+ history.querySelector('summary').click(); await sleep(30);
+ expect(history.open).toBe(true);
+ expect(history.querySelectorAll('li').length).toBe(0);
+ expect(text(history.querySelector('.command-runner-history-note'))).toBe('No command history available');
 });
 
 t('plugins uses the same runner with its options as checkboxes',async()=>{

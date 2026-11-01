@@ -72,6 +72,7 @@ async function screen(creds,details={},opts={}){
   [/\/rabbitmq\/plugins\/category\/([^/]+)\/command\/([^/?]+)$/,(u,o,json)=>{const m=u.match(/category\/([^/]+)\/command\/([^/?]+)$/);return json(200,findCmd(pluginsCatalog,m[1],m[2]));}],
   [/\/rabbitmq\/plugins\/category\/([^/?]+)$/,(u,o,json)=>json(200,pluginsCatalog.find(c=>u.endsWith('/'+c.name)))],
   ['/rabbitmq/plugins/execute',(u,o,json)=>json(200,result('list'))],
+  ['/rabbitmq/plugins/history',(u,o,json)=>json(200,[])],
   [/\/b\/i1\/(redis|rabbitmq)\/[a-z-]+/,(u,o,json)=>json(200,{success:true}),]);
  const html=await w.__T.renderServiceTesting('i1');
  const host=d.createElement('div'); host.className='detail-content'; host.innerHTML=html; d.body.appendChild(host);
@@ -152,6 +153,33 @@ pluginCases.forEach(c=>t(`plugins sends ${c.name} unchanged`,async()=>{
  press(s.w,runButton(s)); await sleep(30);
  expect(requests(s,/plugins/)).toStrictEqual([jsonPost('/b/i1/rabbitmq/plugins/execute',c.body)]);
 }));
+
+// The old History button read the server's plugins history each time it
+// opened, with a bare fetch and no options. Opening the history list does
+// the same, and closing it reads nothing.
+t('opening the plugins history reads GET /plugins/history each time',async()=>{
+ const s=await screen(rabbitCreds);
+ await openTab(s,'plugins');
+ const reads=()=>s.sent.filter(r=>r.url.includes('/history'));
+ expect(reads()).toEqual([]);
+ const summary=s.content().querySelector('details.command-runner-history > summary');
+ summary.click(); await sleep(30);
+ expect(reads()).toStrictEqual([{url:'/b/i1/rabbitmq/plugins/history',options:undefined}]);
+ summary.click(); await sleep(30);
+ expect(reads().length).toBe(1);
+ summary.click(); await sleep(30);
+ expect(reads()).toStrictEqual([{url:'/b/i1/rabbitmq/plugins/history',options:undefined},{url:'/b/i1/rabbitmq/plugins/history',options:undefined}]);
+});
+
+// The old rabbitmqctl History button showed only this session's runs, so
+// opening its list reads nothing from the server.
+t('opening the rabbitmqctl history reads nothing from the server',async()=>{
+ const s=await screen(rabbitCreds);
+ await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping');
+ press(s.w,runButton(s)); await sleep(30);
+ s.content().querySelector('details.command-runner-history > summary').click(); await sleep(30);
+ expect(s.sent.filter(r=>r.url.includes('/history'))).toEqual([]);
+});
 
 t('plugins refuses a missing required argument with the same message',async()=>{
  const s=await screen(rabbitCreds);

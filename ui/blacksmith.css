@@ -13757,6 +13757,12 @@ bs-tabs { display: contents; }
   list-style: none;
 }
 
+.command-runner-history-note {
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
 .command-runner-history-entry {
   display: flex;
   align-items: center;

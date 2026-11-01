@@ -13203,7 +13203,7 @@
   // and its execute function builds the same request the earlier screens sent.
   const commandRunners = {
     rabbitmqctl: { tool: 'rabbitmqctl', route: 'rabbitmqctl', store: 'rabbitmqCtl', run: 'executeRabbitMQCtlCommand', clearHistory: 'clearRabbitMQCtlHistory', dangerText: 'This is a dangerous command that may affect the system' },
-    plugins: { tool: 'rabbitmq-plugins', route: 'plugins', store: 'rabbitmqPlugins', run: 'executeRabbitMQPluginsCommand', clearHistory: 'clearRabbitMQPluginsHistory', dangerText: 'This is a dangerous command. Use with caution.' }
+    plugins: { tool: 'rabbitmq-plugins', route: 'plugins', store: 'rabbitmqPlugins', run: 'executeRabbitMQPluginsCommand', clearHistory: 'clearRabbitMQPluginsHistory', dangerText: 'This is a dangerous command. Use with caution.', serverHistory: true }
   };
   const RUNNER_HISTORY_LIMIT = 20;
 
@@ -13217,6 +13217,10 @@
       selectedCategory: null,
       selectedCommand: null,
       commandHistory: [],
+      serverHistory: [],
+      historyStatus: null,
+      historyLoad: 0,
+      historyView: [],
       running: false,
       pick: 0
     };
@@ -13271,6 +13275,7 @@
         <details class="command-runner-history" data-runner-part="history" hidden>
           <summary>History <span class="command-runner-history-count" data-runner-part="history-count"></span></summary>
           <ol class="command-runner-history-list" data-runner-part="history-list"></ol>
+          <p class="command-runner-history-note" data-runner-part="history-note" hidden></p>
           <button type="button" class="btn btn-secondary" data-variant="secondary" data-runner-action="clear-history">Clear history</button>
         </details>
       </div>
@@ -13431,21 +13436,96 @@
     runnerPart(root, 'output').dataset.status = run.status;
   };
 
+  // A run the server recorded, in the shape of a run from this session. The
+  // server keeps a sample of the output, not all of it.
+  const serverRunnerRun = (kind, entry) => {
+    const args = Array.isArray(entry.arguments) ? entry.arguments.map(String) : [];
+    const at = Number(entry.timestamp);
+    return {
+      line: runnerLine(kind, String(entry.command || ''), args),
+      status: entry.success ? 'success' : 'failure',
+      duration: Number(entry.duration_ms) > 0 ? Number(entry.duration_ms) : undefined,
+      output: entry.output_sample || 'No output',
+      at: Number.isFinite(at) ? at : 0,
+      category: entry.category,
+      command: entry.command,
+      arguments: args
+    };
+  };
+
+  // A server entry is the same run as one from this session when the command
+  // and arguments match and the server's start time falls near the run's.
+  const RUNNER_HISTORY_MATCH_MS = 5000;
+  const sameRunnerRun = (local, server) => local.command !== undefined
+    && local.category === server.category
+    && local.command === server.command
+    && JSON.stringify(local.arguments) === JSON.stringify(server.arguments)
+    && Math.abs(server.at - (local.at - (local.duration || 0))) <= RUNNER_HISTORY_MATCH_MS;
+
+  // The runs the history lists: this session's, joined by the server's for a
+  // runner that keeps one, newest first and each run once.
+  const runnerHistoryEntries = (kind, state) => {
+    if (!commandRunners[kind].serverHistory) return state.commandHistory;
+    const server = state.serverHistory.filter(entry => !state.commandHistory.some(run => sameRunnerRun(run, entry)));
+    return [...state.commandHistory, ...server].sort((a, b) => b.at - a.at);
+  };
+
+  const formatRunTime = (at) => {
+    const date = new Date(at);
+    return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString();
+  };
+
+  const RUNNER_HISTORY_NOTES = {
+    loading: 'Loading history…',
+    failed: 'Failed to load history',
+    empty: 'No command history available'
+  };
+
   const renderRunnerHistory = (kind, root, instanceId) => {
     const history = runnerPart(root, 'history');
     if (!history) return;
-    const entries = runnerState(kind, instanceId).commandHistory;
+    const state = runnerState(kind, instanceId);
+    const fromServer = !!commandRunners[kind].serverHistory;
+    const entries = runnerHistoryEntries(kind, state);
+    state.historyView = entries;
     runnerPart(root, 'history-count').textContent = entries.length > 0 ? `(${countLabel(entries.length, 'run')})` : '';
     runnerPart(root, 'history-list').innerHTML = entries.map((entry, index) => `
       <li>
         <button type="button" class="command-runner-history-entry" data-runner-action="restore" data-index="${index}">
           <code>${escapeHtml(entry.line)}</code>
           ${runStatusPill(entry.status)}
-          <time datetime="${new Date(entry.at).toISOString()}">${escapeHtml(new Date(entry.at).toLocaleTimeString())}</time>
+          <time datetime="${new Date(entry.at).toISOString()}">${escapeHtml(formatRunTime(entry.at))}</time>
         </button>
       </li>`).join('');
-    history.hidden = entries.length === 0;
-    if (entries.length === 0) history.open = false;
+    const note = runnerPart(root, 'history-note');
+    const noteKey = state.historyStatus === 'loaded' ? (entries.length === 0 ? 'empty' : null) : state.historyStatus;
+    note.textContent = noteKey ? RUNNER_HISTORY_NOTES[noteKey] : '';
+    note.hidden = !noteKey;
+    // A runner with server history always offers the list, since opening it
+    // is what reads the server.
+    history.hidden = !fromServer && entries.length === 0;
+    if (!fromServer && entries.length === 0) history.open = false;
+  };
+
+  // Reads the server's history each time the list opens, the way the old
+  // History button did. A later read supersedes one still in flight.
+  const loadRunnerServerHistory = async (kind, root, instanceId) => {
+    const state = runnerState(kind, instanceId);
+    const load = ++state.historyLoad;
+    state.historyStatus = 'loading';
+    renderRunnerHistory(kind, root, instanceId);
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/${commandRunners[kind].route}/history`);
+      const history = await response.json();
+      if (load !== state.historyLoad) return;
+      state.serverHistory = Array.isArray(history) ? history.map(entry => serverRunnerRun(kind, entry)) : [];
+      state.historyStatus = 'loaded';
+    } catch (error) {
+      if (load !== state.historyLoad) return;
+      console.error(`Failed to load ${kind} history:`, error);
+      state.historyStatus = 'failed';
+    }
+    renderRunnerHistory(kind, root, instanceId);
   };
 
   // Records a finished run: the panel shows it and it leads the history.
@@ -13460,8 +13540,9 @@
     renderRunnerHistory(kind, root, instanceId);
   };
 
-  const finishRunnerRun = (kind, root, instanceId, line, started, result) => {
+  const finishRunnerRun = (kind, root, instanceId, line, started, result, request = {}) => {
     recordRunnerRun(kind, root, instanceId, {
+      ...request,
       line,
       status: result && result.success ? 'success' : 'failure',
       exitCode: result ? result.exit_code : undefined,
@@ -13470,8 +13551,9 @@
     });
   };
 
-  const failRunnerRun = (kind, root, instanceId, line, started, message) => {
+  const failRunnerRun = (kind, root, instanceId, line, started, message, request = {}) => {
     recordRunnerRun(kind, root, instanceId, {
+      ...request,
       line,
       status: 'failure',
       duration: Date.now() - started,
@@ -13508,6 +13590,15 @@
     const state = runnerState(kind, instanceId);
     state.selectedCategory = null;
     state.selectedCommand = null;
+    state.serverHistory = [];
+    state.historyStatus = null;
+    state.historyLoad += 1;
+    if (commandRunners[kind].serverHistory) {
+      const history = runnerPart(root, 'history');
+      history.addEventListener('toggle', () => {
+        if (history.open) loadRunnerServerHistory(kind, root, instanceId);
+      });
+    }
     root.addEventListener('change', (event) => {
       const picker = event.target.closest('[data-runner-picker]');
       if (picker) chooseRunnerCommand(kind, root, picker.selectedOptions[0]);
@@ -13530,7 +13621,7 @@
       else if (action === 'clear') showRunnerOutput(root, null);
       else if (action === 'clear-history') window[commandRunners[kind].clearHistory](instanceId);
       else if (action === 'restore') {
-        const entry = runnerState(kind, instanceId).commandHistory[Number(control.dataset.index)];
+        const entry = runnerState(kind, instanceId).historyView[Number(control.dataset.index)];
         if (entry) showRunnerOutput(root, entry);
       }
     });
@@ -13539,7 +13630,11 @@
   };
 
   const clearRunnerHistory = (kind, instanceId) => {
-    runnerState(kind, instanceId).commandHistory = [];
+    const state = runnerState(kind, instanceId);
+    state.commandHistory = [];
+    state.serverHistory = [];
+    state.historyStatus = null;
+    state.historyLoad += 1;
     const root = runnerRoot(kind, instanceId);
     if (root) renderRunnerHistory(kind, root, instanceId);
   };
@@ -13657,6 +13752,7 @@
     if (state.running) return;
     const root = runnerRoot('plugins', instanceId);
     const line = runnerLine('plugins', state.selectedCommand, cmdArguments);
+    const request = { category: state.selectedCategory, command: state.selectedCommand, arguments: [...cmdArguments] };
     const started = Date.now();
 
     try {
@@ -13676,10 +13772,10 @@
       });
 
       const result = await response.json();
-      finishRunnerRun('plugins', root, instanceId, line, started, result);
+      finishRunnerRun('plugins', root, instanceId, line, started, result, request);
 
     } catch (error) {
-      failRunnerRun('plugins', root, instanceId, line, started, error.message);
+      failRunnerRun('plugins', root, instanceId, line, started, error.message, request);
     } finally {
       setRunnerRunning('plugins', root, instanceId, false);
     }
