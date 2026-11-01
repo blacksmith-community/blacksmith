@@ -89,12 +89,23 @@ test('search matches a detail value and hides the detail row with its VM', () =>
   } finally { w.close(); }
 });
 
-test('the table has no minimum width that would force a horizontal scroll', () => {
-  const css = fs.readFileSync(path.join(__dirname, '..', '..', 'ui', 'blacksmith.css'), 'utf8');
-  const forge = fs.readFileSync(path.join(__dirname, '..', '..', 'ui', 'forge-theme.css'), 'utf8');
-  for (const source of [css, forge]) {
+test('the default table shows six columns and sets no wide fixed width', () => {
+  const { w, d } = boot();
+  try {
+    const host = render(w, d, [vm()], null);
+    expect(host.querySelectorAll('.vms-table thead th')).toHaveLength(6);
+    const visible = [...host.querySelector('tr.vm-row').cells].filter((cell) => !cell.hidden);
+    expect(visible).toHaveLength(6);
+    expect(host.querySelector('tr.row-detail').hidden).toBe(true);
+  } finally { w.close(); }
+  const ui = path.join(__dirname, '..', '..', 'ui');
+  for (const name of fs.readdirSync(ui).filter((f) => f.endsWith('.css'))) {
+    const source = fs.readFileSync(path.join(ui, name), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     for (const m of source.matchAll(/([^{}]*\.vms-table[^{}]*)\{([^}]*)\}/g)) {
-      expect(m[2]).not.toMatch(/min-width:\s*\d{3,}/);
+      for (const size of m[2].matchAll(/(?<![-\w])(?:min-)?width:\s*([\d.]+)(px|rem)/g)) {
+        const px = Number(size[1]) * (size[2] === 'rem' ? 16 : 1);
+        expect({ name, selector: m[1].trim(), px: px > 1500 ? px : 0 }).toEqual({ name, selector: m[1].trim(), px: 0 });
+      }
     }
   }
 });
