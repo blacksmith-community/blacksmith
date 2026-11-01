@@ -13481,12 +13481,20 @@
           <p class="command-runner-empty" data-runner-part="output-empty">Choose a command and select Run.</p>
           <pre class="command-runner-pre" id="${prefix}-output-${instanceId}" data-runner-part="output-text" hidden></pre>
         </section>
-        <details class="command-runner-history" data-runner-part="history" hidden>
-          <summary>History <span class="command-runner-history-count" data-runner-part="history-count"></span></summary>
-          <ol class="command-runner-history-list" data-runner-part="history-list"></ol>
-          <p class="command-runner-history-note" data-runner-part="history-note" hidden></p>
-          <button type="button" class="btn btn-secondary" data-variant="secondary" data-runner-action="clear-history">Clear history</button>
-        </details>
+        <section class="testing-history command-runner-history-block" data-runner-part="history-block">
+          <div class="history-header">
+            <h5>Response history</h5>
+            <button type="button" class="btn btn-secondary" data-variant="secondary" data-runner-action="clear-history" disabled>Clear history</button>
+          </div>
+          <div class="history-entries is-empty" data-runner-part="history-entries">
+            <p class="history-empty" data-runner-part="history-empty">No operations performed yet</p>
+          </div>
+          <details class="command-runner-history" data-runner-part="history" hidden>
+            <summary>Runs <span class="command-runner-history-count" data-runner-part="history-count"></span></summary>
+            <ol class="command-runner-history-list" data-runner-part="history-list"></ol>
+            <p class="command-runner-history-note" data-runner-part="history-note" hidden></p>
+          </details>
+        </section>
       </div>
     `;
   };
@@ -13699,7 +13707,7 @@
     const fromServer = !!commandRunners[kind].serverHistory;
     const entries = runnerHistoryEntries(kind, state);
     state.historyView = entries;
-    runnerPart(root, 'history-count').textContent = entries.length > 0 ? `(${countLabel(entries.length, 'run')})` : '';
+    runnerPart(root, 'history-count').textContent = entries.length > 0 ? `(${entries.length})` : '';
     runnerPart(root, 'history-list').innerHTML = entries.map((entry, index) => `
       <li>
         <button type="button" class="command-runner-history-entry" data-runner-action="restore" data-index="${index}">
@@ -13718,6 +13726,11 @@
     // is what reads the server.
     history.hidden = !fromServer && entries.length === 0;
     if (!fromServer && entries.length === 0) history.open = false;
+    const block = runnerPart(root, 'history-block');
+    const empty = entries.length === 0;
+    runnerPart(root, 'history-entries').classList.toggle('is-empty', empty);
+    runnerPart(root, 'history-empty').hidden = !empty || !!noteKey;
+    block.querySelector('[data-runner-action="clear-history"]').disabled = empty;
   };
 
   // Reads the server's history each time the list opens, the way the old

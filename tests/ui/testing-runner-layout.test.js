@@ -214,18 +214,18 @@ t('history is a collapsed list under the output and an entry restores its output
  await openTab(s,'rabbitmqctl');
  const history=s.content().querySelector('details.command-runner-history');
  expect(visible(history)).toBe(false);
- expect(s.content().querySelector('.command-runner-output').nextElementSibling).toBe(history);
+ expect(s.content().querySelector('.command-runner-output').nextElementSibling).toBe(history.closest('.testing-history'));
  await choose(s,'nodes','ping'); runButton(s).click(); await sleep(30);
  await choose(s,'nodes','status'); runButton(s).click(); await sleep(30);
  expect(visible(history)).toBe(true);
  expect(history.open).toBe(false);
- expect(text(history.querySelector('summary'))).toBe('History (2 runs)');
+ expect(text(history.querySelector('summary'))).toBe('Runs (2)');
  const entries=[...history.querySelectorAll('[data-runner-action="restore"]')];
  expect(entries.map(e=>text(e.querySelector('code')))).toEqual(['rabbitmqctl status','rabbitmqctl ping']);
  entries[1].click();
  expect(s.content().querySelector('.command-runner-output pre').textContent).toBe('first');
  expect(text(s.content().querySelector('.command-runner-output-header code'))).toBe('rabbitmqctl ping');
- const clear=history.querySelector('[data-runner-action="clear-history"]');
+ const clear=history.closest('.testing-history').querySelector('[data-runner-action="clear-history"]');
  expect(clear.textContent).toBe('Clear history');
  expect(clear.getAttribute('data-variant')).toBe('secondary');
 });
@@ -234,7 +234,7 @@ t('clearing the history asks first, then empties the list',async()=>{
  const s=await screen();
  await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping'); runButton(s).click(); await sleep(30);
  const history=s.content().querySelector('details.command-runner-history');
- history.querySelector('[data-runner-action="clear-history"]').click(); await sleep(10);
+ history.closest('.testing-history').querySelector('[data-runner-action="clear-history"]').click(); await sleep(10);
  const dialog=s.d.getElementById('dialog-modal');
  expect(dialog.querySelector('.dialog-modal-message').textContent).toBe('Are you sure you want to clear all command history?');
  dialog.querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
@@ -252,13 +252,13 @@ t('the plugins history shows the server entries beside this session\'s runs',asy
  const history=s.content().querySelector('details.command-runner-history');
  expect(visible(history)).toBe(true);
  expect(history.open).toBe(false);
- expect(text(history.querySelector('summary'))).toBe('History');
+ expect(text(history.querySelector('summary'))).toBe('Runs');
  await choose(s,'monitoring','list');
  s.d.getElementById('plugins-opt-enabled-i1').checked=true;
  runButton(s).click(); await sleep(30);
  history.querySelector('summary').click(); await sleep(30);
  expect(history.open).toBe(true);
- expect(text(history.querySelector('summary'))).toBe('History (2 runs)');
+ expect(text(history.querySelector('summary'))).toBe('Runs (2)');
  const entries=[...history.querySelectorAll('[data-runner-action="restore"]')];
  expect(entries.map(e=>text(e.querySelector('code')))).toEqual(['rabbitmq-plugins list --enabled','rabbitmq-plugins enable rabbitmq_shovel']);
  expect(entries.map(e=>text(e.querySelector('.badge')))).toEqual(['Success','Failure']);
@@ -279,7 +279,7 @@ t('a plugins history entry with an out-of-range timestamp shows a dash',async()=
  await openTab(s,'plugins');
  const history=s.content().querySelector('details.command-runner-history');
  history.querySelector('summary').click(); await sleep(30);
- expect(text(history.querySelector('summary'))).toBe('History (2 runs)');
+ expect(text(history.querySelector('summary'))).toBe('Runs (2)');
  const entries=[...history.querySelectorAll('[data-runner-action="restore"]')];
  expect(entries.map(e=>text(e.querySelector('code')))).toEqual(['rabbitmq-plugins list','rabbitmq-plugins enable rabbitmq_shovel']);
  expect(entries[0].querySelector('time').getAttribute('datetime')).toBe('2026-10-30T12:00:00.000Z');
@@ -329,7 +329,7 @@ t('a dangerous command asks first in the page dialog',async()=>{
  expect(dialog.querySelector('.dialog-close, .dialog-modal-command')).toBeNull();
  expect(text(s.content().querySelector('.command-runner-output-header code'))).toBe('rabbitmqctl join_cluster rabbit@server1');
  const history=s.content().querySelector('details.command-runner-history');
- history.querySelector('[data-runner-action="clear-history"]').click(); await sleep(10);
+ history.closest('.testing-history').querySelector('[data-runner-action="clear-history"]').click(); await sleep(10);
  expect(dialog.open).toBe(true);
  expect(dialog.querySelector('.dialog-close')).toBeNull();
  dialog.querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
@@ -383,3 +383,29 @@ test('the runner styles its line, output, and history in blacksmith.css',()=>{
  const empty=css.match(/\.command-runner-empty \{([^}]*)\}/)[1];
  expect(empty).not.toMatch(/background/);
 });
+
+// Every Testing tab that records results shows the same response history:
+// the heading, the one muted empty line, and Clear history, which stays
+// disabled until there is something to clear.
+for(const tab of ['rabbitmqctl','plugins']){
+ t(`${tab} shows the shared response history block, empty until a run`,async()=>{
+  const s=await screen();
+  await openTab(s,tab);
+  const block=s.content().querySelector('.testing-history');
+  expect(block).not.toBeNull();
+  expect(visible(block)).toBe(true);
+  expect(text(block.querySelector('.history-header h5'))).toBe('Response history');
+  const entries=block.querySelector('.history-entries');
+  expect(entries.classList.contains('is-empty')).toBe(true);
+  expect(text(entries.querySelector('.history-empty'))).toBe('No operations performed yet');
+  expect(entries.querySelector('.history-empty').hidden).toBe(false);
+  const clear=block.querySelector('.history-header [data-runner-action="clear-history"]');
+  expect(clear.textContent).toBe('Clear history');
+  expect(clear.disabled).toBe(true);
+  if(tab==='rabbitmqctl') await choose(s,'nodes','ping'); else await choose(s,'monitoring','list');
+  runButton(s).click(); await sleep(30);
+  expect(entries.classList.contains('is-empty')).toBe(false);
+  expect(entries.querySelector('.history-empty').hidden).toBe(true);
+  expect(clear.disabled).toBe(false);
+ });
+}
