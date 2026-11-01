@@ -44,5 +44,5 @@ test('headings are styled as muted uppercase labels apart from the options', () 
   expect(option).toMatch(/padding: 8px 8px 8px 16px/);
   expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/forge-theme.css?v=20261028-oat-317');
   expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.css?v=20261028-oat-324');
-  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.js?v=20261028-oat-325');
+  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.js?v=20261028-oat-326');
 });

@@ -2377,6 +2377,9 @@
     return true;
   };
   const notifyRoute = () => window.blacksmithViews?.notify();
+  document.addEventListener('click', (event) => {
+    if (event.target.closest?.('a[data-attention-link]')) window.blacksmithCerts?.requestFreshAttention?.();
+  });
 
   // Template rendering functions
   const ENTITY_SECTIONS = {
@@ -2482,7 +2485,7 @@
       ? `<div data-attention="instances"><p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">VM job state: ${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul>${fetched(window.blacksmithDataFetchedAt)}</div>`
       : '';
     let value;
-    if (cert.status === 'ready') value = certificates === 0 ? '0' : `<a href="#/certificates?attention=true">${plural(certificates, 'certificate')} need${certificates === 1 ? 's' : ''} attention</a>`;
+    if (cert.status === 'ready') value = certificates === 0 ? '0' : `<a href="#/certificates?attention=true" data-attention-link>${plural(certificates, 'certificate')} need${certificates === 1 ? 's' : ''} attention</a>`;
     else if (cert.status === 'unknown') value = `<span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">${escapeHtml(cert.reason)}</span>`;
     else value = '<span class="entity-attention-unknown">Loading</span>';
     const certificateRow = `<div data-attention="certificates"><p>Certificates needing attention: ${value}</p>${cert.status === 'ready' ? fetched(cert.fetchedAt) : ''}</div>`;
@@ -16747,8 +16750,8 @@
           if(oldScreen!==route.screen){panelContexts.set(oldScreen,captureInspectionContext());restoreInspectionContext(panelContexts.get(route.screen));}
           blacksmithRequestSequence++;window.cancelInstanceSection?.();
           if(signal?.aborted)return null;
-          if(route.screen==='certificates')window.blacksmithCerts.setAttention(route.attention);
-          if(await switchTab(route.screen)===false||signal?.aborted)return null;
+          const restoreAttention=route.screen==='certificates'?window.blacksmithCerts.setAttention(route.attention):null;
+          if(await switchTab(route.screen)===false||signal?.aborted){restoreAttention?.();return null;}
           const selected=(screen,section)=>document.querySelectorAll(`#${screen} .detail-tab`).forEach(tab=>{const on=tab.dataset.tab===section;tab.classList.toggle('active',on);tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
           if(route.screen==='blacksmith') {selected('blacksmith',route.section||'details');await loadBlacksmithDetailTab(route.section||'details');}
           if(route.screen==='services') {
@@ -26759,7 +26762,7 @@
       if (view.lastAttention !== undefined && state.attention !== view.lastAttention) {
         view.lastAttention = state.attention;
         view.routeAttention = state.attention;
-        if (window.blacksmithViews) window.blacksmithViews.notify();
+        if (window.blacksmithViews) window.blacksmithViews.notify({ replace: true });
       }
       view.signature = '';
       refresh({ announce: true });
@@ -27204,20 +27207,30 @@
       await refresh({ announce: false });
     };
 
-    // A route that names the Needs attention filter replaces the default, and
-    // a route that does not name it restores the default for the next read.
+    // A route that names the Needs attention filter replaces the default. A
+    // bare route leaves the operator's chip as it stands, and the default
+    // applies only the first time the screen opens. The summary link asks
+    // for the fleet list with every other filter cleared, so it leaves a
+    // short-lived mark that the next named route consumes. The returned
+    // function puts the previous filters back if the navigation is dropped.
+    const FRESH_MARK_MS = 3000;
+    let freshMark = 0;
+    const requestFreshAttention = () => { freshMark = Date.now(); };
     const setAttention = (value) => {
-      if (typeof value === 'boolean') {
-        view.defaultsApplied = true;
-        view.routeAttention = value;
-        view.lastAttention = value;
-        state.attention = value;
-      } else if (view.routeAttention !== undefined) {
-        view.routeAttention = undefined;
-        view.lastAttention = undefined;
-        view.defaultsApplied = false;
-        state.attention = false;
-      }
+      if (typeof value !== 'boolean') return () => {};
+      const previous = { filters: JSON.parse(JSON.stringify(state)), defaultsApplied: view.defaultsApplied, routeAttention: view.routeAttention, lastAttention: view.lastAttention };
+      if (Date.now() - freshMark < FRESH_MARK_MS) resetState();
+      freshMark = 0;
+      view.defaultsApplied = true;
+      view.routeAttention = value;
+      view.lastAttention = value;
+      state.attention = value;
+      return () => {
+        Object.keys(previous.filters).forEach((key) => { state[key] = previous.filters[key]; });
+        view.defaultsApplied = previous.defaultsApplied;
+        view.routeAttention = previous.routeAttention;
+        view.lastAttention = previous.lastAttention;
+      };
     };
     const routeAttention = () => view.routeAttention;
 
@@ -27241,7 +27254,7 @@
       openDrawer(cert, document.querySelector(`[data-cert-id="${CSS.escape(id)}"]`));
       return true;
     };
-    return { setAttention, routeAttention, openItem, state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
+    return { setAttention, requestFreshAttention, routeAttention, openItem, state, toQuery, attentionVariants, mergeInventory, refresh, selection, init, startBadge, view, resetState, closeDrawer };
   })();
 
   window.blacksmithCerts = {
@@ -27251,6 +27264,7 @@
     selection: CertsFleet.selection,
     openItem: CertsFleet.openItem,
     setAttention: CertsFleet.setAttention,
+    requestFreshAttention: CertsFleet.requestFreshAttention,
     routeAttention: CertsFleet.routeAttention,
     closeDrawer: CertsFleet.closeDrawer
   };

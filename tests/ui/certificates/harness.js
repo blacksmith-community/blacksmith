@@ -31,7 +31,7 @@ const NAMES=['retainView','markFetched','parseLogLine','renderLogRow','filterTab
  'renderOperation','renderRotateInstances','refreshUpgradeInstanceList','updateUpgradeButton','renderUpgradeInstances','setupUpgradeInstanceHandlers','loadRotateInventory','rotateEligibleChips','rotateState','selectedUpgradeInstances','computeUpgradeHolders','rotateSelectVisible','rotateClearVisible','rotateSelectMatching','renderRotateSelectionLine','rotateSelection','setUpgradeTasks','setServiceInstances','rotateReviewList',
  'buildModeControls','selectedUpgradeInstances','updateOperationFooter','batchPatchBlock','startUpgrade','upgradeOperation','previewAndCreate','rotateErrorText','buildPreviewBody','rotateFooterLabel','renderRotateTargets','normalizeSerial','displaySerial','sameSerial','hasUndeployedVersion','renderServiceTesting','detectServiceFamily','LogSelectionManager','renderRedisInfoOperation','batchOptionIssue','batchInstanceIssue','batchSelectedIds','batchMatchingRows','runBatchReview','recordCommandPreview','commandConfirmWord','recordCommandRefusal','commandState','buildCommandReviewBody','lockCommandControls','entityMetric'];
 function boot(opts={}){
-  const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
+  const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:opts.url||'http://localhost/'});
   const w=dom.window;
   const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
@@ -73,6 +73,8 @@ function boot(opts={}){
   try{ w.eval(ICONS); w.eval(hooked);}catch(e){ console.log('LOAD ERROR',e.stack.split('\n').slice(0,4).join('\n')); errors.push('LOAD ERROR '+e.message); }
   // guidance loads ui/view-guidance.js after blacksmith.js, in the page's order.
   if(opts.guidance) w.eval(fs.readFileSync(path.join(UI,'view-guidance.js'),'utf8'));
+  // The hash router loads after the views it drives, and starts once they exist.
+  if(opts.router) w.eval(fs.readFileSync(path.join(UI,'routes.js'),'utf8'));
   // Oat loads after the page's own script, and defines the tabs element's base class.
   if(opts.oat) w.eval(fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8'));
   return {w,d:w.document,errors,logs,calls,alerts,json,stubs};

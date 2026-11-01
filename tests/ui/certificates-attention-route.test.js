@@ -68,13 +68,74 @@ t('entering by the attention URL filters the rows and the chip agrees, and toggl
  }finally{w.close();}
 });
 
-t('a bare certificates URL keeps the default and leaves the address alone',async()=>{
+t('a bare certificates URL keeps the chip the operator left',async()=>{
  const {w,d}=await start();try{
   await w.blacksmithViews.activate({screen:'certificates',attention:false},{});
   expect(rows(d)).toBe(5);
   await w.blacksmithViews.activate({screen:'certificates'},{});
+  expect(chip(d).getAttribute('aria-pressed')).toBe('false');
+  expect(rows(d)).toBe(5);
+ }finally{w.close();}
+});
+
+t('the first bare visit applies the default and leaves the address alone',async()=>{
+ const {w,d}=await start();try{
+  await w.blacksmithViews.activate({screen:'certificates'},{});
   expect(chip(d).getAttribute('aria-pressed')).toBe('true');
   expect(rows(d)).toBe(2);
   expect(w.blacksmithViews.read('certificates')).toEqual({screen:'certificates'});
+ }finally{w.close();}
+});
+
+t('the summary link opens the attention list with the other filters cleared',async()=>{
+ const {w,d}=await start();try{
+  w.blacksmithCerts.state.q='cn1';
+  w.blacksmithCerts.state.kind=['leaf'];
+  const link=d.createElement('a');link.href='#/certificates?attention=true';link.setAttribute('data-attention-link','');d.body.appendChild(link);
+  link.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
+  await w.blacksmithViews.activate({screen:'certificates',attention:true},{});
+  expect(w.blacksmithCerts.state.q).toBe('');
+  expect(w.blacksmithCerts.state.kind).toEqual([]);
+  expect(rows(d)).toBe(2);
+  // An ordinary route to the same address keeps the filters it finds.
+  w.blacksmithCerts.state.q='cn0';
+  await w.blacksmithViews.activate({screen:'certificates',attention:true},{});
+  expect(w.blacksmithCerts.state.q).toBe('cn0');
+ }finally{w.close();}
+});
+
+t('a navigation that is dropped puts the previous chip back',async()=>{
+ const {w,d}=await start();try{
+  await w.blacksmithViews.activate({screen:'certificates',attention:false},{});
+  const controller=new w.AbortController();controller.abort();
+  const result=await w.blacksmithViews.activate({screen:'certificates',attention:true},{signal:controller.signal});
+  expect(result).toBeNull();
+  expect(w.blacksmithCerts.state.attention).toBe(false);
+  expect(w.blacksmithViews.read('certificates')).toEqual({screen:'certificates',attention:false});
+ }finally{w.close();}
+});
+
+const startRouted=async(hash)=>{
+ const env=boot({noDialogs:true,router:true,url:'http://localhost/'+hash,routes:[['/b/certificates/inventory',inventory],['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/status',(u,o,j)=>j(200,{env:'lab',deployment:'blacksmith',instances:{},plans:{}})]]});
+ await sleep(200);
+ return env;
+};
+
+t('with the router running, a chip toggle rewrites the address in place and Back and Forward follow',async()=>{
+ const {w,d}=await startRouted('#/certificates?attention=true');try{
+  expect(w.location.hash).toBe('#/certificates?attention=true');
+  expect(rows(d)).toBe(2);
+  const before=w.history.length;
+  chip(d).click();await sleep(150);
+  expect(chip(d).getAttribute('aria-pressed')).toBe('false');
+  expect(rows(d)).toBe(5);
+  expect(w.location.hash).toBe('#/certificates?attention=false');
+  expect(w.history.length).toBe(before);
+  w.location.hash='#/broker/summary';await sleep(250);
+  w.history.back();await sleep(300);
+  expect(w.location.hash).toBe('#/certificates?attention=false');
+  expect(rows(d)).toBe(5);
+  w.history.forward();await sleep(600);
+  expect(w.location.hash).toBe('#/broker/summary');
  }finally{w.close();}
 });
