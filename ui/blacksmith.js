@@ -2692,7 +2692,7 @@
         // shares the unresponsive badge style.
         const vmStatusClass = details.vm_status === 'unresponsive agent' ? 'unresponsive' : details.vm_status;
         const vmStatusHtml = details.vm_status ? `
-            <div class="vm-status-badge vm-status-${escapeAttribute(String(vmStatusClass || 'unknown').replace(/[^a-z-]/g,''))}" title="VM Status: ${escapeAttribute(String(details.vm_status))}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}">
+            <div class="vm-status-badge vm-status-${escapeAttribute(String(vmStatusClass || 'unknown').replace(/[^a-z-]/g,''))}" title="VM job state: ${escapeAttribute(String(details.vm_status))}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}">
               <span class="vm-status-icon"></span>
               <span class="vm-status-text">${escapeAttribute(String(details.vm_status))}</span>
               ${details.vm_count ? `<span class="vm-count">${details.vm_healthy || 0}/${details.vm_count}</span>` : ''}
@@ -9239,7 +9239,7 @@
     const createdIso = stampIso(metadata.created_at);
     window.serviceInstanceDetailsContent = window.serviceInstanceDetailsContent || {};
     window.serviceInstanceDetailsContent[id] = `<section class="entity-overview" aria-label="Instance overview">
-      <div class="entity-metrics">${entityMetric(status,'VM status','vms')}${entityMetric(details.vm_count ?? 'Not reported','Virtual machines','vms')}${entityMetric(details.plan?.name || details.plan_id || 'Not reported','Plan','manifest')}</div>
+      <div class="entity-metrics">${entityMetric(status,'VM job state','vms')}${entityMetric(details.vm_count ?? 'Not reported','Virtual machines','vms')}${entityMetric(details.plan?.name || details.plan_id || 'Not reported','Plan','manifest')}</div>
       <article class="card entity-context"><h3>Instance context</h3>${entityFacts([['Name',name],['Service',details.service_id],['Deployment',deployment],['Instance ID',id],['Organization',metadata.organization_name],['Space',metadata.space_name]])}</article>
       <p class="entity-status-note">Use Certificates for expiry and trust, or Events and Logs to investigate changes.</p>
       ${entityMetadata(pairs,'Instance metadata',createdIso ? {'created at': createdIso} : {})}
