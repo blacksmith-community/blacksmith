@@ -1785,7 +1785,7 @@ td a {
 
 .settings-hint {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   margin-top: 4px;
 }
@@ -3423,7 +3423,7 @@ bs-tabs > .manifest-tab-pane {
 }
 
 .vm-count {
-  font-size: 11px;
+  font-size: 12px;
   opacity: 0.8;
   margin-left: 4px;
 }
@@ -4567,7 +4567,7 @@ bs-tabs > .cert-tab-pane[hidden] {
 
 .cert-item-path {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   font-style: italic;
 }
 
@@ -9545,7 +9545,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .event-state {
   padding: 0.125rem 0.5rem;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -10604,7 +10604,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   width: 1.75rem;
   text-align: right;
   padding-right: 0.375rem;
-  font-size: 0.6875rem;
+  font-size: 12px;
   color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
   flex-shrink: 0;
@@ -10634,7 +10634,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 #upgrade .upgrade-instance-release {
   display: inline-block;
   padding: 0.125rem 0.5rem;
-  font-size: 0.6875rem;
+  font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
   background-color: var(--bg-secondary);
   color: var(--text-secondary);
@@ -12596,7 +12596,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 1px 8px;
   border: 1px solid var(--border-primary);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -13418,7 +13418,7 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 #upgrade .task-command-digest {
   margin-left: 6px;
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 

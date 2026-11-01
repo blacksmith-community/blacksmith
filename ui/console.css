@@ -82,7 +82,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
 .skip-link { position: fixed; left: 12px; top: -100px; z-index: 20000; padding: 12px; color: var(--text-primary); background: var(--bg-secondary); }
 .skip-link:focus { top: 8px; }
 #navigation-trigger { display: inline-flex; align-items: center; gap: 26px; min-height: 34px; padding: 5px 12px; border: 1px solid #8495ad; border-radius: 7px; color: #f1f5ff; background: #ffffff0a; font: inherit; cursor: pointer; white-space: nowrap; }
-#navigation-trigger kbd { color: #d5e0f0; font-size: 11px; border: 1px solid #8495ad; padding: 1px 5px; border-radius: 4px; }
+#navigation-trigger kbd { color: #d5e0f0; font-size: 12px; border: 1px solid #8495ad; padding: 1px 5px; border-radius: 4px; }
 #navigation-dialog { box-sizing: border-box; margin: 12vh auto auto; width: min(620px, calc(100vw - 24px)); max-height: 76dvh; padding: 20px; border: 1px solid var(--border-primary); border-radius: 14px; background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 24px 80px #0006; overflow: auto; }
 #navigation-dialog::backdrop { background: #0b1428a6; }
 .navigation-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }

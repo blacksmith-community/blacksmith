@@ -90,7 +90,7 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .entity-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; }
 #blacksmith .entity-navigation, #services .entity-navigation { display: flex; flex-direction: column; flex-wrap: nowrap; gap: 20px; flex: 0 0 185px; overflow-y: auto; padding: 16px 12px; border: 0; border-right: 1px solid var(--border); border-radius: 0; background: var(--background); }
 .entity-section-group { display: flex; flex-direction: column; gap: 2px; }
-.entity-group-label { margin: 0 8px 6px; font-size: .6875rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); cursor: default; pointer-events: none; user-select: none; }
+.entity-group-label { margin: 0 8px 6px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); cursor: default; pointer-events: none; user-select: none; }
 .entity-section-group + .entity-section-group { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--border); }
 #blacksmith .entity-navigation .detail-tab, #services .entity-navigation .detail-tab { text-align: left; justify-content: flex-start; border: 0; border-left: 3px solid transparent; box-shadow: none; min-height: 38px; padding: 8px 8px 8px 16px; white-space: normal; font-size: .875rem; }
 #blacksmith .entity-navigation .detail-tab.active, #services .entity-navigation .detail-tab.active { background: var(--secondary); color: var(--primary); border-left-color: var(--primary); }
@@ -504,7 +504,7 @@ body > footer p { margin: 0; }
   border-radius: 999px;
   padding: 1px 8px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -981,9 +981,18 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 /* The right-hand end of every table toolbar. Refresh and Copy share one box so
    they sit on the same baseline, and the group stays at the right end. */
 .table-toolbar-actions { display: flex; align-items: center; gap: .375rem; margin-left: auto; flex-shrink: 0; }
-#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 28px; min-width: 28px; height: 28px; min-height: 28px; margin: 0; padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; }
+#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 32px; min-width: 32px; height: 32px; min-height: 32px; margin: 0; padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; }
 #blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
 #blacksmith .table-toolbar-actions .refresh-btn-logs.refreshing { cursor: wait; opacity: .7; }
 #blacksmith .table-toolbar-actions .refresh-btn-logs.success { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
 #blacksmith .table-toolbar-actions .refresh-btn-logs.error { background: var(--danger); border-color: var(--danger); color: var(--danger-foreground); }
 #blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) svg { width: 14px; height: 14px; }
+
+/* Hit areas. An icon-only button is at least 24 by 24 CSS pixels, and a
+   toolbar icon button is at least 32 by 32. The icons keep their size. */
+button:is(.copy-btn-inline, .secret-toggle, .secret-copy, .entity-copy, .clear-search-btn, .log-info-toggle, .command-runner-icon-btn, .cert-icon-action, .btn-icon, .copy-btn-manifest, .delete-resurrection-btn, .ssh-btn, .cert-copy-btn) { box-sizing: border-box; min-width: 24px; min-height: 24px; }
+button:is(.refresh-btn-logs, .copy-btn-logs, .refresh-btn, .copy-deployment-names-btn, .clear-filters-btn, .vm-expand, #instance-prev, #instance-next, #keyboard-help-trigger) { box-sizing: border-box; min-width: 32px; min-height: 32px; }
+
+/* A label around a checkbox is the click target, so it is as tall as the
+   smallest hit area and shows the pointer over its whole text. */
+:is(.checkbox-group, .filter-row) label:has(> input[type="checkbox"]), label.checkbox-label { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; }

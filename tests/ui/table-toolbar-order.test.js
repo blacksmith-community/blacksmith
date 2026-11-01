@@ -52,7 +52,7 @@ t('Refresh and Copy share one box so they line up', () => {
   const css = fs.readFileSync(path.join(UI, 'forge-theme.css'), 'utf8');
   const rule = css.match(/#blacksmith \.table-toolbar-actions :is\(\.refresh-btn-logs, \.copy-btn-logs\) \{([^}]*)\}/);
   expect(rule).not.toBeNull();
-  expect(rule[1]).toContain('width: 28px');
-  expect(rule[1]).toContain('height: 28px');
+  expect(rule[1]).toContain('width: 32px');
+  expect(rule[1]).toContain('height: 32px');
   expect(css).toMatch(/\.table-toolbar-actions \{[^}]*margin-left: auto/);
 });
