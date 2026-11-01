@@ -182,6 +182,67 @@ table tbody td {
   font-weight: 400;
 }
 
+/* The VMs table shows six columns. The rest of each VM sits in a detail row. */
+.vms-table .vm-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.vms-table .vm-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.vms-table .vm-expand svg {
+  transition: transform 0.15s ease;
+}
+
+.vms-table .vm-expand[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.vms-table tr.row-detail > td {
+  white-space: normal;
+  background: var(--bg-secondary);
+}
+
+.vms-table .vm-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 0.5rem 1.5rem;
+  margin: 0;
+  padding: 0.5rem 0.25rem;
+}
+
+.vms-table .vm-detail-field {
+  min-width: 0;
+}
+
+.vms-table .vm-detail-field dt {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.vms-table .vm-detail-field dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.vms-table .vm-detail-field .cid-value {
+  max-width: 40ch;
+}
+
 /* Scrollbar appearance for the horizontal container */
 .vms-table-container::-webkit-scrollbar { height: 8px; }
 .vms-table-container::-webkit-scrollbar-track { background: var(--bg-tertiary); border-radius: 4px; }

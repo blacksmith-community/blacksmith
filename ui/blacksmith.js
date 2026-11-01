@@ -1034,7 +1034,8 @@
     const tbody = table.querySelector('tbody');
     if (!tbody) return;
 
-    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const rows = Array.from(tbody.querySelectorAll('tr:not(.row-detail)'));
+    const detailRows = new Map(rows.map(row => [row, row.nextElementSibling?.classList.contains('row-detail') ? row.nextElementSibling : null]));
     const isCurrentlyAsc = headerElement.classList.contains('sort-asc');
     const isCurrentlyDesc = headerElement.classList.contains('sort-desc');
 
@@ -1095,8 +1096,11 @@
       return sortDirection === 'desc' ? -comparison : comparison;
     });
 
-    // Re-append sorted rows
-    rows.forEach(row => tbody.appendChild(row));
+    // Re-append sorted rows, each with the detail row that belongs to it
+    rows.forEach(row => {
+      tbody.appendChild(row);
+      if (detailRows.get(row)) tbody.appendChild(detailRows.get(row));
+    });
   };
 
   // Set up observer for dynamic content
@@ -1748,17 +1752,9 @@
         { key: 'instance', sortable: true },
         { key: 'state', sortable: true },
         { key: 'job_state', sortable: true },
-        { key: 'az', sortable: true },
-        { key: 'vm_type', sortable: true },
-        { key: 'active', sortable: true },
-        { key: 'bootstrap', sortable: true },
         { key: 'ips', sortable: true },
-        { key: 'dns', sortable: true },
-        { key: 'vm_cid', sortable: true },
-        { key: 'agent_id', sortable: true },
-        { key: 'vm_created_at', sortable: true },
-        { key: 'disk_cids', sortable: true },
-        { key: 'resurrection', sortable: true }
+        { key: 'az', sortable: true },
+        { key: 'actions', sortable: false }
       ],
       'logs-table': [
         { key: 'timestamp', sortable: true },
@@ -1856,7 +1852,10 @@
     const tbody = table.querySelector('tbody');
     if (!tbody) return;
 
-    const rows = tbody.querySelectorAll('tr');
+    // A detail row follows its row and is shown or hidden with it. Its text
+    // is searched with the row's, and only rows count in the totals.
+    const rows = Array.from(tbody.querySelectorAll('tr:not(.row-detail)'));
+    const detailOf = (row) => (row.nextElementSibling?.classList.contains('row-detail') ? row.nextElementSibling : null);
     const searchText = filterText.toLowerCase().trim();
 
     if (!searchText) {
@@ -1864,6 +1863,7 @@
       rows.forEach(row => {
         row.style.display = '';
         row.classList.remove('filtered-out');
+        if (detailOf(row)) detailOf(row).style.display = '';
       });
       updateFilteredCount(tableClass, rows.length, rows.length);
       return;
@@ -1871,7 +1871,8 @@
 
     let visibleCount = 0;
     rows.forEach(row => {
-      const cells = row.querySelectorAll('td');
+      const detail = detailOf(row);
+      const cells = [...row.querySelectorAll('td'), ...(detail ? detail.querySelectorAll('dd') : [])];
       let matches = false;
 
       for (const cell of cells) {
@@ -1882,14 +1883,10 @@
         }
       }
 
-      if (matches) {
-        row.style.display = '';
-        row.classList.remove('filtered-out');
-        visibleCount++;
-      } else {
-        row.style.display = 'none';
-        row.classList.add('filtered-out');
-      }
+      row.style.display = matches ? '' : 'none';
+      row.classList.toggle('filtered-out', !matches);
+      if (detail) detail.style.display = matches ? '' : 'none';
+      if (matches) visibleCount++;
     });
 
     updateFilteredCount(tableClass, visibleCount, rows.length);
@@ -2126,86 +2123,7 @@
     } else if (tableClass === 'logs-table') {
       tbody.innerHTML = data.map(row => renderLogRow(row)).join('');
     } else if (tableClass === 'vms-table') {
-      tbody.innerHTML = data.map(vm => {
-        // Use the correct field names from our enhanced VM struct
-        const instanceName = vmInstanceName(vm);
-        const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : EMPTY;
-        const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : EMPTY;
-        const vmType = vm.vm_type || vm.resource_pool || EMPTY;
-        const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
-        const agentId = vm.agent_id || EMPTY;
-        const vmCreatedAt = stampHtml(vm.vm_created_at);
-        const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : EMPTY;
-        const bootstrap = vm.bootstrap ? 'Yes' : 'No';
-        const diskCids = vmDiskCids(vm);
-
-        let stateClass = '';
-        if (vm.state === 'running') {
-          stateClass = 'vm-state-running';
-        } else if (vm.state === 'failing' || vm.state === 'unresponsive' || vm.state === 'unresponsive agent') {
-          stateClass = 'vm-state-error';
-        } else if (vm.state === 'stopped') {
-          stateClass = 'vm-state-stopped';
-        }
-
-        let jobStateClass = '';
-        if (vm.job_state === 'running') {
-          jobStateClass = 'vm-state-running';
-        } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive' || vm.job_state === 'unresponsive agent') {
-          jobStateClass = 'vm-state-error';
-        } else if (vm.job_state === 'stopped') {
-          jobStateClass = 'vm-state-stopped';
-        }
-
-        return `
-          <tr>
-            <td class="vm-instance">
-              ${instanceName !== EMPTY ? `
-                <span class="copy-wrapper">
-                  <span>${instanceName}</span>
-                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
-                          title="Copy to clipboard" aria-label="Copy instance name">
-                    ${blacksmithIcon('copy', { size: 14 })}
-                  </button>
-                </span>
-              ` : EMPTY_HTML}
-            </td>
-            <td class="vm-state ${stateClass}">${vm.state || EMPTY_HTML}</td>
-            <td class="vm-job-state ${jobStateClass}">${vm.job_state || EMPTY_HTML}</td>
-            <td class="vm-az">
-              ${!isEmptyValue(vm.az) ? `
-                <span class="copy-wrapper">
-                  <span>${vm.az}</span>
-                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
-                          title="Copy to clipboard" aria-label="Copy availability zone">
-                    ${blacksmithIcon('copy', { size: 14 })}
-                  </button>
-                </span>
-              ` : EMPTY_HTML}
-            </td>
-            <td class="vm-type">
-              ${vmType !== EMPTY ? `
-                <span class="copy-wrapper">
-                  <span>${vmType}</span>
-                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
-                          title="Copy to clipboard" aria-label="Copy VM type">
-                    ${blacksmithIcon('copy', { size: 14 })}
-                  </button>
-                </span>
-              ` : EMPTY_HTML}
-            </td>
-            <td class="vm-active">${showEmpty(active)}</td>
-            <td class="vm-bootstrap">${bootstrap}</td>
-            <td class="vm-ips">${showEmpty(ips)}</td>
-            <td class="vm-dns">${showEmpty(dns)}</td>
-            <td class="vm-cid">${vm.vm_cid ? cidText(vm.vm_cid) : EMPTY_HTML}</td>
-            <td class="vm-agent-id">${vm.agent_id ? cidText(vm.agent_id) : EMPTY_HTML}</td>
-            <td class="vm-created-at">${showEmpty(vmCreatedAt)}</td>
-            <td class="vm-disk-cids">${diskCids.length > 0 ? cidList(diskCids, 'disk CID', false) : EMPTY_HTML}</td>
-            <td class="vm-resurrection">${resurrection}</td>
-          </tr>
-        `;
-      }).join('');
+      tbody.innerHTML = vmRowsHtml(data, table.dataset.instanceId || null);
     } else if (tableClass === 'deployment-log-table' || tableClass === 'debug-log-table') {
       tbody.innerHTML = data.map(log => {
         const time = timestampHtml(log.time);
@@ -11909,6 +11827,91 @@
     `;
   };
 
+  // The VMs table shows what an operator scans for, and the rest of each VM
+  // sits in a detail row under it. The detail row is a label and value grid
+  // that uses the same copy buttons as the table cells.
+  let vmDetailCounter = 0;
+  const vmStateClass = (state) => {
+    if (state === 'running') return 'vm-state-running';
+    if (state === 'failing' || state === 'unresponsive' || state === 'unresponsive agent') return 'vm-state-error';
+    if (state === 'stopped') return 'vm-state-stopped';
+    return '';
+  };
+  const vmCopyValue = (value, label) => `<span class="copy-wrapper"><span>${value}</span><button class="copy-btn-inline" onclick="window.copyValue(event, '${value}')" title="Copy to clipboard" aria-label="Copy ${label}">${blacksmithIcon('copy', { size: 14 })}</button></span>`;
+  const vmDetailGrid = (vm) => {
+    const vmType = vm.vm_type || vm.resource_pool || EMPTY;
+    const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : EMPTY;
+    const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : EMPTY;
+    const diskCids = vmDiskCids(vm);
+    const field = (label, className, html) => `<div class="vm-detail-field"><dt>${label}</dt><dd class="${className}">${html}</dd></div>`;
+    return `<dl class="vm-detail-grid">${[
+      field('VM CID', 'vm-cid', vm.vm_cid ? cidCopy(vm.vm_cid, 'VM CID') : EMPTY_HTML),
+      field('Agent ID', 'vm-agent-id', vm.agent_id ? cidCopy(vm.agent_id, 'agent ID') : EMPTY_HTML),
+      field('Bootstrap', 'vm-bootstrap', vm.bootstrap ? 'Yes' : 'No'),
+      field('VM type', 'vm-type', vmType !== EMPTY ? vmCopyValue(vmType, 'VM type') : EMPTY_HTML),
+      field('Active', 'vm-active', showEmpty(active)),
+      field('DNS', 'vm-dns', showEmpty(dns)),
+      field('Created at', 'vm-created-at', showEmpty(stampHtml(vm.vm_created_at))),
+      field('Disk CIDs', 'vm-disk-cids', diskCids.length > 0 ? cidList(diskCids, 'disk CID', true) : EMPTY_HTML),
+      field('Resurrection', 'vm-resurrection', vm.resurrection_paused ? 'Paused' : 'Active')
+    ].join('')}</dl>`;
+  };
+  const vmRowsHtml = (vms, instanceId) => vms.map(vm => {
+    const instanceName = vmInstanceName(vm);
+    const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : EMPTY;
+    const isBlacksmith = !instanceId;
+    const deploymentName = isBlacksmith ? 'blacksmith' : instanceId;
+    const sshButtonClass = isBlacksmith ? 'blacksmith-ssh' : 'service-instance-ssh';
+    const deploymentType = isBlacksmith ? 'blacksmith' : 'service-instance';
+    // The director lists an instance without an index only when the
+    // instance has no VM, so its button is disabled and says why.
+    const sshButtonAction = vm.index !== undefined && vm.index < 0
+      ? `disabled title="SSH needs a VM, and ${instanceName} has none"`
+      : `onclick="window.openTerminal('${deploymentType}', '${deploymentName}', '${instanceName}', event)"
+                          title="SSH to ${instanceName}"`;
+    const detailId = `vm-detail-${++vmDetailCounter}`;
+    const nameLabel = instanceName !== EMPTY ? instanceName : 'this VM';
+    return `
+              <tr class="vm-row">
+                <td class="vm-instance">
+                  ${instanceName !== EMPTY ? vmCopyValue(instanceName, 'instance name') : EMPTY_HTML}
+                </td>
+                <td class="vm-state ${vmStateClass(vm.state)}">${vm.state || EMPTY_HTML}</td>
+                <td class="vm-job-state ${vmStateClass(vm.job_state)}">${vm.job_state || EMPTY_HTML}</td>
+                <td class="vm-ips">
+                  ${ips !== EMPTY ? vmCopyValue(ips, 'IP addresses') : EMPTY_HTML}
+                </td>
+                <td class="vm-az">
+                  ${!isEmptyValue(vm.az) ? vmCopyValue(vm.az, 'availability zone') : EMPTY_HTML}
+                </td>
+                <td class="vm-actions"><div class="vm-actions-group">
+                  <button type="button" class="vm-expand" aria-expanded="false" aria-controls="${detailId}" aria-label="Show details for ${escapeAttribute(String(nameLabel))}" title="Show details">
+                    ${blacksmithIcon('chevron-right', { size: 16 })}
+                  </button>
+                  <button class="ssh-btn ${sshButtonClass}"
+                          ${sshButtonAction}>
+                    ${blacksmithIcon('terminal', { size: 16 })}
+                  </button>
+                </div></td>
+              </tr>
+              <tr class="row-detail" id="${detailId}" hidden>
+                <td colspan="6">${vmDetailGrid(vm)}</td>
+              </tr>`;
+  }).join('');
+
+  document.addEventListener('click', (event) => {
+    const toggle = event.target.closest?.('.vm-expand');
+    if (!toggle) return;
+    const detail = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (!detail) return;
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', String(open));
+    const name = toggle.getAttribute('aria-label').replace(/^(Show|Hide) details for /, '');
+    toggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for ${name}`);
+    toggle.title = open ? 'Hide details' : 'Show details';
+    detail.hidden = !open;
+  });
+
   const formatVMs = (vms, instanceId = null) => {
     if (!vms || vms.length === 0) {
       return '<div class="no-data">No VMs available</div>';
@@ -11945,148 +11948,19 @@
           ${tableToolbarActions({ tableSelector: '.vms-table', noun: 'VMs', refresh: `onclick="${refreshFunction}"` })}
         </div>
         <div class="vms-table-container">
-          <table class="vms-table">
+          <table class="vms-table" data-instance-id="${escapeAttribute(String(instanceId || ''))}">
         <thead>
           <tr>
-            <th>SSH</th>
             <th>Instance</th>
             <th>VM state</th>
             <th>Job state</th>
-            <th>AZ</th>
-            <th>VM type</th>
-            <th>Active</th>
-            <th>Bootstrap</th>
             <th>IPs</th>
-            <th>DNS</th>
-            <th>VM CID</th>
-            <th>Agent ID</th>
-            <th>Created at</th>
-            <th>Disk CIDs</th>
-            <th>Resurrection</th>
+            <th>AZ</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          ${vms.map(vm => {
-      // Use the correct field names from our enhanced VM struct
-      const instanceName = vmInstanceName(vm);
-      const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : EMPTY;
-      const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : EMPTY;
-      const vmType = vm.vm_type || vm.resource_pool || EMPTY;
-      const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
-      const agentId = vm.agent_id || EMPTY;
-      const vmCreatedAt = stampHtml(vm.vm_created_at);
-      const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : EMPTY;
-      const bootstrap = vm.bootstrap ? 'Yes' : 'No';
-      const diskCids = vmDiskCids(vm);
-
-      // Add class based on state
-      let stateClass = '';
-      if (vm.state === 'running') {
-        stateClass = 'vm-state-running';
-      } else if (vm.state === 'failing' || vm.state === 'unresponsive' || vm.state === 'unresponsive agent') {
-        stateClass = 'vm-state-error';
-      } else if (vm.state === 'stopped') {
-        stateClass = 'vm-state-stopped';
-      }
-
-      // Add class based on job_state as well
-      let jobStateClass = '';
-      if (vm.job_state === 'running') {
-        jobStateClass = 'vm-state-running';
-      } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive' || vm.job_state === 'unresponsive agent') {
-        jobStateClass = 'vm-state-error';
-      } else if (vm.job_state === 'stopped') {
-        jobStateClass = 'vm-state-stopped';
-      }
-
-      // Determine if this is a blacksmith or service instance context
-      const isBlacksmith = !instanceId;
-      const deploymentName = isBlacksmith ? 'blacksmith' : instanceId;
-      const sshButtonClass = isBlacksmith ? 'blacksmith-ssh' : 'service-instance-ssh';
-      const deploymentType = isBlacksmith ? 'blacksmith' : 'service-instance';
-
-      // The director lists an instance without an index only when the
-      // instance has no VM, so its button is disabled and says why.
-      const sshButtonAction = vm.index !== undefined && vm.index < 0
-        ? `disabled title="SSH needs a VM, and ${instanceName} has none"`
-        : `onclick="window.openTerminal('${deploymentType}', '${deploymentName}', '${instanceName}', event)"
-                          title="SSH to ${instanceName}"`;
-
-      return `
-              <tr>
-                <td class="vm-ssh">
-                  <button class="ssh-btn ${sshButtonClass}"
-                          ${sshButtonAction}>
-                    ${blacksmithIcon('terminal', { size: 16 })}
-                  </button>
-                </td>
-                <td class="vm-instance">
-                  ${instanceName !== EMPTY ? `
-                    <span class="copy-wrapper">
-                      <span>${instanceName}</span>
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
-                              title="Copy to clipboard" aria-label="Copy instance name">
-                        ${blacksmithIcon('copy', { size: 14 })}
-                      </button>
-                    </span>
-                  ` : EMPTY_HTML}
-                </td>
-                <td class="vm-state ${stateClass}">${vm.state || EMPTY_HTML}</td>
-                <td class="vm-job-state ${jobStateClass}">${vm.job_state || EMPTY_HTML}</td>
-                <td class="vm-az">
-                  ${!isEmptyValue(vm.az) ? `
-                    <span class="copy-wrapper">
-                      <span>${vm.az}</span>
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
-                              title="Copy to clipboard" aria-label="Copy availability zone">
-                        ${blacksmithIcon('copy', { size: 14 })}
-                      </button>
-                    </span>
-                  ` : EMPTY_HTML}
-                </td>
-                <td class="vm-type">
-                  ${vmType !== EMPTY ? `
-                    <span class="copy-wrapper">
-                      <span>${vmType}</span>
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
-                              title="Copy to clipboard" aria-label="Copy VM type">
-                        ${blacksmithIcon('copy', { size: 14 })}
-                      </button>
-                    </span>
-                  ` : EMPTY_HTML}
-                </td>
-                <td class="vm-active">${showEmpty(active)}</td>
-                <td class="vm-bootstrap">${bootstrap}</td>
-                <td class="vm-ips">
-                  ${ips !== EMPTY ? `
-                    <span class="copy-wrapper">
-                      <span>${ips}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
-                        title="Copy to clipboard" aria-label="Copy IP addresses">
-                  ${blacksmithIcon('copy', { size: 14 })}
-                </button>
-                    </span>
-                  ` : EMPTY_HTML}
-                </td>
-                <td class="vm-dns">${showEmpty(dns)}</td>
-                <td class="vm-cid">
-                  ${vm.vm_cid ? `
-                    ${cidCopy(vm.vm_cid, 'VM CID')}
-                  ` : EMPTY_HTML}
-                </td>
-                <td class="vm-agent-id">
-                  ${agentId !== EMPTY ? `
-                    ${cidCopy(agentId, 'agent ID')}
-                  ` : EMPTY_HTML}
-                </td>
-                <td class="vm-created-at">${showEmpty(vmCreatedAt)}</td>
-                <td class="vm-disk-cids">
-                  ${diskCids.length > 0 ? cidList(diskCids, 'disk CID', true) : EMPTY_HTML}
-                </td>
-                <td class="vm-resurrection">${resurrection}</td>
-              </tr>
-            `;
-    }).join('')}
+          ${vmRowsHtml(vms, instanceId)}
         </tbody>
           </table>
         </div>
@@ -14238,13 +14112,17 @@
         return;
       }
 
-      // Get all visible rows (not hidden by filter)
-      const rows = table.querySelectorAll('tbody tr:not([style*="display: none"])');
+      // Get all visible rows (not hidden by filter). A detail row adds its
+      // labels to the header and its values to the row above it, so the copy
+      // holds every column even when the table shows only some of them.
+      const rows = table.querySelectorAll('tbody tr:not([style*="display: none"]):not(.row-detail)');
       let textContent = [];
+      const firstDetail = table.querySelector('tbody tr.row-detail');
+      const detailLabels = firstDetail ? Array.from(firstDetail.querySelectorAll('dt')).map(dt => dt.textContent.trim()) : [];
 
       // Extract headers first
       const headers = table.querySelectorAll('thead th');
-      const headerTexts = Array.from(headers).map(h => h.textContent.trim());
+      const headerTexts = Array.from(headers).map(h => h.textContent.trim()).concat(detailLabels);
       if (headerTexts.length > 0) {
         textContent.push(headerTexts.join('\t'));
       }
@@ -14252,7 +14130,8 @@
       // Extract visible row data
       rows.forEach(row => {
         const cells = row.querySelectorAll('td');
-        const rowData = Array.from(cells).map(cell => {
+        const detail = row.nextElementSibling?.classList.contains('row-detail') ? row.nextElementSibling : null;
+        const rowData = Array.from(cells).concat(detail ? Array.from(detail.querySelectorAll('dd')) : []).map(cell => {
           // Get text content, stripping HTML
           const text = cell.textContent || cell.innerText || '';
           return text.trim();

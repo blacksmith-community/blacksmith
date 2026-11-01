@@ -26,7 +26,7 @@ t('long CID values are capped, titled, and still copy in full',async()=>{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([vm()],'inst-1');
  for(const [cell,value] of [['vm-cid',LONG('v')],['vm-agent-id',LONG('a')]]){
-  const td=host.querySelector('td.'+cell);
+  const td=host.querySelector('.'+cell);
   const shown=td.querySelector('.cid-value');
   expect(shown.getAttribute('title')).toBe(value);
   expect(shown.textContent).toBe(value);
@@ -38,7 +38,7 @@ t('each disk CID sits on its own line with its own copy button',async()=>{
  const {w,d}=boot();await sleep(50);try{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([vm()],'inst-1');
- const lines=[...host.querySelectorAll('td.vm-disk-cids .cid-line')];
+ const lines=[...host.querySelectorAll('.vm-disk-cids .cid-line')];
  expect(lines.length).toBe(2);
  expect(lines.map((l)=>l.querySelector('.cid-value').getAttribute('title'))).toEqual([LONG('d'),LONG('e')]);
  lines.forEach((l,i)=>expect(l.querySelector('button.copy-btn-inline').getAttribute('onclick')).toContain(LONG(i?'e':'d')));
@@ -48,9 +48,9 @@ t('a short CID and a single disk CID read as before',async()=>{
  const {w,d}=boot();await sleep(50);try{
  const host=d.createElement('div');d.body.appendChild(host);
  host.innerHTML=w.__T.formatVMs([vm({vm_cid:'vm-1',disk_cids:['disk-1']})],'inst-1');
- expect(host.querySelector('td.vm-cid .cid-value').textContent).toBe('vm-1');
- expect(host.querySelectorAll('td.vm-disk-cids .cid-line').length).toBe(1);
- expect(host.querySelector('td.vm-disk-cids .cid-value').textContent).toBe('disk-1');
+ expect(host.querySelector('.vm-cid .cid-value').textContent).toBe('vm-1');
+ expect(host.querySelectorAll('.vm-disk-cids .cid-line').length).toBe(1);
+ expect(host.querySelector('.vm-disk-cids .cid-value').textContent).toBe('disk-1');
  }finally{w.close();}
 });
 t('the sorted table body caps the same values',async()=>{
@@ -59,10 +59,10 @@ t('the sorted table body caps the same values',async()=>{
  host.innerHTML=w.__T.formatVMs([vm(),vm({id:'def'})],'inst-1');
  w.__T.initializeSorting('vms-table');
  host.querySelector('.vms-table thead th').click();
- const cell=host.querySelector('.vms-table td.vm-disk-cids');
+ const cell=host.querySelector('.vms-table .vm-disk-cids');
  expect(cell.querySelectorAll('.cid-value').length).toBe(2);
  expect(cell.querySelector('.cid-value').getAttribute('title')).toBe(LONG('d'));
- expect(host.querySelector('.vms-table td.vm-cid .cid-value').getAttribute('title')).toBe(LONG('v'));
+ expect(host.querySelector('.vms-table .vm-cid .cid-value').getAttribute('title')).toBe(LONG('v'));
  }finally{w.close();}
 });
 test('the CSS holds a CID value to 24ch with an ellipsis',()=>{
