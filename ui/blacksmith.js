@@ -2405,7 +2405,6 @@
   // and only for a view put back from memory without a new request.
   const fetchedAtByContainer = new WeakMap();
   const showRetainedContext = (container, fetchedAt) => {
-    container.parentElement?.querySelector(':scope > .retained-view-note')?.remove();
     container.querySelectorAll('.data-fetched-note').forEach(note => note.remove());
     if (!fetchedAt) { delete container.dataset.retainedAt; return; }
     const actions = container.querySelector('.table-toolbar-actions');
@@ -2419,36 +2418,16 @@
     const refresh = event.target.closest?.('.refresh-btn-logs');
     refresh?.closest('.detail-content')?.querySelectorAll('.data-fetched-note').forEach(note => note.remove());
   });
-  // A load finishes when the loading placeholder is removed and content takes
-  // its place, so the fetch time is stamped then, after the first mount and
-  // after Refresh. Any other child added later never restamps it.
-  const loadWatchers = new Map();
-  const dropLoadWatcher = (container) => {
-    loadWatchers.get(container)?.disconnect();
-    loadWatchers.delete(container);
-  };
-  const watchLoads = (container) => {
-    // A replaced container, or one that left the DOM, no longer needs a watcher.
-    loadWatchers.forEach((_, other) => { if (other !== container && !other.isConnected) dropLoadWatcher(other); });
-    if (loadWatchers.has(container)) return loadWatchers.get(container);
-    const watcher = new MutationObserver((records) => {
-      if (!container.isConnected) { dropLoadWatcher(container); return; }
-      const removedLoading = records.some(record => [...record.removedNodes].some(node => node.classList?.contains('loading')));
-      if (removedLoading && container.firstChild && !container.querySelector(':scope > .loading')) fetchedAtByContainer.set(container, Date.now());
-    });
-    watcher.observe(container, { childList: true });
-    loadWatchers.set(container, watcher);
-    return watcher;
-  };
+  // The code that finishes a load calls this for its container, whether the
+  // container is attached or set aside, so the stored time is the fetch time.
+  const markFetched = (container) => { if (container) fetchedAtByContainer.set(container, Date.now()); };
   const retainView = (container, key) => {
-    const watcher = watchLoads(container);
     const previous = mountedViews.get(container);
     if (previous === key && !container.querySelector(':scope > .loading')) return true;
     if (previous && !container.querySelector(':scope > .loading')) {
       const fragment = document.createDocumentFragment();
       while (container.firstChild) fragment.appendChild(container.firstChild);
       retainedViews.set(previous, {fragment, plans: container.classList.contains('plans-view'), savedAt: Date.now(), fetchedAt: fetchedAtByContainer.get(container) || Date.now(),context:captureInspectionContext(),dirty:dirtyViews.has(container)});
-      watcher.takeRecords();
       trimRetainedViews();
     }
     mountedViews.set(container, key);
@@ -2459,7 +2438,6 @@
     restoreInspectionContext(saved.context);
     if(saved.dirty){dirtyViews.add(container);container.dataset.hasDraft='true';}
     container.replaceChildren(saved.fragment);
-    watcher.takeRecords();
     container.dataset.retainedAt=String(saved.savedAt);
     fetchedAtByContainer.set(container, saved.fetchedAt);
     showRetainedContext(container, saved.fetchedAt);
@@ -14737,6 +14715,7 @@
 
       const data = await response.json();
       if (!refresh.current()) return;
+      refresh.fetched();
       const logs = data.logs;
 
       // Update pagination state
@@ -14804,7 +14783,7 @@
       detailRefreshRequests.get(container) === request && mountedViews.get(container) === viewKey &&
       (!instanceId || window.currentInstanceInfo?.id === instanceId) &&
       (!panel.querySelector('.detail-tab.active') || panel.querySelector('.detail-tab.active').dataset.tab === section);
-    return {container, current, error(message) {
+    return {container, current, fetched: () => markFetched(container), error(message) {
       if (!current()) return;
       let note = container.querySelector('.view-refresh-error');
       if (!note) { note = document.createElement('p'); note.className = 'view-refresh-error'; note.setAttribute('data-variant', 'danger'); note.setAttribute('role', 'status'); container.prepend(note); }
@@ -14843,6 +14822,7 @@
 
       const events = await response.json();
       if (!refresh.current()) return;
+      refresh.fetched();
 
       if (!events || events.length === 0) {
         // Find the detail-content container and update it
@@ -14928,6 +14908,7 @@
 
       const vms = await response.json();
       if (!refresh.current()) return;
+      refresh.fetched();
 
       if (!vms || vms.length === 0) {
         // Find the detail-content container and update it
@@ -15020,6 +15001,7 @@
 
       const text = await response.text();
       if (!refresh.current()) return;
+      refresh.fetched();
       let vms;
       try {
         vms = JSON.parse(text);
@@ -15117,6 +15099,7 @@
 
       const text = await response.text();
       if (!refresh.current()) return;
+      refresh.fetched();
       let logs;
       try {
         logs = JSON.parse(text);
@@ -15199,6 +15182,7 @@
 
       const text = await response.text();
       if (!refresh.current()) return;
+      refresh.fetched();
       let logs;
       try {
         logs = JSON.parse(text);
@@ -15279,6 +15263,7 @@
 
       const text = await response.text();
       if (!refresh.current()) return;
+      refresh.fetched();
       let events;
       try {
         events = JSON.parse(text);
@@ -15370,6 +15355,7 @@
 
       const data = await response.json();
       if (!refresh.current()) return;
+      refresh.fetched();
       const logs = data.logs;
 
       // Update pagination state
@@ -16364,6 +16350,7 @@
           const content = await fetchServiceDetail(instanceId, tabType, () => request === detailRequestSequence && contentContainer.isConnected && window.currentInstanceInfo?.id === instanceId);
           if (request !== detailRequestSequence || !contentContainer.isConnected || window.currentInstanceInfo?.id !== instanceId) return;
           contentContainer.innerHTML = content;
+          markFetched(contentContainer);
           mountLogNotice(contentContainer);
 
           // Initialize sorting and filtering for tables
@@ -16468,6 +16455,7 @@
             } catch (_) { /* Basic context remains available when connection details cannot load. */ }
             if (request !== blacksmithRequestSequence) return;
             contentContainer.innerHTML = renderBlacksmithOverview(window.blacksmithData || {}, creds);
+            markFetched(contentContainer);
             return;
           }
 
@@ -16522,6 +16510,7 @@
           const content = await fetchBlacksmithDetail(deploymentName, tabType, () => request === blacksmithRequestSequence);
           if (request !== blacksmithRequestSequence) return;
           contentContainer.innerHTML = content;
+          markFetched(contentContainer);
           mountLogNotice(contentContainer);
 
           // Initialize sorting and filtering for tables
@@ -17025,6 +17014,7 @@
 
       const tasks = await response.json();
       if (!refresh.current()) return;
+      refresh.fetched();
       const contentContainer = refresh.container;
 
       if (contentContainer) {
@@ -17154,6 +17144,7 @@
 
       const configs = await response.json();
       if (!refresh.current()) return;
+      refresh.fetched();
       const contentContainer = refresh.container;
 
       if (contentContainer) {
