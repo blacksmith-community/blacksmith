@@ -98,6 +98,13 @@
         button.addEventListener('click', () => { root.blacksmithTheme?.setPreference(value); dialog.close(); root.blacksmithNav?.announce(`${name} selected`); });
         dialog.querySelector('.theme-choices').append(button);
       }
+      // The text-label setting sits under the theme choices. It is a body
+      // attribute, off until someone turns it on.
+      const labelSetting = document.createElement('label'); labelSetting.className = 'action-label-setting';
+      const labelInput = document.createElement('input'); labelInput.type = 'checkbox'; labelInput.dataset.actionLabelToggle = '';
+      labelInput.addEventListener('change', () => document.body.toggleAttribute('data-action-labels', labelInput.checked));
+      labelSetting.append(labelInput, document.createTextNode(' Show text labels beside icon actions'));
+      dialog.append(labelSetting);
       dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
       dialog.addEventListener('close', () => { hide(); document.getElementById('themeToggle')?.focus(); });
       dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
@@ -106,22 +113,13 @@
     let preference = 'system';
     try { preference = root.localStorage.getItem('theme') || 'system'; } catch (_) { /* Storage may be blocked. */ }
     dialog.querySelectorAll('[data-theme-choice]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.themeChoice === preference)));
+    dialog.querySelector('[data-action-label-toggle]').checked = document.body.hasAttribute('data-action-labels');
     dialog.showModal(); root.blacksmithAnnouncers?.watch(dialog); dialog.querySelector('[aria-pressed="true"]')?.focus();
-  }
-  function addLabelToggle() {
-    const content = document.querySelector('#keyboard-help-dialog .keyboard-help-content');
-    if (!content || content.querySelector('[data-action-label-toggle]')) return;
-    const label = document.createElement('label'); label.className = 'action-label-setting';
-    const input = document.createElement('input'); input.type = 'checkbox'; input.dataset.actionLabelToggle = '';
-    input.checked = document.body.hasAttribute('data-action-labels');
-    input.addEventListener('change', () => document.body.toggleAttribute('data-action-labels', input.checked));
-    label.append(input, document.createTextNode(' Show text labels beside icon actions'));
-    content.prepend(label);
   }
   function init() {
     if (observer) return;
     document.documentElement.classList.add('blacksmith-action-help');
-    scan(document); addLabelToggle();
+    scan(document);
     observer = new root.MutationObserver(records => {
       for (const record of records) {
         if (record.type === 'childList') record.addedNodes.forEach(scan);
@@ -134,7 +132,6 @@
       }
       if (active && !active.isConnected) hide();
       if (active && tooltip) { const text = label(active); if (tooltip.textContent !== text) tooltip.textContent = text; describe(); position(); }
-      addLabelToggle();
     });
     observer.observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['title','aria-label','data-help','data-tooltip']});
     document.addEventListener('focusin', event => { const control = event.target.closest(selector); if (control) show(control); });

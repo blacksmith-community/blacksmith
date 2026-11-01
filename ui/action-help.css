@@ -18,7 +18,7 @@
 .theme-choices { display: grid; gap: 6px; }
 .theme-choices button { text-align: left; white-space: normal; }
 .theme-choices [aria-pressed="true"] { border-color: var(--primary); box-shadow: inset 3px 0 var(--primary); font-weight: 700; }
-.action-label-setting { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.action-label-setting { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; }
 [data-icon-help]::after { display: none; }
 body[data-action-labels] [data-icon-help] { width: auto !important; max-width: 100%; gap: 6px; }
 body[data-action-labels] [data-icon-help]::after { display: inline; content: attr(data-action-help); font-size: .8125rem; white-space: normal; }
