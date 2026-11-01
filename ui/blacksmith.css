@@ -9313,16 +9313,48 @@ span.config-type.resurrection {
   overflow-x: hidden;
 }
 
-#task-details-modal .task-tabs-nav {
-  padding: 0.25rem 0.5rem;
+/* The output tabs are a bs-tabs strip like the instance certificate tabs, so
+   the tab list takes the plain manifest tab bar and the panels are its
+   direct children. */
+#task-details-modal bs-tabs.task-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  max-height: calc(90vh - 200px);
   margin: 0;
-  border-radius: 9999px;
-  border: 1px solid var(--border-primary);
+}
+
+#task-details-modal .task-tabs-nav {
+  flex: 0 0 auto;
+}
+
+#task-details-modal bs-tabs.task-tabs > .task-tab-pane {
+  flex: 1 1 0%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
   background: var(--bg-secondary);
-  box-shadow: var(--shadow-secondary);
-  gap: 0.25rem;
-  flex: 0 0 auto; /* Fixed height */
-  height: 48px; /* Explicit height */
+  border: 1px solid var(--border-table);
+  border-radius: 0 0 8px 8px;
+  padding: 0.75rem;
+}
+
+#task-details-modal bs-tabs.task-tabs > .task-tab-pane[hidden] {
+  display: none;
+}
+
+/* An event level is the Tasks list state badge, without its pulse. */
+#task-details-modal .task-event-level {
+  animation: none;
+}
+
+/* A task that did not finish says where it stopped, above its events. */
+#task-details-modal .task-end-summary {
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
 }
 
 #task-details-modal .task-tab-content {
@@ -9459,7 +9491,7 @@ span.config-type.resurrection {
 
 #task-details-modal .task-tab-scroll td.level,
 #task-details-modal .task-tab-scroll .log-level {
-  width: 7rem;
+  width: 9rem;
 }
 
 #task-details-modal .task-tab-scroll td.message,

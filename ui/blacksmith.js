@@ -17779,7 +17779,7 @@
       const modalHTML = `
         <dialog id="task-details-modal" class="modal-dialog" aria-labelledby="task-details-modal-title">
               <div class="modal-header">
-                <h3 id="task-details-modal-title">Task Details</h3>
+                <h3 id="task-details-modal-title">BOSH task</h3>
                 <div class="task-actions">
                   <button id="cancel-task-btn" class="btn btn-secondary" style="display: none;" onclick="cancelTaskAndRefresh()">Cancel Task</button>
                 </div>
@@ -17801,27 +17801,26 @@
                     </dl>
                   </div>
 
-                  <div class="manifest-tabs-nav task-tabs-nav">
-                    <button class="manifest-tab-btn active" data-tab="task" data-group="task-tabs">Task</button>
-                    <button class="manifest-tab-btn" data-tab="debug" data-group="task-tabs">Debug</button>
-                    <button class="manifest-tab-btn" data-tab="raw" data-group="task-tabs">Raw</button>
-                    <button class="manifest-tab-btn" data-tab="cpi" data-group="task-tabs">CPI</button>
-                  </div>
-
-                  <div class="manifest-tab-content task-tab-content">
-                    <div id="task-task-content" class="manifest-tab-pane task-tab-pane active" data-tab="task" data-group="task-tabs">
+                  <bs-tabs class="task-tabs">
+                    <div class="manifest-tabs-nav task-tabs-nav" role="tablist" aria-label="Task output">
+                      <button type="button" role="tab" id="task-tab-task" aria-controls="task-task-content" aria-selected="true" tabindex="0" class="manifest-tab-btn active" data-tab="task" data-group="task-tabs">Task</button>
+                      <button type="button" role="tab" id="task-tab-debug" aria-controls="task-debug-content" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="debug" data-group="task-tabs">Debug</button>
+                      <button type="button" role="tab" id="task-tab-raw" aria-controls="task-raw-content" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="raw" data-group="task-tabs">Raw</button>
+                      <button type="button" role="tab" id="task-tab-cpi" aria-controls="task-cpi-content" aria-selected="false" tabindex="-1" class="manifest-tab-btn" data-tab="cpi" data-group="task-tabs">CPI</button>
+                    </div>
+                    <div id="task-task-content" role="tabpanel" aria-labelledby="task-tab-task" class="manifest-tab-pane task-tab-pane active" data-tab="task" data-group="task-tabs">
                       <div class="loading">Loading task output...</div>
                     </div>
-                    <div id="task-debug-content" class="manifest-tab-pane task-tab-pane" data-tab="debug" data-group="task-tabs">
+                    <div id="task-debug-content" role="tabpanel" aria-labelledby="task-tab-debug" class="manifest-tab-pane task-tab-pane" data-tab="debug" data-group="task-tabs">
                       <div class="loading">Loading debug...</div>
                     </div>
-                    <div id="task-raw-content" class="manifest-tab-pane task-tab-pane" data-tab="raw" data-group="task-tabs">
+                    <div id="task-raw-content" role="tabpanel" aria-labelledby="task-tab-raw" class="manifest-tab-pane task-tab-pane" data-tab="raw" data-group="task-tabs">
                       <div class="loading">Loading raw data...</div>
                     </div>
-                    <div id="task-cpi-content" class="manifest-tab-pane task-tab-pane" data-tab="cpi" data-group="task-tabs">
+                    <div id="task-cpi-content" role="tabpanel" aria-labelledby="task-tab-cpi" class="manifest-tab-pane task-tab-pane" data-tab="cpi" data-group="task-tabs">
                       <div class="loading">Loading CPI output...</div>
                     </div>
-                  </div>
+                  </bs-tabs>
                 </div>
               </div>
         </dialog>
@@ -17841,6 +17840,7 @@
 
     // Store current task ID for refresh
     window.currentTaskId = taskId;
+    document.getElementById('task-details-modal-title').textContent = `BOSH task ${taskId}`;
 
     // Escape and the backdrop close the native dialog, which ends the run
     // and calls hideTaskDetailsModal for the rest of the cleanup.
@@ -18757,37 +18757,17 @@
 
   // escapeHtml function is already defined earlier in the code
 
-  // Set up task modal tab switching
+  // Set up task modal tab switching. The bs-tabs element selects the tab and
+  // panel, and this loads a panel's output the first time it is shown.
   const setupTaskModalTabs = () => {
-    const tabGroupId = 'task-tabs';
-    const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
-    const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
-
-    tabButtons.forEach(button => {
-      button.addEventListener('click', () => {
-        const tabName = button.dataset.tab;
-
-        // Update active states
-        tabButtons.forEach(btn => btn.classList.remove('active'));
-        button.classList.add('active');
-
-        // Show/hide content panes
-        tabPanes.forEach(pane => {
-          pane.classList.remove('active');
-          pane.style.display = 'none';
-        });
-
-        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
-        if (targetPane) {
-          targetPane.classList.add('active');
-          targetPane.style.display = '';
-
-          // Load content if not already loaded
-          if (targetPane.innerHTML.includes('Loading') && window.currentTaskId) {
-            loadTaskTabContent(window.currentTaskId, tabName);
-          }
-        }
-      });
+    const tabset = document.querySelector('#task-details-modal bs-tabs');
+    if (!tabset) return;
+    tabset.addEventListener('ot-tab-change', (event) => {
+      if (event.target !== tabset) return;
+      const targetPane = tabset.panels[event.detail.index];
+      if (targetPane && targetPane.innerHTML.includes('Loading') && window.currentTaskId) {
+        loadTaskTabContent(window.currentTaskId, targetPane.dataset.tab);
+      }
     });
   };
 
@@ -18810,7 +18790,8 @@
       const task = taskData.task;
 
       // Update task summary and modal title
-      document.getElementById('task-details-modal-title').textContent = `Task Details - Task # ${task.id}`;
+      document.getElementById('task-details-modal-title').textContent = `BOSH task ${task.id}`;
+      contentDiv.dataset.taskState = task.state || '';
       setCellText(document.getElementById('task-description'), task.description);
       setCellText(document.getElementById('task-deployment'), task.deployment);
       setCellText(document.getElementById('task-user'), task.user);
@@ -18914,11 +18895,6 @@
             for (const line of lines) {
               try {
                 const event = JSON.parse(line);
-                // Convert Unix timestamp to readable format
-                const timestamp = new Date(event.time * 1000);
-                const timeStr = timestamp.toISOString().substring(11, 19); // HH:MM:SS format
-                const dateStr = timestamp.toISOString().substring(0, 10); // YYYY-MM-DD format
-
                 // Build display message from stage and task info
                 let message = event.stage;
                 if (event.task && event.task !== event.stage) {
@@ -18935,10 +18911,11 @@
                 }
 
                 events.push({
-                  date: dateStr,
-                  time: timeStr,
+                  time: event.time,
+                  stage: event.stage,
                   level: event.state.toUpperCase(),
-                  message: message
+                  message: message,
+                  error: event.error && event.error.message
                 });
               } catch (e) {
                 // Skip malformed JSON lines
@@ -18948,7 +18925,7 @@
 
             // Format as task events table
             if (events.length > 0) {
-              content = formatTaskEventsAsLogs(events, 'task');
+              content = formatTaskEventsAsLogs(events, 'task', document.getElementById('task-details-content')?.dataset.taskState);
             } else {
               content = formatTaskOutput('', outputType);
             }
@@ -19093,7 +19070,25 @@
   };
 
   // Format task events as logs table for the Task tab
-  const formatTaskEventsAsLogs = (events, outputType) => {
+  // An event level takes the color of the Tasks list state it matches.
+  const taskEventLevelState = (level) => {
+    const name = String(level || '').toLowerCase();
+    if (name === 'finished') return 'done';
+    if (name === 'started' || name === 'in_progress') return 'processing';
+    if (name === 'failed' || name === 'error') return 'error';
+    return 'queued';
+  };
+
+  // A task that did not finish says where it stopped, above the events.
+  const taskEndSummary = (events, taskState) => {
+    if (!['error', 'cancelled', 'timeout'].includes(taskState) || !events.length) return '';
+    const last = events[events.length - 1];
+    const detail = last.error || last.message || '';
+    const variant = taskState === 'cancelled' ? 'warning' : 'danger';
+    return `<div class="task-end-summary" role="status" data-variant="${variant}"><strong>${escapeHtml(String(last.stage || 'Last event'))}</strong>${detail ? `: ${escapeHtml(String(detail))}` : ''}</div>`;
+  };
+
+  const formatTaskEventsAsLogs = (events, outputType, taskState) => {
     const tableClass = `task-${outputType}-table`;
 
     if (!events || events.length === 0) {
@@ -19129,14 +19124,14 @@
     }
 
     const rows = events.map(event => {
-      const timestamp = event.date && event.time ? `${event.date} ${event.time}` : (event.time || EMPTY);
+      const timestamp = formatTimestamp(event.time);
       const level = event.level || 'INFO';
       const message = event.message || '';
 
       return `
         <tr>
           <td class="timestamp">${timestamp}</td>
-          <td class="level"><span class="log-level ${level.toLowerCase()}">${level}</span></td>
+          <td class="level"><span class="log-level ${level.toLowerCase()} task-event-level task-state ${taskEventLevelState(level)}">${level}</span></td>
           <td class="message">${highlightPatterns(message)}</td>
         </tr>
       `;
@@ -19144,6 +19139,7 @@
 
     return `
       <div class="logs-table-container task-table">
+        ${taskEndSummary(events, taskState)}
         <div class="table-controls-container">
           <div class="search-filter-container">
             ${createSearchFilter(tableClass, 'Search task events...')}

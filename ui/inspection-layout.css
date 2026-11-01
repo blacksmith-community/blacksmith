@@ -1,21 +1,21 @@
-/* Inspection metadata is a readable set of facts, not a wide one-row data table. */
+/* Inspection metadata is a readable set of facts, not a wide one-row data table.
+   The grid and spacing match the facts in the instance context card. */
 #task-details-modal .task-summary-facts {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
-  gap: 10px 20px; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px 24px; margin: 0; padding: 0;
 }
 #task-details-modal .task-summary-facts > div { min-width: 0; padding: 0; }
-#task-details-modal .task-summary-facts dt { color: var(--muted-foreground); font-size: .8125rem; font-weight: 500; margin: 0 0 3px; }
-#task-details-modal .task-summary-facts dd { color: var(--foreground); font-size: .875rem; margin: 0; overflow-wrap: anywhere; }
-#task-details-modal .task-fact-description,
-#task-details-modal .task-fact-deployment { grid-column: span 2; }
-#task-details-modal .task-summary-section { padding: 0 0 12px; margin: 0 0 12px; border-bottom: 1px solid var(--border); }
+#task-details-modal .task-summary-facts dt { color: var(--muted-foreground); font-size: .75rem; font-weight: 500; margin: 0; }
+#task-details-modal .task-summary-facts dd { color: var(--foreground); font-size: .875rem; margin: 2px 0 0; overflow-wrap: anywhere; }
+#task-details-modal .task-summary-section { padding: 0 0 16px; margin: 16px 0 16px; border-bottom: 1px solid var(--border); }
 #blacksmith .config-id { white-space: nowrap; }
 #blacksmith .config-active-label { display: inline-block; margin-left: 8px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--foreground); background: var(--secondary); font-size: .75rem; }
 #blacksmith .blacksmith-settings .settings-row { align-items: start; }
 #blacksmith .blacksmith-settings .settings-feedback { white-space: normal; overflow-wrap: anywhere; }
 #blacksmith .blacksmith-settings [aria-invalid="true"] { border-color: var(--danger); outline: 1px solid var(--danger); }
+@media (max-width: 900px) {
+  #task-details-modal .task-summary-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 600px) {
   #task-details-modal .task-summary-facts { grid-template-columns: 1fr; }
-  #task-details-modal .task-fact-description,
-  #task-details-modal .task-fact-deployment { grid-column: auto; }
 }
