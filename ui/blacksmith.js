@@ -13094,7 +13094,8 @@
 
   // Colors the status dot on the Connection tab. Every Connection tab draws
   // its dot when it renders, and the tab's title names the state.
-  const updateConnectionStatus = (instanceId, connected) => {
+  // A state names the dot directly. Without one, the dot follows the flag.
+  const updateConnectionStatus = (instanceId, connected, namedState = null) => {
     const connectionTab = document.querySelector(`.operation-tab[data-operation="test"][data-instance="${instanceId}"]`);
     if (connectionTab) {
       let indicator = connectionTab.querySelector('.connection-status-indicator');
@@ -13104,7 +13105,7 @@
         indicator.setAttribute('aria-hidden', 'true');
         connectionTab.insertBefore(indicator, connectionTab.firstChild);
       }
-      const state = connected ? 'connected' : 'disconnected';
+      const state = namedState || (connected ? 'connected' : 'disconnected');
       indicator.dataset.state = state;
       connectionTab.title = CONNECTION_STATES[state];
     }
@@ -14051,8 +14052,9 @@
       setTimeout(() => {
         const connectionState = window.serviceConnections && window.serviceConnections[instanceId];
         if (connectionState) {
-          // Update connection status indicator
-          updateConnectionStatus(instanceId, connectionState.connected);
+          // Redraw the dot from the last attempt. Before any attempt there is
+          // no line, so it stays neutral rather than reading as a failure.
+          updateConnectionStatus(instanceId, connectionState.connected, connectionState.connected ? 'connected' : (connectionState.line && connectionState.line.state) || 'idle');
 
           // If on connection tab, restore connection UI state
           if (operation === 'test') {
