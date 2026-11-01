@@ -140,3 +140,19 @@ test('array items collapse certificates and mask secrets one by one',async()=>{
  expect(await copyOf(t,secretCopy)).toBe('redis://:s3cr3t-test@h:6379');
  t.w.close();
 });
+
+test('a secret nested deeper than one level is masked whole',async()=>{
+ const t=await table({protocols:{amqp:{uri:'amqp://u:s3cr3t-test@h'}},other:{amqp:{password:'s3cr3t-test'}},peers:[{password:'s3cr3t-test'},{host:'h'}],plain:{a:{b:'ok'}}});
+ for(const name of ['protocols','other']){
+  expect(t.row(name)).toBeUndefined();
+ }
+ const cells=[...t.host.querySelectorAll('tbody tr')];
+ expect(cells.length).toBe(4);
+ expect(t.host.innerHTML).not.toContain('s3cr3t-test');
+ expect(t.row('amqp').querySelector('button[aria-pressed]')).not.toBeNull();
+ const peers=t.row('peers');
+ expect(peers.querySelectorAll('button[aria-pressed]').length).toBe(1);
+ expect(peers.querySelector('button[aria-label="Copy peers"]')).not.toBeNull();
+ expect(t.row('a').querySelector('button[aria-pressed]')).toBeNull();
+ t.w.close();
+});

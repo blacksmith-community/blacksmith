@@ -9350,14 +9350,21 @@
   // real value waits here until the person reveals or copies it.
   const SECRET_MASK = '••••••••';
   const SECRET_KEY = /pass(word|wd|phrase)|secret|token|private_key|_key$/;
-  const URI_PASSWORD = /^[a-z][a-z0-9+.-]*:\/\/[^\/\s@]*:[^\/\s@]+@/i;
-  const JSON_URI_PASSWORD = /[a-z][a-z0-9+.-]*:\/\/[^\/\s@"]*:[^\/\s@"]+@/i;
+  const URI_PASSWORD = /[a-z][a-z0-9+.-]*:\/\/[^\/\s@"]*:[^\/\s@"]+@/i;
   const secretValues = new Map();
   let secretCounter = 0;
 
   // camelCase and dashed key names read as snake_case before the test.
   const snakeKey = (key) => String(key).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toLowerCase();
   const isSecretEntry = (key, text) => SECRET_KEY.test(snakeKey(key)) || text.includes('PRIVATE KEY-----') || URI_PASSWORD.test(text);
+
+  // A nested object or array is secret when any nested key reads as a secret
+  // key or any nested string reads as a secret value. Scalars use isSecretEntry.
+  const hasSecretDeep = (key, value) => {
+    if (Array.isArray(value)) return value.some((item) => hasSecretDeep(key, item));
+    if (value !== null && typeof value === 'object') return Object.entries(value).some(([k, v]) => SECRET_KEY.test(snakeKey(k)) || hasSecretDeep(k, v));
+    return typeof value === 'string' && isSecretEntry(key, value);
+  };
 
   // A secret value as a masked cell with a reveal button and a copy button.
   // The copy button always copies the real value.
@@ -9406,12 +9413,12 @@
 
   // An array as one item per line in the monospace face. A certificate item
   // collapses and a secret item is masked, each with its own copy button.
-  const arrayItem = (key, item) => {
-    if (isSecretEntry(key, item)) return `<div class="credential-array-item">${secretValue(item, key)}</div>`;
+  const arrayItem = (key, item, raw) => {
+    if (isSecretEntry(key, item) || hasSecretDeep(key, raw)) return `<div class="credential-array-item">${secretValue(item, key)}</div>`;
     if (item.includes('-----BEGIN CERTIFICATE-----')) return `<div class="credential-array-item">${entityCopy(item, key)}${pemCertificate(item)}</div>`;
     return `<code class="credential-array-item">${escapeHtml(item)}</code>`;
   };
-  const arrayLines = (key, items) => `<span class="credential-array">${items.map((item) => arrayItem(key, item)).join('')}</span>`;
+  const arrayLines = (key, items, raw) => `<span class="credential-array">${items.map((item, index) => arrayItem(key, item, raw[index])).join('')}</span>`;
 
   // One credentials table cell. Secrets are masked, certificates collapse, and
   // a missing value is the shared empty value with no copy button.
@@ -9424,10 +9431,10 @@
     // An array copies whole only when no item is a secret, so a secret never
     // reaches the markup through the group copy button.
     if (isArray) {
-      const hasSecret = items.some((item) => isSecretEntry(key, item));
-      return `<div class="credential-value-layout">${hasSecret ? '' : entityCopy(text, key)}<div class="credential-value-text">${arrayLines(key, items)}</div></div>`;
+      const hasSecret = items.some((item, index) => isSecretEntry(key, item) || hasSecretDeep(key, value[index]));
+      return `<div class="credential-value-layout">${hasSecret ? '' : entityCopy(text, key)}<div class="credential-value-text">${arrayLines(key, items, value)}</div></div>`;
     }
-    if (isSecretEntry(key, text)) return `<div class="credential-value-layout">${secretValue(text, key)}</div>`;
+    if (isSecretEntry(key, text) || hasSecretDeep(key, value)) return `<div class="credential-value-layout">${secretValue(text, key)}</div>`;
     let display;
     if (text.includes('-----BEGIN CERTIFICATE-----')) display = pemCertificate(text);
     else if (text.includes('\n')) display = `<pre class="credential-multiline">${escapeHtml(text)}</pre>`;
@@ -9459,7 +9466,7 @@
     const flattenConfig = (obj, prefix = '') => Object.entries(obj).flatMap(([key, value]) => {
       const fullKey = prefix ? `${prefix}.${key}` : key;
       if (value === null || value === undefined) return [{ key: fullKey, value: '' }];
-      if (Array.isArray(value)) return [{ key: fullKey, value: JSON.stringify(value) }];
+      if (Array.isArray(value)) return [{ key: fullKey, value: JSON.stringify(value), raw: value }];
       if (typeof value === 'object') return flattenConfig(value, fullKey);
       return [{ key: fullKey, value: String(value) }];
     });
@@ -9474,14 +9481,14 @@
 
     const valueCell = (item) => {
       if (item.value === '') return EMPTY_HTML;
-      if (isSecretEntry(item.key, item.value) || JSON_URI_PASSWORD.test(item.value)) return secretValue(item.value, item.key);
+      if (isSecretEntry(item.key, item.value) || hasSecretDeep(item.key, item.raw)) return secretValue(item.value, item.key);
       if (item.value.includes('-----BEGIN CERTIFICATE-----')) {
         return `<span class="manifest-value">${pemCertificate(item.value)}${entityCopy(item.value, item.key)}</span>`;
       }
       return manifestValue(item.value, item.key);
     };
     const filterText = (item) => {
-      const plain = item.value === '' || isSecretEntry(item.key, item.value) || JSON_URI_PASSWORD.test(item.value) || item.value.includes('-----BEGIN CERTIFICATE-----') ? '' : item.value;
+      const plain = item.value === '' || isSecretEntry(item.key, item.value) || hasSecretDeep(item.key, item.raw) || item.value.includes('-----BEGIN CERTIFICATE-----') ? '' : item.value;
       return `${item.key} ${plain}`.toLowerCase();
     };
 
