@@ -3,6 +3,8 @@ const fs=require('fs');
 const path=require('path');
 const {main:{boot,sleep}}=require('./certificates/harness.js');
 const {JSDOM}=require('./certificates/support.js');
+const { pinZone } = require('./fixed-zone.js');
+pinZone('UTC');
 const t=JSDOM?test:test.skip;
 
 const UI=path.resolve(__dirname,'..','..','ui');
@@ -103,13 +105,14 @@ t('the metadata is one even grid with the instance context spacing and room unde
  expect(bodies('inspection-layout.css','#task-details-modal .task-summary-section')).toMatch(/margin:\s*16px 0 16px/);
 });
 
-t('event times use the local format of the header, with seconds',async()=>{
+t('event times use the shared timestamp format, with the ISO value in the title',async()=>{
  const {w,d}=await start('done',ALL);
- const cells=[...d.querySelectorAll('#task-task-content td.timestamp')].map((x)=>x.textContent.trim());
+ const cells=[...d.querySelectorAll('#task-task-content td.timestamp')];
  expect(cells.length).toBe(4);
- expect(cells[0]).toBe(new w.Date(T0*1000).toLocaleString());
- expect(cells[3]).toBe(new w.Date((T0+3)*1000).toLocaleString());
- expect(cells[0]).not.toMatch(/^\d{4}-\d{2}-\d{2} /);
+ const text=(secs)=>new w.Date(secs*1000).toISOString().replace('T',' ').replace(/\.\d+Z$/,' UTC');
+ expect(cells[0].textContent.trim()).toBe(text(T0));
+ expect(cells[3].textContent.trim()).toBe(text(T0+3));
+ expect(cells[0].querySelector('time').getAttribute('title')).toBe(new w.Date(T0*1000).toISOString());
 });
 
 t('each event level is a badge in the color of the matching task state',async()=>{

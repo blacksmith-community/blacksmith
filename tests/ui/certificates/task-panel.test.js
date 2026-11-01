@@ -1,6 +1,8 @@
 const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
+const { pinZone } = require('../fixed-zone.js');
+pinZone('UTC');
 
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
@@ -121,7 +123,7 @@ t('task panel and API errors', async () => {
   // poll status
   T._setSelectedTask(null);
   let r=await T.fetchUpgradeTasks();
-  ok(r===true&&/^Updated \d\d:\d\d:\d\d$/.test(d.querySelector('.upgrade-poll-updated').textContent),'poll success shows "Updated HH:MM:SS"');
+  ok(r===true&&/^Updated \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC$/.test(d.querySelector('.upgrade-poll-updated').textContent),'poll success shows "Updated" with the timestamp');
   const stamp=d.querySelector('.upgrade-poll-updated').textContent.replace('Updated ','');
   w.__routes.unshift([/\/b\/upgrade\/tasks$/,(u,o,json)=>json(500,{success:false,error:'boom',code:'internal_error'})]);
   r=await T.fetchUpgradeTasks();

@@ -14,6 +14,57 @@
     else element.textContent = value;
   };
 
+  // One timestamp format everywhere. formatStamp reads 2026-10-31 23:06:32
+  // EDT, the browser's local time with its short zone name. formatDay reads a
+  // date-only value as 2029-10-24. stampIso gives the full ISO value that
+  // goes in an element's title, and setStamp writes the text and that title.
+  const stampDate = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const zoneName = (date) => {
+    try {
+      const part = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(date).find((p) => p.type === 'timeZoneName');
+      return part ? part.value : '';
+    } catch (error) {
+      return '';
+    }
+  };
+  const formatStamp = (value) => {
+    const date = stampDate(value);
+    if (!date) return '';
+    const day = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+    const time = `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+    const zone = zoneName(date);
+    return zone ? `${day} ${time} ${zone}` : `${day} ${time}`;
+  };
+  const formatDay = (value) => {
+    const date = stampDate(value);
+    return date ? `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}` : '';
+  };
+  const stampIso = (value) => {
+    const date = stampDate(value);
+    return date ? date.toISOString() : '';
+  };
+  const setStamp = (element, value) => {
+    const text = formatStamp(value);
+    if (!text) {
+      element.innerHTML = EMPTY_HTML;
+      element.removeAttribute('title');
+      return;
+    }
+    element.textContent = text;
+    element.setAttribute('title', stampIso(value));
+  };
+  // A <time> element as markup for a table cell, with the ISO value in title.
+  const stampHtml = (value) => {
+    const text = formatStamp(value);
+    if (!text) return EMPTY_HTML;
+    return `<time datetime="${stampIso(value)}" title="${stampIso(value)}">${text}</time>`;
+  };
+
   // The typed confirmation names the action itself. Two spellings of the
   // word match when they agree after trimming, folding case, and collapsing
   // runs of spaces.
@@ -2036,7 +2087,7 @@
     // Re-render based on table type
     if (tableClass === 'events-table') {
       tbody.innerHTML = data.map(event => {
-        const time = formatTimestamp(event.time);
+        const time = timestampHtml(event.time);
         let objectInfo = EMPTY;
         if (event.object_type && event.object_name) {
           objectInfo = `${event.object_type}: ${event.object_name}`;
@@ -2075,7 +2126,7 @@
         const vmType = vm.vm_type || vm.resource_pool || EMPTY;
         const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
         const agentId = vm.agent_id || EMPTY;
-        const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : EMPTY;
+        const vmCreatedAt = stampHtml(vm.vm_created_at);
         const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : EMPTY;
         const bootstrap = vm.bootstrap ? 'Yes' : 'No';
         const diskCids = vmDiskCids(vm);
@@ -2149,7 +2200,7 @@
       }).join('');
     } else if (tableClass === 'deployment-log-table' || tableClass === 'debug-log-table') {
       tbody.innerHTML = data.map(log => {
-        const time = formatTimestamp(log.time);
+        const time = timestampHtml(log.time);
         const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : EMPTY;
         let status = EMPTY;
         if (log.data && log.data.status) {
@@ -2183,7 +2234,7 @@
       tbody.innerHTML = data.map(row => renderLogRow(row)).join('');
     } else if (tableClass === 'tasks-table') {
       tbody.innerHTML = data.map(task => {
-        const startedAt = formatTimestamp(task.started_at);
+        const startedAt = timestampHtml(task.started_at);
 
         // Calculate duration
         let duration = EMPTY;
@@ -2222,7 +2273,7 @@
       }).join('');
     } else if (tableClass === 'configs-table') {
       tbody.innerHTML = data.map(config => {
-        const createdAt = formatTimestamp(config.created_at);
+        const createdAt = timestampHtml(config.created_at);
 
         // Create clickable config ID for details
         const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
@@ -2288,44 +2339,22 @@
     return button;
   };
 
-  // Helper function to safely format timestamps
-  const formatTimestamp = (timestamp) => {
-    // Return '-' for missing, null, undefined, or 0 timestamps
-    if (!timestamp || timestamp === 0) {
-      return EMPTY;
+  // The date a broker timestamp names. Unix seconds, milliseconds, and ISO
+  // strings all read as one moment, and a missing or invalid value is null.
+  const timestampMoment = (timestamp) => {
+    if (!timestamp) return null;
+    if (typeof timestamp === 'number') {
+      // After the year 2000 in Unix seconds, so multiply to milliseconds.
+      return stampDate(timestamp > 946684800 ? timestamp * 1000 : timestamp);
     }
-
-    try {
-      let date;
-
-      if (typeof timestamp === 'number') {
-        // Handle Unix timestamps - if it's a reasonable Unix timestamp (after year 2000)
-        // then multiply by 1000 to convert to milliseconds
-        if (timestamp > 946684800) { // Jan 1, 2000 in Unix seconds
-          date = new Date(timestamp * 1000);
-        } else {
-          // Already in milliseconds or invalid
-          date = new Date(timestamp);
-        }
-      } else if (typeof timestamp === 'string') {
-        // Handle string timestamps (ISO format, etc.)
-        date = new Date(timestamp);
-      } else {
-        // Handle other formats
-        date = new Date(timestamp);
-      }
-
-      // Check if the date is valid
-      if (isNaN(date.getTime())) {
-        return EMPTY;
-      }
-
-      return date.toLocaleString();
-    } catch (error) {
-      console.warn('Error formatting timestamp:', timestamp, error);
-      return EMPTY;
-    }
+    return stampDate(timestamp);
   };
+
+  // A broker timestamp as text, or EMPTY when there is none.
+  const formatTimestamp = (timestamp) => formatStamp(timestampMoment(timestamp)) || EMPTY;
+
+  // A broker timestamp as table-cell markup with the ISO value in its title.
+  const timestampHtml = (timestamp) => stampHtml(timestampMoment(timestamp));
 
   // Strftime implementation
   const strftime = (fmt, d) => {
@@ -2439,7 +2468,7 @@
     let note = container.parentElement?.querySelector(':scope > .retained-view-note');
     if (!savedAt) { note?.remove(); delete container.dataset.retainedAt; return; }
     if (!note) { note = document.createElement('p'); note.className = 'retained-view-note'; container.before(note); }
-    note.textContent = `Restored your view saved at ${new Date(savedAt).toLocaleTimeString()}. Data may have changed; use Refresh where available.`;
+    note.textContent = `Restored your view saved at ${formatStamp(savedAt)}. Data may have changed; use Refresh where available.`;
   };
   const retainView = (container, key) => {
     const previous = mountedViews.get(container);
@@ -7313,10 +7342,7 @@
     window.Feedback.error(`${summary} ${commandErrorText(error)}`, { context: 'upgrade-tasks' });
   };
 
-  const clockTime = (date) => {
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  };
+  const clockTime = (date) => formatStamp(date);
 
   // The line above the task list. It says when the list last updated, and
   // after a failed poll it says so, names the time of the data on screen,
@@ -7362,6 +7388,7 @@
     const updated = bar.querySelector('.upgrade-poll-updated');
     const failed = bar.querySelector('.upgrade-poll-failed');
     updated.textContent = stamp && !upgradePollFailed ? `Updated ${stamp}` : '';
+    if (stamp) updated.setAttribute('title', stampIso(upgradePollUpdatedAt));
     updated.hidden = upgradePollFailed || !stamp;
     failed.hidden = !upgradePollFailed;
     failed.querySelector('.upgrade-poll-note').textContent = stamp
@@ -7491,11 +7518,7 @@
   };
 
   // Format task timestamp
-  const formatTaskTime = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    return date.toLocaleString();
-  };
+  const formatTaskTime = (timestamp) => (timestamp ? formatStamp(timestamp) : '');
 
   // Set up click handlers for task items
   const setupTaskClickHandlers = () => {
@@ -7592,10 +7615,10 @@
     return Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971 ? null : date;
   };
 
-  // A time as "2026-10-21 14:00 UTC", or an empty string when it is not a time.
+  // A time as "2026-10-21 14:00:00 UTC", or an empty string when it is not a time.
   const certTimeText = (value) => {
     const date = certDate(value);
-    return date ? `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC` : '';
+    return date ? formatStamp(date) : '';
   };
 
   // A day such as 2026-10-21.
@@ -7604,11 +7627,8 @@
     return date ? date.toISOString().slice(0, 10) : '';
   };
 
-  // A minute such as 2026-10-21 09:14 UTC.
-  const certMinute = (value) => {
-    const date = certDate(value);
-    return date ? `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC` : '';
-  };
+  // The same timestamp format, kept as its own name where a same-day pair needs it.
+  const certMinute = (value) => certTimeText(value);
 
   // Shows days, or minutes when both values fall on the same day so a change stays visible.
   const certExpiryPair = (oldValue, newValue) => {
@@ -7627,11 +7647,8 @@
     return date ? String(date.getTime()) : '';
   };
 
-  // A time of day such as "14:00 UTC".
-  const certClockText = (value) => {
-    const date = certDate(value);
-    return date ? `${date.toISOString().slice(11, 16)} UTC` : '';
-  };
+  // A scan time in the shared timestamp format.
+  const certClockText = (value) => certTimeText(value);
 
   const confirmedAnswer = (answer) => answer === true || Boolean(answer && answer.confirmed);
 
@@ -10002,7 +10019,7 @@
         </thead>
         <tbody>
           ${logs.map(log => {
-      const time = formatTimestamp(log.time);
+      const time = timestampHtml(log.time);
       const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : EMPTY;
       let status = EMPTY;
       if (log.data && log.data.status) {
@@ -10083,7 +10100,7 @@
         </thead>
         <tbody>
           ${logs.map(log => {
-      const time = formatTimestamp(log.time);
+      const time = timestampHtml(log.time);
       const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : EMPTY;
       let status = EMPTY;
       if (log.data && log.data.status) {
@@ -10725,7 +10742,7 @@
           </thead>
           <tbody>
             ${events.map(event => {
-      const time = formatTimestamp(event.time);
+      const time = timestampHtml(event.time);
       // Handle object info - check if it's already a combined string or separate fields
       let objectInfo = EMPTY;
       if (event.object_type && event.object_name) {
@@ -10833,7 +10850,7 @@
           </thead>
           <tbody>
             ${hasTasks ? tasks.map(task => {
-      const startedAt = formatTimestamp(task.started_at);
+      const startedAt = timestampHtml(task.started_at);
 
       // Calculate duration
       let duration = EMPTY;
@@ -10917,7 +10934,7 @@
         const typeConfigs = configsByType[type];
         if (typeConfigs.length > 0) {
           typeConfigs.forEach(config => {
-            const createdAt = formatTimestamp(config.created_at);
+            const createdAt = timestampHtml(config.created_at);
 
             // Keep API IDs clean and expose active state without an unexplained symbol.
             const rawId = String(config.id ?? '');
@@ -11912,7 +11929,7 @@
       const vmType = vm.vm_type || vm.resource_pool || EMPTY;
       const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
       const agentId = vm.agent_id || EMPTY;
-      const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : EMPTY;
+      const vmCreatedAt = stampHtml(vm.vm_created_at);
       const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : EMPTY;
       const bootstrap = vm.bootstrap ? 'Yes' : 'No';
       const diskCids = vmDiskCids(vm);
@@ -12901,7 +12918,7 @@
     }
 
     const historyHtml = history.map(entry => {
-      const timestamp = new Date(entry.timestamp).toLocaleString();
+      const timestamp = formatStamp(entry.timestamp) || EMPTY;
       const statusClass = entry.success ? 'success' : 'error';
       const statusIcon = entry.success ? blacksmithIcon('check', { size: 14, label: 'Succeeded' }) : blacksmithIcon('x', { size: 14, label: 'Failed' });
 
@@ -13650,8 +13667,7 @@
   };
 
   const formatRunTime = (at) => {
-    const date = new Date(at);
-    return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString();
+    return formatStamp(at);
   };
 
   const RUNNER_HISTORY_NOTES = {
@@ -13675,7 +13691,7 @@
           ${runStatusPill(entry.status)}
           ${entry.at === null
             ? `<span class="command-runner-history-time">${EMPTY_HTML}</span>`
-            : `<time class="command-runner-history-time" datetime="${new Date(entry.at).toISOString()}">${escapeHtml(formatRunTime(entry.at))}</time>`}
+            : `<time class="command-runner-history-time" datetime="${new Date(entry.at).toISOString()}" title="${new Date(entry.at).toISOString()}">${escapeHtml(formatRunTime(entry.at))}</time>`}
         </button>
       </li>`).join('');
     const note = runnerPart(root, 'history-note');
@@ -18484,7 +18500,7 @@
           </thead>
           <tbody>
             ${events.map(event => {
-      const time = formatTimestamp(event.time);
+      const time = timestampHtml(event.time);
       const progress = event.progress ? `${event.progress}%` : EMPTY;
       const error = event.error ? event.error.message : EMPTY;
 
@@ -18570,7 +18586,7 @@
     }
 
     const rows = events.map(event => {
-      const timestamp = formatTimestamp(event.time);
+      const timestamp = timestampHtml(event.time);
       const level = event.level || 'INFO';
       const message = event.message || '';
 
@@ -20228,14 +20244,11 @@
 
     const formatDate = (value) => {
       if (!value) return 'N/A';
-      const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? String(value) : `${date.toISOString().slice(0, 10)} ${date.toISOString().slice(11, 16)} UTC`;
+      return formatStamp(value) || String(value);
     };
 
     const utcString = (value) => {
-      const date = new Date(value);
-      if (!value || Number.isNaN(date.getTime())) return '';
-      return `${date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '')} UTC`;
+      return formatStamp(value);
     };
 
     const EXPIRY = {
@@ -21497,7 +21510,7 @@
     // Render individual registration card
     renderRegistrationCard(registration) {
       const statusClass = (registration.status || 'created').toLowerCase();
-      const createdDate = registration.created_at ? new Date(registration.created_at).toLocaleDateString() : 'Unknown';
+      const createdDate = formatDay(registration.created_at) || 'Unknown';
 
       return `
         <div class="registration-card" data-registration-id="${registration.id}">

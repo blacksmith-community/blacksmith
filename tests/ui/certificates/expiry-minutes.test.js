@@ -1,6 +1,8 @@
 const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
+const { pinZone } = require('../fixed-zone.js');
+pinZone('UTC');
 
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
@@ -26,7 +28,7 @@ t('expiry comparison shows the time only when both days match', async () => {
 
   ok(expiry({ name: '/s/a_crt', old_serial: 'AA', new_serial: 'BB',
     old_not_after: '2029-10-24T09:14:30Z', new_not_after: '2029-10-24T13:40:05Z' })
-    === 'Expires | 2029-10-24 09:14 UTC | 2029-10-24 13:40 UTC', 'same day shows both times to the minute in UTC');
+    === 'Expires | 2029-10-24 09:14:30 UTC | 2029-10-24 13:40:05 UTC', 'same day shows both times with seconds');
   ok(expiry({ name: '/s/a_crt', old_serial: 'AA', new_serial: 'BB',
     old_not_after: '2029-10-24T09:14:00Z', new_not_after: '2029-10-25T09:14:00Z' })
     === 'Expires | 2029-10-24 | 2029-10-25', 'different days keep the date-only output');

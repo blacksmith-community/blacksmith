@@ -1,6 +1,8 @@
 const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
+const { pinZone } = require('../fixed-zone.js');
+pinZone('UTC');
 
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
@@ -52,7 +54,7 @@ t('candidate refresh', async () => {
   // ---- checked, none found
   T.renderTaskDetail(mkTask({ candidates_checked_at: '2026-10-21T15:00:00Z' }));
   ok(/CredHub holds no version that this request could have made/.test(reconcile().textContent), 'checked and empty: says CredHub holds no version');
-  ok(reconcile().textContent.includes('2026-10-21 15:00 UTC'), 'checked and empty: shows when CredHub was checked');
+  ok(reconcile().textContent.includes('2026-10-21 15:00:00 UTC'), 'checked and empty: shows when CredHub was checked');
   ok(!/not checked CredHub/.test(reconcile().textContent) && !!btn('candidates'), 'checked and empty: no not-checked text, refresh still offered');
 
   // ---- refresh finds a version to adopt
@@ -63,7 +65,7 @@ t('candidate refresh', async () => {
   ok(!d.querySelector('#dialog-modal[open]'), 'refresh: asks for no confirmation');
   ok(!!btn('adopt:v-good-1234567890') && btn('adopt:v-good-1234567890').textContent === 'Adopt version v-good-1', 'refresh: the valid candidate gets an Adopt button');
   ok(!btn('adopt:v-bad-0987654321') && /failed a check/.test(reconcile().textContent), 'refresh: the failed candidate gets no Adopt button');
-  ok(reconcile().textContent.includes('2026-10-21 15:05 UTC') && !/not checked CredHub/.test(reconcile().textContent), 'refresh: shows the new check time');
+  ok(reconcile().textContent.includes('2026-10-21 15:05:00 UTC') && !/not checked CredHub/.test(reconcile().textContent), 'refresh: shows the new check time');
   ok(/found 2 versions/.test(live()), 'refresh: the live region says what was found => ' + live());
   ok(d.activeElement === btn('candidates'), 'refresh: focus returns to Check CredHub again');
   ok(panel().querySelectorAll('img,script,iframe').length === 0 && reconcile().textContent.includes(EVIL), 'refresh: hostile strings render as text');

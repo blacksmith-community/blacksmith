@@ -1,6 +1,8 @@
 const { test, expect, afterEach } = require('bun:test');
 const H = require('./harness.js');
 const { JSDOM } = require('./support.js');
+const { pinZone } = require('../fixed-zone.js');
+pinZone('UTC');
 
 const t = JSDOM ? test : test.skip;
 const { boot, sleep, now, day, iso } = H.fleet;
@@ -38,12 +40,12 @@ const open = async (certs) => {
   return env;
 };
 
-t('the Expires column shows ISO days with a UTC minute title and a sort value', async () => {
+t('the Expires column shows ISO days with a timestamp title and a sort value', async () => {
   const { d } = await open([cert('a', '2027-10-11T09:14:30Z')]);
   const cell = d.querySelector('#cert-tbody tr.cert-row .cert-col-expires');
   expect(!!cell).toBe(true);
   expect(cell.textContent).toBe('2027-10-11');
-  expect(cell.getAttribute('title')).toBe('2027-10-11 09:14 UTC');
+  expect(cell.getAttribute('title')).toBe('2027-10-11 09:14:30 UTC');
   expect(cell.getAttribute('data-sort-value')).toBe(String(Date.parse('2027-10-11T09:14:30Z')));
 });
 
@@ -86,9 +88,9 @@ t('the probe table sorts same-year dates in both directions', async () => {
   }
 });
 
-t('the inspector formats dates as ISO minutes in UTC', () => {
+t('the inspector formats dates as timestamps', () => {
   const inst = H.instance.boot();
   const view = inst.w.__T.CertView;
-  expect(view.formatDate('2027-10-11T09:14:30Z')).toBe('2027-10-11 09:14 UTC');
+  expect(view.formatDate('2027-10-11T09:14:30Z')).toBe('2027-10-11 09:14:30 UTC');
   expect(view.formatDate('')).toBe('N/A');
 });

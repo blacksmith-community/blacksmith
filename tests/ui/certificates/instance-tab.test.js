@@ -1,6 +1,8 @@
 const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
+const { pinZone } = require('../fixed-zone.js');
+pinZone('UTC');
 
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
@@ -44,7 +46,7 @@ t('instance certificates tab', async () => {
   const lis=ov.querySelectorAll('.cert-ov-listeners');
   ok(lis.length===1 && lis[0].querySelectorAll('li').length===3 && /valkey\/0:6379/.test(lis[0].textContent)&&/6379/.test(lis[0].textContent)&&/Listeners/.test(lis[0].textContent),'Listeners line names 3 VMs on 6379');
   ok(/failed: timed out/.test(lis[0].textContent),'failed listener shows error');
-  ok(/Scanned \d{4}-\d\d-\d\d \d\d:\d\d UTC, 2 of 3 listeners observed/.test(ov.querySelector('.cert-ov-footer').textContent),'scan time and coverage: '+ov.querySelector('.cert-ov-footer').textContent);
+  ok(/Scanned \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC, 2 of 3 listeners observed/.test(ov.querySelector('.cert-ov-footer').textContent),'scan time and coverage: '+ov.querySelector('.cert-ov-footer').textContent);
   const rot=ov.querySelector('.cert-ov-rotate'); ok(rot&&rot.disabled&&rot.textContent==='Rotate...'&&d.getElementById(rot.getAttribute('aria-describedby')).textContent.length>0,'Rotate... disabled with visible reason');
   ok(/Newer version not deployed yet/.test(ov.textContent)&&/n\/a/.test(ov.textContent),'deployed vs latest column');
   ok(bad(d)===0,'no injected elements');

@@ -1,6 +1,8 @@
 const { test, expect } = require('bun:test');
 const H = require('./harness.js');
 const { checks, JSDOM } = require('./support.js');
+const { pinZone } = require('../fixed-zone.js');
+pinZone('UTC');
 
 const { ok, failures } = checks();
 const t = JSDOM ? test : test.skip;
@@ -45,7 +47,7 @@ t('converge preview and create', async () => {
   p=T.startUpgrade(); await waitDialog(); confirmBtn().click(); await sleep(100);
   ok(d.querySelector('#dialog-modal[open]')&&/not converged/.test(dlgText()),'confirm dialog opens for a diverged instance');
   ok(/Type upgrade to continue/.test(dlgText()),'a diverged upgrade asks for the word upgrade');
-  ok(dlgText().includes('2026-10-21 14:00 UTC')&&!dlgText().includes('2026-10-21T14')&&dlgText().includes(EVIL)&&dlgText().includes('/s/other_crt')&&dlgText().includes('/s/a_crt')&&d.querySelectorAll('#dialog-modal img,#dialog-modal script').length===0,'dialog names the instance and its additional variables, hostile inert');
+  ok(dlgText().includes('2026-10-21 14:00:00 UTC')&&!dlgText().includes('2026-10-21T14')&&dlgText().includes(EVIL)&&dlgText().includes('/s/other_crt')&&dlgText().includes('/s/a_crt')&&d.querySelectorAll('#dialog-modal img,#dialog-modal script').length===0,'dialog names the instance and its additional variables, hostile inert');
   ok(posts(/"instance_ids"/).length===nBefore+1,'no create before confirm (preview only)');
   cancelBtn().click(); await p; await sleep(30);
   ok(posts(/"instance_ids"/).length===nBefore+1,'Cancel creates no task');
