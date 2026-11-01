@@ -6,7 +6,7 @@ test('broker endpoint toolbar is ordered and the add dialog opens accessibly',as
  const toolbar=host.querySelector('.broker-endpoint-header');expect(!!toolbar.querySelector('table')).toBe(false);
  expect(toolbar.querySelector('label').textContent).toBe('Endpoint:');
  expect(toolbar.lastElementChild.id).toBe('connection-status');expect(!!host.querySelector('.broker-details-table')).toBe(false);
- const opener=toolbar.querySelector('[title="Add Endpoint"]');opener.focus();w.showCFEndpointForm();
+ const opener=toolbar.querySelector('[title="Add endpoint"]');opener.focus();w.showCFEndpointForm();
  const modal=d.getElementById('cf-endpoint-modal');expect(modal.open).toBe(true);expect(modal.hasAttribute('aria-hidden')).toBe(false);
  expect(d.activeElement.id).toBe('cf-endpoint-name');
  w.hideCFEndpointForm();expect(modal.open).toBe(false);expect(d.activeElement).toBe(opener);

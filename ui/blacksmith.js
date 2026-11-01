@@ -20050,7 +20050,7 @@
           <select id="cf-endpoint-select" aria-label="Cloud Foundry endpoint" class="cf-endpoint-dropdown"><option value="">Loading endpoints...</option></select>
           <div class="endpoint-controls">
             <button type="button" class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh endpoints" aria-label="Refresh endpoints">${blacksmithIcon('refresh-cw', { size: 16 })}</button>
-            <button type="button" class="btn btn-icon btn-sm" onclick="showCFEndpointForm()" title="Add Endpoint" aria-label="Add endpoint">+</button>
+            <button type="button" class="btn btn-icon btn-sm" onclick="showCFEndpointForm()" title="Add endpoint" aria-label="Add endpoint">${blacksmithIcon('plus', { size: 16 })}</button>
             <button type="button" class="btn btn-sm btn-primary" onclick="CFEndpointManager.showRegistrationModal()" title="Register broker" id="register-btn" style="display: none;">Register</button>
           </div>
           <span id="broker-detail-username" class="broker-endpoint-user" hidden></span>
