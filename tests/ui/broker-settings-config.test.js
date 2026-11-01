@@ -182,7 +182,9 @@ test('an empty feedback span stays in the DOM and takes no space',async()=>{
  expect(css).toMatch(/\.blacksmith-settings \.settings-apply-btn\s*\{[^}]*min-height:\s*28px/);
  expect(css).toMatch(/\.blacksmith-settings \.settings-input\s*\{[^}]*padding-block:\s*3px/);
  expect(css).toMatch(/\.settings-row:last-of-type\s*\{[^}]*margin-bottom:\s*0/);
- expect(css).toMatch(/#blacksmith \.blacksmith-settings \.settings-row\s*\{\s*align-items:\s*center/);
+ const layout=fs.readFileSync(path.join(__dirname,'../../ui/inspection-layout.css'),'utf8');
+ expect(layout).toMatch(/^#blacksmith \.blacksmith-settings \.settings-row\s*\{\s*align-items:\s*center\s*;?\s*\}/m);
+ expect(layout).not.toMatch(/\.settings-row\s*\{[^}]*align-items:\s*start/);
  expect(css).toMatch(/\.config-group-toggle:focus-visible\s*\{\s*outline-offset:\s*-2px/);
  expect(css.match(/\.blacksmith-settings \.settings-feedback\s*\{([^}]*)\}/)[1]).toMatch(/min-height:\s*0/);
  s.w.close();

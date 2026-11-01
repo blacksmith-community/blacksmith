@@ -10,7 +10,7 @@
 #task-details-modal .task-summary-section { padding: 0 0 16px; margin: 16px 0 16px; border-bottom: 1px solid var(--border); }
 #blacksmith .config-id { white-space: nowrap; }
 #blacksmith .config-active-label { display: inline-block; margin-left: 8px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--foreground); background: var(--secondary); font-size: .75rem; }
-#blacksmith .blacksmith-settings .settings-row { align-items: start; }
+#blacksmith .blacksmith-settings .settings-row { align-items: center; }
 #blacksmith .blacksmith-settings .settings-feedback { white-space: normal; overflow-wrap: anywhere; }
 #blacksmith .blacksmith-settings [aria-invalid="true"] { border-color: var(--danger); outline: 1px solid var(--danger); }
 @media (max-width: 900px) {

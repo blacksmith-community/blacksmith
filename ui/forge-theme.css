@@ -1022,7 +1022,6 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .blacksmith-settings .settings-apply-btn { min-height: 28px; padding: 2px 14px; }
 .blacksmith-settings .settings-input { padding-block: 3px; }
 .blacksmith-settings .settings-row:last-of-type { margin-bottom: 0; }
-#blacksmith .blacksmith-settings .settings-row { align-items: center; }
 .blacksmith-settings .settings-divider { margin: 0 16px; }
 @media (max-width: 900px) {
   .blacksmith-settings .settings-row { grid-template-columns: minmax(0, 1fr); }
