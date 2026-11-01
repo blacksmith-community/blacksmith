@@ -13795,3 +13795,10 @@ bs-tabs { display: contents; }
 .plans-overview-table, .instances-overview-table { width: 100%; }
 tr.row-link { cursor: pointer; }
 .main-content tr.row-link:hover > td { background: var(--secondary); }
+
+/* The summary's Attention required section. */
+.entity-attention.card { padding: 20px; margin: 0 0 20px; }
+.entity-attention h3 { font-size: 1rem; margin: 0 0 12px; }
+.entity-attention ul { margin: 0 0 12px; padding-left: 1.25rem; }
+.entity-attention .entity-attention-state, .entity-attention .entity-attention-unknown { color: var(--muted-foreground); }
+.entity-attention .entity-attention-fetched { margin: 12px 0 0; color: var(--muted-foreground); font-size: .8125rem; }

@@ -2465,6 +2465,32 @@
     return shell(`<div class="entity-services-scroll" role="region" tabindex="0" aria-labelledby="entity-services-heading"><table class="entity-services-table"><caption class="visually-hidden">Active instances and instances with VM alerts for each service type and plan</caption><thead><tr><th scope="col">Service type or plan</th><th scope="col">Details</th><th scope="col">Instances</th><th scope="col">Instances with VM alerts</th></tr></thead>${body}</table></div>`);
   };
 
+  // The summary's first stop for problems. VM alerts come from the instance
+  // list the summary already holds. Certificates come from the one fleet
+  // request, and until that returns, or if it fails, the row says Unknown.
+  const renderAttentionRequired = (data) => {
+    const alerts = Object.entries(data.instances || {}).filter(([, instance]) => instance && !instance.deleted && hasVmAlert(instance));
+    const known = !!attentionCertificates.certificates && !attentionCertificates.failed;
+    const certificates = known ? attentionCertificates.certificates.length : null;
+    const fetchedAt = attentionCertificates.fetchedAt || Date.now();
+    const heading = '<h3 id="entity-attention-heading">Attention required</h3>';
+    const fetched = `<p class="entity-attention-fetched">Data fetched ${stampHtml(fetchedAt)}</p>`;
+    const shell = (body) => `<section class="card entity-attention" aria-labelledby="entity-attention-heading">${heading}${body}${fetched}</section>`;
+    if (!alerts.length && certificates === 0) return shell('<p class="entity-attention-clear">Nothing needs attention.</p>');
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    const instanceRow = alerts.length
+      ? `<div data-attention="instances"><p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul></div>`
+      : '';
+    const certificateRow = `<div data-attention="certificates"><p>Certificates needing attention: ${certificates === null ? '<span class="entity-attention-unknown">Unknown</span>' : certificates === 0 ? '0' : `<a href="#/certificates?attention=true">${plural(certificates, 'certificate')} need${certificates === 1 ? 's' : ''} attention</a>`}</p></div>`;
+    return shell(`${instanceRow}${certificateRow}`);
+  };
+  const refreshAttentionRequired = async (container, data = window.blacksmithData || {}) => {
+    if (!container?.querySelector('.entity-attention')) return;
+    await loadAttentionCertificates();
+    const current = container.querySelector('.entity-attention');
+    if (current) current.outerHTML = renderAttentionRequired(data);
+  };
+
   const renderBlacksmithOverview = (data, creds = {}) => {
     const instances = Object.values(data.instances || {}).filter(instance => instance && !instance.deleted);
     const plans = Object.keys(data.plans || {}).length;
@@ -2478,6 +2504,7 @@
       <p class="entity-intro">Manage the broker and its service fleet. Inspect health, activity, and configuration using the sections alongside.</p>
       <div class="entity-metrics">${entityMetric(instances.length,'Service instances','instances')}${entityMetric(plans,'Service plans','plans')}${entityMetric(attention,'Instances with VM alerts','instances')}</div>
       <p class="entity-status-note">${instances.length} active instance${instances.length === 1 ? '' : 's'}. VM exceptions reflect reported status; missing status is not a health check.</p>
+      ${renderAttentionRequired(data)}
       ${renderServicesAndPlans(data)}
       <article class="card entity-context"><h3>Deployment context</h3>${entityFacts(facts)}</article>
       ${entityMetadata(technical,'Connection and technical details')}
@@ -16487,6 +16514,7 @@
             if (request !== blacksmithRequestSequence) return;
             contentContainer.innerHTML = renderBlacksmithOverview(window.blacksmithData || {}, creds);
             markFetched(contentContainer);
+            refreshAttentionRequired(contentContainer);
             return;
           }
 
