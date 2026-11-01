@@ -14,7 +14,7 @@ t('the certificate detail table shows the empty value for missing fields',()=>{
   const view=inst.w.__T.CertView;
   const table=view.detail({subject:'CN=db',serialNumber:'0A:0B'});
   const rows=Object.fromEntries([...table.querySelectorAll('tr')].map(tr=>[tr.querySelector('th').textContent,tr.querySelector('td')]));
-  for(const label of ['Issuer','Valid From','Valid To','Signature Algorithm']){
+  for(const label of ['Issuer','Valid from','Valid to','Signature algorithm']){
    expect(rows[label].textContent.trim()).toBe('—');
    expect(rows[label].querySelector('.empty-value')).not.toBeNull();
    expect(rows[label].querySelector('button')).toBeNull();

@@ -69,3 +69,19 @@ t('the stylesheet no longer draws task states as capitalised pills', () => {
   expect(css).not.toMatch(/span\.config-type/);
   expect(css).toMatch(/\.status-badge \{[^}]*white-space: nowrap/);
 });
+
+t('task event states and registration statuses use the one badge', () => {
+  const { w, d } = boot();
+  try {
+    const host = d.createElement('div');
+    host.innerHTML = w.__T.statusBadge('started') + w.__T.statusBadge('registering') + w.__T.statusBadge('created');
+    const badges = [...host.querySelectorAll('.status-badge')];
+    expect(badges.map(b => b.textContent)).toEqual(['Started', 'Registering', 'Created']);
+    expect(badges.map(b => b.dataset.status)).toEqual(['active', 'active', 'neutral']);
+    const card = w.__T.CFRegistrationManager.renderRegistrationCard({ id: 'r1', name: 'cf', status: 'failed', created_at: '2026-11-01T03:06:32Z' });
+    expect(card).toContain('data-status="error"');
+    expect(card).not.toContain('registration-status');
+    const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'ui', 'blacksmith.js'), 'utf8');
+    expect(src).not.toContain('class="event-state');
+  } finally { w.close(); }
+});

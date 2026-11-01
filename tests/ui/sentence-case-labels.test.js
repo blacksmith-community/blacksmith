@@ -59,3 +59,18 @@ t('VM and certificate tables use sentence case headers', () => {
   expect(src).toContain('<th>Created at</th>');
   expect(src).toContain('<th>VM state</th>');
 });
+
+t('certificate detail labels and the remaining table headers read in sentence case', () => {
+  const src = fs.readFileSync(path.join(UI, 'blacksmith.js'), 'utf8');
+  for (const label of ['Serial number', 'Valid from', 'Valid to', 'Signature algorithm', 'Public key', 'Subject alt names', 'Extended key usage', 'SHA-256 fingerprint']) {
+    expect(src).toContain(`fieldRow('${label}'`);
+  }
+  expect(src).not.toMatch(/fieldRow\('[A-Z][a-z]+ [A-Z][a-z]+/);
+  const css = fs.readFileSync(path.join(UI, 'blacksmith.css'), 'utf8');
+  for (const selector of ['.config-overview-table th', '.commands-table th']) {
+    const start = css.indexOf(`\n${selector} {`);
+    expect(start).toBeGreaterThan(-1);
+    expect(css.slice(start, css.indexOf('}', start))).not.toContain('text-transform');
+  }
+  expect(css).not.toMatch(/\.config-type[^{]*\{[^}]*text-transform:\s*uppercase/);
+});

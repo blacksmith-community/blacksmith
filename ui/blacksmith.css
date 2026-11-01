@@ -2458,9 +2458,8 @@ td a {
   white-space: nowrap;
 }
 
-/* Oat's badge keeps the case it is given, and log levels and config types read as capitals. */
-.log-level .badge,
-.config-type .badge {
+/* Oat's badge keeps the case it is given, and log levels read as capitals. */
+.log-level .badge {
   text-transform: uppercase;
 }
 
@@ -5013,34 +5012,6 @@ bs-tabs > .cert-tab-pane[hidden] {
   margin: 0;
 }
 
-.registration-status {
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-}
-
-.registration-status.created {
-  background: var(--info-bg);
-  color: var(--info-text);
-}
-
-.registration-status.registering {
-  background: var(--warning-bg);
-  color: var(--warning-text);
-}
-
-.registration-status.active {
-  background: var(--success-bg);
-  color: var(--success-text);
-}
-
-.registration-status.failed {
-  background: var(--error-bg);
-  color: var(--error-text);
-}
-
 .registration-details {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5410,7 +5381,6 @@ bs-tabs > .cert-tab-pane[hidden] {
   color: var(--text-primary);
   font-weight: 600;
   font-size: 0.85em;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
@@ -9541,46 +9511,6 @@ bs-tabs > .broker-tab-pane[hidden] {
 /* Task info table handled by generic rules above */
 
 
-/* Event states in modal */
-.event-state {
-  padding: 0.125rem 0.5rem;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.event-state.started {
-  background-color: #dbeafe;
-  color: #1d4ed8;
-}
-
-.event-state.finished {
-  background-color: #dcfce7;
-  color: #166534;
-}
-
-.event-state.failed {
-  background-color: #fee2e2;
-  color: #dc2626;
-}
-
-/* Dark theme event states */
-[data-theme="dark"] .event-state.started {
-  background-color: #1e3a8a;
-  color: #93c5fd;
-}
-
-[data-theme="dark"] .event-state.finished {
-  background-color: #166534;
-  color: #86efac;
-}
-
-[data-theme="dark"] .event-state.failed {
-  background-color: #991b1b;
-  color: #fca5a5;
-}
-
 /* Task output uses existing logs table styling */
 
 /* Task modal responsive adjustments */
@@ -9667,7 +9597,6 @@ bs-tabs > .broker-tab-pane[hidden] {
   color: var(--text-secondary);
   white-space: nowrap;
   font-size: 12px;
-  text-transform: uppercase;
 }
 
 .config-overview-table td {

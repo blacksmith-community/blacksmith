@@ -82,7 +82,7 @@ t('fleet views and drawer', async () => {
   ok(!dr.hidden && dr.getAttribute('role')==='dialog' && dr.getAttribute('aria-modal')==='false','drawer open via Enter, role dialog');
   ok(d.activeElement===d.getElementById('cert-drawer-title'),'focus on heading');
   ok(log.some(l=>l==='GET /b/certificates/items/c2'),'item fetched');
-  ok(dr.querySelector('.cert-details-table')!==null && dr.textContent.includes('Subject Alt Names'),'detail table rendered');
+  ok(dr.querySelector('.cert-details-table')!==null && dr.textContent.includes('Subject alt names'),'detail table rendered');
   ok(bad(d)===0 && dr.querySelectorAll('img,script,[onerror]').length===0,'no injected (drawer)');
   ok(dr.textContent.includes('"><img src=x'),'hostile text shown literally in drawer');
   ok(!!dr.querySelector('.cert-drawer-credhub') && dr.querySelector('.cert-drawer-credhub').textContent.includes('8f2e1c0aabbcc'),'observation fingerprint shown');

@@ -11607,6 +11607,8 @@
     succeeded: ['success', 'Succeeded'],
     passed: ['success', 'Passed'],
     active: ['success', 'Active'],
+    created: ['neutral', 'Created'],
+    registering: ['active', 'Registering'],
     started: ['active', 'Started'],
     in_progress: ['active', 'In progress'],
     processing: ['active', 'Processing'],
@@ -18480,7 +18482,7 @@
                   <td>${showEmpty(time)}</td>
                   <td>${event.stage || EMPTY_HTML}</td>
                   <td>${showEmpty(taskInfo)}</td>
-                  <td><span class="event-state ${event.state}">${event.state || EMPTY_HTML}</span></td>
+                  <td>${event.state ? statusBadge(event.state) : EMPTY_HTML}</td>
                   <td>${showEmpty(progress)}</td>
                   <td class="event-error">${showEmpty(error)}</td>
                 </tr>
@@ -20478,10 +20480,10 @@
       const raw = (value) => (value === undefined || value === null ? '' : String(value));
 
       body.appendChild(fieldRow('Version', na(cert.version), raw(cert.version)));
-      body.appendChild(fieldRow('Serial Number', na(displaySerial(cert.serialNumber)), raw(displaySerial(cert.serialNumber))));
+      body.appendChild(fieldRow('Serial number', na(displaySerial(cert.serialNumber)), raw(displaySerial(cert.serialNumber))));
       body.appendChild(fieldRow('Subject', formatName(cert.subject), formatName(cert.subject)));
       body.appendChild(fieldRow('Issuer', formatName(cert.issuer), formatName(cert.issuer)));
-      body.appendChild(fieldRow('Valid From', formatDate(cert.notBefore), formatDate(cert.notBefore)));
+      body.appendChild(fieldRow('Valid from', formatDate(cert.notBefore), formatDate(cert.notBefore)));
 
       const validTo = el('span');
       if (cert.notAfter) validTo.appendChild(document.createTextNode(`${formatDate(cert.notAfter)} `));
@@ -20490,32 +20492,32 @@
         const shown = displayExpiry(cert.notAfter);
         validTo.appendChild(expiryPill(shown.status, shown.daysLeft, cert.notAfter));
       }
-      body.appendChild(fieldRow('Valid To', validTo, formatDate(cert.notAfter)));
+      body.appendChild(fieldRow('Valid to', validTo, formatDate(cert.notAfter)));
 
-      body.appendChild(fieldRow('Signature Algorithm', na(cert.signatureAlgorithm), raw(cert.signatureAlgorithm)));
+      body.appendChild(fieldRow('Signature algorithm', na(cert.signatureAlgorithm), raw(cert.signatureAlgorithm)));
 
       if (cert.publicKey && (cert.publicKey.algorithm || cert.publicKey.bits)) {
         const key = [cert.publicKey.algorithm, cert.publicKey.bits ? `${cert.publicKey.bits} bits` : '', cert.publicKey.curve]
           .filter(Boolean).join(', ');
-        body.appendChild(fieldRow('Public Key', key, key));
+        body.appendChild(fieldRow('Public key', key, key));
       }
 
       const sans = asList(cert.subjectAltNames);
       if (sans.length > 0) {
         const list = el('ul', 'cert-san-list');
         sans.forEach((san) => list.appendChild(el('li', null, san)));
-        body.appendChild(fieldRow('Subject Alt Names', list, sans.join(', ')));
+        body.appendChild(fieldRow('Subject alt names', list, sans.join(', ')));
       }
 
       const ekus = asList(cert.extKeyUsage);
       if (ekus.length > 0) {
-        body.appendChild(fieldRow('Extended Key Usage', ekus.join(', '), ekus.join(', ')));
+        body.appendChild(fieldRow('Extended key usage', ekus.join(', '), ekus.join(', ')));
       }
 
       if (cert.fingerprints) {
         const code = el('code');
         setCellText(code, na(cert.fingerprints.sha256));
-        body.appendChild(fieldRow('SHA256 Fingerprint', code, raw(cert.fingerprints.sha256)));
+        body.appendChild(fieldRow('SHA-256 fingerprint', code, raw(cert.fingerprints.sha256)));
       }
       return table;
     };
@@ -21494,7 +21496,7 @@
         <div class="registration-card" data-registration-id="${registration.id}">
           <div class="registration-card-header">
             <h3 class="registration-name">${this.escapeHtml(registration.name || 'Unnamed')}</h3>
-            <span class="registration-status ${statusClass}">${registration.status || 'created'}</span>
+            ${statusBadge(registration.status || 'created')}
           </div>
 
           <div class="registration-details">
