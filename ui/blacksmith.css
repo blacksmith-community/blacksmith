@@ -8283,7 +8283,14 @@ span.task-state.cancelled {
 }
 
 .task-duration {
-  font-family: 'Courier New', monospace;
+  font-family: inherit;
+  color: inherit;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tasks-table th:last-child {
+  text-align: right;
   white-space: nowrap;
 }
 
