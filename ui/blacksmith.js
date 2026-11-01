@@ -10762,6 +10762,10 @@
   };
 
   // Format tasks table
+  // The scope value "blacksmith" asks the director for every task, so the
+  // label says that. The value the request carries is unchanged.
+  const TASK_SCOPE_ALL_LABEL = 'Broker director (all tasks)';
+
   const formatTasks = (tasks, dataKey = 'tasks') => {
     // Always store data for sorting, even if empty
     tableOriginalData.set(dataKey, tasks || []);
@@ -10788,7 +10792,7 @@
           <div class="filter-group">
             <label for="task-filter">Scope:</label>
             <select id="task-filter" aria-label="Task scope">
-              <option value="blacksmith">blacksmith</option>
+              <option value="blacksmith">${TASK_SCOPE_ALL_LABEL}</option>
             </select>
           </div>
           <div class="tasks-action-buttons">
@@ -16979,7 +16983,7 @@
         data.options.forEach(option => {
           const optionElement = document.createElement('option');
           optionElement.value = option;
-          optionElement.textContent = option;
+          optionElement.textContent = option === 'blacksmith' ? TASK_SCOPE_ALL_LABEL : option;
           if (option === currentSelection) optionElement.selected = true;
           taskFilter.appendChild(optionElement);
         });
