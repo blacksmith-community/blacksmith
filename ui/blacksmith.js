@@ -2467,28 +2467,36 @@
 
   // The summary's first stop for problems. VM alerts come from the instance
   // list the summary already holds. Certificates come from the one fleet
-  // request, and until that returns, or if it fails, the row says Unknown.
+  // request. Until it returns, and whenever it cannot say, the row says so
+  // and never reports zero.
   const renderAttentionRequired = (data) => {
     const alerts = Object.entries(data.instances || {}).filter(([, instance]) => instance && !instance.deleted && hasVmAlert(instance));
-    const known = !!attentionCertificates.certificates && !attentionCertificates.failed;
-    const certificates = known ? attentionCertificates.certificates.length : null;
-    const fetchedAt = attentionCertificates.fetchedAt || Date.now();
+    const cert = attentionCertificates;
+    const certificates = cert.status === 'ready' ? cert.certificates.length : null;
+    const fetched = (at) => at ? `<p class="entity-attention-fetched">Data fetched ${stampHtml(at)}</p>` : '';
     const heading = '<h3 id="entity-attention-heading">Attention required</h3>';
-    const fetched = `<p class="entity-attention-fetched">Data fetched ${stampHtml(fetchedAt)}</p>`;
-    const shell = (body) => `<section class="card entity-attention" aria-labelledby="entity-attention-heading">${heading}${body}${fetched}</section>`;
-    if (!alerts.length && certificates === 0) return shell('<p class="entity-attention-clear">Nothing needs attention.</p>');
+    const shell = (body) => `<section class="card entity-attention" aria-labelledby="entity-attention-heading">${heading}${body}</section>`;
+    if (!alerts.length && certificates === 0) return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${fetched(cert.fetchedAt)}`);
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     const instanceRow = alerts.length
-      ? `<div data-attention="instances"><p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul></div>`
+      ? `<div data-attention="instances"><p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">VM job state: ${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul>${fetched(window.blacksmithDataFetchedAt)}</div>`
       : '';
-    const certificateRow = `<div data-attention="certificates"><p>Certificates needing attention: ${certificates === null ? '<span class="entity-attention-unknown">Unknown</span>' : certificates === 0 ? '0' : `<a href="#/certificates?attention=true">${plural(certificates, 'certificate')} need${certificates === 1 ? 's' : ''} attention</a>`}</p></div>`;
+    let value;
+    if (cert.status === 'ready') value = certificates === 0 ? '0' : `<a href="#/certificates?attention=true">${plural(certificates, 'certificate')} need${certificates === 1 ? 's' : ''} attention</a>`;
+    else if (cert.status === 'unknown') value = `<span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">${escapeHtml(cert.reason)}</span>`;
+    else value = '<span class="entity-attention-unknown">Loading</span>';
+    const certificateRow = `<div data-attention="certificates"><p>Certificates needing attention: ${value}</p>${cert.status === 'ready' ? fetched(cert.fetchedAt) : ''}</div>`;
     return shell(`${instanceRow}${certificateRow}`);
   };
+  // The section is taken before the wait, and replaced where it sits after
+  // it, so a summary set aside while the request ran still gets its answer.
   const refreshAttentionRequired = async (container, data = window.blacksmithData || {}) => {
-    if (!container?.querySelector('.entity-attention')) return;
+    const section = container?.querySelector('.entity-attention');
+    if (!section) return;
     await loadAttentionCertificates();
-    const current = container.querySelector('.entity-attention');
-    if (current) current.outerHTML = renderAttentionRequired(data);
+    const holder = document.createElement('template');
+    holder.innerHTML = renderAttentionRequired(data);
+    if (section.parentNode) section.replaceWith(holder.content.firstElementChild);
   };
 
   const renderBlacksmithOverview = (data, creds = {}) => {
@@ -2705,27 +2713,39 @@
 
   // One request to the fleet certificates endpoint lists every certificate
   // that needs attention. Each instance's count is derived from that list, so
-  // no instance is ever asked for its own.
-  const attentionCertificates = {certificates: null, fetchedAt: null, failed: false, pending: null};
+  // no instance is ever asked for its own. A successful answer is reused for
+  // a short while, so the summary and the instances screen share one request
+  // per page load. The inventory can only call a count zero after it has
+  // finished a scan, the same test the Certificates screen applies.
+  // The summary row could come from the badge's summary_only answer if this
+  // payload ever grows heavy.
+  const ATTENTION_REUSE_MS = 30000;
+  const attentionCertificates = {status: 'idle', certificates: null, scanErrors: [], fetchedAt: null, reason: '', loadedAt: 0, pending: null};
   const loadAttentionCertificates = () => {
-    if (attentionCertificates.pending) return attentionCertificates.pending;
-    attentionCertificates.pending = (async () => {
+    const state = attentionCertificates;
+    if (state.pending) return state.pending;
+    if (state.status === 'ready' && Date.now() - state.loadedAt < ATTENTION_REUSE_MS) return Promise.resolve(state);
+    if (state.status !== 'ready') state.status = 'loading';
+    state.pending = (async () => {
       try {
         const response = await fetchWithHeaders('/b/certificates/inventory?attention=true');
         if (!response.ok) throw new Error('unavailable');
         const body = await response.json();
-        attentionCertificates.certificates = Array.isArray(body?.certificates) ? body.certificates : [];
-        attentionCertificates.fetchedAt = Date.now();
-        attentionCertificates.failed = false;
+        const scan = body?.scan || {};
+        const never = !scan.completed_at || (scan.state === 'failed' && !((body?.summary || {}).certificates > 0));
+        if (never) {
+          Object.assign(state, {status: 'unknown', certificates: null, scanErrors: [], fetchedAt: null, reason: 'No completed certificate scan yet'});
+        } else {
+          Object.assign(state, {status: 'ready', certificates: Array.isArray(body.certificates) ? body.certificates : [], scanErrors: Array.isArray(scan.errors) ? scan.errors : [], fetchedAt: Date.now(), loadedAt: Date.now(), reason: ''});
+        }
       } catch (_) {
-        attentionCertificates.certificates = null;
-        attentionCertificates.failed = true;
+        Object.assign(state, {status: 'unknown', certificates: null, scanErrors: [], fetchedAt: null, reason: 'The certificate request failed'});
       } finally {
-        attentionCertificates.pending = null;
+        state.pending = null;
       }
-      return attentionCertificates;
+      return state;
     })();
-    return attentionCertificates.pending;
+    return state.pending;
   };
   const attentionCountsByInstance = (certificates) => {
     const counts = new Map();
@@ -2736,14 +2756,23 @@
     return counts;
   };
   const fillInstanceCertificates = async () => {
-    const cells = document.querySelectorAll('td[data-instance-certificates]');
-    if (!cells.length) return;
+    if (!document.querySelector('td[data-instance-certificates]')) return;
     const result = await loadAttentionCertificates();
-    const counts = result.failed ? null : attentionCountsByInstance(result.certificates);
+    const ready = result.status === 'ready';
+    const counts = ready ? attentionCountsByInstance(result.certificates) : null;
+    // An instance the last scan could not read, and never read before, has no count to give.
+    const unread = new Set(ready ? result.scanErrors.filter(entry => entry && entry.instance_id && !entry.last_success_at).map(entry => entry.instance_id) : []);
     document.querySelectorAll('td[data-instance-certificates]').forEach(cell => {
-      if (!counts) { cell.textContent = 'Unknown'; cell.removeAttribute('data-sort-value'); return; }
-      const count = counts.get(cell.dataset.instanceCertificates) || 0;
+      const id = cell.dataset.instanceCertificates;
+      if (!ready || unread.has(id)) {
+        cell.textContent = 'Unknown';
+        cell.title = ready ? 'The last certificate scan could not read this instance' : result.reason;
+        cell.removeAttribute('data-sort-value');
+        return;
+      }
+      const count = counts.get(id) || 0;
       cell.textContent = String(count);
+      cell.removeAttribute('title');
       cell.setAttribute('data-sort-value', String(count));
     });
   };
@@ -2756,7 +2785,7 @@
       const service = String(serviceIdToName[details.service_id] || details.service_id || '');
       const plan = String(details.plan?.name || details.plan_id || '');
       const status = details.vm_status ? String(details.vm_status) : '';
-      return `<tr class="row-link" tabindex="0" data-instance-row data-instance-id="${escapeAttribute(String(id))}" title="Open ${escapeAttribute(name)}"><td>${escapeHtml(name)}</td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">${EMPTY_HTML}</td></tr>`;
+      return `<tr class="row-link" tabindex="0" data-instance-row data-instance-id="${escapeAttribute(String(id))}" title="Open ${escapeAttribute(name)}"><td>${escapeHtml(name)}</td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">Unknown</td></tr>`;
     }).join('');
     if (!rows) return '<div class="no-data">No services have been provisioned yet.</div>';
     return `<div class="instances-overview">
@@ -15649,6 +15678,8 @@
         }
       }
 
+      if (tabId === 'services') fillInstanceCertificates();
+
       // Re-initialize sorting for any tables in the newly activated tab
       await new Promise((resolve) => {
         setTimeout(() => {
@@ -15946,7 +15977,7 @@
           window.serviceInstanceElements = new Map([...document.querySelectorAll('#services .service-item')].map(item => [item.dataset.instanceId,item]));
           attachSearchFilter('instances-overview-table');
           initializeAllTables();
-          fillInstanceCertificates();
+          if (document.getElementById('services')?.classList.contains('active')) fillInstanceCertificates();
           document.querySelectorAll('#services .service-item').forEach(item => {
             item.addEventListener('click', () => window.blacksmithRouter ? window.blacksmithRouter.navigate({screen:'services',instance:item.dataset.instanceId,section:'details'}) : window.navigateToInstance(item.dataset.instanceId));
           });
@@ -16498,7 +16529,7 @@
       const loadBlacksmithDetailTab = async (tabType) => {
         const request = ++blacksmithRequestSequence;
         const contentContainer = document.querySelector('#blacksmith .detail-content');
-        if (retainView(contentContainer, JSON.stringify(['broker',tabType]))) return;
+        if (retainView(contentContainer, JSON.stringify(['broker',tabType]))) { if (tabType === 'details') refreshAttentionRequired(contentContainer); return; }
         // Clean up any special layout classes
         contentContainer.classList.remove('plans-view');
         contentContainer.innerHTML = '<div class="loading">Loading...</div>';
@@ -16652,6 +16683,7 @@
 
         // Store status data for later use
         window.blacksmithData = data;
+        window.blacksmithDataFetchedAt = Date.now();
 
         // Render the Blacksmith detail view
         blacksmithPanel.innerHTML = renderBlacksmithTemplate(data);

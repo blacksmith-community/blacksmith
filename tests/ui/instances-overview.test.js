@@ -15,7 +15,8 @@ const mount=(w,d)=>{
  return host;
 };
 const cells=(row)=>[...row.children].map(c=>c.textContent.replace(/\s+/g,' ').trim());
-const inventory=(certs,status=200)=>['/b/certificates/inventory?attention=true',(u,o,json)=>json(status,status===200?{certificates:certs}:{error:'off'})];
+const scanned={state:'completed',completed_at:'2026-10-30T10:00:00Z',errors:[]};
+const inventory=(certs,status=200,scan=scanned)=>['/b/certificates/inventory?attention=true',(u,o,json)=>json(status,status===200?{certificates:certs,scan,summary:{certificates:certs.length}}:{error:'off'})];
 const owned=(...ids)=>({owners:ids.map(id=>({kind:'instance',instance_id:id}))});
 
 test('with no instance open the detail pane lists the instances in a searchable table',()=>{
@@ -56,7 +57,7 @@ test('the Certificates column counts attention certificates from one request',as
  try{
   const host=mount(w,d);
   const column=()=>[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
-  expect(column()).toEqual(['—','—','—']);
+  expect(column()).toEqual(['Unknown','Unknown','Unknown']);
   await w.__T.fillInstanceCertificates();
   expect(column()).toEqual(['3','0','1']);
   expect(calls.filter(c=>c==='GET /b/certificates/inventory?attention=true').length).toBe(1);
@@ -73,6 +74,39 @@ test('a failed certificates request says Unknown and never zero',async()=>{
   const column=[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
   expect(column).toEqual(['Unknown','Unknown','Unknown']);
  }finally{w.close();}
+});
+
+test('an instance the scan could not read is Unknown, not zero',async()=>{
+ const scan={...scanned,errors:[{instance_id:'b2',error:'unreachable'},{instance_id:'c3',error:'timeout',last_success_at:'2026-10-29T10:00:00Z'}]};
+ const {w,d}=boot({routes:[inventory([{id:'x1',...owned('a1')}],200,scan)]});
+ try{
+  const host=mount(w,d);
+  await w.__T.fillInstanceCertificates();
+  const column=[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
+  expect(column).toEqual(['1','Unknown','0']);
+ }finally{w.close();}
+});
+
+test('a platform-owned certificate is not counted against an instance',async()=>{
+ const {w,d}=boot({routes:[inventory([{id:'p1',owners:[{kind:'platform',instance_name:'cache-a'}]},{id:'x1',...owned('a1')}])]});
+ try{
+  const host=mount(w,d);
+  await w.__T.fillInstanceCertificates();
+  const column=[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
+  expect(column).toEqual(['1','0','0']);
+ }finally{w.close();}
+});
+
+test('a first scan that never completed leaves every count Unknown',async()=>{
+ for(const scan of [{state:'never'},{state:'failed',completed_at:'2026-10-30T10:00:00Z'}]){
+  const {w,d}=boot({routes:[inventory([],200,scan)]});
+  try{
+   const host=mount(w,d);
+   await w.__T.fillInstanceCertificates();
+   const column=[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
+   expect(column).toEqual(['Unknown','Unknown','Unknown']);
+  }finally{w.close();}
+ }
 });
 
 test('instance names and services are escaped in the table',()=>{
