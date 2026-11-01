@@ -12423,17 +12423,39 @@
     return info;
   };
 
+  // Whether the credentials carry a usable port for each connection type. A
+  // port of 0 or a missing one means that type cannot connect.
+  const connectionPortSupport = (serviceType, creds) => {
+    const usable = (port) => Number(port) > 0;
+    if (serviceType === 'rabbitmq') {
+      const protocols = (creds && creds.protocols) || {};
+      return {
+        standard: usable((protocols.amqp && protocols.amqp.port) || (creds && creds.port)),
+        secure: usable((protocols.amqps && protocols.amqps.port) || (creds && (creds.tls_port || creds.amqps_port)))
+      };
+    }
+    return { standard: usable(creds && creds.port), secure: usable(creds && creds.tls_port) };
+  };
+
+  // Standard is off only when it has no port and the secure type has one, so
+  // an instance with neither port keeps today's default.
+  const secureOnly = (serviceType, creds) => {
+    const support = connectionPortSupport(serviceType, creds);
+    return !support.standard && support.secure;
+  };
+
   // Generate connection fields based on service type
   const generateConnectionFields = (instanceId, serviceType, creds, manifestData = null) => {
     const connectionInfo = extractConnectionInfo(creds, serviceType, manifestData);
+    const noStandard = secureOnly(serviceType, creds);
 
     if (serviceType === 'redis') {
       return `
         <div class="connection-field">
           <label for="connection-type-${instanceId}">Type</label>
           <select id="connection-type-${instanceId}" name="connection-type" onchange="refreshConnectionTarget('${instanceId}')">
-            <option value="standard">Standard</option>
-            <option value="tls">TLS</option>
+            <option value="standard"${noStandard ? ' disabled' : ''}>Standard</option>
+            <option value="tls"${noStandard ? ' selected' : ''}>TLS</option>
           </select>
         </div>
       `;
@@ -12456,8 +12478,8 @@
         <div class="connection-field">
           <label for="connection-type-${instanceId}">Type</label>
           <select id="connection-type-${instanceId}" name="connection-type" onchange="refreshConnectionTarget('${instanceId}')">
-            <option value="amqp">AMQP</option>
-            <option value="amqps">AMQPS</option>
+            <option value="amqp"${noStandard ? ' disabled' : ''}>AMQP</option>
+            <option value="amqps"${noStandard ? ' selected' : ''}>AMQPS</option>
           </select>
         </div>
         <div class="connection-field">
@@ -12533,10 +12555,11 @@
   const connectionLine = (instanceId) => (window.serviceConnections && window.serviceConnections[instanceId] && window.serviceConnections[instanceId].line) || CONNECTION_LINE_IDLE;
 
   // The picks a fresh form starts on, which match the selected options.
-  const defaultConnectionPicks = (serviceType, info) => {
+  const defaultConnectionPicks = (serviceType, info, creds) => {
     const first = (list, preferred) => (list.includes(preferred) ? preferred : list[0]);
-    if (serviceType === 'rabbitmq') return { type: 'amqp', user: first(info.users, 'binding.user'), vhost: first(info.vhosts, 'binding.vhost') };
-    return { type: 'standard', user: '', vhost: '/' };
+    const noStandard = secureOnly(serviceType, creds);
+    if (serviceType === 'rabbitmq') return { type: noStandard ? 'amqps' : 'amqp', user: first(info.users, 'binding.user'), vhost: first(info.vhosts, 'binding.vhost') };
+    return { type: noStandard ? 'tls' : 'standard', user: '', vhost: '/' };
   };
 
   // Host, port, and for RabbitMQ the user and vhost a Connect would use. It
@@ -12570,7 +12593,7 @@
     if (!testingInstance) return '<div class="no-data">No operations available</div>';
     const connectionFields = generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials, testingInstance.manifestData);
     const info = extractConnectionInfo(testingInstance.credentials || {}, testingInstance.serviceType, testingInstance.manifestData);
-    const rows = connectionTargetRows(testingInstance, defaultConnectionPicks(testingInstance.serviceType, info));
+    const rows = connectionTargetRows(testingInstance, defaultConnectionPicks(testingInstance.serviceType, info, testingInstance.credentials));
     const connectionState = window.serviceConnections && window.serviceConnections[instanceId];
     const connected = !!(connectionState && connectionState.connected);
 
@@ -12582,6 +12605,7 @@
           ${connectionFields}
           <button class="btn btn-primary" id="connect-btn-${instanceId}" onclick="${handler}('${instanceId}')">${connected ? 'Disconnect' : 'Connect'}</button>
         </div>
+        ${secureOnly(testingInstance.serviceType, testingInstance.credentials) ? "<p class=\"connection-type-note\">Standard connections aren't available for this instance.</p>" : ''}
         <dl class="entity-facts connection-target" id="connection-target-${instanceId}" aria-label="Connection target">${connectionTargetHtml(rows)}</dl>
         <p class="connection-status-line" id="connection-status-${instanceId}" role="status">${connectionLineHtml(connectionLine(instanceId))}</p>
       </div>
