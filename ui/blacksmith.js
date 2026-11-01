@@ -26074,13 +26074,26 @@
     // The drawer reads top to bottom: the buttons, the warnings and notices,
     // the CredHub details, the certificate details, and the probe results.
     // Each warning and each notice gets its own callout.
+    // The finding names two versions without saying which side holds which.
+    // This puts each subject in its own words, and says what the listener
+    // serves when an observation shows it serving the latest certificate.
+    const deployPendingText = (cert, finding) => {
+      const versions = cert.versions;
+      const served = (cert.observations || []).some((o) => o.state !== 'failed' && o.matches === 'latest');
+      if (served) return 'The listener serves the latest certificate, but the deployment still references an older version.';
+      if (versions && versions.latest_version_id && versions.deployed_version_id) {
+        return `CredHub holds version ${versions.latest_version_id}, but the deployment still references version ${versions.deployed_version_id}.`;
+      }
+      return finding.message || finding.code || '';
+    };
+
     const drawerCallouts = (cert) => {
       const errors = [];
       const warnings = [];
       const notices = [];
       const findings = cert.findings || [];
       findings.forEach((finding) => {
-        const text = finding.message || finding.code || '';
+        const text = finding.code === 'deploy_pending' ? deployPendingText(cert, finding) : (finding.message || finding.code || '');
         if (!text) return;
         if (finding.severity === 'error') errors.push(text);
         else if (finding.severity === 'warning') warnings.push(text);
@@ -26143,12 +26156,12 @@
       add('Kind', cert.kind);
       add('Read from', sourcesOf(cert));
       if (versions) {
-        add('Deployed version', versions.deployed_version_id, true);
-        if (versions.deployed_not_after) add('Deployed version expires', shortDate(versions.deployed_not_after));
+        add('Referenced by deployment', versions.deployed_version_id, true);
+        if (versions.deployed_not_after) add('Referenced version expires', shortDate(versions.deployed_not_after));
         const same = versions.latest_version_id && versions.latest_version_id === versions.deployed_version_id;
-        if (same) add('Latest version', 'Same as the deployed version');
-        else add('Latest version', versions.latest_version_id, true);
-        if (!same && versions.latest_not_after) add('Latest version expires', shortDate(versions.latest_not_after));
+        if (same) add('Latest in CredHub', 'Same as the version the deployment references');
+        else add('Latest in CredHub', versions.latest_version_id, true);
+        if (!same && versions.latest_not_after) add('Latest in CredHub expires', shortDate(versions.latest_not_after));
         if (versions.transitional) add('Transitional', 'Yes');
       }
       credhubObs.forEach((obs, index) => {
@@ -26156,7 +26169,7 @@
         if (obs.locator && obs.locator !== cert.key) add(`Credential path${tag}`, obs.locator, true);
         add(`Version ID${tag}`, obs.version_id, true);
         add(`SHA-256 fingerprint${tag}`, obs.sha256_fingerprint, true);
-        add(`Matches${tag}`, matchText(obs.matches));
+        add(`Listener serves${tag}`, matchText(obs.matches));
         if (obs.not_after) add(`Expires${tag}`, shortDate(obs.not_after));
         add(`Status${tag}`, credhubStateText(obs));
         if (obs.observed_at) add(`Last read${tag}`, `${shortDate(obs.observed_at)} ${clock(obs.observed_at)}`);
@@ -26164,7 +26177,7 @@
       if (!body.hasChildNodes()) return null;
 
       const section = el('section', 'cert-drawer-credhub');
-      section.appendChild(el('h4', null, 'CredHub Details'));
+      section.appendChild(el('h4', null, 'CredHub details'));
       const table = el('table', 'cert-details-table cert-credhub-table');
       table.appendChild(body);
       // The grid layout drops the table semantics, so they are set by hand.

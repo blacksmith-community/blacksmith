@@ -23,7 +23,7 @@ async function openCert(id, tweak) {
 const heading = (dr, text) => Array.from(dr.querySelectorAll('h4')).find((h) => h.textContent === text);
 const position = (dr, node) => Array.from(dr.querySelector('.cert-drawer-body').children).findIndex((c) => c === node || c.contains(node));
 
-t('the drawer reads buttons, warnings and notices, CredHub Details, Certificate details, then Probe information', async () => {
+t('the drawer reads buttons, warnings and notices, CredHub details, Certificate details, then Probe information', async () => {
   const { w, dr } = await openCert('c2', (c) => {
     c.findings = [
       { code: 'a', severity: 'info', message: 'This is a notice.' },
@@ -33,7 +33,7 @@ t('the drawer reads buttons, warnings and notices, CredHub Details, Certificate 
   try {
     const actions = dr.querySelector('.cert-drawer-actions');
     const callouts = dr.querySelector('.cert-drawer-callouts');
-    const order = [actions, callouts, heading(dr, 'CredHub Details'), heading(dr, 'Certificate details'), heading(dr, 'Probe information')];
+    const order = [actions, callouts, heading(dr, 'CredHub details'), heading(dr, 'Certificate details'), heading(dr, 'Probe information')];
     order.forEach((node) => expect(node).toBeTruthy());
     const spots = order.map((node) => position(dr, node));
     expect(spots).toEqual([...spots].sort((a, b) => a - b));
@@ -72,7 +72,7 @@ t('no callout section renders when there is nothing to say', async () => {
   } finally { w.close(); }
 });
 
-t('CredHub Details is a label and value table with copy actions and no secret field', async () => {
+t('CredHub details is a label and value table with copy actions and no secret field', async () => {
   const { w, dr, copied, d } = await openCert('c2', (c) => {
     c.key = '/ws-bosh/valkey/var2';
     c.versions = { deployed_version_id: 'v-deployed-1', latest_version_id: 'v-latest-2', deployed_not_after: iso(Date.now() + DAY), latest_not_after: iso(Date.now() + 5 * DAY), transitional: true };
@@ -84,7 +84,7 @@ t('CredHub Details is a label and value table with copy actions and no secret fi
     const table = dr.querySelector('.cert-drawer-credhub table.cert-details-table');
     expect(table).toBeTruthy();
     const labels = Array.from(table.querySelectorAll('th')).map((th) => th.textContent);
-    expect(labels).toEqual(expect.arrayContaining(['Credential name', 'Deployed version', 'Latest version', 'Version ID', 'SHA-256 fingerprint', 'Expires', 'Last read']));
+    expect(labels).toEqual(expect.arrayContaining(['Credential name', 'Referenced by deployment', 'Latest in CredHub', 'Version ID', 'SHA-256 fingerprint', 'Expires', 'Last read']));
     labels.forEach((label) => expect(label).not.toMatch(/private|key material|password|secret|value|pem/i));
     expect(table.textContent).not.toMatch(/BEGIN (CERTIFICATE|PRIVATE)/);
     const row = Array.from(table.querySelectorAll('tr')).find((tr) => tr.querySelector('th').textContent === 'Credential name');
@@ -142,7 +142,7 @@ t('Other sources lists manifest and vault observations after Probe information',
     const rows = Array.from(section.querySelectorAll('tbody tr'));
     expect(rows.map((r) => r.querySelector('td').textContent)).toEqual(['manifest', 'vault']);
     expect(Array.from(section.querySelectorAll('thead th')).map((th) => th.textContent)).not.toContain('Expires');
-    const order = [dr.querySelector('.cert-drawer-actions'), dr.querySelector('.cert-drawer-callouts'), heading(dr, 'CredHub Details'), heading(dr, 'Certificate details'), heading(dr, 'Probe information'), heading(dr, 'Other sources')];
+    const order = [dr.querySelector('.cert-drawer-actions'), dr.querySelector('.cert-drawer-callouts'), heading(dr, 'CredHub details'), heading(dr, 'Certificate details'), heading(dr, 'Probe information'), heading(dr, 'Other sources')];
     const spots = order.map((n) => position(dr, n));
     expect(new Set(spots).size).toBe(6);
     expect(spots).toEqual([...spots].sort((a, b) => a - b));

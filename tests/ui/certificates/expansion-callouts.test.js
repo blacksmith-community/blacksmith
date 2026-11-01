@@ -73,7 +73,7 @@ t('a row with only warnings keeps the amber rule', async () => {
   } finally { w.close(); }
 });
 
-t('CredHub Details reads as the label and value grid of the task header', () => {
+t('CredHub details reads as the label and value grid of the task header', () => {
   const grid = bodies('forge-theme.css', '.cert-expansion .cert-credhub-table tbody');
   const facts = bodies('forge-theme.css', '.entity-facts');
   expect(grid).toMatch(/display:\s*grid/);
