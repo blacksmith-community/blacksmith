@@ -17462,7 +17462,7 @@
       document.getElementById('config-id').textContent = config.id;
       document.getElementById('config-name').textContent = config.name;
       document.getElementById('config-type').textContent = config.type;
-      document.getElementById('config-team').textContent = config.team || 'N/A';
+      setCellText(document.getElementById('config-team'), config.team);
       setCellText(document.getElementById('config-created-at'), formatTimestamp(config.created_at));
       document.getElementById('config-status').textContent = config.id.endsWith('*') ? 'Active' : 'Inactive';
 
@@ -19043,7 +19043,7 @@
         if (value instanceof Node) {
           holder.appendChild(value);
         } else {
-          holder.textContent = value;
+          setCellText(holder, value);
         }
         row.appendChild(holder);
         summaryBox.appendChild(row);
@@ -19051,7 +19051,8 @@
       addRow('Subject:', CertView.formatName(info.subject));
       addRow('Issuer:', CertView.formatName(info.issuer));
       const validUntil = CertView.el('span');
-      validUntil.appendChild(document.createTextNode(`${CertView.formatDate(info.notAfter)} `));
+      if (info.notAfter) validUntil.appendChild(document.createTextNode(`${CertView.formatDate(info.notAfter)} `));
+      else validUntil.innerHTML = EMPTY_HTML;
       if (info.notAfter) {
         const shown = CertView.displayExpiry(info.notAfter);
         validUntil.appendChild(CertView.expiryPill(shown.status, shown.daysLeft, info.notAfter));
@@ -20253,7 +20254,7 @@
 
     // Subject and issuer arrive as a string or as the parsed name object.
     const formatName = (name) => {
-      if (!name) return 'N/A';
+      if (!name) return EMPTY;
       if (typeof name === 'string') return name;
       if (typeof name !== 'object') return String(name);
 
@@ -20268,11 +20269,11 @@
       add('C', name.country);
       add('L', name.locality);
       add('ST', name.province);
-      return parts.length > 0 ? parts.join(', ') : 'N/A';
+      return parts.length > 0 ? parts.join(', ') : EMPTY;
     };
 
     const formatDate = (value) => {
-      if (!value) return 'N/A';
+      if (!value) return EMPTY;
       return formatStamp(value) || String(value);
     };
 
@@ -20501,13 +20502,14 @@
       const td = el('td');
       const wrap = el('div', 'cert-field-value');
       const span = el('span', 'cert-field-text');
+      const missing = text === EMPTY || copyValue === EMPTY;
       if (text instanceof Node) {
         span.appendChild(text);
       } else {
-        span.textContent = text;
+        setCellText(span, text);
       }
       wrap.appendChild(span);
-      if (copyValue) wrap.appendChild(copyButton(`Copy ${label}`, copyValue));
+      if (copyValue && !missing) wrap.appendChild(copyButton(`Copy ${label}`, copyValue));
       td.appendChild(wrap);
       tr.appendChild(td);
       return tr;
@@ -20536,7 +20538,7 @@
       const body = el('tbody');
       table.appendChild(body);
 
-      const na = (value) => (value === undefined || value === null || value === '' ? 'N/A' : String(value));
+      const na = (value) => (value === undefined || value === null || value === '' ? EMPTY : String(value));
       const raw = (value) => (value === undefined || value === null ? '' : String(value));
 
       body.appendChild(fieldRow('Version', na(cert.version), raw(cert.version)));
@@ -20546,7 +20548,8 @@
       body.appendChild(fieldRow('Valid From', formatDate(cert.notBefore), formatDate(cert.notBefore)));
 
       const validTo = el('span');
-      validTo.appendChild(document.createTextNode(`${formatDate(cert.notAfter)} `));
+      if (cert.notAfter) validTo.appendChild(document.createTextNode(`${formatDate(cert.notAfter)} `));
+      else validTo.innerHTML = EMPTY_HTML;
       if (cert.notAfter) {
         const shown = displayExpiry(cert.notAfter);
         validTo.appendChild(expiryPill(shown.status, shown.daysLeft, cert.notAfter));
@@ -20574,7 +20577,8 @@
       }
 
       if (cert.fingerprints) {
-        const code = el('code', null, na(cert.fingerprints.sha256));
+        const code = el('code');
+        setCellText(code, na(cert.fingerprints.sha256));
         body.appendChild(fieldRow('SHA256 Fingerprint', code, raw(cert.fingerprints.sha256)));
       }
       return table;
@@ -20785,7 +20789,7 @@
 
     const versionText = (cert) => {
       const v = cert.versions;
-      if (!v || !v.deployed_version_id) return 'n/a';
+      if (!v || !v.deployed_version_id) return EMPTY;
       if (v.deployed_version_id === v.latest_version_id) return 'Deployed is the latest';
       return v.transitional ? 'Newer version waiting, transitional' : 'Newer version not deployed yet';
     };
@@ -20833,7 +20837,11 @@
           expires.setAttribute('data-sort-value', certSortValue(cert.effective_not_after));
         }
         tr.appendChild(expires);
-        if (opts.versions) tr.appendChild(el('td', null, versionText(cert)));
+        if (opts.versions) {
+          const versionCell = el('td');
+          setCellText(versionCell, versionText(cert));
+          tr.appendChild(versionCell);
+        }
         body.appendChild(tr);
       });
       table.appendChild(body);
@@ -21551,11 +21559,11 @@
           <div class="registration-details">
             <div class="registration-detail">
               <div class="registration-detail-label">API URL</div>
-              <div class="registration-detail-value">${this.escapeHtml(registration.api_url || 'N/A')}</div>
+              <div class="registration-detail-value">${registration.api_url ? this.escapeHtml(registration.api_url) : EMPTY_HTML}</div>
             </div>
             <div class="registration-detail">
               <div class="registration-detail-label">Username</div>
-              <div class="registration-detail-value">${this.escapeHtml(registration.username || 'N/A')}</div>
+              <div class="registration-detail-value">${registration.username ? this.escapeHtml(registration.username) : EMPTY_HTML}</div>
             </div>
             <div class="registration-detail">
               <div class="registration-detail-label">Broker Name</div>
@@ -22801,8 +22809,8 @@
                       <tr>
                         <td><strong>${escapeHtml(service.name || 'Not reported')}</strong></td>
                         <td>${escapeHtml(service.description || 'Not reported')}</td>
-                        <td>${service.plans ? service.plans.length + ' plan(s)' : 'N/A'}</td>
-                        <td>${service.available !== undefined ? (service.available ? 'Yes' : 'No') : 'N/A'}</td>
+                        <td>${service.plans ? service.plans.length + ' plan(s)' : EMPTY_HTML}</td>
+                        <td>${service.available !== undefined ? (service.available ? 'Yes' : 'No') : EMPTY_HTML}</td>
                       </tr>
                     `).join('')}
                   </tbody>

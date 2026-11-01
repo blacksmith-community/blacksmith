@@ -92,5 +92,5 @@ t('the inspector formats dates as timestamps', () => {
   const inst = H.instance.boot();
   const view = inst.w.__T.CertView;
   expect(view.formatDate('2027-10-11T09:14:30Z')).toBe('2027-10-11 09:14:30 UTC');
-  expect(view.formatDate('')).toBe('N/A');
+  expect(view.formatDate('')).toBe('—');
 });

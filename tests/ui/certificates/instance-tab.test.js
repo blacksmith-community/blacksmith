@@ -48,7 +48,7 @@ t('instance certificates tab', async () => {
   ok(/failed: timed out/.test(lis[0].textContent),'failed listener shows error');
   ok(/Scanned \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC, 2 of 3 listeners observed/.test(ov.querySelector('.cert-ov-footer').textContent),'scan time and coverage: '+ov.querySelector('.cert-ov-footer').textContent);
   const rot=ov.querySelector('.cert-ov-rotate'); ok(rot&&rot.disabled&&rot.textContent==='Rotate...'&&d.getElementById(rot.getAttribute('aria-describedby')).textContent.length>0,'Rotate... disabled with visible reason');
-  ok(/Newer version not deployed yet/.test(ov.textContent)&&/n\/a/.test(ov.textContent),'deployed vs latest column');
+  ok(/Newer version not deployed yet/.test(ov.textContent)&&ov.querySelector('td .empty-value')!==null,'deployed vs latest column');
   ok(bad(d)===0,'no injected elements');
   ok(errors.filter(e=>!/Error loading data/.test(e)).length===0,'no console errors beyond page-load 404 '+errors.join('|'));
   // arrow keys
