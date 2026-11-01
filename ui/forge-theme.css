@@ -38,7 +38,7 @@
   --text-primary: var(--foreground); --text-secondary: var(--muted-foreground);
   --text-muted: var(--muted-foreground); --text-tertiary: var(--muted-foreground);
   --text-link: var(--primary); --text-code: var(--foreground); --bg-code: var(--secondary);
-  --bg-footer: var(--background); --text-success: var(--success); --text-error: var(--danger); --text-warning: var(--warning); --text-info: var(--primary);
+  --text-success: var(--success); --text-error: var(--danger); --text-warning: var(--warning); --text-info: var(--primary);
   --border-tertiary: var(--border); --border-table-row: var(--border); --border-primary: var(--border);
   --border-secondary: var(--border); --border-table: var(--border); --border-active: var(--primary);
   --rotate-pressed-bg: var(--primary); --rotate-pressed-text: var(--primary-foreground);
@@ -52,7 +52,8 @@ body > header #logo { display: inline-flex; align-items: center; gap: 8px; color
 body > header #logo img { width: 36px; height: 36px; display: block; }
 body > header span, body > header .theme-toggle { color: #f7f3ea; }
 #themeText { margin-left: 8px; }
-body > footer img, .minimized-terminal-bar img { width: 24px; height: 24px; vertical-align: middle; }
+.minimized-terminal-bar img { width: 24px; height: 24px; vertical-align: middle; }
+.keyboard-help-copyright-icon { flex: none; width: 24px; height: 24px; background: url("/assets/brand/icon-192.png") center / contain no-repeat; }
 .wrap { margin-inline: 20px; width: calc(100% - 40px); }
 .main-content > .wrap, .tab-content { display: flex; flex: 1; flex-direction: column; }
 .main-content .tabs { display: flex; overflow-x: auto; }
@@ -83,6 +84,8 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .modal-content { color: var(--foreground); background: var(--card); border: 1px solid var(--border); }
 .main-content table :is(td, th) { padding: 10px 12px; font-size: .875rem; color: var(--foreground); border-color: var(--border); }
 .main-content table th { background: var(--secondary); }
+/* The header row stays in view while the rows scroll; --secondary is opaque in every theme and in high contrast. */
+.main-content table thead, .main-content table thead th { position: sticky; top: 0; z-index: 5; background: var(--secondary); }
 .main-content table td { background: var(--card); }
 [data-theme="dark"] .main-content table td { background: var(--surface-page); }
 [data-theme="dark"] .entity-metric.card { background: var(--surface-raised); }
@@ -173,7 +176,6 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 .entity-metric.card { margin: 0; }
 .entity-context.card { margin: 0 0 20px; }
 .entity-metrics { padding: 0; }
-body > footer p { margin: 0; }
 
 #services .instance-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-block: 1px solid var(--border); flex-shrink: 0; }
 #services .instance-pagination span { font-size: .75rem; color: var(--muted-foreground); }
@@ -733,6 +735,7 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 #keyboard-help-dialog h3 { margin: 0 0 8px; padding: 0; font-size: .875rem; overflow-wrap: anywhere; }
 #keyboard-help-dialog table { margin: 0 0 16px; }
 #keyboard-help-dialog :is(th,td) { padding: 8px; font-size: .8125rem; border-bottom: 1px solid var(--border); text-align: left; white-space: normal; overflow-wrap: anywhere; }
+#keyboard-help-dialog .keyboard-help-copyright { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: .75rem; }
 #keyboard-help-dialog kbd { white-space: normal; }
 #keyboard-help-dialog p { font-size: .8125rem; margin: 0; }
 #blacksmith .compact-tasks-controls { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; padding: 0 0 8px; }

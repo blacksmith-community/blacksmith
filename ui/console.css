@@ -44,7 +44,6 @@ body > header > .wrap { height: 100%; gap: 12px; }
 body > header #logo { font-size: 18px; font-weight: 650; }
 body > header .theme-toggle { height: 32px; margin-top: 0; border-color: #8999ad; padding: 4px 10px; }
 #minimized-terminal-bar { top: 56px; }
-body > footer { font-size: 12px; }
 .main-content > .wrap { min-height: 0; padding-bottom: 12px; }
 .main-content .tabs { margin-top: 14px; flex-shrink: 0; border: 1px solid var(--border-primary); border-radius: 10px 10px 0 0; box-shadow: none; }
 .main-content .tab-button { padding: 13px 18px; }

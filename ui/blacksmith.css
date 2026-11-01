@@ -605,7 +605,6 @@ select option {
   --bg-active: #e8f4ff;
   --bg-code: #f5f5f5;
   --bg-header: #000;
-  --bg-footer: #f5f5f5;
   --bg-table-header: #f8f9fa;
   --bg-table-hover: #f8f9fa;
   --bg-table-even: #fafafa;
@@ -647,7 +646,6 @@ select option {
   --bg-active: #3d4d5d;
   --bg-code: #1e1e1e;
   --bg-header: #0a0a0a;
-  --bg-footer: #252525;
   --bg-table-header: #000000;
   --bg-table-hover: #1a1a1a;
   --bg-table-even: #1a1a1a;
@@ -953,20 +951,6 @@ header span#ident {
   display: flex;
   flex-direction: column;
   height: 100%;
-}
-
-footer {
-  background-color: var(--bg-footer);
-  padding: 10px 0;
-  flex-shrink: 0;
-  border-top: 1px solid var(--border-primary);
-}
-
-footer p {
-  text-align: center;
-  font-size: 9pt;
-  color: var(--text-muted);
-  margin: 0;
 }
 
 
