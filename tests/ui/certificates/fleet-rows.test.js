@@ -66,7 +66,7 @@ t('fleet rows and grouping', async () => {
   // export blocked
   const csv=d.getElementById('cert-export-csv'), js=d.getElementById('cert-export-json'), note=d.getElementById('cert-export-note');
   ok(!csv.hasAttribute('href')&&!js.hasAttribute('href')&&csv.getAttribute('aria-disabled')==='true'&&!note.hidden&&/unavailable/.test(note.textContent),'export disabled with visible reason');
-  m=log.length; btn(d,'Unconverged').click(); await sleep(250);
+  m=log.length; btn(d,'Deployment mismatch').click(); await sleep(250);
   calls=invCalls(log,m).filter(c=>/attention|health|finding/.test(c));
   ok(calls.length===3,'three requests for three toggles');
   ok(rowsIds(d).sort().join()==='A,B,C,D,M','union of three: A,B,C,D,M');
@@ -76,7 +76,7 @@ t('fleet rows and grouping', async () => {
   calls=invCalls(log,m).filter(c=>/attention|health|finding/.test(c));
   ok(calls.length>=3&&calls.every(c=>/q=cn/.test(c)),'search constant across variants ('+calls.length+')');
   // back to one toggle
-  btn(d,'Health errors').click(); await sleep(250); btn(d,'Unconverged').click(); await sleep(250);
+  btn(d,'Health errors').click(); await sleep(250); btn(d,'Deployment mismatch').click(); await sleep(250);
   m=log.length; btn(d,'Needs attention').click(); await sleep(10); btn(d,'Health errors').click(); await sleep(250);
   ok(!!csv.getAttribute('href')&&csv.getAttribute('href').includes('format=csv')&&!csv.hasAttribute('aria-disabled')&&note.hidden,'export enabled with one toggle');
   // zero toggles

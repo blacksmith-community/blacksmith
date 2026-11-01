@@ -14,8 +14,8 @@ t('fleet finding toggles', async () => {
   w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
   d.getElementById('certificates').classList.add('active');
   await T.CertsFleet.init(); await sleep(200);
-  const btn=()=>[...d.querySelectorAll('#cert-strip-attention button')].find(b=>/Unconverged/.test(b.textContent));
-  ok(btn()&&/3/.test(btn().textContent),'Unconverged toggle counts unconverged plus reverted: '+(btn()&&btn().textContent));
+  const btn=()=>[...d.querySelectorAll('#cert-strip-attention button')].find(b=>/Deployment mismatch/.test(b.textContent));
+  ok(btn()&&/3/.test(btn().textContent),'Deployment mismatch toggle counts unconverged plus reverted: '+(btn()&&btn().textContent));
   const n0=calls.length; btn().click(); await sleep(150);
   const reqs=calls.slice(n0).filter(c=>/certificates\/inventory/.test(c));
   ok(reqs.some(c=>/finding=unconverged/.test(c)&&/finding=patch_reverted/.test(c)),'pressing the toggle filters to both findings: '+reqs.join(' | '));
@@ -23,5 +23,23 @@ t('fleet finding toggles', async () => {
   const n1=calls.length; btn().click(); await sleep(150);
   ok(!calls.slice(n1).filter(c=>/certificates\/inventory/.test(c)).some(c=>/finding=/.test(c)),'releasing the toggle clears both findings');
   ok(!errors.some(e=>/Reference|TypeError|LOAD/.test(e)),'no script errors: '+errors.join('|'));
+  expect(failures).toEqual([]);
+}, 120000);
+
+t('the filter chips say what they count', async () => {
+  const env=boot(); const {w,d,errors,calls}=env; const T=w.__T;
+  const cert={id:'c1',key:'/s/a_crt',variable:'a_crt',kind:'leaf',days_left:50,expiry:'ok',health:'ok',owners:[{kind:'instance',instance_id:'inst-a',instance_name:'a'}],rotation:{allowed:true,reasons:[]},findings:[]};
+  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])],
+    [/certificates\/inventory/,(u,o,j)=>j(200,{certificates:[cert],capabilities:{rotation:{enabled:true}},settings:{warning_days:30,critical_days:7},scan:{state:'idle'},summary:{certificates:1,needs_attention:3,unconverged:2,reverted:1,health_errors:0,expired:0,critical:0,warning:0,expiry_ok:1},filtered:{certificates:1}})]);
+  w.serviceInstances={}; await sleep(50); w.plansData={services:[]};
+  d.getElementById('certificates').classList.add('active');
+  await T.CertsFleet.init(); await sleep(200);
+  const labels=[...d.querySelectorAll('#cert-strips .cert-strip-label')].map(l=>l.textContent);
+  expect(labels).toEqual(['Needs attention','Health errors','Deployment mismatch','Expired','Expiry critical','Expiry warning','Expiry OK','Unknown']);
+  const attention=[...d.querySelectorAll('#cert-strips button')].find(b=>b.textContent.startsWith('Needs attention'));
+  expect(attention.title).toBe('Counts each certificate once, whether its expiry, its health, or its deployment needs attention.');
+  // The names are the only change. Saved links keep using the same filter values.
+  [...d.querySelectorAll('#cert-strips button')].find(b=>b.textContent.startsWith('Expiry warning')).click(); await sleep(100);
+  expect(w.blacksmithCerts.state.expiry).toEqual(['warning']);
   expect(failures).toEqual([]);
 }, 120000);

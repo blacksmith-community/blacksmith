@@ -24,9 +24,9 @@ t('fleet tab', async () => {
   ok(rows[0].textContent.includes(EVIL.slice(0,10))===true,'hostile text literal');
   // pressed
   const btn=(label)=>Array.from(d.querySelectorAll('.cert-strip-btn')).find(b=>b.textContent.startsWith(label));
-  btn('Critical').click(); await sleep(80);
-  ok(w.blacksmithCerts.state.expiry.join()==='critical' && btn('Critical').getAttribute('aria-pressed')==='true','critical pressed');
-  btn('Warning').click(); await sleep(80);
+  btn('Expiry critical').click(); await sleep(80);
+  ok(w.blacksmithCerts.state.expiry.join()==='critical' && btn('Expiry critical').getAttribute('aria-pressed')==='true','critical pressed');
+  btn('Expiry warning').click(); await sleep(80);
   ok(w.blacksmithCerts.state.expiry.join()==='critical,warning','critical+warning');
   ok(/expiry=critical&expiry=warning/.test(w.blacksmithCerts.toQuery(w.blacksmithCerts.state)),'query '+w.blacksmithCerts.toQuery(w.blacksmithCerts.state));
   // chips

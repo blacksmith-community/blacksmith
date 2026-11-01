@@ -66,8 +66,8 @@ t('fleet settings and coverage line', async () => {
   ok(log.filter(l=>l.startsWith('GET /b/certificates/inventory')).length>inv0,'inventory re-fetched');
   ok(d.activeElement===sb,'focus returns to Settings button');
   w.blacksmithCerts.state.attention=false; await w.blacksmithCerts.refresh({announce:true}); await sleep(80);
-  const strip=Array.from(d.querySelectorAll('.cert-strip-btn')).find(b=>b.textContent.startsWith('Warning'));
-  ok(strip.querySelector('.cert-strip-count').textContent==='3','Warning count moved from 2 to 3 (days 24,33,42 between 20 and 45): '+strip.querySelector('.cert-strip-count').textContent);
+  const strip=Array.from(d.querySelectorAll('.cert-strip-btn')).find(b=>b.textContent.startsWith('Expiry warning'));
+  ok(strip.querySelector('.cert-strip-count').textContent==='3','Expiry warning count moved from 2 to 3 (days 24,33,42 between 20 and 45): '+strip.querySelector('.cert-strip-count').textContent);
   ok(w.CertView.displayExpiry(new Date(Date.now()+40*86400000).toISOString()).status==='warning','pill thresholds updated in CertView');
   // ---- 403 on GET settings ----
   server.settingsGet={status:403,body:{success:false,error:'settings forbidden'+EVIL,code:'forbidden'}};

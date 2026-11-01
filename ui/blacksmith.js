@@ -24307,7 +24307,7 @@
     const ATTENTION_TOGGLES = [
       { pressed: (f) => Boolean(f.attention), clear: (f) => { f.attention = false; }, set: (f) => { f.attention = true; } },
       { pressed: (f) => f.health.includes('error'), clear: (f) => { f.health = f.health.filter((v) => v !== 'error'); }, set: (f) => { f.health = f.health.concat('error'); } },
-      // The Unconverged toggle stands for both findings of a divergence record.
+      // The Deployment mismatch toggle stands for both findings of a divergence record.
       { pressed: (f) => f.finding.includes('unconverged'), clear: (f) => { f.finding = f.finding.filter((v) => !DIVERGENCE_FINDINGS.includes(v)); }, set: (f) => { f.finding = f.finding.filter((v) => !DIVERGENCE_FINDINGS.includes(v)).concat(DIVERGENCE_FINDINGS); } }
     ];
 
@@ -24920,17 +24920,17 @@
 
     const STRIPS = {
       attention: [
-        { label: 'Needs attention', tone: 'critical', count: (s) => s.needs_attention, pressed: () => state.attention, toggle: () => { state.attention = !state.attention; } },
+        { label: 'Needs attention', title: 'Counts each certificate once, whether its expiry, its health, or its deployment needs attention.', tone: 'critical', count: (s) => s.needs_attention, pressed: () => state.attention, toggle: () => { state.attention = !state.attention; } },
         { label: 'Health errors', tone: 'critical', count: (s) => s.health_errors, pressed: () => state.health.includes('error'), toggle: () => toggleValue('health', 'error') },
-        { label: 'Unconverged', tone: 'warning', count: (s) => (Number(s.unconverged) || 0) + (Number(s.reverted) || 0), pressed: () => state.finding.includes('unconverged'), toggle: () => {
+        { label: 'Deployment mismatch', tone: 'warning', count: (s) => (Number(s.unconverged) || 0) + (Number(s.reverted) || 0), pressed: () => state.finding.includes('unconverged'), toggle: () => {
           const toggle = ATTENTION_TOGGLES[2];
           if (toggle.pressed(state)) toggle.clear(state); else toggle.set(state);
         } }
       ],
       expiry: [
         { label: 'Expired', tone: 'expired', count: (s) => s.expired, pressed: () => state.expiry.includes('expired'), toggle: () => toggleValue('expiry', 'expired') },
-        { label: 'Critical', tone: 'critical', count: (s) => s.critical, pressed: () => state.expiry.includes('critical'), toggle: () => toggleValue('expiry', 'critical') },
-        { label: 'Warning', tone: 'warning', count: (s) => s.warning, pressed: () => state.expiry.includes('warning'), toggle: () => toggleValue('expiry', 'warning') },
+        { label: 'Expiry critical', tone: 'critical', count: (s) => s.critical, pressed: () => state.expiry.includes('critical'), toggle: () => toggleValue('expiry', 'critical') },
+        { label: 'Expiry warning', tone: 'warning', count: (s) => s.warning, pressed: () => state.expiry.includes('warning'), toggle: () => toggleValue('expiry', 'warning') },
         { label: 'Expiry OK', tone: 'ok', count: (s) => s.expiry_ok, pressed: () => state.expiry.includes('ok'), toggle: () => toggleValue('expiry', 'ok') },
         { label: 'Unknown', tone: 'unknown', count: (s) => s.expiry_unknown, pressed: () => state.expiry.includes('unknown'), toggle: () => toggleValue('expiry', 'unknown') }
       ]
@@ -24941,6 +24941,7 @@
       [['attention', view.refs.stripAttention], ['expiry', view.refs.stripExpiry]].forEach(([name, holder]) => {
         STRIPS[name].forEach((def) => {
           const b = button(`cert-strip-btn cert-strip-btn--${def.tone}`);
+          if (def.title) b.title = def.title;
           b.appendChild(el('span', 'cert-strip-label', def.label));
           const count = el('span', 'cert-strip-count', '0');
           b.appendChild(count);
@@ -25569,7 +25570,7 @@
 
     // The server cannot express an OR across attention toggles in one
     // query, so an export of that view is disabled with a visible reason.
-    const EXPORT_BLOCKED_TEXT = 'Export is unavailable while two or more of Needs attention, Health errors, and Unconverged are pressed. Press one of them, or clear them, to export.';
+    const EXPORT_BLOCKED_TEXT = 'Export is unavailable while two or more of Needs attention, Health errors, and Deployment mismatch are pressed. Press one of them, or clear them, to export.';
 
     const renderExportLinks = () => {
       const blocked = attentionPressedCount(state) >= 2;
