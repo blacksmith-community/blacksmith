@@ -51,7 +51,7 @@
    entries.set(currentEntryId,{...previous,route:current,focus:win.document.activeElement,scroll:[...win.document.querySelectorAll('.tab-panel,.detail-content,.plan-detail,.plans-list,.services-items-container')].map(el=>({el,top:el.scrollTop,left:el.scrollLeft}))});
    while(entries.size>100)entries.delete(entries.keys().next().value);
   }
-  function restore(id){const e=entries.get(id);if(!e)return;for(const s of e.scroll||[])if(s.el.isConnected){s.el.scrollTop=s.top;s.el.scrollLeft=s.left;}if(e.focus?.isConnected&&e.focus.getClientRects().length)e.focus.focus({preventScroll:true});}
+  function restore(id){const e=entries.get(id);if(!e)return;for(const s of e.scroll||[])if(s.el.isConnected){s.el.scrollTop=s.top;s.el.scrollLeft=s.left;}if(e.focus?.isConnected&&e.focus.getClientRects().length){if(e.focus.matches('.detail-content,.tab-panel'))routeFocus(e.focus,win.document);else e.focus.focus({preventScroll:true});}}
   async function recover(error,route,options,signal,revision){
    const previous=current, previousEntry=currentEntryId;
    const fallback=previous||{screen:'blacksmith',section:'details'};
@@ -198,6 +198,25 @@
  }
  root.blacksmithRefreshContext=()=>{const current=root.blacksmithRouter?.current;if(current&&current.view==='activity'&&current.task)render(current);};
  function error(error){let node=doc.getElementById('route-error');if(!node){node=doc.createElement('div');node.id='route-error';node.setAttribute('data-variant','danger');node.setAttribute('role','alert');doc.querySelector('.tab-content')?.before(node);}node.textContent=error.message+' Use Back or select a destination from the navigation.';}
- function start(){if(root.blacksmithRouter||!root.blacksmithViews)return;const router=create(root,{activate:(r,o)=>root.blacksmithViews.activate(r,o),settled:()=>doc.getElementById('route-error')?.remove(),pending:r=>render(r),changed:(r,o)=>{doc.getElementById('route-error')?.remove();render(r);root.blacksmithNav?.announce(doc.title.replace(' — Blacksmith',''));if(!r.inspection&&!o.history&&!o.record){const h=doc.querySelector('.tab-panel.active .detail-content')||doc.querySelector('.tab-panel.active');if(h){if(!h.hasAttribute('tabindex'))h.setAttribute('tabindex','-1');h.setAttribute('data-route-focus','');h.addEventListener('blur',()=>h.removeAttribute('data-route-focus'),{once:true});h.focus({preventScroll:true});if(doc.activeElement!==h)h.removeAttribute('data-route-focus');}}},error});root.blacksmithRouter=router;router.start();}
+ // Moves focus to a panel for a route change and marks it, so the ring stays hidden for a move the operator
+ // did not make. The marker ends when focus goes to another control or when the operator presses a key or
+ // the pointer. A blur that leaves the panel as the active element is the window being deactivated, so the panel
+ // keeps its marker for the focus it gets back.
+ const marked=new WeakMap();
+ function routeFocus(h,doc=root.document){
+  if(!h)return;
+  marked.get(h)?.();
+  if(!h.hasAttribute('tabindex'))h.setAttribute('tabindex','-1');
+  h.setAttribute('data-route-focus','');
+  const end=()=>{h.removeAttribute('data-route-focus');h.removeEventListener('blur',blur);for(const t of ['keydown','pointerdown'])doc.removeEventListener(t,end,true);marked.delete(h);};
+  const blur=()=>{queueMicrotask(()=>{if(doc.activeElement!==h)end();});};
+  h.addEventListener('blur',blur);
+  for(const t of ['keydown','pointerdown'])doc.addEventListener(t,end,true);
+  marked.set(h,end);
+  h.focus({preventScroll:true});
+  if(doc.activeElement!==h)end();
+ }
+ root.blacksmithRouteFocus=routeFocus;
+ function start(){if(root.blacksmithRouter||!root.blacksmithViews)return;const router=create(root,{activate:(r,o)=>root.blacksmithViews.activate(r,o),settled:()=>doc.getElementById('route-error')?.remove(),pending:r=>render(r),changed:(r,o)=>{doc.getElementById('route-error')?.remove();render(r);root.blacksmithNav?.announce(doc.title.replace(' — Blacksmith',''));if(!r.inspection&&!o.history&&!o.record){routeFocus(doc.querySelector('.tab-panel.active .detail-content')||doc.querySelector('.tab-panel.active'));}},error});root.blacksmithRouter=router;router.start();}
  doc.addEventListener('blacksmith:ready',start);if(root.blacksmithViews)start();
 })(globalThis);

@@ -48,6 +48,8 @@ test('after the router focus ends the marker is gone and the ring is inset',asyn
  const content=w.document.querySelector('.tab-panel.active .detail-content');
  await w.blacksmithRouter.navigate({screen:'blacksmith',section:'details'});
  content.blur();
+ // The router waits a tick to tell a focus move from the window losing focus.
+ await new Promise(r=>setTimeout(r,0));
  expect(content.hasAttribute('data-route-focus')).toBe(false);
  for(const contrast of [undefined,'high']){
   if(contrast)w.document.documentElement.dataset.contrast=contrast;

@@ -253,7 +253,10 @@
       input.setAttribute('aria-expanded', 'false');
       if (restore && previousFocus?.isConnected) previousFocus.focus();
     }
-    function docFocus() { (document.querySelector('.tab-panel.active .detail-content') || document.querySelector('.tab-panel.active'))?.focus({preventScroll:true}); }
+    function docFocus() {
+      const panel = document.querySelector('.tab-panel.active .detail-content') || document.querySelector('.tab-panel.active');
+      if (root.blacksmithRouteFocus) root.blacksmithRouteFocus(panel, document); else panel?.focus({preventScroll:true});
+    }
     async function navigate(entry) {
       if (input.disabled) return;
       const controller = new AbortController();
