@@ -93,3 +93,13 @@ test('dark panels, nested cards, and tables sit on different surfaces', () => {
   expect(cell).toMatch(/background:\s*var\(--surface-page\)/);
   expect(theme).toMatch(/\[data-theme="dark"\] #blacksmith \.entity-navigation[^{]*\{[^}]*var\(--surface-nav\)/);
 });
+
+test('the expanded VM detail row takes a dark fill that beats the generic table cell', () => {
+  const rule = block(theme, '[data-theme="dark"] .main-content .vms-table tr.row-detail > td');
+  expect(rule).toMatch(/background:\s*var\(--surface-raised\)/);
+  const base = blacksmith.match(/\.vms-table tr\.row-detail > td \{[^}]*\}/);
+  expect(base).not.toBeNull();
+  // The detail rule counts more classes and attributes than the generic dark cell rule, so it wins.
+  const weight = (selector) => (selector.match(/[.[]/g) || []).length;
+  expect(weight('[data-theme="dark"] .main-content .vms-table tr.row-detail > td')).toBeGreaterThan(weight('[data-theme="dark"] .main-content table td'));
+});

@@ -50,7 +50,7 @@ t('the Tasks and Configs refresh buttons keep the ids their handlers bind', () =
 
 t('Refresh and Copy share one box so they line up', () => {
   const css = fs.readFileSync(path.join(UI, 'forge-theme.css'), 'utf8');
-  const rule = css.match(/#blacksmith \.table-toolbar-actions :is\(\.refresh-btn-logs, \.copy-btn-logs\) \{([^}]*)\}/);
+  const rule = css.match(/:is\(#blacksmith, #services\) \.table-toolbar-actions :is\(\.refresh-btn-logs, \.copy-btn-logs\) \{([^}]*)\}/);
   expect(rule).not.toBeNull();
   expect(rule[1]).toContain('width: 32px');
   expect(rule[1]).toContain('height: 32px');
@@ -95,4 +95,11 @@ t('the log viewer labels its server-supplied times as UTC', () => {
   const src = fs.readFileSync(path.join(UI, 'blacksmith.js'), 'utf8');
   expect(src.match(/class="log-col-timestamp">Timestamp \(UTC\)<\/th>/g).length).toBe(2);
   expect(src).not.toMatch(/class="log-col-timestamp">Timestamp<\/th>/);
+});
+
+t('the toolbar button style covers the instance toolbars under Services too', () => {
+  const css = fs.readFileSync(path.join(UI, 'forge-theme.css'), 'utf8');
+  expect(css).not.toMatch(/(^|\n)#blacksmith \.table-toolbar-actions/);
+  expect(css).toMatch(/:is\(#blacksmith, #services\) \.table-toolbar-actions \.refresh-btn-logs\.success/);
+  expect(css).toMatch(/:is\(#blacksmith, #services\) \.table-toolbar-actions :is\(\.refresh-btn-logs, \.copy-btn-logs\):is\(:hover, :focus-visible\)/);
 });

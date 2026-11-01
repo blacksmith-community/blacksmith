@@ -86,6 +86,7 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .main-content table td { background: var(--card); }
 [data-theme="dark"] .main-content table td { background: var(--surface-page); }
 [data-theme="dark"] .entity-metric.card { background: var(--surface-raised); }
+[data-theme="dark"] .main-content .vms-table tr.row-detail > td { background: var(--surface-raised); }
 [data-theme="dark"] #blacksmith .entity-navigation, [data-theme="dark"] #services .entity-navigation { background: var(--surface-nav); }
 [data-theme="dark"] #blacksmith .entity-navigation .detail-tab.active, [data-theme="dark"] #services .entity-navigation .detail-tab.active { background: var(--surface-raised); color: var(--primary); border-left-color: var(--primary); }
 [data-theme="dark"] .manifest-tab-btn.active { background: var(--surface-raised); color: var(--text-primary); box-shadow: inset 0 -2px 0 var(--primary); }
@@ -993,12 +994,12 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 /* The right-hand end of every table toolbar. Refresh and Copy share one box so
    they sit on the same baseline, and the group stays at the right end. */
 .table-toolbar-actions { display: flex; align-items: center; gap: .375rem; margin-left: auto; flex-shrink: 0; }
-#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 32px; min-width: 32px; height: 32px; min-height: 32px; margin: 0; padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; }
-#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
-#blacksmith .table-toolbar-actions .refresh-btn-logs.refreshing { cursor: wait; opacity: .7; }
-#blacksmith .table-toolbar-actions .refresh-btn-logs.success { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
-#blacksmith .table-toolbar-actions .refresh-btn-logs.error { background: var(--danger); border-color: var(--danger); color: var(--danger-foreground); }
-#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) svg { width: 14px; height: 14px; }
+:is(#blacksmith, #services) .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 32px; min-width: 32px; height: 32px; min-height: 32px; margin: 0; padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; }
+:is(#blacksmith, #services) .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
+:is(#blacksmith, #services) .table-toolbar-actions .refresh-btn-logs.refreshing { cursor: wait; opacity: .7; }
+:is(#blacksmith, #services) .table-toolbar-actions .refresh-btn-logs.success { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
+:is(#blacksmith, #services) .table-toolbar-actions .refresh-btn-logs.error { background: var(--danger); border-color: var(--danger); color: var(--danger-foreground); }
+:is(#blacksmith, #services) .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) svg { width: 14px; height: 14px; }
 
 /* Hit areas. An icon-only button is at least 24 by 24 CSS pixels, and a
    toolbar icon button is at least 32 by 32. The icons keep their size. */
