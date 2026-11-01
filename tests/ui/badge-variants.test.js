@@ -8,16 +8,17 @@ const read=(f)=>fs.readFileSync(path.join(UI,f),'utf8');
 test('badges use Oat badge with a data-variant and no badge-color class',()=>{
  const js=read('blacksmith.js');
  expect(js).not.toMatch(/class="badge badge-/);
- expect(js).toContain('<span class="badge" data-variant="success">ACTIVE</span>');
- expect(js).toContain('<span class="badge" data-variant="secondary">INACTIVE</span>');
- expect(js).toContain('<span class="badge" data-variant="warning">Error</span>');
+ expect(js).toContain("active: ['success', 'Active']");
+ expect(js).toContain("inactive: ['neutral', 'Inactive']");
+ expect(js).toContain("error: ['error', 'Error']");
 });
 test('log levels and config types use Oat badge variants',()=>{
  const js=read('blacksmith.js');
  expect(js).not.toContain('level-badge');
  expect(js).not.toContain('config-type-badge');
  expect(js).toContain("const LOG_LEVEL_VARIANTS = { error: 'danger', warning: 'warning', warn: 'warning', debug: 'secondary' };");
- expect(js).toContain("const CONFIG_TYPE_VARIANTS = { runtime: 'secondary', cpi: 'success', resurrection: 'warning' };");
+ expect(js).not.toContain('CONFIG_TYPE_VARIANTS');
+ expect(js).toContain('<span class="badge outline" data-config-type=');
  for (const f of ['blacksmith.css','forge-theme.css']) {
   expect(read(f)).not.toMatch(/level-badge|config-type-badge/);
  }

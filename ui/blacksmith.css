@@ -8192,70 +8192,11 @@ bs-tabs > .broker-tab-pane[hidden] {
   height: 14px;
 }
 
-/* Task State Badges */
-span.task-state {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+/* Every operational status shares one badge. The fill and text colors come
+   from Oat's badge variants, so the five kinds read alike in both themes. */
+.status-badge {
   white-space: nowrap;
-}
-
-/* Light theme task state colors */
-span.task-state.queued {
-  background-color: #f3f4f6;
-  color: #6b7280;
-}
-
-span.task-state.processing {
-  background-color: #dbeafe;
-  color: #1d4ed8;
-  animation: pulse 2s infinite;
-}
-
-span.task-state.done {
-  background-color: #dcfce7;
-  color: #166534;
-}
-
-span.task-state.error {
-  background-color: #fee2e2;
-  color: #dc2626;
-}
-
-span.task-state.cancelled {
-  background-color: #fed7aa;
-  color: #ea580c;
-}
-
-/* Dark theme task state colors */
-[data-theme="dark"] span.task-state.queued {
-  background-color: #374151;
-  color: #9ca3af;
-}
-
-[data-theme="dark"] span.task-state.processing {
-  background-color: #1e3a8a;
-  color: #93c5fd;
-}
-
-[data-theme="dark"] span.task-state.done {
-  background-color: #166534;
-  color: #86efac;
-}
-
-[data-theme="dark"] span.task-state.error {
-  background-color: #991b1b;
-  color: #fca5a5;
-}
-
-[data-theme="dark"] span.task-state.cancelled {
-  background-color: #c2410c;
-  color: #fed7aa;
+  max-width: none;
 }
 
 /* Pulse animation for processing tasks */
@@ -8592,56 +8533,6 @@ span.task-state.cancelled {
 
 .config-id a:hover {
   text-decoration: underline;
-}
-
-span.config-type {
-  display: inline-block;
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.25rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-span.config-type.cloud {
-  background: #e3f2fd;
-  color: #1976d2;
-}
-
-span.config-type.runtime {
-  background: #f3e5f5;
-  color: #7b1fa2;
-}
-
-span.config-type.cpi {
-  background: #e8f5e8;
-  color: #388e3c;
-}
-
-span.config-type.resurrection {
-  background: #fff3e0;
-  color: #f57c00;
-}
-
-/* Dark theme config type badges */
-[data-theme="dark"] span.config-type.cloud {
-  background: #1e3a8a;
-  color: #93c5fd;
-}
-
-[data-theme="dark"] span.config-type.runtime {
-  background: #581c87;
-  color: #c4b5fd;
-}
-
-[data-theme="dark"] span.config-type.cpi {
-  background: #166534;
-  color: #86efac;
-}
-
-[data-theme="dark"] span.config-type.resurrection {
-  background: #c2410c;
-  color: #fed7aa;
 }
 
 /* Responsive configs table */
@@ -9370,11 +9261,6 @@ span.config-type.resurrection {
 
 #task-details-modal bs-tabs.task-tabs > .task-tab-pane[hidden] {
   display: none;
-}
-
-/* An event level is the Tasks list state badge, without its pulse. */
-#task-details-modal .task-event-level {
-  animation: none;
 }
 
 /* A task that did not finish says where it stopped, above its events. */

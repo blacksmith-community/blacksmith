@@ -115,13 +115,12 @@ t('event times use the shared timestamp format, with the ISO value in the title'
  expect(cells[0].querySelector('time').getAttribute('title')).toBe(new w.Date(T0*1000).toISOString());
 });
 
-t('each event level is a badge in the color of the matching task state',async()=>{
+t('each event level is a status badge of the matching kind',async()=>{
  const {d}=await start('done',ALL);
  const badges=[...d.querySelectorAll('#task-task-content td.level .task-event-level')];
- expect(badges.map((x)=>x.textContent.trim())).toEqual(['STARTED','IN_PROGRESS','FINISHED','FAILED']);
- expect(badges.map((x)=>x.classList.contains('task-state'))).toEqual([true,true,true,true]);
- expect(badges.map((x)=>['queued','processing','done','error'].find((c)=>x.classList.contains(c)))).toEqual(['processing','processing','done','error']);
- expect(bodies('blacksmith.css','#task-details-modal .task-event-level')).toMatch(/animation:\s*none/);
+ expect(badges.map((x)=>x.textContent.trim())).toEqual(['Started','In progress','Finished','Failed']);
+ expect(badges.map((x)=>x.classList.contains('status-badge'))).toEqual([true,true,true,true]);
+ expect(badges.map((x)=>x.dataset.status)).toEqual(['active','active','success','error']);
 });
 
 t('a task that failed, was cancelled, or timed out summarizes where it stopped',async()=>{

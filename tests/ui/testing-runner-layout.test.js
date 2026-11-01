@@ -202,7 +202,7 @@ t('a running command shows the running pill and Copy writes the output',async()=
  await openTab(s,'rabbitmqctl'); await choose(s,'nodes','ping');
  runButton(s).click(); await sleep(20);
  const header=s.content().querySelector('.command-runner-output-header');
- expect(header.querySelector('.badge[data-variant="secondary"]').textContent).toBe('Running');
+ expect(header.querySelector('.status-badge[data-status="active"]').textContent).toBe('Running');
  expect(header.querySelector('[data-runner-action="copy"]')).toBeNull();
  s.held.release({success:true,output:'pong',exit_code:0}); await sleep(30);
  header.querySelector('[data-runner-action="copy"]').click(); await sleep(20);

@@ -2257,7 +2257,7 @@
         const taskIdLink = `<a href="#" class="task-link" data-task-id="${task.id}" onclick="showTaskDetails(${task.id}, event); return false;">${task.id}</a>`;
 
         // Format state with badge
-        const stateBadge = `<span class="task-state ${task.state}">${task.state}</span>`;
+        const stateBadge = statusBadge(task.state);
 
         return `
           <tr>
@@ -2279,7 +2279,7 @@
         const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
 
         // Format type with badge
-        const typeBadge = `<span class="config-type ${config.type}" data-config-type="${config.type}">${config.type}</span>`;
+        const typeBadge = configTypeBadge(config.type);
 
         return `
           <tr>
@@ -10873,7 +10873,7 @@
       const taskIdLink = `<a href="#" class="task-link" data-task-id="${task.id}" onclick="showTaskDetails(${task.id}, event); return false;">${task.id}</a>`;
 
       // Format state with badge
-      const stateBadge = `<span class="task-state ${task.state}">${task.state}</span>`;
+      const stateBadge = statusBadge(task.state);
 
       return `
                 <tr>
@@ -11655,11 +11655,48 @@
     const variant = LOG_LEVEL_VARIANTS[levelName] || (levelName === 'info' ? '' : 'secondary');
     return `<span class="badge"${variant ? ` data-variant="${variant}"` : ''}>${text}</span>`;
   };
-  // Cloud takes Oat's default badge, and an unknown type is secondary.
-  const CONFIG_TYPE_VARIANTS = { runtime: 'secondary', cpi: 'success', resurrection: 'warning' };
-  const configTypeBadge = (type) => {
-    const variant = type === 'cloud' ? '' : (CONFIG_TYPE_VARIANTS[type] || 'secondary');
-    return `<span class="badge" data-config-type="${escapeAttribute(String(type || ''))}"${variant ? ` data-variant="${variant}"` : ''}>${type}</span>`;
+  // A config type is a category, not a status, so it takes Oat's outlined
+  // neutral badge in every case.
+  const configTypeBadge = (type) => `<span class="badge outline" data-config-type="${escapeAttribute(String(type || ''))}">${escapeHtml(String(type == null ? '' : type))}</span>`;
+
+  // One badge for every operational status. A state maps to one of five
+  // kinds, which are success, active, warning, error, and neutral, and the
+  // text is sentence case. The state stays in data-state for code that reads
+  // it back, and the value a caller compares against is never changed.
+  const STATUS_BADGES = {
+    done: ['success', 'Done'],
+    finished: ['success', 'Finished'],
+    success: ['success', 'Success'],
+    succeeded: ['success', 'Succeeded'],
+    passed: ['success', 'Passed'],
+    active: ['success', 'Active'],
+    started: ['active', 'Started'],
+    in_progress: ['active', 'In progress'],
+    processing: ['active', 'Processing'],
+    running: ['active', 'Running'],
+    queued: ['neutral', 'Queued'],
+    inactive: ['neutral', 'Inactive'],
+    skipped: ['neutral', 'Not run'],
+    cancelled: ['warning', 'Cancelled'],
+    warning: ['warning', 'Warning'],
+    error: ['error', 'Error'],
+    failed: ['error', 'Failed'],
+    failure: ['error', 'Failure'],
+    timeout: ['error', 'Timeout']
+  };
+  const STATUS_VARIANTS = { success: 'success', active: '', warning: 'warning', error: 'danger', neutral: 'secondary' };
+  const sentenceCase = (text) => {
+    const words = String(text == null ? '' : text).replace(/[_-]+/g, ' ').trim().toLowerCase();
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  };
+  const statusBadge = (state, options = {}) => {
+    const key = String(state == null ? '' : state).toLowerCase();
+    const known = Object.prototype.hasOwnProperty.call(STATUS_BADGES, key) ? STATUS_BADGES[key] : null;
+    const kind = known ? known[0] : (options.kind || 'neutral');
+    const label = options.label || (known ? known[1] : sentenceCase(state));
+    const variant = STATUS_VARIANTS[kind];
+    const classes = ['badge', 'status-badge', options.className].filter(Boolean).join(' ');
+    return `<span class="${classes}" data-status="${kind}" data-state="${escapeAttribute(key)}"${variant ? ` data-variant="${variant}"` : ''}>${escapeHtml(label)}</span>`;
   };
 
   const renderLogRow = (logEntry, columns = null) => {
@@ -13432,15 +13469,7 @@
   const runnerLine = (kind, commandName, args) => [commandRunners[kind].tool, commandName, ...args.map(shellWord)].join(' ');
   const formatRunDuration = (ms) => ms < 1000 ? `${Math.max(0, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`;
 
-  const RUN_STATUS = {
-    running: ['secondary', 'Running'],
-    success: ['success', 'Success'],
-    failure: ['danger', 'Failure']
-  };
-  const runStatusPill = (status) => {
-    const [variant, label] = RUN_STATUS[status];
-    return `<span class="badge" data-variant="${variant}">${label}</span>`;
-  };
+  const runStatusPill = (status) => statusBadge(status);
 
   const renderCommandRunner = (kind, instanceId) => {
     const prefix = kind;
@@ -16956,7 +16985,7 @@
       // Only auto-refresh if tasks tab is active and there are running tasks
       const tasksTab = document.querySelector('.detail-tab[data-tab="tasks"]');
       if (tasksTab && tasksTab.classList.contains('active')) {
-        const runningTasks = document.querySelectorAll('.task-state.processing, .task-state.queued');
+        const runningTasks = document.querySelectorAll('.tasks-table .status-badge[data-state="processing"], .tasks-table .status-badge[data-state="queued"]');
         if (runningTasks.length > 0) {
           refreshTasksTable();
         }
@@ -17119,9 +17148,9 @@
     const rows = document.querySelectorAll('.tasks-table tbody tr');
 
     rows.forEach(row => {
-      const stateCell = row.querySelector('.task-state span');
+      const stateCell = row.querySelector('.task-state .status-badge');
       if (stateCell) {
-        const taskState = stateCell.classList[1]; // Second class is the state
+        const taskState = stateCell.dataset.state;
         if (checkedStates.has(taskState)) {
           row.style.display = '';
         } else {
@@ -17556,8 +17585,8 @@
           const isActive = latestVersion.is_active || latestVersion.current ||
             (latestVersion.id && String(latestVersion.id).includes('*'));
           statusElem.innerHTML = isActive ?
-            '<span class="badge" data-variant="success">ACTIVE</span>' :
-            '<span class="badge" data-variant="secondary">INACTIVE</span>';
+            statusBadge('active') :
+            statusBadge('inactive');
         }
       } else {
         // Clear table if no versions
@@ -18274,7 +18303,7 @@
 
       // Set state badge
       const stateBadge = document.getElementById('task-state-badge');
-      stateBadge.innerHTML = `<span class="task-state ${task.state}">${task.state}</span>`;
+      stateBadge.innerHTML = statusBadge(task.state);
 
       // Show/hide cancel button
       const cancelBtn = document.getElementById('cancel-task-btn');
@@ -18593,7 +18622,7 @@
       return `
         <tr>
           <td class="timestamp">${timestamp}</td>
-          <td class="level"><span class="log-level ${level.toLowerCase()} task-event-level task-state ${taskEventLevelState(level)}">${level}</span></td>
+          <td class="level">${statusBadge(level, { kind: STATUS_BADGES[taskEventLevelState(level)][0], className: 'task-event-level' })}</td>
           <td class="message">${highlightPatterns(message)}</td>
         </tr>
       `;
@@ -18741,8 +18770,8 @@
     // Set up new interval for running tasks
     window.taskModalAutoRefresh = setInterval(async () => {
       if (window.currentTaskId) {
-        const stateBadge = document.querySelector('#task-state-badge .task-state');
-        if (stateBadge && (stateBadge.classList.contains('processing') || stateBadge.classList.contains('queued'))) {
+        const stateBadge = document.querySelector('#task-state-badge .status-badge');
+        if (stateBadge && (stateBadge.dataset.state === 'processing' || stateBadge.dataset.state === 'queued')) {
           await loadTaskDetails(window.currentTaskId);
 
           // Reload active tab content
@@ -21781,8 +21810,9 @@
           node.textContent = text;
           return node;
         };
-        const badge = part('span', 'badge', { passed: 'Passed', failed: 'Failed', skipped: 'Not run' }[state]);
-        badge.dataset.variant = { passed: 'success', failed: 'danger', skipped: 'secondary' }[state];
+        const holder = document.createElement('template');
+        holder.innerHTML = statusBadge(state);
+        const badge = holder.content.firstElementChild;
         // The hidden punctuation reads the row as one sentence.
         item.append(
           part('span', 'test-connection-check-name', labels[check.name] || String(check.name || 'Check')),
@@ -23004,7 +23034,7 @@
       } catch (error) {
         console.error(`Failed to load bindings for service ${serviceGuid}:`, error);
         if (current()) {
-          bindingsElement.innerHTML = `<span class="badge" data-variant="warning">Error</span>`;
+          bindingsElement.innerHTML = statusBadge('error');
           bindingsElement.title = 'Failed to load binding information';
         }
       }
