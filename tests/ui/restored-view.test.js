@@ -75,3 +75,36 @@ test('the fetched line is muted text of at least 12 pixels', () => {
   expect(rule[1]).toContain('var(--muted-foreground');
   expect(rule[1]).toMatch(/font-size: \.8125rem|font-size: 12px|font-size: \.75rem/);
 });
+
+test('the fetched time follows a Refresh that completes after the first mount', async () => {
+  const { w, d } = boot();
+  try {
+    let now = Date.parse('2026-11-01T10:00:00Z');
+    w.Date.now = () => now;
+    const host = d.createElement('section');
+    const content = d.createElement('div');
+    content.className = 'detail-content';
+    host.appendChild(content);
+    d.body.appendChild(host);
+    const microtask = () => new Promise((resolve) => setTimeout(resolve, 0));
+    expect(w.__T.retainView(content, 'A')).toBe(false);
+    content.innerHTML = '<div class="loading">Loading...</div>';
+    now = Date.parse('2026-11-01T10:00:05Z');
+    content.innerHTML = TOOLBAR;
+    await microtask();
+    // Leave, come back, and refresh much later.
+    expect(w.__T.retainView(content, 'B')).toBe(false);
+    content.innerHTML = '<p>Other</p>';
+    expect(w.__T.retainView(content, 'A')).toBe(true);
+    expect(content.querySelector('.data-fetched-note time').getAttribute('datetime')).toBe('2026-11-01T10:00:05.000Z');
+    now = Date.parse('2026-11-01T10:30:00Z');
+    content.innerHTML = '<div class="loading">Loading...</div>';
+    now = Date.parse('2026-11-01T10:30:02Z');
+    content.innerHTML = TOOLBAR;
+    await microtask();
+    expect(w.__T.retainView(content, 'B')).toBe(true);
+    content.innerHTML = '<p>Other</p>';
+    expect(w.__T.retainView(content, 'A')).toBe(true);
+    expect(content.querySelector('.data-fetched-note time').getAttribute('datetime')).toBe('2026-11-01T10:30:02.000Z');
+  } finally { w.close(); }
+});

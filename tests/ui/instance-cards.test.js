@@ -87,3 +87,26 @@ test('opening an instance scrolls its card into view in the sidebar', async () =
     expect(scrolled.find(([id]) => id === UUID)[1]).toEqual({ block: 'nearest' });
   } finally { w.close(); }
 });
+
+test('returning to an instance reveals its card on every open path', async () => {
+  const routes = [['/v2/catalog', (u, o, j) => j(200, { services: [{ id: 'valkey', name: 'valkey', plans: [{ id: 'standalone', name: 'standalone' }] }] })],
+    ['/b/status', (u, o, j) => j(200, { env: 'lab', deployment: 'blacksmith', instances, plans: {} })],
+    [`/b/${UUID}/details`, (u, o, j) => j(200, { instance_name: 'certmgmt-valkey-solo' })],
+    ['/b/plain-id/details', (u, o, j) => j(200, { instance_name: 'plain' })]];
+  const { w, d } = boot({ noDialogs: true, routes });
+  try {
+    await sleep(80);
+    const scrolled = [];
+    w.HTMLElement.prototype.scrollIntoView = function () { scrolled.push(this.dataset.instanceId); };
+    await w.navigateToInstance(UUID);
+    await w.navigateToInstance('plain-id');
+    scrolled.length = 0;
+    // The shell for UUID is cached now, so this is the cached path.
+    expect(await w.navigateToInstance(UUID)).toBe(true);
+    expect(scrolled).toEqual([UUID]);
+    // Opening what is already mounted still reveals the card.
+    scrolled.length = 0;
+    expect(await w.navigateToInstance(UUID)).toBe(true);
+    expect(scrolled).toEqual([UUID]);
+  } finally { w.close(); }
+});

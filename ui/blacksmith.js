@@ -2420,13 +2420,27 @@
     const refresh = event.target.closest?.('.refresh-btn-logs');
     refresh?.closest('.detail-content')?.querySelectorAll('.data-fetched-note').forEach(note => note.remove());
   });
+  // A load finishes when the loading placeholder is replaced by content, so
+  // the fetch time is stamped then, after the first mount and after Refresh.
+  const loadWatchers = new WeakMap();
+  const watchLoads = (container) => {
+    if (loadWatchers.has(container)) return loadWatchers.get(container);
+    const watcher = new MutationObserver(() => {
+      if (container.firstChild && !container.querySelector(':scope > .loading')) fetchedAtByContainer.set(container, Date.now());
+    });
+    watcher.observe(container, { childList: true });
+    loadWatchers.set(container, watcher);
+    return watcher;
+  };
   const retainView = (container, key) => {
+    const watcher = watchLoads(container);
     const previous = mountedViews.get(container);
     if (previous === key && !container.querySelector(':scope > .loading')) return true;
     if (previous && !container.querySelector(':scope > .loading')) {
       const fragment = document.createDocumentFragment();
       while (container.firstChild) fragment.appendChild(container.firstChild);
       retainedViews.set(previous, {fragment, plans: container.classList.contains('plans-view'), savedAt: Date.now(), fetchedAt: fetchedAtByContainer.get(container) || Date.now(),context:captureInspectionContext(),dirty:dirtyViews.has(container)});
+      watcher.takeRecords();
       trimRetainedViews();
     }
     mountedViews.set(container, key);
@@ -2437,6 +2451,7 @@
     restoreInspectionContext(saved.context);
     if(saved.dirty){dirtyViews.add(container);container.dataset.hasDraft='true';}
     container.replaceChildren(saved.fragment);
+    watcher.takeRecords();
     container.dataset.retainedAt=String(saved.savedAt);
     fetchedAtByContainer.set(container, saved.fetchedAt);
     showRetainedContext(container, saved.fetchedAt);
@@ -15809,12 +15824,14 @@
           if (!item || !details) return false;
           const selection = ++instanceSelectionSequence;
           const detailHost = document.querySelector('#services .service-detail');
-          if (mountedInstance === instanceId && detailHost?.querySelector('.entity-workspace')) { servicesPanel.classList.add('instance-open'); return true; }
+          const revealCard = () => item.scrollIntoView?.({ block: 'nearest' });
+          if (mountedInstance === instanceId && detailHost?.querySelector('.entity-workspace')) { servicesPanel.classList.add('instance-open'); revealCard(); return true; }
           if (instanceShells.has(instanceId)) {
             if (mountedInstance) { const fragment = document.createDocumentFragment(); while(detailHost.firstChild) fragment.appendChild(detailHost.firstChild); instanceShells.set(mountedInstance,{fragment,info:window.currentInstanceInfo,context:captureInspectionContext()}); }
             const cached = instanceShells.get(instanceId); instanceShells.delete(instanceId);
             detailHost.replaceChildren(cached.fragment); restoreInspectionContext(cached.context); window.currentInstanceInfo=cached.info; mountedInstance=instanceId;
             servicesPanel.classList.add('instance-open'); window.serviceInstanceElements.forEach((node,id)=>node.classList.toggle('active',id===instanceId));
+            revealCard();
             return true;
           }
           // Fetch vault data for the instance
@@ -15862,7 +15879,7 @@
           // Update active state
           window.serviceInstanceElements.forEach(i => i.classList.remove('active'));
           item.classList.add('active');
-          item.scrollIntoView?.({ block: 'nearest' });
+          revealCard();
 
           // Render detail view with vault data
           const detailContainer = document.querySelector('#services .service-detail');
