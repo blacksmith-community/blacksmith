@@ -81,11 +81,11 @@ t('task panel and API errors', async () => {
   T.renderTaskDetail(detail);
   ok(panel.querySelectorAll('img,script').length===0,'task detail: hostile strings render inert');
   ok(panel.textContent.includes(EVIL),'task detail: hostile text shown literally');
-  ok(panel.querySelectorAll('[onclick]').length===0&&[...panel.querySelectorAll('.bosh-task-btn')].every(n=>/^\d+$/.test(n.dataset.boshTaskId)),'task detail: no inline handlers, and the BOSH task button carries a numeric id');
+  ok(panel.querySelectorAll('[onclick]').length===0&&[...panel.querySelectorAll('.bosh-task-link')].every(n=>/^\d+$/.test(n.dataset.boshTaskId)),'task detail: no inline handlers, and the BOSH task button carries a numeric id');
 
   { const shown=[]; w.showTaskDetails=(id,ev)=>{ shown.push(id); };
     T.renderTaskDetail({...detail,instances:[{instance_id:'i9',instance_name:'nine',status:'failed',bosh_task_id:42}]});
-    const bb=panel.querySelector('.bosh-task-btn'); bb.click();
+    const bb=panel.querySelector('.bosh-task-link'); bb.click();
     ok(bb&&bb.dataset.boshTaskId==='42'&&!bb.hasAttribute('onclick')&&shown.length===1&&shown[0]===42,'BOSH task button opens its task through a listener'); }
 
   // controls: refusal via Feedback, no alert
@@ -106,13 +106,13 @@ t('task panel and API errors', async () => {
   { const shown=[];w.showTaskDetails=id=>shown.push(id);
     for (const certificates of [{mode:'patch',converge:{bosh_task_id:71}},{deploy_outcome:{bosh_task_id:72}}]) {
       T.renderTaskDetail({...detail,instances:[{instance_id:'patch-i',status:'running',certificates}]});
-      const button=panel.querySelector('.bosh-task-btn');
+      const button=panel.querySelector('.bosh-task-link');
       ok(!!button,'certificate deployment exposes its BOSH task');
       if(button)button.click();
     }
     ok(shown.join(',')==='71,72','nested BOSH task links use the existing task modal');
     T.renderTaskDetail({...detail,instances:[{instance_id:'patch-only',status:'running',certificates:{phase:'patch'}}]});
-    ok(!panel.querySelector('.bosh-task-btn'),'SSH-only patch does not invent a BOSH task');
+    ok(!panel.querySelector('.bosh-task-link'),'SSH-only patch does not invent a BOSH task');
   }
   // network failure
   w.__routes.unshift([/\/b\/upgrade\/tasks\/t1\/cancel$/,()=>Promise.reject(new Error('network down'))]);

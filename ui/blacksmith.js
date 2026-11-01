@@ -8578,7 +8578,7 @@
             <div class="instance-deployment">${escapeHtml(instance.deployment_name || '')}</div>
             ${(instance.applied_releases || []).length ? `<div class="instance-releases">Applied: ${escapeHtml(instance.applied_releases.map(r => `${r.name}/${r.version}`).join(', '))}</div>` : ''}
             <div class="instance-actions">
-              ${boshTaskId ? `<button type="button" class="bosh-task-btn" data-bosh-task-id="${boshTaskId}">BOSH Task: ${boshTaskId}</button>` : ''}
+              ${boshTaskId ? `<a href="#" class="bosh-task-link" data-bosh-task-id="${boshTaskId}">BOSH task ${boshTaskId}</a>` : ''}
             </div>
             ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
             ${isCertificates ? `<div class="cert-task-host" data-cert-index="${index}"></div>` : ''}${isCommand ? `<div class="command-task-host" data-command-index="${index}"></div>` : ''}
@@ -8746,7 +8746,10 @@
       });
     });
     tasksContainer.querySelectorAll('[data-bosh-task-id]').forEach((button) => {
-      button.addEventListener('click', (event) => window.showTaskDetails(Number(button.dataset.boshTaskId), event));
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        window.showTaskDetails(Number(button.dataset.boshTaskId), event);
+      });
     });
   };
 
@@ -19496,15 +19499,15 @@
           <label for="cf-endpoint-select">Endpoint:</label>
           <select id="cf-endpoint-select" aria-label="Cloud Foundry endpoint" class="cf-endpoint-dropdown"><option value="">Loading endpoints...</option></select>
           <div class="endpoint-controls">
-            <button type="button" class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh endpoints" aria-label="Refresh endpoints">${blacksmithIcon('refresh-cw', { size: 16 })}</button>
-            <button type="button" class="btn btn-icon btn-sm" onclick="showCFEndpointForm()" title="Add endpoint" aria-label="Add endpoint">${blacksmithIcon('plus', { size: 16 })}</button>
-            <button type="button" class="btn btn-sm btn-primary" onclick="CFEndpointManager.showRegistrationModal()" title="Register broker" id="register-btn" style="display: none;">Register</button>
+            <button type="button" class="btn btn-icon btn-sm btn-secondary" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh endpoints" aria-label="Refresh endpoints">${blacksmithIcon('refresh-cw', { size: 16 })}</button>
+            <button type="button" class="btn btn-icon btn-sm btn-secondary" onclick="showCFEndpointForm()" title="Add endpoint" aria-label="Add endpoint">${blacksmithIcon('plus', { size: 16 })}</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="CFEndpointManager.showRegistrationModal()" title="Register broker" id="register-btn" style="display: none;">Register</button>
           </div>
           <span id="broker-detail-username" class="broker-endpoint-user" hidden></span>
           <div class="connection-status" id="connection-status">
             <span class="status-indicator" id="status-indicator" aria-hidden="true"></span>
             <span id="connection-status-text" role="status">Not connected</span>
-            <button type="button" class="btn btn-sm btn-secondary" id="connection-btn" onclick="CFEndpointManager.toggleConnection()" disabled>Connect</button>
+            <button type="button" class="btn btn-sm btn-secondary" id="connection-btn" onclick="CFEndpointManager.toggleConnection()" disabled hidden>Disconnect</button>
           </div>
         </div>
         <div class="feedback-panel" data-feedback-context="cf-endpoint" role="alert" aria-live="polite"></div>
@@ -22598,7 +22601,8 @@
       const connectionBtn = document.getElementById('connection-btn');
       if (connectionBtn) {
         connectionBtn.disabled = true;
-        connectionBtn.textContent = 'Connect';
+        connectionBtn.hidden = true;
+        connectionBtn.textContent = 'Disconnect';
       }
 
       const statusIndicator = document.getElementById('status-indicator');
@@ -23044,8 +23048,10 @@
         statusIndicator.classList.add('status-disconnected');
       }
 
-      // Update button
-      connectionBtn.textContent = connectionState.connected ? 'Disconnect' : 'Connect';
+      // The toolbar shows the endpoint state. Connecting happens from the
+      // empty state, so the toolbar button only appears to disconnect.
+      connectionBtn.textContent = 'Disconnect';
+      connectionBtn.hidden = !connectionState.connected;
       connectionBtn.disabled = !endpointName || connectionState.testing;
       const text = document.getElementById('connection-status-text');
       if (text) text.textContent = connectionState.testing ? 'Connecting…' : connectionState.connected ? 'Connected' : 'Not connected';

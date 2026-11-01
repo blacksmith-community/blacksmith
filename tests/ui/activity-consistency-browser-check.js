@@ -28,7 +28,7 @@ async (page) => {
   check(await page.locator('[data-task-id="upgrade-job"]').evaluate(el=>el===document.activeElement),'Back restores selected card focus');
   check((await page.locator('[data-task-id="upgrade-job"]').innerText()).includes('outcome unknown'),'mixed outcomes remain visible');
   await page.locator('[data-task-id="patch-job"]').click();
-  await page.locator('.bosh-task-btn').click();
+  await page.locator('.bosh-task-link').click();
   await page.locator('#task-details-modal').waitFor({state:'visible'});
   await page.locator('#task-details-modal .modal-close').click();
   await page.locator('#task-details-modal').waitFor({state:'hidden'});

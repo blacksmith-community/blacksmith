@@ -20,7 +20,7 @@ async (page) => {
   await page.locator('.tabs [data-tab="upgrade"]').click();
   await page.locator('#batch-activity').click();
   await page.locator('[data-task-id="patch-job"]').click();
-  await page.locator('.bosh-task-btn').click();
+  await page.locator('.bosh-task-link').click();
   await page.locator('#task-details-modal').waitFor({state:'visible'});
   await page.locator('#task-details-modal .modal-close').click();
   await page.locator('#task-details-modal').waitFor({state:'hidden'});
