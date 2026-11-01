@@ -84,8 +84,10 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .modal-content { color: var(--foreground); background: var(--card); border: 1px solid var(--border); }
 .main-content table :is(td, th) { padding: 10px 12px; font-size: .875rem; color: var(--foreground); border-color: var(--border); }
 .main-content table th { background: var(--secondary); }
-/* The header row stays in view while the rows scroll; --secondary is opaque in every theme and in high contrast. */
-.main-content table thead, .main-content table thead th { position: sticky; top: 0; z-index: 5; background: var(--secondary); }
+/* The header cells stay in view while the rows scroll; --secondary is opaque in every theme and in high contrast.
+   The cell carries the position, because sticky on a thead is not honored everywhere. A table inside a wrapper
+   with overflow-x: auto sticks to that wrapper, which never scrolls vertically, so its header does not pin to the page. */
+.main-content table thead th { position: sticky; top: 0; z-index: 5; background: var(--secondary); }
 .main-content table td { background: var(--card); }
 [data-theme="dark"] .main-content table td { background: var(--surface-page); }
 [data-theme="dark"] .entity-metric.card { background: var(--surface-raised); }

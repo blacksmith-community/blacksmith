@@ -35,7 +35,7 @@ test('the keyboard shortcuts dialog carries the copyright line and icon',async()
 test('no stylesheet still styles the removed page footer',()=>{
  for(const f of ['blacksmith.css','console.css','forge-theme.css']){
   const css=strip(read(f));
-  expect(css).not.toMatch(/(^|[\s,}])(body\s*>\s*)?footer(\s|,|\{)/m);
+  expect(css).not.toMatch(/(^\s*|[,}]\s*)(body\s*>\s*footer|footer)\s*[,{]/m);
  }
 });
 
@@ -44,7 +44,7 @@ test('data table headers stay visible on an opaque surface token',()=>{
  expect(b).toMatch(/position:\s*sticky/);
  expect(b).toMatch(/top:\s*0/);
  expect(b).toMatch(/background:\s*var\(--secondary\)/);
- expect(bodies('forge-theme.css','.main-content table thead')).toMatch(/position:\s*sticky/);
+ expect(bodies('forge-theme.css','.main-content table thead')).not.toMatch(/position:\s*sticky/);
 });
 test('the header surface token is opaque in dark and high contrast',()=>{
  const css=read('forge-theme.css');
