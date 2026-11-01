@@ -172,14 +172,13 @@ github.com/shieldproject/shield v8.7.0+incompatible h1:1kroZHyDL2GNB/lWNKiCl3zD0
 github.com/shieldproject/shield v8.7.0+incompatible/go.mod h1:3Z/khiR8hfDHV8atkkHjgpkeH+GAlgPY9hEQ0EBD7g4=
 github.com/smallfish/simpleyaml v0.1.0 h1:5uAZdLAiHxS9cmzkOxg7lH0dILXKTD7uRZbAhyHmyU0=
 github.com/smallfish/simpleyaml v0.1.0/go.mod h1:gU3WdNn44dQVAbVHD2SrSqKKCvmzFApWD2UURhgEj1M=
-github.com/sony/gobreaker v1.0.0 h1:feX5fGGXSl3dYd4aHZItw+FpHLvvoaqkawKjVNiFMNQ=
-github.com/sony/gobreaker v1.0.0/go.mod h1:ZKptC7FHNvhBz7dN2LGjPVBz2sZJmc0/PkyDJOjmxWY=
+github.com/sony/gobreaker/v2 v2.4.0 h1:g2KJRW1Ubty3+ZOcSEUN7K+REQJdN6yo6XvaML+jptg=
+github.com/sony/gobreaker/v2 v2.4.0/go.mod h1:pTyFJgcZ3h2tdQVLZZruK2C0eoFL1fb/G83wK1ZQl+s=
 github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be h1:vV6o1C8iPioC0Ahi3e9Bs9vVPW9/YN3uwgA6EFahAws=
 github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be/go.mod h1:Py4V645l0xZXsyvSR6WIcsGhNQEiIFDlmJ4Xwd6UCws=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.8.0 h1:rm9oMkeprG/wHifkZP4EuDww9S0mvEaQ/p9cXTNT4cw=
 github.com/stretchr/objx v0.8.0/go.mod h1:xSzHnPHkdEv7vtgdQej8atlCuU1mdX+ELge8bn0hCsE=
-github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.5.1/go.mod h1:5W2xD1RspED5o8YsWQXVCued0rvSQ+mT+I5cxcmMvtA=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=

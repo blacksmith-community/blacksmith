@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
-	"github.com/sony/gobreaker"
+	"github.com/sony/gobreaker/v2"
 	"golang.org/x/time/rate"
 )
 
@@ -64,9 +64,9 @@ type ReconcilerManager struct {
 	vaultLimiter *rate.Limiter
 
 	// Circuit breakers for each API
-	boshBreaker  *gobreaker.CircuitBreaker
-	cfBreaker    *gobreaker.CircuitBreaker
-	vaultBreaker *gobreaker.CircuitBreaker
+	boshBreaker  *gobreaker.CircuitBreaker[interface{}]
+	cfBreaker    *gobreaker.CircuitBreaker[interface{}]
+	vaultBreaker *gobreaker.CircuitBreaker[interface{}]
 
 	// Worker pool for batch processing
 	workerPool  *WorkerPool
@@ -657,21 +657,21 @@ func (r *ReconcilerManager) initializeRateLimiters() {
 
 // initializeCircuitBreakers initializes circuit breakers for API calls.
 func (r *ReconcilerManager) initializeCircuitBreakers() {
-	r.boshBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
+	r.boshBreaker = gobreaker.NewCircuitBreaker[interface{}](gobreaker.Settings{
 		Name:        "bosh",
 		MaxRequests: r.safeUint32(r.config.APIs.BOSH.CircuitBreaker.MaxConcurrent),
 		Interval:    0, // Use default
 		Timeout:     r.config.APIs.BOSH.CircuitBreaker.Timeout,
 	})
 
-	r.cfBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
+	r.cfBreaker = gobreaker.NewCircuitBreaker[interface{}](gobreaker.Settings{
 		Name:        "cf",
 		MaxRequests: r.safeUint32(r.config.APIs.CF.CircuitBreaker.MaxConcurrent),
 		Interval:    0, // Use default
 		Timeout:     r.config.APIs.CF.CircuitBreaker.Timeout,
 	})
 
-	r.vaultBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
+	r.vaultBreaker = gobreaker.NewCircuitBreaker[interface{}](gobreaker.Settings{
 		Name:        "vault",
 		MaxRequests: r.safeUint32(r.config.APIs.Vault.CircuitBreaker.MaxConcurrent),
 		Interval:    0, // Use default

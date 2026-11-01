@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sony/gobreaker"
+	"github.com/sony/gobreaker/v2"
 )
 
 // Constants for retry operations.
@@ -446,7 +446,7 @@ func randomBool() bool {
 func RetryWithCircuitBreaker(
 	ctx context.Context,
 	retryManager *RetryManager,
-	breaker *gobreaker.CircuitBreaker,
+	breaker *gobreaker.CircuitBreaker[interface{}],
 	fn func() (interface{}, error),
 ) (interface{}, error) {
 	retryFunc := func(ctx context.Context) (interface{}, error) {
