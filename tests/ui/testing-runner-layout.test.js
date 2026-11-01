@@ -285,6 +285,7 @@ t('a plugins history entry with an out-of-range timestamp shows a dash',async()=
  expect(entries[0].querySelector('time').getAttribute('datetime')).toBe('2026-10-30T12:00:00.000Z');
  expect(entries[1].querySelector('time')).toBeNull();
  expect(text(entries[1].querySelector('.command-runner-history-time'))).toBe('—');
+ expect(entries[1].querySelector('.command-runner-history-time .empty-value')).not.toBeNull();
  entries[1].click();
  expect(s.content().querySelector('.command-runner-output pre').textContent).toBe('far future');
 });

@@ -13513,7 +13513,7 @@
           <code>${escapeHtml(entry.line)}</code>
           ${runStatusPill(entry.status)}
           ${entry.at === null
-            ? '<span class="command-runner-history-time">—</span>'
+            ? `<span class="command-runner-history-time">${EMPTY_HTML}</span>`
             : `<time class="command-runner-history-time" datetime="${new Date(entry.at).toISOString()}">${escapeHtml(formatRunTime(entry.at))}</time>`}
         </button>
       </li>`).join('');
