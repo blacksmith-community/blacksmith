@@ -778,24 +778,23 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 #blacksmith .configs-table :is(th,td) { padding: 5px 12px; }
 #blacksmith .configs-table .config-type .badge { padding: 2px 6px; line-height: 1.3; }
 
-/* Broker Manifest uses one compact workspace, not nested padded panels. */
-#blacksmith .deployment-manifest-workspace { height: auto; margin: 0; min-width: 0; }
-#blacksmith .deployment-manifest-workspace > .manifest-tab-content { padding: 8px 0 0; margin: 0; border: 0; border-radius: 0; min-height: 0; max-height: none; overflow: visible; }
-#blacksmith .deployment-manifest-workspace .manifest-tab-pane { padding: 0; overflow: visible; }
-#blacksmith .deployment-manifest-workspace bs-tabs > .manifest-tab-pane { padding: 8px 0 0; margin: 0; border: 0; border-radius: 0; min-height: 0; max-height: none; overflow: visible; }
-#blacksmith .deployment-manifest-workspace .manifest-tab-pane > div { overflow: visible; flex: none; }
-#blacksmith .deployment-manifest-workspace .manifest-table { margin: 0 0 12px; }
-#blacksmith .deployment-manifest-workspace .manifest-table :is(th,td) { padding: 6px 12px; }
-#blacksmith .deployment-manifest-workspace :is(.instance-groups-container,.jobs-container,.job-details) { margin-top: 0; }
-#blacksmith .deployment-manifest-workspace :is(.instance-group-selector,.job-selector) { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 8px; padding: 0; }
-#blacksmith .deployment-manifest-workspace :is(.instance-group-select,.job-select) { margin: 0; min-width: 0; width: auto; max-width: 100%; flex: 0 1 360px; }
-#blacksmith .deployment-manifest-workspace :is(h4,h5,h6) { margin: 8px 0; padding: 0; border: 0; font-size: .875rem; color: var(--foreground); }
-#blacksmith .deployment-manifest-workspace .addons-list { gap: 12px; }
-#blacksmith .deployment-manifest-workspace .addon-item { padding: 8px 12px; border-color: var(--border); background: var(--card); }
-#blacksmith .deployment-manifest-workspace .manifest-container { height: auto; padding: 0; overflow: visible; }
-#blacksmith .deployment-manifest-workspace .manifest-header { position: static; display: flex; justify-content: flex-end; padding: 0 0 6px; }
-#blacksmith .deployment-manifest-workspace .copy-btn-manifest { width: 36px; height: 36px; padding: 6px; background: var(--card); color: var(--foreground); border-color: var(--border); }
-#blacksmith .deployment-manifest-workspace .manifest-container pre { padding: 12px; margin: 0; max-width: 100%; overflow: auto; white-space: pre; line-height: 1.5; }
+/* The broker and instance manifests share one compact card. The strip is its top band and the panel is the body. */
+:is(#blacksmith, #services) .deployment-manifest-workspace { height: auto; margin: 0; min-width: 0; }
+:is(#blacksmith, #services) .deployment-manifest-workspace .manifest-tabs-nav { margin: 0; border: 1px solid var(--border); border-bottom-color: var(--border-primary); }
+:is(#blacksmith, #services) .deployment-manifest-workspace bs-tabs > .manifest-tab-pane { padding: 8px; margin: 0; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 8px 8px; min-height: 0; max-height: none; overflow: visible; }
+:is(#blacksmith, #services) .deployment-manifest-workspace .manifest-tab-pane > div { overflow: visible; flex: none; }
+:is(#blacksmith, #services) .deployment-manifest-workspace .manifest-table { margin: 0; }
+:is(#blacksmith, #services) .deployment-manifest-workspace .manifest-table :is(th,td) { padding: 6px 12px; }
+:is(#blacksmith, #services) .deployment-manifest-workspace :is(.instance-groups-container,.jobs-container,.job-details) { margin-top: 0; }
+:is(#blacksmith, #services) .deployment-manifest-workspace :is(.instance-group-selector,.job-selector) { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 8px; padding: 0; }
+:is(#blacksmith, #services) .deployment-manifest-workspace :is(.instance-group-select,.job-select) { margin: 0; min-width: 0; width: auto; max-width: 100%; flex: 0 1 360px; }
+:is(#blacksmith, #services) .deployment-manifest-workspace :is(h4,h5,h6) { margin: 8px 0; padding: 0; border: 0; font-size: .875rem; color: var(--foreground); }
+:is(#blacksmith, #services) .deployment-manifest-workspace .addons-list { gap: 12px; }
+:is(#blacksmith, #services) .deployment-manifest-workspace .addon-item { padding: 8px 12px; border-color: var(--border); background: var(--card); }
+:is(#blacksmith, #services) .deployment-manifest-workspace .manifest-container { height: auto; padding: 0; overflow: visible; }
+:is(#blacksmith, #services) .deployment-manifest-workspace .manifest-header { position: static; display: flex; justify-content: flex-end; padding: 0 0 6px; }
+:is(#blacksmith, #services) .deployment-manifest-workspace .copy-btn-manifest { width: 36px; height: 36px; padding: 6px; background: var(--card); color: var(--foreground); border-color: var(--border); }
+:is(#blacksmith, #services) .deployment-manifest-workspace .manifest-container pre { padding: 12px; margin: 0; max-width: 100%; overflow: auto; white-space: pre; line-height: 1.5; }
 
 /* High Contrast themes retain the light/dark hooks used by older components. */
 :root[data-contrast="high"] {
