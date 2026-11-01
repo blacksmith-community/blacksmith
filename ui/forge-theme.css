@@ -601,6 +601,22 @@ body > footer p { margin: 0; }
 }
 .credentials-table .credential-value-layout > button { flex: 0 0 auto; }
 
+/* Show PEM is a plain disclosure: a small text link with a leading chevron
+   that turns when it opens, and the PEM block under it. */
+.credentials-table .credential-pem-disclosure { margin: .25rem 0 0; padding: 0; border: 0; background: none; box-shadow: none; }
+.credentials-table .credential-pem-disclosure > summary {
+  display: inline-flex; align-items: center; gap: .25rem; width: auto; margin: 0; padding: 0;
+  border: 0; background: none; box-shadow: none; list-style: none; cursor: pointer;
+  font-size: .8125rem; font-weight: 400; color: var(--primary); text-decoration: underline;
+}
+.credentials-table .credential-pem-disclosure > summary::-webkit-details-marker { display: none; }
+.credentials-table .credential-pem-disclosure > summary::marker,
+.credentials-table .credential-pem-disclosure > summary::after { content: none; display: none; }
+.credentials-table .credential-pem-disclosure > summary:hover { text-decoration-thickness: 2px; }
+.credentials-table .credential-pem-chevron { display: inline-flex; transition: transform .1s ease; }
+.credentials-table .credential-pem-disclosure[open] > summary .credential-pem-chevron { transform: rotate(90deg); }
+.credentials-table .credential-pem-disclosure > .credential-multiline { margin-top: .375rem; }
+
 .header-deployment { display: inline-flex; align-items: center; gap: .375rem; vertical-align: middle; }
 .header-deployment:has(#deployment-name:empty) { display: none; }
 #copy-header-deployment { color: inherit; opacity: 1; flex: 0 0 auto; min-width: 2rem; min-height: 2rem; }

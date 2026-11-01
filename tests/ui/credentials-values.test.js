@@ -156,3 +156,21 @@ test('a secret nested deeper than one level is masked whole',async()=>{
  expect(t.row('a').querySelector('button[aria-pressed]')).toBeNull();
  t.w.close();
 });
+
+// Show PEM is a plain disclosure, not a card: a small link with a leading
+// chevron that turns when it opens, and the PEM under it.
+test('Show PEM is a plain disclosure with a leading chevron',async()=>{
+ const fs=require('fs');
+ const path=require('path');
+ const t=await table({leaf:CERT});
+ const details=t.row('leaf').querySelector('details.credential-pem-disclosure');
+ const summary=details.querySelector('summary');
+ expect(summary.firstElementChild.classList.contains('credential-pem-chevron')).toBe(true);
+ expect(summary.querySelector('.credential-pem-chevron svg')).not.toBeNull();
+ expect(summary.textContent).toBe('Show PEM');
+ expect(details.lastElementChild.tagName).toBe('PRE');
+ const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','forge-theme.css'),'utf8');
+ expect(css).toMatch(/\.credential-pem-disclosure\[open\] > summary \.credential-pem-chevron \{ transform: rotate\(90deg\)/);
+ expect(css).toMatch(/\.credential-pem-disclosure > summary \{[^}]*border: 0[^}]*background: none/);
+ t.w.close();
+});

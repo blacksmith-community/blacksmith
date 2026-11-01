@@ -9436,7 +9436,7 @@
   const pemCertificate = (text) => {
     const count = (text.match(/-----BEGIN CERTIFICATE-----/g) || []).length;
     return `<span class="credential-pem"><span class="credential-pem-summary">PEM certificate · ${count} ${count === 1 ? 'certificate' : 'certificates'}</span>`
-      + `<details><summary>Show PEM</summary><pre class="credential-multiline">${escapeHtml(text)}</pre></details></span>`;
+      + `<details class="credential-pem-disclosure"><summary><span class="credential-pem-chevron" aria-hidden="true">${blacksmithIcon('chevron-right', { size: 14 })}</span>Show PEM</summary><pre class="credential-multiline">${escapeHtml(text)}</pre></details></span>`;
   };
 
   // An array as one item per line in the monospace face. A certificate item
