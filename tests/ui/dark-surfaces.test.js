@@ -44,6 +44,9 @@ test('the dark theme defines its surface tokens in one block', () => {
   for (const surface of ['page', 'nav', 'content', 'raised']) {
     expect(ratio(tokens['muted-text'], tokens[surface])).toBeGreaterThanOrEqual(4.5);
   }
+  // The border is drawn on the page and on the content surface, so it clears 3:1 on both.
+  expect(ratio(tokens.border, tokens.page)).toBeGreaterThanOrEqual(3);
+  expect(ratio(tokens.border, tokens.content)).toBeGreaterThanOrEqual(3);
   expect(dark).toMatch(/--background:\s*var\(--surface-page\)/);
   expect(dark).toMatch(/--card:\s*var\(--surface-content\)/);
   expect(dark).toMatch(/--secondary:\s*var\(--surface-raised\)/);

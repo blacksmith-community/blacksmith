@@ -16,7 +16,7 @@
 [data-theme="dark"] {
   color-scheme: dark;
   --surface-page: #0f1317; --surface-nav: #1e252b; --surface-content: #20262c;
-  --surface-raised: #2f373f; --surface-border: #565f68; --surface-muted-text: #c5beb4;
+  --surface-raised: #2f373f; --surface-border: #6b7580; --surface-muted-text: #c5beb4;
   --background: var(--surface-page); --foreground: #f7f3ea;
   --card: var(--surface-content); --card-foreground: #f7f3ea;
   --secondary: var(--surface-raised); --secondary-foreground: #f7f3ea;
