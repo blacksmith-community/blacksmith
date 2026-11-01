@@ -644,8 +644,7 @@ body > footer p { margin: 0; }
 .compact-configs-controls .configs-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: 0; margin: 0; border: 0; background: transparent; }
 .compact-configs-controls .checkbox-group { display: flex; flex-wrap: wrap; gap: .375rem .75rem; }
 .compact-configs-controls .checkbox-group label { display: inline-flex; align-items: center; gap: .25rem; margin: 0; font-size: .875rem; white-space: nowrap; }
-.compact-configs-controls .configs-action-buttons { display: flex; gap: .375rem; order: 2; }
-.compact-configs-controls .configs-action-buttons button { width: 36px; min-width: 36px; height: 36px; padding: 0; margin: 0; }
+.compact-configs-controls .configs-action-buttons { order: 2; }
 .compact-configs-controls .configs-help { order: 3; cursor: help; }
 .configs-table-container { margin-top: 0; }
 
@@ -962,3 +961,13 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .config-table .config-value code, .config-table .config-value .manifest-value-text { color: var(--foreground); }
 .config-table .config-value .credential-pem { display: inline-flex; flex-direction: column; gap: .25rem; min-width: 0; }
 .config-no-match { margin: 12px 0 0; color: var(--muted-foreground); }
+
+/* The right-hand end of every table toolbar. Refresh and Copy share one box so
+   they sit on the same baseline, and the group stays at the right end. */
+.table-toolbar-actions { display: flex; align-items: center; gap: .375rem; margin-left: auto; flex-shrink: 0; }
+#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 28px; min-width: 28px; height: 28px; min-height: 28px; margin: 0; padding: 0; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; }
+#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
+#blacksmith .table-toolbar-actions .refresh-btn-logs.refreshing { cursor: wait; opacity: .7; }
+#blacksmith .table-toolbar-actions .refresh-btn-logs.success { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
+#blacksmith .table-toolbar-actions .refresh-btn-logs.error { background: var(--danger); border-color: var(--danger); color: var(--danger-foreground); }
+#blacksmith .table-toolbar-actions :is(.refresh-btn-logs, .copy-btn-logs) svg { width: 14px; height: 14px; }

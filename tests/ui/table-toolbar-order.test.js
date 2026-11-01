@@ -1,0 +1,58 @@
+const { test, expect } = require('bun:test');
+const fs = require('fs');
+const path = require('path');
+const { main: { boot } } = require('./certificates/harness.js');
+const { JSDOM } = require('./certificates/support.js');
+const t = JSDOM ? test : test.skip;
+
+const UI = path.resolve(__dirname, '..', '..', 'ui');
+
+const screens = (w) => ({
+  tasks: { html: w.__T.formatTasks([{ id: 7, state: 'done', description: 'create release', started_at: '2026-10-31T10:00:00Z' }]), noun: 'tasks' },
+  vms: { html: w.__T.formatVMs([{ id: 'vm', job_name: 'blacksmith', index: 0, state: 'running', job_state: 'running' }], 'inst-1'), noun: 'VMs' },
+  events: { html: w.__T.formatEvents([{ id: '1', time: '2026-10-31T10:00:00Z', user: 'admin', action: 'create', object_type: 'deployment', object_name: 'x' }]), noun: 'events' },
+  configs: { html: w.__T.formatConfigs({ configs: [{ id: '1', type: 'cloud', name: 'default', created_at: '2026-10-25' }] }), noun: 'configs' }
+});
+
+t('every table toolbar ends with Refresh and then Copy, on the right', () => {
+  const { w, d } = boot();
+  try {
+    Object.entries(screens(w)).forEach(([name, { html, noun }]) => {
+      const host = d.createElement('div');
+      host.innerHTML = html;
+      const group = host.querySelector('.table-toolbar-actions');
+      expect(group).not.toBeNull();
+      const buttons = Array.from(group.querySelectorAll('button'));
+      expect(buttons.map((b) => b.className.split(' ')[0])).toEqual(['refresh-btn-logs', 'copy-btn-logs']);
+      expect(buttons[1].getAttribute('aria-label')).toBe(`Copy ${noun} table`);
+      expect(buttons[0].getAttribute('aria-label')).toBe(`Refresh ${noun}`);
+      // The group is the last child of its toolbar, after the search and any filters.
+      const toolbar = group.parentElement;
+      expect(toolbar.lastElementChild).toBe(group);
+      expect(toolbar.querySelector('.search-filter-container')).not.toBeNull();
+      expect(name).toBeTruthy();
+    });
+  } finally { w.close(); }
+});
+
+t('the Tasks and Configs refresh buttons keep the ids their handlers bind', () => {
+  const { w, d } = boot();
+  try {
+    const all = screens(w);
+    const tasks = d.createElement('div');
+    tasks.innerHTML = all.tasks.html;
+    expect(tasks.querySelector('#refresh-tasks-btn.refresh-btn-logs')).not.toBeNull();
+    const configs = d.createElement('div');
+    configs.innerHTML = all.configs.html;
+    expect(configs.querySelector('#refresh-configs-btn.refresh-btn-logs')).not.toBeNull();
+  } finally { w.close(); }
+});
+
+t('Refresh and Copy share one box so they line up', () => {
+  const css = fs.readFileSync(path.join(UI, 'forge-theme.css'), 'utf8');
+  const rule = css.match(/#blacksmith \.table-toolbar-actions :is\(\.refresh-btn-logs, \.copy-btn-logs\) \{([^}]*)\}/);
+  expect(rule).not.toBeNull();
+  expect(rule[1]).toContain('width: 28px');
+  expect(rule[1]).toContain('height: 28px');
+  expect(css).toMatch(/\.table-toolbar-actions \{[^}]*margin-left: auto/);
+});

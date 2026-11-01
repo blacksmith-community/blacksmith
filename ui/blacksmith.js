@@ -10719,14 +10719,7 @@
         <div class="search-filter-container">
           ${createSearchFilter(tableId, 'Search events...')}
         </div>
-        <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
-                title="Copy filtered table rows" aria-label="Copy filtered table rows">
-          ${blacksmithIcon('copy', { size: 16 })}
-        </button>
-        <button class="refresh-btn-logs" onclick="${refreshFunction}"
-                title="Refresh events">
-          ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-        </button>
+        ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'events', refresh: `onclick="${refreshFunction}"` })}
       </div>
       <div class="events-table-container">
         <table class="${tableId} events-table">
@@ -10812,15 +10805,7 @@
               <option value="blacksmith">${TASK_SCOPE_ALL_LABEL}</option>
             </select>
           </div>
-          <div class="tasks-action-buttons">
-            <button id="refresh-tasks-btn" class="refresh-btn" title="Refresh tasks">
-              ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-            </button>
-            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
-                    title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              ${blacksmithIcon('copy', { size: 16 })}
-            </button>
-          </div>
+          ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'tasks', refresh: 'id="refresh-tasks-btn"', wrapperClass: 'tasks-action-buttons' })}
         </div>
         <div class="tasks-controls-row-2">
           <div class="filter-group">
@@ -10973,15 +10958,7 @@
           <div class="search-filter-container">
             ${createSearchFilter(tableId, 'Search configs...')}
           </div>
-          <div class="configs-action-buttons">
-            <button id="refresh-configs-btn" type="button" class="refresh-btn" title="Refresh configs" aria-label="Refresh configs">
-              ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-            </button>
-            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
-                    title="Copy filtered table rows" aria-label="Copy filtered table rows">
-              ${blacksmithIcon('copy', { size: 16 })}
-            </button>
-          </div>
+          ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'configs', refresh: 'id="refresh-configs-btn"', wrapperClass: 'configs-action-buttons' })}
         </div>
         <div class="configs-controls-row-2">
           <div class="filter-group configs-filters">
@@ -11699,6 +11676,20 @@
     return `<span class="${classes}" data-status="${kind}" data-state="${escapeAttribute(key)}"${variant ? ` data-variant="${variant}"` : ''}>${escapeHtml(label)}</span>`;
   };
 
+  // The right-hand end of a table toolbar. Search and filters sit on the
+  // left, and the Refresh and Copy icon buttons sit here in that order.
+  // refresh holds the attributes of the Refresh button, such as an id or an
+  // onclick, and noun names the table for the Copy button's label.
+  const tableToolbarActions = ({ tableSelector, noun, refresh, wrapperClass = '' }) => `<div class="table-toolbar-actions${wrapperClass ? ` ${wrapperClass}` : ''}">
+          <button type="button" class="refresh-btn-logs" ${refresh} title="Refresh ${noun}" aria-label="Refresh ${noun}">
+            ${blacksmithIcon('refresh-cw', { size: 16 })}
+          </button>
+          <button type="button" class="copy-btn-logs" onclick="window.copyTableRowsAsText('${tableSelector}', event)"
+                  title="Copy ${noun} table" aria-label="Copy ${noun} table">
+            ${blacksmithIcon('copy', { size: 16 })}
+          </button>
+        </div>`;
+
   const renderLogRow = (logEntry, columns = null) => {
     // Default to showing all columns if no column config provided (backward compatibility)
     const activeColumns = columns || {
@@ -11913,14 +11904,6 @@
           <div class="search-filter-container">
             ${createSearchFilter('vms-table', 'Search VMs...')}
           </div>
-          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.vms-table', event)"
-                  title="Copy filtered table rows" aria-label="Copy filtered table rows">
-            ${blacksmithIcon('copy', { size: 16 })}
-          </button>
-          <button class="refresh-btn-logs" onclick="${refreshFunction}"
-                  title="Refresh VMs">
-            ${blacksmithIcon('refresh-cw', { size: 16, label: 'Refresh' })}
-          </button>
           <div class="resurrection-toggle-container">
             <span class="resurrection-label-text" title="Automatically recreate failed VMs">Resurrection</span>
             <span class="resurrection-state" id="resurrection-state-${instanceId || 'blacksmith'}" role="status">Loading…</span>
@@ -11935,6 +11918,7 @@
               ${blacksmithIcon('trash-2', { size: 16 })}
             </button>
           </div>
+          ${tableToolbarActions({ tableSelector: '.vms-table', noun: 'VMs', refresh: `onclick="${refreshFunction}"` })}
         </div>
         <div class="vms-table-container">
           <table class="vms-table">
