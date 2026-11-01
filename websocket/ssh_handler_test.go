@@ -15,7 +15,7 @@ import (
 
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/websocket"
-	wsn "nhooyr.io/websocket"
+	wsn "github.com/coder/websocket"
 )
 
 const eventWait = 5 * time.Second

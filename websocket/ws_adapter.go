@@ -2,11 +2,11 @@ package websocket
 
 import (
 	"fmt"
+	wsn "github.com/coder/websocket"
 	"net/http"
-	wsn "nhooyr.io/websocket"
 )
 
-// acceptWS wraps nhooyr Accept and returns a WSConn abstraction.
+// acceptWS wraps coder/websocket Accept and returns a WSConn abstraction.
 func acceptWS(writer http.ResponseWriter, request *http.Request, enableCompression bool) (*nhooyrWSConn, error) {
 	opts := &wsn.AcceptOptions{}
 	if enableCompression {

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh/ssh"
-	wsn "nhooyr.io/websocket"
+	wsn "github.com/coder/websocket"
 )
 
 // Constants for WebSocket SSH handler.
@@ -109,7 +109,7 @@ type WSConn interface {
 	SetReadLimit(n int64)
 }
 
-// nhooyrWSConn implements WSConn using nhooyr.io/websocket.
+// nhooyrWSConn implements WSConn using github.com/coder/websocket.
 type nhooyrWSConn struct {
 	conn *wsn.Conn
 }
@@ -271,7 +271,7 @@ func (h *SSHHandler) HandleWebSocket(ctx context.Context, writer http.ResponseWr
 		return
 	}
 
-	// Accept connection via nhooyr (supports HTTP/1.1 and HTTP/2)
+	// Accept connection via coder/websocket (supports HTTP/1.1 and HTTP/2)
 	rawConn, err := acceptWS(writer, request, h.config.EnableCompression)
 	if err != nil {
 		h.logger.Errorf("Failed to upgrade WebSocket connection: %v", err)

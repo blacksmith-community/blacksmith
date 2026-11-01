@@ -4,6 +4,7 @@ go 1.27.3
 
 require (
 	github.com/andybalholm/brotli v1.2.7
+	github.com/coder/websocket v1.8.15
 	github.com/fivetwenty-io/boshapi v0.283.9
 	github.com/fivetwenty-io/capi/v3 v3.236.0
 	github.com/fivetwenty-io/osbapi/v2 v2.0.5
@@ -23,7 +24,6 @@ require (
 	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.1
-	nhooyr.io/websocket v1.8.17
 )
 
 require (
