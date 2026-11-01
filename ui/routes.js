@@ -126,7 +126,16 @@
     adapter.error?.(new Error('This destination is not available.'),null);
     return;
    }
-   if(current&&format(current)===format(route)&&!applying)return;
+   if(current&&format(current)===format(route)&&!applying){
+    // A bare link to the route already showing is still rewritten to its full form.
+    const full=format(current);
+    if(win.location.hash!==full){
+     const old=win.history.state?.blacksmithRoute;
+     win.history.replaceState(old?.session===session?win.history.state:metadata(++entryId,null),'',full);
+     currentEntryId=win.history.state?.blacksmithRoute?.id??null;
+    }
+    return;
+   }
    await apply(route,{history:true});
   }
   const api={get current(){return current;},get applying(){return applying;},navigate:(r,o)=>apply(r,o),
@@ -139,7 +148,6 @@
    record(route,options={}){
     if(applying||!started)return;const clean=parse(format(route));
     if(!clean)return;
-    adapter.settled?.();
     if(current&&format(clean)===format(current))return;
     const old=win.history.state?.blacksmithRoute;
     // A replacing record rewrites the current entry, so refining a filter does not fill Back.

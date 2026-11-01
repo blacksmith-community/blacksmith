@@ -192,6 +192,23 @@ t('a Services route for an unknown type or plan is refused rather than showing e
  }finally{w.close();}
 });
 
+t('an instance route says not found only once the list has loaded',async()=>{
+ const env=await loaded(),{w}=env;try{
+  const route={screen:'services',instance:'nope',section:'details'};
+  await expect(w.blacksmithViews.activate(route,{})).rejects.toThrow('Service instance nope was not found.');
+  // While the list is still loading, nothing can be missing from it.
+  const list=w.serviceInstances;w.serviceInstances=undefined;
+  const aborted=new w.AbortController();
+  const waiting=w.blacksmithViews.activate(route,{signal:aborted.signal});
+  await sleep(150);aborted.abort();
+  expect(await waiting).toBeNull();
+  const late=w.blacksmithViews.activate(route,{});
+  const outcome=late.then(()=>'opened',(e)=>e.message);
+  await sleep(150);w.serviceInstances=list;
+  expect(await outcome).toBe('Service instance nope was not found.');
+ }finally{w.close();}
+});
+
 t('the overview in the loaded page links through the real router to the filtered list',async()=>{
  const env=await loaded(),{w,d}=env;try{
   w.eval(fs.readFileSync(path.join(__dirname,'../../ui/routes.js'),'utf8'));

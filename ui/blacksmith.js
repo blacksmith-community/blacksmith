@@ -16716,6 +16716,13 @@
       };
       let notifyQueued=false,notifyReplace=false,routeFilterApplied=false;
       const panelContexts=new Map();
+      // The instance list arrives with the status read. Until it has, an
+      // instance route has nothing to be found in, so it waits for the list.
+      const instanceListReady = async (signal) => {
+        const ready = () => !!window.serviceInstances && typeof window.navigateToInstance === 'function';
+        for (let waited = 0; !ready() && !signal?.aborted && waited < 5000; waited += 100) await new Promise((resolve) => setTimeout(resolve, 100));
+        return ready();
+      };
       window.blacksmithViews={read:readRoute,notify(options){notifyReplace=notifyReplace||!!options?.replace;if(notifyQueued)return;notifyQueued=true;queueMicrotask(()=>{notifyQueued=false;const replace=notifyReplace;notifyReplace=false;window.blacksmithRouter?.record(readRoute(),{replace});});},
         async activate(route,{signal,history:restoring}={}) {
           if(route.screen!=='upgrade'||route.view!=='activity')selectedTaskRevision++;
@@ -16746,7 +16753,13 @@
               if(route.service||routeFilterApplied){window.applyServicesFilter?.(route.service,route.plan);routeFilterApplied=!!route.service;}
               return finish(route);
             }
-            if(!await window.navigateToInstance(route.instance,signal))throw new Error(`Service instance ${route.instance} was not found.`);
+            if(!await instanceListReady(signal)){if(signal?.aborted)return null;throw new Error('The service instance list is still loading. Try again in a moment.');}
+            if(!await window.navigateToInstance(route.instance,signal)){
+              if(signal?.aborted)return null;
+              // Only a loaded list can say an instance is missing.
+              if(!window.serviceInstances?.[route.instance])throw new Error(`Service instance ${route.instance} was not found.`);
+              throw new Error(`Service instance ${route.instance} could not be opened.`);
+            }
             if(signal?.aborted)return null;selected('services',route.section||'details');await window.loadInstanceSection(route.instance,route.section||'details');
           }
           if(signal?.aborted)return null;

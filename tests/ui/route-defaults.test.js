@@ -45,16 +45,35 @@ test('the navigation error clears once another route renders',async()=>{
  w.blacksmithRouter.destroy();w.close();
 });
 
-test('the navigation error clears when the user changes view in place',async()=>{
+test('a late in-place notification leaves the navigation error showing',async()=>{
  const {w}=boot('#/instances/missing/logs',async r=>{if(r.instance==='missing')throw new Error('gone');return r;});
  await new Promise(r=>setTimeout(r,20));
  expect(w.document.getElementById('route-error')).not.toBeNull();
+ // The fallback screen settles after its data loads and reports the route it already shows.
+ w.blacksmithRouter.record({screen:'blacksmith',section:'details'},{replace:true});
  w.blacksmithRouter.record({screen:'blacksmith',section:'details'});
+ expect(w.document.getElementById('route-error')).not.toBeNull();
+ w.blacksmithRouter.destroy();w.close();
+});
+
+test('the navigation error clears when the view moves to another route',async()=>{
+ const {w}=boot('#/instances/missing/logs',async r=>{if(r.instance==='missing')throw new Error('gone');return r;});
+ await new Promise(r=>setTimeout(r,20));
+ expect(w.document.getElementById('route-error')).not.toBeNull();
+ w.blacksmithRouter.record({screen:'certificates'});
  expect(w.document.getElementById('route-error')).toBeNull();
  w.blacksmithRouter.destroy();w.close();
 });
 
-test('an unknown instance error names the instance that was not found',()=>{
- const src=fs.readFileSync(path.join(__dirname,'../../ui/blacksmith.js'),'utf8');
- expect(src).toContain('Service instance ${route.instance} was not found.');
+test('a bare link to the route already showing is rewritten without rendering again',async()=>{
+ const calls=[];
+ const {w}=boot('#/instances/abc/summary',async r=>{calls.push(r);return r;});
+ await new Promise(r=>setTimeout(r,20));
+ expect(calls).toHaveLength(1);
+ w.location.hash='#/instances/abc';
+ await new Promise(r=>setTimeout(r,40));
+ expect(w.location.hash).toBe('#/instances/abc/summary');
+ expect(calls).toHaveLength(1);
+ expect(w.blacksmithRouter.current).toEqual({screen:'services',instance:'abc',section:'details'});
+ w.blacksmithRouter.destroy();w.close();
 });
