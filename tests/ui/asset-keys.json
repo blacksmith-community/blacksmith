@@ -12,16 +12,16 @@
   "sha256": "cab6d0dcd50836e8acb16d128c9950df3e401b729c41f8c207d6584d993f4906"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-240",
-  "sha256": "9b71d2af0a4078bcc4cd4fd9919ac0aa6d6fc865ca2908ba80758e40d49683d8"
+  "key": "20261028-oat-242",
+  "sha256": "9c37f2921494943d8b8cf9134b47938ca97b0410b3141099bbf5e2347ea74264"
  },
  "console.css": {
   "key": "20261028-oat-95",
   "sha256": "32cfbbd14b79e2873e3a3d78baf7b022cbd1a88fc1805716fdc9012f3a399fd5"
  },
  "forge-theme.css": {
-  "key": "20261028-oat-239",
-  "sha256": "2c796860523a01b221816729af25941f3eb1f2ec4e6898bd097f8032bb5b8f85"
+  "key": "20261028-oat-241",
+  "sha256": "e0ada6e25c596521421c5e313b68d90eda4d4302264d53183d758ba0fc23fd6d"
  },
  "icons.js": {
   "key": "20261028-oat-233",

@@ -883,7 +883,11 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .entity-services-table thead th { font-size: .75rem; color: var(--muted-foreground); font-weight: 600; }
 .entity-service-group + .entity-service-group .entity-type-row th, .entity-service-group + .entity-service-group .entity-type-row td { border-top: 1px solid var(--border); }
 .entity-type-row th, .entity-type-row td { background: var(--secondary); font-weight: 600; }
-.entity-plan-row th { padding-left: 28px; font-weight: 400; }
+.entity-services-table .entity-plan-row th { padding-left: 2rem; font-weight: 400; background: transparent; }
+.entity-type-row .entity-services-link { color: var(--foreground); font-weight: 600; text-decoration: none; }
+.entity-type-row .entity-services-link:hover { text-decoration: underline; }
+.entity-alert-count.is-zero { color: var(--muted-foreground); }
+.entity-alert-count.is-warning { color: var(--warning); font-weight: 600; }
 .entity-services-link { padding: 0; min-height: 0; border: 0; background: none; color: var(--primary); font: inherit; font-weight: inherit; text-align: left; text-decoration: underline; cursor: pointer; }
 .entity-services-link:hover { text-decoration: none; }
 .entity-not-in-catalog, .entity-plan-limit { font-size: .75rem; font-weight: 400; color: var(--muted-foreground); }

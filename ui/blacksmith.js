@@ -2546,8 +2546,8 @@
       const label = `Show the ${plural(count, type.name + ' instance')}${plan ? ` on plan ${plan.name}` : ''}`;
       return `<button type="button" class="ghost entity-services-link" data-services-filter data-service="${escapeAttribute(type.name)}"${target} aria-label="${escapeAttribute(label)}">${escapeHtml(text)}</button>`;
     };
-    const counts = (item) => `<td data-count="instances">${plural(item.count, 'instance')}</td><td data-count="alerts">${item.alerts ? `${item.alerts} with VM alerts` : 'None'}</td>`;
-    const body = types.map(type => `<tbody class="entity-service-group"><tr class="entity-type-row" data-service="${escapeAttribute(type.name)}"><th scope="row">${entry(type, null, type.name, type.count)}${note(type.inCatalog)}</th><td></td>${counts(type)}</tr>${type.plans.map(plan => {
+    const counts = (item) => `<td data-count="instances">${plural(item.count, 'instance')}</td><td data-count="alerts">${item.alerts ? `<span class="entity-alert-count is-warning">${item.alerts} with VM alerts</span>` : '<span class="entity-alert-count is-zero">0</span>'}</td>`;
+    const body = types.map(type => `<tbody class="entity-service-group"><tr class="entity-type-row" data-service="${escapeAttribute(type.name)}"><th scope="row" colspan="2">${entry(type, null, type.name, type.count)}${note(type.inCatalog)}</th>${counts(type)}</tr>${type.plans.map(plan => {
       const limit = Number.isFinite(plan.limit) && plan.limit > 0 ? `<span class="entity-plan-limit">Limit ${plan.limit}</span>` : '';
       return `<tr class="entity-plan-row" data-service="${escapeAttribute(type.name)}" data-plan="${escapeAttribute(plan.name)}"><th scope="row">${entry(type, plan, plan.name, plan.count)}${note(plan.inCatalog)}</th><td>${escapeHtml(String(plan.description))}${plan.description && limit ? ' ' : ''}${limit}</td>${counts(plan)}</tr>`;
     }).join('')}</tbody>`).join('');

@@ -47,9 +47,9 @@ t('the panel lists every type and plan, sorted, with active and alert counts tha
    ['type','valkey'],['plan','cluster'],['plan','solo']]);
   const counts=Object.fromEntries(rows(host).map(r=>[r.className.includes('entity-plan-row')?r.dataset.service+'/'+r.dataset.plan:r.dataset.service,[r.querySelector('[data-count="instances"]').textContent.trim(),r.querySelector('[data-count="alerts"]').textContent.trim()]]));
   expect(counts).toEqual({
-   legacy:['1 instance','None'],'legacy/old':['1 instance','None'],
-   redis:['4 instances','1 with VM alerts'],'redis/gone':['1 instance','None'],'redis/large':['1 instance','None'],'redis/small':['2 instances','1 with VM alerts'],
-   valkey:['1 instance','1 with VM alerts'],'valkey/cluster':['1 instance','1 with VM alerts'],'valkey/solo':['0 instances','None']});
+   legacy:['1 instance','0'],'legacy/old':['1 instance','0'],
+   redis:['4 instances','1 with VM alerts'],'redis/gone':['1 instance','0'],'redis/large':['1 instance','0'],'redis/small':['2 instances','1 with VM alerts'],
+   valkey:['1 instance','1 with VM alerts'],'valkey/cluster':['1 instance','1 with VM alerts'],'valkey/solo':['0 instances','0']});
   const typeTotal=rows(host).filter(r=>!r.className.includes('entity-plan-row')).reduce((n,r)=>n+Number(r.querySelector('[data-count="instances"]').textContent.trim().split(' ')[0]),0);
   expect(typeTotal).toBe(6);
   const planTotal=rows(host).filter(r=>r.className.includes('entity-plan-row')).reduce((n,r)=>n+Number(r.querySelector('[data-count="instances"]').textContent.trim().split(' ')[0]),0);
@@ -274,5 +274,38 @@ t('a type and plan missing from the catalog are marked in the filters and filter
   await w.blacksmithViews.activate({screen:'services',service:'redis'},{});
   expect([...d.getElementById('plan-filter').options].find(o=>o.value==='gone').textContent).toBe('gone (not in the catalog)');
   expect([...d.getElementById('plan-filter').options].find(o=>o.value==='small').textContent).toBe('small');
+ }finally{w.close();}
+});
+
+// Each service row is a group header, plan rows sit indented under it, the
+// first column carries no shading, and a zero alert count reads as 0.
+t('a service row spans Service and Details and plan rows hold the description',()=>{
+ const {w,d}=start();try{
+  const host=render(w,d,fixture());
+  const type=host.querySelector('.entity-type-row[data-service="redis"]');
+  expect(type.children.length).toBe(3);
+  expect(type.querySelector('th').getAttribute('colspan')).toBe('2');
+  expect(type.querySelector('th button').textContent).toBe('redis');
+  const small=host.querySelector('.entity-plan-row[data-plan="small"][data-service="redis"]');
+  expect(small.children.length).toBe(4);
+  expect(rowText(small)[0]).toBe('small');
+  expect(small.querySelector('th').getAttribute('colspan')).toBeNull();
+  expect(small.querySelector('td').textContent).toContain('One small node');
+  expect(small.querySelector('td .entity-plan-limit').textContent).toBe('Limit 5');
+  const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
+  expect(css).toMatch(/\.entity-services-table \.entity-plan-row th\s*\{[^}]*padding-left:\s*2rem/);
+  expect(css).toMatch(/\.entity-services-table \.entity-plan-row th\s*\{[^}]*background:\s*transparent/);
+ }finally{w.close();}
+});
+t('a zero alert count is a neutral 0 and a positive count is a warning',()=>{
+ const {w,d}=start();try{
+  const host=render(w,d,fixture());
+  const zero=host.querySelector('.entity-plan-row[data-plan="large"] [data-count="alerts"] .entity-alert-count');
+  expect(zero.textContent).toBe('0');
+  expect(zero.classList.contains('is-zero')).toBe(true);
+  const some=host.querySelector('.entity-plan-row[data-plan="small"] [data-count="alerts"] .entity-alert-count');
+  expect(some.textContent).toBe('1 with VM alerts');
+  expect(some.classList.contains('is-warning')).toBe(true);
+  expect(host.querySelector('.entity-services').textContent).not.toContain('None');
  }finally{w.close();}
 });
