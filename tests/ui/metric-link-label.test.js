@@ -12,6 +12,9 @@ const link=(w,label)=>{
 t('the metric link keeps an acronym in capitals',()=>{
  const {w}=boot();try{
  expect(link(w,'VM status')).toBe('View VM status →');
+ expect(link(w,'VMs')).toBe('View VMs →');
+ expect(link(w,'VM')).toBe('View VM →');
+ expect(link(w,'CPU usage')).toBe('View CPU usage →');
  expect(link(w,'Instances with VM alerts')).toBe('View instances with VM alerts →');
  }finally{w.close();}
 });
