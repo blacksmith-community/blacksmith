@@ -3056,6 +3056,7 @@ bs-tabs > .manifest-tab-pane {
 
 .instance-group-selector label,
 .job-selector label {
+  white-space: nowrap;
   font-weight: 500;
   color: var(--text-secondary);
   font-size: 13px;
@@ -3099,14 +3100,62 @@ bs-tabs > .manifest-tab-pane {
   margin-top: 15px;
 }
 
-.boolean-value {
-  color: #805ad5;
-  font-weight: 500;
+/* A manifest value reads left to right in monospace, with its copy button
+   right after it. A long value cuts off with an ellipsis. */
+.manifest-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+  font-family: var(--font-mono, monospace);
+  font-style: normal;
+  font-size: 12px;
+  color: var(--text-primary);
 }
 
-.number-value {
-  color: #38a169;
-  font-weight: 500;
+.manifest-value-text {
+  min-width: 0;
+  max-width: 60ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manifest-value-multiline {
+  margin: 0;
+  max-width: none;
+  overflow: visible;
+  white-space: pre-wrap;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.manifest-options {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.manifest-options > div {
+  display: flex;
+  gap: 8px;
+}
+
+.manifest-options dt {
+  color: var(--muted-foreground);
+  flex: 0 0 auto;
+}
+
+.manifest-options dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  font-style: normal;
 }
 
 .addons-list {

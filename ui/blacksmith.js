@@ -14092,6 +14092,44 @@
   // Format manifest details with tabbed view
   document.addEventListener('change',event=>{if(event.target.matches('#cf-endpoint-select'))notifyRoute();});
 
+  // One value cell for every table of values. The value sits at the left in
+  // the monospace face with its copy button right after it, and a long value
+  // cuts off at the cell edge while the title and the copy button keep all of
+  // it. A missing value is the shared empty value, with no copy button.
+  const MANIFEST_PLACEHOLDERS = ['Not specified', 'N/A'];
+  const manifestValue = (value, label, options = {}) => {
+    if (isEmptyValue(value) || MANIFEST_PLACEHOLDERS.includes(value)) return EMPTY_HTML;
+    const text = String(value);
+    const copy = options.copy === undefined ? text : String(options.copy);
+    const title = escapeAttribute(text);
+    let shown;
+    if (text.includes('\n')) shown = `<pre class="manifest-value-text manifest-value-multiline">${escapeHtml(text)}</pre>`;
+    else if (options.link && /^https?:\/\//i.test(text)) shown = `<a class="manifest-value-text" href="${title}" target="_blank" rel="noopener noreferrer" title="${title}">${escapeHtml(text)}</a>`;
+    else shown = `<span class="manifest-value-text" title="${title}">${escapeHtml(text)}</span>`;
+    return `<span class="manifest-value">${shown}<button type="button" class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(copy))})" title="Copy ${escapeAttribute(label)}" aria-label="Copy ${escapeAttribute(label)}">${blacksmithIcon('copy', { size: 14 })}</button></span>`;
+  };
+
+  // A manifest property of any type, shown as plain text whatever its type.
+  const manifestPropertyValue = (value, label) => {
+    if (value === null || value === undefined) return EMPTY_HTML;
+    if (Array.isArray(value)) {
+      const text = value.length === 0 ? '[]' : typeof value[0] === 'string' ? value.join(', ') : `[${value.length} items]`;
+      return manifestValue(text, label, { copy: JSON.stringify(value) });
+    }
+    if (typeof value === 'object') return manifestValue('[object]', label, { copy: JSON.stringify(value) });
+    return manifestValue(String(value), label);
+  };
+
+  // A variable's options as one label and value pair per line.
+  const manifestOptions = (options) => {
+    const entries = options && typeof options === 'object' ? Object.entries(options) : [];
+    if (entries.length === 0) return options ? manifestValue(options, 'options') : EMPTY_HTML;
+    return `<dl class="manifest-options">${entries.map(([key, value]) => {
+      const text = Array.isArray(value) ? value.join(', ') : value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
+      return `<div><dt>${escapeHtml(String(key))}</dt><dd>${isEmptyValue(text) ? EMPTY_HTML : escapeHtml(text)}</dd></div>`;
+    }).join('')}</dl>`;
+  };
+
   let manifestRenderSequence = 0;
   const formatManifestDetails = (manifestData, instanceId) => {
     if (!manifestData || !manifestData.text || !manifestData.parsed) {
@@ -14121,26 +14159,8 @@
       return result;
     };
 
-    // Helper function to format value for display
-    const formatValue = (value) => {
-      if (value === null || value === undefined) return '<em>null</em>';
-      if (typeof value === 'boolean') return `<span class="boolean-value">${value}</span>`;
-      if (typeof value === 'number') return `<span class="number-value">${value}</span>`;
-      if (Array.isArray(value)) {
-        if (value.length === 0) return '<em>[]</em>';
-        if (typeof value[0] === 'string') return escapeHtml(value.join(', '));
-        return `<em>[${value.length} items]</em>`;
-      }
-      if (typeof value === 'object') return '<em>[object]</em>';
-      if (typeof value === 'string' && value.includes('\n')) {
-        return `<pre style="margin: 0; white-space: pre-wrap;">${escapeHtml(value)}</pre>`;
-      }
-      return escapeHtml(String(value));
-    };
-
     // Extract data from parsed manifest
     const parsed = manifestData.parsed;
-    const directorUuid = parsed.director_uuid || 'Not specified';
     const instanceGroups = parsed.instance_groups || [];
     const releases = parsed.releases || [];
     const stemcells = parsed.stemcells || [];
@@ -14167,7 +14187,7 @@
 
           <!-- Global Tab -->
           <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-global" aria-labelledby="${tabGroupId}-tab-global" class="manifest-tab-pane active" data-tab="global" data-group="${tabGroupId}">
-            <table class="manifest-table">
+            <table class="manifest-table" data-sortable="false">
               <thead>
                 <tr>
                   <th>Property</th>
@@ -14177,27 +14197,11 @@
               <tbody>
                 <tr>
                   <td>Director UUID</td>
-                  <td>
-                    <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(directorUuid)))})"
-                              title="Copy to clipboard" aria-label="Copy director UUID">
-                        ${blacksmithIcon('copy', { size: 14 })}
-                      </button>
-                      <code>${escapeHtml(String(directorUuid))}</code>
-                    </span>
-                  </td>
+                  <td>${manifestValue(parsed.director_uuid, 'director UUID')}</td>
                 </tr>
                 <tr>
                   <td>Name</td>
-                  <td>
-                    <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((parsed.name || 'Not specified'))))})"
-                              title="Copy to clipboard" aria-label="Copy manifest name">
-                        ${blacksmithIcon('copy', { size: 14 })}
-                      </button>
-                      <code>${escapeHtml(String(parsed.name || 'Not specified'))}</code>
-                    </span>
-                  </td>
+                  <td>${manifestValue(parsed.name, 'manifest name')}</td>
                 </tr>
               </tbody>
             </table>
@@ -14208,7 +14212,7 @@
           <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-instance-groups" aria-labelledby="${tabGroupId}-tab-instance-groups" class="manifest-tab-pane" data-tab="instance-groups" data-group="${tabGroupId}">
             <div class="instance-groups-container">
               <div class="instance-group-selector">
-                <label for="instance-group-select-${manifestId}">Select Instance Group:</label>
+                <label for="instance-group-select-${manifestId}">Instance group</label>
                 <select id="instance-group-select-${manifestId}" class="instance-group-select">
                   ${instanceGroups.map((ig, idx) =>
       `<option value="${idx}">${escapeHtml(String(ig.name))} (${escapeHtml(String(ig.instances || 1))} instance${(ig.instances || 1) > 1 ? 's' : ''})</option>`
@@ -14222,7 +14226,7 @@
       return `
                     <div class="instance-group-pane ${idx === 0 ? 'active' : ''}" data-group-index="${idx}">
                       <h4>Instance Group: ${escapeHtml(String(ig.name))}</h4>
-                      <table class="manifest-table">
+                      <table class="manifest-table" data-sortable="false">
                         <thead>
                           <tr>
                             <th>Property</th>
@@ -14232,75 +14236,27 @@
                         <tbody>
                           <tr>
                             <td>Instances</td>
-                            <td>
-                              <span class="copy-wrapper">
-                                <span>${escapeHtml(String(ig.instances || 1))}</span>
-                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(ig.instances || 1)))})"
-                        title="Copy to clipboard" aria-label="Copy instance count">
-                  ${blacksmithIcon('copy', { size: 14 })}
-                </button>
-                              </span>
-                            </td>
+                            <td>${manifestValue(ig.instances || 1, 'instance count')}</td>
                           </tr>
                           <tr>
                             <td>AZs</td>
-                            <td>
-                              <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(((ig.azs || []).join(', ') || 'None'))))})"
-                                        title="Copy to clipboard" aria-label="Copy availability zones">
-                                  ${blacksmithIcon('copy', { size: 14 })}
-                                </button>
-                                <span>${escapeHtml(String((ig.azs || []).join(', ') || 'None'))}</span>
-                              </span>
-                            </td>
+                            <td>${manifestValue((ig.azs || []).join(', '), 'availability zones')}</td>
                           </tr>
                           <tr>
                             <td>Networks</td>
-                            <td>
-                              <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(((ig.networks || []).map(n => n.name || n).join(', ') || 'None'))))})"
-                                        title="Copy to clipboard" aria-label="Copy networks">
-                                  ${blacksmithIcon('copy', { size: 14 })}
-                                </button>
-                                <span>${escapeHtml(String((ig.networks || []).map(n => n.name || n).join(', ') || 'None'))}</span>
-                              </span>
-                            </td>
+                            <td>${manifestValue((ig.networks || []).map(n => n.name || n).join(', '), 'networks')}</td>
                           </tr>
                           <tr>
                             <td>VM Type</td>
-                            <td>
-                              <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.vm_type || 'Not specified'))))})"
-                                        title="Copy to clipboard" aria-label="Copy VM type">
-                                  ${blacksmithIcon('copy', { size: 14 })}
-                                </button>
-                                <span>${escapeHtml(String(ig.vm_type || 'Not specified'))}</span>
-                              </span>
-                            </td>
+                            <td>${manifestValue(ig.vm_type, 'VM type')}</td>
                           </tr>
                           <tr>
                             <td>Persistent Disk Type</td>
-                            <td>
-                              <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.persistent_disk_type || 'None'))))})"
-                                        title="Copy to clipboard" aria-label="Copy persistent disk type">
-                                  ${blacksmithIcon('copy', { size: 14 })}
-                                </button>
-                                <span>${escapeHtml(String(ig.persistent_disk_type || 'None'))}</span>
-                              </span>
-                            </td>
+                            <td>${manifestValue(ig.persistent_disk_type, 'persistent disk type')}</td>
                           </tr>
                           <tr>
                             <td>Stemcell</td>
-                            <td>
-                              <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((ig.stemcell || 'default'))))})"
-                                        title="Copy to clipboard" aria-label="Copy stemcell">
-                                  ${blacksmithIcon('copy', { size: 14 })}
-                                </button>
-                                <span>${escapeHtml(String(ig.stemcell || 'default'))}</span>
-                              </span>
-                            </td>
+                            <td>${manifestValue(ig.stemcell || 'default', 'stemcell')}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -14326,7 +14282,7 @@
         return `
                                 <div class="job-pane ${jidx === 0 ? 'active' : ''}" data-job-index="${jidx}" data-group-index="${idx}">
                                   <h6>Job: ${escapeHtml(String(job.name))}</h6>
-                                  <table class="manifest-table">
+                                  <table class="manifest-table" data-sortable="false">
                                     <thead>
                                       <tr>
                                         <th>Property</th>
@@ -14336,34 +14292,14 @@
                                     <tbody>
                                       <tr>
                                         <td>Release</td>
-                                        <td>
-                                          <span class="copy-wrapper">
-                                            <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((job.release || 'Not specified'))))})"
-                                                    title="Copy to clipboard" aria-label="Copy release">
-                                              ${blacksmithIcon('copy', { size: 14 })}
-                                            </button>
-                                            <span>${escapeHtml(String(job.release || 'Not specified'))}</span>
-                                          </span>
-                                        </td>
+                                        <td>${manifestValue(job.release, 'release')}</td>
                                       </tr>
-                                      ${propKeys.length > 0 ? propKeys.map(key => {
-          const value = flatProps[key];
-          const copyValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
-          return `
+                                      ${propKeys.length > 0 ? propKeys.map(key => `
                                         <tr>
                                           <td><code>${escapeHtml(String(key))}</code></td>
-                                          <td>
-                                            <span class="copy-wrapper">
-                                              <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(copyValue)))})"
-                                                      title="Copy to clipboard" aria-label="Copy ${escapeAttribute(String(key))}">
-                                                ${blacksmithIcon('copy', { size: 14 })}
-                                              </button>
-                                              <span>${formatValue(value)}</span>
-                                            </span>
-                                          </td>
+                                          <td>${manifestPropertyValue(flatProps[key], String(key))}</td>
                                         </tr>
-                                      `;
-        }).join('') : '<tr><td colspan="2"><em>No properties defined</em></td></tr>'}
+                                      `).join('') : '<tr><td colspan="2"><em>No properties defined</em></td></tr>'}
                                     </tbody>
                                   </table>
                                 </div>
@@ -14395,46 +14331,10 @@
               <tbody>
                 ${releases.map(release => `
                   <tr>
-                    <td>
-                      <span class="copy-wrapper">
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.name)))})"
-                                title="Copy to clipboard" aria-label="Copy release name">
-                          ${blacksmithIcon('copy', { size: 14 })}
-                        </button>
-                        <span>${escapeHtml(String(release.name))}</span>
-                      </span>
-                    </td>
-                    <td>
-                      <span class="copy-wrapper">
-                        <span>${escapeHtml(String(release.version || 'latest'))}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((release.version || 'latest'))))})"
-                                title="Copy to clipboard" aria-label="Copy release version">
-                          ${blacksmithIcon('copy', { size: 14 })}
-                        </button>
-                      </span>
-                    </td>
-                    <td>
-                      ${release.url ? `
-                        <span class="copy-wrapper">
-                          ${/^https?:\/\//i.test(String(release.url)) ? `<a href="${escapeAttribute(String(release.url))}" target="_blank" rel="noopener noreferrer" style="word-break: break-all;">${escapeHtml(String(release.url))}</a>` : escapeHtml(String(release.url))}
-                          <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.url)))})"
-                                  title="Copy URL" aria-label="Copy release URL">
-                            ${blacksmithIcon('copy', { size: 14 })}
-                          </button>
-                        </span>
-                      ` : 'N/A'}
-                    </td>
-                    <td>
-                      ${release.sha1 && release.sha1 !== 'N/A' ? `
-                        <span class="copy-wrapper">
-                          <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(release.sha1)))})"
-                                  title="Copy SHA1" aria-label="Copy release SHA1">
-                            ${blacksmithIcon('copy', { size: 14 })}
-                          </button>
-                          <code style="font-size: 0.8em;">${escapeHtml(String(release.sha1))}</code>
-                        </span>
-                      ` : '<code style="font-size: 0.8em;">N/A</code>'}
-                    </td>
+                    <td>${escapeHtml(String(release.name))}</td>
+                    <td>${manifestValue(release.version || 'latest', 'release version')}</td>
+                    <td>${manifestValue(release.url, 'release URL', { link: true })}</td>
+                    <td>${manifestValue(release.sha1, 'release SHA1')}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -14456,33 +14356,9 @@
               <tbody>
                 ${stemcells.map(stemcell => `
                   <tr>
-                    <td>
-                      <span class="copy-wrapper">
-                        <span>${escapeHtml(String(stemcell.alias || 'default'))}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((stemcell.alias || 'default'))))})"
-                                title="Copy to clipboard" aria-label="Copy stemcell alias">
-                          ${blacksmithIcon('copy', { size: 14 })}
-                        </button>
-                      </span>
-                    </td>
-                    <td>
-                      <span class="copy-wrapper">
-                        <span>${escapeHtml(String(stemcell.os || 'Not specified'))}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String((stemcell.os || 'Not specified'))))})"
-                                title="Copy to clipboard" aria-label="Copy stemcell OS">
-                          ${blacksmithIcon('copy', { size: 14 })}
-                        </button>
-                      </span>
-                    </td>
-                    <td>
-                      <span class="copy-wrapper">
-                        <span>${escapeHtml(String(stemcell.version || 'latest'))}</span>
-                        <button class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(String(String(stemcell.version || 'latest'))))})"
-                                title="Copy to clipboard" aria-label="Copy stemcell version">
-                          ${blacksmithIcon('copy', { size: 14 })}
-                        </button>
-                      </span>
-                    </td>
+                    <td>${escapeHtml(String(stemcell.alias || 'default'))}</td>
+                    <td>${manifestValue(stemcell.os, 'stemcell OS')}</td>
+                    <td>${manifestValue(stemcell.version || 'latest', 'stemcell version')}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -14493,7 +14369,7 @@
           <!-- Features Tab -->
           ${Object.keys(features).length > 0 ? `
           <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-features" aria-labelledby="${tabGroupId}-tab-features" class="manifest-tab-pane" data-tab="features" data-group="${tabGroupId}">
-            <table class="manifest-table">
+            <table class="manifest-table" data-sortable="false">
               <thead>
                 <tr>
                   <th>Feature</th>
@@ -14504,7 +14380,7 @@
                 ${Object.entries(features).map(([key, value]) => `
                   <tr>
                     <td>${escapeHtml(String(key))}</td>
-                    <td>${formatValue(value)}</td>
+                    <td>${manifestPropertyValue(value, String(key))}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -14515,7 +14391,7 @@
           <!-- Update Tab -->
           ${Object.keys(update).length > 0 ? `
           <div role="tabpanel" tabindex="0" id="${tabGroupId}-panel-update" aria-labelledby="${tabGroupId}-tab-update" class="manifest-tab-pane" data-tab="update" data-group="${tabGroupId}">
-            <table class="manifest-table">
+            <table class="manifest-table" data-sortable="false">
               <thead>
                 <tr>
                   <th>Property</th>
@@ -14526,7 +14402,7 @@
                 ${Object.entries(update).map(([key, value]) => `
                   <tr>
                     <td>${escapeHtml(String(key))}</td>
-                    <td>${formatValue(value)}</td>
+                    <td>${manifestPropertyValue(value, String(key))}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -14549,8 +14425,8 @@
                 ${variables.map(variable => `
                   <tr>
                     <td>${escapeHtml(String(variable.name))}</td>
-                    <td>${escapeHtml(String(variable.type || 'Not specified'))}</td>
-                    <td>${variable.options ? `<pre style="margin: 0;">${escapeHtml(String(JSON.stringify(variable.options, null, 2)))}</pre>` : 'None'}</td>
+                    <td>${manifestValue(variable.type, 'variable type')}</td>
+                    <td>${manifestOptions(variable.options)}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -14577,7 +14453,7 @@
                         ${addon.jobs.map(job => `
                           <tr>
                             <td>${escapeHtml(String(job.name))}</td>
-                            <td>${escapeHtml(String(job.release || 'Not specified'))}</td>
+                            <td>${manifestValue(job.release, 'release')}</td>
                           </tr>
                         `).join('')}
                       </tbody>
