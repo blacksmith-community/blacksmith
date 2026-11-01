@@ -2676,6 +2676,84 @@
     return {serviceIdToName, plansPerService, missingServices, missingPlans};
   };
 
+  // One request to the fleet certificates endpoint lists every certificate
+  // that needs attention. Each instance's count is derived from that list, so
+  // no instance is ever asked for its own.
+  const attentionCertificates = {certificates: null, fetchedAt: null, failed: false, pending: null};
+  const loadAttentionCertificates = () => {
+    if (attentionCertificates.pending) return attentionCertificates.pending;
+    attentionCertificates.pending = (async () => {
+      try {
+        const response = await fetchWithHeaders('/b/certificates/inventory?attention=true');
+        if (!response.ok) throw new Error('unavailable');
+        const body = await response.json();
+        attentionCertificates.certificates = Array.isArray(body?.certificates) ? body.certificates : [];
+        attentionCertificates.fetchedAt = Date.now();
+        attentionCertificates.failed = false;
+      } catch (_) {
+        attentionCertificates.certificates = null;
+        attentionCertificates.failed = true;
+      } finally {
+        attentionCertificates.pending = null;
+      }
+      return attentionCertificates;
+    })();
+    return attentionCertificates.pending;
+  };
+  const attentionCountsByInstance = (certificates) => {
+    const counts = new Map();
+    (certificates || []).forEach(cert => {
+      new Set((cert?.owners || []).filter(owner => owner?.kind === 'instance' && owner.instance_id).map(owner => owner.instance_id))
+        .forEach(id => counts.set(id, (counts.get(id) || 0) + 1));
+    });
+    return counts;
+  };
+  const fillInstanceCertificates = async () => {
+    const cells = document.querySelectorAll('td[data-instance-certificates]');
+    if (!cells.length) return;
+    const result = await loadAttentionCertificates();
+    const counts = result.failed ? null : attentionCountsByInstance(result.certificates);
+    document.querySelectorAll('td[data-instance-certificates]').forEach(cell => {
+      if (!counts) { cell.textContent = 'Unknown'; cell.removeAttribute('data-sort-value'); return; }
+      const count = counts.get(cell.dataset.instanceCertificates) || 0;
+      cell.textContent = String(count);
+      cell.setAttribute('data-sort-value', String(count));
+    });
+  };
+
+  // With no instance open, the detail pane lists every instance. A row opens
+  // its instance exactly as the card in the list beside it does.
+  const renderInstancesOverview = (instancesList, serviceIdToName) => {
+    const rows = instancesList.filter(([, details]) => details && details.deleted !== true).map(([id, details]) => {
+      const name = String(details.instance_name || id);
+      const service = String(serviceIdToName[details.service_id] || details.service_id || '');
+      const plan = String(details.plan?.name || details.plan_id || '');
+      const status = details.vm_status ? String(details.vm_status) : '';
+      return `<tr class="row-link" tabindex="0" data-instance-row data-instance-id="${escapeAttribute(String(id))}" title="Open ${escapeAttribute(name)}"><td>${escapeHtml(name)}</td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">${EMPTY_HTML}</td></tr>`;
+    }).join('');
+    if (!rows) return '<div class="no-data">No services have been provisioned yet.</div>';
+    return `<div class="instances-overview">
+      <div class="table-controls-container">
+        <div class="search-filter-container">${createSearchFilter('instances-overview-table', 'Search instances...')}</div>
+        ${tableToolbarActions({ tableSelector: '.instances-overview-table', noun: 'instances' })}
+      </div>
+      <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table"><caption class="visually-hidden">Every service instance with its service, plan, VM status, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">VM status</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`;
+  };
+  const openOverviewInstance = (row) => {
+    const id = row.dataset.instanceId;
+    if (window.blacksmithRouter) window.blacksmithRouter.navigate({screen: 'services', instance: id, section: 'details'});
+    else window.navigateToInstance?.(id);
+  };
+  document.addEventListener('click', (event) => {
+    const row = event.target.closest?.('tr[data-instance-row]');
+    if (row) openOverviewInstance(row);
+  });
+  document.addEventListener('keydown', (event) => {
+    const row = event.target.closest?.('tr[data-instance-row]');
+    if (row && event.target === row && event.key === 'Enter') { event.preventDefault(); openOverviewInstance(row); }
+  });
+
   const renderServicesTemplate = (instances) => {
     const instancesList = isEmpty(instances) ? [] : Object.entries(instances);
 
@@ -2791,7 +2869,7 @@
         </div>
       </div>
       <div class="service-detail">
-        <div class="no-selection">Select a service instance to view details</div>
+        ${renderInstancesOverview(instancesList, serviceIdToName)}
       </div>
     `;
   };
@@ -15839,6 +15917,9 @@
         };
         const setupServiceHandlers = () => {
           window.serviceInstanceElements = new Map([...document.querySelectorAll('#services .service-item')].map(item => [item.dataset.instanceId,item]));
+          attachSearchFilter('instances-overview-table');
+          initializeAllTables();
+          fillInstanceCertificates();
           document.querySelectorAll('#services .service-item').forEach(item => {
             item.addEventListener('click', () => window.blacksmithRouter ? window.blacksmithRouter.navigate({screen:'services',instance:item.dataset.instanceId,section:'details'}) : window.navigateToInstance(item.dataset.instanceId));
           });

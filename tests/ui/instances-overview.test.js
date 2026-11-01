@@ -1,0 +1,87 @@
+const {test,expect}=require('bun:test');
+const {main:{boot,sleep}}=require('./certificates/harness.js');
+
+const instances=()=>({
+ a1:{service_id:'redis',plan_id:'small',plan:{id:'small',name:'small'},instance_name:'cache-a',vm_status:'running'},
+ b2:{service_id:'redis',plan_id:'large',plan:{id:'large',name:'large'},vm_status:'failing'},
+ c3:{service_id:'valkey',plan_id:'solo',plan:{id:'solo',name:'solo'},instance_name:'kv-c'},
+ d4:{service_id:'redis',plan_id:'small',plan:{id:'small',name:'small'},instance_name:'gone',deleted:true}
+});
+const catalog={services:[{id:'redis',name:'Redis',plans:[{id:'small',name:'small'},{id:'large',name:'large'}]},{id:'valkey',name:'Valkey',plans:[{id:'solo',name:'solo'}]}]};
+const mount=(w,d)=>{
+ w.plansData=catalog;
+ const host=d.createElement('div'); host.id='services'; d.body.appendChild(host);
+ host.innerHTML=w.__T.renderServicesTemplate(instances());
+ return host;
+};
+const cells=(row)=>[...row.children].map(c=>c.textContent.replace(/\s+/g,' ').trim());
+const inventory=(certs,status=200)=>['/b/certificates/inventory?attention=true',(u,o,json)=>json(status,status===200?{certificates:certs}:{error:'off'})];
+const owned=(...ids)=>({owners:ids.map(id=>({kind:'instance',instance_id:id}))});
+
+test('with no instance open the detail pane lists the instances in a searchable table',()=>{
+ const {w,d}=boot();try{
+  const host=mount(w,d);
+  const pane=host.querySelector('.service-detail');
+  expect(pane.querySelector('.no-selection')).toBeNull();
+  expect(pane.textContent).not.toContain('Select a service instance');
+  const table=pane.querySelector('table.instances-overview-table');
+  expect([...table.querySelectorAll('thead th')].map(th=>th.textContent)).toEqual(['Name','Service','Plan','VM status','Certificates']);
+  expect([...table.querySelectorAll('tbody tr')].map(cells).map(r=>r.slice(0,4))).toEqual([
+   ['cache-a','Redis','small','running'],
+   ['b2','Redis','large','failing'],
+   ['kv-c','Valkey','solo','—']]);
+  expect(pane.querySelector('.table-controls-container .table-search-input')).not.toBeNull();
+  expect(pane.querySelector('.table-toolbar-actions .copy-btn-logs')).not.toBeNull();
+  expect(host.querySelectorAll('.services-list .service-item').length).toBe(4);
+ }finally{w.close();}
+});
+
+test('a row opens its instance the way the card does',()=>{
+ const {w,d}=boot();try{
+  const host=mount(w,d);
+  const routed=[];
+  w.blacksmithRouter={navigate:(route)=>{routed.push(route);return Promise.resolve(true);}};
+  const rows=[...host.querySelectorAll('.instances-overview-table tbody tr')];
+  expect(rows.every(r=>r.tabIndex===0)).toBe(true);
+  rows[1].querySelector('td').dispatchEvent(new w.MouseEvent('click',{bubbles:true}));
+  rows[2].dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+  rows[0].dispatchEvent(new w.KeyboardEvent('keydown',{key:'x',bubbles:true}));
+  expect(routed).toEqual([{screen:'services',instance:'b2',section:'details'},{screen:'services',instance:'c3',section:'details'}]);
+ }finally{w.close();}
+});
+
+test('the Certificates column counts attention certificates from one request',async()=>{
+ const {w,d,calls}=boot({routes:[inventory([
+  {id:'x1',...owned('a1')},{id:'x2',...owned('a1','c3')},{id:'x3',...owned('a1')},{id:'x4',owners:[{kind:'broker'}]}])]});
+ try{
+  const host=mount(w,d);
+  const column=()=>[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
+  expect(column()).toEqual(['—','—','—']);
+  await w.__T.fillInstanceCertificates();
+  expect(column()).toEqual(['3','0','1']);
+  expect(calls.filter(c=>c==='GET /b/certificates/inventory?attention=true').length).toBe(1);
+  const sorts=[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.dataset.sortValue);
+  expect(sorts).toEqual(['3','0','1']);
+ }finally{w.close();}
+});
+
+test('a failed certificates request says Unknown and never zero',async()=>{
+ const {w,d}=boot({routes:[inventory([],403)]});
+ try{
+  const host=mount(w,d);
+  await w.__T.fillInstanceCertificates();
+  const column=[...host.querySelectorAll('.instances-overview-table tbody tr')].map(r=>r.lastElementChild.textContent.trim());
+  expect(column).toEqual(['Unknown','Unknown','Unknown']);
+ }finally{w.close();}
+});
+
+test('instance names and services are escaped in the table',()=>{
+ const {w,d}=boot();try{
+  const evil='"><img src=x onerror=alert(1)>';
+  w.plansData=null;
+  const host=d.createElement('div'); d.body.appendChild(host);
+  host.innerHTML=w.__T.renderServicesTemplate({e1:{service_id:evil,plan:{name:evil},instance_name:evil,vm_status:evil}});
+  expect(host.querySelector('.instances-overview-table img')).toBeNull();
+  expect(host.querySelector('.instances-overview-table tbody td').textContent).toBe(evil);
+ }finally{w.close();}
+});
