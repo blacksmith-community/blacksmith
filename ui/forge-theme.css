@@ -115,10 +115,10 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .entity-facts .entity-copy { margin-left: 8px; }
 /* One icon button for every copy control, drawn in currentColor. The id in
    the list lifts the whole selector above the older per-view rules. */
-button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-width: 28px; height: 28px; min-height: 28px; padding: 0 6px; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; vertical-align: middle; }
-button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
-button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content).copied { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
-button:is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) svg { width: 14px; height: 14px; }
+button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-width: 28px; height: 28px; min-height: 28px; padding: 0 6px; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; vertical-align: middle; }
+button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
+button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content).copied { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
+button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) svg { width: 14px; height: 14px; }
 .entity-technical { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; }
 .entity-technical > summary { padding: 14px 16px; cursor: pointer; font-weight: 600; }
 .entity-technical .service-info-table { margin: 0; table-layout: fixed; min-width: 0 !important; }
@@ -937,3 +937,11 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 @media (max-width: 600px) {
   .cert-expansion .cert-credhub-table tbody { grid-template-columns: minmax(0,1fr); }
 }
+
+/* Masked secrets, collapsed certificates, and array values in Credentials. */
+.credentials-table .secret-value { display: flex; align-items: flex-start; gap: .5rem; min-width: 0; flex: 1; }
+.credentials-table .secret-value > button { flex: 0 0 auto; }
+.credentials-table .secret-text { letter-spacing: .1em; }
+.credentials-table .credential-pem, .credentials-table .credential-array { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.credentials-table .credential-pem summary { cursor: pointer; }
+.credentials-table .credential-array-item { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }

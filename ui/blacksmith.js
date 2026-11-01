@@ -9343,22 +9343,88 @@
     return renderEntityShell('instance',name,`${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'}`);
   };
 
-  // Format credentials as table from JSON
+  // Secrets stay out of the markup. The rendered cell carries an id, and the
+  // real value waits here until the person reveals or copies it.
+  const SECRET_MASK = '••••••••';
+  const SECRET_KEY = /password|secret|token|private_key|_key$/i;
+  const secretValues = new Map();
+  let secretCounter = 0;
+
+  const isSecretEntry = (key, text) => SECRET_KEY.test(String(key)) || text.includes('PRIVATE KEY-----');
+
+  // A secret value as a masked cell with a reveal button and a copy button.
+  // The copy button always copies the real value.
+  const secretValue = (value, label) => {
+    const text = String(value);
+    if (secretValues.size > 200) {
+      for (const id of [...secretValues.keys()]) if (!document.querySelector(`[data-secret-id="${id}"]`)) secretValues.delete(id);
+    }
+    const id = `secret-${++secretCounter}`;
+    secretValues.set(id, text);
+    const name = escapeAttribute(label);
+    return `<span class="secret-value" data-secret-id="${id}"><span class="secret-text credential-value-text">${SECRET_MASK}</span>`
+      + `<button type="button" class="secret-toggle" data-secret-toggle aria-pressed="false" aria-label="Show ${name}" title="Show ${name}">${blacksmithIcon('eye', { size: 14 })}</button>`
+      + `<button type="button" class="copy-btn-inline secret-copy" data-secret-copy aria-label="Copy ${name}" title="Copy ${name}">${COPY_ICON_SVG}</button></span>`;
+  };
+
+  document.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-secret-toggle], [data-secret-copy]');
+    const cell = button && button.closest('[data-secret-id]');
+    const text = cell ? secretValues.get(cell.dataset.secretId) : undefined;
+    if (text === undefined) return;
+    if (button.hasAttribute('data-secret-copy')) {
+      try { await navigator.clipboard.writeText(text); announce('Copied to clipboard'); flashCopyIcon(button); }
+      catch (_) { announce('Clipboard unavailable. Reveal the value to copy it.'); }
+      return;
+    }
+    const label = button.getAttribute('aria-label').replace(/^(Show|Hide) /, '');
+    const show = button.getAttribute('aria-pressed') !== 'true';
+    const shown = cell.querySelector('.secret-text');
+    if (show && text.includes('\n')) shown.innerHTML = `<pre class="credential-multiline">${escapeHtml(text)}</pre>`;
+    else if (show) shown.innerHTML = `<code>${escapeHtml(text)}</code>`;
+    else shown.textContent = SECRET_MASK;
+    button.setAttribute('aria-pressed', String(show));
+    button.setAttribute('aria-label', `${show ? 'Hide' : 'Show'} ${label}`);
+    button.title = `${show ? 'Hide' : 'Show'} ${label}`;
+    button.innerHTML = show ? blacksmithIcon('eye-off', { size: 14 }) : blacksmithIcon('eye', { size: 14 });
+  });
+
+  // A PEM certificate or chain as a one-line summary with the full text behind
+  // a disclosure. The copy button copies the whole PEM.
+  const pemCertificate = (text, label) => {
+    const count = (text.match(/-----BEGIN CERTIFICATE-----/g) || []).length;
+    return `<span class="credential-pem"><span class="credential-pem-summary">PEM certificate · ${count} ${count === 1 ? 'certificate' : 'certificates'}</span>`
+      + `<details><summary>Show PEM</summary><pre class="credential-multiline">${escapeHtml(text)}</pre></details></span>`;
+  };
+
+  // An array as one item per line in the monospace face.
+  const arrayLines = (items) => `<span class="credential-array">${items.map((item) => `<code class="credential-array-item">${escapeHtml(item)}</code>`).join('')}</span>`;
+
+  // One credentials table cell. Secrets are masked, certificates collapse, and
+  // a missing value is the shared empty value with no copy button.
+  const credentialCell = (key, value) => {
+    const isArray = Array.isArray(value);
+    const text = value == null ? '' : isArray
+      ? value.map((item) => (item !== null && typeof item === 'object' ? JSON.stringify(item) : String(item ?? ''))).join('\n')
+      : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+    if (text === '') return EMPTY_HTML;
+    if (isSecretEntry(key, text)) return `<div class="credential-value-layout">${secretValue(text, key)}</div>`;
+    let display;
+    if (isArray) display = arrayLines(text.split('\n'));
+    else if (text.includes('-----BEGIN CERTIFICATE-----')) display = pemCertificate(text, key);
+    else if (text.includes('\n')) display = `<pre class="credential-multiline">${escapeHtml(text)}</pre>`;
+    else display = `<code>${escapeHtml(text)}</code>`;
+    return `<div class="credential-value-layout">${entityCopy(text, key)}<div class="credential-value-text">${display}</div></div>`;
+  };
+
+  // Format credentials as table from JSON. Plain objects flatten one level.
   const formatCredentials = (creds) => {
     if (!creds || Object.keys(creds).length === 0) return '<div class="no-data">No credentials available</div>';
-    const rows = Object.entries(creds).flatMap(([section, values]) =>
-      typeof values === 'object' && values !== null && Object.keys(values).length > 0
-        ? Object.entries(values) : [[section, values]]);
-    return `<div class="credentials-container"><table class="credentials-table">
+    const isPlain = (v) => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length > 0;
+    const rows = Object.entries(creds).flatMap(([section, values]) => isPlain(values) ? Object.entries(values) : [[section, values]]);
+    return `<div class="credentials-container"><table class="credentials-table" data-sortable="false">
       <thead><tr><th>Property</th><th>Value</th></tr></thead><tbody>
-      ${rows.map(([key, value]) => {
-        const text = value == null ? '' : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
-        const display = text === '' ? '<em>empty</em>' : text.includes('\n')
-          ? `<pre class="credential-multiline">${escapeHtml(text)}</pre>` : `<code>${escapeHtml(text)}</code>`;
-        return `<tr><td class="cred-key">${escapeHtml(key)}</td><td class="cred-value">
-          <div class="credential-value-layout">${entityCopy(text, key)}<div class="credential-value-text">${display}</div></div>
-        </td></tr>`;
-      }).join('')}</tbody></table></div>`;
+      ${rows.map(([key, value]) => `<tr><td class="cred-key">${escapeHtml(key)}</td><td class="cred-value">${credentialCell(key, value)}</td></tr>`).join('')}</tbody></table></div>`;
   };
 
   // Format config as a hierarchical table similar to credentials
