@@ -1000,6 +1000,7 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .config-table .config-group th { text-align: left; font-size: .875rem; font-weight: 600; padding-top: 4px; padding-bottom: 4px; background: transparent; color: var(--foreground); }
 .config-table .config-group-toggle { display: flex; align-items: center; gap: .5rem; width: 100%; min-height: 24px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .config-table .config-group-toggle:is(:hover, :focus-visible) { color: var(--primary); }
+.config-table .config-group-toggle:focus-visible { outline-offset: -2px; }
 .config-table .config-group-chevron { width: 6px; height: 6px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; flex-shrink: 0; }
 .config-table .config-group-toggle[aria-expanded="true"] .config-group-chevron { transform: rotate(45deg); }
 .config-table .config-group-count { margin-left: .25rem; font-size: .75rem; font-weight: 400; color: var(--muted-foreground); }
@@ -1017,7 +1018,11 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .blacksmith-settings .settings-input-group { max-width: none; }
 .blacksmith-settings .settings-hint { margin: 0; color: var(--muted-foreground); }
 .blacksmith-settings .settings-feedback { grid-column: 2 / -1; margin: 0; min-height: 0; }
-.blacksmith-settings .settings-feedback:empty { display: none; }
+.blacksmith-settings .settings-feedback:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); margin: 0; padding: 0; }
+.blacksmith-settings .settings-apply-btn { min-height: 28px; padding: 2px 14px; }
+.blacksmith-settings .settings-input { padding-block: 3px; }
+.blacksmith-settings .settings-row:last-of-type { margin-bottom: 0; }
+#blacksmith .blacksmith-settings .settings-row { align-items: center; }
 .blacksmith-settings .settings-divider { margin: 0 16px; }
 @media (max-width: 900px) {
   .blacksmith-settings .settings-row { grid-template-columns: minmax(0, 1fr); }

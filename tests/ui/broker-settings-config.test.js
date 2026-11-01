@@ -177,7 +177,13 @@ test('an empty feedback span stays in the DOM and takes no space',async()=>{
  expect(fb.getAttribute('role')).toBe('status');
  expect(fb.textContent).toBe('');
  const css=fs.readFileSync(path.join(__dirname,'../../ui/forge-theme.css'),'utf8');
- expect(css).toMatch(/\.settings-feedback:empty\s*\{\s*display:\s*none/);
+ expect(css).toMatch(/\.settings-feedback:empty\s*\{[^}]*position:\s*absolute[^}]*clip-path:\s*inset\(50%\)/);
+ expect(css).not.toMatch(/\.settings-feedback:empty\s*\{[^}]*display:\s*none/);
+ expect(css).toMatch(/\.blacksmith-settings \.settings-apply-btn\s*\{[^}]*min-height:\s*28px/);
+ expect(css).toMatch(/\.blacksmith-settings \.settings-input\s*\{[^}]*padding-block:\s*3px/);
+ expect(css).toMatch(/\.settings-row:last-of-type\s*\{[^}]*margin-bottom:\s*0/);
+ expect(css).toMatch(/#blacksmith \.blacksmith-settings \.settings-row\s*\{\s*align-items:\s*center/);
+ expect(css).toMatch(/\.config-group-toggle:focus-visible\s*\{\s*outline-offset:\s*-2px/);
  expect(css.match(/\.blacksmith-settings \.settings-feedback\s*\{([^}]*)\}/)[1]).toMatch(/min-height:\s*0/);
  s.w.close();
 });
@@ -188,4 +194,32 @@ test('the settings table is dense and its copy target is 24 pixels, scoped to th
  expect(css).toMatch(/\.config-container \.config-table \.copy-btn-inline\s*\{[^}]*width:\s*24px;\s*height:\s*24px/);
  expect(css).not.toMatch(/^\.copy-btn-inline\s*\{[^}]*height:\s*2[0-3]px/m);
  expect(css).not.toMatch(/\.manifest[^{]*\{[^}]*padding-top:\s*4px/);
+});
+
+test('a group toggle works while filtering and clearing restores the saved state',async()=>{
+ const s=await screen();
+ s.host.querySelector('tr[data-group="broker"] .config-group-toggle').click();
+ s.type('ca');
+ s.host.querySelector('tr[data-group="bosh"] .config-group-toggle').click();
+ expect(s.visible()).toEqual(['# bosh','# credhub','ca_cert']);
+ s.host.querySelector('tr[data-group="bosh"] .config-group-toggle').click();
+ expect(s.visible()).toEqual(['# bosh','cacert','# credhub','ca_cert']);
+ s.host.querySelector('tr[data-group="bosh"] .config-group-toggle').click();
+ s.type('');
+ expect(s.visible()).toEqual(['# bosh','# broker','port','debug','note','# credhub','# general']);
+ s.w.close();
+});
+
+test('Collapse all while filtering leaves the saved choices intact',async()=>{
+ const s=await screen();
+ s.host.querySelector('tr[data-group="broker"] .config-group-toggle').click();
+ s.type('ca');
+ s.host.querySelector('.config-collapse-all').click();
+ expect(s.visible()).toEqual(['# bosh','# credhub']);
+ s.host.querySelector('.config-expand-all').click();
+ expect(s.visible()).toEqual(['# bosh','cacert','# credhub','ca_cert']);
+ s.host.querySelector('.config-collapse-all').click();
+ s.type('');
+ expect(s.visible()).toEqual(['# bosh','# broker','port','debug','note','# credhub','# general']);
+ s.w.close();
 });

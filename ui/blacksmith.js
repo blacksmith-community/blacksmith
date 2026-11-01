@@ -9617,19 +9617,23 @@
     const input = container.querySelector('input.config-filter');
     const needle = input.value.trim().toLowerCase();
     const chosen = container.__configOpen || (container.__configOpen = new Set());
-    let shown = 0;
+    if (needle === '') container.__configFilterOpen = null;
+    const filterOpen = container.__configFilterOpen || (container.__configFilterOpen = needle === '' ? null : new Map());
     const live = new Set();
     container.querySelectorAll('tbody tr:not(.config-group)').forEach((row) => {
+      if (needle === '' || row.dataset.filter.includes(needle)) live.add(row.dataset.group);
+    });
+    const isOpen = (group) => needle === '' ? chosen.has(group) : (filterOpen.has(group) ? filterOpen.get(group) : live.has(group));
+    let shown = 0;
+    container.querySelectorAll('tbody tr:not(.config-group)').forEach((row) => {
       const match = needle === '' || row.dataset.filter.includes(needle);
-      if (match) live.add(row.dataset.group);
-      const visible = match && (needle !== '' || chosen.has(row.dataset.group));
-      row.hidden = !visible;
+      row.hidden = !(match && isOpen(row.dataset.group));
       if (match) shown++;
     });
     container.querySelectorAll('tr.config-group').forEach((row) => {
       const group = row.dataset.group;
       row.hidden = !live.has(group);
-      row.querySelector('.config-group-toggle').setAttribute('aria-expanded', String(needle !== '' ? live.has(group) : chosen.has(group)));
+      row.querySelector('.config-group-toggle').setAttribute('aria-expanded', String(isOpen(group)));
     });
     container.querySelector('.config-no-match').hidden = shown > 0;
   };
@@ -9640,18 +9644,25 @@
     if (container) applyConfigView(container);
   });
 
+  // While the filter has text the toggles write to a filter-time map, so the
+  // operator's saved choices come back untouched when the filter is cleared.
   document.addEventListener('click', (event) => {
     const button = event.target.closest && event.target.closest('.config-group-toggle, .config-expand-all, .config-collapse-all');
     const container = button && button.closest('.config-container');
     if (!container) return;
+    const filtering = container.querySelector('input.config-filter').value.trim() !== '';
     const chosen = container.__configOpen || (container.__configOpen = new Set());
+    const filterOpen = filtering ? (container.__configFilterOpen || (container.__configFilterOpen = new Map())) : null;
     const groups = [...container.querySelectorAll('tr.config-group')].map((row) => row.dataset.group);
-    if (button.classList.contains('config-expand-all')) groups.forEach((g) => chosen.add(g));
-    else if (button.classList.contains('config-collapse-all')) chosen.clear();
+    const set = (group, open) => {
+      if (filtering) filterOpen.set(group, open);
+      else if (open) chosen.add(group); else chosen.delete(group);
+    };
+    if (button.classList.contains('config-expand-all')) groups.forEach((g) => set(g, true));
+    else if (button.classList.contains('config-collapse-all')) groups.forEach((g) => set(g, false));
     else {
-      const group = button.closest('tr.config-group').dataset.group;
-      if (container.querySelector('input.config-filter').value.trim() !== '') return;
-      if (chosen.has(group)) chosen.delete(group); else chosen.add(group);
+      const toggle = button.closest('tr.config-group');
+      set(toggle.dataset.group, button.getAttribute('aria-expanded') !== 'true');
     }
     applyConfigView(container);
   });
