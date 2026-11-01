@@ -64,7 +64,7 @@ t('decision panels', async () => {
   ok(!!panel().querySelector('.upgrade-task-instance.instance-awaiting-decision .status-icon.awaiting-decision'),'detail: awaiting instance shows the awaiting-decision icon and class');
   ok(panel().querySelectorAll('img,script,iframe').length===0&&panel().textContent.includes(EVIL),'detail: hostile strings are inert text');
   const txt=panel().textContent;
-  ok(txt.includes('Phase: regenerate')&&txt.includes('AA11')&&txt.includes('2026-10-27')&&txt.includes('Failed: chain')&&txt.includes('Version v-good-1'),'detail: phase, old serial and expiry, validation check, candidate');
+  ok((panel().querySelector('.instance-heading .cert-task-phase')||{}).textContent==='Regenerate'&&txt.includes('AA11')&&txt.includes('2026-10-27')&&txt.includes('Failed: chain')&&txt.includes('Version v-good-1'),'detail: phase, old serial and expiry, validation check, candidate');
   ok(!!btn('task-1|i-rec','adopt:v-good-1234567890')&&btn('task-1|i-rec','adopt:v-good-1234567890').textContent==='Adopt version v-good-1'&&![...panel().querySelectorAll('[data-decision-action]')].some(b=>b.dataset.decisionAction==='adopt:v-bad-0987654321'),'reconcile: Adopt offered only for the valid candidate');
 
   // ---- request bodies

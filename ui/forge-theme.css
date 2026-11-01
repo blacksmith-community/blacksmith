@@ -509,13 +509,20 @@ body > footer p { margin: 0; }
   white-space: nowrap;
 }
 #upgrade .upgrade-task-stats { flex-wrap: wrap; gap: .5rem 1rem; }
+/* A job's own page uses the job title as its heading and drops the list controls. */
+#upgrade .upgrade-right-panel.job-detail > h2 { display: none; }
+#upgrade .upgrade-right-panel.job-detail .batch-execution-settings { display: none; }
+#upgrade .upgrade-right-panel.job-detail .back-to-list { display: none; }
+#upgrade .task-detail-summary .value[class*="status-"] { color: var(--text-primary); }
+#upgrade .upgrade-task-instance .instance-heading { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
 #upgrade .upgrade-task-item:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 
 /* Operational evidence reads top to bottom, with comparable values in columns. */
 #upgrade .cert-task-vm-body { display: block; }
 #upgrade .cert-task-variables { padding: 0; }
 #upgrade .cert-task-variable { margin-block: 1rem; }
-#upgrade .cert-task-variable-name { display: block; overflow-wrap: anywhere; margin-bottom: .75rem; }
+#upgrade .cert-task-variable-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+#upgrade .cert-task-variable-name { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace; font-weight: 400; font-size: .8125rem; overflow-wrap: anywhere; }
 #upgrade .cert-evidence-table { width: 100%; table-layout: fixed; margin: 0 0 1rem; }
 #upgrade .cert-evidence-table caption { text-align: left; font-weight: 600; padding: .5rem 0; }
 #upgrade .cert-evidence-table th, #upgrade .cert-evidence-table td {
@@ -523,6 +530,13 @@ body > footer p { margin: 0; }
 }
 #upgrade .cert-evidence-table th { color: var(--text-secondary); }
 #upgrade .cert-validation-details { margin-block: .5rem 1rem; }
+#upgrade .cert-validation-table { table-layout: auto; }
+#upgrade .cert-validation-table th:nth-child(-n+2), #upgrade .cert-validation-table td:nth-child(-n+2) { width: 1%; white-space: nowrap; }
+#upgrade .cert-check-result.passed { color: var(--cert-ok-fg); }
+#upgrade .cert-check-result.failed { color: var(--cert-critical-fg); }
+#upgrade .cert-check-result.skipped { color: var(--text-secondary); }
+/* The header of the certificate tables stays in the flow, so it never slides over the page toolbar. */
+#upgrade .cert-evidence-table thead, #upgrade .cert-evidence-table thead th { position: static; }
 #upgrade .cert-validation-details summary { padding: .65rem .75rem; }
 #upgrade .cert-task-vm-body > :last-child { margin-bottom: 0; }
 

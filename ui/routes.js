@@ -170,7 +170,7 @@
   if(route.instance)push(root.serviceInstances?.[route.instance]?.instance_name||route.instance,{screen:'services',instance:route.instance,section:'details'});
   if(route.section)push(labels[route.section]||route.section,{screen:route.screen,section:route.section,...(route.instance?{instance:route.instance}:{})});
   if(route.plan){const s=root.plansData?.services?.find(s=>s.id===route.service);push(s?.name||route.service,{screen:'blacksmith',section:'plans'});push(s?.plans?.find(p=>p.id===route.plan)?.name||route.plan,route);}
-  if(route.screen==='upgrade'){if(route.view==='activity'){push('Activity',{screen:'upgrade',view:'activity'});if(route.task)push('Job '+route.task,route);}else{push(({upgrade:'Upgrade',rotate:'Rotate certificates',converge:'Converge',command:'Run command'})[route.operation]||'New Operation',route);push(steps[route.step||0].replace(/^./,c=>c.toUpperCase()),route);}}
+  if(route.screen==='upgrade'){if(route.view==='activity'){push('Activity',{screen:'upgrade',view:'activity'});if(route.task)push(root.blacksmithJobTitle?.(route.task)||'Job '+route.task,route);}else{push(({upgrade:'Upgrade',rotate:'Rotate certificates',converge:'Converge',command:'Run command'})[route.operation]||'New Operation',route);push(steps[route.step||0].replace(/^./,c=>c.toUpperCase()),route);}}
   if(route.inspection)push(({task:'BOSH task ',config:'Config version ',certificate:'Certificate '})[route.inspection.kind]+route.inspection.id,route);
   if(route.subview)push(route.subview.replaceAll('-',' ').replace(/^./,c=>c.toUpperCase()),route);
   crumbs.forEach((c,i)=>{const li=doc.createElement('li');if(i===crumbs.length-1){const span=doc.createElement('span');span.textContent=c.label;span.setAttribute('aria-current','page');li.append(span);}else{const a=doc.createElement('a');a.textContent=c.label;a.href=format(c.r);a.addEventListener('click',e=>{if(e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;e.preventDefault();root.blacksmithRouter.navigate(c.r);});li.append(a);}list.append(li);});
@@ -178,6 +178,7 @@
   const heading=doc.getElementById('console-title');if(heading)heading.textContent=crumbs.map(c=>c.label).join(' / ');
   root.BlacksmithViewGuidance?.mount(bar,route);
  }
+ root.blacksmithRefreshContext=()=>{const current=root.blacksmithRouter?.current;if(current&&current.view==='activity'&&current.task)render(current);};
  function error(error){let node=doc.getElementById('route-error');if(!node){node=doc.createElement('div');node.id='route-error';node.setAttribute('data-variant','danger');node.setAttribute('role','alert');doc.querySelector('.tab-content')?.before(node);}node.textContent=error.message+' Use Back or select a destination from the navigation.';}
  function start(){if(root.blacksmithRouter||!root.blacksmithViews)return;const router=create(root,{activate:(r,o)=>root.blacksmithViews.activate(r,o),pending:r=>render(r),changed:(r,o)=>{doc.getElementById('route-error')?.remove();render(r);root.blacksmithNav?.announce(doc.title.replace(' — Blacksmith',''));if(!r.inspection&&!o.history&&!o.record){const h=doc.querySelector('.tab-panel.active .detail-content')||doc.querySelector('.tab-panel.active');h?.setAttribute('tabindex','-1');h?.focus({preventScroll:true});}},error});root.blacksmithRouter=router;router.start();}
  doc.addEventListener('blacksmith:ready',start);if(root.blacksmithViews)start();

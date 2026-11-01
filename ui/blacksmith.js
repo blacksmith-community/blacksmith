@@ -7196,6 +7196,14 @@
   };
   const activityStatus = status => String(status || 'unknown').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
+  // The title a job carries on its Activity card, on its own page, and in
+  // the breadcrumb, so the three always agree.
+  const jobTitle = (task) => task.name || task.target || (task.kind === 'certificates' ? 'Certificate operation' : task.kind === 'command' ? 'Run command' : `Upgrade to ${describeUpgradeTargets(task).label}`);
+  window.blacksmithJobTitle = (id) => {
+    const known = taskDetailCache.get(id) || upgradeTasks.find((task) => task && task.id === id);
+    return known ? jobTitle(known) : '';
+  };
+
   // ---- Errors, poll status, and re-render helpers for the task panel ----
 
   // Reads a failed response into an Error that carries the HTTP status and the
@@ -7383,6 +7391,7 @@
   const renderUpgradeTaskList = () => {
     const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
     if (!tasksContainer) return;
+    document.querySelector('#upgrade .upgrade-right-panel')?.classList.remove('job-detail');
 
     if (upgradeTasks.length === 0) {
       rerenderTaskPanel(tasksContainer, 'list', () => {
@@ -7396,7 +7405,7 @@
       const statusClass = getTaskStatusClass(task.status);
       const statusIcon = getTaskStatusIcon(task.status);
       const progress = upgradeTaskProgress(task);
-      const taskName = task.name || task.target || (task.kind === 'certificates' ? 'Certificate operation' : task.kind === 'command' ? 'Run command' : `Upgrade to ${describeUpgradeTargets(task).label}`);
+      const taskName = jobTitle(task);
       const isCertificates = task.kind === 'certificates';
       const commandDigest = task.kind === 'command' && task.command ? String(task.command.command_digest || '').slice(0, 12) : '';
       const kindBadge = isCertificates
@@ -8030,6 +8039,19 @@
   // The expandable list of VMs under a certificate instance. Each VM is a
   // details element with a stable keep key, so the open ones stay open
   // when the panel redraws on a poll.
+  // The readable names of the checks the broker runs on a certificate. A
+  // name this table does not know shows as its identifier, capitalized.
+  const CERT_CHECK_NAMES = {
+    key_match: 'Key matches', ca_verify: 'CA verifies', common_name: 'Common name', sans: 'SANs',
+    ext_key_usage: 'Extended key usage', not_ca: 'Not a CA', not_before: 'Not before', not_after: 'Not after'
+  };
+  const certCheckName = (name) => CERT_CHECK_NAMES[name] || String(name || 'unknown').replace(/^./, (c) => c.toUpperCase());
+  const certCheckResult = (check) => {
+    const skipped = check.skipped === true || check.status === 'skipped';
+    const state = skipped ? 'skipped' : check.passed ? 'passed' : 'failed';
+    return rotateEl('span', `activity-status-label cert-check-result ${state}`, state.replace(/^./, (c) => c.toUpperCase()));
+  };
+
   const evidenceTable = (caption, headers, rows, className = '') => {
     const table = rotateEl('table', `cert-evidence-table ${className}`);
     table.dataset.sortable = 'false';
@@ -8043,7 +8065,8 @@
     rows.forEach(values => {
       const row = document.createElement('tr');
       values.forEach((value, index) => {
-        const cell = rotateEl('td', null, String(value ?? '—'));
+        const cell = rotateEl('td', null, value instanceof Node ? undefined : String(value ?? '—'));
+        if (value instanceof Node) cell.appendChild(value);
         cell.dataset.label = headers[index]; cell.setAttribute('role', 'cell');
         row.appendChild(cell);
       });
@@ -8093,14 +8116,16 @@
     const wrap = rotateEl('div', 'cert-task-instance');
     const rotation = instance.certificates;
     if (rotation) {
-      wrap.appendChild(rotateEl('div', 'cert-task-phase', `Phase: ${rotation.phase || 'unknown'}`));
       const variables = Array.isArray(rotation.variables) ? rotation.variables : [];
       if (variables.length > 0) {
         const list = rotateEl('div', 'cert-task-variables');
         variables.forEach((variable) => {
           if (!variable) return;
           const item = rotateEl('div', 'cert-task-variable');
-          item.appendChild(rotateEl('strong', 'cert-task-variable-name', String(variable.name || '')));
+          const head = rotateEl('div', 'cert-task-variable-head');
+          head.appendChild(rotateEl('code', 'cert-task-variable-name', String(variable.name || '')));
+          if (variable.name) head.appendChild(createCopyButton(String(variable.name), 'copy-btn'));
+          item.appendChild(head);
           const [expiryWas, expiryNow] = certExpiryPair(variable.old_not_after, variable.new_not_after);
           item.appendChild(evidenceTable('Certificate changes', ['Property', 'Previous', 'New certificate'], [
             ['Serial', displaySerial(variable.old_serial) || 'Not recorded', displaySerial(variable.new_serial) || 'Pending'],
@@ -8114,7 +8139,7 @@
             validation.dataset.keepKey = `validation:${task.id}:${instance.instance_id}:${variable.name}`;
             validation.open = failed > 0;
             validation.appendChild(rotateEl('summary', null, `Validation: ${checks.length - failed} passed${failed ? `, ${failed} failed` : ''}`));
-            validation.appendChild(evidenceTable('Validation checks', ['Check', 'Result', 'Details'], checks.map(check => [humanize(check.name), check.passed ? 'Passed' : 'Failed', check.detail || '—'])));
+            validation.appendChild(evidenceTable('Validation checks', ['Check', 'Result', 'Details'], checks.map(check => [certCheckName(check.name), certCheckResult(check), check.detail || '—']), 'cert-validation-table'));
             item.appendChild(validation);
           }
           list.appendChild(item);
@@ -8497,6 +8522,7 @@
     const isCertificates = task.kind === 'certificates';
     const isCommand = task.kind === 'command';
     taskDetailCache.set(task.id, task);
+    document.querySelector('#upgrade .upgrade-right-panel')?.classList.add('job-detail');
     const instancesHtml = instances.map((instance, index) => {
       const statusIcon = getInstanceStatusIcon(instance.status);
       const statusClass = getInstanceStatusClass(instance.status);
@@ -8512,7 +8538,7 @@
         <div class="upgrade-task-instance ${statusClass}"${rowAttrs}>
           <span class="instance-status">${statusIcon}</span>
           <div class="instance-info">
-            <div class="instance-id">${escapeHtml(instance.instance_name || instance.instance_id)}</div>
+            <div class="instance-heading"><span class="instance-id">${escapeHtml(instance.instance_name || instance.instance_id)}</span>${isCertificates && instance.certificates ? `<span class="activity-status-label cert-task-phase" title="Phase">${escapeHtml(activityStatus(instance.certificates.phase))}</span>` : ''}</div>
             <div class="instance-deployment">${escapeHtml(instance.deployment_name || '')}</div>
             ${(instance.applied_releases || []).length ? `<div class="instance-releases">Applied: ${escapeHtml(instance.applied_releases.map(r => `${r.name}/${r.version}`).join(', '))}</div>` : ''}
             <div class="instance-actions">
@@ -8564,33 +8590,33 @@
 
     const targets = describeUpgradeTargets(task);
     const spec = task.certificates || {};
-    const jobName = task.name || (isCertificates ? 'Certificate rotation' : isCommand ? 'Run command' : `Upgrade to ${targets.label}`);
+    const jobName = jobTitle(task);
     const targetRows = isCommand
       ? '<div class="command-summary-host"></div>'
       : isCertificates
       ? `
           <div class="summary-row">
-            <span class="label">Mode:</span>
+            <span class="label">Mode</span>
             <span class="value">${escapeHtml(({patch: 'Patch in place', redeploy: 'Redeploy', converge: 'Converge'})[spec.mode] || spec.mode || '')}</span>
           </div>
           ${spec.reason ? `
           <div class="summary-row">
-            <span class="label">Reason:</span>
+            <span class="label">Reason</span>
             <span class="value">${escapeHtml(spec.reason)}</span>
           </div>` : ''}`
       : `
           <div class="summary-row">
-            <span class="label">System:</span>
+            <span class="label">System</span>
             <span class="value">${escapeHtml(targets.stemcell) || 'keep current'}</span>
           </div>
           ${targets.releases.length ? `
           <div class="summary-row">
-            <span class="label">Releases:</span>
+            <span class="label">Releases</span>
             <span class="value">${escapeHtml(targets.releases.join(', '))}</span>
           </div>` : ''}`;
     const failureRow = isCommand ? '' : `
           <div class="summary-row">
-            <span class="label">After a failure:</span>
+            <span class="label">After a failure</span>
             <span class="value task-pause-on-failure">${escapeHtml(taskFailureText(task))}</span>
           </div>`;
 
@@ -8605,23 +8631,23 @@
         <div class="task-detail-summary">
           ${targetRows}${failureRow}
           <div class="summary-row">
-            <span class="label">Status:</span>
-            <span class="value status-${escapeAttribute(task.status)}">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : `${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : awaitsCleanup ? ' (cleanup waits for a resume)' : ''}`}</span>
+            <span class="label">Status</span>
+            <span class="value status-${escapeAttribute(task.status)}"><span class="activity-status-label">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : escapeHtml(activityStatus(task.status))}</span>${(isCertificates || isCommand) && isPaused ? '' : isPaused ? ' (waiting to resume)' : awaitsCleanup ? ' (cleanup waits for a resume)' : ''}</span>
           </div>${pausedOnFailure ? `
           <div class="summary-row">
-            <span class="label">Paused because:</span>
+            <span class="label">Paused because</span>
             <span class="value task-pause-reason">${escapeHtml(task.pause_reason)}</span>
           </div>` : ''}${(isCertificates || isCommand || pausedOnFailure) && isPaused && hasFailedInstance ? `
           <div class="summary-row">
-            <span class="label">Resume:</span>
+            <span class="label">Resume</span>
             <span class="value">The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.</span>
           </div>` : ''}
           <div class="summary-row">
-            <span class="label">Progress:</span>
+            <span class="label">Progress</span>
             <span class="value">${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)</span>
           </div>
           <div class="summary-row">
-            <span class="label">Created:</span>
+            <span class="label">Created</span>
             <span class="value">${escapeHtml(formatTaskTime(task.created_at))}</span>
           </div>
         </div>
@@ -8655,6 +8681,8 @@
         });
       }
     });
+
+    if (typeof window.blacksmithRefreshContext === 'function') window.blacksmithRefreshContext();
 
     const actions = {
       back: () => window.backToTaskList(),

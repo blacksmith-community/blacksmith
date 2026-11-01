@@ -10944,9 +10944,8 @@ span.config-type.resurrection {
 }
 
 #upgrade .upgrade-task-instance .instance-id {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-size: 0.9375rem;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
