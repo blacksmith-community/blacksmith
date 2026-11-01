@@ -1030,6 +1030,18 @@
   };
 
   // Sort table by column
+  // What orders a cell. An explicit data-sort-value wins, and a cell that
+  // holds a formatted timestamp sorts by the epoch milliseconds of its ISO
+  // datetime, so the text 2026-10-31 23:06:32 EDT never reaches parseFloat.
+  const cellSortKey = (cell) => {
+    const explicit = cell.getAttribute('data-sort-value');
+    if (explicit !== null) return explicit;
+    const time = cell.querySelector('time[datetime]');
+    if (!time) return null;
+    const ms = Date.parse(time.getAttribute('datetime'));
+    return Number.isNaN(ms) ? null : String(ms);
+  };
+
   const sortTableByColumn = (table, columnIndex, headerElement) => {
     const tbody = table.querySelector('tbody');
     if (!tbody) return;
@@ -1066,8 +1078,8 @@
 
       // A data-sort-value on either cell decides the order. A cell without
       // one, such as an Unknown date, sorts after every cell that has one.
-      const aKey = aCell.getAttribute('data-sort-value');
-      const bKey = bCell.getAttribute('data-sort-value');
+      const aKey = cellSortKey(aCell);
+      const bKey = cellSortKey(bCell);
       if (aKey !== null || bKey !== null) {
         const aVal = aKey === null ? NaN : Number(aKey);
         const bVal = bKey === null ? NaN : Number(bKey);
@@ -7560,10 +7572,16 @@
     return date ? formatStamp(date) : '';
   };
 
-  // A day such as 2026-10-21.
+  // The full ISO value that goes in a title, or an empty string when there is no date.
+  const certIso = (value) => {
+    const date = certDate(value);
+    return date ? date.toISOString() : '';
+  };
+
+  // A day such as 2026-10-21, in the same local zone as every stamp beside it.
   const certDay = (value) => {
     const date = certDate(value);
-    return date ? date.toISOString().slice(0, 10) : '';
+    return date ? formatDay(date) : '';
   };
 
   // The same timestamp format, kept as its own name where a same-day pair needs it.
@@ -12837,7 +12855,7 @@
     }
 
     const historyHtml = history.map(entry => {
-      const timestamp = formatStamp(entry.timestamp) || EMPTY;
+      const timestamp = stampHtml(entry.timestamp);
       const statusClass = entry.success ? 'success' : 'error';
       const statusIcon = entry.success ? blacksmithIcon('check', { size: 14, label: 'Succeeded' }) : blacksmithIcon('x', { size: 14, label: 'Failed' });
 
@@ -17381,7 +17399,7 @@
       document.getElementById('config-name').textContent = config.name;
       document.getElementById('config-type').textContent = config.type;
       setCellText(document.getElementById('config-team'), config.team);
-      setCellText(document.getElementById('config-created-at'), formatTimestamp(config.created_at));
+      setStamp(document.getElementById('config-created-at'), timestampMoment(config.created_at));
       document.getElementById('config-status').textContent = config.id.endsWith('*') ? 'Active' : 'Inactive';
 
       // Populate content tab
@@ -17494,7 +17512,7 @@
         setElementText('config-name', configName);
         setElementText('config-type', configType);
         setElementText('config-team', latestVersion.team);
-        setElementText('config-created-at', latestVersion.created_at);
+        setStamp(document.getElementById('config-created-at'), timestampMoment(latestVersion.created_at));
 
         // Set status with active indicator
         const statusElem = document.getElementById('config-status');
@@ -17559,7 +17577,7 @@
           if (String(version.id).replace('*', '') === String(retained?.version || currentId).replace('*', '')) selectedVersionItem = versionItem;
           versionItem.innerHTML = `
             <span class="version-id">${version.id}${isActive ? ' *' : ''}</span>
-            <span class="version-date">${showEmpty(formatTimestamp(version.created_at))}</span>
+            <span class="version-date">${timestampHtml(version.created_at)}</span>
             ${version.team ? `<span class="version-team">Team: ${escapeHtml(version.team)}</span>` : ''}
           `;
 
@@ -18202,8 +18220,8 @@
       setCellText(document.getElementById('task-deployment'), task.deployment);
       setCellText(document.getElementById('task-user'), task.user);
       setCellText(document.getElementById('task-context-id'), task.context_id);
-      setCellText(document.getElementById('task-started'), formatTimestamp(task.started_at));
-      setCellText(document.getElementById('task-finished'), task.ended_at ? formatTimestamp(task.ended_at) : EMPTY);
+      setStamp(document.getElementById('task-started'), timestampMoment(task.started_at));
+      setStamp(document.getElementById('task-finished'), task.ended_at ? timestampMoment(task.ended_at) : null);
 
       // Calculate and set duration
       let duration = EMPTY;
@@ -20196,7 +20214,7 @@
     };
 
     const utcString = (value) => {
-      return formatStamp(value);
+      return certIso(value);
     };
 
     const EXPIRY = {
@@ -20751,7 +20769,7 @@
         const day = dayText(cert.effective_not_after);
         expires.textContent = day || cert.expiry_reason || 'Unknown';
         if (day) {
-          expires.setAttribute('title', timeText(cert.effective_not_after));
+          expires.setAttribute('title', certIso(cert.effective_not_after));
           expires.setAttribute('data-sort-value', certSortValue(cert.effective_not_after));
         }
         tr.appendChild(expires);
@@ -21153,7 +21171,11 @@
         const parts = [];
         if (when) parts.push(`Scanned ${when}`);
         if (expected > 0) parts.push(`${observed} of ${expected} listeners observed`);
-        if (parts.length) nodes.push(el('p', 'cert-muted cert-ov-footer', parts.join(', ')));
+        if (parts.length) {
+          const footer = el('p', 'cert-muted cert-ov-footer', parts.join(', '));
+          if (when) footer.setAttribute('title', `Scanned ${certIso(scan.scanned_at)}`);
+          nodes.push(footer);
+        }
       }
 
       container.replaceChildren(...nodes);
@@ -21465,7 +21487,8 @@
     // Render individual registration card
     renderRegistrationCard(registration) {
       const statusClass = (registration.status || 'created').toLowerCase();
-      const createdDate = formatDay(registration.created_at) || 'Unknown';
+      const createdIso = stampIso(registration.created_at);
+      const createdDate = createdIso ? `<time datetime="${createdIso}" title="${createdIso}">${formatDay(registration.created_at)}</time>` : 'Unknown';
 
       return `
         <div class="registration-card" data-registration-id="${registration.id}">
@@ -24634,6 +24657,9 @@
         parts.push(`${line}.`);
       }
       summaryEl.textContent = parts.join(' ');
+      const scanIso = scan.state !== 'running' && scan.completed_at ? certIso(scan.completed_at) : '';
+      if (scanIso) summaryEl.setAttribute('title', scan.next_at ? `Scanned ${scanIso}, next ${certIso(scan.next_at)}` : `Scanned ${scanIso}`);
+      else summaryEl.removeAttribute('title');
     };
 
     const credhubNotice = (resp) => {

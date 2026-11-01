@@ -28,6 +28,7 @@ t('fleet accessibility and announcements', async () => {
   more.click();
   expect(more.getAttribute('aria-expanded')).toBe('false');
   const rows=()=>[...d.querySelectorAll('#cert-tbody tr.cert-row')];
+  ok(/^Scanned \d{4}-\d\d-\d\dT[\d:.]+Z$/.test(d.getElementById('cert-fleet-summary').getAttribute('title')||''),'the Scanned line carries the ISO value in its title: '+d.getElementById('cert-fleet-summary').getAttribute('title'));
   const blockedRow=rows().find(r=>r.dataset.certId==='c2');
   const cb=blockedRow.querySelector('input[type=checkbox]');
   ok(cb.disabled,'blocked row checkbox is disabled');

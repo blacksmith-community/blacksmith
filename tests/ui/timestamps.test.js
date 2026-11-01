@@ -45,6 +45,75 @@ t('a certificate timestamp and a scan line use the same format', () => {
 });
 
 t('no UI code formats a time with the browser locale', () => {
-  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'ui', 'blacksmith.js'), 'utf8');
-  expect(src).not.toMatch(/\.toLocale(Time|Date)String\(\)/);
+  const fs = require('fs');
+  const path = require('path');
+  for (const file of ['blacksmith.js', 'navigation.js', 'action-help.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'ui', file), 'utf8');
+    // Date and time methods are never allowed, with or without arguments.
+    expect(src).not.toMatch(/\.toLocale(Time|Date)String\s*\(/);
+    // toLocaleString is for counts. A date-like receiver is not allowed.
+    const lines = src.split('\n').filter((line) => /(new Date\([^)]*\)|\b\w*([dD]ate|[tT]ime|[sS]tamp|[mM]oment)\w*)\.toLocaleString\s*\(/.test(line));
+    expect(lines).toEqual([]);
+  }
+});
+
+t('formatDay is the local calendar day and stampIso is the full ISO value', () => {
+  const { w } = boot();
+  try {
+    expect(w.__T.formatDay('2026-11-01T03:06:32Z')).toBe('2026-10-31');
+    expect(w.__T.formatDay(new Date('2026-12-01T03:06:32Z'))).toBe('2026-11-30');
+    expect(w.__T.formatDay('')).toBe('');
+    expect(w.__T.formatDay('nope')).toBe('');
+    expect(w.__T.stampIso('2026-11-01T03:06:32Z')).toBe('2026-11-01T03:06:32.000Z');
+    expect(w.__T.stampIso(null)).toBe('');
+    expect(w.__T.stampIso('nope')).toBe('');
+  } finally { w.close(); }
+});
+
+t('a certificate day falls on the local day, the same one the stamp beside it shows', () => {
+  const { w } = boot();
+  try {
+    // 02:00 UTC is still the day before in New York.
+    expect(w.__T.certDay('2029-10-25T02:00:00Z')).toBe('2029-10-24');
+    expect(w.__T.certTimeText('2029-10-25T02:00:00Z')).toBe('2029-10-24 22:00:00 EDT');
+    expect(w.__T.certIso('2029-10-25T02:00:00Z')).toBe('2029-10-25T02:00:00.000Z');
+  } finally { w.close(); }
+});
+
+t('setStamp writes the stamp with its ISO title, and the empty value for none', () => {
+  const { w, d } = boot();
+  try {
+    const el = d.createElement('dd');
+    w.__T.setStamp(el, moment);
+    expect(el.textContent).toBe('2026-10-31 23:06:32 EDT');
+    expect(el.getAttribute('title')).toBe('2026-11-01T03:06:32.000Z');
+    w.__T.setStamp(el, null);
+    expect(el.querySelector('.empty-value')).not.toBeNull();
+    expect(el.hasAttribute('title')).toBe(false);
+  } finally { w.close(); }
+});
+
+t('sorting a timestamp column orders rows by time, in both directions, across months', () => {
+  const { w, d } = boot();
+  try {
+    const rows = [['b', '2026-11-02T10:00:00Z'], ['a', '2026-10-05T10:00:00Z'], ['c', '2026-12-01T10:00:00Z'], ['n', '']];
+    const table = d.createElement('table');
+    table.innerHTML = '<thead><tr><th>Name</th><th>Started</th></tr></thead><tbody>'
+      + rows.map(([n, v]) => `<tr><td>${n}</td><td>${w.__T.timestampHtml(v)}</td></tr>`).join('') + '</tbody>';
+    d.body.appendChild(table);
+    const th = table.querySelectorAll('th')[1];
+    const names = () => [...table.querySelectorAll('tbody tr')].map((r) => r.cells[0].textContent).filter((n) => n !== 'n');
+    w.__T.sortTableByColumn(table, 1, th);
+    expect(names()).toEqual(['a', 'b', 'c']);
+    w.__T.sortTableByColumn(table, 1, th);
+    expect(names()).toEqual(['c', 'b', 'a']);
+  } finally { w.close(); }
+});
+
+t('a registration card dates itself with the ISO value in a title', () => {
+  const { w } = boot();
+  try {
+    const html = w.__T.CFRegistrationManager.renderRegistrationCard({ id: 'r1', name: 'cf', status: 'active', created_at: '2026-11-01T03:06:32Z' });
+    expect(html).toContain('<time datetime="2026-11-01T03:06:32.000Z" title="2026-11-01T03:06:32.000Z">2026-10-31</time>');
+  } finally { w.close(); }
 });

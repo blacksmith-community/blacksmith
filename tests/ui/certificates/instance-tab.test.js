@@ -47,6 +47,7 @@ t('instance certificates tab', async () => {
   ok(lis.length===1 && lis[0].querySelectorAll('li').length===3 && /valkey\/0:6379/.test(lis[0].textContent)&&/6379/.test(lis[0].textContent)&&/Listeners/.test(lis[0].textContent),'Listeners line names 3 VMs on 6379');
   ok(/failed: timed out/.test(lis[0].textContent),'failed listener shows error');
   ok(/Scanned \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC, 2 of 3 listeners observed/.test(ov.querySelector('.cert-ov-footer').textContent),'scan time and coverage: '+ov.querySelector('.cert-ov-footer').textContent);
+  ok(/^Scanned \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(ov.querySelector('.cert-ov-footer').getAttribute('title')||''),'scan footer carries the ISO value in its title');
   const rot=ov.querySelector('.cert-ov-rotate'); ok(rot&&rot.disabled&&rot.textContent==='Rotate...'&&d.getElementById(rot.getAttribute('aria-describedby')).textContent.length>0,'Rotate... disabled with visible reason');
   ok(/Newer version not deployed yet/.test(ov.textContent)&&ov.querySelector('td .empty-value')!==null,'deployed vs latest column');
   ok(bad(d)===0,'no injected elements');
