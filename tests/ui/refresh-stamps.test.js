@@ -45,7 +45,7 @@ test('Refresh on instance logs moves the fetched time', async () => {
     panel.querySelectorAll('.detail-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === 'instance-logs'));
     expect(w.__T.retainView(content, 'instance-logs')).toBe(false);
     content.innerHTML = w.__T.formatInstanceLogs({ 'job/0': { 'job.log': 'one line' } }, false);
-    w.fetch = () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ 'job/0': { files: { 'job.log': 'a refreshed line' } } })) });
+    w.fetch = () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify({ 'job/0': { 'job.log': 'a refreshed line' } })) });
     now = Date.parse('2026-11-01T10:30:00Z');
     // The logs toolbar has no inline handler, so a plain click reaches the document listener.
     const button = content.querySelector('[data-instance-log="refresh"]');

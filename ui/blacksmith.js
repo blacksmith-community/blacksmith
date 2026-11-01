@@ -10409,7 +10409,7 @@
 
   // Refresh instance logs - re-fetches logs from server
   window.refreshInstanceLogs = async (jobKey, event) => {
-    const button = event.currentTarget;
+    let button = event.currentTarget;
 
     // Get the current instance ID from the active service instance
     const activeInstanceItem = document.querySelector('.service-instance-item.active');
@@ -10443,11 +10443,12 @@
       }
 
       const text = await response.text();
-      const logsData = JSON.parse(text);
+      const payload = JSON.parse(text);
       if (!refresh.current()) return;
       refresh.fetched();
 
-      // Update the global logs data
+      // The first load reads the logs the same way, so one shape serves both.
+      const logsData = payload.logs || payload;
       window.instanceLogsData = logsData;
 
       // Check if the current job still exists in the new data
@@ -10456,74 +10457,15 @@
         return;
       }
 
-      // Update the files for this job
-      const jobData = logsData[jobKey];
-      const files = jobData.files || {};
-
-      if (Object.keys(files).length === 0) {
-        // Handle case with no files
-        const logs = jobData.logs || 'No logs available';
-
-        // Store original text
-        if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
-        window.instanceLogOriginalText[jobKey] = typeof logs === 'string' ? logs : JSON.stringify(logs, null, 2);
-
-        // Parse and update table
-        const parsedLogs = typeof logs === 'string'
-          ? logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line))
-          : [];
-
-        const tableKey = `instance-logs-${jobKey}`;
-        tableOriginalData.set(tableKey, parsedLogs);
-
-        // Update table body
-        const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
-        if (tableEl) {
-          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
-          // Re-initialize sorting and restore search filter state after updating table
-          setTimeout(() => {
-            if (!refresh.current()) return;
-            const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
-            initializeSorting(tableClass);
-            restoreSearchFilterState(tableId, currentSearchFilter);
-          }, 100);
-        }
-      } else {
-        // Update files data
-        if (!window.instanceLogFiles) window.instanceLogFiles = {};
-        window.instanceLogFiles[jobKey] = files;
-
-        // Get currently selected file from dropdown
-        const dropdownEl = document.getElementById(`log-select-${jobKey.replace(/\//g, '-')}`);
-        const currentFile = dropdownEl ? dropdownEl.value : Object.keys(files)[0];
-
-        // Use the selected file or first file
-        const fileToShow = files[currentFile] ? currentFile : Object.keys(files)[0];
-        const logContent = files[fileToShow] || 'No content';
-
-        // Store original text
-        if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
-        window.instanceLogOriginalText[jobKey] = logContent;
-
-        // Parse and update table
-        const parsedLogs = logContent.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
-
-        const tableKey = `instance-logs-${jobKey}`;
-        tableOriginalData.set(tableKey, parsedLogs);
-
-        // Update table body
-        const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
-        if (tableEl) {
-          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
-          // Re-initialize sorting and restore search filter state after updating table
-          setTimeout(() => {
-            if (!refresh.current()) return;
-            const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
-            initializeSorting(tableClass);
-            restoreSearchFilterState(tableId, currentSearchFilter);
-          }, 100);
-        }
-      }
+      // The job's content is rebuilt by the one renderer the first load uses,
+      // which keeps the selected file when it is still there.
+      window.selectInstanceJob(jobKey);
+      setTimeout(() => {
+        if (!refresh.current()) return;
+        restoreSearchFilterState(tableId, currentSearchFilter);
+      }, 100);
+      const renewed = document.querySelector('#instance-logs-content [data-instance-log="refresh"]');
+      if (renewed) button = renewed;
 
       // Visual feedback for successful refresh
       button.classList.add('success');
