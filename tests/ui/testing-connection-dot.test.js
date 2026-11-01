@@ -38,3 +38,25 @@ t('the Connection dot is red after a failed attempt and stays so across tab swit
  w.switchTestingOperation('i1','queues'); await sleep(80);
  expect(dot(d)).toBe('disconnected');
 });
+
+t('a deliberate disconnect returns the dot to neutral, and a failed attempt stays red',async()=>{
+ const {w,d}=await screen(rabbitCreds,[[/rabbitmq\/test/,(u,o,json)=>json(200,{success:true})]]);
+ w.executeRabbitMQTest('i1'); await sleep(60);
+ expect(dot(d)).toBe('connected');
+ w.executeRabbitMQTest('i1'); await sleep(30);
+ expect(dot(d)).toBe('idle');
+ expect(d.getElementById('connection-status-i1').textContent.trim()).toBe('Disconnected');
+ w.switchTestingOperation('i1','queues'); await sleep(80);
+ expect(dot(d)).toBe('idle');
+});
+
+t('the automatic disconnect after ten minutes is not a failure',async()=>{
+ const {w,d}=await screen(rabbitCreds,[[/rabbitmq\/test/,(u,o,json)=>json(200,{success:true})]]);
+ const timers=[];const real=w.setTimeout;
+ w.setTimeout=(fn,ms,...a)=>{ if(ms===10*60*1000){timers.push(fn);return 0;} return real(fn,ms,...a); };
+ w.executeRabbitMQTest('i1'); await sleep(60);
+ expect(dot(d)).toBe('connected');
+ expect(timers).toHaveLength(1);
+ timers[0]();
+ expect(dot(d)).toBe('idle');
+});

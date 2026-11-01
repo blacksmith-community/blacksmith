@@ -60,7 +60,7 @@ for(const [service,creds,details,connect] of [['RabbitMQ',rabbitCreds,{},'execut
   expect(dot()[0].getAttribute('style')).toBeNull();
   expect(connection.title).toBe('Connected');
   await s.w[connect]('i1'); await sleep(10);
-  expect(dot()[0].dataset.state).toBe('disconnected');
+  expect(dot()[0].dataset.state).toBe('idle');
   expect(label(connection)).toBe('Connection');
  });
 }

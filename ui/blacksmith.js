@@ -13126,9 +13126,11 @@
     connectionState.connectionParams = null;
     connectionState.connectedAt = null;
 
+    // A deliberate or timed disconnect is not a failure, so the dot goes
+    // back to neutral. Only a failed attempt turns it red.
     updateConnectionUI(instanceId, false);
-    updateConnectionStatus(instanceId, false);
-    setConnectionLine(instanceId, 'disconnected', 'Disconnected');
+    updateConnectionStatus(instanceId, false, 'idle');
+    setConnectionLine(instanceId, 'idle', 'Disconnected');
   };
 
   const updateConnectionUI = (instanceId, connected) => {
@@ -26332,7 +26334,7 @@
         { title: 'Source', text: (o) => o.source || 'unknown' },
         { title: 'Location', has: (o) => o.locator, text: (o) => o.locator, copy: (o) => o.locator, label: 'location' },
         { title: 'SHA-256 fingerprint', has: (o) => o.sha256_fingerprint, text: (o) => o.sha256_fingerprint, copy: (o) => o.sha256_fingerprint, label: 'fingerprint' },
-        { title: 'Matches', has: (o) => o.matches, text: (o) => matchText(o.matches) },
+        { title: 'Listener serves', has: (o) => o.matches, text: (o) => matchText(o.matches) },
         { title: 'Expires', has: (o) => o.not_after, text: (o) => shortDate(o.not_after), sort: (o) => certSortValue(o.not_after) },
         { title: 'Status', text: credhubStateText },
         { title: 'Last read', has: (o) => o.observed_at, text: (o) => `${shortDate(o.observed_at)} ${clock(o.observed_at)}`, sort: (o) => certSortValue(o.observed_at) }

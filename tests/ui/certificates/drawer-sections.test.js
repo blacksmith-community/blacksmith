@@ -142,6 +142,9 @@ t('Other sources lists manifest and vault observations after Probe information',
     const rows = Array.from(section.querySelectorAll('tbody tr'));
     expect(rows.map((r) => r.querySelector('td').textContent)).toEqual(['manifest', 'vault']);
     expect(Array.from(section.querySelectorAll('thead th')).map((th) => th.textContent)).not.toContain('Expires');
+    const heads = Array.from(section.querySelectorAll('thead th')).map((th) => th.textContent);
+    expect(heads).toContain('Listener serves');
+    expect(heads).not.toContain('Matches');
     const order = [dr.querySelector('.cert-drawer-actions'), dr.querySelector('.cert-drawer-callouts'), heading(dr, 'CredHub details'), heading(dr, 'Certificate details'), heading(dr, 'Probe information'), heading(dr, 'Other sources')];
     const spots = order.map((n) => position(dr, n));
     expect(new Set(spots).size).toBe(6);
