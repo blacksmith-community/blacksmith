@@ -2862,14 +2862,14 @@
 
         return `
             <div class="service-item ${isDeleting ? 'deleting' : ''} ${isDeleted ? 'deleted' : ''}" data-instance-id="${escapeAttribute(String(id))}" data-service="${escapeAttribute(String(serviceName))}" data-plan="${escapeAttribute(String(details.plan?.name || ''))}" data-deleted="${isDeleted}">
-              <div class="service-id">${escapeAttribute(String(id))}</div>
-              ${details.instance_name ? `<div class="service-instance-name">${escapeAttribute(String(details.instance_name))}</div>` : ''}
+              <div class="service-instance-name">${escapeAttribute(String(details.instance_name || id))}</div>
               <div class="service-meta">
-                ${escapeAttribute(String(displayServiceName))} / ${escapeAttribute(String(details.plan?.name || details.plan_id || 'unknown'))} @ ${formatCreatedTimestamp(details)}
+                <span class="service-meta-text">${escapeAttribute(String(displayServiceName))} / ${escapeAttribute(String(details.plan?.name || details.plan_id || 'unknown'))}</span>
+                ${deletedStatusHtml}
+                ${deletionStatusHtml}
+                ${vmStatusHtml}
               </div>
-              ${deletedStatusHtml}
-              ${deletionStatusHtml}
-              ${vmStatusHtml}
+              ${details.instance_name ? `<div class="service-id" title="${escapeAttribute(String(id))}">${escapeAttribute(String(id))}</div>` : ''}
             </div>
           `;
       }).join('');
@@ -15979,6 +15979,7 @@
           // Update active state
           window.serviceInstanceElements.forEach(i => i.classList.remove('active'));
           item.classList.add('active');
+          item.scrollIntoView?.({ block: 'nearest' });
 
           // Render detail view with vault data
           const detailContainer = document.querySelector('#services .service-detail');
