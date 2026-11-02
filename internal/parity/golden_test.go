@@ -3,6 +3,7 @@ package parity_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"blacksmith/internal/parity"
@@ -98,6 +99,21 @@ func TestFixturesCoverEveryForgeAndVariant(t *testing.T) {
 	for forge, count := range want {
 		if counts[forge] != count {
 			t.Errorf("%s has %d fixtures, want %d", forge, counts[forge], count)
+		}
+	}
+}
+
+func TestRenderedManifestsSkipsFailures(t *testing.T) {
+	t.Parallel()
+
+	rendered := parity.RenderedManifests(t)
+	if len(rendered) < 30 {
+		t.Fatalf("found %d rendered manifests, want at least 30", len(rendered))
+	}
+
+	for _, manifest := range rendered {
+		if strings.HasPrefix(manifest.Body, "ERROR:") || strings.Contains(manifest.Name, "/") {
+			t.Errorf("unexpected rendered manifest %q", manifest.Name)
 		}
 	}
 }

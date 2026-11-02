@@ -1,0 +1,15 @@
+$.cert_variables	[]string	null
+$.groups.postgresql	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"postgresql"
+$.jobs[0].job	string	"postgres"
+$.jobs[0].properties.postgres.config.listen_addresses	string	"0.0.0.0"
+$.jobs[0].properties.postgres.config.port	int	5432
+$.jobs[0].properties.postgres.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.jobs[0].properties.postgres.hba[1]	string	"host all all ::/0 md5"
+$.jobs[0].properties.postgres.users[0].admin	bool	true
+$.jobs[0].properties.postgres.users[0].password	string	"yes"
+$.jobs[0].properties.postgres.users[0].username	string	"y"
+$.literals	[]interface {}	[]
+$.name	string	"postgresql-standalone-parity-postgresql-base"
+$.signing_cas	map[string]string	{}

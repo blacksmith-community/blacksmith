@@ -1,0 +1,98 @@
+---
+# Properties for rendering the blacksmith release's config/blacksmith.conf,
+# the broker config the kit deploys. The release version and checksum are
+# the ones the blacksmith kit pins. Every credential is a placeholder.
+
+release:
+  version: 2.6.0
+  checksum: sha256:d3d74228dedb687574995e4acd464ece7f152cb512d1d99e62b8cc838fd7e962
+  job: blacksmith
+
+placeholders:
+  cert: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
+
+variants:
+  minimal:
+    bosh:
+      address: https://10.0.0.6:25555
+      ca_cert: "@cert"
+    credhub:
+      cleanup:
+        enabled: false
+  full:
+    debug: true
+    env: fixture-env
+    shareable: true
+    services:
+      skip_tls_verify: [rabbitmq, redis]
+    broker:
+      port: 8080
+      username: fixture-broker
+      password: fixture-password-not-real
+      tls:
+        enabled: true
+        port: 8443
+        reuse-after: 5
+        protocols: TLSv1.3
+        ciphers: HIGH:!aNULL
+      cf:
+        ca_cert: "@cert"
+        skip_ssl_validation: false
+        apis:
+          lab:
+            name: lab-cf
+            endpoint: https://api.sys.fixture.example
+            username: fixture-admin
+            password: fixture-password-not-real
+          prod:
+            name: prod-cf
+            endpoint: https://api.sys.prod.fixture.example
+            username: fixture-admin
+            password: fixture-password-not-real
+            skip_ssl_validation: true
+    shield:
+      enabled: true
+      address: https://shield.fixture.example
+      skip_ssl_validation: false
+      agent: shield-agent.fixture.example:5444
+      auth_method: local
+      username: fixture-shield
+      password: fixture-password-not-real
+      schedule: daily 4am
+      retain: 4d
+      tenant: fixture-tenant
+      store: fixture-store
+      enabled_on_targets: [rabbitmq, redis]
+    bosh:
+      address: https://10.0.0.6:25555
+      username: fixture-bosh
+      password: fixture-password-not-real
+      ca_cert: "@cert"
+      network: fixture-services
+      cloud-config: {azs: []}
+      request_timeout: 90
+      allow_http: false
+      stemcells:
+      - name: bosh-aws-xen-hvm-ubuntu-noble-go_agent
+        version: "1.181"
+        url: https://example.test/stemcell.tgz
+        sha1: 0000000000000000000000000000000000000001
+      releases:
+      - name: redis-forge
+        version: 1.4.4
+        url: https://example.test/redis-forge.tgz
+        sha1: sha256:0000000000000000000000000000000000000000000000000000000000000002
+    credhub:
+      url: https://credhub.fixture.example:8844
+      ca_cert: "@cert"
+      client_id: fixture-credhub
+      client_secret: fixture-password-not-real
+      director_name: fixture-director
+      uaa_url: https://uaa.fixture.example:8443
+      cleanup:
+        enabled: true
+        sweep: "on"
+        protected_deployments: [fixture-protected]

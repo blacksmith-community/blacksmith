@@ -1,0 +1,28 @@
+$.cert_variables	[]string	null
+$.groups.postgresql	int	3
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"postgresql"
+$.jobs[0].job	string	"postgres"
+$.jobs[0].properties.pgpool.users[0].admin	bool	true
+$.jobs[0].properties.pgpool.users[0].password	string	"yes"
+$.jobs[0].properties.pgpool.users[0].username	string	"y"
+$.jobs[0].properties.postgres.config.listen_addresses	string	"0.0.0.0"
+$.jobs[0].properties.postgres.config.port	int	6432
+$.jobs[0].properties.postgres.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.jobs[0].properties.postgres.hba[1]	string	"host all all ::/0 md5"
+$.jobs[0].properties.postgres.replication.enabled	bool	true
+$.jobs[1].cert_refs	map[string]string	{}
+$.jobs[1].group	string	"postgresql"
+$.jobs[1].job	string	"pgpool"
+$.jobs[1].properties.pcp.system_password	string	"secret"
+$.jobs[1].properties.pgpool.backend.port	int	6432
+$.jobs[1].properties.pgpool.config.enable_pool_hba	bool	true
+$.jobs[1].properties.pgpool.config.port	int	5432
+$.jobs[1].properties.pgpool.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.jobs[1].properties.pgpool.hba[1]	string	"host all all ::/0 md5"
+$.jobs[1].properties.pgpool.users[0].admin	bool	true
+$.jobs[1].properties.pgpool.users[0].password	string	"yes"
+$.jobs[1].properties.pgpool.users[0].username	string	"y"
+$.literals	[]interface {}	[]
+$.name	string	"postgresql-cluster-parity-postgresql-base"
+$.signing_cas	map[string]string	{}

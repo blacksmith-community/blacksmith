@@ -1,0 +1,3 @@
+ERROR: failed to unmarshal config YAML: yaml: unmarshal errors:
+  line 8: cannot unmarshal !!str `many` into int
+  line 9: cannot unmarshal !!str `perhaps` into bool

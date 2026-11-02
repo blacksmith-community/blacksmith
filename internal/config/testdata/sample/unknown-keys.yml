@@ -1,0 +1,12 @@
+---
+vault:
+  address: http://127.0.0.1:8200
+  mystery: 1
+bosh:
+  address: https://10.0.0.6:25555
+  username: fixture-bosh
+  password: fixture-password-not-real
+  with_cloud_config: true
+  cloud-config: "@CLOUD_CONFIG@"
+extra_top_level:
+  anything: [1, 2, 3]

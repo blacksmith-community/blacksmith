@@ -1,0 +1,4 @@
+$.merged.os	string	"ubuntu-noble"
+$.merged.version	string	"1.99"
+$.rendered.os	string	"ubuntu-bionic"
+$.rendered.version	string	"latest"

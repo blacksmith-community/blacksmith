@@ -1,0 +1,31 @@
+$.cert_variables[0]	string	"redis_standalone_crt"
+$.groups.standalone	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"standalone"
+$.jobs[0].job	string	"bpm"
+$.jobs[0].properties	map[string]interface {}	{}
+$.jobs[1].cert_refs.redis.tls.ca_cert	string	"redis_standalone_crt"
+$.jobs[1].group	string	"standalone"
+$.jobs[1].job	string	"standalone-6"
+$.jobs[1].properties.auth.password	string	"yes"
+$.jobs[1].properties.client.connections	int	10000
+$.jobs[1].properties.client.tcpkeepalive	int	300
+$.jobs[1].properties.client.timeout	int	0
+$.jobs[1].properties.lua.scripting-enabled	bool	true
+$.jobs[1].properties.persistent	bool	false
+$.jobs[1].properties.redis.auto-aof-rewrite-min-size	string	"64mb"
+$.jobs[1].properties.redis.auto-aof-rewrite-percentage	int	100
+$.jobs[1].properties.redis.maxmemory	int	0
+$.jobs[1].properties.redis.maxmemory-policy	string	"allkeys-lru"
+$.jobs[1].properties.redis.no-appendfsync-on-rewrite	bool	false
+$.jobs[1].properties.redis.notify-keyspace-events	string	"KEA"
+$.jobs[1].properties.redis.slowlog-log-slower-than	int	10000
+$.jobs[1].properties.redis.slowlog-max-len	int	128
+$.jobs[1].properties.redis.tls.ca	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
+$.jobs[1].properties.redis.tls.ca_cert	string	"((redis_standalone_crt.certificate))"
+$.jobs[1].properties.redis.tls.ca_key	string	"((redis_standalone_crt.private_key))"
+$.jobs[1].properties.redis.tls.dual-mode	bool	false
+$.jobs[1].properties.redis.tls.enabled	bool	false
+$.literals	[]interface {}	[]
+$.name	string	"redis-standalone-6-parity-redis-base"
+$.signing_cas.redis_standalone_crt	string	"/fixture-env-bosh/fixture-env-blacksmith/blacksmith_services_ca"

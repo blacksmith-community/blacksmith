@@ -1,0 +1,158 @@
+$.cert_variables[0]	string	"ca_cert"
+$.cert_variables[1]	string	"server_cert"
+$.cert_variables[2]	string	"external_cert"
+$.groups.web	int	2
+$.groups.worker	int	3
+$.jobs[0].cert_refs.tls.ca	string	"ca_cert"
+$.jobs[0].cert_refs.tls.certificate	string	"server_cert"
+$.jobs[0].cert_refs.tls.external	string	"external_cert"
+$.jobs[0].group	string	"web"
+$.jobs[0].job	string	"server"
+$.jobs[0].properties.password	string	"((a_password))"
+$.jobs[0].properties.scalars.big_integer	uint64	12345678901234567890
+$.jobs[0].properties.scalars.boolean	bool	true
+$.jobs[0].properties.scalars.colon_lead	string	":leading-colon"
+$.jobs[0].properties.scalars.date	time.Time	2026-01-02T00:00:00Z
+$.jobs[0].properties.scalars.empty_value	interface {}	null
+$.jobs[0].properties.scalars.explicit_null	interface {}	null
+$.jobs[0].properties.scalars.float_whole	float64	3
+$.jobs[0].properties.scalars.hex	int	31
+$.jobs[0].properties.scalars.infinity	float64	+Inf
+$.jobs[0].properties.scalars.integer	int	3
+$.jobs[0].properties.scalars.list[0]	int	1
+$.jobs[0].properties.scalars.list[1]	string	"two"
+$.jobs[0].properties.scalars.list[2]	float64	3.5
+$.jobs[0].properties.scalars.list[3]	bool	true
+$.jobs[0].properties.scalars.list[4]	interface {}	null
+$.jobs[0].properties.scalars.marker	string	"value with a ((marker)) inside"
+$.jobs[0].properties.scalars.negative	int	-4
+$.jobs[0].properties.scalars.nested.inner.deep[0]	string	"a"
+$.jobs[0].properties.scalars.nested.inner.deep[1].b	string	"c"
+$.jobs[0].properties.scalars.no_value	string	"no"
+$.jobs[0].properties.scalars.not_a_number	float64	NaN
+$.jobs[0].properties.scalars.octal	int	493
+$.jobs[0].properties.scalars.octal_new	int	15
+$.jobs[0].properties.scalars.off_value	string	"off"
+$.jobs[0].properties.scalars.on_value	string	"on"
+$.jobs[0].properties.scalars.quoted_number	string	"12"
+$.jobs[0].properties.scalars.quoted_yes	string	"yes"
+$.jobs[0].properties.scalars.scientific	float64	1000
+$.jobs[0].properties.scalars.short_n	string	"n"
+$.jobs[0].properties.scalars.short_y	string	"y"
+$.jobs[0].properties.scalars.tilde_null	interface {}	null
+$.jobs[0].properties.scalars.timestamp	time.Time	2026-01-02T03:04:05Z
+$.jobs[0].properties.scalars.yes_value	string	"yes"
+$.jobs[0].properties.tls.ca	string	"((ca_cert.certificate))"
+$.jobs[0].properties.tls.certificate	string	"((server_cert.certificate))"
+$.jobs[0].properties.tls.external	string	"(( external_cert.certificate ))"
+$.jobs[0].properties.tls.key	string	"((server_cert.private_key))"
+$.jobs[0].properties.tls.literal_ca	string	"-----BEGIN CERTIFICATE-----\nMIIBfTCCASSgAwIBAgIUY2J6rlAUyWq0ImkDTQBWZyHaZvwwCgYIKoZIzj0EAwIw\nJDEiMCAGA1UEAwwZcGFyaXR5LWZpeHR1cmUtY2EuZXhhbXBsZTAgFw0yNjExMDIw\nMjAwMjJaGA8yMTI2MTAwOTAyMDAyMlowJDEiMCAGA1UEAwwZcGFyaXR5LWZpeHR1\ncmUtY2EuZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABB2WlLyIM8vy\nvF/PsSsGCQrmZMWqQSyJelHIMYxhEGYa73mVHNxu42rGYavDBXkAApZagWtKRf7u\n99n1R+OC2W+jMjAwMB0GA1UdDgQWBBTsiZ/0kYkkLZbBk23deZ8rI9rSKTAPBgNV\nHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIB6EbY6pgnFoHJNf7Exxm7uN\ndFtjB5dhjsXdf1SnsoFXAiBRnyTaHzJei4rTqLpMZqcBnUvQ2NU3bpG0sCnGUnYh\noQ==\n-----END CERTIFICATE-----\n"
+$.jobs[0].properties.tls.literal_leaf	string	"-----BEGIN CERTIFICATE-----\nMIIBqTCCAVCgAwIBAgIUDwBV6QdCYY+we5qXn+znlGePm3EwCgYIKoZIzj0EAwIw\nJjEkMCIGA1UEAwwbcGFyaXR5LWZpeHR1cmUtbGVhZi5leGFtcGxlMCAXDTI2MTEw\nMjAyMDAyMloYDzIxMjYxMDA5MDIwMDIyWjAmMSQwIgYDVQQDDBtwYXJpdHktZml4\ndHVyZS1sZWFmLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQIrWDn\nO5E9vdfRaJODC59wU6cCjHjwDxbK+GsGu+h22xyMiFNlflbHsNBSLsPni3fcrnjy\nUY7f4VcI96B6Mc2Mo1owWDAdBgNVHQ4EFgQUwsPqRSfHjzGyWMXrn5WpUsikulIw\nDwYDVR0TAQH/BAUwAwEB/zAmBgNVHREEHzAdghtwYXJpdHktZml4dHVyZS1sZWFm\nLmV4YW1wbGUwCgYIKoZIzj0EAwIDRwAwRAIgH5kR1nY8lxPlPQeTCCNDRLzx0DjC\nj8XhT7cCSv7v30UCIBKlhngoPmwX7mODwZPTn5JnLTR5HcEaqxGNB6TJJZXI\n-----END CERTIFICATE-----\n"
+$.jobs[1].cert_refs.tls.ca	string	"ca_cert"
+$.jobs[1].group	string	"web"
+$.jobs[1].job	string	"sidecar"
+$.jobs[1].properties.extra	string	"added"
+$.jobs[1].properties.password	string	"((a_password))"
+$.jobs[1].properties.scalars.big_integer	uint64	12345678901234567890
+$.jobs[1].properties.scalars.boolean	bool	true
+$.jobs[1].properties.scalars.colon_lead	string	":leading-colon"
+$.jobs[1].properties.scalars.date	time.Time	2026-01-02T00:00:00Z
+$.jobs[1].properties.scalars.empty_value	interface {}	null
+$.jobs[1].properties.scalars.explicit_null	interface {}	null
+$.jobs[1].properties.scalars.float_whole	float64	3
+$.jobs[1].properties.scalars.hex	int	31
+$.jobs[1].properties.scalars.infinity	float64	+Inf
+$.jobs[1].properties.scalars.integer	int	3
+$.jobs[1].properties.scalars.list[0]	int	1
+$.jobs[1].properties.scalars.list[1]	string	"two"
+$.jobs[1].properties.scalars.list[2]	float64	3.5
+$.jobs[1].properties.scalars.list[3]	bool	true
+$.jobs[1].properties.scalars.list[4]	interface {}	null
+$.jobs[1].properties.scalars.marker	string	"value with a ((marker)) inside"
+$.jobs[1].properties.scalars.negative	int	-4
+$.jobs[1].properties.scalars.nested.inner.deep[0]	string	"a"
+$.jobs[1].properties.scalars.nested.inner.deep[1].b	string	"c"
+$.jobs[1].properties.scalars.no_value	string	"no"
+$.jobs[1].properties.scalars.not_a_number	float64	NaN
+$.jobs[1].properties.scalars.octal	int	493
+$.jobs[1].properties.scalars.octal_new	int	15
+$.jobs[1].properties.scalars.off_value	string	"off"
+$.jobs[1].properties.scalars.on_value	string	"on"
+$.jobs[1].properties.scalars.quoted_number	string	"12"
+$.jobs[1].properties.scalars.quoted_yes	string	"yes"
+$.jobs[1].properties.scalars.scientific	float64	1000
+$.jobs[1].properties.scalars.short_n	string	"n"
+$.jobs[1].properties.scalars.short_y	string	"y"
+$.jobs[1].properties.scalars.tilde_null	interface {}	null
+$.jobs[1].properties.scalars.timestamp	time.Time	2026-01-02T03:04:05Z
+$.jobs[1].properties.scalars.yes_value	string	"yes"
+$.jobs[1].properties.tls.ca	string	"((ca_cert.certificate))"
+$.jobs[2].cert_refs.tls.ca	string	"ca_cert"
+$.jobs[2].cert_refs.tls.certificate	string	"server_cert"
+$.jobs[2].cert_refs.tls.external	string	"external_cert"
+$.jobs[2].group	string	"worker"
+$.jobs[2].job	string	"server"
+$.jobs[2].properties.password	string	"((a_password))"
+$.jobs[2].properties.scalars.big_integer	uint64	12345678901234567890
+$.jobs[2].properties.scalars.boolean	bool	true
+$.jobs[2].properties.scalars.colon_lead	string	":leading-colon"
+$.jobs[2].properties.scalars.date	time.Time	2026-01-02T00:00:00Z
+$.jobs[2].properties.scalars.empty_value	interface {}	null
+$.jobs[2].properties.scalars.explicit_null	interface {}	null
+$.jobs[2].properties.scalars.float_whole	float64	3
+$.jobs[2].properties.scalars.hex	int	31
+$.jobs[2].properties.scalars.infinity	float64	+Inf
+$.jobs[2].properties.scalars.integer	int	3
+$.jobs[2].properties.scalars.list[0]	int	1
+$.jobs[2].properties.scalars.list[1]	string	"two"
+$.jobs[2].properties.scalars.list[2]	float64	3.5
+$.jobs[2].properties.scalars.list[3]	bool	true
+$.jobs[2].properties.scalars.list[4]	interface {}	null
+$.jobs[2].properties.scalars.marker	string	"value with a ((marker)) inside"
+$.jobs[2].properties.scalars.negative	int	-4
+$.jobs[2].properties.scalars.nested.inner.deep[0]	string	"a"
+$.jobs[2].properties.scalars.nested.inner.deep[1].b	string	"c"
+$.jobs[2].properties.scalars.no_value	string	"no"
+$.jobs[2].properties.scalars.not_a_number	float64	NaN
+$.jobs[2].properties.scalars.octal	int	493
+$.jobs[2].properties.scalars.octal_new	int	15
+$.jobs[2].properties.scalars.off_value	string	"off"
+$.jobs[2].properties.scalars.on_value	string	"on"
+$.jobs[2].properties.scalars.quoted_number	string	"12"
+$.jobs[2].properties.scalars.quoted_yes	string	"yes"
+$.jobs[2].properties.scalars.scientific	float64	1000
+$.jobs[2].properties.scalars.short_n	string	"n"
+$.jobs[2].properties.scalars.short_y	string	"y"
+$.jobs[2].properties.scalars.tilde_null	interface {}	null
+$.jobs[2].properties.scalars.timestamp	time.Time	2026-01-02T03:04:05Z
+$.jobs[2].properties.scalars.yes_value	string	"yes"
+$.jobs[2].properties.tls.ca	string	"((ca_cert.certificate))"
+$.jobs[2].properties.tls.certificate	string	"((server_cert.certificate))"
+$.jobs[2].properties.tls.external	string	"(( external_cert.certificate ))"
+$.jobs[2].properties.tls.key	string	"((server_cert.private_key))"
+$.jobs[2].properties.tls.literal_ca	string	"-----BEGIN CERTIFICATE-----\nMIIBfTCCASSgAwIBAgIUY2J6rlAUyWq0ImkDTQBWZyHaZvwwCgYIKoZIzj0EAwIw\nJDEiMCAGA1UEAwwZcGFyaXR5LWZpeHR1cmUtY2EuZXhhbXBsZTAgFw0yNjExMDIw\nMjAwMjJaGA8yMTI2MTAwOTAyMDAyMlowJDEiMCAGA1UEAwwZcGFyaXR5LWZpeHR1\ncmUtY2EuZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABB2WlLyIM8vy\nvF/PsSsGCQrmZMWqQSyJelHIMYxhEGYa73mVHNxu42rGYavDBXkAApZagWtKRf7u\n99n1R+OC2W+jMjAwMB0GA1UdDgQWBBTsiZ/0kYkkLZbBk23deZ8rI9rSKTAPBgNV\nHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIB6EbY6pgnFoHJNf7Exxm7uN\ndFtjB5dhjsXdf1SnsoFXAiBRnyTaHzJei4rTqLpMZqcBnUvQ2NU3bpG0sCnGUnYh\noQ==\n-----END CERTIFICATE-----\n"
+$.jobs[2].properties.tls.literal_leaf	string	"-----BEGIN CERTIFICATE-----\nMIIBqTCCAVCgAwIBAgIUDwBV6QdCYY+we5qXn+znlGePm3EwCgYIKoZIzj0EAwIw\nJjEkMCIGA1UEAwwbcGFyaXR5LWZpeHR1cmUtbGVhZi5leGFtcGxlMCAXDTI2MTEw\nMjAyMDAyMloYDzIxMjYxMDA5MDIwMDIyWjAmMSQwIgYDVQQDDBtwYXJpdHktZml4\ndHVyZS1sZWFmLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQIrWDn\nO5E9vdfRaJODC59wU6cCjHjwDxbK+GsGu+h22xyMiFNlflbHsNBSLsPni3fcrnjy\nUY7f4VcI96B6Mc2Mo1owWDAdBgNVHQ4EFgQUwsPqRSfHjzGyWMXrn5WpUsikulIw\nDwYDVR0TAQH/BAUwAwEB/zAmBgNVHREEHzAdghtwYXJpdHktZml4dHVyZS1sZWFm\nLmV4YW1wbGUwCgYIKoZIzj0EAwIDRwAwRAIgH5kR1nY8lxPlPQeTCCNDRLzx0DjC\nj8XhT7cCSv7v30UCIBKlhngoPmwX7mODwZPTn5JnLTR5HcEaqxGNB6TJJZXI\n-----END CERTIFICATE-----\n"
+$.literals[0].group	string	"web"
+$.literals[0].is_ca	bool	true
+$.literals[0].not_after	string	"2126-10-09T02:00:22Z"
+$.literals[0].path	string	"instance_groups[0].jobs[0].properties.tls.literal_ca"
+$.literals[0].subject	string	"parity-fixture-ca.example"
+$.literals[1].group	string	"web"
+$.literals[1].is_ca	bool	true
+$.literals[1].not_after	string	"2126-10-09T02:00:22Z"
+$.literals[1].path	string	"instance_groups[0].jobs[0].properties.tls.literal_leaf"
+$.literals[1].subject	string	"parity-fixture-leaf.example"
+$.literals[2].group	string	"worker"
+$.literals[2].is_ca	bool	true
+$.literals[2].not_after	string	"2126-10-09T02:00:22Z"
+$.literals[2].path	string	"instance_groups[1].jobs[0].properties.tls.literal_ca"
+$.literals[2].subject	string	"parity-fixture-ca.example"
+$.literals[3].group	string	"worker"
+$.literals[3].is_ca	bool	true
+$.literals[3].not_after	string	"2126-10-09T02:00:22Z"
+$.literals[3].path	string	"instance_groups[1].jobs[0].properties.tls.literal_leaf"
+$.literals[3].subject	string	"parity-fixture-leaf.example"
+$.name	string	"parity-handwritten"
+$.signing_cas.ca_cert	string	""
+$.signing_cas.external_cert	string	"/parity-director/parity-deployment/external_ca"
+$.signing_cas.server_cert	string	"ca_cert"

@@ -1,0 +1,9 @@
+---
+vault:
+  address: http://127.0.0.1:8200
+bosh:
+  address: https://10.0.0.6:25555
+  username: fixture-bosh
+  password: fixture-password-not-real
+  max_connections: many
+debug: "perhaps"

@@ -1,0 +1,50 @@
+$.cert_variables	[]string	null
+$.groups.k8s	int	3
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"k8s"
+$.jobs[0].job	string	"etcd"
+$.jobs[0].properties	map[string]interface {}	{}
+$.jobs[1].cert_refs	map[string]string	{}
+$.jobs[1].group	string	"k8s"
+$.jobs[1].job	string	"control"
+$.jobs[1].properties.apiserver.additional-sans[0]	string	"10.245.0.1"
+$.jobs[1].properties.apiserver.audit-policy.apiVersion	string	"audit.k8s.io/v1"
+$.jobs[1].properties.apiserver.audit-policy.kind	string	"Policy"
+$.jobs[1].properties.apiserver.audit-policy.rules[0].level	string	"Request"
+$.jobs[1].properties.apiserver.flags[0].audit-log-maxage	int	5
+$.jobs[1].properties.cluster.dns	string	"10.245.0.2"
+$.jobs[1].properties.cluster.name	string	"cluster0"
+$.jobs[1].properties.encryption.key	string	"yes"
+$.jobs[1].properties.networks.nodes	string	"0.0.0.0/32"
+$.jobs[1].properties.networks.pods	string	"10.244.0.0/16"
+$.jobs[1].properties.networks.services	string	"10.245.0.0/24"
+$.jobs[1].properties.tls.ca.certificate	string	"0755"
+$.jobs[1].properties.tls.ca.key	string	"2026-01-02"
+$.jobs[1].properties.tls.sa.certificate	string	":leading-colon"
+$.jobs[1].properties.tls.sa.key	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
+$.jobs[2].cert_refs	map[string]string	{}
+$.jobs[2].group	string	"k8s"
+$.jobs[2].job	string	"lb"
+$.jobs[2].properties	map[string]interface {}	{}
+$.jobs[3].cert_refs	map[string]string	{}
+$.jobs[3].group	string	"k8s"
+$.jobs[3].job	string	"runtime-runc"
+$.jobs[3].properties.cni	string	"flannel"
+$.jobs[4].cert_refs	map[string]string	{}
+$.jobs[4].group	string	"k8s"
+$.jobs[4].job	string	"net-flannel"
+$.jobs[4].properties	map[string]interface {}	{}
+$.jobs[5].cert_refs	map[string]string	{}
+$.jobs[5].group	string	"k8s"
+$.jobs[5].job	string	"kubelet"
+$.jobs[5].properties.labels.bosh/deployment	string	"(deployment)"
+$.jobs[5].properties.labels.bosh/instance-group	string	"(name)"
+$.jobs[5].properties.labels.bosh/instance-id	string	"(id)"
+$.jobs[5].properties.labels.node-role.kubernetes.io/master	string	""
+$.jobs[6].cert_refs	map[string]string	{}
+$.jobs[6].group	string	"k8s"
+$.jobs[6].job	string	"nfs"
+$.jobs[6].properties	map[string]interface {}	{}
+$.literals	[]interface {}	[]
+$.name	string	"kubernetes-cluster-parity-kubernetes-base"
+$.signing_cas	map[string]string	{}

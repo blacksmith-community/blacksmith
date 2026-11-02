@@ -1,0 +1,113 @@
+---
+# Hand-written manifest for the certificate walk. It holds real, throwaway
+# certificates that carry no private key, plus the YAML features a deployed
+# manifest can use: anchors, aliases, merge keys, and scalars that resolve
+# differently across YAML versions.
+name: parity-handwritten
+
+variables:
+- name: ca_cert
+  type: certificate
+  options:
+    is_ca: true
+    common_name: parity-fixture-ca.example
+- name: server_cert
+  type: certificate
+  options:
+    ca: ca_cert
+    common_name: parity-fixture-leaf.example
+- name: external_cert
+  type: certificate
+  options:
+    ca: /parity-director/parity-deployment/external_ca
+    common_name: parity-fixture-external.example
+- name: a_password
+  type: password
+
+instance_groups:
+- name: web
+  instances: 2
+  jobs:
+  - name: server
+    release: parity
+    properties: &server_properties
+      tls:
+        ca: ((ca_cert.certificate))
+        certificate: ((server_cert.certificate))
+        key: ((server_cert.private_key))
+        external: (( external_cert.certificate ))
+        literal_ca: |
+          -----BEGIN CERTIFICATE-----
+          MIIBfTCCASSgAwIBAgIUY2J6rlAUyWq0ImkDTQBWZyHaZvwwCgYIKoZIzj0EAwIw
+          JDEiMCAGA1UEAwwZcGFyaXR5LWZpeHR1cmUtY2EuZXhhbXBsZTAgFw0yNjExMDIw
+          MjAwMjJaGA8yMTI2MTAwOTAyMDAyMlowJDEiMCAGA1UEAwwZcGFyaXR5LWZpeHR1
+          cmUtY2EuZXhhbXBsZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABB2WlLyIM8vy
+          vF/PsSsGCQrmZMWqQSyJelHIMYxhEGYa73mVHNxu42rGYavDBXkAApZagWtKRf7u
+          99n1R+OC2W+jMjAwMB0GA1UdDgQWBBTsiZ/0kYkkLZbBk23deZ8rI9rSKTAPBgNV
+          HRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIB6EbY6pgnFoHJNf7Exxm7uN
+          dFtjB5dhjsXdf1SnsoFXAiBRnyTaHzJei4rTqLpMZqcBnUvQ2NU3bpG0sCnGUnYh
+          oQ==
+          -----END CERTIFICATE-----
+        literal_leaf: |
+          -----BEGIN CERTIFICATE-----
+          MIIBqTCCAVCgAwIBAgIUDwBV6QdCYY+we5qXn+znlGePm3EwCgYIKoZIzj0EAwIw
+          JjEkMCIGA1UEAwwbcGFyaXR5LWZpeHR1cmUtbGVhZi5leGFtcGxlMCAXDTI2MTEw
+          MjAyMDAyMloYDzIxMjYxMDA5MDIwMDIyWjAmMSQwIgYDVQQDDBtwYXJpdHktZml4
+          dHVyZS1sZWFmLmV4YW1wbGUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQIrWDn
+          O5E9vdfRaJODC59wU6cCjHjwDxbK+GsGu+h22xyMiFNlflbHsNBSLsPni3fcrnjy
+          UY7f4VcI96B6Mc2Mo1owWDAdBgNVHQ4EFgQUwsPqRSfHjzGyWMXrn5WpUsikulIw
+          DwYDVR0TAQH/BAUwAwEB/zAmBgNVHREEHzAdghtwYXJpdHktZml4dHVyZS1sZWFm
+          LmV4YW1wbGUwCgYIKoZIzj0EAwIDRwAwRAIgH5kR1nY8lxPlPQeTCCNDRLzx0DjC
+          j8XhT7cCSv7v30UCIBKlhngoPmwX7mODwZPTn5JnLTR5HcEaqxGNB6TJJZXI
+          -----END CERTIFICATE-----
+        embedded_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END PRIVATE KEY-----"
+      password: ((a_password))
+      scalars:
+        yes_value: yes
+        no_value: no
+        on_value: on
+        off_value: off
+        short_y: y
+        short_n: n
+        quoted_yes: "yes"
+        scientific: 1e3
+        octal: 0755
+        octal_new: 0o17
+        hex: 0x1f
+        date: 2026-01-02
+        timestamp: 2026-01-02T03:04:05Z
+        float_whole: 3.0
+        integer: 3
+        big_integer: 12345678901234567890
+        negative: -4
+        infinity: .inf
+        not_a_number: .nan
+        explicit_null: null
+        tilde_null: ~
+        empty_value:
+        quoted_number: "12"
+        boolean: true
+        colon_lead: ":leading-colon"
+        marker: "value with a ((marker)) inside"
+        list: [1, two, 3.5, true, null]
+        nested: {inner: {deep: [a, {b: c}]}}
+  - name: sidecar
+    release: parity
+    properties:
+      <<: *server_properties
+      extra: added
+      tls:
+        ca: ((ca_cert.certificate))
+- name: worker
+  instances: 3
+  jobs:
+  - name: server
+    release: parity
+    properties: *server_properties
+- name: unnamed-count
+  instances: "4"
+  jobs: []
+
+update:
+  canaries: 1
+  max_in_flight: 1

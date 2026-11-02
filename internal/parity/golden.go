@@ -129,3 +129,56 @@ func globAll(dir string, patterns ...string) ([]string, error) {
 func Relative(text string) string {
 	return strings.ReplaceAll(text, FixtureRoot(), "<fixtures>")
 }
+
+// Rendered is one manifest the manifest parity test recorded.
+type Rendered struct {
+	// Name joins the forge, variant, plan, and parameter set with
+	// underscores, and is safe to use in a file name.
+	Name string
+	Body string
+}
+
+// RenderedManifests returns every service manifest the manifest parity test
+// recorded, sorted by name, except the ones that failed to render. Later
+// parity tests feed them to the code that reads or rewrites a deployed
+// manifest.
+func RenderedManifests(t *testing.T) []Rendered {
+	t.Helper()
+
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(file), "..", "manifest", "testdata", "manifests")
+
+	var rendered []Rendered
+
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if entry.IsDir() || filepath.Ext(path) != ".yml" {
+			return nil
+		}
+
+		body, err := os.ReadFile(path) //nolint:gosec // a golden file
+		if err != nil {
+			return err //nolint:wrapcheck // the walk reports the path
+		}
+
+		if strings.HasPrefix(string(body), "ERROR:") {
+			return nil
+		}
+
+		rel, _ := filepath.Rel(root, path)
+		name := strings.ReplaceAll(strings.TrimSuffix(rel, ".yml"), string(filepath.Separator), "_")
+		rendered = append(rendered, Rendered{Name: name, Body: string(body)})
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("read the recorded manifests: %s", err)
+	}
+
+	sort.Slice(rendered, func(i, j int) bool { return rendered[i].Name < rendered[j].Name })
+
+	return rendered
+}

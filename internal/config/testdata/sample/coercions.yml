@@ -1,0 +1,20 @@
+---
+# Values whose YAML type differs from the Go field they land in.
+broker:
+  username: 0755
+  password: yes
+  port: 8080
+  bind_ip: 127.1
+  read_timeout: 0x1f
+vault:
+  address: http://127.0.0.1:8200
+  token: 1e3
+bosh:
+  address: https://10.0.0.6:25555
+  username: "no"
+  password: fixture-password-not-real
+  request_timeout: 5
+env: 2026-01-02
+web-root: ~
+shareable: on
+debug: y

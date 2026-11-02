@@ -1,0 +1,8 @@
+releases:
+- name: bpm
+  version: "99"
+- name: bpm
+  stemcell:
+    os: x
+    version: true
+  version: "1"

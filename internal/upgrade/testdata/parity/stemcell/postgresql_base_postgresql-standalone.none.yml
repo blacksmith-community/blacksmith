@@ -1,0 +1,67 @@
+director_uuid: 00000000-0000-4000-8000-000000000000
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - consumes:
+      db:
+        from: postgres
+    name: postgres
+    properties:
+      postgres:
+        config:
+          listen_addresses: 0.0.0.0
+          port: 5432
+        hba:
+        - host all all 0.0.0.0/0 md5
+        - host all all ::/0 md5
+        users:
+        - admin: true
+          password: "yes"
+          username: "y"
+    provides:
+      db:
+        as: postgres
+    release: postgres
+  name: postgresql
+  networks:
+  - name: postgresql-service
+  persistent_disk: 2048
+  stemcell: default
+  vm_type: default
+meta:
+  default:
+    az: z1
+  disk: 2048
+  disk_type: default
+  hba:
+  - host all all 0.0.0.0/0 md5
+  - host all all ::/0 md5
+  net: postgresql-service
+  params:
+    instance_id: parity-postgresql-base
+  service:
+    password: "yes"
+    port: 5432
+    username: "y"
+  size: default
+  users:
+  - admin: true
+    password: "yes"
+    username: "y"
+name: postgresql-standalone-parity-postgresql-base
+releases:
+- name: postgres
+  sha1: 7699715ed0b7ec129f60958e2864958030333cea
+  url: https://github.com/cloudfoundry-community/postgres-boshrelease/releases/download/v3.2.2/postgres-3.2.2.tgz
+  version: 3.2.2
+stemcells:
+- alias: default
+  os: ubuntu-noble
+  version: "1.99"
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000

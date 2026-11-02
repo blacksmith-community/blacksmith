@@ -1,0 +1,21 @@
+$.cert_variables	[]string	null
+$.groups.standalone	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"standalone"
+$.jobs[0].job	string	"rabbitmq"
+$.jobs[0].properties.erlang.cookie	string	"1e3"
+$.jobs[0].properties.plugins	[]interface {}	[]
+$.jobs[0].properties.rabbitmq.admin.pass	string	":leading-colon"
+$.jobs[0].properties.rabbitmq.admin.user	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
+$.jobs[0].properties.rabbitmq.app.pass	string	"yes"
+$.jobs[0].properties.rabbitmq.app.user	string	"y"
+$.jobs[0].properties.rabbitmq.monitoring.pass	string	"0755"
+$.jobs[0].properties.rabbitmq.monitoring.user	string	"2026-01-02"
+$.jobs[0].properties.rabbitmq.network	string	"rabbitmq-service"
+$.jobs[0].properties.rabbitmq.plan	string	"standalone"
+$.jobs[0].properties.rabbitmq.tls.dual-mode	bool	false
+$.jobs[0].properties.rabbitmq.tls.enabled	bool	false
+$.jobs[0].properties.rabbitmq.vhost	string	"parity-rabbitmq-base"
+$.literals	[]interface {}	[]
+$.name	string	"rabbitmq-standalone-parity-rabbitmq-base"
+$.signing_cas	map[string]string	{}

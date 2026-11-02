@@ -1,0 +1,13 @@
+---
+azs:
+- name: z1
+networks:
+- name: fixture-services
+  type: manual
+  subnets:
+  - range: 10.0.1.0/24
+    gateway: 10.0.1.1
+    az: z1
+vm_types:
+- name: default
+  cloud_properties: {fixture: yes}

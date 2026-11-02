@@ -1,0 +1,94 @@
+director_uuid: 00000000-0000-4000-8000-000000000000
+features:
+  use_dns_addresses: true
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - consumes:
+      rabbitmq-servers:
+        from: rabbitmq-servers
+        ip_addresses: false
+    custom_provider_definitions:
+    - name: rabbitmq-san
+      type: address
+    - name: rabbitmq-alias-domain
+      type: placeholder
+    name: rabbitmq
+    properties:
+      erlang:
+        cookie: "1e3"
+      plugins: []
+      rabbitmq:
+        admin:
+          pass: :leading-colon
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+        app:
+          pass: "yes"
+          user: "y"
+        monitoring:
+          pass: "0755"
+          user: "2026-01-02"
+        network: rabbitmq-service
+        plan: standalone
+        tls:
+          dual-mode: false
+          enabled: false
+        vhost: parity-rabbitmq-base
+    provides:
+      rabbitmq-alias-domain:
+        aliases:
+        - domain: _.rabbitmq_standalone.bosh
+          placeholder_type: uuid
+      rabbitmq-san:
+        as: rabbitmq-san
+        ip_addresses: false
+      rabbitmq-servers:
+        as: rabbitmq-servers
+        ip_addresses: false
+    release: rabbitmq-forge
+  name: standalone
+  networks:
+  - name: rabbitmq-service
+  stemcell: default
+  vm_type: default
+meta:
+  azs:
+  - z1
+  bosh_env: fixture-env
+  disk_config: {}
+  environment: fixture-env
+  erlang_cookie: "1e3"
+  instances: 1
+  net: rabbitmq-service
+  params:
+    instance_id: parity-rabbitmq-base
+  password: :leading-colon
+  password-app: "yes"
+  password-monitoring: "0755"
+  persistent: false
+  plugins: []
+  size: default
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
+  username-app: "y"
+  username-monitoring: "2026-01-02"
+name: rabbitmq-standalone-parity-rabbitmq-base
+releases:
+- name: rabbitmq-forge
+  version: 99.3.0
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 1
+  update_watch_time: 1000-30000

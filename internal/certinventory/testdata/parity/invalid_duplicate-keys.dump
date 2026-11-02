@@ -1,0 +1,6 @@
+$.cert_variables	[]string	null
+$.groups	map[string]int	{}
+$.jobs	[]interface {}	[]
+$.literals	[]interface {}	[]
+$.name	string	"second"
+$.signing_cas	map[string]string	{}

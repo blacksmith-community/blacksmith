@@ -1,0 +1,23 @@
+---
+# Anchors, aliases, and merge keys.
+defaults: &connection
+  username: fixture-bosh
+  password: fixture-password-not-real
+vault:
+  address: http://127.0.0.1:8200
+bosh:
+  <<: *connection
+  address: https://10.0.0.6:25555
+  stemcells:
+  - &stemcell
+    name: fixture-stemcell
+    version: "1.2"
+    url: https://example.test/stemcell.tgz
+    sha1: 0000000000000000000000000000000000000001
+  - <<: *stemcell
+    version: "1.3"
+  releases:
+  - name: fixture-release
+    version: 1.10
+    url: https://example.test/release.tgz
+    sha1: 0000000000000000000000000000000000000002

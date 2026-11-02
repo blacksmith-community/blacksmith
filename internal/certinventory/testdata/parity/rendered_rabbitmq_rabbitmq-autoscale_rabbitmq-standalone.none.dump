@@ -1,0 +1,59 @@
+$.cert_variables[0]	string	"rabbitmq_metrics_emitter_crt"
+$.groups.standalone	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"standalone"
+$.jobs[0].job	string	"rabbitmq"
+$.jobs[0].properties.erlang.cookie	string	"1e3"
+$.jobs[0].properties.plugins	[]interface {}	[]
+$.jobs[0].properties.rabbitmq.admin.pass	string	":leading-colon"
+$.jobs[0].properties.rabbitmq.admin.user	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
+$.jobs[0].properties.rabbitmq.app.pass	string	"yes"
+$.jobs[0].properties.rabbitmq.app.user	string	"y"
+$.jobs[0].properties.rabbitmq.monitoring.pass	string	"0755"
+$.jobs[0].properties.rabbitmq.monitoring.user	string	"2026-01-02"
+$.jobs[0].properties.rabbitmq.network	string	"rabbitmq-service"
+$.jobs[0].properties.rabbitmq.plan	string	"standalone"
+$.jobs[0].properties.rabbitmq.tls.dual-mode	bool	false
+$.jobs[0].properties.rabbitmq.tls.enabled	bool	false
+$.jobs[0].properties.rabbitmq.vhost	string	"parity-rabbitmq-rabbitmq-autoscale"
+$.jobs[1].cert_refs	map[string]string	{}
+$.jobs[1].group	string	"standalone"
+$.jobs[1].job	string	"bpm"
+$.jobs[1].properties	map[string]interface {}	{}
+$.jobs[2].cert_refs	map[string]string	{}
+$.jobs[2].group	string	"standalone"
+$.jobs[2].job	string	"loggr-syslog-agent"
+$.jobs[2].properties.cache.tls.ca_cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[2].properties.cache.tls.cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[2].properties.cache.tls.cn	string	"binding-cache"
+$.jobs[2].properties.drain_ca_cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[2].properties.metrics.ca_cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[2].properties.metrics.cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[2].properties.metrics.server_name	string	"syslog_agent_metrics"
+$.jobs[2].properties.port	int	3460
+$.jobs[2].properties.tls.ca_cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[2].properties.tls.cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[3].cert_refs	map[string]string	{}
+$.jobs[3].group	string	"standalone"
+$.jobs[3].job	string	"loggr-forwarder-agent"
+$.jobs[3].properties.metrics.ca_cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[3].properties.metrics.cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[3].properties.metrics.server_name	string	"forwarder_agent_metrics"
+$.jobs[3].properties.tls.ca_cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[3].properties.tls.cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[4].cert_refs	map[string]string	{}
+$.jobs[4].group	string	"standalone"
+$.jobs[4].job	string	"rabbitmq-metrics-emitter"
+$.jobs[4].properties.rabbitmq_metrics_emitter.cloud_foundry.api	string	"https://api.sys.fixture.example"
+$.jobs[4].properties.rabbitmq_metrics_emitter.cloud_foundry.password	string	"fixture-password-not-real"
+$.jobs[4].properties.rabbitmq_metrics_emitter.cloud_foundry.skip_ssl_validation	bool	false
+$.jobs[4].properties.rabbitmq_metrics_emitter.cloud_foundry.username	string	"fixture-admin"
+$.jobs[4].properties.rabbitmq_metrics_emitter.loggregator.tls.ca_cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[4].properties.rabbitmq_metrics_emitter.loggregator.tls.cert	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n\n"
+$.jobs[4].properties.rabbitmq_metrics_emitter.rmq_management.endpoint	string	"https://localhost:15671/api"
+$.jobs[4].properties.rabbitmq_metrics_emitter.rmq_management.password	string	":leading-colon"
+$.jobs[4].properties.rabbitmq_metrics_emitter.rmq_management.skip_ssl_validation	bool	true
+$.jobs[4].properties.rabbitmq_metrics_emitter.rmq_management.user	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
+$.literals	[]interface {}	[]
+$.name	string	"rabbitmq-standalone-parity-rabbitmq-rabbitmq-autoscale"
+$.signing_cas.rabbitmq_metrics_emitter_crt	string	"/fixture-env-bosh/fixture-env-blacksmith/blacksmith_services_ca"

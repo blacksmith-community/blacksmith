@@ -1,0 +1,26 @@
+$.cert_variables	[]string	null
+$.groups.standalone	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"standalone"
+$.jobs[0].job	string	"bpm"
+$.jobs[0].properties	map[string]interface {}	{}
+$.jobs[1].cert_refs	map[string]string	{}
+$.jobs[1].group	string	"standalone"
+$.jobs[1].job	string	"standalone"
+$.jobs[1].properties.auth.password	string	"yes"
+$.jobs[1].properties.client.connections	int	10000
+$.jobs[1].properties.client.tcpkeepalive	int	300
+$.jobs[1].properties.client.timeout	int	0
+$.jobs[1].properties.lua.scripting-enabled	bool	true
+$.jobs[1].properties.persistent	bool	false
+$.jobs[1].properties.redis.auto-aof-rewrite-min-size	string	"64mb"
+$.jobs[1].properties.redis.auto-aof-rewrite-percentage	int	100
+$.jobs[1].properties.redis.maxmemory	int	0
+$.jobs[1].properties.redis.maxmemory-policy	string	"allkeys-lru"
+$.jobs[1].properties.redis.no-appendfsync-on-rewrite	bool	false
+$.jobs[1].properties.redis.notify-keyspace-events	string	"KEA"
+$.jobs[1].properties.redis.slowlog-log-slower-than	int	10000
+$.jobs[1].properties.redis.slowlog-max-len	int	128
+$.literals	[]interface {}	[]
+$.name	string	"redis-standalone-parity-redis-base"
+$.signing_cas	map[string]string	{}

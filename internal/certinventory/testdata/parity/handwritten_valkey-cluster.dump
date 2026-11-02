@@ -1,0 +1,21 @@
+$.cert_variables[0]	string	"valkey_cluster_crt"
+$.groups.valkey	int	3
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"valkey"
+$.jobs[0].job	string	"bpm"
+$.jobs[0].properties	map[string]interface {}	{}
+$.jobs[1].cert_refs.valkey.tls.ca_cert	string	"valkey_cluster_crt"
+$.jobs[1].group	string	"valkey"
+$.jobs[1].job	string	"cluster"
+$.jobs[1].properties.valkey.tls.ca	string	"-----BEGIN CERTIFICATE-----\nMIIBaDCCAQ2gAwIBAgIBATAKBggqhkjOPQQDAjAbMRkwFwYDVQQDExB0ZXN0LXNl\ncnZpY2VzLWNhMB4XDTI2MTAyMjA5NDIwM1oXDTM2MTAxOTEwNDIwM1owGzEZMBcG\nA1UEAxMQdGVzdC1zZXJ2aWNlcy1jYTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IA\nBG5MuWrsoOP+oF3N53bq9L+SrCc0430sekUKVXDEoiJq1GLAFLRSCPGdnnkaBuzD\nis+5S6Tm3GE15GrLVEIOEAOjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8E\nBTADAQH/MB0GA1UdDgQWBBSmmFr6h+LA3CwWA7ldNW5zMmuHEDAKBggqhkjOPQQD\nAgNJADBGAiEAjS6EtpTYzg+9eEeDQKF4bD32rtX6tex7ftQVn4Q2szgCIQC6JIgy\nqW3qJSt9DfyRRB+2WdOIrlPp7usfnYFsKzEfyA==\n-----END CERTIFICATE-----\n"
+$.jobs[1].properties.valkey.tls.ca_cert	string	"((valkey_cluster_crt.certificate))"
+$.jobs[1].properties.valkey.tls.ca_key	string	"((valkey_cluster_crt.private_key))"
+$.jobs[1].properties.valkey.tls.dual-mode	bool	false
+$.jobs[1].properties.valkey.tls.enabled	bool	true
+$.literals[0].group	string	"valkey"
+$.literals[0].is_ca	bool	true
+$.literals[0].not_after	string	"2036-10-19T10:42:03Z"
+$.literals[0].path	string	"instance_groups[0].jobs[1].properties.valkey.tls.ca"
+$.literals[0].subject	string	"test-services-ca"
+$.name	string	"valkey-3c4d"
+$.signing_cas.valkey_cluster_crt	string	"/ws-bosh/ws-blacksmith/blacksmith_services_ca"

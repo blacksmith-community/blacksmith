@@ -1,0 +1,4 @@
+releases:
+- just-a-string
+- name: bpm
+  version: "99"

@@ -1,0 +1,32 @@
+$.cert_variables[0]	string	"valkey_standalone_crt"
+$.groups.standalone	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"standalone"
+$.jobs[0].job	string	"bpm"
+$.jobs[0].properties	map[string]interface {}	{}
+$.jobs[1].cert_refs.valkey.tls.ca_cert	string	"valkey_standalone_crt"
+$.jobs[1].group	string	"standalone"
+$.jobs[1].job	string	"standalone"
+$.jobs[1].properties.auth.password	string	"yes"
+$.jobs[1].properties.client.connections	int	10000
+$.jobs[1].properties.client.tcpkeepalive	int	300
+$.jobs[1].properties.client.timeout	int	0
+$.jobs[1].properties.lua.scripting-enabled	bool	true
+$.jobs[1].properties.persistent	bool	false
+$.jobs[1].properties.valkey.auto-aof-rewrite-min-size	string	"64mb"
+$.jobs[1].properties.valkey.auto-aof-rewrite-percentage	int	100
+$.jobs[1].properties.valkey.maxmemory	int	0
+$.jobs[1].properties.valkey.maxmemory-policy	string	"allkeys-lru"
+$.jobs[1].properties.valkey.no-appendfsync-on-rewrite	bool	false
+$.jobs[1].properties.valkey.notify-keyspace-events	string	""
+$.jobs[1].properties.valkey.slowlog-log-slower-than	int	10000
+$.jobs[1].properties.valkey.slowlog-max-len	int	128
+$.jobs[1].properties.valkey.tls.ca	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
+$.jobs[1].properties.valkey.tls.ca_cert	string	"((valkey_standalone_crt.certificate))"
+$.jobs[1].properties.valkey.tls.ca_key	string	"((valkey_standalone_crt.private_key))"
+$.jobs[1].properties.valkey.tls.dual-mode	bool	true
+$.jobs[1].properties.valkey.tls.enabled	bool	true
+$.jobs[1].properties.valkey.version	int	8
+$.literals	[]interface {}	[]
+$.name	string	"valkey-standalone-parity-valkey-dual-mode"
+$.signing_cas.valkey_standalone_crt	string	"/fixture-env-bosh/fixture-env-blacksmith/blacksmith_services_ca"

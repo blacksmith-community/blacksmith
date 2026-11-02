@@ -1,0 +1,11 @@
+$.cert_variables	[]string	null
+$.groups.standalone	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"standalone"
+$.jobs[0].job	string	"standalone"
+$.jobs[0].properties.db.admin_password	string	"yes"
+$.jobs[0].properties.db.admin_username	string	"y"
+$.jobs[0].properties.db.database_name	string	"service_instance_db"
+$.literals	[]interface {}	[]
+$.name	string	"mariadb-standalone-parity-mariadb-base"
+$.signing_cas	map[string]string	{}
