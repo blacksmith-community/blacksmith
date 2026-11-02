@@ -179,6 +179,7 @@ func NewService(deps ServiceDeps) *Service {
 	s.deps = deps
 	s.scanner = NewScanner(deps.Scanner)
 	s.sched = NewScheduler(s.scanner, s.cache, deps.List, s.brokerSources, s.store.Current, deps.Now, deps.After)
+	s.sched.SetLogger(s.log)
 
 	if deps.Scanner.Vault != nil {
 		s.divergence = NewDivergenceStore(deps.Scanner.Vault, deps.Now)

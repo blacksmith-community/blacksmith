@@ -8,12 +8,14 @@ import (
 	"fmt"
 	mrand "math/rand/v2"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/pkg/logger"
 )
 
 // Scan states.
@@ -22,6 +24,10 @@ const (
 	ScanRunning = "running"
 	ScanFailed  = "failed"
 )
+
+// scanPanicked is the error of a scan that panicked. The broker log holds
+// the panic and its stack.
+const scanPanicked = "the scan stopped on an internal error, which the broker log records"
 
 const (
 	firstScanDelay  = 30 * time.Second
@@ -124,6 +130,9 @@ type Scheduler struct {
 	// nothing.
 	divergence *DivergenceStore
 	sources    ReconcileSources
+
+	// log, guarded by mu, records the panics the scheduler survives.
+	log logger.Logger
 }
 
 // fleetRun is one fleet scan. Its fields other than id, done, and subset
@@ -143,7 +152,7 @@ type fleetRun struct {
 }
 
 type scanJob struct {
-	id  string
+	ref InstanceRef
 	run func(ctx context.Context) InstanceScan
 }
 
@@ -173,6 +182,49 @@ func NewScheduler(scanner instanceScanner, cache *Cache, list InstanceLister, br
 		cancel:   cancel,
 		errs:     map[string]ScanError{},
 		locks:    map[string]chan struct{}{},
+		log:      logger.NewNoOpLogger(),
+	}
+}
+
+// SetLogger gives the scheduler the logger for the panics it survives. The
+// service calls it once, before Start. A nil log logs nothing.
+func (s *Scheduler) SetLogger(log logger.Logger) {
+	if isNil(log) {
+		log = logger.NewNoOpLogger()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.log = log
+}
+
+// survive recovers a panic in the scheduler's work and logs it, with the
+// stack of the goroutine it happened on, as what, then runs failed when it
+// is set. It must be deferred directly, so that its recover sees the panic.
+// A scan runs on goroutines of the scheduler's own, so without it a panic
+// in one would crash the broker.
+func (s *Scheduler) survive(what string, failed func()) {
+	r := recover()
+	if r == nil {
+		return
+	}
+
+	stack := debug.Stack()
+
+	// A panic that within handed back carries the stack of the call.
+	if p, ok := r.(*callPanic); ok {
+		r, stack = p.value, p.stack
+	}
+
+	s.mu.Lock()
+	log := s.log
+	s.mu.Unlock()
+
+	log.Errorf("certificate inventory: %s panicked, and the scheduler keeps running: %v\n%s", what, r, stack)
+
+	if failed != nil {
+		failed()
 	}
 }
 
@@ -291,6 +343,13 @@ func (s *Scheduler) requestScan(ids []string) (*fleetRun, bool) {
 	go func() {
 		defer s.wg.Done()
 		defer close(run.done)
+		defer s.survive("fleet scan "+run.id, func() {
+			s.mu.Lock()
+			run.running = false
+			run.completedAt = s.now()
+			run.failed = true
+			s.mu.Unlock()
+		})
 
 		s.fleetScan(s.ctx, run, subset)
 	}()
@@ -402,7 +461,7 @@ feeding:
 // tryScan scans one instance when its lock is free and stores the result.
 // It reports whether the scan succeeded and whether it ran and was stored.
 func (s *Scheduler) tryScan(ctx context.Context, job scanJob) (bool, bool) {
-	lock := s.lockFor(job.id)
+	lock := s.lockFor(job.ref.ID)
 
 	select {
 	case lock <- struct{}{}:
@@ -426,7 +485,7 @@ func (s *Scheduler) tryScan(ctx context.Context, job scanJob) (bool, bool) {
 func (s *Scheduler) scanHeld(ctx context.Context, job scanJob, lock chan struct{}) (InstanceScan, bool) {
 	defer func() { <-lock }()
 
-	scan := job.run(ctx)
+	scan := s.runJob(ctx, job)
 	if ctx.Err() != nil {
 		return scan, false
 	}
@@ -434,6 +493,18 @@ func (s *Scheduler) scanHeld(ctx context.Context, job scanJob, lock chan struct{
 	s.store(scan)
 
 	return scan, true
+}
+
+// runJob runs the job. A job that panics returns a failed scan instead,
+// with the error scanPanicked.
+func (s *Scheduler) runJob(ctx context.Context, job scanJob) (scan InstanceScan) {
+	started := s.now()
+
+	defer s.survive("the scan of instance "+job.ref.ID, func() {
+		scan = InstanceScan{Ref: job.ref, ScannedAt: started, Err: scanPanicked}
+	})
+
+	return job.run(ctx)
 }
 
 // SetReconciler gives the scheduler the divergence store and the sources
@@ -459,6 +530,8 @@ func (s *Scheduler) reconcile(ctx context.Context, scan InstanceScan) {
 	if store == nil {
 		return
 	}
+
+	defer s.survive("the reconcile of instance "+scan.Ref.ID+" with its scan", nil)
 
 	if err := store.ReconcileScan(ctx, scan, src); err != nil {
 		src.log().Errorf("certificate divergence: the record of instance %s could not be reconciled with its scan, so it stays as it was until the next scan: %v", scan.Ref.ID, err)
@@ -723,13 +796,13 @@ func (s *Scheduler) drop(listed map[string]bool) {
 }
 
 func (s *Scheduler) instanceJob(ref InstanceRef) scanJob {
-	return scanJob{id: ref.ID, run: func(ctx context.Context) InstanceScan {
+	return scanJob{ref: ref, run: func(ctx context.Context) InstanceScan {
 		return s.scanner.ScanInstance(ctx, ref)
 	}}
 }
 
 func (s *Scheduler) brokerJob() scanJob {
-	return scanJob{id: BrokerScanID, run: func(ctx context.Context) InstanceScan {
+	return scanJob{ref: InstanceRef{ID: BrokerScanID, Name: "broker"}, run: func(ctx context.Context) InstanceScan {
 		return s.scanner.ScanBroker(ctx, s.broker())
 	}}
 }

@@ -1086,3 +1086,121 @@ func TestStopCancelsScanInstanceNow(t *testing.T) {
 		t.Error("a scan cancelled by Stop was stored")
 	}
 }
+
+// startLoggedScheduler starts a scheduler on the timer the test drives,
+// logging to a recorder, and waits for its first wait.
+func startLoggedScheduler(t *testing.T, sc instanceScanner, cache *Cache, list InstanceLister) (*Scheduler, *fakeAfter, *recLogger) {
+	t.Helper()
+
+	fa := newFakeAfter()
+	log := newRecLogger()
+
+	s := NewScheduler(sc, cache, list, nil, settingsWith(4, 60), nil, fa.after)
+	s.SetLogger(log)
+	s.Start(t.Context())
+	t.Cleanup(s.Stop)
+
+	fa.next(t)
+
+	return s, fa, log
+}
+
+// expectPanicLogged fails the test unless one line logs the panic with
+// the stack of the goroutine it happened on.
+func expectPanicLogged(t *testing.T, log *recLogger, value, frame string) {
+	t.Helper()
+
+	if lines := log.logged(value, "goroutine ", frame); len(lines) != 1 {
+		t.Fatalf("expected the panic %q logged once with its stack, got %q", value, log.logged())
+	}
+}
+
+// A scheduled scan that panics fails that scan alone, which the cache and
+// the state record, logs the panic with its stack, and the timer scans
+// again.
+func TestScheduledScanPanicFailsThatScan(t *testing.T) {
+	t.Parallel()
+
+	sc := newFakeScanner()
+	sc.result = func(ref InstanceRef, n int) InstanceScan {
+		if ref.ID == "a" && n == 1 {
+			panic("the scan of a blew up")
+		}
+
+		scan := cachedScan(ref.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+		scan.Ref = ref
+
+		return scan
+	}
+
+	var cache Cache
+
+	s, fa, log := startLoggedScheduler(t, sc, &cache, staticLister("a", "b"))
+
+	fa.fire(t, 0)
+	fa.next(t)
+
+	st := s.State()
+	if st.State != ScanIdle || len(st.Errors) != 1 || st.Errors[0].InstanceID != "a" || st.Errors[0].Error != scanPanicked {
+		t.Fatalf("expected the scan of a alone failed, got %+v", st)
+	}
+
+	if a, ok := cache.Get("a"); !ok || a.Err != scanPanicked || a.Ref.Deployment != "svc-a" {
+		t.Fatalf("expected a's failed scan cached with its ref, got %+v (cached %v)", a, ok)
+	}
+
+	if b, ok := cache.Get("b"); !ok || b.Err != "" {
+		t.Fatalf("expected b's scan cached, got %+v (cached %v)", b, ok)
+	}
+
+	expectPanicLogged(t, log, "the scan of a blew up", "(*fakeScanner).scan")
+
+	fa.fire(t, 1)
+	fa.next(t)
+
+	if n := sc.count("a"); n != 2 {
+		t.Fatalf("expected the timer to scan a again, got %d scans", n)
+	}
+
+	if st := s.State(); st.State != ScanIdle || len(st.Errors) != 0 {
+		t.Fatalf("expected the next scan of a to clear its failure, got %+v", st)
+	}
+}
+
+// A fleet scan whose instance list panics fails, logs the panic with the
+// stack of the call that panicked, and the timer scans again.
+func TestScheduledScanListPanicFailsTheFleetScan(t *testing.T) {
+	t.Parallel()
+
+	var lists atomic.Int32
+
+	list := func(context.Context) ([]InstanceRef, error) {
+		if lists.Add(1) == 1 {
+			panic("the instance index blew up")
+		}
+
+		return refs("a"), nil
+	}
+
+	sc := newFakeScanner()
+
+	var cache Cache
+
+	s, fa, log := startLoggedScheduler(t, sc, &cache, list)
+
+	fa.fire(t, 0)
+	fa.next(t)
+
+	if st := s.State(); st.State != ScanFailed || st.CompletedAt == nil {
+		t.Fatalf("expected the fleet scan to fail and finish, got %+v", st)
+	}
+
+	expectPanicLogged(t, log, "the instance index blew up", "TestScheduledScanListPanicFailsTheFleetScan")
+
+	fa.fire(t, 1)
+	fa.next(t)
+
+	if st := s.State(); st.State != ScanIdle || sc.count("a") != 1 {
+		t.Fatalf("expected the timer to scan again, got %+v and %d scans of a", st, sc.count("a"))
+	}
+}
