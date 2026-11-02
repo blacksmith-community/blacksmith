@@ -9,11 +9,15 @@ properties:
   plugins: []
   cf:
     nats_tls_only: true
+    exodus_path: secret/exodus/fixture-env/cf
+    deployment_name: fixture-env-cf
+    system_domain: sys.fixture.example
+    api_url: https://api.sys.fixture.example
+    username: fixture-admin
+    password: fixture-password-not-real
     deployment_env: fixture-env
     deployment_type: cf
-    deployment_name: fixture-env-cf
     core_network: fixture-core-network
-    system_domain: sys.fixture.example
   service:
     id: rabbitmq
     name: rabbitmq
@@ -31,10 +35,80 @@ properties:
       limit: 7
       type: standalone
       vm_type: default
-  bosh:
-    deployment_name: fixture-env
   rabbitmq:
+    autoscale:
+      enabled: true
     route_registrar:
       enabled: true
       tls:
         enabled: false
+  loggregator:
+    tls:
+      ca_cert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+      agent:
+        cert: |
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+        key: |
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+  syslog_agent_api:
+    tls:
+      ca_cert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+      cert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+      key: |
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+  syslog_agent_metrics:
+    tls:
+      ca_cert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+      cert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+      key: |
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+  forwarder_agent_metrics:
+    tls:
+      ca_cert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+      cert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+      key: |
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+  rabbitmq_metrics_emitter:
+    cloud_foundry:
+      api: https://api.sys.fixture.example
+      skip_ssl_validation: false
+      username: fixture-admin
+      password: fixture-password-not-real
+    rmq_management:
+      skip_ssl_validation: true
+      mgmt_port: '15671'
+      mgmt_scheme: https
+      mgmt_host: localhost
+  bosh:
+    deployment_name: fixture-env

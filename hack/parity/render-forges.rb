@@ -13,7 +13,8 @@
 #   2. renders the forge's *-blacksmith-plans job with bosh-template,
 #   3. runs bin/configure-blacksmith against a temporary root, so that
 #      service.yml and each plan's plan.yml come out as they do on a VM,
-#   4. rewrites the job paths into fixture-relative paths, and
+#   4. rewrites the /var/vcap/jobs paths into fixture-relative paths, adds
+#      a placeholder for the CA file the broker VM provides, and
 #   5. writes the tree to <forge>/<variant>/ in the fixture directory.
 #
 # It then scans every rendered YAML file for duplicate mapping keys, which
@@ -47,6 +48,13 @@ def deep_merge(base, overlay)
   return overlay unless base.is_a?(Hash) && overlay.is_a?(Hash)
 
   base.merge(overlay) { |_key, left, right| deep_merge(left, right) }
+end
+
+# Returns a variant's overlay, built on the variant it extends if any.
+def variant_overlay(variants, name)
+  overlay = (variants.fetch(name) || {}).dup
+  parent = overlay.delete('extends')
+  parent ? deep_merge(variant_overlay(variants, parent), overlay) : overlay
 end
 
 def resolve_placeholders(value, placeholders)
@@ -124,10 +132,9 @@ end
 
 # Rewrites root-relative job paths so fixtures do not depend on where they
 # were rendered.
-def relativize(path, root, job_name)
+def relativize(path, root)
   text = File.binread(path)
-  fixed = text.gsub("#{root}/jobs/#{job_name}/", "jobs/#{job_name}/")
-              .gsub("/var/vcap/jobs/#{job_name}/", "jobs/#{job_name}/")
+  fixed = text.gsub("#{root}/jobs/", 'jobs/').gsub('/var/vcap/jobs/', 'jobs/')
   File.binwrite(path, fixed) unless fixed == text
 end
 
@@ -165,8 +172,13 @@ def render_variant(name, forge, variant, overlay, placeholders, job_dir, out)
     end
     Dir.glob('**/*', base: out).each do |rel|
       path = File.join(out, rel)
-      relativize(path, root, forge['job']) if File.file?(path)
+      relativize(path, root) if File.file?(path)
     end
+    # The broker VM's own blacksmith job holds the CA that plan manifests read
+    # with the file operator.
+    ca = File.join(out, 'jobs/blacksmith/config/tls/blacksmith_services_ca')
+    FileUtils.mkdir_p(File.dirname(ca))
+    File.write(ca, placeholders.fetch('cert'))
     File.write(File.join(out, 'properties.yml'),
                YAML.dump('release' => "#{name}-forge #{forge['version']}",
                          'variant' => variant, 'properties' => properties))
@@ -226,9 +238,10 @@ config['forges'].each do |name, forge|
   next if options[:forge] && options[:forge] != name
 
   job_dir = download(forge, name, work)
-  forge['variants'].each do |variant, overlay|
+  forge['variants'].each_key do |variant|
     out = File.join(target, name, variant)
-    render_variant(name, forge, variant, overlay || {}, config['placeholders'], job_dir, out)
+    overlay = variant_overlay(forge['variants'], variant)
+    render_variant(name, forge, variant, overlay, config['placeholders'], job_dir, out)
     problems.concat(scan_duplicates(out).map { |p| "#{name}/#{variant}/#{p}" })
     puts "rendered #{name}/#{variant}"
   end

@@ -1,0 +1,45 @@
+$.director_uuid	string	"00000000-0000-4000-8000-000000000000"
+$.instance_groups[0].azs[0]	string	"z1"
+$.instance_groups[0].instances	int	1
+$.instance_groups[0].jobs[0].consumes.db.from	string	"postgres"
+$.instance_groups[0].jobs[0].name	string	"postgres"
+$.instance_groups[0].jobs[0].properties.postgres.config.listen_addresses	string	"0.0.0.0"
+$.instance_groups[0].jobs[0].properties.postgres.config.port	int	5432
+$.instance_groups[0].jobs[0].properties.postgres.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.instance_groups[0].jobs[0].properties.postgres.hba[1]	string	"host all all ::/0 md5"
+$.instance_groups[0].jobs[0].properties.postgres.users[0].admin	bool	true
+$.instance_groups[0].jobs[0].properties.postgres.users[0].password	string	"yes"
+$.instance_groups[0].jobs[0].properties.postgres.users[0].username	string	"y"
+$.instance_groups[0].jobs[0].provides.db.as	string	"postgres"
+$.instance_groups[0].jobs[0].release	string	"postgres"
+$.instance_groups[0].name	string	"postgresql"
+$.instance_groups[0].networks[0].name	string	"postgresql-service"
+$.instance_groups[0].persistent_disk	int	2048
+$.instance_groups[0].stemcell	string	"default"
+$.instance_groups[0].vm_type	string	"default"
+$.meta.default.az	string	"z1"
+$.meta.disk	int	2048
+$.meta.disk_type	string	"default"
+$.meta.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.meta.hba[1]	string	"host all all ::/0 md5"
+$.meta.net	string	"postgresql-service"
+$.meta.params.instance_id	string	"parity-postgresql-base"
+$.meta.service.password	string	"yes"
+$.meta.service.port	int	5432
+$.meta.service.username	string	"y"
+$.meta.size	string	"default"
+$.meta.users[0].admin	bool	true
+$.meta.users[0].password	string	"yes"
+$.meta.users[0].username	string	"y"
+$.name	string	"postgresql-standalone-parity-postgresql-base"
+$.releases[0].name	string	"postgres"
+$.releases[0].sha1	string	"7699715ed0b7ec129f60958e2864958030333cea"
+$.releases[0].url	string	"https://github.com/cloudfoundry-community/postgres-boshrelease/releases/download/v3.2.2/postgres-3.2.2.tgz"
+$.releases[0].version	string	"3.2.2"
+$.stemcells[0].alias	string	"default"
+$.stemcells[0].os	string	"ubuntu-bionic"
+$.stemcells[0].version	string	"latest"
+$.update.canaries	int	1
+$.update.canary_watch_time	string	"1000-30000"
+$.update.max_in_flight	int	10
+$.update.update_watch_time	string	"1000-30000"

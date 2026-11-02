@@ -74,7 +74,7 @@ instance_groups:
         tls:
           enabled: (( grab meta.rabbitmq.tls.enabled || false ))
           dual-mode: (( grab meta.rabbitmq.tls.dual-mode || false ))
-          ca: (( file "/var/vcap/jobs/blacksmith/config/tls/blacksmith_services_ca" ))
+          ca: (( file "jobs/blacksmith/config/tls/blacksmith_services_ca" ))
           crt: ((rabbitmq_standalone_crt.certificate))
           key: ((rabbitmq_standalone_crt.private_key))
 

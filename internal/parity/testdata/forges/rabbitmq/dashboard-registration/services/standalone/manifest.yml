@@ -13,8 +13,37 @@ meta:
   erlang_cookie: (( vault $CREDENTIALS "/rabbitmq/erlang:cookie" ))
   plugins: []
 
+  cf:
+    exodus_path: secret/exodus/fixture-env/cf
+    deployment_name: fixture-env-cf
+    system_domain: sys.fixture.example
+    api_url:    https://api.sys.fixture.example
+    username:   fixture-admin
+    password:   fixture-password-not-real
 
+  mgmt_ssl:    true
+  mgmt_port:   15671
+  mgmt_scheme: https
+  mgmt_host:   localhost
 
+variables:
+
+- name: rabbitmq_metrics_emitter_crt
+  type: certificate
+
+  options:
+    ca: (( concat "/" meta.bosh_env "-bosh/" meta.environment "-blacksmith/blacksmith_services_ca" ))
+    common_name: (( concat meta.environment "-rabbitmq-metrics-emitter.bosh" ))
+
+  consumes:
+    common_name:
+      from: rabbitmq-emitter
+
+    alternative_name: 
+      from: rabbitmq-emitter
+
+      properties:
+        wildcard: true
 
 
 params:
@@ -90,6 +119,77 @@ instance_groups:
       - name: rabbitmq-alias-domain
         type: placeholder
 
+  - name: loggr-syslog-agent
+    release: loggregator-agent
+    
+    consumes:
+      binding_cache:
+        from: binding_cache
+        deployment: fixture-env-cf
+    properties:
+      port: 3460
+      drain_ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+      tls:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.key" ))
+      cache:
+        tls:
+          ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_api.ca" ))
+          cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_api.crt" ))
+          key: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_api.key" ))
+          cn: binding-cache
+      metrics:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_metrics.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_metrics.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_metrics.key" ))
+        server_name: syslog_agent_metrics
+
+  - name: loggr-forwarder-agent
+    release: loggregator-agent
+    properties:
+      tls:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.key" ))
+      metrics:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/forwarder_agent_metrics.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/forwarder_agent_metrics.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/forwarder_agent_metrics.key" ))
+        server_name: forwarder_agent_metrics
+        
+  - name: rabbitmq-metrics-emitter
+    release: rabbitmq-metrics-emitter
+
+    properties:
+      rabbitmq_metrics_emitter:
+        cloud_foundry:
+          api:    (( grab meta.cf.api_url ))
+          skip_ssl_validation: false
+          username: fixture-admin
+          password: fixture-password-not-real
+
+        rmq_management:
+          skip_ssl_validation: (( grab meta.mgmt_ssl ))
+          endpoint: (( concat meta.mgmt_scheme "://" meta.mgmt_host ":" meta.mgmt_port "/api" ))
+          user: (( grab meta.username ))
+          password: (( grab meta.password ))
+
+        loggregator:
+          tls:
+            cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.crt" ))
+            key: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.key" ))
+            ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+
+    provides:
+      rabbitmq-emitter:
+        as: rabbitmq-emitter
+        ip_addresses: false
+
+    custom_provider_definitions:
+      - name: rabbitmq-emitter
+        type: address
+
   - name: route_registrar
     release: routing
 
@@ -148,6 +248,23 @@ addons:
           network: (( grab params.cf.core_network ))
           query: _
 
+      - domain: log-cache.service.cf.internal
+
+        targets:
+        - deployment: (( grab meta.cf.deployment_name ))
+          domain: bosh
+          instance_group: log-cache
+          network: (( grab params.cf.core_network ))
+          query: '*'
+
+      - domain: _.log-cache.service.cf.internal 
+      
+        targets:
+        - deployment: (( grab meta.cf.deployment_name ))
+          domain: bosh
+          instance_group: log-cache
+          network: (( grab params.cf.core_network ))
+          query: _
 
 
 releases:
@@ -165,6 +282,14 @@ releases:
     version: "0.0.4"
     url: "https://bosh.io/d/github.com/cloudfoundry/bosh-dns-aliases-release?v=0.0.4"
     sha1: "55b3dced813ff9ed92a05cda02156e4b5604b273"
+  - name: "loggregator-agent"
+    version: "8.3.8"
+    url: "https://bosh.io/d/github.com/cloudfoundry/loggregator-agent-release?v=8.3.8"
+    sha1: "c0871307d993aa1766982b04f312affa83bce926"
+  - name:    rabbitmq-metrics-emitter
+    version: 0.4.1
+    url:     https://github.com/cloudfoundry-community/rabbitmq-metrics-emitter-release/releases/download/v0.4.1/rabbitmq-metrics-emitter-0.4.1.tgz
+    sha1:    05afc6f3559f45e0696c6a3760242045640e0df8
 
 stemcells:
 - alias: default

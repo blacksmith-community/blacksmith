@@ -1,0 +1,225 @@
+package manifest
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"blacksmith/internal/bosh"
+	"blacksmith/internal/parity"
+	"blacksmith/internal/services"
+	"blacksmith/pkg/logger"
+	"blacksmith/pkg/utils"
+	"go.yaml.in/yaml/v2"
+)
+
+// TestMain stops the OpenBao dev server that the parity tests share.
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	parity.CloseSharedVault()
+	os.Exit(code)
+}
+
+const (
+	parityDirectorUUID = "00000000-0000-4000-8000-000000000000"
+	parityNetwork      = "fixture-net"
+)
+
+// parityParams are the provision parameters a plan renders with. The tuned
+// set carries the integral numbers JSON delivers as float64, which the redis
+// forges grab into their job configuration.
+func parityParams(paramSet string, instanceID string) map[interface{}]interface{} {
+	params := map[interface{}]interface{}{"instance_id": instanceID}
+
+	if paramSet == "tuned" {
+		params["slowlog-max-len"] = float64(128)
+		params["slowlog-log-slower-than"] = float64(10000)
+		params["notify-keyspace-events"] = "KEA"
+		params["maxmemory-policy"] = "allkeys-lru"
+	}
+
+	return params
+}
+
+func parityParamSets(forge string) []string {
+	if forge == "redis" {
+		return []string{"none", "tuned"}
+	}
+
+	return []string{"none"}
+}
+
+// parityGolden records the manifest bytes and the canonical dump of what a
+// YAML reader makes of them, or the error that came out instead.
+func parityGolden(t *testing.T, base string, manifestYAML string, err error) {
+	t.Helper()
+
+	if err != nil {
+		parity.Golden(t, base+".yml", "ERROR: "+err.Error()+"\n")
+
+		return
+	}
+
+	parity.Golden(t, base+".yml", manifestYAML)
+
+	var decoded map[interface{}]interface{}
+
+	decodeErr := yaml.Unmarshal([]byte(manifestYAML), &decoded)
+	if decodeErr != nil {
+		t.Fatalf("decode %s: %s", base, decodeErr)
+	}
+
+	parity.Golden(t, base+".dump", parity.Dump(decoded))
+}
+
+func readParityService(t *testing.T, fixture parity.Fixture) services.Service {
+	t.Helper()
+
+	service, err := services.ReadService(fixture.ServicesDir())
+	if err != nil {
+		t.Fatalf("read %s: %s", fixture.Name(), err)
+	}
+
+	return service
+}
+
+func prepareParityFixture(t *testing.T, fixture parity.Fixture) string {
+	t.Helper()
+
+	server := parity.SharedVault(t)
+	instanceID := parity.InstanceID(fixture)
+
+	parity.SeedCredentials(t, server, fixture, instanceID)
+	t.Setenv("CREDENTIALS", parity.CredentialsPath(instanceID))
+	t.Setenv("SPRUCE_FILE_BASE_PATH", fixture.Dir)
+	t.Setenv("BOSH_NETWORK", parityNetwork)
+
+	return instanceID
+}
+
+//nolint:paralleltest // spruce keeps global state, and the test sets environment variables
+func TestGenManifestParity(t *testing.T) {
+	for _, fixture := range parity.Fixtures(t) {
+		t.Run(fixture.Name(), func(t *testing.T) {
+			instanceID := prepareParityFixture(t, fixture)
+
+			for _, plan := range readParityService(t, fixture).Plans {
+				for _, paramSet := range parityParamSets(fixture.Forge) {
+					// Read the plan again, because a merge may reuse its maps.
+					var current services.Plan
+
+					for _, candidate := range readParityService(t, fixture).Plans {
+						if candidate.ID == plan.ID {
+							current = candidate
+						}
+					}
+
+					defaults := map[interface{}]interface{}{
+						"name":          current.ID + "-" + instanceID,
+						"director_uuid": parityDirectorUUID,
+					}
+
+					rendered, err := GenManifest(current, defaults, utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
+					base := filepath.Join("testdata", "manifests", fixture.Forge, fixture.Variant, plan.ID+"."+paramSet)
+					parityGolden(t, base, rendered, err)
+				}
+			}
+		})
+	}
+}
+
+var parityJobReference = regexp.MustCompile(`(?m)^[^#\n]*\bjobs\.([A-Za-z0-9_\-]+)(?:/\d+)?\.ips`)
+
+// parityJobName returns the instance group the plan's credentials read from
+// the VMs, which is standalone or node unless the credentials name another.
+func parityJobName(t *testing.T, plan services.Plan) string {
+	t.Helper()
+
+	data, err := os.ReadFile(plan.CredentialsPath)
+	if err != nil {
+		t.Fatalf("read %s: %s", plan.CredentialsPath, err)
+	}
+
+	if match := parityJobReference.FindSubmatch(data); match != nil {
+		return string(match[1])
+	}
+
+	if strings.Contains(plan.Type, "standalone") {
+		return "standalone"
+	}
+
+	return "node"
+}
+
+// parityVMs returns the VMs a plan's deployment has, one for a standalone
+// plan and three nodes for any other.
+func parityVMs(t *testing.T, plan services.Plan, deployment string) []bosh.VM {
+	t.Helper()
+
+	job := parityJobName(t, plan)
+	ids := []string{
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		"33333333-3333-4333-8333-333333333333",
+	}
+
+	if strings.Contains(plan.Type, "standalone") {
+		ids = ids[:1]
+	}
+
+	vms := make([]bosh.VM, 0, len(ids))
+
+	for index, id := range ids {
+		vms = append(vms, bosh.VM{
+			ID: id, Job: job, Index: index,
+			IPs: []string{fmt.Sprintf("10.0.0.%d", 11+index)},
+			DNS: []string{id + "." + job + "." + parityNetwork + "." + deployment + ".bosh"},
+		})
+	}
+
+	return vms
+}
+
+//nolint:paralleltest // spruce keeps global state, and the test sets environment variables
+func TestCredentialsManifestParity(t *testing.T) {
+	log := &logger.NoOpLogger{}
+
+	for _, fixture := range parity.Fixtures(t) {
+		t.Run(fixture.Name(), func(t *testing.T) {
+			instanceID := prepareParityFixture(t, fixture)
+
+			for _, plan := range readParityService(t, fixture).Plans {
+				deployment := plan.ID + "-" + instanceID
+				jobs, dnsname := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, map[string]string{}, log)
+				base := filepath.Join("testdata", "credentials", fixture.Forge, fixture.Variant, plan.ID)
+
+				jobsIfc, err := marshalJobsToInterface(jobs, log)
+				if err != nil {
+					t.Fatalf("%s: %s", plan.ID, err)
+				}
+
+				manifestYAML, err := generateCredentialsManifest(plan, jobsIfc, deployment, instanceID, dnsname, log)
+				if err != nil {
+					parity.Golden(t, base+".yml", "ERROR: "+err.Error()+"\n")
+
+					continue
+				}
+
+				parity.Golden(t, base+".yml", manifestYAML)
+
+				credentials, err := extractCredentialsFromManifest(manifestYAML, log)
+
+				recorded := map[string]interface{}{"jobs": jobsIfc, "credentials": credentials}
+				if err != nil {
+					recorded["error"] = err.Error()
+				}
+
+				parity.Golden(t, base+".dump", parity.Dump(recorded))
+			}
+		})
+	}
+}

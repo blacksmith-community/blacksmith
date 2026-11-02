@@ -1,0 +1,63 @@
+$.ID	string	"mariadb"
+$.Name	string	"mariadb"
+$.Type	string	""
+$.Description	string	"A dedicated MariaDB instance, deployed on-demand"
+$.Bindable	bool	true
+$.Tags[0]	string	"blacksmith"
+$.Tags[1]	string	"dedicated"
+$.Tags[2]	string	"mariadb"
+$.Limit	int	0
+$.Plans[0].ID	string	"mariadb-standalone"
+$.Plans[0].Name	string	"standalone"
+$.Plans[0].Description	string	"A dedicated MariaDB server, with no redundancy or replication\n"
+$.Plans[0].Limit	int	7
+$.Plans[0].Type	string	""
+$.Plans[0].Manifest.instance_groups[0].azs[0]	string	"(( grab meta.azs || meta.default.azs ))"
+$.Plans[0].Manifest.instance_groups[0].instances	int	1
+$.Plans[0].Manifest.instance_groups[0].jobs[0].name	string	"standalone"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.db.admin_password	string	"(( grab meta.admin_password ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.db.admin_username	string	"(( grab meta.admin_username ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.db.database_name	string	"(( grab meta.database_name ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].release	string	"mariadb-forge"
+$.Plans[0].Manifest.instance_groups[0].name	string	"standalone"
+$.Plans[0].Manifest.instance_groups[0].networks[0].name	string	"(( grab meta.net || \"mariadb-service\" ))"
+$.Plans[0].Manifest.instance_groups[0].persistent_disk	string	"(( grab meta.disk ))"
+$.Plans[0].Manifest.instance_groups[0].stemcell	string	"default"
+$.Plans[0].Manifest.instance_groups[0].vm_type	string	"(( grab meta.size ))"
+$.Plans[0].Manifest.meta.admin_password	string	"(( vault $CREDENTIALS \"/standalone/system:password\" ))"
+$.Plans[0].Manifest.meta.admin_username	string	"(( vault $CREDENTIALS \"/standalone/system:username\" ))"
+$.Plans[0].Manifest.meta.database_name	string	"service_instance_db"
+$.Plans[0].Manifest.meta.default.azs	string	"z1"
+$.Plans[0].Manifest.meta.disk	int	2048
+$.Plans[0].Manifest.meta.net	string	"mariadb-service"
+$.Plans[0].Manifest.meta.size	string	"default"
+$.Plans[0].Manifest.releases[0].name	string	"mariadb-forge"
+$.Plans[0].Manifest.releases[0].version	string	"latest"
+$.Plans[0].Manifest.stemcells[0].alias	string	"default"
+$.Plans[0].Manifest.stemcells[0].os	string	"ubuntu-bionic"
+$.Plans[0].Manifest.stemcells[0].version	string	"latest"
+$.Plans[0].Manifest.update.canaries	int	1
+$.Plans[0].Manifest.update.canary_watch_time	string	"1000-30000"
+$.Plans[0].Manifest.update.max_in_flight	int	10
+$.Plans[0].Manifest.update.update_watch_time	string	"1000-30000"
+$.Plans[0].Credentials.credentials.host	string	"(( grab jobs.standalone/0.ips[0] ))"
+$.Plans[0].Credentials.credentials.hostname	string	"(( grab credentials.host ))"
+$.Plans[0].Credentials.credentials.jdbcUrl	string	"(( concat \"jdbc:mysql://\" credentials.host \":\" credentials.port \"/\" credentials.name \"?user=\" credentials.username \"&password=\" credentials.password \"&useSSL=false\" ))"
+$.Plans[0].Credentials.credentials.name	string	"(( grab meta.database_name ))"
+$.Plans[0].Credentials.credentials.password	string	"(( grab meta.admin_password ))"
+$.Plans[0].Credentials.credentials.port	int	3306
+$.Plans[0].Credentials.credentials.uri	string	"(( concat \"mysql://\" credentials.username \":\" credentials.password \"@\" credentials.host \":\" credentials.port \"/\" credentials.name \"?reconnect=true\" ))"
+$.Plans[0].Credentials.credentials.username	string	"(( grab meta.admin_username ))"
+$.Plans[0].InitScriptPath	string	"<fixtures>/mariadb/base/services/standalone/init"
+$.Plans[0].ManifestPath	string	"<fixtures>/mariadb/base/services/standalone/manifest.yml"
+$.Plans[0].CredentialsPath	string	"<fixtures>/mariadb/base/services/standalone/credentials.yml"
+$.Plans[0].Service.ID	string	"mariadb"
+$.Plans[0].Service.Name	string	"mariadb"
+$.Plans[0].Service.Type	string	""
+$.Plans[0].Service.Description	string	"A dedicated MariaDB instance, deployed on-demand"
+$.Plans[0].Service.Bindable	bool	true
+$.Plans[0].Service.Tags[0]	string	"blacksmith"
+$.Plans[0].Service.Tags[1]	string	"dedicated"
+$.Plans[0].Service.Tags[2]	string	"mariadb"
+$.Plans[0].Service.Limit	int	0
+$.Plans[0].Service.Plans	[]services.Plan	null

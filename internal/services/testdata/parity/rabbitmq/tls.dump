@@ -1,0 +1,136 @@
+$.ID	string	"rabbitmq"
+$.Name	string	"rabbitmq"
+$.Type	string	"standalone"
+$.Description	string	"A dedicated RabbitMQ instance, deployed on-demand"
+$.Bindable	bool	true
+$.Tags[0]	string	"blacksmith"
+$.Tags[1]	string	"dedicated"
+$.Tags[2]	string	"rabbitmq"
+$.Limit	int	0
+$.Plans[0].ID	string	"rabbitmq-standalone"
+$.Plans[0].Name	string	"standalone"
+$.Plans[0].Description	string	"A dedicated RabbitMQ server, with no redundancy or replication\n"
+$.Plans[0].Limit	int	7
+$.Plans[0].Type	string	"standalone"
+$.Plans[0].Manifest.features.use_dns_addresses	bool	true
+$.Plans[0].Manifest.instance_groups[0]..	string	"(( inject meta.disk_config ))"
+$.Plans[0].Manifest.instance_groups[0].azs	string	"(( grab meta.azs ))"
+$.Plans[0].Manifest.instance_groups[0].instances	int	1
+$.Plans[0].Manifest.instance_groups[0].jobs[0].consumes.rabbitmq-servers.from	string	"rabbitmq-servers"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].consumes.rabbitmq-servers.ip_addresses	bool	false
+$.Plans[0].Manifest.instance_groups[0].jobs[0].custom_provider_definitions[0].name	string	"rabbitmq-san"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].custom_provider_definitions[0].type	string	"address"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].custom_provider_definitions[1].name	string	"rabbitmq-alias-domain"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].custom_provider_definitions[1].type	string	"placeholder"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].name	string	"rabbitmq"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.erlang.cookie	string	"(( grab meta.erlang_cookie ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.plugins	string	"(( grab meta.plugins ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.admin.pass	string	"(( grab meta.password ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.admin.user	string	"(( grab meta.username ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.app.pass	string	"(( grab meta.password-app ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.app.user	string	"(( grab meta.username-app ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.monitoring.pass	string	"(( grab meta.password-monitoring ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.monitoring.user	string	"(( grab meta.username-monitoring ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.network	string	"(( grab meta.net || \"rabbitmq-service\" ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.plan	string	"standalone"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.tls.ca	string	"(( file \"jobs/blacksmith/config/tls/blacksmith_services_ca\" ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.tls.crt	string	"((rabbitmq_standalone_crt.certificate))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.tls.dual-mode	string	"(( grab meta.rabbitmq.tls.dual-mode || false ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.tls.enabled	string	"(( grab meta.rabbitmq.tls.enabled || false ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.tls.key	string	"((rabbitmq_standalone_crt.private_key))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].properties.rabbitmq.vhost	string	"(( grab meta.params.instance_id || \"/\" ))"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].provides.rabbitmq-alias-domain.aliases[0].domain	string	"_.rabbitmq_standalone.bosh"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].provides.rabbitmq-alias-domain.aliases[0].placeholder_type	string	"uuid"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].provides.rabbitmq-san.as	string	"rabbitmq-san"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].provides.rabbitmq-san.ip_addresses	bool	false
+$.Plans[0].Manifest.instance_groups[0].jobs[0].provides.rabbitmq-servers.as	string	"rabbitmq-servers"
+$.Plans[0].Manifest.instance_groups[0].jobs[0].provides.rabbitmq-servers.ip_addresses	bool	false
+$.Plans[0].Manifest.instance_groups[0].jobs[0].release	string	"rabbitmq-forge"
+$.Plans[0].Manifest.instance_groups[0].name	string	"standalone"
+$.Plans[0].Manifest.instance_groups[0].networks[0].name	string	"(( grab meta.net || \"rabbitmq-service\" ))"
+$.Plans[0].Manifest.instance_groups[0].stemcell	string	"default"
+$.Plans[0].Manifest.instance_groups[0].vm_type	string	"(( grab meta.size ))"
+$.Plans[0].Manifest.meta.azs[0]	string	"z1"
+$.Plans[0].Manifest.meta.bosh_env	string	"fixture-env"
+$.Plans[0].Manifest.meta.disk_config	map[interface {}]interface {}	{}
+$.Plans[0].Manifest.meta.environment	string	"fixture-env"
+$.Plans[0].Manifest.meta.erlang_cookie	string	"(( vault $CREDENTIALS \"/rabbitmq/erlang:cookie\" ))"
+$.Plans[0].Manifest.meta.instances	int	1
+$.Plans[0].Manifest.meta.net	string	"rabbitmq-service"
+$.Plans[0].Manifest.meta.password	string	"(( vault $CREDENTIALS \"/rabbitmq/system:password\" ))"
+$.Plans[0].Manifest.meta.password-app	string	"(( vault $CREDENTIALS \"/rabbitmq/app:password\" ))"
+$.Plans[0].Manifest.meta.password-monitoring	string	"(( vault $CREDENTIALS \"/rabbitmq/monitoring:password\" ))"
+$.Plans[0].Manifest.meta.persistent	bool	false
+$.Plans[0].Manifest.meta.plugins	[]interface {}	[]
+$.Plans[0].Manifest.meta.rabbitmq.tls.ca	string	"(( file \"jobs/rabbitmq-blacksmith-plans/tls/rabbitmq.ca\" ))"
+$.Plans[0].Manifest.meta.rabbitmq.tls.crt	string	"(( file \"jobs/rabbitmq-blacksmith-plans/tls/rabbitmq.crt\" ))"
+$.Plans[0].Manifest.meta.rabbitmq.tls.enabled	bool	true
+$.Plans[0].Manifest.meta.rabbitmq.tls.key	string	"(( file \"jobs/rabbitmq-blacksmith-plans/tls/rabbitmq.key\" ))"
+$.Plans[0].Manifest.meta.size	string	"default"
+$.Plans[0].Manifest.meta.username	string	"(( vault $CREDENTIALS \"/rabbitmq/system:username\" ))"
+$.Plans[0].Manifest.meta.username-app	string	"(( vault $CREDENTIALS \"/rabbitmq/app:username\" ))"
+$.Plans[0].Manifest.meta.username-monitoring	string	"(( vault $CREDENTIALS \"/rabbitmq/monitoring:username\" ))"
+$.Plans[0].Manifest.releases[0].name	string	"rabbitmq-forge"
+$.Plans[0].Manifest.releases[0].version	string	"latest"
+$.Plans[0].Manifest.stemcells[0].alias	string	"default"
+$.Plans[0].Manifest.stemcells[0].os	string	"ubuntu-jammy"
+$.Plans[0].Manifest.stemcells[0].version	string	"latest"
+$.Plans[0].Manifest.update.canaries	int	1
+$.Plans[0].Manifest.update.canary_watch_time	string	"1000-30000"
+$.Plans[0].Manifest.update.max_in_flight	int	1
+$.Plans[0].Manifest.update.update_watch_time	string	"1000-30000"
+$.Plans[0].Manifest.variables[0].consumes.alternative_name.from	string	"rabbitmq-san"
+$.Plans[0].Manifest.variables[0].consumes.alternative_name.properties.wildcard	bool	true
+$.Plans[0].Manifest.variables[0].name	string	"rabbitmq_standalone_crt"
+$.Plans[0].Manifest.variables[0].options.alternative_names[0]	string	"(( concat name \".\" ))"
+$.Plans[0].Manifest.variables[0].options.ca	string	"(( concat \"/\" meta.bosh_env \"-bosh/\" meta.environment \"-blacksmith/blacksmith_services_ca\" ))"
+$.Plans[0].Manifest.variables[0].options.common_name	string	"(( concat meta.environment \"-rabbitmq-standalone.bosh\" ))"
+$.Plans[0].Manifest.variables[0].type	string	"certificate"
+$.Plans[0].Credentials.credentials.admin_password	string	"(( grab meta.password ))"
+$.Plans[0].Credentials.credentials.admin_username	string	"(( grab meta.username ))"
+$.Plans[0].Credentials.credentials.api_url	string	"(( concat \"https://\" jobs.standalone/0.ips[0] \":\" credentials.tls_mgmt_port \"/api\" ))"
+$.Plans[0].Credentials.credentials.dashboard_url	string	"(( concat \"https://\" jobs.standalone/0.ips[0] \":\" credentials.tls_mgmt_port \"/#/login/\"  meta.username-app \"/\" meta.password-app ))"
+$.Plans[0].Credentials.credentials.dnsname	string	"(( grab params.hostname ))"
+$.Plans[0].Credentials.credentials.host	string	"(( grab credentials.dnsname ))"
+$.Plans[0].Credentials.credentials.hostname	string	"(( grab credentials.dnsname ))"
+$.Plans[0].Credentials.credentials.hostnames	string	"(( grab credentials.dnsname ))"
+$.Plans[0].Credentials.credentials.mgmt_port	int	15672
+$.Plans[0].Credentials.credentials.monitoring_password	string	"(( grab meta.password-monitoring ))"
+$.Plans[0].Credentials.credentials.monitoring_username	string	"(( grab meta.username-monitoring ))"
+$.Plans[0].Credentials.credentials.password	string	"(( grab meta.password-app ))"
+$.Plans[0].Credentials.credentials.protocols.amqps.host	string	"(( grab credentials.dnsname ))"
+$.Plans[0].Credentials.credentials.protocols.amqps.password	string	"(( grab meta.password-app ))"
+$.Plans[0].Credentials.credentials.protocols.amqps.port	int	5671
+$.Plans[0].Credentials.credentials.protocols.amqps.ssl	bool	true
+$.Plans[0].Credentials.credentials.protocols.amqps.uri	string	"(( grab credentials.protocols.amqps.uris[0] ))"
+$.Plans[0].Credentials.credentials.protocols.amqps.uris	string	"(( cartesian-product \"amqps://\" meta.username-app \":\" meta.password-app \"@\" credentials.dnsname \":\" credentials.tls_port ))"
+$.Plans[0].Credentials.credentials.protocols.amqps.username	string	"(( grab meta.username-app ))"
+$.Plans[0].Credentials.credentials.protocols.amqps.vhost	string	"(( grab params.instance_id || \"/\" ))"
+$.Plans[0].Credentials.credentials.protocols.management_tls.host	string	"(( grab credentials.dnsname ))"
+$.Plans[0].Credentials.credentials.protocols.management_tls.password	string	"(( grab meta.password-app ))"
+$.Plans[0].Credentials.credentials.protocols.management_tls.path	string	"/api"
+$.Plans[0].Credentials.credentials.protocols.management_tls.port	int	15671
+$.Plans[0].Credentials.credentials.protocols.management_tls.ssl	bool	true
+$.Plans[0].Credentials.credentials.protocols.management_tls.uri	string	"(( grab credentials.protocols.management_tls.uris[0] ))"
+$.Plans[0].Credentials.credentials.protocols.management_tls.uris	string	"(( cartesian-product \"https://\" meta.username-app \":\" meta.password-app \"@\" credentials.dnsname \":\" credentials.tls_mgmt_port \"/api\" ))"
+$.Plans[0].Credentials.credentials.protocols.management_tls.username	string	"(( grab meta.username-app ))"
+$.Plans[0].Credentials.credentials.rmq_port	int	5672
+$.Plans[0].Credentials.credentials.tls_mgmt_port	int	15671
+$.Plans[0].Credentials.credentials.tls_port	int	5671
+$.Plans[0].Credentials.credentials.uri	string	"(( grab credentials.uris[0] ))"
+$.Plans[0].Credentials.credentials.uris	string	"(( cartesian-product \"amqps://\" meta.username-app \":\" meta.password-app \"@\" credentials.dnsname \":\" credentials.tls_port ))"
+$.Plans[0].Credentials.credentials.username	string	"(( grab meta.username-app ))"
+$.Plans[0].Credentials.credentials.vhost	string	"(( grab params.instance_id || \"/\" ))"
+$.Plans[0].InitScriptPath	string	"<fixtures>/rabbitmq/tls/services/standalone/init"
+$.Plans[0].ManifestPath	string	"<fixtures>/rabbitmq/tls/services/standalone/manifest.yml"
+$.Plans[0].CredentialsPath	string	"<fixtures>/rabbitmq/tls/services/standalone/credentials.yml"
+$.Plans[0].Service.ID	string	"rabbitmq"
+$.Plans[0].Service.Name	string	"rabbitmq"
+$.Plans[0].Service.Type	string	"standalone"
+$.Plans[0].Service.Description	string	"A dedicated RabbitMQ instance, deployed on-demand"
+$.Plans[0].Service.Bindable	bool	true
+$.Plans[0].Service.Tags[0]	string	"blacksmith"
+$.Plans[0].Service.Tags[1]	string	"dedicated"
+$.Plans[0].Service.Tags[2]	string	"rabbitmq"
+$.Plans[0].Service.Limit	int	0
+$.Plans[0].Service.Plans	[]services.Plan	null

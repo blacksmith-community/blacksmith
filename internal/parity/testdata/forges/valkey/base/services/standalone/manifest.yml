@@ -80,7 +80,7 @@ instance_groups:
             tls:
               dual-mode: (( grab meta.valkey.tls.dual-mode || false ))
               enabled: (( grab meta.valkey.tls.enabled || false ))
-              ca: (( file "/var/vcap/jobs/blacksmith/config/tls/blacksmith_services_ca" ))
+              ca: (( file "jobs/blacksmith/config/tls/blacksmith_services_ca" ))
               ca_cert: ((valkey_standalone_crt.certificate))
               ca_key: ((valkey_standalone_crt.private_key))
           lua:

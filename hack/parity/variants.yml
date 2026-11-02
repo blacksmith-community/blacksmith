@@ -4,7 +4,8 @@
 # Every credential below is an obvious placeholder.
 #
 # A variant overlay is deep-merged over the forge's base properties.  Hashes
-# merge key by key, and every other value replaces the base value.
+# merge key by key, and every other value replaces the base value.  A variant
+# that names another in `extends` is merged over that variant first.
 
 placeholders:
   cert: |
@@ -209,7 +210,10 @@ forges:
             mgmt_port: "15671"
             mgmt_scheme: https
             mgmt_host: localhost
+      # The forge reads meta.cf for the route registrar only when autoscale
+      # is on, so this variant builds on rabbitmq-autoscale.
       dashboard-registration:
+        extends: rabbitmq-autoscale
         cf:
           deployment_env: fixture-env
           deployment_type: cf
