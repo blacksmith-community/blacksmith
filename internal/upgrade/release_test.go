@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 // releaseManifest is a deployment manifest with the forge release at

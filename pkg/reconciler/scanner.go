@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 type BoshScanner struct {

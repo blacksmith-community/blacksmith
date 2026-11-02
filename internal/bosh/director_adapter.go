@@ -19,8 +19,8 @@ import (
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/geofffranks/spruce"
 	"github.com/google/uuid"
+	"go.yaml.in/yaml/v2"
 	"golang.org/x/crypto/ssh"
-	"gopkg.in/yaml.v2"
 )
 
 // Error definitions.

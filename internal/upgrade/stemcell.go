@@ -6,7 +6,7 @@ import (
 	manifestPkg "blacksmith/internal/manifest"
 
 	"github.com/geofffranks/spruce"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 // MergeStemcellOverlay merges a stemcell overlay into an existing manifest.

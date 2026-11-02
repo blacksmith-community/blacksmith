@@ -37,7 +37,7 @@ import (
 	"blacksmith/shield"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 const (

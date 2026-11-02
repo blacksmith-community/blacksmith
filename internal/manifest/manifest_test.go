@@ -6,7 +6,7 @@ import (
 
 	manifestPkg "blacksmith/internal/manifest"
 	"blacksmith/internal/services"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 var _ = Describe("Manifests", func() {

@@ -13,7 +13,7 @@ import (
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 // Constants for services operations.

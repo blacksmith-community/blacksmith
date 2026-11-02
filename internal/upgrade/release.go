@@ -3,7 +3,7 @@ package upgrade
 import (
 	"fmt"
 
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 // MergeReleaseOverlay sets the version of each target release that the

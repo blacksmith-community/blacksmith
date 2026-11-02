@@ -15,7 +15,7 @@ import (
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/certificates"
 	"blacksmith/pkg/logger"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v2"
 )
 
 // Constants for certificate handler operations.
