@@ -273,12 +273,11 @@ func TestCreateCertificateTaskCopiesApproval(t *testing.T) {
 
 	expectCertificateHolder(t, env.manager, waitInstanceID, task.ID)
 
-	// The worker may already have started the task and saved it running,
-	// so either status shows the create's record, as long as it is
-	// confirmed.
-	stored, ok := vault.storedRecord(t, certificateTasksVaultPath+"/"+task.ID)
-	if !ok || !stored.CreationConfirmed || (stored.Status != TaskStatusPending && stored.Status != TaskStatusRunning) {
-		t.Fatalf("expected a confirmed pending or running record, got %+v (stored %v)", stored, ok)
+	// The worker may already have run the task on and saved it again, so
+	// the create's own record is the second write, the confirmed one.
+	landed, ok := vault.landedRecord(t, 2)
+	if !ok || landed.ID != task.ID || !landed.CreationConfirmed || landed.Status != TaskStatusPending {
+		t.Fatalf("expected the create's confirmed pending record, got %+v (stored %v)", landed, ok)
 	}
 }
 

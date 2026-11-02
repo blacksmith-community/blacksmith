@@ -61,6 +61,8 @@ type previewDirector struct {
 	manifests map[string]string
 	variables map[string][]bosh.Variable
 	running   map[string][]bosh.Task
+	// deploymentVMs holds each deployment's VMs, which the scan lists too.
+	deploymentVMs map[string][]bosh.VM
 	// deadlines holds, by call, how long each call had left before its
 	// context's deadline, or zero for a call whose context had none.
 	deadlines map[string][]time.Duration
@@ -120,6 +122,15 @@ func (d *previewDirector) FindRunningTasksForDeployment(ctx context.Context, dep
 	d.note(ctx, "FindRunningTasksForDeployment")
 
 	return append([]bosh.Task(nil), d.running[deployment]...), nil
+}
+
+func (d *previewDirector) GetDeploymentVMs(ctx context.Context, deployment string) ([]bosh.VM, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.note(ctx, "GetDeploymentVMs")
+
+	return append([]bosh.VM(nil), d.deploymentVMs[deployment]...), nil
 }
 
 // previewTokens hands the CredHub client a fixed token.
@@ -267,10 +278,11 @@ func newPreviewEnv(t *testing.T) *previewEnv {
 
 	env := &previewEnv{
 		director: &previewDirector{
-			version:   "280.0.4",
-			manifests: make(map[string]string),
-			variables: make(map[string][]bosh.Variable),
-			running:   make(map[string][]bosh.Task),
+			version:       "280.0.4",
+			manifests:     make(map[string]string),
+			variables:     make(map[string][]bosh.Variable),
+			running:       make(map[string][]bosh.Task),
+			deploymentVMs: make(map[string][]bosh.VM),
 		},
 		credhub:  newPreviewCredHub(t),
 		ca:       newTestCA(t, "services-ca"),
@@ -363,6 +375,8 @@ func (e *previewEnv) addInstance(t *testing.T, instanceID, deployment string, ci
 	for _, cid := range cids {
 		vms = append(vms, bosh.VM{CID: cid, Job: "redis"})
 	}
+
+	e.director.deploymentVMs[deployment] = vms
 
 	e.scans[instanceID] = certinventory.InstanceScan{
 		Ref: certinventory.InstanceRef{
@@ -513,6 +527,58 @@ func TestPreviewBoundsEachDirectorCall(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A director call runs on a goroutine of its own, so directorCall hands a
+// panic in it to the caller, where a recover such as recoverTask's catches
+// it, rather than letting it crash the broker.
+func TestDirectorCallPanicReachesTheCaller(t *testing.T) {
+	t.Parallel()
+
+	var recovered any
+
+	func() {
+		defer func() { recovered = recover() }()
+
+		_, _ = directorCall(context.Background(), func(context.Context) ([]bosh.VM, error) {
+			panic("the director client broke")
+		})
+	}()
+
+	got, ok := recovered.(*directorPanic)
+	if !ok || got.value != "the director client broke" || !strings.Contains(fmt.Sprint(got), "the director client broke") {
+		t.Fatalf("expected the call's panic in the caller, got %#v", recovered)
+	}
+}
+
+// A call that panics after its caller stopped waiting has its panic
+// dropped with its result, so it never crashes the broker.
+func TestDirectorCallDropsAnAbandonedPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	finished := make(chan struct{})
+
+	cancel()
+
+	_, err := directorCall(ctx, func(context.Context) ([]bosh.VM, error) {
+		defer close(finished)
+
+		<-release
+
+		panic("the director client broke late")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the caller to stop waiting, got %v", err)
+	}
+
+	close(release)
+	<-finished
+
+	// The panic unwinds past the deferred close, so give it the moment it
+	// needs to reach directorCall's recover, or crash the test binary.
+	time.Sleep(50 * time.Millisecond)
 }
 
 func TestPreviewListsAdditionalPassword(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -518,30 +519,58 @@ func (m *Manager) credhubReady() error {
 // director calls, and returns when the call or the deadline finishes. A
 // call that ignores its context keeps running in the background, but the
 // caller no longer waits for it, and its result is dropped.
+//
+// The call runs on a goroutine of its own, so a panic in it would get past
+// the caller's recover, such as recoverTask's, and crash the broker. The
+// goroutine recovers the panic instead and hands it to the caller, which
+// panics with it again, as if the call had run inline. A call the caller
+// no longer waits for has its panic dropped with its result.
 func directorCall[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
 	callCtx, cancel := context.WithTimeout(ctx, certinventory.DirectorCallTimeout)
 	defer cancel()
 
 	type result struct {
-		value T
-		err   error
+		value    T
+		err      error
+		panicked *directorPanic
 	}
 
 	done := make(chan result, 1)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{panicked: &directorPanic{value: r, stack: debug.Stack()}}
+			}
+		}()
+
 		value, err := call(callCtx)
-		done <- result{value, err}
+		done <- result{value: value, err: err}
 	}()
 
 	select {
 	case r := <-done:
+		if r.panicked != nil {
+			panic(r.panicked)
+		}
+
 		return r.value, r.err
 	case <-callCtx.Done():
 		var zero T
 
 		return zero, fmt.Errorf("the director did not answer in time: %w", callCtx.Err())
 	}
+}
+
+// directorPanic is a panic that directorCall recovered from a director
+// call, with the stack of the goroutine the call ran on.
+type directorPanic struct {
+	value any
+	stack []byte
+}
+
+func (p *directorPanic) String() string {
+	return fmt.Sprintf("a director call panicked: %v\n%s", p.value, p.stack)
 }
 
 // rotationDirector asks the director for its name and checks that its

@@ -44,6 +44,39 @@ func (d *vmsDirector) GetDeploymentVMs(ctx context.Context, deployment string) (
 	return append([]bosh.VM(nil), d.vms[deployment]...), nil
 }
 
+// panickingVMsDirector is a preview director whose VM list panics, the
+// way a broken director client would.
+type panickingVMsDirector struct {
+	*previewDirector
+}
+
+func (panickingVMsDirector) GetDeploymentVMs(context.Context, string) ([]bosh.VM, error) {
+	panic("the VM list broke")
+}
+
+// The worker's VM re-check runs its director call on a goroutine of its
+// own, and a panic there still fails the task through recoverTask rather
+// than crashing the broker.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateTaskFailsOnDirectorPanic(t *testing.T) {
+	env := newPreviewEnv(t)
+	env.manager.director = panickingVMsDirector{previewDirector: env.director}
+	env.manager.Start()
+	waitForLoad(t, env.manager)
+
+	preview := previewOf(t, env, redeploy(waitInstanceID))
+
+	task, _, err := env.manager.CreateCertificateTask(context.Background(), createRequest(preview.ID))
+	if err != nil {
+		t.Fatalf("CreateCertificateTask: %v", err)
+	}
+
+	eventuallyWithin(t, env.manager, task.ID, waitTimeout, "the task failing", func(current UpgradeTask) bool {
+		return current.Status == TaskStatusFailed
+	})
+}
+
 func newPreflightEnv(t *testing.T, mode RotationMode) *preflightEnv {
 	t.Helper()
 
