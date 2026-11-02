@@ -441,11 +441,11 @@ func (r *Refusal) describe() string {
 		return fmt.Sprintf("the directory %s can be changed by %s (owner %s, mode %s), so patching in place isn't safe. Redeploy it instead",
 			r.At, r.writers(), r.Owner, r.Mode)
 	case "not-regular":
-		return fmt.Sprint("that file is not a plain file, or is a symbolic link, so patching in place isn't safe. Redeploy it instead")
+		return "that file is not a plain file, or is a symbolic link, so patching in place isn't safe. Redeploy it instead"
 	case "many-links":
-		return fmt.Sprint("that file has more than one link, so patching in place isn't safe. Redeploy it instead")
+		return "that file has more than one link, so patching in place isn't safe. Redeploy it instead"
 	case "realpath":
-		return fmt.Sprint("that file resolves to a different real path, so patching in place isn't safe. Redeploy it instead")
+		return "that file resolves to a different real path, so patching in place isn't safe. Redeploy it instead"
 	case "shape":
 		return "the file or its job directory is not where a job's files belong, so patching in place isn't safe. Redeploy it instead"
 	default:

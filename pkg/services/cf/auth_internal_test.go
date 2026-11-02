@@ -37,7 +37,6 @@ type v3OnlyFoundation struct {
 	brokerHits    atomic.Int32
 	uaaHits       atomic.Int32
 	loginHits     atomic.Int32
-	tokenPaths    []string
 }
 
 func newV3OnlyFoundation(t *testing.T) *v3OnlyFoundation {

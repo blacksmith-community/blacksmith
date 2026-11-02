@@ -79,9 +79,7 @@ func (f *taskFixture) holdCleanups(t *testing.T) (release func()) {
 
 	gate := make(chan struct{})
 
-	var once func()
-
-	once = func() {
+	once := func() {
 		select {
 		case <-gate:
 		default:
