@@ -1,0 +1,101 @@
+=== forge_kubernetes_base_kubernetes-cluster.none ===
+k8s
+=== forge_mariadb_base_mariadb-standalone.none ===
+standalone
+=== forge_postgresql_base_postgresql-cluster.none ===
+postgresql
+=== forge_postgresql_base_postgresql-standalone.none ===
+postgresql
+=== forge_rabbitmq_base_rabbitmq-standalone.none ===
+standalone
+=== forge_rabbitmq_dashboard-registration_rabbitmq-standalone.none ===
+standalone
+=== forge_rabbitmq_dual-mode_rabbitmq-standalone.none ===
+standalone
+=== forge_rabbitmq_rabbitmq-autoscale_rabbitmq-standalone.none ===
+standalone
+=== forge_rabbitmq_tls_rabbitmq-standalone.none ===
+standalone
+=== forge_redis_base_redis-standalone-6.none ===
+standalone
+=== forge_redis_base_redis-standalone-6.tuned ===
+standalone
+=== forge_redis_base_redis-standalone-7.none ===
+standalone
+=== forge_redis_base_redis-standalone-7.tuned ===
+standalone
+=== forge_redis_base_redis-standalone.none ===
+standalone
+=== forge_redis_base_redis-standalone.tuned ===
+standalone
+=== forge_redis_dual-mode_redis-standalone-6.none ===
+standalone
+=== forge_redis_dual-mode_redis-standalone-6.tuned ===
+standalone
+=== forge_redis_dual-mode_redis-standalone-7.none ===
+standalone
+=== forge_redis_dual-mode_redis-standalone-7.tuned ===
+standalone
+=== forge_redis_dual-mode_redis-standalone.none ===
+standalone
+=== forge_redis_dual-mode_redis-standalone.tuned ===
+standalone
+=== forge_redis_tls_redis-standalone-6.none ===
+standalone
+=== forge_redis_tls_redis-standalone-6.tuned ===
+standalone
+=== forge_redis_tls_redis-standalone-7.none ===
+standalone
+=== forge_redis_tls_redis-standalone-7.tuned ===
+standalone
+=== forge_redis_tls_redis-standalone.none ===
+standalone
+=== forge_redis_tls_redis-standalone.tuned ===
+standalone
+=== forge_valkey_base_valkey-cluster.none ===
+node
+=== forge_valkey_base_valkey-standalone.none ===
+standalone
+=== forge_valkey_dual-mode_valkey-cluster.none ===
+node
+=== forge_valkey_dual-mode_valkey-standalone.none ===
+standalone
+=== forge_valkey_tls_valkey-cluster.none ===
+node
+=== forge_valkey_tls_valkey-standalone.none ===
+standalone
+=== odd_anchors-and-merge ===
+ERROR: manifest missing instance_groups
+=== odd_binary-and-tags ===
+ERROR: manifest missing instance_groups
+=== odd_blacksmith-metadata ===
+fixture-group
+=== odd_comment-only ===
+ERROR: manifest missing instance_groups
+=== odd_duplicate-keys ===
+ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
+  line 2: mapping key "name" already defined at line 1
+=== odd_empty ===
+ERROR: manifest missing instance_groups
+=== odd_instance-groups-not-a-list ===
+ERROR: manifest has no instance groups
+=== odd_list-root ===
+ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!seq into map[string]interface {}
+=== odd_mixed-group-names ===
+ERROR: instance group name not found
+=== odd_multiline ===
+ERROR: manifest missing instance_groups
+=== odd_non-string-keys ===
+ERROR: failed to parse manifest YAML: yaml: invalid map key: []interface {}{"a", "b"}
+=== odd_null ===
+ERROR: manifest missing instance_groups
+=== odd_scalar-root ===
+ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `just a ...` into map[string]interface {}
+=== odd_tab-indent ===
+ERROR: failed to parse manifest YAML: yaml: line 3: found character that cannot start any token
+=== odd_unterminated ===
+ERROR: failed to parse manifest YAML: yaml: line 1: did not find expected ',' or '}'
+=== odd_yaml11-scalars ===
+ERROR: manifest missing instance_groups

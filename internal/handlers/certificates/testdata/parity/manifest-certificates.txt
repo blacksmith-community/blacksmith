@@ -1,0 +1,103 @@
+=== forge_kubernetes_base_kubernetes-cluster.none ===
+
+=== forge_mariadb_base_mariadb-standalone.none ===
+
+=== forge_postgresql_base_postgresql-cluster.none ===
+
+=== forge_postgresql_base_postgresql-standalone.none ===
+
+=== forge_rabbitmq_base_rabbitmq-standalone.none ===
+
+=== forge_rabbitmq_dashboard-registration_rabbitmq-standalone.none ===
+
+=== forge_rabbitmq_dual-mode_rabbitmq-standalone.none ===
+
+=== forge_rabbitmq_rabbitmq-autoscale_rabbitmq-standalone.none ===
+
+=== forge_rabbitmq_tls_rabbitmq-standalone.none ===
+
+=== forge_redis_base_redis-standalone-6.none ===
+
+=== forge_redis_base_redis-standalone-6.tuned ===
+
+=== forge_redis_base_redis-standalone-7.none ===
+
+=== forge_redis_base_redis-standalone-7.tuned ===
+
+=== forge_redis_base_redis-standalone.none ===
+
+=== forge_redis_base_redis-standalone.tuned ===
+
+=== forge_redis_dual-mode_redis-standalone-6.none ===
+
+=== forge_redis_dual-mode_redis-standalone-6.tuned ===
+
+=== forge_redis_dual-mode_redis-standalone-7.none ===
+
+=== forge_redis_dual-mode_redis-standalone-7.tuned ===
+
+=== forge_redis_dual-mode_redis-standalone.none ===
+
+=== forge_redis_dual-mode_redis-standalone.tuned ===
+
+=== forge_redis_tls_redis-standalone-6.none ===
+
+=== forge_redis_tls_redis-standalone-6.tuned ===
+
+=== forge_redis_tls_redis-standalone-7.none ===
+
+=== forge_redis_tls_redis-standalone-7.tuned ===
+
+=== forge_redis_tls_redis-standalone.none ===
+
+=== forge_redis_tls_redis-standalone.tuned ===
+
+=== forge_valkey_base_valkey-cluster.none ===
+
+=== forge_valkey_base_valkey-standalone.none ===
+
+=== forge_valkey_dual-mode_valkey-cluster.none ===
+
+=== forge_valkey_dual-mode_valkey-standalone.none ===
+
+=== forge_valkey_tls_valkey-cluster.none ===
+
+=== forge_valkey_tls_valkey-standalone.none ===
+
+=== odd_anchors-and-merge ===
+
+=== odd_binary-and-tags ===
+
+=== odd_blacksmith-metadata ===
+
+=== odd_comment-only ===
+
+=== odd_duplicate-keys ===
+
+=== odd_empty ===
+
+=== odd_instance-groups-not-a-list ===
+
+=== odd_list-root ===
+
+=== odd_mixed-group-names ===
+
+=== odd_multiline ===
+
+=== odd_non-string-keys ===
+
+=== odd_null ===
+
+=== odd_scalar-root ===
+
+=== odd_tab-indent ===
+
+=== odd_unterminated ===
+
+=== odd_yaml11-scalars ===
+
+=== handwritten-certs ===
+instance_groups[0].jobs[0].properties.tls.literal_ca	instance_groups[0].jobs[0].properties.tls.literal_ca	parity-fixture-ca.example	29c6554ebc5740c8270ccb2ecf5ba8a778439b6f13d0f998eb664fb9bbd80c56
+instance_groups[0].jobs[0].properties.tls.literal_leaf	instance_groups[0].jobs[0].properties.tls.literal_leaf	parity-fixture-leaf.example	e3a178b9eb77f8e9fbaaee7494deac7986db03d73d13ee62ca8cf681f0afe581
+instance_groups[1].jobs[0].properties.tls.literal_ca	instance_groups[1].jobs[0].properties.tls.literal_ca	parity-fixture-ca.example	29c6554ebc5740c8270ccb2ecf5ba8a778439b6f13d0f998eb664fb9bbd80c56
+instance_groups[1].jobs[0].properties.tls.literal_leaf	instance_groups[1].jobs[0].properties.tls.literal_leaf	parity-fixture-leaf.example	e3a178b9eb77f8e9fbaaee7494deac7986db03d73d13ee62ca8cf681f0afe581

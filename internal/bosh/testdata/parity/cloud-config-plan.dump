@@ -1,0 +1,134 @@
+=== director anchors / mine ===
+$.Action	bosh.CloudConfigAction	0
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director anchors / broker-anchors ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director disjoint / mine ===
+$.Action	bosh.CloudConfigAction	0
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director disjoint / broker-disjoint ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director duplicate-keys / mine ===
+$.Action	bosh.CloudConfigAction	3
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	"the director's cloud config \"default\" is not valid YAML: yaml: unmarshal errors:\n  line 3: mapping key \"azs\" already defined at line 1"
+=== director duplicate-keys / broker-duplicate-keys ===
+$.Action	bosh.CloudConfigAction	3
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	"the broker's cloud config is not valid YAML: yaml: unmarshal errors:\n  line 3: mapping key \"azs\" already defined at line 1"
+=== director empty / mine ===
+$.Action	bosh.CloudConfigAction	0
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director empty / broker-empty ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director list / mine ===
+$.Action	bosh.CloudConfigAction	3
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	"the director's cloud config \"default\" is not a YAML map (it is []interface {})"
+=== director list / broker-list ===
+$.Action	bosh.CloudConfigAction	3
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	"the broker's cloud config is not a YAML map (it is []interface {})"
+=== director non-string-keys / mine ===
+$.Action	bosh.CloudConfigAction	0
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director non-string-keys / broker-non-string-keys ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director null / mine ===
+$.Action	bosh.CloudConfigAction	0
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director null / broker-null ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director numeric-name / mine ===
+$.Action	bosh.CloudConfigAction	0
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director numeric-name / broker-numeric-name ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director overlap-az / mine ===
+$.Action	bosh.CloudConfigAction	2
+$.Holder	string	""
+$.Overlaps[0].Config	string	"default"
+$.Overlaps[0].Key	string	"azs"
+$.Overlaps[0].Name	string	"z1"
+$.Reason	string	""
+=== director overlap-az / broker-overlap-az ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director overlap-network / mine ===
+$.Action	bosh.CloudConfigAction	2
+$.Holder	string	""
+$.Overlaps[0].Config	string	"default"
+$.Overlaps[0].Key	string	"networks"
+$.Overlaps[0].Name	string	"services"
+$.Reason	string	""
+=== director overlap-network / broker-overlap-network ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director same / mine ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director same / broker-same ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director scalars / mine ===
+$.Action	bosh.CloudConfigAction	0
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director scalars / broker-scalars ===
+$.Action	bosh.CloudConfigAction	1
+$.Holder	string	"default"
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	""
+=== director unterminated / mine ===
+$.Action	bosh.CloudConfigAction	3
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	"the director's cloud config \"default\" is not valid YAML: yaml: line 1: did not find expected node content"
+=== director unterminated / broker-unterminated ===
+$.Action	bosh.CloudConfigAction	3
+$.Holder	string	""
+$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Reason	string	"the broker's cloud config is not valid YAML: yaml: line 1: did not find expected node content"

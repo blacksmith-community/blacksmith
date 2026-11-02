@@ -1,0 +1,48 @@
+=== anchors-and-merge ===
+$.Empty	bool	false
+$.Err	string	""
+=== binary-and-tags ===
+$.Empty	bool	false
+$.Err	string	""
+=== blacksmith-metadata ===
+$.Empty	bool	false
+$.Err	string	""
+=== comment-only ===
+$.Empty	bool	true
+$.Err	string	""
+=== duplicate-keys ===
+$.Empty	bool	false
+$.Err	string	"the cloud config is not valid YAML: yaml: unmarshal errors:\n  line 2: mapping key \"name\" already defined at line 1"
+=== empty ===
+$.Empty	bool	true
+$.Err	string	""
+=== instance-groups-not-a-list ===
+$.Empty	bool	false
+$.Err	string	""
+=== list-root ===
+$.Empty	bool	false
+$.Err	string	""
+=== mixed-group-names ===
+$.Empty	bool	false
+$.Err	string	""
+=== multiline ===
+$.Empty	bool	false
+$.Err	string	""
+=== non-string-keys ===
+$.Empty	bool	false
+$.Err	string	"the cloud config is not valid YAML: yaml: invalid map key: []interface {}{\"a\", \"b\"}"
+=== null ===
+$.Empty	bool	true
+$.Err	string	""
+=== scalar-root ===
+$.Empty	bool	false
+$.Err	string	""
+=== tab-indent ===
+$.Empty	bool	false
+$.Err	string	"the cloud config is not valid YAML: yaml: line 3: found character that cannot start any token"
+=== unterminated ===
+$.Empty	bool	false
+$.Err	string	"the cloud config is not valid YAML: yaml: line 1: did not find expected ',' or '}'"
+=== yaml11-scalars ===
+$.Empty	bool	false
+$.Err	string	""

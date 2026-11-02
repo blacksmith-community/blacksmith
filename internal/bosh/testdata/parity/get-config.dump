@@ -1,0 +1,113 @@
+=== anchors-and-merge ===
+$.defaults.port	int	5432
+$.defaults.user	string	"fixture-user"
+$.name	string	"fixture"
+$.properties.again[0]	string	"one"
+$.properties.again[1]	string	"two"
+$.properties.list[0]	string	"one"
+$.properties.list[1]	string	"two"
+$.properties.primary.host	string	"a.example.test"
+$.properties.primary.port	int	5432
+$.properties.primary.user	string	"fixture-user"
+$.properties.replica.host	string	"b.example.test"
+$.properties.replica.port	int	5433
+$.properties.replica.user	string	"fixture-user"
+=== binary-and-tags ===
+$.name	string	"fixture"
+$.properties.blob	string	"hello"
+$.properties.floaty	float64	3
+$.properties.forced	string	"123"
+$.properties.seq[0]	string	"a"
+=== blacksmith-metadata ===
+$.instance_groups[0].instances	int	3
+$.instance_groups[0].jobs[0].name	string	"fixture-job"
+$.instance_groups[0].jobs[0].release	string	"fixture-release"
+$.instance_groups[0].name	string	"fixture-group"
+$.meta.blacksmith.instance_id	string	"00000000-0000-0000-0000-000000000001"
+$.name	string	"fixture-deployment"
+$.properties.blacksmith.instance_id	string	"00000000-0000-0000-0000-000000000001"
+$.properties.blacksmith.plan_id	string	"fixture-plan"
+$.properties.blacksmith.service_id	string	"fixture-service"
+$.releases[0].name	string	"fixture-release"
+$.releases[0].version	string	"1.2.3"
+$.stemcells[0].alias	string	"default"
+$.stemcells[0].os	string	"ubuntu-noble"
+$.stemcells[0].version	string	"latest"
+=== comment-only ===
+$	map[string]interface {}	{}
+=== duplicate-keys ===
+$.name	string	"second"
+$.properties.a	int	2
+=== empty ===
+$	map[string]interface {}	{}
+=== instance-groups-not-a-list ===
+$.instance_groups.name	string	"oops"
+$.name	string	"fixture"
+=== list-root ===
+ERROR: failed to parse config YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!seq into map[string]interface {}
+=== mixed-group-names ===
+$.instance_groups[0].name	int	123
+$.instance_groups[1].name	string	"second"
+$.name	string	"fixture"
+=== multiline ===
+$.name	string	"fixture"
+$.properties.folded	string	"folded one folded two\n"
+$.properties.keep	string	"kept\n\n"
+$.properties.literal	string	"line one\nline two\n"
+$.properties.quoted	string	"tab\there\nnewline"
+$.properties.strip	string	"stripped"
+=== non-string-keys ===
+ERROR: failed to parse config YAML: yaml: invalid map key: []interface {}{"a", "b"}
+=== null ===
+$	map[string]interface {}	{}
+=== scalar-root ===
+ERROR: failed to parse config YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `just a ...` into map[string]interface {}
+=== tab-indent ===
+ERROR: failed to parse config YAML: yaml: line 3: found character that cannot start any token
+=== unterminated ===
+ERROR: failed to parse config YAML: yaml: line 2: did not find expected ',' or '}'
+=== yaml11-scalars ===
+$.name	string	"fixture"
+$.properties.dates[0]	string	"2026-01-02"
+$.properties.dates[1]	string	"2026-01-02T03:04:05Z"
+$.properties.dates[2]	string	"12:30:45"
+$.properties.nulls[0]	interface {}	null
+$.properties.nulls[1]	interface {}	null
+$.properties.nulls[2]	interface {}	null
+$.properties.nulls[3]	string	""
+$.properties.numbers[0]	float64	1000
+$.properties.numbers[1]	int	493
+$.properties.numbers[2]	int	15
+$.properties.numbers[3]	int	31
+$.properties.numbers[4]	int	1000
+$.properties.numbers[5]	float64	0.5
+$.properties.numbers[6]	float64	1.1
+$.properties.numbers[7]	int	3
+$.properties.numbers[8]	int	0
+$.properties.numbers[9]	float64	+Inf
+$.properties.numbers[10]	float64	NaN
+$.properties.octal-ish[0]	float64	8
+$.properties.octal-ish[1]	float64	9
+$.properties.octal-ish[2]	int	8
+$.properties.octal-ish[3]	int	5
+$.properties.password	string	"fixture-password-not-real"
+$.properties.strings[0]	string	"yes"
+$.properties.strings[1]	string	"1e3"
+$.properties.strings[2]	string	"0755"
+$.properties.strings[3]	string	":leading-colon"
+$.properties.strings[4]	string	"a: b"
+$.properties.strings[5]	string	"- x"
+$.properties.strings[6]	string	"# not a comment"
+$.properties.truthy[0]	bool	true
+$.properties.truthy[1]	bool	false
+$.properties.truthy[2]	bool	true
+$.properties.truthy[3]	bool	false
+$.properties.truthy[4]	bool	true
+$.properties.truthy[5]	bool	false
+$.properties.truthy[6]	bool	true
+$.properties.truthy[7]	bool	false
+$.properties.truthy[8]	bool	true
+$.properties.truthy[9]	bool	false
+$.properties.version	float64	1.1

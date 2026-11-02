@@ -473,3 +473,9 @@ type ReadoptStore = readoptStore
 func (b *Broker) SetReadoptStore(store ReadoptStore) {
 	b.readoptVault = store
 }
+
+// YamlGsub exposes the YAML round trip that swaps one string for another in
+// a credentials map.
+func YamlGsub(obj interface{}, orig, replacement string) (interface{}, error) {
+	return yamlGsub(obj, orig, replacement)
+}

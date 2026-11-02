@@ -1,0 +1,234 @@
+=== plain ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	string	"dynamic-user"
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://dynamic-user:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	string	"dynamic-user"
+=== password ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	string	"fixture-user"
+$.password	string	"dynamic-password"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://fixture-user:dynamic-password@10.0.0.1:5432/db"
+$.username	string	"fixture-user"
+=== to-yes ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	bool	true
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://yes:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	bool	true
+=== to-number ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	float64	1000
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://1e3:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	float64	1000
+=== to-octal ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	int	493
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://0755:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	int	493
+=== to-date ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	string	"2026-01-02"
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://2026-01-02:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	string	"2026-01-02"
+=== to-null ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	interface {}	null
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://null:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	interface {}	null
+=== to-colon ===
+ERROR: failed to unmarshal replaced YAML: yaml: line 9: mapping values are not allowed in this context
+=== to-hash ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	string	"a"
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://a"
+$.username	string	"a"
+=== to-leading-colon ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	string	":leading"
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://:leading:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	string	":leading"
+=== to-dash ===
+ERROR: failed to unmarshal replaced YAML: yaml: line 9: block sequence entries are not allowed in this context
+=== to-quote ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	string	"say \"hi\""
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://say \"hi\":fixture-password-not-real@10.0.0.1:5432/db"
+$.username	string	"say \"hi\""
+=== to-newline ===
+ERROR: failed to unmarshal replaced YAML: yaml: line 11: could not find expected ':'
+=== to-broken ===
+ERROR: failed to unmarshal replaced YAML: yaml: line 9: did not find expected ',' or ']'
+=== to-brace ===
+ERROR: failed to unmarshal replaced YAML: yaml: line 9: did not find expected ',' or '}'
+=== to-empty ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	interface {}	null
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	interface {}	null
+=== no-match ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.nested.digits	string	"0755"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.nested.username	string	"fixture-user"
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://fixture-user:fixture-password-not-real@10.0.0.1:5432/db"
+$.username	string	"fixture-user"
+=== empty-orig ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `xhxoxsx...` into map[interface {}]interface {}
+=== key-name ===
+$.hosts[0]	string	"10.0.0.1"
+$.hosts[1]	string	"10.0.0.2"
+$.login	string	"fixture-user"
+$.nested.digits	string	"0755"
+$.nested.login	string	"fixture-user"
+$.nested.nothing	interface {}	null
+$.nested.quoted	string	"yes"
+$.nested.ratio	float64	1.5
+$.password	string	"fixture-password-not-real"
+$.port	int	5432
+$.tls	bool	true
+$.uri	string	"postgres://fixture-user:fixture-password-not-real@10.0.0.1:5432/db"
+=== key-to-colon ===
+ERROR: failed to unmarshal replaced YAML: yaml: line 10: mapping values are not allowed in this context
+=== text anchors-and-merge ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text binary-and-tags ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text blacksmith-metadata ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text comment-only ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `# nothi...` into map[interface {}]interface {}
+=== text duplicate-keys ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: f...` into map[interface {}]interface {}
+=== text empty ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `` into map[interface {}]interface {}
+=== text instance-groups-not-a-list ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text list-root ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `- 1
+- t...` into map[interface {}]interface {}
+=== text mixed-group-names ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text multiline ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text non-string-keys ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text null ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `~
+` into map[interface {}]interface {}
+=== text scalar-root ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `just a ...` into map[interface {}]interface {}
+=== text tab-indent ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text unterminated ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text yaml11-scalars ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
