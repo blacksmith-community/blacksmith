@@ -1,6 +1,7 @@
 package reconciler_test
 
 import (
+	"go.yaml.in/yaml/v2"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,4 +76,62 @@ func errText(err error) string {
 	}
 
 	return err.Error()
+}
+
+// TestParseManifestDataParity records the releases and stemcells a scan
+// lists for each manifest.
+func TestParseManifestDataParity(t *testing.T) {
+	t.Parallel()
+
+	scanner := &BoshScanner{}
+
+	var recorded strings.Builder
+
+	for _, doc := range parity.Corpus(t) {
+		detail := scanner.ParseManifestData(doc.Body)
+		recorded.WriteString(parity.Section(doc.Name, parity.Dump(map[string]interface{}{
+			"releases": detail.Releases, "stemcells": detail.Stemcells,
+		})))
+	}
+
+	parity.Golden(t, filepath.Join("testdata", "parity", "manifest-data.dump"), recorded.String())
+}
+
+// TestExtractCredentialsFromManifestParity records the credentials the
+// populator takes from each manifest, for each service type it knows.
+//
+// getDeploymentManifest, which decodes the manifest before this step, cannot
+// be reached from a test. It asks the BOSH client for a type declared inside
+// the function, so no outside type satisfies the interface. The decode here
+// is the same call, into the same kind of map, with the same library.
+func TestExtractCredentialsFromManifestParity(t *testing.T) {
+	t.Parallel()
+
+	populator := NewCredentialPopulator(nil, NewMockLogger())
+
+	var recorded strings.Builder
+
+	for _, doc := range parity.Corpus(t) {
+		var manifest map[string]interface{}
+
+		err := yaml.Unmarshal([]byte(doc.Body), &manifest)
+		if err != nil {
+			recorded.WriteString(parity.Section(doc.Name, "DECODE ERROR: "+err.Error()+"\n"))
+
+			continue
+		}
+
+		for _, name := range []string{"rabbitmq-standalone-" + parityInstanceID, "redis-standalone-" + parityInstanceID, "postgresql-cluster-" + parityInstanceID} {
+			creds, err := populator.ExtractCredentialsFromManifest(manifest, name)
+
+			body := parity.Dump(creds)
+			if err != nil {
+				body = "ERROR: " + err.Error() + "\n" + body
+			}
+
+			recorded.WriteString(parity.Section(doc.Name+" as "+name, body))
+		}
+	}
+
+	parity.Golden(t, filepath.Join("testdata", "parity", "extract-credentials.dump"), recorded.String())
 }

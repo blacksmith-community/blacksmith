@@ -18,39 +18,75 @@ standalone
 standalone
 === forge_redis_base_redis-standalone-6.none ===
 standalone
+=== forge_redis_base_redis-standalone-6.strings ===
+standalone
 === forge_redis_base_redis-standalone-6.tuned ===
+standalone
+=== forge_redis_base_redis-standalone-6.types ===
 standalone
 === forge_redis_base_redis-standalone-7.none ===
 standalone
+=== forge_redis_base_redis-standalone-7.strings ===
+standalone
 === forge_redis_base_redis-standalone-7.tuned ===
+standalone
+=== forge_redis_base_redis-standalone-7.types ===
 standalone
 === forge_redis_base_redis-standalone.none ===
 standalone
+=== forge_redis_base_redis-standalone.strings ===
+standalone
 === forge_redis_base_redis-standalone.tuned ===
+standalone
+=== forge_redis_base_redis-standalone.types ===
 standalone
 === forge_redis_dual-mode_redis-standalone-6.none ===
 standalone
+=== forge_redis_dual-mode_redis-standalone-6.strings ===
+standalone
 === forge_redis_dual-mode_redis-standalone-6.tuned ===
+standalone
+=== forge_redis_dual-mode_redis-standalone-6.types ===
 standalone
 === forge_redis_dual-mode_redis-standalone-7.none ===
 standalone
+=== forge_redis_dual-mode_redis-standalone-7.strings ===
+standalone
 === forge_redis_dual-mode_redis-standalone-7.tuned ===
+standalone
+=== forge_redis_dual-mode_redis-standalone-7.types ===
 standalone
 === forge_redis_dual-mode_redis-standalone.none ===
 standalone
+=== forge_redis_dual-mode_redis-standalone.strings ===
+standalone
 === forge_redis_dual-mode_redis-standalone.tuned ===
+standalone
+=== forge_redis_dual-mode_redis-standalone.types ===
 standalone
 === forge_redis_tls_redis-standalone-6.none ===
 standalone
+=== forge_redis_tls_redis-standalone-6.strings ===
+standalone
 === forge_redis_tls_redis-standalone-6.tuned ===
+standalone
+=== forge_redis_tls_redis-standalone-6.types ===
 standalone
 === forge_redis_tls_redis-standalone-7.none ===
 standalone
+=== forge_redis_tls_redis-standalone-7.strings ===
+standalone
 === forge_redis_tls_redis-standalone-7.tuned ===
+standalone
+=== forge_redis_tls_redis-standalone-7.types ===
 standalone
 === forge_redis_tls_redis-standalone.none ===
 standalone
+=== forge_redis_tls_redis-standalone.strings ===
+standalone
 === forge_redis_tls_redis-standalone.tuned ===
+standalone
+=== forge_redis_tls_redis-standalone.types ===
 standalone
 === forge_valkey_base_valkey-cluster.none ===
 node
@@ -72,11 +108,15 @@ ERROR: manifest missing instance_groups
 fixture-group
 === odd_comment-only ===
 ERROR: manifest missing instance_groups
+=== odd_dotted-keys ===
+ERROR: manifest missing instance_groups
 === odd_duplicate-keys ===
 ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
   line 2: mapping key "name" already defined at line 1
 === odd_empty ===
 ERROR: manifest missing instance_groups
+=== odd_instance-group-networks ===
+first
 === odd_instance-groups-not-a-list ===
 ERROR: manifest has no instance groups
 === odd_list-root ===
@@ -86,9 +126,15 @@ ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
 ERROR: instance group name not found
 === odd_multiline ===
 ERROR: manifest missing instance_groups
+=== odd_networks-not-a-list ===
+first
 === odd_non-string-keys ===
 ERROR: failed to parse manifest YAML: yaml: invalid map key: []interface {}{"a", "b"}
 === odd_null ===
+ERROR: manifest missing instance_groups
+=== odd_release-not-a-map ===
+ERROR: manifest missing instance_groups
+=== odd_release-versions ===
 ERROR: manifest missing instance_groups
 === odd_scalar-root ===
 ERROR: failed to parse manifest YAML: yaml: unmarshal errors:

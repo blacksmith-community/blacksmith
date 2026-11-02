@@ -3,8 +3,8 @@ $.groups.redis	int	3
 $.jobs[0].cert_refs	map[string]string	{}
 $.jobs[0].group	string	"redis"
 $.jobs[0].job	string	"bpm"
-$.jobs[0].properties	map[string]interface {}	{}
-$.jobs[1].cert_refs.redis.tls.ca_cert	string	"redis_cluster_crt"
+$.jobs[0].properties	map[string]interface {}	null
+$.jobs[1].cert_refs["redis.tls.ca_cert"]	string	"redis_cluster_crt"
 $.jobs[1].group	string	"redis"
 $.jobs[1].job	string	"cluster-7"
 $.jobs[1].properties.redis.tls.ca	string	"-----BEGIN CERTIFICATE-----\nMIIBaDCCAQ2gAwIBAgIBATAKBggqhkjOPQQDAjAbMRkwFwYDVQQDExB0ZXN0LXNl\ncnZpY2VzLWNhMB4XDTI2MTAyMjA5NDIwM1oXDTM2MTAxOTEwNDIwM1owGzEZMBcG\nA1UEAxMQdGVzdC1zZXJ2aWNlcy1jYTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IA\nBG5MuWrsoOP+oF3N53bq9L+SrCc0430sekUKVXDEoiJq1GLAFLRSCPGdnnkaBuzD\nis+5S6Tm3GE15GrLVEIOEAOjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8E\nBTADAQH/MB0GA1UdDgQWBBSmmFr6h+LA3CwWA7ldNW5zMmuHEDAKBggqhkjOPQQD\nAgNJADBGAiEAjS6EtpTYzg+9eEeDQKF4bD32rtX6tex7ftQVn4Q2szgCIQC6JIgy\nqW3qJSt9DfyRRB+2WdOIrlPp7usfnYFsKzEfyA==\n-----END CERTIFICATE-----\n"

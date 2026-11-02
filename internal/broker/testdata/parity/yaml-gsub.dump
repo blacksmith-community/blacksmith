@@ -194,12 +194,18 @@ ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
 === text comment-only ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `# nothi...` into map[interface {}]interface {}
+=== text dotted-keys ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
 === text duplicate-keys ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `name: f...` into map[interface {}]interface {}
 === text empty ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `` into map[interface {}]interface {}
+=== text instance-group-networks ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
 === text instance-groups-not-a-list ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
@@ -213,6 +219,9 @@ ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
 === text multiline ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text networks-not-a-list ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
 === text non-string-keys ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
@@ -220,6 +229,12 @@ ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `~
 ` into map[interface {}]interface {}
+=== text release-not-a-map ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
+=== text release-versions ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
 === text scalar-root ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `just a ...` into map[interface {}]interface {}

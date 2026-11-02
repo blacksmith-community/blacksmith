@@ -18,39 +18,75 @@
 
 === forge_redis_base_redis-standalone-6.none ===
 
+=== forge_redis_base_redis-standalone-6.strings ===
+
 === forge_redis_base_redis-standalone-6.tuned ===
+
+=== forge_redis_base_redis-standalone-6.types ===
 
 === forge_redis_base_redis-standalone-7.none ===
 
+=== forge_redis_base_redis-standalone-7.strings ===
+
 === forge_redis_base_redis-standalone-7.tuned ===
+
+=== forge_redis_base_redis-standalone-7.types ===
 
 === forge_redis_base_redis-standalone.none ===
 
+=== forge_redis_base_redis-standalone.strings ===
+
 === forge_redis_base_redis-standalone.tuned ===
+
+=== forge_redis_base_redis-standalone.types ===
 
 === forge_redis_dual-mode_redis-standalone-6.none ===
 
+=== forge_redis_dual-mode_redis-standalone-6.strings ===
+
 === forge_redis_dual-mode_redis-standalone-6.tuned ===
+
+=== forge_redis_dual-mode_redis-standalone-6.types ===
 
 === forge_redis_dual-mode_redis-standalone-7.none ===
 
+=== forge_redis_dual-mode_redis-standalone-7.strings ===
+
 === forge_redis_dual-mode_redis-standalone-7.tuned ===
+
+=== forge_redis_dual-mode_redis-standalone-7.types ===
 
 === forge_redis_dual-mode_redis-standalone.none ===
 
+=== forge_redis_dual-mode_redis-standalone.strings ===
+
 === forge_redis_dual-mode_redis-standalone.tuned ===
+
+=== forge_redis_dual-mode_redis-standalone.types ===
 
 === forge_redis_tls_redis-standalone-6.none ===
 
+=== forge_redis_tls_redis-standalone-6.strings ===
+
 === forge_redis_tls_redis-standalone-6.tuned ===
+
+=== forge_redis_tls_redis-standalone-6.types ===
 
 === forge_redis_tls_redis-standalone-7.none ===
 
+=== forge_redis_tls_redis-standalone-7.strings ===
+
 === forge_redis_tls_redis-standalone-7.tuned ===
+
+=== forge_redis_tls_redis-standalone-7.types ===
 
 === forge_redis_tls_redis-standalone.none ===
 
+=== forge_redis_tls_redis-standalone.strings ===
+
 === forge_redis_tls_redis-standalone.tuned ===
+
+=== forge_redis_tls_redis-standalone.types ===
 
 === forge_valkey_base_valkey-cluster.none ===
 
@@ -72,9 +108,13 @@
 
 === odd_comment-only ===
 
+=== odd_dotted-keys ===
+
 === odd_duplicate-keys ===
 
 === odd_empty ===
+
+=== odd_instance-group-networks ===
 
 === odd_instance-groups-not-a-list ===
 
@@ -84,9 +124,15 @@
 
 === odd_multiline ===
 
+=== odd_networks-not-a-list ===
+
 === odd_non-string-keys ===
 
 === odd_null ===
+
+=== odd_release-not-a-map ===
+
+=== odd_release-versions ===
 
 === odd_scalar-root ===
 

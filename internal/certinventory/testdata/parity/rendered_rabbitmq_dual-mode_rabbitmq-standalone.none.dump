@@ -1,6 +1,6 @@
 $.cert_variables[0]	string	"rabbitmq_standalone_crt"
 $.groups.standalone	int	1
-$.jobs[0].cert_refs.rabbitmq.tls.crt	string	"rabbitmq_standalone_crt"
+$.jobs[0].cert_refs["rabbitmq.tls.crt"]	string	"rabbitmq_standalone_crt"
 $.jobs[0].group	string	"standalone"
 $.jobs[0].job	string	"rabbitmq"
 $.jobs[0].properties.erlang.cookie	string	"1e3"

@@ -3,7 +3,7 @@ $.groups.k8s	int	3
 $.jobs[0].cert_refs	map[string]string	{}
 $.jobs[0].group	string	"k8s"
 $.jobs[0].job	string	"etcd"
-$.jobs[0].properties	map[string]interface {}	{}
+$.jobs[0].properties	map[string]interface {}	null
 $.jobs[1].cert_refs	map[string]string	{}
 $.jobs[1].group	string	"k8s"
 $.jobs[1].job	string	"control"
@@ -25,7 +25,7 @@ $.jobs[1].properties.tls.sa.key	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLA
 $.jobs[2].cert_refs	map[string]string	{}
 $.jobs[2].group	string	"k8s"
 $.jobs[2].job	string	"lb"
-$.jobs[2].properties	map[string]interface {}	{}
+$.jobs[2].properties	map[string]interface {}	null
 $.jobs[3].cert_refs	map[string]string	{}
 $.jobs[3].group	string	"k8s"
 $.jobs[3].job	string	"runtime-runc"
@@ -33,18 +33,18 @@ $.jobs[3].properties.cni	string	"flannel"
 $.jobs[4].cert_refs	map[string]string	{}
 $.jobs[4].group	string	"k8s"
 $.jobs[4].job	string	"net-flannel"
-$.jobs[4].properties	map[string]interface {}	{}
+$.jobs[4].properties	map[string]interface {}	null
 $.jobs[5].cert_refs	map[string]string	{}
 $.jobs[5].group	string	"k8s"
 $.jobs[5].job	string	"kubelet"
-$.jobs[5].properties.labels.bosh/deployment	string	"(deployment)"
-$.jobs[5].properties.labels.bosh/instance-group	string	"(name)"
-$.jobs[5].properties.labels.bosh/instance-id	string	"(id)"
-$.jobs[5].properties.labels.node-role.kubernetes.io/master	string	""
+$.jobs[5].properties.labels["bosh/deployment"]	string	"(deployment)"
+$.jobs[5].properties.labels["bosh/instance-group"]	string	"(name)"
+$.jobs[5].properties.labels["bosh/instance-id"]	string	"(id)"
+$.jobs[5].properties.labels["node-role.kubernetes.io/master"]	string	""
 $.jobs[6].cert_refs	map[string]string	{}
 $.jobs[6].group	string	"k8s"
 $.jobs[6].job	string	"nfs"
-$.jobs[6].properties	map[string]interface {}	{}
+$.jobs[6].properties	map[string]interface {}	null
 $.literals	[]interface {}	[]
 $.name	string	"kubernetes-cluster-parity-kubernetes-base"
 $.signing_cas	map[string]string	{}

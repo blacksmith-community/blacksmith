@@ -10,11 +10,17 @@ $.Err	string	""
 === comment-only ===
 $.Empty	bool	true
 $.Err	string	""
+=== dotted-keys ===
+$.Empty	bool	false
+$.Err	string	""
 === duplicate-keys ===
 $.Empty	bool	false
 $.Err	string	"the cloud config is not valid YAML: yaml: unmarshal errors:\n  line 2: mapping key \"name\" already defined at line 1"
 === empty ===
 $.Empty	bool	true
+$.Err	string	""
+=== instance-group-networks ===
+$.Empty	bool	false
 $.Err	string	""
 === instance-groups-not-a-list ===
 $.Empty	bool	false
@@ -28,11 +34,20 @@ $.Err	string	""
 === multiline ===
 $.Empty	bool	false
 $.Err	string	""
+=== networks-not-a-list ===
+$.Empty	bool	false
+$.Err	string	""
 === non-string-keys ===
 $.Empty	bool	false
 $.Err	string	"the cloud config is not valid YAML: yaml: invalid map key: []interface {}{\"a\", \"b\"}"
 === null ===
 $.Empty	bool	true
+$.Err	string	""
+=== release-not-a-map ===
+$.Empty	bool	false
+$.Err	string	""
+=== release-versions ===
+$.Empty	bool	false
 $.Err	string	""
 === scalar-root ===
 $.Empty	bool	false

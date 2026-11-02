@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Dump renders a decoded value as one line per leaf, holding the leaf's
@@ -52,6 +53,12 @@ func dumpValue(builder *strings.Builder, path string, value reflect.Value) {
 }
 
 func dumpMap(builder *strings.Builder, path string, value reflect.Value) {
+	if value.IsNil() {
+		writeLeaf(builder, path, value.Type().String(), "null")
+
+		return
+	}
+
 	if value.Len() == 0 {
 		writeLeaf(builder, path, value.Type().String(), "{}")
 
@@ -72,10 +79,7 @@ func dumpMap(builder *strings.Builder, path string, value reflect.Value) {
 			key = key.Elem()
 		}
 
-		label := fmt.Sprintf("%v", key.Interface())
-		if key.Kind() != reflect.String {
-			label = fmt.Sprintf("%s(%s)", label, key.Type())
-		}
+		label := keyLabel(key)
 
 		entries = append(entries, entry{label: label, value: iter.Value()})
 	}
@@ -83,8 +87,29 @@ func dumpMap(builder *strings.Builder, path string, value reflect.Value) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].label < entries[j].label })
 
 	for _, item := range entries {
-		dumpValue(builder, path+"."+item.label, item.value)
+		dumpValue(builder, path+item.label, item.value)
 	}
+}
+
+// keyLabel is how a map key appears in a path. A string key made only of
+// letters, digits, underscores, and dashes follows a dot. Any other string
+// key goes in brackets and quotes, so a key with a dot in it cannot be
+// mistaken for two nested keys. A key that is not a string carries its type.
+func keyLabel(key reflect.Value) string {
+	if key.Kind() != reflect.String {
+		return fmt.Sprintf(".%v(%s)", key.Interface(), key.Type())
+	}
+
+	text := key.String()
+	if text != "" && strings.IndexFunc(text, func(r rune) bool { return !isPlainKeyRune(r) }) < 0 {
+		return "." + text
+	}
+
+	return fmt.Sprintf("[%q]", text)
+}
+
+func isPlainKeyRune(r rune) bool {
+	return r == '_' || r == '-' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 func dumpList(builder *strings.Builder, path string, value reflect.Value) {

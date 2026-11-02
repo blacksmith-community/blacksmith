@@ -17,7 +17,7 @@ $.Broker.CF.BrokerURL	string	""
 $.Broker.CF.BrokerUser	string	""
 $.Broker.CF.BrokerPass	string	""
 $.Broker.CF.DefaultName	string	""
-$.Broker.CF.APIs	map[string]config.CFAPIConfig	{}
+$.Broker.CF.APIs	map[string]config.CFAPIConfig	null
 $.Broker.Compression.Enabled	bool	true
 $.Broker.Compression.Types[0]	string	"gzip"
 $.Broker.Compression.Level	int	-1

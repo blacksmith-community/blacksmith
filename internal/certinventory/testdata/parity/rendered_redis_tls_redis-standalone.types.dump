@@ -1,0 +1,32 @@
+$.cert_variables	[]string	null
+$.groups.standalone	int	1
+$.jobs[0].cert_refs	map[string]string	{}
+$.jobs[0].group	string	"standalone"
+$.jobs[0].job	string	"bpm"
+$.jobs[0].properties	map[string]interface {}	null
+$.jobs[1].cert_refs	map[string]string	{}
+$.jobs[1].group	string	"standalone"
+$.jobs[1].job	string	"standalone"
+$.jobs[1].properties.auth.password	string	"yes"
+$.jobs[1].properties.client.connections	int	10000
+$.jobs[1].properties.client.tcpkeepalive	int	300
+$.jobs[1].properties.client.timeout	int	0
+$.jobs[1].properties.lua.scripting-enabled	bool	true
+$.jobs[1].properties.persistent	bool	false
+$.jobs[1].properties.redis.auto-aof-rewrite-min-size	string	"64mb"
+$.jobs[1].properties.redis.auto-aof-rewrite-percentage	int	100
+$.jobs[1].properties.redis.maxmemory	int	0
+$.jobs[1].properties.redis.maxmemory-policy.nested.date	string	"2026-01-02"
+$.jobs[1].properties.redis.maxmemory-policy.nested.deep	string	"0755"
+$.jobs[1].properties.redis.maxmemory-policy.nested.flag	bool	false
+$.jobs[1].properties.redis.maxmemory-policy.policy	string	"allkeys-lru"
+$.jobs[1].properties.redis.no-appendfsync-on-rewrite	bool	false
+$.jobs[1].properties.redis.notify-keyspace-events[0]	string	"K"
+$.jobs[1].properties.redis.notify-keyspace-events[1]	string	"E"
+$.jobs[1].properties.redis.notify-keyspace-events[2]	string	"yes"
+$.jobs[1].properties.redis.notify-keyspace-events[3]	int	493
+$.jobs[1].properties.redis.slowlog-log-slower-than	bool	true
+$.jobs[1].properties.redis.slowlog-max-len	float64	3.5
+$.literals	[]interface {}	[]
+$.name	string	"redis-standalone-parity-redis-tls"
+$.signing_cas	map[string]string	{}

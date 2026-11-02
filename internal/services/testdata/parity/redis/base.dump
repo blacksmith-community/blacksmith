@@ -13,7 +13,6 @@ $.Plans[0].Description	string	"A dedicated Redis server, with no redundancy or r
 $.Plans[0].Limit	int	7
 $.Plans[0].Type	string	"standalone"
 $.Plans[0].Manifest.features.randomize_az_placement	bool	true
-$.Plans[0].Manifest.instance_groups[0]..	string	"(( inject meta.disk_config ))"
 $.Plans[0].Manifest.instance_groups[0].azs	string	"(( grab meta.azs || meta.default.azs ))"
 $.Plans[0].Manifest.instance_groups[0].instances	int	1
 $.Plans[0].Manifest.instance_groups[0].jobs[0].name	string	"bpm"
@@ -38,6 +37,7 @@ $.Plans[0].Manifest.instance_groups[0].name	string	"standalone"
 $.Plans[0].Manifest.instance_groups[0].networks[0].name	string	"(( grab meta.net || \"redis-service\" ))"
 $.Plans[0].Manifest.instance_groups[0].stemcell	string	"default"
 $.Plans[0].Manifest.instance_groups[0].vm_type	string	"(( grab meta.size ))"
+$.Plans[0].Manifest.instance_groups[0]["."]	string	"(( inject meta.disk_config ))"
 $.Plans[0].Manifest.meta.default.azs[0]	string	"z1"
 $.Plans[0].Manifest.meta.disk_config	map[interface {}]interface {}	{}
 $.Plans[0].Manifest.meta.net	string	"redis-service"
@@ -79,7 +79,6 @@ $.Plans[1].Description	string	"A dedicated Redis 6 server, with no redundancy or
 $.Plans[1].Limit	int	7
 $.Plans[1].Type	string	"standalone"
 $.Plans[1].Manifest.features.randomize_az_placement	bool	true
-$.Plans[1].Manifest.instance_groups[0]..	string	"(( inject meta.disk_config ))"
 $.Plans[1].Manifest.instance_groups[0].azs	string	"(( grab meta.azs || meta.default.azs ))"
 $.Plans[1].Manifest.instance_groups[0].instances	int	1
 $.Plans[1].Manifest.instance_groups[0].jobs[0].name	string	"bpm"
@@ -117,6 +116,7 @@ $.Plans[1].Manifest.instance_groups[0].name	string	"standalone"
 $.Plans[1].Manifest.instance_groups[0].networks[0].name	string	"(( grab meta.net || \"redis-service\" ))"
 $.Plans[1].Manifest.instance_groups[0].stemcell	string	"default"
 $.Plans[1].Manifest.instance_groups[0].vm_type	string	"(( grab meta.size ))"
+$.Plans[1].Manifest.instance_groups[0]["."]	string	"(( inject meta.disk_config ))"
 $.Plans[1].Manifest.meta.bosh_env	string	"fixture-env"
 $.Plans[1].Manifest.meta.default.azs[0]	string	"z1"
 $.Plans[1].Manifest.meta.disk_config	map[interface {}]interface {}	{}
@@ -166,7 +166,6 @@ $.Plans[2].Description	string	"A dedicated Redis 7 server, with no redundancy or
 $.Plans[2].Limit	int	7
 $.Plans[2].Type	string	"standalone"
 $.Plans[2].Manifest.features.randomize_az_placement	bool	true
-$.Plans[2].Manifest.instance_groups[0]..	string	"(( inject meta.disk_config ))"
 $.Plans[2].Manifest.instance_groups[0].azs	string	"(( grab meta.azs || meta.default.azs ))"
 $.Plans[2].Manifest.instance_groups[0].instances	int	1
 $.Plans[2].Manifest.instance_groups[0].jobs[0].name	string	"bpm"
@@ -204,6 +203,7 @@ $.Plans[2].Manifest.instance_groups[0].name	string	"standalone"
 $.Plans[2].Manifest.instance_groups[0].networks[0].name	string	"(( grab meta.net || \"redis-service\" ))"
 $.Plans[2].Manifest.instance_groups[0].stemcell	string	"default"
 $.Plans[2].Manifest.instance_groups[0].vm_type	string	"(( grab meta.size ))"
+$.Plans[2].Manifest.instance_groups[0]["."]	string	"(( inject meta.disk_config ))"
 $.Plans[2].Manifest.meta.bosh_env	string	"fixture-env"
 $.Plans[2].Manifest.meta.default.azs[0]	string	"z1"
 $.Plans[2].Manifest.meta.disk_config	map[interface {}]interface {}	{}

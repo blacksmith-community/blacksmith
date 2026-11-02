@@ -34,12 +34,38 @@ $.stemcells[0].alias	string	"default"
 $.stemcells[0].os	string	"ubuntu-noble"
 $.stemcells[0].version	string	"latest"
 === comment-only ===
-$	map[string]interface {}	{}
+$	map[string]interface {}	null
+=== dotted-keys ===
+$.name	string	"fixture"
+$.properties.a.b	string	"nested"
+$.properties.x[0]	string	"listed"
+$.properties[""]	string	"empty-key"
+$.properties["a.b"]	string	"dotted"
+$.properties["with space"]	string	"spaced"
+$.properties["x[0]"]	string	"bracketed"
 === duplicate-keys ===
 $.name	string	"second"
 $.properties.a	int	2
 === empty ===
-$	map[string]interface {}	{}
+$	map[string]interface {}	null
+=== instance-group-networks ===
+$.instance_groups[0].name	string	"first"
+$.instance_groups[0].networks[0].name	string	"services"
+$.instance_groups[0].networks[1].name	string	"second-network"
+$.instance_groups[1].name	string	"dotted"
+$.instance_groups[1].networks[0].name	string	"my.net.work"
+$.instance_groups[2].name	string	"numeric"
+$.instance_groups[2].networks[0].name	float64	1.1
+$.instance_groups[3].name	string	"boolean"
+$.instance_groups[3].networks[0].name	bool	true
+$.instance_groups[4].name	string	"null-name"
+$.instance_groups[4].networks[0].name	interface {}	null
+$.instance_groups[5].name	string	"no-networks"
+$.instance_groups[6].name	string	"empty-networks"
+$.instance_groups[6].networks	[]interface {}	[]
+$.instance_groups[7].name	int	123
+$.instance_groups[7].networks[0].name	string	"numeric-group"
+$.name	string	"fixture"
 === instance-groups-not-a-list ===
 $.instance_groups.name	string	"oops"
 $.name	string	"fixture"
@@ -57,10 +83,66 @@ $.properties.keep	string	"kept\n\n"
 $.properties.literal	string	"line one\nline two\n"
 $.properties.quoted	string	"tab\there\nnewline"
 $.properties.strip	string	"stripped"
+=== networks-not-a-list ===
+$.instance_groups[0].name	string	"first"
+$.instance_groups[0].networks.name	string	"oops"
+$.name	string	"fixture"
 === non-string-keys ===
 ERROR: failed to parse config YAML: yaml: invalid map key: []interface {}{"a", "b"}
 === null ===
-$	map[string]interface {}	{}
+$	map[string]interface {}	null
+=== release-not-a-map ===
+$.name	string	"fixture"
+$.releases[0].name	string	"ok"
+$.releases[0].version	float64	1.1
+$.releases[1]	string	"not-a-map"
+=== release-versions ===
+$.name	string	"fixture"
+$.releases[0].name	string	"bare-decimal"
+$.releases[0].sha1	float64	1.2345678901234568e+38
+$.releases[0].url	string	"https://example.test/a.tgz"
+$.releases[0].version	float64	1.1
+$.releases[1].name	string	"bare-trailing-zero"
+$.releases[1].sha1	float64	1e+10
+$.releases[1].version	float64	1
+$.releases[2].name	string	"bare-integer"
+$.releases[2].sha1	int	1234567890
+$.releases[2].version	int	1
+$.releases[3].name	string	"bare-octal"
+$.releases[3].sha1	int	90
+$.releases[3].version	int	493
+$.releases[4].name	string	"bare-date"
+$.releases[4].version	string	"2026-01-02"
+$.releases[5].name	string	"bare-bool"
+$.releases[5].version	bool	true
+$.releases[6].name	string	"bare-exponent"
+$.releases[6].version	float64	1000
+$.releases[7].name	string	"bare-three-part"
+$.releases[7].version	string	"1.2.3"
+$.releases[8].name	string	"quoted-decimal"
+$.releases[8].sha1	string	"0123456789012345678901234567890123456789"
+$.releases[8].version	string	"1.10"
+$.releases[9].name	string	"latest"
+$.releases[9].version	string	"latest"
+$.releases[10].name	string	"no-version"
+$.releases[11].name	string	"null-version"
+$.releases[11].version	interface {}	null
+$.releases[12].version	int	7
+$.releases[13].name	int	123
+$.releases[13].version	int	4
+$.stemcells[0].alias	string	"default"
+$.stemcells[0].os	string	"ubuntu-noble"
+$.stemcells[0].version	float64	1.1
+$.stemcells[1].alias	string	"bare-integer"
+$.stemcells[1].os	string	"ubuntu-noble"
+$.stemcells[1].version	int	621
+$.stemcells[2].alias	string	"quoted"
+$.stemcells[2].os	string	"ubuntu-noble"
+$.stemcells[2].version	string	"621.10"
+$.stemcells[3].alias	string	"latest"
+$.stemcells[3].os	string	"ubuntu-noble"
+$.stemcells[3].version	string	"latest"
+$.stemcells[4].os	string	"ubuntu-noble"
 === scalar-root ===
 ERROR: failed to parse config YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `just a ...` into map[string]interface {}

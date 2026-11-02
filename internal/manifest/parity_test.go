@@ -29,17 +29,35 @@ const (
 	parityNetwork      = "fixture-net"
 )
 
-// parityParams are the provision parameters a plan renders with. The tuned
-// set carries the integral numbers JSON delivers as float64, which the redis
-// forges grab into their job configuration.
+// parityParams are the provision parameters a plan renders with. The redis
+// forges grab four of them into their job configuration, so those carry the
+// values whose YAML form is a choice of the library. The tuned set has the
+// integral numbers JSON delivers as float64. The strings set has strings
+// that read as numbers, dates, and booleans. The types set has real values of
+// other kinds, which are a bool, a float that is not whole, a list, and a
+// nested map.
 func parityParams(paramSet string, instanceID string) map[interface{}]interface{} {
 	params := map[interface{}]interface{}{"instance_id": instanceID}
 
-	if paramSet == "tuned" {
+	switch paramSet {
+	case "tuned":
 		params["slowlog-max-len"] = float64(128)
 		params["slowlog-log-slower-than"] = float64(10000)
 		params["notify-keyspace-events"] = "KEA"
 		params["maxmemory-policy"] = "allkeys-lru"
+	case "strings":
+		params["slowlog-max-len"] = "0755"
+		params["slowlog-log-slower-than"] = "2026-01-02"
+		params["notify-keyspace-events"] = "yes"
+		params["maxmemory-policy"] = "1e3"
+	case "types":
+		params["slowlog-max-len"] = 3.5
+		params["slowlog-log-slower-than"] = true
+		params["notify-keyspace-events"] = []interface{}{"K", "E", "yes", 0755}
+		params["maxmemory-policy"] = map[string]interface{}{
+			"policy": "allkeys-lru",
+			"nested": map[string]interface{}{"deep": "0755", "flag": false, "date": "2026-01-02"},
+		}
 	}
 
 	return params
@@ -47,7 +65,7 @@ func parityParams(paramSet string, instanceID string) map[interface{}]interface{
 
 func parityParamSets(forge string) []string {
 	if forge == "redis" {
-		return []string{"none", "tuned"}
+		return []string{"none", "tuned", "strings", "types"}
 	}
 
 	return []string{"none"}
@@ -101,6 +119,27 @@ func prepareParityFixture(t *testing.T, fixture parity.Fixture) string {
 	return instanceID
 }
 
+// genParityManifest renders a plan of a fixture with a set of parameters.
+// It reads the plan again, because a merge may reuse its maps.
+func genParityManifest(t *testing.T, fixture parity.Fixture, instanceID, planID, paramSet string) (string, error) {
+	t.Helper()
+
+	var current services.Plan
+
+	for _, candidate := range readParityService(t, fixture).Plans {
+		if candidate.ID == planID {
+			current = candidate
+		}
+	}
+
+	defaults := map[interface{}]interface{}{
+		"name":          current.ID + "-" + instanceID,
+		"director_uuid": parityDirectorUUID,
+	}
+
+	return GenManifest(current, defaults, utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
+}
+
 //nolint:paralleltest // spruce keeps global state, and the test sets environment variables
 func TestGenManifestParity(t *testing.T) {
 	for _, fixture := range parity.Fixtures(t) {
@@ -109,21 +148,7 @@ func TestGenManifestParity(t *testing.T) {
 
 			for _, plan := range readParityService(t, fixture).Plans {
 				for _, paramSet := range parityParamSets(fixture.Forge) {
-					// Read the plan again, because a merge may reuse its maps.
-					var current services.Plan
-
-					for _, candidate := range readParityService(t, fixture).Plans {
-						if candidate.ID == plan.ID {
-							current = candidate
-						}
-					}
-
-					defaults := map[interface{}]interface{}{
-						"name":          current.ID + "-" + instanceID,
-						"director_uuid": parityDirectorUUID,
-					}
-
-					rendered, err := GenManifest(current, defaults, utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
+					rendered, err := genParityManifest(t, fixture, instanceID, plan.ID, paramSet)
 					base := filepath.Join("testdata", "manifests", fixture.Forge, fixture.Variant, plan.ID+"."+paramSet)
 					parityGolden(t, base, rendered, err)
 				}
@@ -194,7 +219,12 @@ func TestCredentialsManifestParity(t *testing.T) {
 
 			for _, plan := range readParityService(t, fixture).Plans {
 				deployment := plan.ID + "-" + instanceID
-				jobs, dnsname := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, map[string]string{}, log)
+
+				// The networks come from the deployment's own manifest, as they do
+				// when a bind reads the credentials of a running deployment.
+				deployed, _ := genParityManifest(t, fixture, instanceID, plan.ID, "none")
+				networks := extractNetworksByJob(deployed)
+				jobs, dnsname := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, networks, log)
 				base := filepath.Join("testdata", "credentials", fixture.Forge, fixture.Variant, plan.ID)
 
 				jobsIfc, err := marshalJobsToInterface(jobs, log)
@@ -213,7 +243,7 @@ func TestCredentialsManifestParity(t *testing.T) {
 
 				credentials, err := extractCredentialsFromManifest(manifestYAML, log)
 
-				recorded := map[string]interface{}{"jobs": jobsIfc, "credentials": credentials}
+				recorded := map[string]interface{}{"networks": networks, "dnsname": dnsname, "jobs": jobsIfc, "credentials": credentials}
 				if err != nil {
 					recorded["error"] = err.Error()
 				}

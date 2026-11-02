@@ -18,39 +18,75 @@ rabbitmq-standalone-parity-rabbitmq-rabbitmq-autoscale / standalone
 rabbitmq-standalone-parity-rabbitmq-tls / standalone
 === forge_redis_base_redis-standalone-6.none ===
 redis-standalone-6-parity-redis-base / standalone
+=== forge_redis_base_redis-standalone-6.strings ===
+redis-standalone-6-parity-redis-base / standalone
 === forge_redis_base_redis-standalone-6.tuned ===
+redis-standalone-6-parity-redis-base / standalone
+=== forge_redis_base_redis-standalone-6.types ===
 redis-standalone-6-parity-redis-base / standalone
 === forge_redis_base_redis-standalone-7.none ===
 redis-standalone-7-parity-redis-base / standalone
+=== forge_redis_base_redis-standalone-7.strings ===
+redis-standalone-7-parity-redis-base / standalone
 === forge_redis_base_redis-standalone-7.tuned ===
+redis-standalone-7-parity-redis-base / standalone
+=== forge_redis_base_redis-standalone-7.types ===
 redis-standalone-7-parity-redis-base / standalone
 === forge_redis_base_redis-standalone.none ===
 redis-standalone-parity-redis-base / standalone
+=== forge_redis_base_redis-standalone.strings ===
+redis-standalone-parity-redis-base / standalone
 === forge_redis_base_redis-standalone.tuned ===
+redis-standalone-parity-redis-base / standalone
+=== forge_redis_base_redis-standalone.types ===
 redis-standalone-parity-redis-base / standalone
 === forge_redis_dual-mode_redis-standalone-6.none ===
 redis-standalone-6-parity-redis-dual-mode / standalone
+=== forge_redis_dual-mode_redis-standalone-6.strings ===
+redis-standalone-6-parity-redis-dual-mode / standalone
 === forge_redis_dual-mode_redis-standalone-6.tuned ===
+redis-standalone-6-parity-redis-dual-mode / standalone
+=== forge_redis_dual-mode_redis-standalone-6.types ===
 redis-standalone-6-parity-redis-dual-mode / standalone
 === forge_redis_dual-mode_redis-standalone-7.none ===
 redis-standalone-7-parity-redis-dual-mode / standalone
+=== forge_redis_dual-mode_redis-standalone-7.strings ===
+redis-standalone-7-parity-redis-dual-mode / standalone
 === forge_redis_dual-mode_redis-standalone-7.tuned ===
+redis-standalone-7-parity-redis-dual-mode / standalone
+=== forge_redis_dual-mode_redis-standalone-7.types ===
 redis-standalone-7-parity-redis-dual-mode / standalone
 === forge_redis_dual-mode_redis-standalone.none ===
 redis-standalone-parity-redis-dual-mode / standalone
+=== forge_redis_dual-mode_redis-standalone.strings ===
+redis-standalone-parity-redis-dual-mode / standalone
 === forge_redis_dual-mode_redis-standalone.tuned ===
+redis-standalone-parity-redis-dual-mode / standalone
+=== forge_redis_dual-mode_redis-standalone.types ===
 redis-standalone-parity-redis-dual-mode / standalone
 === forge_redis_tls_redis-standalone-6.none ===
 redis-standalone-6-parity-redis-tls / standalone
+=== forge_redis_tls_redis-standalone-6.strings ===
+redis-standalone-6-parity-redis-tls / standalone
 === forge_redis_tls_redis-standalone-6.tuned ===
+redis-standalone-6-parity-redis-tls / standalone
+=== forge_redis_tls_redis-standalone-6.types ===
 redis-standalone-6-parity-redis-tls / standalone
 === forge_redis_tls_redis-standalone-7.none ===
 redis-standalone-7-parity-redis-tls / standalone
+=== forge_redis_tls_redis-standalone-7.strings ===
+redis-standalone-7-parity-redis-tls / standalone
 === forge_redis_tls_redis-standalone-7.tuned ===
+redis-standalone-7-parity-redis-tls / standalone
+=== forge_redis_tls_redis-standalone-7.types ===
 redis-standalone-7-parity-redis-tls / standalone
 === forge_redis_tls_redis-standalone.none ===
 redis-standalone-parity-redis-tls / standalone
+=== forge_redis_tls_redis-standalone.strings ===
+redis-standalone-parity-redis-tls / standalone
 === forge_redis_tls_redis-standalone.tuned ===
+redis-standalone-parity-redis-tls / standalone
+=== forge_redis_tls_redis-standalone.types ===
 redis-standalone-parity-redis-tls / standalone
 === forge_valkey_base_valkey-cluster.none ===
 valkey-cluster-parity-valkey-base / node
@@ -75,6 +111,9 @@ fixture-deployment / fixture-group
 === odd_comment-only ===
 fallback-deployment / blacksmith
 ERROR: manifest missing instance_groups
+=== odd_dotted-keys ===
+fixture / blacksmith
+ERROR: manifest missing instance_groups
 === odd_duplicate-keys ===
 fallback-deployment / blacksmith
 ERROR: failed to parse deployment manifest: yaml: unmarshal errors:
@@ -82,6 +121,8 @@ ERROR: failed to parse deployment manifest: yaml: unmarshal errors:
 === odd_empty ===
 fallback-deployment / blacksmith
 ERROR: manifest missing instance_groups
+=== odd_instance-group-networks ===
+fixture / first
 === odd_instance-groups-not-a-list ===
 fixture / blacksmith
 ERROR: manifest missing instance_groups
@@ -95,11 +136,19 @@ ERROR: first instance group missing name field
 === odd_multiline ===
 fixture / blacksmith
 ERROR: manifest missing instance_groups
+=== odd_networks-not-a-list ===
+fixture / first
 === odd_non-string-keys ===
 fallback-deployment / blacksmith
 ERROR: failed to parse deployment manifest: yaml: invalid map key: []interface {}{"a", "b"}
 === odd_null ===
 fallback-deployment / blacksmith
+ERROR: manifest missing instance_groups
+=== odd_release-not-a-map ===
+fixture / blacksmith
+ERROR: manifest missing instance_groups
+=== odd_release-versions ===
+fixture / blacksmith
 ERROR: manifest missing instance_groups
 === odd_scalar-root ===
 fallback-deployment / blacksmith

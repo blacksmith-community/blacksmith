@@ -50,7 +50,7 @@ $.jobs[3].properties.rabbitmq_metrics_emitter.rmq_management.endpoint	string	"ht
 $.jobs[3].properties.rabbitmq_metrics_emitter.rmq_management.password	string	":leading-colon"
 $.jobs[3].properties.rabbitmq_metrics_emitter.rmq_management.skip_ssl_validation	bool	true
 $.jobs[3].properties.rabbitmq_metrics_emitter.rmq_management.user	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
-$.jobs[4].cert_refs.nats.tls.client_cert	string	"/fixture-env-bosh/fixture-env-cf/nats_client_cert"
+$.jobs[4].cert_refs["nats.tls.client_cert"]	string	"/fixture-env-bosh/fixture-env-cf/nats_client_cert"
 $.jobs[4].group	string	"standalone"
 $.jobs[4].job	string	"route_registrar"
 $.jobs[4].properties.nats.tls.client_cert	string	"((/fixture-env-bosh/fixture-env-cf/nats_client_cert.certificate))"
@@ -64,7 +64,7 @@ $.jobs[4].properties.route_registrar.routes[0].uris[0]	string	"rabbitmq-standalo
 $.jobs[5].cert_refs	map[string]string	{}
 $.jobs[5].group	string	"standalone"
 $.jobs[5].job	string	"bpm"
-$.jobs[5].properties	map[string]interface {}	{}
+$.jobs[5].properties	map[string]interface {}	null
 $.literals	[]interface {}	[]
 $.name	string	"rabbitmq-standalone-parity-rabbitmq-dashboard-registration"
 $.signing_cas.rabbitmq_metrics_emitter_crt	string	"/fixture-env-bosh/fixture-env-blacksmith/blacksmith_services_ca"

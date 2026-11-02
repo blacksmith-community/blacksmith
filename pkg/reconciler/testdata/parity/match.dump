@@ -78,6 +78,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_base_redis-standalone-6.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_base_redis-standalone-6.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_base_redis-standalone-6.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_base_redis-standalone-6.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -85,6 +93,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_base_redis-standalone-6.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_base_redis-standalone-6.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_base_redis-standalone-6.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_base_redis-standalone-7.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -94,6 +110,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_base_redis-standalone-7.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_base_redis-standalone-7.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_base_redis-standalone-7.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_base_redis-standalone-7.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -101,6 +125,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_base_redis-standalone-7.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_base_redis-standalone-7.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_base_redis-standalone-7.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_base_redis-standalone.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -110,6 +142,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_base_redis-standalone.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_base_redis-standalone.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_base_redis-standalone.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_base_redis-standalone.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -117,6 +157,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_base_redis-standalone.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_base_redis-standalone.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_base_redis-standalone.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_dual-mode_redis-standalone-6.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -126,6 +174,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_dual-mode_redis-standalone-6.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_dual-mode_redis-standalone-6.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_dual-mode_redis-standalone-6.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_dual-mode_redis-standalone-6.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -133,6 +189,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_dual-mode_redis-standalone-6.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_dual-mode_redis-standalone-6.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_dual-mode_redis-standalone-6.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_dual-mode_redis-standalone-7.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -142,6 +206,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_dual-mode_redis-standalone-7.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_dual-mode_redis-standalone-7.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_dual-mode_redis-standalone-7.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_dual-mode_redis-standalone-7.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -149,6 +221,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_dual-mode_redis-standalone-7.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_dual-mode_redis-standalone-7.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_dual-mode_redis-standalone-7.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_dual-mode_redis-standalone.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -158,6 +238,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_dual-mode_redis-standalone.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_dual-mode_redis-standalone.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_dual-mode_redis-standalone.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_dual-mode_redis-standalone.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -165,6 +253,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_dual-mode_redis-standalone.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_dual-mode_redis-standalone.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_dual-mode_redis-standalone.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_tls_redis-standalone-6.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -174,6 +270,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_tls_redis-standalone-6.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_tls_redis-standalone-6.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_tls_redis-standalone-6.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_tls_redis-standalone-6.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -181,6 +285,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_tls_redis-standalone-6.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_tls_redis-standalone-6.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_tls_redis-standalone-6.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_tls_redis-standalone-7.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -190,6 +302,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_tls_redis-standalone-7.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_tls_redis-standalone-7.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_tls_redis-standalone-7.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_tls_redis-standalone-7.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -197,6 +317,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_tls_redis-standalone-7.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_tls_redis-standalone-7.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_tls_redis-standalone-7.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_redis_tls_redis-standalone.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -206,6 +334,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_tls_redis-standalone.none as unmatched-deployment ===
 ERROR: no match found for deployment
+=== forge_redis_tls_redis-standalone.strings as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_tls_redis-standalone.strings as unmatched-deployment ===
+ERROR: no match found for deployment
 === forge_redis_tls_redis-standalone.tuned as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -213,6 +349,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === forge_redis_tls_redis-standalone.tuned as unmatched-deployment ===
+ERROR: no match found for deployment
+=== forge_redis_tls_redis-standalone.types as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== forge_redis_tls_redis-standalone.types as unmatched-deployment ===
 ERROR: no match found for deployment
 === forge_valkey_base_valkey-cluster.none as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -298,6 +442,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === odd_comment-only as unmatched-deployment ===
 ERROR: no match found for deployment
+=== odd_dotted-keys as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== odd_dotted-keys as unmatched-deployment ===
+ERROR: no match found for deployment
 === odd_duplicate-keys as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -313,6 +465,14 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"exact_name_match"
 === odd_empty as unmatched-deployment ===
+ERROR: no match found for deployment
+=== odd_instance-group-networks as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== odd_instance-group-networks as unmatched-deployment ===
 ERROR: no match found for deployment
 === odd_instance-groups-not-a-list as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
@@ -346,6 +506,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === odd_multiline as unmatched-deployment ===
 ERROR: no match found for deployment
+=== odd_networks-not-a-list as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== odd_networks-not-a-list as unmatched-deployment ===
+ERROR: no match found for deployment
 === odd_non-string-keys as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
@@ -361,6 +529,22 @@ $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
 $.Confidence	float64	1
 $.MatchReason	string	"perfect_manifest_match"
 === odd_null as unmatched-deployment ===
+ERROR: no match found for deployment
+=== odd_release-not-a-map as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== odd_release-not-a-map as unmatched-deployment ===
+ERROR: no match found for deployment
+=== odd_release-versions as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== odd_release-versions as unmatched-deployment ===
 ERROR: no match found for deployment
 === odd_scalar-root as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"

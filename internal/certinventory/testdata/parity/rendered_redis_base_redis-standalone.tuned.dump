@@ -3,7 +3,7 @@ $.groups.standalone	int	1
 $.jobs[0].cert_refs	map[string]string	{}
 $.jobs[0].group	string	"standalone"
 $.jobs[0].job	string	"bpm"
-$.jobs[0].properties	map[string]interface {}	{}
+$.jobs[0].properties	map[string]interface {}	null
 $.jobs[1].cert_refs	map[string]string	{}
 $.jobs[1].group	string	"standalone"
 $.jobs[1].job	string	"standalone"

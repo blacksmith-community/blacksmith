@@ -3,8 +3,8 @@ $.groups.node	int	6
 $.jobs[0].cert_refs	map[string]string	{}
 $.jobs[0].group	string	"node"
 $.jobs[0].job	string	"bpm"
-$.jobs[0].properties	map[string]interface {}	{}
-$.jobs[1].cert_refs.valkey.tls.ca_cert	string	"valkey_cluster_crt"
+$.jobs[0].properties	map[string]interface {}	null
+$.jobs[1].cert_refs["valkey.tls.ca_cert"]	string	"valkey_cluster_crt"
 $.jobs[1].group	string	"node"
 $.jobs[1].job	string	"cluster"
 $.jobs[1].properties.auth.password	string	"yes"

@@ -95,6 +95,67 @@ stemcells:
   os: ubuntu-noble
   version: latest
 `,
+	"release-versions": `name: fixture
+releases:
+- {name: bare-decimal, version: 1.10, url: "https://example.test/a.tgz", sha1: 0123456789012345678901234567890123456789}
+- {name: bare-trailing-zero, version: 1.0, sha1: 1e10}
+- {name: bare-integer, version: 1, sha1: 1234567890}
+- {name: bare-octal, version: 0755, sha1: 0x5a}
+- {name: bare-date, version: 2026-01-02}
+- {name: bare-bool, version: yes}
+- {name: bare-exponent, version: 1e3}
+- {name: bare-three-part, version: 1.2.3}
+- {name: quoted-decimal, version: "1.10", sha1: "0123456789012345678901234567890123456789"}
+- {name: latest, version: latest}
+- {name: no-version}
+- {name: null-version, version: ~}
+- {version: 7}
+- {name: 123, version: 4}
+stemcells:
+- {alias: default, os: ubuntu-noble, version: 1.10}
+- {alias: bare-integer, os: ubuntu-noble, version: 621}
+- {alias: quoted, os: ubuntu-noble, version: "621.10"}
+- {alias: latest, os: ubuntu-noble, version: latest}
+- {os: ubuntu-noble}
+`,
+	"instance-group-networks": `name: fixture
+instance_groups:
+- name: first
+  networks:
+  - name: services
+  - name: second-network
+- name: dotted
+  networks:
+  - {name: my.net.work}
+- name: numeric
+  networks:
+  - name: 1.10
+- name: boolean
+  networks:
+  - name: yes
+- name: null-name
+  networks:
+  - name: ~
+- name: no-networks
+- name: empty-networks
+  networks: []
+- name: 123
+  networks:
+  - name: numeric-group
+`,
+	"dotted-keys": `name: fixture
+properties:
+  a.b: dotted
+  a:
+    b: nested
+  "x[0]": bracketed
+  x:
+  - listed
+  "": empty-key
+  "with space": spaced
+`,
+	"release-not-a-map":   "name: fixture\nreleases:\n- {name: ok, version: 1.10}\n- not-a-map\n",
+	"networks-not-a-list": "name: fixture\ninstance_groups:\n- name: first\n  networks: {name: oops}\n",
 	"mixed-group-names": `name: fixture
 instance_groups:
 - name: 123

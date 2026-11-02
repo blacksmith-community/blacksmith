@@ -19,7 +19,7 @@ $.jobs[0].properties.rabbitmq.vhost	string	"parity-rabbitmq-rabbitmq-autoscale"
 $.jobs[1].cert_refs	map[string]string	{}
 $.jobs[1].group	string	"standalone"
 $.jobs[1].job	string	"bpm"
-$.jobs[1].properties	map[string]interface {}	{}
+$.jobs[1].properties	map[string]interface {}	null
 $.jobs[2].cert_refs	map[string]string	{}
 $.jobs[2].group	string	"standalone"
 $.jobs[2].job	string	"loggr-syslog-agent"
