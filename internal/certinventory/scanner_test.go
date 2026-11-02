@@ -1297,3 +1297,55 @@ func TestScanInstanceDropsJobProperties(t *testing.T) {
 		}
 	}
 }
+
+// A bounded call runs on a goroutine of its own, so within hands a panic
+// in it to the caller, where a recover such as the upgrade worker's
+// catches it, rather than letting it crash the broker.
+func TestWithinPanicReachesTheCaller(t *testing.T) {
+	t.Parallel()
+
+	var recovered any
+
+	func() {
+		defer func() { recovered = recover() }()
+
+		_, _ = within(context.Background(), DirectorCallTimeout, func(context.Context) ([]bosh.VM, error) {
+			panic("the director client broke")
+		})
+	}()
+
+	got, ok := recovered.(*callPanic)
+	if !ok || got.value != "the director client broke" || !strings.Contains(fmt.Sprint(got), "the director client broke") {
+		t.Fatalf("expected the call's panic in the caller, got %#v", recovered)
+	}
+}
+
+// A call that panics after the scan stopped waiting has its panic dropped
+// with its result, so it never crashes the broker.
+func TestWithinDropsAnAbandonedPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	finished := make(chan struct{})
+
+	cancel()
+
+	_, err := within(ctx, DirectorCallTimeout, func(context.Context) ([]bosh.VM, error) {
+		defer close(finished)
+
+		<-release
+
+		panic("the director client broke late")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the scan to stop waiting, got %v", err)
+	}
+
+	close(release)
+	<-finished
+
+	// The panic unwinds past the deferred close, so give it the moment it
+	// needs to reach within's recover, or crash the test binary.
+	time.Sleep(50 * time.Millisecond)
+}

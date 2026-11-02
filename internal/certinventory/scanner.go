@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"sync"
@@ -348,30 +349,58 @@ func (s *Scanner) director(ctx context.Context) (string, error) {
 // or the deadline finishes. A call that ignores its context keeps running in
 // the background, but the scan no longer waits for it, and its result is
 // dropped.
+//
+// The call runs on a goroutine of its own, so a panic in it would get past
+// the caller's recover, such as the upgrade worker's, and crash the broker.
+// The goroutine recovers the panic instead and hands it to the caller,
+// which panics with it again, as if the call had run inline. A call the
+// scan no longer waits for has its panic dropped with its result.
 func within[T any](ctx context.Context, d time.Duration, call func(context.Context) (T, error)) (T, error) {
 	callCtx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
 
 	type result struct {
-		v   T
-		err error
+		v        T
+		err      error
+		panicked *callPanic
 	}
 
 	done := make(chan result, 1)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{panicked: &callPanic{value: r, stack: debug.Stack()}}
+			}
+		}()
+
 		v, err := call(callCtx)
-		done <- result{v, err}
+		done <- result{v: v, err: err}
 	}()
 
 	select {
 	case r := <-done:
+		if r.panicked != nil {
+			panic(r.panicked)
+		}
+
 		return r.v, r.err
 	case <-callCtx.Done():
 		var zero T
 
 		return zero, callCtx.Err()
 	}
+}
+
+// callPanic is a panic that within recovered from a call, with the stack
+// of the goroutine the call ran on.
+type callPanic struct {
+	value any
+	stack []byte
+}
+
+func (p *callPanic) String() string {
+	return fmt.Sprintf("a bounded call panicked: %v\n%s", p.value, p.stack)
 }
 
 func literalObservations(facts *ManifestFacts, owner Owner, at time.Time) []RawObservation {
