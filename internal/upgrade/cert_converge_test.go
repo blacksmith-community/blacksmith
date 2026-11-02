@@ -33,6 +33,8 @@ type convergeEnv struct {
 
 	mu    sync.Mutex
 	scans int
+	// reconciles counts the scans whose reconcile with the record ended.
+	reconciles int
 	// hidden makes the listener's probe fail, so no scan observes it.
 	hidden bool
 	// listenerless gives the scan no expected listener and no probe.
@@ -114,6 +116,13 @@ func (e *convergeEnv) scanCount() int {
 	return e.scans
 }
 
+func (e *convergeEnv) reconcileCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.reconciles
+}
+
 // scan scans the instance as it stands: the version the director deploys
 // and, unless the listener is hidden, the leaf it serves, observed at the
 // scan's start. Each scan begins a second after the one before.
@@ -162,6 +171,10 @@ func (e *convergeEnv) scan(ctx context.Context, instanceID string) (certinventor
 		defer func() {
 			// The scheduler logs a failed reconcile and returns the scan.
 			_ = e.store.ReconcileScan(ctx, scan, certinventory.ReconcileSources{Versions: e.credhub, Tasks: e.director})
+
+			e.mu.Lock()
+			e.reconciles++
+			e.mu.Unlock()
 		}()
 	}
 
@@ -470,7 +483,9 @@ func TestConvergeConfirmsTheScannersReconcile(t *testing.T) {
 // A scan that reconciles the record before the converge does, but whose
 // write of the cleared record fails, never counts as a success. The
 // converge fails with the note that its deploy finished, and the record
-// stays.
+// stays, through the scan the settled instance starts in the background
+// too. Deletes keep failing until that scan's reconcile ends, since one
+// that Vault takes rightly clears the record.
 //
 //nolint:paralleltest // the runner shares the manager's test seams
 func TestConvergeReconcileFailureKeepsRecord(t *testing.T) {
@@ -486,9 +501,11 @@ func TestConvergeReconcileFailureKeepsRecord(t *testing.T) {
 	task := env.task()
 	settled := env.run(manager, &task)
 
-	env.dv.mu.Lock()
-	env.dv.failDeletes = false
-	env.dv.mu.Unlock()
+	// Each attempt of the converge reconciles once, and the follow-up
+	// scan once more.
+	waitUntil(t, "the reconcile of the follow-up scan", func() bool {
+		return env.reconcileCount() > verifyAttempts
+	})
 
 	expectUnconfirmedConverge(t, env, manager, settled)
 }
