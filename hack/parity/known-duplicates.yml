@@ -1,0 +1,18 @@
+---
+# Duplicate mapping keys that the pinned forge releases ship today.  The
+# forge fix is pending, so render-forges.rb reports these as known and fails
+# on every other duplicate.
+#
+# go.yaml.in/yaml/v2 keeps the last value of a repeated key, so the second
+# `features:` block below replaces the first and use_dns_addresses never
+# reaches the rendered manifest.  Graft refuses duplicate keys.  Remove an
+# entry once the forge release that fixes it is pinned.
+#
+# Each entry is a path pattern relative to the fixture directory and the
+# repeated key.
+- path: "valkey/*/services/standalone/manifest.yml"
+  key: ".features"
+- path: "redis/*/services/standalone-6/manifest.yml"
+  key: ".features"
+- path: "redis/*/services/standalone-7/manifest.yml"
+  key: ".features"

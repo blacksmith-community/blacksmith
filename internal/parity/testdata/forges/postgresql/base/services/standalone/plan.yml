@@ -1,0 +1,6 @@
+---
+id: standalone
+name: standalone
+limit: 7
+description: |+
+  A dedicated PostgreSQL server, with no redundancy or replication

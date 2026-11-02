@@ -1,0 +1,20 @@
+---
+release: kubernetes-forge 1.0.0
+variant: base
+properties:
+  service:
+    id: kubernetes
+    name: kubernetes
+    description: A Kubernetes cluster, deployed on-demand
+    tags:
+    - blacksmith
+    - dedicated
+    - kubernetes
+    limit: 0
+  plans:
+    cluster:
+      name: cluster
+      description: A 3-node Kubernetes cluster
+      limit: 7
+      type: cluster
+      nodes: 3

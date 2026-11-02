@@ -1,0 +1,15 @@
+---
+id: valkey
+name: "valkey"
+description: |-
+  A dedicated Valkey instance, deployed on-demand
+tags:
+    - blacksmith
+    - dedicated
+    - valkey
+    - redis
+  
+bindable: true
+metadata: {}
+plan_updateable: true
+

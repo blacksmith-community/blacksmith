@@ -1,0 +1,14 @@
+---
+id:   mariadb
+name: mariadb
+description: |-
+    A dedicated MariaDB instance, deployed on-demand
+tags:
+    - blacksmith
+    - dedicated
+    - mariadb
+  
+bindable: true
+metadata: {}
+plan_updateable: true
+

@@ -1,0 +1,38 @@
+---
+release: valkey-forge 1.4.0
+variant: base
+properties:
+  environment: fixture-env
+  bosh_env: fixture-env
+  stemcell_os: ubuntu-noble
+  stemcell_version: latest
+  service:
+    id: valkey
+    name: valkey
+    description: A dedicated Valkey instance, deployed on-demand
+    tags:
+    - blacksmith
+    - dedicated
+    - valkey
+    - redis
+    limit: 0
+    type: standalone
+  plans:
+    standalone:
+      name: standalone
+      description: A dedicated Valkey server, with no redundancy or replication
+      limit: 7
+      type: standalone
+      version: 8
+      vm_type: default
+    cluster:
+      name: cluster
+      description: A Valkey cluster with 3 master nodes and 3 replica nodes
+      limit: 5
+      type: cluster
+      version: 8
+      vm_type: default
+      masters: 3
+      replicas: 1
+      azs:
+      - z1

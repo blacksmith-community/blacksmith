@@ -1,0 +1,14 @@
+---
+id:   postgresql
+name: postgresql
+description: |-
+    A dedicated PostgreSQL instance, deployed on-demand
+tags:
+    - blacksmith
+    - dedicated
+    - postgresql
+  
+bindable: true
+metadata: {}
+plan_updateable: true
+

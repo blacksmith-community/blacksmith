@@ -1,0 +1,223 @@
+---
+meta:
+  size: default
+  disk_config: {}
+  username: (( vault $CREDENTIALS "/rabbitmq/system:username" ))
+  password: (( vault $CREDENTIALS "/rabbitmq/system:password" ))
+  username-monitoring: (( vault $CREDENTIALS "/rabbitmq/monitoring:username" ))
+  password-monitoring: (( vault $CREDENTIALS "/rabbitmq/monitoring:password" ))
+  username-app: (( vault $CREDENTIALS "/rabbitmq/app:username" ))
+  password-app: (( vault $CREDENTIALS "/rabbitmq/app:password" ))
+  environment: fixture-env
+  bosh_env: fixture-env
+  erlang_cookie: (( vault $CREDENTIALS "/rabbitmq/erlang:cookie" ))
+  plugins: []
+
+  cf:
+    exodus_path: secret/exodus/fixture-env/cf
+    deployment_name: fixture-env-cf
+    system_domain: sys.fixture.example
+    api_url:    https://api.sys.fixture.example
+    username:   fixture-admin
+    password:   fixture-password-not-real
+
+  mgmt_ssl:    true
+  mgmt_port:   15671
+  mgmt_scheme: https
+  mgmt_host:   localhost
+
+variables:
+
+- name: rabbitmq_metrics_emitter_crt
+  type: certificate
+
+  options:
+    ca: (( concat "/" meta.bosh_env "-bosh/" meta.environment "-blacksmith/blacksmith_services_ca" ))
+    common_name: (( concat meta.environment "-rabbitmq-metrics-emitter.bosh" ))
+
+  consumes:
+    common_name:
+      from: rabbitmq-emitter
+
+    alternative_name: 
+      from: rabbitmq-emitter
+
+      properties:
+        wildcard: true
+
+
+
+features:
+  use_dns_addresses: true
+
+instance_groups:
+- name: standalone
+  instances: 1
+  azs: (( grab meta.azs ))
+  stemcell: default
+  vm_type: (( grab meta.size ))
+
+  networks: 
+    - name: (( grab meta.net || "rabbitmq-service" ))
+
+  .: (( inject meta.disk_config )) # Accounts for persistent_disk_type option
+
+  jobs:
+  - name:    rabbitmq
+    release: rabbitmq-forge
+
+    properties:
+      plugins: (( grab meta.plugins ))
+      erlang:
+        cookie: (( grab meta.erlang_cookie ))
+      rabbitmq:
+        plan: standalone
+        vhost: (( grab meta.params.instance_id || "/" ))
+        network: (( grab meta.net || "rabbitmq-service" ))
+
+        admin:
+          user: (( grab meta.username ))
+          pass: (( grab meta.password ))
+
+        monitoring:
+          user: (( grab meta.username-monitoring ))
+          pass: (( grab meta.password-monitoring ))
+
+        app:
+          user: (( grab meta.username-app ))
+          pass: (( grab meta.password-app ))
+
+        tls:
+          enabled: (( grab meta.rabbitmq.tls.enabled || false ))
+          dual-mode: (( grab meta.rabbitmq.tls.dual-mode || false ))
+
+    provides:
+      rabbitmq-servers:
+        as: rabbitmq-servers
+        ip_addresses: false
+
+      rabbitmq-san:
+        as: rabbitmq-san
+        ip_addresses: false
+
+      rabbitmq-alias-domain:
+        aliases:
+          - domain: "_.rabbitmq_standalone.bosh"
+            placeholder_type: uuid
+
+    consumes:
+      rabbitmq-servers:
+        from: rabbitmq-servers
+        ip_addresses: false
+
+    custom_provider_definitions:
+      - name: rabbitmq-san
+        type: address
+      - name: rabbitmq-alias-domain
+        type: placeholder
+
+  - name:    bpm
+    release: bpm
+  - name: loggr-syslog-agent
+    release: loggregator-agent
+    
+    consumes:
+      binding_cache:
+        from: binding_cache
+        deployment: fixture-env-cf
+    properties:
+      port: 3460
+      drain_ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+      tls:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.key" ))
+      cache:
+        tls:
+          ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_api.ca" ))
+          cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_api.crt" ))
+          key: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_api.key" ))
+          cn: binding-cache
+      metrics:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_metrics.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_metrics.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/syslog_agent_metrics.key" ))
+        server_name: syslog_agent_metrics
+
+  - name: loggr-forwarder-agent
+    release: loggregator-agent
+    properties:
+      tls:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.key" ))
+      metrics:
+        ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/forwarder_agent_metrics.ca" ))
+        cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/forwarder_agent_metrics.crt" ))
+        key: (( file "jobs/rabbitmq-blacksmith-plans/tls/forwarder_agent_metrics.key" ))
+        server_name: forwarder_agent_metrics
+        
+  - name: rabbitmq-metrics-emitter
+    release: rabbitmq-metrics-emitter
+
+    properties:
+      rabbitmq_metrics_emitter:
+        cloud_foundry:
+          api:    (( grab meta.cf.api_url ))
+          skip_ssl_validation: false
+          username: fixture-admin
+          password: fixture-password-not-real
+
+        rmq_management:
+          skip_ssl_validation: (( grab meta.mgmt_ssl ))
+          endpoint: (( concat meta.mgmt_scheme "://" meta.mgmt_host ":" meta.mgmt_port "/api" ))
+          user: (( grab meta.username ))
+          password: (( grab meta.password ))
+
+        loggregator:
+          tls:
+            cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.crt" ))
+            key: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.key" ))
+            ca_cert: (( file "jobs/rabbitmq-blacksmith-plans/tls/loggregator.ca" ))
+
+    provides:
+      rabbitmq-emitter:
+        as: rabbitmq-emitter
+        ip_addresses: false
+
+    custom_provider_definitions:
+      - name: rabbitmq-emitter
+        type: address
+
+
+releases:
+  - name: rabbitmq-forge
+    version: latest
+  - name: "bpm"
+    version: "1.4.20"
+    url: "https://bosh.io/d/github.com/cloudfoundry/bpm-release?v=1.4.20"
+    sha1: "00223345c70d5629d35008e88c42bf4482bdf766"
+  - name: "bosh-dns-aliases"
+    version: "0.0.4"
+    url: "https://bosh.io/d/github.com/cloudfoundry/bosh-dns-aliases-release?v=0.0.4"
+    sha1: "55b3dced813ff9ed92a05cda02156e4b5604b273"
+  - name: "loggregator-agent"
+    version: "8.3.8"
+    url: "https://bosh.io/d/github.com/cloudfoundry/loggregator-agent-release?v=8.3.8"
+    sha1: "c0871307d993aa1766982b04f312affa83bce926"
+  - name:    rabbitmq-metrics-emitter
+    version: 0.4.1
+    url:     https://github.com/cloudfoundry-community/rabbitmq-metrics-emitter-release/releases/download/v0.4.1/rabbitmq-metrics-emitter-0.4.1.tgz
+    sha1:    05afc6f3559f45e0696c6a3760242045640e0df8
+
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: "latest"
+
+update:
+  canaries: 1
+  max_in_flight: 1
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+

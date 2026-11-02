@@ -1,0 +1,14 @@
+---
+id:   kubernetes
+name: kubernetes
+description: |
+    A Kubernetes cluster, deployed on-demand
+tags:
+    - blacksmith
+    - dedicated
+    - kubernetes
+  
+bindable: true
+metadata: {}
+plan_updateable: true
+

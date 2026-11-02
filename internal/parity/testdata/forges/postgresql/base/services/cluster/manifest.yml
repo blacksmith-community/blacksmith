@@ -1,0 +1,78 @@
+---
+meta:
+  size: default
+  instances: 3
+  default:
+    azs: [z1,z2]
+  service:
+    username: (( vault $CREDENTIALS "/postgresql:username" ))
+    password: (( vault $CREDENTIALS "/postgresql:password" ))
+    port: 5432
+  users:
+  - username: (( grab meta.service.username ))
+    password: (( grab meta.service.password ))
+    admin: true
+  hba:
+  - host all all 0.0.0.0/0 md5
+  - host all all ::/0 md5
+
+releases:
+  - name: postgres
+    version: 2.0.0
+    url: https://github.com/cloudfoundry-community/postgres-boshrelease/releases/download/v2.0.0/postgres-2.0.0.tgz
+    sha1: dea5cad517c62afaf97a1b31df41ad691928d960
+
+stemcells:
+- alias: default
+  os: ubuntu-bionic
+  version: latest
+
+update:
+  canaries: 1
+  max_in_flight: 10
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+
+instance_groups:
+  - name: postgresql
+    instances: (( grab meta.instances ))
+    azs: (( grab meta.azs || meta.default.azs ))
+    networks: [name: (( grab meta.net ))]
+    stemcell: default
+
+    vm_type: (( grab meta.size ))
+    persistent_disk_type: (( grab meta.disk_type ))
+
+    jobs:
+      - name:    postgres
+        release: postgres
+        consumes:
+          db: {from: postgres}
+        provides:
+          db: {as: postgres}
+        properties:
+          postgres:
+            config:
+              listen_addresses: 0.0.0.0
+              port: 6432
+            replication:
+              enabled: true
+            hba:   (( grab meta.hba ))
+          pgpool:
+            users: (( grab meta.users ))
+
+      - name: pgpool
+        release: postgres
+        consumes:
+          db: {from: postgres}
+        properties:
+          pgpool:
+            backend:
+              port: 6432
+            config:
+              port: (( grab meta.service.port ))
+              enable_pool_hba: on
+            hba: (( grab meta.hba ))
+            users: (( grab meta.users ))
+          pcp:
+            system_password: secret

@@ -1,0 +1,7 @@
+---
+id: standalone
+name: standalone # NOTE: DNS Requires - not _
+limit: 7
+type: standalone
+description: |+
+  A dedicated RabbitMQ server, with no redundancy or replication

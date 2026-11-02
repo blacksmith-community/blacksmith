@@ -1,0 +1,6 @@
+---
+id: cluster
+name: cluster
+limit: 4
+description: |+
+  A 3-node PostgreSQL replicated cluster, with PGPoolII front-end

@@ -1,0 +1,179 @@
+---
+meta:
+  size: default
+  disk_config: {}
+  username: (( vault $CREDENTIALS "/rabbitmq/system:username" ))
+  password: (( vault $CREDENTIALS "/rabbitmq/system:password" ))
+  username-monitoring: (( vault $CREDENTIALS "/rabbitmq/monitoring:username" ))
+  password-monitoring: (( vault $CREDENTIALS "/rabbitmq/monitoring:password" ))
+  username-app: (( vault $CREDENTIALS "/rabbitmq/app:username" ))
+  password-app: (( vault $CREDENTIALS "/rabbitmq/app:password" ))
+  environment: fixture-env
+  bosh_env: fixture-env
+  erlang_cookie: (( vault $CREDENTIALS "/rabbitmq/erlang:cookie" ))
+  plugins: []
+
+
+
+
+
+params:
+  cf:
+    core_network: fixture-core-network
+
+features:
+  use_dns_addresses: true
+
+instance_groups:
+- name: standalone
+  instances: 1
+  azs: (( grab meta.azs ))
+  stemcell: default
+  vm_type: (( grab meta.size ))
+
+  networks: 
+    - name: (( grab meta.net || "rabbitmq-service" ))
+
+  .: (( inject meta.disk_config )) # Accounts for persistent_disk_type option
+
+  jobs:
+  - name:    rabbitmq
+    release: rabbitmq-forge
+
+    properties:
+      plugins: (( grab meta.plugins ))
+      erlang:
+        cookie: (( grab meta.erlang_cookie ))
+      rabbitmq:
+        plan: standalone
+        vhost: (( grab meta.params.instance_id || "/" ))
+        network: (( grab meta.net || "rabbitmq-service" ))
+
+        admin:
+          user: (( grab meta.username ))
+          pass: (( grab meta.password ))
+
+        monitoring:
+          user: (( grab meta.username-monitoring ))
+          pass: (( grab meta.password-monitoring ))
+
+        app:
+          user: (( grab meta.username-app ))
+          pass: (( grab meta.password-app ))
+
+        tls:
+          enabled: (( grab meta.rabbitmq.tls.enabled || false ))
+          dual-mode: (( grab meta.rabbitmq.tls.dual-mode || false ))
+
+    provides:
+      rabbitmq-servers:
+        as: rabbitmq-servers
+        ip_addresses: false
+
+      rabbitmq-san:
+        as: rabbitmq-san
+        ip_addresses: false
+
+      rabbitmq-alias-domain:
+        aliases:
+          - domain: "_.rabbitmq_standalone.bosh"
+            placeholder_type: uuid
+
+    consumes:
+      rabbitmq-servers:
+        from: rabbitmq-servers
+        ip_addresses: false
+
+    custom_provider_definitions:
+      - name: rabbitmq-san
+        type: address
+      - name: rabbitmq-alias-domain
+        type: placeholder
+
+  - name: route_registrar
+    release: routing
+
+    properties:
+      nats:
+        tls:
+          enabled: true
+          client_cert: "((/fixture-env-bosh/fixture-env-cf/nats_client_cert.certificate))"
+          client_key: "((/fixture-env-bosh/fixture-env-cf/nats_client_cert.private_key))"
+
+      route_registrar:
+        logging_level: "debug"
+
+        routes:
+        - name: (( grab name ))
+          uris:
+          - (( concat name ".sys.fixture.example" ))
+          registration_interval: 10s
+          port: 15672
+
+    consumes:
+      nats-tls:
+        from: nats-tls
+        deployment: fixture-env-cf
+  - name:    bpm
+    release: bpm
+
+addons:
+- name: bosh-dns-aliases
+
+  include:
+    jobs:
+    - name: route_registrar
+      release: routing
+
+  jobs:
+  - name: bosh-dns-aliases
+    release: bosh-dns-aliases
+
+    properties:
+      aliases:
+      - domain: nats.service.cf.internal
+
+        targets:
+        - deployment: (( grab meta.cf.deployment_name ))
+          domain: bosh
+          instance_group: nats
+          network: (( grab params.cf.core_network ))
+          query: '*'
+      - domain: _.nats.service.cf.internal
+
+        targets:
+        - deployment: (( grab meta.cf.deployment_name ))
+          domain: bosh
+          instance_group: nats
+          network: (( grab params.cf.core_network ))
+          query: _
+
+
+
+releases:
+  - name: rabbitmq-forge
+    version: latest
+  - name: "routing"
+    version: "0.338.0"
+    url: "https://bosh.io/d/github.com/cloudfoundry/routing-release?v=0.338.0"
+    sha1: "69690159842feda278a45ca17484ea055432086d"
+  - name: "bpm"
+    version: "1.4.20"
+    url: "https://bosh.io/d/github.com/cloudfoundry/bpm-release?v=1.4.20"
+    sha1: "00223345c70d5629d35008e88c42bf4482bdf766"
+  - name: "bosh-dns-aliases"
+    version: "0.0.4"
+    url: "https://bosh.io/d/github.com/cloudfoundry/bosh-dns-aliases-release?v=0.0.4"
+    sha1: "55b3dced813ff9ed92a05cda02156e4b5604b273"
+
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: "latest"
+
+update:
+  canaries: 1
+  max_in_flight: 1
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+

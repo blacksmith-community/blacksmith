@@ -1,0 +1,61 @@
+---
+meta:
+  size: default
+  default:
+    az: z1
+  service:
+    username: (( vault $CREDENTIALS "/postgresql:username" ))
+    password: (( vault $CREDENTIALS "/postgresql:password" ))
+    port: 5432
+  users:
+  - username: (( grab meta.service.username ))
+    password: (( grab meta.service.password ))
+    admin: true
+  hba:
+  - host all all 0.0.0.0/0 md5
+  - host all all ::/0 md5
+
+releases:
+- name:    postgres
+  version: 3.2.2
+  url:     https://github.com/cloudfoundry-community/postgres-boshrelease/releases/download/v3.2.2/postgres-3.2.2.tgz
+  sha1:    7699715ed0b7ec129f60958e2864958030333cea
+
+stemcells:
+- alias: default
+  os: ubuntu-bionic
+  version: latest
+
+update:
+  canaries: 1
+  max_in_flight: 10
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+
+instance_groups:
+  - name: postgresql
+    instances: 1
+    azs: [(( grab meta.az || meta.default.az ))]
+    networks: [name: (( grab meta.net ))]
+    stemcell: default
+
+    vm_type: (( grab meta.size ))
+    persistent_disk: (( grab meta.disk ))
+
+    jobs:
+      - name:    postgres
+        release: postgres
+        consumes:
+          db: {from: postgres}
+        provides:
+          db: {as: postgres}
+        properties:
+          postgres:
+            config:
+              listen_addresses: 0.0.0.0
+              port: (( grab meta.service.port ))
+            hba:   (( grab meta.hba ))
+            users:
+            - username: (( grab meta.service.username ))
+              password: (( grab meta.service.password ))
+              admin: true

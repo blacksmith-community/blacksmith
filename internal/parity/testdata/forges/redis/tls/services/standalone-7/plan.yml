@@ -1,0 +1,7 @@
+---
+id: standalone-7
+name: standalone-7
+limit: 7
+type: standalone
+description: |+
+  A dedicated Redis 7 server, with no redundancy or replication

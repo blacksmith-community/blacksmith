@@ -1,0 +1,294 @@
+---
+# Forge releases the parity fixtures render, pinned to the versions the
+# blacksmith kit pins, and the property sets each variant renders them with.
+# Every credential below is an obvious placeholder.
+#
+# A variant overlay is deep-merged over the forge's base properties.  Hashes
+# merge key by key, and every other value replaces the base value.
+
+placeholders:
+  cert: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
+  key: |
+    -----BEGIN PRIVATE KEY-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+    -----END PRIVATE KEY-----
+
+forges:
+  valkey:
+    version: 1.4.0
+    checksum: sha1:945a23b81aa4921b0a2f2212283a78dcf24cd5ad
+    job: valkey-blacksmith-plans
+    base:
+      environment: fixture-env
+      bosh_env: fixture-env
+      stemcell_os: ubuntu-noble
+      stemcell_version: latest
+      service:
+        id: valkey
+        name: valkey
+        description: A dedicated Valkey instance, deployed on-demand
+        tags: [blacksmith, dedicated, valkey, redis]
+        limit: 0
+        type: standalone
+      plans:
+        standalone:
+          name: standalone
+          description: A dedicated Valkey server, with no redundancy or replication
+          limit: 7
+          type: standalone
+          version: 8
+          vm_type: default
+        cluster:
+          name: cluster
+          description: A Valkey cluster with 3 master nodes and 3 replica nodes
+          limit: 5
+          type: cluster
+          version: 8
+          vm_type: default
+          masters: 3
+          replicas: 1
+          azs: [z1]
+    variants:
+      base: {}
+      tls:
+        valkey:
+          tls:
+            enabled: true
+            ca: "@cert"
+            ca_cert: "@cert"
+            ca_key: "@key"
+      dual-mode:
+        valkey:
+          tls:
+            enabled: true
+            dual-mode: true
+            ca: "@cert"
+            ca_cert: "@cert"
+            ca_key: "@key"
+
+  redis:
+    version: 1.4.4
+    checksum: sha256:4095483fdb904ee55b1b9c1a782218cb7f727bf25a61c7d0bca37568a353eb6b
+    job: redis-blacksmith-plans
+    base:
+      environment: fixture-env
+      bosh_env: fixture-env
+      stemcell_os: ubuntu-noble
+      stemcell_version: latest
+      service:
+        id: redis
+        name: redis
+        description: A dedicated Redis instance, deployed on-demand
+        tags: [blacksmith, dedicated, redis]
+        limit: 0
+        type: standalone
+        stemcell: latest
+      plans:
+        standalone:
+          name: standalone
+          description: A dedicated Redis server, with no redundancy or replication
+          limit: 7
+          type: standalone
+          vm_type: default
+        standalone-6:
+          name: standalone-6
+          description: A dedicated Redis 6 server, with no redundancy or replication
+          limit: 7
+          type: standalone-6
+          vm_type: default
+        standalone-7:
+          name: standalone-7
+          description: A dedicated Redis 7 server, with no redundancy or replication
+          limit: 7
+          type: standalone-7
+          vm_type: default
+    variants:
+      base: {}
+      tls:
+        redis:
+          tls:
+            enabled: true
+            ca: "@cert"
+            ca_cert: "@cert"
+            ca_key: "@key"
+      dual-mode:
+        redis:
+          tls:
+            enabled: true
+            dual-mode: true
+            ca: "@cert"
+            ca_cert: "@cert"
+            ca_key: "@key"
+
+  rabbitmq:
+    version: 1.5.1
+    checksum: sha256:59fb7686861fd92a21456a97d7fe97f6e19ba6c39bdb6ca0acb655b79f07ef82
+    job: rabbitmq-blacksmith-plans
+    base:
+      environment: fixture-env
+      bosh_env: fixture-env
+      stemcell_os: ubuntu-noble
+      stemcell_version: latest
+      plugins: []
+      cf:
+        nats_tls_only: true
+      service:
+        id: rabbitmq
+        name: rabbitmq
+        description: A dedicated RabbitMQ instance, deployed on-demand
+        tags: [blacksmith, dedicated, rabbitmq]
+        limit: 0
+        stemcell: latest
+      plans:
+        standalone:
+          name: standalone
+          description: A dedicated RabbitMQ server, with no redundancy or replication
+          limit: 7
+          type: standalone
+          vm_type: default
+    variants:
+      base: {}
+      tls:
+        rabbitmq:
+          tls:
+            enabled: true
+            ca: "@cert"
+            crt: "@cert"
+            key: "@key"
+      dual-mode:
+        rabbitmq:
+          tls:
+            enabled: true
+            dual-mode: true
+            ca: "@cert"
+            crt: "@cert"
+            key: "@key"
+      rabbitmq-autoscale:
+        rabbitmq:
+          autoscale:
+            enabled: true
+        cf:
+          exodus_path: secret/exodus/fixture-env/cf
+          deployment_name: fixture-env-cf
+          system_domain: sys.fixture.example
+          api_url: https://api.sys.fixture.example
+          username: fixture-admin
+          password: fixture-password-not-real
+        loggregator:
+          tls:
+            ca_cert: "@cert"
+            agent:
+              cert: "@cert"
+              key: "@key"
+        syslog_agent_api:
+          tls:
+            ca_cert: "@cert"
+            cert: "@cert"
+            key: "@key"
+        syslog_agent_metrics:
+          tls:
+            ca_cert: "@cert"
+            cert: "@cert"
+            key: "@key"
+        forwarder_agent_metrics:
+          tls:
+            ca_cert: "@cert"
+            cert: "@cert"
+            key: "@key"
+        rabbitmq_metrics_emitter:
+          cloud_foundry:
+            api: https://api.sys.fixture.example
+            skip_ssl_validation: false
+            username: fixture-admin
+            password: fixture-password-not-real
+          rmq_management:
+            skip_ssl_validation: true
+            mgmt_port: "15671"
+            mgmt_scheme: https
+            mgmt_host: localhost
+      dashboard-registration:
+        cf:
+          deployment_env: fixture-env
+          deployment_type: cf
+          deployment_name: fixture-env-cf
+          core_network: fixture-core-network
+          system_domain: sys.fixture.example
+        bosh:
+          deployment_name: fixture-env
+        rabbitmq:
+          route_registrar:
+            enabled: true
+            tls:
+              enabled: false
+
+  postgresql:
+    version: 0.4.0
+    checksum: sha1:81d5b2d0b864a02cf4f519d6029ad74503391bf5
+    job: postgresql-blacksmith-plans
+    base:
+      service:
+        id: postgresql
+        name: postgresql
+        description: A dedicated PostgreSQL instance, deployed on-demand
+        tags: [blacksmith, dedicated, postgresql]
+        limit: 0
+      plans:
+        standalone:
+          name: standalone
+          description: A dedicated PostgreSQL server, with no redundancy or replication
+          limit: 7
+          type: standalone
+          vm_type: default
+        cluster:
+          name: cluster
+          description: A 3-node PostgreSQL replicated cluster, with PGPoolII front-end
+          limit: 4
+          type: cluster
+          vm_type: default
+    variants:
+      base: {}
+
+  mariadb:
+    version: 0.5.0
+    checksum: sha1:e332545449e55df5cd28f9d78f83e6df62a4e4ae
+    job: mariadb-blacksmith-plans
+    base:
+      service:
+        id: mariadb
+        name: mariadb
+        description: A dedicated MariaDB instance, deployed on-demand
+        tags: [blacksmith, dedicated, mariadb]
+        limit: 0
+      plans:
+        standalone:
+          name: standalone
+          description: A dedicated MariaDB server, with no redundancy or replication
+          limit: 7
+          type: standalone
+          vm_type: default
+    variants:
+      base: {}
+
+  kubernetes:
+    version: 1.0.0
+    checksum: sha1:01a04f6b80daafadfdfd3d5fcc83344193b83a81
+    job: kubernetes-blacksmith-plans
+    base:
+      service:
+        id: kubernetes
+        name: kubernetes
+        description: A Kubernetes cluster, deployed on-demand
+        tags: [blacksmith, dedicated, kubernetes]
+        limit: 0
+      plans:
+        cluster:
+          name: cluster
+          description: A 3-node Kubernetes cluster
+          limit: 7
+          type: cluster
+          nodes: 3
+    variants:
+      base: {}

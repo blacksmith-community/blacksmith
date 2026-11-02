@@ -1,0 +1,40 @@
+---
+release: rabbitmq-forge 1.5.1
+variant: dashboard-registration
+properties:
+  environment: fixture-env
+  bosh_env: fixture-env
+  stemcell_os: ubuntu-noble
+  stemcell_version: latest
+  plugins: []
+  cf:
+    nats_tls_only: true
+    deployment_env: fixture-env
+    deployment_type: cf
+    deployment_name: fixture-env-cf
+    core_network: fixture-core-network
+    system_domain: sys.fixture.example
+  service:
+    id: rabbitmq
+    name: rabbitmq
+    description: A dedicated RabbitMQ instance, deployed on-demand
+    tags:
+    - blacksmith
+    - dedicated
+    - rabbitmq
+    limit: 0
+    stemcell: latest
+  plans:
+    standalone:
+      name: standalone
+      description: A dedicated RabbitMQ server, with no redundancy or replication
+      limit: 7
+      type: standalone
+      vm_type: default
+  bosh:
+    deployment_name: fixture-env
+  rabbitmq:
+    route_registrar:
+      enabled: true
+      tls:
+        enabled: false

@@ -1,0 +1,6 @@
+#!/bin/bash
+set -eu
+
+safe gen $CREDENTIALS/redis/system password
+
+exit 0

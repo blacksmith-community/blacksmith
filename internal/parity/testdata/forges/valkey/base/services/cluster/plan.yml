@@ -1,0 +1,7 @@
+---
+id: "cluster"
+name: "cluster"
+limit: 5
+type: node
+description: |+
+  "A Valkey cluster with 3 master nodes and 3 replica nodes"

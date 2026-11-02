@@ -1,0 +1,104 @@
+---
+meta:
+  size: default
+  disk_config: {}
+  password: (( vault $CREDENTIALS "/redis/system:password" ))
+  environment: fixture-env
+  bosh_env: fixture-env
+  default:
+    azs: [ z1 ]
+
+variables:
+- name: redis_standalone_crt
+  type: certificate
+  options:
+    ca: (( concat "/" meta.bosh_env "-bosh/" meta.environment "-blacksmith/blacksmith_services_ca" ))
+    common_name: (( concat meta.environment "-redis-standalone.bosh" ))
+  consumes:
+    alternative_name: 
+      from: redis-san 
+      properties: { wildcard: true }
+
+features:
+  use_dns_addresses: true
+
+releases:
+  - name: redis-forge
+    version: latest
+  - name: "bpm"
+    version: "1.4.20"
+    url: "https://bosh.io/d/github.com/cloudfoundry/bpm-release?v=1.4.20"
+    sha1: sha256:1984129b352cd414e29a7dcffcf076049a776afa511cd44b587065f6e618cc6d
+
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: "latest"
+
+update:
+  canaries: 1
+  max_in_flight: 10
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+
+features:
+  randomize_az_placement: true
+
+instance_groups:
+  - name: standalone
+    instances: 1
+    networks: [name: (( grab meta.net || "redis-service" ))]
+    stemcell: default
+    azs: (( grab meta.azs || meta.default.azs ))
+    vm_type: (( grab meta.size ))
+
+    
+    # This is a workaround to make sure only one of `persistent_disk`
+    # and `persistent_disk_type` is defined.
+    .: (( inject meta.disk_config ))
+    
+
+    jobs:
+      - name:    bpm
+        release: bpm
+      - name:    standalone-7
+        release: redis-forge
+        properties:
+          auth:
+            password: (( grab meta.password ))
+          persistent: (( grab meta.persistent ))
+          redis:
+            maxmemory-policy: (( grab meta.params.maxmemory-policy || meta.redis_maxmemory-policy || "allkeys-lru" ))
+            notify-keyspace-events: (( grab meta.params.notify-keyspace-events || meta.redis_notify-keyspace-events || "" ))
+            slowlog-log-slower-than: (( grab meta.params.slowlog-log-slower-than || meta.redis_slowlog-log-slower-than || 10000 ))
+            slowlog-max-len: (( grab meta.params.slowlog-max-len || meta.redis_slowlog-max-len || 128 ))
+            maxmemory: (( grab meta.redis_maxmemory || 0 ))
+            no-appendfsync-on-rewrite: (( grab meta.redis_no-appendfsync-on-rewrite || false ))
+            auto-aof-rewrite-percentage: (( grab meta.redis_auto-aof-rewrite-percentage || 100 ))
+            auto-aof-rewrite-min-size: (( grab meta.redis_auto-aof-rewrite-min-size || "64mb" ))
+            tls:
+              dual-mode: (( grab meta.redis.tls.dual-mode || false ))
+              enabled: (( grab meta.redis.tls.enabled || false ))
+              ca: (( file "/var/vcap/jobs/blacksmith/config/tls/blacksmith_services_ca" ))
+              ca_cert: ((redis_standalone_crt.certificate))
+              ca_key: ((redis_standalone_crt.private_key))
+          lua:
+            scripting-enabled: (( grab meta.lua_scripting_enabled || true ))
+          client:
+            timeout: (( grab meta.client_timeout || 0 ))
+            tcpkeepalive: (( grab meta.client_tcpkeepalive || 300 ))
+            connections: (( grab meta.client_connections || 10000 ))
+
+        provides:
+          redis-san:
+            as: redis-san
+            ip_addresses: false
+          redis-alias-domain:
+            aliases:
+            - domain: "_.redis_standalone.bosh"
+              placeholder_type: uuid
+        custom_provider_definitions:
+        - name: redis-san  
+          type: address
+        - name: redis-alias-domain
+          type: placeholder

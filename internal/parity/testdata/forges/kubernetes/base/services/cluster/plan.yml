@@ -1,0 +1,6 @@
+---
+id: cluster
+name: cluster
+limit: 7
+description: |+
+  A 3-node Kubernetes cluster

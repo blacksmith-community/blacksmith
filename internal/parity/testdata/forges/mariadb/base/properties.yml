@@ -1,0 +1,20 @@
+---
+release: mariadb-forge 0.5.0
+variant: base
+properties:
+  service:
+    id: mariadb
+    name: mariadb
+    description: A dedicated MariaDB instance, deployed on-demand
+    tags:
+    - blacksmith
+    - dedicated
+    - mariadb
+    limit: 0
+  plans:
+    standalone:
+      name: standalone
+      description: A dedicated MariaDB server, with no redundancy or replication
+      limit: 7
+      type: standalone
+      vm_type: default

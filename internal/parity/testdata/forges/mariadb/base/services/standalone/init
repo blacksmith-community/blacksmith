@@ -1,0 +1,8 @@
+#!/bin/bash
+# nothing to do, yet.
+set -eu
+
+safe gen $CREDENTIALS/standalone/system password
+safe gen $CREDENTIALS/standalone/system username
+
+exit 0

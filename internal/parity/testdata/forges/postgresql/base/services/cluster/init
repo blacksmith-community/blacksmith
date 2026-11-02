@@ -1,0 +1,11 @@
+#!/bin/bash
+set -eu
+
+# init - Bootstrap Script for Postgresql Forge.
+#           Generates username and password for the
+#           new Redis environment.
+
+safe gen -l 16 ${CREDENTIALS}/postgresql username
+safe gen       ${CREDENTIALS}/postgresql password
+
+exit 0

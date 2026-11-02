@@ -1,0 +1,105 @@
+---
+meta:
+  size: default
+  disk_config: {}
+  password: (( vault $CREDENTIALS "/valkey/system:password" ))
+  environment: fixture-env
+  bosh_env: fixture-env
+  default:
+    azs: [ z1 ]
+
+variables:
+- name: valkey_standalone_crt
+  type: certificate
+  options:
+    ca: (( concat "/" meta.bosh_env "-bosh/" meta.environment "-blacksmith/blacksmith_services_ca" ))
+    common_name: (( concat meta.environment "-valkey-standalone.bosh" ))
+  consumes:
+    alternative_name:
+      from: valkey-san
+      properties: { wildcard: true }
+
+features:
+  use_dns_addresses: true
+
+releases:
+  - name: valkey-forge
+    version: latest
+  - name: "bpm"
+    version: "1.4.41"
+    url: "https://bosh.io/d/github.com/cloudfoundry/bpm-release?v=1.4.41"
+    sha1: sha256:7b445508d63d2171d892ba33f836087e1e519b9782f44c5fa5290323616ca8e6
+
+stemcells:
+- alias: default
+  os: ubuntu-noble
+  version: "latest"
+
+update:
+  canaries: 1
+  max_in_flight: 10
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+
+features:
+  randomize_az_placement: true
+
+instance_groups:
+  - name: standalone
+    instances: 1
+    networks: [name: (( grab meta.net || "valkey-service" ))]
+    stemcell: default
+    azs: (( grab meta.azs || meta.default.azs ))
+    vm_type: (( grab meta.size ))
+
+    
+    # This is a workaround to make sure only one of `persistent_disk`
+    # and `persistent_disk_type` is defined.
+    .: (( inject meta.disk_config ))
+    
+
+    jobs:
+      - name:    bpm
+        release: bpm
+      - name:    standalone
+        release: valkey-forge
+        properties:
+          auth:
+            password: (( grab meta.password ))
+          persistent: (( grab meta.persistent ))
+          valkey:
+            version: (( grab meta.valkey_version || 8 ))
+            maxmemory-policy: (( grab meta.params.maxmemory-policy || meta.valkey_maxmemory-policy || "allkeys-lru" ))
+            notify-keyspace-events: (( grab meta.params.notify-keyspace-events || meta.valkey_notify-keyspace-events || "" ))
+            slowlog-log-slower-than: (( grab meta.params.slowlog-log-slower-than || meta.valkey_slowlog-log-slower-than || 10000 ))
+            slowlog-max-len: (( grab meta.params.slowlog-max-len || meta.valkey_slowlog-max-len || 128 ))
+            maxmemory: (( grab meta.valkey_maxmemory || 0 ))
+            no-appendfsync-on-rewrite: (( grab meta.valkey_no-appendfsync-on-rewrite || false ))
+            auto-aof-rewrite-percentage: (( grab meta.valkey_auto-aof-rewrite-percentage || 100 ))
+            auto-aof-rewrite-min-size: (( grab meta.valkey_auto-aof-rewrite-min-size || "64mb" ))
+            tls:
+              dual-mode: (( grab meta.valkey.tls.dual-mode || false ))
+              enabled: (( grab meta.valkey.tls.enabled || false ))
+              ca: (( file "/var/vcap/jobs/blacksmith/config/tls/blacksmith_services_ca" ))
+              ca_cert: ((valkey_standalone_crt.certificate))
+              ca_key: ((valkey_standalone_crt.private_key))
+          lua:
+            scripting-enabled: (( grab meta.lua_scripting_enabled || true ))
+          client:
+            timeout: (( grab meta.client_timeout || 0 ))
+            tcpkeepalive: (( grab meta.client_tcpkeepalive || 300 ))
+            connections: (( grab meta.client_connections || 10000 ))
+
+        provides:
+          valkey-san:
+            as: valkey-san
+            ip_addresses: false
+          valkey-alias-domain:
+            aliases:
+            - domain: "_.valkey_standalone.bosh"
+              placeholder_type: uuid
+        custom_provider_definitions:
+        - name: valkey-san
+          type: address
+        - name: valkey-alias-domain
+          type: placeholder

@@ -1,0 +1,15 @@
+#!/bin/bash
+set -eu
+
+safe gen $CREDENTIALS/rabbitmq/system username
+safe gen $CREDENTIALS/rabbitmq/system password
+
+safe gen $CREDENTIALS/rabbitmq/monitoring username
+safe gen $CREDENTIALS/rabbitmq/monitoring password
+
+safe gen $CREDENTIALS/rabbitmq/app username
+safe gen $CREDENTIALS/rabbitmq/app password
+
+safe gen $CREDENTIALS/rabbitmq/erlang cookie
+
+exit 0

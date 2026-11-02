@@ -1,0 +1,103 @@
+---
+meta:
+  nodes: 3
+  node_cpu: 2
+  node_mem: 2048
+  node_ephemeral:  20_480
+  node_persistent: 20_480
+  network: kubernetes-service
+
+  default:
+    azs: [z1, z2, z3]
+
+  x509:
+    ca:
+      certificate: (( vault $CREDENTIALS "/x509/ca:certificate" ))
+      key:         (( vault $CREDENTIALS "/x509/ca:key" ))
+    sa:
+      certificate: (( vault $CREDENTIALS "/x509/sa:certificate" ))
+      key:         (( vault $CREDENTIALS "/x509/sa:key" ))
+    admin:
+      certificate: (( vault $CREDENTIALS "/x509/admin:certificate" ))
+      key:         (( vault $CREDENTIALS "/x509/admin:key" ))
+
+releases:
+  - name:    k8s
+    version: (( grab meta.version || "latest" ))
+
+stemcells:
+- alias:   default
+  os:      ubuntu-xenial
+  version: latest
+
+update:
+  canaries:          1
+  max_in_flight:     1
+  serial:            true
+  canary_watch_time: 1000-120000
+  update_watch_time: 1000-120000
+
+instance_groups:
+  - name:      k8s
+    instances: (( grab meta.nodes ))
+    azs:       (( grab meta.azs || meta.default.azs ))
+    networks:  [name: (( grab meta.network ))]
+    stemcell:  default
+    vm_resources:
+      cpu: (( grab meta.node_cpu ))
+      ram: (( grab meta.node_mem ))
+      ephemeral_disk_size: (( grab meta.node_ephemeral ))
+    persistent_disk: (( grab meta.node_persistent ))
+
+    jobs:
+      - name: etcd
+        release: k8s
+      - name: control
+        release: k8s
+        properties:
+          apiserver:
+            flags:
+              - audit-log-maxage: 5
+            additional-sans: [10.245.0.1]
+            audit-policy:
+              apiVersion: audit.k8s.io/v1
+              kind: Policy
+              rules:
+                - level: Request
+          cluster:
+            name: cluster0
+            dns:  10.245.0.2
+          networks:
+            nodes:    0.0.0.0/32
+            services: 10.245.0.0/24
+            pods:     10.244.0.0/16
+          encryption:
+            key: (( vault $CREDENTIALS "/control:encryption-key" ))
+          tls:
+            ca:
+              certificate: (( grab meta.x509.ca.certificate ))
+              key:         (( grab meta.x509.ca.key         ))
+            sa:
+              certificate: (( grab meta.x509.sa.certificate ))
+              key:         (( grab meta.x509.sa.key         ))
+
+      - name: lb
+        release: k8s
+
+      - name: runtime-runc
+        release: k8s
+        properties:
+          cni: flannel
+      - name: net-flannel
+        release: k8s
+      - name: kubelet
+        release: k8s
+        properties:
+          labels:
+            node-role.kubernetes.io/master: ""
+            bosh/deployment:     '(deployment)'
+            bosh/instance-group: '(name)'
+            bosh/instance-id:    '(id)'
+
+      - name: nfs
+        release: k8s

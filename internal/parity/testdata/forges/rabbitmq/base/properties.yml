@@ -1,0 +1,28 @@
+---
+release: rabbitmq-forge 1.5.1
+variant: base
+properties:
+  environment: fixture-env
+  bosh_env: fixture-env
+  stemcell_os: ubuntu-noble
+  stemcell_version: latest
+  plugins: []
+  cf:
+    nats_tls_only: true
+  service:
+    id: rabbitmq
+    name: rabbitmq
+    description: A dedicated RabbitMQ instance, deployed on-demand
+    tags:
+    - blacksmith
+    - dedicated
+    - rabbitmq
+    limit: 0
+    stemcell: latest
+  plans:
+    standalone:
+      name: standalone
+      description: A dedicated RabbitMQ server, with no redundancy or replication
+      limit: 7
+      type: standalone
+      vm_type: default

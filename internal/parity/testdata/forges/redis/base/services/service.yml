@@ -1,0 +1,15 @@
+---
+id:   redis
+name: redis
+description: |-
+    A dedicated Redis instance, deployed on-demand
+tags:
+    - blacksmith
+    - dedicated
+    - redis
+  
+bindable: true
+type: standalone
+metadata: {}
+plan_updateable: true
+

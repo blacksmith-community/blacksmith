@@ -1,0 +1,40 @@
+meta:
+  size: default
+  default:
+    azs: z1
+  admin_password: (( vault $CREDENTIALS "/standalone/system:password" ))
+  admin_username: (( vault $CREDENTIALS "/standalone/system:username" ))
+  database_name:  service_instance_db
+
+releases:
+  - { name: mariadb-forge, version: latest }
+
+stemcells:
+- alias: default
+  os: ubuntu-bionic
+  version: latest
+
+update:
+  canaries: 1
+  max_in_flight: 10
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+
+instance_groups:
+  - name: standalone
+    instances: 1
+    azs: [(( grab meta.azs || meta.default.azs ))]
+    networks: [name: (( grab meta.net || "mariadb-service" ))]
+    stemcell: default
+
+    vm_type: (( grab meta.size ))
+    persistent_disk: (( grab meta.disk ))
+
+    jobs:
+    - name:    standalone
+      release: mariadb-forge
+      properties:
+        db:
+          admin_password: (( grab meta.admin_password ))
+          admin_username: (( grab meta.admin_username ))
+          database_name:  (( grab meta.database_name ))

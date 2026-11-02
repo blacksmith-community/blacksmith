@@ -1,0 +1,7 @@
+---
+id: standalone-6
+name: standalone-6
+limit: 7
+type: standalone
+description: |+
+  A dedicated Redis 6 server, with no redundancy or replication

@@ -1,0 +1,38 @@
+---
+release: redis-forge 1.4.4
+variant: base
+properties:
+  environment: fixture-env
+  bosh_env: fixture-env
+  stemcell_os: ubuntu-noble
+  stemcell_version: latest
+  service:
+    id: redis
+    name: redis
+    description: A dedicated Redis instance, deployed on-demand
+    tags:
+    - blacksmith
+    - dedicated
+    - redis
+    limit: 0
+    type: standalone
+    stemcell: latest
+  plans:
+    standalone:
+      name: standalone
+      description: A dedicated Redis server, with no redundancy or replication
+      limit: 7
+      type: standalone
+      vm_type: default
+    standalone-6:
+      name: standalone-6
+      description: A dedicated Redis 6 server, with no redundancy or replication
+      limit: 7
+      type: standalone-6
+      vm_type: default
+    standalone-7:
+      name: standalone-7
+      description: A dedicated Redis 7 server, with no redundancy or replication
+      limit: 7
+      type: standalone-7
+      vm_type: default

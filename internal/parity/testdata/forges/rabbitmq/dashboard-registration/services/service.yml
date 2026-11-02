@@ -1,0 +1,14 @@
+---
+id:  rabbitmq
+name: rabbitmq
+description: |-
+  A dedicated RabbitMQ instance, deployed on-demand
+type: standalone
+tags:
+  - blacksmith
+  - dedicated
+  - rabbitmq
+bindable: true
+metadata: {}
+plan_updateable: true
+
