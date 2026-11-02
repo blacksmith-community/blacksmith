@@ -227,10 +227,17 @@ func bashCanary() []byte { return []byte(`touch "$CERTPATCH_ROOT/ran"` + "\n") }
 // over a real SSH exec of the real script under real bash, answers with
 // the refusal status and never runs the command on stdin. A prepare that
 // succeeds stages the command without running it. The server needs GNU
-// tools, so the test skips off Linux.
+// tools, so the test skips off Linux. It also needs root, because the
+// script refuses directories that root does not own, so as anyone else
+// the control's prepare is refused and every refusal case passes for
+// that reason rather than its own.
 func TestPrepareRefusalThroughSSHNeverRunsTheCommand(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the exact RunInput needs GNU tools")
+	}
+
+	if os.Geteuid() != 0 {
+		t.Skip("run.sh checks for root ownership, so this test must run as root")
 	}
 
 	t.Run("existing task directory", func(t *testing.T) {
