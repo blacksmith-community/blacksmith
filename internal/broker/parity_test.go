@@ -9,6 +9,8 @@ import (
 
 	"blacksmith/internal/broker"
 	"blacksmith/internal/parity"
+
+	"go.yaml.in/yaml/v2"
 )
 
 // TestWriteYamlFileParity records the file WriteYamlFile writes for each
@@ -90,6 +92,17 @@ func TestYamlGsubParity(t *testing.T) {
 		{"key-name", "username", "login"},
 		{"key-to-colon", "password", "pass: word"},
 	}
+
+	// The text yamlGsub marshals before it replaces anything. It is a frozen
+	// copy of the call at broker.go:5014, which the migrating commit must
+	// switch to the same graft call, because a test cannot see the text
+	// inside yamlGsub.
+	marshaled, err := yaml.Marshal(credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parity.GoldenYAML(t, filepath.Join("testdata", "parity", "yaml-gsub-marshaled.yml"), string(marshaled))
 
 	var recorded strings.Builder
 

@@ -13,6 +13,7 @@ import (
 	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
+
 	"go.yaml.in/yaml/v2"
 )
 
@@ -301,7 +302,9 @@ func TestRenderedScalarsGoldenFailsWhenAQuoteIsLost(t *testing.T) {
 			t.Fatal("the render does not decode")
 		}
 
-		t.Logf("the decoded dumps are the same: %v", parity.Dump(kept) == parity.Dump(dropped))
+		if parity.Dump(kept) != parity.Dump(dropped) {
+			t.Error("the decoded dumps differ, so the scalars golden is no longer the only check that sees the lost quote")
+		}
 
 		return
 	}

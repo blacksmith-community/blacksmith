@@ -1,0 +1,172 @@
+broker:
+    username: blacksmith
+    password: blacksmith
+    port: "3000"
+    bind_ip: 0.0.0.0
+    read_timeout: 0
+    write_timeout: 0
+    idle_timeout: 0
+    tls:
+        enabled: false
+        port: "443"
+        certificate: ""
+        key: ""
+        protocols: TLSv1.2 TLSv1.3
+        ciphers: ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:HIGH:!MD5:!aNULL:!EDH
+        reuse_after: 2
+    cf:
+        enabled: false
+        broker_url: ""
+        broker_user: ""
+        broker_pass: ""
+        default_name: ""
+        apis: {}
+    compression:
+        enabled: true
+        types:
+            - gzip
+        level: -1
+        min_size: 1024
+        content_types:
+            - text/html
+            - text/css
+            - text/javascript
+            - text/plain
+            - text/xml
+            - application/json
+            - application/javascript
+            - application/xml
+            - application/rss+xml
+            - application/atom+xml
+            - image/svg+xml
+vault:
+    address: http://127.0.0.1:8200
+    token: ""
+    skip_ssl_validation: false
+    credentials: /var/vcap/store/blacksmith/.vault/creds
+    cacert: ""
+    auto_unseal: true
+    health_check_interval: 15s
+    unseal_cooldown: 30s
+    history_retention:
+        enabled: false
+        retention_days: 0
+        max_entries: 0
+shield:
+    enabled: false
+    address: ""
+    skip_ssl_validation: false
+    agent: ""
+    auth_method: ""
+    token: ""
+    username: ""
+    password: ""
+    tenant: ""
+    store: ""
+    schedule: ""
+    retain: ""
+    enabled_on_targets: []
+bosh:
+    address: https://10.0.0.6:25555
+    username: admin
+    password: admin
+    cacert: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+    allow_http: false
+    stemcells: []
+    releases: []
+    cloud-config: ""
+    cloudconfig: ""
+    network: blacksmith
+    max_connections: 4
+    max_batch_connections: 10
+    connection_timeout: 300
+    request_timeout: 60
+    task_watch_max: 21600
+    director_workers: 0
+ssh:
+    enabled: true
+    ui_terminal_enabled: true
+    timeout: 600
+    connect_timeout: 30
+    session_init_timeout: 60
+    output_read_timeout: 2
+    max_concurrent: 10
+    max_output_size: 1048576
+    keep_alive: 10
+    retry_attempts: 3
+    retry_delay: 5
+    websocket:
+        enabled: true
+        read_buffer_size: 0
+        write_buffer_size: 0
+        handshake_timeout: 0
+        max_message_size: 0
+        ping_interval: 0
+        pong_timeout: 0
+        max_sessions: 0
+        session_timeout: 0
+        enable_compression: false
+services:
+    skip_tls_verify: []
+reconciler:
+    enabled: true
+    interval: ""
+    max_concurrency: 0
+    batch_size: 0
+    retry_attempts: 0
+    retry_delay: ""
+    cache_ttl: ""
+    debug: false
+    backup:
+        enabled: true
+        retention_count: 5
+        retention_days: 0
+        compression_level: 9
+        cleanup_enabled: true
+        backup_on_update: true
+        backup_on_delete: true
+vm_monitoring:
+    enabled: true
+    normal_interval: 3600
+    failed_interval: 300
+    max_retries: 3
+    timeout: 300
+    max_concurrent: 3
+debug: false
+web-root: /var/vcap/packages/blacksmith/ui
+env: ""
+shareable: false
+forges:
+    auto-scan: true
+    scan-paths:
+        - /var/vcap/jobs
+        - /var/vcap/data/blacksmith
+    scan-patterns:
+        - '*-forge/templates'
+        - '*-forge'
+credhub:
+    url: ""
+    ca_cert: ""
+    client_id: ""
+    client_secret: ""
+    director_name: ""
+    uaa_url: ""
+    cleanup:
+        enabled: false
+        sweep: "off"
+        protected_deployments: []
+certificates:
+    inventory:
+        enabled: null
+    rotation:
+        enabled: null
+    patch_in_place:
+        enabled: null
+commands:
+    enabled: null
+    allow_root: null
+    credential:
+        key: ""

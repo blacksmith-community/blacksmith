@@ -10,6 +10,8 @@ import (
 
 	"blacksmith/internal/config"
 	"blacksmith/internal/parity"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestGetConfigParity records the JSON the config endpoint returns for the
@@ -49,11 +51,29 @@ func TestGetConfigParity(t *testing.T) {
 		}
 
 		recorded.WriteString(parity.Section("kit "+name, strings.ReplaceAll(getConfigBody(t, &cfg), cloudConfig, "<cloud-config>")))
+		marshaledConfig(t, "kit-"+name, &cfg, cloudConfig)
 	}
 
 	recorded.WriteString(parity.Section("hand-built", getConfigBody(t, createTestConfig())))
+	marshaledConfig(t, "hand-built", createTestConfig(), cloudConfig)
 
 	parity.Golden(t, filepath.Join("testdata", "parity", "get-config.json"), recorded.String())
+}
+
+// marshaledConfig records the YAML text the handler marshals before it reads
+// the config back. It is a frozen copy of the call at handler.go:397, which
+// the migrating commit must switch to the same graft call, because a test
+// cannot see the text inside GetConfig.
+func marshaledConfig(t *testing.T, name string, cfg *config.Config, cloudConfig string) {
+	t.Helper()
+
+	text, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+
+	parity.GoldenYAML(t, filepath.Join("testdata", "parity", "get-config-marshaled-"+name+".yml"),
+		strings.ReplaceAll(string(text), cloudConfig, "<cloud-config>"))
 }
 
 func getConfigBody(t *testing.T, cfg *config.Config) string {

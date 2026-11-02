@@ -6,7 +6,10 @@ import (
 	"testing"
 
 	"blacksmith/internal/parity"
+	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestParseManifestReleasesParity records the releases parseManifestReleases
@@ -78,4 +81,35 @@ func TestBuildJobsFallsBackToTheDefaultNetwork(t *testing.T) {
 	}
 
 	parity.Golden(t, filepath.Join("testdata", "parity", "fallback-network.dump"), recorded.String())
+}
+
+// TestMarshaledJobsParity records the YAML text marshalJobsToInterface
+// builds from the jobs of each fixture's first plan, before it reads the text
+// back. The marshal here is a frozen copy of the call at manifest.go:795,
+// which the migrating commit must switch to the same graft call, because a
+// test cannot see the text inside marshalJobsToInterface.
+//
+//nolint:paralleltest // the test sets an environment variable
+func TestMarshaledJobsParity(t *testing.T) {
+	t.Setenv("BOSH_NETWORK", "fallback.net")
+
+	log := &logger.NoOpLogger{}
+
+	for _, fixture := range parity.Fixtures(t) {
+		plan := readParityService(t, fixture).Plans[0]
+		deployment := plan.ID + "-marshaled"
+
+		jobs, _ := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, extractNetworksByJob(""), log)
+
+		text, err := yaml.Marshal(map[string][]*services.Job{"jobs": jobs})
+		if err != nil {
+			t.Fatalf("%s: %v", fixture.Name(), err)
+		}
+
+		if _, err := marshalJobsToInterface(jobs, log); err != nil {
+			t.Fatalf("%s: marshalJobsToInterface: %v", fixture.Name(), err)
+		}
+
+		parity.GoldenYAML(t, filepath.Join("testdata", "parity", "marshaled-jobs", strings.ReplaceAll(fixture.Name(), "/", "-")+".yml"), string(text))
+	}
 }

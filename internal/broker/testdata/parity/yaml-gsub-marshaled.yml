@@ -1,0 +1,14 @@
+hosts:
+- 10.0.0.1
+- 10.0.0.2
+nested:
+  digits: "0755"
+  nothing: null
+  quoted: "yes"
+  ratio: 1.5
+  username: fixture-user
+password: fixture-password-not-real
+port: 5432
+tls: true
+uri: postgres://fixture-user:fixture-password-not-real@10.0.0.1:5432/db
+username: fixture-user
