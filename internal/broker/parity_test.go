@@ -20,7 +20,7 @@ func TestWriteYamlFileParity(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BLACKSMITH_INSTANCE_DATA_DIR", dir+"/")
 
-	var recorded strings.Builder
+	var recorded, scalars strings.Builder
 
 	for index, doc := range parity.Corpus(t) {
 		id := "parity-" + strconv.Itoa(index)
@@ -38,9 +38,12 @@ func TestWriteYamlFileParity(t *testing.T) {
 		}
 
 		recorded.WriteString(parity.Section(doc.Name, string(written)))
+		scalars.WriteString(parity.Section(doc.Name, parity.Scalars(string(written))))
 	}
 
-	parity.Golden(t, filepath.Join("testdata", "parity", "write-yaml-file.txt"), recorded.String())
+	golden := filepath.Join("testdata", "parity", "write-yaml-file.txt")
+	parity.Golden(t, golden, recorded.String())
+	parity.Golden(t, parity.ScalarsPath(golden), scalars.String())
 }
 
 // TestYamlGsubParity records the credentials a YAML round trip returns after

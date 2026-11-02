@@ -93,7 +93,7 @@ var updateBodies = []parity.Document{
 func TestUpdateManifestParity(t *testing.T) {
 	t.Parallel()
 
-	var recorded strings.Builder
+	var recorded, scalars strings.Builder
 
 	for _, doc := range updateBodies {
 		director := &updateDirector{}
@@ -110,9 +110,15 @@ func TestUpdateManifestParity(t *testing.T) {
 		}
 
 		recorded.WriteString(parity.Section(doc.Name, body))
+
+		if director.sent != "" {
+			scalars.WriteString(parity.Section(doc.Name, parity.Scalars(director.sent)))
+		}
 	}
 
-	parity.Golden(t, filepath.Join("testdata", "parity", "update-manifest.txt"), recorded.String())
+	golden := filepath.Join("testdata", "parity", "update-manifest.txt")
+	parity.Golden(t, golden, recorded.String())
+	parity.Golden(t, parity.ScalarsPath(golden), scalars.String())
 }
 
 func boolWord(value bool) string {

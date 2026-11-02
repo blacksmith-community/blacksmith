@@ -1,0 +1,2 @@
+$["name"]#key	plain	!!str	string	"name"
+$["name"]	plain	!!str	string	"bare"

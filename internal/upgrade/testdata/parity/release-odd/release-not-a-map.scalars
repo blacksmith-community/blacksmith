@@ -1,0 +1,6 @@
+$["releases"]#key	plain	!!str	string	"releases"
+$["releases"][0]	plain	!!str	string	"just-a-string"
+$["releases"][1]["name"]#key	plain	!!str	string	"name"
+$["releases"][1]["name"]	plain	!!str	string	"bpm"
+$["releases"][1]["version"]#key	plain	!!str	string	"version"
+$["releases"][1]["version"]	double	!!str	string	"99"

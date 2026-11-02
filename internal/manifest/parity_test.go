@@ -82,7 +82,7 @@ func parityGolden(t *testing.T, base string, manifestYAML string, err error) {
 		return
 	}
 
-	parity.Golden(t, base+".yml", manifestYAML)
+	parity.GoldenYAML(t, base+".yml", manifestYAML)
 
 	var decoded map[interface{}]interface{}
 
@@ -222,7 +222,11 @@ func TestCredentialsManifestParity(t *testing.T) {
 
 				// The networks come from the deployment's own manifest, as they do
 				// when a bind reads the credentials of a running deployment.
-				deployed, _ := genParityManifest(t, fixture, instanceID, plan.ID, "none")
+				deployed, err := genParityManifest(t, fixture, instanceID, plan.ID, "none")
+				if err != nil {
+					t.Fatalf("%s: render the deployment manifest: %s", plan.ID, err)
+				}
+
 				networks := extractNetworksByJob(deployed)
 				jobs, dnsname := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, networks, log)
 				base := filepath.Join("testdata", "credentials", fixture.Forge, fixture.Variant, plan.ID)
@@ -239,7 +243,7 @@ func TestCredentialsManifestParity(t *testing.T) {
 					continue
 				}
 
-				parity.Golden(t, base+".yml", manifestYAML)
+				parity.GoldenYAML(t, base+".yml", manifestYAML)
 
 				credentials, err := extractCredentialsFromManifest(manifestYAML, log)
 
@@ -252,4 +256,55 @@ func TestCredentialsManifestParity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRenderedScalarsGoldenFailsWhenAQuoteIsLost shows that the scalars
+// golden of a render catches a date that loses its quotes, which the decoded
+// dump cannot, because the decoder reads the date as a string either way.
+//
+//nolint:paralleltest // spruce keeps global state, and the test sets environment variables
+func TestRenderedScalarsGoldenFailsWhenAQuoteIsLost(t *testing.T) {
+	for _, fixture := range parity.Fixtures(t) {
+		if fixture.Forge != "redis" || fixture.Variant != "base" {
+			continue
+		}
+
+		instanceID := prepareParityFixture(t, fixture)
+
+		rendered, err := genParityManifest(t, fixture, instanceID, "redis-standalone-7", "strings")
+		if err != nil {
+			t.Fatalf("render: %s", err)
+		}
+
+		golden := parity.ScalarsPath(filepath.Join("testdata", "manifests", "redis", "base", "redis-standalone-7.strings.yml"))
+
+		if diff := parity.GoldenDiff(golden, parity.Scalars(rendered)); diff != "" && !parity.Updating() {
+			t.Fatalf("the unchanged render does not match its golden: %s", diff)
+		}
+
+		lost := strings.Replace(rendered, `"2026-01-02"`, `2026-01-02`, 1)
+		if lost == rendered {
+			t.Fatal("the render holds no quoted date to lose")
+		}
+
+		if parity.Updating() {
+			return
+		}
+
+		if parity.GoldenDiff(golden, parity.Scalars(lost)) == "" {
+			t.Error("the scalars golden does not change when a quoted date loses its quotes")
+		}
+
+		var kept, dropped map[interface{}]interface{}
+
+		if yaml.Unmarshal([]byte(rendered), &kept) != nil || yaml.Unmarshal([]byte(lost), &dropped) != nil {
+			t.Fatal("the render does not decode")
+		}
+
+		t.Logf("the decoded dumps are the same: %v", parity.Dump(kept) == parity.Dump(dropped))
+
+		return
+	}
+
+	t.Fatal("no redis base fixture")
 }

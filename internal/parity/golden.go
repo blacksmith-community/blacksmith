@@ -42,14 +42,42 @@ func Golden(t *testing.T, path string, got string) {
 		return
 	}
 
+	if message := GoldenDiff(path, got); message != "" {
+		t.Error(message)
+	}
+}
+
+// GoldenDiff compares got with the golden file at path, and returns what is
+// wrong, or an empty string when they match.
+func GoldenDiff(path string, got string) string {
 	want, err := os.ReadFile(path) //nolint:gosec // a test reads its own golden
 	if err != nil {
-		t.Fatalf("read golden %s: %s (run the test with -update to create it)", path, err)
+		return "read golden " + path + ": " + err.Error() + " (run the test with -update to create it)"
 	}
 
 	if string(want) != got {
-		t.Errorf("golden %s differs (run the test with -update to accept the change)\n--- want\n%s\n--- got\n%s", path, want, got)
+		return "golden " + path + " differs (run the test with -update to accept the change)\n--- want\n" + string(want) + "\n--- got\n" + got
 	}
+
+	return ""
+}
+
+// GoldenYAML records YAML text twice, as the text itself in path, and as the
+// style, tag, and YAML 1.1 type of each of its scalars in the file next to
+// it, with the extension .scalars in place of the one path has. The second
+// record sees what the first shows only to a reader of the bytes, such as a
+// date or a number that lost its quotes. The text must be YAML the test
+// produced, not a constant.
+func GoldenYAML(t *testing.T, path string, text string) {
+	t.Helper()
+
+	Golden(t, path, text)
+	Golden(t, ScalarsPath(path), Scalars(text))
+}
+
+// ScalarsPath is the file GoldenYAML records the scalars of path's text in.
+func ScalarsPath(path string) string {
+	return strings.TrimSuffix(path, filepath.Ext(path)) + ".scalars"
 }
 
 // Fixture is one rendered forge release with one set of properties.

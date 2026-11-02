@@ -44,7 +44,7 @@ func TestMergeStemcellOverlayParity(t *testing.T) {
 				return
 			}
 
-			parity.Golden(t, golden, merged)
+			parity.GoldenYAML(t, golden, merged)
 		})
 	}
 }
@@ -97,7 +97,7 @@ func TestMergeReleaseOverlayParity(t *testing.T) {
 				return
 			}
 
-			parity.Golden(t, base+".yml", merged)
+			parity.GoldenYAML(t, base+".yml", merged)
 			parity.Golden(t, base+".dump", parity.Dump(applied))
 		})
 	}
@@ -134,7 +134,7 @@ func TestMergeReleaseOverlayParityHandlesOddInput(t *testing.T) {
 				return
 			}
 
-			parity.Golden(t, base+".yml", merged)
+			parity.GoldenYAML(t, base+".yml", merged)
 			parity.Golden(t, base+".dump", parity.Dump(applied))
 		})
 	}

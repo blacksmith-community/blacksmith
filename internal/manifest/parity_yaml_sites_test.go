@@ -30,16 +30,6 @@ func TestParseManifestReleasesParity(t *testing.T) {
 	}
 
 	parity.Golden(t, filepath.Join("testdata", "parity", "releases.dump"), recorded.String())
-
-	var scalars strings.Builder
-
-	for _, doc := range parity.OddDocuments() {
-		if doc.Name == "release-versions" {
-			scalars.WriteString(parity.Section(doc.Name, parity.Scalars(doc.Body)))
-		}
-	}
-
-	parity.Golden(t, filepath.Join("testdata", "parity", "releases.scalars"), scalars.String())
 }
 
 // TestExtractNetworksByJobParity records the network each instance group of
