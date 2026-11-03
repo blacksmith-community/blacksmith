@@ -14,7 +14,6 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
-	yamlv2 "go.yaml.in/yaml/v2"
 )
 
 // Constants for services operations.
@@ -35,13 +34,16 @@ type Plan struct {
 	Limit       int    `json:"limit"       yaml:"limit"`
 	Type        string `json:"type"        yaml:"type"`
 
+	// The credentials and the three paths keep the key yaml.v2 gave each
+	// from its lower-cased name. graft takes a key from the json tag when
+	// there is no yaml tag, and json:"-" would leave them out of plan.yml.
 	Manifest       map[string]interface{} `json:"-" yaml:"-"`
-	Credentials    map[string]interface{} `json:"-"`
-	InitScriptPath string                 `json:"-"`
+	Credentials    map[string]interface{} `json:"-" yaml:"credentials"`
+	InitScriptPath string                 `json:"-" yaml:"initscriptpath"`
 
 	// Store the actual file paths for SHA256 calculation
-	ManifestPath    string `json:"-"`
-	CredentialsPath string `json:"-"`
+	ManifestPath    string `json:"-" yaml:"manifestpath"`
+	CredentialsPath string `json:"-" yaml:"credentialspath"`
 
 	Service *Service `json:"service" yaml:"service"`
 }
@@ -216,31 +218,21 @@ func readAndParsePlanFile(path string, plan *Plan, loggerInstance logger.Logger)
 		return fmt.Errorf("failed to read plan file: %w", err)
 	}
 
-	warnDuplicateKeys(planFile, fileData, loggerInstance)
+	// plan.yml is a template, so a repeated key keeps its last value and
+	// the warning names the file and the key.
+	warn := duplicateKeyWarner(loggerInstance)
 
-	err = yamlv2.Unmarshal(fileData, plan)
+	err = yaml.UnmarshalWith(fileData, plan, yaml.DecodeOptions{
+		OnDuplicateKey: func(key yaml.DuplicateKey) { warn(planFile, key.Path) },
+	})
 	if err != nil {
 		loggerInstance.Error("Failed to unmarshal plan YAML from %s: %s", planFile, err)
 		loggerInstance.Debug("Raw YAML content (first 500 chars): %s", string(fileData[:minInt(len(fileData), DebugYAMLContentLimit)]))
 
-		return fmt.Errorf("failed to unmarshal plan YAML: %w", err)
+		return fmt.Errorf("failed to unmarshal plan YAML %s: %w", planFile, err)
 	}
 
 	return nil
-}
-
-// warnDuplicateKeys logs each key that plan.yml repeats. yaml.v2 decodes
-// the file and keeps the last value of a repeated key, and graft's reader
-// only finds the repeats, so a file it cannot read is left to yaml.v2 to
-// refuse.
-func warnDuplicateKeys(planFile string, data []byte, loggerInstance logger.Logger) {
-	warn := duplicateKeyWarner(loggerInstance)
-
-	var scanned interface{}
-
-	_ = yaml.UnmarshalWith(data, &scanned, yaml.DecodeOptions{
-		OnDuplicateKey: func(key yaml.DuplicateKey) { warn(planFile, key.Path) },
-	})
 }
 
 // duplicateKeyWarner returns the function that logs a key a plan template
@@ -314,27 +306,46 @@ func processPlanCredentials(path string, plan *Plan, loggerInstance logger.Logge
 func processExistingCredentialsFile(credFileData []byte, credsFile string, plan *Plan, loggerInstance logger.Logger) error {
 	loggerInstance.Debug("Found credentials file for plan %s", plan.Name)
 
-	// yaml.v2 decodes into the interface-keyed form. Starting from what
-	// plan.yml put in the field keeps the keys a credentials key there adds,
-	// and the result goes back to string keys once the decode is done.
-	credentials := utils.InterfaceMap(plan.Credentials)
+	var credentials map[string]interface{}
 
-	err := yamlv2.Unmarshal(credFileData, &credentials)
+	err := yaml.Unmarshal(credFileData, &credentials)
 	if err != nil {
 		loggerInstance.Error("Failed to unmarshal credentials YAML for plan %s: %s", plan.Name, err)
 
-		return fmt.Errorf("failed to unmarshal credentials YAML: %w", err)
+		return fmt.Errorf("failed to unmarshal credentials YAML %s: %w", credsFile, err)
 	}
 
-	plan.Credentials = nil
-	if credentials != nil {
-		plan.Credentials = utils.DeinterfaceMap(credentials)
-	}
+	plan.Credentials = mergeCredentials(plan.Credentials, credentials, utils.IsNullDocument(credFileData))
 
 	plan.CredentialsPath = credsFile
 	loggerInstance.Debug("Successfully loaded credentials for plan %s", plan.Name)
 
 	return nil
+}
+
+// mergeCredentials adds the keys of credentials.yml to the credentials
+// plan.yml gives, and a key both set takes its value from credentials.yml.
+// A credentials.yml that holds nothing leaves them as they are, and one
+// that holds only a null clears them.
+func mergeCredentials(fromPlan, fromFile map[string]interface{}, null bool) map[string]interface{} {
+	switch {
+	case null:
+		return nil
+	case fromFile == nil:
+		return fromPlan
+	}
+
+	merged := make(map[string]interface{}, len(fromPlan)+len(fromFile))
+
+	for key, value := range fromPlan {
+		merged[key] = value
+	}
+
+	for key, value := range fromFile {
+		merged[key] = value
+	}
+
+	return merged
 }
 
 func ReadPlans(dir string, service Service) ([]Plan, error) {
@@ -395,7 +406,7 @@ func ReadService(path string) (Service, error) {
 		return service, fmt.Errorf("%s: %w", file, err)
 	}
 
-	err = yamlv2.Unmarshal(serviceData, &service)
+	err = yaml.Unmarshal(serviceData, &service)
 	if err != nil {
 		log.Error("Failed to unmarshal service YAML from %s: %s", file, err)
 		log.Debug("Raw YAML content (first 500 chars): %s", string(serviceData[:minInt(len(serviceData), DebugYAMLContentLimit)]))

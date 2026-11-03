@@ -216,15 +216,15 @@ func decodeMergeFile(path string, data []byte, onDuplicate DuplicateKeyFunc) (ma
 		return nil, err //nolint:wrapcheck // the caller says which file failed
 	}
 
-	if len(decoded) == 0 && isNullDocument(data) {
+	if len(decoded) == 0 && IsNullDocument(data) {
 		decoded = nil
 	}
 
 	return decoded, nil
 }
 
-// isNullDocument reports whether data is a document that holds a null.
-func isNullDocument(data []byte) bool {
+// IsNullDocument reports whether data is a document that holds a null.
+func IsNullDocument(data []byte) bool {
 	var node yaml.Node
 
 	if yaml.Unmarshal(data, &node) != nil || node.Kind != yaml.DocumentNode || len(node.Content) != 1 {
