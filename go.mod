@@ -7,6 +7,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fivetwenty-io/boshapi v0.283.9
 	github.com/fivetwenty-io/capi/v3 v3.236.0
+	github.com/fivetwenty-io/graft v1.44.0
 	github.com/fivetwenty-io/osbapi/v2 v2.0.5
 	github.com/geofffranks/spruce v1.35.24
 	github.com/go-redis/redis/v8 v8.11.5
@@ -47,12 +48,12 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudfoundry-community/vaultkv v0.7.2 // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/geofffranks/simpleyaml v0.0.0-20161109204137-c9320f076de5 // indirect
 	github.com/geofffranks/yaml v0.0.0-20161117152608-9f2fe4b6f295 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.7 // indirect
+	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/hashicorp/cap v0.14.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect

@@ -158,8 +158,6 @@ github.com/coder/websocket/internal/bpool
 github.com/coder/websocket/internal/errd
 github.com/coder/websocket/internal/util
 github.com/coder/websocket/internal/wsjs
-# github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
-## explicit
 # github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
 ## explicit
 github.com/dgryski/go-rendezvous
@@ -180,6 +178,16 @@ github.com/fivetwenty-io/capi/v3/internal/constants
 github.com/fivetwenty-io/capi/v3/internal/http
 github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
+# github.com/fivetwenty-io/graft v1.44.0
+## explicit; go 1.27.3
+github.com/fivetwenty-io/graft/internal/keyorder
+github.com/fivetwenty-io/graft/internal/yamlcodec
+github.com/fivetwenty-io/graft/internal/yamlnode
+github.com/fivetwenty-io/graft/internal/yamlprep
+github.com/fivetwenty-io/graft/pkg/decimal
+github.com/fivetwenty-io/graft/pkg/query/value
+github.com/fivetwenty-io/graft/pkg/sortkeys
+github.com/fivetwenty-io/graft/pkg/yaml
 # github.com/fivetwenty-io/osbapi/v2 v2.0.5
 ## explicit; go 1.26.0
 github.com/fivetwenty-io/osbapi/v2/internal/server
@@ -215,6 +223,17 @@ github.com/go-redis/redis/v8/internal/pool
 github.com/go-redis/redis/v8/internal/proto
 github.com/go-redis/redis/v8/internal/rand
 github.com/go-redis/redis/v8/internal/util
+# github.com/goccy/go-yaml v1.19.2
+## explicit; go 1.21.0
+github.com/goccy/go-yaml
+github.com/goccy/go-yaml/ast
+github.com/goccy/go-yaml/internal/errors
+github.com/goccy/go-yaml/internal/format
+github.com/goccy/go-yaml/lexer
+github.com/goccy/go-yaml/parser
+github.com/goccy/go-yaml/printer
+github.com/goccy/go-yaml/scanner
+github.com/goccy/go-yaml/token
 # github.com/google/go-cmp v0.7.0
 ## explicit; go 1.21
 github.com/google/go-cmp/cmp
