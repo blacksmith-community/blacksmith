@@ -223,6 +223,9 @@ $.stemcells	[]string	null
 === odd_empty ===
 $.releases	[]string	null
 $.stemcells	[]string	null
+=== odd_float-tag-over-int ===
+$.releases	[]string	null
+$.stemcells	[]string	null
 === odd_instance-group-networks ===
 $.releases	[]string	null
 $.stemcells	[]string	null

@@ -3,7 +3,7 @@ $.Empty	bool	false
 $.Err	string	""
 === binary-and-tags ===
 $.Empty	bool	false
-$.Err	string	"the cloud config is not valid YAML: yaml: line 5: cannot decode a !!int scalar as !!float"
+$.Err	string	""
 === blacksmith-metadata ===
 $.Empty	bool	false
 $.Err	string	""
@@ -19,6 +19,9 @@ $.Err	string	"the cloud config is not valid YAML: yaml: line 2: mapping key alre
 === empty ===
 $.Empty	bool	true
 $.Err	string	""
+=== float-tag-over-int ===
+$.Empty	bool	false
+$.Err	string	"the cloud config is not valid YAML: yaml: line 3: cannot decode a !!int scalar as !!float"
 === instance-group-networks ===
 $.Empty	bool	false
 $.Err	string	""

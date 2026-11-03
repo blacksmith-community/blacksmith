@@ -3793,7 +3793,6 @@ $.properties.replica.user	string	"fixture-user"
 === odd_binary-and-tags ===
 $.name	string	"fixture"
 $.properties.blob	string	"hello"
-$.properties.floaty	float64	3
 $.properties.forced	string	"123"
 $.properties.seq[0]	string	"a"
 === odd_blacksmith-metadata ===
@@ -3826,6 +3825,9 @@ $.name	string	"second"
 $.properties.a	int	2
 === odd_empty ===
 $	map[interface {}]interface {}	{}
+=== odd_float-tag-over-int ===
+$.name	string	"fixture"
+$.properties.floaty	float64	3
 === odd_instance-group-networks ===
 $.instance_groups[0].name	string	"first"
 $.instance_groups[0].networks[0].name	string	"services"

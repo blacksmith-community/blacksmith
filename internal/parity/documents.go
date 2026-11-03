@@ -162,7 +162,8 @@ instance_groups:
 - name: second
 `,
 	"instance-groups-not-a-list": "name: fixture\ninstance_groups: {name: oops}\n",
-	"binary-and-tags":            "name: fixture\nproperties:\n  blob: !!binary aGVsbG8=\n  forced: !!str 123\n  floaty: !!float 3\n  seq: !!seq [a]\n",
+	"binary-and-tags":            "name: fixture\nproperties:\n  blob: !!binary aGVsbG8=\n  forced: !!str 123\n  seq: !!seq [a]\n",
+	"float-tag-over-int":         "name: fixture\nproperties:\n  floaty: !!float 3\n",
 }
 
 // OddDocuments returns the library-sensitive texts, sorted by name.

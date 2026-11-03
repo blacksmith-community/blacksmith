@@ -3843,8 +3843,11 @@ $.parsed.properties.replica.port	int	5433
 $.parsed.properties.replica.user	string	"fixture-user"
 $.text	string	"name: fixture\ndefaults: &defaults\n  port: 5432\n  user: fixture-user\nproperties:\n  primary:\n    <<: *defaults\n    host: a.example.test\n  replica:\n    <<: *defaults\n    port: 5433\n    host: b.example.test\n  list: &items [one, two]\n  again: *items\n"
 === odd_binary-and-tags ===
-$.parsed	map[string]interface {}	{}
-$.text	string	"name: fixture\nproperties:\n  blob: !!binary aGVsbG8=\n  forced: !!str 123\n  floaty: !!float 3\n  seq: !!seq [a]\n"
+$.parsed.name	string	"fixture"
+$.parsed.properties.blob	string	"hello"
+$.parsed.properties.forced	string	"123"
+$.parsed.properties.seq[0]	string	"a"
+$.text	string	"name: fixture\nproperties:\n  blob: !!binary aGVsbG8=\n  forced: !!str 123\n  seq: !!seq [a]\n"
 === odd_blacksmith-metadata ===
 $.parsed.instance_groups[0].instances	int	3
 $.parsed.instance_groups[0].jobs[0].name	string	"fixture-job"
@@ -3879,6 +3882,9 @@ $.text	string	"name: first\nname: second\nproperties:\n  a: 1\n  a: 2\n"
 === odd_empty ===
 $.parsed	map[string]interface {}	{}
 $.text	string	""
+=== odd_float-tag-over-int ===
+$.parsed	map[string]interface {}	{}
+$.text	string	"name: fixture\nproperties:\n  floaty: !!float 3\n"
 === odd_instance-group-networks ===
 $.parsed.instance_groups[0].name	string	"first"
 $.parsed.instance_groups[0].networks[0].name	string	"services"

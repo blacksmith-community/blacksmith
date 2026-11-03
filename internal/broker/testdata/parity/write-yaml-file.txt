@@ -5940,7 +5940,6 @@ properties:
 name: fixture
 properties:
   blob: hello
-  floaty: 3
   forced: "123"
   seq:
   - a
@@ -5986,6 +5985,10 @@ properties:
   a: 2
 === odd_empty ===
 {}
+=== odd_float-tag-over-int ===
+name: fixture
+properties:
+  floaty: 3
 === odd_instance-group-networks ===
 instance_groups:
 - name: first

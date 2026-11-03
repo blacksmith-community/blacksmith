@@ -103,7 +103,7 @@ standalone
 === odd_anchors-and-merge ===
 ERROR: manifest missing instance_groups
 === odd_binary-and-tags ===
-ERROR: failed to parse manifest YAML: yaml: line 5: cannot decode a !!int scalar as !!float
+ERROR: manifest missing instance_groups
 === odd_blacksmith-metadata ===
 fixture-group
 === odd_comment-only ===
@@ -114,6 +114,8 @@ ERROR: manifest missing instance_groups
 ERROR: failed to parse manifest YAML: yaml: line 2: mapping key already defined at [1:1]
 === odd_empty ===
 ERROR: manifest missing instance_groups
+=== odd_float-tag-over-int ===
+ERROR: failed to parse manifest YAML: yaml: line 3: cannot decode a !!int scalar as !!float
 === odd_instance-group-networks ===
 first
 === odd_instance-groups-not-a-list ===

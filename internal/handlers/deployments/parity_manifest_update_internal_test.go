@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,9 +89,10 @@ var updateBodies = []parity.Document{
 
 // TestUpdateManifestParity records the YAML text an update sends to the
 // director and stores in the vault for each JSON manifest, and the answer the
-// endpoint gives. The spruce-era recording is in update-manifest.txt and
-// update-manifest/, and the graft recording is in update-manifest-graft/. The text is a YAML marshal of a map, so key order, quoting,
-// and number forms are all the library's.
+// endpoint gives. The graft recording is in update-manifest-graft/. The
+// spruce-era recording is frozen in update-manifest.txt and update-manifest/.
+// The text is a YAML marshal of a map, so key order, quoting, and number
+// forms are all the library's.
 func TestUpdateManifestParity(t *testing.T) {
 	t.Parallel()
 
@@ -126,4 +128,50 @@ func boolWord(value bool) string {
 	}
 
 	return "no"
+}
+
+// TestSpruceEraUpdateRecordIsConsistent checks that each per-case file in the
+// frozen spruce-era update-manifest/ is the "sent to director" section of the
+// frozen update-manifest.txt it was cut from, so the Psych comparison reads
+// the recording and not a copy that drifted.
+func TestSpruceEraUpdateRecordIsConsistent(t *testing.T) {
+	t.Parallel()
+
+	base := filepath.Join("testdata", "parity")
+
+	recorded, err := os.ReadFile(filepath.Join(base, "update-manifest.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := filepath.Glob(filepath.Join(base, "update-manifest", "*.yml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no spruce-era files found: %v", err)
+	}
+
+	for _, file := range files {
+		name := strings.TrimSuffix(filepath.Base(file), ".yml")
+
+		want, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		section := strings.SplitN(string(recorded), "=== "+name+" ===\n", 2)
+		if len(section) != 2 {
+			t.Fatalf("%s: no section in update-manifest.txt", name)
+		}
+
+		body := strings.SplitN(section[1], "\n=== ", 2)[0]
+
+		_, sent, found := strings.Cut(body, "--- sent to director\n")
+		if !found {
+			t.Fatalf("%s: no sent text in update-manifest.txt", name)
+		}
+
+		sent, _, _ = strings.Cut(sent, "--- stored in vault")
+		if sent != string(want) {
+			t.Errorf("%s: update-manifest/%s.yml differs from update-manifest.txt", name, name)
+		}
+	}
 }

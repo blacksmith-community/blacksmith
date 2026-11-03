@@ -13,7 +13,10 @@ $.properties.replica.host	string	"b.example.test"
 $.properties.replica.port	int	5433
 $.properties.replica.user	string	"fixture-user"
 === binary-and-tags ===
-ERROR: failed to parse config YAML: yaml: line 5: cannot decode a !!int scalar as !!float
+$.name	string	"fixture"
+$.properties.blob	string	"hello"
+$.properties.forced	string	"123"
+$.properties.seq[0]	string	"a"
 === blacksmith-metadata ===
 $.instance_groups[0].instances	int	3
 $.instance_groups[0].jobs[0].name	string	"fixture-job"
@@ -43,6 +46,8 @@ $.properties["x[0]"]	string	"bracketed"
 ERROR: failed to parse config YAML: yaml: line 2: mapping key already defined at [1:1]
 === empty ===
 $	map[string]interface {}	null
+=== float-tag-over-int ===
+ERROR: failed to parse config YAML: yaml: line 3: cannot decode a !!int scalar as !!float
 === instance-group-networks ===
 $.instance_groups[0].name	string	"first"
 $.instance_groups[0].networks[0].name	string	"services"

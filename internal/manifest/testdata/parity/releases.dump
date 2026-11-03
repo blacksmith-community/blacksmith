@@ -475,6 +475,8 @@ ERROR: failed to unmarshal manifest for release extraction: yaml: unmarshal erro
   line 2: mapping key "name" already defined at line 1
 === odd_empty ===
 $.Releases	[]struct { Name string "yaml:\"name\""; Version string "yaml:\"version\""; URL string "yaml:\"url\""; SHA1 string "yaml:\"sha1\"" }	null
+=== odd_float-tag-over-int ===
+$.Releases	[]struct { Name string "yaml:\"name\""; Version string "yaml:\"version\""; URL string "yaml:\"url\""; SHA1 string "yaml:\"sha1\"" }	null
 === odd_instance-group-networks ===
 $.Releases	[]struct { Name string "yaml:\"name\""; Version string "yaml:\"version\""; URL string "yaml:\"url\""; SHA1 string "yaml:\"sha1\"" }	null
 === odd_instance-groups-not-a-list ===

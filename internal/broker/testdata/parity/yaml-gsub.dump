@@ -203,6 +203,9 @@ ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
 === text empty ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `` into map[interface {}]interface {}
+=== text float-tag-over-int ===
+ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
+  line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}
 === text instance-group-networks ===
 ERROR: failed to unmarshal replaced YAML: yaml: unmarshal errors:
   line 1: cannot unmarshal !!str `name: s...` into map[interface {}]interface {}

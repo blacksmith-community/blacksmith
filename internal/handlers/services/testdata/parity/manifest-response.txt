@@ -103,7 +103,7 @@
 === odd_anchors-and-merge ===
 {"parsed":{"defaults":{"port":5432,"user":"fixture-user"},"name":"fixture","properties":{"again":["one","two"],"list":["one","two"],"primary":{"host":"a.example.test","port":5432,"user":"fixture-user"},"replica":{"host":"b.example.test","port":5433,"user":"fixture-user"}}},"text":"name: fixture\ndefaults: \u0026defaults\n  port: 5432\n  user: fixture-user\nproperties:\n  primary:\n    \u003c\u003c: *defaults\n    host: a.example.test\n  replica:\n    \u003c\u003c: *defaults\n    port: 5433\n    host: b.example.test\n  list: \u0026items [one, two]\n  again: *items\n"}
 === odd_binary-and-tags ===
-{"error":"unable to parse manifest","parsed":null,"text":"name: fixture\nproperties:\n  blob: !!binary aGVsbG8=\n  forced: !!str 123\n  floaty: !!float 3\n  seq: !!seq [a]\n"}
+{"parsed":{"name":"fixture","properties":{"blob":"hello","forced":"123","seq":["a"]}},"text":"name: fixture\nproperties:\n  blob: !!binary aGVsbG8=\n  forced: !!str 123\n  seq: !!seq [a]\n"}
 === odd_blacksmith-metadata ===
 {"parsed":{"instance_groups":[{"instances":3,"jobs":[{"name":"fixture-job","release":"fixture-release"}],"name":"fixture-group"}],"meta":{"blacksmith":{"instance_id":"00000000-0000-0000-0000-000000000001"}},"name":"fixture-deployment","properties":{"blacksmith":{"instance_id":"00000000-0000-0000-0000-000000000001","plan_id":"fixture-plan","service_id":"fixture-service"}},"releases":[{"name":"fixture-release","version":"1.2.3"}],"stemcells":[{"alias":"default","os":"ubuntu-noble","version":"latest"}]},"text":"name: fixture-deployment\nproperties:\n  blacksmith:\n    service_id: fixture-service\n    plan_id: fixture-plan\n    instance_id: 00000000-0000-0000-0000-000000000001\nmeta:\n  blacksmith:\n    instance_id: 00000000-0000-0000-0000-000000000001\ninstance_groups:\n- name: fixture-group\n  instances: 3\n  jobs:\n  - name: fixture-job\n    release: fixture-release\nreleases:\n- name: fixture-release\n  version: 1.2.3\nstemcells:\n- alias: default\n  os: ubuntu-noble\n  version: latest\n"}
 === odd_comment-only ===
@@ -114,6 +114,8 @@
 {"error":"unable to parse manifest","parsed":null,"text":"name: first\nname: second\nproperties:\n  a: 1\n  a: 2\n"}
 === odd_empty ===
 {"parsed":null,"text":""}
+=== odd_float-tag-over-int ===
+{"error":"unable to parse manifest","parsed":null,"text":"name: fixture\nproperties:\n  floaty: !!float 3\n"}
 === odd_instance-group-networks ===
 {"parsed":{"instance_groups":[{"name":"first","networks":[{"name":"services"},{"name":"second-network"}]},{"name":"dotted","networks":[{"name":"my.net.work"}]},{"name":"numeric","networks":[{"name":1.1}]},{"name":"boolean","networks":[{"name":true}]},{"name":"null-name","networks":[{"name":null}]},{"name":"no-networks"},{"name":"empty-networks","networks":[]},{"name":123,"networks":[{"name":"numeric-group"}]}],"name":"fixture"},"text":"name: fixture\ninstance_groups:\n- name: first\n  networks:\n  - name: services\n  - name: second-network\n- name: dotted\n  networks:\n  - {name: my.net.work}\n- name: numeric\n  networks:\n  - name: 1.10\n- name: boolean\n  networks:\n  - name: yes\n- name: null-name\n  networks:\n  - name: ~\n- name: no-networks\n- name: empty-networks\n  networks: []\n- name: 123\n  networks:\n  - name: numeric-group\n"}
 === odd_instance-groups-not-a-list ===

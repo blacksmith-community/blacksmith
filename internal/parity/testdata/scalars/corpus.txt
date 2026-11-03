@@ -8757,8 +8757,6 @@ $["properties"]["blob"]#key	plain	!!str	string	"blob"
 $["properties"]["blob"]	plain	!!binary	string	"aGVsbG8="
 $["properties"]["forced"]#key	plain	!!str	string	"forced"
 $["properties"]["forced"]	plain	!!str	int	"123"
-$["properties"]["floaty"]#key	plain	!!str	string	"floaty"
-$["properties"]["floaty"]	plain	!!float	int	"3"
 $["properties"]["seq"]#key	plain	!!str	string	"seq"
 $["properties"]["seq"][0]	plain	!!str	string	"a"
 === odd_blacksmith-metadata ===
@@ -8827,6 +8825,12 @@ $["properties"]["a"]	plain	!!int	int	"1"
 $["properties"]["a"]#key	plain	!!str	string	"a"
 $["properties"]["a"]	plain	!!int	int	"2"
 === odd_empty ===
+=== odd_float-tag-over-int ===
+$["name"]#key	plain	!!str	string	"name"
+$["name"]	plain	!!str	string	"fixture"
+$["properties"]#key	plain	!!str	string	"properties"
+$["properties"]["floaty"]#key	plain	!!str	string	"floaty"
+$["properties"]["floaty"]	plain	!!float	int	"3"
 === odd_instance-group-networks ===
 $["name"]#key	plain	!!str	string	"name"
 $["name"]	plain	!!str	string	"fixture"

@@ -466,6 +466,14 @@ $.Confidence	float64	1
 $.MatchReason	string	"exact_name_match"
 === odd_empty as unmatched-deployment ===
 ERROR: no match found for deployment
+=== odd_float-tag-over-int as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
+$.ServiceID	string	"fixture-service"
+$.PlanID	string	"fixture-plan"
+$.InstanceID	string	"00000000-0000-0000-0000-000000000001"
+$.Confidence	float64	1
+$.MatchReason	string	"perfect_manifest_match"
+=== odd_float-tag-over-int as unmatched-deployment ===
+ERROR: no match found for deployment
 === odd_instance-group-networks as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"

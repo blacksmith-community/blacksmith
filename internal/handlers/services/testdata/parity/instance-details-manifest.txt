@@ -156,7 +156,7 @@ sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"defaults":{"port":5432,"user":"fixture-user"},"name":"fixture","properties":{"again":["one","two"],"list":["one","two"],"primary":{"host":"a.example.test","port":5432,"user":"fixture-user"},"replica":{"host":"b.example.test","port":5433,"user":"fixture-user"}}},"vault_sources":["inst-1/manifest"]}
 === odd_binary-and-tags ===
 sources inst-1/manifest
-{"instance_id":"inst-1","vault_sources":["inst-1/manifest"]}
+{"instance_id":"inst-1","manifest":{"name":"fixture","properties":{"blob":"hello","forced":"123","seq":["a"]}},"vault_sources":["inst-1/manifest"]}
 === odd_blacksmith-metadata ===
 sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"instance_groups":[{"instances":3,"jobs":[{"name":"fixture-job","release":"fixture-release"}],"name":"fixture-group"}],"meta":{"blacksmith":{"instance_id":"00000000-0000-0000-0000-000000000001"}},"name":"fixture-deployment","properties":{"blacksmith":{"instance_id":"00000000-0000-0000-0000-000000000001","plan_id":"fixture-plan","service_id":"fixture-service"}},"releases":[{"name":"fixture-release","version":"1.2.3"}],"stemcells":[{"alias":"default","os":"ubuntu-noble","version":"latest"}]},"vault_sources":["inst-1/manifest"]}
@@ -172,6 +172,9 @@ sources inst-1/manifest
 === odd_empty ===
 sources 
 {"instance_id":"inst-1"}
+=== odd_float-tag-over-int ===
+sources inst-1/manifest
+{"instance_id":"inst-1","vault_sources":["inst-1/manifest"]}
 === odd_instance-group-networks ===
 sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"instance_groups":[{"name":"first","networks":[{"name":"services"},{"name":"second-network"}]},{"name":"dotted","networks":[{"name":"my.net.work"}]},{"name":"numeric","networks":[{"name":1.1}]},{"name":"boolean","networks":[{"name":true}]},{"name":"null-name","networks":[{"name":null}]},{"name":"no-networks"},{"name":"empty-networks","networks":[]},{"name":123,"networks":[{"name":"numeric-group"}]}],"name":"fixture"},"vault_sources":["inst-1/manifest"]}

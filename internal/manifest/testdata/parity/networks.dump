@@ -114,6 +114,8 @@ $	map[string]string	{}
 $	map[string]string	{}
 === odd_empty ===
 $	map[string]string	{}
+=== odd_float-tag-over-int ===
+$	map[string]string	{}
 === odd_instance-group-networks ===
 $.123	string	"numeric-group"
 $.boolean	string	"yes"
