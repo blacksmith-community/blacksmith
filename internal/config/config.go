@@ -10,7 +10,7 @@ import (
 
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Static errors for err113 compliance.

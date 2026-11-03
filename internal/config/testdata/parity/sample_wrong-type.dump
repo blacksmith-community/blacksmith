@@ -1,3 +1,1 @@
-ERROR: failed to unmarshal config YAML: yaml: unmarshal errors:
-  line 8: cannot unmarshal !!str `many` into int
-  line 9: cannot unmarshal !!str `perhaps` into bool
+ERROR: failed to unmarshal config YAML: yaml: line 8: cannot unmarshal string into Go struct field Config.BOSH of type int

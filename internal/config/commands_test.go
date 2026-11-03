@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 
 	"blacksmith/internal/config"
 )

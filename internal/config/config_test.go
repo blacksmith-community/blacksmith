@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"blacksmith/internal/config"
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 func TestCFAPIConfigTLSFields(t *testing.T) {
