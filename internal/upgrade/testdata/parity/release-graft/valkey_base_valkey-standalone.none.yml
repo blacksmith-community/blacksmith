@@ -1,0 +1,97 @@
+director_uuid: 00000000-0000-4000-8000-000000000000
+features:
+  randomize_az_placement: true
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - name: bpm
+    release: bpm
+  - custom_provider_definitions:
+    - name: valkey-san
+      type: address
+    - name: valkey-alias-domain
+      type: placeholder
+    name: standalone
+    properties:
+      auth:
+        password: "yes"
+      client:
+        connections: 10000
+        tcpkeepalive: 300
+        timeout: 0
+      lua:
+        scripting-enabled: true
+      persistent: false
+      valkey:
+        auto-aof-rewrite-min-size: 64mb
+        auto-aof-rewrite-percentage: 100
+        maxmemory: 0
+        maxmemory-policy: allkeys-lru
+        no-appendfsync-on-rewrite: false
+        notify-keyspace-events: ""
+        slowlog-log-slower-than: 10000
+        slowlog-max-len: 128
+        tls:
+          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
+            CERTIFICATE-----\n"
+          ca_cert: ((valkey_standalone_crt.certificate))
+          ca_key: ((valkey_standalone_crt.private_key))
+          dual-mode: false
+          enabled: false
+        version: 8
+    provides:
+      valkey-alias-domain:
+        aliases:
+        - domain: _.valkey_standalone.bosh
+          placeholder_type: uuid
+      valkey-san:
+        as: valkey-san
+        ip_addresses: false
+    release: valkey-forge
+  name: standalone
+  networks:
+  - name: valkey-service
+  stemcell: default
+  vm_type: default
+meta:
+  bosh_env: fixture-env
+  default:
+    azs:
+    - z1
+  disk_config: {}
+  environment: fixture-env
+  net: valkey-service
+  params:
+    instance_id: parity-valkey-base
+  password: "yes"
+  persistent: false
+  size: default
+  valkey_version: 8
+name: valkey-standalone-parity-valkey-base
+releases:
+- name: valkey-forge
+  version: 99.1.0
+- name: bpm
+  version: 99.0.1
+stemcells:
+- alias: default
+  os: ubuntu-noble
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000
+variables:
+- consumes:
+    alternative_name:
+      from: valkey-san
+      properties:
+        wildcard: true
+  name: valkey_standalone_crt
+  options:
+    ca: /fixture-env-bosh/fixture-env-blacksmith/blacksmith_services_ca
+    common_name: fixture-env-valkey-standalone.bosh
+  type: certificate

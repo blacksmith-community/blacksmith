@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // releaseManifest is a deployment manifest with the forge release at
@@ -44,21 +44,21 @@ const (
 
 // manifestReleases returns each release of the manifest by name, as a map
 // of its keys.
-func manifestReleases(t *testing.T, manifestYAML string) map[string]map[interface{}]interface{} {
+func manifestReleases(t *testing.T, manifestYAML string) map[string]map[string]any {
 	t.Helper()
 
-	var manifest map[interface{}]interface{}
+	var manifest map[string]any
 
 	err := yaml.Unmarshal([]byte(manifestYAML), &manifest)
 	if err != nil {
 		t.Fatalf("parsing the merged manifest: %v", err)
 	}
 
-	releases := map[string]map[interface{}]interface{}{}
+	releases := map[string]map[string]any{}
 
-	entries, _ := manifest["releases"].([]interface{})
+	entries, _ := manifest["releases"].([]any)
 	for _, entry := range entries {
-		release, _ := entry.(map[interface{}]interface{})
+		release, _ := entry.(map[string]any)
 		name, _ := release["name"].(string)
 		releases[name] = release
 	}

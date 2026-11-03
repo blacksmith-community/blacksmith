@@ -3,7 +3,7 @@ package upgrade
 import (
 	"fmt"
 
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // MergeReleaseOverlay sets the version of each target release that the
@@ -20,14 +20,14 @@ func MergeReleaseOverlay(manifestYAML string, targets []ReleaseTarget) (string, 
 		return manifestYAML, nil, nil
 	}
 
-	var manifest map[interface{}]interface{}
+	var manifest map[string]any
 
 	err := yaml.Unmarshal([]byte(manifestYAML), &manifest)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
-	releases, _ := manifest["releases"].([]interface{})
+	releases, _ := manifest["releases"].([]any)
 	applied := make([]ReleaseTarget, 0, len(targets))
 
 	for _, target := range targets {
@@ -51,9 +51,9 @@ func MergeReleaseOverlay(manifestYAML string, targets []ReleaseTarget) (string, 
 // bumpRelease sets the target's version on the release of the same name
 // in releases, drops the keys that describe that release's old tarball,
 // and reports whether releases held it.
-func bumpRelease(releases []interface{}, target ReleaseTarget) bool {
+func bumpRelease(releases []any, target ReleaseTarget) bool {
 	for _, entry := range releases {
-		release, ok := entry.(map[interface{}]interface{})
+		release, ok := entry.(map[string]any)
 		if !ok || release["name"] != target.Name {
 			continue
 		}

@@ -164,16 +164,33 @@ func TestPsychCompareCatchesWhatTheTreeCheckCannot(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	allowSymbols := []string{"--allow", "symbol-quoting"}
+	allowKeys := []string{"--allow", "stringified-keys"}
+	allowY := []string{"--allow", "y-strings"}
+
 	cases := map[string]struct {
 		want, got string
+		args      []string
 		exit      int
 	}{
-		"sexagesimal":      {"a: \"1:20\"\n", "a: 1:20\n", 1},
-		"plain bool key":   {"\"yes\": 1\n", "yes: 1\n", 1},
-		"load failures":    {"a: [\n", "b: [\n", 1},
-		"same nan":         {"a: .nan\n", "a: .nan\n", 0},
-		"identical":        {"a: 1:20\n", "a: 1:20\n", 0},
-		"one load failure": {"a: 1\n", "a: [\n", 1},
+		"sexagesimal":                 {"a: \"1:20\"\n", "a: 1:20\n", nil, 1},
+		"plain bool key":              {"\"yes\": 1\n", "yes: 1\n", nil, 1},
+		"load failures":               {"a: [\n", "b: [\n", nil, 1},
+		"same nan":                    {"a: .nan\n", "a: .nan\n", nil, 0},
+		"identical":                   {"a: 1:20\n", "a: 1:20\n", nil, 0},
+		"one load failure":            {"a: 1\n", "a: [\n", nil, 1},
+		"symbol quoting exempt":       {"a: :x\n", "a: \":x\"\n", allowSymbols, 0},
+		"symbol quoting off":          {"a: :x\n", "a: \":x\"\n", nil, 1},
+		"symbol to other text":        {"a: :x\n", "a: \":y\"\n", allowSymbols, 1},
+		"symbol to text without sign": {"a: :x\n", "a: x\n", allowSymbols, 1},
+		"string to symbol":            {"a: \":x\"\n", "a: :x\n", allowSymbols, 1},
+		"integer key exempt":          {"1: one\n", "\"1\": one\n", allowKeys, 0},
+		"integer key off":             {"1: one\n", "\"1\": one\n", nil, 1},
+		"integer key other value":     {"1: one\n", "\"1\": two\n", allowKeys, 1},
+		"integer key other name":      {"1: one\n", "\"2\": one\n", allowKeys, 1},
+		"y exempt":                    {"a: true\n", "a: \"y\"\n", allowY, 0},
+		"y off":                       {"a: true\n", "a: \"y\"\n", nil, 1},
+		"y for other text":            {"a: true\n", "a: \"x\"\n", allowY, 1},
 	}
 
 	for name, tc := range cases {
@@ -189,7 +206,7 @@ func TestPsychCompareCatchesWhatTheTreeCheckCannot(t *testing.T) {
 				}
 			}
 
-			out, err := exec.Command(ruby, script, want, got).CombinedOutput() //nolint:gosec // a test runs its own script
+			out, err := exec.Command(ruby, append(append([]string{script}, tc.args...), want, got)...).CombinedOutput() //nolint:gosec // a test runs its own script
 			code := 0
 
 			var exitErr *exec.ExitError
@@ -203,5 +220,55 @@ func TestPsychCompareCatchesWhatTheTreeCheckCannot(t *testing.T) {
 				t.Errorf("exit %d, want %d:\n%s", code, tc.exit, out)
 			}
 		})
+	}
+}
+
+// TestRenderForgesScanFlagsNonStringKeys shows that the fixture scan fails on
+// a plain mapping key that YAML 1.1 reads as something other than a string,
+// and passes on the committed fixtures.
+func TestRenderForgesScanFlagsNonStringKeys(t *testing.T) {
+	t.Parallel()
+
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("ruby is not installed")
+	}
+
+	script, err := filepath.Abs("../../hack/parity/render-forges.rb")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixtures, err := filepath.Abs("testdata/forges")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	body := "1: a\nyes: b\n~: c\n1.5: d\n2026-01-02: e\n\"3\": quoted\nname: plain\n"
+
+	err = os.WriteFile(filepath.Join(dir, "bad.yml"), []byte(body), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := exec.Command(ruby, script, "--scan", dir).CombinedOutput() //nolint:gosec // a test runs its own script
+	if err == nil {
+		t.Fatalf("the scan passed a directory with non-string keys:\n%s", out)
+	}
+
+	for _, key := range []string{".1", ".yes", ".~", ".1.5", ".2026-01-02"} {
+		if !strings.Contains(string(out), "non-string key "+key+"\n") {
+			t.Errorf("the scan did not flag %s:\n%s", key, out)
+		}
+	}
+
+	if strings.Contains(string(out), `.3`) || strings.Contains(string(out), ".name") {
+		t.Errorf("the scan flagged a quoted or string key:\n%s", out)
+	}
+
+	out, err = exec.Command(ruby, script, "--scan", fixtures).CombinedOutput() //nolint:gosec // a test runs its own script
+	if err != nil {
+		t.Fatalf("the committed fixtures are not clean:\n%s", out)
 	}
 }

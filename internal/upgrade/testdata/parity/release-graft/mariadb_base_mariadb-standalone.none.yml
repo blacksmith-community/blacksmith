@@ -1,0 +1,43 @@
+director_uuid: 00000000-0000-4000-8000-000000000000
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - name: standalone
+    properties:
+      db:
+        admin_password: "yes"
+        admin_username: "y"
+        database_name: service_instance_db
+    release: mariadb-forge
+  name: standalone
+  networks:
+  - name: mariadb-service
+  persistent_disk: 2048
+  stemcell: default
+  vm_type: default
+meta:
+  admin_password: "yes"
+  admin_username: "y"
+  database_name: service_instance_db
+  default:
+    azs: z1
+  disk: 2048
+  net: mariadb-service
+  params:
+    instance_id: parity-mariadb-base
+  size: default
+name: mariadb-standalone-parity-mariadb-base
+releases:
+- name: mariadb-forge
+  version: 99.5.0
+stemcells:
+- alias: default
+  os: ubuntu-bionic
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000

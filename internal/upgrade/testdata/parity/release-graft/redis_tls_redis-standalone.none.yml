@@ -1,0 +1,71 @@
+director_uuid: 00000000-0000-4000-8000-000000000000
+features:
+  randomize_az_placement: true
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - name: bpm
+    release: bpm
+  - name: standalone
+    properties:
+      auth:
+        password: "yes"
+      client:
+        connections: 10000
+        tcpkeepalive: 300
+        timeout: 0
+      lua:
+        scripting-enabled: true
+      persistent: false
+      redis:
+        auto-aof-rewrite-min-size: 64mb
+        auto-aof-rewrite-percentage: 100
+        maxmemory: 0
+        maxmemory-policy: allkeys-lru
+        no-appendfsync-on-rewrite: false
+        notify-keyspace-events: ""
+        slowlog-log-slower-than: 10000
+        slowlog-max-len: 128
+    release: redis-forge
+  name: standalone
+  networks:
+  - name: redis-service
+  stemcell: default
+  vm_type: default
+meta:
+  default:
+    azs:
+    - z1
+  disk_config: {}
+  net: redis-service
+  params:
+    instance_id: parity-redis-tls
+  password: "yes"
+  persistent: false
+  redis:
+    tls:
+      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
+        CERTIFICATE-----\n\n"
+      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
+        CERTIFICATE-----\n\n"
+      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
+        PRIVATE KEY-----\n\n"
+      enabled: true
+  size: default
+name: redis-standalone-parity-redis-tls
+releases:
+- name: redis-forge
+  version: 99.2.0
+- name: bpm
+  version: 99.0.1
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000

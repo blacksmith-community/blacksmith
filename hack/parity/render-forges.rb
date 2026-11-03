@@ -19,8 +19,13 @@
 #
 # It then scans every rendered YAML file for duplicate mapping keys, which
 # some YAML libraries refuse and others silently collapse, and exits 1 when
-# it finds any that known-duplicates.yml does not list.  With --check it renders into a scratch directory and fails
-# when the committed fixtures differ.
+# it finds any that known-duplicates.yml does not list.  The same scan fails
+# on any plain mapping key that YAML 1.1 reads as something other than a
+# string, such as 1, 1.5, yes, ~, or 2026-01-02, because graft decodes every
+# key to a string and would write such a key back quoted.  With --check it
+# renders into a scratch directory and fails when the committed fixtures
+# differ.  With --scan DIR it only scans the YAML under DIR and renders
+# nothing.
 
 require 'bosh/template'
 require 'bosh/template/renderer'
@@ -185,8 +190,19 @@ def render_variant(name, forge, variant, overlay, placeholders, job_dir, out)
   end
 end
 
-# Walks a Psych AST and reports every mapping that repeats a key.
-def duplicate_keys(node, path, found)
+SCANNER = Psych::ScalarScanner.new(Psych::ClassLoader.new)
+
+# A plain, untagged key that YAML 1.1 reads as something other than a string.
+def non_string_key?(node)
+  return false unless node.is_a?(Psych::Nodes::Scalar)
+  return false if node.quoted || node.tag || node.value == '<<'
+
+  !SCANNER.tokenize(node.value).is_a?(String)
+end
+
+# Walks a Psych AST and reports every mapping that repeats a key, and every
+# mapping with a plain key that is not a string.
+def duplicate_keys(node, path, found, odd = [])
   case node
   when Psych::Nodes::Mapping
     seen = {}
@@ -196,10 +212,11 @@ def duplicate_keys(node, path, found)
         found << "#{path}.#{key}" if seen[key]
         seen[key] = true
       end
-      duplicate_keys(v, "#{path}.#{key}", found)
+      odd << "#{path}.#{key}" if non_string_key?(k)
+      duplicate_keys(v, "#{path}.#{key}", found, odd)
     end
   else
-    (node.children || []).each { |c| duplicate_keys(c, path, found) }
+    (node.children || []).each { |c| duplicate_keys(c, path, found, odd) }
   end
 end
 
@@ -215,18 +232,43 @@ def scan_duplicates(dir)
       next
     end
     found = []
-    duplicate_keys(stream, '', found)
+    odd = []
+    duplicate_keys(stream, '', found, odd)
     found.each { |key| problems << "#{rel}: duplicate key #{key}" }
+    odd.each { |key| problems << "#{rel}: non-string key #{key}" }
   end
   problems
 end
 
-options = { work: nil, forge: nil, check: false }
+# Returns the problems that known-duplicates.yml does not list.  A
+# non-string key is never listed.
+def unknown_problems(problems)
+  known = YAML.load_file(File.join(HERE, 'known-duplicates.yml'))
+  problems.reject do |problem|
+    next false if problem.include?(': non-string key ')
+
+    known.any? do |entry|
+      File.fnmatch?("#{entry['path']}: duplicate key #{entry['key']}", problem, File::FNM_PATHNAME)
+    end
+  end
+end
+
+options = { work: nil, forge: nil, check: false, scan: nil }
 OptionParser.new do |o|
   o.on('--work DIR', 'directory for downloads, created if missing') { |v| options[:work] = v }
   o.on('--forge NAME', 'render only this forge') { |v| options[:forge] = v }
   o.on('--check', 'compare against the committed fixtures instead of writing') { options[:check] = true }
+  o.on('--scan DIR', 'only scan the YAML under DIR for duplicate and non-string keys') { |v| options[:scan] = v }
 end.parse!
+
+if options[:scan]
+  problems = scan_duplicates(options[:scan])
+  unknown = unknown_problems(problems)
+  (problems - unknown).each { |problem| puts "known duplicate: #{problem}" }
+  puts unknown
+  puts "scan: #{unknown.length} problem(s)"
+  exit(unknown.empty? ? 0 : 1)
+end
 
 config = YAML.load_file(File.join(HERE, 'variants.yml'))
 work = options[:work] || Dir.mktmpdir('forge-downloads-')
@@ -247,12 +289,7 @@ config['forges'].each do |name, forge|
   end
 end
 
-known = YAML.load_file(File.join(HERE, 'known-duplicates.yml'))
-unknown = problems.reject do |problem|
-  known.any? do |entry|
-    File.fnmatch?("#{entry['path']}: duplicate key #{entry['key']}", problem, File::FNM_PATHNAME)
-  end
-end
+unknown = unknown_problems(problems)
 (problems - unknown).each { |problem| puts "known duplicate: #{problem}" }
 unless unknown.empty?
   warn unknown
