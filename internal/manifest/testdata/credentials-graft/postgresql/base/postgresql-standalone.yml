@@ -1,0 +1,128 @@
+credentials:
+  db_host: 10.0.0.11
+  db_name: postgres
+  db_port: 5432
+  dbname: postgres
+  host: 10.0.0.11
+  hostname: 10.0.0.11
+  jdbc_read_uri: jdbc:postgresql://10.0.0.11:5432/postgres
+  jdbc_uri: jdbc:postgresql://10.0.0.11:5432/postgres
+  password: "yes"
+  port: 5432
+  read_host: 10.0.0.11
+  read_port: 5432
+  read_uri: postgresql://y:yes@10.0.0.11:5432/postgres
+  uri: postgresql://y:yes@10.0.0.11:5432/postgres
+  username: "y"
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - consumes:
+      db:
+        from: postgres
+    name: postgres
+    properties:
+      postgres:
+        config:
+          listen_addresses: 0.0.0.0
+          port: 5432
+        hba:
+        - host all all 0.0.0.0/0 md5
+        - host all all ::/0 md5
+        users:
+        - admin: true
+          password: "yes"
+          username: "y"
+    provides:
+      db:
+        as: postgres
+    release: postgres
+  name: postgresql
+  networks:
+  - name: postgresql-service
+  persistent_disk: 2048
+  stemcell: default
+  vm_type: default
+jobs:
+- deployment: postgresql-standalone-parity-postgresql-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.postgresql.fixture-net.postgresql-standalone-parity-postgresql-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111..postgresql-service.postgresql-standalone-parity-postgresql-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  name: postgresql/0
+  plan_id: postgresql-standalone
+  plan_name: standalone
+- deployment: postgresql-standalone-parity-postgresql-base
+  dns:
+  - 22222222-2222-4222-8222-222222222222.postgresql.fixture-net.postgresql-standalone-parity-postgresql-base.bosh
+  fqdn: 22222222-2222-4222-8222-222222222222..postgresql-service.postgresql-standalone-parity-postgresql-base.bosh
+  id: 22222222-2222-4222-8222-222222222222
+  ips:
+  - 10.0.0.12
+  name: postgresql/1
+  plan_id: postgresql-standalone
+  plan_name: standalone
+- deployment: postgresql-standalone-parity-postgresql-base
+  dns:
+  - 33333333-3333-4333-8333-333333333333.postgresql.fixture-net.postgresql-standalone-parity-postgresql-base.bosh
+  fqdn: 33333333-3333-4333-8333-333333333333..postgresql-service.postgresql-standalone-parity-postgresql-base.bosh
+  id: 33333333-3333-4333-8333-333333333333
+  ips:
+  - 10.0.0.13
+  name: postgresql/2
+  plan_id: postgresql-standalone
+  plan_name: standalone
+- deployment: postgresql-standalone-parity-postgresql-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.postgresql.fixture-net.postgresql-standalone-parity-postgresql-base.bosh
+  - 22222222-2222-4222-8222-222222222222.postgresql.fixture-net.postgresql-standalone-parity-postgresql-base.bosh
+  - 33333333-3333-4333-8333-333333333333.postgresql.fixture-net.postgresql-standalone-parity-postgresql-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111.standalone.blacksmith.postgresql-standalone-parity-postgresql-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  - 10.0.0.12
+  - 10.0.0.13
+  name: postgresql
+  plan_id: postgresql-standalone
+  plan_name: standalone
+meta:
+  default:
+    az: z1
+  disk: 2048
+  disk_type: default
+  hba:
+  - host all all 0.0.0.0/0 md5
+  - host all all ::/0 md5
+  net: postgresql-service
+  service:
+    password: "yes"
+    port: 5432
+    username: "y"
+  size: default
+  users:
+  - admin: true
+    password: "yes"
+    username: "y"
+name: postgresql-standalone-parity-postgresql-base
+params:
+  hostname: 33333333-3333-4333-8333-333333333333..postgresql-service.postgresql-standalone-parity-postgresql-base.bosh
+  instance_id: parity-postgresql-base
+releases:
+- name: postgres
+  sha1: 7699715ed0b7ec129f60958e2864958030333cea
+  url: https://github.com/cloudfoundry-community/postgres-boshrelease/releases/download/v3.2.2/postgres-3.2.2.tgz
+  version: 3.2.2
+stemcells:
+- alias: default
+  os: ubuntu-bionic
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000

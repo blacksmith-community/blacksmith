@@ -1,0 +1,166 @@
+credentials:
+  apiserver: 10.0.0.11:6443
+  apiservers:
+  - 10.0.0.11:6443
+  ca: "0755"
+  certificate: "y"
+  key: "1e3"
+instance_groups:
+- azs:
+  - z1
+  - z2
+  - z3
+  instances: 3
+  jobs:
+  - name: etcd
+    release: k8s
+  - name: control
+    properties:
+      apiserver:
+        additional-sans:
+        - 10.245.0.1
+        audit-policy:
+          apiVersion: audit.k8s.io/v1
+          kind: Policy
+          rules:
+          - level: Request
+        flags:
+        - audit-log-maxage: 5
+      cluster:
+        dns: 10.245.0.2
+        name: cluster0
+      encryption:
+        key: "yes"
+      networks:
+        nodes: 0.0.0.0/32
+        pods: 10.244.0.0/16
+        services: 10.245.0.0/24
+      tls:
+        ca:
+          certificate: "0755"
+          key: "2026-01-02"
+        sa:
+          certificate: ":leading-colon"
+          key: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+    release: k8s
+  - name: lb
+    release: k8s
+  - name: runtime-runc
+    properties:
+      cni: flannel
+    release: k8s
+  - name: net-flannel
+    release: k8s
+  - name: kubelet
+    properties:
+      labels:
+        bosh/deployment: (deployment)
+        bosh/instance-group: (name)
+        bosh/instance-id: (id)
+        node-role.kubernetes.io/master: ""
+    release: k8s
+  - name: nfs
+    release: k8s
+  name: k8s
+  networks:
+  - name: kubernetes-service
+  persistent_disk: 20480
+  stemcell: default
+  vm_resources:
+    cpu: 2
+    ephemeral_disk_size: 20480
+    ram: 2048
+jobs:
+- deployment: kubernetes-cluster-parity-kubernetes-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.k8s.fixture-net.kubernetes-cluster-parity-kubernetes-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111..kubernetes-service.kubernetes-cluster-parity-kubernetes-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  name: k8s/0
+  plan_id: kubernetes-cluster
+  plan_name: cluster
+- deployment: kubernetes-cluster-parity-kubernetes-base
+  dns:
+  - 22222222-2222-4222-8222-222222222222.k8s.fixture-net.kubernetes-cluster-parity-kubernetes-base.bosh
+  fqdn: 22222222-2222-4222-8222-222222222222..kubernetes-service.kubernetes-cluster-parity-kubernetes-base.bosh
+  id: 22222222-2222-4222-8222-222222222222
+  ips:
+  - 10.0.0.12
+  name: k8s/1
+  plan_id: kubernetes-cluster
+  plan_name: cluster
+- deployment: kubernetes-cluster-parity-kubernetes-base
+  dns:
+  - 33333333-3333-4333-8333-333333333333.k8s.fixture-net.kubernetes-cluster-parity-kubernetes-base.bosh
+  fqdn: 33333333-3333-4333-8333-333333333333..kubernetes-service.kubernetes-cluster-parity-kubernetes-base.bosh
+  id: 33333333-3333-4333-8333-333333333333
+  ips:
+  - 10.0.0.13
+  name: k8s/2
+  plan_id: kubernetes-cluster
+  plan_name: cluster
+- deployment: kubernetes-cluster-parity-kubernetes-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.k8s.fixture-net.kubernetes-cluster-parity-kubernetes-base.bosh
+  - 22222222-2222-4222-8222-222222222222.k8s.fixture-net.kubernetes-cluster-parity-kubernetes-base.bosh
+  - 33333333-3333-4333-8333-333333333333.k8s.fixture-net.kubernetes-cluster-parity-kubernetes-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111.standalone.blacksmith.kubernetes-cluster-parity-kubernetes-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  - 10.0.0.12
+  - 10.0.0.13
+  name: k8s
+  plan_id: kubernetes-cluster
+  plan_name: cluster
+meta:
+  azs:
+  - z1
+  - z2
+  - z3
+  default:
+    azs:
+    - z1
+    - z2
+    - z3
+  network: kubernetes-service
+  node_cpu: 2
+  node_ephemeral: 20480
+  node_mem: 2048
+  node_persistent: 20480
+  nodes: 3
+  x509:
+    admin:
+      certificate: "y"
+      key: "1e3"
+    ca:
+      certificate: "0755"
+      key: "2026-01-02"
+    sa:
+      certificate: ":leading-colon"
+      key: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+name: kubernetes-cluster-parity-kubernetes-base
+params:
+  hostname: 33333333-3333-4333-8333-333333333333..kubernetes-service.kubernetes-cluster-parity-kubernetes-base.bosh
+  instance_id: parity-kubernetes-base
+releases:
+- name: k8s
+  version: latest
+stemcells:
+- alias: default
+  os: ubuntu-xenial
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-120000
+  max_in_flight: 1
+  serial: true
+  update_watch_time: 1000-120000

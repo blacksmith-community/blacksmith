@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/merger"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
@@ -18,75 +19,51 @@ var (
 	ErrPotentiallyDangerousCharacterFound = errors.New("potentially dangerous character found in executable path")
 )
 
-// Wrap nests data under a dot-separated key path, in the interface-keyed
-// form spruce merges. Only the top level of data is re-keyed. Its values
-// pass through untouched, so a nested map from a JSON request stays a
-// map[string]interface{} that a spruce merge replaces whole, as it did
-// when the broker kept its parameters interface-keyed.
-func Wrap(key string, data map[string]interface{}) map[interface{}]interface{} {
+// Wrap nests data under a dot-separated key path. Each map in data below
+// its top level, including a map that is an item of a top-level list, is
+// wrapped as a graft literal. A merge replaces a literal whole and never
+// merges into it, and evaluation never looks inside it, so a nested map in
+// a request stays inert and replaces the plan's default whole, as it did
+// when spruce saw it as one opaque value. A top-level string, and each
+// string item of a top-level list, is left as it is, so the merge
+// evaluates any operator it holds.
+func Wrap(key string, data map[string]interface{}) map[string]interface{} {
 	keyParts := strings.Split(key, ".")
 
 	for i := range len(keyParts) / 2 {
 		keyParts[i], keyParts[len(keyParts)-i-1] = keyParts[len(keyParts)-i-1], keyParts[i]
 	}
 
-	wrapped := make(map[interface{}]interface{}, len(data))
+	wrapped := make(map[string]interface{}, len(data))
 	for k, v := range data {
-		wrapped[k] = v
+		wrapped[k] = inertMaps(v)
 	}
 
 	for _, k := range keyParts {
-		wrapped = map[interface{}]interface{}{k: wrapped}
+		wrapped = map[string]interface{}{k: wrapped}
 	}
 
 	return wrapped
 }
 
-// InterfaceMap converts a map with string keys to the map with interface{}
-// keys that spruce and yaml.v2 work on. It walks nested maps, including
-// interface-keyed ones, and []interface{} lists, copying each, so the result
-// shares no map or list with its input. A nil map converts to nil. It is the
-// inverse of DeinterfaceMap, and it exists only until spruce leaves the
-// module.
-func InterfaceMap(o map[string]interface{}) map[interface{}]interface{} {
-	if o == nil {
-		return nil
-	}
-
-	m := make(map[interface{}]interface{}, len(o))
-	for k, v := range o {
-		m[k] = interfaceValue(v)
-	}
-
-	return m
-}
-
-func interfaceValue(obj interface{}) interface{} {
-	switch value := obj.(type) {
+// inertMaps wraps value as a graft literal when it is a string-keyed map,
+// and walks a list to wrap each such map in it. Any other value is
+// returned as it is.
+func inertMaps(value interface{}) interface{} {
+	switch typed := value.(type) {
 	case map[string]interface{}:
-		return InterfaceMap(value)
-	case map[interface{}]interface{}:
-		if value == nil {
-			return value
-		}
-
-		m := make(map[interface{}]interface{}, len(value))
-		for k, v := range value {
-			m[k] = interfaceValue(v)
-		}
-
-		return m
+		return graft.NewLiteral(typed)
 	case []interface{}:
-		if value == nil {
-			return value
+		if typed == nil {
+			return typed
 		}
 
-		l := make([]interface{}, len(value))
-		for i, v := range value {
-			l[i] = interfaceValue(v)
+		items := make([]interface{}, len(typed))
+		for i, item := range typed {
+			items[i] = inertMaps(item)
 		}
 
-		return l
+		return items
 	default:
 		return value
 	}

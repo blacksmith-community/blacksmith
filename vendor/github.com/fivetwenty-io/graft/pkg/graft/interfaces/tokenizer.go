@@ -138,7 +138,7 @@ func (p *ArrayReferencePattern) Name() string { return "array_path" }
 //
 //nolint:gocyclo // complex pattern matching for nested brackets and quotes
 func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
-	// Match pattern: identifier([expr]|.identifier)*
+	// Match pattern: identifier([expr]|.identifier|/text)*
 	// This is more complex as it needs to handle nested brackets and quotes
 
 	runes := []rune(input[offset:])
@@ -148,8 +148,25 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 
 	pos := 0
 
-	// Must start with identifier or environment variable
+	// A path whose first segment starts with a digit is a reference only
+	// when a '/' joins it to more text, as in "8/2" or "0/x". Without a
+	// '/' the scanner reads it as a number, as it always has.
+	numericStart := false
+	sawSlash := false
+	finish := func() (bool, int) {
+		if numericStart && !sawSlash {
+			return false, 0
+		}
+		return pos > 0, pos
+	}
+
+	// Must start with identifier, environment variable, or digit
 	switch {
+	case unicode.IsDigit(runes[pos]):
+		numericStart = true
+		for pos < len(runes) && isIdentifierContinue(runes[pos]) {
+			pos++
+		}
 	case runes[pos] == '$':
 		pos++
 		if pos >= len(runes) || !isIdentifierStart(runes[pos]) {
@@ -168,9 +185,31 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 		return false, 0
 	}
 
-	// Look for additional segments: [expr] or .identifier
+	// Look for additional segments: [expr], .identifier, or /text
 	for pos < len(runes) {
 		switch runes[pos] {
+		case '/':
+			// A '/' that directly follows a reference character is part
+			// of the reference, and so is the text after it up to the
+			// next delimiter. This is BOSH's name/index instance notation,
+			// as in "jobs.postgresql/0.ips", and it is how spruce reads a
+			// '/' in a path. Every rune this loop sits after is part of
+			// the reference, so the '/' always qualifies here. A '/' with
+			// whitespace before it never reaches this point, because the
+			// match stops at the whitespace, so "a / b" and "a /b" stay
+			// division. A '+' followed by a name continues the segment,
+			// as it does after a '.', so "x/b+c" is one key while "x/b+1"
+			// still adds. A '$' name after the '/' stays in the path too,
+			// as it does after a '.', so "a/$X" is the one key "a/$X".
+			// That segment does not start with '$', so ResolveEnv leaves
+			// it literal, which is how spruce reads it.
+			sawSlash = true
+			pos++ // consume '/'
+			if pos+1 < len(runes) && runes[pos] == '$' && isIdentifierStart(runes[pos+1]) {
+				pos = consumeIdentifierRun(runes, pos+1)
+			} else {
+				pos = consumeSegmentIdentifier(runes, pos)
+			}
 		case '[':
 			// Array/map index - need to find matching ]
 			bracketDepth := 1
@@ -198,14 +237,14 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 
 			if bracketDepth > 0 {
 				// Unmatched bracket - not a valid reference
-				return pos > 0, pos
+				return finish()
 			}
 		case '.':
 			pos++ // consume '.'
 
 			// Check what follows the dot
 			if pos >= len(runes) {
-				return pos > 0, pos // End of input
+				return finish() // End of input
 			}
 
 			// Allow either identifier, number, bracket, or an embedded
@@ -213,6 +252,13 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 			switch {
 			case runes[pos] == '[':
 				// Continue with bracket parsing (handled in next iteration)
+				continue
+			case runes[pos] == '/':
+				// A '/' right after a '.' starts a segment whose key
+				// begins with '/', as spruce reads "m./x". defer writes
+				// "arr[0]/x" back out as "arr.0./x", so this keeps
+				// graft able to read its own deferred output. The
+				// outer loop's '/' case consumes the segment.
 				continue
 			case runes[pos] == '$':
 				// An embedded environment-variable segment, e.g.
@@ -271,15 +317,15 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 					}
 				}
 			default:
-				return pos > 0, pos // Not a valid continuation
+				return finish() // Not a valid continuation
 			}
 		default:
 			// End of reference path
-			return pos > 0, pos
+			return finish()
 		}
 	}
 
-	return pos > 0, pos
+	return finish()
 }
 
 // AdvancedTokenizer provides enhanced tokenization with path recognition.
@@ -498,7 +544,7 @@ func (t *AdvancedTokenizer) tryMatchReferencePattern(pos tokenPosition) (Token, 
 	for _, pattern := range t.patterns {
 		if matched, length := pattern.Match(t.input, t.position); matched {
 			value := t.input[t.position:runeSpanEnd(t.input, t.position, length)]
-			if strings.Contains(value, ".") || strings.Contains(value, "[") {
+			if strings.Contains(value, ".") || strings.Contains(value, "[") || strings.Contains(value, "/") {
 				t.advance(length)
 				return Token{
 					Type:    TokenReference,

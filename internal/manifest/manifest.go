@@ -17,9 +17,9 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
 
+	"github.com/fivetwenty-io/graft/pkg/graft"
+	_ "github.com/fivetwenty-io/graft/pkg/graft/operators" // registers the operators a render evaluates
 	graftyaml "github.com/fivetwenty-io/graft/pkg/yaml"
-	"github.com/geofffranks/spruce"
-	"gopkg.in/yaml.v3"
 )
 
 // manifestMu serializes GenManifest's render and the stemcell overlay's
@@ -276,25 +276,30 @@ func redactEnvValues(text string, env []string, names ...string) string {
 }
 
 // GenManifest merges the plan's manifest and then each of manifests with
-// spruce, evaluates the result, and returns it as YAML. The manifests are
-// in the interface-keyed form spruce merges. Callers convert their own maps
-// with utils.InterfaceMap, or with utils.Wrap for request parameters.
+// graft, evaluates the result, and returns it as YAML. Request parameters
+// reach it through utils.Wrap, which marks their nested maps as graft
+// literals so the merge keeps them whole and evaluation leaves them as
+// text.
 //
 // Templates read the instance's Vault path through $CREDENTIALS, which
-// spruce resolves from the process environment. GenManifest sets it to
+// graft resolves from the process environment. GenManifest sets it to
 // secret/<instanceID> under the lock, so a concurrent render for another
 // instance cannot change it mid-render, and leaves it set afterwards.
-func GenManifest(p services.Plan, instanceID string, manifests ...map[interface{}]interface{}) (string, error) {
+//
+// The returned error says whether the merge or the evaluation failed. Its
+// text, like that of every graft error, quotes no value from a manifest.
+func GenManifest(p services.Plan, instanceID string, manifests ...map[string]interface{}) (string, error) {
 	log := logger.Get().Named("manifest")
 	log.Info("Generating manifest for plan %s", p.ID)
-	log.Debug("Starting spruce merge with %d additional manifests", len(manifests))
+	log.Debug("Starting graft merge with %d additional manifests", len(manifests))
 
-	// The plan's manifest is converted before the lock is taken, so the
-	// locked section holds only the spruce calls.
-	base := utils.InterfaceMap(p.Manifest)
+	documents := make([]graft.Document, 0, len(manifests)+1)
+	documents = append(documents, graft.NewDocument(p.Manifest))
 
-	// Serialize spruce operations because the library uses global state
-	// that is not thread-safe (StaticIPOperator.Setup, Evaluator globals).
+	for _, next := range manifests {
+		documents = append(documents, graft.NewDocument(next))
+	}
+
 	manifestMu.Lock()
 	defer manifestMu.Unlock()
 
@@ -305,38 +310,14 @@ func GenManifest(p services.Plan, instanceID string, manifests ...map[interface{
 		return "", fmt.Errorf("failed to set CREDENTIALS env var: %w", err)
 	}
 
-	merged, err := spruce.Merge(base)
+	final, err := mergeAndEvaluate(documents)
 	if err != nil {
-		log.Error("Failed to merge base manifest: %s", err)
+		log.Error("Failed to generate the manifest: %s", err)
 
-		return "", fmt.Errorf("failed to merge base manifest with spruce: %w", err)
+		return "", err
 	}
 
-	for manifestIndex, next := range manifests {
-		log.Debug("Merging manifest %d of %d", manifestIndex+1, len(manifests))
-
-		merged, err = spruce.Merge(merged, next)
-		if err != nil {
-			log.Error("Failed to merge manifest %d: %s", manifestIndex+1, err)
-
-			return "", fmt.Errorf("failed to merge manifest %d with spruce: %w", manifestIndex+1, err)
-		}
-	}
-
-	log.Debug("Running spruce evaluator on merged manifest")
-
-	eval := &spruce.Evaluator{Tree: merged}
-
-	err = eval.Run(nil, nil)
-	if err != nil {
-		log.Error("Failed to evaluate spruce expressions: %s", err)
-
-		return "", fmt.Errorf("failed to evaluate spruce expressions: %w", err)
-	}
-
-	final := eval.Tree
-
-	manifestYAML, err := yaml.Marshal(final)
+	manifestYAML, err := graftyaml.Marshal(final)
 	if err != nil {
 		log.Error("Failed to marshal final manifest to YAML: %s", err)
 
@@ -347,6 +328,30 @@ func GenManifest(p services.Plan, instanceID string, manifests ...map[interface{
 	log.Info("Successfully generated manifest (size: %d bytes)", len(manifestStr))
 
 	return manifestStr, nil
+}
+
+// mergeAndEvaluate merges documents in order and evaluates the operators
+// in the result, on a graft engine of its own with no cache. The caller
+// holds manifestMu. Graft reports an evaluation failure as a
+// PartialEvaluationError, so the error says which of the two steps failed.
+func mergeAndEvaluate(documents []graft.Document) (interface{}, error) {
+	engine, err := graft.NewEngine(graft.WithCacheDisabled())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create the graft engine for the manifest: %w", err)
+	}
+
+	merged, err := engine.Merge(context.Background(), documents...).Execute()
+
+	var evaluation *graft.PartialEvaluationError
+
+	switch {
+	case errors.As(err, &evaluation):
+		return nil, fmt.Errorf("failed to evaluate the manifest: %w", err)
+	case err != nil:
+		return nil, fmt.Errorf("failed to merge the manifests: %w", err)
+	}
+
+	return merged.RawData(), nil
 }
 
 func UploadReleasesFromManifest(ctx context.Context, raw string, director bosh.Director, loggerInstance logger.Logger, progress func(message string)) error {
@@ -827,7 +832,7 @@ func stringList(strs []string) []interface{} {
 func generateCredentialsManifest(plan services.Plan, jobs map[string]interface{}, deployment, instanceID, dnsname string, loggerInstance logger.Logger) (string, error) {
 	loggerInstance.Debug("merging service deployment manifest with credentials.yml (for retrieve/bind)")
 
-	defaults := map[interface{}]interface{}{
+	defaults := map[string]interface{}{
 		"name": deployment,
 	}
 
@@ -836,7 +841,7 @@ func generateCredentialsManifest(plan services.Plan, jobs map[string]interface{}
 		"hostname":    dnsname,
 	}
 
-	manifest, err := GenManifest(plan, instanceID, utils.InterfaceMap(jobs), utils.InterfaceMap(plan.Credentials), defaults, utils.Wrap("params", params))
+	manifest, err := GenManifest(plan, instanceID, jobs, plan.Credentials, defaults, utils.Wrap("params", params))
 	if err != nil {
 		loggerInstance.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
 

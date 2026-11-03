@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
 
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // TestMain stops the OpenBao dev server that the parity tests share.
@@ -72,20 +73,37 @@ func parityParamSets(forge string) []string {
 	return []string{"none"}
 }
 
+// The spruce-era recordings of the renders are frozen in testdata/manifests
+// and testdata/credentials, and the graft recordings sit beside them in
+// testdata/manifests-graft and testdata/credentials-graft, under the same
+// relative paths.
+const (
+	spruceManifests   = "manifests"
+	graftManifests    = "manifests-graft"
+	spruceCredentials = "credentials"
+	graftCredentials  = "credentials-graft"
+	parityTestdata    = "testdata"
+	parityErrorPrefix = "ERROR: "
+)
+
 // parityGolden records the manifest bytes and the canonical dump of what a
-// YAML reader makes of them, or the error that came out instead.
-func parityGolden(t *testing.T, base string, manifestYAML string, err error) {
+// YAML reader makes of them, or the error that came out instead, and then
+// compares the render with the frozen spruce-era one.
+func parityGolden(t *testing.T, rel string, manifestYAML string, err error) {
 	t.Helper()
 
+	base := filepath.Join(parityTestdata, graftManifests, rel)
+
 	if err != nil {
-		parity.Golden(t, base+".yml", "ERROR: "+err.Error()+"\n")
+		parity.Golden(t, base+".yml", parityErrorPrefix+err.Error()+"\n")
+		compareWithSpruce(t, spruceManifests, rel, "", err)
 
 		return
 	}
 
 	parity.GoldenYAML(t, base+".yml", manifestYAML)
 
-	var decoded map[interface{}]interface{}
+	var decoded map[string]interface{}
 
 	decodeErr := yaml.Unmarshal([]byte(manifestYAML), &decoded)
 	if decodeErr != nil {
@@ -93,6 +111,90 @@ func parityGolden(t *testing.T, base string, manifestYAML string, err error) {
 	}
 
 	parity.Golden(t, base+".dump", parity.Dump(decoded))
+	compareWithSpruce(t, spruceManifests, rel, manifestYAML, nil)
+}
+
+// pemLeadingNewline names the values the redis tls and dual-mode fixtures
+// read with (( file )) from PEM files that begin with an empty line. Spruce
+// wrote each as a |4+ block that dropped that newline, and graft keeps the
+// file byte for byte, so these values differ from the spruce-era recording
+// by design. PEM readers skip leading whitespace, so the deployed value
+// works either way.
+var pemLeadingNewline = []string{"$.meta.redis.tls.ca", "$.meta.redis.tls.ca_cert", "$.meta.redis.tls.ca_key"}
+
+// acceptedPaths returns the paths whose values may differ from the
+// spruce-era recording of the render at rel, a path relative to the
+// recording directory.
+func acceptedPaths(rel string) []string {
+	if strings.HasPrefix(rel, filepath.Join("redis", "tls")+string(filepath.Separator)) ||
+		strings.HasPrefix(rel, filepath.Join("redis", "dual-mode")+string(filepath.Separator)) {
+		return pemLeadingNewline
+	}
+
+	return nil
+}
+
+// compareWithSpruce checks a render against the spruce-era recording of the
+// same plan, at rel under the directory spruceDir. A render that failed must
+// have failed under spruce too, though the error text is new. A render that
+// worked must hold the same tree, except at the accepted paths, each of
+// which must differ, so that an exemption cannot go stale.
+func compareWithSpruce(t *testing.T, spruceDir, rel string, manifestYAML string, err error) {
+	t.Helper()
+
+	sprucePath := filepath.Join(parityTestdata, spruceDir, rel+".yml")
+
+	want, readErr := os.ReadFile(sprucePath) //nolint:gosec // a test reads its own golden
+	if readErr != nil {
+		t.Fatalf("read the spruce-era recording %s: %s", sprucePath, readErr)
+	}
+
+	spruceFailed := strings.HasPrefix(string(want), parityErrorPrefix)
+
+	switch {
+	case spruceFailed && err != nil:
+		return
+	case spruceFailed:
+		t.Errorf("%s: spruce failed to render it, and graft rendered it", sprucePath)
+
+		return
+	case err != nil:
+		t.Errorf("%s: spruce rendered it, and graft failed to", sprucePath)
+
+		return
+	}
+
+	accepted := acceptedPaths(rel)
+	seen := map[string]bool{}
+
+	for _, difference := range parity.YAMLDifferences(want, []byte(manifestYAML)) {
+		if path, ok := differencePath(difference); ok && slices.Contains(accepted, path) {
+			seen[path] = true
+
+			continue
+		}
+
+		t.Errorf("%s: %s", sprucePath, difference)
+	}
+
+	for _, path := range accepted {
+		if !seen[path] {
+			t.Errorf("%s: the accepted difference at %s did not occur", sprucePath, path)
+		}
+	}
+}
+
+// differencePath returns the path a YAMLDifferences line reports, which
+// follows its tree or decode prefix and ends at the first colon after it.
+func differencePath(difference string) (string, bool) {
+	_, rest, ok := strings.Cut(difference, " ")
+	if !ok {
+		return "", false
+	}
+
+	path, _, ok := strings.Cut(rest, ": ")
+
+	return path, ok
 }
 
 func readParityService(t *testing.T, fixture parity.Fixture) services.Service {
@@ -138,10 +240,10 @@ func genParityManifest(t *testing.T, fixture parity.Fixture, instanceID, planID,
 		"director_uuid": parityDirectorUUID,
 	}
 
-	return GenManifest(current, instanceID, utils.InterfaceMap(defaults), utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
+	return GenManifest(current, instanceID, defaults, utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
 }
 
-//nolint:paralleltest // spruce keeps global state, and the test sets environment variables
+//nolint:paralleltest // GenManifest holds a process-wide lock, and the test sets environment variables
 func TestGenManifestParity(t *testing.T) {
 	for _, fixture := range parity.Fixtures(t) {
 		t.Run(fixture.Name(), func(t *testing.T) {
@@ -150,8 +252,7 @@ func TestGenManifestParity(t *testing.T) {
 			for _, plan := range readParityService(t, fixture).Plans {
 				for _, paramSet := range parityParamSets(fixture.Forge) {
 					rendered, err := genParityManifest(t, fixture, instanceID, plan.ID, paramSet)
-					base := filepath.Join("testdata", "manifests", fixture.Forge, fixture.Variant, plan.ID+"."+paramSet)
-					parityGolden(t, base, rendered, err)
+					parityGolden(t, filepath.Join(fixture.Forge, fixture.Variant, plan.ID+"."+paramSet), rendered, err)
 				}
 			}
 		})
@@ -210,7 +311,7 @@ func parityVMs(t *testing.T, plan services.Plan, deployment string) []bosh.VM {
 	return vms
 }
 
-//nolint:paralleltest // spruce keeps global state, and the test sets environment variables
+//nolint:paralleltest // GenManifest holds a process-wide lock, and the test sets environment variables
 func TestCredentialsManifestParity(t *testing.T) {
 	log := &logger.NoOpLogger{}
 
@@ -230,18 +331,21 @@ func TestCredentialsManifestParity(t *testing.T) {
 
 				networks := extractNetworksByJob(deployed)
 				jobs, dnsname := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, networks, log)
-				base := filepath.Join("testdata", "credentials", fixture.Forge, fixture.Variant, plan.ID)
+				rel := filepath.Join(fixture.Forge, fixture.Variant, plan.ID)
+				base := filepath.Join(parityTestdata, graftCredentials, rel)
 
 				jobsTree := jobsMap(jobs)
 
 				manifestYAML, err := generateCredentialsManifest(plan, jobsTree, deployment, instanceID, dnsname, log)
 				if err != nil {
-					parity.Golden(t, base+".yml", "ERROR: "+err.Error()+"\n")
+					parity.Golden(t, base+".yml", parityErrorPrefix+err.Error()+"\n")
+					compareWithSpruce(t, spruceCredentials, rel, "", err)
 
 					continue
 				}
 
 				parity.GoldenYAML(t, base+".yml", manifestYAML)
+				compareWithSpruce(t, spruceCredentials, rel, manifestYAML, nil)
 
 				credentials, err := extractCredentialsFromManifest(manifestYAML, log)
 
@@ -260,7 +364,7 @@ func TestCredentialsManifestParity(t *testing.T) {
 // golden of a render catches a date that loses its quotes, which the decoded
 // dump cannot, because the decoder reads the date as a string either way.
 //
-//nolint:paralleltest // spruce keeps global state, and the test sets environment variables
+//nolint:paralleltest // GenManifest holds a process-wide lock, and the test sets environment variables
 func TestRenderedScalarsGoldenFailsWhenAQuoteIsLost(t *testing.T) {
 	for _, fixture := range parity.Fixtures(t) {
 		if fixture.Forge != "redis" || fixture.Variant != "base" {
@@ -274,7 +378,7 @@ func TestRenderedScalarsGoldenFailsWhenAQuoteIsLost(t *testing.T) {
 			t.Fatalf("render: %s", err)
 		}
 
-		golden := parity.ScalarsPath(filepath.Join("testdata", "manifests", "redis", "base", "redis-standalone-7.strings.yml"))
+		golden := parity.ScalarsPath(filepath.Join(parityTestdata, graftManifests, "redis", "base", "redis-standalone-7.strings.yml"))
 
 		if diff := parity.GoldenDiff(golden, parity.Scalars(rendered)); diff != "" && !parity.Updating() {
 			t.Fatalf("the unchanged render does not match its golden: %s", diff)
@@ -293,7 +397,7 @@ func TestRenderedScalarsGoldenFailsWhenAQuoteIsLost(t *testing.T) {
 			t.Error("the scalars golden does not change when a quoted date loses its quotes")
 		}
 
-		var kept, dropped map[interface{}]interface{}
+		var kept, dropped map[string]interface{}
 
 		if yaml.Unmarshal([]byte(rendered), &kept) != nil || yaml.Unmarshal([]byte(lost), &dropped) != nil {
 			t.Fatal("the render does not decode")

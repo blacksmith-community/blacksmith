@@ -1,0 +1,97 @@
+credentials:
+  host: 10.0.0.11
+  hostname: 10.0.0.11
+  jdbcUrl: jdbc:mysql://10.0.0.11:3306/service_instance_db?user=y&password=yes&useSSL=false
+  name: service_instance_db
+  password: "yes"
+  port: 3306
+  uri: mysql://y:yes@10.0.0.11:3306/service_instance_db?reconnect=true
+  username: "y"
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - name: standalone
+    properties:
+      db:
+        admin_password: "yes"
+        admin_username: "y"
+        database_name: service_instance_db
+    release: mariadb-forge
+  name: standalone
+  networks:
+  - name: mariadb-service
+  persistent_disk: 2048
+  stemcell: default
+  vm_type: default
+jobs:
+- deployment: mariadb-standalone-parity-mariadb-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.standalone.fixture-net.mariadb-standalone-parity-mariadb-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111..mariadb-service.mariadb-standalone-parity-mariadb-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  name: standalone/0
+  plan_id: mariadb-standalone
+  plan_name: standalone
+- deployment: mariadb-standalone-parity-mariadb-base
+  dns:
+  - 22222222-2222-4222-8222-222222222222.standalone.fixture-net.mariadb-standalone-parity-mariadb-base.bosh
+  fqdn: 22222222-2222-4222-8222-222222222222..mariadb-service.mariadb-standalone-parity-mariadb-base.bosh
+  id: 22222222-2222-4222-8222-222222222222
+  ips:
+  - 10.0.0.12
+  name: standalone/1
+  plan_id: mariadb-standalone
+  plan_name: standalone
+- deployment: mariadb-standalone-parity-mariadb-base
+  dns:
+  - 33333333-3333-4333-8333-333333333333.standalone.fixture-net.mariadb-standalone-parity-mariadb-base.bosh
+  fqdn: 33333333-3333-4333-8333-333333333333..mariadb-service.mariadb-standalone-parity-mariadb-base.bosh
+  id: 33333333-3333-4333-8333-333333333333
+  ips:
+  - 10.0.0.13
+  name: standalone/2
+  plan_id: mariadb-standalone
+  plan_name: standalone
+- deployment: mariadb-standalone-parity-mariadb-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.standalone.fixture-net.mariadb-standalone-parity-mariadb-base.bosh
+  - 22222222-2222-4222-8222-222222222222.standalone.fixture-net.mariadb-standalone-parity-mariadb-base.bosh
+  - 33333333-3333-4333-8333-333333333333.standalone.fixture-net.mariadb-standalone-parity-mariadb-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111.standalone.blacksmith.mariadb-standalone-parity-mariadb-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  - 10.0.0.12
+  - 10.0.0.13
+  name: standalone
+  plan_id: mariadb-standalone
+  plan_name: standalone
+meta:
+  admin_password: "yes"
+  admin_username: "y"
+  database_name: service_instance_db
+  default:
+    azs: z1
+  disk: 2048
+  net: mariadb-service
+  size: default
+name: mariadb-standalone-parity-mariadb-base
+params:
+  hostname: 33333333-3333-4333-8333-333333333333..mariadb-service.mariadb-standalone-parity-mariadb-base.bosh
+  instance_id: parity-mariadb-base
+releases:
+- name: mariadb-forge
+  version: latest
+stemcells:
+- alias: default
+  os: ubuntu-bionic
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000

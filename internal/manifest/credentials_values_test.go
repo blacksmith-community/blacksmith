@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sort"
@@ -183,4 +185,53 @@ func dumpedLeaves(dump string) map[string]leaf {
 	}
 
 	return leaves
+}
+
+// TestBindCredentialsKeepFloatsAsNumbers renders credentials that grab a
+// whole float and a fractional one, extracts them, and encodes them as a
+// bind response does. Both must reach the JSON as numbers, never as
+// strings.
+//
+//nolint:paralleltest // GenManifest sets CREDENTIALS
+func TestBindCredentialsKeepFloatsAsNumbers(t *testing.T) {
+	t.Setenv("CREDENTIALS", "")
+
+	plan := services.Plan{ID: "bind-floats", Manifest: map[string]interface{}{
+		"meta": map[string]interface{}{"whole": 2000000.0, "fraction": 2.5},
+		"credentials": map[string]interface{}{
+			"whole":    "(( grab meta.whole ))",
+			"fraction": "(( grab meta.fraction ))",
+		},
+	}}
+
+	rendered, err := GenManifest(plan, "bind-floats-instance")
+	if err != nil {
+		t.Fatalf("render: %s", err)
+	}
+
+	credentials, err := extractCredentialsFromManifest(rendered, &logger.NoOpLogger{})
+	if err != nil {
+		t.Fatalf("extract: %s", err)
+	}
+
+	encoded, err := json.Marshal(credentials)
+	if err != nil {
+		t.Fatalf("encode: %s", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+
+	var decoded map[string]interface{}
+
+	err = decoder.Decode(&decoded)
+	if err != nil {
+		t.Fatalf("decode: %s", err)
+	}
+
+	for _, key := range []string{"whole", "fraction"} {
+		if _, isNumber := decoded[key].(json.Number); !isNumber {
+			t.Errorf("credentials.%s reaches the JSON as %T, want a number", key, decoded[key])
+		}
+	}
 }

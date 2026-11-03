@@ -349,7 +349,7 @@ func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan s
 	p.logger.Info("Generating BOSH deployment manifest for %s", defaults["name"])
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Generating BOSH deployment manifest", 0, p.params, p.logger)
 
-	manifestStr, err := manifest.GenManifest(plan, p.instanceID, utils.InterfaceMap(defaults), utils.Wrap("meta.params", p.params))
+	manifestStr, err := manifest.GenManifest(plan, p.instanceID, defaults, utils.Wrap("meta.params", p.params))
 	if err != nil {
 		p.logger.Error("Failed to generate service deployment manifest: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Manifest generation failed: %s", err), p.params, p.logger)

@@ -1,0 +1,61 @@
+$.director_uuid	string	"00000000-0000-4000-8000-000000000000"
+$.instance_groups[0].azs[0]	string	"z1"
+$.instance_groups[0].azs[1]	string	"z2"
+$.instance_groups[0].instances	int	3
+$.instance_groups[0].jobs[0].consumes.db.from	string	"postgres"
+$.instance_groups[0].jobs[0].name	string	"postgres"
+$.instance_groups[0].jobs[0].properties.pgpool.users[0].admin	bool	true
+$.instance_groups[0].jobs[0].properties.pgpool.users[0].password	string	"yes"
+$.instance_groups[0].jobs[0].properties.pgpool.users[0].username	string	"y"
+$.instance_groups[0].jobs[0].properties.postgres.config.listen_addresses	string	"0.0.0.0"
+$.instance_groups[0].jobs[0].properties.postgres.config.port	int	6432
+$.instance_groups[0].jobs[0].properties.postgres.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.instance_groups[0].jobs[0].properties.postgres.hba[1]	string	"host all all ::/0 md5"
+$.instance_groups[0].jobs[0].properties.postgres.replication.enabled	bool	true
+$.instance_groups[0].jobs[0].provides.db.as	string	"postgres"
+$.instance_groups[0].jobs[0].release	string	"postgres"
+$.instance_groups[0].jobs[1].consumes.db.from	string	"postgres"
+$.instance_groups[0].jobs[1].name	string	"pgpool"
+$.instance_groups[0].jobs[1].properties.pcp.system_password	string	"secret"
+$.instance_groups[0].jobs[1].properties.pgpool.backend.port	int	6432
+$.instance_groups[0].jobs[1].properties.pgpool.config.enable_pool_hba	bool	true
+$.instance_groups[0].jobs[1].properties.pgpool.config.port	int	5432
+$.instance_groups[0].jobs[1].properties.pgpool.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.instance_groups[0].jobs[1].properties.pgpool.hba[1]	string	"host all all ::/0 md5"
+$.instance_groups[0].jobs[1].properties.pgpool.users[0].admin	bool	true
+$.instance_groups[0].jobs[1].properties.pgpool.users[0].password	string	"yes"
+$.instance_groups[0].jobs[1].properties.pgpool.users[0].username	string	"y"
+$.instance_groups[0].jobs[1].release	string	"postgres"
+$.instance_groups[0].name	string	"postgresql"
+$.instance_groups[0].networks[0].name	string	"postgresql-service"
+$.instance_groups[0].persistent_disk_type	string	"default"
+$.instance_groups[0].stemcell	string	"default"
+$.instance_groups[0].vm_type	string	"default"
+$.meta.default.azs[0]	string	"z1"
+$.meta.default.azs[1]	string	"z2"
+$.meta.disk	int	2048
+$.meta.disk_type	string	"default"
+$.meta.hba[0]	string	"host all all 0.0.0.0/0 md5"
+$.meta.hba[1]	string	"host all all ::/0 md5"
+$.meta.instances	int	3
+$.meta.net	string	"postgresql-service"
+$.meta.params.instance_id	string	"parity-postgresql-base"
+$.meta.service.password	string	"yes"
+$.meta.service.port	int	5432
+$.meta.service.username	string	"y"
+$.meta.size	string	"default"
+$.meta.users[0].admin	bool	true
+$.meta.users[0].password	string	"yes"
+$.meta.users[0].username	string	"y"
+$.name	string	"postgresql-cluster-parity-postgresql-base"
+$.releases[0].name	string	"postgres"
+$.releases[0].sha1	string	"dea5cad517c62afaf97a1b31df41ad691928d960"
+$.releases[0].url	string	"https://github.com/cloudfoundry-community/postgres-boshrelease/releases/download/v2.0.0/postgres-2.0.0.tgz"
+$.releases[0].version	string	"2.0.0"
+$.stemcells[0].alias	string	"default"
+$.stemcells[0].os	string	"ubuntu-bionic"
+$.stemcells[0].version	string	"latest"
+$.update.canaries	int	1
+$.update.canary_watch_time	string	"1000-30000"
+$.update.max_in_flight	int	10
+$.update.update_watch_time	string	"1000-30000"

@@ -12,6 +12,8 @@ import (
 
 	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
+
+	graftlog "github.com/fivetwenty-io/graft/log"
 )
 
 const (
@@ -134,5 +136,77 @@ func TestFailedInitScriptOutputMasksSecretEnvironment(t *testing.T) {
 		if strings.Contains(out, secret) {
 			t.Errorf("log output leaked %q:\n%s", secret, out)
 		}
+	}
+}
+
+// TestGenManifestErrorsQuoteNoValue drives a render into an evaluation
+// failure where a key beside the failing operator holds a probe value. One
+// case grabs through the probe as if it were a map, and the other has calc
+// evaluate an expression that holds the probe. Neither the returned error
+// nor any line the broker or graft logs may quote the probe or hold an
+// ANSI escape.
+//
+//nolint:paralleltest // the test swaps the broker's logger and graft's stderr hook, and GenManifest sets CREDENTIALS
+func TestGenManifestErrorsQuoteNoValue(t *testing.T) {
+	// A calc expression reads a hyphen as subtraction, so the probe is one
+	// word.
+	const probe = "sentinelmanifestvaluedonotreport"
+
+	cases := map[string]map[string]interface{}{
+		"grab through a scalar": {
+			"meta": map[string]interface{}{"scalar": probe},
+			"copy": "(( grab meta.scalar.deeper ))",
+		},
+		"calc over a probe operand": {
+			"meta":  map[string]interface{}{"expression": probe + " * 2"},
+			"total": "(( calc meta.expression ))",
+		},
+	}
+
+	for name, manifest := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("CREDENTIALS", "")
+
+			capture := newCaptureLogger()
+			previousLogger := logger.Get()
+			previousStderr := graftlog.PrintStdErrf
+
+			logger.Set(capture)
+
+			var graftLines []string
+
+			graftlog.PrintStdErrf = func(format string, args ...interface{}) {
+				graftLines = append(graftLines, fmt.Sprintf(format, args...))
+			}
+
+			t.Cleanup(func() {
+				logger.Set(previousLogger)
+
+				graftlog.PrintStdErrf = previousStderr
+			})
+
+			_, err := GenManifest(services.Plan{ID: "value-free-errors", Manifest: manifest}, "value-free-errors")
+			if err == nil {
+				t.Fatal("the render succeeded")
+			}
+
+			if strings.Contains(err.Error(), probe) {
+				t.Error("the error quotes a manifest value")
+			}
+
+			if strings.Contains(err.Error(), "\x1b") {
+				t.Error("the error holds an ANSI escape")
+			}
+
+			for _, line := range append([]string{capture.output()}, graftLines...) {
+				if strings.Contains(line, probe) {
+					t.Error("a log line quotes a manifest value")
+				}
+
+				if strings.Contains(line, "\x1b") {
+					t.Error("a log line holds an ANSI escape")
+				}
+			}
+		})
 	}
 }

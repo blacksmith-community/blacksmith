@@ -8,124 +8,30 @@ import (
 	"testing"
 
 	"blacksmith/pkg/utils"
+
+	"github.com/fivetwenty-io/graft/pkg/graft"
 )
 
-func TestInterfaceMapConvertsNestedMapsAndLists(t *testing.T) {
+func TestDeinterfaceMapConvertsNestedMaps(t *testing.T) {
 	t.Parallel()
 
-	input := map[string]interface{}{
-		"name":    "redis",
-		"count":   3,
-		"ratio":   1.5,
-		"enabled": true,
-		"missing": nil,
-		"tags":    []string{"a", "b"},
-		"meta": map[string]interface{}{
-			"params": map[string]interface{}{"port": 6379},
-			"empty":  map[string]interface{}{},
-		},
-		"jobs": []interface{}{
-			map[string]interface{}{"name": "node", "ips": []interface{}{"10.0.0.1"}},
-			"plain",
-			[]interface{}{map[string]interface{}{"deep": "yes"}},
-		},
-		"decoded": map[interface{}]interface{}{
-			"inner": map[string]interface{}{"key": "value"},
-		},
-	}
-
-	want := map[interface{}]interface{}{
-		"name":    "redis",
-		"count":   3,
-		"ratio":   1.5,
-		"enabled": true,
-		"missing": nil,
-		"tags":    []string{"a", "b"},
+	input := map[interface{}]interface{}{
 		"meta": map[interface{}]interface{}{
-			"params": map[interface{}]interface{}{"port": 6379},
-			"empty":  map[interface{}]interface{}{},
+			"list": []interface{}{map[interface{}]interface{}{"name": "z1"}, 2},
 		},
-		"jobs": []interface{}{
-			map[interface{}]interface{}{"name": "node", "ips": []interface{}{"10.0.0.1"}},
-			"plain",
-			[]interface{}{map[interface{}]interface{}{"deep": "yes"}},
-		},
-		"decoded": map[interface{}]interface{}{
-			"inner": map[interface{}]interface{}{"key": "value"},
-		},
+		"value": "text",
 	}
 
-	got := utils.InterfaceMap(input)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("InterfaceMap() = %#v, want %#v", got, want)
-	}
-}
-
-func TestInterfaceMapCopiesRatherThanSharing(t *testing.T) {
-	t.Parallel()
-
-	nested := map[string]interface{}{"key": "value"}
-	list := []interface{}{"first"}
-	input := map[string]interface{}{"nested": nested, "list": list}
-
-	got := utils.InterfaceMap(input)
-
-	gotNested, ok := got["nested"].(map[interface{}]interface{})
-	if !ok {
-		t.Fatalf("nested value is %T, want map[interface{}]interface{}", got["nested"])
-	}
-
-	gotNested["key"] = "changed"
-
-	gotList, ok := got["list"].([]interface{})
-	if !ok {
-		t.Fatalf("list value is %T, want []interface{}", got["list"])
-	}
-
-	gotList[0] = "changed"
-
-	if nested["key"] != "value" {
-		t.Error("changing the converted map changed the input map")
-	}
-
-	if list[0] != "first" {
-		t.Error("changing the converted list changed the input list")
-	}
-}
-
-func TestInterfaceMapKeepsNilAndEmpty(t *testing.T) {
-	t.Parallel()
-
-	if got := utils.InterfaceMap(nil); got != nil {
-		t.Errorf("InterfaceMap(nil) = %#v, want nil", got)
-	}
-
-	got := utils.InterfaceMap(map[string]interface{}{})
-	if got == nil || len(got) != 0 {
-		t.Errorf("InterfaceMap(empty) = %#v, want an empty non-nil map", got)
-	}
-
-	var nilList []interface{}
-
-	withNilList := utils.InterfaceMap(map[string]interface{}{"list": nilList})
-	if list, ok := withNilList["list"].([]interface{}); !ok || list != nil {
-		t.Errorf("a nil list converted to %#v, want a nil []interface{}", withNilList["list"])
-	}
-}
-
-func TestInterfaceMapRoundTripsWithDeinterfaceMap(t *testing.T) {
-	t.Parallel()
-
-	input := map[string]interface{}{
+	want := map[string]interface{}{
 		"meta": map[string]interface{}{
 			"list": []interface{}{map[string]interface{}{"name": "z1"}, 2},
 		},
 		"value": "text",
 	}
 
-	got := utils.DeinterfaceMap(utils.InterfaceMap(input))
-	if !reflect.DeepEqual(got, input) {
-		t.Fatalf("round trip = %#v, want %#v", got, input)
+	got := utils.DeinterfaceMap(input)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeinterfaceMap() = %#v, want %#v", got, want)
 	}
 }
 
@@ -134,9 +40,9 @@ func TestWrapNestsDataUnderTheKeyPath(t *testing.T) {
 
 	got := utils.Wrap("meta.params", map[string]interface{}{"instance_id": "abc"})
 
-	want := map[interface{}]interface{}{
-		"meta": map[interface{}]interface{}{
-			"params": map[interface{}]interface{}{"instance_id": "abc"},
+	want := map[string]interface{}{
+		"meta": map[string]interface{}{
+			"params": map[string]interface{}{"instance_id": "abc"},
 		},
 	}
 
@@ -145,32 +51,61 @@ func TestWrapNestsDataUnderTheKeyPath(t *testing.T) {
 	}
 }
 
-// A nested map in request parameters reaches spruce as one value, which a
-// merge replaces whole, so Wrap re-keys only the top level of its data.
-func TestWrapPassesValuesThroughUnchanged(t *testing.T) {
+// A nested map in request parameters must reach graft as one value, which
+// a merge replaces whole and evaluation never looks inside, so Wrap marks
+// each one as a graft literal. That includes a map that is an item of a
+// top-level list. Strings, at the top level or in a list, stay as they are.
+func TestWrapMarksNestedMapsAsLiterals(t *testing.T) {
 	t.Parallel()
 
 	nested := map[string]interface{}{"policy": "allkeys-lru"}
-	list := []interface{}{map[string]interface{}{"name": "node"}}
+	item := map[string]interface{}{"name": "node"}
+	list := []interface{}{item, "plain", []interface{}{item}}
 
-	got := utils.Wrap("params", map[string]interface{}{"nested": nested, "list": list})
+	got := utils.Wrap("params", map[string]interface{}{"nested": nested, "list": list, "top": "text"})
 
-	params, ok := got["params"].(map[interface{}]interface{})
+	params, ok := got["params"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("params is %T, want map[interface{}]interface{}", got["params"])
+		t.Fatalf("params is %T, want map[string]interface{}", got["params"])
 	}
 
-	if _, ok := params["nested"].(map[string]interface{}); !ok {
-		t.Errorf("nested value is %T, want it passed through as map[string]interface{}", params["nested"])
+	assertLiteral(t, "nested", params["nested"], nested)
+
+	if params["top"] != "text" {
+		t.Errorf("top-level string is %#v, want it unchanged", params["top"])
 	}
 
 	gotList, ok := params["list"].([]interface{})
-	if !ok || len(gotList) != 1 {
-		t.Fatalf("list value is %#v, want the input list", params["list"])
+	if !ok || len(gotList) != len(list) {
+		t.Fatalf("list value is %T of the wrong length, want a list as long as the input", params["list"])
 	}
 
-	if _, ok := gotList[0].(map[string]interface{}); !ok {
-		t.Errorf("list element is %T, want it passed through as map[string]interface{}", gotList[0])
+	assertLiteral(t, "list item", gotList[0], item)
+
+	if gotList[1] != "plain" {
+		t.Errorf("string list item is %#v, want it unchanged", gotList[1])
+	}
+
+	inner, ok := gotList[2].([]interface{})
+	if !ok || len(inner) != 1 {
+		t.Fatalf("inner list is %T, want a list of one", gotList[2])
+	}
+
+	assertLiteral(t, "inner list item", inner[0], item)
+}
+
+func assertLiteral(t *testing.T, what string, got interface{}, want map[string]interface{}) {
+	t.Helper()
+
+	literal, ok := got.(graft.LiteralValue)
+	if !ok {
+		t.Errorf("%s is %T, want a graft literal", what, got)
+
+		return
+	}
+
+	if !reflect.DeepEqual(literal.Value(), want) {
+		t.Errorf("%s literal holds %#v, want %#v", what, literal.Value(), want)
 	}
 }
 
@@ -179,7 +114,7 @@ func TestWrapOfNilDataIsAnEmptyMap(t *testing.T) {
 
 	got := utils.Wrap("params", nil)
 
-	params, ok := got["params"].(map[interface{}]interface{})
+	params, ok := got["params"].(map[string]interface{})
 	if !ok || len(params) != 0 {
 		t.Fatalf("Wrap(nil) params = %#v, want an empty map", got["params"])
 	}

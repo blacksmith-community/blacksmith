@@ -1,0 +1,343 @@
+addons:
+- include:
+    jobs:
+    - name: route_registrar
+      release: routing
+  jobs:
+  - name: bosh-dns-aliases
+    properties:
+      aliases:
+      - domain: nats.service.cf.internal
+        targets:
+        - deployment: fixture-env-cf
+          domain: bosh
+          instance_group: nats
+          network: fixture-core-network
+          query: '*'
+      - domain: _.nats.service.cf.internal
+        targets:
+        - deployment: fixture-env-cf
+          domain: bosh
+          instance_group: nats
+          network: fixture-core-network
+          query: _
+      - domain: log-cache.service.cf.internal
+        targets:
+        - deployment: fixture-env-cf
+          domain: bosh
+          instance_group: log-cache
+          network: fixture-core-network
+          query: '*'
+      - domain: _.log-cache.service.cf.internal
+        targets:
+        - deployment: fixture-env-cf
+          domain: bosh
+          instance_group: log-cache
+          network: fixture-core-network
+          query: _
+    release: bosh-dns-aliases
+  name: bosh-dns-aliases
+director_uuid: 00000000-0000-4000-8000-000000000000
+features:
+  use_dns_addresses: true
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - consumes:
+      rabbitmq-servers:
+        from: rabbitmq-servers
+        ip_addresses: false
+    custom_provider_definitions:
+    - name: rabbitmq-san
+      type: address
+    - name: rabbitmq-alias-domain
+      type: placeholder
+    name: rabbitmq
+    properties:
+      erlang:
+        cookie: "1e3"
+      plugins: []
+      rabbitmq:
+        admin:
+          pass: ":leading-colon"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+        app:
+          pass: "yes"
+          user: "y"
+        monitoring:
+          pass: "0755"
+          user: "2026-01-02"
+        network: rabbitmq-service
+        plan: standalone
+        tls:
+          dual-mode: false
+          enabled: false
+        vhost: parity-rabbitmq-dashboard-registration
+    provides:
+      rabbitmq-alias-domain:
+        aliases:
+        - domain: _.rabbitmq_standalone.bosh
+          placeholder_type: uuid
+      rabbitmq-san:
+        as: rabbitmq-san
+        ip_addresses: false
+      rabbitmq-servers:
+        as: rabbitmq-servers
+        ip_addresses: false
+    release: rabbitmq-forge
+  - consumes:
+      binding_cache:
+        deployment: fixture-env-cf
+        from: binding_cache
+    name: loggr-syslog-agent
+    properties:
+      cache:
+        tls:
+          ca_cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
+          cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
+          cn: binding-cache
+          key: |+
+            -----BEGIN PRIVATE KEY-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+            -----END PRIVATE KEY-----
+
+      drain_ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      metrics:
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
+        server_name: syslog_agent_metrics
+      port: 3460
+      tls:
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
+    release: loggregator-agent
+  - name: loggr-forwarder-agent
+    properties:
+      metrics:
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
+        server_name: forwarder_agent_metrics
+      tls:
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
+    release: loggregator-agent
+  - custom_provider_definitions:
+    - name: rabbitmq-emitter
+      type: address
+    name: rabbitmq-metrics-emitter
+    properties:
+      rabbitmq_metrics_emitter:
+        cloud_foundry:
+          api: https://api.sys.fixture.example
+          password: fixture-password-not-real
+          skip_ssl_validation: false
+          username: fixture-admin
+        loggregator:
+          tls:
+            ca_cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            key: |+
+              -----BEGIN PRIVATE KEY-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+              -----END PRIVATE KEY-----
+
+        rmq_management:
+          endpoint: https://localhost:15671/api
+          password: ":leading-colon"
+          skip_ssl_validation: true
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+    provides:
+      rabbitmq-emitter:
+        as: rabbitmq-emitter
+        ip_addresses: false
+    release: rabbitmq-metrics-emitter
+  - consumes:
+      nats-tls:
+        deployment: fixture-env-cf
+        from: nats-tls
+    name: route_registrar
+    properties:
+      nats:
+        tls:
+          client_cert: ((/fixture-env-bosh/fixture-env-cf/nats_client_cert.certificate))
+          client_key: ((/fixture-env-bosh/fixture-env-cf/nats_client_cert.private_key))
+          enabled: true
+      route_registrar:
+        logging_level: debug
+        routes:
+        - name: rabbitmq-standalone-parity-rabbitmq-dashboard-registration
+          port: 15672
+          registration_interval: 10s
+          uris:
+          - rabbitmq-standalone-parity-rabbitmq-dashboard-registration.sys.fixture.example
+    release: routing
+  - name: bpm
+    release: bpm
+  name: standalone
+  networks:
+  - name: rabbitmq-service
+  stemcell: default
+  vm_type: default
+meta:
+  azs:
+  - z1
+  bosh_env: fixture-env
+  cf:
+    api_url: https://api.sys.fixture.example
+    deployment_name: fixture-env-cf
+    exodus_path: secret/exodus/fixture-env/cf
+    password: fixture-password-not-real
+    system_domain: sys.fixture.example
+    username: fixture-admin
+  disk_config: {}
+  environment: fixture-env
+  erlang_cookie: "1e3"
+  instances: 1
+  mgmt_host: localhost
+  mgmt_port: 15671
+  mgmt_scheme: https
+  mgmt_ssl: true
+  net: rabbitmq-service
+  params:
+    instance_id: parity-rabbitmq-dashboard-registration
+  password: ":leading-colon"
+  password-app: "yes"
+  password-monitoring: "0755"
+  persistent: false
+  plugins: []
+  size: default
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
+  username-app: "y"
+  username-monitoring: "2026-01-02"
+name: rabbitmq-standalone-parity-rabbitmq-dashboard-registration
+params:
+  cf:
+    core_network: fixture-core-network
+releases:
+- name: rabbitmq-forge
+  version: latest
+- name: routing
+  sha1: 69690159842feda278a45ca17484ea055432086d
+  url: https://bosh.io/d/github.com/cloudfoundry/routing-release?v=0.338.0
+  version: 0.338.0
+- name: bpm
+  sha1: 00223345c70d5629d35008e88c42bf4482bdf766
+  url: https://bosh.io/d/github.com/cloudfoundry/bpm-release?v=1.4.20
+  version: 1.4.20
+- name: bosh-dns-aliases
+  sha1: 55b3dced813ff9ed92a05cda02156e4b5604b273
+  url: https://bosh.io/d/github.com/cloudfoundry/bosh-dns-aliases-release?v=0.0.4
+  version: 0.0.4
+- name: loggregator-agent
+  sha1: c0871307d993aa1766982b04f312affa83bce926
+  url: https://bosh.io/d/github.com/cloudfoundry/loggregator-agent-release?v=8.3.8
+  version: 8.3.8
+- name: rabbitmq-metrics-emitter
+  sha1: 05afc6f3559f45e0696c6a3760242045640e0df8
+  url: https://github.com/cloudfoundry-community/rabbitmq-metrics-emitter-release/releases/download/v0.4.1/rabbitmq-metrics-emitter-0.4.1.tgz
+  version: 0.4.1
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 1
+  update_watch_time: 1000-30000
+variables:
+- consumes:
+    alternative_name:
+      from: rabbitmq-emitter
+      properties:
+        wildcard: true
+    common_name:
+      from: rabbitmq-emitter
+  name: rabbitmq_metrics_emitter_crt
+  options:
+    ca: /fixture-env-bosh/fixture-env-blacksmith/blacksmith_services_ca
+    common_name: fixture-env-rabbitmq-metrics-emitter.bosh
+  type: certificate

@@ -7,9 +7,8 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fivetwenty-io/boshapi v0.283.9
 	github.com/fivetwenty-io/capi/v3 v3.236.0
-	github.com/fivetwenty-io/graft v1.45.0
+	github.com/fivetwenty-io/graft v1.45.1
 	github.com/fivetwenty-io/osbapi/v2 v2.0.5
-	github.com/geofffranks/spruce v1.35.24
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
@@ -27,7 +26,6 @@ require (
 )
 
 require (
-	github.com/Knetic/govaluate v3.0.0+incompatible // indirect
 	github.com/aws/aws-sdk-go-v2 v1.47.5 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.33.13 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.13 // indirect
@@ -47,31 +45,24 @@ require (
 	github.com/casbin/govaluate v1.10.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cloudfoundry-community/vaultkv v0.7.2 // indirect
 	github.com/cppforlife/go-patch v0.2.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dlclark/regexp2/v2 v2.9.1 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/geofffranks/simpleyaml v0.0.0-20161109204137-c9320f076de5 // indirect
-	github.com/geofffranks/yaml v0.0.0-20161117152608-9f2fe4b6f295 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.7 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/hashicorp/cap v0.14.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/go-rootcerts v1.1.0 // indirect
-	github.com/hashicorp/go-secure-stdlib/base62 v0.1.2 // indirect
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.2.0 // indirect
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
-	github.com/hashicorp/go-uuid v1.0.4 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/jhunt/go-querytron v0.0.0-20190121150331-d03b28210bbc // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
-	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect
 	github.com/nats-io/nats.go v1.54.0 // indirect
@@ -80,9 +71,7 @@ require (
 	github.com/nxadm/tail v1.4.11 // indirect
 	github.com/pborman/uuid v1.2.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
-	github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
-	github.com/ziutek/utils v0.0.0-20190626152656-eb2a3b364d6c // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/net v0.62.0 // indirect
@@ -90,6 +79,7 @@ require (
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

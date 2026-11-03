@@ -1,0 +1,160 @@
+credentials:
+  admin_password: ":leading-colon"
+  admin_username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
+  api_url: http://10.0.0.11:15672/api
+  dashboard_url: http://10.0.0.11:15672/#/login/y/yes
+  dnsname: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  host: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  hostname: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  hostnames: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  mgmt_port: 15672
+  monitoring_password: "0755"
+  monitoring_username: "2026-01-02"
+  password: "yes"
+  protocols:
+    amqp:
+      host: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+      password: "yes"
+      port: 5672
+      ssl: false
+      uri: amqp://y:yes@11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh:5672
+      uris:
+      - amqp://y:yes@11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh:5672
+      username: "y"
+      vhost: parity-rabbitmq-base
+    management:
+      host: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+      password: "yes"
+      path: /api
+      port: 15672
+      ssl: false
+      uri: http://y:yes@11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh:15672/api
+      uris:
+      - http://y:yes@11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh:15672/api
+      username: "y"
+  rmq_port: 5672
+  tls_mgmt_port: 15671
+  tls_port: 5671
+  uri: amqp://y:yes@11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh:5672
+  uris:
+  - amqp://y:yes@11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh:5672
+  username: "y"
+  vhost: parity-rabbitmq-base
+features:
+  use_dns_addresses: true
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - consumes:
+      rabbitmq-servers:
+        from: rabbitmq-servers
+        ip_addresses: false
+    custom_provider_definitions:
+    - name: rabbitmq-san
+      type: address
+    - name: rabbitmq-alias-domain
+      type: placeholder
+    name: rabbitmq
+    properties:
+      erlang:
+        cookie: "1e3"
+      plugins: []
+      rabbitmq:
+        admin:
+          pass: ":leading-colon"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+        app:
+          pass: "yes"
+          user: "y"
+        monitoring:
+          pass: "0755"
+          user: "2026-01-02"
+        network: rabbitmq-service
+        plan: standalone
+        tls:
+          dual-mode: false
+          enabled: false
+        vhost: /
+    provides:
+      rabbitmq-alias-domain:
+        aliases:
+        - domain: _.rabbitmq_standalone.bosh
+          placeholder_type: uuid
+      rabbitmq-san:
+        as: rabbitmq-san
+        ip_addresses: false
+      rabbitmq-servers:
+        as: rabbitmq-servers
+        ip_addresses: false
+    release: rabbitmq-forge
+  name: standalone
+  networks:
+  - name: rabbitmq-service
+  stemcell: default
+  vm_type: default
+jobs:
+- deployment: rabbitmq-standalone-parity-rabbitmq-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.standalone.fixture-net.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  name: standalone/0
+  plan_id: rabbitmq-standalone
+  plan_name: standalone
+- deployment: rabbitmq-standalone-parity-rabbitmq-base
+  dns:
+  - 11111111-1111-4111-8111-111111111111.standalone.fixture-net.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111.standalone.blacksmith.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  name: standalone
+  plan_id: rabbitmq-standalone
+  plan_name: standalone
+meta:
+  azs:
+  - z1
+  bosh_env: fixture-env
+  disk_config: {}
+  environment: fixture-env
+  erlang_cookie: "1e3"
+  instances: 1
+  net: rabbitmq-service
+  password: ":leading-colon"
+  password-app: "yes"
+  password-monitoring: "0755"
+  persistent: false
+  plugins: []
+  size: default
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
+  username-app: "y"
+  username-monitoring: "2026-01-02"
+name: rabbitmq-standalone-parity-rabbitmq-base
+params:
+  hostname: 11111111-1111-4111-8111-111111111111.standalone.rabbitmq-service.rabbitmq-standalone-parity-rabbitmq-base.bosh
+  instance_id: parity-rabbitmq-base
+releases:
+- name: rabbitmq-forge
+  version: latest
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 1
+  update_watch_time: 1000-30000
