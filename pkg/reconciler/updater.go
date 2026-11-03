@@ -1222,11 +1222,11 @@ func (u *VaultUpdater) storeMetadataWithHistory(instance InstanceData) {
 	u.addReconciliationHistory(mergedMetadata, changes)
 
 	// Clean and store metadata
-	cleanedMetadataRaw := u.deinterfaceMetadata(mergedMetadata)
+	cleanedMetadataRaw := u.deepCopyMetadata(mergedMetadata)
 
 	cleanedMetadata, ok := cleanedMetadataRaw.(map[string]interface{})
 	if !ok {
-		u.logger.Errorf("deinterfaceMetadata returned unexpected type for %s: %T", instance.ID, cleanedMetadataRaw)
+		u.logger.Errorf("deepCopyMetadata returned unexpected type for %s: %T", instance.ID, cleanedMetadataRaw)
 
 		return
 	}
@@ -2369,20 +2369,20 @@ func (u *VaultUpdater) compressAndEncode(data map[string]interface{}) (string, e
 	return encoded, nil
 }
 
-// deinterfaceMetadata returns a deep copy of the metadata.
-func (u *VaultUpdater) deinterfaceMetadata(data interface{}) interface{} {
+// deepCopyMetadata returns a deep copy of the metadata.
+func (u *VaultUpdater) deepCopyMetadata(data interface{}) interface{} {
 	switch value := data.(type) {
 	case map[string]interface{}:
 		result := make(map[string]interface{})
 		for key, val := range value {
-			result[key] = u.deinterfaceMetadata(val)
+			result[key] = u.deepCopyMetadata(val)
 		}
 
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(value))
 		for index, val := range value {
-			result[index] = u.deinterfaceMetadata(val)
+			result[index] = u.deepCopyMetadata(val)
 		}
 
 		return result

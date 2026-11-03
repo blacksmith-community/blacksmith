@@ -139,7 +139,7 @@ func TestExtractCredentialsFromManifestParity(t *testing.T) {
 }
 
 // handBuiltManifest returns a manifest with string keys all the way down,
-// the shape the extractors accept, in place of what the v2 decode gives them.
+// the shape the extractors accept.
 func handBuiltManifest(job, propertiesKey string, properties map[string]interface{}, withHost bool) map[string]interface{} {
 	group := map[string]interface{}{
 		"name": "standalone",
