@@ -142,11 +142,19 @@ func ReadFile(path string) ([]byte, bool, error) {
 type DuplicateKeyFunc func(file, key string)
 
 // MergeFiles reads the required YAML file and each optional file that
-// exists, and merges them in that order with graft's merger. It only
-// merges: operators stay as text for the render to evaluate, and a
-// (( prune )) marker is not applied. When onDuplicate is not nil, a key
-// that a file repeats keeps its last value and onDuplicate hears of it.
-// When onDuplicate is nil, a repeated key fails the merge.
+// exists, and merges them in that order with graft's merger. It evaluates
+// nothing, so operators stay as text for the render to evaluate.
+//
+// A (( prune )) that replaces a map key leaves the earlier content in
+// place, and the marker is dropped, so no later evaluation prunes the
+// path. Spruce queued that path in a process-wide list that the next
+// evaluation applied, whichever render it was, so a prune in one plan
+// could reach another plan's render, and that is not kept. A (( prune ))
+// given as a list entry removes the entry at its index during the merge.
+//
+// When onDuplicate is not nil, a key that a file repeats keeps its last
+// value and onDuplicate hears of it. When onDuplicate is nil, a repeated
+// key fails the merge.
 func MergeFiles(onDuplicate DuplicateKeyFunc, required string, optional ...string) (map[string]interface{}, error) {
 	// Required Manifest
 	requiredBytes, err := SafeReadFile(required)
