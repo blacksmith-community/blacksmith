@@ -232,12 +232,9 @@ func TestCredentialsManifestParity(t *testing.T) {
 				jobs, dnsname := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, networks, log)
 				base := filepath.Join("testdata", "credentials", fixture.Forge, fixture.Variant, plan.ID)
 
-				jobsIfc, err := marshalJobsToInterface(jobs, log)
-				if err != nil {
-					t.Fatalf("%s: %s", plan.ID, err)
-				}
+				jobsTree := jobsMap(jobs)
 
-				manifestYAML, err := generateCredentialsManifest(plan, jobsIfc, deployment, instanceID, dnsname, log)
+				manifestYAML, err := generateCredentialsManifest(plan, jobsTree, deployment, instanceID, dnsname, log)
 				if err != nil {
 					parity.Golden(t, base+".yml", "ERROR: "+err.Error()+"\n")
 
@@ -248,7 +245,7 @@ func TestCredentialsManifestParity(t *testing.T) {
 
 				credentials, err := extractCredentialsFromManifest(manifestYAML, log)
 
-				recorded := map[string]interface{}{"networks": networks, "dnsname": dnsname, "jobs": jobsIfc, "credentials": credentials}
+				recorded := map[string]interface{}{"networks": networks, "dnsname": dnsname, "jobs": jobsTree, "credentials": credentials}
 				if err != nil {
 					recorded["error"] = err.Error()
 				}

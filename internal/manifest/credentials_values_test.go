@@ -1,0 +1,181 @@
+package manifest
+
+import (
+	"errors"
+	"reflect"
+	"sort"
+	"strings"
+	"testing"
+
+	"blacksmith/internal/parity"
+	"blacksmith/internal/services"
+	"blacksmith/pkg/logger"
+)
+
+// bindCertificate is a multi-line credential, as a PEM certificate is.
+const bindCertificate = "-----BEGIN CERTIFICATE-----\nZml4dHVyZS1vbmx5\n-----END CERTIFICATE-----\n"
+
+// bindCredentials are the credentials the bind tests render, with nested
+// maps, a list, an integer, booleans, a string y, and a multi-line value.
+func bindCredentials() map[string]interface{} {
+	return map[string]interface{}{
+		"host":        "db.example.test",
+		"port":        5432,
+		"tls":         true,
+		"replica":     "y",
+		"hosts":       []interface{}{"10.0.0.1", "10.0.0.2"},
+		"certificate": bindCertificate,
+		"admin": map[string]interface{}{
+			"username": "fixture-admin",
+			"limits":   map[string]interface{}{"connections": 100, "readonly": false},
+		},
+	}
+}
+
+// TestExtractCredentialsKeepsTheBindValues reads the credentials of a
+// manifest GenManifest rendered and checks the exact Go values a bind
+// response carries, so a change of YAML reader cannot change a type or a
+// value the client sees.
+//
+//nolint:paralleltest // GenManifest sets CREDENTIALS
+func TestExtractCredentialsKeepsTheBindValues(t *testing.T) {
+	t.Setenv("CREDENTIALS", "")
+
+	plan := services.Plan{ID: "bind-values", Manifest: map[string]interface{}{"credentials": bindCredentials()}}
+
+	rendered, err := GenManifest(plan, "bind-values-instance")
+	if err != nil {
+		t.Fatalf("render: %s", err)
+	}
+
+	got, err := extractCredentialsFromManifest(rendered, &logger.NoOpLogger{})
+	if err != nil {
+		t.Fatalf("extract: %s", err)
+	}
+
+	assertSameCredentials(t, bindCredentials(), got)
+}
+
+// TestExtractCredentialsReadsPlainYAML11Scalars pins what a plain y and n in
+// the credentials become. GenManifest quotes both, so only a manifest written
+// another way holds them plain. They stay strings, where yaml.v2 read them as
+// booleans.
+func TestExtractCredentialsReadsPlainYAML11Scalars(t *testing.T) {
+	t.Parallel()
+
+	manifest := "credentials:\n  replica: y\n  primary: n\n  enabled: yes\n  port: 5432\n  certificate: |\n" +
+		"    -----BEGIN CERTIFICATE-----\n    Zml4dHVyZS1vbmx5\n    -----END CERTIFICATE-----\n"
+
+	got, err := extractCredentialsFromManifest(manifest, &logger.NoOpLogger{})
+	if err != nil {
+		t.Fatalf("extract: %s", err)
+	}
+
+	want := map[string]interface{}{
+		"replica":     "y",
+		"primary":     "n",
+		"enabled":     true,
+		"port":        5432,
+		"certificate": bindCertificate,
+	}
+
+	assertSameCredentials(t, want, got)
+}
+
+// TestExtractCredentialsRefusesWhatIsNotAMap checks that a manifest whose
+// credentials are missing, null, or not a map gives no credentials and an
+// error, and that a string gives ErrCredentialsNotMap.
+func TestExtractCredentialsRefusesWhatIsNotAMap(t *testing.T) {
+	t.Parallel()
+
+	manifests := map[string]string{
+		"missing":     "name: fixture\n",
+		"null":        "credentials: ~\n",
+		"list":        "credentials: [a, b]\n",
+		"integer":     "credentials: 5432\n",
+		"list root":   "- credentials\n",
+		"scalar root": "credentials\n",
+		"empty":       "",
+		"string":      "credentials: fixture-string\n",
+	}
+
+	for name, manifest := range manifests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := extractCredentialsFromManifest(manifest, &logger.NoOpLogger{})
+			if err == nil || got != nil {
+				t.Fatalf("expected an error and no credentials, got an error %v and credentials of type %T", err, got)
+			}
+
+			if strings.Contains(err.Error(), "fixture") {
+				t.Error("expected the error to quote nothing from the manifest")
+			}
+
+			if name == "string" && !errors.Is(err, ErrCredentialsNotMap) {
+				t.Errorf("expected ErrCredentialsNotMap, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestExtractCredentialsKeepsAnEmptyMap checks that empty credentials give
+// an empty map and no error.
+func TestExtractCredentialsKeepsAnEmptyMap(t *testing.T) {
+	t.Parallel()
+
+	got, err := extractCredentialsFromManifest("credentials: {}\n", &logger.NoOpLogger{})
+	if err != nil {
+		t.Fatalf("extract: %s", err)
+	}
+
+	assertSameCredentials(t, map[string]interface{}{}, got)
+}
+
+// assertSameCredentials fails the test when got is not exactly want. It
+// names each path whose Go type or value differs, with the two types, and
+// never prints a value.
+func assertSameCredentials(t *testing.T, want map[string]interface{}, got interface{}) {
+	t.Helper()
+
+	if reflect.DeepEqual(interface{}(want), got) {
+		return
+	}
+
+	wantLeaves, gotLeaves := dumpedLeaves(parity.Dump(want)), dumpedLeaves(parity.Dump(got))
+
+	paths := map[string]bool{}
+	for path := range wantLeaves {
+		paths[path] = true
+	}
+
+	for path := range gotLeaves {
+		paths[path] = true
+	}
+
+	var differ []string
+
+	for path := range paths {
+		if wantLeaves[path] != gotLeaves[path] {
+			differ = append(differ, path+": want "+wantLeaves[path].typeName+", got "+gotLeaves[path].typeName)
+		}
+	}
+
+	sort.Strings(differ)
+	t.Errorf("credentials of type %T differ at:\n%s", got, strings.Join(differ, "\n"))
+}
+
+// leaf is the Go type and value parity.Dump records at one path.
+type leaf struct{ typeName, value string }
+
+func dumpedLeaves(dump string) map[string]leaf {
+	leaves := map[string]leaf{}
+
+	for _, line := range strings.Split(strings.TrimSuffix(dump, "\n"), "\n") {
+		if fields := strings.SplitN(line, "\t", 3); len(fields) == 3 {
+			leaves[fields[0]] = leaf{typeName: fields[1], value: fields[2]}
+		}
+	}
+
+	return leaves
+}

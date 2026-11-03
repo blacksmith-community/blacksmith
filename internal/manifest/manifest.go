@@ -19,7 +19,6 @@ import (
 
 	graftyaml "github.com/fivetwenty-io/graft/pkg/yaml"
 	"github.com/geofffranks/spruce"
-	"github.com/smallfish/simpleyaml"
 	"gopkg.in/yaml.v3"
 )
 
@@ -73,6 +72,7 @@ var (
 var (
 	ErrCredentialsFieldNotFound = errors.New("credentials field not found in manifest")
 	ErrCredentialsNotMap        = errors.New("failed to get credentials map: credentials is a string, not a map")
+	ErrCredentialsWrongType     = errors.New("failed to get credentials map: credentials is not a map")
 	// ErrReleaseUploadFailed marks a plan release whose upload task did not
 	// succeed and which the director still does not have.
 	ErrReleaseUploadFailed = errors.New("BOSH release upload failed")
@@ -662,12 +662,7 @@ func GetCreds(ctx context.Context, instanceID string, plan services.Plan, direct
 
 	jobs, dnsname := buildJobsFromVMs(vms, plan, deployment, networkByJob, loggerInstance)
 
-	jobsIfc, err := marshalJobsToInterface(jobs, loggerInstance)
-	if err != nil {
-		return nil, err
-	}
-
-	manifest, err := generateCredentialsManifest(plan, jobsIfc, deployment, instanceID, dnsname, loggerInstance)
+	manifest, err := generateCredentialsManifest(plan, jobsMap(jobs), deployment, instanceID, dnsname, loggerInstance)
 	if err != nil {
 		return nil, err
 	}
@@ -796,40 +791,46 @@ func updateJobsByType(byType map[string]*services.Job, instance bosh.VM, plan se
 	}
 }
 
-func marshalJobsToInterface(jobs []*services.Job, loggerInstance logger.Logger) (map[interface{}]interface{}, error) {
-	jobsYAML := map[string][]*services.Job{"jobs": jobs}
+// jobsMap returns the jobs under a jobs key, as credentials templates read
+// them, with each job a map keyed by its yaml tag and each list a
+// []interface{}.
+func jobsMap(jobs []*services.Job) map[string]interface{} {
+	list := make([]interface{}, 0, len(jobs))
 
-	loggerInstance.Debug("marshaling BOSH VM information")
+	for _, job := range jobs {
+		if job == nil {
+			list = append(list, nil)
 
-	jobsMarshal, err := yaml.Marshal(jobsYAML)
-	if err != nil {
-		loggerInstance.Error("failed to marshal BOSH VM information (for credentials.yml merge): %s", err)
+			continue
+		}
 
-		return nil, fmt.Errorf("failed to marshal jobs YAML: %w", err)
+		list = append(list, map[string]interface{}{
+			"name":       job.Name,
+			"deployment": job.Deployment,
+			"id":         job.ID,
+			"plan_id":    job.PlanID,
+			"plan_name":  job.PlanName,
+			"fqdn":       job.FQDN,
+			"ips":        stringList(job.IPs),
+			"dns":        stringList(job.DNS),
+		})
 	}
 
-	loggerInstance.Debug("converting BOSH VM information to YAML")
-
-	yamlJobs, err := simpleyaml.NewYaml(jobsMarshal)
-	if err != nil {
-		loggerInstance.Error("failed to convert BOSH VM information to YAML (for credentials.yml merge): %s", err)
-
-		return nil, fmt.Errorf("failed to create simpleyaml from jobs: %w", err)
-	}
-
-	loggerInstance.Debug("parsing BOSH VM information from YAML (don't ask)")
-
-	jobsIfc, err := yamlJobs.Map()
-	if err != nil {
-		loggerInstance.Error("failed to parse BOSH VM information from YAML (for credentials.yml merge): %s", err)
-
-		return nil, fmt.Errorf("failed to get jobs map: %w", err)
-	}
-
-	return jobsIfc, nil
+	return map[string]interface{}{"jobs": list}
 }
 
-func generateCredentialsManifest(plan services.Plan, jobsIfc map[interface{}]interface{}, deployment, instanceID, dnsname string, loggerInstance logger.Logger) (string, error) {
+// stringList copies strings into a []interface{}, and gives an empty list
+// for a nil one.
+func stringList(strs []string) []interface{} {
+	list := make([]interface{}, 0, len(strs))
+	for _, str := range strs {
+		list = append(list, str)
+	}
+
+	return list
+}
+
+func generateCredentialsManifest(plan services.Plan, jobs map[string]interface{}, deployment, instanceID, dnsname string, loggerInstance logger.Logger) (string, error) {
 	loggerInstance.Debug("merging service deployment manifest with credentials.yml (for retrieve/bind)")
 
 	defaults := map[interface{}]interface{}{
@@ -841,7 +842,7 @@ func generateCredentialsManifest(plan services.Plan, jobsIfc map[interface{}]int
 		"hostname":    dnsname,
 	}
 
-	manifest, err := GenManifest(plan, instanceID, jobsIfc, utils.InterfaceMap(plan.Credentials), defaults, utils.Wrap("params", params))
+	manifest, err := GenManifest(plan, instanceID, utils.InterfaceMap(jobs), utils.InterfaceMap(plan.Credentials), defaults, utils.Wrap("params", params))
 	if err != nil {
 		loggerInstance.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
 
@@ -851,10 +852,17 @@ func generateCredentialsManifest(plan services.Plan, jobsIfc map[interface{}]int
 	return manifest, nil
 }
 
+// extractCredentialsFromManifest returns the credentials key of a rendered
+// manifest, which must be a map. Missing or null credentials give
+// ErrCredentialsFieldNotFound, a string gives ErrCredentialsNotMap, and any
+// other value gives ErrCredentialsWrongType. No error or log line holds a
+// value from the manifest.
 func extractCredentialsFromManifest(manifest string, loggerInstance logger.Logger) (interface{}, error) {
 	loggerInstance.Debug("parsing merged YAML super-structure, to retrieve `credentials' top-level key")
 
-	yamlManifest, err := simpleyaml.NewYaml([]byte(manifest))
+	var decoded interface{}
+
+	err := graftyaml.Unmarshal([]byte(manifest), &decoded)
 	if err != nil {
 		loggerInstance.Error("failed to parse merged YAML; unable to retrieve credentials for bind: %s", err)
 
@@ -863,30 +871,22 @@ func extractCredentialsFromManifest(manifest string, loggerInstance logger.Logge
 
 	loggerInstance.Debug("retrieving `credentials' top-level key, to return to the caller")
 
-	yamlCreds := yamlManifest.Get("credentials")
+	root, _ := decoded.(map[string]interface{})
 
-	// Check if credentials exists and is not nil
-	if yamlCreds == nil {
+	switch credentials := root["credentials"].(type) {
+	case map[string]interface{}:
+		return credentials, nil
+	case nil:
 		loggerInstance.Error("credentials field is missing from manifest")
 
 		return nil, ErrCredentialsFieldNotFound
+	case string:
+		loggerInstance.Error("failed to retrieve `credentials' top-level key: got string instead of map (string of %d bytes, value not logged)", len(credentials))
+
+		return nil, ErrCredentialsNotMap
+	default:
+		loggerInstance.Error("failed to retrieve `credentials' top-level key: got %T instead of map (value not logged)", credentials)
+
+		return nil, ErrCredentialsWrongType
 	}
-
-	// Try to get as map, but handle gracefully if it's not a map
-	yamlMap, err := yamlCreds.Map()
-	if err != nil {
-		// If it's not a map, check if it's a different type we can handle
-		str, strErr := yamlCreds.String()
-		if strErr == nil {
-			loggerInstance.Error("failed to retrieve `credentials' top-level key: got string instead of map (string of %d bytes, value not logged)", len(str))
-
-			return nil, ErrCredentialsNotMap
-		}
-
-		loggerInstance.Error("failed to retrieve `credentials' top-level key: %s", err)
-
-		return nil, fmt.Errorf("failed to get credentials map: %w", err)
-	}
-
-	return utils.DeinterfaceMap(yamlMap), nil
 }

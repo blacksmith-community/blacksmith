@@ -18,7 +18,6 @@ require (
 	github.com/onsi/gomega v1.44.0
 	github.com/rabbitmq/amqp091-go v1.16.0
 	github.com/shieldproject/shield v8.7.0+incompatible
-	github.com/smallfish/simpleyaml v0.1.0
 	github.com/sony/gobreaker/v2 v2.4.0
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v2 v2.4.4

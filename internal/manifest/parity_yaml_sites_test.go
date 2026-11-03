@@ -1,15 +1,15 @@
 package manifest
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"blacksmith/internal/parity"
-	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
 
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // TestParseManifestReleasesParity records the releases parseManifestReleases
@@ -84,11 +84,12 @@ func TestBuildJobsFallsBackToTheDefaultNetwork(t *testing.T) {
 	parity.Golden(t, filepath.Join("testdata", "parity", "fallback-network.dump"), recorded.String())
 }
 
-// TestMarshaledJobsParity records the YAML text marshalJobsToInterface
-// builds from the jobs of each fixture's first plan, before it reads the text
-// back. The marshal here is a frozen copy of the call at manifest.go:795,
-// which the migrating commit must switch to the same graft call, because a
-// test cannot see the text inside marshalJobsToInterface.
+// TestMarshaledJobsParity records the jobs map credentials templates read,
+// built from the jobs of each fixture's first plan, as graft writes it. The
+// spruce-era recording in testdata/parity/marshaled-jobs is the text a
+// yaml.v3 marshal gave, which the broker then read back into the map. The
+// graft recording is in testdata/parity-graft/marshaled-jobs, and each pair
+// must hold the same tree.
 //
 //nolint:paralleltest // the test sets an environment variable
 func TestMarshaledJobsParity(t *testing.T) {
@@ -102,15 +103,19 @@ func TestMarshaledJobsParity(t *testing.T) {
 
 		jobs, _ := buildJobsFromVMs(parityVMs(t, plan, deployment), plan, deployment, extractNetworksByJob(""), log)
 
-		text, err := yaml.Marshal(map[string][]*services.Job{"jobs": jobs})
+		text, err := yaml.Marshal(jobsMap(jobs))
 		if err != nil {
 			t.Fatalf("%s: %v", fixture.Name(), err)
 		}
 
-		if _, err := marshalJobsToInterface(jobs, log); err != nil {
-			t.Fatalf("%s: marshalJobsToInterface: %v", fixture.Name(), err)
+		name := strings.ReplaceAll(fixture.Name(), "/", "-") + ".yml"
+		parity.GoldenYAML(t, filepath.Join("testdata", "parity-graft", "marshaled-jobs", name), string(text))
+
+		want, err := os.ReadFile(filepath.Join("testdata", "parity", "marshaled-jobs", name))
+		if err != nil {
+			t.Fatal(err)
 		}
 
-		parity.GoldenYAML(t, filepath.Join("testdata", "parity", "marshaled-jobs", strings.ReplaceAll(fixture.Name(), "/", "-")+".yml"), string(text))
+		parity.CompareYAML(t, want, text)
 	}
 }

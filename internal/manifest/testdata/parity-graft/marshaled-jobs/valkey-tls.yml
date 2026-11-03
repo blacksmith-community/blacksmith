@@ -1,0 +1,45 @@
+jobs:
+- deployment: valkey-cluster-marshaled
+  dns:
+  - 11111111-1111-4111-8111-111111111111.node.fixture-net.valkey-cluster-marshaled.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111.node.fallbacknet.valkey-cluster-marshaled.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  name: node/0
+  plan_id: valkey-cluster
+  plan_name: cluster
+- deployment: valkey-cluster-marshaled
+  dns:
+  - 22222222-2222-4222-8222-222222222222.node.fixture-net.valkey-cluster-marshaled.bosh
+  fqdn: 22222222-2222-4222-8222-222222222222.node.fallbacknet.valkey-cluster-marshaled.bosh
+  id: 22222222-2222-4222-8222-222222222222
+  ips:
+  - 10.0.0.12
+  name: node/1
+  plan_id: valkey-cluster
+  plan_name: cluster
+- deployment: valkey-cluster-marshaled
+  dns:
+  - 33333333-3333-4333-8333-333333333333.node.fixture-net.valkey-cluster-marshaled.bosh
+  fqdn: 33333333-3333-4333-8333-333333333333.node.fallbacknet.valkey-cluster-marshaled.bosh
+  id: 33333333-3333-4333-8333-333333333333
+  ips:
+  - 10.0.0.13
+  name: node/2
+  plan_id: valkey-cluster
+  plan_name: cluster
+- deployment: valkey-cluster-marshaled
+  dns:
+  - 11111111-1111-4111-8111-111111111111.node.fixture-net.valkey-cluster-marshaled.bosh
+  - 22222222-2222-4222-8222-222222222222.node.fixture-net.valkey-cluster-marshaled.bosh
+  - 33333333-3333-4333-8333-333333333333.node.fixture-net.valkey-cluster-marshaled.bosh
+  fqdn: 11111111-1111-4111-8111-111111111111.standalone.blacksmith.valkey-cluster-marshaled.bosh
+  id: 11111111-1111-4111-8111-111111111111
+  ips:
+  - 10.0.0.11
+  - 10.0.0.12
+  - 10.0.0.13
+  name: node
+  plan_id: valkey-cluster
+  plan_name: cluster
