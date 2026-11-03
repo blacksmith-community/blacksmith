@@ -16,11 +16,6 @@ import (
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
-// Constants for services operations.
-const (
-	DebugYAMLContentLimit = 500
-)
-
 // Static errors for err113 compliance.
 var (
 	ErrInvalidNameFormat         = errors.New("invalid name format - names should only contain letters, numbers and hyphens")
@@ -72,14 +67,6 @@ type Job struct {
 }
 
 var ValidName = regexp.MustCompile("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-
-	return b
-}
 
 func CheckNames(names ...string) error {
 	for _, s := range names {
@@ -227,7 +214,7 @@ func readAndParsePlanFile(path string, plan *Plan, loggerInstance logger.Logger)
 	})
 	if err != nil {
 		loggerInstance.Error("Failed to unmarshal plan YAML from %s: %s", planFile, err)
-		loggerInstance.Debug("Raw YAML content (first 500 chars): %s", string(fileData[:minInt(len(fileData), DebugYAMLContentLimit)]))
+		loggerInstance.Debug("Plan file %s (%d bytes) did not decode: %s", planFile, len(fileData), err)
 
 		return fmt.Errorf("failed to unmarshal plan YAML %s: %w", planFile, err)
 	}
@@ -409,7 +396,7 @@ func ReadService(path string) (Service, error) {
 	err = yaml.Unmarshal(serviceData, &service)
 	if err != nil {
 		log.Error("Failed to unmarshal service YAML from %s: %s", file, err)
-		log.Debug("Raw YAML content (first 500 chars): %s", string(serviceData[:minInt(len(serviceData), DebugYAMLContentLimit)]))
+		log.Debug("Service file %s (%d bytes) did not decode: %s", file, len(serviceData), err)
 
 		return service, fmt.Errorf("%s: %w", file, err)
 	}
