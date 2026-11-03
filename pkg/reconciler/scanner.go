@@ -296,7 +296,9 @@ func (s *BoshScanner) getStringValue(m map[string]interface{}, key string) strin
 	return ""
 }
 
-// getVersionValue safely gets a version value from a map (string or int).
+// getVersionValue safely gets a version value from a map (string, int, or
+// float). A float keeps every digit, and a whole one keeps a single decimal,
+// so 1.0 stays "1.0" and 621.125 stays "621.125".
 func (s *BoshScanner) getVersionValue(m map[string]interface{}, key string) string {
 	if v, ok := m[key].(string); ok {
 		return v
@@ -307,7 +309,12 @@ func (s *BoshScanner) getVersionValue(m map[string]interface{}, key string) stri
 	}
 
 	if v, ok := m[key].(float64); ok {
-		return fmt.Sprintf("%.1f", v)
+		text := strconv.FormatFloat(v, 'f', -1, 64)
+		if !strings.Contains(text, ".") {
+			text += ".0"
+		}
+
+		return text
 	}
 
 	return ""
