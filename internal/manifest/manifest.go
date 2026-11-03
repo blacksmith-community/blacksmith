@@ -22,17 +22,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// spruceMu serializes calls to the spruce library which uses global state
-// that is not thread-safe. This is necessary because spruce.SetupOperators()
-// and spruce.Evaluator.Run() modify global variables without synchronization.
-var spruceMu sync.Mutex
+// manifestMu serializes every manifest merge and evaluation in the
+// process. It also guards the process-wide CREDENTIALS value, which
+// GenManifest sets for the instance it renders and which templates read
+// through (( vault $CREDENTIALS ... )), so no render sees the path of
+// another instance.
+var manifestMu sync.Mutex
 
-// WithSpruceLock runs fn under the lock that serializes every use of the
-// spruce library, so code outside this package that merges or evaluates
-// with spruce never races the manifests this package generates.
-func WithSpruceLock(fn func()) {
-	spruceMu.Lock()
-	defer spruceMu.Unlock()
+// WithManifestLock runs fn under manifestMu, so code outside this package
+// that merges or evaluates a manifest never runs alongside the renders
+// this package performs.
+func WithManifestLock(fn func()) {
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
 
 	fn()
 }
@@ -290,8 +292,8 @@ func GenManifest(p services.Plan, instanceID string, manifests ...map[interface{
 
 	// Serialize spruce operations because the library uses global state
 	// that is not thread-safe (StaticIPOperator.Setup, Evaluator globals).
-	spruceMu.Lock()
-	defer spruceMu.Unlock()
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
 
 	err := os.Setenv("CREDENTIALS", "secret/"+instanceID)
 	if err != nil {

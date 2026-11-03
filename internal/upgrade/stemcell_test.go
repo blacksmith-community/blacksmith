@@ -15,6 +15,9 @@ import (
 //
 //nolint:paralleltest // the merges race other spruce users unless locked
 func TestStemcellOverlayMergesDoNotRace(t *testing.T) {
+	// GenManifest sets CREDENTIALS and leaves it set.
+	t.Setenv("CREDENTIALS", "")
+
 	plan := services.Plan{
 		ID: "overlay-race",
 		Manifest: map[string]interface{}{

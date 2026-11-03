@@ -29,11 +29,11 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 	// Create the stemcell overlay
 	overlay := createStemcellOverlay(stemcellOS, stemcellVersion)
 
-	// Spruce keeps global state, so the merge and the evaluation run under
-	// the lock the manifest package holds around its own spruce calls.
+	// The merge and the evaluation run under the lock the manifest package
+	// holds around its own renders.
 	var tree map[interface{}]interface{}
 
-	manifestPkg.WithSpruceLock(func() {
+	manifestPkg.WithManifestLock(func() {
 		tree, err = mergeAndEvaluate(manifest, overlay)
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 }
 
 // mergeAndEvaluate merges the overlay into the manifest with spruce and
-// runs the spruce evaluator on the result. The caller holds the spruce
+// runs the spruce evaluator on the result. The caller holds the manifest
 // lock.
 func mergeAndEvaluate(manifest, overlay map[interface{}]interface{}) (map[interface{}]interface{}, error) {
 	merged, err := spruce.Merge(manifest, overlay)
