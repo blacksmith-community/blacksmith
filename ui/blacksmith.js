@@ -18053,7 +18053,7 @@
     if (!diffData.has_changes) {
       output += 'No changes detected between these configuration versions.\n';
     } else if (diffData.diff_string) {
-      // Display the spruce diff string directly
+      // Display the config diff string directly
       output += diffData.diff_string;
     } else {
       output += 'Diff information not available.\n';
@@ -18119,9 +18119,9 @@
 
       const diffData = await response.json();
 
-      // Display the diff using spruce diff string if available
+      // Display the diff using the config diff string if available
       if (diffData.diff_string && diffData.has_changes) {
-        displaySpruceConfigDiff(diffData.diff_string, fromVersion, toVersion);
+        displayConfigDiffText(diffData.diff_string, fromVersion, toVersion);
       } else if (!diffData.has_changes) {
         displayNoChangesMessage(fromVersion, toVersion);
       } else {
@@ -18174,7 +18174,7 @@
       return;
     }
 
-    // Restore side-by-side layout (in case it was changed by spruce diff view)
+    // Restore side-by-side layout (in case it was changed by the config diff text view)
     rightPanel.style.display = 'block';
     leftPanel.style.width = '';
     rightPanel.style.width = '';
@@ -18232,8 +18232,8 @@
     return html;
   };
 
-  // Display spruce diff output in a single formatted panel
-  const displaySpruceConfigDiff = (diffString, fromVersion, toVersion) => {
+  // Display config diff text in a single formatted panel
+  const displayConfigDiffText = (diffString, fromVersion, toVersion) => {
     const leftPanel = document.getElementById('diff-left-content');
     const rightPanel = document.getElementById('diff-right-content');
     const diffPanels = document.querySelector('.diff-panels');
@@ -18251,22 +18251,22 @@
       return;
     }
 
-    // Parse the spruce diff output and create formatted display
-    const formattedDiff = formatSpruceDiff(diffString);
+    // Parse the config diff text and create formatted display
+    const formattedDiff = formatConfigDiffText(diffString);
 
     // Display diff in left panel, hide right panel or show legend
     leftPanel.innerHTML = `
-      <div class="spruce-diff-container">
+      <div class="config-diff-container">
         <div class="diff-header">
           <h4>Configuration Changes: ${fromVersion.id} → ${toVersion.id}</h4>
         </div>
-        <div class="spruce-diff-output">
+        <div class="config-diff-output">
           ${formattedDiff}
         </div>
       </div>
     `;
 
-    // Hide right panel for spruce diff display
+    // Hide right panel for config diff text display
     rightPanel.style.display = 'none';
     leftPanel.style.width = '100%';
   };
@@ -18304,20 +18304,20 @@
     leftPanel.style.width = '100%';
   };
 
-  // Format spruce diff output with syntax highlighting
-  const formatSpruceDiff = (diffString) => {
+  // Format config diff text with syntax highlighting
+  const formatConfigDiffText = (diffString) => {
     if (!diffString || diffString.trim() === '') {
       return '<p>No diff content available</p>';
     }
 
     const lines = diffString.split('\n');
-    let html = '<div class="spruce-diff-lines">';
+    let html = '<div class="config-diff-lines">';
 
     lines.forEach((line, index) => {
-      let lineClass = 'spruce-diff-line';
+      let lineClass = 'config-diff-line';
       let lineContent = escapeHtml(line);
 
-      // Highlight different types of changes based on spruce diff output
+      // Highlight different types of changes based on the config diff text
       if (line.startsWith('+ ')) {
         lineClass += ' addition';
         lineContent = '<span class="diff-indicator">+</span>' + lineContent.substring(1);
