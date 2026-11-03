@@ -684,6 +684,10 @@ func (h *Handler) readManifest(ctx context.Context, deploymentName string) (map[
 
 	if deployment.Manifest != "" {
 		parseErr := yaml.Unmarshal([]byte(deployment.Manifest), &parsed)
+		if parseErr != nil {
+			h.logger.Named("deployment-manifest").Warn("Unable to parse the manifest of deployment %s, returning the text only: %v", deploymentName, parseErr)
+		}
+
 		if parseErr != nil || parsed == nil {
 			parsed = map[string]interface{}{}
 		}

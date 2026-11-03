@@ -1110,6 +1110,8 @@ func (h *Handler) formatManifestResponse(manifestYAML string) map[string]interfa
 	err := yaml.Unmarshal([]byte(manifestYAML), &parsed)
 	if err != nil {
 		// If parsing fails, return text only with empty parsed section
+		h.logger.Warn("Unable to parse manifest YAML, returning the text only: %v", err)
+
 		return map[string]interface{}{
 			"text":   manifestYAML,
 			"parsed": map[string]interface{}{},
