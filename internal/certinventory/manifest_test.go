@@ -363,3 +363,37 @@ func TestWalkManifestBudgetTripNeverPanics(t *testing.T) {
 		_, _ = walkManifest(manifest, walkLimits{aliases: aliases, nodes: 100000})
 	}
 }
+
+// TestWalkManifestCountsOnlyPlainIntegerInstances pins how graft tags the
+// instances value. The director refuses a string there, so a quoted number
+// does not size the group, and an alias to a plain integer does.
+func TestWalkManifestCountsOnlyPlainIntegerInstances(t *testing.T) {
+	cases := map[string]struct {
+		instances string
+		want      int
+		counted   bool
+	}{
+		"plain":   {"4", 4, true},
+		"quoted":  {`"4"`, 0, false},
+		"single":  {`'4'`, 0, false},
+		"tagged":  {"!!str 4", 0, false},
+		"float":   {"4.0", 0, false},
+		"aliased": {"*n", 4, true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			manifest := "name: d\nn: &n 4\ninstance_groups:\n- name: g\n  instances: " + tc.instances + "\n  jobs: []\n"
+
+			facts, err := WalkManifest(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, counted := facts.Groups["g"]
+			if counted != tc.counted || got != tc.want {
+				t.Fatalf("Groups[g] = %d (counted %v), want %d (counted %v)", got, counted, tc.want, tc.counted)
+			}
+		})
+	}
+}

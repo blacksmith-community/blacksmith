@@ -1,1 +1,1 @@
-ERROR: parse manifest: yaml: line 1: did not find expected ',' or ']'
+ERROR: parse manifest: yaml: line 1: sequence end token ']' not found

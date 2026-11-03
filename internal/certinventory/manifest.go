@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Literal is a certificate written straight into a manifest value.
@@ -380,7 +380,9 @@ func (w *walker) instanceGroups(n *yaml.Node) {
 
 			switch p.key.Value {
 			case "instances":
-				if group != "" && v.Kind == yaml.ScalarNode {
+				// Only a plain integer counts. The director refuses a string
+				// for instances, so a quoted "4" never sizes the group.
+				if group != "" && v.Kind == yaml.ScalarNode && v.Tag == "!!int" {
 					var count int
 					if err := v.Decode(&count); err == nil {
 						w.facts.Groups[group] = count

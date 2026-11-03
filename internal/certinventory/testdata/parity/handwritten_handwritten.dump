@@ -12,7 +12,7 @@ $.jobs[0].properties.password	string	"((a_password))"
 $.jobs[0].properties.scalars.big_integer	uint64	12345678901234567890
 $.jobs[0].properties.scalars.boolean	bool	true
 $.jobs[0].properties.scalars.colon_lead	string	":leading-colon"
-$.jobs[0].properties.scalars.date	time.Time	2026-01-02T00:00:00Z
+$.jobs[0].properties.scalars.date	string	"2026-01-02"
 $.jobs[0].properties.scalars.empty_value	interface {}	null
 $.jobs[0].properties.scalars.explicit_null	interface {}	null
 $.jobs[0].properties.scalars.float_whole	float64	3
@@ -28,20 +28,20 @@ $.jobs[0].properties.scalars.marker	string	"value with a ((marker)) inside"
 $.jobs[0].properties.scalars.negative	int	-4
 $.jobs[0].properties.scalars.nested.inner.deep[0]	string	"a"
 $.jobs[0].properties.scalars.nested.inner.deep[1].b	string	"c"
-$.jobs[0].properties.scalars.no_value	string	"no"
+$.jobs[0].properties.scalars.no_value	bool	false
 $.jobs[0].properties.scalars.not_a_number	float64	NaN
 $.jobs[0].properties.scalars.octal	int	493
 $.jobs[0].properties.scalars.octal_new	int	15
-$.jobs[0].properties.scalars.off_value	string	"off"
-$.jobs[0].properties.scalars.on_value	string	"on"
+$.jobs[0].properties.scalars.off_value	bool	false
+$.jobs[0].properties.scalars.on_value	bool	true
 $.jobs[0].properties.scalars.quoted_number	string	"12"
 $.jobs[0].properties.scalars.quoted_yes	string	"yes"
-$.jobs[0].properties.scalars.scientific	float64	1000
+$.jobs[0].properties.scalars.scientific	string	"1e3"
 $.jobs[0].properties.scalars.short_n	string	"n"
 $.jobs[0].properties.scalars.short_y	string	"y"
 $.jobs[0].properties.scalars.tilde_null	interface {}	null
-$.jobs[0].properties.scalars.timestamp	time.Time	2026-01-02T03:04:05Z
-$.jobs[0].properties.scalars.yes_value	string	"yes"
+$.jobs[0].properties.scalars.timestamp	string	"2026-01-02T03:04:05Z"
+$.jobs[0].properties.scalars.yes_value	bool	true
 $.jobs[0].properties.tls.ca	string	"((ca_cert.certificate))"
 $.jobs[0].properties.tls.certificate	string	"((server_cert.certificate))"
 $.jobs[0].properties.tls.external	string	"(( external_cert.certificate ))"
@@ -56,7 +56,7 @@ $.jobs[1].properties.password	string	"((a_password))"
 $.jobs[1].properties.scalars.big_integer	uint64	12345678901234567890
 $.jobs[1].properties.scalars.boolean	bool	true
 $.jobs[1].properties.scalars.colon_lead	string	":leading-colon"
-$.jobs[1].properties.scalars.date	time.Time	2026-01-02T00:00:00Z
+$.jobs[1].properties.scalars.date	string	"2026-01-02"
 $.jobs[1].properties.scalars.empty_value	interface {}	null
 $.jobs[1].properties.scalars.explicit_null	interface {}	null
 $.jobs[1].properties.scalars.float_whole	float64	3
@@ -72,20 +72,20 @@ $.jobs[1].properties.scalars.marker	string	"value with a ((marker)) inside"
 $.jobs[1].properties.scalars.negative	int	-4
 $.jobs[1].properties.scalars.nested.inner.deep[0]	string	"a"
 $.jobs[1].properties.scalars.nested.inner.deep[1].b	string	"c"
-$.jobs[1].properties.scalars.no_value	string	"no"
+$.jobs[1].properties.scalars.no_value	bool	false
 $.jobs[1].properties.scalars.not_a_number	float64	NaN
 $.jobs[1].properties.scalars.octal	int	493
 $.jobs[1].properties.scalars.octal_new	int	15
-$.jobs[1].properties.scalars.off_value	string	"off"
-$.jobs[1].properties.scalars.on_value	string	"on"
+$.jobs[1].properties.scalars.off_value	bool	false
+$.jobs[1].properties.scalars.on_value	bool	true
 $.jobs[1].properties.scalars.quoted_number	string	"12"
 $.jobs[1].properties.scalars.quoted_yes	string	"yes"
-$.jobs[1].properties.scalars.scientific	float64	1000
+$.jobs[1].properties.scalars.scientific	string	"1e3"
 $.jobs[1].properties.scalars.short_n	string	"n"
 $.jobs[1].properties.scalars.short_y	string	"y"
 $.jobs[1].properties.scalars.tilde_null	interface {}	null
-$.jobs[1].properties.scalars.timestamp	time.Time	2026-01-02T03:04:05Z
-$.jobs[1].properties.scalars.yes_value	string	"yes"
+$.jobs[1].properties.scalars.timestamp	string	"2026-01-02T03:04:05Z"
+$.jobs[1].properties.scalars.yes_value	bool	true
 $.jobs[1].properties.tls.ca	string	"((ca_cert.certificate))"
 $.jobs[2].cert_refs["tls.ca"]	string	"ca_cert"
 $.jobs[2].cert_refs["tls.certificate"]	string	"server_cert"
@@ -96,7 +96,7 @@ $.jobs[2].properties.password	string	"((a_password))"
 $.jobs[2].properties.scalars.big_integer	uint64	12345678901234567890
 $.jobs[2].properties.scalars.boolean	bool	true
 $.jobs[2].properties.scalars.colon_lead	string	":leading-colon"
-$.jobs[2].properties.scalars.date	time.Time	2026-01-02T00:00:00Z
+$.jobs[2].properties.scalars.date	string	"2026-01-02"
 $.jobs[2].properties.scalars.empty_value	interface {}	null
 $.jobs[2].properties.scalars.explicit_null	interface {}	null
 $.jobs[2].properties.scalars.float_whole	float64	3
@@ -112,20 +112,20 @@ $.jobs[2].properties.scalars.marker	string	"value with a ((marker)) inside"
 $.jobs[2].properties.scalars.negative	int	-4
 $.jobs[2].properties.scalars.nested.inner.deep[0]	string	"a"
 $.jobs[2].properties.scalars.nested.inner.deep[1].b	string	"c"
-$.jobs[2].properties.scalars.no_value	string	"no"
+$.jobs[2].properties.scalars.no_value	bool	false
 $.jobs[2].properties.scalars.not_a_number	float64	NaN
 $.jobs[2].properties.scalars.octal	int	493
 $.jobs[2].properties.scalars.octal_new	int	15
-$.jobs[2].properties.scalars.off_value	string	"off"
-$.jobs[2].properties.scalars.on_value	string	"on"
+$.jobs[2].properties.scalars.off_value	bool	false
+$.jobs[2].properties.scalars.on_value	bool	true
 $.jobs[2].properties.scalars.quoted_number	string	"12"
 $.jobs[2].properties.scalars.quoted_yes	string	"yes"
-$.jobs[2].properties.scalars.scientific	float64	1000
+$.jobs[2].properties.scalars.scientific	string	"1e3"
 $.jobs[2].properties.scalars.short_n	string	"n"
 $.jobs[2].properties.scalars.short_y	string	"y"
 $.jobs[2].properties.scalars.tilde_null	interface {}	null
-$.jobs[2].properties.scalars.timestamp	time.Time	2026-01-02T03:04:05Z
-$.jobs[2].properties.scalars.yes_value	string	"yes"
+$.jobs[2].properties.scalars.timestamp	string	"2026-01-02T03:04:05Z"
+$.jobs[2].properties.scalars.yes_value	bool	true
 $.jobs[2].properties.tls.ca	string	"((ca_cert.certificate))"
 $.jobs[2].properties.tls.certificate	string	"((server_cert.certificate))"
 $.jobs[2].properties.tls.external	string	"(( external_cert.certificate ))"

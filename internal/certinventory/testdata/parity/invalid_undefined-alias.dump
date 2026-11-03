@@ -1,1 +1,1 @@
-ERROR: parse manifest: yaml: unknown anchor 'missing' referenced
+ERROR: parse manifest: yaml: line 1: could not find alias
