@@ -173,9 +173,15 @@ func TestGenManifestErrorsQuoteNoValue(t *testing.T) {
 
 			logger.Set(capture)
 
-			var graftLines []string
+			var (
+				graftMu    sync.Mutex
+				graftLines []string
+			)
 
 			graftlog.PrintStdErrf = func(format string, args ...interface{}) {
+				graftMu.Lock()
+				defer graftMu.Unlock()
+
 				graftLines = append(graftLines, fmt.Sprintf(format, args...))
 			}
 
@@ -198,7 +204,11 @@ func TestGenManifestErrorsQuoteNoValue(t *testing.T) {
 				t.Error("the error holds an ANSI escape")
 			}
 
-			for _, line := range append([]string{capture.output()}, graftLines...) {
+			graftMu.Lock()
+			lines := append([]string{capture.output()}, graftLines...)
+			graftMu.Unlock()
+
+			for _, line := range lines {
 				if strings.Contains(line, probe) {
 					t.Error("a log line quotes a manifest value")
 				}

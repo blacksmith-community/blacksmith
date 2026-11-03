@@ -203,3 +203,98 @@ func TestRequestParamsReadTheEnvironment(t *testing.T) {
 		t.Errorf("meta.params.probe = %#v, want the environment value", got)
 	}
 }
+
+// renderPlanWithParams renders a plan with request parameters under
+// meta.params and returns the decoded render.
+func renderPlanWithParams(t *testing.T, manifest map[string]interface{}, params map[string]interface{}) map[string]interface{} {
+	t.Helper()
+
+	t.Setenv("CREDENTIALS", "")
+
+	rendered, err := manifestPkg.GenManifest(services.Plan{Manifest: manifest}, "request-params", utils.Wrap("meta.params", params))
+	if err != nil {
+		t.Fatalf("render: %s", err)
+	}
+
+	var decoded map[string]interface{}
+
+	err = yaml.Unmarshal([]byte(rendered), &decoded)
+	if err != nil {
+		t.Fatalf("decode the render: %s", err)
+	}
+
+	return decoded
+}
+
+// A request list of named maps merges into the plan's list of named maps
+// by index, because each request map is a literal and not a map the merge
+// can key on name. The first plan item is replaced whole, the rest stay,
+// and a name can appear twice. Spruce panicked here, which took the broker
+// down, and a merged manifest is the accepted outcome.
+//
+//nolint:paralleltest // GenManifest sets CREDENTIALS
+func TestRequestNamedListMergesByIndex(t *testing.T) {
+	plan := map[string]interface{}{
+		"meta": map[string]interface{}{
+			"params": map[string]interface{}{
+				"nodes": []interface{}{
+					map[string]interface{}{"name": "a", "size": "plan-a"},
+					map[string]interface{}{"name": "b", "size": "plan-b"},
+				},
+			},
+		},
+	}
+
+	params := map[string]interface{}{
+		"nodes": []interface{}{map[string]interface{}{"name": "b", "size": "user-b"}},
+	}
+
+	got := requestParam(t, renderPlanWithParams(t, plan, params), "nodes")
+
+	want := []interface{}{
+		map[string]interface{}{"name": "b", "size": "user-b"},
+		map[string]interface{}{"name": "b", "size": "plan-b"},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("meta.params.nodes = %#v, want %#v", got, want)
+	}
+}
+
+// A plan can inject a nested request map and list its keys. Spruce failed
+// both with "is not a map", because it never looked inside the request
+// map, and graft reads through the literal. The operator text the request
+// map holds is copied into the plan as text and never evaluated.
+//
+//nolint:paralleltest // GenManifest sets CREDENTIALS
+func TestRequestNestedMapFeedsInjectAndKeys(t *testing.T) {
+	const operator = "(( grab meta.something ))"
+
+	plan := map[string]interface{}{
+		"meta": map[string]interface{}{
+			"something": "from-the-plan",
+			"params":    map[string]interface{}{"outer": map[string]interface{}{"a": "plan-a"}},
+		},
+		"injected": map[string]interface{}{
+			".":    "(( inject meta.params.outer ))",
+			"kept": "plan-kept",
+		},
+		"names": "(( keys meta.params.outer ))",
+	}
+
+	params := map[string]interface{}{
+		"outer": map[string]interface{}{"b": "user-b", "probe": operator},
+	}
+
+	decoded := renderPlanWithParams(t, plan, params)
+
+	wantInjected := map[string]interface{}{"b": "user-b", "probe": operator, "kept": "plan-kept"}
+	if !reflect.DeepEqual(decoded["injected"], wantInjected) {
+		t.Errorf("injected = %#v, want %#v", decoded["injected"], wantInjected)
+	}
+
+	wantNames := []interface{}{"b", "probe"}
+	if !reflect.DeepEqual(decoded["names"], wantNames) {
+		t.Errorf("names = %#v, want %#v", decoded["names"], wantNames)
+	}
+}

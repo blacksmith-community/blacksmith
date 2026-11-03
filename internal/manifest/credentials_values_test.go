@@ -187,20 +187,24 @@ func dumpedLeaves(dump string) map[string]leaf {
 	return leaves
 }
 
-// TestBindCredentialsKeepFloatsAsNumbers renders credentials that grab a
-// whole float and a fractional one, extracts them, and encodes them as a
-// bind response does. Both must reach the JSON as numbers, never as
-// strings.
+// TestBindCredentialsKeepFloatsAsNumbers renders credentials that grab
+// plan floats, extracts them, and encodes them as a bind response does.
+// Each must reach the JSON as a number with its exact value, never as a
+// string, and a whole float must not turn into exponent form. That covers
+// a whole float, a fractional one, and floats large or small enough that
+// spruce wrote them in exponent form.
 //
 //nolint:paralleltest // GenManifest sets CREDENTIALS
 func TestBindCredentialsKeepFloatsAsNumbers(t *testing.T) {
 	t.Setenv("CREDENTIALS", "")
 
 	plan := services.Plan{ID: "bind-floats", Manifest: map[string]interface{}{
-		"meta": map[string]interface{}{"whole": 2000000.0, "fraction": 2.5},
+		"meta": map[string]interface{}{"whole": 2000000.0, "fraction": 2.5, "large": 1e16, "small": 1e-7},
 		"credentials": map[string]interface{}{
 			"whole":    "(( grab meta.whole ))",
 			"fraction": "(( grab meta.fraction ))",
+			"large":    "(( grab meta.large ))",
+			"small":    "(( grab meta.small ))",
 		},
 	}}
 
@@ -229,9 +233,23 @@ func TestBindCredentialsKeepFloatsAsNumbers(t *testing.T) {
 		t.Fatalf("decode: %s", err)
 	}
 
-	for _, key := range []string{"whole", "fraction"} {
-		if _, isNumber := decoded[key].(json.Number); !isNumber {
+	want := map[string]string{
+		"whole":    "2000000",
+		"fraction": "2.5",
+		"large":    "10000000000000000",
+		"small":    "1e-7",
+	}
+
+	for key, text := range want {
+		number, isNumber := decoded[key].(json.Number)
+		if !isNumber {
 			t.Errorf("credentials.%s reaches the JSON as %T, want a number", key, decoded[key])
+
+			continue
+		}
+
+		if number.String() != text {
+			t.Errorf("credentials.%s reaches the JSON as %s, want %s", key, number, text)
 		}
 	}
 }
