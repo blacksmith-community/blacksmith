@@ -95,13 +95,13 @@ func (planBroker) GetVault() interfaces.Vault { return nil }
 func (b planBroker) GetPlans() map[string]services.Plan {
 	releases := make([]interface{}, 0, len(b.releases))
 	for _, name := range b.releases {
-		releases = append(releases, map[interface{}]interface{}{"name": name, "version": "latest"})
+		releases = append(releases, map[string]interface{}{"name": name, "version": "latest"})
 	}
 
 	return map[string]services.Plan{redisPlan: {
 		ID:       redisPlan,
 		Name:     "standalone",
-		Manifest: map[interface{}]interface{}{"releases": releases},
+		Manifest: map[string]interface{}{"releases": releases},
 	}}
 }
 

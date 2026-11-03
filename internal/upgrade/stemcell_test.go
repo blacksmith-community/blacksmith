@@ -17,10 +17,10 @@ import (
 func TestStemcellOverlayMergesDoNotRace(t *testing.T) {
 	plan := services.Plan{
 		ID: "overlay-race",
-		Manifest: map[interface{}]interface{}{
+		Manifest: map[string]interface{}{
 			"name": "overlay-race",
 			"stemcells": []interface{}{
-				map[interface{}]interface{}{"alias": "default", "os": targetStemcellOS, "version": "1.1"},
+				map[string]interface{}{"alias": "default", "os": targetStemcellOS, "version": "1.1"},
 			},
 		},
 	}

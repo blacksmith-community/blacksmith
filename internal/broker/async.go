@@ -147,7 +147,7 @@ var (
 // Helper methods for provisionAsync refactoring
 
 // trackProgress is a helper to track progress with error logging.
-func (b *Broker) trackProgress(ctx context.Context, instanceID, operation, message string, _ int, params map[interface{}]interface{}, l logger.Logger) {
+func (b *Broker) trackProgress(ctx context.Context, instanceID, operation, message string, _ int, params map[string]interface{}, l logger.Logger) {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
@@ -164,7 +164,7 @@ func (b *Broker) trackProgress(ctx context.Context, instanceID, operation, messa
 // happens to the request or to the broker. When the write fails, it
 // returns an error wrapping ErrContextIDNotRecorded, and the caller must
 // not send the request.
-func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, operation, message, contextID, deploymentName string, params map[interface{}]interface{}, log logger.Logger) error {
+func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, operation, message, contextID, deploymentName string, params map[string]interface{}, log logger.Logger) error {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
@@ -179,7 +179,7 @@ func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, ope
 }
 
 // failWithTracking tracks a failure.
-func (b *Broker) failWithTracking(ctx context.Context, instanceID, operation, message string, params map[interface{}]interface{}, l logger.Logger) {
+func (b *Broker) failWithTracking(ctx context.Context, instanceID, operation, message string, params map[string]interface{}, l logger.Logger) {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
@@ -227,7 +227,7 @@ type provisioningPhase struct {
 	broker     *Broker
 	instanceID string
 	logger     logger.Logger
-	params     map[interface{}]interface{}
+	params     map[string]interface{}
 	// contextID is the context ID the deploy request carries. It is on
 	// record from the provision's first record on.
 	contextID string
@@ -264,12 +264,12 @@ func (p *provisioningPhase) parseParameters(ctx context.Context, details interfa
 }
 
 // setupBOSHDefaults sets up BOSH director connection and defaults.
-func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services.Plan) (map[interface{}]interface{}, bool) {
+func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services.Plan) (map[string]interface{}, bool) {
 	startTime := time.Now()
 
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Setting up deployment defaults", 0, p.params, p.logger)
 
-	defaults := make(map[interface{}]interface{})
+	defaults := make(map[string]interface{})
 	defaults["name"] = plan.ID + "-" + p.instanceID
 	p.params["instance_id"] = p.instanceID
 
@@ -352,13 +352,13 @@ func (p *provisioningPhase) initializeService(ctx context.Context, plan services
 }
 
 // generateAndStoreManifest generates the BOSH manifest and stores it in Vault.
-func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan services.Plan, defaults map[interface{}]interface{}) (string, bool) {
+func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan services.Plan, defaults map[string]interface{}) (string, bool) {
 	startTime := time.Now()
 
 	p.logger.Info("Generating BOSH deployment manifest for %s", defaults["name"])
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Generating BOSH deployment manifest", 0, p.params, p.logger)
 
-	manifestStr, err := manifest.GenManifest(plan, defaults, utils.Wrap("meta.params", p.params))
+	manifestStr, err := manifest.GenManifest(plan, utils.InterfaceMap(defaults), utils.Wrap("meta.params", p.params))
 	if err != nil {
 		p.logger.Error("Failed to generate service deployment manifest: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Manifest generation failed: %s", err), p.params, p.logger)
@@ -1109,7 +1109,7 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 // is sent, so a restart at any point leaves an ID to look the deploy task
 // up by. It reports false when the record could not be written.
 func (b *Broker) startProvisioningPhase(ctx context.Context, instanceID string, takeRelease func() func(), logger logger.Logger) (*provisioningPhase, bool) {
-	params := make(map[interface{}]interface{})
+	params := make(map[string]interface{})
 	contextID := uuid.NewString()
 
 	recordCtx, cancelRecord := recordContext(ctx)

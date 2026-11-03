@@ -163,7 +163,7 @@ var _ = Describe("Vault read errors in the broker", func() {
 			b.BOSH = mockBOSH
 			b.Plans[serviceID+"/"+planID] = services.Plan{
 				ID: planID, Name: "Small", Type: "redis",
-				Credentials: toInterfaceMap(map[string]interface{}{
+				Credentials: toPlanMap(map[string]interface{}{
 					"credentials": map[string]interface{}{"host": "rebuilt.example.com", "port": 6379, "username": "u", "password": "p"},
 				}),
 			}

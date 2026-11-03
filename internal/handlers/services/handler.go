@@ -2593,13 +2593,6 @@ func normalizeToStringMap(value interface{}) map[string]interface{} {
 		return nil
 	case map[string]interface{}:
 		return copyStringInterfaceMap(typedValue)
-	case map[interface{}]interface{}:
-		out := make(map[string]interface{}, len(typedValue))
-		for key, val := range typedValue {
-			out[fmt.Sprintf("%v", key)] = val
-		}
-
-		return out
 	default:
 		return nil
 	}

@@ -6,6 +6,7 @@ import (
 
 	manifestPkg "blacksmith/internal/manifest"
 	"blacksmith/internal/services"
+	"blacksmith/pkg/utils"
 	"go.yaml.in/yaml/v2"
 )
 
@@ -19,8 +20,12 @@ foo: bar
 		plan := services.Plan{}
 
 		BeforeEach(func() {
-			err := yaml.Unmarshal([]byte(manifest), &plan.Manifest)
+			var decoded map[interface{}]interface{}
+
+			err := yaml.Unmarshal([]byte(manifest), &decoded)
 			Ω(err).ShouldNot(HaveOccurred())
+
+			plan.Manifest = utils.DeinterfaceMap(decoded)
 		})
 
 		Context("without user parameters", func() {

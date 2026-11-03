@@ -166,7 +166,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 			ID:          testPlanID,
 			Name:        "Small Redis Plan",
 			Type:        "redis",
-			Credentials: toInterfaceMap(defaultPlanCredentials),
+			Credentials: toPlanMap(defaultPlanCredentials),
 		}
 
 		brokerInstance = &broker.Broker{
@@ -340,7 +340,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 					ID:   "rabbit-plan",
 					Name: "RabbitMQ Plan",
 					Type: "rabbitmq",
-					Credentials: toInterfaceMap(map[string]interface{}{
+					Credentials: toPlanMap(map[string]interface{}{
 						"credentials": map[string]interface{}{
 							"host":           "rabbitmq.example.com",
 							"port":           5672,
@@ -461,7 +461,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 					ID:   "invalid-plan",
 					Name: "Invalid Plan",
 					Type: "redis",
-					Credentials: toInterfaceMap(map[string]interface{}{
+					Credentials: toPlanMap(map[string]interface{}{
 						"credentials": map[string]interface{}{
 							"host": "{{.Invalid.Path}}",
 						},

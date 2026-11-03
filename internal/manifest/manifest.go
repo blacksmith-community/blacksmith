@@ -270,17 +270,25 @@ func redactEnvValues(text string, env []string, names ...string) string {
 	return text
 }
 
+// GenManifest merges the plan's manifest and then each of manifests with
+// spruce, evaluates the result, and returns it as YAML. The manifests are
+// in the interface-keyed form spruce merges. Callers convert their own maps
+// with utils.InterfaceMap, or with utils.Wrap for request parameters.
 func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (string, error) {
 	log := logger.Get().Named("manifest")
 	log.Info("Generating manifest for plan %s", p.ID)
 	log.Debug("Starting spruce merge with %d additional manifests", len(manifests))
+
+	// The plan's manifest is converted before the lock is taken, so the
+	// locked section holds only the spruce calls.
+	base := utils.InterfaceMap(p.Manifest)
 
 	// Serialize spruce operations because the library uses global state
 	// that is not thread-safe (StaticIPOperator.Setup, Evaluator globals).
 	spruceMu.Lock()
 	defer spruceMu.Unlock()
 
-	merged, err := spruce.Merge(p.Manifest)
+	merged, err := spruce.Merge(base)
 	if err != nil {
 		log.Error("Failed to merge base manifest: %s", err)
 
@@ -827,12 +835,12 @@ func generateCredentialsManifest(plan services.Plan, jobsIfc map[interface{}]int
 		"name": deployment,
 	}
 
-	params := map[interface{}]interface{}{
+	params := map[string]interface{}{
 		"instance_id": instanceID,
 		"hostname":    dnsname,
 	}
 
-	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials, defaults, utils.Wrap("params", params))
+	manifest, err := GenManifest(plan, jobsIfc, utils.InterfaceMap(plan.Credentials), defaults, utils.Wrap("params", params))
 	if err != nil {
 		loggerInstance.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
 

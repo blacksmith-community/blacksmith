@@ -392,12 +392,12 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 			Name:           planID,
 			Type:           serviceID,
 			InitScriptPath: script,
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				manifestNameKey:           outcomeManifestName,
 				manifestInstanceGroupsKey: []interface{}{},
 			},
-			Credentials: map[interface{}]interface{}{
-				credentialsKey: map[interface{}]interface{}{credentialsHostKey: readoptVMAddress},
+			Credentials: map[string]interface{}{
+				credentialsKey: map[string]interface{}{credentialsHostKey: readoptVMAddress},
 			},
 			Service: &services.Service{ID: serviceID, Name: serviceID},
 		}

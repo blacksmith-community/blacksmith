@@ -121,7 +121,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 				Name:           id,
 				Type:           "valkey",
 				InitScriptPath: initScript,
-				Manifest: map[interface{}]interface{}{
+				Manifest: map[string]interface{}{
 					"name":            "placeholder",
 					"instance_groups": []interface{}{},
 				},

@@ -48,8 +48,8 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			ID:   "rabbitmq-plan",
 			Name: "RabbitMQ Test Plan",
 			Type: "rabbitmq",
-			Credentials: map[interface{}]interface{}{
-				"credentials": map[interface{}]interface{}{
+			Credentials: map[string]interface{}{
+				"credentials": map[string]interface{}{
 					"host":           "", // Will be set after mock server creation
 					"port":           5672,
 					"api_url":        "", // Will be set after mock server creation
@@ -111,7 +111,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 
 		// Set up test plan with actual mock server URLs
 		mockHost := strings.TrimPrefix(mockRabbitMQ.URL, "http://")
-		if creds, ok := testPlan.Credentials["credentials"].(map[interface{}]interface{}); ok {
+		if creds, ok := testPlan.Credentials["credentials"].(map[string]interface{}); ok {
 			creds["host"] = mockHost
 			creds["api_url"] = mockRabbitMQ.URL + "/api"
 		}
@@ -483,8 +483,8 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			// Create a test plan with the temp server URL
 			tempHost := strings.TrimPrefix(tempServer.URL, "http://")
 			errorTestPlan := originalPlan
-			errorTestPlan.Credentials = map[interface{}]interface{}{
-				"credentials": map[interface{}]interface{}{
+			errorTestPlan.Credentials = map[string]interface{}{
+				"credentials": map[string]interface{}{
 					"host":           tempHost,
 					"port":           5672,
 					"api_url":        tempServer.URL + "/api",
@@ -562,8 +562,8 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			// Create a test plan with the temp server URL
 			tempHost := strings.TrimPrefix(tempServer.URL, "http://")
 			transientTestPlan := originalPlan
-			transientTestPlan.Credentials = map[interface{}]interface{}{
-				"credentials": map[interface{}]interface{}{
+			transientTestPlan.Credentials = map[string]interface{}{
+				"credentials": map[string]interface{}{
 					"host":           tempHost,
 					"port":           5672,
 					"api_url":        tempServer.URL + "/api",

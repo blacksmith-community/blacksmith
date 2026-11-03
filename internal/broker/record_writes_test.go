@@ -180,7 +180,7 @@ var _ = Describe("Record writes of the provision and deprovision goroutines", fu
 			Name:           planID,
 			Type:           "valkey",
 			InitScriptPath: initScript,
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				"name":            "placeholder",
 				"instance_groups": []interface{}{},
 			},

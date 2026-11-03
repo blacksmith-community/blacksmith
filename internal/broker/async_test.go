@@ -183,7 +183,7 @@ var _ = Describe("Detached broker work", func() {
 			Name:           planID,
 			Type:           "valkey",
 			InitScriptPath: initScript,
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				"name":            "placeholder",
 				"instance_groups": []interface{}{},
 			},
@@ -776,11 +776,11 @@ var _ = Describe("Detached broker work", func() {
 		brokerInstance.ServiceContext = serviceCtx
 
 		plan := brokerInstance.Plans[serviceID+"/"+planID]
-		plan.Manifest = map[interface{}]interface{}{
+		plan.Manifest = map[string]interface{}{
 			"name":            "placeholder",
 			"instance_groups": []interface{}{},
 			"releases": []interface{}{
-				map[interface{}]interface{}{
+				map[string]interface{}{
 					"name":    "redis",
 					"version": "18",
 					"url":     "https://releases.example.test/redis-18.tgz",

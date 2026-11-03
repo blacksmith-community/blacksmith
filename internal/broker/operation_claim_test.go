@@ -146,7 +146,7 @@ var _ = Describe("The operation claim on an instance", func() {
 			Name:           planID,
 			Type:           "valkey",
 			InitScriptPath: initScript,
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				"name":            "placeholder",
 				"instance_groups": []interface{}{},
 			},

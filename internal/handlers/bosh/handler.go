@@ -525,7 +525,7 @@ func planReleaseNames(plan services.Plan) []string {
 	names := make([]string, 0, len(releases))
 
 	for _, release := range releases {
-		releaseMap, ok := release.(map[interface{}]interface{})
+		releaseMap, ok := release.(map[string]interface{})
 		if !ok {
 			continue
 		}

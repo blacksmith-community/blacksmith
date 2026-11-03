@@ -97,7 +97,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 			Name:           planID,
 			Type:           "valkey",
 			InitScriptPath: writeInitScript(),
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				"name":            "placeholder",
 				"instance_groups": []interface{}{},
 			},

@@ -1,13 +1,13 @@
 package broker_test
 
-func toInterfaceSlice(values []interface{}) []interface{} {
+func toPlanSlice(values []interface{}) []interface{} {
 	out := make([]interface{}, len(values))
 	for index, value := range values {
 		switch typed := value.(type) {
 		case map[string]interface{}:
-			out[index] = toInterfaceMap(typed)
+			out[index] = toPlanMap(typed)
 		case []interface{}:
-			out[index] = toInterfaceSlice(typed)
+			out[index] = toPlanSlice(typed)
 		default:
 			out[index] = typed
 		}
@@ -16,14 +16,16 @@ func toInterfaceSlice(values []interface{}) []interface{} {
 	return out
 }
 
-func toInterfaceMap(values map[string]interface{}) map[interface{}]interface{} {
-	out := make(map[interface{}]interface{}, len(values))
+// toPlanMap copies values into the form a plan's manifest and credentials
+// take once the catalog loads them, with every list a []interface{}.
+func toPlanMap(values map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(values))
 	for key, value := range values {
 		switch typed := value.(type) {
 		case map[string]interface{}:
-			out[key] = toInterfaceMap(typed)
+			out[key] = toPlanMap(typed)
 		case []interface{}:
-			out[key] = toInterfaceSlice(typed)
+			out[key] = toPlanSlice(typed)
 		case []string:
 			converted := make([]interface{}, len(typed))
 			for idx, v := range typed {

@@ -18,19 +18,78 @@ var (
 	ErrPotentiallyDangerousCharacterFound = errors.New("potentially dangerous character found in executable path")
 )
 
-// Wrap wraps data in nested maps using a dot-separated key path.
-func Wrap(key string, data map[interface{}]interface{}) map[interface{}]interface{} {
+// Wrap nests data under a dot-separated key path, in the interface-keyed
+// form spruce merges. Only the top level of data is re-keyed. Its values
+// pass through untouched, so a nested map from a JSON request stays a
+// map[string]interface{} that a spruce merge replaces whole, as it did
+// when the broker kept its parameters interface-keyed.
+func Wrap(key string, data map[string]interface{}) map[interface{}]interface{} {
 	keyParts := strings.Split(key, ".")
 
 	for i := range len(keyParts) / 2 {
 		keyParts[i], keyParts[len(keyParts)-i-1] = keyParts[len(keyParts)-i-1], keyParts[i]
 	}
 
-	for _, k := range keyParts {
-		data = map[interface{}]interface{}{k: data}
+	wrapped := make(map[interface{}]interface{}, len(data))
+	for k, v := range data {
+		wrapped[k] = v
 	}
 
-	return data
+	for _, k := range keyParts {
+		wrapped = map[interface{}]interface{}{k: wrapped}
+	}
+
+	return wrapped
+}
+
+// InterfaceMap converts a map with string keys to the map with interface{}
+// keys that spruce and yaml.v2 work on. It walks nested maps, including
+// interface-keyed ones, and []interface{} lists, copying each, so the result
+// shares no map or list with its input. A nil map converts to nil. It is the
+// inverse of DeinterfaceMap, and it exists only until spruce leaves the
+// module.
+func InterfaceMap(o map[string]interface{}) map[interface{}]interface{} {
+	if o == nil {
+		return nil
+	}
+
+	m := make(map[interface{}]interface{}, len(o))
+	for k, v := range o {
+		m[k] = interfaceValue(v)
+	}
+
+	return m
+}
+
+func interfaceValue(obj interface{}) interface{} {
+	switch value := obj.(type) {
+	case map[string]interface{}:
+		return InterfaceMap(value)
+	case map[interface{}]interface{}:
+		if value == nil {
+			return value
+		}
+
+		m := make(map[interface{}]interface{}, len(value))
+		for k, v := range value {
+			m[k] = interfaceValue(v)
+		}
+
+		return m
+	case []interface{}:
+		if value == nil {
+			return value
+		}
+
+		l := make([]interface{}, len(value))
+		for i, v := range value {
+			l[i] = interfaceValue(v)
+		}
+
+		return l
+	default:
+		return value
+	}
 }
 
 func deinterface(obj interface{}) interface{} {

@@ -72,7 +72,7 @@ var _ = Describe("GetBindingCredentials", func() {
 			ID:          testPlanID,
 			Name:        "Small Redis Plan",
 			Type:        "redis",
-			Credentials: toInterfaceMap(defaultPlanCredentials),
+			Credentials: toPlanMap(defaultPlanCredentials),
 		}
 
 		brokerInstance = &broker.Broker{
@@ -180,7 +180,7 @@ var _ = Describe("GetBindingCredentials", func() {
 
 			testPlanKey := testServiceID + "/" + testPlanID
 			testPlan := brokerInstance.Plans[testPlanKey]
-			testPlan.Credentials = toInterfaceMap(map[string]interface{}{
+			testPlan.Credentials = toPlanMap(map[string]interface{}{
 				"credentials": map[string]interface{}{
 					"host":           "rabbitmq.example.com",
 					"port":           5672,
@@ -256,7 +256,7 @@ var _ = Describe("GetBindingCredentials", func() {
 
 			testPlanKey := testServiceID + "/" + testPlanID
 			plan := brokerInstance.Plans[testPlanKey]
-			plan.Credentials = toInterfaceMap(map[string]interface{}{
+			plan.Credentials = toPlanMap(map[string]interface{}{
 				"credentials": testCredentials,
 			})
 			brokerInstance.Plans[testPlanKey] = plan

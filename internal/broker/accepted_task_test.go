@@ -261,7 +261,7 @@ func TestProvisionSendsTheContextIDItRecordedAndKeepsItWhenTheAnswerIsLost(t *te
 		Name:           standalonePlanID,
 		Type:           valkeyServiceID,
 		InitScriptPath: initScript,
-		Manifest: map[interface{}]interface{}{
+		Manifest: map[string]interface{}{
 			manifestNameKey:           outcomeManifestName,
 			manifestInstanceGroupsKey: []interface{}{},
 		},

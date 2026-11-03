@@ -99,7 +99,7 @@ var _ = Describe("Provision repeated while the first is in flight", func() {
 			Name:           planID,
 			Type:           "valkey",
 			InitScriptPath: initScript,
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				"name":            "placeholder",
 				"instance_groups": []interface{}{},
 			},

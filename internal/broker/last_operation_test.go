@@ -349,12 +349,12 @@ var _ = Describe("LastOperation", func() {
 			Name:           planID,
 			Type:           serviceID,
 			InitScriptPath: writeInitScript(),
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				"name":            "placeholder",
 				"instance_groups": []interface{}{},
 			},
-			Credentials: map[interface{}]interface{}{
-				"credentials": map[interface{}]interface{}{"host": "10.0.0.10"},
+			Credentials: map[string]interface{}{
+				"credentials": map[string]interface{}{"host": "10.0.0.10"},
 			},
 			Service: &services.Service{ID: serviceID, Name: serviceID},
 		}

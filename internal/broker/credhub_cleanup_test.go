@@ -318,7 +318,7 @@ var _ = Describe("CredHub cleanup", func() {
 
 		plan := services.Plan{
 			ID: planID, Name: planID, Type: serviceID, InitScriptPath: initScript,
-			Manifest: map[interface{}]interface{}{"name": "placeholder", "instance_groups": []interface{}{}},
+			Manifest: map[string]interface{}{"name": "placeholder", "instance_groups": []interface{}{}},
 			Service:  &services.Service{ID: serviceID, Name: serviceID},
 		}
 

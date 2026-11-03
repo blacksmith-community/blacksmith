@@ -34,9 +34,9 @@ type Plan struct {
 	Limit       int    `json:"limit"       yaml:"limit"`
 	Type        string `json:"type"        yaml:"type"`
 
-	Manifest       map[interface{}]interface{} `json:"-"`
-	Credentials    map[interface{}]interface{} `json:"-"`
-	InitScriptPath string                      `json:"-"`
+	Manifest       map[string]interface{} `json:"-" yaml:"-"`
+	Credentials    map[string]interface{} `json:"-"`
+	InitScriptPath string                 `json:"-"`
 
 	// Store the actual file paths for SHA256 calculation
 	ManifestPath    string `json:"-"`
@@ -252,7 +252,7 @@ func processPlanManifest(path string, plan *Plan, loggerInstance logger.Logger) 
 		return fmt.Errorf("failed to merge manifest files: %w", err)
 	}
 
-	plan.Manifest = manifest
+	plan.Manifest = utils.DeinterfaceMap(manifest)
 	plan.ManifestPath = manifestFile
 
 	loggerInstance.Debug("Successfully merged manifest files for plan %s", plan.Name)
@@ -274,7 +274,7 @@ func processPlanCredentials(path string, plan *Plan, loggerInstance logger.Logge
 		return fmt.Errorf("failed to check credentials file: %w", err)
 	default:
 		loggerInstance.Debug("No credentials file found for plan %s, using empty credentials", plan.Name)
-		plan.Credentials = make(map[interface{}]interface{})
+		plan.Credentials = make(map[string]interface{})
 
 		return nil
 	}
@@ -283,11 +283,21 @@ func processPlanCredentials(path string, plan *Plan, loggerInstance logger.Logge
 func processExistingCredentialsFile(credFileData []byte, credsFile string, plan *Plan, loggerInstance logger.Logger) error {
 	loggerInstance.Debug("Found credentials file for plan %s", plan.Name)
 
-	err := yaml.Unmarshal(credFileData, &plan.Credentials)
+	// yaml.v2 decodes into the interface-keyed form. Starting from what
+	// plan.yml put in the field keeps the keys a credentials key there adds,
+	// and the result goes back to string keys once the decode is done.
+	credentials := utils.InterfaceMap(plan.Credentials)
+
+	err := yaml.Unmarshal(credFileData, &credentials)
 	if err != nil {
 		loggerInstance.Error("Failed to unmarshal credentials YAML for plan %s: %s", plan.Name, err)
 
 		return fmt.Errorf("failed to unmarshal credentials YAML: %w", err)
+	}
+
+	plan.Credentials = nil
+	if credentials != nil {
+		plan.Credentials = utils.DeinterfaceMap(credentials)
 	}
 
 	plan.CredentialsPath = credsFile

@@ -37,8 +37,8 @@ const (
 // that read as numbers, dates, and booleans. The types set has real values of
 // other kinds, which are a bool, a float that is not whole, a list, and a
 // nested map.
-func parityParams(paramSet string, instanceID string) map[interface{}]interface{} {
-	params := map[interface{}]interface{}{"instance_id": instanceID}
+func parityParams(paramSet string, instanceID string) map[string]interface{} {
+	params := map[string]interface{}{"instance_id": instanceID}
 
 	switch paramSet {
 	case "tuned":
@@ -133,12 +133,12 @@ func genParityManifest(t *testing.T, fixture parity.Fixture, instanceID, planID,
 		}
 	}
 
-	defaults := map[interface{}]interface{}{
+	defaults := map[string]interface{}{
 		"name":          current.ID + "-" + instanceID,
 		"director_uuid": parityDirectorUUID,
 	}
 
-	return GenManifest(current, defaults, utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
+	return GenManifest(current, utils.InterfaceMap(defaults), utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
 }
 
 //nolint:paralleltest // spruce keeps global state, and the test sets environment variables

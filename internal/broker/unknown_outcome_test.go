@@ -74,7 +74,7 @@ func newOutcomeBroker(director bosh.Director, vaultClient *internalVault.Vault, 
 	initScript := filepath.Join(dir, "init")
 	ExpectWithOffset(1, os.WriteFile(initScript, []byte("#!/bin/bash\nexit 0\n"), 0o600)).To(Succeed())
 
-	manifest := map[interface{}]interface{}{}
+	manifest := map[string]interface{}{}
 	manifest[manifestNameKey] = outcomeManifestName
 	manifest[manifestInstanceGroupsKey] = []interface{}{}
 

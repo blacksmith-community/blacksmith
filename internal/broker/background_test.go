@@ -74,7 +74,7 @@ var _ = Describe("Broker background work", func() {
 			Name:           planID,
 			Type:           valkeyServiceID,
 			InitScriptPath: initScript,
-			Manifest: map[interface{}]interface{}{
+			Manifest: map[string]interface{}{
 				manifestNameKey:           outcomeManifestName,
 				manifestInstanceGroupsKey: []interface{}{},
 			},

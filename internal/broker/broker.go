@@ -1682,19 +1682,11 @@ func copyJSONMap(original map[string]any) map[string]any {
 
 // copyJSONValue returns a deep copy of a value decoded from JSON. Objects and
 // arrays are copied element by element. Every other value a JSON decoder
-// produces is a string, number, boolean, or nil, which is copied by value. A
-// map[interface{}]interface{} from a YAML decoder is copied as well.
+// produces is a string, number, boolean, or nil, which is copied by value.
 func copyJSONValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		return copyJSONMap(typed)
-	case map[interface{}]interface{}:
-		copied := make(map[interface{}]interface{}, len(typed))
-		for key, element := range typed {
-			copied[key] = copyJSONValue(element)
-		}
-
-		return copied
 	case []any:
 		if typed == nil {
 			return typed
@@ -1988,15 +1980,6 @@ func copyIndexEntry(raw interface{}) map[string]interface{} {
 	case map[string]interface{}:
 		for key, value := range typed {
 			entry[key] = value
-		}
-	case map[interface{}]interface{}:
-		for key, value := range typed {
-			keyStr, ok := key.(string)
-			if !ok {
-				continue
-			}
-
-			entry[keyStr] = value
 		}
 	case vaultPkg.Instance:
 		if typed.ServiceID != "" {

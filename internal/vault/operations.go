@@ -278,7 +278,7 @@ func trackedTask(action string, params interface{}) trackedTaskRecord {
 		State:       "in_progress",
 		Description: fmt.Sprintf("Operation %s in progress", action),
 		UpdatedAt:   time.Now().Unix(),
-		Params:      deinterface(params),
+		Params:      copyParams(params),
 	}
 }
 
@@ -526,7 +526,7 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 		State:          state,
 		Description:    description,
 		UpdatedAt:      time.Now().Unix(),
-		Params:         deinterface(params),
+		Params:         copyParams(params),
 		ContextID:      contextID,
 		DeploymentName: deploymentName,
 	}
@@ -1027,33 +1027,36 @@ func applyIndexUpdates(logger logger.Logger, idx *vaultPkg.Index, instanceID str
 	idx.Data[instanceID] = entry
 }
 
-// Helper function to convert interface{} recursively.
-func deinterface(option interface{}) interface{} {
+// copyParams copies the parameters a task record carries, so the record
+// shares no map or list with the caller's parameters. A nil parameter map
+// copies as an empty one, so the record holds {} rather than null.
+func copyParams(option interface{}) interface{} {
 	switch option := option.(type) {
-	case map[interface{}]interface{}:
-		return deinterfaceMap(option)
+	case map[string]interface{}:
+		return copyParamsMap(option)
 	case []interface{}:
-		return deinterfaceList(option)
+		return copyParamsList(option)
 	default:
 		return option
 	}
 }
 
-// deinterfaceMap converts a map[interface{}]interface{} to map[string]interface{}.
-func deinterfaceMap(o map[interface{}]interface{}) map[string]interface{} {
-	m := map[string]interface{}{}
+// copyParamsMap copies a map[string]interface{}, and each map and list in
+// it, into a new map. A nil map copies as an empty one.
+func copyParamsMap(o map[string]interface{}) map[string]interface{} {
+	m := make(map[string]interface{}, len(o))
 	for k, v := range o {
-		m[fmt.Sprintf("%v", k)] = deinterface(v)
+		m[k] = copyParams(v)
 	}
 
 	return m
 }
 
-// deinterfaceList converts []interface{} by recursively calling deinterface on each element.
-func deinterfaceList(o []interface{}) []interface{} {
+// copyParamsList copies a list, copying each map and list in it.
+func copyParamsList(o []interface{}) []interface{} {
 	l := make([]interface{}, len(o))
 	for i, v := range o {
-		l[i] = deinterface(v)
+		l[i] = copyParams(v)
 	}
 
 	return l
