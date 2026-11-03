@@ -7,7 +7,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/fivetwenty-io/boshapi v0.283.9
 	github.com/fivetwenty-io/capi/v3 v3.236.0
-	github.com/fivetwenty-io/graft v1.44.0
+	github.com/fivetwenty-io/graft v1.44.1
 	github.com/fivetwenty-io/osbapi/v2 v2.0.5
 	github.com/geofffranks/spruce v1.35.24
 	github.com/go-redis/redis/v8 v8.11.5

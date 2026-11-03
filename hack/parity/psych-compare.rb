@@ -4,7 +4,8 @@
 # Compares two sets of YAML the way the BOSH director reads them.
 #
 #   psych-compare.rb [--allow RULE]... [--allow-diff FILE PATH]...
-#                    [--skip-error-file REL=REASON]... WANT GOT
+#                    [--skip-error-file REL=REASON]...
+#                    [--skip-missing-want REL=REASON]... WANT GOT
 #
 # WANT and GOT are both files or both directories.  For directories the
 # script pairs the *.yml and *.yaml files by relative path, and a file that
@@ -35,7 +36,9 @@
 # stale.  --skip-error-file REL=REASON leaves out a pair of files that both
 # begin with ERROR:, which a recording of a failure holds.  A file missing
 # on one side, or a pair where only one side is an error, is still a
-# difference.
+# difference.  --skip-missing-want REL=REASON leaves out a file that only GOT
+# has, for a document the WANT recording holds only in its combined text
+# file, so there is no file to pair it with.
 #
 # It prints paths, classes, and values and never a whole document, and it
 # exits 1 on any difference.
@@ -136,6 +139,7 @@ def pairs(want, got)
 end
 
 skipped = {}
+skipped_missing = {}
 $allowed_diffs = []
 args = ARGV.dup
 rest = []
@@ -154,15 +158,23 @@ until args.empty?
     rel, reason = args.shift.to_s.split('=', 2)
     abort 'psych-compare: --skip-error-file wants REL=REASON' if rel.to_s.empty? || reason.to_s.empty?
     skipped[rel] = reason
+  when '--skip-missing-want'
+    rel, reason = args.shift.to_s.split('=', 2)
+    abort 'psych-compare: --skip-missing-want wants REL=REASON' if rel.to_s.empty? || reason.to_s.empty?
+    skipped_missing[rel] = reason
   else
     rest << arg
   end
 end
-abort 'usage: psych-compare.rb [--allow RULE] [--allow-diff FILE PATH] [--skip-error-file REL=REASON] WANT GOT' unless rest.length == 2
+abort 'usage: psych-compare.rb [--allow RULE] [--allow-diff FILE PATH] [--skip-error-file REL=REASON] [--skip-missing-want REL=REASON] WANT GOT' unless rest.length == 2
 
 found = []
 pairs(*rest).each do |rel, want, got|
   label = rel || File.basename(want)
+  if skipped_missing.key?(label) && !File.exist?(want) && File.exist?(got)
+    $exempt['skip-missing-want'] << "#{label}: #{skipped_missing[label]}"
+    next
+  end
   unless File.exist?(want) && File.exist?(got)
     found << "#{label}: only in #{File.exist?(want) ? 'want' : 'got'}"
     next

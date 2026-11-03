@@ -2762,7 +2762,7 @@ ERROR: failed to unmarshal manifest: yaml: line 2: mapping key already defined a
 === odd_empty ===
 $	map[string]interface {}	{}
 === odd_float-tag-over-int ===
-ERROR: failed to unmarshal manifest: yaml: line 3: cannot decode a !!int scalar as !!float
+$.properties.floaty	float64	3
 === odd_instance-group-networks ===
 $.instance_groups[0].name	string	"first"
 $.instance_groups[0].networks[0].name	string	"services"

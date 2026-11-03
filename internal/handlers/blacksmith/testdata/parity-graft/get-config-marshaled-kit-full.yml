@@ -26,16 +26,20 @@ broker:
         endpoint: https://api.sys.fixture.example
         username: fixture-admin
         password: fixture-password-not-real
-        cacert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n"
+        cacert: |
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
         skip_ssl_validation: false
       prod:
         name: prod-cf
         endpoint: https://api.sys.prod.fixture.example
         username: fixture-admin
         password: fixture-password-not-real
-        cacert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n"
+        cacert: |
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
         skip_ssl_validation: true
   compression:
     enabled: true
@@ -88,8 +92,10 @@ bosh:
   address: https://10.0.0.6:25555
   username: fixture-bosh
   password: fixture-password-not-real
-  cacert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  cacert: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   allow_http: false
   stemcells:
   - name: bosh-aws-xen-hvm-ubuntu-noble-go_agent
@@ -102,9 +108,20 @@ bosh:
     url: https://example.test/redis-forge.tgz
     sha1: sha256:0000000000000000000000000000000000000000000000000000000000000002
   cloud-config: <cloud-config>
-  cloudconfig: "---\nazs:\n- name: z1\nnetworks:\n- name: fixture-services\n  type:
-    manual\n  subnets:\n  - range: 10.0.1.0/24\n    gateway: 10.0.1.1\n    az: z1\nvm_types:\n-
-    name: default\n  cloud_properties: {fixture: yes}\n"
+  cloudconfig: |
+    ---
+    azs:
+    - name: z1
+    networks:
+    - name: fixture-services
+      type: manual
+      subnets:
+      - range: 10.0.1.0/24
+        gateway: 10.0.1.1
+        az: z1
+    vm_types:
+    - name: default
+      cloud_properties: {fixture: yes}
   network: fixture-services
   max_connections: 4
   max_batch_connections: 10
@@ -177,8 +194,10 @@ forges:
   - '*-forge'
 credhub:
   url: https://credhub.fixture.example:8844
-  ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  ca_cert: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   client_id: fixture-credhub
   client_secret: fixture-password-not-real
   director_name: fixture-director

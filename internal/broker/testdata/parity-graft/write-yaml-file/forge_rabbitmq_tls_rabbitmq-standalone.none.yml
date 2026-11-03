@@ -23,8 +23,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -34,8 +36,10 @@ instance_groups:
         network: rabbitmq-service
         plan: standalone
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           crt: ((rabbitmq_standalone_crt.certificate))
           dual-mode: false
           enabled: true
@@ -76,16 +80,27 @@ meta:
   plugins: []
   rabbitmq:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      crt: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      crt: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
       enabled: true
-      key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-tls

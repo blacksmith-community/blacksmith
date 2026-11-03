@@ -36,8 +36,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((valkey_cluster_crt.certificate))
           ca_key: ((valkey_cluster_crt.private_key))
           dual-mode: true

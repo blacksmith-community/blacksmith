@@ -168,6 +168,12 @@ stays the word yes, and !!timestamp word stays the word rather than becoming
 the zero time. A time.Time field still reads a date written under
 !!timestamp.
 
+A scalar tagged !!float over integer text reads as the float of that integer,
+where spruce refuses it with "cannot decode a !!int scalar as !!float". So
+a: !!float 3 is 3.0, and !!float -7, !!float 0x1F, and !!float "3" are -7.0,
+31.0, and 3.0. This is a deliberate difference. !!int over float text, as in
+a: !!int 3.0, is still a syntax error, as it is in spruce.
+
 The decoder refuses a few tagged documents that spruce reads. A !!str or
 other scalar tag on a flow or block collection is a syntax error, where
 spruce ignores the tag. That holds with an anchor between the tag and the

@@ -24,12 +24,19 @@ import (
 //
 // A string is written in the style spruce picks for it, so one that would
 // read back as another type is quoted and a multi-line one is a literal
-// block. A string that a YAML 1.1 reader resolves as a timestamp, such as
-// 2026-01-02, is double-quoted. A key that spruce would write as a
-// "? key" is double-quoted on one line instead, because goccy's parser
-// misreads some of those, and so are strings that goccy's parser misreads
-// in other places. A key whose double-quoted form would be longer than
-// 1024 bytes still takes the "? key" form. A float that holds a whole
+// block, even when it starts with an indicator such as "-", as a PEM
+// certificate does. A multi-line string that a block cannot hold, such as
+// one with a space at the end of a line or a U+2028 at the start of one,
+// is double-quoted instead. A single-line string that starts with "-",
+// "?", or ":" and a character other than a space, such as "-a", is
+// double-quoted, and one with a space or nothing after the indicator, such
+// as "- a" or "-", is single-quoted. A string that a YAML 1.1 reader
+// resolves as a timestamp, such as 2026-01-02, is double-quoted. A key
+// that spruce would write as a "? key" is double-quoted on one line
+// instead, because goccy's parser misreads some of those, and so are
+// strings that goccy's parser misreads in other places. A key whose
+// double-quoted form would be longer than 1024 bytes still takes the
+// "? key" form. A float that holds a whole
 // number is plain integer digits when it fits in an int64, so 3.0 is 3
 // and 1e6 is 1000000. A whole float outside that range, and any other
 // float, has a "." (1e20 is 1.0e+20) so that a YAML 1.1 reader reads it

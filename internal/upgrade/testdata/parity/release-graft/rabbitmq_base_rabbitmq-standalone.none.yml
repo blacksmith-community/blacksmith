@@ -23,8 +23,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -71,8 +73,10 @@ meta:
   persistent: false
   plugins: []
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-base

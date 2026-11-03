@@ -35,8 +35,10 @@ instance_groups:
           key: "2026-01-02"
         sa:
           certificate: ":leading-colon"
-          key: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          key: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
     release: k8s
   - name: lb
     release: k8s
@@ -92,8 +94,10 @@ meta:
       key: "2026-01-02"
     sa:
       certificate: ":leading-colon"
-      key: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n"
+      key: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
 name: kubernetes-cluster-parity-kubernetes-base
 releases:
 - name: k8s

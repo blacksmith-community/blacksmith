@@ -329,6 +329,17 @@ func resolveScalar(tag, in string) (any, *TagValueError) {
 		return string(data), nil
 	}
 	rtag, value := resolvePlain(in)
+	if tag == yamlnode.TagFloat && rtag == yamlnode.TagInt {
+		// graft reads integer text under !!float as that integer's
+		// float. spruce refuses it, and this is a deliberate
+		// divergence.
+		switch v := value.(type) {
+		case int64:
+			return float64(v), nil
+		case uint64:
+			return float64(v), nil
+		}
+	}
 	if rtag != tag {
 		return nil, &TagValueError{Tag: tag, Resolved: rtag}
 	}

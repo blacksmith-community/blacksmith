@@ -121,8 +121,8 @@ ERROR: failed to parse deployment manifest: yaml: line 2: mapping key already de
 fallback-deployment / blacksmith
 ERROR: manifest missing instance_groups
 === odd_float-tag-over-int ===
-fallback-deployment / blacksmith
-ERROR: failed to parse deployment manifest: yaml: line 3: cannot decode a !!int scalar as !!float
+fixture / blacksmith
+ERROR: manifest missing instance_groups
 === odd_instance-group-networks ===
 fixture / first
 === odd_instance-groups-not-a-list ===

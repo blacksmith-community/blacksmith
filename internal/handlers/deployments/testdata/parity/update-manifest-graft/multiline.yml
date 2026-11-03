@@ -4,7 +4,10 @@ properties:
     a
 
     b
-  cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER\n-----END CERTIFICATE-----\n"
+  cert: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER
+    -----END CERTIFICATE-----
   cr: "a\r\nb"
   trailing: |
     line1

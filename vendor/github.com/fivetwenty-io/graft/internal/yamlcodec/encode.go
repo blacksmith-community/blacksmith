@@ -421,7 +421,7 @@ func (e *scalarEncoder) prepareValue(s string, pos nodePosition) (interface{}, b
 		// goccy keeps these; spruce cannot read such a string anyway.
 		return s, true
 	}
-	style := timestampStyle(s, e.quoteTimestamps)
+	style := timestampStyle(s, e.quoteTimestamps, false)
 	if renderValueScalarAs(s, style, pos.scalarColumn, pos.scalarIndent, pos.indention) == s && goccyWritesVerbatim(s) {
 		return s, true
 	}
@@ -454,7 +454,7 @@ func (e *scalarEncoder) prepareKey(k string, m int, value interface{}) (interfac
 	if !utf8.ValidString(k) {
 		return k, mapValuePosition(m, len(k)), true
 	}
-	style := timestampStyle(k, e.quoteTimestamps)
+	style := timestampStyle(k, e.quoteTimestamps, true)
 	text, simple := renderSimpleKeyAs(k, style, m)
 	if !simple && e.quoteTimestamps && fitsQuotedKey(k) {
 		// goccy's parser misreads some explicit "? key" forms, such as a

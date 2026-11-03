@@ -43,8 +43,10 @@ instance_groups:
         slowlog-log-slower-than: true
         slowlog-max-len: 3.5
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false

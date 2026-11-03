@@ -373,12 +373,13 @@ func TestWalkManifestCountsOnlyPlainIntegerInstances(t *testing.T) {
 		want      int
 		counted   bool
 	}{
-		"plain":   {"4", 4, true},
-		"quoted":  {`"4"`, 0, false},
-		"single":  {`'4'`, 0, false},
-		"tagged":  {"!!str 4", 0, false},
-		"float":   {"4.0", 0, false},
-		"aliased": {"*n", 4, true},
+		"plain":        {"4", 4, true},
+		"quoted":       {`"4"`, 0, false},
+		"single":       {`'4'`, 0, false},
+		"tagged":       {"!!str 4", 0, false},
+		"float":        {"4.0", 0, false},
+		"tagged float": {"!!float 4", 0, false},
+		"aliased":      {"*n", 4, true},
 	}
 
 	for name, tc := range cases {

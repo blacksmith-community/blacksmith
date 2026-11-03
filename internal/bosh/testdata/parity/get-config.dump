@@ -47,7 +47,8 @@ ERROR: failed to parse config YAML: yaml: line 2: mapping key already defined at
 === empty ===
 $	map[string]interface {}	null
 === float-tag-over-int ===
-ERROR: failed to parse config YAML: yaml: line 3: cannot decode a !!int scalar as !!float
+$.name	string	"fixture"
+$.properties.floaty	float64	3
 === instance-group-networks ===
 $.instance_groups[0].name	string	"first"
 $.instance_groups[0].networks[0].name	string	"services"

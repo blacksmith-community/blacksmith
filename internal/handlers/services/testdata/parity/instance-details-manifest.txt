@@ -174,7 +174,7 @@ sources
 {"instance_id":"inst-1"}
 === odd_float-tag-over-int ===
 sources inst-1/manifest
-{"instance_id":"inst-1","vault_sources":["inst-1/manifest"]}
+{"instance_id":"inst-1","manifest":{"name":"fixture","properties":{"floaty":3}},"vault_sources":["inst-1/manifest"]}
 === odd_instance-group-networks ===
 sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"instance_groups":[{"name":"first","networks":[{"name":"services"},{"name":"second-network"}]},{"name":"dotted","networks":[{"name":"my.net.work"}]},{"name":"numeric","networks":[{"name":1.1}]},{"name":"boolean","networks":[{"name":true}]},{"name":"null-name","networks":[{"name":null}]},{"name":"no-networks"},{"name":"empty-networks","networks":[]},{"name":123,"networks":[{"name":"numeric-group"}]}],"name":"fixture"},"vault_sources":["inst-1/manifest"]}

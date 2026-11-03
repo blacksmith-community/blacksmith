@@ -36,8 +36,10 @@ instance_groups:
           key: "2026-01-02"
         sa:
           certificate: ":leading-colon"
-          key: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          key: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
     release: k8s
   - name: lb
     release: k8s
@@ -93,8 +95,10 @@ meta:
       key: "2026-01-02"
     sa:
       certificate: ":leading-colon"
-      key: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n"
+      key: |
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
 name: kubernetes-cluster-parity-kubernetes-base
 releases:
 - name: k8s
@@ -343,8 +347,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -391,8 +397,10 @@ meta:
   persistent: false
   plugins: []
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-base
@@ -473,8 +481,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -507,49 +517,97 @@ instance_groups:
     properties:
       cache:
         tls:
-          ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n\n"
-          cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n\n"
+          ca_cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
+          cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
           cn: binding-cache
-          key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-            PRIVATE KEY-----\n\n"
-      drain_ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
+          key: |+
+            -----BEGIN PRIVATE KEY-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+            -----END PRIVATE KEY-----
+
+      drain_ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
       metrics:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
         server_name: syslog_agent_metrics
       port: 3460
       tls:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
     release: loggregator-agent
   - name: loggr-forwarder-agent
     properties:
       metrics:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
         server_name: forwarder_agent_metrics
       tls:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
     release: loggregator-agent
   - custom_provider_definitions:
     - name: rabbitmq-emitter
@@ -564,18 +622,29 @@ instance_groups:
           username: fixture-admin
         loggregator:
           tls:
-            ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-              CERTIFICATE-----\n\n"
-            cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-              CERTIFICATE-----\n\n"
-            key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-              PRIVATE KEY-----\n\n"
+            ca_cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            key: |+
+              -----BEGIN PRIVATE KEY-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+              -----END PRIVATE KEY-----
+
         rmq_management:
           endpoint: https://localhost:15671/api
           password: ":leading-colon"
           skip_ssl_validation: true
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
     provides:
       rabbitmq-emitter:
         as: rabbitmq-emitter
@@ -636,8 +705,10 @@ meta:
   persistent: false
   plugins: []
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-dashboard-registration
@@ -715,8 +786,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -726,8 +799,10 @@ instance_groups:
         network: rabbitmq-service
         plan: standalone
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           crt: ((rabbitmq_standalone_crt.certificate))
           dual-mode: true
           enabled: true
@@ -768,17 +843,28 @@ meta:
   plugins: []
   rabbitmq:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      crt: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      crt: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
       dual-mode: true
       enabled: true
-      key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-dual-mode
@@ -833,8 +919,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -869,49 +957,97 @@ instance_groups:
     properties:
       cache:
         tls:
-          ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n\n"
-          cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n\n"
+          ca_cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
+          cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
           cn: binding-cache
-          key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-            PRIVATE KEY-----\n\n"
-      drain_ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
+          key: |+
+            -----BEGIN PRIVATE KEY-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+            -----END PRIVATE KEY-----
+
+      drain_ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
       metrics:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
         server_name: syslog_agent_metrics
       port: 3460
       tls:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
     release: loggregator-agent
   - name: loggr-forwarder-agent
     properties:
       metrics:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
         server_name: forwarder_agent_metrics
       tls:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
     release: loggregator-agent
   - custom_provider_definitions:
     - name: rabbitmq-emitter
@@ -926,18 +1062,29 @@ instance_groups:
           username: fixture-admin
         loggregator:
           tls:
-            ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-              CERTIFICATE-----\n\n"
-            cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-              CERTIFICATE-----\n\n"
-            key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-              PRIVATE KEY-----\n\n"
+            ca_cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            key: |+
+              -----BEGIN PRIVATE KEY-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+              -----END PRIVATE KEY-----
+
         rmq_management:
           endpoint: https://localhost:15671/api
           password: ":leading-colon"
           skip_ssl_validation: true
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
     provides:
       rabbitmq-emitter:
         as: rabbitmq-emitter
@@ -976,8 +1123,10 @@ meta:
   persistent: false
   plugins: []
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-rabbitmq-autoscale
@@ -1048,8 +1197,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -1059,8 +1210,10 @@ instance_groups:
         network: rabbitmq-service
         plan: standalone
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           crt: ((rabbitmq_standalone_crt.certificate))
           dual-mode: false
           enabled: true
@@ -1101,16 +1254,27 @@ meta:
   plugins: []
   rabbitmq:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      crt: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      crt: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
       enabled: true
-      key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-tls
@@ -1176,8 +1340,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -1274,8 +1440,10 @@ instance_groups:
         slowlog-log-slower-than: "2026-01-02"
         slowlog-max-len: "0755"
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -1376,8 +1544,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -1487,8 +1657,10 @@ instance_groups:
         slowlog-log-slower-than: true
         slowlog-max-len: 3.5
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -1598,8 +1770,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -1696,8 +1870,10 @@ instance_groups:
         slowlog-log-slower-than: "2026-01-02"
         slowlog-max-len: "0755"
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -1798,8 +1974,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -1909,8 +2087,10 @@ instance_groups:
         slowlog-log-slower-than: true
         slowlog-max-len: 3.5
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -2310,8 +2490,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -2344,12 +2526,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -2418,8 +2609,10 @@ instance_groups:
         slowlog-log-slower-than: "2026-01-02"
         slowlog-max-len: "0755"
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -2456,12 +2649,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -2530,8 +2732,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -2568,12 +2772,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -2651,8 +2864,10 @@ instance_groups:
         slowlog-log-slower-than: true
         slowlog-max-len: 3.5
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -2698,12 +2913,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -2772,8 +2996,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -2806,12 +3032,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -2880,8 +3115,10 @@ instance_groups:
         slowlog-log-slower-than: "2026-01-02"
         slowlog-max-len: "0755"
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -2918,12 +3155,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -2992,8 +3238,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -3030,12 +3278,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -3113,8 +3370,10 @@ instance_groups:
         slowlog-log-slower-than: true
         slowlog-max-len: 3.5
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: true
@@ -3160,12 +3419,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -3246,12 +3514,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -3325,12 +3602,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -3404,12 +3690,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -3501,12 +3796,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       dual-mode: true
       enabled: true
   size: default
@@ -3564,8 +3868,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -3598,12 +3904,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-6-parity-redis-tls
@@ -3671,8 +3986,10 @@ instance_groups:
         slowlog-log-slower-than: "2026-01-02"
         slowlog-max-len: "0755"
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -3709,12 +4026,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-6-parity-redis-tls
@@ -3782,8 +4108,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -3820,12 +4148,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-6-parity-redis-tls
@@ -3902,8 +4239,10 @@ instance_groups:
         slowlog-log-slower-than: true
         slowlog-max-len: 3.5
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -3949,12 +4288,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-6-parity-redis-tls
@@ -4022,8 +4370,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -4056,12 +4406,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-7-parity-redis-tls
@@ -4129,8 +4488,10 @@ instance_groups:
         slowlog-log-slower-than: "2026-01-02"
         slowlog-max-len: "0755"
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -4167,12 +4528,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-7-parity-redis-tls
@@ -4240,8 +4610,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -4278,12 +4650,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-7-parity-redis-tls
@@ -4360,8 +4741,10 @@ instance_groups:
         slowlog-log-slower-than: true
         slowlog-max-len: 3.5
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((redis_standalone_crt.certificate))
           ca_key: ((redis_standalone_crt.private_key))
           dual-mode: false
@@ -4407,12 +4790,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-7-parity-redis-tls
@@ -4492,12 +4884,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-parity-redis-tls
@@ -4570,12 +4971,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-parity-redis-tls
@@ -4648,12 +5058,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-parity-redis-tls
@@ -4744,12 +5163,21 @@ meta:
   persistent: false
   redis:
     tls:
-      ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
-      ca_key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-        PRIVATE KEY-----\n\n"
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
       enabled: true
   size: default
 name: redis-standalone-parity-redis-tls
@@ -4808,8 +5236,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((valkey_cluster_crt.certificate))
           ca_key: ((valkey_cluster_crt.private_key))
           dual-mode: false
@@ -4913,8 +5343,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((valkey_standalone_crt.certificate))
           ca_key: ((valkey_standalone_crt.private_key))
           dual-mode: false
@@ -5015,8 +5447,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((valkey_cluster_crt.certificate))
           ca_key: ((valkey_cluster_crt.private_key))
           dual-mode: true
@@ -5142,8 +5576,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((valkey_standalone_crt.certificate))
           ca_key: ((valkey_standalone_crt.private_key))
           dual-mode: true
@@ -5266,8 +5702,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((valkey_cluster_crt.certificate))
           ca_key: ((valkey_cluster_crt.private_key))
           dual-mode: false
@@ -5392,8 +5830,10 @@ instance_groups:
         slowlog-log-slower-than: 10000
         slowlog-max-len: 128
         tls:
-          ca: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
           ca_cert: ((valkey_standalone_crt.certificate))
           ca_key: ((valkey_standalone_crt.private_key))
           dual-mode: false
@@ -5544,7 +5984,9 @@ ERROR: failed to unmarshal YAML data: line 2, column 1: mapping key already defi
 === odd_empty ===
 {}
 === odd_float-tag-over-int ===
-ERROR: failed to unmarshal YAML data: line 3, column 11: cannot decode a !!int scalar as !!float
+name: fixture
+properties:
+  floaty: 3
 === odd_instance-group-networks ===
 instance_groups:
 - name: first

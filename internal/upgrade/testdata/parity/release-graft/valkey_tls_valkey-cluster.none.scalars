@@ -62,7 +62,7 @@ $["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["slowlog-max-len"]#ke
 $["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["slowlog-max-len"]	plain	!!int	int	"128"
 $["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["tls"]#key	plain	!!str	string	"tls"
 $["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["tls"]["ca"]#key	plain	!!str	string	"ca"
-$["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["tls"]["ca"]	double	!!str	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
+$["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["tls"]["ca"]	literal	!!str	string	"-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END CERTIFICATE-----\n"
 $["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["tls"]["ca_cert"]#key	plain	!!str	string	"ca_cert"
 $["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["tls"]["ca_cert"]	plain	!!str	string	"((valkey_cluster_crt.certificate))"
 $["instance_groups"][0]["jobs"][1]["properties"]["valkey"]["tls"]["ca_key"]#key	plain	!!str	string	"ca_key"

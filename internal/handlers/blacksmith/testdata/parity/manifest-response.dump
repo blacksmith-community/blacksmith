@@ -3883,7 +3883,8 @@ $.text	string	"name: first\nname: second\nproperties:\n  a: 1\n  a: 2\n"
 $.parsed	map[string]interface {}	{}
 $.text	string	""
 === odd_float-tag-over-int ===
-$.parsed	map[string]interface {}	{}
+$.parsed.name	string	"fixture"
+$.parsed.properties.floaty	float64	3
 $.text	string	"name: fixture\nproperties:\n  floaty: !!float 3\n"
 === odd_instance-group-networks ===
 $.parsed.instance_groups[0].name	string	"first"

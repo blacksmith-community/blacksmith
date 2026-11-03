@@ -1,0 +1,5 @@
+$["name"]#key	plain	!!str	string	"name"
+$["name"]	plain	!!str	string	"fixture"
+$["properties"]#key	plain	!!str	string	"properties"
+$["properties"]["floaty"]#key	plain	!!str	string	"floaty"
+$["properties"]["floaty"]	plain	!!int	int	"3"

@@ -70,8 +70,10 @@ bosh:
   address: https://10.0.0.6:25555
   username: admin
   password: admin
-  cacert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  cacert: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   allow_http: false
   stemcells: []
   releases: []

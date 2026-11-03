@@ -23,8 +23,10 @@ instance_groups:
       rabbitmq:
         admin:
           pass: ":leading-colon"
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
         app:
           pass: "yes"
           user: "y"
@@ -59,49 +61,97 @@ instance_groups:
     properties:
       cache:
         tls:
-          ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n\n"
-          cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n\n"
+          ca_cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
+          cert: |+
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+
           cn: binding-cache
-          key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-            PRIVATE KEY-----\n\n"
-      drain_ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-        CERTIFICATE-----\n\n"
+          key: |+
+            -----BEGIN PRIVATE KEY-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+            -----END PRIVATE KEY-----
+
+      drain_ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
       metrics:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
         server_name: syslog_agent_metrics
       port: 3460
       tls:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
     release: loggregator-agent
   - name: loggr-forwarder-agent
     properties:
       metrics:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
         server_name: forwarder_agent_metrics
       tls:
-        ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-          CERTIFICATE-----\n\n"
-        key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-          PRIVATE KEY-----\n\n"
+        ca_cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        cert: |+
+          -----BEGIN CERTIFICATE-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+          -----END CERTIFICATE-----
+
+        key: |+
+          -----BEGIN PRIVATE KEY-----
+          FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+          -----END PRIVATE KEY-----
+
     release: loggregator-agent
   - custom_provider_definitions:
     - name: rabbitmq-emitter
@@ -116,18 +166,29 @@ instance_groups:
           username: fixture-admin
         loggregator:
           tls:
-            ca_cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-              CERTIFICATE-----\n\n"
-            cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-              CERTIFICATE-----\n\n"
-            key: "-----BEGIN PRIVATE KEY-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-KEY\n-----END
-              PRIVATE KEY-----\n\n"
+            ca_cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            cert: |+
+              -----BEGIN CERTIFICATE-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+              -----END CERTIFICATE-----
+
+            key: |+
+              -----BEGIN PRIVATE KEY-----
+              FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+              -----END PRIVATE KEY-----
+
         rmq_management:
           endpoint: https://localhost:15671/api
           password: ":leading-colon"
           skip_ssl_validation: true
-          user: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-            CERTIFICATE-----\n"
+          user: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
     provides:
       rabbitmq-emitter:
         as: rabbitmq-emitter
@@ -166,8 +227,10 @@ meta:
   persistent: false
   plugins: []
   size: default
-  username: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE\n-----END
-    CERTIFICATE-----\n"
+  username: |
+    -----BEGIN CERTIFICATE-----
+    FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+    -----END CERTIFICATE-----
   username-app: "y"
   username-monitoring: "2026-01-02"
 name: rabbitmq-standalone-parity-rabbitmq-rabbitmq-autoscale

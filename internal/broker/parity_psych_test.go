@@ -13,9 +13,11 @@ import (
 // counts pin how many of each there are, so a new difference of an accepted
 // kind still fails the test.
 //
-// The two documents graft refuses (duplicate keys and an explicit !!float tag
-// over integer text) have no file in the graft recording, so the spruce-era
-// files for them are not in the comparison. They stay in write-yaml-file.txt.
+// The one document graft refuses (duplicate keys) has no file in the graft
+// recording, so the spruce-era file for it is not in the comparison. It stays
+// in write-yaml-file.txt. The explicit !!float tag over integer text now reads
+// as a float, so the graft recording has a file for it, and the spruce-era
+// recording holds it only in write-yaml-file.txt, so the comparison skips it.
 func TestYamlHelpersParityPsych(t *testing.T) {
 	t.Parallel()
 
@@ -41,6 +43,7 @@ func TestYamlHelpersParityPsych(t *testing.T) {
 		"--allow-diff", versions, "$.releases[6].version",
 		"--allow-diff", versions, "$.releases[1].sha1",
 		"--allow-diff", versions, "$.releases[0].sha1",
+		"--skip-missing-want", "write-yaml-file/odd_float-tag-over-int.yml=the spruce-era recording holds it only in write-yaml-file.txt",
 		filepath.Join("testdata", "parity"), filepath.Join("testdata", "parity-graft"),
 	}
 
@@ -51,7 +54,7 @@ func TestYamlHelpersParityPsych(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 
-	want := "psych-compare: 0 difference(s), 23 exempt (symbol-quoting 15, allow-diff 6, y-strings 2)"
+	want := "psych-compare: 0 difference(s), 24 exempt (symbol-quoting 15, allow-diff 6, y-strings 2, skip-missing-want 1)"
 	if last := lines[len(lines)-1]; last != want {
 		t.Errorf("last line %q, want %q", last, want)
 	}
