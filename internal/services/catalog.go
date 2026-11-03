@@ -12,8 +12,9 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
-	"go.yaml.in/yaml/v2"
+	yamlv2 "go.yaml.in/yaml/v2"
 )
 
 // Constants for services operations.
@@ -215,7 +216,9 @@ func readAndParsePlanFile(path string, plan *Plan, loggerInstance logger.Logger)
 		return fmt.Errorf("failed to read plan file: %w", err)
 	}
 
-	err = yaml.Unmarshal(fileData, plan)
+	warnDuplicateKeys(planFile, fileData, loggerInstance)
+
+	err = yamlv2.Unmarshal(fileData, plan)
 	if err != nil {
 		loggerInstance.Error("Failed to unmarshal plan YAML from %s: %s", planFile, err)
 		loggerInstance.Debug("Raw YAML content (first 500 chars): %s", string(fileData[:minInt(len(fileData), DebugYAMLContentLimit)]))
@@ -224,6 +227,28 @@ func readAndParsePlanFile(path string, plan *Plan, loggerInstance logger.Logger)
 	}
 
 	return nil
+}
+
+// warnDuplicateKeys logs each key that plan.yml repeats. yaml.v2 decodes
+// the file and keeps the last value of a repeated key, and graft's reader
+// only finds the repeats, so a file it cannot read is left to yaml.v2 to
+// refuse.
+func warnDuplicateKeys(planFile string, data []byte, loggerInstance logger.Logger) {
+	warn := duplicateKeyWarner(loggerInstance)
+
+	var scanned interface{}
+
+	_ = yaml.UnmarshalWith(data, &scanned, yaml.DecodeOptions{
+		OnDuplicateKey: func(key yaml.DuplicateKey) { warn(planFile, key.Path) },
+	})
+}
+
+// duplicateKeyWarner returns the function that logs a key a plan template
+// repeats. It names the file and the key and never the value.
+func duplicateKeyWarner(loggerInstance logger.Logger) utils.DuplicateKeyFunc {
+	return func(file, key string) {
+		loggerInstance.Warn("Plan template %s repeats the key %s, and its last value wins", file, key)
+	}
 }
 
 func normalizePlanIDAndName(plan *Plan, loggerInstance logger.Logger) {
@@ -245,7 +270,7 @@ func processPlanManifest(path string, plan *Plan, loggerInstance logger.Logger) 
 	paramsFile := path + "/params.yml"
 	loggerInstance.Debug("Merging manifest files: %s and %s", manifestFile, paramsFile)
 
-	manifest, err := utils.MergeFiles(manifestFile, paramsFile)
+	manifest, err := utils.MergeFiles(duplicateKeyWarner(loggerInstance), manifestFile, paramsFile)
 	if err != nil {
 		loggerInstance.Error("Failed to merge manifest files for plan %s: %s", plan.Name, err)
 
@@ -294,7 +319,7 @@ func processExistingCredentialsFile(credFileData []byte, credsFile string, plan 
 	// and the result goes back to string keys once the decode is done.
 	credentials := utils.InterfaceMap(plan.Credentials)
 
-	err := yaml.Unmarshal(credFileData, &credentials)
+	err := yamlv2.Unmarshal(credFileData, &credentials)
 	if err != nil {
 		loggerInstance.Error("Failed to unmarshal credentials YAML for plan %s: %s", plan.Name, err)
 
@@ -370,7 +395,7 @@ func ReadService(path string) (Service, error) {
 		return service, fmt.Errorf("%s: %w", file, err)
 	}
 
-	err = yaml.Unmarshal(serviceData, &service)
+	err = yamlv2.Unmarshal(serviceData, &service)
 	if err != nil {
 		log.Error("Failed to unmarshal service YAML from %s: %s", file, err)
 		log.Debug("Raw YAML content (first 500 chars): %s", string(serviceData[:minInt(len(serviceData), DebugYAMLContentLimit)]))

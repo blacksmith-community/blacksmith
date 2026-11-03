@@ -34,9 +34,12 @@ var mergeOverlays = []parity.Document{
 }
 
 // TestMergeFilesParity records what MergeFiles reads from one file and
-// what it makes of layers merged over it.
+// what it makes of layers merged over it. It lets a file repeat a key, as
+// the catalog does for plan templates.
 func TestMergeFilesParity(t *testing.T) {
 	t.Parallel()
+
+	tolerate := func(string, string) {}
 
 	dir := t.TempDir()
 
@@ -61,7 +64,7 @@ func TestMergeFilesParity(t *testing.T) {
 
 	for index, doc := range parity.Corpus(t) {
 		path := write("read-"+strconv.Itoa(index)+".yml", doc.Body)
-		merged, err := utils.MergeFiles(path)
+		merged, err := utils.MergeFiles(tolerate, path)
 		read.WriteString(parity.Section(doc.Name, describe(merged, err)))
 	}
 
@@ -73,18 +76,18 @@ func TestMergeFilesParity(t *testing.T) {
 
 	for index, overlay := range mergeOverlays {
 		path := write("overlay-"+strconv.Itoa(index)+".yml", overlay.Body)
-		merged, err := utils.MergeFiles(base, path)
+		merged, err := utils.MergeFiles(tolerate, base, path)
 		layered.WriteString(parity.Section(overlay.Name, describe(merged, err)))
 	}
 
 	absent := filepath.Join(dir, "absent.yml")
-	merged, err := utils.MergeFiles(base, absent)
+	merged, err := utils.MergeFiles(tolerate, base, absent)
 	layered.WriteString(parity.Section("absent-optional", describe(merged, err)))
 
-	merged, err = utils.MergeFiles(absent)
+	merged, err = utils.MergeFiles(tolerate, absent)
 	layered.WriteString(parity.Section("absent-required", describe(merged, err)))
 
-	stacked, err := utils.MergeFiles(base,
+	stacked, err := utils.MergeFiles(tolerate, base,
 		write("s1.yml", mergeOverlays[0].Body),
 		write("s2.yml", mergeOverlays[2].Body),
 		write("s3.yml", mergeOverlays[8].Body))

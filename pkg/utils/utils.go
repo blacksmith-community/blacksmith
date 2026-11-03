@@ -137,19 +137,24 @@ func ReadFile(path string) ([]byte, bool, error) {
 	return fileBytes, true, err
 }
 
+// DuplicateKeyFunc receives the path of a YAML file and the path of a key
+// that the file repeats. It never receives the key's value.
+type DuplicateKeyFunc func(file, key string)
+
 // MergeFiles reads the required YAML file and each optional file that
 // exists, and merges them in that order with graft's merger. It only
 // merges: operators stay as text for the render to evaluate, and a
-// (( prune )) marker is not applied. A key a file repeats keeps its last
-// value, as yaml.v2 kept it.
-func MergeFiles(required string, optional ...string) (map[string]interface{}, error) {
+// (( prune )) marker is not applied. When onDuplicate is not nil, a key
+// that a file repeats keeps its last value and onDuplicate hears of it.
+// When onDuplicate is nil, a repeated key fails the merge.
+func MergeFiles(onDuplicate DuplicateKeyFunc, required string, optional ...string) (map[string]interface{}, error) {
 	// Required Manifest
 	requiredBytes, err := SafeReadFile(required)
 	if err != nil {
 		return nil, err
 	}
 
-	manifestData, err := decodeMergeFile(requiredBytes)
+	manifestData, err := decodeMergeFile(required, requiredBytes, onDuplicate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
 	}
@@ -167,7 +172,7 @@ func MergeFiles(required string, optional ...string) (map[string]interface{}, er
 			return nil, err
 		}
 
-		layer, err := decodeMergeFile(optionalBytes)
+		layer, err := decodeMergeFile(path, optionalBytes, onDuplicate)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal optional YAML file %s: %w", path, err)
 		}
@@ -190,10 +195,15 @@ func MergeFiles(required string, optional ...string) (map[string]interface{}, er
 // decodeMergeFile decodes one file of a merge. An empty file decodes to an
 // empty map and a file that holds only a null to a nil one, as yaml.v2
 // decoded them.
-func decodeMergeFile(data []byte) (map[string]interface{}, error) {
+func decodeMergeFile(path string, data []byte, onDuplicate DuplicateKeyFunc) (map[string]interface{}, error) {
 	decoded := make(map[string]interface{})
 
-	err := yaml.UnmarshalWith(data, &decoded, yaml.DecodeOptions{OnDuplicateKey: func(yaml.DuplicateKey) {}})
+	var options yaml.DecodeOptions
+	if onDuplicate != nil {
+		options.OnDuplicateKey = func(key yaml.DuplicateKey) { onDuplicate(path, key.Path) }
+	}
+
+	err := yaml.UnmarshalWith(data, &decoded, options)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // the caller says which file failed
 	}
