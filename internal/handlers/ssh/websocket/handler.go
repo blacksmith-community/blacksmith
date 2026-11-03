@@ -277,19 +277,14 @@ func (h *Handler) extractBlacksmithManifestMetadata(manifestYAML string, fallbac
 		return deploymentName, deploymentNameBlacksmith, errManifestMissingInstanceGroups
 	}
 
-	firstGroup := instanceGroups[0]
-
-	var nameValue string
-	switch group := firstGroup.(type) {
-	case map[string]interface{}:
-		if value, ok := group["name"].(string); ok {
-			nameValue = value
-		}
-	default:
+	group, ok := instanceGroups[0].(map[string]interface{})
+	if !ok {
 		logger.Error("First instance group has invalid format")
 
 		return deploymentName, deploymentNameBlacksmith, errFirstInstanceGroupInvalidFormat
 	}
+
+	nameValue, _ := group["name"].(string)
 
 	if strings.TrimSpace(nameValue) == "" {
 		logger.Error("First instance group missing name field")
@@ -419,15 +414,15 @@ func (h *Handler) extractFirstInstanceGroupName(manifest map[string]interface{},
 }
 
 func (h *Handler) extractGroupName(firstGroup interface{}, instanceID string, logger interfaces.Logger) string {
-	switch group := firstGroup.(type) {
-	case map[string]interface{}:
-		if value, ok := group["name"].(string); ok {
-			return value
-		}
-	default:
+	group, ok := firstGroup.(map[string]interface{})
+	if !ok {
 		logger.Error("First instance group has invalid format for instance %s", instanceID)
 
 		return ""
+	}
+
+	if value, ok := group["name"].(string); ok {
+		return value
 	}
 
 	logger.Error("First instance group missing name field for instance %s", instanceID)

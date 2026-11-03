@@ -393,15 +393,12 @@ func (h *Handler) extractInstanceGroupFromManifest(ctx context.Context, instance
 		return ""
 	}
 
-	firstGroup := instanceGroups[0]
-
-	var nameValue string
-	switch group := firstGroup.(type) {
-	case map[string]interface{}:
-		if value, ok := group["name"].(string); ok {
-			nameValue = value
-		}
+	group, ok := instanceGroups[0].(map[string]interface{})
+	if !ok {
+		return ""
 	}
+
+	nameValue, _ := group["name"].(string)
 
 	return strings.TrimSpace(nameValue)
 }

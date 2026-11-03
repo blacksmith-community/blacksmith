@@ -243,13 +243,13 @@ func (s *BoshScanner) extractReleases(detail *DeploymentDetail, manifestData map
 
 // parseReleaseInfo parses individual release information.
 func (s *BoshScanner) parseReleaseInfo(rel interface{}) string {
-	var name, version string
-
-	switch relMap := rel.(type) {
-	case map[string]interface{}:
-		name = s.getStringValue(relMap, "name")
-		version = s.getVersionValue(relMap, "version")
+	relMap, ok := rel.(map[string]interface{})
+	if !ok {
+		return ""
 	}
+
+	name := s.getStringValue(relMap, "name")
+	version := s.getVersionValue(relMap, "version")
 
 	if name != "" {
 		return fmt.Sprintf("%s/%s", name, version)
@@ -275,14 +275,14 @@ func (s *BoshScanner) extractStemcells(detail *DeploymentDetail, manifestData ma
 
 // parseStemcellInfo parses individual stemcell information.
 func (s *BoshScanner) parseStemcellInfo(stem interface{}) string {
-	var alias, operatingSystem, version string
-
-	switch stemMap := stem.(type) {
-	case map[string]interface{}:
-		alias = s.getStringValue(stemMap, "alias")
-		operatingSystem = s.getStringValue(stemMap, "os")
-		version = s.getVersionValue(stemMap, "version")
+	stemMap, ok := stem.(map[string]interface{})
+	if !ok {
+		return ""
 	}
+
+	alias := s.getStringValue(stemMap, "alias")
+	operatingSystem := s.getStringValue(stemMap, "os")
+	version := s.getVersionValue(stemMap, "version")
 
 	return s.formatStemcellString(alias, operatingSystem, version)
 }
