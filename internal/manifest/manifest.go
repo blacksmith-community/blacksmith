@@ -274,7 +274,12 @@ func redactEnvValues(text string, env []string, names ...string) string {
 // spruce, evaluates the result, and returns it as YAML. The manifests are
 // in the interface-keyed form spruce merges. Callers convert their own maps
 // with utils.InterfaceMap, or with utils.Wrap for request parameters.
-func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (string, error) {
+//
+// Templates read the instance's Vault path through $CREDENTIALS, which
+// spruce resolves from the process environment. GenManifest sets it to
+// secret/<instanceID> under the lock, so a concurrent render for another
+// instance cannot change it mid-render, and leaves it set afterwards.
+func GenManifest(p services.Plan, instanceID string, manifests ...map[interface{}]interface{}) (string, error) {
 	log := logger.Get().Named("manifest")
 	log.Info("Generating manifest for plan %s", p.ID)
 	log.Debug("Starting spruce merge with %d additional manifests", len(manifests))
@@ -287,6 +292,13 @@ func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (str
 	// that is not thread-safe (StaticIPOperator.Setup, Evaluator globals).
 	spruceMu.Lock()
 	defer spruceMu.Unlock()
+
+	err := os.Setenv("CREDENTIALS", "secret/"+instanceID)
+	if err != nil {
+		log.Error("Failed to set CREDENTIALS environment variable: %s", err)
+
+		return "", fmt.Errorf("failed to set CREDENTIALS env var: %w", err)
+	}
 
 	merged, err := spruce.Merge(base)
 	if err != nil {
@@ -641,11 +653,6 @@ func GetCreds(ctx context.Context, instanceID string, plan services.Plan, direct
 		return nil, err
 	}
 
-	err = setCredentialsEnv(instanceID, loggerInstance)
-	if err != nil {
-		return nil, err
-	}
-
 	networkByJob := extractNetworksByJob(deploymentManifest)
 
 	jobs, dnsname := buildJobsFromVMs(vms, plan, deployment, networkByJob, loggerInstance)
@@ -674,17 +681,6 @@ func getDeploymentVMs(ctx context.Context, director bosh.Director, deployment st
 	}
 
 	return vms, nil
-}
-
-func setCredentialsEnv(instanceID string, loggerInstance logger.Logger) error {
-	err := os.Setenv("CREDENTIALS", "secret/"+instanceID)
-	if err != nil {
-		loggerInstance.Error("failed to set CREDENTIALS environment variable: %s", err)
-
-		return fmt.Errorf("failed to set CREDENTIALS env var: %w", err)
-	}
-
-	return nil
 }
 
 // extractNetworksByJob parses a BOSH deployment manifest and returns a map of instance group name -> network name.
@@ -840,7 +836,7 @@ func generateCredentialsManifest(plan services.Plan, jobsIfc map[interface{}]int
 		"hostname":    dnsname,
 	}
 
-	manifest, err := GenManifest(plan, jobsIfc, utils.InterfaceMap(plan.Credentials), defaults, utils.Wrap("params", params))
+	manifest, err := GenManifest(plan, instanceID, jobsIfc, utils.InterfaceMap(plan.Credentials), defaults, utils.Wrap("params", params))
 	if err != nil {
 		loggerInstance.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
 

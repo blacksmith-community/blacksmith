@@ -138,7 +138,7 @@ func genParityManifest(t *testing.T, fixture parity.Fixture, instanceID, planID,
 		"director_uuid": parityDirectorUUID,
 	}
 
-	return GenManifest(current, utils.InterfaceMap(defaults), utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
+	return GenManifest(current, instanceID, utils.InterfaceMap(defaults), utils.Wrap("meta.params", parityParams(paramSet, instanceID)))
 }
 
 //nolint:paralleltest // spruce keeps global state, and the test sets environment variables

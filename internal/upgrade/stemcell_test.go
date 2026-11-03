@@ -42,7 +42,7 @@ func TestStemcellOverlayMergesDoNotRace(t *testing.T) {
 		go func() {
 			defer merges.Done()
 
-			_, err := manifest.GenManifest(plan)
+			_, err := manifest.GenManifest(plan, "stemcell-instance")
 			if err != nil {
 				t.Errorf("generating the manifest: %v", err)
 			}

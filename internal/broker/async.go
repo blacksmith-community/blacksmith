@@ -299,22 +299,13 @@ func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services
 func (p *provisioningPhase) initializeService(ctx context.Context, plan services.Plan) bool {
 	startTime := time.Now()
 
-	// Set credentials environment variable
-	err := os.Setenv("CREDENTIALS", "secret/"+p.instanceID)
-	if err != nil {
-		p.logger.Error("Failed to set CREDENTIALS environment variable: %s", err)
-		p.broker.failWithTracking(ctx, p.instanceID, "provision", "Failed to set environment variables", p.params, p.logger)
-
-		return false
-	}
-
 	// Run init script
 	p.logger.Info("Running service init script for plan %s", plan.ID)
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Initializing service deployment", 0, p.params, p.logger)
 
 	initStartTime := time.Now()
 
-	err = manifest.InitManifest(ctx, plan, p.instanceID)
+	err := manifest.InitManifest(ctx, plan, p.instanceID)
 	if err != nil {
 		p.logger.Error("Service deployment initialization script failed: %s", err)
 		p.failStep(ctx, "Service initialization failed", err)
@@ -358,7 +349,7 @@ func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan s
 	p.logger.Info("Generating BOSH deployment manifest for %s", defaults["name"])
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Generating BOSH deployment manifest", 0, p.params, p.logger)
 
-	manifestStr, err := manifest.GenManifest(plan, utils.InterfaceMap(defaults), utils.Wrap("meta.params", p.params))
+	manifestStr, err := manifest.GenManifest(plan, p.instanceID, utils.InterfaceMap(defaults), utils.Wrap("meta.params", p.params))
 	if err != nil {
 		p.logger.Error("Failed to generate service deployment manifest: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Manifest generation failed: %s", err), p.params, p.logger)

@@ -30,7 +30,7 @@ foo: bar
 
 		Context("without user parameters", func() {
 			It("can generate a manifest", func() {
-				_, err := manifestPkg.GenManifest(plan, map[interface{}]interface{}{})
+				_, err := manifestPkg.GenManifest(plan, "instance-id", map[interface{}]interface{}{})
 				Ω(err).ShouldNot(HaveOccurred())
 				Ω(manifest).Should(Equal(`foo: bar
 meta:
@@ -41,7 +41,7 @@ meta:
 
 		Context("with user parameters", func() {
 			It("can generate a manifest", func() {
-				_, err := manifestPkg.GenManifest(plan, map[interface{}]interface{}{
+				_, err := manifestPkg.GenManifest(plan, "instance-id", map[interface{}]interface{}{
 					"meta": map[interface{}]interface{}{
 						"params": map[interface{}]interface{}{
 							"extra": "value",
@@ -60,7 +60,7 @@ meta:
 
 		Context("with multi-level user parameters", func() {
 			It("can generate a manifest", func() {
-				manifest, err := manifestPkg.GenManifest(plan, map[interface{}]interface{}{
+				manifest, err := manifestPkg.GenManifest(plan, "instance-id", map[interface{}]interface{}{
 					"meta": map[interface{}]interface{}{
 						"params": map[interface{}]interface{}{
 							"extra": map[interface{}]interface{}{
