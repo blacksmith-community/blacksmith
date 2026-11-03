@@ -1,14 +1,11 @@
 package upgrade
 
 import (
-	"context"
-	"errors"
 	"fmt"
 
 	manifestPkg "blacksmith/internal/manifest"
 
-	"github.com/fivetwenty-io/graft/pkg/graft"
-	_ "github.com/fivetwenty-io/graft/pkg/graft/operators" // registers the operators the evaluation runs
+	"github.com/fivetwenty-io/graft/pkg/graft/merger"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
@@ -20,6 +17,14 @@ import (
 //	- alias: default
 //	  os: ubuntu-jammy
 //	  version: <selected-version>
+//
+// The overlay merges and never evaluates an operator. The manifest comes
+// back from the director, and it holds the instance's nested request
+// parameters as the literal (( )) text a tenant sent, which the render
+// kept inert. Evaluating it here would run that tenant's grab, file,
+// vault, and other operators with the broker's environment and
+// credentials. The overlay itself holds only a stemcell name and version,
+// so it needs no operator.
 func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion string) (string, error) {
 	// Parse the existing manifest
 	var manifest map[string]interface{}
@@ -32,15 +37,15 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 	// Create the stemcell overlay
 	overlay := createStemcellOverlay(stemcellOS, stemcellVersion)
 
-	// The merge and the evaluation run under the lock the manifest package
-	// holds around its own renders.
-	var tree interface{}
+	// The merge runs under the lock the manifest package holds around its
+	// own renders.
+	var tree map[string]interface{}
 
 	manifestPkg.WithManifestLock(func() {
-		tree, err = mergeAndEvaluate(manifest, overlay)
+		tree, err = merger.Merge(manifest, overlay)
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to merge the stemcell overlay: %w", err)
 	}
 
 	// Marshal back to YAML
@@ -50,31 +55,6 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 	}
 
 	return string(result), nil
-}
-
-// mergeAndEvaluate merges the overlay into the manifest with graft and
-// evaluates the operators in the result, on an engine of its own with no
-// cache. The caller holds the manifest lock. Graft reports an evaluation
-// failure as a PartialEvaluationError, so the error says which of the two
-// steps failed.
-func mergeAndEvaluate(manifest, overlay map[string]interface{}) (interface{}, error) {
-	engine, err := graft.NewEngine(graft.WithCacheDisabled())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create the graft engine for the stemcell overlay: %w", err)
-	}
-
-	merged, err := engine.Merge(context.Background(), graft.NewDocument(manifest), graft.NewDocument(overlay)).Execute()
-
-	var evaluation *graft.PartialEvaluationError
-
-	switch {
-	case errors.As(err, &evaluation):
-		return nil, fmt.Errorf("failed to evaluate the manifest after the stemcell overlay merge: %w", err)
-	case err != nil:
-		return nil, fmt.Errorf("failed to merge the stemcell overlay: %w", err)
-	}
-
-	return merged.RawData(), nil
 }
 
 // createStemcellOverlay creates the stemcell overlay structure.
