@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -554,5 +555,79 @@ func TestRejectedUploadStillFailsAtOnce(t *testing.T) {
 	got := director.recorded()
 	if lists := listCount(got); lists != 1 || got[len(got)-1] != "upload https://releases.example.test/redis-18.tgz" {
 		t.Fatalf("expected one listing, the upload, and nothing after it, got: %q", got)
+	}
+}
+
+// A manifest with a collection as a map key fails the release step with an
+// error that quotes nothing from the manifest, and nothing reaches the
+// director. A key like that anywhere in the manifest fails it, not only one
+// inside a release, so a malformed manifest never uploads nothing quietly.
+// Scalar keys that are not strings, such as 1, true, and ~, still decode,
+// and the release they sit in uploads.
+func TestReleaseStepRefusesACollectionKey(t *testing.T) {
+	t.Parallel()
+
+	const sentinel = "sentinel-value-not-in-errors"
+
+	cases := map[string]struct {
+		manifest string
+		refused  bool
+	}{
+		"a collection key in a release": {refused: true, manifest: `releases:
+- name: redis-` + sentinel + `
+  version: "18"
+  [a, b]: ` + sentinel + `
+`},
+		"a collection key beside the releases": {refused: true, manifest: `releases:
+- name: redis
+  version: "18"
+  url: https://releases.example.test/` + sentinel + `.tgz
+properties:
+  [a, b]: ` + sentinel + `
+`},
+		"scalar keys in a release": {refused: false, manifest: `releases:
+- name: redis
+  version: "18"
+  url: https://releases.example.test/redis-18.tgz
+  sha1: 0123456789abcdef
+  1: one
+  true: yes-key
+  ~: null-key
+`},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			director := &uploadDirector{polls: []string{stateDone}}
+
+			err := manifestPkg.UploadReleasesFromManifest(t.Context(), tc.manifest, director, newLineLogger(), nil)
+			got := director.recorded()
+
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("expected the release to upload, got: %v", err)
+				}
+
+				if !slices.Contains(got, "upload https://releases.example.test/redis-18.tgz") {
+					t.Errorf("expected the director to see the upload, got: %q", got)
+				}
+
+				return
+			}
+
+			if err == nil {
+				t.Fatal("expected the release step to fail")
+			}
+
+			if strings.Contains(err.Error(), sentinel) || strings.Contains(err.Error(), "redis") {
+				t.Error("expected the error to quote nothing from the manifest")
+			}
+
+			if len(got) != 0 {
+				t.Errorf("expected no director call, got: %q", got)
+			}
+		})
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
 
+	graftyaml "github.com/fivetwenty-io/graft/pkg/yaml"
 	"github.com/geofffranks/spruce"
 	"github.com/smallfish/simpleyaml"
 	"gopkg.in/yaml.v3"
@@ -374,7 +375,7 @@ type manifestReleases struct {
 func parseManifestReleases(raw string) (*manifestReleases, error) {
 	var manifest manifestReleases
 
-	err := yaml.Unmarshal([]byte(raw), &manifest)
+	err := graftyaml.Unmarshal([]byte(raw), &manifest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal manifest for release extraction: %w", err)
 	}
@@ -704,7 +705,7 @@ func extractNetworksByJob(manifestYAML string) map[string]string {
 		} `yaml:"instance_groups"`
 	}
 
-	if err := yaml.Unmarshal([]byte(manifestYAML), &manifest); err != nil {
+	if err := graftyaml.Unmarshal([]byte(manifestYAML), &manifest); err != nil {
 		return result
 	}
 

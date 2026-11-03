@@ -15,7 +15,8 @@ import (
 // TestParseManifestReleasesParity records the releases parseManifestReleases
 // reads from each manifest. Its fields are strings, so a bare 1.10, 0755, or
 // 1.0 version, and a sha1 that looks like a number, show what the decoder
-// does when a YAML scalar is not a string.
+// does when a YAML scalar is not a string. The graft recording is in
+// testdata/parity-graft, and the spruce-era one is frozen in testdata/parity.
 func TestParseManifestReleasesParity(t *testing.T) {
 	t.Parallel()
 
@@ -32,7 +33,7 @@ func TestParseManifestReleasesParity(t *testing.T) {
 		recorded.WriteString(parity.Section(doc.Name, parity.Dump(releases)))
 	}
 
-	parity.Golden(t, filepath.Join("testdata", "parity", "releases.dump"), recorded.String())
+	parity.Golden(t, filepath.Join("testdata", "parity-graft", "releases.dump"), recorded.String())
 }
 
 // TestExtractNetworksByJobParity records the network each instance group of
