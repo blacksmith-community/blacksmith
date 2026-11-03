@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 type BoshScanner struct {
@@ -125,37 +125,11 @@ func (s *BoshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	return detail, nil
 }
 
-// parseManifestProperties parses manifest properties
-// convertInterfaceMapToStringMap converts map[interface{}]interface{} to map[string]interface{}.
-func convertInterfaceMapToStringMap(input map[interface{}]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range input {
-		if key, ok := k.(string); ok {
-			result[key] = v
-		}
-	}
-
-	return result
-}
-
 // extractBlacksmithMetadata extracts blacksmith metadata from properties.
-func extractBlacksmithMetadata(props interface{}) map[string]interface{} {
-	switch properties := props.(type) {
-	case map[string]interface{}:
-		if blacksmith, ok := properties["blacksmith"].(map[string]interface{}); ok {
-			return blacksmith
-		}
+func extractBlacksmithMetadata(props map[string]interface{}) map[string]interface{} {
+	blacksmith, _ := props["blacksmith"].(map[string]interface{})
 
-		if blacksmith, ok := properties["blacksmith"].(map[interface{}]interface{}); ok {
-			return convertInterfaceMapToStringMap(blacksmith)
-		}
-	case map[interface{}]interface{}:
-		if blacksmith, ok := properties["blacksmith"].(map[interface{}]interface{}); ok {
-			return convertInterfaceMapToStringMap(blacksmith)
-		}
-	}
-
-	return nil
+	return blacksmith
 }
 
 // parseManifestProperties extracts properties from a manifest.
@@ -169,17 +143,10 @@ func (s *BoshScanner) ParseManifestProperties(manifest string) (map[string]inter
 
 	result := make(map[string]interface{})
 
-	// Extract properties (handles both map[string]interface{} and map[interface{}]interface{})
+	// Extract properties
 	if props, ok := manifestData["properties"].(map[string]interface{}); ok {
 		result["properties"] = props
 		if blacksmith := extractBlacksmithMetadata(props); blacksmith != nil {
-			result["blacksmith"] = blacksmith
-		}
-	} else if props, ok := manifestData["properties"].(map[interface{}]interface{}); ok {
-		convertedProps := convertInterfaceMapToStringMap(props)
-
-		result["properties"] = convertedProps
-		if blacksmith := extractBlacksmithMetadata(convertedProps); blacksmith != nil {
 			result["blacksmith"] = blacksmith
 		}
 	}
@@ -187,16 +154,6 @@ func (s *BoshScanner) ParseManifestProperties(manifest string) (map[string]inter
 	// Extract meta
 	if meta, ok := manifestData["meta"].(map[string]interface{}); ok {
 		result["meta"] = meta
-	} else if meta, ok := manifestData["meta"].(map[interface{}]interface{}); ok {
-		// Convert to map[string]interface{}
-		converted := make(map[string]interface{})
-		for k, v := range meta {
-			if key, ok := k.(string); ok {
-				converted[key] = v
-			}
-		}
-
-		result["meta"] = converted
 	}
 
 	// Extract networks
@@ -292,9 +249,6 @@ func (s *BoshScanner) parseReleaseInfo(rel interface{}) string {
 	case map[string]interface{}:
 		name = s.getStringValue(relMap, "name")
 		version = s.getVersionValue(relMap, "version")
-	case map[interface{}]interface{}:
-		name = s.getInterfaceStringValue(relMap, "name")
-		version = s.getInterfaceVersionValue(relMap, "version")
 	}
 
 	if name != "" {
@@ -328,10 +282,6 @@ func (s *BoshScanner) parseStemcellInfo(stem interface{}) string {
 		alias = s.getStringValue(stemMap, "alias")
 		operatingSystem = s.getStringValue(stemMap, "os")
 		version = s.getVersionValue(stemMap, "version")
-	case map[interface{}]interface{}:
-		alias = s.getInterfaceStringValue(stemMap, "alias")
-		operatingSystem = s.getInterfaceStringValue(stemMap, "os")
-		version = s.getInterfaceVersionValue(stemMap, "version")
 	}
 
 	return s.formatStemcellString(alias, operatingSystem, version)
@@ -356,30 +306,8 @@ func (s *BoshScanner) getVersionValue(m map[string]interface{}, key string) stri
 		return strconv.Itoa(v)
 	}
 
-	return ""
-}
-
-// getInterfaceStringValue safely gets a string value from an interface{} map.
-func (s *BoshScanner) getInterfaceStringValue(m map[interface{}]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-
-	return ""
-}
-
-// getInterfaceVersionValue safely gets a version value from an interface{} map.
-func (s *BoshScanner) getInterfaceVersionValue(dataMap map[interface{}]interface{}, key string) string {
-	if value, ok := dataMap[key].(string); ok {
-		return value
-	}
-
-	if value, ok := dataMap[key].(int); ok {
-		return strconv.Itoa(value)
-	}
-
-	if value, ok := dataMap[key].(float64); ok {
-		return fmt.Sprintf("%.1f", value)
+	if v, ok := m[key].(float64); ok {
+		return fmt.Sprintf("%.1f", v)
 	}
 
 	return ""

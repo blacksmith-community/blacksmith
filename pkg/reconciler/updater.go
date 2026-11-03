@@ -30,7 +30,6 @@ const (
 
 var (
 	ErrInstanceIDCannotBeEmpty             = errors.New("instance ID cannot be empty")
-	ErrDeinterfaceMetadataUnexpectedType   = errors.New("deinterfaceMetadata returned unexpected type")
 	ErrCredentialsMustBeMap                = errors.New("credentials must be of type map[string]interface{}")
 	ErrBrokerNotAvailableForReconstruction = errors.New("broker not available for reconstruction")
 	ErrBrokerReturnedNoCredentials         = errors.New("broker returned no credentials")
@@ -2370,18 +2369,9 @@ func (u *VaultUpdater) compressAndEncode(data map[string]interface{}) (string, e
 	return encoded, nil
 }
 
-// deinterfaceMetadata converts map[interface{}]interface{} structures to map[string]interface{}.
+// deinterfaceMetadata returns a deep copy of the metadata.
 func (u *VaultUpdater) deinterfaceMetadata(data interface{}) interface{} {
 	switch value := data.(type) {
-	case map[interface{}]interface{}:
-		result := make(map[string]interface{})
-
-		for key, val := range value {
-			keyStr := fmt.Sprintf("%v", key)
-			result[keyStr] = u.deinterfaceMetadata(val)
-		}
-
-		return result
 	case map[string]interface{}:
 		result := make(map[string]interface{})
 		for key, val := range value {

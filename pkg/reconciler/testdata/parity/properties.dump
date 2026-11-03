@@ -202,7 +202,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.azs[0]	string	"z1"
 $.meta.bosh_env	string	"fixture-env"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.erlang_cookie	string	"1e3"
 $.meta.instances	int	1
@@ -316,7 +316,7 @@ $.meta.cf.exodus_path	string	"secret/exodus/fixture-env/cf"
 $.meta.cf.password	string	"fixture-password-not-real"
 $.meta.cf.system_domain	string	"sys.fixture.example"
 $.meta.cf.username	string	"fixture-admin"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.erlang_cookie	string	"1e3"
 $.meta.instances	int	1
@@ -374,7 +374,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.azs[0]	string	"z1"
 $.meta.bosh_env	string	"fixture-env"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.erlang_cookie	string	"1e3"
 $.meta.instances	int	1
@@ -481,7 +481,7 @@ $.meta.cf.exodus_path	string	"secret/exodus/fixture-env/cf"
 $.meta.cf.password	string	"fixture-password-not-real"
 $.meta.cf.system_domain	string	"sys.fixture.example"
 $.meta.cf.username	string	"fixture-admin"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.erlang_cookie	string	"1e3"
 $.meta.instances	int	1
@@ -539,7 +539,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.azs[0]	string	"z1"
 $.meta.bosh_env	string	"fixture-env"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.erlang_cookie	string	"1e3"
 $.meta.instances	int	1
@@ -598,7 +598,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -645,7 +645,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -696,7 +696,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -753,7 +753,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -810,7 +810,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -857,7 +857,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -908,7 +908,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -965,7 +965,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
@@ -1008,7 +1008,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
 $.meta.password	string	"yes"
@@ -1040,7 +1040,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
 $.meta.params.maxmemory-policy	string	"1e3"
@@ -1076,7 +1076,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
 $.meta.params.maxmemory-policy	string	"allkeys-lru"
@@ -1118,7 +1118,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-base"
 $.meta.params.maxmemory-policy.nested.date	string	"2026-01-02"
@@ -1174,7 +1174,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1226,7 +1226,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1282,7 +1282,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1344,7 +1344,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1406,7 +1406,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1458,7 +1458,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1514,7 +1514,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1576,7 +1576,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
@@ -1624,7 +1624,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
 $.meta.password	string	"yes"
@@ -1661,7 +1661,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
 $.meta.params.maxmemory-policy	string	"1e3"
@@ -1702,7 +1702,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
 $.meta.params.maxmemory-policy	string	"allkeys-lru"
@@ -1749,7 +1749,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-dual-mode"
 $.meta.params.maxmemory-policy.nested.date	string	"2026-01-02"
@@ -1810,7 +1810,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -1861,7 +1861,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -1916,7 +1916,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -1977,7 +1977,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -2038,7 +2038,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -2089,7 +2089,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -2144,7 +2144,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -2205,7 +2205,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
@@ -2252,7 +2252,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
 $.meta.password	string	"yes"
@@ -2288,7 +2288,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
 $.meta.params.maxmemory-policy	string	"1e3"
@@ -2328,7 +2328,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
 $.meta.params.maxmemory-policy	string	"allkeys-lru"
@@ -2374,7 +2374,7 @@ $.instance_groups[0].networks[0].name	string	"redis-service"
 $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.net	string	"redis-service"
 $.meta.params.instance_id	string	"parity-redis-tls"
 $.meta.params.maxmemory-policy.nested.date	string	"2026-01-02"
@@ -2438,7 +2438,7 @@ $.meta.azs[0]	string	"z1"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
 $.meta.default.azs[1]	string	"z2"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.instances	int	6
 $.meta.masters	int	3
@@ -2489,7 +2489,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"valkey-service"
 $.meta.params.instance_id	string	"parity-valkey-base"
@@ -2541,7 +2541,7 @@ $.meta.azs[0]	string	"z1"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
 $.meta.default.azs[1]	string	"z2"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.instances	int	6
 $.meta.masters	int	3
@@ -2597,7 +2597,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"valkey-service"
 $.meta.params.instance_id	string	"parity-valkey-dual-mode"
@@ -2654,7 +2654,7 @@ $.meta.azs[0]	string	"z1"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
 $.meta.default.azs[1]	string	"z2"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.instances	int	6
 $.meta.masters	int	3
@@ -2709,7 +2709,7 @@ $.instance_groups[0].stemcell	string	"default"
 $.instance_groups[0].vm_type	string	"default"
 $.meta.bosh_env	string	"fixture-env"
 $.meta.default.azs[0]	string	"z1"
-$.meta.disk_config	map[interface {}]interface {}	{}
+$.meta.disk_config	map[string]interface {}	{}
 $.meta.environment	string	"fixture-env"
 $.meta.net	string	"valkey-service"
 $.meta.params.instance_id	string	"parity-valkey-tls"
@@ -2758,11 +2758,11 @@ $.properties["a.b"]	string	"dotted"
 $.properties["with space"]	string	"spaced"
 $.properties["x[0]"]	string	"bracketed"
 === odd_duplicate-keys ===
-$.properties.a	int	2
+ERROR: failed to unmarshal manifest: yaml: line 2: mapping key already defined at [1:1]
 === odd_empty ===
 $	map[string]interface {}	{}
 === odd_float-tag-over-int ===
-$.properties.floaty	float64	3
+ERROR: failed to unmarshal manifest: yaml: line 3: cannot decode a !!int scalar as !!float
 === odd_instance-group-networks ===
 $.instance_groups[0].name	string	"first"
 $.instance_groups[0].networks[0].name	string	"services"
@@ -2783,8 +2783,7 @@ $.instance_groups[7].networks[0].name	string	"numeric-group"
 === odd_instance-groups-not-a-list ===
 $.instance_groups.name	string	"oops"
 === odd_list-root ===
-ERROR: failed to unmarshal manifest: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!seq into map[string]interface {}
+ERROR: failed to unmarshal manifest: yaml: cannot unmarshal []interface {} into Go value of type map[string]interface {}
 === odd_mixed-group-names ===
 $.instance_groups[0].name	int	123
 $.instance_groups[1].name	string	"second"
@@ -2798,7 +2797,7 @@ $.properties.strip	string	"stripped"
 $.instance_groups[0].name	string	"first"
 $.instance_groups[0].networks.name	string	"oops"
 === odd_non-string-keys ===
-ERROR: failed to unmarshal manifest: yaml: invalid map key: []interface {}{"a", "b"}
+ERROR: failed to unmarshal manifest: yaml: line 7: found an invalid key for this map
 === odd_null ===
 $	map[string]interface {}	{}
 === odd_release-not-a-map ===
@@ -2806,12 +2805,11 @@ $	map[string]interface {}	{}
 === odd_release-versions ===
 $	map[string]interface {}	{}
 === odd_scalar-root ===
-ERROR: failed to unmarshal manifest: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!str `just a ...` into map[string]interface {}
+ERROR: failed to unmarshal manifest: yaml: cannot unmarshal string into Go value of type map[string]interface {}
 === odd_tab-indent ===
 ERROR: failed to unmarshal manifest: yaml: line 3: found character that cannot start any token
 === odd_unterminated ===
-ERROR: failed to unmarshal manifest: yaml: line 2: did not find expected ',' or '}'
+ERROR: failed to unmarshal manifest: yaml: line 2: could not find flow mapping end token '}'
 === odd_yaml11-scalars ===
 $.properties.dates[0]	string	"2026-01-02"
 $.properties.dates[1]	string	"2026-01-02T03:04:05Z"
@@ -2820,7 +2818,7 @@ $.properties.nulls[0]	interface {}	null
 $.properties.nulls[1]	interface {}	null
 $.properties.nulls[2]	interface {}	null
 $.properties.nulls[3]	string	""
-$.properties.numbers[0]	float64	1000
+$.properties.numbers[0]	string	"1e3"
 $.properties.numbers[1]	int	493
 $.properties.numbers[2]	int	15
 $.properties.numbers[3]	int	31
@@ -2831,8 +2829,8 @@ $.properties.numbers[7]	int	3
 $.properties.numbers[8]	int	0
 $.properties.numbers[9]	float64	+Inf
 $.properties.numbers[10]	float64	NaN
-$.properties.octal-ish[0]	float64	8
-$.properties.octal-ish[1]	float64	9
+$.properties.octal-ish[0]	string	"08"
+$.properties.octal-ish[1]	string	"09"
 $.properties.octal-ish[2]	int	8
 $.properties.octal-ish[3]	int	5
 $.properties.password	string	"fixture-password-not-real"
@@ -2847,8 +2845,8 @@ $.properties.truthy[0]	bool	true
 $.properties.truthy[1]	bool	false
 $.properties.truthy[2]	bool	true
 $.properties.truthy[3]	bool	false
-$.properties.truthy[4]	bool	true
-$.properties.truthy[5]	bool	false
+$.properties.truthy[4]	string	"y"
+$.properties.truthy[5]	string	"n"
 $.properties.truthy[6]	bool	true
 $.properties.truthy[7]	bool	false
 $.properties.truthy[8]	bool	true

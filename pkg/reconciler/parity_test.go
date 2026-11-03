@@ -8,7 +8,7 @@ import (
 	"blacksmith/internal/parity"
 	. "blacksmith/pkg/reconciler"
 
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 const parityInstanceID = "00000000-0000-0000-0000-000000000001"

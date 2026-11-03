@@ -454,8 +454,8 @@ ERROR: no match found for deployment
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
 $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
-$.Confidence	float64	1
-$.MatchReason	string	"perfect_manifest_match"
+$.Confidence	float64	0.5
+$.MatchReason	string	"partial_manifest_match"
 === odd_duplicate-keys as unmatched-deployment ===
 ERROR: no match found for deployment
 === odd_empty as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===
@@ -470,8 +470,8 @@ ERROR: no match found for deployment
 $.ServiceID	string	"fixture-service"
 $.PlanID	string	"fixture-plan"
 $.InstanceID	string	"00000000-0000-0000-0000-000000000001"
-$.Confidence	float64	1
-$.MatchReason	string	"perfect_manifest_match"
+$.Confidence	float64	0.5
+$.MatchReason	string	"partial_manifest_match"
 === odd_float-tag-over-int as unmatched-deployment ===
 ERROR: no match found for deployment
 === odd_instance-group-networks as fixture-service-fixture-plan-00000000-0000-0000-0000-000000000001 ===

@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Static errors for err113 compliance.
@@ -220,30 +220,7 @@ func (m *ServiceMatcher) checkManifestMetadata(deployment DeploymentDetail) *Mat
 
 // checkPropertiesSection checks the properties section for blacksmith metadata.
 func (m *ServiceMatcher) checkPropertiesSection(manifest map[string]interface{}) *MatchResult {
-	// Try map[interface{}]interface{} format
-	if result := m.checkInterfaceProperties(manifest); result != nil {
-		return result
-	}
-
-	// Try map[string]interface{} format
 	return m.checkStringProperties(manifest)
-}
-
-// checkInterfaceProperties checks properties in map[interface{}]interface{} format.
-func (m *ServiceMatcher) checkInterfaceProperties(manifest map[string]interface{}) *MatchResult {
-	props, exists := manifest["properties"].(map[interface{}]interface{})
-	if !exists {
-		return nil
-	}
-
-	m.logger.Debugf("Found properties section (map[interface{}]interface{})")
-
-	blacksmith, exists := props["blacksmith"].(map[interface{}]interface{})
-	if !exists {
-		return nil
-	}
-
-	return m.extractBlacksmithMetadataFromInterface(blacksmith)
 }
 
 // checkStringProperties checks properties in map[string]interface{} format.
@@ -255,37 +232,8 @@ func (m *ServiceMatcher) checkStringProperties(manifest map[string]interface{}) 
 
 	m.logger.Debugf("Found properties section (map[string]interface{})")
 
-	// Try both map formats for blacksmith section
 	if blacksmith, exists := props["blacksmith"].(map[string]interface{}); exists {
 		return m.extractBlacksmithMetadataFromString(blacksmith)
-	}
-
-	if blacksmith, exists := props["blacksmith"].(map[interface{}]interface{}); exists {
-		return m.extractBlacksmithMetadataFromInterface(blacksmith)
-	}
-
-	return nil
-}
-
-// extractBlacksmithMetadataFromInterface extracts metadata from interface{} map.
-func (m *ServiceMatcher) extractBlacksmithMetadataFromInterface(blacksmith map[interface{}]interface{}) *MatchResult {
-	m.logger.Debugf("Found blacksmith section (map[interface{}]interface{})")
-
-	serviceID, _ := blacksmith["service_id"].(string)
-	planID, _ := blacksmith["plan_id"].(string)
-	instanceID, _ := blacksmith["instance_id"].(string)
-
-	if serviceID != "" && planID != "" && instanceID != "" {
-		m.logger.Debugf("Found blacksmith metadata in manifest: service=%s, plan=%s, instance=%s",
-			serviceID, planID, instanceID)
-
-		return &MatchResult{
-			ServiceID:   serviceID,
-			PlanID:      planID,
-			InstanceID:  instanceID,
-			Confidence:  deploymentConfidenceHigh,
-			MatchReason: "manifest_metadata",
-		}
 	}
 
 	return nil
@@ -317,13 +265,7 @@ func (m *ServiceMatcher) extractBlacksmithMetadataFromString(blacksmith map[stri
 
 // checkMetaSection checks the meta section for instance ID.
 func (m *ServiceMatcher) checkMetaSection(manifest map[string]interface{}, deployment DeploymentDetail) *MatchResult {
-	// Try map[string]interface{} format
-	if result := m.checkStringMeta(manifest, deployment); result != nil {
-		return result
-	}
-
-	// Try map[interface{}]interface{} format
-	return m.checkInterfaceMeta(manifest, deployment)
+	return m.checkStringMeta(manifest, deployment)
 }
 
 // checkStringMeta checks meta section in map[string]interface{} format.
@@ -334,26 +276,6 @@ func (m *ServiceMatcher) checkStringMeta(manifest map[string]interface{}, deploy
 	}
 
 	params, exists := meta["params"].(map[string]interface{})
-	if !exists {
-		return nil
-	}
-
-	instanceID, _ := params["instance_id"].(string)
-	if instanceID != "" && IsValidUUID(instanceID) {
-		return m.inferServiceFromDeploymentName(deployment.Name, instanceID)
-	}
-
-	return nil
-}
-
-// checkInterfaceMeta checks meta section in map[interface{}]interface{} format.
-func (m *ServiceMatcher) checkInterfaceMeta(manifest map[string]interface{}, deployment DeploymentDetail) *MatchResult {
-	meta, exists := manifest["meta"].(map[interface{}]interface{})
-	if !exists {
-		return nil
-	}
-
-	params, exists := meta["params"].(map[interface{}]interface{})
 	if !exists {
 		return nil
 	}
