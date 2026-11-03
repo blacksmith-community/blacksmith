@@ -1,5 +1,5 @@
 ---
-# Values whose YAML type differs from the Go field they land in.
+# Values whose YAML type differs from the Go field they land in. A plain y is a string, so debug: y fails to load. coercions-without-y.yml holds the rest.
 broker:
   username: 0755
   password: yes
