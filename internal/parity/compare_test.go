@@ -154,10 +154,7 @@ func TestYAMLDifferencesRejectsBadYAML(t *testing.T) {
 func TestPsychCompareCatchesWhatTheTreeCheckCannot(t *testing.T) {
 	t.Parallel()
 
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("ruby is not installed")
-	}
+	ruby := parity.Ruby(t)
 
 	script, err := filepath.Abs("../../hack/parity/psych-compare.rb")
 	if err != nil {
@@ -242,10 +239,7 @@ func TestPsychCompareCatchesWhatTheTreeCheckCannot(t *testing.T) {
 func TestRenderForgesScanFlagsNonStringKeys(t *testing.T) {
 	t.Parallel()
 
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("ruby is not installed")
-	}
+	ruby := parity.Ruby(t)
 
 	script, err := filepath.Abs("../../hack/parity/render-forges.rb")
 	if err != nil {

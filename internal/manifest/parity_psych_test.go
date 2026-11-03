@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"blacksmith/internal/parity"
 )
 
 // TestMarshaledJobsParityPsych reads the spruce-era and graft recordings of
@@ -14,10 +16,7 @@ import (
 func TestMarshaledJobsParityPsych(t *testing.T) {
 	t.Parallel()
 
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("ruby is not installed")
-	}
+	ruby := parity.Ruby(t)
 
 	script, err := filepath.Abs(filepath.Join("..", "..", "hack", "parity", "psych-compare.rb"))
 	if err != nil {
@@ -76,10 +75,7 @@ func redisPEMRenders(suffixes ...string) []string {
 func runPsychCompare(t *testing.T, args ...string) string {
 	t.Helper()
 
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("ruby is not installed")
-	}
+	ruby := parity.Ruby(t)
 
 	script, err := filepath.Abs(filepath.Join("..", "..", "hack", "parity", "psych-compare.rb"))
 	if err != nil {

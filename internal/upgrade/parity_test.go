@@ -359,10 +359,7 @@ func scalarTypes(scalars string) []string {
 func TestReleaseOverlayParityPsych(t *testing.T) {
 	t.Parallel()
 
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("ruby is not installed")
-	}
+	ruby := parity.Ruby(t)
 
 	script, err := filepath.Abs(filepath.Join("..", "..", "hack", "parity", "psych-compare.rb"))
 	if err != nil {
@@ -415,10 +412,7 @@ func TestReleaseOverlayParityPsych(t *testing.T) {
 func TestStemcellOverlayParityPsych(t *testing.T) {
 	t.Parallel()
 
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("ruby is not installed")
-	}
+	ruby := parity.Ruby(t)
 
 	script, err := filepath.Abs(filepath.Join("..", "..", "hack", "parity", "psych-compare.rb"))
 	if err != nil {

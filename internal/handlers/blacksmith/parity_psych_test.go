@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"blacksmith/internal/parity"
 )
 
 // TestGetConfigMarshaledParityPsych reads the spruce-era and graft
@@ -13,10 +15,7 @@ import (
 func TestGetConfigMarshaledParityPsych(t *testing.T) {
 	t.Parallel()
 
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("ruby is not installed")
-	}
+	ruby := parity.Ruby(t)
 
 	script, err := filepath.Abs(filepath.Join("..", "..", "..", "hack", "parity", "psych-compare.rb"))
 	if err != nil {
