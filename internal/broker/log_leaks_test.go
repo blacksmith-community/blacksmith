@@ -137,6 +137,17 @@ var _ = Describe("Log leak prevention", func() {
 		}
 	})
 
+	It("keeps the static and dynamic credentials out of the YAML substitution log", func() {
+		const dynamicPassword = "sentinel-dynamic-do-not-log" //nolint:gosec // fake credential the test proves stays out of logs
+
+		_, err := broker.YamlGsub(map[string]interface{}{"password": leakSentinelPassword}, leakSentinelPassword, dynamicPassword)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(capture.output()).To(ContainSubstring("YAML string substitution"))
+		Expect(capture.output()).NotTo(ContainSubstring(leakSentinelPassword))
+		Expect(capture.output()).NotTo(ContainSubstring(dynamicPassword))
+	})
+
 	It("does not log the RabbitMQ password in the user creation payload", func() {
 		data, err := broker.PrepareUserCreationPayload(leakSentinelPassword, capture)
 

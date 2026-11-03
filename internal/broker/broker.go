@@ -5011,7 +5011,7 @@ func yamlGsub(
 	error,
 ) {
 	logger := logger.Get().Named("broker")
-	logger.Debug("Performing YAML string substitution - orig: %s, replacement: %s", orig, replacement)
+	logger.Debug("Performing YAML string substitution - orig length: %d, replacement length: %d", len(orig), len(replacement))
 
 	marshaledData, err := yaml.Marshal(obj)
 	if err != nil {
