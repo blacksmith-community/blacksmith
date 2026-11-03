@@ -1,0 +1,95 @@
+director_uuid: 00000000-0000-4000-8000-000000000000
+instance_groups:
+- azs:
+  - z1
+  - z2
+  instances: 3
+  jobs:
+  - consumes:
+      db:
+        from: postgres
+    name: postgres
+    properties:
+      pgpool:
+        users:
+        - admin: true
+          password: "yes"
+          username: "y"
+      postgres:
+        config:
+          listen_addresses: 0.0.0.0
+          port: 6432
+        hba:
+        - host all all 0.0.0.0/0 md5
+        - host all all ::/0 md5
+        replication:
+          enabled: true
+    provides:
+      db:
+        as: postgres
+    release: postgres
+  - consumes:
+      db:
+        from: postgres
+    name: pgpool
+    properties:
+      pcp:
+        system_password: secret
+      pgpool:
+        backend:
+          port: 6432
+        config:
+          enable_pool_hba: true
+          port: 5432
+        hba:
+        - host all all 0.0.0.0/0 md5
+        - host all all ::/0 md5
+        users:
+        - admin: true
+          password: "yes"
+          username: "y"
+    release: postgres
+  name: postgresql
+  networks:
+  - name: postgresql-service
+  persistent_disk_type: default
+  stemcell: default
+  vm_type: default
+meta:
+  default:
+    azs:
+    - z1
+    - z2
+  disk: 2048
+  disk_type: default
+  hba:
+  - host all all 0.0.0.0/0 md5
+  - host all all ::/0 md5
+  instances: 3
+  net: postgresql-service
+  params:
+    instance_id: parity-postgresql-base
+  service:
+    password: "yes"
+    port: 5432
+    username: "y"
+  size: default
+  users:
+  - admin: true
+    password: "yes"
+    username: "y"
+name: postgresql-cluster-parity-postgresql-base
+releases:
+- name: postgres
+  sha1: dea5cad517c62afaf97a1b31df41ad691928d960
+  url: https://github.com/cloudfoundry-community/postgres-boshrelease/releases/download/v2.0.0/postgres-2.0.0.tgz
+  version: 2.0.0
+stemcells:
+- alias: default
+  os: ubuntu-bionic
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000

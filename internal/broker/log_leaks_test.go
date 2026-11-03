@@ -121,6 +121,22 @@ var _ = Describe("Log leak prevention", func() {
 		Expect(err.Error()).NotTo(ContainSubstring("hunter2"))
 	})
 
+	It("describes a YAML decode error by position without any value from the input", func() {
+		inputs := []string{
+			"hunter2-not-a-mapping",
+			"password: " + leakSentinelPassword + "\n  bad: [unclosed\n",
+			"password: " + leakSentinelPassword + "\npassword: " + leakSentinelPassword + "\n",
+			"- " + leakSentinelPassword + "\n",
+		}
+
+		for _, input := range inputs {
+			err := broker.WriteYamlFile("inst-1", []byte(input))
+			Expect(err).To(HaveOccurred())
+			Expect(broker.YamlErrorSummary(err)).NotTo(ContainSubstring("hunter2"))
+			Expect(broker.YamlErrorSummary(err)).NotTo(ContainSubstring(leakSentinelPassword))
+		}
+	})
+
 	It("does not log the RabbitMQ password in the user creation payload", func() {
 		data, err := broker.PrepareUserCreationPayload(leakSentinelPassword, capture)
 

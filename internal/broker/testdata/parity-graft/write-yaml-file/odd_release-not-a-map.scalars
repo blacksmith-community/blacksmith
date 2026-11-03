@@ -1,0 +1,8 @@
+$["name"]#key	plain	!!str	string	"name"
+$["name"]	plain	!!str	string	"fixture"
+$["releases"]#key	plain	!!str	string	"releases"
+$["releases"][0]["name"]#key	plain	!!str	string	"name"
+$["releases"][0]["name"]	plain	!!str	string	"ok"
+$["releases"][0]["version"]#key	plain	!!str	string	"version"
+$["releases"][0]["version"]	plain	!!float	float64	"1.1"
+$["releases"][1]	plain	!!str	string	"not-a-map"

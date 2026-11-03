@@ -1,0 +1,24 @@
+instance_groups:
+- name: first
+  networks:
+  - name: services
+  - name: second-network
+- name: dotted
+  networks:
+  - name: my.net.work
+- name: numeric
+  networks:
+  - name: 1.1
+- name: boolean
+  networks:
+  - name: true
+- name: null-name
+  networks:
+  - name: null
+- name: no-networks
+- name: empty-networks
+  networks: []
+- name: 123
+  networks:
+  - name: numeric-group
+name: fixture

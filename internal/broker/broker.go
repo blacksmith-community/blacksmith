@@ -32,12 +32,11 @@ import (
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/services/common"
-	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	"github.com/google/uuid"
-	"go.yaml.in/yaml/v2"
 )
 
 const (
@@ -313,13 +312,16 @@ func WriteDataFile(
 	return nil
 }
 
-// yamlErrorSummary describes a YAML decode error without the fragment of the
-// offending value that yaml.v2 puts in a type error, because that value can be
-// a credential.
+// yamlErrorSummary describes a YAML decode error by its position and message.
+// The message never quotes the input, which can be a credential.
 func yamlErrorSummary(err error) string {
-	var typeErr *yaml.TypeError
-	if errors.As(err, &typeErr) {
-		return fmt.Sprintf("%d value(s) in the YAML have a type the target does not accept", len(typeErr.Errors))
+	var decodeErr *yaml.DecodeError
+	if errors.As(err, &decodeErr) {
+		if decodeErr.Line > 0 {
+			return fmt.Sprintf("line %d, column %d: %s", decodeErr.Line, decodeErr.Column, decodeErr.Msg)
+		}
+
+		return decodeErr.Msg
 	}
 
 	return err.Error()
@@ -332,7 +334,7 @@ func WriteYamlFile(
 	logger := logger.Get().Named("broker")
 	logger.Debug("Writing YAML file for instance %s (input size: %d bytes)", instanceID, len(data))
 
-	mergedMap := make(map[interface{}]interface{})
+	mergedMap := make(map[string]interface{})
 
 	err := yaml.Unmarshal(data, &mergedMap)
 	if err != nil {
@@ -5022,7 +5024,7 @@ func yamlGsub(
 	replaced := strings.ReplaceAll(s, orig, replacement)
 	logger.Debug("Replaced %d occurrences", strings.Count(s, orig))
 
-	var data map[interface{}]interface{}
+	var data map[string]interface{}
 
 	err = yaml.Unmarshal([]byte(replaced), &data)
 	if err != nil {
@@ -5033,7 +5035,7 @@ func yamlGsub(
 
 	logger.Debug("Successfully completed YAML substitution")
 
-	return utils.DeinterfaceMap(data), nil
+	return data, nil
 }
 
 // createHTTPClientForService creates an HTTP client with optional TLS verification skip.

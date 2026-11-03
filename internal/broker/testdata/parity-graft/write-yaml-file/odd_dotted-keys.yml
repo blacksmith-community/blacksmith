@@ -1,0 +1,10 @@
+name: fixture
+properties:
+  "": empty-key
+  a:
+    b: nested
+  a.b: dotted
+  with space: spaced
+  x:
+  - listed
+  x[0]: bracketed

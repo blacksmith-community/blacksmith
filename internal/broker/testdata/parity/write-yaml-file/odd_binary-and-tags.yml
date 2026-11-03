@@ -1,0 +1,6 @@
+name: fixture
+properties:
+  blob: hello
+  forced: "123"
+  seq:
+  - a

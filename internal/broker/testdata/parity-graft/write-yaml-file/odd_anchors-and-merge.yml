@@ -1,0 +1,19 @@
+defaults:
+  port: 5432
+  user: fixture-user
+name: fixture
+properties:
+  again:
+  - one
+  - two
+  list:
+  - one
+  - two
+  primary:
+    host: a.example.test
+    port: 5432
+    user: fixture-user
+  replica:
+    host: b.example.test
+    port: 5433
+    user: fixture-user

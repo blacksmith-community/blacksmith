@@ -1,0 +1,5 @@
+instance_groups:
+- name: first
+  networks:
+    name: oops
+name: fixture

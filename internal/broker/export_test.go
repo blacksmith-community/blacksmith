@@ -480,3 +480,7 @@ func (b *Broker) SetReadoptStore(store ReadoptStore) {
 func YamlGsub(obj interface{}, orig, replacement string) (interface{}, error) {
 	return yamlGsub(obj, orig, replacement)
 }
+
+// YamlErrorSummary exposes the description of a YAML decode error that the
+// broker logs and returns, to package broker_test.
+func YamlErrorSummary(err error) string { return yamlErrorSummary(err) }

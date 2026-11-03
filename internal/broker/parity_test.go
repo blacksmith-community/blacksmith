@@ -10,11 +10,13 @@ import (
 	"blacksmith/internal/broker"
 	"blacksmith/internal/parity"
 
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // TestWriteYamlFileParity records the file WriteYamlFile writes for each
-// document, or the error it returns. It sets the instance data directory, so
+// document, or the error it returns. The graft recording is in
+// testdata/parity-graft. The spruce-era one is frozen in
+// testdata/parity/write-yaml-file.txt and testdata/parity/write-yaml-file/. It sets the instance data directory, so
 // it cannot run in parallel.
 //
 //nolint:paralleltest // sets an environment variable
@@ -22,7 +24,7 @@ func TestWriteYamlFileParity(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BLACKSMITH_INSTANCE_DATA_DIR", dir+"/")
 
-	var recorded, scalars strings.Builder
+	var recorded strings.Builder
 
 	for index, doc := range parity.Corpus(t) {
 		id := "parity-" + strconv.Itoa(index)
@@ -40,12 +42,10 @@ func TestWriteYamlFileParity(t *testing.T) {
 		}
 
 		recorded.WriteString(parity.Section(doc.Name, string(written)))
-		scalars.WriteString(parity.Section(doc.Name, parity.Scalars(string(written))))
+		parity.GoldenYAML(t, filepath.Join("testdata", "parity-graft", "write-yaml-file", doc.Name+".yml"), string(written))
 	}
 
-	golden := filepath.Join("testdata", "parity", "write-yaml-file.txt")
-	parity.Golden(t, golden, recorded.String())
-	parity.Golden(t, parity.ScalarsPath(golden), scalars.String())
+	parity.Golden(t, filepath.Join("testdata", "parity-graft", "write-yaml-file.txt"), recorded.String())
 }
 
 // TestYamlGsubParity records the credentials a YAML round trip returns after
@@ -93,16 +93,23 @@ func TestYamlGsubParity(t *testing.T) {
 		{"key-to-colon", "password", "pass: word"},
 	}
 
-	// The text yamlGsub marshals before it replaces anything. It is a frozen
-	// copy of the call at broker.go:5014, which the migrating commit must
-	// switch to the same graft call, because a test cannot see the text
-	// inside yamlGsub.
+	// The text yamlGsub marshals before it replaces anything. It is a copy
+	// of the call in yamlGsub, because a test cannot see the text inside
+	// it. The graft recording is in testdata/parity-graft, and the
+	// spruce-era one is frozen in testdata/parity.
 	marshaled, err := yaml.Marshal(credentials)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	parity.GoldenYAML(t, filepath.Join("testdata", "parity", "yaml-gsub-marshaled.yml"), string(marshaled))
+	parity.GoldenYAML(t, filepath.Join("testdata", "parity-graft", "yaml-gsub-marshaled.yml"), string(marshaled))
+
+	want, err := os.ReadFile(filepath.Join("testdata", "parity", "yaml-gsub-marshaled.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parity.CompareYAML(t, want, marshaled)
 
 	var recorded strings.Builder
 
@@ -128,5 +135,5 @@ func TestYamlGsubParity(t *testing.T) {
 		recorded.WriteString(parity.Section("text "+doc.Name, parity.Dump(got)))
 	}
 
-	parity.Golden(t, filepath.Join("testdata", "parity", "yaml-gsub.dump"), recorded.String())
+	parity.Golden(t, filepath.Join("testdata", "parity-graft", "yaml-gsub.dump"), recorded.String())
 }

@@ -1,0 +1,12 @@
+name: fixture
+properties:
+  folded: |
+    folded one folded two
+  keep: |+
+    kept
+
+  literal: |
+    line one
+    line two
+  quoted: "tab\there\nnewline"
+  strip: stripped

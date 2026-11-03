@@ -1,0 +1,121 @@
+director_uuid: 00000000-0000-4000-8000-000000000000
+features:
+  randomize_az_placement: true
+instance_groups:
+- azs:
+  - z1
+  instances: 1
+  jobs:
+  - name: bpm
+    release: bpm
+  - custom_provider_definitions:
+    - name: redis-san
+      type: address
+    - name: redis-alias-domain
+      type: placeholder
+    name: standalone-7
+    properties:
+      auth:
+        password: "yes"
+      client:
+        connections: 10000
+        tcpkeepalive: 300
+        timeout: 0
+      lua:
+        scripting-enabled: true
+      persistent: false
+      redis:
+        auto-aof-rewrite-min-size: 64mb
+        auto-aof-rewrite-percentage: 100
+        maxmemory: 0
+        maxmemory-policy: "1e3"
+        no-appendfsync-on-rewrite: false
+        notify-keyspace-events: "yes"
+        slowlog-log-slower-than: "2026-01-02"
+        slowlog-max-len: "0755"
+        tls:
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+            -----END CERTIFICATE-----
+          ca_cert: ((redis_standalone_crt.certificate))
+          ca_key: ((redis_standalone_crt.private_key))
+          dual-mode: false
+          enabled: true
+    provides:
+      redis-alias-domain:
+        aliases:
+        - domain: _.redis_standalone.bosh
+          placeholder_type: uuid
+      redis-san:
+        as: redis-san
+        ip_addresses: false
+    release: redis-forge
+  name: standalone
+  networks:
+  - name: redis-service
+  stemcell: default
+  vm_type: default
+meta:
+  bosh_env: fixture-env
+  default:
+    azs:
+    - z1
+  disk_config: {}
+  environment: fixture-env
+  net: redis-service
+  params:
+    instance_id: parity-redis-tls
+    maxmemory-policy: "1e3"
+    notify-keyspace-events: "yes"
+    slowlog-log-slower-than: "2026-01-02"
+    slowlog-max-len: "0755"
+  password: "yes"
+  persistent: false
+  redis:
+    tls:
+      ca: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_cert: |+
+        -----BEGIN CERTIFICATE-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-CERTIFICATE
+        -----END CERTIFICATE-----
+
+      ca_key: |+
+        -----BEGIN PRIVATE KEY-----
+        FIXTURE-PLACEHOLDER-NOT-A-REAL-KEY
+        -----END PRIVATE KEY-----
+
+      enabled: true
+  size: default
+name: redis-standalone-7-parity-redis-tls
+releases:
+- name: redis-forge
+  version: latest
+- name: bpm
+  sha1: sha256:1984129b352cd414e29a7dcffcf076049a776afa511cd44b587065f6e618cc6d
+  url: https://bosh.io/d/github.com/cloudfoundry/bpm-release?v=1.4.20
+  version: 1.4.20
+stemcells:
+- alias: default
+  os: ubuntu-jammy
+  version: latest
+update:
+  canaries: 1
+  canary_watch_time: 1000-30000
+  max_in_flight: 10
+  update_watch_time: 1000-30000
+variables:
+- consumes:
+    alternative_name:
+      from: redis-san
+      properties:
+        wildcard: true
+  name: redis_standalone_crt
+  options:
+    ca: /fixture-env-bosh/fixture-env-blacksmith/blacksmith_services_ca
+    common_name: fixture-env-redis-standalone.bosh
+  type: certificate

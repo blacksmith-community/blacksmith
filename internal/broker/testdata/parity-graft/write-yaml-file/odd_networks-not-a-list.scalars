@@ -1,0 +1,8 @@
+$["instance_groups"]#key	plain	!!str	string	"instance_groups"
+$["instance_groups"][0]["name"]#key	plain	!!str	string	"name"
+$["instance_groups"][0]["name"]	plain	!!str	string	"first"
+$["instance_groups"][0]["networks"]#key	plain	!!str	string	"networks"
+$["instance_groups"][0]["networks"]["name"]#key	plain	!!str	string	"name"
+$["instance_groups"][0]["networks"]["name"]	plain	!!str	string	"oops"
+$["name"]#key	plain	!!str	string	"name"
+$["name"]	plain	!!str	string	"fixture"

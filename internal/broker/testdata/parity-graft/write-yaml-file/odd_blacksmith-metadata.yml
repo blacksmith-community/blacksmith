@@ -1,0 +1,22 @@
+instance_groups:
+- instances: 3
+  jobs:
+  - name: fixture-job
+    release: fixture-release
+  name: fixture-group
+meta:
+  blacksmith:
+    instance_id: 00000000-0000-0000-0000-000000000001
+name: fixture-deployment
+properties:
+  blacksmith:
+    instance_id: 00000000-0000-0000-0000-000000000001
+    plan_id: fixture-plan
+    service_id: fixture-service
+releases:
+- name: fixture-release
+  version: 1.2.3
+stemcells:
+- alias: default
+  os: ubuntu-noble
+  version: latest
