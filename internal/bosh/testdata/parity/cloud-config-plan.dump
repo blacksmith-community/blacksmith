@@ -22,12 +22,12 @@ $.Reason	string	""
 $.Action	bosh.CloudConfigAction	3
 $.Holder	string	""
 $.Overlaps	[]bosh.CloudConfigOverlap	null
-$.Reason	string	"the director's cloud config \"default\" is not valid YAML: yaml: unmarshal errors:\n  line 3: mapping key \"azs\" already defined at line 1"
+$.Reason	string	"the director's cloud config \"default\" is not valid YAML: yaml: line 3: mapping key already defined at [1:1]"
 === director duplicate-keys / broker-duplicate-keys ===
 $.Action	bosh.CloudConfigAction	3
 $.Holder	string	""
 $.Overlaps	[]bosh.CloudConfigOverlap	null
-$.Reason	string	"the broker's cloud config is not valid YAML: yaml: unmarshal errors:\n  line 3: mapping key \"azs\" already defined at line 1"
+$.Reason	string	"the broker's cloud config is not valid YAML: yaml: line 3: mapping key already defined at [1:1]"
 === director empty / mine ===
 $.Action	bosh.CloudConfigAction	0
 $.Holder	string	""
@@ -49,9 +49,11 @@ $.Holder	string	""
 $.Overlaps	[]bosh.CloudConfigOverlap	null
 $.Reason	string	"the broker's cloud config is not a YAML map (it is []interface {})"
 === director non-string-keys / mine ===
-$.Action	bosh.CloudConfigAction	0
+$.Action	bosh.CloudConfigAction	2
 $.Holder	string	""
-$.Overlaps	[]bosh.CloudConfigOverlap	null
+$.Overlaps[0].Config	string	"default"
+$.Overlaps[0].Key	string	"azs"
+$.Overlaps[0].Name	string	"z1"
 $.Reason	string	""
 === director non-string-keys / broker-non-string-keys ===
 $.Action	bosh.CloudConfigAction	1
@@ -126,9 +128,9 @@ $.Reason	string	""
 $.Action	bosh.CloudConfigAction	3
 $.Holder	string	""
 $.Overlaps	[]bosh.CloudConfigOverlap	null
-$.Reason	string	"the director's cloud config \"default\" is not valid YAML: yaml: line 1: did not find expected node content"
+$.Reason	string	"the director's cloud config \"default\" is not valid YAML: yaml: line 1: sequence end token ']' not found"
 === director unterminated / broker-unterminated ===
 $.Action	bosh.CloudConfigAction	3
 $.Holder	string	""
 $.Overlaps	[]bosh.CloudConfigOverlap	null
-$.Reason	string	"the broker's cloud config is not valid YAML: yaml: line 1: did not find expected node content"
+$.Reason	string	"the broker's cloud config is not valid YAML: yaml: line 1: sequence end token ']' not found"

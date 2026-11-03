@@ -17,9 +17,9 @@ import (
 
 	"blacksmith/internal/bosh/sshconn"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
-	"github.com/geofffranks/spruce"
+	"github.com/fivetwenty-io/graft/pkg/graft"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 	"github.com/google/uuid"
-	"go.yaml.in/yaml/v2"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -1258,8 +1258,8 @@ func (d *DirectorAdapter) ComputeConfigDiff(ctx context.Context, fromID, toID st
 		return nil, fmt.Errorf("failed to parse 'to' config YAML: %w", err)
 	}
 
-	// Compute diff using spruce
-	diffable, err := spruce.Diff(fromData, toData)
+	// Compute diff using graft
+	diffable, err := graft.Diff(fromData, toData)
 	if err != nil {
 		d.log.Errorf("Failed to compute diff: %v", err)
 
@@ -1276,7 +1276,7 @@ func (d *DirectorAdapter) ComputeConfigDiff(ctx context.Context, fromID, toID st
 
 	// Generate diff string representation
 	if diffable.Changed() {
-		diffString := diffable.String("$")
+		diffString := graft.PlainString(diffable, "$")
 		result.DiffString = diffString
 
 		// Parse the diff string to extract individual changes
@@ -1289,7 +1289,7 @@ func (d *DirectorAdapter) ComputeConfigDiff(ctx context.Context, fromID, toID st
 	return result, nil
 }
 
-// parseDiffString parses the spruce diff output into structured changes.
+// parseDiffString parses the graft diff output into structured changes.
 func parseDiffString(diffStr string) []ConfigDiffChange {
 	changes := []ConfigDiffChange{}
 	lines := strings.Split(diffStr, "\n")

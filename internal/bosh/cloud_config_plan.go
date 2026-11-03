@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // BoshCloudConfigName is the name Blacksmith gives the cloud config it writes.

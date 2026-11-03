@@ -158,6 +158,9 @@ github.com/coder/websocket/internal/bpool
 github.com/coder/websocket/internal/errd
 github.com/coder/websocket/internal/util
 github.com/coder/websocket/internal/wsjs
+# github.com/cppforlife/go-patch v0.2.0
+## explicit
+github.com/cppforlife/go-patch/patch
 # github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
 ## explicit
 github.com/dgryski/go-rendezvous
@@ -180,11 +183,25 @@ github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
 # github.com/fivetwenty-io/graft v1.44.0
 ## explicit; go 1.27.3
+github.com/fivetwenty-io/graft/internal/cache
+github.com/fivetwenty-io/graft/internal/config
+github.com/fivetwenty-io/graft/internal/features
 github.com/fivetwenty-io/graft/internal/keyorder
+github.com/fivetwenty-io/graft/internal/metrics
+github.com/fivetwenty-io/graft/internal/parallel
+github.com/fivetwenty-io/graft/internal/srcpos
+github.com/fivetwenty-io/graft/internal/utils/ansi
+github.com/fivetwenty-io/graft/internal/utils/mfa
 github.com/fivetwenty-io/graft/internal/yamlcodec
 github.com/fivetwenty-io/graft/internal/yamlnode
 github.com/fivetwenty-io/graft/internal/yamlprep
+github.com/fivetwenty-io/graft/log
 github.com/fivetwenty-io/graft/pkg/decimal
+github.com/fivetwenty-io/graft/pkg/graft
+github.com/fivetwenty-io/graft/pkg/graft/interfaces
+github.com/fivetwenty-io/graft/pkg/graft/merger
+github.com/fivetwenty-io/graft/pkg/graft/postprocess
+github.com/fivetwenty-io/graft/pkg/graft/tree
 github.com/fivetwenty-io/graft/pkg/query/value
 github.com/fivetwenty-io/graft/pkg/sortkeys
 github.com/fivetwenty-io/graft/pkg/yaml
@@ -427,8 +444,12 @@ golang.org/x/net/proxy
 # golang.org/x/sys v0.49.0
 ## explicit; go 1.26.0
 golang.org/x/sys/cpu
+golang.org/x/sys/plan9
 golang.org/x/sys/unix
 golang.org/x/sys/windows
+# golang.org/x/term v0.47.0
+## explicit; go 1.26.0
+golang.org/x/term
 # golang.org/x/text v0.43.0
 ## explicit; go 1.26.0
 golang.org/x/text/encoding

@@ -13,11 +13,7 @@ $.properties.replica.host	string	"b.example.test"
 $.properties.replica.port	int	5433
 $.properties.replica.user	string	"fixture-user"
 === binary-and-tags ===
-$.name	string	"fixture"
-$.properties.blob	string	"hello"
-$.properties.floaty	float64	3
-$.properties.forced	string	"123"
-$.properties.seq[0]	string	"a"
+ERROR: failed to parse config YAML: yaml: line 5: cannot decode a !!int scalar as !!float
 === blacksmith-metadata ===
 $.instance_groups[0].instances	int	3
 $.instance_groups[0].jobs[0].name	string	"fixture-job"
@@ -44,8 +40,7 @@ $.properties["a.b"]	string	"dotted"
 $.properties["with space"]	string	"spaced"
 $.properties["x[0]"]	string	"bracketed"
 === duplicate-keys ===
-$.name	string	"second"
-$.properties.a	int	2
+ERROR: failed to parse config YAML: yaml: line 2: mapping key already defined at [1:1]
 === empty ===
 $	map[string]interface {}	null
 === instance-group-networks ===
@@ -70,8 +65,7 @@ $.name	string	"fixture"
 $.instance_groups.name	string	"oops"
 $.name	string	"fixture"
 === list-root ===
-ERROR: failed to parse config YAML: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!seq into map[string]interface {}
+ERROR: failed to parse config YAML: yaml: cannot unmarshal []interface {} into Go value of type map[string]interface {}
 === mixed-group-names ===
 $.instance_groups[0].name	int	123
 $.instance_groups[1].name	string	"second"
@@ -88,7 +82,7 @@ $.instance_groups[0].name	string	"first"
 $.instance_groups[0].networks.name	string	"oops"
 $.name	string	"fixture"
 === non-string-keys ===
-ERROR: failed to parse config YAML: yaml: invalid map key: []interface {}{"a", "b"}
+ERROR: failed to parse config YAML: yaml: line 7: found an invalid key for this map
 === null ===
 $	map[string]interface {}	null
 === release-not-a-map ===
@@ -99,11 +93,11 @@ $.releases[1]	string	"not-a-map"
 === release-versions ===
 $.name	string	"fixture"
 $.releases[0].name	string	"bare-decimal"
-$.releases[0].sha1	float64	1.2345678901234568e+38
+$.releases[0].sha1	string	"0123456789012345678901234567890123456789"
 $.releases[0].url	string	"https://example.test/a.tgz"
 $.releases[0].version	float64	1.1
 $.releases[1].name	string	"bare-trailing-zero"
-$.releases[1].sha1	float64	1e+10
+$.releases[1].sha1	string	"1e10"
 $.releases[1].version	float64	1
 $.releases[2].name	string	"bare-integer"
 $.releases[2].sha1	int	1234567890
@@ -116,7 +110,7 @@ $.releases[4].version	string	"2026-01-02"
 $.releases[5].name	string	"bare-bool"
 $.releases[5].version	bool	true
 $.releases[6].name	string	"bare-exponent"
-$.releases[6].version	float64	1000
+$.releases[6].version	string	"1e3"
 $.releases[7].name	string	"bare-three-part"
 $.releases[7].version	string	"1.2.3"
 $.releases[8].name	string	"quoted-decimal"
@@ -144,12 +138,11 @@ $.stemcells[3].os	string	"ubuntu-noble"
 $.stemcells[3].version	string	"latest"
 $.stemcells[4].os	string	"ubuntu-noble"
 === scalar-root ===
-ERROR: failed to parse config YAML: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!str `just a ...` into map[string]interface {}
+ERROR: failed to parse config YAML: yaml: cannot unmarshal string into Go value of type map[string]interface {}
 === tab-indent ===
 ERROR: failed to parse config YAML: yaml: line 3: found character that cannot start any token
 === unterminated ===
-ERROR: failed to parse config YAML: yaml: line 2: did not find expected ',' or '}'
+ERROR: failed to parse config YAML: yaml: line 2: could not find flow mapping end token '}'
 === yaml11-scalars ===
 $.name	string	"fixture"
 $.properties.dates[0]	string	"2026-01-02"
@@ -159,7 +152,7 @@ $.properties.nulls[0]	interface {}	null
 $.properties.nulls[1]	interface {}	null
 $.properties.nulls[2]	interface {}	null
 $.properties.nulls[3]	string	""
-$.properties.numbers[0]	float64	1000
+$.properties.numbers[0]	string	"1e3"
 $.properties.numbers[1]	int	493
 $.properties.numbers[2]	int	15
 $.properties.numbers[3]	int	31
@@ -170,8 +163,8 @@ $.properties.numbers[7]	int	3
 $.properties.numbers[8]	int	0
 $.properties.numbers[9]	float64	+Inf
 $.properties.numbers[10]	float64	NaN
-$.properties.octal-ish[0]	float64	8
-$.properties.octal-ish[1]	float64	9
+$.properties.octal-ish[0]	string	"08"
+$.properties.octal-ish[1]	string	"09"
 $.properties.octal-ish[2]	int	8
 $.properties.octal-ish[3]	int	5
 $.properties.password	string	"fixture-password-not-real"
@@ -186,8 +179,8 @@ $.properties.truthy[0]	bool	true
 $.properties.truthy[1]	bool	false
 $.properties.truthy[2]	bool	true
 $.properties.truthy[3]	bool	false
-$.properties.truthy[4]	bool	true
-$.properties.truthy[5]	bool	false
+$.properties.truthy[4]	string	"y"
+$.properties.truthy[5]	string	"n"
 $.properties.truthy[6]	bool	true
 $.properties.truthy[7]	bool	false
 $.properties.truthy[8]	bool	true
