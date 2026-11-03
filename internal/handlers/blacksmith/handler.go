@@ -18,8 +18,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
-	"blacksmith/pkg/utils"
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Static errors for err113 compliance.
@@ -315,15 +314,6 @@ func convertToStringMap(rule interface{}, logger interfaces.Logger) map[string]i
 	switch r := rule.(type) {
 	case map[string]interface{}:
 		return r
-	case map[interface{}]interface{}:
-		ruleMap := make(map[string]interface{})
-		for k, v := range r {
-			if ks, ok := k.(string); ok {
-				ruleMap[ks] = v
-			}
-		}
-
-		return ruleMap
 	default:
 		logger.Error("First rule is not a map: %T", rule)
 
@@ -402,7 +392,7 @@ func (h *Handler) GetConfig(responseWriter http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	intermediate := make(map[interface{}]interface{})
+	intermediate := make(map[string]interface{})
 
 	err = yaml.Unmarshal(configYAML, &intermediate)
 	if err != nil {
@@ -412,7 +402,7 @@ func (h *Handler) GetConfig(responseWriter http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	configData := utils.DeinterfaceMap(intermediate)
+	configData := intermediate
 
 	// The endpoint is readable by anyone holding the broker credentials, so no
 	// secret value may leave it.

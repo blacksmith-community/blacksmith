@@ -156,7 +156,7 @@ sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"defaults":{"port":5432,"user":"fixture-user"},"name":"fixture","properties":{"again":["one","two"],"list":["one","two"],"primary":{"host":"a.example.test","port":5432,"user":"fixture-user"},"replica":{"host":"b.example.test","port":5433,"user":"fixture-user"}}},"vault_sources":["inst-1/manifest"]}
 === odd_binary-and-tags ===
 sources inst-1/manifest
-{"instance_id":"inst-1","manifest":{"name":"fixture","properties":{"blob":"hello","floaty":3,"forced":"123","seq":["a"]}},"vault_sources":["inst-1/manifest"]}
+{"instance_id":"inst-1","vault_sources":["inst-1/manifest"]}
 === odd_blacksmith-metadata ===
 sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"instance_groups":[{"instances":3,"jobs":[{"name":"fixture-job","release":"fixture-release"}],"name":"fixture-group"}],"meta":{"blacksmith":{"instance_id":"00000000-0000-0000-0000-000000000001"}},"name":"fixture-deployment","properties":{"blacksmith":{"instance_id":"00000000-0000-0000-0000-000000000001","plan_id":"fixture-plan","service_id":"fixture-service"}},"releases":[{"name":"fixture-release","version":"1.2.3"}],"stemcells":[{"alias":"default","os":"ubuntu-noble","version":"latest"}]},"vault_sources":["inst-1/manifest"]}
@@ -174,7 +174,7 @@ sources
 {"instance_id":"inst-1"}
 === odd_instance-group-networks ===
 sources inst-1/manifest
-{"instance_id":"inst-1","manifest":{"instance_groups":[{"name":"first","networks":[{"name":"services"},{"name":"second-network"}]},{"name":"dotted","networks":[{"name":"my.net.work"}]},{"name":"numeric","networks":[{"name":1.1}]},{"name":"boolean","networks":[{"name":"yes"}]},{"name":"null-name","networks":[{"name":null}]},{"name":"no-networks"},{"name":"empty-networks","networks":[]},{"name":123,"networks":[{"name":"numeric-group"}]}],"name":"fixture"},"vault_sources":["inst-1/manifest"]}
+{"instance_id":"inst-1","manifest":{"instance_groups":[{"name":"first","networks":[{"name":"services"},{"name":"second-network"}]},{"name":"dotted","networks":[{"name":"my.net.work"}]},{"name":"numeric","networks":[{"name":1.1}]},{"name":"boolean","networks":[{"name":true}]},{"name":"null-name","networks":[{"name":null}]},{"name":"no-networks"},{"name":"empty-networks","networks":[]},{"name":123,"networks":[{"name":"numeric-group"}]}],"name":"fixture"},"vault_sources":["inst-1/manifest"]}
 === odd_instance-groups-not-a-list ===
 sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"instance_groups":{"name":"oops"},"name":"fixture"},"vault_sources":["inst-1/manifest"]}
@@ -201,7 +201,7 @@ sources inst-1/manifest
 {"instance_id":"inst-1","manifest":{"name":"fixture","releases":[{"name":"ok","version":1.1},"not-a-map"]},"vault_sources":["inst-1/manifest"]}
 === odd_release-versions ===
 sources inst-1/manifest
-{"instance_id":"inst-1","manifest":{"name":"fixture","releases":[{"name":"bare-decimal","sha1":1.2345678901234568e+38,"url":"https://example.test/a.tgz","version":1.1},{"name":"bare-trailing-zero","sha1":10000000000,"version":1},{"name":"bare-integer","sha1":1234567890,"version":1},{"name":"bare-octal","sha1":90,"version":493},{"name":"bare-date","version":"2026-01-02T00:00:00Z"},{"name":"bare-bool","version":"yes"},{"name":"bare-exponent","version":1000},{"name":"bare-three-part","version":"1.2.3"},{"name":"quoted-decimal","sha1":"0123456789012345678901234567890123456789","version":"1.10"},{"name":"latest","version":"latest"},{"name":"no-version"},{"name":"null-version","version":null},{"version":7},{"name":123,"version":4}],"stemcells":[{"alias":"default","os":"ubuntu-noble","version":1.1},{"alias":"bare-integer","os":"ubuntu-noble","version":621},{"alias":"quoted","os":"ubuntu-noble","version":"621.10"},{"alias":"latest","os":"ubuntu-noble","version":"latest"},{"os":"ubuntu-noble"}]},"vault_sources":["inst-1/manifest"]}
+{"instance_id":"inst-1","manifest":{"name":"fixture","releases":[{"name":"bare-decimal","sha1":"0123456789012345678901234567890123456789","url":"https://example.test/a.tgz","version":1.1},{"name":"bare-trailing-zero","sha1":"1e10","version":1},{"name":"bare-integer","sha1":1234567890,"version":1},{"name":"bare-octal","sha1":90,"version":493},{"name":"bare-date","version":"2026-01-02"},{"name":"bare-bool","version":true},{"name":"bare-exponent","version":"1e3"},{"name":"bare-three-part","version":"1.2.3"},{"name":"quoted-decimal","sha1":"0123456789012345678901234567890123456789","version":"1.10"},{"name":"latest","version":"latest"},{"name":"no-version"},{"name":"null-version","version":null},{"version":7},{"name":123,"version":4}],"stemcells":[{"alias":"default","os":"ubuntu-noble","version":1.1},{"alias":"bare-integer","os":"ubuntu-noble","version":621},{"alias":"quoted","os":"ubuntu-noble","version":"621.10"},{"alias":"latest","os":"ubuntu-noble","version":"latest"},{"os":"ubuntu-noble"}]},"vault_sources":["inst-1/manifest"]}
 === odd_scalar-root ===
 sources inst-1/manifest
 {"instance_id":"inst-1","vault_sources":["inst-1/manifest"]}

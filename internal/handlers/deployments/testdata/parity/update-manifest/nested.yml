@@ -1,0 +1,13 @@
+instance_groups:
+    - jobs:
+        - name: j
+          properties:
+            deep:
+                deeper:
+                    deepest:
+                        - 1
+                        - - 2
+                          - - 3
+                        - k: v
+      name: g
+name: parity

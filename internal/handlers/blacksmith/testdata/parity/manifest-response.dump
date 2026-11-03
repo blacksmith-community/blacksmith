@@ -3843,11 +3843,7 @@ $.parsed.properties.replica.port	int	5433
 $.parsed.properties.replica.user	string	"fixture-user"
 $.text	string	"name: fixture\ndefaults: &defaults\n  port: 5432\n  user: fixture-user\nproperties:\n  primary:\n    <<: *defaults\n    host: a.example.test\n  replica:\n    <<: *defaults\n    port: 5433\n    host: b.example.test\n  list: &items [one, two]\n  again: *items\n"
 === odd_binary-and-tags ===
-$.parsed.name	string	"fixture"
-$.parsed.properties.blob	string	"hello"
-$.parsed.properties.floaty	float64	3
-$.parsed.properties.forced	string	"123"
-$.parsed.properties.seq[0]	string	"a"
+$.parsed	map[string]interface {}	{}
 $.text	string	"name: fixture\nproperties:\n  blob: !!binary aGVsbG8=\n  forced: !!str 123\n  floaty: !!float 3\n  seq: !!seq [a]\n"
 === odd_blacksmith-metadata ===
 $.parsed.instance_groups[0].instances	int	3
@@ -3892,7 +3888,7 @@ $.parsed.instance_groups[1].networks[0].name	string	"my.net.work"
 $.parsed.instance_groups[2].name	string	"numeric"
 $.parsed.instance_groups[2].networks[0].name	float64	1.1
 $.parsed.instance_groups[3].name	string	"boolean"
-$.parsed.instance_groups[3].networks[0].name	string	"yes"
+$.parsed.instance_groups[3].networks[0].name	bool	true
 $.parsed.instance_groups[4].name	string	"null-name"
 $.parsed.instance_groups[4].networks[0].name	interface {}	null
 $.parsed.instance_groups[5].name	string	"no-networks"
@@ -3942,11 +3938,11 @@ $.text	string	"name: fixture\nreleases:\n- {name: ok, version: 1.10}\n- not-a-ma
 === odd_release-versions ===
 $.parsed.name	string	"fixture"
 $.parsed.releases[0].name	string	"bare-decimal"
-$.parsed.releases[0].sha1	float64	1.2345678901234568e+38
+$.parsed.releases[0].sha1	string	"0123456789012345678901234567890123456789"
 $.parsed.releases[0].url	string	"https://example.test/a.tgz"
 $.parsed.releases[0].version	float64	1.1
 $.parsed.releases[1].name	string	"bare-trailing-zero"
-$.parsed.releases[1].sha1	float64	1e+10
+$.parsed.releases[1].sha1	string	"1e10"
 $.parsed.releases[1].version	float64	1
 $.parsed.releases[2].name	string	"bare-integer"
 $.parsed.releases[2].sha1	int	1234567890
@@ -3955,11 +3951,11 @@ $.parsed.releases[3].name	string	"bare-octal"
 $.parsed.releases[3].sha1	int	90
 $.parsed.releases[3].version	int	493
 $.parsed.releases[4].name	string	"bare-date"
-$.parsed.releases[4].version	time.Time	2026-01-02T00:00:00Z
+$.parsed.releases[4].version	string	"2026-01-02"
 $.parsed.releases[5].name	string	"bare-bool"
-$.parsed.releases[5].version	string	"yes"
+$.parsed.releases[5].version	bool	true
 $.parsed.releases[6].name	string	"bare-exponent"
-$.parsed.releases[6].version	float64	1000
+$.parsed.releases[6].version	string	"1e3"
 $.parsed.releases[7].name	string	"bare-three-part"
 $.parsed.releases[7].version	string	"1.2.3"
 $.parsed.releases[8].name	string	"quoted-decimal"
@@ -3998,14 +3994,14 @@ $.parsed	map[string]interface {}	{}
 $.text	string	"name: fixture\nproperties: {a: 1\n"
 === odd_yaml11-scalars ===
 $.parsed.name	string	"fixture"
-$.parsed.properties.dates[0]	time.Time	2026-01-02T00:00:00Z
-$.parsed.properties.dates[1]	time.Time	2026-01-02T03:04:05Z
+$.parsed.properties.dates[0]	string	"2026-01-02"
+$.parsed.properties.dates[1]	string	"2026-01-02T03:04:05Z"
 $.parsed.properties.dates[2]	string	"12:30:45"
 $.parsed.properties.nulls[0]	interface {}	null
 $.parsed.properties.nulls[1]	interface {}	null
 $.parsed.properties.nulls[2]	interface {}	null
 $.parsed.properties.nulls[3]	string	""
-$.parsed.properties.numbers[0]	float64	1000
+$.parsed.properties.numbers[0]	string	"1e3"
 $.parsed.properties.numbers[1]	int	493
 $.parsed.properties.numbers[2]	int	15
 $.parsed.properties.numbers[3]	int	31
@@ -4016,8 +4012,8 @@ $.parsed.properties.numbers[7]	int	3
 $.parsed.properties.numbers[8]	int	0
 $.parsed.properties.numbers[9]	float64	+Inf
 $.parsed.properties.numbers[10]	float64	NaN
-$.parsed.properties.octal-ish[0]	float64	8
-$.parsed.properties.octal-ish[1]	float64	9
+$.parsed.properties.octal-ish[0]	string	"08"
+$.parsed.properties.octal-ish[1]	string	"09"
 $.parsed.properties.octal-ish[2]	int	8
 $.parsed.properties.octal-ish[3]	int	5
 $.parsed.properties.password	string	"fixture-password-not-real"
@@ -4028,14 +4024,14 @@ $.parsed.properties.strings[3]	string	":leading-colon"
 $.parsed.properties.strings[4]	string	"a: b"
 $.parsed.properties.strings[5]	string	"- x"
 $.parsed.properties.strings[6]	string	"# not a comment"
-$.parsed.properties.truthy[0]	string	"yes"
-$.parsed.properties.truthy[1]	string	"no"
-$.parsed.properties.truthy[2]	string	"on"
-$.parsed.properties.truthy[3]	string	"off"
+$.parsed.properties.truthy[0]	bool	true
+$.parsed.properties.truthy[1]	bool	false
+$.parsed.properties.truthy[2]	bool	true
+$.parsed.properties.truthy[3]	bool	false
 $.parsed.properties.truthy[4]	string	"y"
 $.parsed.properties.truthy[5]	string	"n"
-$.parsed.properties.truthy[6]	string	"Yes"
-$.parsed.properties.truthy[7]	string	"NO"
+$.parsed.properties.truthy[6]	bool	true
+$.parsed.properties.truthy[7]	bool	false
 $.parsed.properties.truthy[8]	bool	true
 $.parsed.properties.truthy[9]	bool	false
 $.parsed.properties.version	float64	1.1

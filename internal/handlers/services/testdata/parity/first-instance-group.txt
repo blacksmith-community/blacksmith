@@ -103,7 +103,7 @@ standalone
 === odd_anchors-and-merge ===
 ERROR: manifest missing instance_groups
 === odd_binary-and-tags ===
-ERROR: manifest missing instance_groups
+ERROR: failed to parse manifest YAML: yaml: line 5: cannot decode a !!int scalar as !!float
 === odd_blacksmith-metadata ===
 fixture-group
 === odd_comment-only ===
@@ -111,8 +111,7 @@ ERROR: manifest missing instance_groups
 === odd_dotted-keys ===
 ERROR: manifest missing instance_groups
 === odd_duplicate-keys ===
-ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
-  line 2: mapping key "name" already defined at line 1
+ERROR: failed to parse manifest YAML: yaml: line 2: mapping key already defined at [1:1]
 === odd_empty ===
 ERROR: manifest missing instance_groups
 === odd_instance-group-networks ===
@@ -120,8 +119,7 @@ first
 === odd_instance-groups-not-a-list ===
 ERROR: manifest has no instance groups
 === odd_list-root ===
-ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!seq into map[string]interface {}
+ERROR: failed to parse manifest YAML: yaml: cannot unmarshal []interface {} into Go value of type map[string]interface {}
 === odd_mixed-group-names ===
 ERROR: instance group name not found
 === odd_multiline ===
@@ -129,7 +127,7 @@ ERROR: manifest missing instance_groups
 === odd_networks-not-a-list ===
 first
 === odd_non-string-keys ===
-ERROR: failed to parse manifest YAML: yaml: invalid map key: []interface {}{"a", "b"}
+ERROR: failed to parse manifest YAML: yaml: line 7: found an invalid key for this map
 === odd_null ===
 ERROR: manifest missing instance_groups
 === odd_release-not-a-map ===
@@ -137,11 +135,10 @@ ERROR: manifest missing instance_groups
 === odd_release-versions ===
 ERROR: manifest missing instance_groups
 === odd_scalar-root ===
-ERROR: failed to parse manifest YAML: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!str `just a ...` into map[string]interface {}
+ERROR: failed to parse manifest YAML: yaml: cannot unmarshal string into Go value of type map[string]interface {}
 === odd_tab-indent ===
 ERROR: failed to parse manifest YAML: yaml: line 3: found character that cannot start any token
 === odd_unterminated ===
-ERROR: failed to parse manifest YAML: yaml: line 1: did not find expected ',' or '}'
+ERROR: failed to parse manifest YAML: yaml: line 2: could not find flow mapping end token '}'
 === odd_yaml11-scalars ===
 ERROR: manifest missing instance_groups

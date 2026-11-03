@@ -13,7 +13,7 @@ import (
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
 	"blacksmith/pkg/http/response"
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Constants for deployment test data.
@@ -738,15 +738,6 @@ func convertToStringMap(rule interface{}, logger interfaces.Logger) map[string]i
 	switch r := rule.(type) {
 	case map[string]interface{}:
 		return r
-	case map[interface{}]interface{}:
-		ruleMap := make(map[string]interface{})
-		for k, v := range r {
-			if ks, ok := k.(string); ok {
-				ruleMap[ks] = v
-			}
-		}
-
-		return ruleMap
 	default:
 		logger.Error("First rule is not a map: %T", rule)
 

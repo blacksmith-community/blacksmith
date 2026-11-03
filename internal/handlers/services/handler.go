@@ -22,7 +22,7 @@ import (
 	"blacksmith/pkg/certificates"
 	"blacksmith/pkg/http/response"
 
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Constants for services handler.
@@ -439,15 +439,6 @@ func convertToStringMapWithDebug(rule interface{}, logger interfaces.Logger) map
 	switch r := rule.(type) {
 	case map[string]interface{}:
 		return r
-	case map[interface{}]interface{}:
-		ruleMap := make(map[string]interface{})
-		for k, v := range r {
-			if ks, ok := k.(string); ok {
-				ruleMap[ks] = v
-			}
-		}
-
-		return ruleMap
 	default:
 		logger.Error("First rule is not a map: %T", rule)
 
@@ -680,29 +671,6 @@ func (h *Handler) GetInstanceManifest(writer http.ResponseWriter, req *http.Requ
 // fetchDeploymentManifest fetches deployment manifest from director.
 
 // writeManifestResponse writes the manifest response.
-
-// convertToJSONCompatible converts map[interface{}]interface{} to map[string]interface{}
-// This is necessary because YAML unmarshaling creates map[interface{}]interface{} which
-// cannot be directly marshaled to JSON.
-func convertToJSONCompatible(value interface{}) interface{} {
-	switch typedValue := value.(type) {
-	case map[interface{}]interface{}:
-		m := make(map[string]interface{})
-		for k, v := range typedValue {
-			m[fmt.Sprint(k)] = convertToJSONCompatible(v)
-		}
-
-		return m
-	case []interface{}:
-		for i, v := range typedValue {
-			typedValue[i] = convertToJSONCompatible(v)
-		}
-
-		return typedValue
-	default:
-		return value
-	}
-}
 
 // GetInstanceCredentials returns credentials for a service instance.
 func (h *Handler) GetInstanceCredentials(writer http.ResponseWriter, req *http.Request, instanceID string) {
@@ -1746,8 +1714,6 @@ func (h *Handler) writeManifestFromText(writer http.ResponseWriter, logger inter
 
 		return
 	}
-
-	manifestParsed = convertToJSONCompatible(manifestParsed)
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"text":   manifestText,

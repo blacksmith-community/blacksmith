@@ -104,8 +104,8 @@ valkey-standalone-parity-valkey-tls / standalone
 fixture / blacksmith
 ERROR: manifest missing instance_groups
 === odd_binary-and-tags ===
-fixture / blacksmith
-ERROR: manifest missing instance_groups
+fallback-deployment / blacksmith
+ERROR: failed to parse deployment manifest: yaml: line 5: cannot decode a !!int scalar as !!float
 === odd_blacksmith-metadata ===
 fixture-deployment / fixture-group
 === odd_comment-only ===
@@ -116,8 +116,7 @@ fixture / blacksmith
 ERROR: manifest missing instance_groups
 === odd_duplicate-keys ===
 fallback-deployment / blacksmith
-ERROR: failed to parse deployment manifest: yaml: unmarshal errors:
-  line 2: mapping key "name" already defined at line 1
+ERROR: failed to parse deployment manifest: yaml: line 2: mapping key already defined at [1:1]
 === odd_empty ===
 fallback-deployment / blacksmith
 ERROR: manifest missing instance_groups
@@ -128,8 +127,7 @@ fixture / blacksmith
 ERROR: manifest missing instance_groups
 === odd_list-root ===
 fallback-deployment / blacksmith
-ERROR: failed to parse deployment manifest: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!seq into map[interface {}]interface {}
+ERROR: failed to parse deployment manifest: yaml: cannot unmarshal []interface {} into Go value of type map[string]interface {}
 === odd_mixed-group-names ===
 fixture / blacksmith
 ERROR: first instance group missing name field
@@ -140,7 +138,7 @@ ERROR: manifest missing instance_groups
 fixture / first
 === odd_non-string-keys ===
 fallback-deployment / blacksmith
-ERROR: failed to parse deployment manifest: yaml: invalid map key: []interface {}{"a", "b"}
+ERROR: failed to parse deployment manifest: yaml: line 7: found an invalid key for this map
 === odd_null ===
 fallback-deployment / blacksmith
 ERROR: manifest missing instance_groups
@@ -152,14 +150,13 @@ fixture / blacksmith
 ERROR: manifest missing instance_groups
 === odd_scalar-root ===
 fallback-deployment / blacksmith
-ERROR: failed to parse deployment manifest: yaml: unmarshal errors:
-  line 1: cannot unmarshal !!str `just a ...` into map[interface {}]interface {}
+ERROR: failed to parse deployment manifest: yaml: cannot unmarshal string into Go value of type map[string]interface {}
 === odd_tab-indent ===
 fallback-deployment / blacksmith
 ERROR: failed to parse deployment manifest: yaml: line 3: found character that cannot start any token
 === odd_unterminated ===
 fallback-deployment / blacksmith
-ERROR: failed to parse deployment manifest: yaml: line 1: did not find expected ',' or '}'
+ERROR: failed to parse deployment manifest: yaml: line 2: could not find flow mapping end token '}'
 === odd_yaml11-scalars ===
 fixture / blacksmith
 ERROR: manifest missing instance_groups

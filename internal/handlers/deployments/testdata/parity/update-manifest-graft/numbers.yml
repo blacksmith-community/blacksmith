@@ -1,0 +1,13 @@
+name: parity
+properties:
+  big: 1.2345678901234567e+19
+  exp: 1000
+  float: 1.5
+  int: 3
+  neg: -7
+  neg-zero: 0
+  safe-max: 9007199254740992
+  small: 1.0e-06
+  version: 1.1
+  whole-float: 3
+  zero: 0

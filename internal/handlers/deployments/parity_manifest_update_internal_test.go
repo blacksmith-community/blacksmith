@@ -88,12 +88,13 @@ var updateBodies = []parity.Document{
 
 // TestUpdateManifestParity records the YAML text an update sends to the
 // director and stores in the vault for each JSON manifest, and the answer the
-// endpoint gives. The text is a YAML marshal of a map, so key order, quoting,
+// endpoint gives. The spruce-era recording is in update-manifest.txt and
+// update-manifest/, and the graft recording is in update-manifest-graft/. The text is a YAML marshal of a map, so key order, quoting,
 // and number forms are all the library's.
 func TestUpdateManifestParity(t *testing.T) {
 	t.Parallel()
 
-	var recorded, scalars strings.Builder
+	var recorded strings.Builder
 
 	for _, doc := range updateBodies {
 		director := &updateDirector{}
@@ -112,13 +113,11 @@ func TestUpdateManifestParity(t *testing.T) {
 		recorded.WriteString(parity.Section(doc.Name, body))
 
 		if director.sent != "" {
-			scalars.WriteString(parity.Section(doc.Name, parity.Scalars(director.sent)))
+			parity.GoldenYAML(t, filepath.Join("testdata", "parity", "update-manifest-graft", doc.Name+".yml"), director.sent)
 		}
 	}
 
-	golden := filepath.Join("testdata", "parity", "update-manifest.txt")
-	parity.Golden(t, golden, recorded.String())
-	parity.Golden(t, parity.ScalarsPath(golden), scalars.String())
+	parity.Golden(t, filepath.Join("testdata", "parity", "update-manifest-graft", "update-manifest.txt"), recorded.String())
 }
 
 func boolWord(value bool) string {

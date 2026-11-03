@@ -14,7 +14,7 @@ import (
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/services"
 	"blacksmith/pkg/http/response"
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Constants for SSH websocket handler.
@@ -253,7 +253,7 @@ func (h *Handler) readDeploymentNameFromInstanceFile(logger interfaces.Logger) s
 }
 
 func (h *Handler) extractBlacksmithManifestMetadata(manifestYAML string, fallbackName string, logger interfaces.Logger) (string, string, error) {
-	var manifest map[interface{}]interface{}
+	var manifest map[string]interface{}
 
 	err := yaml.Unmarshal([]byte(manifestYAML), &manifest)
 	if err != nil {
@@ -281,10 +281,6 @@ func (h *Handler) extractBlacksmithManifestMetadata(manifestYAML string, fallbac
 
 	var nameValue string
 	switch group := firstGroup.(type) {
-	case map[interface{}]interface{}:
-		if value, ok := group["name"].(string); ok {
-			nameValue = value
-		}
 	case map[string]interface{}:
 		if value, ok := group["name"].(string); ok {
 			nameValue = value
@@ -391,8 +387,8 @@ func (h *Handler) retrieveManifestFromVault(ctx context.Context, instanceID stri
 	return manifestData.Manifest, true
 }
 
-func (h *Handler) parseManifestYAML(manifestYAML, instanceID string, logger interfaces.Logger) (map[interface{}]interface{}, bool) {
-	var manifest map[interface{}]interface{}
+func (h *Handler) parseManifestYAML(manifestYAML, instanceID string, logger interfaces.Logger) (map[string]interface{}, bool) {
+	var manifest map[string]interface{}
 
 	err := yaml.Unmarshal([]byte(manifestYAML), &manifest)
 	if err != nil {
@@ -404,7 +400,7 @@ func (h *Handler) parseManifestYAML(manifestYAML, instanceID string, logger inte
 	return manifest, true
 }
 
-func (h *Handler) extractFirstInstanceGroupName(manifest map[interface{}]interface{}, instanceID string, logger interfaces.Logger) (string, bool) {
+func (h *Handler) extractFirstInstanceGroupName(manifest map[string]interface{}, instanceID string, logger interfaces.Logger) (string, bool) {
 	instanceGroups, ok := manifest["instance_groups"].([]interface{})
 	if !ok || len(instanceGroups) == 0 {
 		logger.Error("Manifest has empty instance_groups for instance %s", instanceID)
@@ -424,10 +420,6 @@ func (h *Handler) extractFirstInstanceGroupName(manifest map[interface{}]interfa
 
 func (h *Handler) extractGroupName(firstGroup interface{}, instanceID string, logger interfaces.Logger) string {
 	switch group := firstGroup.(type) {
-	case map[interface{}]interface{}:
-		if value, ok := group["name"].(string); ok {
-			return value
-		}
 	case map[string]interface{}:
 		if value, ok := group["name"].(string); ok {
 			return value

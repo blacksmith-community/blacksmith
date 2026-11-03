@@ -1,0 +1,161 @@
+broker:
+  username: user
+  password: pass
+  port: "8080"
+  bind_ip: 0.0.0.0
+  read_timeout: 0
+  write_timeout: 0
+  idle_timeout: 0
+  tls:
+    enabled: false
+    port: ""
+    certificate: ""
+    key: ""
+    protocols: ""
+    ciphers: ""
+    reuse_after: 0
+  cf:
+    enabled: true
+    broker_url: ""
+    broker_user: ""
+    broker_pass: ""
+    default_name: ""
+    apis:
+      dev:
+        name: dev
+        endpoint: https://api.dev
+        username: cf-user
+        password: cf-pass
+        cacert: ""
+        skip_ssl_validation: false
+  compression:
+    enabled: false
+    types: []
+    level: 0
+    min_size: 0
+    content_types: []
+vault:
+  address: https://vault.local
+  token: token
+  skip_ssl_validation: false
+  credentials: ""
+  cacert: ""
+  auto_unseal: false
+  health_check_interval: ""
+  unseal_cooldown: ""
+  history_retention:
+    enabled: false
+    retention_days: 0
+    max_entries: 0
+shield:
+  enabled: false
+  address: ""
+  skip_ssl_validation: false
+  agent: ""
+  auth_method: ""
+  token: ""
+  username: ""
+  password: ""
+  tenant: ""
+  store: ""
+  schedule: ""
+  retain: ""
+  enabled_on_targets: []
+bosh:
+  address: ""
+  username: ""
+  password: ""
+  cacert: ""
+  allow_http: false
+  stemcells: []
+  releases: []
+  cloud-config: ""
+  cloudconfig: ""
+  network: ""
+  max_connections: 0
+  max_batch_connections: 0
+  connection_timeout: 0
+  request_timeout: 0
+  task_watch_max: 0
+  director_workers: 0
+ssh:
+  enabled: false
+  ui_terminal_enabled: false
+  timeout: 0
+  connect_timeout: 0
+  session_init_timeout: 0
+  output_read_timeout: 0
+  max_concurrent: 0
+  max_output_size: 0
+  keep_alive: 0
+  retry_attempts: 0
+  retry_delay: 0
+  websocket:
+    enabled: null
+    read_buffer_size: 0
+    write_buffer_size: 0
+    handshake_timeout: 0
+    max_message_size: 0
+    ping_interval: 0
+    pong_timeout: 0
+    max_sessions: 0
+    session_timeout: 0
+    enable_compression: false
+services:
+  skip_tls_verify:
+  - rabbitmq
+reconciler:
+  enabled: false
+  interval: ""
+  max_concurrency: 0
+  batch_size: 0
+  retry_attempts: 0
+  retry_delay: ""
+  cache_ttl: ""
+  debug: false
+  backup:
+    enabled: false
+    retention_count: 0
+    retention_days: 0
+    compression_level: 0
+    cleanup_enabled: false
+    backup_on_update: false
+    backup_on_delete: false
+vm_monitoring:
+  enabled: null
+  normal_interval: 0
+  failed_interval: 0
+  max_retries: 0
+  timeout: 0
+  max_concurrent: 0
+debug: false
+web-root: ""
+env: testing
+shareable: false
+forges:
+  auto-scan: false
+  scan-paths: []
+  scan-patterns: []
+credhub:
+  url: ""
+  ca_cert: ""
+  client_id: ""
+  client_secret: ""
+  director_name: ""
+  uaa_url: ""
+  cleanup:
+    enabled: false
+    sweep: ""
+    protected_deployments: []
+certificates:
+  inventory:
+    enabled: null
+  rotation:
+    enabled: null
+  patch_in_place:
+    enabled: null
+commands:
+  enabled: null
+  allow_root: null
+  credential:
+    key: ""

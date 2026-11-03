@@ -15,7 +15,7 @@ import (
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/certificates"
 	"blacksmith/pkg/logger"
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Constants for certificate handler operations.
@@ -750,7 +750,7 @@ func (h *Handler) extractCertificatesFromManifest(ctx context.Context, manifest 
 	}
 
 	// Parse YAML manifest
-	var data map[interface{}]interface{}
+	var data map[string]interface{}
 
 	err := yaml.Unmarshal([]byte(manifest), &data)
 	if err != nil {
@@ -772,19 +772,6 @@ func (h *Handler) extractCertificatesFromManifest(ctx context.Context, manifest 
 // findCertificatesInYAML recursively searches for certificate PEM blocks in YAML data.
 func (h *Handler) findCertificatesInYAML(ctx context.Context, data interface{}, path string, certList *[]certificates.CertificateListItem) {
 	switch value := data.(type) {
-	case map[interface{}]interface{}:
-		for key, value := range value {
-			keyStr := fmt.Sprintf("%v", key)
-
-			newPath := path
-			if newPath == "" {
-				newPath = keyStr
-			} else {
-				newPath = fmt.Sprintf("%s.%s", path, keyStr)
-			}
-
-			h.findCertificatesInYAML(ctx, value, newPath, certList)
-		}
 	case map[string]interface{}:
 		for key, value := range value {
 			newPath := path

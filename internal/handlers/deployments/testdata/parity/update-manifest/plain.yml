@@ -1,0 +1,10 @@
+instance_groups:
+    - azs:
+        - z1
+        - z2
+      instances: 3
+      name: g
+name: parity
+releases:
+    - name: r
+      version: 1.2.3

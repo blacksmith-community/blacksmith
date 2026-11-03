@@ -1,0 +1,7 @@
+$["name"]#key	plain	!!str	string	"name"
+$["name"]	plain	!!str	string	"parity"
+$["properties"]#key	plain	!!str	string	"properties"
+$["properties"]["long"]#key	plain	!!str	string	"long"
+$["properties"]["long"]	single	!!str	string	"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word "
+$["properties"]["nospace"]#key	plain	!!str	string	"nospace"
+$["properties"]["nospace"]	plain	!!str	string	"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

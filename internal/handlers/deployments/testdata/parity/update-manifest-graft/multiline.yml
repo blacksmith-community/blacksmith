@@ -1,0 +1,13 @@
+name: parity
+properties:
+  blank: |-
+    a
+
+    b
+  cert: "-----BEGIN CERTIFICATE-----\nFIXTURE-PLACEHOLDER\n-----END CERTIFICATE-----\n"
+  cr: "a\r\nb"
+  trailing: |
+    line1
+  two: |-
+    line1
+    line2

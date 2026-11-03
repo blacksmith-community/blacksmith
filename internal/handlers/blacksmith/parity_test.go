@@ -11,7 +11,7 @@ import (
 	"blacksmith/internal/config"
 	"blacksmith/internal/parity"
 
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // TestGetConfigParity records the JSON the config endpoint returns for the
@@ -61,9 +61,9 @@ func TestGetConfigParity(t *testing.T) {
 }
 
 // marshaledConfig records the YAML text the handler marshals before it reads
-// the config back. It is a frozen copy of the call at handler.go:397, which
-// the migrating commit must switch to the same graft call, because a test
-// cannot see the text inside GetConfig.
+// the config back, which is the call at handler.go:397. The text goes in
+// testdata/parity-graft, beside the spruce-era recording it replaced, and
+// must read as the same tree.
 func marshaledConfig(t *testing.T, name string, cfg *config.Config, cloudConfig string) {
 	t.Helper()
 
@@ -72,8 +72,17 @@ func marshaledConfig(t *testing.T, name string, cfg *config.Config, cloudConfig 
 		t.Fatalf("%s: %v", name, err)
 	}
 
-	parity.GoldenYAML(t, filepath.Join("testdata", "parity", "get-config-marshaled-"+name+".yml"),
-		strings.ReplaceAll(string(text), cloudConfig, "<cloud-config>"))
+	got := strings.ReplaceAll(string(text), cloudConfig, "<cloud-config>")
+	file := "get-config-marshaled-" + name + ".yml"
+
+	parity.GoldenYAML(t, filepath.Join("testdata", "parity-graft", file), got)
+
+	want, err := os.ReadFile(filepath.Join("testdata", "parity", file))
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+
+	parity.CompareYAML(t, want, []byte(got))
 }
 
 func getConfigBody(t *testing.T, cfg *config.Config) string {

@@ -1,0 +1,21 @@
+name: parity
+properties:
+    amp: '&x'
+    apos: it's
+    at: '@x'
+    backtick: '`x'
+    bang: '!x'
+    brace: '{x}'
+    bracket: '[x]'
+    colon: 'a: b'
+    dash: '- x'
+    emoji: "\U0001F600"
+    hash: 'a #b'
+    lead-colon: :x
+    lead-space: ' x'
+    pct: '%x'
+    quote: say "hi"
+    star: '*x'
+    tab: "a\tb"
+    trail-space: 'x '
+    unicode: café ☃

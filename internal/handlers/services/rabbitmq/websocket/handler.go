@@ -15,8 +15,8 @@ import (
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/services"
 	rabbitmqssh "blacksmith/internal/services/rabbitmq"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 	gorillawebsocket "github.com/gorilla/websocket"
-	"gopkg.in/yaml.v3"
 )
 
 // Static errors for err113 linter compliance.
@@ -381,7 +381,7 @@ func (h *Handler) extractInstanceGroupFromManifest(ctx context.Context, instance
 		return ""
 	}
 
-	var manifest map[interface{}]interface{}
+	var manifest map[string]interface{}
 
 	err = yaml.Unmarshal([]byte(manifestData.Manifest), &manifest)
 	if err != nil {
@@ -397,10 +397,6 @@ func (h *Handler) extractInstanceGroupFromManifest(ctx context.Context, instance
 
 	var nameValue string
 	switch group := firstGroup.(type) {
-	case map[interface{}]interface{}:
-		if value, ok := group["name"].(string); ok {
-			nameValue = value
-		}
 	case map[string]interface{}:
 		if value, ok := group["name"].(string); ok {
 			nameValue = value

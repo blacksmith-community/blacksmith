@@ -1,0 +1,8 @@
+name: parity
+properties:
+    empty-list: []
+    empty-map: {}
+    empty-string: ""
+    f: false
+    nothing: null
+    t: true

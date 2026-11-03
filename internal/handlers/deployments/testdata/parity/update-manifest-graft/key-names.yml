@@ -1,0 +1,12 @@
+name: parity
+properties:
+  "1": numeric
+  "": empty-key
+  '-': dash
+  "~": tilde
+  a b: space
+  a:b: colon
+  "long-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": long
+  "null": "n"
+  "true": t
+  "yes": k

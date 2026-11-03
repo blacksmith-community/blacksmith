@@ -16,7 +16,7 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/testutil"
 	"blacksmith/pkg/vault"
-	"gopkg.in/yaml.v3"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Test error definitions.
