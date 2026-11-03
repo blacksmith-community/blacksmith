@@ -23,10 +23,24 @@ require 'yaml'
 
 PERMITTED = [Date, Time, Symbol].freeze
 
+# Returns the loaded document and nil, or nil and the error class name.  The
+# error's message is dropped because it can quote the content.
 def load_yaml(path)
-  YAML.safe_load(File.read(path), permitted_classes: PERMITTED, aliases: true)
-rescue StandardError => e
-  "load error: #{e.class}"
+  [YAML.safe_load(File.read(path), permitted_classes: PERMITTED, aliases: true), nil]
+rescue StandardError, Psych::SyntaxError => e
+  [nil, e.class.to_s]
+end
+
+def summary(value)
+  case value
+  when Hash then "#{value.class} of #{value.size} keys"
+  when Array then "#{value.class} of #{value.size} items"
+  else "#{value.class} #{value.inspect}"
+  end
+end
+
+def same_scalar?(want, got)
+  want == got || (want.is_a?(Float) && want.nan? && got.nan?)
 end
 
 def path_for(base, key)
@@ -40,7 +54,7 @@ end
 
 def compare(base, want, got, found)
   if want.class != got.class
-    found << "#{base}: class #{got.class}, want #{want.class} (#{got.inspect} against #{want.inspect})"
+    found << "#{base}: got #{summary(got)}, want #{summary(want)}"
   elsif want.is_a?(Hash)
     (want.keys - got.keys).each { |key| found << "#{path_for(base, key)}: missing" }
     (got.keys - want.keys).each { |key| found << "#{path_for(base, key)}: extra" }
@@ -48,7 +62,7 @@ def compare(base, want, got, found)
   elsif want.is_a?(Array)
     found << "#{base}: #{got.length} items, want #{want.length}" if want.length != got.length
     [want.length, got.length].min.times { |index| compare("#{base}[#{index}]", want[index], got[index], found) }
-  elsif want != got
+  elsif !same_scalar?(want, got)
     found << "#{base}: value #{got.inspect}, want #{want.inspect}"
   end
 end
@@ -77,7 +91,15 @@ pairs(*ARGV).each do |rel, want, got|
     next
   end
 
-  compare('$', load_yaml(want), load_yaml(got), local = [])
+  want_doc, want_error = load_yaml(want)
+  got_doc, got_error = load_yaml(got)
+  if want_error || got_error
+    found << "#{label}: cannot load#{" want (#{want_error})" if want_error}#{" got (#{got_error})" if got_error}"
+    next
+  end
+
+  local = []
+  compare('$', want_doc, got_doc, local)
   local.each { |line| found << "#{label} #{line}" }
 end
 

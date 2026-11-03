@@ -17,6 +17,14 @@ import (
 func CompareYAML(t *testing.T, want, got []byte) {
 	t.Helper()
 
+	CompareYAMLTB(t, want, got)
+}
+
+// CompareYAMLTB is CompareYAML for any testing.TB, so that its failure path
+// can be tested.
+func CompareYAMLTB(t testing.TB, want, got []byte) {
+	t.Helper()
+
 	for _, difference := range YAMLDifferences(want, got) {
 		t.Error(difference)
 	}
@@ -40,6 +48,23 @@ func CompareYAML(t *testing.T, want, got []byte) {
 // The second decodes both documents into any under YAML 1.1, where plain
 // yes is true, and requires the results to be reflect.DeepEqual. That
 // check sees merged values and the Go types the broker will see.
+//
+// The comparator reads only the first document of each input, as Psych's
+// safe_load does.
+//
+// A << merge key is never expanded, so a document that writes a merge and
+// one that writes out the merged keys differ, and the report says so. That
+// is the behavior today, and a test pins it.
+//
+// The comparator does not model Psych's scalar resolver. Graft tags these
+// as strings and decodes them as strings, where Psych reads them as other
+// types, so two documents that differ only in how they spell one pass here
+// and must be caught by hack/parity/psych-compare.rb, which has to run on
+// every parity pair whose output text changes. The classes are sexagesimal
+// numbers such as 1:20, numbers with commas such as 1,000, mixed-case
+// booleans such as oN, timestamps with a space before the zone such as
+// 2026-01-02 10:00:00 +5, and plain mapping keys such as yes: against
+// "yes":.
 //
 // Paths follow Dump, so a key with a dot in it reads ["a.b"] and cannot be
 // mistaken for a nested key.
@@ -72,6 +97,8 @@ func YAMLDifferences(want, got []byte) []string {
 		return append(differences, "got: cannot decode the document: "+err.Error())
 	}
 
+	// DeepEqual calls NaN different from itself, so only a leaf by leaf
+	// difference counts, and the same NaN on both sides is equal.
 	if !reflect.DeepEqual(wantValue, gotValue) {
 		differences = append(differences, decodeDifferences(wantValue, gotValue)...)
 	}
@@ -102,10 +129,6 @@ func decodeDifferences(want, got any) []string {
 		if _, ok := wantLines[path]; !ok {
 			differences = append(differences, "decode "+path+": extra, got "+line)
 		}
-	}
-
-	if len(differences) == 0 {
-		differences = append(differences, "decode $: values differ")
 	}
 
 	sort.Strings(differences)
@@ -160,13 +183,7 @@ func compareNodes(differences *[]string, path string, want, got *yaml.Node) {
 }
 
 func compareContent(differences *[]string, path string, want, got *yaml.Node) {
-	if len(want.Content) != len(got.Content) {
-		*differences = append(*differences, fmt.Sprintf("tree %s: %d documents, want %d", path, len(got.Content), len(want.Content)))
-
-		return
-	}
-
-	for index := range want.Content {
+	for index := range min(len(want.Content), len(got.Content)) {
 		compareNodes(differences, path, want.Content[index], got.Content[index])
 	}
 }
