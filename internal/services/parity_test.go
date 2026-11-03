@@ -11,7 +11,7 @@ import (
 // TestCatalogParity records the service every rendered forge tree loads as,
 // with each plan's merged manifest and credentials.
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestCatalogParity(t *testing.T) {
 	for _, fixture := range parity.Fixtures(t) {
 		t.Run(fixture.Name(), func(t *testing.T) {
@@ -29,7 +29,7 @@ func TestCatalogParity(t *testing.T) {
 // TestCatalogParityReadsEveryFixtureTree proves the fixtures hold the plans
 // each forge ships, so a missing plan cannot pass as an empty golden.
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestCatalogParityReadsEveryFixtureTree(t *testing.T) {
 	want := map[string]int{"kubernetes": 1, "mariadb": 1, "postgresql": 2, "rabbitmq": 1, "redis": 3, "valkey": 2}
 

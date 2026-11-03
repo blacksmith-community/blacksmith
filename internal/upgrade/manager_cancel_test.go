@@ -23,7 +23,7 @@ func cancelUpgrade(t *testing.T, manager *Manager, task *UpgradeTask) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelCancelsTheRecordedTask(t *testing.T) {
 	director := newWaitDirector()
 	manager, task, _ := startUpgrade(t, director, newWaitVault())
@@ -52,7 +52,7 @@ func TestUpgradeCancelCancelsTheRecordedTask(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelReleasesTheLockBeforeCallingTheDirector(t *testing.T) {
 	director := newWaitDirector()
 	heldLock := make(chan bool, 1)
@@ -98,7 +98,7 @@ func TestUpgradeCancelReleasesTheLockBeforeCallingTheDirector(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelTakesTheTasksOwnResultWhenItEndsAnotherWay(t *testing.T) {
 	director := newWaitDirector()
 	manager, task, _ := startUpgrade(t, director, newWaitVault())
@@ -149,7 +149,7 @@ func TestUpgradeCancelLeavesTheInstanceRunningWhenTheTaskOutlivesTheDeadline(t *
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelSkipsThePendingInstances(t *testing.T) {
 	director := newWaitDirector()
 	manager, task, _ := startUpgrade(t, director, newWaitVault(), waitInstanceID, "instance-2")
@@ -209,7 +209,7 @@ func eventuallySaved(t *testing.T, vault *waitVault, taskID string, done func(Up
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelBeforeTheTaskIDIsStoredCancelsTheTask(t *testing.T) {
 	director := newWaitDirector()
 	director.updateStarted = make(chan struct{})
@@ -258,7 +258,7 @@ func TestUpgradeCancelBeforeTheTaskIDIsStoredCancelsTheTask(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelAfterTheTaskIDIsStoredCancelsOnce(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()
@@ -426,7 +426,7 @@ func expectOneCancelOfTheFoundTask(t *testing.T, manager *Manager, task *Upgrade
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelDuringALostAnswerWaitCancelsTheFoundTask(t *testing.T) {
 	director := lostAnswerDirector()
 	gated := &gatedLookupDirector{lostDirector: director, lookupStarted: make(chan struct{}), gate: make(chan struct{})}
@@ -489,7 +489,7 @@ func TestUpgradeCancelDuringALostAnswerWaitCancelsTheFoundTask(t *testing.T) {
 	expectOneCancelOfTheFoundTask(t, manager, task, director.waitDirector)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelAfterTheFoundTaskIsStoredCancelsOnce(t *testing.T) {
 	director := lostAnswerDirector()
 	batch := newTestBatchDirector(t, director)
@@ -534,7 +534,7 @@ func (l *gateLogger) Info(msg string, args ...interface{}) {
 	})
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeCancelBeforeTheLastInstanceStartsSkipsIt(t *testing.T) {
 	const lastInstanceID = "instance-2"
 
@@ -585,7 +585,7 @@ func TestUpgradeCancelBeforeTheLastInstanceStartsSkipsIt(t *testing.T) {
 // A cancel frees a pending instance at once, since no deploy of it will be
 // sent, and keeps the running one until its deploy task settles it.
 //
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestCancelledInFlightInstanceHeldUntilSettled(t *testing.T) {
 	director := newWaitDirector()
 	endTheTaskAtCleanup(t, director)

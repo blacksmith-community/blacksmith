@@ -370,7 +370,7 @@ func TestCreateTaskFreesAnInstanceSettledAtCreation(t *testing.T) {
 	expectFree(t, manager, "unknown-instance")
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestInstanceReleasedWhenSettled(t *testing.T) {
 	director := newResumeDirector()
 	director.holdDeployment(nextDeployment)
@@ -436,7 +436,7 @@ func (d *erroringDirector) WaitForTask(_ context.Context, taskID int) (*bosh.Tas
 // Every way an instance can end frees its reservation, so no upgrade
 // keeps an instance it has finished with.
 //
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestTerminalInstancesReleaseTheirReservations(t *testing.T) {
 	cases := map[string]struct {
 		director func() bosh.Director

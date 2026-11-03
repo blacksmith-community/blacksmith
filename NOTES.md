@@ -18,7 +18,7 @@ director and posting a new deployment manifest.  This deployment
 will be named after the UUID of the new service (according to
 Cloud Foundry) and possibly the plan (for easier ops debugging).
 
-At this point, any credentials are generated using Spruce
+At this point, any credentials are generated using graft
 operators, and stored in the Vault, generating passwords as
 necessary.  The `$.meta.service` subtree will be extracted and
 returned to the service creator, by way of Cloud Foundry:

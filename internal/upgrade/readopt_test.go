@@ -963,7 +963,7 @@ func awaitReturn(t *testing.T, returned <-chan struct{}, what string) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestResumeDoesNotRecountSettledFailures(t *testing.T) {
 	director := newWaitDirector()
 
@@ -990,7 +990,7 @@ func TestResumeDoesNotRecountSettledFailures(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestProcessTaskStopsAtAnInstanceStillInFlight(t *testing.T) {
 	director := newWaitDirector()
 	director.updateStarted = make(chan struct{})

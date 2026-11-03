@@ -171,7 +171,7 @@ func TestCreateTaskWithReleasesNeedsADirector(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestCreateTaskAcceptsEachTargetCombination(t *testing.T) {
 	stemcell := StemcellTarget{OS: targetStemcellOS, Version: targetStemcellVersion}
 	forge := []ReleaseTarget{{Name: redisForge, Version: redisForgeTarget}}

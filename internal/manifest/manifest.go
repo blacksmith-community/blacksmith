@@ -335,8 +335,9 @@ func GenManifest(p services.Plan, instanceID string, manifests ...map[string]int
 // in the result. Every call builds its own graft engine with the operator
 // cache disabled. Graft's vault secret cache is process-wide and lives
 // until the broker restarts, as spruce's did, so a rotated secret reaches
-// a render only after a restart. The caller holds manifestMu. Graft reports an evaluation failure as a
-// PartialEvaluationError, so the error says which of the two steps failed.
+// a render only after a restart. The caller holds manifestMu. Graft
+// reports an evaluation failure as a PartialEvaluationError, so the error
+// says which of the two steps failed.
 func mergeAndEvaluate(documents []graft.Document) (interface{}, error) {
 	engine, err := graft.NewEngine(graft.WithCacheDisabled())
 	if err != nil {

@@ -246,7 +246,7 @@ func settled(t *testing.T, manager *Manager, task *UpgradeTask) UpgradeTask {
 	})
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstanceWithALostAnswerIsNotMarkedFailed(t *testing.T) {
 	director := newWaiterDirector()
 	director.lose = 1
@@ -284,7 +284,7 @@ func TestUpgradeInstanceWithALostAnswerIsNotMarkedFailed(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstancePutsItsContextIDOnTheContext(t *testing.T) {
 	director := newLostDirector()
 	vault := newWaitVault()
@@ -328,7 +328,7 @@ func TestUpgradeInstancePutsItsContextIDOnTheContext(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstancePersistsUnknownSinceWhenTheAnswerIsLost(t *testing.T) {
 	director := newWaiterDirector()
 	director.lose = 1
@@ -352,7 +352,7 @@ func TestUpgradeInstancePersistsUnknownSinceWhenTheAnswerIsLost(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstanceWithNoTaskForTheContextIDIsMarkedFailedNamingTheID(t *testing.T) {
 	director := newWaiterDirector()
 	director.lose = 1
@@ -375,7 +375,7 @@ func TestUpgradeInstanceWithNoTaskForTheContextIDIsMarkedFailedNamingTheID(t *te
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstanceSupersededByALaterDeployIsSkippedNamingIt(t *testing.T) {
 	director := newWaiterDirector()
 	director.lose = 1
@@ -435,7 +435,7 @@ func expectOutcomeUnknown(t *testing.T, done UpgradeTask, contextID string, task
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstanceWithAnAbandonedWatchSettlesAsOutcomeUnknown(t *testing.T) {
 	director := newWaiterDirector()
 	director.lose = 1
@@ -452,7 +452,7 @@ func TestUpgradeInstanceWithAnAbandonedWatchSettlesAsOutcomeUnknown(t *testing.T
 	expectOutcomeUnknown(t, settled(t, manager, task), contextID, 0)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstanceWhoseFollowedTaskIsAbandonedSettlesAsOutcomeUnknown(t *testing.T) {
 	director := newLostDirector()
 	director.abandonWaits = 1
@@ -473,7 +473,7 @@ func TestUpgradeInstanceWhoseFollowedTaskIsAbandonedSettlesAsOutcomeUnknown(t *t
 	expectOutcomeUnknown(t, done, sent[0], waitDeployTaskID)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeWithOnlyAnUnknownInstanceIsCompletedNotFailed(t *testing.T) {
 	director := newLostDirector()
 	director.abandonWaits = 1
@@ -553,7 +553,7 @@ func expectTheFoundTaskIsFollowed(t *testing.T, manager *Manager, task *UpgradeT
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the test swaps the package's awaitTaskByContextID hook
 func TestUpgradeInstanceWithNoWatcherUsesAwaitTaskByContextID(t *testing.T) {
 	awaits := recordAwaits(t)
 
@@ -570,7 +570,7 @@ func TestUpgradeInstanceWithNoWatcherUsesAwaitTaskByContextID(t *testing.T) {
 	expectTheFoundTaskIsFollowed(t, manager, task, vault, director.lostDirector, awaits)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the test swaps the package's awaitTaskByContextID hook
 func TestUpgradeInstanceWithNoBatchDirectorUsesAwaitTaskByContextID(t *testing.T) {
 	awaits := recordAwaits(t)
 
@@ -584,7 +584,7 @@ func TestUpgradeInstanceWithNoBatchDirectorUsesAwaitTaskByContextID(t *testing.T
 	expectTheFoundTaskIsFollowed(t, manager, task, vault, director, awaits)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeInstanceStoppedMarksTheInstanceInterrupted(t *testing.T) {
 	cases := map[string]func(director *waiterDirector, stop func()){
 		"the manager stops": func(_ *waiterDirector, stop func()) { stop() },

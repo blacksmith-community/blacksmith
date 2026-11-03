@@ -500,7 +500,7 @@ func TestUpgradeSavesTheFailureAndThePauseTogether(t *testing.T) {
 // outcome is unknown too, with a reason that says so, and Resume goes on
 // with the rest.
 //
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeOutcomeUnknownPausesWhenAsked(t *testing.T) {
 	director := newLostDirector()
 	director.abandonWaits = 1

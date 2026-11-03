@@ -13,8 +13,8 @@ import (
 )
 
 // mergeOverlays are layers merged over the blacksmith-metadata document.
-// They hold the spruce operators the broker's own layering relies on, and a
-// few that change shape.
+// They hold the operators the broker's own layering relies on, and a few
+// that change shape.
 var mergeOverlays = []parity.Document{
 	{Name: "grab", Body: "properties:\n  copy: (( grab name ))\n  deep: (( grab properties.blacksmith.plan_id ))\n"},
 	{Name: "concat", Body: "properties:\n  joined: (( concat name \"-\" properties.blacksmith.plan_id ))\n"},

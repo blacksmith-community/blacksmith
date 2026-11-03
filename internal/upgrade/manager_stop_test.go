@@ -61,7 +61,7 @@ func expectNoCounts(t *testing.T, task UpgradeTask) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestStopLeavesRemainingInstancesPending(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()
@@ -77,7 +77,7 @@ func TestStopLeavesRemainingInstancesPending(t *testing.T) {
 	expectNoCounts(t, stopped)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestStopMarksTheWaitingInstanceInterrupted(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()
@@ -108,7 +108,7 @@ func TestStopMarksTheWaitingInstanceInterrupted(t *testing.T) {
 	expectNoCounts(t, snapshot(manager, task))
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestStopDuringTheLastInstanceLeavesTheUpgradeRunning(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()
@@ -127,7 +127,7 @@ func TestStopDuringTheLastInstanceLeavesTheUpgradeRunning(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestStopWhileWaitingForABatchSlotLeavesTheInstancePending(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()
@@ -162,7 +162,7 @@ func TestStopWhileWaitingForABatchSlotLeavesTheInstancePending(t *testing.T) {
 	expectNoCounts(t, stopped)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestStopDuringGetDeploymentLeavesTheInstancePending(t *testing.T) {
 	director := &stoppingDirector{waitDirector: newWaitDirector(), reading: make(chan struct{})}
 	vault := newWaitVault()
@@ -184,7 +184,7 @@ func TestStopDuringGetDeploymentLeavesTheInstancePending(t *testing.T) {
 	expectNoCounts(t, stopped)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the test swaps the package's cancelWaitTimeout
 func TestStopEndsTheWaitAfterACancel(t *testing.T) {
 	previous := cancelWaitTimeout
 	cancelWaitTimeout = 10 * time.Second
@@ -232,7 +232,7 @@ func TestStopEndsTheWaitAfterACancel(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestStopDuringALostAnswerLookupNamesTheContextID(t *testing.T) {
 	// The deploy loses its answer, and no lookup finds its task, so the
 	// upgrade keeps looking by context ID until it is stopped.

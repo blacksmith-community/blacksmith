@@ -443,7 +443,7 @@ func TestUpgradePreviewValidatesLikeCreate(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestCreateUpgradeRequiresPreviewWhenDiverged(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -454,7 +454,7 @@ func TestCreateUpgradeRequiresPreviewWhenDiverged(t *testing.T) {
 	env.expectNothingCreated(t)
 }
 
-//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestCreateUpgradeRejectsMismatchedPreview(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.director.releases = []bosh.Release{{Name: "redis-forge", ReleaseVersions: []bosh.ReleaseVersion{{Version: "9.9.8"}, {Version: "9.9.9"}}}}
@@ -537,7 +537,7 @@ func TestUpgradePreviewStoreExpiry(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestCreateUpgradeRejectsExpiredPreview(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -555,7 +555,7 @@ func TestCreateUpgradeRejectsExpiredPreview(t *testing.T) {
 	env.expectNothingCreated(t)
 }
 
-//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestCreateUpgradeRejectsRotationPreviewID(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -665,7 +665,7 @@ func runCleanUpgrade(t *testing.T, withDivergence bool) ([]map[string]any, *dive
 	return out, env
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestCreateUpgradeCleanUnchanged(t *testing.T) {
 	today, _ := runCleanUpgrade(t, false)
 	now, env := runCleanUpgrade(t, true)
@@ -691,7 +691,7 @@ func TestCreateUpgradeCleanUnchanged(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeOfDivergedInstanceForcesLatest(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -736,7 +736,7 @@ func TestUpgradeOfDivergedInstanceForcesLatest(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeOfDivergedInstanceWithNothingElseKeepsItsApproval(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -808,7 +808,7 @@ func expectStoppedForApproval(t *testing.T, env *divergedEnv, taskID string) {
 	}
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeStopsWhenEffectsGrew(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -837,7 +837,7 @@ func TestUpgradeStopsWhenEffectsGrew(t *testing.T) {
 	expectStoppedForApproval(t, env, task.ID)
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeStopsWhenDivergedAfterCreate(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.director.getGate = make(chan struct{})
@@ -919,7 +919,7 @@ func (e *divergedEnv) gateDeploymentRead(t *testing.T, create func()) func() {
 	return func() { close(e.director.getGate) }
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeRetriesDivergenceRead(t *testing.T) {
 	env, flaky := newFlakyDivergedEnv(t)
 
@@ -958,7 +958,7 @@ func TestUpgradeRetriesDivergenceRead(t *testing.T) {
 	eventuallySaved(t, env.vault, task.ID, func(saved UpgradeTask) bool { return saved.Status == TaskStatusCompleted })
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeFailsClosedWhenDivergenceUnreadable(t *testing.T) {
 	env, flaky := newFlakyDivergedEnv(t)
 
@@ -995,7 +995,7 @@ func TestUpgradeFailsClosedWhenDivergenceUnreadable(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestUpgradeAnswers503WhenDivergenceUnreadable(t *testing.T) {
 	env, flaky := newFlakyDivergedEnv(t)
 	flaky.failures.Store(1000)
@@ -1012,7 +1012,7 @@ func TestUpgradeAnswers503WhenDivergenceUnreadable(t *testing.T) {
 // An ID that can't name a divergence record has none, so the upgrade
 // treats it as it always has and fails only that instance.
 //
-//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestCreateUpgradeWithBadInstanceIDFailsOnlyThatInstance(t *testing.T) {
 	for _, badID := range []string{"a/b", ""} {
 		without := newDivergedEnv(t, false)
@@ -1055,7 +1055,7 @@ func TestCreateUpgradeWithBadInstanceIDFailsOnlyThatInstance(t *testing.T) {
 // A bad ID beside a clean instance fails only itself, and the clean
 // instance still deploys.
 //
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeWithBadInstanceIDStillDeploysCleanInstance(t *testing.T) {
 	env := newDivergedEnv(t, true)
 
@@ -1138,7 +1138,7 @@ func TestUpgradePreviewChecksDirectorOnlyWhenDiverged(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeOfDivergedInstanceChecksDirector(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -1200,7 +1200,7 @@ func TestUpgradePreviewOfVanishedDivergedInstance(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // a created upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestCreateUpgradeApprovesOnlyDivergedInstances(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)
@@ -1245,7 +1245,7 @@ func TestCreateUpgradeApprovesOnlyDivergedInstances(t *testing.T) {
 // A converge or reconciliation can clear the record between the create
 // and the deploy, and the instance then deploys as any upgrade does.
 //
-//nolint:paralleltest // the upgrade runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeDeploysPlainWhenRecordClearedAfterCreate(t *testing.T) {
 	env := newDivergedEnv(t, true)
 	env.diverge(t)

@@ -214,7 +214,7 @@ func TestReleaseUpgradeDeploysTheBumpedReleaseAndKeepsTheStemcell(t *testing.T) 
 	expectReleaseBumped(t, director.deployed(t, firstDeployment), deployedStemcellVersion)
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestStemcellAndReleaseUpgradeAppliesBothTargets(t *testing.T) {
 	director := newReleaseDirector()
 	vault := newWaitVault()

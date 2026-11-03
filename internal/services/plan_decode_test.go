@@ -164,7 +164,7 @@ func requirePlan(t *testing.T, got, want services.Plan) {
 // a plan and of its service. Fields with no yaml tag of their own take
 // their key from the lower-cased field name, as yaml.v2 matched them.
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestReadPlanDecodesEveryField(t *testing.T) {
 	// The nested plan's manifest is never decoded, and a plan's service
 	// is the one service.yml gives it.
@@ -243,7 +243,7 @@ func TestReadPlanDecodesEveryField(t *testing.T) {
 // TestReadPlanAcceptsAQuotedLimit pins what a quoted number does in the
 // integer limit field.
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestReadPlanAcceptsAQuotedLimit(t *testing.T) {
 	dir := writePlanDir(t, map[string]string{"plan.yml": "id: quoted\nname: quoted\nlimit: \"5\"\n"})
 
@@ -261,7 +261,7 @@ func TestReadPlanAcceptsAQuotedLimit(t *testing.T) {
 // credentials are not a map. Each load fails with an error that names the
 // file that holds them.
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestReadPlanRefusesCredentialsOfTheWrongType(t *testing.T) {
 	cases := map[string]struct {
 		files map[string]string
@@ -374,7 +374,7 @@ func TestPlanFilesTreatRepeatedKeys(t *testing.T) {
 // manifest does, so y and 08 stay strings where yaml.v2 gave true and 8,
 // and a yes key stays "yes" where yaml.v2 gave "true".
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestPlanFilesKeepYAML11Scalars(t *testing.T) {
 	dir := writePlanDir(t, map[string]string{
 		"service.yml": "id: y\nname: no\ndescription: 2001-12-14t21:59:43.10-05:00\ntype: 08\nbindable: yes\ntags: [y, no, 08, 2001-12-14]\nlimit: 08\n",
@@ -429,7 +429,7 @@ func TestPlanFilesKeepYAML11Scalars(t *testing.T) {
 // with an error that names service.yml, where yaml.v2 read it as a
 // boolean, and every other spelling decodes as yaml.v2 decoded it.
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestServiceBindableSpellings(t *testing.T) {
 	spellings := map[string]bool{
 		"yes": true, "Yes": true, "YES": true, "on": true, "On": true, "ON": true, "true": true, "True": true, "TRUE": true,
@@ -475,7 +475,7 @@ func TestServiceBindableSpellings(t *testing.T) {
 // none. Nothing leaves the credentials as plan.yml gives them, a null
 // clears them, and an empty map adds no key.
 //
-//nolint:paralleltest // merging plan files uses spruce, which keeps global state
+//nolint:paralleltest // kept serial for now, though it shares no process-wide state
 func TestReadPlanCredentialsFileShapes(t *testing.T) {
 	const withCredentials = "id: shapes\nname: shapes\ncredentials:\n  from-plan: plan-value\n"
 

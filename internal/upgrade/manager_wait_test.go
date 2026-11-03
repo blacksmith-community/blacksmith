@@ -284,7 +284,7 @@ func eventually(t *testing.T, manager *Manager, task *UpgradeTask, what string, 
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeRecordsTheTaskBeforeItFinishes(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()
@@ -312,7 +312,7 @@ func TestUpgradeRecordsTheTaskBeforeItFinishes(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+//nolint:paralleltest // the upgrade merges the stemcell overlay under the process-wide manifestMu
 func TestUpgradeNilTaskFailsTheInstance(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()

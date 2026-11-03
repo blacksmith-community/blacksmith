@@ -216,6 +216,7 @@ func prepareParityFixture(t *testing.T, fixture parity.Fixture) string {
 
 	parity.SeedCredentials(t, server, fixture, instanceID)
 	t.Setenv("CREDENTIALS", parity.CredentialsPath(instanceID))
+	// Graft reads SPRUCE_FILE_BASE_PATH when GRAFT_FILE_BASE_PATH is unset.
 	t.Setenv("SPRUCE_FILE_BASE_PATH", fixture.Dir)
 	t.Setenv("BOSH_NETWORK", parityNetwork)
 
