@@ -859,7 +859,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	}
 
 	if err != nil {
-		m.failInstance(persistCtx, task, instance, fmt.Sprintf("failed to merge stemcell overlay: %v", err))
+		m.failInstance(persistCtx, task, instance, err.Error())
 
 		return
 	}

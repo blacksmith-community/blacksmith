@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	manifestPkg "blacksmith/internal/manifest"
@@ -25,7 +26,7 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 
 	err := yaml.Unmarshal([]byte(manifestYAML), &manifest)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse manifest YAML: %w", err)
+		return "", fmt.Errorf("failed to parse the manifest for the stemcell overlay: %w", err)
 	}
 
 	// Create the stemcell overlay
@@ -45,7 +46,7 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 	// Marshal back to YAML
 	result, err := yaml.Marshal(tree)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal merged manifest: %w", err)
+		return "", fmt.Errorf("failed to marshal the manifest after the stemcell overlay: %w", err)
 	}
 
 	return string(result), nil
@@ -53,16 +54,24 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 
 // mergeAndEvaluate merges the overlay into the manifest with graft and
 // evaluates the operators in the result, on an engine of its own with no
-// cache. The caller holds the manifest lock.
+// cache. The caller holds the manifest lock. Graft reports an evaluation
+// failure as a PartialEvaluationError, so the error says which of the two
+// steps failed.
 func mergeAndEvaluate(manifest, overlay map[string]interface{}) (interface{}, error) {
 	engine, err := graft.NewEngine(graft.WithCacheDisabled())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create the graft engine: %w", err)
+		return nil, fmt.Errorf("failed to create the graft engine for the stemcell overlay: %w", err)
 	}
 
 	merged, err := engine.Merge(context.Background(), graft.NewDocument(manifest), graft.NewDocument(overlay)).Execute()
-	if err != nil {
-		return nil, fmt.Errorf("failed to merge stemcell overlay: %w", err)
+
+	var evaluation *graft.PartialEvaluationError
+
+	switch {
+	case errors.As(err, &evaluation):
+		return nil, fmt.Errorf("failed to evaluate the manifest after the stemcell overlay merge: %w", err)
+	case err != nil:
+		return nil, fmt.Errorf("failed to merge the stemcell overlay: %w", err)
 	}
 
 	return merged.RawData(), nil
