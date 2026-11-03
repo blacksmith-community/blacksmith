@@ -83,27 +83,32 @@ func TestExtractCredentialsReadsPlainYAML11Scalars(t *testing.T) {
 }
 
 // TestExtractCredentialsRefusesWhatIsNotAMap checks that a manifest whose
-// credentials are missing, null, or not a map gives no credentials and an
-// error, and that a string gives ErrCredentialsNotMap.
+// credentials are missing, null, or not a map gives no credentials and the
+// error for its shape. Missing or null credentials, and a root that is not a
+// map, give ErrCredentialsFieldNotFound, a string gives ErrCredentialsNotMap,
+// and any other value gives ErrCredentialsWrongType.
 func TestExtractCredentialsRefusesWhatIsNotAMap(t *testing.T) {
 	t.Parallel()
 
-	manifests := map[string]string{
-		"missing":     "name: fixture\n",
-		"null":        "credentials: ~\n",
-		"list":        "credentials: [a, b]\n",
-		"integer":     "credentials: 5432\n",
-		"list root":   "- credentials\n",
-		"scalar root": "credentials\n",
-		"empty":       "",
-		"string":      "credentials: fixture-string\n",
+	cases := map[string]struct {
+		manifest string
+		want     error
+	}{
+		"missing":     {"name: fixture\n", ErrCredentialsFieldNotFound},
+		"null":        {"credentials: ~\n", ErrCredentialsFieldNotFound},
+		"list root":   {"- credentials\n", ErrCredentialsFieldNotFound},
+		"scalar root": {"credentials\n", ErrCredentialsFieldNotFound},
+		"empty":       {"", ErrCredentialsFieldNotFound},
+		"list":        {"credentials: [a, b]\n", ErrCredentialsWrongType},
+		"integer":     {"credentials: 5432\n", ErrCredentialsWrongType},
+		"string":      {"credentials: fixture-string\n", ErrCredentialsNotMap},
 	}
 
-	for name, manifest := range manifests {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := extractCredentialsFromManifest(manifest, &logger.NoOpLogger{})
+			got, err := extractCredentialsFromManifest(tc.manifest, &logger.NoOpLogger{})
 			if err == nil || got != nil {
 				t.Fatalf("expected an error and no credentials, got an error %v and credentials of type %T", err, got)
 			}
@@ -112,8 +117,8 @@ func TestExtractCredentialsRefusesWhatIsNotAMap(t *testing.T) {
 				t.Error("expected the error to quote nothing from the manifest")
 			}
 
-			if name == "string" && !errors.Is(err, ErrCredentialsNotMap) {
-				t.Errorf("expected ErrCredentialsNotMap, got: %v", err)
+			if !errors.Is(err, tc.want) {
+				t.Errorf("expected %v, got: %v", tc.want, err)
 			}
 		})
 	}

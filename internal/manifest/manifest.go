@@ -798,12 +798,6 @@ func jobsMap(jobs []*services.Job) map[string]interface{} {
 	list := make([]interface{}, 0, len(jobs))
 
 	for _, job := range jobs {
-		if job == nil {
-			list = append(list, nil)
-
-			continue
-		}
-
 		list = append(list, map[string]interface{}{
 			"name":       job.Name,
 			"deployment": job.Deployment,
