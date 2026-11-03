@@ -488,15 +488,17 @@ func TestReadPlanCredentialsFileShapes(t *testing.T) {
 		credentials string
 		want        map[string]interface{}
 	}{
-		"an empty file over plan credentials":        {withCredentials, "", fromPlan},
-		"a comment over plan credentials":            {withCredentials, "# nothing\n", fromPlan},
-		"a null over plan credentials":               {withCredentials, "~\n", nil},
-		"an empty map over plan credentials":         {withCredentials, "{}\n", fromPlan},
-		"an empty file without plan credentials":     {withoutCredentials, "", nil},
-		"a null without plan credentials":            {withoutCredentials, "null\n", nil},
-		"an empty map without plan credentials":      {withoutCredentials, "{}\n", map[string]interface{}{}},
-		"a nested map without plan credentials":      {withoutCredentials, "outer:\n  inner: file-value\n", map[string]interface{}{"outer": map[string]interface{}{"inner": "file-value"}}},
-		"a nested map replaces a plan key wholesale": {"id: shapes\nname: shapes\ncredentials:\n  outer:\n    kept: plan-value\n", "outer:\n  inner: file-value\n", map[string]interface{}{"outer": map[string]interface{}{"inner": "file-value"}}},
+		"an empty file over plan credentials":         {withCredentials, "", fromPlan},
+		"a comment over plan credentials":             {withCredentials, "# nothing\n", fromPlan},
+		"a null over plan credentials":                {withCredentials, "~\n", nil},
+		"a null word over plan credentials":           {withCredentials, "null\n", nil},
+		"a bare document start over plan credentials": {withCredentials, "---\n", nil},
+		"an empty map over plan credentials":          {withCredentials, "{}\n", fromPlan},
+		"an empty file without plan credentials":      {withoutCredentials, "", nil},
+		"a null without plan credentials":             {withoutCredentials, "null\n", nil},
+		"an empty map without plan credentials":       {withoutCredentials, "{}\n", map[string]interface{}{}},
+		"a nested map without plan credentials":       {withoutCredentials, "outer:\n  inner: file-value\n", map[string]interface{}{"outer": map[string]interface{}{"inner": "file-value"}}},
+		"a nested map replaces a plan key wholesale":  {"id: shapes\nname: shapes\ncredentials:\n  outer:\n    kept: plan-value\n", "outer:\n  inner: file-value\n", map[string]interface{}{"outer": map[string]interface{}{"inner": "file-value"}}},
 	}
 
 	for name, tc := range cases {

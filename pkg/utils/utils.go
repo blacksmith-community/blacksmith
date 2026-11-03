@@ -224,6 +224,11 @@ func decodeMergeFile(path string, data []byte, onDuplicate DuplicateKeyFunc) (ma
 }
 
 // IsNullDocument reports whether data is a document that holds a null.
+// It is true for ~, for null, and for a bare --- document start, which
+// holds an implicit null. It is false for an empty file and for one that
+// holds only comments, because neither holds a document. Only the first
+// document counts. yaml.v2 told these cases apart the same way: a null
+// cleared the map it decoded into, and an empty file left it alone.
 func IsNullDocument(data []byte) bool {
 	var node yaml.Node
 
