@@ -22,16 +22,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// manifestMu serializes every manifest merge and evaluation in the
-// process. It also guards the process-wide CREDENTIALS value, which
-// GenManifest sets for the instance it renders and which templates read
-// through (( vault $CREDENTIALS ... )), so no render sees the path of
-// another instance.
+// manifestMu serializes GenManifest's render and the stemcell overlay's
+// merge and evaluation, the two places that evaluate operators. It also
+// guards the process-wide CREDENTIALS value, which GenManifest sets for
+// the instance it renders and which templates read through
+// (( vault $CREDENTIALS ... )), so no render sees the path of another
+// instance. Merges that evaluate nothing, such as utils.MergeFiles and
+// the release overlay, run without it.
 var manifestMu sync.Mutex
 
-// WithManifestLock runs fn under manifestMu, so code outside this package
-// that merges or evaluates a manifest never runs alongside the renders
-// this package performs.
+// WithManifestLock runs fn under manifestMu, so an evaluation outside this
+// package never runs alongside GenManifest's render or reads the
+// CREDENTIALS value another render set.
 func WithManifestLock(fn func()) {
 	manifestMu.Lock()
 	defer manifestMu.Unlock()
