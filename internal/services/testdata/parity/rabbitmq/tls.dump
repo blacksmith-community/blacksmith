@@ -52,7 +52,7 @@ $.Plans[0].Manifest.instance_groups[0].vm_type	string	"(( grab meta.size ))"
 $.Plans[0].Manifest.instance_groups[0]["."]	string	"(( inject meta.disk_config ))"
 $.Plans[0].Manifest.meta.azs[0]	string	"z1"
 $.Plans[0].Manifest.meta.bosh_env	string	"fixture-env"
-$.Plans[0].Manifest.meta.disk_config	map[interface {}]interface {}	{}
+$.Plans[0].Manifest.meta.disk_config	map[string]interface {}	{}
 $.Plans[0].Manifest.meta.environment	string	"fixture-env"
 $.Plans[0].Manifest.meta.erlang_cookie	string	"(( vault $CREDENTIALS \"/rabbitmq/erlang:cookie\" ))"
 $.Plans[0].Manifest.meta.instances	int	1

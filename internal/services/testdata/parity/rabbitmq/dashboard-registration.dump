@@ -141,7 +141,7 @@ $.Plans[0].Manifest.meta.cf.exodus_path	string	"secret/exodus/fixture-env/cf"
 $.Plans[0].Manifest.meta.cf.password	string	"fixture-password-not-real"
 $.Plans[0].Manifest.meta.cf.system_domain	string	"sys.fixture.example"
 $.Plans[0].Manifest.meta.cf.username	string	"fixture-admin"
-$.Plans[0].Manifest.meta.disk_config	map[interface {}]interface {}	{}
+$.Plans[0].Manifest.meta.disk_config	map[string]interface {}	{}
 $.Plans[0].Manifest.meta.environment	string	"fixture-env"
 $.Plans[0].Manifest.meta.erlang_cookie	string	"(( vault $CREDENTIALS \"/rabbitmq/erlang:cookie\" ))"
 $.Plans[0].Manifest.meta.instances	int	1
