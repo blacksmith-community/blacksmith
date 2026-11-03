@@ -142,6 +142,9 @@ github.com/aws/smithy-go/transport/http/protocol/internal/json
 github.com/aws/smithy-go/transport/http/protocol/internal/json/internal/stdlib
 github.com/aws/smithy-go/transport/http/protocol/restjson1
 github.com/aws/smithy-go/waiter
+# github.com/casbin/govaluate v1.10.0
+## explicit; go 1.13
+github.com/casbin/govaluate
 # github.com/cenkalti/backoff/v4 v4.3.0
 ## explicit; go 1.18
 github.com/cenkalti/backoff/v4
@@ -164,6 +167,11 @@ github.com/cppforlife/go-patch/patch
 # github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
 ## explicit
 github.com/dgryski/go-rendezvous
+# github.com/dlclark/regexp2/v2 v2.9.1
+## explicit; go 1.25
+github.com/dlclark/regexp2/v2
+github.com/dlclark/regexp2/v2/helpers
+github.com/dlclark/regexp2/v2/syntax
 # github.com/fivetwenty-io/boshapi v0.283.9
 ## explicit; go 1.27.1
 github.com/fivetwenty-io/boshapi/internal/auth
@@ -183,6 +191,10 @@ github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
 # github.com/fivetwenty-io/graft v1.44.1
 ## explicit; go 1.27.3
+github.com/fivetwenty-io/graft/internal/backends/aws
+github.com/fivetwenty-io/graft/internal/backends/nats
+github.com/fivetwenty-io/graft/internal/backends/reqdedup
+github.com/fivetwenty-io/graft/internal/backends/vault
 github.com/fivetwenty-io/graft/internal/cache
 github.com/fivetwenty-io/graft/internal/config
 github.com/fivetwenty-io/graft/internal/features
@@ -192,6 +204,7 @@ github.com/fivetwenty-io/graft/internal/parallel
 github.com/fivetwenty-io/graft/internal/srcpos
 github.com/fivetwenty-io/graft/internal/utils/ansi
 github.com/fivetwenty-io/graft/internal/utils/mfa
+github.com/fivetwenty-io/graft/internal/utils/netutil
 github.com/fivetwenty-io/graft/internal/yamlcodec
 github.com/fivetwenty-io/graft/internal/yamlnode
 github.com/fivetwenty-io/graft/internal/yamlprep
@@ -200,6 +213,7 @@ github.com/fivetwenty-io/graft/pkg/decimal
 github.com/fivetwenty-io/graft/pkg/graft
 github.com/fivetwenty-io/graft/pkg/graft/interfaces
 github.com/fivetwenty-io/graft/pkg/graft/merger
+github.com/fivetwenty-io/graft/pkg/graft/operators
 github.com/fivetwenty-io/graft/pkg/graft/postprocess
 github.com/fivetwenty-io/graft/pkg/graft/tree
 github.com/fivetwenty-io/graft/pkg/query/value
@@ -314,6 +328,11 @@ github.com/hashicorp/vault/api
 # github.com/jhunt/go-querytron v0.0.0-20190121150331-d03b28210bbc
 ## explicit
 github.com/jhunt/go-querytron
+# github.com/klauspost/compress v1.20.3
+## explicit; go 1.25
+github.com/klauspost/compress/flate
+github.com/klauspost/compress/internal/le
+github.com/klauspost/compress/internal/regmask
 # github.com/mattn/go-isatty v0.0.24
 ## explicit; go 1.20
 github.com/mattn/go-isatty
@@ -323,6 +342,20 @@ github.com/mitchellh/go-homedir
 # github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c
 ## explicit; go 1.14
 github.com/mitchellh/mapstructure
+# github.com/nats-io/nats.go v1.54.0
+## explicit; go 1.26.0
+github.com/nats-io/nats.go
+github.com/nats-io/nats.go/encoders/builtin
+github.com/nats-io/nats.go/internal/parser
+github.com/nats-io/nats.go/internal/syncx
+github.com/nats-io/nats.go/jetstream
+github.com/nats-io/nats.go/util
+# github.com/nats-io/nkeys v0.4.16
+## explicit; go 1.25.0
+github.com/nats-io/nkeys
+# github.com/nats-io/nuid v1.0.1
+## explicit
+github.com/nats-io/nuid
 # github.com/nxadm/tail v1.4.11
 ## explicit; go 1.13
 github.com/nxadm/tail
@@ -419,6 +452,7 @@ go.yaml.in/yaml/v2
 go.yaml.in/yaml/v3
 # golang.org/x/crypto v0.58.0
 ## explicit; go 1.26.0
+golang.org/x/crypto/blake2b
 golang.org/x/crypto/blowfish
 golang.org/x/crypto/chacha20
 golang.org/x/crypto/cryptobyte
@@ -426,6 +460,9 @@ golang.org/x/crypto/cryptobyte/asn1
 golang.org/x/crypto/curve25519
 golang.org/x/crypto/internal/alias
 golang.org/x/crypto/internal/poly1305
+golang.org/x/crypto/nacl/box
+golang.org/x/crypto/nacl/secretbox
+golang.org/x/crypto/salsa20/salsa
 golang.org/x/crypto/ssh
 golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
 # golang.org/x/net v0.62.0
@@ -441,6 +478,9 @@ golang.org/x/net/internal/httpcommon
 golang.org/x/net/internal/httpsfv
 golang.org/x/net/internal/socks
 golang.org/x/net/proxy
+# golang.org/x/sync v0.24.0
+## explicit; go 1.26.0
+golang.org/x/sync/singleflight
 # golang.org/x/sys v0.49.0
 ## explicit; go 1.26.0
 golang.org/x/sys/cpu

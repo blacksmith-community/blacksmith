@@ -34,34 +34,62 @@ var parityReleaseTargets = []upgrade.ReleaseTarget{
 	{Name: "absent-release", Version: "99.7.0"},
 }
 
-// TestMergeStemcellOverlayParity records the manifest the stemcell overlay
-// produces for every rendered manifest, or the error it fails with.
-//
-//nolint:paralleltest // the merge uses spruce, which keeps global state
+// TestMergeStemcellOverlayParity checks the manifest the stemcell overlay
+// produces for every rendered manifest against the recording made when
+// spruce merged it, and records what graft makes of it in stemcell-graft.
+// The manifest has to match as a YAML tree, and the type of every scalar
+// has to stay the same though its style may change. A failure compares
+// only that both fail, since the error text is graft's.
 func TestMergeStemcellOverlayParity(t *testing.T) {
+	t.Parallel()
+
 	for _, rendered := range parity.RenderedManifests(t) {
 		t.Run(rendered.Name, func(t *testing.T) {
-			golden := filepath.Join("testdata", "parity", "stemcell", rendered.Name+".yml")
+			t.Parallel()
+
+			old := filepath.Join("testdata", "parity", "stemcell", rendered.Name)
+			graft := filepath.Join("testdata", "parity", "stemcell-graft", rendered.Name)
+
+			oldYAML := readRecording(t, old+".yml")
 
 			merged, err := upgrade.MergeStemcellOverlay(rendered.Body, parityStemcellOS, parityStemcellVersion)
 			if err != nil {
-				parity.Golden(t, golden, "ERROR: "+err.Error()+"\n")
+				if !strings.HasPrefix(oldYAML, "ERROR:") {
+					t.Errorf("the recording holds a manifest, but the overlay failed: %v", err)
+				}
+
+				parity.Golden(t, graft+".yml", "ERROR: "+err.Error()+"\n")
 
 				return
 			}
 
-			parity.GoldenYAML(t, golden, merged)
+			if strings.HasPrefix(oldYAML, "ERROR:") {
+				t.Fatalf("the recording is an error, but the overlay made a manifest")
+			}
+
+			parity.CompareYAML(t, []byte(oldYAML), []byte(merged))
+
+			wantScalars, gotScalars := scalarTypes(readRecording(t, old+".scalars")), scalarTypes(parity.Scalars(merged))
+			if !reflect.DeepEqual(wantScalars, gotScalars) {
+				t.Errorf("scalar types differ\n--- want\n%s\n--- got\n%s", strings.Join(wantScalars, "\n"), strings.Join(gotScalars, "\n"))
+			}
+
+			parity.GoldenYAML(t, graft+".yml", merged)
 		})
 	}
 }
 
 // TestGetCurrentStemcellParity records the stemcell each rendered manifest
-// reports, and the same call on the overlay's output.
-//
-//nolint:paralleltest // the merge uses spruce, which keeps global state
+// reports, and the same call on the overlay's output. The recordings were
+// made when yaml.v2 read the manifest and spruce merged it, and graft
+// matches them byte for byte.
 func TestGetCurrentStemcellParity(t *testing.T) {
+	t.Parallel()
+
 	for _, rendered := range parity.RenderedManifests(t) {
 		t.Run(rendered.Name, func(t *testing.T) {
+			t.Parallel()
+
 			recorded := map[string]interface{}{}
 
 			recorded["rendered"] = currentStemcell(rendered.Body)
@@ -376,5 +404,39 @@ func TestReleaseOverlayParityPsych(t *testing.T) {
 				t.Errorf("last line %q, want %q", last, tc.last)
 			}
 		})
+	}
+}
+
+// TestStemcellOverlayParityPsych runs the Ruby comparison on the
+// spruce-era and graft recordings of the stemcell overlay. The only
+// difference is that graft quotes a string that starts with a colon, which
+// Psych reads as a symbol when it is plain, and the exempt count pins how
+// many of those there are.
+func TestStemcellOverlayParityPsych(t *testing.T) {
+	t.Parallel()
+
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("ruby is not installed")
+	}
+
+	script, err := filepath.Abs(filepath.Join("..", "..", "hack", "parity", "psych-compare.rb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := filepath.Join("testdata", "parity")
+
+	out, err := exec.Command(ruby, script, "--allow", "symbol-quoting", //nolint:gosec // a test runs its own script
+		filepath.Join(base, "stemcell"), filepath.Join(base, "stemcell-graft")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("psych-compare found a difference: %s\n%s", err, out)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+
+	want := "psych-compare: 0 difference(s), 14 exempt (symbol-quoting 14)"
+	if last := lines[len(lines)-1]; last != want {
+		t.Errorf("last line %q, want %q", last, want)
 	}
 }
