@@ -2,8 +2,10 @@ package upgrade_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -95,21 +97,73 @@ func TestMergeReleaseOverlayParity(t *testing.T) {
 			t.Parallel()
 
 			merged, applied, err := upgrade.MergeReleaseOverlay(rendered.Body, parityReleaseTargets)
-			checkReleaseParity(t, "release", rendered.Name, "", merged, applied, err)
+			checkReleaseParity(t, "release", rendered.Name, nil, merged, applied, err)
 		})
 	}
 }
 
+// movedRelease pins how one odd input is meant to differ from its
+// recording. The comparison has to report exactly these lines and no
+// others, so a second difference cannot hide behind the first.
+type movedRelease struct {
+	reason string
+	// differences are the lines parity.YAMLDifferences reports.
+	differences []string
+	// scalars are the lines of the scalar-type record that only one side
+	// has, with - for the recording and + for the graft output.
+	scalars []string
+	// dumpDiffers is whether the applied targets differ.
+	dumpDiffers bool
+}
+
 // movedReleaseCases lists the odd inputs whose result is meant to differ
-// from the recording, and why. A plain y is a string to Psych and to graft,
-// and the recording kept it as a boolean, which is yaml.v2's reading. Graft
-// decodes every mapping key to a string, so an integer key comes back quoted.
+// from the recording. A plain y is a string to Psych and to graft, and the
+// recording kept it as a boolean, which is yaml.v2's reading. Graft decodes
+// every mapping key to a string, so an integer key comes back quoted.
 //
 //nolint:gochecknoglobals // constant test data
-var movedReleaseCases = map[string]string{
-	"quoted-boolean-names": "a plain y is a string, so the release named y is bumped",
-	"scalars-and-anchors":  "a plain y stays the string y instead of becoming true",
-	"integer-keys":         "map[string]any; no forge template has non-string keys",
+var movedReleaseCases = map[string]movedRelease{
+	"quoted-boolean-names": {
+		reason: "a plain y is a string, so the release named y is bumped",
+		differences: []string{
+			`tree $.releases[1].name: tag !!str, want !!bool`,
+			`tree $.releases[1].name: value "y", want "true"`,
+			`tree $.releases[1].version: tag !!str, want !!int`,
+			`tree $.releases[1].version: value "97", want "1"`,
+			"decode $.releases[1].name: want bool\ttrue, got string\t\"y\"",
+			"decode $.releases[1].version: want int\t1, got string\t\"97\"",
+		},
+		scalars: []string{
+			"- $[\"releases\"][1][\"name\"]\t!!bool\tbool\t\"true\"",
+			"- $[\"releases\"][1][\"version\"]\t!!int\tint\t\"1\"",
+			"+ $[\"releases\"][1][\"name\"]\t!!str\tstring\t\"y\"",
+			"+ $[\"releases\"][1][\"version\"]\t!!str\tstring\t\"97\"",
+		},
+		dumpDiffers: true,
+	},
+	"scalars-and-anchors": {
+		reason: "a plain y stays the string y instead of becoming true",
+		differences: []string{
+			`tree $.releases[1].stemcell.version: tag !!str, want !!bool`,
+			`tree $.releases[1].stemcell.version: value "y", want "true"`,
+			"decode $.releases[1].stemcell.version: want bool\ttrue, got string\t\"y\"",
+		},
+		scalars: []string{
+			"- $[\"releases\"][1][\"stemcell\"][\"version\"]\t!!bool\tbool\t\"true\"",
+			"+ $[\"releases\"][1][\"stemcell\"][\"version\"]\t!!str\tstring\t\"y\"",
+		},
+	},
+	"integer-keys": {
+		reason: "map[string]any; no forge template has non-string keys",
+		differences: []string{
+			`tree $["1"](!!int): missing, want !!str "one"`,
+			`tree $.1: extra, got !!str "one"`,
+		},
+		scalars: []string{
+			"- $[\"1\"]#key\t!!int\tint\t\"1\"",
+			"+ $[\"1\"]#key\t!!str\tstring\t\"1\"",
+		},
+	},
 }
 
 // TestMergeReleaseOverlayParityHandlesOddInput checks how the bump treats
@@ -135,7 +189,7 @@ func TestMergeReleaseOverlayParityHandlesOddInput(t *testing.T) {
 			t.Parallel()
 
 			merged, applied, err := upgrade.MergeReleaseOverlay(input, targets)
-			checkReleaseParity(t, "release-odd", name, movedReleaseCases[name], merged, applied, err)
+			checkReleaseParity(t, "release-odd", name, movedFor(name), merged, applied, err)
 		})
 	}
 }
@@ -148,7 +202,7 @@ func TestMergeReleaseOverlayParityHandlesOddInput(t *testing.T) {
 // to match byte for byte. A case in movedReleaseCases is meant to differ,
 // and the test requires that it does, so the exemption cannot go stale. A
 // failure compares only that both fail, since the error text is graft's.
-func checkReleaseParity(t *testing.T, dir, name, moved, merged string, applied []upgrade.ReleaseTarget, err error) {
+func checkReleaseParity(t *testing.T, dir, name string, moved *movedRelease, merged string, applied []upgrade.ReleaseTarget, err error) {
 	t.Helper()
 
 	old := filepath.Join("testdata", "parity", dir, name)
@@ -173,25 +227,69 @@ func checkReleaseParity(t *testing.T, dir, name, moved, merged string, applied [
 	oldDump := readRecording(t, old+".dump")
 	dump := parity.Dump(applied)
 
-	if moved != "" {
-		if len(parity.YAMLDifferences([]byte(oldYAML), []byte(merged))) == 0 && dump == oldDump {
-			t.Errorf("the case is exempt (%s) but matches the recording", moved)
-		}
-	} else {
+	wantScalars, gotScalars := scalarTypes(readRecording(t, old+".scalars")), scalarTypes(parity.Scalars(merged))
+
+	if moved == nil {
 		parity.CompareYAML(t, []byte(oldYAML), []byte(merged))
 
-		wantTypes, gotTypes := scalarTypes(readRecording(t, old+".scalars")), scalarTypes(parity.Scalars(merged))
-		if !reflect.DeepEqual(wantTypes, gotTypes) {
-			t.Errorf("scalar types differ\n--- want\n%s\n--- got\n%s", strings.Join(wantTypes, "\n"), strings.Join(gotTypes, "\n"))
+		if !reflect.DeepEqual(wantScalars, gotScalars) {
+			t.Errorf("scalar types differ\n--- want\n%s\n--- got\n%s", strings.Join(wantScalars, "\n"), strings.Join(gotScalars, "\n"))
 		}
 
 		if dump != oldDump {
 			t.Errorf("applied targets differ\n--- want\n%s\n--- got\n%s", oldDump, dump)
 		}
+	} else {
+		if got := parity.YAMLDifferences([]byte(oldYAML), []byte(merged)); !reflect.DeepEqual(got, moved.differences) {
+			t.Errorf("the differences (%s) are not the pinned ones\n--- pinned\n%s\n--- got\n%s",
+				moved.reason, strings.Join(moved.differences, "\n"), strings.Join(got, "\n"))
+		}
+
+		if got := scalarDifferences(wantScalars, gotScalars); !reflect.DeepEqual(got, moved.scalars) {
+			t.Errorf("the scalar differences are not the pinned ones\n--- pinned\n%s\n--- got\n%s",
+				strings.Join(moved.scalars, "\n"), strings.Join(got, "\n"))
+		}
+
+		if (dump != oldDump) != moved.dumpDiffers {
+			t.Errorf("applied targets differ is %v, want %v", dump != oldDump, moved.dumpDiffers)
+		}
 	}
 
 	parity.GoldenYAML(t, graft+".yml", merged)
 	parity.Golden(t, graft+".dump", dump)
+}
+
+func movedFor(name string) *movedRelease {
+	moved, ok := movedReleaseCases[name]
+	if !ok {
+		return nil
+	}
+
+	return &moved
+}
+
+// scalarDifferences lists the lines only one of two sorted scalar-type
+// records has, the recording's first.
+func scalarDifferences(want, got []string) []string {
+	var differences []string
+
+	has := func(lines []string, line string) bool {
+		return slices.Contains(lines, line)
+	}
+
+	for _, line := range want {
+		if !has(got, line) {
+			differences = append(differences, "- "+line)
+		}
+	}
+
+	for _, line := range got {
+		if !has(want, line) {
+			differences = append(differences, "+ "+line)
+		}
+	}
+
+	return differences
 }
 
 func readRecording(t *testing.T, path string) string {
@@ -223,4 +321,60 @@ func scalarTypes(scalars string) []string {
 	sort.Strings(lines)
 
 	return lines
+}
+
+// TestReleaseOverlayParityPsych runs the Ruby comparison, which reads both
+// sets of recordings as the BOSH director does, on the spruce-era and graft
+// recordings. The exemptions are the accepted differences, and the exempt
+// counts pin how many of each there are, so a new difference of an
+// accepted kind still fails the test.
+func TestReleaseOverlayParityPsych(t *testing.T) {
+	t.Parallel()
+
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("ruby is not installed")
+	}
+
+	script, err := filepath.Abs(filepath.Join("..", "..", "hack", "parity", "psych-compare.rb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]struct {
+		args []string
+		last string
+	}{
+		"release": {
+			args: []string{"--allow", "symbol-quoting"},
+			last: "psych-compare: 0 difference(s), 12 exempt (symbol-quoting 12)",
+		},
+		"release-odd": {
+			args: []string{
+				"--allow", "stringified-keys", "--allow", "y-strings",
+				"--allow-diff", "quoted-boolean-names.yml", "$.releases[1].version",
+				"--skip-error-file", "not-yaml.yml=the error text is graft's",
+			},
+			last: "psych-compare: 0 difference(s), 5 exempt (stringified-keys 1, skip-error-file 1, y-strings 2, allow-diff 1)",
+		},
+	}
+
+	for dir, tc := range cases {
+		t.Run(dir, func(t *testing.T) {
+			t.Parallel()
+
+			base := filepath.Join("testdata", "parity")
+			args := append(append([]string{script}, tc.args...), filepath.Join(base, dir), filepath.Join(base, dir+"-graft"))
+
+			out, err := exec.Command(ruby, args...).CombinedOutput() //nolint:gosec // a test runs its own script
+			if err != nil {
+				t.Fatalf("psych-compare found a difference: %s\n%s", err, out)
+			}
+
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			if last := lines[len(lines)-1]; last != tc.last {
+				t.Errorf("last line %q, want %q", last, tc.last)
+			}
+		})
+	}
 }

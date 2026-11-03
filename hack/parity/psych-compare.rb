@@ -3,7 +3,8 @@
 
 # Compares two sets of YAML the way the BOSH director reads them.
 #
-#   psych-compare.rb [--allow RULE]... [--skip-file REL=REASON]... WANT GOT
+#   psych-compare.rb [--allow RULE]... [--allow-diff FILE PATH]...
+#                    [--skip-error-file REL=REASON]... WANT GOT
 #
 # WANT and GOT are both files or both directories.  For directories the
 # script pairs the *.yml and *.yaml files by relative path, and a file that
@@ -21,14 +22,20 @@
 #                    symbol's name with a colon in front.  yaml.v2 wrote
 #                    ":x" plain, which Psych reads as a Symbol, and graft
 #                    quotes it, which Psych reads as a String.
-#   stringified-keys a key that is not a String in WANT and the String of
-#                    its text in GOT, with the same value.  Graft decodes
+#   stringified-keys an Integer key in WANT and the String of its text in
+#                    GOT, with the same value.  Graft decodes
 #                    every key to a string.
-#   y-strings        true or false in WANT and "y" or "n" in GOT.  yaml.v2
+#   y-strings        true in WANT and "y" in GOT, or false in WANT and "n"
+#                    in GOT.  yaml.v2
 #                    reads a plain y or n as a boolean, and Psych and graft
 #                    read a string.
 #
-# --skip-file REL=REASON leaves out a whole file, and the reason is listed.
+# --allow-diff FILE PATH exempts every difference at exactly PATH in FILE,
+# and it is itself a difference when it matches nothing, so it cannot go
+# stale.  --skip-error-file REL=REASON leaves out a pair of files that both
+# begin with ERROR:, which a recording of a failure holds.  A file missing
+# on one side, or a pair where only one side is an error, is still a
+# difference.
 #
 # It prints paths, classes, and values and never a whole document, and it
 # exits 1 on any difference.
@@ -48,7 +55,7 @@ def exempt?(rule, line, want, got)
 
   ok = case rule
        when 'symbol-quoting' then want.is_a?(Symbol) && got.is_a?(String) && ":#{want}" == got
-       when 'y-strings' then [true, false].include?(want) && %w[y n].include?(got)
+       when 'y-strings' then (want == true && got == 'y') || (want == false && got == 'n')
        else false
        end
   $exempt[rule] << line if ok
@@ -95,7 +102,7 @@ def compare(base, want, got, found)
     extra = got.keys - want.keys
     if $allowed.include?('stringified-keys')
       missing.dup.each do |key|
-        next if key.is_a?(String) || !extra.include?(key.to_s)
+        next unless key.is_a?(Integer) && extra.include?(key.to_s)
 
         $exempt['stringified-keys'] << "#{path_for(base, key)}: key is #{key.class}, got String #{key.to_s.inspect}"
         compare(path_for(base, key.to_s), want[key], got[key.to_s], found)
@@ -129,6 +136,7 @@ def pairs(want, got)
 end
 
 skipped = {}
+$allowed_diffs = []
 args = ARGV.dup
 rest = []
 until args.empty?
@@ -138,25 +146,29 @@ until args.empty?
     rule = args.shift
     abort "psych-compare: unknown rule #{rule.inspect}" unless RULES.include?(rule)
     $allowed << rule
-  when '--skip-file'
+  when '--allow-diff'
+    file, path = args.shift(2)
+    abort 'psych-compare: --allow-diff wants FILE PATH' if file.to_s.empty? || path.to_s.empty?
+    $allowed_diffs << { file: file, path: path, used: false }
+  when '--skip-error-file'
     rel, reason = args.shift.to_s.split('=', 2)
-    abort 'psych-compare: --skip-file wants REL=REASON' if rel.to_s.empty? || reason.to_s.empty?
+    abort 'psych-compare: --skip-error-file wants REL=REASON' if rel.to_s.empty? || reason.to_s.empty?
     skipped[rel] = reason
   else
     rest << arg
   end
 end
-abort 'usage: psych-compare.rb [--allow RULE] [--skip-file REL=REASON] WANT GOT' unless rest.length == 2
+abort 'usage: psych-compare.rb [--allow RULE] [--allow-diff FILE PATH] [--skip-error-file REL=REASON] WANT GOT' unless rest.length == 2
 
 found = []
 pairs(*rest).each do |rel, want, got|
   label = rel || File.basename(want)
-  if skipped.key?(label)
-    $exempt['skip-file'] << "#{label}: #{skipped[label]}"
-    next
-  end
   unless File.exist?(want) && File.exist?(got)
     found << "#{label}: only in #{File.exist?(want) ? 'want' : 'got'}"
+    next
+  end
+  if skipped.key?(label) && [want, got].all? { |file| File.read(file).start_with?('ERROR:') }
+    $exempt['skip-error-file'] << "#{label}: #{skipped[label]}"
     next
   end
 
@@ -169,7 +181,18 @@ pairs(*rest).each do |rel, want, got|
 
   local = []
   compare('$', want_doc, got_doc, local)
-  local.each { |line| found << "#{label} #{line}" }
+  local.each do |line|
+    allowed = $allowed_diffs.find { |entry| entry[:file] == label && line.start_with?("#{entry[:path]}: ") }
+    if allowed
+      allowed[:used] = true
+      $exempt['allow-diff'] << "#{label} #{line}"
+    else
+      found << "#{label} #{line}"
+    end
+  end
+end
+$allowed_diffs.reject { |entry| entry[:used] }.each do |entry|
+  found << "#{entry[:file]} #{entry[:path]}: --allow-diff matched no difference"
 end
 
 found.each { |line| puts line }

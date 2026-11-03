@@ -192,10 +192,13 @@ end
 
 SCANNER = Psych::ScalarScanner.new(Psych::ClassLoader.new)
 
-# A plain, untagged key that YAML 1.1 reads as something other than a string.
+# A key that YAML 1.1 reads as something other than a string, or that is not
+# a scalar at all, such as a complex ? key.  A tagged key passes only under
+# !!str, and a quoted one is a string.
 def non_string_key?(node)
-  return false unless node.is_a?(Psych::Nodes::Scalar)
-  return false if node.quoted || node.tag || node.value == '<<'
+  return true unless node.is_a?(Psych::Nodes::Scalar)
+  return node.tag != 'tag:yaml.org,2002:str' if node.tag
+  return false if node.quoted || node.value == '<<'
 
   !SCANNER.tokenize(node.value).is_a?(String)
 end
@@ -212,7 +215,7 @@ def duplicate_keys(node, path, found, odd = [])
         found << "#{path}.#{key}" if seen[key]
         seen[key] = true
       end
-      odd << "#{path}.#{key}" if non_string_key?(k)
+      odd << "#{path}.#{key || '(complex key)'}" if non_string_key?(k)
       duplicate_keys(v, "#{path}.#{key}", found, odd)
     end
   else

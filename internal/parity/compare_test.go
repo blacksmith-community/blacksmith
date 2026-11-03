@@ -189,6 +189,19 @@ func TestPsychCompareCatchesWhatTheTreeCheckCannot(t *testing.T) {
 		"integer key other value":     {"1: one\n", "\"1\": two\n", allowKeys, 1},
 		"integer key other name":      {"1: one\n", "\"2\": one\n", allowKeys, 1},
 		"y exempt":                    {"a: true\n", "a: \"y\"\n", allowY, 0},
+		"true for n":                  {"a: true\n", "a: \"n\"\n", allowY, 1},
+		"false for y":                 {"a: false\n", "a: \"y\"\n", allowY, 1},
+		"false for n":                 {"a: false\n", "a: \"n\"\n", allowY, 0},
+		"float key not exempt":        {"1.5: one\n", "\"1.5\": one\n", allowKeys, 1},
+		"bool key not exempt":         {"true: one\n", "\"true\": one\n", allowKeys, 1},
+		"allow-diff covers its path":  {"a: 1\nb: 2\n", "a: x\nb: 2\n", []string{"--allow-diff", "want.yml", "$.a"}, 0},
+		"allow-diff misses a path":    {"a: 1\nb: 2\n", "a: x\nb: y\n", []string{"--allow-diff", "want.yml", "$.a"}, 1},
+		"allow-diff matches nothing":  {"a: 1\n", "a: 1\n", []string{"--allow-diff", "want.yml", "$.a"}, 1},
+		"allow-diff other file":       {"a: 1\n", "a: x\n", []string{"--allow-diff", "other.yml", "$.a"}, 1},
+		"allow-diff longer path":      {"ab: 1\n", "ab: x\n", []string{"--allow-diff", "want.yml", "$.a"}, 1},
+		"skip both errors":            {"ERROR: a\n", "ERROR: b\n", []string{"--skip-error-file", "want.yml=error text"}, 0},
+		"skip one error":              {"ERROR: a\n", "a: 1\n", []string{"--skip-error-file", "want.yml=error text"}, 1},
+		"skip no error":               {"a: 1\n", "a: 2\n", []string{"--skip-error-file", "want.yml=error text"}, 1},
 		"y off":                       {"a: true\n", "a: \"y\"\n", nil, 1},
 		"y for other text":            {"a: true\n", "a: \"x\"\n", allowY, 1},
 	}
@@ -245,7 +258,8 @@ func TestRenderForgesScanFlagsNonStringKeys(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	body := "1: a\nyes: b\n~: c\n1.5: d\n2026-01-02: e\n\"3\": quoted\nname: plain\n"
+	body := "1: a\nyes: b\n~: c\n1.5: d\n2026-01-02: e\n!!int 5: f\n? [x, y]\n: g\n" +
+		"\"3\": quoted\n!!str 6: tagged string\nname: plain\n"
 
 	err = os.WriteFile(filepath.Join(dir, "bad.yml"), []byte(body), 0o600)
 	if err != nil {
@@ -257,14 +271,16 @@ func TestRenderForgesScanFlagsNonStringKeys(t *testing.T) {
 		t.Fatalf("the scan passed a directory with non-string keys:\n%s", out)
 	}
 
-	for _, key := range []string{".1", ".yes", ".~", ".1.5", ".2026-01-02"} {
+	for _, key := range []string{".1", ".yes", ".~", ".1.5", ".2026-01-02", ".5", ".(complex key)"} {
 		if !strings.Contains(string(out), "non-string key "+key+"\n") {
 			t.Errorf("the scan did not flag %s:\n%s", key, out)
 		}
 	}
 
-	if strings.Contains(string(out), `.3`) || strings.Contains(string(out), ".name") {
-		t.Errorf("the scan flagged a quoted or string key:\n%s", out)
+	for _, key := range []string{".3", ".6", ".name"} {
+		if strings.Contains(string(out), "non-string key "+key+"\n") {
+			t.Errorf("the scan flagged the string key %s:\n%s", key, out)
+		}
 	}
 
 	out, err = exec.Command(ruby, script, "--scan", fixtures).CombinedOutput() //nolint:gosec // a test runs its own script
