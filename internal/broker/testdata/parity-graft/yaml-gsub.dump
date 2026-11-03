@@ -225,3 +225,17 @@ ERROR: failed to unmarshal replaced YAML: yaml: cannot unmarshal string into Go 
 ERROR: failed to unmarshal replaced YAML: yaml: cannot unmarshal string into Go value of type map[string]interface {}
 === text yaml11-scalars ===
 ERROR: failed to unmarshal replaced YAML: yaml: cannot unmarshal string into Go value of type map[string]interface {}
+=== static leading-dash ===
+$.password	string	"00000000-1111-2222-3333-444444444444"
+=== static leading-question ===
+$.password	string	"00000000-1111-2222-3333-444444444444"
+=== static leading-colon ===
+$.password	string	"00000000-1111-2222-3333-444444444444"
+=== static yes-word ===
+$.password	string	"00000000-1111-2222-3333-444444444444"
+=== static no-word ===
+$.password	string	"00000000-1111-2222-3333-444444444444"
+=== static slash-plus ===
+$.password	string	"00000000-1111-2222-3333-444444444444"
+=== static colon-space ===
+$.password	string	"00000000-1111-2222-3333-444444444444"

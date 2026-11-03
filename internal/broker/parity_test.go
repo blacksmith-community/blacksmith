@@ -16,8 +16,9 @@ import (
 // TestWriteYamlFileParity records the file WriteYamlFile writes for each
 // document, or the error it returns. The graft recording is in
 // testdata/parity-graft. The spruce-era one is frozen in
-// testdata/parity/write-yaml-file.txt and testdata/parity/write-yaml-file/. It sets the instance data directory, so
-// it cannot run in parallel.
+// testdata/parity/write-yaml-file.txt and
+// testdata/parity/write-yaml-file/. It sets the instance data directory,
+// so it cannot run in parallel.
 //
 //nolint:paralleltest // sets an environment variable
 func TestWriteYamlFileParity(t *testing.T) {
@@ -133,6 +134,39 @@ func TestYamlGsubParity(t *testing.T) {
 		}
 
 		recorded.WriteString(parity.Section("text "+doc.Name, parity.Dump(got)))
+	}
+
+	// Static credentials that graft may quote when it writes them. The
+	// replacement is UUID-shaped, as the broker's callers pass it.
+	const dynamic = "00000000-1111-2222-3333-444444444444"
+
+	quotedStatics := []struct{ name, static string }{
+		{"leading-dash", "-fixture-static"},
+		{"leading-question", "?fixture-static"},
+		{"leading-colon", ":fixture-static"},
+		{"yes-word", "yes"},
+		{"no-word", "no"},
+		{"slash-plus", "fixture/static+value=="},
+		{"colon-space", "fixture: static"},
+	}
+
+	for _, quoted := range quotedStatics {
+		got, err := broker.YamlGsub(map[string]interface{}{"password": quoted.static}, quoted.static, dynamic)
+		if err != nil {
+			t.Fatalf("static %s: %v", quoted.name, err)
+		}
+
+		decoded, isMap := got.(map[string]interface{})
+		if !isMap || decoded["password"] != dynamic {
+			t.Errorf("static %s: password was not replaced", quoted.name)
+		}
+
+		dump := parity.Dump(got)
+		if strings.Contains(dump, quoted.static) {
+			t.Errorf("static %s: the static value is still present", quoted.name)
+		}
+
+		recorded.WriteString(parity.Section("static "+quoted.name, dump))
 	}
 
 	parity.Golden(t, filepath.Join("testdata", "parity-graft", "yaml-gsub.dump"), recorded.String())
