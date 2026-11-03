@@ -31,7 +31,7 @@ var hostileValues = []string{
 
 var vaultReference = regexp.MustCompile(`\(\(\s*vault\s+\$CREDENTIALS\s+"(/[^":]+):([^"]+)"\s*\)\)`)
 
-//nolint:gochecknoglobals // the spruce library keeps one Vault client for the life of the process
+//nolint:gochecknoglobals // graft's vault DefaultReader keeps one Vault client for the life of the process
 var (
 	sharedVaultOnce sync.Once
 	sharedVault     *testutil.VaultDevServer
@@ -39,9 +39,9 @@ var (
 )
 
 // SharedVault starts one OpenBao dev server for the whole test process and
-// points VAULT_ADDR and VAULT_TOKEN at it. The spruce library builds its
-// Vault client once per process, so every test in the process has to reach
-// the same server. A package that calls it must call CloseSharedVault from
+// points VAULT_ADDR and VAULT_TOKEN at it. Graft's vault DefaultReader
+// builds its Vault client once per process, so every test in the process
+// has to reach the same server. A package that calls it must call CloseSharedVault from
 // TestMain.
 func SharedVault(t *testing.T) *testutil.VaultDevServer {
 	t.Helper()

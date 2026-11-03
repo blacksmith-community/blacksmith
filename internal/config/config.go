@@ -508,7 +508,7 @@ func validateRequiredFields(config *Config) error {
 		return ErrVaultAddressNotSet
 	}
 
-	// Vault and spruce both echo the address in their errors, which reach
+	// Vault and graft both echo the address in their errors, which reach
 	// operators and the platform verbatim, so it must never carry a password.
 	// Neither error wraps the parse failure, since that text quotes the address.
 	vaultURL, err := url.Parse(config.Vault.Address)

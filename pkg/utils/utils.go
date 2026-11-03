@@ -25,7 +25,7 @@ var (
 // merges into it, and evaluation never looks inside it, so a nested map in
 // a request stays inert and replaces the plan's default whole, as it did
 // when spruce saw it as one opaque value. A top-level string, and each
-// string item of a top-level list, is left as it is, so the merge
+// string item of a top-level list, is left as it is, so the render
 // evaluates any operator it holds.
 func Wrap(key string, data map[string]interface{}) map[string]interface{} {
 	keyParts := strings.Split(key, ".")
