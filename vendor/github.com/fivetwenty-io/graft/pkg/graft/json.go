@@ -12,7 +12,7 @@ import (
 
 	"github.com/goccy/go-yaml/ast"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/internal/yamlnode"
 	"github.com/fivetwenty-io/graft/internal/yamlprep"
@@ -34,7 +34,7 @@ func jsonifyDataWith(data []byte, strict bool, less func(a, b string) bool) (str
 	// yaml.v3's depth error.
 	data, err := yamlnode.FirstDocument(yamlnode.TrimBOM(data))
 	if err != nil {
-		return "", ansi.Errorf("@R{Root of YAML document is not a hash/map}: %s\n", err.Error())
+		return "", errtext.Colorf("@R{Root of YAML document is not a hash/map}: %s\n", plainYAMLError(err))
 	}
 
 	// Parse through the same YAML-1.1-compat-aware path ParseYAML uses, so
@@ -52,7 +52,7 @@ func jsonifyDataWith(data []byte, strict bool, less func(a, b string) bool) (str
 		return "", err
 	}
 	if err != nil {
-		return "", ansi.Errorf("@R{Root of YAML document is not a hash/map}: %s\n", err.Error())
+		return "", errtext.Colorf("@R{Root of YAML document is not a hash/map}: %s\n", plainYAMLError(err))
 	}
 
 	// An empty, whitespace-only, or explicit-null document unmarshals to a
@@ -61,7 +61,7 @@ func jsonifyDataWith(data []byte, strict bool, less func(a, b string) bool) (str
 	// blank document fails loudly instead of silently emitting "{}".
 	doc, ok := root.(map[string]interface{})
 	if !ok {
-		return "", ansi.Errorf("@R{Root of YAML document is not a hash/map}: %s\n", "type assertion to map[string]interface{} failed")
+		return "", errtext.Colorf("@R{Root of YAML document is not a hash/map}: %s\n", "type assertion to map[string]interface{} failed")
 	}
 
 	doc = DefaultYAMLCompat().ConvertAndUnprotect(doc)
@@ -247,7 +247,7 @@ func splitYAMLDocs(data []byte) [][]byte {
 func JSONifyIO(in io.Reader, strict bool) (string, error) {
 	data, err := io.ReadAll(in)
 	if err != nil {
-		return "", ansi.Errorf("@R{Error reading input}: %s", err)
+		return "", errtext.Colorf("@R{Error reading input}: %s", err)
 	}
 	return jsonifyData(data, strict)
 }
@@ -268,12 +268,12 @@ func JSONifyFilesWith(paths []string, strict bool, less func(a, b string) bool) 
 			DEBUG("Processing STDIN")
 			stat, statErr := os.Stdin.Stat()
 			if statErr != nil {
-				return nil, ansi.Errorf("@R{Error statting STDIN} - Bailing out: %s\n", statErr.Error())
+				return nil, errtext.Colorf("@R{Error statting STDIN} - Bailing out: %s\n", statErr)
 			}
 			if stat.Mode()&os.ModeCharDevice == 0 {
 				data, err = io.ReadAll(os.Stdin)
 				if err != nil {
-					return nil, ansi.Errorf("@R{Error reading STDIN}: %s\n", err.Error())
+					return nil, errtext.Colorf("@R{Error reading STDIN}: %s\n", err)
 				}
 			}
 		} else {
@@ -281,7 +281,7 @@ func JSONifyFilesWith(paths []string, strict bool, less func(a, b string) bool) 
 			// #nosec G304 - File path is from user-provided command line arguments which is expected behavior for processing YAML files
 			data, err = os.ReadFile(path)
 			if err != nil {
-				return nil, ansi.Errorf("@R{Error reading file} @m{%s}: %s", path, err)
+				return nil, errtext.Colorf("@R{Error reading file} @m{%s}: %s", path, err)
 			}
 		}
 
@@ -289,7 +289,7 @@ func JSONifyFilesWith(paths []string, strict bool, less func(a, b string) bool) 
 		for i, doc := range docs {
 			jsonData, err := jsonifyDataWith(doc, strict, less)
 			if err != nil {
-				return nil, ansi.Errorf("%s[%d]: %s", path, i, err)
+				return nil, errtext.Colorf("%s[%d]: %s", path, i, err)
 			}
 			l = append(l, jsonData)
 		}
@@ -307,14 +307,14 @@ func readJSONSource(path string) ([]byte, error) {
 		DEBUG("Processing STDIN")
 		stat, statErr := os.Stdin.Stat()
 		if statErr != nil {
-			return nil, ansi.Errorf("@R{Error statting STDIN} - Bailing out: %s\n", statErr.Error())
+			return nil, errtext.Colorf("@R{Error statting STDIN} - Bailing out: %s\n", statErr)
 		}
 		if stat.Mode()&os.ModeCharDevice != 0 {
 			return []byte{}, nil
 		}
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			return nil, ansi.Errorf("@R{Error reading STDIN}: %s\n", err.Error())
+			return nil, errtext.Colorf("@R{Error reading STDIN}: %s\n", err)
 		}
 		return data, nil
 	}
@@ -323,7 +323,7 @@ func readJSONSource(path string) ([]byte, error) {
 	// #nosec G304 - File path is from user-provided command line arguments which is expected behavior for processing YAML/JSON files
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, ansi.Errorf("@R{Error reading file} @m{%s}: %s", path, err)
+		return nil, errtext.Colorf("@R{Error reading file} @m{%s}: %s", path, err)
 	}
 	return data, nil
 }
@@ -347,16 +347,16 @@ func YAMLifyFiles(paths []string) ([]string, error) {
 
 		docs, decErr := decodeJSONDocs(data)
 		if decErr != nil {
-			return nil, ansi.Errorf("@m{%s}: @R{Error parsing JSON}: %s\n", path, decErr.Error())
+			return nil, errtext.Colorf("@m{%s}: @R{Error parsing JSON}: %s\n", path, decErr)
 		}
 		if len(docs) == 0 {
-			return nil, ansi.Errorf("@m{%s}: @R{Error parsing JSON}: no JSON documents found\n", path)
+			return nil, errtext.Colorf("@m{%s}: @R{Error parsing JSON}: no JSON documents found\n", path)
 		}
 
 		for i, doc := range docs {
 			yamlBytes, mErr := MarshalYAML(doc)
 			if mErr != nil {
-				return nil, ansi.Errorf("@m{%s}[%d]: @R{Error converting JSON to YAML}: %s\n", path, i, mErr.Error())
+				return nil, errtext.Colorf("@m{%s}[%d]: @R{Error converting JSON to YAML}: %s\n", path, i, mErr)
 			}
 			out = append(out, strings.TrimRight(string(yamlBytes), "\n"))
 		}
@@ -438,7 +438,7 @@ func CombineJSONLines(lines []string) (string, error) {
 
 	b, err := json.MarshalIndent(raws, "", "  ")
 	if err != nil {
-		return "", ansi.Errorf("@R{Error combining JSON documents into an array}: %s", err.Error())
+		return "", errtext.Colorf("@R{Error combining JSON documents into an array}: %s", err)
 	}
 	return string(b), nil
 }

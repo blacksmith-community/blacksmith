@@ -95,9 +95,6 @@ var (
 
 	// CacheCleanupInterval is the interval between cache cleanup runs.
 	CacheCleanupInterval = 1 * time.Minute
-
-	// CacheStopCleanup is the channel to stop the cache cleanup goroutine.
-	CacheStopCleanup = make(chan struct{})
 )
 
 // ClearCache clears the global NATS cache (useful for testing).

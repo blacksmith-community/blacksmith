@@ -3,6 +3,8 @@ package operators
 import (
 	"fmt"
 	"math"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // NumericTypeHandler handles arithmetic and comparison operations for numeric types (int and float).
@@ -52,10 +54,16 @@ func numericToInteger(val interface{}) (int64, error) {
 		if v == math.Trunc(v) && v >= math.MinInt64 && v <= math.MaxInt64 {
 			return int64(v), nil
 		}
-		return 0, fmt.Errorf("float %v is not a whole number or out of int64 range", v)
+		return 0, errtext.WithPlain(fmt.Errorf("float %v is not a whole number or out of int64 range", v), "the float is not a whole number or out of int64 range")
 	default:
 		return 0, fmt.Errorf("cannot convert %T to integer", val)
 	}
+}
+
+// numericConvertError reports that v could not be read as a number.
+// The detailed text quotes v; the plain text leaves it out.
+func numericConvertError(v interface{}, err error) error {
+	return errtext.WithPlain(fmt.Errorf("cannot convert %v to numeric: %w", v, err), "cannot convert the value to numeric: "+err.Error())
 }
 
 // Add performs addition on numeric types with overflow detection
@@ -64,12 +72,12 @@ func numericToInteger(val interface{}) (int64, error) {
 func (h *NumericTypeHandler) Add(a, b interface{}) (interface{}, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return nil, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return nil, numericConvertError(b, err)
 	}
 
 	// If either operand is a float, result is float
@@ -97,12 +105,12 @@ func (h *NumericTypeHandler) Add(a, b interface{}) (interface{}, error) {
 func (h *NumericTypeHandler) Subtract(a, b interface{}) (interface{}, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return nil, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return nil, numericConvertError(b, err)
 	}
 
 	// If either operand is a float, result is float
@@ -130,12 +138,12 @@ func (h *NumericTypeHandler) Subtract(a, b interface{}) (interface{}, error) {
 func (h *NumericTypeHandler) Multiply(a, b interface{}) (interface{}, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return nil, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return nil, numericConvertError(b, err)
 	}
 
 	// If either operand is a float, result is float
@@ -168,12 +176,12 @@ func (h *NumericTypeHandler) Multiply(a, b interface{}) (interface{}, error) {
 func (h *NumericTypeHandler) Divide(a, b interface{}) (interface{}, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return nil, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return nil, numericConvertError(b, err)
 	}
 
 	bFloat := numericToFloat(bNum)
@@ -189,12 +197,12 @@ func (h *NumericTypeHandler) Divide(a, b interface{}) (interface{}, error) {
 func (h *NumericTypeHandler) Modulo(a, b interface{}) (interface{}, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return nil, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return nil, numericConvertError(b, err)
 	}
 
 	// Convert operands to integers, handling floats that represent whole numbers
@@ -219,12 +227,12 @@ func (h *NumericTypeHandler) Modulo(a, b interface{}) (interface{}, error) {
 func (h *NumericTypeHandler) Equal(a, b interface{}) (bool, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return false, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return false, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return false, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return false, numericConvertError(b, err)
 	}
 
 	// Convert both to float for comparison to handle int-float comparisons
@@ -240,12 +248,12 @@ func (h *NumericTypeHandler) NotEqual(a, b interface{}) (bool, error) {
 func (h *NumericTypeHandler) Less(a, b interface{}) (bool, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return false, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return false, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return false, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return false, numericConvertError(b, err)
 	}
 
 	// Convert both to float for comparison
@@ -256,12 +264,12 @@ func (h *NumericTypeHandler) Less(a, b interface{}) (bool, error) {
 func (h *NumericTypeHandler) Greater(a, b interface{}) (bool, error) {
 	aNum, err := toNumeric(a)
 	if err != nil {
-		return false, fmt.Errorf("cannot convert %v to numeric: %w", a, err)
+		return false, numericConvertError(a, err)
 	}
 
 	bNum, err := toNumeric(b)
 	if err != nil {
-		return false, fmt.Errorf("cannot convert %v to numeric: %w", b, err)
+		return false, numericConvertError(b, err)
 	}
 
 	// Convert both to float for comparison

@@ -2,11 +2,14 @@
 package interfaces
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // Scanner tokenizes operator expressions from source text.
@@ -410,7 +413,7 @@ func (s *Scanner) scanNumber(startPos Position) Token {
 	if isFloat {
 		val, err := strconv.ParseFloat(literal, 64)
 		if err != nil {
-			return s.makeErrorToken(startPos, fmt.Sprintf("invalid float: %s", err))
+			return s.makeNumberErrorToken(startPos, "invalid float", err)
 		}
 		return NewFloatToken(val, literal, startPos, endPos)
 	}
@@ -421,7 +424,7 @@ func (s *Scanner) scanNumber(startPos Position) Token {
 		if floatVal, floatErr := strconv.ParseFloat(literal, 64); floatErr == nil {
 			return NewFloatToken(floatVal, literal, startPos, endPos)
 		}
-		return s.makeErrorToken(startPos, fmt.Sprintf("invalid integer: %s", err))
+		return s.makeNumberErrorToken(startPos, "invalid integer", err)
 	}
 	return NewIntToken(val, literal, startPos, endPos)
 }
@@ -440,7 +443,7 @@ func (s *Scanner) scanHexNumber(startPos Position, buf *strings.Builder) Token {
 	literal := buf.String()
 	val, err := strconv.ParseInt(literal, 0, 64)
 	if err != nil {
-		return s.makeErrorToken(startPos, fmt.Sprintf("invalid hex number: %s", err))
+		return s.makeNumberErrorToken(startPos, "invalid hex number", err)
 	}
 	return NewIntToken(val, literal, startPos, s.Pos())
 }
@@ -725,6 +728,23 @@ func (s *Scanner) advance() {
 // makeEOFToken creates an EOF token at the current position.
 func (s *Scanner) makeEOFToken() Token {
 	return NewEOFToken(s.Pos())
+}
+
+// makeNumberErrorToken creates an error token for a number strconv
+// could not parse. The token and the recorded error's Error() give only
+// strconv's reason; the recorded error's detailed text keeps strconv's
+// whole message, which quotes the number.
+func (s *Scanner) makeNumberErrorToken(startPos Position, what string, err error) Token {
+	reason := "invalid syntax"
+	var numErr *strconv.NumError
+	if errors.As(err, &numErr) {
+		reason = numErr.Err.Error()
+	}
+	plain := what + ": " + reason
+	s.errors = append(s.errors, errtext.WithPlain(
+		fmt.Errorf("%s: %w at %s", what, err, startPos),
+		fmt.Sprintf("%s at %s", plain, startPos)))
+	return NewErrorToken(plain, startPos, s.Pos())
 }
 
 // makeErrorToken creates an error token with a message.

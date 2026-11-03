@@ -117,7 +117,7 @@ func (le *LazyExpression) evaluateExpression() (interface{}, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve reference: %w", err)
 		}
-		return result, nil
+		return plainValue(result), nil
 
 	case OperatorCall:
 		// For operator calls, we need to evaluate through the normal operator system

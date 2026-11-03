@@ -1,10 +1,13 @@
 package operators
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/utils/ansi"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -12,16 +15,43 @@ import (
 // FileOperator handles nested operator calls.
 type FileOperator struct{}
 
-// fileReadError renders spruce's exact read-failure wording while
-// preserving the underlying error chain, which ClassifyError needs to
-// map missing files and permission failures to E901/E902.
+// fileReadError renders spruce's exact read-failure wording as its
+// detailed text. Its cause names the file, so it stays off the Unwrap
+// chain, but errors.Is still sees it, which ClassifyError needs to map
+// missing files and permission failures to E901/E902.
 type fileReadError struct {
 	msg   string
+	plain string
 	cause error
 }
 
-func (e *fileReadError) Error() string { return e.msg }
-func (e *fileReadError) Unwrap() error { return e.cause }
+func (e *fileReadError) Error() string         { return e.plain }
+func (e *fileReadError) DetailedError() string { return e.msg }
+func (e *fileReadError) Is(target error) bool  { return errors.Is(e.cause, target) }
+func (e *fileReadError) As(target any) bool    { return errtext.AsHidden(e.cause, target) }
+
+// notAStringScalar is the file and load operators' error for an
+// argument that resolved to a map or a list. Error() names the argument
+// when it is a reference, which is a path, and leaves out the source of
+// a nested call, which can hold literal text.
+func notAStringScalar(arg *Expr) error {
+	err := errtext.Colorf("@R{tried to read file} @c{%s}@R{, which is not a string scalar}", arg.String())
+	if arg.Type == Reference {
+		return err
+	}
+	return errtext.WithPlain(err, "tried to read a file whose name is not a string scalar")
+}
+
+// fileErrorReason is err's text without the file name: the failed
+// operation and the system's reason for a *fs.PathError, and a generic
+// phrase for anything else.
+func fileErrorReason(err error) string {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Op + ": " + pathErr.Err.Error()
+	}
+	return "the file could not be read"
+}
 
 // Setup ...
 func (FileOperator) Setup() error {
@@ -75,7 +105,7 @@ func (FileOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		switch val.(type) {
 		case map[interface{}]interface{}, map[string]interface{}, []interface{}:
 			DEBUG("file operator argument %v is not a string scalar", val)
-			return nil, ansi.Errorf("@R{tried to read file} @c{%s}@R{, which is not a string scalar}", args[0].String())
+			return nil, notAStringScalar(args[0])
 		}
 
 		filename = fmt.Sprintf("%v", val)
@@ -128,6 +158,7 @@ func (FileOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		DEBUG("error was: %s", err)
 		return nil, &fileReadError{
 			msg:   ansi.Sprintf("@R{tried to read file} @c{%s}@R{: could not be read - %s}", filename, err),
+			plain: "tried to read a file: could not be read - " + fileErrorReason(err),
 			cause: err,
 		}
 	}

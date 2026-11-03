@@ -408,7 +408,7 @@ func (ev *Evaluator) runConcurrentTasks(ctx context.Context, pool *parallel.Work
 		}
 
 		treeMu.Lock()
-		applyErr := ev.applyResponse(r.op, r.resp, r.oldValue)
+		applyErr := ev.scrubLiteralError(r.op, ev.applyResponse(r.op, r.resp, r.oldValue))
 		treeMu.Unlock()
 
 		if applyErr != nil {

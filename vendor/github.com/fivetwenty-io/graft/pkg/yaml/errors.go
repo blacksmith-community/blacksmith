@@ -9,6 +9,7 @@ import (
 	goyaml "github.com/goccy/go-yaml"
 
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
+	"github.com/fivetwenty-io/graft/internal/yamlerr"
 	"github.com/fivetwenty-io/graft/internal/yamlnode"
 )
 
@@ -263,4 +264,12 @@ func quotedEnd(msg string, i int) (int, bool) {
 // span, is one ASCII punctuation character.
 func isPunctuationSpan(s string) bool {
 	return len(s) == 1 && strings.IndexByte("!\"#$%&()*+,-./:;<=>?@[]^_`{|}~", s[0]) >= 0
+}
+
+//nolint:gochecknoinits // pkg/graft reads the translation through internal/yamlerr
+func init() {
+	yamlerr.Describe = func(err error) (int, int, string) {
+		de := translate(err)
+		return de.Line, de.Column, de.Msg
+	}
 }

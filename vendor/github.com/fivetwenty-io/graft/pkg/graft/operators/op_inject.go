@@ -3,7 +3,8 @@ package operators
 import (
 	"fmt"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -66,6 +67,42 @@ func (InjectOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cur
 	return l
 }
 
+// resolveInjectArg resolves one (( inject ... )) argument without
+// stripping a literal from it, the way resolveGrabArgValue does for grab.
+// A || fallback tries each side in turn through this same function, and a
+// nested call's result is used as it came back, so a map read from
+// inside a literal by any of these routes still reaches Run wrapped.
+// viaOr is set for a reference on either side of a ||, which gets the
+// same environment variable expansion ResolveOperatorArgument gives it.
+func resolveInjectArg(ev *Evaluator, arg *Expr, viaOr bool) (interface{}, error) {
+	switch arg.Type {
+	case LogicalOr:
+		if val, err := resolveInjectArg(ev, arg.Left, true); err == nil {
+			return val, nil
+		}
+		return resolveInjectArg(ev, arg.Right, true)
+	case Reference:
+		// arg.Reference is nil for a bare @name token that parsed as an
+		// orphaned target (no cursor to resolve): see
+		// ResolveOperatorArgument's doc comment on the same condition.
+		if arg.Reference == nil {
+			return nil, fmt.Errorf("unable to resolve reference: @%s is a target, not a value", arg.Name)
+		}
+		if viaOr {
+			arg.Reference.Nodes = ResolveEnv(arg.Reference.Nodes)
+		}
+		val, err := arg.Reference.ResolveLiteral(ev.Tree)
+		if err != nil && viaOr {
+			return nil, fmt.Errorf("unable to resolve `%s`: %w", arg.Reference.String(), err)
+		}
+		return val, err
+	case OperatorCall:
+		return evaluateNestedOperator(ev, arg)
+	default:
+		return ResolveOperatorArgument(ev, arg)
+	}
+}
+
 // Run executes the operator.
 func (InjectOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	DEBUG("running (( inject ... )) operation at $.%s", ev.Here)
@@ -74,63 +111,52 @@ func (InjectOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	var vals []map[string]interface{}
 
 	for i, arg := range args {
-		// Special handling for references vs expressions
-		if arg.Type == Reference {
-			// arg.Reference is nil for a bare @name token that parsed as an
-			// orphaned target (no cursor to resolve): see
-			// ResolveOperatorArgument's doc comment on the same condition.
-			if arg.Reference == nil {
-				return nil, fmt.Errorf("unable to resolve reference: @%s is a target, not a value", arg.Name)
-			}
-			// Direct reference - resolve it directly
+		if arg.Type == Reference && arg.Reference != nil {
 			DEBUG("  arg[%d]: trying to resolve reference $.%s", i, arg.Reference)
-			s, err := arg.Reference.Resolve(ev.Tree)
-			if err != nil {
-				DEBUG("     [%d]: resolution failed\n    error: %s", i, err)
-				return nil, err
-			}
-
-			m, ok := s.(map[string]interface{})
-			if !ok {
-				DEBUG("     [%d]: resolved to something that is not a map.  that is unacceptable.", i)
-				return nil, ansi.Errorf("@c{%s} @R{is not a map}", arg.Reference)
-			}
-
-			DEBUG("     [%d]: resolved to a map; appending to the list of maps to merge/inject", i)
-			// Deep copy the map to avoid modifying the original
-			vals = append(vals, DeepCopyMap(m))
-		} else {
-			// Use ResolveOperatorArgument for all other expressions (including nested operators)
-			val, err := ResolveOperatorArgument(ev, arg)
-			if err != nil {
-				DEBUG("  arg[%d]: failed to resolve expression to a concrete value", i)
-				DEBUG("     [%d]: error was: %s", i, err)
-				return nil, err
-			}
-
-			if val == nil {
-				DEBUG("  arg[%d]: resolved to nil", i)
-				return nil, fmt.Errorf("inject operator argument cannot be nil")
-			}
-
-			// Check if the resolved value is a map
-			m, ok := val.(map[string]interface{})
-			if !ok {
-				DEBUG("     [%d]: resolved to something that is not a map", i)
-				return nil, ansi.Errorf("@R{inject operator argument must resolve to a map}")
-			}
-
-			DEBUG("     [%d]: resolved to a map; appending to the list of maps to merge/inject", i)
-			// Deep copy the map to avoid modifying the original
-			vals = append(vals, DeepCopyMap(m))
 		}
+		s, err := resolveInjectArg(ev, arg, false)
+		if err != nil {
+			DEBUG("     [%d]: resolution failed\n    error: %s", i, err)
+			return nil, err
+		}
+		if s == nil && arg.Type != Reference {
+			DEBUG("  arg[%d]: resolved to nil", i)
+			return nil, fmt.Errorf("inject operator argument cannot be nil")
+		}
+
+		// A map that is, or sits inside, a literal injects each of its
+		// values as a literal, so the evaluator still never looks inside
+		// them once they land here.
+		wrapped := false
+		if l, isLiteral := s.(literal.Value); isLiteral {
+			s, wrapped = l.Value(), true
+		}
+
+		m, ok := s.(map[string]interface{})
+		if !ok {
+			DEBUG("     [%d]: resolved to something that is not a map.  that is unacceptable.", i)
+			if arg.Type == Reference {
+				return nil, errtext.Colorf("@c{%s} @R{is not a map}", arg.Reference)
+			}
+			return nil, errtext.Colorf("@R{inject operator argument must resolve to a map}")
+		}
+
+		DEBUG("     [%d]: resolved to a map; appending to the list of maps to merge/inject", i)
+		// Deep copy the map to avoid modifying the original
+		m = DeepCopyMap(m)
+		if wrapped {
+			for k, v := range m {
+				m[k] = literal.Wrap(v)
+			}
+		}
+		vals = append(vals, m)
 		DEBUG("")
 	}
 
 	switch len(vals) {
 	case 0:
 		DEBUG("  no arguments supplied to (( inject ... )) operation.  oops.")
-		return nil, ansi.Errorf("no arguments specified to @c{(( inject ... ))}")
+		return nil, errtext.Colorf("no arguments specified to @c{(( inject ... ))}")
 
 	default:
 		DEBUG("  merging found maps into a single map to be injected")

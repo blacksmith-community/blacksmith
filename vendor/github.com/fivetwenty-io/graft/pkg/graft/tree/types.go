@@ -75,8 +75,20 @@ type TypeMismatchError struct {
 	Value  interface{}
 }
 
-// Error returns the error message for TypeMismatchError with ANSI coloring.
+// Error returns the plain message for TypeMismatchError: no color and no
+// value.
 func (e TypeMismatchError) Error() string {
+	path := strings.Join(e.Path, ".")
+	if e.Got == "" {
+		return path + " is not " + e.Wanted
+	}
+	return "$." + path + " is " + e.Got + " (not " + e.Wanted + ")"
+}
+
+// DetailedError returns the text the graft CLI prints, which quotes the
+// value found and is colored when the ansi toggle is on. It is what
+// graft.DetailedError reports for the error.
+func (e TypeMismatchError) DetailedError() string {
 	if e.Got == "" {
 		return ansi.Sprintf("@c{%s} @R{is not} @m{%s}", strings.Join(e.Path, "."), e.Wanted)
 	}
@@ -98,8 +110,15 @@ type NotFoundError struct {
 	Path []string
 }
 
-// Error returns the error message for NotFoundError with ANSI coloring.
+// Error returns the plain message for NotFoundError, with no color.
 func (e NotFoundError) Error() string {
+	return "`$." + strings.Join(e.Path, ".") + "` could not be found in the datastructure"
+}
+
+// DetailedError returns the text the graft CLI prints, colored when the
+// ansi toggle is on. It is what graft.DetailedError reports for the
+// error.
+func (e NotFoundError) DetailedError() string {
 	return ansi.Sprintf("@R{`}@c{$.%s}@R{` could not be found in the datastructure}", strings.Join(e.Path, "."))
 }
 

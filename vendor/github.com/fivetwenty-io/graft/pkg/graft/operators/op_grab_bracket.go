@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -90,7 +91,7 @@ func resolveBracketNode(node string, ev *Evaluator) (string, error) {
 		return "", fmt.Errorf("unable to resolve bracketed key reference %q: %w", node, err)
 	}
 
-	return bracketKeyToNode(node, val)
+	return bracketKeyToNode(node, literal.Strip(val))
 }
 
 // isDynamicBracketNode reports whether a bracketed path node should be

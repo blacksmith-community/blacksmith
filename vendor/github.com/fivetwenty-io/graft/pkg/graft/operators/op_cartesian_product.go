@@ -3,7 +3,7 @@ package operators
 import (
 	"fmt"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -69,7 +69,7 @@ func (CartesianProductOperator) Run(ev *Evaluator, args []*Expr) (*Response, err
 
 	if len(args) == 0 {
 		DEBUG("  no arguments supplied to (( cartesian-product ... )) operation. oops.")
-		return nil, ansi.Errorf("no arguments specified to @c{(( cartesian-product ... ))}")
+		return nil, errtext.Colorf("no arguments specified to @c{(( cartesian-product ... ))}")
 	}
 
 	var lists [][]interface{}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // Phase indicates when a post-processor should run.
@@ -693,8 +695,15 @@ func getPath(doc interface{}, path string) interface{} {
 
 	parts := splitPath(path)
 	current := doc
+	inside := false
 
 	for _, part := range parts {
+		// A path sees through a literal wrapper, and the value it finds
+		// there comes back wrapped so that it stays opaque where it is
+		// put.
+		if l, ok := current.(literal.Value); ok {
+			current, inside = l.Value(), true
+		}
 		switch val := current.(type) {
 		case map[string]interface{}:
 			v, ok := val[part]
@@ -725,6 +734,9 @@ func getPath(doc interface{}, path string) interface{} {
 		}
 	}
 
+	if inside && current != nil {
+		return literal.Wrap(current)
+	}
 	return current
 }
 
@@ -879,6 +891,10 @@ func deletePathRecursive(v interface{}, parts []string) interface{} {
 	remaining := parts[1:]
 
 	switch val := v.(type) {
+	case literal.Value:
+		// Delete from a copy of what the wrapper holds, and wrap the
+		// result again.
+		return literal.Wrap(deletePathRecursive(val.Value(), parts))
 	case map[string]interface{}:
 		if len(remaining) == 0 {
 			// This is the final segment - delete it

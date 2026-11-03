@@ -3,7 +3,7 @@ package operators
 import (
 	"fmt"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -33,7 +33,7 @@ func (ParamOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	defer DEBUG("done with (( param ... )) operation at $.%s\n", ev.Here)
 
 	if len(args) != 1 {
-		return nil, graft.WithCode(ansi.Errorf("@R{param operator only expects} @c{one argument}"), graft.CodeArgumentCount)
+		return nil, graft.WithCode(errtext.Colorf("@R{param operator only expects} @c{one argument}"), graft.CodeArgumentCount)
 	}
 
 	// For param operator, we need to be careful about evaluation
@@ -62,7 +62,7 @@ func (ParamOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	}
 
 	// Always return an error with the specified message
-	return nil, graft.WithCode(ansi.Errorf("@R{%s}", paramMessage), graft.CodeParamRequired)
+	return nil, graft.WithCode(errtext.WithPlain(errtext.Colorf("@R{%s}", paramMessage), "a required parameter was not provided"), graft.CodeParamRequired)
 }
 
 //nolint:gochecknoinits // Operator registration must happen at package load time

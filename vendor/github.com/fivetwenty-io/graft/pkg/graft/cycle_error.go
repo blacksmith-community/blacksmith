@@ -186,11 +186,24 @@ type CycleError struct {
 // DependencyGraph.TopologicalSort.
 func (e *CycleError) Unwrap() error { return ErrDependencyCycle }
 
-// Error renders the cycle block. Every file-derived string passes
+// Error renders the cycle block with each node's location and path.
+// The operator expressions can quote document values, so only
+// DetailedError prints them.
+func (e *CycleError) Error() string {
+	return e.render(false)
+}
+
+// DetailedError renders the cycle block the graft CLI prints, with each
+// node's expression after its path.
+func (e *CycleError) DetailedError() string {
+	return e.render(true)
+}
+
+// render builds the cycle block. Every file-derived string passes
 // through sanitizeDisplay, and the whole block is built with plain fmt:
 // no part of it is color-processed, so document content cannot inject
 // escapes or forge a line beginning " - $.".
-func (e *CycleError) Error() string {
+func (e *CycleError) render(withExpr bool) string {
 	var b strings.Builder
 	b.WriteString("cycle detected in operator data-flow graph")
 
@@ -226,8 +239,10 @@ func (e *CycleError) Error() string {
 		lines = append(append([]CycleNode(nil), e.Nodes...), e.Nodes[0])
 	}
 	for _, n := range lines {
-		fmt.Fprintf(&b, "\n     %s  %s: %s",
-			cycleLocation(n.Pos), sanitizeDisplay(n.Path), sanitizeDisplay(n.Expr))
+		fmt.Fprintf(&b, "\n     %s  %s", cycleLocation(n.Pos), sanitizeDisplay(n.Path))
+		if withExpr {
+			fmt.Fprintf(&b, ": %s", sanitizeDisplay(n.Expr))
+		}
 	}
 
 	return b.String()

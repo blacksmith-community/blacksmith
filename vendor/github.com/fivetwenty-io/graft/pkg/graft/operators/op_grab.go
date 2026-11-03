@@ -3,7 +3,8 @@ package operators
 import (
 	"fmt"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -71,15 +72,24 @@ func resolveGrabArgValue(ev *Evaluator, arg *Expr) (interface{}, error) {
 		}
 	}
 
-	// Use ResolveOperatorArgument to handle nested expressions.
-	val, err := ResolveOperatorArgument(ev, arg)
+	// Use ResolveOperatorArgument to handle nested expressions. A nested
+	// call is run directly instead, so that a literal it returns, such as
+	// the result of a nested (( grab )), stays a literal here.
+	var val interface{}
+	var err error
+	if arg.Type == OperatorCall {
+		val, err = evaluateNestedOperator(ev, arg)
+	} else {
+		val, err = ResolveOperatorArgument(ev, arg)
+	}
 	if err != nil {
 		return nil, err
 	}
 
 	if arg.Type == Reference {
-		// Direct reference, resolve it normally.
-		resolved, err := arg.Reference.Resolve(ev.Tree)
+		// Direct reference, resolve it normally. ResolveLiteral keeps a
+		// value that sits inside a literal opaque at its new place.
+		resolved, err := arg.Reference.ResolveLiteral(ev.Tree)
 		if err != nil {
 			return nil, fmt.Errorf("unable to resolve `%s`: %w", arg.Reference, err)
 		}
@@ -147,7 +157,7 @@ func resolveComputedPath(ev *Evaluator, pathStr string) (interface{}, error) {
 		return pathStr, nil //nolint:nilerr // a non-path string is a legitimate grab result
 	}
 
-	resolved, err := cursor.Resolve(ev.Tree)
+	resolved, err := cursor.ResolveLiteral(ev.Tree)
 	if err != nil {
 		return nil, fmt.Errorf("unable to resolve `%s`: %w", pathStr, err)
 	}
@@ -181,7 +191,7 @@ func (GrabOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	switch len(args) {
 	case 0:
 		DEBUG("  no arguments supplied to (( grab ... )) operation.  oops.")
-		return nil, ansi.Errorf("no arguments specified to @c{(( grab ... ))}")
+		return nil, errtext.Colorf("no arguments specified to @c{(( grab ... ))}")
 
 	case 1:
 		DEBUG("  called with only one argument; returning value as-is")
@@ -199,6 +209,18 @@ func (GrabOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			case []interface{}:
 				DEBUG("    [%d]: value is a list; flattening it out", i)
 				flat = append(flat, v...)
+			case literal.Value:
+				// A literal list flattens like any other list, and each
+				// item it gives up stays a literal.
+				items, ok := v.Value().([]interface{})
+				if !ok {
+					flat = append(flat, lst)
+					continue
+				}
+				DEBUG("    [%d]: value is a literal list; flattening it out", i)
+				for _, item := range items {
+					flat = append(flat, literal.Wrap(item))
+				}
 			default:
 				DEBUG("    [%d]: value is not a list; appending it as-is", i)
 				flat = append(flat, lst)

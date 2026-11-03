@@ -21,7 +21,11 @@ import (
 // operation holder returned by NewGoPatchDocument) are exhaustive; new
 // methods may be added to this interface in minor releases.
 type Document interface {
-	// Get retrieves a value at the given path (e.g., "meta.instance_groups.0.name")
+	// Get retrieves a value at the given path (e.g., "meta.instance_groups.0.name").
+	// A map or list it returns is the document's own, so a change to it
+	// changes the document, and that holds for a value read from inside a
+	// LiteralValue too. Get, GetMap, and GetSlice remove any wrapper from
+	// the value they return, copying only the containers on the way to it.
 	Get(path string) (interface{}, error)
 
 	// GetString retrieves a string value at the given path
@@ -54,7 +58,17 @@ type Document interface {
 	// ToJSON converts the document to JSON bytes
 	ToJSON() ([]byte, error)
 
-	// RawData returns the underlying data structure
+	// RawData returns the underlying data structure, with every
+	// LiteralValue replaced by the value it wraps. When the document
+	// holds no wrapper, the result is the document's own map. When it
+	// holds one, the maps and lists on the way to each wrapper are
+	// copies, so a change made through the result may or may not reach
+	// the document. Use Set and Delete to change a document, and Clone
+	// for a copy that is safe to change. In particular, put a
+	// LiteralValue into a document with Set or NewDocument. The document
+	// remembers whether it holds one, so that RawData and the other
+	// output calls can skip the walk when it does not, and it does not
+	// notice a wrapper written straight into this map.
 	RawData() interface{}
 
 	// Clone creates a deep copy of the document

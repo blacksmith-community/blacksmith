@@ -44,7 +44,7 @@ func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 		}
 		return &Response{
 			Type:  Replace,
-			Value: v,
+			Value: plainValue(v),
 		}, nil
 
 	case EnvVar:

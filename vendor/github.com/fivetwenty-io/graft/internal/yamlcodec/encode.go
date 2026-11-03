@@ -11,6 +11,8 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/token"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // MarshalYAML serializes a value to YAML with 2-space indentation,
@@ -94,6 +96,9 @@ func MarshalYAMLTyped(v interface{}, less func(a, b string) bool) ([]byte, error
 // marshalYAML is the encoder behind the exported functions. typed turns
 // on the quoted timestamps that MarshalYAMLTyped describes.
 func marshalYAML(v interface{}, comments []YAMLHeadComment, less func(a, b string) bool, typed bool) ([]byte, error) {
+	// A literal wrapper is graft's own marker for a value it keeps whole.
+	// Output never shows it, so the encoder sees the plain value.
+	v = literal.Strip(v)
 	enc, prepared := newScalarEncoder(v, comments, less, typed)
 
 	opts := []yaml.EncodeOption{yaml.Indent(2)}

@@ -3,8 +3,27 @@ package graft
 import (
 	"errors"
 
+	goyaml "github.com/goccy/go-yaml"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
+	"github.com/fivetwenty-io/graft/internal/yamlerr"
+	_ "github.com/fivetwenty-io/graft/pkg/yaml" // sets yamlerr.Describe
 )
+
+// plainYAMLError returns err, a failure from the YAML codec. When err
+// holds one of goccy's errors, whose text prints the source lines around
+// the failure, the result's Error() is the text pkg/yaml's DecodeError
+// gives instead: a line and a message that quotes nothing from the
+// input. The detailed text is err's own. The codec's other errors quote
+// nothing from the input, so they come back unchanged.
+func plainYAMLError(err error) error {
+	var ge goyaml.Error
+	if !errors.As(err, &ge) {
+		return err
+	}
+	return errtext.WithPlain(err, yamlerr.Text(err, "yaml: the document is not valid YAML"))
+}
 
 // YAMLHeadComment attaches a block of comment lines directly above one node
 // in the output of MarshalYAMLWithComments. Each entry in Lines becomes one
@@ -135,7 +154,8 @@ func FirstMergeDocument(data []byte) ([]byte, error) {
 		if errors.As(err, &tooDeep) {
 			return nil, err
 		}
-		return nil, NewParseError(err.Error(), err)
+		cause := plainYAMLError(err)
+		return nil, NewParseError(cause.Error(), cause)
 	}
 	return first, nil
 }

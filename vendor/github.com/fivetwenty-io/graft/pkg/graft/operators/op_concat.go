@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/utils/ansi"
 	graft "github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -70,7 +71,7 @@ func (ConcatOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			switch v.(type) {
 			case map[string]interface{}, []interface{}:
 				DEBUG("  arg[%d]: %v is not a string scalar", i, v)
-				return nil, ansi.Errorf("@R{tried to concat} @c{%s}@R{, which is not a string scalar}", arg.Reference)
+				return nil, errtext.Colorf("@R{tried to concat} @c{%s}@R{, which is not a string scalar}", arg.Reference)
 			}
 		}
 

@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -44,7 +44,7 @@ func (Base64DecodeOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) 
 	}
 
 	if val == nil {
-		return nil, ansi.Errorf("@R{base64-decode operator argument resolved to nil}")
+		return nil, errtext.Colorf("@R{base64-decode operator argument resolved to nil}")
 	}
 
 	// Convert to string
@@ -55,12 +55,12 @@ func (Base64DecodeOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) 
 		contents = v
 	default:
 		DEBUG("  resolved to non-string: %T = %v", v, v)
-		return nil, ansi.Errorf("@R{tried to base64 decode} @c{%v}@R{, which is not a string}", v)
+		return nil, errtext.WithPlain(errtext.Colorf("@R{tried to base64 decode} @c{%v}@R{, which is not a string}", v), fmt.Sprintf("tried to base64 decode a %T, which is not a string", v))
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(contents)
 	if err != nil {
-		return nil, ansi.Errorf("@R{base64 decoding failed:} @c{%s}", err)
+		return nil, errtext.Colorf("@R{base64 decoding failed:} @c{%s}", err)
 	}
 
 	DEBUG("  resolved (( base64-decode ... )) operation to the string:\n    \"%s\"", string(decoded))

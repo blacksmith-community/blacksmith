@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -59,7 +60,7 @@ func (c ComparisonOperator) Run(ev *graft.Evaluator, args []*graft.Expr) (*graft
 	case "<", ">", "<=", ">=":
 		cmp, err := c.compare(left, right)
 		if err != nil {
-			return nil, fmt.Errorf("cannot compare %v and %v: %w", left, right, err)
+			return nil, errtext.WithPlain(fmt.Errorf("cannot compare %v and %v: %w", left, right, err), "cannot compare the two values: "+err.Error())
 		}
 		switch c.op {
 		case "<":

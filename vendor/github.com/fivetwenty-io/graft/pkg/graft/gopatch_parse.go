@@ -7,7 +7,7 @@ import (
 
 	"github.com/cppforlife/go-patch/patch"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/internal/yamlnode"
 )
@@ -152,7 +152,7 @@ func isDefiniteNonArrayStart(c byte) bool {
 func detectArrayRootFull(data []byte) error {
 	raw, err := yamlcodec.DecodeFirstGeneric(QuoteInjectKeys(data))
 	if err != nil {
-		return fmt.Errorf("failed to parse YAML: %w", err)
+		return fmt.Errorf("failed to parse YAML: %w", plainYAMLError(err))
 	}
 
 	switch raw.(type) {
@@ -196,7 +196,9 @@ func ParseGoPatch(data []byte) (patch.Ops, error) {
 		// produce, but under --color=on it renders real ANSI codes around
 		// "...but got" (F13) - a plain fmt.Errorf can't reproduce that, so
 		// this must stay ansi.Errorf, not be simplified to fmt.Errorf.
-		return nil, ansi.Errorf("@R{Root of YAML document is not a hash/map. Tried parsing it as go-patch, but got}: %s\n", err)
+		return nil, errtext.WithPlain(
+			errtext.Colorf("@R{Root of YAML document is not a hash/map. Tried parsing it as go-patch, but got}: %s\n", err),
+			"Root of YAML document is not a hash/map. Tried parsing it as go-patch, but got: "+plainYAMLError(err).Error())
 	}
 
 	ops, err := patch.NewOpsFromDefinitions(opdefs)
@@ -213,7 +215,9 @@ func ParseGoPatch(data []byte) (patch.Ops, error) {
 		// string carried.
 		//nolint:staticcheck,revive // capitalized "@R{Unable" is the pinned literal HEAD text, brace bug included
 		//lint:ignore ST1005 same, for the standalone staticcheck run
-		return nil, fmt.Errorf("@R{Unable to parse go-patch definitions: %w\n", err)
+		return nil, errtext.WithPlain(
+			fmt.Errorf("@R{Unable to parse go-patch definitions: %w\n", err),
+			"Unable to parse go-patch definitions")
 	}
 	return ops, nil
 }

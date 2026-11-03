@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // Backend is the public extension point for custom secret/parameter
@@ -90,6 +92,13 @@ type TargetedBackend interface {
 // compatibility contract's "secret <path> not found" shape.
 var ErrBackendNotFound = errors.New("backend: path not found")
 
+// backendNotFound reports path missing from a backend. Error() is
+// ErrBackendNotFound's own text, since the path is a value from the
+// document, and DetailedError adds the path after it.
+func backendNotFound(path string) error {
+	return errtext.WithPlain(fmt.Errorf("%w: %s", ErrBackendNotFound, path), ErrBackendNotFound.Error())
+}
+
 // BackendError carries structured context about a Backend failure.
 // Operators never return *BackendError as the outermost error: it is
 // always wrapped inside a *GraftError (Type: ExternalError), reachable via
@@ -114,16 +123,32 @@ type BackendError struct {
 	Cause error
 }
 
-// Error renders "backend %q[@target][ path %q]: message".
+// Error renders "backend %q[@target]: message". The path is a value
+// from the document, so only DetailedError quotes it.
 func (e *BackendError) Error() string {
+	return e.prefix() + ": " + e.Message
+}
+
+// DetailedError renders "backend %q[@target][ path %q]: message", with
+// the cause's detailed text in place of Message when Message is the
+// cause's own text.
+func (e *BackendError) DetailedError() string {
+	s := e.prefix()
+	if e.Path != "" {
+		s += fmt.Sprintf(" path %q", e.Path)
+	}
+	msg := e.Message
+	if e.Cause != nil && msg == e.Cause.Error() {
+		msg = errtext.Detail(e.Cause)
+	}
+	return s + ": " + msg
+}
+
+func (e *BackendError) prefix() string {
 	s := fmt.Sprintf("backend %q", e.Backend)
 	if e.Target != "" {
 		s += "@" + e.Target
 	}
-	if e.Path != "" {
-		s += fmt.Sprintf(" path %q", e.Path)
-	}
-	s += ": " + e.Message
 	return s
 }
 

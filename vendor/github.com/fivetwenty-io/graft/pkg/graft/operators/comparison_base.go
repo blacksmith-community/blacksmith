@@ -3,6 +3,7 @@ package operators
 import (
 	"fmt"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/log"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -120,7 +121,7 @@ func (c *ComparisonOperatorBase) performLegacyComparison(left, right interface{}
 	case "<", ">", "<=", ">=":
 		cmp, err := legacyCompare(left, right)
 		if err != nil {
-			return false, fmt.Errorf("cannot compare %v and %v: %w", left, right, err)
+			return false, errtext.WithPlain(fmt.Errorf("cannot compare %v and %v: %w", left, right, err), "cannot compare the two values: "+err.Error())
 		}
 		switch c.op {
 		case "<":

@@ -3,6 +3,8 @@ package graft
 import (
 	"fmt"
 	"math"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // ValueType string constants.
@@ -204,14 +206,14 @@ func (v *valueImpl) AsInt() (int, error) {
 	case Int64Value:
 		if val, ok := v.value.(int64); ok {
 			if val > math.MaxInt32 || val < math.MinInt32 {
-				return 0, fmt.Errorf("int64 value %d overflows int", val)
+				return 0, errtext.WithPlain(fmt.Errorf("int64 value %d overflows int", val), "int64 value overflows int")
 			}
 			return int(val), nil
 		}
 	case Float64Value:
 		if val, ok := v.value.(float64); ok {
 			if val != float64(int(val)) {
-				return 0, fmt.Errorf("float64 value %g is not an integer", val)
+				return 0, errtext.WithPlain(fmt.Errorf("float64 value %g is not an integer", val), "float64 value is not an integer")
 			}
 			return int(val), nil
 		}
@@ -239,7 +241,7 @@ func (v *valueImpl) AsInt64() (int64, error) {
 	case Float64Value:
 		if val, ok := v.value.(float64); ok {
 			if val != float64(int64(val)) {
-				return 0, fmt.Errorf("float64 value %g is not an integer", val)
+				return 0, errtext.WithPlain(fmt.Errorf("float64 value %g is not an integer", val), "float64 value is not an integer")
 			}
 			return int64(val), nil
 		}

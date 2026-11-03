@@ -523,7 +523,11 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 		return e.Literal, nil
 	case Reference:
 		if e.Reference != nil {
-			return e.Reference.Resolve(treeData)
+			v, err := e.Reference.Resolve(treeData)
+			if err != nil {
+				return nil, err
+			}
+			return plainValue(v), nil
 		}
 		return nil, fmt.Errorf("nil reference")
 	case EnvVar:

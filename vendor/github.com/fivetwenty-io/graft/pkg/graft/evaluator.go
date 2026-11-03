@@ -9,9 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/log"
 	"github.com/fivetwenty-io/graft/pkg/graft/interfaces"
 	"github.com/fivetwenty-io/graft/pkg/graft/merger"
@@ -49,6 +50,10 @@ type Evaluator struct {
 	// already in flight. A plain int32 (not atomic.Int32) so the
 	// deliberate shallow copy in computeOp stays vet-clean.
 	depComputing int32
+
+	// holdsLiteral is set when DataFlow finds a literal wrapper in Tree.
+	// computeOp then checks each result for text read from inside one.
+	holdsLiteral bool
 
 	// Reference to the engine (for accessing registries and state)
 	engine Engine
@@ -183,11 +188,14 @@ type ambiguousEntry struct {
 // renders as one " - $.<list>: ..." line like every other per-path
 // merge error.
 func (a *ambiguousEntry) errorAt(opPath string) error {
+	at := strings.Join(a.paths, ", ")
 	return &PathError{
 		Path: a.list,
-		Cause: fmt.Errorf(
-			"duplicate name %q at %s makes the operator at $.%s unaddressable; give each entry a unique name",
-			a.name, strings.Join(a.paths, ", "), opPath),
+		Cause: errtext.WithPlain(
+			fmt.Errorf("duplicate name %q at %s makes the operator at $.%s unaddressable; give each entry a unique name",
+				a.name, at, opPath),
+			fmt.Sprintf("duplicate name at %s makes the operator at $.%s unaddressable; give each entry a unique name",
+				at, opPath)),
 	}
 }
 
@@ -270,6 +278,10 @@ func (ctx *dataFlowContext) registerOpcall(op *Opcall) {
 // scanValue recursively scans a value for operators.
 func (ctx *dataFlowContext) scanValue(o interface{}) {
 	switch v := o.(type) {
+	case literal.Value:
+		// The scan never looks inside a literal, but the evaluator must
+		// know the tree holds one.
+		ctx.ev.holdsLiteral = true
 	case map[string]interface{}:
 		ctx.scanStringMap(v)
 	case []interface{}:
@@ -525,7 +537,7 @@ func (ev *Evaluator) applyCherryPickFilter(g [][]*Opcall, ctx *dataFlowContext) 
 	for i, s := range ev.Only {
 		c, err := tree.ParseCursor(s)
 		if err != nil {
-			return nil, ansi.Errorf("@*{invalid --cherry-pick path '%s': %s}", s, err)
+			return nil, errtext.Colorf("@*{invalid --cherry-pick path '%s': %s}", s, err)
 		}
 		picks[i] = c
 	}
@@ -591,7 +603,7 @@ func (ev *Evaluator) collectCherryPickedOps(all map[string]*Opcall) (map[string]
 		for _, pickedPath := range ev.Only {
 			cursor, err := tree.ParseCursor(pickedPath)
 			if err != nil {
-				return nil, ansi.Errorf("@*{invalid --cherry-pick path '%s': %s}", pickedPath, err)
+				return nil, errtext.Colorf("@*{invalid --cherry-pick path '%s': %s}", pickedPath, err)
 			}
 			if cursor.Contains(op.canonical) {
 				newAll[path] = op
@@ -665,7 +677,7 @@ func (ev *Evaluator) newCycleError(g [][]*Opcall, all map[string]*Opcall) error 
 	dependents, order := dependentsFromEdges(g)
 	paths := extractCycle(dependents, order)
 	if len(paths) == 0 {
-		return ansi.Errorf("@*{cycle detected in operator data-flow graph}")
+		return errtext.Colorf("@*{cycle detected in operator data-flow graph}")
 	}
 	return buildCycleError(ev.Sources, paths, all)
 }
@@ -909,7 +921,7 @@ func (ev *Evaluator) CherryPick(paths []string) error {
 							cherryValue = tmp
 
 						default:
-							return ansi.Errorf("@*{Unsupported type detected, %s is neither a map nor a list}", parent.String())
+							return errtext.Colorf("@*{Unsupported type detected, %s is neither a map nor a list}", parent.String())
 						}
 					} else {
 						return err
@@ -933,10 +945,14 @@ func (ev *Evaluator) CheckForCycles(maxDepth int) error {
 	var check func(o interface{}, depth int) error
 	check = func(o interface{}, depth int) error {
 		if depth == 0 {
-			return ansi.Errorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
+			return errtext.Colorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
 		}
 
 		switch val := o.(type) {
+		case literal.Value:
+			// A wrapped value can refer to itself as well.
+			return check(val.Value(), depth-1)
+
 		case []interface{}:
 			for _, v := range val {
 				if err := check(v, depth-1); err != nil {
@@ -976,7 +992,7 @@ func (ev *Evaluator) RunOp(op *Opcall) error {
 	if err != nil {
 		return err
 	}
-	return ev.applyResponse(op, resp, oldValue)
+	return ev.scrubLiteralError(op, ev.applyResponse(op, resp, oldValue))
 }
 
 // computeOp runs the operator itself (op.Run), which may perform Vault,
@@ -1005,7 +1021,11 @@ func (ev *Evaluator) computeOp(op *Opcall) (resp *Response, oldValue interface{}
 	// copy is safe for the read-only access computeOp performs.
 	evCopy := *ev
 	resp, err = op.Run(&evCopy)
-	return resp, oldValue, err
+	if err != nil {
+		return resp, oldValue, ev.scrubLiteralError(op, err)
+	}
+	ev.guardLiteralResponse(op, resp)
+	return resp, oldValue, nil
 }
 
 // applyResponse mutates ev.Tree with the operator's result and records

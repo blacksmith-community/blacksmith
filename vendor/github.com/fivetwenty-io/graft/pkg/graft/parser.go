@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft/interfaces"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -501,7 +502,7 @@ func (p *Parser) parseInteger() (*Expr, error) {
 				Literal: floatVal,
 			}, nil
 		}
-		return nil, fmt.Errorf("invalid integer: %s", tok.Literal)
+		return nil, errtext.WithPlain(fmt.Errorf("invalid integer: %s", tok.Literal), "invalid integer")
 	}
 
 	return &Expr{
@@ -517,7 +518,7 @@ func (p *Parser) parseFloat() (*Expr, error) {
 
 	val, err := strconv.ParseFloat(tok.Literal, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid float: %s", tok.Literal)
+		return nil, errtext.WithPlain(fmt.Errorf("invalid float: %s", tok.Literal), "invalid float")
 	}
 
 	return &Expr{
@@ -1179,7 +1180,7 @@ func (p *Parser) parseUnaryMinus() (*Expr, error) {
 		p.advance()
 		val, err := strconv.ParseInt("-"+tok.Literal, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid integer: -%s", tok.Literal)
+			return nil, errtext.WithPlain(fmt.Errorf("invalid integer: -%s", tok.Literal), "invalid integer")
 		}
 		return &Expr{
 			Type:    Literal,
@@ -1192,7 +1193,7 @@ func (p *Parser) parseUnaryMinus() (*Expr, error) {
 		p.advance()
 		val, err := strconv.ParseFloat("-"+tok.Literal, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid float: -%s", tok.Literal)
+			return nil, errtext.WithPlain(fmt.Errorf("invalid float: -%s", tok.Literal), "invalid float")
 		}
 		return &Expr{
 			Type:    Literal,
@@ -1431,7 +1432,7 @@ func (e *exprOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	// This is needed for nested operator calls within the expression
 	args[0].SetEvaluator(ev)
 
-	val, err := args[0].Evaluate(ev.Tree)
+	val, err := evaluateKeepingLiteral(args[0], ev.Tree)
 	if err != nil {
 		return nil, err
 	}
@@ -1440,6 +1441,39 @@ func (e *exprOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		Type:  Replace,
 		Value: val,
 	}, nil
+}
+
+// evaluateKeepingLiteral evaluates a bare expression the way Evaluate
+// does, except that a reference, on its own or as a side of ||, keeps a
+// LiteralValue it reads as a LiteralValue. That matches (( grab x || y )),
+// so the value a bare (( x || y )) copies out of a literal is replaced
+// whole by a later merge. Every other kind of expression goes through
+// Evaluate unchanged.
+func evaluateKeepingLiteral(e *Expr, treeData interface{}) (interface{}, error) {
+	switch e.Type {
+	case Reference:
+		if e.Reference != nil {
+			return e.Reference.ResolveLiteral(treeData)
+		}
+	case LogicalOr:
+		if e.Left != nil {
+			if e.evaluator != nil && e.Left.evaluator == nil {
+				e.Left.SetEvaluator(e.evaluator)
+			}
+			if left, err := evaluateKeepingLiteral(e.Left, treeData); err == nil {
+				return left, nil
+			}
+		}
+		if e.Right != nil {
+			if e.evaluator != nil && e.Right.evaluator == nil {
+				e.Right.SetEvaluator(e.evaluator)
+			}
+			return evaluateKeepingLiteral(e.Right, treeData)
+		}
+		return nil, nil
+	default:
+	}
+	return e.Evaluate(treeData)
 }
 
 // processEscapes processes escape sequences in a string.

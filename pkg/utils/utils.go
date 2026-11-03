@@ -150,7 +150,9 @@ type DuplicateKeyFunc func(file, key string)
 // path. Spruce queued that path in a process-wide list that the next
 // evaluation applied, whichever render it was, so a prune in one plan
 // could reach another plan's render, and that is not kept. A (( prune ))
-// given as a list entry removes the entry at its index during the merge.
+// over a key the base does not have survives as the literal text
+// "(( prune ))". A (( prune )) given as a list entry removes the entry at
+// its index during the merge.
 //
 // When onDuplicate is not nil, a key that a file repeats keeps its last
 // value and onDuplicate hears of it. When onDuplicate is nil, a repeated

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // deepEqual performs a deep comparison of two values.
@@ -30,6 +32,8 @@ func deepCopyHelper(v interface{}) interface{} {
 			result[i] = deepCopyHelper(v)
 		}
 		return result
+	case literal.Value:
+		return literal.Copy(val)
 	default:
 		// For primitive types, return as-is
 		return v

@@ -7,7 +7,7 @@ import (
 
 	"github.com/dlclark/regexp2/v2"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -54,23 +54,23 @@ func (SplitOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 	if len(args) == 0 {
 		DEBUG("  no arguments supplied to (( split ... )) operation.")
-		return nil, ansi.Errorf("no arguments specified to @c{(( split ... ))}")
+		return nil, errtext.Colorf("no arguments specified to @c{(( split ... ))}")
 	}
 
 	if len(args) < 2 {
 		DEBUG("  too few arguments supplied to (( split ... )) operation.")
-		return nil, ansi.Errorf("too few arguments supplied to @c{(( split ... ))}")
+		return nil, errtext.Colorf("too few arguments supplied to @c{(( split ... ))}")
 	}
 
 	if len(args) > 2 {
 		DEBUG("  too many arguments supplied to (( split ... )) operation.")
-		return nil, ansi.Errorf("too many arguments supplied to @c{(( split ... ))}")
+		return nil, errtext.Colorf("too many arguments supplied to @c{(( split ... ))}")
 	}
 
 	// First argument: separator (must be literal)
 	if args[0].Type != Literal {
 		DEBUG("     [0]: separator is not a literal")
-		return nil, ansi.Errorf("split operator only accepts literal argument for the separator")
+		return nil, errtext.Colorf("split operator only accepts literal argument for the separator")
 	}
 
 	separator := fmt.Sprintf("%v", args[0].Literal)
@@ -87,14 +87,14 @@ func (SplitOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		DEBUG("     [1]: resolution failed\n    error: %s", err)
 		// Maintain backward compatibility with error messages
 		if args[1].Type == Reference {
-			return nil, ansi.Errorf("Unable to resolve @c{`%s`}: %s", args[1].Reference, err)
+			return nil, errtext.Colorf("Unable to resolve @c{`%s`}: %s", args[1].Reference, err)
 		}
 		return nil, err
 	}
 
 	if val == nil {
 		DEBUG("     [1]: argument resolved to nil")
-		return nil, ansi.Errorf("cannot split nil value in @c{(( split ... ))}")
+		return nil, errtext.Colorf("cannot split nil value in @c{(( split ... ))}")
 	}
 
 	// Convert value to string and split
@@ -132,7 +132,7 @@ func (SplitOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		re, err := regexp2.Compile(pattern, regexp2.None)
 		if err != nil {
 			DEBUG("  failed to compile PCRE regex: %s", err)
-			return nil, ansi.Errorf("invalid PCRE regex pattern @c{%s}: %s", pattern, err)
+			return nil, errtext.WithPlain(errtext.Colorf("invalid PCRE regex pattern @c{%s}: %s", pattern, err), "invalid PCRE regex pattern")
 		}
 
 		// Split using regex. regexp2 v2 has its own Regexp.Split, but

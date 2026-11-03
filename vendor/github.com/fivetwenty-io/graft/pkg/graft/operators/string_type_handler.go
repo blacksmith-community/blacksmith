@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // StringTypeHandler handles operations for string types.
@@ -74,7 +76,7 @@ func (h *StringTypeHandler) Multiply(a, b interface{}) (interface{}, error) {
 // repeatString repeats a string n times with safety limits.
 func repeatString(s string, n int64) (interface{}, error) {
 	if n < 0 {
-		return nil, fmt.Errorf("cannot repeat string negative times: %d", n)
+		return nil, errtext.WithPlain(fmt.Errorf("cannot repeat string negative times: %d", n), "cannot repeat a string a negative number of times")
 	}
 	if n == 0 {
 		return "", nil
@@ -82,7 +84,7 @@ func repeatString(s string, n int64) (interface{}, error) {
 
 	const maxRepetitions = 10000
 	if n > maxRepetitions {
-		return nil, fmt.Errorf("string repetition count too large: %d (max %d)", n, maxRepetitions)
+		return nil, errtext.WithPlain(fmt.Errorf("string repetition count too large: %d (max %d)", n, maxRepetitions), fmt.Sprintf("string repetition count too large (max %d)", maxRepetitions))
 	}
 
 	// Also check resulting length to prevent memory issues
@@ -183,7 +185,7 @@ func toIntForString(val interface{}) (int64, error) {
 		return v, nil
 	case uint:
 		if uint64(v) > uint64(math.MaxInt64) {
-			return 0, fmt.Errorf("uint value %d overflows int64", v)
+			return 0, errtext.WithPlain(fmt.Errorf("uint value %d overflows int64", v), "the uint value overflows int64")
 		}
 		return int64(v), nil // #nosec G115 - bounds checked above
 	case uint8:
@@ -196,7 +198,7 @@ func toIntForString(val interface{}) (int64, error) {
 		if v <= 9223372036854775807 { // Max int64
 			return int64(v), nil
 		}
-		return 0, fmt.Errorf("uint64 value %d exceeds int64 range", v)
+		return 0, errtext.WithPlain(fmt.Errorf("uint64 value %d exceeds int64 range", v), "the uint64 value exceeds int64 range")
 	case float32:
 		return int64(v), nil
 	case float64:

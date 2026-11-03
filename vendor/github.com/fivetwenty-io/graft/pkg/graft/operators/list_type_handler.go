@@ -3,6 +3,8 @@ package operators
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // ListTypeHandler handles operations on list types (TypeList).
@@ -68,7 +70,7 @@ func (h *ListTypeHandler) Multiply(a, b interface{}) (interface{}, error) {
 	}
 
 	if times < 0 {
-		return nil, fmt.Errorf("cannot repeat list negative times: %d", times)
+		return nil, errtext.WithPlain(fmt.Errorf("cannot repeat list negative times: %d", times), "cannot repeat a list a negative number of times")
 	}
 
 	if times == 0 {

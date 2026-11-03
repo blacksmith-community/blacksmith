@@ -15,6 +15,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // PooledConnection represents a pooled NATS connection with metadata.
@@ -29,14 +31,12 @@ type PooledConnection struct {
 type ConnectionPool struct {
 	mu          sync.RWMutex
 	connections map[string]*PooledConnection
-	stopCleanup chan struct{}
 }
 
 // NewConnectionPool creates a new connection pool.
 func NewConnectionPool() *ConnectionPool {
 	return &ConnectionPool{
 		connections: make(map[string]*PooledConnection),
-		stopCleanup: make(chan struct{}),
 	}
 }
 
@@ -49,8 +49,8 @@ var (
 // ConnPool is the global NATS connection pool.
 var ConnPool = NewConnectionPool()
 
-// CleanupLoop periodically removes idle connections.
-func (p *ConnectionPool) CleanupLoop() {
+// CleanupLoop periodically removes idle connections until stop is closed.
+func (p *ConnectionPool) CleanupLoop(stop <-chan struct{}) {
 	ticker := time.NewTicker(PoolCleanupInterval)
 	defer ticker.Stop()
 
@@ -58,7 +58,7 @@ func (p *ConnectionPool) CleanupLoop() {
 		select {
 		case <-ticker.C:
 			p.Cleanup()
-		case <-p.stopCleanup:
+		case <-stop:
 			return
 		}
 	}
@@ -74,13 +74,15 @@ func (p *ConnectionPool) Cleanup() {
 		if pc.RefCount == 0 && now.Sub(pc.LastUsed) > PoolMaxIdleTime {
 			pc.Conn.Close()
 			delete(p.connections, key)
-			debugLogf("closed idle NATS connection to %s", key)
+			debugLogf("closed idle NATS connection to %s", redactURL(key))
 		}
 	}
 }
 
 // GetConnection retrieves or creates a pooled connection.
 func (p *ConnectionPool) GetConnection(config *Config) (*PooledConnection, error) {
+	ensureBackground()
+
 	key := config.URL
 
 	p.mu.Lock()
@@ -111,7 +113,7 @@ func (p *ConnectionPool) GetConnection(config *Config) (*PooledConnection, error
 	}
 
 	p.connections[key] = pc
-	debugLogf("created new NATS connection to %s", key)
+	debugLogf("created new NATS connection to %s", redactURL(key))
 
 	return pc, nil
 }
@@ -133,11 +135,6 @@ func (p *ConnectionPool) ConnectionCount() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return len(p.connections)
-}
-
-// StopCleanup signals the cleanup goroutine to stop.
-func (p *ConnectionPool) StopCleanup() {
-	close(p.stopCleanup)
 }
 
 // CloseAll closes all connections in the pool.
@@ -172,6 +169,8 @@ var DefaultPool = &ClientPool{
 // guarantees the map itself is not concurrently written, not that other
 // RLock holders cannot race on values reached through it.
 func (ncp *ClientPool) GetConnection(targetName string) (*PooledConnection, error) {
+	ensureBackground()
+
 	ncp.mu.Lock()
 	if conn, exists := ncp.connections[targetName]; exists {
 		conn.RefCount++
@@ -355,7 +354,7 @@ func (ncp *ClientPool) CloseAll() {
 func CreateConnectionWithRetry(config *Config) (*nats.Conn, jetstream.JetStream, error) {
 	opts, err := BuildConnectionOptions(config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid NATS connection configuration: %w", err)
+		return nil, nil, configError(err)
 	}
 
 	var conn *nats.Conn
@@ -380,11 +379,11 @@ func CreateConnectionWithRetry(config *Config) (*nats.Conn, jetstream.JetStream,
 			break
 		}
 
-		debugLogf("failed to connect to NATS: %v", err)
+		debugLogf("failed to connect to NATS: %v", redactCause(err))
 	}
 
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to NATS after %d attempts: %w", config.Retries+1, err)
+		return nil, nil, connectError(config.Retries+1, err)
 	}
 
 	// Create JetStream context
@@ -401,7 +400,7 @@ func CreateConnectionWithRetry(config *Config) (*nats.Conn, jetstream.JetStream,
 func CreateConnectionFromConfig(config *Config) (*nats.Conn, error) {
 	opts, err := BuildConnectionOptions(config)
 	if err != nil {
-		return nil, fmt.Errorf("invalid NATS connection configuration: %w", err)
+		return nil, configError(err)
 	}
 
 	var conn *nats.Conn
@@ -426,11 +425,11 @@ func CreateConnectionFromConfig(config *Config) (*nats.Conn, error) {
 			break
 		}
 
-		debugLogf("failed to connect to NATS: %v", err)
+		debugLogf("failed to connect to NATS: %v", redactCause(err))
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to NATS after %d attempts: %w", config.Retries+1, err)
+		return nil, connectError(config.Retries+1, err)
 	}
 
 	return conn, nil
@@ -453,7 +452,7 @@ func BuildConnectionOptions(config *Config) ([]nats.Option, error) {
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
-			debugLogf("NATS reconnected to %s", nc.ConnectedUrl())
+			debugLogf("NATS reconnected to %s", redactURL(nc.ConnectedUrl()))
 		}),
 		nats.ErrorHandler(func(nc *nats.Conn, sub *nats.Subscription, err error) {
 			debugLogf("NATS error: %v", err)
@@ -469,7 +468,9 @@ func BuildConnectionOptions(config *Config) ([]nats.Option, error) {
 		if config.CertFile != "" && config.KeyFile != "" {
 			cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
 			if err != nil {
-				return nil, fmt.Errorf("failed to load NATS client certificate/key pair (%s, %s): %w", config.CertFile, config.KeyFile, err)
+				return nil, errtext.WithPlain(
+					fmt.Errorf("failed to load NATS client certificate/key pair (%s, %s): %w", config.CertFile, config.KeyFile, err),
+					"failed to load NATS client certificate/key pair: "+fileErrorReason(err))
 			}
 			tlsConfig.Certificates = []tls.Certificate{cert}
 		}
@@ -507,7 +508,9 @@ func buildAuthOption(config *Config) (nats.Option, error) {
 	case config.NkeySeedFile != "":
 		opt, err := nats.NkeyOptionFromSeed(config.NkeySeedFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load NATS nkey seed file %s: %w", config.NkeySeedFile, err)
+			return nil, errtext.WithPlain(
+				fmt.Errorf("failed to load NATS nkey seed file %s: %w", config.NkeySeedFile, err),
+				"failed to load NATS nkey seed file: "+fileErrorReason(err))
 		}
 		return opt, nil
 	case config.Token != "":
@@ -646,7 +649,9 @@ func FetchFromKV(js jetstream.JetStream, storePath string, config *Config) (inte
 
 	duration := time.Since(startTime)
 	GlobalMetrics.RecordOperation(operationType, duration, true, false)
-	return nil, fmt.Errorf("failed to get key '%s' from store '%s' after %d attempts: %w", key, storeName, config.Retries+1, err)
+	return nil, errtext.WithPlain(
+		fmt.Errorf("failed to get key '%s' from store '%s' after %d attempts: %w", key, storeName, config.Retries+1, err),
+		fmt.Sprintf("failed to get the key from the KV store after %d attempts%s", config.Retries+1, knownReason(err)))
 }
 
 // FetchFromObject retrieves a value from a NATS Object store with retry logic.
@@ -722,7 +727,9 @@ func FetchFromObject(js jetstream.JetStream, storePath string, config *Config) (
 			var yamlResult interface{}
 			err = unmarshalGuarded(data, &yamlResult)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse YAML from object '%s': %w", objectName, err)
+				return nil, errtext.WithPlain(
+					fmt.Errorf("failed to parse YAML from object '%s': %w", objectName, err),
+					"failed to parse YAML from the object")
 			}
 			// Normalize result from goccy/go-yaml (uint64 → int normalization)
 			result = normalizeYAMLValue(yamlResult)
@@ -730,7 +737,9 @@ func FetchFromObject(js jetstream.JetStream, storePath string, config *Config) (
 			// Parse as JSON (YAML parser handles JSON too)
 			err = unmarshalGuarded(data, &result)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse JSON from object '%s': %w", objectName, err)
+				return nil, errtext.WithPlain(
+					fmt.Errorf("failed to parse JSON from object '%s': %w", objectName, err),
+					"failed to parse JSON from the object")
 			}
 			result = normalizeYAMLValue(result)
 		case "text/plain", "":
@@ -772,7 +781,30 @@ func FetchFromObject(js jetstream.JetStream, storePath string, config *Config) (
 
 	duration := time.Since(startTime)
 	GlobalMetrics.RecordOperation(operationType, duration, true, false)
-	return nil, fmt.Errorf("failed to get object '%s' from bucket '%s' after %d attempts: %w", objectName, bucketName, config.Retries+1, err)
+	return nil, errtext.WithPlain(
+		fmt.Errorf("failed to get object '%s' from bucket '%s' after %d attempts: %w", objectName, bucketName, config.Retries+1, err),
+		fmt.Sprintf("failed to get the object from the bucket after %d attempts%s", config.Retries+1, knownReason(err)))
+}
+
+// knownReasons are the JetStream errors whose text a fetch failure's
+// plain text may repeat, since their text is fixed and names nothing.
+var knownReasons = []error{
+	jetstream.ErrKeyNotFound,
+	jetstream.ErrKeyDeleted,
+	jetstream.ErrBucketNotFound,
+	jetstream.ErrObjectNotFound,
+}
+
+// knownReason returns ": " and the text of the first of knownReasons that
+// err is, or "" when it is none of them. Any other error's text can
+// name a store, key, bucket, or object, so it stays in the detailed text.
+func knownReason(err error) string {
+	for _, known := range knownReasons {
+		if errors.Is(err, known) {
+			return ": " + known.Error()
+		}
+	}
+	return ""
 }
 
 // StreamLargeObject handles streaming of large objects to reduce memory usage.
@@ -823,9 +855,9 @@ func StreamLargeObject(obj jetstream.ObjectStore, objectName string, maxSize int
 
 // Shutdown gracefully shuts down NATS connections and goroutines.
 func Shutdown() {
-	// Stop cleanup goroutines
-	ConnPool.StopCleanup()
-	close(CacheStopCleanup)
+	// Stop cleanup goroutines, if they ever started. A later use starts
+	// them again.
+	stopBackground()
 
 	// Close all pooled connections
 	ConnPool.CloseAll()

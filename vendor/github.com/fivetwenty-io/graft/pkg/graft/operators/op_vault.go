@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/fivetwenty-io/graft/internal/backends/vault"
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -353,7 +353,8 @@ func isVaultNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	errMsg := err.Error()
+	// The detailed text is the text this check has always read.
+	errMsg := errtext.Detail(err)
 	return strings.Contains(errMsg, "not found") ||
 		strings.Contains(errMsg, "404") ||
 		strings.Contains(errMsg, "secret not found")
@@ -606,7 +607,7 @@ func (o VaultOperator) performVaultLookup(ev *graft.Evaluator, engine graft.Engi
 				// contract's not-found detection - "starts with `secret
 				// `, ends with ` not found`" - keeps working for custom
 				// backends.
-				return "", graft.WithCode(fmt.Errorf("secret %s not found", key), graft.CodeSecretNotFound)
+				return "", graft.WithCode(secretNotFound(key), graft.CodeSecretNotFound)
 			}
 			return "", wrapBackendError("vault", target, key, fetchErr)
 		}
@@ -620,7 +621,7 @@ func (o VaultOperator) performVaultLookup(ev *graft.Evaluator, engine graft.Engi
 
 	leftPart, rightPart := vault.ParsePath(key)
 	if leftPart == "" || rightPart == "" {
-		return "", ansi.Errorf("@R{invalid argument} @c{%s}@R{; must be in the form} @m{path/to/secret:key}", key)
+		return "", errtext.WithPlain(errtext.Colorf("@R{invalid argument} @c{%s}@R{; must be in the form} @m{path/to/secret:key}", key), "invalid argument; must be in the form path/to/secret:key")
 	}
 
 	// Cache key is namespaced by target so the same path on two different
@@ -641,7 +642,11 @@ func (o VaultOperator) performVaultLookup(ev *graft.Evaluator, engine graft.Engi
 			// Normalize the error messages
 			var notFoundErr *vault.ErrNotFound
 			if errors.As(secretErr, &notFoundErr) {
-				secretErr = graft.WithCode(fmt.Errorf("secret %s not found", key), graft.CodeSecretNotFound)
+				secretErr = graft.WithCode(secretNotFound(key), graft.CodeSecretNotFound)
+			} else {
+				// The Vault client's errors quote the request URL,
+				// which holds the secret path.
+				secretErr = errtext.WithPlain(secretErr, "unable to read the secret from vault")
 			}
 			return nil, secretErr
 		}
@@ -815,6 +820,13 @@ func (o VaultTryOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		Type:  Replace,
 		Value: defaultValue,
 	}, nil
+}
+
+// secretNotFound is the vault operator's error for a secret or key that
+// does not exist. Error() keeps the "secret ... not found" shape without
+// the path, and the detailed text names the path as the CLI always has.
+func secretNotFound(key string) error {
+	return errtext.WithPlain(fmt.Errorf("secret %s not found", key), "secret not found")
 }
 
 //nolint:gochecknoinits // Operator registration must happen at package load time

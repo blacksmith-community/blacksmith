@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // Glob performs glob pattern matching on the cursor path.
@@ -18,6 +20,8 @@ func (c *Cursor) Glob(tree interface{}) ([]*Cursor, error) {
 			}, nil
 		}
 
+		// A path reads through a literal wrapper to the value it holds.
+		o, _ = literal.Unwrap(o)
 		paths := []interface{}{}
 		k := path[pos]
 		if k == "*" {

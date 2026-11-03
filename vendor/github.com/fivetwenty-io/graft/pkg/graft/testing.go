@@ -72,7 +72,7 @@ func NewTestEvaluator(t *testing.T, yamlStr string) *Evaluator {
 		return nil
 	}
 
-	root, ok := doc.RawData().(map[string]interface{})
+	root, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		t.Fatalf("NewTestEvaluator: document root must be a map, got %T", doc.RawData())
 		return nil

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // Store type constants.
@@ -80,7 +82,9 @@ func ParsePath(path string) (storeType, storePath string, err error) {
 
 	storeType = strings.ToLower(parts[0])
 	if storeType != StoreKV && storeType != StoreObj {
-		return "", "", fmt.Errorf("invalid store type '%s', must be 'kv' or 'obj'", storeType)
+		return "", "", errtext.WithPlain(
+			fmt.Errorf("invalid store type '%s', must be 'kv' or 'obj'", storeType),
+			"invalid store type, must be 'kv' or 'obj'")
 	}
 
 	storePath = parts[1]

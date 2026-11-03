@@ -9,7 +9,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	natsbackend "github.com/fivetwenty-io/graft/internal/backends/nats"
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -272,7 +272,7 @@ func (n NatsOperator) Run(ev *graft.Evaluator, args []*graft.Expr) (*graft.Respo
 
 	path, ok := pathVal.(string)
 	if !ok {
-		return nil, ansi.Errorf("@R{first argument to nats operator must be a string}")
+		return nil, errtext.Colorf("@R{first argument to nats operator must be a string}")
 	}
 
 	// When features.FeatureBackendRegistry is enabled on ev's engine and
@@ -360,7 +360,7 @@ func runNatsCustomBackend(ev *graft.Evaluator, args []*graft.Expr, path string) 
 	// docs/developer-guide/custom-backends.md's "Which name to register
 	// under" section.
 	if len(args) > 1 {
-		return nil, true, ansi.Errorf("@R{nats operator's config argument is not supported against a custom \"nats\" backend - remove the second argument or configure the backend directly}")
+		return nil, true, errtext.Colorf("@R{nats operator's config argument is not supported against a custom \"nats\" backend - remove the second argument or configure the backend directly}")
 	}
 
 	val, err := fetchFromBackend(ev, backend, ev.Target, path)
@@ -399,25 +399,12 @@ func parseFloatOrDefault(value string, defaultValue float64) float64 {
 	return natsbackend.ParseFloatOrDefault(value, defaultValue)
 }
 
-//nolint:gochecknoinits // Operator registration and background cleanup must start at package load time
+//nolint:gochecknoinits // Operator registration must happen at package load time
 func init() {
 	// Wire up debug logging for the backend
 	natsbackend.DebugFunc = func(format string, args ...interface{}) {
 		DEBUG(format, args...)
 	}
 
-	go natsbackend.ConnPool.CleanupLoop()
-	go func() {
-		ticker := time.NewTicker(natsbackend.CacheCleanupInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				natsbackend.Cache.Cleanup()
-			case <-natsbackend.CacheStopCleanup:
-				return
-			}
-		}
-	}()
 	RegisterOp("nats", NatsOperator{})
 }

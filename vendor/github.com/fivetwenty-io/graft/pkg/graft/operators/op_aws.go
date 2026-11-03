@@ -14,7 +14,7 @@ import (
 	"github.com/goccy/go-yaml"
 
 	awsbackend "github.com/fivetwenty-io/graft/internal/backends/aws"
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -120,11 +120,11 @@ func (o AwsOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 		case map[string]interface{}:
 			DEBUG("  arg[%d]: %v is not a string scalar", i, v)
-			return nil, ansi.Errorf("@R{%s operator argument is a map; only scalars are supported here}", o.variant)
+			return nil, errtext.Colorf("@R{%s operator argument is a map; only scalars are supported here}", o.variant)
 
 		case []interface{}:
 			DEBUG("  arg[%d]: %v is not a string scalar", i, v)
-			return nil, ansi.Errorf("@R{%s operator argument is a list; only scalars are supported here}", o.variant)
+			return nil, errtext.Colorf("@R{%s operator argument is a list; only scalars are supported here}", o.variant)
 
 		default:
 			DEBUG("  arg[%d]: using value of type %T as string", i, val)
@@ -151,7 +151,7 @@ func (o AwsOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		if backend, ok := resolveCustomBackend(ev, o.variant); ok {
 			val, fetchErr := fetchFromBackend(ev, backend, ev.Target, key)
 			if fetchErr != nil {
-				return nil, fmt.Errorf("$.%s error fetching %s: %w", key, o.variant, wrapBackendError(o.variant, ev.Target, key, fetchErr))
+				return nil, awsFetchError(key, o.variant, wrapBackendError(o.variant, ev.Target, key, fetchErr))
 			}
 			value = stringifyBackendValue(val)
 		} else {
@@ -169,7 +169,7 @@ func (o AwsOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			}
 
 			if err != nil {
-				return nil, fmt.Errorf("$.%s error fetching %s: %w", key, o.variant, err)
+				return nil, awsFetchError(key, o.variant, err)
 			}
 		}
 
@@ -179,13 +179,13 @@ func (o AwsOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			err := yaml.Unmarshal([]byte(value), &tmp)
 
 			if err != nil {
-				return nil, fmt.Errorf("$.%s error extracting key: %w", key, err)
+				return nil, errtext.WithPlain(fmt.Errorf("$.%s error extracting key: %w", key, err), "error extracting key from the "+o.variant+" value")
 			}
 
 			tmp = graft.NormalizeMap(tmp)
 
 			if _, ok := tmp[subkey]; !ok {
-				return nil, fmt.Errorf("$.%s invalid key '%s'", key, subkey)
+				return nil, errtext.WithPlain(fmt.Errorf("$.%s invalid key '%s'", key, subkey), "invalid key for the "+o.variant+" value")
 			}
 
 			value = fmt.Sprintf("%v", tmp[subkey])
@@ -356,7 +356,7 @@ func (o AwsOperator) getAwsParam(ctx context.Context, cfg aws.Config, cacheTarge
 			return "", err
 		}
 		if output.Parameter == nil || output.Parameter.Value == nil {
-			return "", fmt.Errorf("parameter %s has no value", param)
+			return "", errtext.WithPlain(fmt.Errorf("parameter %s has no value", param), "the parameter has no value")
 		}
 
 		return aws.ToString(output.Parameter.Value), nil
@@ -375,6 +375,13 @@ func NewAwsParamOperator() *AwsOperator {
 // NewAwsSecretOperator creates a new AWS Secrets Manager operator.
 func NewAwsSecretOperator() *AwsOperator {
 	return &AwsOperator{variant: "awssecret"}
+}
+
+// awsFetchError reports a failed AWS fetch. The detailed text names the
+// parameter or secret, as the CLI always has. Error() leaves out both the
+// name and the cause's text, since AWS error messages can quote the name.
+func awsFetchError(key, variant string, err error) error {
+	return errtext.WithPlain(fmt.Errorf("$.%s error fetching %s: %w", key, variant, err), "error fetching "+variant)
 }
 
 //nolint:gochecknoinits // Operator registration must happen at package load time

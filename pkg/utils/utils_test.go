@@ -242,7 +242,8 @@ func writeFile(t *testing.T, path, body string) {
 // TestMergeFilesKeepsAMapKeyPruneAndAppliesAListEntryPrune pins what
 // graft's merger does with (( prune )) when MergeFiles merges without
 // evaluating. A prune that replaces a map key leaves the earlier content
-// in place, and nothing prunes it later. A prune given as a list entry
+// in place, and nothing prunes it later. A prune over a key the base does
+// not have stays as the literal text. A prune given as a list entry
 // removes the entry at that index during the merge.
 func TestMergeFilesKeepsAMapKeyPruneAndAppliesAListEntryPrune(t *testing.T) {
 	t.Parallel()
@@ -252,7 +253,7 @@ func TestMergeFilesKeepsAMapKeyPruneAndAppliesAListEntryPrune(t *testing.T) {
 	overlay := filepath.Join(dir, "params.yml")
 
 	writeFile(t, base, "meta:\n  size: small\nlist:\n- a\n- b\n")
-	writeFile(t, overlay, "meta: (( prune ))\nlist:\n- (( prune ))\n")
+	writeFile(t, overlay, "meta: (( prune ))\nfresh: (( prune ))\nlist:\n- (( prune ))\n")
 
 	merged, err := utils.MergeFiles(nil, base, overlay)
 	if err != nil {
@@ -260,8 +261,9 @@ func TestMergeFilesKeepsAMapKeyPruneAndAppliesAListEntryPrune(t *testing.T) {
 	}
 
 	want := map[string]interface{}{
-		"meta": map[string]interface{}{"size": "small"},
-		"list": []interface{}{"b"},
+		"meta":  map[string]interface{}{"size": "small"},
+		"fresh": "(( prune ))",
+		"list":  []interface{}{"b"},
 	}
 	if !reflect.DeepEqual(merged, want) {
 		t.Errorf("merged %#v, want %#v", merged, want)

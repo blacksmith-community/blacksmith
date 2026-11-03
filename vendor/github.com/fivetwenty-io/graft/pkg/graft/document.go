@@ -7,8 +7,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -25,6 +27,47 @@ type document struct {
 	// emptyHistory{} when it is nil, so callers never see a nil History
 	// interface.
 	history *historyImpl
+
+	// literals caches whether data holds a LiteralValue, so the output
+	// calls hand out data itself, without a walk, when it holds none.
+	// It starts unknown and is settled by the first output call; see
+	// plainData.
+	literals atomic.Int32
+}
+
+// The states of document.literals.
+const (
+	literalsUnknown int32 = iota
+	literalsNone
+	literalsSome
+)
+
+// holdsNoLiteral reports whether d.data holds no LiteralValue. The first
+// call walks the tree once, without allocating, and caches the answer.
+// Set keeps the cache current. A LiteralValue written straight into a
+// map that RawData handed out is not seen.
+func (d *document) holdsNoLiteral() bool {
+	switch d.literals.Load() {
+	case literalsNone:
+		return true
+	case literalsSome:
+		return false
+	}
+	if literal.Contains(d.data) {
+		d.literals.Store(literalsSome)
+		return false
+	}
+	d.literals.Store(literalsNone)
+	return true
+}
+
+// plainData is d.data with every LiteralValue replaced by its content.
+// It is d.data itself when the document holds no wrapper.
+func (d *document) plainData() map[string]interface{} {
+	if d.holdsNoLiteral() {
+		return d.data
+	}
+	return plainMap(d.data)
 }
 
 // NewDocument creates a new document from a map.
@@ -50,7 +93,7 @@ func NewDocumentFromInterface(data interface{}) (Document, error) {
 // Get retrieves a value at the given path.
 func (d *document) Get(path string) (interface{}, error) {
 	if path == "" || path == "$" {
-		return d.data, nil
+		return d.plainData(), nil
 	}
 
 	cursor, err := tree.ParseCursor(path)
@@ -63,7 +106,10 @@ func (d *document) Get(path string) (interface{}, error) {
 		return nil, NewEvaluationError(path, fmt.Sprintf("path not found: %v", err), err)
 	}
 
-	return value, nil
+	if d.holdsNoLiteral() {
+		return value, nil
+	}
+	return plainValue(value), nil
 }
 
 // Set sets a value at the given path.
@@ -71,6 +117,7 @@ func (d *document) Set(path string, value interface{}) error {
 	if path == "" || path == "$" {
 		if mapValue, ok := value.(map[string]interface{}); ok {
 			d.data = mapValue
+			d.literals.Store(literalsUnknown)
 			return nil
 		}
 		return NewValidationError("cannot set root to non-map value")
@@ -81,7 +128,13 @@ func (d *document) Set(path string, value interface{}) error {
 		return NewValidationErrorWithCause(fmt.Sprintf("invalid path '%s': %v", path, err), err)
 	}
 
-	return cursor.Set(d.data, value)
+	if err := cursor.Set(d.data, value); err != nil {
+		return err
+	}
+	if literal.Contains(value) {
+		d.literals.Store(literalsSome)
+	}
+	return nil
 }
 
 // Delete removes a value at the given path.
@@ -127,12 +180,12 @@ func (d *document) GetInt(path string) (int, error) {
 		if v == float64(int(v)) {
 			return int(v), nil
 		}
-		return 0, NewValidationErrorWithCause(fmt.Sprintf("value at path '%s' is not a whole number (got %f)", path, v), ErrTypeMismatch)
+		return 0, notWholeNumber(path, v)
 	case float32:
 		if v == float32(int(v)) {
 			return int(v), nil
 		}
-		return 0, NewValidationErrorWithCause(fmt.Sprintf("value at path '%s' is not a whole number (got %f)", path, v), ErrTypeMismatch)
+		return 0, notWholeNumber(path, v)
 	default:
 		return 0, NewValidationErrorWithCause(fmt.Sprintf("value at path '%s' is not a number (got %T)", path, val), ErrTypeMismatch)
 	}
@@ -186,9 +239,10 @@ func (d *document) Keys() []string {
 	return keys
 }
 
-// ToMap returns the underlying map representation.
+// ToMap returns the underlying map representation, with every
+// LiteralValue replaced by the value it wraps.
 func (d *document) ToMap() map[string]interface{} {
-	return d.data
+	return d.plainData()
 }
 
 // convertToJSONCompatible ensures all nested maps are map[string]interface{}.
@@ -215,19 +269,24 @@ func convertToJSONCompatible(v interface{}) interface{} {
 // MarshalYAML so library output carries the same spruce-compatible key
 // ordering and special-float quoting as CLI output.
 func (d *document) ToYAML() ([]byte, error) {
-	return MarshalYAML(d.data)
+	return MarshalYAML(d.plainData())
 }
 
 // ToJSON converts the document to JSON bytes.
 func (d *document) ToJSON() ([]byte, error) {
 	// Convert to JSON-compatible format first
-	jsonData := convertToJSONCompatible(d.data)
+	jsonData := convertToJSONCompatible(d.plainData())
 	return json.Marshal(jsonData)
 }
 
-// RawData returns the underlying data structure.
+// RawData returns the underlying data structure, with every LiteralValue
+// replaced by the value it wraps. The containers on the way to a wrapper
+// are copies, and every other container is the document's own, so the
+// result is the document's own map only when the document holds no
+// wrapper. A caller that changes the result may therefore be changing a
+// copy; see the Document interface.
 func (d *document) RawData() interface{} {
-	return d.data
+	return d.plainData()
 }
 
 // Clone creates a deep copy of the document.
@@ -256,6 +315,9 @@ func deepCopy(src interface{}) interface{} {
 			dst[i] = deepCopy(value)
 		}
 		return dst
+
+	case literal.Value:
+		return literal.Copy(v)
 
 	default:
 		// For primitive types and other types, return as-is
@@ -555,9 +617,10 @@ func (d *document) addSortedListItems(picked map[string]interface{}, listItems [
 	}
 }
 
-// GetData returns the underlying data (for backward compatibility).
+// GetData returns the underlying data (for backward compatibility), with
+// every LiteralValue replaced by the value it wraps, as RawData does.
 func (d *document) GetData() interface{} {
-	return d.data
+	return d.plainData()
 }
 
 // GetInt64 retrieves an int64 value at the given path.
@@ -640,7 +703,9 @@ func (d *document) GetMapStringString(path string) (map[string]string, error) {
 	for k, v := range rawMap {
 		value, ok := v.(string)
 		if !ok {
-			return nil, withHiddenCause(fmt.Sprintf("map at path %s contains non-string value for key %s: %v", path, k, v), ErrTypeMismatch)
+			return nil, errtext.Wrap(ErrTypeMismatch,
+				fmt.Sprintf("map at path %s contains non-string value for key %s (got %T)", path, k, v),
+				fmt.Sprintf("map at path %s contains non-string value for key %s: %v", path, k, v))
 		}
 		result[k] = value
 	}
@@ -656,14 +721,18 @@ func CheckForCycles(root interface{}, maxDepth int) error {
 	var check func(o interface{}, depth int) error
 	check = func(o interface{}, depth int) error {
 		if depth == 0 {
-			return ansi.Errorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
+			return errtext.Colorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
 		}
 
 		switch v := o.(type) {
+		case literal.Value:
+			// A wrapped value can refer to itself as well.
+			return check(v.Value(), depth-1)
+
 		case map[string]interface{}:
 			ptr := reflect.ValueOf(v).Pointer()
 			if visited[ptr] {
-				return ansi.Errorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
+				return errtext.Colorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
 			}
 			visited[ptr] = true
 			for _, val := range v {
@@ -676,7 +745,7 @@ func CheckForCycles(root interface{}, maxDepth int) error {
 		case []interface{}:
 			ptr := reflect.ValueOf(v).Pointer()
 			if visited[ptr] {
-				return ansi.Errorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
+				return errtext.Colorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
 			}
 			visited[ptr] = true
 			for _, val := range v {
@@ -763,7 +832,7 @@ func (d *document) Has(path string) bool {
 // path round-trips through Get.
 func (d *document) Paths() []string {
 	var paths []string
-	collectPaths(d.data, "", &paths)
+	collectPaths(d.plainData(), "", &paths)
 	sort.Strings(paths)
 	return paths
 }
@@ -836,7 +905,7 @@ func sortKeysRecursive(v interface{}) interface{} {
 // Document-level convenience; Engine.ToJSONIndent(doc, indent) remains
 // the engine-level equivalent.
 func (d *document) ToJSONIndent(indent string) ([]byte, error) {
-	jsonData := convertToJSONCompatible(d.data)
+	jsonData := convertToJSONCompatible(d.plainData())
 	return json.MarshalIndent(jsonData, "", indent)
 }
 
@@ -855,4 +924,12 @@ func (d *document) History() History {
 		return emptyHistory{}
 	}
 	return d.history
+}
+
+// notWholeNumber reports a fractional number where a getter wants an
+// integer. Error() leaves the number out, and DetailedError quotes it.
+func notWholeNumber(path string, v interface{}) *GraftError {
+	plain := fmt.Sprintf("value at path '%s' is not a whole number", path)
+	detail := fmt.Sprintf("value at path '%s' is not a whole number (got %f)", path, v)
+	return NewValidationErrorWithCause(plain, errtext.Wrap(ErrTypeMismatch, plain, detail))
 }

@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/internal/yamlprep"
 	"github.com/fivetwenty-io/graft/pkg/graft"
@@ -68,7 +69,7 @@ func (LoadOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 	case map[string]interface{}, []interface{}:
 		DEBUG("  arg[0]: %v is not a string scalar", v)
-		return nil, ansi.Errorf("@R{tried to read file} @c{%s}@R{, which is not a string scalar}", args[0].String())
+		return nil, notAStringScalar(args[0])
 
 	default:
 		DEBUG("  arg[0]: using value of type %T as string", val)
@@ -77,7 +78,7 @@ func (LoadOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 	bytes, err := getBytesFromLocation(location)
 	if err != nil {
-		return nil, err
+		return nil, errtext.WithPlain(err, loadErrorPlain(err))
 	}
 
 	// Loaded content gets the merge's guards, since a manifest can name
@@ -125,6 +126,37 @@ func (LoadOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 // first document is neither a map nor a list, or that does not parse.
 var errUnsupportedLoadRoot = errors.New("unsupported root type in loaded content, only map or list roots are supported")
 
+// loadLocationError is a load failure whose message names the location.
+// Its Error() text leaves the location out, and its detailed text keeps
+// it. The error it describes names the location too, so it stays off
+// the Unwrap chain, and errors.Is and errors.As look into it the way
+// errtext.WithPlain's errors do.
+type loadLocationError struct {
+	err   error
+	plain string
+}
+
+func (e *loadLocationError) Error() string         { return e.plain }
+func (e *loadLocationError) DetailedError() string { return errtext.Detail(e.err) }
+func (e *loadLocationError) Is(target error) bool  { return errors.Is(e.err, target) }
+func (e *loadLocationError) As(target any) bool    { return errtext.AsHidden(e.err, target) }
+
+// loadErrorPlain is the plain text of a failure to read a location. The
+// errors the load operator builds already have one. A request or read
+// failure from the network or the file system names the location, so
+// only a generic phrase is given for it.
+func loadErrorPlain(err error) string {
+	var located *loadLocationError
+	if errors.As(err, &located) {
+		return located.plain
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return "unable to read the location: " + pathErr.Op + ": " + pathErr.Err.Error()
+	}
+	return "unable to get any content using the location"
+}
+
 func getBytesFromLocation(location string) ([]byte, error) {
 	// Handle location as a URI if it looks like one and has a scheme
 	if locURL, err := url.ParseRequestURI(location); err == nil && locURL.Scheme != "" {
@@ -141,7 +173,7 @@ func getBytesFromLocation(location string) ([]byte, error) {
 
 		data, err := io.ReadAll(response.Body)
 		if response.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("failed to retrieve data from location %s: %s", location, string(data))
+			return nil, &loadLocationError{err: fmt.Errorf("failed to retrieve data from location %s: %s", location, string(data)), plain: "failed to retrieve data from the location"}
 		}
 
 		return data, err
@@ -158,7 +190,7 @@ func getBytesFromLocation(location string) ([]byte, error) {
 	}
 
 	// In any other case, bail out ...
-	return nil, fmt.Errorf("unable to get any content using location %s: it is not a file or usable URI", location)
+	return nil, &loadLocationError{err: fmt.Errorf("unable to get any content using location %s: it is not a file or usable URI", location), plain: "unable to get any content using the location: it is not a file or usable URI"}
 }
 
 //nolint:gochecknoinits // Operator registration must happen at package load time

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // ParseCursor parses a string path into a Cursor object.
@@ -284,7 +286,7 @@ func (c *Cursor) Set(root map[string]interface{}, value interface{}) error {
 			}
 			current = container[idx]
 		default:
-			return fmt.Errorf("cannot traverse into %T at %q", current, node)
+			return traverseError(current, node)
 		}
 	}
 
@@ -301,7 +303,7 @@ func (c *Cursor) Set(root map[string]interface{}, value interface{}) error {
 		container[idx] = value
 		return nil
 	default:
-		return fmt.Errorf("cannot set on %T", current)
+		return containerError("cannot set on %T", current)
 	}
 }
 
@@ -328,7 +330,7 @@ func (c *Cursor) Delete(root map[string]interface{}) error {
 			}
 			current = container[idx]
 		default:
-			return fmt.Errorf("cannot traverse into %T at %q", current, node)
+			return traverseError(current, node)
 		}
 	}
 
@@ -341,6 +343,24 @@ func (c *Cursor) Delete(root map[string]interface{}) error {
 		delete(container, lastNode)
 		return nil
 	default:
-		return fmt.Errorf("cannot delete from %T", current)
+		return containerError("cannot delete from %T", current)
 	}
+}
+
+// traverseError is the error for a Set or Delete path that cannot go
+// on into current at node.
+func traverseError(current interface{}, node string) error {
+	if literal.Is(current) {
+		return literal.ErrPathInside
+	}
+	return fmt.Errorf("cannot traverse into %T at %q", current, node)
+}
+
+// containerError is the error for a Set or Delete whose last step meets
+// current, which cannot hold the change. format takes current's type.
+func containerError(format string, current interface{}) error {
+	if literal.Is(current) {
+		return literal.ErrPathInside
+	}
+	return fmt.Errorf(format, current)
 }

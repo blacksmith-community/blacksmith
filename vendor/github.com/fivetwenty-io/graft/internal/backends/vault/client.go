@@ -15,7 +15,7 @@ import (
 	"github.com/goccy/go-yaml"
 	api "github.com/hashicorp/vault/api"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 )
 
@@ -283,12 +283,12 @@ func ExtractSubkey(secretMap map[string]interface{}, secret, subkey string) (str
 	v, ok := secretMap[subkey]
 	if !ok {
 		graft.DEBUG("    !! %s not found!\n", secretSubkeyPath)
-		return "", ansi.Errorf("@R{secret} @c{%s} @R{not found}", secretSubkeyPath)
+		return "", errtext.WithPlain(errtext.Colorf("@R{secret} @c{%s} @R{not found}", secretSubkeyPath), "secret not found")
 	}
 	vStr, ok := v.(string)
 	if !ok {
 		graft.DEBUG("    !! %s is not a string!\n", secretSubkeyPath)
-		return "", ansi.Errorf("@R{secret} @c{%s} @R{is not a string}", secretSubkeyPath)
+		return "", errtext.WithPlain(errtext.Colorf("@R{secret} @c{%s} @R{is not a string}", secretSubkeyPath), "secret is not a string")
 	}
 	graft.DEBUG(" success.")
 	return vStr, nil

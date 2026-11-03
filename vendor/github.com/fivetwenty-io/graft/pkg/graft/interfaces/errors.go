@@ -37,6 +37,18 @@ type SyntaxError struct {
 func (e *SyntaxError) Error() string {
 	if len(e.Expected) > 0 {
 		expected := strings.Join(e.Expected, " or ")
+		return fmt.Sprintf("syntax error at line %d, column %d: expected %s",
+			e.Position.Line, e.Position.Column, expected)
+	}
+	return fmt.Sprintf("syntax error at line %d, column %d: %s",
+		e.Position.Line, e.Position.Column, e.Message)
+}
+
+// DetailedError returns the message with the token that was found,
+// which Error() leaves out because it can quote document text.
+func (e *SyntaxError) DetailedError() string {
+	if len(e.Expected) > 0 {
+		expected := strings.Join(e.Expected, " or ")
 		return fmt.Sprintf("syntax error at line %d, column %d: expected %s, got %s",
 			e.Position.Line, e.Position.Column, expected, e.Got)
 	}

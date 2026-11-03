@@ -142,7 +142,7 @@ func (e *DefaultEngine) BuildDependencyGraph(doc Document, phase OperatorPhase) 
 	if doc == nil {
 		return nil, fmt.Errorf("graft: BuildDependencyGraph: doc is nil")
 	}
-	data, ok := doc.RawData().(map[string]interface{})
+	data, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("graft: BuildDependencyGraph: document data is not a map")
 	}
@@ -412,7 +412,7 @@ func (e *DefaultEngine) EvaluateParallel(ctx context.Context, doc Document, wave
 		return nil, ErrNoWorkerPool
 	}
 
-	data, ok := doc.RawData().(map[string]interface{})
+	data, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("graft: EvaluateParallel: document data is not a map")
 	}

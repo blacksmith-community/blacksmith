@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/internal/utils/ansi"
 	"github.com/fivetwenty-io/graft/log"
 	"github.com/fivetwenty-io/graft/pkg/graft/interfaces"
@@ -65,13 +67,21 @@ const (
 	eContextDefaultMerge ErrorContext = 1 << iota
 )
 
-// WarningError represents a warning that can be printed.
+// WarningError represents a warning that can be printed. Error() is the
+// warning without color; DetailedError and Warn give it with color when
+// the ansi toggle was on as the warning was built.
 type WarningError struct {
+	plain   string
 	warning string
 	context ErrorContext
 }
 
 func (e WarningError) Error() string {
+	return e.plain
+}
+
+// DetailedError returns the warning as Warn prints it.
+func (e WarningError) DetailedError() string {
 	return e.warning
 }
 
@@ -88,6 +98,7 @@ func (e WarningError) HasContext(context ErrorContext) bool {
 // NewWarningError creates a new warning error.
 func NewWarningError(context ErrorContext, format string, args ...interface{}) WarningError {
 	return WarningError{
+		plain:   plainSprintf(format, args...),
 		warning: ansi.Sprintf(format, args...),
 		context: context,
 	}
@@ -110,17 +121,26 @@ type MultiError struct {
 }
 
 func (e MultiError) Error() string {
+	return e.render(func(err error) string { return err.Error() })
+}
+
+// DetailedError lists the detailed text of each error.
+func (e MultiError) DetailedError() string {
+	return e.render(errtext.Detail)
+}
+
+func (e MultiError) render(text func(error) string) string {
 	if len(e.Errors) == 0 {
 		return "no errors"
 	}
 	if len(e.Errors) == 1 {
-		return e.Errors[0].Error()
+		return text(e.Errors[0])
 	}
 
 	// For multiple errors, list them all
 	msgs := make([]string, 0, len(e.Errors))
 	for _, err := range e.Errors {
-		msgs = append(msgs, err.Error())
+		msgs = append(msgs, text(err))
 	}
 	return fmt.Sprintf("%d errors occurred:\n  %s", len(e.Errors), strings.Join(msgs, "\n  "))
 }
@@ -283,6 +303,9 @@ func deepCopy(orig interface{}) interface{} {
 		}
 		return x
 
+	case literal.Value:
+		return literal.Copy(v)
+
 	default:
 		return orig
 	}
@@ -375,7 +398,7 @@ func (m *Merger) mergeMap(orig, n map[string]interface{}, at mergePath) {
 		child := at.key(k)
 		path := child.shown
 		if s, ok := val.(string); ok && mergeRx.MatchString(s) {
-			m.Errors.Append(ansi.Errorf("@m{%s}: @R{inappropriate use of} @c{(( merge ))} @R{operator outside of a list} (this is @G{graft}, after all)", path))
+			m.Errors.Append(errtext.Colorf("@m{%s}: @R{inappropriate use of} @c{(( merge ))} @R{operator outside of a list} (this is @G{graft}, after all)", path))
 		}
 		// Argument-bearing delete only has meaning as a list entry;
 		// anywhere else it would survive the merge as literal data (spruce
@@ -383,7 +406,7 @@ func (m *Merger) mergeMap(orig, n map[string]interface{}, at mergePath) {
 		// "(( delete ))" form is deliberately not guarded: spruce passes
 		// it through as literal text, and graft keeps that parity.
 		if s, ok := val.(string); ok && deleteOutsideListRegEx.MatchString(s) {
-			m.Errors.Append(ansi.Errorf("@m{%s}: @R{inappropriate use of} @c{(( delete ))} @R{operator outside of a list}", path))
+			m.Errors.Append(errtext.Colorf("@m{%s}: @R{inappropriate use of} @c{(( delete ))} @R{operator outside of a list}", path))
 		}
 
 		// Guarded: boxing val twice per key escapes the whole subtree.
@@ -685,7 +708,8 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 			if isDelete {
 				// Sanity check for delete operation, ensure no orphan entries follow the operator definition
 				if len(modificationDefinition.list) > 0 {
-					m.Errors.Append(ansi.Errorf("@m{%s}: @R{item in array directly after} @c{(( delete \"%s\" ))} @r{must be one of the array operators 'append', 'prepend', 'delete', or 'insert'}", node, name))
+					m.Errors.Append(errtext.WithPlain(errtext.Colorf("@m{%s}: @R{item in array directly after} @c{(( delete \"%s\" ))} @r{must be one of the array operators 'append', 'prepend', 'delete', or 'insert'}", node, name),
+						node+": item in array directly after a (( delete )) by value must be one of the array operators 'append', 'prepend', 'delete', or 'insert'"))
 					return nil
 				}
 			}
@@ -700,7 +724,8 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 					// always exist.
 					continue
 				}
-				m.Errors.Append(ansi.Errorf("@m{%s}: @R{unable to find specified modification point with} @c{'%s'}", node, name))
+				m.Errors.Append(errtext.WithPlain(errtext.Colorf("@m{%s}: @R{unable to find specified modification point with} @c{'%s'}", node, name),
+					node+": unable to find specified modification point by value"))
 				return nil
 			}
 		default: // Index look-up based on key and name
@@ -712,7 +737,8 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 			// simple list so it can be rejected here - a scalar entry has no
 			// key to match on, and the marker must never leak into the output
 			if simpleList {
-				m.Errors.Append(ansi.Errorf("@m{%s}: @R{unable to insert, because the keyed insertion point} @c{'%s: %s'} @R{cannot target entries in a list of scalars}", node, key, name))
+				m.Errors.Append(errtext.WithPlain(errtext.Colorf("@m{%s}: @R{unable to insert, because the keyed insertion point} @c{'%s: %s'} @R{cannot target entries in a list of scalars}", node, key, name),
+					node+": unable to insert, because an insertion point keyed on "+key+" cannot target entries in a list of scalars"))
 				return nil
 			}
 
@@ -726,7 +752,8 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 			if isDelete {
 				// Sanity check for delete operation, ensure no orphan entries follow the operator definition
 				if len(modificationDefinition.list) > 0 {
-					m.Errors.Append(ansi.Errorf("@m{%s}: @R{item in array directly after} @c{(( delete %s \"%s\" ))} @r{must be one of the array operators 'append', 'prepend', 'delete', or 'insert'}", node, key, name))
+					m.Errors.Append(errtext.WithPlain(errtext.Colorf("@m{%s}: @R{item in array directly after} @c{(( delete %s \"%s\" ))} @r{must be one of the array operators 'append', 'prepend', 'delete', or 'insert'}", node, key, name),
+						node+": item in array directly after a (( delete )) keyed on "+key+" must be one of the array operators 'append', 'prepend', 'delete', or 'insert'"))
 					return nil
 				}
 			} else {
@@ -747,7 +774,8 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 						continue
 					}
 					if getIndexOfEntry(result, key, entryNameVal) >= 0 {
-						m.Errors.Append(ansi.Errorf("@m{%s}: @R{unable to insert, because new list entry} @c{'%s: %s'} @R{is detected multiple times}", node, key, entryNameVal))
+						m.Errors.Append(errtext.WithPlain(errtext.Colorf("@m{%s}: @R{unable to insert, because new list entry} @c{'%s: %s'} @R{is detected multiple times}", node, key, entryNameVal),
+							node+": unable to insert, because a new list entry keyed on "+key+" is detected multiple times"))
 						return nil
 					}
 				}
@@ -763,7 +791,8 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 					// always exist.
 					continue
 				}
-				m.Errors.Append(ansi.Errorf("@m{%s}: @R{unable to find specified modification point with} @c{'%s: %s'}", node, key, name))
+				m.Errors.Append(errtext.WithPlain(errtext.Colorf("@m{%s}: @R{unable to find specified modification point with} @c{'%s: %s'}", node, key, name),
+					node+": unable to find specified modification point keyed on "+key))
 				return nil
 			}
 		}
@@ -775,7 +804,8 @@ func (m *Merger) mergeArray(orig []interface{}, n []interface{}, at mergePath) [
 
 		// Back out if idx is smaller than 0, or greater than the length (for inserts), or greater/equal than the length (for deletes)
 		if (idx < 0) || (modificationDefinition.listOp != listOpDelete && idx > len(result)) || (modificationDefinition.listOp == listOpDelete && idx >= len(result)) {
-			m.Errors.Append(ansi.Errorf("@m{%s}: @R{unable to modify the list, because specified index} @c{%d} @R{is out of bounds}", node, idx))
+			m.Errors.Append(errtext.WithPlain(errtext.Colorf("@m{%s}: @R{unable to modify the list, because specified index} @c{%d} @R{is out of bounds}", node, idx),
+				node+": unable to modify the list, because the specified index is out of bounds"))
 			return nil
 		}
 
@@ -1216,10 +1246,10 @@ func shouldKeyMergeArray(obj []interface{}) (bool, string) {
 // array merge (mergeArrayDefault) calls canKeyMergeArray speculatively
 // on every array pair and silently falls back when it fails, so on the
 // common path the error is created and discarded without ever being
-// printed. Formatting the ansi-colored message is deferred to Error()
-// so the discarded case costs a small allocation instead of a full
-// color-template render; the rendered text is byte-identical to the
-// eager ansi.Errorf calls this replaces.
+// printed. Formatting the message is deferred to Error() and
+// DetailedError() so the discarded case costs a small allocation instead
+// of a full color-template render; the detailed text is byte-identical
+// to the eager ansi.Errorf calls this replaces.
 type keyMergeError struct {
 	kind     keyMergeErrKind
 	disp     string
@@ -1238,16 +1268,33 @@ const (
 	keyMergeMissingKey
 )
 
+// Error returns the message without color.
 func (e *keyMergeError) Error() string {
+	return e.render(plainSprintf)
+}
+
+// DetailedError returns the message with color when the ansi toggle is
+// on.
+func (e *keyMergeError) DetailedError() string {
+	return e.render(ansi.Sprintf)
+}
+
+// plainSprintf drops the color markup in format and writes args
+// verbatim.
+func plainSprintf(format string, args ...interface{}) string {
+	return ansi.SprintfTemplate(false, format, args...)
+}
+
+func (e *keyMergeError) render(sprintf func(string, ...interface{}) string) string {
 	switch e.kind {
 	case keyMergeNilObject:
-		return ansi.Sprintf("@m{%s.%d}: @R{%s object is nil - cannot merge by key}", e.node, e.idx, e.disp)
+		return sprintf("@m{%s.%d}: @R{%s object is nil - cannot merge by key}", e.node, e.idx, e.disp)
 	case keyMergeNotMap:
-		return ansi.Sprintf("@m{%s.%d}: @R{%s object is a} @c{%s}@R{, not a} @c{map} @R{- cannot merge by key}", e.node, e.idx, e.disp, e.typeName)
+		return sprintf("@m{%s.%d}: @R{%s object is a} @c{%s}@R{, not a} @c{map} @R{- cannot merge by key}", e.node, e.idx, e.disp, e.typeName)
 	case keyMergeNotStringMap:
-		return ansi.Sprintf("@m{%s.%d}: @R{%s object is not a map[string]interface{} - cannot merge by key}", e.node, e.idx, e.disp)
+		return sprintf("@m{%s.%d}: @R{%s object is not a map[string]interface{} - cannot merge by key}", e.node, e.idx, e.disp)
 	default: // keyMergeMissingKey
-		return ansi.Sprintf("@m{%s.%d}: @R{%s object does not contain the key} @c{'%s'}@R{ - cannot merge by key}", e.node, e.idx, e.disp, e.key)
+		return sprintf("@m{%s.%d}: @R{%s object does not contain the key} @c{'%s'}@R{ - cannot merge by key}", e.node, e.idx, e.disp, e.key)
 	}
 }
 

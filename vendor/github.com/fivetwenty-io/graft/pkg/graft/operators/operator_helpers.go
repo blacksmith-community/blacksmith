@@ -6,6 +6,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 )
 
@@ -47,7 +48,9 @@ func ResolveOperatorArgument(ev *Evaluator, arg *Expr) (interface{}, error) {
 			// Format the error message to match the expected format
 			return nil, fmt.Errorf("unable to resolve `%s`: %w", arg.Reference.String(), err)
 		}
-		return val, nil
+		// An operator works on plain data, so a value read from inside a
+		// literal comes back without the wrapper.
+		return literal.Strip(val), nil
 
 	case EnvVar:
 		// Get environment variable value
@@ -74,8 +77,13 @@ func ResolveOperatorArgument(ev *Evaluator, arg *Expr) (interface{}, error) {
 		return val, nil
 
 	case OperatorCall:
-		// Evaluate nested operator call
-		return evaluateNestedOperator(ev, arg)
+		// Evaluate nested operator call. Its result reaches this operator
+		// as plain data, like a reference does.
+		val, err := evaluateNestedOperator(ev, arg)
+		if err != nil {
+			return nil, err
+		}
+		return literal.Strip(val), nil
 
 	case LogicalOr:
 		// Handle || as an or-else operator - if left fails, try right
@@ -104,7 +112,10 @@ func ResolveOperatorArgument(ev *Evaluator, arg *Expr) (interface{}, error) {
 	return nil, fmt.Errorf("unknown expression type: %v", arg.Type)
 }
 
-// evaluateNestedOperator evaluates a nested operator call expression.
+// evaluateNestedOperator evaluates a nested operator call expression. The
+// result is what the nested operator returned, so it may be or hold a
+// literal; ResolveOperatorArgument strips it, and (( grab )) and
+// (( inject )) keep it.
 func evaluateNestedOperator(ev *Evaluator, expr *Expr) (interface{}, error) {
 	if expr.Type != OperatorCall {
 		return nil, fmt.Errorf("not an operator call expression")

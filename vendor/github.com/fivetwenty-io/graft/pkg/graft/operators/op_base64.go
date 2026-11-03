@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -44,7 +44,7 @@ func (Base64Operator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	}
 
 	if val == nil {
-		return nil, ansi.Errorf("@R{base64 operator argument resolved to nil}")
+		return nil, errtext.Colorf("@R{base64 operator argument resolved to nil}")
 	}
 
 	// Convert to string

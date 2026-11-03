@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // isTruthy determines if a value is "truthy" according to Graft's rules
@@ -95,7 +97,7 @@ func toNumeric(val interface{}) (interface{}, error) {
 		return v, nil
 	case uint:
 		if uint64(v) > uint64(math.MaxInt64) {
-			return 0, fmt.Errorf("uint value %d overflows int64", v)
+			return 0, errtext.WithPlain(fmt.Errorf("uint value %d overflows int64", v), "the uint value overflows int64")
 		}
 		return int64(v), nil // #nosec G115 - bounds checked above
 	case uint8:
@@ -114,9 +116,9 @@ func toNumeric(val interface{}) (interface{}, error) {
 	case float64:
 		return v, nil
 	case string:
-		return nil, fmt.Errorf("cannot use string '%s' in arithmetic operation", v)
+		return nil, errtext.WithPlain(fmt.Errorf("cannot use string '%s' in arithmetic operation", v), "cannot use a string in arithmetic operation")
 	case bool:
-		return nil, fmt.Errorf("cannot use boolean '%v' in arithmetic operation", v)
+		return nil, errtext.WithPlain(fmt.Errorf("cannot use boolean '%v' in arithmetic operation", v), "cannot use a boolean in arithmetic operation")
 	default:
 		return nil, fmt.Errorf("cannot convert %T to numeric value", val)
 	}

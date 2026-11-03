@@ -3,6 +3,8 @@ package postprocess
 import (
 	"context"
 	"regexp"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // DefaultRedactionMask is the value NewSecurityRedactor uses when called
@@ -94,6 +96,10 @@ func (r *SecurityRedactor) matches(key string) bool {
 
 func (r *SecurityRedactor) redact(v interface{}) interface{} {
 	switch val := v.(type) {
+	case literal.Value:
+		// A secret inside a literal is still a secret. Redact what the
+		// wrapper holds and keep the wrapper.
+		return literal.Wrap(r.redact(val.Value()))
 	case map[string]interface{}:
 		result := make(map[string]interface{}, len(val))
 		for k, elem := range val {

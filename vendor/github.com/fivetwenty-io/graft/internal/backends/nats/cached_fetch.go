@@ -46,6 +46,7 @@ func FetchFromKVCachedWith(target, storePath string, ttl time.Duration, auditLog
 		return fetch()
 	}
 
+	ensureBackground()
 	startTime := time.Now()
 	key := "kv:" + target + ":" + storePath
 	if val, ok := Cache.Get(key); ok {
@@ -73,6 +74,7 @@ func FetchFromObjectCachedWith(target, storePath string, ttl time.Duration, audi
 		return fetch()
 	}
 
+	ensureBackground()
 	startTime := time.Now()
 	key := StoreObj + ":" + target + ":" + storePath
 	if val, ok := Cache.Get(key); ok {

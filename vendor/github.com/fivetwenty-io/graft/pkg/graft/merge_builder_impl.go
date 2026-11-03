@@ -12,6 +12,7 @@ import (
 
 	"github.com/cppforlife/go-patch/patch"
 
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft/interfaces"
 	"github.com/fivetwenty-io/graft/pkg/graft/merger"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -390,7 +391,7 @@ func (m *mergeBuilderImpl) Execute() (Document, error) {
 		if IsGoPatchDocument(doc) {
 			continue // go-patch documents carry patch.Ops, not raw map data
 		}
-		if data, ok := doc.RawData().(map[string]interface{}); ok {
+		if data, ok := treeOf(doc).(map[string]interface{}); ok {
 			if err := detectCyclicValue(data); err != nil {
 				return nil, fmt.Errorf("document %d: %w", i, err)
 			}
@@ -404,7 +405,7 @@ func (m *mergeBuilderImpl) Execute() (Document, error) {
 	if len(m.docs) == 1 && !IsGoPatchDocument(m.docs[0]) {
 		// For single documents, we need to validate arrays even without merging
 		// to match legacy behavior for Issue #172
-		data, ok := m.docs[0].RawData().(map[string]interface{})
+		data, ok := treeOf(m.docs[0]).(map[string]interface{})
 		if !ok {
 			return nil, fmt.Errorf("document data is not a map")
 		}
@@ -530,7 +531,7 @@ func (m *mergeBuilderImpl) mergeDocuments() (Document, error) {
 			continue
 		}
 
-		overlayData, ok := doc.RawData().(map[string]interface{})
+		overlayData, ok := treeOf(doc).(map[string]interface{})
 		if !ok {
 			return nil, fmt.Errorf("document data is not a map")
 		}
@@ -1292,7 +1293,7 @@ func (m *mergeBuilderImpl) collectPruneKeys(result Document) []string {
 		return keys
 	}
 
-	resultData, ok := result.RawData().(map[string]interface{})
+	resultData, ok := treeOf(result).(map[string]interface{})
 	if !ok {
 		return keys
 	}
@@ -1369,7 +1370,7 @@ func toInterfaceKeyValue(v interface{}) interface{} {
 // list). spruce reports at most one sort error per run; returning on the
 // first failure preserves that.
 func (m *mergeBuilderImpl) applySortPaths(doc Document, sortPaths map[string]string) (Document, error) {
-	data, ok := doc.RawData().(map[string]interface{})
+	data, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		if len(sortPaths) == 0 {
 			return doc, nil
@@ -1425,7 +1426,7 @@ func (m *mergeBuilderImpl) applySortPaths(doc Document, sortPaths map[string]str
 // non-nil error from removeKey is therefore a genuine failure and is
 // propagated rather than swallowed.
 func (m *mergeBuilderImpl) applyPruning(doc Document) (Document, error) {
-	data, ok := doc.RawData().(map[string]interface{})
+	data, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		return doc, nil // Return unchanged if not a map
 	}
@@ -1455,7 +1456,7 @@ func (m *mergeBuilderImpl) applyPruning(doc Document) (Document, error) {
 //
 //nolint:gocyclo // cherry-picking handles arrays, maps, and nested paths
 func (m *mergeBuilderImpl) applyCherryPicking(doc Document) (Document, error) {
-	data, ok := doc.RawData().(map[string]interface{})
+	data, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("document data is not a map")
 	}
@@ -1612,7 +1613,7 @@ func (m *mergeBuilderImpl) applyEvaluation(doc Document) (Document, error) {
 	}
 
 	// Fallback: create basic evaluator (this should not happen in practice)
-	data, ok := doc.RawData().(map[string]interface{})
+	data, ok := treeOf(doc).(map[string]interface{})
 	if !ok {
 		return nil, NewEvaluationError("", "document data is not a map", nil)
 	}
@@ -1945,6 +1946,10 @@ func detectCyclicValue(v interface{}) error {
 
 func detectCyclicValueOnStack(v interface{}, onStack map[uintptr]struct{}) error {
 	switch val := v.(type) {
+	case literal.Value:
+		// A literal is opaque to merge, but the value it wraps is still
+		// copied and written out, so a cycle inside it is just as fatal.
+		return detectCyclicValueOnStack(val.Value(), onStack)
 	case map[string]interface{}:
 		if len(val) == 0 {
 			return nil
@@ -2051,6 +2056,14 @@ func deepCopyValueOnStack(src interface{}, onStack map[uintptr]struct{}) (interf
 			dst[i] = copied
 		}
 		return dst, nil
+	case literal.Value:
+		// A copy of a literal is still a literal, with its own copy of
+		// the value it wraps.
+		inner, err := deepCopyValueOnStack(v.Value(), onStack)
+		if err != nil {
+			return nil, err
+		}
+		return literal.Wrap(inner), nil
 	default:
 		return v, nil // Primitives are copied by value
 	}

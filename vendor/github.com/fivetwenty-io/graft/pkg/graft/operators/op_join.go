@@ -5,7 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fivetwenty-io/graft/internal/utils/ansi"
+	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -39,6 +40,7 @@ func (JoinOperator) Dependencies(ev *Evaluator, args []*Expr, _ []*tree.Cursor, 
 		if arg.Type == Reference && arg.Reference != nil {
 			// Try to resolve to see if it's a list
 			val, err := arg.Reference.Resolve(ev.Tree)
+			val = literal.Strip(val)
 			if err == nil && val != nil {
 				switch v := val.(type) {
 				case []interface{}:
@@ -69,12 +71,12 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 	if len(args) == 0 {
 		DEBUG("  no arguments supplied to (( join ... )) operation.")
-		return nil, ansi.Errorf("no arguments specified to @c{(( join ... ))}")
+		return nil, errtext.Colorf("no arguments specified to @c{(( join ... ))}")
 	}
 
 	if len(args) == 1 {
 		DEBUG("  too few arguments supplied to (( join ... )) operation.")
-		return nil, ansi.Errorf("too few arguments supplied to @c{(( join ... ))}")
+		return nil, errtext.Colorf("too few arguments supplied to @c{(( join ... ))}")
 	}
 
 	var separator string
@@ -86,7 +88,7 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			// The separator must be a literal
 			if arg.Type != Literal {
 				DEBUG("     [%d]: separator is not a literal", i)
-				return nil, ansi.Errorf("join operator only accepts literal argument for the separator")
+				return nil, errtext.Colorf("join operator only accepts literal argument for the separator")
 			}
 
 			DEBUG("     [%d]: list separator will be: %v", i, arg.Literal)
@@ -113,11 +115,11 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 					switch entry.(type) {
 					case []interface{}:
 						DEBUG("     [%d]: entry #%d in list is a list (not a literal)", i, idx)
-						return nil, ansi.Errorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
+						return nil, errtext.Colorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
 
 					case map[string]interface{}:
 						DEBUG("     [%d]: entry #%d in list is a map (not a literal)", i, idx)
-						return nil, ansi.Errorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
+						return nil, errtext.Colorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
 
 					default:
 						*list = append(*list, fmt.Sprintf("%v", entry))

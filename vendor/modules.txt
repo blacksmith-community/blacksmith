@@ -189,7 +189,7 @@ github.com/fivetwenty-io/capi/v3/internal/constants
 github.com/fivetwenty-io/capi/v3/internal/http
 github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
-# github.com/fivetwenty-io/graft v1.44.1
+# github.com/fivetwenty-io/graft v1.45.0
 ## explicit; go 1.27.3
 github.com/fivetwenty-io/graft/internal/backends/aws
 github.com/fivetwenty-io/graft/internal/backends/nats
@@ -197,8 +197,10 @@ github.com/fivetwenty-io/graft/internal/backends/reqdedup
 github.com/fivetwenty-io/graft/internal/backends/vault
 github.com/fivetwenty-io/graft/internal/cache
 github.com/fivetwenty-io/graft/internal/config
+github.com/fivetwenty-io/graft/internal/errtext
 github.com/fivetwenty-io/graft/internal/features
 github.com/fivetwenty-io/graft/internal/keyorder
+github.com/fivetwenty-io/graft/internal/literal
 github.com/fivetwenty-io/graft/internal/metrics
 github.com/fivetwenty-io/graft/internal/parallel
 github.com/fivetwenty-io/graft/internal/srcpos
@@ -206,6 +208,7 @@ github.com/fivetwenty-io/graft/internal/utils/ansi
 github.com/fivetwenty-io/graft/internal/utils/mfa
 github.com/fivetwenty-io/graft/internal/utils/netutil
 github.com/fivetwenty-io/graft/internal/yamlcodec
+github.com/fivetwenty-io/graft/internal/yamlerr
 github.com/fivetwenty-io/graft/internal/yamlnode
 github.com/fivetwenty-io/graft/internal/yamlprep
 github.com/fivetwenty-io/graft/log

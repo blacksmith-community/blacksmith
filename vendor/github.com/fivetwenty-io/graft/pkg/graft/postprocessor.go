@@ -122,6 +122,13 @@ type PostProcessor interface {
 	// Name(), err). Process must not retain doc, its RawData(), or its
 	// returned Document past the call: the merge builder may reuse or
 	// discard the underlying data once Process returns.
+	//
+	// doc can hold LiteralValues. Get, Set, and the other Document
+	// methods keep them in place, and the Document returned is the one
+	// Execute hands back, so it should be doc itself or one built from
+	// doc's methods. A processor that builds a new Document from
+	// doc.RawData() drops every wrapper, and a later Evaluate of the
+	// result then sees what was inside them as plain data.
 	Process(ctx context.Context, doc Document, meta *ProcessMetadata) (Document, error)
 }
 
@@ -198,7 +205,9 @@ func (a *postProcessorAdapter) Process(ctx context.Context, doc interface{}, _ *
 		return nil, errors.New("post-processor returned a nil document")
 	}
 
-	return result.RawData(), nil
+	// treeOf, not RawData: RawData strips every literal wrapper, and the
+	// document Execute returns must keep them.
+	return treeOf(result), nil
 }
 
 // runPostProcessors executes m.postProcessors, in Phase-then-Priority
@@ -237,7 +246,7 @@ func (m *mergeBuilderImpl) runPostProcessors(result Document, startTime time.Tim
 		pipeline.Add(&postProcessorAdapter{pp: pp, meta: meta})
 	}
 
-	processed, err := pipeline.ProcessWithContext(m.ctx, result.RawData(), nil)
+	processed, err := pipeline.ProcessWithContext(m.ctx, treeOf(result), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +285,7 @@ func (w *wrappedProcessor) Process(ctx context.Context, doc Document, meta *Proc
 		Duration:   meta.Duration,
 	}
 
-	result, err := w.inner.Process(ctx, doc.RawData(), ppMeta)
+	result, err := w.inner.Process(ctx, treeOf(doc), ppMeta)
 	if err != nil {
 		return nil, err
 	}

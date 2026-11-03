@@ -13,6 +13,8 @@ import (
 	"time"
 
 	vaultapi "github.com/hashicorp/vault/api"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
 )
 
 // VaultConfig carries per-engine Vault connection configuration for
@@ -103,16 +105,16 @@ func (b *vaultOptionBackend) get(ctx context.Context, target, path string) (inte
 
 	secretPath, subkey := splitVaultOptionPath(path)
 	if secretPath == "" || subkey == "" {
-		return nil, fmt.Errorf("vault: invalid path %q: must be in the form path/to/secret:key", path)
+		return nil, errtext.WithPlain(fmt.Errorf("vault: invalid path %q: must be in the form path/to/secret:key", path), "vault: invalid path: must be in the form path/to/secret:key")
 	}
 
 	DEBUG("vault backend: reading `%s' (target=%q)", secretPath, target)
 	secret, err := client.Logical().ReadWithContext(ctx, secretPath)
 	if err != nil {
-		return nil, fmt.Errorf("vault: reading %q: %w", secretPath, err)
+		return nil, errtext.WithPlain(fmt.Errorf("vault: reading %q: %w", secretPath, err), "vault: reading the secret failed")
 	}
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, path)
+		return nil, backendNotFound(path)
 	}
 
 	// KV v2 responses nest the secret under "data" alongside a sibling
@@ -128,11 +130,11 @@ func (b *vaultOptionBackend) get(ctx context.Context, target, path string) (inte
 
 	v, ok := data[subkey]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, path)
+		return nil, backendNotFound(path)
 	}
 	s, ok := v.(string)
 	if !ok {
-		return nil, fmt.Errorf("vault: value at %q is not a string (got %T)", path, v)
+		return nil, errtext.WithPlain(fmt.Errorf("vault: value at %q is not a string (got %T)", path, v), fmt.Sprintf("vault: value is not a string (got %T)", v))
 	}
 	return s, nil
 }

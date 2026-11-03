@@ -5,6 +5,10 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+
+	"github.com/fivetwenty-io/graft/internal/errtext"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // predicateSegmentPattern matches a list-predicate path segment such as
@@ -58,7 +62,8 @@ func PredicateFind(l []interface{}, field, value string) (interface{}, uint64, b
 func predicateFind(l []interface{}, field, value string) (interface{}, uint64, bool) {
 	for i, v := range l {
 		idx := uint64(i) // #nosec G115 - i is from range loop, always >= 0
-		m, ok := v.(map[string]interface{})
+		item, _ := literal.Unwrap(v)
+		m, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
@@ -66,6 +71,7 @@ func predicateFind(l []interface{}, field, value string) (interface{}, uint64, b
 		if !present {
 			continue
 		}
+		fv, _ = literal.Unwrap(fv)
 		if stringifyForPredicate(fv) == value {
 			return v, idx, true
 		}
@@ -91,8 +97,10 @@ func listFind(l []interface{}, fields []string, key string) (interface{}, uint64
 			// Convert index to uint64 safely
 			idx := uint64(i) // #nosec G115 - i is from range loop, always >= 0
 
-			if m, isMap := v.(map[string]interface{}); isMap {
+			item, _ := literal.Unwrap(v)
+			if m, isMap := item.(map[string]interface{}); isMap {
 				value, ok := m[field]
+				value, _ = literal.Unwrap(value)
 				if ok && value == key {
 					return v, idx, true
 				}
@@ -107,6 +115,8 @@ func (c *Cursor) Canonical(o interface{}) (*Cursor, error) {
 	canon := &Cursor{Nodes: []string{}}
 
 	for _, k := range c.Nodes {
+		// A path reads through a literal wrapper to the value it holds.
+		o, _ = literal.Unwrap(o)
 		switch val := o.(type) {
 		case []interface{}:
 			if field, value, isPredicate := parsePredicateSegment(k); isPredicate {
@@ -166,17 +176,48 @@ func (c *Cursor) Canonical(o interface{}) (*Cursor, error) {
 }
 
 // Resolve resolves the cursor path in the given data structure.
+//
+// The path reads through a literal wrapper (graft.LiteralValue) to the
+// value it holds, at any step. The value it returns is the value as
+// stored, so it is a wrapper when the path ends on one, and it may hold
+// wrappers inside it.
 func (c *Cursor) Resolve(o interface{}) (interface{}, error) {
+	v, _, err := c.resolve(o)
+	return v, err
+}
+
+// ResolveLiteral is Resolve for a caller that copies the value it finds to
+// another place in the tree, such as (( grab )). When the path passes
+// through a literal wrapper on the way to the value, the value comes back
+// wrapped, so that what was opaque where it was found stays opaque where
+// it is put. A value that is itself a wrapper comes back as it is.
+func (c *Cursor) ResolveLiteral(o interface{}) (interface{}, error) {
+	v, inside, err := c.resolve(o)
+	if err != nil || !inside {
+		return v, err
+	}
+	return literal.Wrap(v), nil
+}
+
+// resolve is Resolve. It also reports whether the path passed through a
+// literal wrapper.
+func (c *Cursor) resolve(o interface{}) (interface{}, bool, error) {
 	path := make([]string, 0, len(c.Nodes))
+	inside := false
 
 	for _, k := range c.Nodes {
 		path = append(path, k)
+
+		if inner, ok := literal.Unwrap(o); ok {
+			o = inner
+			inside = true
+		}
 
 		switch val := o.(type) {
 		case map[string]interface{}:
 			v, ok := val[k]
 			if !ok {
-				return nil, NotFoundError{
+				return nil, false, NotFoundError{
 					Path: path,
 				}
 			}
@@ -186,7 +227,7 @@ func (c *Cursor) Resolve(o interface{}) (interface{}, error) {
 			if field, value, isPredicate := parsePredicateSegment(k); isPredicate {
 				found, _, ok := predicateFind(val, field, value)
 				if !ok {
-					return nil, NotFoundError{
+					return nil, false, NotFoundError{
 						Path: path,
 					}
 				}
@@ -198,7 +239,7 @@ func (c *Cursor) Resolve(o interface{}) (interface{}, error) {
 			if err == nil {
 				// if k is an integer (in string form), go by index
 				if i >= uint64(len(val)) {
-					return nil, NotFoundError{
+					return nil, false, NotFoundError{
 						Path: path,
 					}
 				}
@@ -211,23 +252,29 @@ func (c *Cursor) Resolve(o interface{}) (interface{}, error) {
 			var found bool
 			o, _, found = listFind(val, NameFields, k)
 			if !found {
-				return nil, NotFoundError{
+				return nil, false, NotFoundError{
 					Path: path,
 				}
 			}
 
 		default:
 			path = path[0 : len(path)-1]
-			return nil, TypeMismatchError{
+			// The error shows the scalar it met, except inside a literal,
+			// whose content never appears in a message.
+			shown := o
+			if inside {
+				shown = nil
+			}
+			return nil, false, TypeMismatchError{
 				Path:   path,
 				Wanted: wantedContainer,
 				Got:    gotScalar,
-				Value:  o,
+				Value:  shown,
 			}
 		}
 	}
 
-	return o, nil
+	return o, inside, nil
 }
 
 // ResolveString resolves the cursor path and returns the value as a string.
@@ -236,6 +283,7 @@ func (c *Cursor) ResolveString(tree interface{}) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	o, _ = literal.Unwrap(o)
 
 	switch val := o.(type) {
 	case string:
@@ -258,7 +306,11 @@ func Find(o interface{}, path string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.Resolve(o)
+	v, err := c.Resolve(o)
+	if err != nil {
+		return nil, err
+	}
+	return literal.Strip(v), nil
 }
 
 // FindString attempts to find the value at `path` inside data structure `o`.
@@ -346,7 +398,9 @@ type Number float64
 func (n Number) Int64() (int64, error) {
 	i := int64(n)
 	if Number(i) != n {
-		return 0, fmt.Errorf("%f does not represent an integer, cannot auto-convert", float64(n))
+		return 0, errtext.WithPlain(
+			fmt.Errorf("%f does not represent an integer, cannot auto-convert", float64(n)),
+			"the number does not represent an integer, cannot auto-convert")
 	}
 	return i, nil
 }

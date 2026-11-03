@@ -160,6 +160,10 @@ func (dm *DocumentMemory) RecordChange(path string, oldValue, newValue interface
 		return nil
 	}
 
+	// History is a record for people and tools to read, so it holds plain
+	// values with no literal wrapper in them.
+	oldValue, newValue = plainValue(oldValue), plainValue(newValue)
+
 	// Get or create history for this path
 	history, exists := dm.histories[path]
 	if !exists {

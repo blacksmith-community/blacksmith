@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/utils/ansi"
 )
 
@@ -43,8 +44,30 @@ type Position struct {
 	File   string // Optional filename
 }
 
-// Error implements the error interface.
+// Error implements the error interface. It gives the type, the
+// position, the message, and the nested error's plain text, without
+// color and without the source lines or the context message, which can
+// quote document text.
 func (e *ExprError) Error() string {
+	var parts []string
+	if prefix := e.typeString(); prefix != "" {
+		parts = append(parts, prefix)
+	}
+	if loc := e.location(); loc != "" {
+		parts = append(parts, loc)
+	}
+	parts = append(parts, e.Message)
+	msg := strings.Join(parts, ": ")
+	if e.Nested != nil {
+		msg += "\n  caused by: " + e.Nested.Error()
+	}
+	return msg
+}
+
+// DetailedError returns the message the graft CLI prints, with color
+// when the ansi toggle is on, the source lines around the error, the
+// context message, and the nested error's detailed text.
+func (e *ExprError) DetailedError() string {
 	var parts []string
 
 	// Add error type prefix
@@ -54,16 +77,17 @@ func (e *ExprError) Error() string {
 	}
 
 	// Add position information
-	if e.Position.Line > 0 {
-		loc := fmt.Sprintf("%d:%d", e.Position.Line, e.Position.Column)
-		if e.Position.File != "" {
-			loc = e.Position.File + ":" + loc
-		}
+	if loc := e.location(); loc != "" {
 		parts = append(parts, ansi.Sprintf("@Y{%s}", loc))
 	}
 
-	// Add main message
-	parts = append(parts, e.Message)
+	// Add main message, in its detailed form when it is the nested
+	// error's text, as WrapError builds it
+	message := e.Message
+	if e.Nested != nil && message == e.Nested.Error() {
+		message = errtext.Detail(e.Nested)
+	}
+	parts = append(parts, message)
 
 	// Build error message
 	msg := strings.Join(parts, ": ")
@@ -78,10 +102,23 @@ func (e *ExprError) Error() string {
 
 	// Add nested error
 	if e.Nested != nil {
-		msg += "\n  caused by: " + e.Nested.Error()
+		msg += "\n  caused by: " + errtext.Detail(e.Nested)
 	}
 
 	return msg
+}
+
+// location returns "file:line:column", or "" when the position has no
+// line.
+func (e *ExprError) location() string {
+	if e.Position.Line <= 0 {
+		return ""
+	}
+	loc := fmt.Sprintf("%d:%d", e.Position.Line, e.Position.Column)
+	if e.Position.File != "" {
+		loc = e.Position.File + ":" + loc
+	}
+	return loc
 }
 
 // Unwrap returns the nested error.
@@ -162,8 +199,17 @@ func (el *ExprErrorList) Add(err *ExprError) {
 	el.Errors = append(el.Errors, err)
 }
 
-// Error implements the error interface.
+// Error implements the error interface, listing each error's plain text.
 func (el *ExprErrorList) Error() string {
+	return el.render(func(err *ExprError) string { return err.Error() })
+}
+
+// DetailedError lists each error's detailed text.
+func (el *ExprErrorList) DetailedError() string {
+	return el.render((*ExprError).DetailedError)
+}
+
+func (el *ExprErrorList) render(text func(*ExprError) string) string {
 	if len(el.Errors) == 0 {
 		return "no errors"
 	}
@@ -172,7 +218,7 @@ func (el *ExprErrorList) Error() string {
 	msgs = append(msgs, fmt.Sprintf("Found %d errors:", len(el.Errors)))
 
 	for i, err := range el.Errors {
-		msgs = append(msgs, fmt.Sprintf("\n[%d] %s", i+1, err.Error()))
+		msgs = append(msgs, fmt.Sprintf("\n[%d] %s", i+1, text(err)))
 	}
 
 	return strings.Join(msgs, "\n")

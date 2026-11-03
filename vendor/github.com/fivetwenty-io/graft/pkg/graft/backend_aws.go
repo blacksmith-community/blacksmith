@@ -19,6 +19,7 @@ import (
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
+	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/utils/mfa"
 )
 
@@ -338,12 +339,12 @@ func getAWSOptionParam(ctx context.Context, cfg aws.Config, name string) (string
 		var notFound *ssmtypes.ParameterNotFound
 		var resourceNotFound *ssmtypes.ResourceNotFoundException
 		if errors.As(err, &notFound) || errors.As(err, &resourceNotFound) {
-			return "", fmt.Errorf("%w: %s", ErrBackendNotFound, name)
+			return "", backendNotFound(name)
 		}
-		return "", fmt.Errorf("aws: GetParameter %q: %w", name, err)
+		return "", errtext.WithPlain(fmt.Errorf("aws: GetParameter %q: %w", name, err), "aws: GetParameter failed")
 	}
 	if out.Parameter == nil || out.Parameter.Value == nil {
-		return "", fmt.Errorf("%w: %s", ErrBackendNotFound, name)
+		return "", backendNotFound(name)
 	}
 	return *out.Parameter.Value, nil
 }
@@ -363,9 +364,9 @@ func getAWSOptionSecret(ctx context.Context, cfg aws.Config, id string) (string,
 	if err != nil {
 		var resourceNotFound *smtypes.ResourceNotFoundException
 		if errors.As(err, &resourceNotFound) {
-			return "", fmt.Errorf("%w: %s", ErrBackendNotFound, id)
+			return "", backendNotFound(id)
 		}
-		return "", fmt.Errorf("aws: GetSecretValue %q: %w", id, err)
+		return "", errtext.WithPlain(fmt.Errorf("aws: GetSecretValue %q: %w", id, err), "aws: GetSecretValue failed")
 	}
 	if out.SecretString != nil {
 		return *out.SecretString, nil
@@ -373,7 +374,7 @@ func getAWSOptionSecret(ctx context.Context, cfg aws.Config, id string) (string,
 	if out.SecretBinary != nil {
 		return string(out.SecretBinary), nil
 	}
-	return "", fmt.Errorf("%w: %s", ErrBackendNotFound, id)
+	return "", backendNotFound(id)
 }
 
 // awsConfigStoreFor returns the *awsConfigStore shared by opts.Backends'
