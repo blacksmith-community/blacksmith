@@ -252,7 +252,13 @@ func processPlanManifest(path string, plan *Plan, loggerInstance logger.Logger) 
 		return fmt.Errorf("failed to merge manifest files: %w", err)
 	}
 
-	plan.Manifest = utils.DeinterfaceMap(manifest)
+	// A manifest.yml that holds only a null merges to a nil map, and the plan
+	// keeps an empty one, as it always has.
+	if manifest == nil {
+		manifest = map[string]interface{}{}
+	}
+
+	plan.Manifest = manifest
 	plan.ManifestPath = manifestFile
 
 	loggerInstance.Debug("Successfully merged manifest files for plan %s", plan.Name)

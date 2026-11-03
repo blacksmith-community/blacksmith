@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/geofffranks/spruce"
-	"go.yaml.in/yaml/v2"
+	"github.com/fivetwenty-io/graft/pkg/graft/merger"
+	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
 // Static errors for err113 compliance.
@@ -137,19 +137,24 @@ func ReadFile(path string) ([]byte, bool, error) {
 	return fileBytes, true, err
 }
 
-func MergeFiles(required string, optional ...string) (map[interface{}]interface{}, error) {
+// MergeFiles reads the required YAML file and each optional file that
+// exists, and merges them in that order with graft's merger. It only
+// merges: operators stay as text for the render to evaluate, and a
+// (( prune )) marker is not applied. A key a file repeats keeps its last
+// value, as yaml.v2 kept it.
+func MergeFiles(required string, optional ...string) (map[string]interface{}, error) {
 	// Required Manifest
 	requiredBytes, err := SafeReadFile(required)
 	if err != nil {
 		return nil, err
 	}
 
-	manifestData := make(map[interface{}]interface{})
-
-	err = yaml.Unmarshal(requiredBytes, &manifestData)
+	manifestData, err := decodeMergeFile(requiredBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
 	}
+
+	layers := []map[string]interface{}{manifestData}
 
 	// Optional Manifests
 	for _, path := range optional {
@@ -162,20 +167,55 @@ func MergeFiles(required string, optional ...string) (map[interface{}]interface{
 			return nil, err
 		}
 
-		tmp := make(map[interface{}]interface{})
-
-		err = yaml.Unmarshal(optionalBytes, &tmp)
+		layer, err := decodeMergeFile(optionalBytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal optional YAML file %s: %w", path, err)
 		}
 
-		manifestData, err = spruce.Merge(manifestData, tmp)
-		if err != nil {
-			return nil, fmt.Errorf("failed to merge files: %w", err)
-		}
+		layers = append(layers, layer)
 	}
 
-	return manifestData, nil
+	if len(layers) == 1 {
+		return manifestData, nil
+	}
+
+	merged, err := merger.Merge(layers...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge files: %w", err)
+	}
+
+	return merged, nil
+}
+
+// decodeMergeFile decodes one file of a merge. An empty file decodes to an
+// empty map and a file that holds only a null to a nil one, as yaml.v2
+// decoded them.
+func decodeMergeFile(data []byte) (map[string]interface{}, error) {
+	decoded := make(map[string]interface{})
+
+	err := yaml.UnmarshalWith(data, &decoded, yaml.DecodeOptions{OnDuplicateKey: func(yaml.DuplicateKey) {}})
+	if err != nil {
+		return nil, err //nolint:wrapcheck // the caller says which file failed
+	}
+
+	if len(decoded) == 0 && isNullDocument(data) {
+		decoded = nil
+	}
+
+	return decoded, nil
+}
+
+// isNullDocument reports whether data is a document that holds a null.
+func isNullDocument(data []byte) bool {
+	var node yaml.Node
+
+	if yaml.Unmarshal(data, &node) != nil || node.Kind != yaml.DocumentNode || len(node.Content) != 1 {
+		return false
+	}
+
+	root := node.Content[0]
+
+	return root.Kind == yaml.ScalarNode && root.Tag == "!!null"
 }
 
 // validateFilePath validates that a file path is safe to use
