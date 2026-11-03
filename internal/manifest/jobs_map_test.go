@@ -7,9 +7,6 @@ import (
 	"blacksmith/internal/parity"
 	"blacksmith/internal/services"
 	"blacksmith/pkg/utils"
-
-	yamlv2 "go.yaml.in/yaml/v2"
-	yamlv3 "gopkg.in/yaml.v3"
 )
 
 // TestJobsMapMatchesTheYAMLRoundTrip checks that the jobs map credentials
@@ -30,14 +27,7 @@ func TestJobsMapMatchesTheYAMLRoundTrip(t *testing.T) {
 		{Name: "standalone", IPs: []string{}, DNS: []string{}},
 	}
 
-	text, err := yamlv3.Marshal(map[string][]*services.Job{"jobs": jobs})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var decoded map[interface{}]interface{}
-
-	err = yamlv2.Unmarshal(text, &decoded)
+	decoded, err := parity.LegacyRoundTrip(map[string][]*services.Job{"jobs": jobs})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -96,3 +96,23 @@ func yaml11Type(node *yamlv3.Node) string {
 func writeScalarLine(builder *strings.Builder, path, style, tag, resolved, text string) {
 	fmt.Fprintf(builder, "%s\t%s\t%s\t%s\t%q\n", path, style, tag, resolved, text)
 }
+
+// LegacyRoundTrip marshals value with yaml.v3 and reads the text back with
+// yaml.v2, the way jobs reached credentials templates before graft carried
+// them. It exists for comparison in tests only, and is here so this file is
+// the one place that imports those libraries.
+func LegacyRoundTrip(value interface{}) (map[interface{}]interface{}, error) {
+	text, err := yamlv3.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling with yaml.v3: %w", err)
+	}
+
+	var decoded map[interface{}]interface{}
+
+	err = yamlv2.Unmarshal(text, &decoded)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling with yaml.v2: %w", err)
+	}
+
+	return decoded, nil
+}
