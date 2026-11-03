@@ -10,8 +10,8 @@ import (
 // ruby is not on PATH it skips the test, except when the CI environment
 // variable is set, where it fails the test, so a CI image without ruby
 // cannot drop the comparison against the spruce-era goldens unnoticed.
-func Ruby(t testing.TB) string {
-	t.Helper()
+func Ruby(tb testing.TB) string {
+	tb.Helper()
 
 	ruby, err := exec.LookPath("ruby")
 	if err == nil {
@@ -19,10 +19,10 @@ func Ruby(t testing.TB) string {
 	}
 
 	if os.Getenv("CI") != "" {
-		t.Fatal("ruby is not installed, and CI is set, so the psych comparison cannot run")
+		tb.Fatal("ruby is not installed, and CI is set, so the psych comparison cannot run")
 	}
 
-	t.Skip("ruby is not installed")
+	tb.Skip("ruby is not installed")
 
 	return ""
 }

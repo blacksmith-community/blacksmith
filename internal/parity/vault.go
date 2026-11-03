@@ -35,30 +35,28 @@ var vaultReference = regexp.MustCompile(`\(\(\s*vault\s+\$CREDENTIALS\s+"(/[^":]
 var (
 	sharedVaultOnce sync.Once
 	sharedVault     *testutil.VaultDevServer
-	sharedVaultErr  error
+	errSharedVault  error
 )
 
-// SharedVault starts one OpenBao dev server for the whole test process and
-// points VAULT_ADDR and VAULT_TOKEN at it. Graft's vault DefaultReader
-// builds its Vault client once per process, so every test in the process
-// has to reach the same server. A package that calls it must call CloseSharedVault from
-// TestMain.
+// SharedVault starts one OpenBao dev server for the whole test process,
+// and points VAULT_ADDR and VAULT_TOKEN at it until the calling test
+// ends, so the calling test cannot run in parallel. Graft's vault
+// DefaultReader builds its Vault client once per process, so every test
+// in the process has to reach the same server. A package that calls it
+// must call CloseSharedVault from TestMain.
 func SharedVault(t *testing.T) *testutil.VaultDevServer {
 	t.Helper()
 
 	sharedVaultOnce.Do(func() {
-		sharedVault, sharedVaultErr = testutil.NewVaultDevServer(nil)
-		if sharedVaultErr != nil {
-			return
-		}
-
-		_ = os.Setenv("VAULT_ADDR", sharedVault.Addr)
-		_ = os.Setenv("VAULT_TOKEN", sharedVault.RootToken)
+		sharedVault, errSharedVault = testutil.NewVaultDevServer(nil)
 	})
 
-	if sharedVaultErr != nil {
-		t.Fatalf("start the OpenBao dev server: %s", sharedVaultErr)
+	if errSharedVault != nil {
+		t.Fatalf("start the OpenBao dev server: %s", errSharedVault)
 	}
+
+	t.Setenv("VAULT_ADDR", sharedVault.Addr)
+	t.Setenv("VAULT_TOKEN", sharedVault.RootToken)
 
 	return sharedVault
 }

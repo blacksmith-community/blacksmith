@@ -33,7 +33,7 @@ func dumpValue(builder *strings.Builder, path string, value reflect.Value) {
 	}
 
 	switch value.Kind() { //nolint:exhaustive // the remaining kinds are leaves
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface, reflect.Pointer:
 		if value.IsNil() {
 			writeLeaf(builder, path, value.Type().String(), "null")
 

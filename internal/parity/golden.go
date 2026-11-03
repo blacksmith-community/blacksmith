@@ -97,9 +97,17 @@ func (f Fixture) ServicesDir() string { return filepath.Join(f.Dir, "services") 
 
 // FixtureRoot returns the directory holding the rendered forge trees.
 func FixtureRoot() string {
-	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(packageDir(), "testdata", "forges")
+}
 
-	return filepath.Join(filepath.Dir(file), "testdata", "forges")
+// packageDir returns the directory that holds the parity package's source.
+func packageDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("parity: the runtime cannot report the package's source file")
+	}
+
+	return filepath.Dir(file)
 }
 
 // Fixtures lists every rendered forge tree, sorted by forge and variant.
@@ -173,8 +181,7 @@ type Rendered struct {
 func RenderedManifests(t *testing.T) []Rendered {
 	t.Helper()
 
-	_, file, _, _ := runtime.Caller(0)
-	root := filepath.Join(filepath.Dir(file), "..", "manifest", "testdata", "manifests")
+	root := filepath.Join(packageDir(), "..", "manifest", "testdata", "manifests")
 
 	var rendered []Rendered
 
