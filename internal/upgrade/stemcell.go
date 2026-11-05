@@ -3,14 +3,11 @@ package upgrade
 import (
 	"fmt"
 
-	manifestPkg "blacksmith/internal/manifest"
-
-	"github.com/fivetwenty-io/graft/pkg/graft/merger"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
-// MergeStemcellOverlay merges a stemcell overlay into an existing manifest.
-// The overlay format is:
+// MergeStemcellOverlay sets the stemcell in an existing manifest. The
+// stemcell it writes is:
 //
 //	---
 //	stemcells:
@@ -18,13 +15,12 @@ import (
 //	  os: ubuntu-jammy
 //	  version: <selected-version>
 //
-// The overlay merges and never evaluates an operator. The manifest comes
-// back from the director, and it holds the instance's nested request
-// parameters as the literal (( )) text a tenant sent, which the render
-// kept inert. Evaluating it here would run that tenant's grab, file,
-// vault, and other operators with the broker's environment and
-// credentials. The overlay itself holds only a stemcell name and version,
-// so it needs no operator.
+// The first stemcell entry is replaced by it, or the entry is added when
+// the manifest has none. The overlay sets the stemcell directly and never
+// merges, so no operator and no merge marker in the manifest takes effect.
+// The manifest comes back from the director, and it holds the instance's
+// nested request parameters as the literal (( )) text a tenant sent, which
+// the render kept inert. That text has to stay exactly as it was written.
 func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion string) (string, error) {
 	// Parse the existing manifest
 	var manifest map[string]interface{}
@@ -34,27 +30,44 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 		return "", fmt.Errorf("failed to parse the manifest for the stemcell overlay: %w", err)
 	}
 
-	// Create the stemcell overlay
-	overlay := createStemcellOverlay(stemcellOS, stemcellVersion)
-
-	// The merge runs under the lock the manifest package holds around its
-	// own renders.
-	var tree map[string]interface{}
-
-	manifestPkg.WithManifestLock(func() {
-		tree, err = merger.Merge(manifest, overlay)
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to merge the stemcell overlay: %w", err)
+	if manifest == nil {
+		manifest = map[string]interface{}{}
 	}
 
+	setStemcell(manifest, createStemcellOverlay(stemcellOS, stemcellVersion))
+
 	// Marshal back to YAML
-	result, err := yaml.Marshal(tree)
+	result, err := yaml.Marshal(manifest)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal the manifest after the stemcell overlay: %w", err)
 	}
 
 	return string(result), nil
+}
+
+// setStemcell writes the overlay's stemcell over the manifest's first
+// stemcell. A first stemcell that is a map keeps its other keys, and any
+// other first entry is replaced. A manifest with no stemcell list gets one.
+func setStemcell(manifest, overlay map[string]interface{}) {
+	stemcell, _ := overlay["stemcells"].([]interface{})[0].(map[string]interface{})
+
+	existing, ok := manifest["stemcells"].([]interface{})
+	if !ok || len(existing) == 0 {
+		manifest["stemcells"] = overlay["stemcells"]
+
+		return
+	}
+
+	first, ok := existing[0].(map[string]interface{})
+	if !ok {
+		existing[0] = stemcell
+
+		return
+	}
+
+	for key, value := range stemcell {
+		first[key] = value
+	}
 }
 
 // createStemcellOverlay creates the stemcell overlay structure.

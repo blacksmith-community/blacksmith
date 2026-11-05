@@ -18,10 +18,8 @@ import (
 
 // TestStemcellOverlayMergesDoNotRace runs overlay merges alongside
 // GenManifest's renders, so the race detector sees the two in concurrent
-// use. The overlay merges with graft's merger, evaluates nothing, and
-// shares no mutable state with the render, so the test would most likely
-// still pass if the overlay stopped taking the manifest lock. The overlay
-// still takes the lock, with the scope it had when it evaluated.
+// use. The overlay sets the stemcell directly and shares no mutable state
+// with the render, so it takes no lock.
 //
 //nolint:paralleltest // t.Setenv cannot run in a parallel test
 func TestStemcellOverlayMergesDoNotRace(t *testing.T) {
@@ -140,7 +138,7 @@ func TestStemcellOverlayLeavesRequestOperatorsLiteral(t *testing.T) {
 }
 
 // TestMergeStemcellOverlayErrorsNameTheStep checks that a failed overlay
-// says whether reading or merging the manifest failed, names the overlay
+// says that reading the manifest failed, names the overlay
 // once, and never quotes a manifest value, in its error or in any line
 // the broker or graft logs. It swaps the process-wide log hooks, so it
 // cannot run in parallel.
@@ -156,10 +154,6 @@ func TestMergeStemcellOverlayErrorsNameTheStep(t *testing.T) {
 		"parse": {
 			manifest: "name: " + sentinel + "\nlist: [unterminated\n",
 			prefix:   "failed to parse the manifest for the stemcell overlay: ",
-		},
-		"merge": {
-			manifest: "name: " + sentinel + "\nmeta: (( delete \"x\" ))\n",
-			prefix:   "failed to merge the stemcell overlay: ",
 		},
 	}
 
