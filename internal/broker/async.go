@@ -16,6 +16,7 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
+	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/google/uuid"
 )
 
@@ -45,6 +46,12 @@ const (
 	// recordWriteTimeout bounds a failure or progress record written to the
 	// vault, so the write still happens after the context it follows ended.
 	recordWriteTimeout = 10 * time.Second
+
+	// refusedParamsDescription is the failed provision's description when
+	// graft refused a request parameter. The platform shows it to the
+	// tenant, so it quotes no value, operator, or path.
+	refusedParamsDescription = "Manifest generation failed: the request parameters cannot be used where this plan puts them, " +
+		"because the plan reads that position as code, a path, or a name"
 )
 
 // serviceContext returns the context that ends when the broker shuts down. A
@@ -350,6 +357,13 @@ func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan s
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Generating BOSH deployment manifest", 0, p.params, p.logger)
 
 	manifestStr, err := manifest.GenManifest(plan, p.instanceID, defaults, utils.Wrap("meta.params", p.params))
+	if errors.Is(err, graft.ErrLiteralRefused) {
+		p.logger.Error("Failed to generate the service deployment manifest of plan %s for instance %s, because graft refused a request parameter", plan.ID, p.instanceID)
+		p.broker.failWithTracking(ctx, p.instanceID, "provision", refusedParamsDescription, p.params, p.logger)
+
+		return "", false
+	}
+
 	if err != nil {
 		p.logger.Error("Failed to generate service deployment manifest: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Manifest generation failed: %s", err), p.params, p.logger)

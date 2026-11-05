@@ -288,6 +288,10 @@ func redactEnvValues(text string, env []string, names ...string) string {
 //
 // The returned error says whether the merge or the evaluation failed. Its
 // text, like that of every graft error, quotes no value from a manifest.
+// When graft refuses a request parameter that sits where the plan reads
+// code, a path, or a name, the error matches graft.ErrLiteralRefused, and
+// the log line names the plan and the instance but not the operator or
+// the path that graft's error text holds.
 func GenManifest(p services.Plan, instanceID string, manifests ...map[string]interface{}) (string, error) {
 	log := logger.Get().Named("manifest")
 	log.Info("Generating manifest for plan %s", p.ID)
@@ -311,6 +315,12 @@ func GenManifest(p services.Plan, instanceID string, manifests ...map[string]int
 	}
 
 	final, err := mergeAndEvaluate(documents)
+	if errors.Is(err, graft.ErrLiteralRefused) {
+		log.Error("Failed to generate the manifest of plan %s for instance %s, because a request parameter is where the plan reads code, a path, or a name", p.ID, instanceID)
+
+		return "", err
+	}
+
 	if err != nil {
 		log.Error("Failed to generate the manifest: %s", err)
 
