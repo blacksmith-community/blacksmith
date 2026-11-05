@@ -177,6 +177,16 @@ func renderForgeTuning(t *testing.T, fixture parity.Fixture, plan services.Plan,
 func renderForgeCredentials(t *testing.T, forge, variant, planID string) (map[string]interface{}, string, string, []string) {
 	t.Helper()
 
+	return renderForgeCredentialsWith(t, forge, variant, planID, true)
+}
+
+// renderForgeCredentialsWith renders as renderForgeCredentials does. When
+// withInstanceID is false, it leaves instance_id out of the params the
+// credentials read, which a bind always sets, so that a fallback after
+// params.instance_id is evaluated.
+func renderForgeCredentialsWith(t *testing.T, forge, variant, planID string, withInstanceID bool) (map[string]interface{}, string, string, []string) {
+	t.Helper()
+
 	fixture, plan := forgeFixture(t, forge, variant, planID)
 	instanceID := prepareParityFixture(t, fixture)
 	deployment := plan.ID + "-" + instanceID
@@ -190,7 +200,15 @@ func renderForgeCredentials(t *testing.T, forge, variant, planID string) (map[st
 	vms := parityVMs(t, plan, deployment)
 	jobs, dnsname := buildJobsFromVMs(vms, plan, deployment, extractNetworksByJob(deployed), log)
 
-	rendered, err := generateCredentialsManifest(plan, jobsMap(jobs), deployment, instanceID, dnsname, log)
+	var rendered string
+
+	if withInstanceID {
+		rendered, err = generateCredentialsManifest(plan, jobsMap(jobs), deployment, instanceID, dnsname, log)
+	} else {
+		params := map[string]interface{}{"hostname": dnsname}
+		rendered, err = GenManifest(plan, instanceID, jobsMap(jobs), plan.Credentials, map[string]interface{}{"name": deployment}, utils.Wrap("params", params))
+	}
+
 	if err != nil {
 		t.Fatalf("render the credentials: %s", err)
 	}
@@ -210,9 +228,10 @@ func renderForgeCredentials(t *testing.T, forge, variant, planID string) (map[st
 	return credentialsMap, instanceID, dnsname, ips
 }
 
-// TestForgeCredentialsGrabs renders the credentials of each forge's plans and checks the values that come from the request-side params, the
-// VM jobs, and the credentials themselves. No assertion prints a value
-// that holds a seeded secret.
+// TestForgeCredentialsGrabs renders the credentials of each forge's plans
+// and checks the values that come from the request-side params, the VM
+// jobs, and the credentials themselves. No assertion prints a value that
+// holds a seeded secret.
 //
 //nolint:paralleltest // GenManifest holds a process-wide lock, and the test sets environment variables
 func TestForgeCredentialsGrabs(t *testing.T) {
@@ -255,6 +274,15 @@ func TestForgeCredentialsGrabs(t *testing.T) {
 		if len(uris) != 1 || !strings.HasSuffix(fmt.Sprint(uris[0]), "@"+dnsname+":5672") {
 			t.Error("credentials.uris does not hold one amqp URI that ends at the deployment's DNS name")
 		}
+	})
+
+	t.Run("rabbitmq without an instance ID", func(t *testing.T) {
+		credentials, _, _, _ := renderForgeCredentialsWith(t, "rabbitmq", "base", "rabbitmq-standalone", false)
+		expect(t, credentials, "vhost", "/")
+
+		protocols, _ := credentials["protocols"].(map[string]interface{})
+		amqp, _ := protocols["amqp"].(map[string]interface{})
+		expect(t, amqp, "vhost", "/")
 	})
 
 	t.Run("rabbitmq dashboard registration", func(t *testing.T) {

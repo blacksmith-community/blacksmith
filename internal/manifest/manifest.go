@@ -290,8 +290,10 @@ func redactEnvValues(text string, env []string, names ...string) string {
 // text, like that of every graft error, quotes no value from a manifest.
 // When graft refuses a request parameter that sits where the plan reads
 // code, a path, or a name, the error matches graft.ErrLiteralRefused, and
-// the log line names the plan and the instance but not the operator or
-// the path that graft's error text holds.
+// GenManifest logs a line that names the plan and the instance and leaves
+// out graft's text. The returned error still holds that text, which names
+// the operator and the path, so a caller that logs or returns the error
+// passes them on.
 func GenManifest(p services.Plan, instanceID string, manifests ...map[string]interface{}) (string, error) {
 	log := logger.Get().Named("manifest")
 	log.Info("Generating manifest for plan %s", p.ID)

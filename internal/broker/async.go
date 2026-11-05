@@ -358,7 +358,7 @@ func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan s
 
 	manifestStr, err := manifest.GenManifest(plan, p.instanceID, defaults, utils.Wrap("meta.params", p.params))
 	if errors.Is(err, graft.ErrLiteralRefused) {
-		p.logger.Error("Failed to generate the service deployment manifest of plan %s for instance %s, because graft refused a request parameter", plan.ID, p.instanceID)
+		// GenManifest has logged the refusal with the plan and the instance.
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", refusedParamsDescription, p.params, p.logger)
 
 		return "", false

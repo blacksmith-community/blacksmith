@@ -2,9 +2,11 @@ package broker_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"blacksmith/pkg/testutil"
 	"blacksmith/shield"
 
+	graftlog "github.com/fivetwenty-io/graft/log"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -40,6 +43,9 @@ var _ = Describe("Provision parameters graft refuses", func() {
 		instanceID     string
 		createCalled   chan struct{}
 		dir            string
+		previousStderr func(format string, args ...interface{})
+		graftMu        sync.Mutex
+		graftLines     []string
 	)
 
 	const (
@@ -47,7 +53,10 @@ var _ = Describe("Provision parameters graft refuses", func() {
 		planID    = "refused-plan"
 	)
 
-	provisionWith := func(template string) osbapi.LastOperationResponse {
+	// provisionWith provisions with the plan's vm_type set to template and
+	// the probe in the request, waits for the provision to end, and returns
+	// the answer to the request and the last operation.
+	provisionWith := func(template string) (osbapi.ProvisionResponse, osbapi.LastOperationResponse) {
 		initScript := filepath.Join(dir, "init")
 		Expect(os.WriteFile(initScript, []byte("#!/bin/bash\nexit 0\n"), 0o600)).To(Succeed())
 
@@ -64,7 +73,7 @@ var _ = Describe("Provision parameters graft refuses", func() {
 			Service: &services.Service{ID: serviceID, Name: serviceID},
 		}}
 
-		_, async, err := brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
+		accepted, async, err := brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
 			ServiceID: serviceID, PlanID: planID, OrganizationGUID: "org-guid", SpaceGUID: "space-guid",
 			Parameters: map[string]any{"size": refusedProbe, "path": "secret/" + refusedProbe + ":key"},
 		}, true)
@@ -78,7 +87,15 @@ var _ = Describe("Provision parameters graft refuses", func() {
 		})
 		Expect(err).ToNot(HaveOccurred())
 
-		return response
+		return accepted, response
+	}
+
+	// graftOutput returns what graft wrote to its stderr hook.
+	graftOutput := func() string {
+		graftMu.Lock()
+		defer graftMu.Unlock()
+
+		return strings.Join(graftLines, "\n")
 	}
 
 	BeforeEach(func() {
@@ -98,6 +115,15 @@ var _ = Describe("Provision parameters graft refuses", func() {
 		previousLogger = logger.Get()
 
 		logger.Set(capture)
+
+		graftLines = nil
+		previousStderr = graftlog.PrintStdErrf
+		graftlog.PrintStdErrf = func(format string, args ...interface{}) {
+			graftMu.Lock()
+			defer graftMu.Unlock()
+
+			graftLines = append(graftLines, fmt.Sprintf(format, args...))
+		}
 
 		director := testutil.NewScriptedBOSHDirector()
 		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
@@ -122,6 +148,8 @@ var _ = Describe("Provision parameters graft refuses", func() {
 		logger.Set(previousLogger)
 		stopBrokerGoroutines(stopService)
 
+		graftlog.PrintStdErrf = previousStderr
+
 		_ = vaultClient.Index(ctx, instanceID, nil)
 		_ = os.RemoveAll(dir)
 	})
@@ -131,7 +159,7 @@ var _ = Describe("Provision parameters graft refuses", func() {
 		"a vault path":  "(( vault meta.params.path ))",
 	} {
 		It("fails the provision without echoing the request when a parameter is "+name, func() {
-			response := provisionWith(template)
+			accepted, response := provisionWith(template)
 
 			Expect(response.State).To(Equal(osbapi.StateFailed))
 			Expect(response.Description).To(Equal("Manifest generation failed: " +
@@ -144,12 +172,17 @@ var _ = Describe("Provision parameters graft refuses", func() {
 			Expect(recorded.Description).To(Equal(response.Description))
 
 			output := capture.output()
-			Expect(output).To(ContainSubstring(planID))
-			Expect(output).To(ContainSubstring(instanceID))
+			Expect(output).To(ContainSubstring("Failed to generate the manifest of plan " + planID + " for instance " + instanceID +
+				", because a request parameter is where the plan reads code, a path, or a name"))
+
+			answer, err := json.Marshal(accepted)
+			Expect(err).ToNot(HaveOccurred())
 
 			for _, banned := range []string{refusedProbe, "((", "$."} {
+				Expect(string(answer)).ToNot(ContainSubstring(banned))
 				Expect(response.Description).ToNot(ContainSubstring(banned))
 				Expect(output).ToNot(ContainSubstring(banned))
+				Expect(graftOutput()).ToNot(ContainSubstring(banned))
 			}
 		})
 	}
