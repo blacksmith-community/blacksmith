@@ -278,9 +278,8 @@ func redactEnvValues(text string, env []string, names ...string) string {
 
 // GenManifest merges the plan's manifest and then each of manifests with
 // graft, evaluates the result, and returns it as YAML. Request parameters
-// reach it through utils.Wrap, which marks their nested maps as graft
-// literals so the merge keeps them whole and evaluation leaves them as
-// text.
+// reach it through utils.Wrap, which marks every map and string in them as
+// a graft literal, so no request text reaches an operator.
 //
 // Templates read the instance's Vault path through $CREDENTIALS, which
 // graft resolves from the process environment. GenManifest sets it to

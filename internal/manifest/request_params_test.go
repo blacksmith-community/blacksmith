@@ -2,6 +2,7 @@ package manifest_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	manifestPkg "blacksmith/internal/manifest"
@@ -31,6 +32,14 @@ func requestParamsPlan() services.Plan {
 func renderRequestParams(t *testing.T, params map[string]interface{}) map[string]interface{} {
 	t.Helper()
 
+	return decodeRender(t, renderRequestParamsText(t, params))
+}
+
+// renderRequestParamsText renders requestParamsPlan with params under
+// meta.params and returns the YAML text.
+func renderRequestParamsText(t *testing.T, params map[string]interface{}) string {
+	t.Helper()
+
 	t.Setenv("CREDENTIALS", "")
 
 	rendered, err := manifestPkg.GenManifest(requestParamsPlan(), "request-params", utils.Wrap("meta.params", params))
@@ -38,9 +47,15 @@ func renderRequestParams(t *testing.T, params map[string]interface{}) map[string
 		t.Fatalf("render: %s", err)
 	}
 
+	return rendered
+}
+
+func decodeRender(t *testing.T, rendered string) map[string]interface{} {
+	t.Helper()
+
 	var decoded map[string]interface{}
 
-	err = yaml.Unmarshal([]byte(rendered), &decoded)
+	err := yaml.Unmarshal([]byte(rendered), &decoded)
 	if err != nil {
 		t.Fatalf("decode the render: %s", err)
 	}
@@ -58,7 +73,8 @@ func requestParam(t *testing.T, decoded map[string]interface{}, key string) inte
 }
 
 // Request parameters are merged under meta.params and evaluated with the
-// plan. These cases pin what a render does with them.
+// plan. No request text reaches an operator. These cases pin what a
+// render does with them.
 //
 //nolint:paralleltest // GenManifest sets CREDENTIALS
 func TestRequestParamsRender(t *testing.T) {
@@ -76,24 +92,18 @@ func TestRequestParamsRender(t *testing.T) {
 		deep   interface{}
 	}{
 		{
-			// Deliberate: an operator in a top-level string parameter is
-			// evaluated, so request input reaches grab, vault, file, and
-			// the process environment. The broker keeps this on purpose,
-			// and the case pins it.
-			name:   "top-level operator is evaluated",
+			name:   "top-level operator stays literal",
 			params: map[string]interface{}{"probe": operator},
 			key:    "probe",
-			want:   "from-the-plan",
+			want:   operator,
 			whole:  map[string]interface{}{"a": "plan-a", "b": "plan-b"},
 			deep:   "plan-b",
 		},
 		{
-			// Deliberate: the same holds for each string item of a
-			// top-level list.
-			name:   "top-level list operator is evaluated",
+			name:   "top-level list operator stays literal",
 			params: map[string]interface{}{"list": []interface{}{operator}},
 			key:    "list",
-			want:   []interface{}{"from-the-plan", "plan-2"},
+			want:   []interface{}{operator, "plan-2"},
 			whole:  map[string]interface{}{"a": "plan-a", "b": "plan-b"},
 			deep:   "plan-b",
 		},
@@ -134,13 +144,11 @@ func TestRequestParamsRender(t *testing.T) {
 			deep:  "none",
 		},
 		{
-			// Deliberate: a string item of a top-level list is evaluated
-			// wherever it sits, and the list merges into the plan default
-			// by index.
-			name:   "operator among the strings of a top-level list is evaluated",
+			// The list still merges into the plan default by index.
+			name:   "operator among the strings of a top-level list stays literal",
 			params: map[string]interface{}{"list": []interface{}{"user-1", operator, "user-3"}},
 			key:    "list",
-			want:   []interface{}{"user-1", "from-the-plan", "user-3"},
+			want:   []interface{}{"user-1", operator, "user-3"},
 			whole:  map[string]interface{}{"a": "plan-a", "b": "plan-b"},
 			deep:   "plan-b",
 		},
@@ -189,19 +197,64 @@ func TestRequestParamsRender(t *testing.T) {
 	}
 }
 
-// Deliberate: a top-level parameter can read the broker's environment into
-// the manifest, because user input reaches operators. The broker keeps
-// this on purpose, and the test pins it.
+// No request text reaches an operator, so a top-level string, a string in
+// a top-level list, and a merge marker in a top-level list all come out as
+// the text the request sent. None of them reads the plan, the broker's
+// environment, a file, or vault. VAULT_ADDR points at a closed port, so a
+// vault lookup would fail the render.
 //
 //nolint:paralleltest // the test sets environment variables
-func TestRequestParamsReadTheEnvironment(t *testing.T) {
-	t.Setenv("REQUEST_PARAMS_PROBE", "probe-value")
+func TestRequestParamsNeverReachAnOperator(t *testing.T) {
+	const probe = "request-params-env-probe-do-not-report"
 
-	decoded := renderRequestParams(t, map[string]interface{}{"probe": `(( concat $REQUEST_PARAMS_PROBE "" ))`})
+	t.Setenv("REQUEST_PARAMS_PROBE", probe)
+	t.Setenv("VAULT_ADDR", "http://127.0.0.1:1")
+	t.Setenv("VAULT_TOKEN", "request-params-not-a-token")
 
-	if got := requestParam(t, decoded, "probe"); got != "probe-value" {
-		t.Errorf("meta.params.probe = %#v, want the environment value", got)
+	operators := []string{
+		"(( grab meta.something ))",
+		"(( grab $REQUEST_PARAMS_PROBE ))",
+		`(( concat $REQUEST_PARAMS_PROBE "" ))`,
+		`(( vault "secret/x:y" ))`,
+		"(( file /etc/hostname ))",
+		`(( file "/etc/hostname" ))`,
 	}
+
+	for _, operator := range operators {
+		t.Run("top-level "+operator, func(t *testing.T) {
+			rendered := renderRequestParamsText(t, map[string]interface{}{"probe": operator})
+
+			if strings.Contains(rendered, probe) {
+				t.Error("the render holds the probe value from the environment")
+			}
+
+			if got := requestParam(t, decodeRender(t, rendered), "probe"); got != operator {
+				t.Errorf("meta.params.probe = %#v, want the request text", got)
+			}
+		})
+
+		t.Run("top-level list "+operator, func(t *testing.T) {
+			rendered := renderRequestParamsText(t, map[string]interface{}{"list": []interface{}{operator}})
+
+			if strings.Contains(rendered, probe) {
+				t.Error("the render holds the probe value from the environment")
+			}
+
+			want := []interface{}{operator, "plan-2"}
+			if got := requestParam(t, decodeRender(t, rendered), "list"); !reflect.DeepEqual(got, want) {
+				t.Errorf("meta.params.list = %#v, want %#v", got, want)
+			}
+		})
+	}
+
+	t.Run("append marker in a top-level list", func(t *testing.T) {
+		params := map[string]interface{}{"list": []interface{}{"(( append ))", "user-3"}}
+
+		want := []interface{}{"(( append ))", "user-3"}
+		if got := requestParam(t, renderRequestParams(t, params), "list"); !reflect.DeepEqual(got, want) {
+			t.Errorf("meta.params.list = %#v, want %#v", got, want)
+		}
+	})
 }
 
 // renderPlanWithParams renders a plan with request parameters under
@@ -216,14 +269,7 @@ func renderPlanWithParams(t *testing.T, manifest map[string]interface{}, params 
 		t.Fatalf("render: %s", err)
 	}
 
-	var decoded map[string]interface{}
-
-	err = yaml.Unmarshal([]byte(rendered), &decoded)
-	if err != nil {
-		t.Fatalf("decode the render: %s", err)
-	}
-
-	return decoded
+	return decodeRender(t, rendered)
 }
 
 // A request list of named maps merges into the plan's list of named maps

@@ -42,7 +42,7 @@ func TestWrapNestsDataUnderTheKeyPath(t *testing.T) {
 
 	want := map[string]interface{}{
 		"meta": map[string]interface{}{
-			"params": map[string]interface{}{"instance_id": "abc"},
+			"params": map[string]interface{}{"instance_id": graft.NewLiteral("abc")},
 		},
 	}
 
@@ -51,18 +51,20 @@ func TestWrapNestsDataUnderTheKeyPath(t *testing.T) {
 	}
 }
 
-// A nested map in request parameters must reach graft as one value, which
-// a merge replaces whole and evaluation never looks inside, so Wrap marks
-// each one as a graft literal. That includes a map that is an item of a
-// top-level list. Strings, at the top level or in a list, stay as they are.
-func TestWrapMarksNestedMapsAsLiterals(t *testing.T) {
+// No request value may reach a graft operator, so Wrap marks each map and
+// each string as a graft literal, at the top level and in a list at any
+// depth. A list stays a list, so it still merges item by item, and a
+// number, a bool, or a nil stays as it is.
+func TestWrapMarksRequestValuesAsLiterals(t *testing.T) {
 	t.Parallel()
 
 	nested := map[string]interface{}{"policy": "allkeys-lru"}
 	item := map[string]interface{}{"name": "node"}
-	list := []interface{}{item, "plain", []interface{}{item}}
+	list := []interface{}{item, "plain", []interface{}{item, "inner"}, 3.0, true, nil}
 
-	got := utils.Wrap("params", map[string]interface{}{"nested": nested, "list": list, "top": "text"})
+	got := utils.Wrap("params", map[string]interface{}{
+		"nested": nested, "list": list, "top": "text", "count": 2.0, "flag": false, "empty": nil,
+	})
 
 	params, ok := got["params"].(map[string]interface{})
 	if !ok {
@@ -71,8 +73,12 @@ func TestWrapMarksNestedMapsAsLiterals(t *testing.T) {
 
 	assertLiteral(t, "nested", params["nested"], nested)
 
-	if params["top"] != "text" {
-		t.Errorf("top-level string is %#v, want it unchanged", params["top"])
+	assertLiteral(t, "top-level string", params["top"], "text")
+
+	for key, want := range map[string]interface{}{"count": 2.0, "flag": false, "empty": nil} {
+		if got, present := params[key]; !present || got != want {
+			t.Errorf("top-level %s is %#v, want it unchanged", key, got)
+		}
 	}
 
 	gotList, ok := params["list"].([]interface{})
@@ -81,20 +87,24 @@ func TestWrapMarksNestedMapsAsLiterals(t *testing.T) {
 	}
 
 	assertLiteral(t, "list item", gotList[0], item)
-
-	if gotList[1] != "plain" {
-		t.Errorf("string list item is %#v, want it unchanged", gotList[1])
-	}
+	assertLiteral(t, "string list item", gotList[1], "plain")
 
 	inner, ok := gotList[2].([]interface{})
-	if !ok || len(inner) != 1 {
-		t.Fatalf("inner list is %T, want a list of one", gotList[2])
+	if !ok || len(inner) != 2 {
+		t.Fatalf("inner list is %T, want a list of two", gotList[2])
 	}
 
 	assertLiteral(t, "inner list item", inner[0], item)
+	assertLiteral(t, "inner list string", inner[1], "inner")
+
+	for i, want := range []interface{}{3.0, true, nil} {
+		if got := gotList[3+i]; got != want {
+			t.Errorf("list item %d is %#v, want it unchanged", 3+i, got)
+		}
+	}
 }
 
-func assertLiteral(t *testing.T, what string, got interface{}, want map[string]interface{}) {
+func assertLiteral(t *testing.T, what string, got interface{}, want interface{}) {
 	t.Helper()
 
 	literal, ok := got.(graft.LiteralValue)

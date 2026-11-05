@@ -19,14 +19,15 @@ var (
 	ErrPotentiallyDangerousCharacterFound = errors.New("potentially dangerous character found in executable path")
 )
 
-// Wrap nests data under a dot-separated key path. Each map in data below
-// its top level, including a map that is an item of a top-level list, is
-// wrapped as a graft literal. A merge replaces a literal whole and never
-// merges into it, and evaluation never looks inside it, so a nested map in
-// a request stays inert and replaces the plan's default whole, as it did
-// when spruce saw it as one opaque value. A top-level string, and each
-// string item of a top-level list, is left as it is, so the render
-// evaluates any operator it holds.
+// Wrap nests data under a dot-separated key path. No request value ever
+// reaches a graft operator, so every map and every string in data is
+// wrapped as a graft literal, at the top level and in a list at any depth.
+// Evaluation never looks inside a literal, so an operator or a merge
+// marker in request text stays text. A merge replaces a literal whole and
+// never merges into it, so a request map replaces the plan's default
+// whole, as it did when spruce saw it as one opaque value, and a request
+// string replaces a plan scalar as before. A list is not wrapped, so a
+// request list still merges into the plan's list item by item.
 func Wrap(key string, data map[string]interface{}) map[string]interface{} {
 	keyParts := strings.Split(key, ".")
 
@@ -36,7 +37,7 @@ func Wrap(key string, data map[string]interface{}) map[string]interface{} {
 
 	wrapped := make(map[string]interface{}, len(data))
 	for k, v := range data {
-		wrapped[k] = inertMaps(v)
+		wrapped[k] = inert(v)
 	}
 
 	for _, k := range keyParts {
@@ -46,12 +47,12 @@ func Wrap(key string, data map[string]interface{}) map[string]interface{} {
 	return wrapped
 }
 
-// inertMaps wraps value as a graft literal when it is a string-keyed map,
-// and walks a list to wrap each such map in it. Any other value is
-// returned as it is.
-func inertMaps(value interface{}) interface{} {
+// inert wraps value as a graft literal when it is a string-keyed map or a
+// string, and walks a list to do the same to each item in it. A number, a
+// bool, or a nil holds no operator text and is returned as it is.
+func inert(value interface{}) interface{} {
 	switch typed := value.(type) {
-	case map[string]interface{}:
+	case map[string]interface{}, string:
 		return graft.NewLiteral(typed)
 	case []interface{}:
 		if typed == nil {
@@ -60,7 +61,7 @@ func inertMaps(value interface{}) interface{} {
 
 		items := make([]interface{}, len(typed))
 		for i, item := range typed {
-			items[i] = inertMaps(item)
+			items[i] = inert(item)
 		}
 
 		return items
