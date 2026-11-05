@@ -170,7 +170,7 @@ func (m *mergeBuilderImpl) WithPrune(keys ...string) MergeBuilder {
 	}
 
 	newBuilder := *m // Copy the builder
-	newBuilder.pruneKeys = append(m.pruneKeys, keys...)
+	newBuilder.pruneKeys = append(m.pruneKeys, trimRootPrefix(keys)...)
 	return &newBuilder
 }
 
@@ -181,8 +181,21 @@ func (m *mergeBuilderImpl) WithCherryPick(keys ...string) MergeBuilder {
 	}
 
 	newBuilder := *m // Copy the builder
-	newBuilder.cherryPickKeys = append(m.cherryPickKeys, keys...)
+	newBuilder.cherryPickKeys = append(m.cherryPickKeys, trimRootPrefix(keys)...)
 	return &newBuilder
+}
+
+// trimRootPrefix returns keys with a leading "$." removed from each, so
+// a prune or cherry-pick path written from the document root, as spruce
+// accepts "--prune $.meta", names the same key as the path without it.
+// A "$." with nothing after it becomes the empty path, which prunes
+// nothing and fails a cherry-pick as an empty key path.
+func trimRootPrefix(keys []string) []string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = strings.TrimPrefix(k, "$.")
+	}
+	return out
 }
 
 // WithPostProcessors appends processors to run, in Phase-then-Priority

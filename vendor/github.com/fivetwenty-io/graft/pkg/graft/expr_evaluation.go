@@ -6,6 +6,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 )
 
@@ -37,14 +38,14 @@ func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 				fmt.Errorf("unable to resolve reference: @%s is a target, not a value", e.Name),
 				ReferenceError, e.Pos)
 		}
-		v, err := e.Reference.Resolve(ev.Tree)
+		v, err := e.Reference.ResolveLiteral(ev.Tree)
 		if err != nil {
 			return nil, WrapError(err, ReferenceError, e.Pos).
 				WithContext(fmt.Sprintf("while resolving reference '%s'", e.Reference))
 		}
 		return &Response{
 			Type:  Replace,
-			Value: plainValue(v),
+			Value: ev.noteLiteralRead(v),
 		}, nil
 
 	case EnvVar:
@@ -84,6 +85,10 @@ func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 		if err == nil {
 			// Left side succeeded, use its value
 			return left, nil
+		}
+		if literal.IsRefusal(err) {
+			// A refused literal is never a reason to fall back.
+			return nil, err
 		}
 		// Left side failed, check if right side is prune
 		if e.Right != nil && e.Right.Type == OperatorCall && e.Right.Operator == "prune" {

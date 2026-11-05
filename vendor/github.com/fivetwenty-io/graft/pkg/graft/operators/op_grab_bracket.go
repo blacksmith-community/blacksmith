@@ -79,19 +79,25 @@ func hasDynamicBracket(nodes []string, bracketed []bool) bool {
 }
 
 // resolveBracketNode resolves one dynamic bracketed node as a path
-// against ev.Tree and returns the map/list key its value stands for.
+// against ev.Tree and returns the map/list key its value stands for. A
+// literal never names a key in the path grab reads, so a value that is a
+// literal, sits inside one, or holds one is refused.
 func resolveBracketNode(node string, ev *Evaluator) (string, error) {
 	cursor, err := tree.ParseCursor(node)
 	if err != nil {
 		return "", fmt.Errorf("invalid bracketed key reference %q: %w", node, err)
 	}
 
-	val, err := cursor.Resolve(ev.Tree)
+	val, err := cursor.ResolveLiteral(ev.Tree)
 	if err != nil {
 		return "", fmt.Errorf("unable to resolve bracketed key reference %q: %w", node, err)
 	}
 
-	return bracketKeyToNode(node, literal.Strip(val))
+	plain, fromLiteral := literal.StripReport(val)
+	if fromLiteral {
+		return "", literal.Refuse("grab", "a key in a path")
+	}
+	return bracketKeyToNode(node, plain)
 }
 
 // isDynamicBracketNode reports whether a bracketed path node should be

@@ -149,15 +149,29 @@ func instances(ev *Evaluator, job *tree.Cursor) (int, error) {
 	return int(i), nil
 }
 
+// staticsNetworkName reads the name of the network the current job
+// entry is on. The name is a key under networks, so a literal never
+// chooses it, and a name that is or sits inside a literal is refused.
+func staticsNetworkName(ev *Evaluator) (string, error) {
+	c := ev.Here.Copy()
+	c.Pop()
+	c.Push("name")
+	v, err := c.ResolveLiteral(ev.Tree)
+	if err != nil {
+		return "", err
+	}
+	if _, fromLiteral := literal.StripReport(v); fromLiteral {
+		return "", literal.Refuse("static_ips", "a network name")
+	}
+	return c.ResolveString(ev.Tree)
+}
+
 //nolint:gocyclo // statics parses BOSH network configuration with AZs and IP ranges
 func statics(ev *Evaluator) (map[string][]string, []string, error) {
 	addrs := map[string][]string{}
 	azs := []string{}
 
-	c := ev.Here.Copy()
-	c.Pop()
-	c.Push("name")
-	name, err := c.ResolveString(ev.Tree)
+	name, err := staticsNetworkName(ev)
 	if err != nil {
 		return addrs, azs, err
 	}
@@ -165,7 +179,7 @@ func statics(ev *Evaluator) (map[string][]string, []string, error) {
 	// Build the cursor from nodes rather than parsing a dotted string,
 	// so a network name that contains dots (as every Genesis 3 cloud
 	// config network name does) stays one node and is matched whole.
-	c = &tree.Cursor{Nodes: []string{"networks", name, "subnets", "*"}}
+	c := &tree.Cursor{Nodes: []string{"networks", name, "subnets", "*"}}
 	keys, err := c.Glob(ev.Tree)
 	if err != nil {
 		return addrs, azs, err

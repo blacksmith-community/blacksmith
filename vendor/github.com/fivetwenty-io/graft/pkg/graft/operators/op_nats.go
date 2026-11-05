@@ -10,6 +10,7 @@ import (
 
 	natsbackend "github.com/fivetwenty-io/graft/internal/backends/nats"
 	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -264,15 +265,9 @@ func (n NatsOperator) Run(ev *graft.Evaluator, args []*graft.Expr) (*graft.Respo
 		return nil, fmt.Errorf("nats operator requires at least one argument")
 	}
 
-	// Resolve the path argument
-	pathVal, err := ResolveOperatorArgument(ev, args[0])
+	path, err := resolveNatsPath(ev, args)
 	if err != nil {
 		return nil, err
-	}
-
-	path, ok := pathVal.(string)
-	if !ok {
-		return nil, errtext.Colorf("@R{first argument to nats operator must be a string}")
 	}
 
 	// When features.FeatureBackendRegistry is enabled on ev's engine and
@@ -332,6 +327,27 @@ func (n NatsOperator) Run(ev *graft.Evaluator, args []*graft.Expr) (*graft.Respo
 		Type:  graft.Replace,
 		Value: value,
 	}, nil
+}
+
+// resolveNatsPath resolves the store path a (( nats )) call reads. A
+// literal never chooses which store or key is read, nor which server is
+// asked or how, so either argument resolving from one is refused before
+// any backend is asked or any connection is made.
+func resolveNatsPath(ev *graft.Evaluator, args []*graft.Expr) (string, error) {
+	pathVal, err := resolveRefusingLiteral(ev, args[0], "nats", "a store path")
+	if err != nil {
+		return "", err
+	}
+	if len(args) > 1 {
+		if _, cfgErr := resolveRefusingLiteral(ev, args[1], "nats", "a server or its settings"); literal.IsRefusal(cfgErr) {
+			return "", cfgErr
+		}
+	}
+	path, ok := pathVal.(string)
+	if !ok {
+		return "", errtext.Colorf("@R{first argument to nats operator must be a string}")
+	}
+	return path, nil
 }
 
 // runNatsCustomBackend consults a custom backend registered under the

@@ -41,6 +41,13 @@ type TokenizerOptions struct {
 
 	// AllowUnicode enables Unicode support in identifiers and strings
 	AllowUnicode bool
+
+	// OperatorName reports whether name is a registered operator. The
+	// tokenizer asks it about an identifier that has no left operand
+	// before it, because such a name opens an operator call and is not
+	// itself an operand, so a '/' after it begins a reference, as in
+	// "grab /b". A nil OperatorName names no operator.
+	OperatorName func(name string) bool
 }
 
 // ReferencePattern defines patterns that should be recognized as reference paths.
@@ -113,6 +120,42 @@ func consumeDigitRun(runes []rune, pos int) int {
 	return pos
 }
 
+// consumeNumericSegment returns the index one past the segment that
+// starts with a digit at pos. It takes the name characters that follow,
+// as any segment does, and it also takes the '+' of an exponent, as in
+// "1e+5", so a number in exponent form followed by a '/' reads as one
+// path, the way spruce reads "1e+5/2". The '+' joins only when the run
+// before it is digits and a single 'e' or 'E', and a digit comes after
+// it, so "2e+3+1" still adds 1. A '-' exponent needs no help, because
+// '-' is a name character.
+func consumeNumericSegment(runes []rune, pos int) int {
+	start := pos
+	pos = consumeIdentifierRun(runes, pos)
+	if pos+1 < len(runes) && runes[pos] == '+' && unicode.IsDigit(runes[pos+1]) &&
+		isExponentMantissa(runes[start:pos]) {
+		pos = consumeIdentifierRun(runes, pos+1)
+	}
+	return pos
+}
+
+// isExponentMantissa reports whether run is one or more digits followed
+// by a single 'e' or 'E', the part of "1e+5" before the sign.
+func isExponentMantissa(run []rune) bool {
+	if len(run) < 2 {
+		return false
+	}
+	last := run[len(run)-1]
+	if last != 'e' && last != 'E' {
+		return false
+	}
+	for _, r := range run[:len(run)-1] {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // consumeSegmentIdentifier consumes an identifier appearing after a dot,
 // where a '+' followed by an identifier character continues the same
 // segment: genesis's vaultified manifests use map keys like
@@ -120,7 +163,12 @@ func consumeDigitRun(runes []rune, pos int) int {
 // token as one reference. A '+' before a digit is left alone so "count+1"
 // stays arithmetic. The leading segment of a path gets no such treatment.
 func consumeSegmentIdentifier(runes []rune, pos int) int {
-	pos = consumeIdentifierRun(runes, pos)
+	return consumePlusNames(runes, consumeIdentifierRun(runes, pos))
+}
+
+// consumePlusNames continues a segment that ends at pos through each
+// '+' followed by a name, as consumeSegmentIdentifier describes.
+func consumePlusNames(runes []rune, pos int) int {
 	for pos+1 < len(runes) && runes[pos] == '+' && isIdentifierStart(runes[pos+1]) {
 		pos++ // consume '+'
 		pos = consumeIdentifierRun(runes, pos)
@@ -135,13 +183,28 @@ type ArrayReferencePattern struct{}
 func (p *ArrayReferencePattern) Name() string { return "array_path" }
 
 // Match matches a path with array indexing.
+func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
+	return matchReferencePath([]rune(input[offset:]), false)
+}
+
+// matchLeadingSlashPath matches a reference that begins with a '/', as
+// in "/b" or "/b/c". Whether a '/' may begin a reference depends on the
+// tokens before it, so only the tokenizer calls this, and only once
+// slashBeginsReference says the '/' has no left operand.
+func matchLeadingSlashPath(input string, offset int) (bool, int) {
+	return matchReferencePath([]rune(input[offset:]), true)
+}
+
+// matchReferencePath matches a reference path at the start of runes and
+// returns its length in runes. With leadingSlash set, the path may begin
+// with a '/', which the loop's '/' case consumes along with the segment
+// after it.
 //
 //nolint:gocyclo // complex pattern matching for nested brackets and quotes
-func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
+func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 	// Match pattern: identifier([expr]|.identifier|/text)*
 	// This is more complex as it needs to handle nested brackets and quotes
 
-	runes := []rune(input[offset:])
 	if len(runes) == 0 {
 		return false, 0
 	}
@@ -160,13 +223,24 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 		return pos > 0, pos
 	}
 
-	// Must start with identifier, environment variable, or digit
+	// Must start with identifier, environment variable, or digit, or with
+	// a '/' when the caller allows a leading slash
 	switch {
+	case leadingSlash && runes[pos] == '/':
+		// The loop's '/' case below consumes the '/' and its segment.
 	case unicode.IsDigit(runes[pos]):
 		numericStart = true
-		for pos < len(runes) && isIdentifierContinue(runes[pos]) {
-			pos++
-		}
+		pos = consumeNumericSegment(runes, pos)
+	case runes[pos] == '$' && len(runes) > 1 && (runes[1] == '.' || runes[1] == '['):
+		// A '$' followed by a '.' or a '[' names the document root, as
+		// spruce reads "$.meta.a" and "$[0]". Only the '$' is consumed
+		// here, and the loop's '.' and '[' cases read the rest of the
+		// path. tree.ParseCursor drops the leading "$" node, so the
+		// reference names the same node as the path without it. A "$."
+		// with no path after it still matches as "$.", so the parser
+		// can refuse it by name instead of reading it as a bad
+		// environment variable.
+		pos++
 	case runes[pos] == '$':
 		pos++
 		if pos >= len(runes) || !isIdentifierStart(runes[pos]) {
@@ -202,12 +276,19 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 			// still adds. A '$' name after the '/' stays in the path too,
 			// as it does after a '.', so "a/$X" is the one key "a/$X".
 			// That segment does not start with '$', so ResolveEnv leaves
-			// it literal, which is how spruce reads it.
+			// it literal, which is how spruce reads it. A '+' name after
+			// the '$' name continues the segment the same way, so
+			// "a/$X+y" is one key. A segment that starts with a digit
+			// keeps an exponent's '+', so "x/1e+5" is one key, and a '+'
+			// name after it, as before, so "pg/0+meta" is one key.
 			sawSlash = true
 			pos++ // consume '/'
-			if pos+1 < len(runes) && runes[pos] == '$' && isIdentifierStart(runes[pos+1]) {
-				pos = consumeIdentifierRun(runes, pos+1)
-			} else {
+			switch {
+			case pos+1 < len(runes) && runes[pos] == '$' && isIdentifierStart(runes[pos+1]):
+				pos = consumeSegmentIdentifier(runes, pos+1)
+			case pos < len(runes) && unicode.IsDigit(runes[pos]):
+				pos = consumePlusNames(runes, consumeNumericSegment(runes, pos))
+			default:
 				pos = consumeSegmentIdentifier(runes, pos)
 			}
 		case '[':
@@ -280,6 +361,13 @@ func (p *ArrayReferencePattern) Match(input string, offset int) (bool, int) {
 						pos++
 					}
 				}
+			case unicode.IsDigit(runes[pos]) && numericStart:
+				// In a path that starts with a digit, the segment after
+				// the '.' may be the rest of a number in exponent form,
+				// as in "1.5e+3/2", which spruce reads as the key "5e+3/2"
+				// inside "1". Without a '/' later in the path, finish
+				// rejects the match and the scanner reads the number.
+				pos = consumeNumericSegment(runes, pos)
 			case unicode.IsDigit(runes[pos]):
 				// Consume numeric index
 				for pos < len(runes) && unicode.IsDigit(runes[pos]) {
@@ -345,6 +433,11 @@ type AdvancedTokenizer struct {
 	nextPosition int
 	nextLine     int
 	nextColumn   int
+
+	// leftOperand records whether the last token scanned ends an
+	// operand, so that a '/' scanned next has a left operand to divide.
+	// slashBeginsReference reads it, and noteScanned keeps it current.
+	leftOperand bool
 
 	// groupStack tracks the still-open "(" / "((" groups, innermost last:
 	// true for a group opened by "((" (needs "))" to close), false for one
@@ -442,6 +535,7 @@ func (t *AdvancedTokenizer) Reset(input string) {
 	t.line = 1
 	t.column = 1
 	t.state = StateNormal
+	t.leftOperand = false
 	t.nextToken = nil
 	t.nextComputed = false
 	t.nextPosition = 0
@@ -461,8 +555,76 @@ type tokenPosition struct {
 	startColumn int
 }
 
-// scanToken performs the actual tokenization.
+// scanToken scans the next token and records whether it ends an
+// operand. Every scanned token is handed out in order, a peeked one
+// included, so the record always describes the token before the next
+// one scanned.
 func (t *AdvancedTokenizer) scanToken() Token {
+	tok := t.scanNextToken()
+	t.noteScanned(tok)
+	return tok
+}
+
+// noteScanned records whether tok ends a left operand. Literals,
+// references, environment variables, and closing brackets end one. An
+// identifier ends one too, unless it names an operator and has no left
+// operand before it, because then it opens an operator call, as "grab"
+// does in "(( grab /b ))". Every other token, such as "((", "(", ",",
+// "||", "?", ":", "!", or a binary operator, leaves no left operand.
+func (t *AdvancedTokenizer) noteScanned(tok Token) {
+	switch tok.Type {
+	case TokenInteger, TokenFloat, TokenString, TokenRawString, TokenBoolean, TokenNull,
+		TokenReference, TokenEnvironment, TokenRightParen, TokenOperatorEnd,
+		TokenRightBracket, TokenRightBrace:
+		t.leftOperand = true
+	case TokenIdentifier:
+		t.leftOperand = t.leftOperand || !t.namesOperator(tok.Literal)
+	default:
+		t.leftOperand = false
+	}
+}
+
+// namesOperator reports whether name is a registered operator, through
+// the OperatorName option.
+func (t *AdvancedTokenizer) namesOperator(name string) bool {
+	return t.options.OperatorName != nil && t.options.OperatorName(name)
+}
+
+// slashBeginsReference reports whether the '/' at the current position
+// begins a reference rather than dividing. This is the one place that
+// decides how a '/' with nothing attached before it reads. A '/' begins
+// a reference when no left operand comes before it: at the start of an
+// expression, right after an operator name that opens a call, and after
+// "(", ",", "||", "?", ":", or a binary operator. That is how spruce
+// reads "(( grab /b ))", as the key "/b". A '/' after an operand divides,
+// with or without whitespace between them, so "a / b" and "a /b" still
+// divide. A '/' attached to the end of a reference never gets here,
+// because the reference patterns consume it as part of the path.
+func (t *AdvancedTokenizer) slashBeginsReference() bool {
+	return t.options.RecognizeReferencePaths && t.state == StateNormal && !t.leftOperand
+}
+
+// scanLeadingSlashReference scans a reference that begins with the '/'
+// at the current position, once slashBeginsReference allows it. A '/'
+// with no segment attached after it, as in "grab / b", is not a
+// reference, so it falls back to the division token, as before.
+func (t *AdvancedTokenizer) scanLeadingSlashReference(pos tokenPosition) (Token, bool) {
+	matched, length := matchLeadingSlashPath(t.input, t.position)
+	if !matched || length < 2 {
+		return Token{}, false
+	}
+	value := t.input[t.position:runeSpanEnd(t.input, t.position, length)]
+	t.advance(length)
+	return Token{
+		Type:    TokenReference,
+		Literal: value,
+		Pos:     Position{Offset: pos.start, Line: pos.startLine, Column: pos.startColumn},
+		End:     Position{Offset: t.position, Line: t.line, Column: t.column},
+	}, true
+}
+
+// scanNextToken performs the actual tokenization.
+func (t *AdvancedTokenizer) scanNextToken() Token {
 	t.skipWhitespace()
 
 	if t.position >= len(t.input) {
@@ -476,6 +638,13 @@ func (t *AdvancedTokenizer) scanToken() Token {
 	}
 
 	ch := t.current()
+
+	// A '/' with no left operand before it begins a reference
+	if ch == '/' && t.slashBeginsReference() {
+		if tok, matched := t.scanLeadingSlashReference(pos); matched {
+			return tok
+		}
+	}
 
 	// Try to match reference patterns first if enabled
 	if tok, matched := t.tryMatchReferencePattern(pos); matched {

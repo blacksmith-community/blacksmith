@@ -44,8 +44,10 @@ func (LoadOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		return nil, fmt.Errorf("load operator requires exactly one literal string or reference argument")
 	}
 
-	// Use ResolveOperatorArgument to support nested expressions
-	val, err := ResolveOperatorArgument(ev, args[0])
+	// Use ResolveOperatorArgument to support nested expressions. A literal
+	// never chooses which file or URL is read, so an argument that
+	// resolves from one is refused before anything is opened or fetched.
+	val, err := resolveRefusingLiteral(ev, args[0], "load", "a file or URL")
 	if err != nil {
 		DEBUG("  arg[0]: failed to resolve expression to a concrete value")
 		DEBUG("     [0]: error was: %s", err)

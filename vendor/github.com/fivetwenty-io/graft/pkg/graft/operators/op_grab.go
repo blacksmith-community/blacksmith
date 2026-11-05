@@ -56,8 +56,13 @@ func resolveGrabArgValue(ev *Evaluator, arg *Expr) (interface{}, error) {
 	}
 
 	if arg.Type == LogicalOr {
-		if val, err := resolveGrabArgValue(ev, arg.Left); err == nil {
+		val, err := resolveGrabArgValue(ev, arg.Left)
+		if err == nil {
 			return val, nil
+		}
+		if literal.IsRefusal(err) {
+			// A refused literal is never a reason to fall back.
+			return nil, err
 		}
 		return resolveGrabArgValue(ev, arg.Right)
 	}
@@ -77,6 +82,7 @@ func resolveGrabArgValue(ev *Evaluator, arg *Expr) (interface{}, error) {
 	// the result of a nested (( grab )), stays a literal here.
 	var val interface{}
 	var err error
+	before := literal.Reads(ev)
 	if arg.Type == OperatorCall {
 		val, err = evaluateNestedOperator(ev, arg)
 	} else {
@@ -84,6 +90,9 @@ func resolveGrabArgValue(ev *Evaluator, arg *Expr) (interface{}, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if computedFromLiteral(ev, arg, val, before) {
+		return nil, literal.Refuse("grab", "a path")
 	}
 
 	if arg.Type == Reference {
@@ -102,6 +111,19 @@ func resolveGrabArgValue(ev *Evaluator, arg *Expr) (interface{}, error) {
 
 	// For literals and other non-string values, use them directly.
 	return val, nil
+}
+
+// computedFromLiteral reports whether val is a path that grab would
+// compute from a literal: arg is neither a reference nor final, val is
+// text, and resolving arg read a literal since Reads returned before. A
+// literal never names the tree path grab reads, so grab refuses such a
+// path, even one that would not parse as a path.
+func computedFromLiteral(ev *Evaluator, arg *Expr, val interface{}, before int) bool {
+	if arg.Type == Reference || valueIsFinal(arg) || !readsLiteral(ev, before) {
+		return false
+	}
+	_, isText := literal.Strip(val).(string)
+	return isText
 }
 
 // valueIsFinal reports whether arg's resolved value is grab's answer

@@ -58,8 +58,8 @@ github.com/fivetwenty-io/boshapi v0.283.9 h1:7bXDypxnbCTOxyCxdRy8fo0Zl6jsciJDKAN
 github.com/fivetwenty-io/boshapi v0.283.9/go.mod h1:tmCwLWAKaw8lfn2n5ZdpTrg9eMHmbqZ1lTO6lM8JDlE=
 github.com/fivetwenty-io/capi/v3 v3.236.0 h1:xYaMHRUKsgqHdCsspUVwFI78zBq05aSY0PnvV38e9hE=
 github.com/fivetwenty-io/capi/v3 v3.236.0/go.mod h1:tlsfNyk6anMgA7mKuUPh6U6FvWJZ32ytowPfhFztKdQ=
-github.com/fivetwenty-io/graft v1.45.1 h1:t1oeFj9IXhey9zDaTB6FmYU2Wh7tbPcOIcl2JnECx7c=
-github.com/fivetwenty-io/graft v1.45.1/go.mod h1:iDy7GOXsIK7B4SvZya/dISiKTQSh7fZ+DpWDU04hqSY=
+github.com/fivetwenty-io/graft v1.45.2 h1:SK7qpMKlFiLr5+mVXWaqQw2smnQgeNGiDE3ndwbyR00=
+github.com/fivetwenty-io/graft v1.45.2/go.mod h1:iDy7GOXsIK7B4SvZya/dISiKTQSh7fZ+DpWDU04hqSY=
 github.com/fivetwenty-io/osbapi/v2 v2.0.5 h1:jUndjFselXFszDybYeI+GYuKBJlUPpZbvEZiJ5ti+ds=
 github.com/fivetwenty-io/osbapi/v2 v2.0.5/go.mod h1:m4WIEoilMxqd82oySDN184tLH6IFahZXzehWPx3dvCc=
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=

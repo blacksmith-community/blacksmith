@@ -7,6 +7,7 @@ import (
 
 	"github.com/fivetwenty-io/graft/internal/backends/vault"
 	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -112,7 +113,10 @@ func (p *vaultArgProcessor) symbolicPlaceholder(ev *Evaluator, expr *Expr) (stri
 	return "", false
 }
 
-// resolveToString resolves an expression and converts it to a string.
+// resolveToString resolves one piece of a vault path and converts it to
+// a string. A literal never chooses which secret is read, so a piece
+// whose resolution read a literal anywhere is refused, before any
+// backend is asked for anything.
 func (p *vaultArgProcessor) resolveToString(ev *Evaluator, expr *Expr) (string, error) {
 	// A path segment carrying a skip-vault sentinel renders symbolically
 	// instead of resolving normally - resolving it normally would return
@@ -123,6 +127,19 @@ func (p *vaultArgProcessor) resolveToString(ev *Evaluator, expr *Expr) (string, 
 		return key, nil
 	}
 
+	before := literal.Reads(ev)
+	part, err := p.resolvePart(ev, expr)
+	if literal.IsRefusal(err) {
+		return "", err
+	}
+	if readsLiteral(ev, before) {
+		return "", literal.Refuse("vault", "a secret path")
+	}
+	return part, err
+}
+
+// resolvePart is resolveToString without the literal check.
+func (p *vaultArgProcessor) resolvePart(ev *Evaluator, expr *Expr) (string, error) {
 	// Check if we need to handle sub-operators
 	if p.hasSubOps {
 		result, err := p.resolveWithSubOperators(ev, expr)
@@ -470,8 +487,9 @@ func (o VaultOperator) runClassic(ev *Evaluator, args []*Expr, engine graft.Engi
 	// Build all vault paths from arguments
 	paths, err := processor.buildVaultPaths(ev)
 	if err != nil {
-		// Failed to build paths, check if we have a default
-		if processor.hasDefault {
+		// Failed to build paths, check if we have a default. A refused
+		// literal is never a reason to fall back to it.
+		if processor.hasDefault && !literal.IsRefusal(err) {
 			DEBUG("vault: failed to build paths (%s), evaluating default value", err)
 			defaultValue, evalErr := processor.evaluateDefault(ev)
 			if evalErr != nil {
@@ -496,8 +514,9 @@ func (o VaultOperator) runWithSubOperators(ev *Evaluator, args []*Expr, engine g
 	// Build all vault paths from arguments (with sub-operator support)
 	paths, err := processor.buildVaultPaths(ev)
 	if err != nil {
-		// Failed to build paths, check if we have a default
-		if processor.hasDefault {
+		// Failed to build paths, check if we have a default. A refused
+		// literal is never a reason to fall back to it.
+		if processor.hasDefault && !literal.IsRefusal(err) {
 			DEBUG("vault: failed to build paths (%s), evaluating default value", err)
 			defaultValue, evalErr := processor.evaluateDefault(ev)
 			if evalErr != nil {
@@ -754,39 +773,11 @@ func (o VaultTryOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	for i, pathExpr := range vaultPaths {
 		DEBUG("vault-try: attempting path %d of %d", i+1, len(vaultPaths))
 
-		// Resolve the path expression to a string
-		val, err := ResolveOperatorArgument(ev, pathExpr)
+		path, usable, err := resolveVaultTryPath(ev, pathExpr, i)
 		if err != nil {
-			DEBUG("vault-try: path %d failed to resolve: %s", i+1, err)
-			continue // Skip to next path
+			return nil, err
 		}
-
-		if val == nil {
-			DEBUG("vault-try: path %d resolved to nil", i+1)
-			continue // Skip to next path
-		}
-
-		// Convert to string
-		path, err := AsString(val)
-		if err != nil {
-			DEBUG("vault-try: path %d is not a string: %s", i+1, err)
-			continue // Skip to next path
-		}
-
-		if path == "" {
-			DEBUG("vault-try: path %d is empty", i+1)
-			continue // Skip to next path
-		}
-
-		// Validate path format (forgiving - just continue on malformed)
-		if !strings.Contains(path, ":") {
-			DEBUG("vault-try: path %d is malformed (no colon)", i+1)
-			continue // Skip to next path
-		}
-
-		parts := strings.Split(path, ":")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			DEBUG("vault-try: path %d is malformed", i+1)
+		if !usable {
 			continue // Skip to next path
 		}
 
@@ -820,6 +811,56 @@ func (o VaultTryOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		Type:  Replace,
 		Value: defaultValue,
 	}, nil
+}
+
+// resolveVaultTryPath resolves one (( vault-try )) path argument. It
+// reports usable=false for a path that does not resolve or is not of the
+// "path:key" form, which vault-try skips. A literal never chooses which
+// secret is read, so a path whose resolution read one is refused with an
+// error, not skipped.
+func resolveVaultTryPath(ev *Evaluator, pathExpr *Expr, i int) (path string, usable bool, err error) {
+	before := literal.Reads(ev)
+	val, err := ResolveOperatorArgument(ev, pathExpr)
+	if literal.IsRefusal(err) {
+		return "", false, err
+	}
+	if readsLiteral(ev, before) {
+		return "", false, literal.Refuse("vault-try", "a secret path")
+	}
+	if err != nil {
+		DEBUG("vault-try: path %d failed to resolve: %s", i+1, err)
+		return "", false, nil
+	}
+
+	if val == nil {
+		DEBUG("vault-try: path %d resolved to nil", i+1)
+		return "", false, nil
+	}
+
+	// Convert to string
+	path, err = AsString(val)
+	if err != nil {
+		DEBUG("vault-try: path %d is not a string: %s", i+1, err)
+		return "", false, nil
+	}
+
+	if path == "" {
+		DEBUG("vault-try: path %d is empty", i+1)
+		return "", false, nil
+	}
+
+	// Validate path format (forgiving - just continue on malformed)
+	if !strings.Contains(path, ":") {
+		DEBUG("vault-try: path %d is malformed (no colon)", i+1)
+		return "", false, nil
+	}
+
+	parts := strings.Split(path, ":")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		DEBUG("vault-try: path %d is malformed", i+1)
+		return "", false, nil
+	}
+	return path, true, nil
 }
 
 // secretNotFound is the vault operator's error for a secret or key that

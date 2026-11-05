@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -76,8 +77,13 @@ func resolveRawEnv(ev *Evaluator, e *Expr) (interface{}, error) {
 		return v, nil
 
 	case LogicalOr:
-		if v, err := resolveRawEnv(ev, e.Left); err == nil {
+		v, err := resolveRawEnv(ev, e.Left)
+		if err == nil {
 			return v, nil
+		}
+		if literal.IsRefusal(err) {
+			// A refused literal is never a reason to fall back.
+			return nil, err
 		}
 		return resolveRawEnv(ev, e.Right)
 

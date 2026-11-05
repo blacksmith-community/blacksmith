@@ -8,6 +8,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/fivetwenty-io/graft/internal/literal"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -292,6 +293,7 @@ func (op *Opcall) Run(ev *Evaluator) (*Response, error) {
 	ev.Here = op.where
 	ev.Target = op.target
 	ev.NoCache = op.noCache
+	reads := ev.literalReads
 	r, err := op.op.Run(ev, op.args)
 	ev.Here = was
 	ev.Target = wasTarget
@@ -302,6 +304,9 @@ func (op *Opcall) Run(ev *Evaluator) (*Response, error) {
 			return nil, &PathError{Path: op.where.String(), Cause: err}
 		}
 		return nil, &PathError{Path: "<generated>", Cause: err}
+	}
+	if ev.literalReads > reads {
+		keepLiteralResult(r)
 	}
 	return r, nil
 }
@@ -523,11 +528,11 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 		return e.Literal, nil
 	case Reference:
 		if e.Reference != nil {
-			v, err := e.Reference.Resolve(treeData)
+			v, err := e.Reference.ResolveLiteral(treeData)
 			if err != nil {
 				return nil, err
 			}
-			return plainValue(v), nil
+			return e.evaluator.noteLiteralRead(v), nil
 		}
 		return nil, fmt.Errorf("nil reference")
 	case EnvVar:
@@ -568,6 +573,9 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 			if err == nil {
 				// Return the value even if it's nil
 				return left, nil
+			}
+			if literal.IsRefusal(err) {
+				return nil, err
 			}
 		}
 		if e.Right != nil {

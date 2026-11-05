@@ -63,8 +63,18 @@ func (CalcOperator) Run(ev *graft.Evaluator, args []*graft.Expr) (*graft.Respons
 		return nil, fmt.Errorf("calc operator only expects one argument containing the expression")
 	}
 
-	// Resolve the argument using ResolveOperatorArgument to support nested expressions
+	// Resolve the argument using ResolveOperatorArgument to support nested
+	// expressions. A value that came from a literal is data, so it is
+	// never read as an expression: it is used as the one number it holds,
+	// or refused.
+	before := literal.Reads(ev)
 	val, err := ResolveOperatorArgument(ev, args[0])
+	if literal.IsRefusal(err) {
+		return nil, err
+	}
+	if readsLiteral(ev, before) {
+		return calcLiteralNumber(val)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +213,36 @@ func (CalcOperator) Run(ev *graft.Evaluator, args []*graft.Expr) (*graft.Respons
 	}, nil
 }
 
+// calcNumber matches a string that reads wholly as one decimal number,
+// with an optional sign, fraction, and exponent.
+var calcNumber = regexp.MustCompile(`^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$`)
+
+// calcLiteralNumber is calc's answer for an argument that came from a
+// literal. A number is that number, and so is a string that reads wholly
+// as one, give or take surrounding space. A leading sign is the number's
+// own sign, never an operator on the value already at the path.
+// Anything else is refused without evaluating it, and the error quotes
+// none of it. The result is normalized the way an evaluated expression's
+// result is, so a whole number comes back as an int64.
+func calcLiteralNumber(val interface{}) (*graft.Response, error) {
+	f, ok := calcToFloat64(val)
+	if s, isString := val.(string); isString {
+		text := strings.TrimSpace(s)
+		if calcNumber.MatchString(text) {
+			parsed, err := strconv.ParseFloat(text, 64)
+			f, ok = parsed, err == nil
+		}
+	}
+	if !ok || math.IsInf(f, 0) || math.IsNaN(f) {
+		return nil, literal.Refuse("calc", "an expression")
+	}
+	var result interface{} = f
+	if whole := int64(f); float64(whole) == f {
+		result = whole
+	}
+	return &graft.Response{Type: graft.Replace, Value: result}, nil
+}
+
 // resolveCalcVariable resolves a bare named variable that survived
 // replaceCalcReferences's dotted-path substitution.
 // It tries, in order: a sibling of the calc call's own path (ev.Here's
@@ -228,11 +268,11 @@ func resolveCalcVariable(ev *graft.Evaluator, name string) (value float64, found
 	}
 
 	for _, cursor := range candidates {
-		resolved, resolveErr := cursor.Resolve(ev.Tree)
+		resolved, resolveErr := cursor.ResolveLiteral(ev.Tree)
 		if resolveErr != nil {
 			continue
 		}
-		resolved = literal.Strip(resolved)
+		resolved = stripNotingRead(ev, resolved)
 		// An explicitly null value resolves without error but has no
 		// reflect.Type, so it gets replaceCalcReferences's own nil message
 		// rather than the type-mismatch one, which would dereference a nil
@@ -372,11 +412,11 @@ func replaceCalcReferences(ev *graft.Evaluator, input string) (string, error) {
 	cursors := searchForCursors(input)
 
 	for _, cursor := range cursors {
-		value, resolveError := cursor.Resolve(ev.Tree)
+		value, resolveError := cursor.ResolveLiteral(ev.Tree)
 		if resolveError != nil {
 			return "", resolveError
 		}
-		value = literal.Strip(value)
+		value = stripNotingRead(ev, value)
 
 		path := cursor.String()
 		DEBUG("    path/value: %s=%v", path, value)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/fivetwenty-io/graft/internal/literal"
 )
 
 // LazyExpression represents an expression that is evaluated only when needed.
@@ -113,11 +115,17 @@ func (le *LazyExpression) evaluateExpression() (interface{}, error) {
 		if le.expr.Reference == nil {
 			return nil, fmt.Errorf("invalid reference expression")
 		}
-		result, err := le.expr.Reference.Resolve(le.evaluator.Tree)
+		// ResolveLiteral keeps a value from inside a literal a literal,
+		// as (( grab )) does, and the read is counted as the engine
+		// counts it.
+		result, err := le.expr.Reference.ResolveLiteral(le.evaluator.Tree)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve reference: %w", err)
 		}
-		return plainValue(result), nil
+		if literal.Contains(result) {
+			le.evaluator.literalReads++
+		}
+		return result, nil
 
 	case OperatorCall:
 		// For operator calls, we need to evaluate through the normal operator system
@@ -130,9 +138,19 @@ func (le *LazyExpression) evaluateExpression() (interface{}, error) {
 			return nil, fmt.Errorf("unknown operator: %s", opName)
 		}
 
+		// The reads of a literal are counted as Opcall.Run counts them,
+		// so a result built from one is a literal too and a later
+		// operator that would read it as code refuses it.
+		reads := le.evaluator.literalReads
 		response, err := operator.Run(le.evaluator, args)
 		if err != nil {
 			return nil, err
+		}
+		if response == nil {
+			return nil, nil
+		}
+		if le.evaluator.literalReads > reads {
+			keepLiteralResult(response)
 		}
 
 		return response.Value, nil

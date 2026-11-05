@@ -9,6 +9,51 @@ import (
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
+//nolint:gochecknoinits // the operators package counts literal reads through these hooks from its first call
+func init() {
+	literal.SetReadHooks(
+		func(ev any) {
+			if e, ok := ev.(*Evaluator); ok && e != nil {
+				e.literalReads++
+			}
+		},
+		func(ev any) int {
+			if e, ok := ev.(*Evaluator); ok && e != nil {
+				return e.literalReads
+			}
+			return 0
+		},
+	)
+}
+
+// noteLiteralRead records that an operator read v, and reports v without
+// any literal wrapper in it. A v that is a literal, sits inside one, or
+// holds one counts as a read of a literal.
+func (ev *Evaluator) noteLiteralRead(v interface{}) interface{} {
+	plain, read := literal.StripReport(v)
+	if read && ev != nil {
+		ev.literalReads++
+	}
+	return plain
+}
+
+// keepLiteralResult makes the result of an operator call that read a
+// literal a literal too, so text the call built from a literal's content
+// is still data wherever it lands. A later operator that reads it as
+// code or as a name refuses it, just as it refuses the literal itself.
+// A result that already holds a literal, such as what (( grab )) copies
+// out of one, is left as the operator built it, and so is a nil result
+// and every response that is not a Replace.
+func keepLiteralResult(resp *Response) {
+	if resp == nil || resp.Type != Replace || resp.Value == nil {
+		return
+	}
+	if literal.Contains(resp.Value) {
+		return
+	}
+	resp.Value = literal.Wrap(resp.Value)
+}
+
 // guardLiteralResponse keeps text that an operator derived from a literal
 // from being run as an operator later. Most operators read their
 // arguments as plain data, so a (( join )) or a || fallback over a
@@ -151,6 +196,19 @@ func quotedLiteral(msg string, texts []string) string {
 	return ""
 }
 
+// withoutRefusal returns err's Error() text with the text of any refusal
+// of a literal in it taken out. A refusal quotes nothing from the value,
+// so its own words, such as the operator's name, never count as quoting
+// a literal, even when a literal happens to hold the same word.
+func withoutRefusal(err error) string {
+	msg := err.Error()
+	var refused *literal.RefusedError
+	if errors.As(err, &refused) {
+		msg = strings.ReplaceAll(msg, refused.Error(), "")
+	}
+	return msg
+}
+
 // scrubLiteralError returns err, or a withheldError in its place when op
 // read from a literal and the error's Error() text holds text from a
 // literal in the tree. An operator that read no literal keeps its
@@ -165,7 +223,7 @@ func (ev *Evaluator) scrubLiteralError(op *Opcall, err error) error {
 		return err
 	}
 	texts := literal.Texts(ev.Tree)
-	if quotedLiteral(err.Error(), texts) == "" {
+	if quotedLiteral(withoutRefusal(err), texts) == "" {
 		return err
 	}
 	if pathErr, ok := err.(*PathError); ok { //nolint:errorlint // only the outer PathError's path is kept

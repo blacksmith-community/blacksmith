@@ -55,6 +55,12 @@ type Evaluator struct {
 	// computeOp then checks each result for text read from inside one.
 	holdsLiteral bool
 
+	// literalReads counts the reads of a literal that operators make on
+	// this evaluator. computeOp gives each operator call its own copy of
+	// the evaluator, so the count belongs to one call and the calls it
+	// nests. A plain int, like depComputing, keeps that copy vet-clean.
+	literalReads int
+
 	// Reference to the engine (for accessing registries and state)
 	engine Engine
 

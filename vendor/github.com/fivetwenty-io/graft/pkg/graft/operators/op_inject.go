@@ -77,8 +77,13 @@ func (InjectOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cur
 func resolveInjectArg(ev *Evaluator, arg *Expr, viaOr bool) (interface{}, error) {
 	switch arg.Type {
 	case LogicalOr:
-		if val, err := resolveInjectArg(ev, arg.Left, true); err == nil {
+		val, err := resolveInjectArg(ev, arg.Left, true)
+		if err == nil {
 			return val, nil
+		}
+		if literal.IsRefusal(err) {
+			// A refused literal is never a reason to fall back.
+			return nil, err
 		}
 		return resolveInjectArg(ev, arg.Right, true)
 	case Reference:

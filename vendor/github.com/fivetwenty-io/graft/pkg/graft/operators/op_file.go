@@ -90,8 +90,10 @@ func (FileOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	// Argument validation and processing
 	switch len(args) {
 	case 1:
-		// Use ResolveOperatorArgument to handle nested expressions
-		val, err := ResolveOperatorArgument(ev, args[0])
+		// Use ResolveOperatorArgument to handle nested expressions. A
+		// literal never chooses which file is read, so an argument that
+		// resolves from one is refused before the file system is touched.
+		val, err := resolveRefusingLiteral(ev, args[0], "file", "a file path")
 		if err != nil {
 			DEBUG("failed to resolve expression to a concrete value")
 			DEBUG("error was: %s", err)
@@ -112,14 +114,14 @@ func (FileOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		DEBUG("using filename '%s'", filename)
 	case 2:
 		// Handle base path + filename
-		basePath, err := ResolveOperatorArgument(ev, args[0])
+		basePath, err := resolveRefusingLiteral(ev, args[0], "file", "a file path")
 		if err != nil {
 			DEBUG("failed to resolve base path expression")
 			DEBUG("error was: %s", err)
 			return nil, err
 		}
 
-		fileName, err := ResolveOperatorArgument(ev, args[1])
+		fileName, err := resolveRefusingLiteral(ev, args[1], "file", "a file path")
 		if err != nil {
 			DEBUG("failed to resolve filename expression")
 			DEBUG("error was: %s", err)

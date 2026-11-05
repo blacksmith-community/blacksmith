@@ -69,6 +69,14 @@ func (AwsOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor, auto 
 	return auto
 }
 
+// awsRole names what variant reads its key as, for a refusal.
+func awsRole(variant string) string {
+	if variant == "awsparam" {
+		return "a parameter name"
+	}
+	return "a secret name"
+}
+
 // Run will invoke the appropriate getAws* function for each instance of the AwsOperator
 // and extract the specified key (if provided).
 //
@@ -96,8 +104,11 @@ func (o AwsOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 	var l []string
 	for i, arg := range args {
-		// Use ResolveOperatorArgument to support nested expressions
-		val, resolveErr := ResolveOperatorArgument(ev, arg)
+		// Use ResolveOperatorArgument to support nested expressions. A
+		// literal never chooses which parameter or secret is read, so an
+		// argument whose resolution read one is refused before AWS is
+		// asked for anything.
+		val, resolveErr := resolveRefusingLiteral(ev, arg, o.variant, awsRole(o.variant))
 		if resolveErr != nil {
 			DEBUG("  arg[%d]: failed to resolve expression to a concrete value", i)
 			DEBUG("     [%d]: error was: %s", i, resolveErr)
