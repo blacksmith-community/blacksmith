@@ -27,8 +27,6 @@
 # differ.  With --scan DIR it only scans the YAML under DIR and renders
 # nothing.
 
-require 'bosh/template'
-require 'bosh/template/renderer'
 require 'digest'
 require 'fileutils'
 require 'json'
@@ -272,6 +270,10 @@ if options[:scan]
   puts "scan: #{unknown.length} problem(s)"
   exit(unknown.empty? ? 0 : 1)
 end
+
+# Only rendering needs the bosh-template gem, so --scan runs without it.
+require 'bosh/template'
+require 'bosh/template/renderer'
 
 config = YAML.load_file(File.join(HERE, 'variants.yml'))
 work = options[:work] || Dir.mktmpdir('forge-downloads-')
