@@ -437,13 +437,37 @@ func ParseFirstBody(data []byte, tag bool) (ast.Node, error) {
 	return PrepareBody(body, tag)
 }
 
+// ParseFirstBodyAsWritten parses data and returns the root node of its
+// first document with every alias expanded and every merge key folded,
+// as ExpandBody describes, or nil when data holds no document. Unlike
+// ParseFirstBody, it leaves each tag where the text put it and resolves
+// none, so a caller can tell how a scalar was written, such as a null
+// written as ~ from one written as !!null ~. It fails an alias inside
+// its own anchor's collection, and a document that expands past
+// maxExpandedNodes.
+func ParseFirstBodyAsWritten(data []byte) (ast.Node, error) {
+	file, err := yamlnode.ParseBytes(data, 0)
+	if err != nil {
+		return nil, err
+	}
+	body := yamlnode.FirstBody(file)
+	if body == nil {
+		return nil, nil
+	}
+	if err := CheckAnchors(body); err != nil {
+		return nil, err
+	}
+	return ExpandBody(body)
+}
+
 // PrepareBody is the part of ParseFirstBody that follows the parse. It
 // takes body, the root node of a document, which may come from goccy's
 // parser or be built by hand, and returns it ready for DecodeBody. It
 // fails a body with an alias inside the collection its anchor names, or
 // with an invalid tag, resolves every scalar with an explicit core tag as
 // spruce does (see ResolveTags), marks the quoted YAML 1.1
-// boolean-lookalike scalars when tag is set, and expands every alias. It
+// boolean-lookalike scalars when tag is set, expands every alias, and
+// folds every << merge key into its mapping as spruce does. It
 // rewrites body in place, so a caller passes a body that nothing else
 // holds.
 func PrepareBody(body ast.Node, tag bool) (ast.Node, error) {
@@ -466,7 +490,9 @@ func PrepareBody(body ast.Node, tag bool) (ast.Node, error) {
 
 	// The tagger runs first, since expansion shares one subtree among
 	// every alias to it, and the tagger must mark each scalar only once.
-	return ExpandAliases(body)
+	// Merge keys fold after aliases expand, so a merge key that names an
+	// anchor reads the anchor's map (see ExpandBody).
+	return ExpandBody(body)
 }
 
 // DecodeFirst decodes the first document of data into v the way goccy's

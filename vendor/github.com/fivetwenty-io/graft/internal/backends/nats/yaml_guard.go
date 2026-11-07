@@ -1,21 +1,19 @@
 package natsbackend
 
 import (
-	"github.com/goccy/go-yaml"
-
-	"github.com/fivetwenty-io/graft/internal/yamlnode"
+	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 )
 
-// unmarshalGuarded decodes the first YAML document in data into out.
-// It runs the data through yamlnode.FirstDocument before yaml.Unmarshal,
-// which refuses nesting past the depth limit and cuts the data after the
-// first document. A value read from a NATS store is written by whoever
-// can write the key, and goccy's decoder spends close to a gigabyte on
-// a few thousand unclosed brackets when it is given the data directly.
-func unmarshalGuarded(data []byte, out any) error {
-	first, err := yamlnode.FirstDocument(data)
-	if err != nil {
-		return err
-	}
-	return yaml.Unmarshal(first, out)
+// decodeGuarded decodes the first YAML document in data, a value read
+// from a NATS store, through the merge's own YAML layer. A value read
+// from a NATS store is written by whoever can write the key, so the
+// layer's guards matter here. Nesting past the depth limit fails before
+// anything tokenizes it, aliases that would expand past the merge's node
+// cap fail rather than expand, and every failure is
+// yamlcodec.ErrExternalValue, whose text names no part of the value. The
+// value reads the way a merge document reads, so plain yes and no are
+// booleans and 010 is octal. JSON decodes the same way, since it is
+// YAML.
+func decodeGuarded(data []byte) (any, error) {
+	return yamlcodec.DecodeExternal(data)
 }

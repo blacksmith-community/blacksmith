@@ -85,11 +85,13 @@ func OperatorForEngine(e Engine, name string) Operator {
 	return graft.OperatorForEngine(e, name)
 }
 
-// ResolveEnv resolves environment variables in a slice of strings.
+// ResolveEnv replaces each $NAME node with the value of the environment
+// variable NAME, whatever the length of the name. A node whose variable is
+// unset or empty, and a lone "$", stay as written.
 func ResolveEnv(nodes []string) []string {
 	// Phase 1: Simple implementation
 	for i, node := range nodes {
-		if len(node) > 2 && node[0] == '$' {
+		if len(node) > 1 && node[0] == '$' {
 			if val := os.Getenv(node[1:]); val != "" {
 				nodes[i] = val
 			}

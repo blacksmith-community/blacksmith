@@ -8,6 +8,7 @@ import (
 	"github.com/fivetwenty-io/graft/internal/backends/vault"
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -488,8 +489,9 @@ func (o VaultOperator) runClassic(ev *Evaluator, args []*Expr, engine graft.Engi
 	paths, err := processor.buildVaultPaths(ev)
 	if err != nil {
 		// Failed to build paths, check if we have a default. A refused
-		// literal is never a reason to fall back to it.
-		if processor.hasDefault && !literal.IsRefusal(err) {
+		// literal, or a grab of an operator that has not run, is never a
+		// reason to fall back to it.
+		if processor.hasDefault && !pending.StopsFallback(err) {
 			DEBUG("vault: failed to build paths (%s), evaluating default value", err)
 			defaultValue, evalErr := processor.evaluateDefault(ev)
 			if evalErr != nil {
@@ -515,8 +517,9 @@ func (o VaultOperator) runWithSubOperators(ev *Evaluator, args []*Expr, engine g
 	paths, err := processor.buildVaultPaths(ev)
 	if err != nil {
 		// Failed to build paths, check if we have a default. A refused
-		// literal is never a reason to fall back to it.
-		if processor.hasDefault && !literal.IsRefusal(err) {
+		// literal, or a grab of an operator that has not run, is never a
+		// reason to fall back to it.
+		if processor.hasDefault && !pending.StopsFallback(err) {
 			DEBUG("vault: failed to build paths (%s), evaluating default value", err)
 			defaultValue, evalErr := processor.evaluateDefault(ev)
 			if evalErr != nil {

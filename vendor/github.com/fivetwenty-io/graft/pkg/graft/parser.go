@@ -10,7 +10,7 @@ import (
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/exprlex"
-	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/pkg/graft/interfaces"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -54,6 +54,69 @@ type Parser struct {
 	// parses reuse the same Parser instance rather than constructing a new
 	// one, so the engine threads through recursion for free.
 	engine Engine
+
+	// calls, when non-nil, collects every operator call whose name
+	// opens the call on its own, keyed by the byte offset of that name
+	// (OperatorCalls).
+	calls map[int]CallSpan
+}
+
+// CallSpan is one operator call OperatorCalls found. Name is the
+// operator's name, and End is the byte offset just past the call's last
+// argument, so the call's text runs from its name's offset to End.
+type CallSpan struct {
+	Name string
+	End  int
+}
+
+// OperatorCalls parses expr, the text between "((" and "))", the way e's
+// parser does, and returns every operator call in it, keyed by the byte
+// offset in expr of the identifier that names it. It reports only a name
+// that opens the call on its own, which is a registered operator
+// followed by a token that can begin an argument, so "type" in
+// "type || x" and "join" alone in "join" are left out. A name in
+// argument position, as the second "join" in `join ", " join`, is a
+// reference and is left out too. The result is nil when expr does not
+// parse. The control-flow loop rewrite uses it to leave an operator
+// name alone when a loop variable shares it, and to leave the argument
+// text of a defer as the user wrote it.
+func OperatorCalls(e Engine, expr string) map[int]CallSpan {
+	const lead = "(( "
+	p := NewParserForEngine(lead+expr+" ))", EvalPhase, e)
+	p.calls = map[int]CallSpan{}
+	if err := p.tokenize(); err != nil {
+		return nil
+	}
+	if p.current().Type != interfaces.TokenOperatorStart {
+		return nil
+	}
+	p.advance()
+	p.opcallPos = p.pos
+	if _, err := p.parseExpression(); err != nil {
+		return nil
+	}
+	if p.current().Type != interfaces.TokenOperatorEnd {
+		return nil
+	}
+	out := make(map[int]CallSpan, len(p.calls))
+	for off, call := range p.calls {
+		call.End -= len(lead)
+		out[off-len(lead)] = call
+	}
+	return out
+}
+
+// OperatorCallNames is OperatorCalls with only each call's name.
+func OperatorCallNames(e Engine, expr string) map[int]string {
+	calls := OperatorCalls(e, expr)
+	if calls == nil {
+		return nil
+	}
+	out := make(map[int]string, len(calls))
+	for off, call := range calls {
+		out[off] = call.Name
+	}
+	return out
 }
 
 // maxNestingDepth bounds "(" / "((" nesting depth.
@@ -490,11 +553,40 @@ func (p *Parser) parsePrimary() (*Expr, error) {
 		interfaces.TokenFor, interfaces.TokenIn, interfaces.TokenDone, interfaces.TokenWhile,
 		interfaces.TokenCase, interfaces.TokenWhen, interfaces.TokenDefault, interfaces.TokenEsac,
 		interfaces.TokenOn, interfaces.TokenBefore, interfaces.TokenAfter, interfaces.TokenRange, interfaces.TokenOperatorName:
-		return nil, fmt.Errorf("unexpected token: %v (%s) at position %d",
-			tok.Type, tok.Literal, tok.Pos.Offset)
+		return nil, p.unexpectedPrimary(tok)
 	}
-	return nil, fmt.Errorf("unexpected token: %v (%s) at position %d",
+	return nil, p.unexpectedPrimary(tok)
+}
+
+// unexpectedPrimary returns the error for a token that cannot begin a
+// primary. A '.' glued to a name, number, or path after it is a path
+// with an empty first segment, as in "(( grab .meta ))", so it gets the
+// empty-segment error instead.
+func (p *Parser) unexpectedPrimary(tok interfaces.Token) error {
+	if tok.Type == interfaces.TokenDot && p.dotLeadsPath() {
+		return emptySegmentError(tok.Pos.Offset)
+	}
+	return fmt.Errorf("unexpected token: %v (%s) at position %d",
 		tok.Type, tok.Literal, tok.Pos.Offset)
+}
+
+// dotLeadsPath reports whether the '.' at the current position is glued
+// to a token that could be a path segment, so the two together read as a
+// path whose first segment is empty.
+func (p *Parser) dotLeadsPath() bool {
+	dot := p.current()
+	next := p.tokenAt(p.pos + 1)
+	if next.Pos.Offset != dot.End.Offset {
+		return false
+	}
+	switch next.Type {
+	case interfaces.TokenIdentifier, interfaces.TokenReference, interfaces.TokenInteger,
+		interfaces.TokenFloat, interfaces.TokenDot, interfaces.TokenEnvironment,
+		interfaces.TokenBoolean, interfaces.TokenNull, interfaces.TokenLeftBracket:
+		return true
+	default:
+		return false
+	}
 }
 
 // parseInteger parses an integer literal.
@@ -781,6 +873,12 @@ func (p *Parser) nextTokenPlacesIdentifierInOperandPosition() bool {
 //
 //nolint:gocyclo // operator call parsing supports multiple argument styles
 func (p *Parser) parseOperatorCall(opName string) (*Expr, error) {
+	if p.calls != nil && p.identifierOpensOpcallAt(p.pos) {
+		start := p.current().Pos.Offset
+		defer func() {
+			p.calls[start] = CallSpan{Name: opName, End: p.tokenAt(p.pos - 1).End.Offset}
+		}()
+	}
 	p.advance() // consume operator name
 
 	op := p.operatorFor(opName)
@@ -905,7 +1003,7 @@ func (p *Parser) parseOperatorCall(opName string) (*Expr, error) {
 
 		// Check for binary operators that would end the argument list
 		// Handle || as a LogicalOr marker for fallback expressions
-		if p.isBinaryOperator(p.current().Type) && !nextIsNumber {
+		if p.isBinaryOperator(p.current().Type) && !nextIsNumber && !p.minusGluedToDigitName(p.pos) {
 			if p.current().Type == interfaces.TokenOr {
 				// Capture || and the fallback value as a LogicalOr expression
 				// This handles (( grab this || "that" )) and (( concat a || b  c || d ))
@@ -916,7 +1014,7 @@ func (p *Parser) parseOperatorCall(opName string) (*Expr, error) {
 				// here (no "@target", no explicit "(") open its own
 				// call under the same two-token rule parseOperand
 				// applies elsewhere — see its doc comment.
-				right, err := p.withOpcallEligibility(p.parsePrimary)
+				right, err := p.withOpcallEligibility(p.parseArgument)
 				if err != nil {
 					return nil, err
 				}
@@ -940,7 +1038,7 @@ func (p *Parser) parseOperatorCall(opName string) (*Expr, error) {
 			break
 		}
 
-		arg, err := p.parsePrimary()
+		arg, err := p.parseArgument()
 		if err != nil {
 			return nil, err
 		}
@@ -969,6 +1067,82 @@ func (p *Parser) parseOperatorCall(opName string) (*Expr, error) {
 		expr.SetModifier("nocache")
 	}
 	return expr, nil
+}
+
+// parseArgument parses one space-separated operator argument, or one
+// side of an argument's ||. A number in exponent form that stands as a
+// whole argument is a reference there, the way spruce reads it, so
+// "(( grab 1e5 ))" reads the key "1e5" and "(( grab 1.5e3 ))" reads the
+// key "5e3" inside "1". A '-' glued in front of it is part of the name,
+// so "-1e5" is one key, and so is a '-' glued in front of a digit-led
+// name, as in "-3abc". Everything else goes to parsePrimary unchanged.
+func (p *Parser) parseArgument() (*Expr, error) {
+	tok := p.current()
+	idx := p.pos
+	if tok.Type == interfaces.TokenMinus {
+		next := p.tokenAt(p.pos + 1)
+		if next.Pos.Offset != tok.End.Offset {
+			return p.parsePrimary()
+		}
+		idx++
+	}
+	if !p.exponentArgumentAt(idx) && !p.minusGluedToDigitName(p.pos) {
+		return p.parsePrimary()
+	}
+	path := p.tokenAt(idx).Literal
+	if idx > p.pos {
+		path = "-" + path
+	}
+	if at := emptySegmentAt(path); at >= 0 {
+		return nil, emptySegmentError(p.current().Pos.Offset + at)
+	}
+	cursor, err := tree.ParseCursor(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid reference path in an operator argument")
+	}
+	for p.pos <= idx {
+		p.advance()
+	}
+	return &Expr{
+		Type:           Reference,
+		Reference:      cursor,
+		BracketedNodes: tree.BracketsOf(path),
+	}, nil
+}
+
+// minusGluedToDigitName reports whether the token at idx is a '-' glued
+// to a reference that starts with a digit, such as the "3abc" in "-3abc".
+// In argument position the two are one key, as spruce reads them, the
+// same way a '-' glued to "1e5" is.
+func (p *Parser) minusGluedToDigitName(idx int) bool {
+	minus := p.tokenAt(idx)
+	next := p.tokenAt(idx + 1)
+	return minus.Type == interfaces.TokenMinus &&
+		next.Type == interfaces.TokenReference &&
+		next.Pos.Offset == minus.End.Offset &&
+		next.Literal != "" && next.Literal[0] >= '0' && next.Literal[0] <= '9'
+}
+
+// exponentArgumentAt reports whether the token at idx is a number in
+// exponent form that is a whole argument. It is one unless an infix
+// operator follows it, which makes it the left operand of an expression,
+// as in "(( grab 1e5 + 1 ))". The test is the one the argument loop uses
+// to end the list, so || and a '-' before a number, which both continue
+// the list, leave the number a whole argument.
+func (p *Parser) exponentArgumentAt(idx int) bool {
+	tok := p.tokenAt(idx)
+	if tok.Type != interfaces.TokenFloat || !strings.ContainsAny(tok.Literal, "eE") {
+		return false
+	}
+	next := p.tokenAt(idx + 1)
+	if next.Type == interfaces.TokenOr || !p.isBinaryOperator(next.Type) {
+		return true
+	}
+	if next.Type == interfaces.TokenMinus {
+		after := p.tokenAt(idx + 2)
+		return after.Type == interfaces.TokenInteger || after.Type == interfaces.TokenFloat
+	}
+	return false
 }
 
 // modifierFollowsAt reports whether the token at nameIdx (an operator
@@ -1080,9 +1254,60 @@ func (p *Parser) parseReferencePath(start string) (*Expr, error) {
 	}, nil
 }
 
+// emptySegmentError is the one error for a reference path with an empty
+// segment, from a leading '.' or two '.' in a row. spruce drops the empty
+// segment and reads the path without it, which hides a typo, so graft
+// refuses the path. The message gives the offset of the dot that makes
+// the empty segment, counted from the start of the expression, and
+// quotes none of the path.
+func emptySegmentError(offset int) error {
+	return fmt.Errorf("a reference path has an empty segment at position %d, from a leading '.' or two '.' in a row", offset)
+}
+
+// emptySegmentAt returns the byte offset in a reference literal of the
+// dot that makes an empty segment, which is a leading '.' or the second
+// of two '.' in a row outside a bracket, or -1 when there is none. Text
+// inside brackets is a key or an expression of its own, so its dots are
+// not path separators.
+func emptySegmentAt(path string) int {
+	if strings.HasPrefix(path, ".") {
+		return 0
+	}
+	depth := 0
+	var quote rune
+	prevDot := false
+	for i, r := range path {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+			continue
+		case depth > 0 && (r == '"' || r == '\''):
+			quote = r
+			continue
+		case r == '[':
+			depth++
+		case r == ']' && depth > 0:
+			depth--
+		case r == '.' && depth == 0:
+			if prevDot {
+				return i
+			}
+			prevDot = true
+			continue
+		}
+		prevDot = false
+	}
+	return -1
+}
+
 // parseReference parses a reference token.
 func (p *Parser) parseReference() (*Expr, error) {
 	tok := p.current()
+	if at := emptySegmentAt(tok.Literal); at >= 0 {
+		return nil, emptySegmentError(tok.Pos.Offset + at)
+	}
 	p.advance()
 
 	cursor, err := tree.ParseCursor(tok.Literal)
@@ -1480,7 +1705,7 @@ func evaluateKeepingLiteral(e *Expr, treeData interface{}) (interface{}, error) 
 			if err == nil {
 				return left, nil
 			}
-			if literal.IsRefusal(err) {
+			if pending.StopsFallback(err) {
 				return nil, err
 			}
 		}

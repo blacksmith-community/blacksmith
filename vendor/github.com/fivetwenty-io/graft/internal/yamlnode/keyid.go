@@ -152,7 +152,9 @@ const duplicateKeyMessage = "mapping key already defined at "
 // when no key does. It stands in for goccy's own check, which compares
 // keys by their text alone, and so it checks the keys goccy checks. It
 // passes a key with no colon after it in a flow mapping, such as each a
-// in {a, a}, which goccy neither checks nor counts.
+// in {a, a}, which goccy neither checks nor counts, and it passes a
+// second << merge key, which spruce's YAML library reads as a second
+// merge.
 func checkDuplicateKeys(file *ast.File) error {
 	c := &dupChecker{}
 	for _, doc := range file.Docs {
@@ -203,7 +205,7 @@ func (c *dupChecker) mapping(pairs []*ast.MappingValueNode, flow bool) {
 			continue
 		}
 		at := pair.Key.GetToken()
-		if !flow || pair.Start != at {
+		if !IsMergeKey(pair.Key) && (!flow || pair.Start != at) {
 			id, _ := KeyIDOf(pair.Key)
 			if first, repeat := keys.Add(id, at); repeat && at != nil && at.Position != nil {
 				c.err = &yaml.SyntaxError{Message: duplicateKeyMessage + place(first), Token: at}

@@ -364,3 +364,40 @@ func containerError(format string, current interface{}) error {
 	}
 	return fmt.Errorf(format, current)
 }
+
+// NormalizeBrackets rewrites each simple bracketed node in a path to the
+// dotted spelling, so "list[0]", "list.[0]", and "list.0" all name the
+// same node, the way spruce's ParseCursor reads them. Only a bracket
+// that holds a plain word is rewritten. A bracket that holds a dot (the
+// QuoteNode spelling), an equals sign, a quote, a space, or nothing, and
+// any unbalanced bracket, is left as written, so a path that depends on
+// one of those spellings keeps its current meaning.
+func NormalizeBrackets(path string) string {
+	if !strings.Contains(path, "[") {
+		return path
+	}
+	var out strings.Builder
+	for i := 0; i < len(path); i++ {
+		if path[i] != '[' {
+			out.WriteByte(path[i])
+			continue
+		}
+		end := strings.IndexAny(path[i+1:], "[]")
+		if end < 0 || path[i+1+end] != ']' {
+			out.WriteString(path[i:])
+			return out.String()
+		}
+		inner := path[i+1 : i+1+end]
+		if inner == "" || strings.ContainsAny(inner, ".=\"' ") {
+			out.WriteString(path[i : i+end+2])
+			i += end + 1
+			continue
+		}
+		if s := out.String(); s != "" && !strings.HasSuffix(s, ".") {
+			out.WriteByte('.')
+		}
+		out.WriteString(inner)
+		i += end + 1
+	}
+	return out.String()
+}

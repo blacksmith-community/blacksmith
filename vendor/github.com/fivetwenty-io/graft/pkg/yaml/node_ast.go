@@ -567,11 +567,16 @@ func bareKey(t *Node, i int) bool {
 
 // checkKey records key among keys, the keys of one mapping so far, and
 // keeps the first repeated key it finds as b.err. Keys compare as the
-// text route compares them, which yamlnode.KeyID describes. alias says the key is an AliasNode, which compares as the
-// empty text, as goccy's parser compares an alias, even where the
-// alias's anchor lies outside the tree and key holds the value written
-// in its place.
+// text route compares them, which yamlnode.KeyID describes. alias says
+// the key is an AliasNode, which compares as the empty text, as goccy's
+// parser compares an alias, even where the alias's anchor lies outside
+// the tree and key holds the value written in its place. A << merge key
+// repeats no key, since a second one is a second merge, as the text
+// route reads it.
 func (b *astBuilder) checkKey(keys *yamlnode.KeySet[*token.Position], key ast.MapKeyNode, alias bool) {
+	if !alias && yamlnode.IsMergeKey(key) {
+		return
+	}
 	id, _ := yamlnode.KeyIDOf(key)
 	if alias {
 		id = yamlnode.KeyID{}

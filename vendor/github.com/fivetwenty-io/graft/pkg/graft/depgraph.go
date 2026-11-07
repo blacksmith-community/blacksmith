@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -58,12 +59,52 @@ type OperatorRef struct {
 // update itself if doc changes afterward (call BuildDependencyGraph again
 // for a fresh snapshot - e.g. after Evaluate, if a "(( grab ... ))" result
 // turned out to be itself-unevaluated YAML with more operator calls).
+//
+// Soft dependencies are kept whole. An operator that waits on every
+// operator under a path, such as a grab with a computed key, would
+// otherwise need one edge for each operator under that path, and a
+// document with many of them would need an edge for each pair. The graph
+// keeps each such path once, as a graphBarrier, and writes out its edges
+// only for the paths Dependencies, Dependents, ToDOT, and DetectCycles
+// are asked about.
 type DependencyGraph struct {
 	phase      OperatorPhase
 	order      []string // canonical paths, sorted, for stable Nodes() order
 	nodes      map[string]OperatorRef
-	deps       map[string][]string // path -> paths it depends on (must run first), sorted
-	dependents map[string][]string // path -> paths that depend on it, sorted
+	deps       map[string][]string // path -> paths it hard-depends on (must run first), sorted
+	dependents map[string][]string // path -> paths that hard-depend on it, sorted
+
+	// waits holds the soft barriers each path waits on, with how many
+	// members it keeps, and memberOf holds the barriers each path is a
+	// member of, with its place among the members.
+	waits    map[string][]barrierRef
+	memberOf map[string][]barrierRef
+	// sorted holds each path once, in the order the sequential sort
+	// placed it, and is nil when the graph has no soft barriers.
+	sorted []string
+}
+
+// graphBarrier is one soft barrier a DependencyGraph keeps whole: the
+// paths of its members, in the order the sort placed them, and its
+// waiters. A waiter depends on the members before its count.
+type graphBarrier struct {
+	members []string
+	waiters []graphWaiter
+}
+
+// graphWaiter is one waiter of a graphBarrier and how many members, from
+// the start, it depends on.
+type graphWaiter struct {
+	path string
+	kept int
+}
+
+// barrierRef points into a graphBarrier. In DependencyGraph.waits, n is
+// how many members the path keeps, and in DependencyGraph.memberOf, n is
+// the path's place among the members.
+type barrierRef struct {
+	bar *graphBarrier
+	n   int
 }
 
 // newDependencyGraph builds a DependencyGraph from a dataFlowGraph -
@@ -99,11 +140,11 @@ func newDependencyGraph(phase OperatorPhase, dfg *dataFlowGraph) *DependencyGrap
 	// pair more than once - e.g. an operator whose two arguments both
 	// resolve to the same producing opcall. Dedup so Dependencies() and
 	// Dependents() each report a path once.
-	seen := make(map[string]bool)
-	for _, pair := range dfg.edges {
+	seen := make(map[[2]string]bool, len(dfg.hard))
+	for _, pair := range dfg.hard {
 		depPath := pair[0].canonical.String()
 		dependentPath := pair[1].canonical.String()
-		key := depPath + "\x00" + dependentPath
+		key := [2]string{depPath, dependentPath}
 		if seen[key] {
 			continue
 		}
@@ -120,7 +161,46 @@ func newDependencyGraph(phase OperatorPhase, dfg *dataFlowGraph) *DependencyGrap
 		sort.Strings(g.dependents[path])
 	}
 
+	g.addSoft(dfg)
 	return g
+}
+
+// addSoft copies the soft barriers the sort kept into g, each once, with
+// every operator named by its canonical path.
+func (g *DependencyGraph) addSoft(dfg *dataFlowGraph) {
+	_, kept := dfg.keptSoft()
+	if len(kept) == 0 {
+		return
+	}
+	paths := make(map[*Opcall]string, len(dfg.order))
+	pathOf := func(op *Opcall) string {
+		p, ok := paths[op]
+		if !ok {
+			p = op.canonical.String()
+			paths[op] = p
+		}
+		return p
+	}
+	g.waits = make(map[string][]barrierRef)
+	g.memberOf = make(map[string][]barrierRef)
+	listed := make(map[string]bool, len(dfg.order))
+	for _, op := range dfg.order {
+		if p := pathOf(op); !listed[p] {
+			listed[p] = true
+			g.sorted = append(g.sorted, p)
+		}
+	}
+	for _, kb := range kept {
+		bar := &graphBarrier{members: make([]string, len(kb.members)), waiters: make([]graphWaiter, len(kb.waiters))}
+		for i, op := range kb.members {
+			bar.members[i] = pathOf(op)
+			g.memberOf[bar.members[i]] = append(g.memberOf[bar.members[i]], barrierRef{bar: bar, n: i})
+		}
+		for i, w := range kb.waiters {
+			bar.waiters[i] = graphWaiter{path: pathOf(w.op), kept: w.kept}
+			g.waits[bar.waiters[i].path] = append(g.waits[bar.waiters[i].path], barrierRef{bar: bar, n: w.kept})
+		}
+	}
 }
 
 // BuildDependencyGraph scans doc for phase's operator calls and returns a
@@ -178,7 +258,16 @@ func (g *DependencyGraph) Dependencies(path string) []string {
 	if g == nil {
 		return nil
 	}
-	return append([]string(nil), g.deps[path]...)
+	out := append([]string(nil), g.deps[path]...)
+	waits := g.waits[path]
+	if len(waits) == 0 {
+		return out
+	}
+	for _, ref := range waits {
+		out = append(out, ref.bar.members[:ref.n]...)
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
 }
 
 // Dependents returns the canonical paths of operator calls that depend on
@@ -188,7 +277,20 @@ func (g *DependencyGraph) Dependents(path string) []string {
 	if g == nil {
 		return nil
 	}
-	return append([]string(nil), g.dependents[path]...)
+	out := append([]string(nil), g.dependents[path]...)
+	refs := g.memberOf[path]
+	if len(refs) == 0 {
+		return out
+	}
+	for _, ref := range refs {
+		for _, w := range ref.bar.waiters {
+			if w.kept > ref.n {
+				out = append(out, w.path)
+			}
+		}
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
 }
 
 // DetectCycles returns every elementary cycle in the graph, each as an
@@ -199,11 +301,27 @@ func (g *DependencyGraph) Dependents(path string) []string {
 // than one node on it is also reachable from outside the cycle - callers
 // that need a deduplicated set can dedupe by the sorted set of paths each
 // cycle slice contains.
+//
+// A soft edge never closes a cycle, so the graph is cyclic exactly when
+// its hard edges are, and an acyclic graph is answered without writing
+// out its soft edges. A cyclic one has them written out, so the search
+// walks the same edges in the same order as it always has.
 func (g *DependencyGraph) DetectCycles() [][]string {
 	if g == nil {
 		return nil
 	}
-	return findCycles(g.dependents, g.order)
+	cycles := findCycles(g.dependents, g.order)
+	if cycles == nil || len(g.memberOf) == 0 {
+		return cycles
+	}
+	all := make(map[string][]string, len(g.dependents)+len(g.memberOf))
+	for path := range g.dependents {
+		all[path] = g.Dependents(path)
+	}
+	for path := range g.memberOf {
+		all[path] = g.Dependents(path)
+	}
+	return findCycles(all, g.order)
 }
 
 func indexOfString(s []string, v string) int {
@@ -252,7 +370,7 @@ func (g *DependencyGraph) ToDOT() string {
 			fmt.Fprintf(&b, "  %q [label=%q];\n", path, fmt.Sprintf("%s: %s", path, ref.Operator))
 		}
 		for _, from := range g.order {
-			for _, to := range g.dependents[from] {
+			for _, to := range g.Dependents(from) {
 				fmt.Fprintf(&b, "  %q -> %q;\n", from, to)
 			}
 		}
@@ -293,9 +411,13 @@ func BuildEvalPlan(g *DependencyGraph) []EvalWave {
 		return nil
 	}
 
+	soft := g.softSchedDeps()
 	scheduler := parallel.NewScheduler()
 	for _, path := range g.order {
-		deps := append([]string(nil), g.deps[path]...)
+		deps, ok := soft[path]
+		if !ok {
+			deps = append([]string(nil), g.deps[path]...)
+		}
 		// AddTask only fails on a nil task or empty ID, neither possible
 		// here: path comes from g.order, which is derived from g.nodes'
 		// own non-empty keys.
@@ -317,6 +439,56 @@ func BuildEvalPlan(g *DependencyGraph) []EvalWave {
 		result[i] = EvalWave{Operators: ops}
 	}
 	return result
+}
+
+// softSchedDeps returns, for each path that waits on a soft barrier,
+// its hard dependencies plus the soft ones the scheduler needs, which
+// finishSchedTasks picks the same way it does for RunPhaseParallel: the
+// tasks are the paths in the order the sort placed them, and each waiter
+// names the member with the latest wave among those it keeps, which puts
+// it in the same wave as naming every one. It returns nil when g has no
+// soft barriers.
+func (g *DependencyGraph) softSchedDeps() map[string][]string {
+	if len(g.waits) == 0 {
+		return nil
+	}
+	tasks := make([]*schedTask, 0, len(g.order))
+	place := make(map[string]int, len(g.order))
+	schedBar := make(map[*graphBarrier]*schedBarrier)
+	memberOf := make(map[string][]*schedBarrier)
+	addTask := func(path string, waits []barrierRef) {
+		task := &schedTask{id: path, deps: append([]string(nil), g.deps[path]...)}
+		for _, ref := range waits {
+			bar, ok := schedBar[ref.bar]
+			if !ok {
+				bar = &schedBarrier{members: ref.bar.members}
+				schedBar[ref.bar] = bar
+			}
+			task.soft = append(task.soft, bar)
+		}
+		place[path] = len(tasks)
+		tasks = append(tasks, task)
+	}
+	for _, path := range g.sorted {
+		if _, ok := g.nodes[path]; ok {
+			addTask(path, g.waits[path])
+		}
+	}
+	for _, path := range g.order {
+		if _, ok := place[path]; !ok {
+			addTask(path, nil)
+		}
+	}
+	for ref, bar := range schedBar {
+		for _, path := range ref.members {
+			memberOf[path] = append(memberOf[path], bar)
+		}
+	}
+	out := make(map[string][]string, len(tasks))
+	for _, task := range finishSchedTasks(tasks, place, memberOf) {
+		out[task.id] = task.deps
+	}
+	return out
 }
 
 // validateEvalPlan checks that waves does not order any operator call at
@@ -355,25 +527,138 @@ func (e *DefaultEngine) validateEvalPlan(data map[string]interface{}, waves []Ev
 			return fmt.Errorf("%w: could not compute live dependency graph for phase %v: %w", ErrInvalidEvalPlan, phase, err)
 		}
 
-		for _, pair := range dfg.edges {
-			depPath := pair[0].canonical.String()
-			dependentPath := pair[1].canonical.String()
-
-			depPos, depKnown := position[depPath]
-			dependentPos, dependentKnown := position[dependentPath]
-			if !depKnown || !dependentKnown {
-				// waves did not mention one side of this live edge - not
-				// this function's concern; see the doc comment above.
-				continue
-			}
-			if depPos >= dependentPos {
-				return fmt.Errorf("%w: %s (wave %d) is not scheduled strictly before its dependent %s (wave %d)",
-					ErrInvalidEvalPlan, depPath, depPos, dependentPath, dependentPos)
-			}
+		if err := checkPlanOrder(dfg, position); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// checkPlanOrder returns ErrInvalidEvalPlan for the first edge of dfg
+// that position, which maps paths to waves, does not order strictly
+// forward. The hard edges come first, then each waiter's soft edges in
+// the order the sort placed the waiters, and a waiter's edges in the
+// order the sort placed its members. An edge with a side position does
+// not name is not this check's concern; see validateEvalPlan.
+func checkPlanOrder(dfg *dataFlowGraph, position map[string]int) error {
+	for _, pair := range dfg.hard {
+		depPath := pair[0].canonical.String()
+		dependentPath := pair[1].canonical.String()
+
+		depPos, depKnown := position[depPath]
+		dependentPos, dependentKnown := position[dependentPath]
+		if !depKnown || !dependentKnown {
+			continue
+		}
+		if depPos >= dependentPos {
+			return misorderedEdge(depPath, depPos, dependentPath, dependentPos)
+		}
+	}
+	return checkSoftPlanOrder(dfg, position)
+}
+
+// misorderedEdge is the error for an edge a plan does not order
+// strictly forward.
+func misorderedEdge(depPath string, depPos int, dependentPath string, dependentPos int) error {
+	return fmt.Errorf("%w: %s (wave %d) is not scheduled strictly before its dependent %s (wave %d)",
+		ErrInvalidEvalPlan, depPath, depPos, dependentPath, dependentPos)
+}
+
+// planWait is one soft barrier a waiter keeps members of, as
+// checkSoftPlanOrder sees it. latest[i] is the latest wave the plan
+// gives any of the barrier's first i members, or -1 when it names none.
+type planWait struct {
+	bar    *keptBarrier
+	latest []int
+	kept   int
+}
+
+// planWaves looks up and remembers the wave a plan gives each operator.
+type planWaves struct {
+	position map[string]int
+	wave     map[*Opcall]int
+}
+
+// of returns the wave the plan gives op, and whether the plan names it.
+func (p *planWaves) of(op *Opcall) (int, bool) {
+	w, ok := p.wave[op]
+	if !ok {
+		w, ok = p.position[op.canonical.String()]
+		if !ok {
+			w = -1
+		}
+		p.wave[op] = w
+	}
+	return w, w >= 0
+}
+
+// checkSoftPlanOrder is checkPlanOrder for the soft edges, which it
+// never writes out. Each barrier keeps the latest wave among each prefix
+// of its members, so a waiter is checked against all the members it
+// keeps at once, and the members are read one by one only for the
+// waiter whose check fails.
+func checkSoftPlanOrder(dfg *dataFlowGraph, position map[string]int) error {
+	pos, kept := dfg.keptSoft()
+	if len(kept) == 0 {
+		return nil
+	}
+	plan := &planWaves{position: position, wave: make(map[*Opcall]int, len(pos))}
+	waits := make(map[*Opcall][]planWait)
+	for i := range kept {
+		bar := &kept[i]
+		latest := make([]int, len(bar.members)+1)
+		latest[0] = -1
+		for j, b := range bar.members {
+			latest[j+1] = latest[j]
+			if w, ok := plan.of(b); ok && w > latest[j+1] {
+				latest[j+1] = w
+			}
+		}
+		for _, w := range bar.waiters {
+			waits[w.op] = append(waits[w.op], planWait{bar: bar, latest: latest, kept: w.kept})
+		}
+	}
+
+	done := make(map[*Opcall]bool, len(pos))
+	for _, a := range dfg.order {
+		if done[a] {
+			continue
+		}
+		done[a] = true
+		at, ok := plan.of(a)
+		if !ok {
+			continue
+		}
+		if first := firstTooLate(waits[a], at, plan, pos); first != nil {
+			depPos, _ := plan.of(first)
+			return misorderedEdge(first.canonical.String(), depPos, a.canonical.String(), at)
+		}
+	}
+	return nil
+}
+
+// firstTooLate returns the member, among those waits keeps, that sorted
+// first of the ones the plan puts at wave at or later, or nil when there
+// is none.
+func firstTooLate(waits []planWait, at int, plan *planWaves, pos map[*Opcall]int) *Opcall {
+	var first *Opcall
+	for _, w := range waits {
+		if w.latest[w.kept] < at {
+			continue
+		}
+		// The members are in sort order, so the first one too late is
+		// the earliest this barrier offers.
+		for _, b := range w.bar.members[:w.kept] {
+			if bw, ok := plan.of(b); ok && bw >= at {
+				if first == nil || pos[b] < pos[first] {
+					first = b
+				}
+				break
+			}
+		}
+	}
+	return first
 }
 
 // EvaluateParallel evaluates doc using the engine's real parallel

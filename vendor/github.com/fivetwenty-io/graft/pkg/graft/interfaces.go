@@ -6,9 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/goccy/go-yaml"
-
-	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -171,6 +169,24 @@ type Operator interface {
 	Phase() OperatorPhase
 }
 
+// SoftDependent is implemented by operators that should run after some
+// other operators when the dependency graph allows it, without making
+// those operators hard dependencies. Each path an operator returns
+// stands for every operator at or under it, other than the operator
+// itself, and the evaluator orders the operator after all of them
+// unless that would close a cycle. Every operator that names the same
+// path shares one node in the graph, so a path with many operators
+// under it costs no more when many operators name it. (( grab )) uses
+// it for the path it reads, so the value it copies holds the results of
+// the operators under that path, and for a path whose bracket key is
+// computed, where the target is not known until the key is.
+type SoftDependent interface {
+	// SoftDependencies returns the paths whose operators this call
+	// should run after, given its arguments and every operator path in
+	// the phase.
+	SoftDependencies(ev *Evaluator, args []*Expr, locs []*tree.Cursor) []*tree.Cursor
+}
+
 // TargetAware is implemented by operators that support selecting a backend
 // instance via "@target" call syntax (e.g. "(( vault@prod "path:key" ))").
 // Opcall.Run consults it before running any operator whose call carried a
@@ -270,6 +286,37 @@ func (op *Opcall) Dependencies(ev *Evaluator, locs []*tree.Cursor) []*tree.Curso
 	return op.op.Dependencies(ev, op.args, locs, l)
 }
 
+// SoftDependencies returns the soft dependencies of this operator call:
+// those its operator reports, if it is SoftDependent, and those of every
+// operator call nested in its arguments.
+func (op *Opcall) SoftDependencies(ev *Evaluator, locs []*tree.Cursor) []*tree.Cursor {
+	var l []*tree.Cursor
+	if op.op == nil {
+		return nil
+	}
+	if sd, ok := op.op.(SoftDependent); ok {
+		l = append(l, sd.SoftDependencies(ev, op.args, locs)...)
+	}
+	for _, arg := range op.args {
+		l = append(l, arg.softDependencies(ev, locs)...)
+	}
+	return l
+}
+
+// softDependencies returns the soft dependencies of every operator call
+// nested in e.
+func (e *Expr) softDependencies(ev *Evaluator, locs []*tree.Cursor) []*tree.Cursor {
+	if e == nil {
+		return nil
+	}
+	var l []*tree.Cursor
+	if e.Type == OperatorCall && e.Call != nil {
+		l = append(l, e.Call.SoftDependencies(ev, locs)...)
+	}
+	l = append(l, e.Left.softDependencies(ev, locs)...)
+	return append(l, e.Right.softDependencies(ev, locs)...)
+}
+
 // Run executes this operator call.
 func (op *Opcall) Run(ev *Evaluator) (*Response, error) {
 	if op.target != "" {
@@ -287,6 +334,10 @@ func (op *Opcall) Run(ev *Evaluator) (*Response, error) {
 		}
 	}
 
+	if ev.outerCall == nil {
+		ev.outerCall = op
+		defer func() { ev.outerCall = nil }()
+	}
 	was := ev.Here
 	wasTarget := ev.Target
 	wasNoCache := ev.NoCache
@@ -540,14 +591,7 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 		if val == "" {
 			return val, nil
 		}
-		var unmarshaled interface{}
-		if err := yaml.Unmarshal([]byte(val), &unmarshaled); err == nil {
-			unmarshaled = yamlcodec.NormalizeValue(unmarshaled)
-			if _, isString := unmarshaled.(string); !isString {
-				return unmarshaled, nil
-			}
-		}
-		return val, nil
+		return yamlcodec.DecodeEnvValue(val), nil
 	case OperatorCall:
 		// Evaluate nested operator call using the evaluator
 		if e.evaluator == nil {
@@ -574,7 +618,7 @@ func (e *Expr) Evaluate(treeData interface{}) (interface{}, error) {
 				// Return the value even if it's nil
 				return left, nil
 			}
-			if literal.IsRefusal(err) {
+			if pending.StopsFallback(err) {
 				return nil, err
 			}
 		}

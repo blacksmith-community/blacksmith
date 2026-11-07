@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/cppforlife/go-patch/patch"
+	"github.com/goccy/go-yaml/ast"
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
@@ -226,7 +228,9 @@ func ParseGoPatch(data []byte) (patch.Ops, error) {
 // DecodeFirst read from data, with the value a merge input would hold.
 // So a plain yes in a value becomes a boolean, while a quoted word, a
 // !!str word, and a block scalar stay strings. An op that has no value
-// keeps none, so NewOpsFromDefinitions still reports it.
+// keeps none, so NewOpsFromDefinitions still reports it, except where
+// spruce's YAML library gives go-patch a null value, as nullValues
+// describes.
 func goPatchValues(data []byte, opdefs []patch.OpDefinition) error {
 	generic, err := yamlcodec.DecodeFirstGeneric(data)
 	if err != nil {
@@ -236,7 +240,16 @@ func goPatchValues(data []byte, opdefs []patch.OpDefinition) error {
 	if !ok || len(items) != len(opdefs) {
 		return fmt.Errorf("go-patch ops decoded as %T, not a list of %d ops", generic, len(opdefs))
 	}
+	nulls, err := nullValues(data, opdefs)
+	if err != nil {
+		return err
+	}
 	for i := range opdefs {
+		if nulls[i] {
+			var null any
+			opdefs[i].Value = &null
+			continue
+		}
 		if opdefs[i].Value == nil {
 			continue
 		}
@@ -248,4 +261,74 @@ func goPatchValues(data []byte, opdefs []patch.OpDefinition) error {
 		opdefs[i].Value = &value
 	}
 	return nil
+}
+
+// nullValues reports, for each op in opdefs that has no value, whether
+// data writes its value as a null that spruce's YAML library hands
+// go-patch as a value. That library leaves a value unset for null, for
+// an empty value, and for any value tagged !!null, and it sets one for
+// every other null, such as ~, Null, and NULL. So "value: ~" sets the
+// path to null, while "value: null" fails with go-patch's missing value
+// error, in spruce and here. An alias reads as the node it names, so an
+// alias to ~ sets null and an alias to null does not.
+func nullValues(data []byte, opdefs []patch.OpDefinition) ([]bool, error) {
+	out := make([]bool, len(opdefs))
+	if !slices.ContainsFunc(opdefs, func(d patch.OpDefinition) bool { return d.Value == nil }) {
+		return out, nil
+	}
+	body, err := yamlcodec.ParseFirstBodyAsWritten(data)
+	if err != nil {
+		return nil, err
+	}
+	seq, ok := unanchored(body).(*ast.SequenceNode)
+	if !ok || len(seq.Values) != len(opdefs) {
+		return nil, fmt.Errorf("go-patch ops parsed as %T, not a list of %d ops", body, len(opdefs))
+	}
+	for i, item := range seq.Values {
+		if opdefs[i].Value != nil {
+			continue
+		}
+		var pairs []*ast.MappingValueNode
+		switch op := unanchored(item).(type) {
+		case *ast.MappingNode:
+			pairs = op.Values
+		case *ast.MappingValueNode:
+			pairs = []*ast.MappingValueNode{op}
+		}
+		for _, pair := range pairs {
+			if id, ok := yamlnode.KeyIDOf(pair.Key); ok && !id.Null && id.Text == "value" {
+				out[i] = setsNull(pair.Value)
+			}
+		}
+	}
+	return out, nil
+}
+
+// setsNull reports whether n, the value of an op, is a null with no tag
+// written as anything but null or nothing at all.
+func setsNull(n ast.Node) bool {
+	null, ok := unanchored(n).(*ast.NullNode)
+	if !ok {
+		return false
+	}
+	tk := null.GetToken()
+	if tk == nil {
+		return false
+	}
+	switch tk.Value {
+	case "~", "Null", "NULL":
+		return true
+	}
+	return false
+}
+
+// unanchored returns n without the anchors on it.
+func unanchored(n ast.Node) ast.Node {
+	for {
+		a, ok := n.(*ast.AnchorNode)
+		if !ok {
+			return n
+		}
+		n = a.Value
+	}
 }

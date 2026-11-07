@@ -2,6 +2,7 @@ package operators
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -11,10 +12,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/goccy/go-yaml"
 
 	awsbackend "github.com/fivetwenty-io/graft/internal/backends/aws"
 	"github.com/fivetwenty-io/graft/internal/errtext"
+	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -186,14 +187,10 @@ func (o AwsOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 		subkey := params.Get("key")
 		if subkey != "" {
-			tmp := make(map[string]interface{})
-			err := yaml.Unmarshal([]byte(value), &tmp)
-
+			tmp, err := awsSubkeyMap(value)
 			if err != nil {
 				return nil, errtext.WithPlain(fmt.Errorf("$.%s error extracting key: %w", key, err), "error extracting key from the "+o.variant+" value")
 			}
-
-			tmp = graft.NormalizeMap(tmp)
 
 			if _, ok := tmp[subkey]; !ok {
 				return nil, errtext.WithPlain(fmt.Errorf("$.%s invalid key '%s'", key, subkey), "invalid key for the "+o.variant+" value")
@@ -400,4 +397,29 @@ func init() {
 	// Register the two variants of the AwsOperator
 	RegisterOp("awsparam", AwsOperator{variant: "awsparam"})
 	RegisterOp("awssecret", AwsOperator{variant: "awssecret"})
+}
+
+// errAwsValueNotMap is the error awsSubkeyMap gives for a value that
+// decodes to something other than a map. Like yamlcodec.ErrExternalValue,
+// it names no part of the value, which is a secret.
+var errAwsValueNotMap = errors.New("the value is not a YAML map")
+
+// awsSubkeyMap decodes value, the whole parameter or secret, as a map so
+// that a ?key= subkey can be read from it, as spruce does. The decode goes
+// through the merge's own YAML layer, so plain yes and no become booleans,
+// 010 is octal, only the first document counts, and aliases are capped. A
+// value with no document, or a null one, is an empty map, so the subkey is
+// reported missing. No error quotes the value.
+func awsSubkeyMap(value string) (map[string]interface{}, error) {
+	v, err := yamlcodec.DecodeExternal([]byte(value))
+	if err != nil {
+		return nil, err
+	}
+	switch m := v.(type) {
+	case nil:
+		return map[string]interface{}{}, nil
+	case map[string]interface{}:
+		return m, nil
+	}
+	return nil, errAwsValueNotMap
 }

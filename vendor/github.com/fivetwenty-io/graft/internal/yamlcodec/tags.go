@@ -133,7 +133,9 @@ func resolveMappingValue(mv *ast.MappingValueNode) error {
 // otherwise walks the node it tags, dropping a core tag that sits on a
 // collection. A node takes one tag, and an alias
 // takes none, so t on another tag or on an alias fails, as it does in
-// spruce, whose parser stops there.
+// spruce, whose parser stops there. The error for a second tag names the
+// line of that tag, where spruce's names the line before it, or none on
+// the first line.
 func resolveTagNode(t *ast.TagNode) (ast.Node, error) {
 	inner := t.Value
 	if a, ok := inner.(*ast.AnchorNode); ok {
@@ -141,7 +143,8 @@ func resolveTagNode(t *ast.TagNode) (ast.Node, error) {
 	}
 	switch x := inner.(type) {
 	case *ast.TagNode:
-		return nil, propertyError(x.Start, "found a second tag on one node")
+		line, col := position(x.Start)
+		return nil, &yamlnode.ParseError{Line: line, SourceLine: line, SourceColumn: col, Message: "found a second tag on one node"}
 	case *ast.AliasNode:
 		return nil, propertyError(x.Start, "found a tag on an alias")
 	}

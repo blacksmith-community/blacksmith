@@ -20,9 +20,9 @@ import (
 // its token, so every error still names the right line. It does the same
 // for the keys of a mapping that fills a struct, since goccy matches
 // keys to fields as strings and empties the whole struct when a key is
-// anything else, and for the keys of a typed map with string keys. It
-// also turns a << merge key whose value is a list into one merge key for
-// each item, which goccy accepts in a struct.
+// anything else, and for the keys of a typed map with string keys. The
+// body comes from yamlcodec.PrepareBody, which has folded every << merge
+// key into its mapping, so the walk meets none.
 //
 // Alias expansion shares one subtree among every alias to an anchor, and
 // two aliases can fill places of different types, so the walk never
@@ -169,9 +169,7 @@ func (w *textWalk) sequence(seq *ast.SequenceNode, elem reflect.Type) ast.Node {
 
 // structMapping returns n prepared to fill a struct of type t. Every key
 // becomes a string, and each value is prepared for the one type that
-// reads its key, if there is exactly one. A << merge key's value fills
-// the same struct, and a list of them becomes one merge key for each,
-// in the same order, so the later map wins, as on the generic route.
+// reads its key, if there is exactly one.
 func (w *textWalk) structMapping(n ast.Node, t reflect.Type) ast.Node {
 	m, ok := n.(*ast.MappingNode)
 	if !ok {
@@ -181,22 +179,12 @@ func (w *textWalk) structMapping(n ast.Node, t reflect.Type) ast.Node {
 	// pairs stays nil until a pair changes, and then holds every pair.
 	var pairs []*ast.MappingValueNode
 	for i, mv := range m.Values {
-		got := []*ast.MappingValueNode{mv}
-		if seq, ok := mv.Value.(*ast.SequenceNode); ok && mv.Key.IsMergeKey() {
-			got = got[:0]
-			for _, item := range seq.Values {
-				c := *mv
-				c.Value = w.node(item, t)
-				got = append(got, &c)
-			}
-		} else {
-			got[0] = w.pair(mv, t, keyText, keys.valueType)
-		}
-		if pairs == nil && (len(got) != 1 || got[0] != mv) {
-			pairs = append(make([]*ast.MappingValueNode, 0, len(m.Values)+len(got)), m.Values[:i]...)
+		got := w.pair(mv, keyText, keys.valueType)
+		if pairs == nil && got != mv {
+			pairs = append(make([]*ast.MappingValueNode, 0, len(m.Values)), m.Values[:i]...)
 		}
 		if pairs != nil {
-			pairs = append(pairs, got...)
+			pairs = append(pairs, got)
 		}
 	}
 	if pairs == nil {
@@ -208,7 +196,7 @@ func (w *textWalk) structMapping(n ast.Node, t reflect.Type) ast.Node {
 }
 
 // typedMapping returns n prepared to fill a map of type t. Each value is
-// prepared for the element type, and each << merge value for t itself.
+// prepared for the element type.
 // A key becomes its source text when the map's keys are strings, unless
 // its values are generic, whose keys follow the generic route.
 func (w *textWalk) typedMapping(n ast.Node, t reflect.Type) ast.Node {
@@ -226,7 +214,7 @@ func (w *textWalk) typedMapping(n ast.Node, t reflect.Type) ast.Node {
 	elem := func(string) (reflect.Type, bool) { return t.Elem(), true }
 	var out *ast.MappingNode
 	for i, mv := range m.Values {
-		got := w.pair(mv, t, key, elem)
+		got := w.pair(mv, key, elem)
 		if got == mv {
 			continue
 		}
@@ -243,23 +231,13 @@ func (w *textWalk) typedMapping(n ast.Node, t reflect.Type) ast.Node {
 	return out
 }
 
-// pair returns mv prepared to sit in a mapping that fills a value of
-// type t. key rewrites the key, and value gives the type the value
-// under a key fills, or false when the walk must leave the value alone.
-func (w *textWalk) pair(mv *ast.MappingValueNode, t reflect.Type, key func(ast.MapKeyNode) ast.MapKeyNode, value func(string) (reflect.Type, bool)) *ast.MappingValueNode {
-	k, v := mv.Key, mv.Value
-	switch {
-	case k.IsMergeKey():
-		if seq, ok := v.(*ast.SequenceNode); ok {
-			v = w.sequence(seq, t)
-		} else {
-			v = w.node(v, t)
-		}
-	default:
-		k = key(k)
-		if ft, ok := value(keyString(k)); ok {
-			v = w.node(v, ft)
-		}
+// pair returns mv prepared to sit in a mapping. key rewrites the key,
+// and value gives the type the value under a key fills, or false when
+// the walk must leave the value alone.
+func (w *textWalk) pair(mv *ast.MappingValueNode, key func(ast.MapKeyNode) ast.MapKeyNode, value func(string) (reflect.Type, bool)) *ast.MappingValueNode {
+	k, v := key(mv.Key), mv.Value
+	if ft, ok := value(keyString(k)); ok {
+		v = w.node(v, ft)
 	}
 	if k == mv.Key && v == mv.Value {
 		return mv

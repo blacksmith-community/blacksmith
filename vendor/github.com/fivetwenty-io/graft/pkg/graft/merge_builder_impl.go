@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/cppforlife/go-patch/patch"
 
 	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/loopbind"
 	"github.com/fivetwenty-io/graft/pkg/graft/interfaces"
 	"github.com/fivetwenty-io/graft/pkg/graft/merger"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -193,7 +195,7 @@ func (m *mergeBuilderImpl) WithCherryPick(keys ...string) MergeBuilder {
 func trimRootPrefix(keys []string) []string {
 	out := make([]string, len(keys))
 	for i, k := range keys {
-		out[i] = strings.TrimPrefix(k, "$.")
+		out[i] = tree.NormalizeBrackets(strings.TrimPrefix(k, "$."))
 	}
 	return out
 }
@@ -1194,6 +1196,7 @@ func (m *mergeBuilderImpl) applyPostProcessing(doc Document, startTime time.Time
 	}
 
 	allPruneKeys := m.collectPruneKeys(result)
+	loopBound := !m.skipEvaluation && slices.Contains(allPruneKeys, loopBindingKey)
 
 	// Apply pruning AFTER evaluation so that grab operators can reference values before they're pruned
 	if len(allPruneKeys) > 0 {
@@ -1206,6 +1209,13 @@ func (m *mergeBuilderImpl) applyPostProcessing(doc Document, startTime time.Time
 		if pruneErr != nil {
 			return nil, pruneErr
 		}
+	}
+
+	// With the loop bindings pruned, a loop body's text that evaluation
+	// passed through as a string reads as the user wrote it. The
+	// evaluated tree is this run's own, so the walk changes it in place.
+	if loopBound {
+		loopbind.WithoutText(treeOf(result))
 	}
 
 	// Apply queued (( sort by X )) list ordering AFTER all pruning and
@@ -1310,8 +1320,8 @@ func (m *mergeBuilderImpl) collectPruneKeys(result Document) []string {
 	if !ok {
 		return keys
 	}
-	if _, present := resultData["__graft_loop"]; present {
-		keys = append(keys, "__graft_loop")
+	if _, present := resultData[loopBindingKey]; present {
+		keys = append(keys, loopBindingKey)
 	}
 	return keys
 }
@@ -1479,13 +1489,41 @@ func (m *mergeBuilderImpl) applyCherryPicking(doc Document) (Document, error) {
 	type arraySelection struct {
 		indices map[int]bool
 		names   map[string]bool
+		// partials holds each element picked by a path that goes on
+		// below it (jobs.0.k), keyed by its index, with the order the
+		// elements were first picked in.
+		partials map[int]interface{}
+		// pickOrder lists every picked element, whole or partial, in the
+		// order it was first picked.
+		pickOrder []int
 	}
 	arrayPaths := make(map[string]*arraySelection)
+	selectionFor := func(parentPath string) *arraySelection {
+		if arrayPaths[parentPath] == nil {
+			arrayPaths[parentPath] = &arraySelection{
+				indices:  make(map[int]bool),
+				names:    make(map[string]bool),
+				partials: make(map[int]interface{}),
+			}
+		}
+		return arrayPaths[parentPath]
+	}
 	regularPaths := []string{}
 
 	// First pass: categorize and group paths
 	for _, keyPath := range m.cherryPickKeys {
 		parts := strings.Split(keyPath, ".")
+
+		if arrayPath, idx, elem, ok := partialListPick(data, parts); ok {
+			sel := selectionFor(arrayPath)
+			if prev, seen := sel.partials[idx]; seen {
+				elem = mergePickedValues(prev, elem)
+			} else {
+				sel.pickOrder = append(sel.pickOrder, idx)
+			}
+			sel.partials[idx] = elem
+			continue
+		}
 
 		if len(parts) >= 2 {
 			parentPath := strings.Join(parts[:len(parts)-1], ".")
@@ -1498,26 +1536,20 @@ func (m *mergeBuilderImpl) applyCherryPicking(doc Document) (Document, error) {
 					if idx, isNum := isNumericIndex(lastPart); isNum {
 						if idx >= 0 && idx < len(arr) {
 							// Valid numeric index
-							if arrayPaths[parentPath] == nil {
-								arrayPaths[parentPath] = &arraySelection{
-									indices: make(map[int]bool),
-									names:   make(map[string]bool),
-								}
-							}
-							arrayPaths[parentPath].indices[idx] = true
+							sel := selectionFor(parentPath)
+							sel.indices[idx] = true
+							sel.pickOrder = append(sel.pickOrder, idx)
 							continue
 						}
 					} else {
 						// Try named lookup
 						_, found := findNamedArrayEntry(arr, lastPart)
 						if found {
-							if arrayPaths[parentPath] == nil {
-								arrayPaths[parentPath] = &arraySelection{
-									indices: make(map[int]bool),
-									names:   make(map[string]bool),
-								}
+							sel := selectionFor(parentPath)
+							sel.names[lastPart] = true
+							if namedIdx, _, ok := findNamedArrayEntryWithIndex(arr, lastPart); ok {
+								sel.pickOrder = append(sel.pickOrder, namedIdx)
 							}
-							arrayPaths[parentPath].names[lastPart] = true
 							continue
 						}
 					}
@@ -1538,6 +1570,14 @@ func (m *mergeBuilderImpl) applyCherryPicking(doc Document) (Document, error) {
 		}
 
 		selectedItems := []interface{}{}
+
+		if len(selection.partials) > 0 {
+			selectedItems = orderPartialSelection(arr, selection.indices, selection.names, selection.partials, selection.pickOrder)
+			if err := m.setKey(result, parentPath, selectedItems); err != nil {
+				return nil, err
+			}
+			continue
+		}
 
 		// Iterate through the array in reverse order
 		// This matches the expected test behavior where higher indices come first
@@ -2095,4 +2135,133 @@ func valuesEqual(a, b interface{}) bool {
 	// For maps and slices, use fmt.Sprintf comparison as a simple deep equality check
 	// This is not the most efficient but handles nested structures
 	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+}
+
+// partialListPick reports whether a cherry-pick path goes through a list
+// element and on below it (jobs.0.k), the case spruce answers with a
+// list that holds only the picked part of that element. It returns the
+// dotted path of the list, the index of the element, and the element
+// reduced to the picked part. A path that ends at the element, or that
+// does not pass through a list, or that does not resolve, reports false
+// and is handled as before.
+func partialListPick(data map[string]interface{}, parts []string) (string, int, interface{}, bool) {
+	var current interface{} = data
+	for i, part := range parts {
+		switch v := current.(type) {
+		case map[string]interface{}:
+			next, ok := v[part]
+			if !ok {
+				return "", 0, nil, false
+			}
+			current = next
+		case []interface{}:
+			if i == len(parts)-1 {
+				return "", 0, nil, false
+			}
+			idx, ok := listPickIndex(v, part)
+			if !ok {
+				return "", 0, nil, false
+			}
+			elem, ok := reduceToPick(v[idx], parts[i+1:])
+			if !ok {
+				return "", 0, nil, false
+			}
+			return strings.Join(parts[:i], "."), idx, elem, true
+		default:
+			return "", 0, nil, false
+		}
+	}
+	return "", 0, nil, false
+}
+
+// listPickIndex resolves one cherry-pick segment, a number or a name, to
+// an index into list.
+func listPickIndex(list []interface{}, part string) (int, bool) {
+	if idx, isNum := isNumericIndex(part); isNum {
+		return idx, idx >= 0 && idx < len(list)
+	}
+	idx, _, found := findNamedArrayEntryWithIndex(list, part)
+	return idx, found
+}
+
+// reduceToPick returns the part of value that the path names, wrapped in
+// the same maps and lists that lead to it, deep copied.
+func reduceToPick(value interface{}, path []string) (interface{}, bool) {
+	if len(path) == 0 {
+		cp, err := deepCopyValue(value)
+		return cp, err == nil
+	}
+	switch v := value.(type) {
+	case map[string]interface{}:
+		child, ok := v[path[0]]
+		if !ok {
+			return nil, false
+		}
+		sub, ok := reduceToPick(child, path[1:])
+		if !ok {
+			return nil, false
+		}
+		return map[string]interface{}{path[0]: sub}, true
+	case []interface{}:
+		idx, ok := listPickIndex(v, path[0])
+		if !ok {
+			return nil, false
+		}
+		sub, ok := reduceToPick(v[idx], path[1:])
+		if !ok {
+			return nil, false
+		}
+		return []interface{}{sub}, true
+	}
+	return nil, false
+}
+
+// mergePickedValues combines two picks of the same list element. Maps
+// combine key by key, and anything else takes the later pick.
+func mergePickedValues(prev, next interface{}) interface{} {
+	pm, pok := prev.(map[string]interface{})
+	nm, nok := next.(map[string]interface{})
+	if !pok || !nok {
+		return next
+	}
+	for k, nv := range nm {
+		if pv, exists := pm[k]; exists {
+			pm[k] = mergePickedValues(pv, nv)
+		} else {
+			pm[k] = nv
+		}
+	}
+	return pm
+}
+
+// orderPartialSelection lists the picked elements of arr for a selection
+// that holds at least one partial pick. Like spruce, the element picked
+// last comes first, so the elements appear in the reverse of the order
+// they were first picked in. An element picked whole, by index or name,
+// appears whole even when a longer path also picked part of it.
+func orderPartialSelection(arr []interface{}, indices map[int]bool, names map[string]bool, partials map[int]interface{}, order []int) []interface{} {
+	whole := make(map[int]bool, len(indices)+len(names))
+	for idx := range indices {
+		whole[idx] = true
+	}
+	for name := range names {
+		if idx, _, found := findNamedArrayEntryWithIndex(arr, name); found {
+			whole[idx] = true
+		}
+	}
+	items := []interface{}{}
+	seen := make(map[int]bool, len(order))
+	for i := len(order) - 1; i >= 0; i-- {
+		idx := order[i]
+		if seen[idx] {
+			continue
+		}
+		seen[idx] = true
+		if part, ok := partials[idx]; ok && !whole[idx] {
+			items = append(items, part)
+		} else {
+			items = append(items, arr[idx])
+		}
+	}
+	return items
 }

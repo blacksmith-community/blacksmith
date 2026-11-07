@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/fivetwenty-io/graft/internal/logfilter"
 )
 
 // DebugOn enables debug level logging when set to true.
@@ -38,17 +40,7 @@ func init() {
 //nolint:goprintffuncname // DEBUG is an established name used throughout the codebase
 func DEBUG(format string, args ...interface{}) {
 	if DebugOn {
-		content := fmt.Sprintf(format, args...)
-		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			lines[i] = "DEBUG> " + line
-		}
-		content = strings.Join(lines, "\n")
-		if Writer != nil {
-			_, _ = fmt.Fprintf(Writer, "%s\n", content)
-			return
-		}
-		PrintStdErrf("%s\n", content)
+		emit("DEBUG> ", fmt.Sprintf(format, args...))
 	}
 }
 
@@ -57,16 +49,27 @@ func DEBUG(format string, args ...interface{}) {
 //nolint:goprintffuncname // TRACE is an established name used throughout the codebase
 func TRACE(format string, args ...interface{}) {
 	if TraceOn {
-		content := fmt.Sprintf(format, args...)
-		lines := strings.Split(content, "\n")
-		for i, line := range lines {
-			lines[i] = "-----> " + line
-		}
-		content = strings.Join(lines, "\n")
-		if Writer != nil {
-			_, _ = fmt.Fprintf(Writer, "%s\n", content)
+		emit("-----> ", fmt.Sprintf(format, args...))
+	}
+}
+
+// emit writes each line of content behind prefix, after passing the
+// whole of content through logfilter.Hook when it is set.
+func emit(prefix, content string) {
+	if logfilter.Hook != nil {
+		var keep bool
+		if content, keep = logfilter.Hook(content); !keep {
 			return
 		}
-		PrintStdErrf("%s\n", content)
 	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	content = strings.Join(lines, "\n")
+	if Writer != nil {
+		_, _ = fmt.Fprintf(Writer, "%s\n", content)
+		return
+	}
+	PrintStdErrf("%s\n", content)
 }

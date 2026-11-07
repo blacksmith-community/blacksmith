@@ -156,6 +156,43 @@ func isExponentMantissa(run []rune) bool {
 	return true
 }
 
+// numberEnd returns the index one past the number that starts at pos:
+// digits, then an optional '.' and digits, then an optional exponent. An
+// exponent is an 'e' or 'E', an optional sign, and at least one digit,
+// so the "e" in "1e" or "3em" is not one. pos may hold the '.' of a
+// fraction with no integer part, as in ".5".
+func numberEnd(runes []rune, pos int) int {
+	pos = consumeDigitRun(runes, pos)
+	if pos+1 < len(runes) && runes[pos] == '.' && unicode.IsDigit(runes[pos+1]) {
+		pos = consumeDigitRun(runes, pos+1)
+	}
+	if pos < len(runes) && (runes[pos] == 'e' || runes[pos] == 'E') {
+		digits := pos + 1
+		if digits < len(runes) && (runes[digits] == '+' || runes[digits] == '-') {
+			digits++
+		}
+		if digits < len(runes) && unicode.IsDigit(runes[digits]) {
+			pos = consumeDigitRun(runes, digits)
+		}
+	}
+	return pos
+}
+
+// digitLedNameEnd reports whether the run that starts with a digit at
+// pos is a name rather than a number, and where the name ends. The run
+// is a name when a letter or '_' follows the number at its start, as in
+// "3abc", "3em", "1e", or "2e5x", and then the name takes every name
+// character after that, '-' included. spruce reads such a run as one key.
+// A '-' right after the number is not part of a name, so "3-1" and
+// "2e5-1" still subtract.
+func digitLedNameEnd(runes []rune, pos int) (int, bool) {
+	end := numberEnd(runes, pos)
+	if end >= len(runes) || !isIdentifierStart(runes[end]) {
+		return pos, false
+	}
+	return consumeIdentifierRun(runes, end), true
+}
+
 // consumeSegmentIdentifier consumes an identifier appearing after a dot,
 // where a '+' followed by an identifier character continues the same
 // segment: genesis's vaultified manifests use map keys like
@@ -211,13 +248,17 @@ func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 
 	pos := 0
 
-	// A path whose first segment starts with a digit is a reference only
-	// when a '/' joins it to more text, as in "8/2" or "0/x". Without a
-	// '/' the scanner reads it as a number, as it always has.
+	// A path whose first segment is a number is a reference only when a
+	// '/' joins it to more text, as in "8/2" or "0/x", or when a name
+	// segment follows the whole number, as in "1e5.x" or "1.foo". Without either
+	// the scanner reads it as a number, as it always has. A first segment
+	// that starts with a digit but is a name, as "3abc" is, starts the
+	// path the way an identifier does.
 	numericStart := false
 	sawSlash := false
+	sawName := false
 	finish := func() (bool, int) {
-		if numericStart && !sawSlash {
+		if numericStart && !sawSlash && !sawName {
 			return false, 0
 		}
 		return pos > 0, pos
@@ -229,6 +270,10 @@ func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 	case leadingSlash && runes[pos] == '/':
 		// The loop's '/' case below consumes the '/' and its segment.
 	case unicode.IsDigit(runes[pos]):
+		if end, isName := digitLedNameEnd(runes, pos); isName {
+			pos = end
+			break
+		}
 		numericStart = true
 		pos = consumeNumericSegment(runes, pos)
 	case runes[pos] == '$' && len(runes) > 1 && (runes[1] == '.' || runes[1] == '['):
@@ -331,6 +376,12 @@ func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 			// Allow either identifier, number, bracket, or an embedded
 			// environment-variable segment after dot
 			switch {
+			case runes[pos] == '.':
+				// A second '.' leaves an empty segment. The run stays in
+				// this one reference so the parser can refuse the whole
+				// path with one message, rather than reading the path up
+				// to the first '.' and choking on the rest.
+				continue
 			case runes[pos] == '[':
 				// Continue with bracket parsing (handled in next iteration)
 				continue
@@ -369,11 +420,26 @@ func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 				// rejects the match and the scanner reads the number.
 				pos = consumeNumericSegment(runes, pos)
 			case unicode.IsDigit(runes[pos]):
-				// Consume numeric index
-				for pos < len(runes) && unicode.IsDigit(runes[pos]) {
-					pos++
+				// A segment that starts with a digit is a number, an
+				// index such as the 0 in "list.0", or a digit-led name,
+				// as the first segment can be. A name takes the rest of
+				// the run, so "m.3x" is the key "3x" inside "m", and a
+				// number takes its exponent, so "m.3e5" is the key "3e5".
+				// spruce reads both that way. A '-' or '+' after the
+				// number still ends the path, so "a.3-1" subtracts.
+				if end, isName := digitLedNameEnd(runes, pos); isName {
+					pos = consumePlusNames(runes, end)
+				} else {
+					pos = numberEnd(runes, pos)
 				}
 			case isIdentifierStart(runes[pos]):
+				// A name segment right after a whole number makes the
+				// path a reference, as spruce reads "1e5.x". A '-'
+				// before the dot leaves it arithmetic, so "3-abc.def"
+				// still subtracts.
+				if numericStart && numberEnd(runes, 0) == pos-1 {
+					sawName = true
+				}
 				// Consume identifier
 				for pos < len(runes) && isIdentifierContinue(runes[pos]) {
 					pos++
@@ -416,6 +482,20 @@ func matchReferencePath(runes []rune, leadingSlash bool) (bool, int) {
 	return finish()
 }
 
+// headState tracks how far the tokenizer is through an operator head.
+type headState int
+
+const (
+	// headNone means the last token is not part of an operator head.
+	headNone headState = iota
+	// headOpen means the last token ends a head that could continue,
+	// such as "grab" or the "nocache" in "grab:nocache".
+	headOpen
+	// headJoin means the last token is a ':' or '@' glued to a head, so
+	// a name glued after it continues the head.
+	headJoin
+)
+
 // AdvancedTokenizer provides enhanced tokenization with path recognition.
 type AdvancedTokenizer struct {
 	input    string
@@ -438,6 +518,20 @@ type AdvancedTokenizer struct {
 	// operand, so that a '/' scanned next has a left operand to divide.
 	// slashBeginsReference reads it, and noteScanned keeps it current.
 	leftOperand bool
+
+	// callHead records whether the last tokens scanned are an operator
+	// head, the operator name with any ":modifier" or "@target" glued to
+	// it, as in "vault:nocache@prod". A name glued after a ':' or an '@'
+	// in a head is part of the head, not an operand, so a '/' after the
+	// whole head still begins a reference. prevEnd is the byte offset
+	// where the last scanned token ends, which tells whether the next
+	// token is glued to it.
+	callHead headState
+	prevEnd  int
+
+	// headName records whether the last token scanned is a modifier or
+	// target name inside an operator head. HeadName reports it.
+	headName bool
 
 	// groupStack tracks the still-open "(" / "((" groups, innermost last:
 	// true for a group opened by "((" (needs "))" to close), false for one
@@ -536,6 +630,9 @@ func (t *AdvancedTokenizer) Reset(input string) {
 	t.column = 1
 	t.state = StateNormal
 	t.leftOperand = false
+	t.callHead = headNone
+	t.prevEnd = 0
+	t.headName = false
 	t.nextToken = nil
 	t.nextComputed = false
 	t.nextPosition = 0
@@ -569,19 +666,58 @@ func (t *AdvancedTokenizer) scanToken() Token {
 // references, environment variables, and closing brackets end one. An
 // identifier ends one too, unless it names an operator and has no left
 // operand before it, because then it opens an operator call, as "grab"
-// does in "(( grab /b ))". Every other token, such as "((", "(", ",",
-// "||", "?", ":", "!", or a binary operator, leaves no left operand.
+// does in "(( grab /b ))". The call stays open through a ':' or an '@'
+// glued to the head and the name glued after it, so "grab:nocache /b"
+// and "vault@prod /b" read "/b" the same way. Every other token, such as
+// "((", "(", ",", "||", "?", ":", "!", or a binary operator, leaves no
+// left operand.
 func (t *AdvancedTokenizer) noteScanned(tok Token) {
+	glued := tok.Pos.Offset == t.prevEnd
+	t.prevEnd = tok.End.Offset
+	t.headName = false
 	switch tok.Type {
 	case TokenInteger, TokenFloat, TokenString, TokenRawString, TokenBoolean, TokenNull,
 		TokenReference, TokenEnvironment, TokenRightParen, TokenOperatorEnd,
 		TokenRightBracket, TokenRightBrace:
 		t.leftOperand = true
+		t.callHead = headNone
 	case TokenIdentifier:
-		t.leftOperand = t.leftOperand || !t.namesOperator(tok.Literal)
+		switch {
+		case t.callHead == headJoin && glued:
+			// The modifier or target name of a head, as "nocache" in
+			// "grab:nocache" or "prod" in "vault@prod".
+			t.callHead = headOpen
+			t.headName = true
+		case !t.leftOperand && t.namesOperator(tok.Literal):
+			t.callHead = headOpen
+		default:
+			t.leftOperand = true
+			t.callHead = headNone
+		}
+	case TokenColon, TokenAt:
+		// A ':' or '@' glued to the end of a head joins the name after
+		// it to the head. One with whitespace before it does not, so the
+		// ternary "c ? grab : /b" is unaffected.
+		if t.callHead == headOpen && glued {
+			t.callHead = headJoin
+		} else {
+			t.callHead = headNone
+		}
+		t.leftOperand = false
 	default:
 		t.leftOperand = false
+		t.callHead = headNone
 	}
+}
+
+// HeadName reports whether the token NextToken last returned is the
+// modifier or target name of an operator head, as "nocache" is in
+// "grab:nocache" and "prod" is in "vault@prod". Such a name belongs to
+// the operator call and never names a key in the document. The answer
+// describes the last token scanned, so it holds only when PeekToken has
+// not been called since.
+func (t *AdvancedTokenizer) HeadName() bool {
+	return t.headName
 }
 
 // namesOperator reports whether name is a registered operator, through
@@ -594,8 +730,9 @@ func (t *AdvancedTokenizer) namesOperator(name string) bool {
 // begins a reference rather than dividing. This is the one place that
 // decides how a '/' with nothing attached before it reads. A '/' begins
 // a reference when no left operand comes before it: at the start of an
-// expression, right after an operator name that opens a call, and after
-// "(", ",", "||", "?", ":", or a binary operator. That is how spruce
+// expression, right after an operator head that opens a call, such as
+// "grab" or "vault:nocache@prod", and after "(", ",", "||", "?", ":", or
+// a binary operator. That is how spruce
 // reads "(( grab /b ))", as the key "/b". A '/' after an operand divides,
 // with or without whitespace between them, so "a / b" and "a /b" still
 // divide. A '/' attached to the end of a reference never gets here,
@@ -1008,69 +1145,32 @@ func (t *AdvancedTokenizer) scanString(quote rune) Token {
 	}
 }
 
-// scanNumber scans integer and floating-point numbers.
-//
-//nolint:gocyclo // number scanning handles integers, floats, and exponents
+// scanNumber scans an integer or a floating-point number, or a name
+// that starts with a digit. The number grammar is numberEnd's, so an 'e'
+// is an exponent only when a digit follows it or its sign. When a letter
+// or '_' follows the number, the whole run is a name, as spruce reads
+// "3abc", "3em", "1e", and "2e5x", and the scanner returns it as a
+// reference. The '-' of a negative number is a separate TokenMinus, which
+// keeps precedence parsing simple.
 func (t *AdvancedTokenizer) scanNumber() Token {
 	start := t.position
 	startLine := t.line
 	startColumn := t.column
 
-	var value strings.Builder
-	isFloat := false
-
-	// Note: negative sign is handled as separate token (TokenMinus)
-	// This allows for proper precedence parsing
-
-	// Scan integer part
-	for t.position < len(t.input) && unicode.IsDigit(t.current()) {
-		value.WriteRune(t.current())
-		t.advance(1)
-	}
-
-	// Check for decimal point
-	if t.position < len(t.input) && t.current() == '.' {
-		// Look ahead to ensure there's a digit after the decimal
-		if t.position+1 < len(t.input) && unicode.IsDigit(rune(t.input[t.position+1])) {
-			isFloat = true
-			value.WriteRune('.')
-			t.advance(1)
-
-			// Scan fractional part
-			for t.position < len(t.input) && unicode.IsDigit(t.current()) {
-				value.WriteRune(t.current())
-				t.advance(1)
-			}
-		}
-	}
-
-	// Check for exponent
-	if t.position < len(t.input) && (t.current() == 'e' || t.current() == 'E') {
-		isFloat = true
-		value.WriteRune(t.current())
-		t.advance(1)
-
-		// Handle optional sign
-		if t.position < len(t.input) && (t.current() == '+' || t.current() == '-') {
-			value.WriteRune(t.current())
-			t.advance(1)
-		}
-
-		// Scan exponent digits
-		for t.position < len(t.input) && unicode.IsDigit(t.current()) {
-			value.WriteRune(t.current())
-			t.advance(1)
-		}
-	}
-
+	runes := []rune(t.input[t.position:])
+	end := numberEnd(runes, 0)
 	tokenType := TokenInteger
-	if isFloat {
+	if nameEnd, isName := digitLedNameEnd(runes, 0); isName {
+		end = nameEnd
+		tokenType = TokenReference
+	} else if strings.ContainsAny(string(runes[:end]), ".eE") {
 		tokenType = TokenFloat
 	}
+	t.advance(end)
 
 	return Token{
 		Type:    tokenType,
-		Literal: value.String(),
+		Literal: t.input[start:t.position],
 		Pos:     Position{Offset: start, Line: startLine, Column: startColumn},
 		End:     Position{Offset: t.position, Line: t.line, Column: t.column},
 	}

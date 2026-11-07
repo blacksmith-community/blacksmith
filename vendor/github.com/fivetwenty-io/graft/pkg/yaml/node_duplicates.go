@@ -54,20 +54,33 @@ func (w nodeDupWalker) walk(n *Node, path string) {
 //
 // Merge keys are never reported. The first one keeps its place, and when
 // the mapping holds more than one, its value becomes a sequence of the
-// sources of every merge key, in order, which a decode merges with a key
-// in a later source winning. A decode lets a merged value win over a key
-// written before the merge key and lets a key written after it win, so a
-// pair whose key a source supplies moves to the side of the merge key
-// that keeps the value written last, as arrange describes.
+// sources of every merge key, with the sources of a later merge key
+// before those of an earlier one. A decode merges that sequence with a
+// key in an earlier source winning, so a later merge key still wins over
+// an earlier one, as it does in the text. A decode lets a merged value
+// win over a key written before the merge key and lets a key written
+// after it win, so a pair whose key a source supplies moves to the side
+// of the merge key that keeps the value written last, as arrange
+// describes.
+//
+// When the value of any merge key is one a decode refuses, as
+// refusedMerge describes, the merge keys stay as they are, so that a
+// decode fails at the merge key the text route fails at, and not at a
+// sequence that hides an alias to a list.
 func (w nodeDupWalker) mapping(n *Node, path string) {
 	var keys yamlnode.KeySet[*Node]
 	lastAt := make(map[string]int, len(n.Content)/2)
 	var kept []keptPair
 	var m merges
+	combine := !refusedMerge(n)
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i], n.Content[i+1]
-		if key != nil && key.Kind == ScalarNode && key.Tag == yamlnode.TagMerge {
+		if isMergeKey(key) {
 			w.walk(val, path)
+			if !combine {
+				kept = append(kept, keptPair{key: key, val: val, last: i})
+				continue
+			}
 			if m.add(i, val, len(kept)) {
 				kept = append(kept, keptPair{key: key, val: val, last: i})
 			} else {
@@ -106,6 +119,49 @@ func (w nodeDupWalker) mapping(n *Node, path string) {
 	n.Content = out
 }
 
+// isMergeKey reports whether key is a << merge key.
+func isMergeKey(key *Node) bool {
+	return key != nil && key.Kind == ScalarNode && key.Tag == yamlnode.TagMerge
+}
+
+// refusedMerge reports whether the mapping n holds a merge key whose
+// value a decode refuses. That is a value that is neither a map nor a
+// list of maps, a list that holds anything but maps, and an alias to a
+// list, which spruce refuses though it takes the same list written in
+// place.
+func refusedMerge(n *Node) bool {
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if !isMergeKey(n.Content[i]) {
+			continue
+		}
+		val := n.Content[i+1]
+		if val == nil {
+			return true
+		}
+		if val.Kind == AliasNode {
+			if val.Alias == nil || val.Alias.Kind != MappingNode {
+				return true
+			}
+			continue
+		}
+		if val.Kind == SequenceNode {
+			for _, item := range val.Content {
+				if item != nil && item.Kind == AliasNode {
+					item = item.Alias
+				}
+				if item == nil || item.Kind != MappingNode {
+					return true
+				}
+			}
+			continue
+		}
+		if val.Kind != MappingNode {
+			return true
+		}
+	}
+	return false
+}
+
 // keptPair is a pair mapping keeps. last is the index in Content of the
 // last pair whose value it holds, slot is the key a map holds for its
 // key, and scalar says its key is a scalar, and so has a slot.
@@ -130,7 +186,8 @@ type merges struct {
 // add records a merge key with the value val at index i of Content,
 // where at is the number of pairs kept so far. It returns true for the
 // first merge key, which the caller keeps as a pair, and false for a
-// later one, whose sources join value.
+// later one, whose sources go at the front of value, so that they win
+// over the sources of the merge keys before it.
 func (m *merges) add(i int, val *Node, at int) bool {
 	if m.supplied == nil {
 		m.supplied = make(map[string]int)
@@ -146,7 +203,7 @@ func (m *merges) add(i int, val *Node, at int) bool {
 	if m.count == 2 {
 		m.value = mergeSequence(m.value)
 	}
-	m.value.Content = append(m.value.Content, sourcesOf(val)...)
+	m.value.Content = append(append([]*Node(nil), sourcesOf(val)...), m.value.Content...)
 	return false
 }
 
@@ -211,9 +268,9 @@ func suppliedKeys(n *Node, seen map[*Node]bool) map[string]bool {
 
 // mergeSequence returns a flow sequence at first's place of the merge
 // sources that first, the value of a merge key, names. A merge key with
-// that sequence as its value merges the sources in turn, as the merge
-// keys that named them would, and the sources of a later merge key are
-// appended to it.
+// that sequence as its value merges the sources as the merge key that
+// named them would, and the sources of a later merge key go at its
+// front.
 func mergeSequence(first *Node) *Node {
 	out := &Node{
 		Kind: SequenceNode, Tag: yamlnode.TagSeq, Line: first.Line, Column: first.Column,

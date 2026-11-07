@@ -4,18 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/goccy/go-yaml"
-
-	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 )
 
-// Literal value constants for YAML parsing.
-const (
-	literalTrue  = "true"
-	literalFalse = "false"
-	literalNull  = "null"
-)
+// literalTrue is the spelling the parser compares a boolean token with.
+const literalTrue = "true"
 
 // EvaluateExpr evaluates an expression, including nested operator calls.
 //
@@ -50,27 +44,15 @@ func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 
 	case EnvVar:
 		val := os.Getenv(e.Name)
-		// Try to unmarshal the value as YAML if it's not empty
-		// But only if it looks like it might be structured data (not a plain string)
-		if val != "" && (val == literalTrue || val == literalFalse || val == literalNull ||
-			(val != "" && (val[0] == '{' || val[0] == '[' || val[0] == '-'))) {
-			var unmarshalled interface{}
-			if err := yaml.Unmarshal([]byte(val), &unmarshalled); err == nil {
-				unmarshalled = yamlcodec.NormalizeValue(unmarshalled)
-				// Only use unmarshalled value if it's not a string
-				// (to avoid changing multiline strings)
-				if _, isString := unmarshalled.(string); !isString {
-					return &Response{
-						Type:  Replace,
-						Value: unmarshalled,
-					}, nil
-				}
-			}
+		// A set value decodes the way spruce decodes it, and an empty
+		// one stays the empty string.
+		var value interface{} = val
+		if val != "" {
+			value = yamlcodec.DecodeEnvValue(val)
 		}
-		// Return as string for plain strings or if unmarshalling fails
 		return &Response{
 			Type:  Replace,
-			Value: val,
+			Value: value,
 		}, nil
 
 	case OperatorCall:
@@ -86,8 +68,9 @@ func EvaluateExpr(e *Expr, ev *Evaluator) (*Response, error) {
 			// Left side succeeded, use its value
 			return left, nil
 		}
-		if literal.IsRefusal(err) {
-			// A refused literal is never a reason to fall back.
+		if pending.StopsFallback(err) {
+			// A refused literal, or a grab of an operator that has not run,
+			// is never a reason to fall back.
 			return nil, err
 		}
 		// Left side failed, check if right side is prune

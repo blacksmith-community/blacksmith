@@ -58,10 +58,12 @@ UnmarshalWith with a DecodeOptions.OnDuplicateKey callback accepts a repeated
 key in any mapping at any depth instead, keeps the last value, as yaml.v2
 does, and calls the callback once for each later occurrence. Each report holds
 a DuplicateKey with the path of the key and the positions of both occurrences.
-Merge keys are never reported. A mapping's keys and merge keys take effect
-in the order written, on every target, so the value written last wins, as in
-spruce, even when a key or a merge key repeats. Unmarshal itself, and
-graft's merge, stay strict.
+Merge keys are never reported, and a key that a merge brings in repeats no key
+written in the mapping. A mapping's keys and merge keys take effect in the
+order written, on every target, so the value written last wins, as in spruce,
+even when a key repeats. Unmarshal itself, and graft's merge, stay strict
+about a repeated key, though both accept a second merge key in a mapping,
+which spruce reads as a second merge.
 
 Keys compare by their text under any tag or anchor, with two exceptions. A null key, such as ~ or null, and a string key whose text is null, such
 as "null" or !!str null, repeat each other, because both are the key "null" in
@@ -89,16 +91,31 @@ Marshal writes map keys in spruce's order with two spaces of indentation, as
 graft merge does. MarshalWith with EncodeOptions{KeyOrder: sortkeys.Lexical}
 writes keys in codepoint order instead.
 
-Merge keys follow graft's engine. When a mapping holds a << key, the merged
-values win over a key written before the << in the same mapping, and a key
-written after the << wins over the merged values. When the value of << is a
-list of maps, a later map wins over an earlier one.
+Merge keys follow spruce wherever graft decodes to values, which covers
+Unmarshal, UnmarshalWith, Node.Decode, and graft's merge. A mapping's pairs
+take effect in the order written, and each one writes over the ones before
+it. A << key writes the pairs of the map it names, so a merged value wins over
+a key written before the << and loses to a key written after it. When the
+value of << is a list of maps, an earlier map wins over a later one, and a
+second << key in the mapping writes over the first. A << whose value is
+neither a map nor a list of maps fails with an ErrorKindSyntax error at the
+line of the <<, and so does a << whose value is an alias to a list, which
+spruce refuses even though it takes the same list written in place. A plain
+<< written after the explicit key indicator, as in "? <<", is a merge key
+too, and a quoted << is an ordinary key.
 
-yaml.v3 differs from graft in two ways. A key written in the mapping always
-wins over a merged value there, wherever the << sits, and an earlier map in
-the list wins over a later one. yaml.v2 agrees with graft about a key
-written before the << (the merged value wins) and about a key written after
-it, but it also lets an earlier map in the list win.
+A Node target merges nothing, so that it stays a lossless picture of the
+text. It keeps each << key and its value as written, with an alias still an
+AliasNode, and a program that walks or rewrites the tree sees the document
+as it was. Node.Decode merges as Unmarshal does. With OnDuplicateKey set,
+the << keys of one mapping in a Node become one, whose value lists the
+sources of a later << before those of an earlier one, so a decode of the
+Node reads the values a decode of the text reads.
+
+yaml.v2 agrees with graft about the order of a list and about a key written
+before or after the <<. yaml.v3 also lets an earlier map in the list win,
+but a key written in the mapping always wins over a merged value there,
+wherever the << sits.
 
 A time.Time target accepts a quoted date such as "2001-12-14". yaml.v2 and
 yaml.v3 refuse a quoted date that is not RFC 3339.

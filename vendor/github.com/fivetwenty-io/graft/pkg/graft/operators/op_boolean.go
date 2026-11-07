@@ -3,7 +3,7 @@ package operators
 import (
 	"fmt"
 
-	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/log"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -52,8 +52,9 @@ func (OrElseOperator) Run(ev *graft.Evaluator, args []*graft.Expr) (*graft.Respo
 
 	// Evaluate left first, but allow for missing values
 	leftResp, err := graft.EvaluateExpr(args[0], ev)
-	if literal.IsRefusal(err) {
-		// A refused literal is never a reason to fall back.
+	if pending.StopsFallback(err) {
+		// A refused literal, or a grab of an operator that has not run,
+		// is never a reason to fall back.
 		return nil, err
 	}
 	if err != nil {

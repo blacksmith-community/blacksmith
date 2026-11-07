@@ -58,7 +58,7 @@ func (ConcatOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 	for i, arg := range args {
 		// Use the helper to resolve arguments, including nested operators
-		v, err := ResolveOperatorArgument(ev, arg)
+		v, fromEnv, err := resolveNotingEnv(ev, arg)
 		if err != nil {
 			DEBUG("  arg[%d]: failed to resolve expression to a concrete value", i)
 			DEBUG("     [%d]: error was: %s", i, err)
@@ -77,12 +77,18 @@ func (ConcatOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 		// Convert to string. References already rejected non-scalar values
 		// above; this branch only handles scalars and non-reference list
-		// results (e.g. from a nested operator call).
+		// results (e.g. from a nested operator call). An environment
+		// variable's decoded value prints the way spruce prints it, so a
+		// list reads [a b] and a map reads map[a:b].
 		var stringVal string
 		switch val := v.(type) {
 		case string:
 			stringVal = val
 		case []interface{}:
+			if fromEnv {
+				stringVal = fmt.Sprintf("%v", val)
+				break
+			}
 			stringSlice := make([]string, len(val))
 			for j, elem := range val {
 				stringSlice[j] = fmt.Sprintf("%v", elem)

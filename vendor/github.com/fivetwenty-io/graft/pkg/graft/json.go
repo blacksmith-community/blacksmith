@@ -170,6 +170,9 @@ func hasNonStringKey(data []byte) (bool, error) {
 	if body == nil {
 		return false, nil
 	}
+	// ExpandAliases and not ExpandBody, since the fold of the merge keys
+	// can only drop a key, never add one. A key that a << brings in is
+	// still in the tree under the <<, where the walk finds it.
 	if body, err = yamlcodec.ExpandAliases(body); err != nil {
 		return false, err
 	}

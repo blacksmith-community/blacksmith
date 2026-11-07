@@ -1,26 +1,18 @@
 package operators
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
-	"github.com/goccy/go-yaml"
-
 	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
+	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/pkg/graft"
-)
-
-// Literal value constants for YAML parsing.
-const (
-	literalTrue  = "true"
-	literalFalse = "false"
-	literalNull  = "null"
 )
 
 // ResolveOperatorArgument resolves an expression argument, including nested operator calls
 // This helper allows operators to handle nested expressions transparently.
-//
-//nolint:gocyclo // expression resolution requires handling all expression types
 func ResolveOperatorArgument(ev *Evaluator, arg *Expr) (interface{}, error) {
 	if arg == nil {
 		return nil, nil
@@ -59,22 +51,9 @@ func ResolveOperatorArgument(ev *Evaluator, arg *Expr) (interface{}, error) {
 			// Return an error so LogicalOr can fall back to the next option
 			return nil, fmt.Errorf("environment variable '%s' is not set", arg.Name)
 		}
-		// Try to unmarshal the value as YAML if it looks like structured data
-		if val == literalTrue || val == literalFalse || val == literalNull ||
-			(val != "" && (val[0] == '{' || val[0] == '[' || val[0] == '-')) {
-			var unmarshalled interface{}
-			if err := yaml.Unmarshal([]byte(val), &unmarshalled); err == nil {
-				// Only use unmarshalled value if it's not a string
-				if _, isString := unmarshalled.(string); !isString {
-					if m, isMap := unmarshalled.(map[string]interface{}); isMap {
-						unmarshalled = graft.NormalizeMap(m)
-					}
-					return unmarshalled, nil
-				}
-			}
-		}
-		// Return as string for plain strings or if unmarshalling fails
-		return val, nil
+		// The value decodes the way spruce decodes it. See
+		// yamlcodec.DecodeEnvValue.
+		return yamlcodec.DecodeEnvValue(val), nil
 
 	case OperatorCall:
 		// Evaluate nested operator call. Its result reaches this operator
@@ -94,8 +73,9 @@ func ResolveOperatorArgument(ev *Evaluator, arg *Expr) (interface{}, error) {
 			DEBUG("LogicalOr: left side succeeded with value %v (type %T), stopping here", left, left)
 			return left, nil
 		}
-		if literal.IsRefusal(err) {
-			// A refused literal is never a reason to fall back.
+		if pending.StopsFallback(err) {
+			// A refused literal, or a grab of an operator that has not
+			// run, is never a reason to fall back.
 			return nil, err
 		}
 		// Left failed, try right
@@ -114,6 +94,30 @@ func ResolveOperatorArgument(ev *Evaluator, arg *Expr) (interface{}, error) {
 		return nil, fmt.Errorf("unsupported expression type: %v", arg.Type)
 	}
 	return nil, fmt.Errorf("unknown expression type: %v", arg.Type)
+}
+
+// resolveNotingEnv resolves arg like ResolveOperatorArgument and also
+// reports whether the value came from an environment variable, either as
+// the argument itself or as the leaf of a || chain that gave the value.
+// spruce prints such a value whole, the way Go's %v prints it, where it
+// would walk a list or map reached through a reference, so join and
+// concat need to know which one they hold.
+func resolveNotingEnv(ev *Evaluator, arg *Expr) (interface{}, bool, error) {
+	if arg != nil && arg.Type == LogicalOr {
+		left, fromEnv, err := resolveNotingEnv(ev, arg.Left)
+		if err == nil {
+			return left, fromEnv, nil
+		}
+		if pending.StopsFallback(err) {
+			return nil, false, err
+		}
+		return resolveNotingEnv(ev, arg.Right)
+	}
+	val, err := ResolveOperatorArgument(ev, arg)
+	if err != nil {
+		return nil, false, err
+	}
+	return val, arg != nil && arg.Type == EnvVar, nil
 }
 
 // stripNotingRead returns val without any literal wrapper in it, and
@@ -189,6 +193,13 @@ func evaluateNestedOperator(ev *Evaluator, expr *Expr) (interface{}, error) {
 	// Run the nested operator
 	resp, err := opcall.Run(ev)
 	if err != nil {
+		// opcall.Run names ev.Here in a path error, and the call this
+		// one is nested in names the same path in its own, so only the
+		// cause is kept here and the path appears once.
+		var perr *graft.PathError
+		if ev.Here != nil && errors.As(err, &perr) && perr.Path == ev.Here.String() {
+			err = perr.Cause
+		}
 		return nil, fmt.Errorf("nested operator %s failed: %w", opName, err)
 	}
 

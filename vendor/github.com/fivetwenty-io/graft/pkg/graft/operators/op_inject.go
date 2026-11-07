@@ -5,6 +5,7 @@ import (
 
 	"github.com/fivetwenty-io/graft/internal/errtext"
 	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/pkg/graft"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
@@ -72,8 +73,9 @@ func (InjectOperator) Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cur
 // A || fallback tries each side in turn through this same function, and a
 // nested call's result is used as it came back, so a map read from
 // inside a literal by any of these routes still reaches Run wrapped.
-// viaOr is set for a reference on either side of a ||, which gets the
-// same environment variable expansion ResolveOperatorArgument gives it.
+// Every reference gets the environment variable expansion grab gives it.
+// viaOr is set for a reference on either side of a ||, which also wraps a
+// failed lookup in an "unable to resolve" message.
 func resolveInjectArg(ev *Evaluator, arg *Expr, viaOr bool) (interface{}, error) {
 	switch arg.Type {
 	case LogicalOr:
@@ -81,8 +83,9 @@ func resolveInjectArg(ev *Evaluator, arg *Expr, viaOr bool) (interface{}, error)
 		if err == nil {
 			return val, nil
 		}
-		if literal.IsRefusal(err) {
-			// A refused literal is never a reason to fall back.
+		if pending.StopsFallback(err) {
+			// A refused literal, or a grab of an operator that has not run,
+			// is never a reason to fall back.
 			return nil, err
 		}
 		return resolveInjectArg(ev, arg.Right, true)
@@ -93,9 +96,7 @@ func resolveInjectArg(ev *Evaluator, arg *Expr, viaOr bool) (interface{}, error)
 		if arg.Reference == nil {
 			return nil, fmt.Errorf("unable to resolve reference: @%s is a target, not a value", arg.Name)
 		}
-		if viaOr {
-			arg.Reference.Nodes = ResolveEnv(arg.Reference.Nodes)
-		}
+		arg.Reference.Nodes = ResolveEnv(arg.Reference.Nodes)
 		val, err := arg.Reference.ResolveLiteral(ev.Tree)
 		if err != nil && viaOr {
 			return nil, fmt.Errorf("unable to resolve `%s`: %w", arg.Reference.String(), err)

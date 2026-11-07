@@ -102,6 +102,9 @@ type keyPos struct{ line, col int }
 // anchor, as the Node route places it, and not at the "?".
 func scalarKey(key ast.MapKeyNode) (yamlnode.KeyID, keyPos, bool) {
 	var pos keyPos
+	if yamlnode.IsMergeKey(key) {
+		return yamlnode.KeyID{}, pos, false
+	}
 	var placed ast.Node = key
 	if explicit, ok := key.(*ast.MappingKeyNode); ok && explicit.Value != nil {
 		placed = explicit.Value

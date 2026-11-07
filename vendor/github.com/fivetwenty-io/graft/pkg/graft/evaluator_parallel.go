@@ -3,10 +3,12 @@ package graft
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
 
+	"github.com/fivetwenty-io/graft/internal/oploc"
 	"github.com/fivetwenty-io/graft/internal/parallel"
 	"github.com/fivetwenty-io/graft/log"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
@@ -47,28 +49,7 @@ func resetParallelStats() {
 // If no WorkerPool is available on the engine, execution falls back to
 // the sequential RunOps path.
 func (ev *Evaluator) RunPhaseParallel(p OperatorPhase) error {
-	err := SetupOperators(p)
-	if err != nil {
-		return err
-	}
-
-	ops, err := ev.DataFlow(p)
-	if err != nil {
-		return err
-	}
-
-	if len(ops) == 0 {
-		return nil
-	}
-
-	// Retrieve the worker pool from the engine
-	pool := getWorkerPool(ev)
-	if pool == nil {
-		log.DEBUG("parallel: no worker pool, falling back to sequential")
-		return ev.RunOps(ops)
-	}
-
-	return ev.runOpsWithScheduler(context.Background(), pool, ops)
+	return ev.runPhase(p, ev.RunOpsParallel)
 }
 
 // RunOpsParallel executes a pre-sorted list of operations using the
@@ -145,6 +126,8 @@ func resolveOpIDForDependency(ev *Evaluator, opIDMap map[string]string, path *tr
 // among themselves in ways no dependency edge captures.
 func (ev *Evaluator) runOpsWithScheduler(ctx context.Context, pool *parallel.WorkerPool, ops []*Opcall) error {
 	parallelStats.totalPhases.Add(1)
+
+	defer ev.startPending(ops)()
 
 	scheduler := parallel.NewScheduler()
 	allLocs, opIDMap, opByID := indexOps(ops)
@@ -235,11 +218,32 @@ func (ev *Evaluator) addSchedulerTasks(scheduler *parallel.Scheduler, ops []*Opc
 	defer atomic.AddInt32(&ev.depComputing, -1)
 
 	savedHere := ev.Here
-	defer func() { ev.Here = savedHere }()
+	ev.locIndex = oploc.New(allLocs, ev.Tree)
+	defer func() {
+		ev.Here = savedHere
+		ev.locIndex = nil
+	}()
 
+	// ops arrive in DataFlow's order, which already honors every soft
+	// dependency the sequential sort kept. A soft dependency on an op
+	// that comes earlier in that order is one the sort kept, and one on
+	// an op that comes later is one it dropped to avoid a cycle, so each
+	// task waits on its barriers' members that come before it. Each op
+	// is taken once, at its first place in the order.
+	tasks := make([]*schedTask, 0, len(ops))
+	place := make(map[string]int, len(ops))
+	barriers := make(map[string]*schedBarrier)
+	memberOf := make(map[string][]*schedBarrier)
 	for _, op := range ops {
-		taskOp := op // capture for closure
-		taskID := taskOp.Where().String()
+		if op.Where() == nil {
+			continue
+		}
+		taskID := op.Where().String()
+		if _, dup := place[taskID]; dup {
+			log.DEBUG("parallel: skipping duplicate task %s", taskID)
+			continue
+		}
+		place[taskID] = len(tasks)
 
 		// ev.Here is set to this task's own path before computing its
 		// dependencies, mirroring Opcall.Run and
@@ -249,16 +253,30 @@ func (ev *Evaluator) addSchedulerTasks(scheduler *parallel.Scheduler, ops []*Opc
 		// named calc variable that is a sibling of the calc call's own
 		// path) needs it to compute the right relative cursor, or the
 		// sibling edge is silently never added.
-		ev.Here = taskOp.Where()
+		ev.Here = op.Where()
 
-		task := &parallel.Task{
-			ID:           taskID,
-			Dependencies: ev.dependencyIDs(taskOp, taskID, allLocs, opIDMap),
+		task := &schedTask{id: taskID, deps: ev.dependencyIDs(op, taskID, allLocs, opIDMap)}
+		if op.op != nil {
+			for _, c := range op.SoftDependencies(ev, allLocs) {
+				nodes := oploc.Canonical(c, ev.Tree).Nodes
+				key := oploc.Key(nodes)
+				bar, ok := barriers[key]
+				if !ok {
+					bar = newSchedBarrier(ev, opIDMap, ev.locIndex.Under(nodes, nil))
+					barriers[key] = bar
+					for _, id := range bar.members {
+						memberOf[id] = append(memberOf[id], bar)
+					}
+				}
+				task.soft = append(task.soft, bar)
+			}
 		}
+		tasks = append(tasks, task)
+	}
 
-		if err := scheduler.AddTask(task); err != nil {
-			log.DEBUG("parallel: skipping duplicate task %s: %v", taskID, err)
-			continue
+	for _, task := range finishSchedTasks(tasks, place, memberOf) {
+		if err := scheduler.AddTask(&parallel.Task{ID: task.id, Dependencies: task.deps}); err != nil {
+			log.DEBUG("parallel: skipping duplicate task %s: %v", task.id, err)
 		}
 	}
 }
@@ -280,6 +298,116 @@ func (ev *Evaluator) dependencyIDs(op *Opcall, taskID string, allLocs []*tree.Cu
 		}
 	}
 	return depIDs
+}
+
+// schedTask is one task addSchedulerTasks is building: its ID, its
+// dependency IDs, and the soft barriers it waits on.
+type schedTask struct {
+	id   string
+	deps []string
+	soft []*schedBarrier
+}
+
+// schedBarrier is the scheduler's form of one soft barrier: the task IDs
+// of the ops at or under one path, each once. best is the member seen so
+// far in the order with the latest wave, and bestWave is that wave.
+type schedBarrier struct {
+	members  []string
+	best     string
+	bestWave int
+}
+
+// newSchedBarrier returns the barrier whose members are the ops at locs.
+func newSchedBarrier(ev *Evaluator, opIDMap map[string]string, locs []*tree.Cursor) *schedBarrier {
+	bar := &schedBarrier{members: make([]string, 0, len(locs))}
+	seen := make(map[string]bool, len(locs))
+	for _, loc := range locs {
+		if id, ok := resolveOpIDForDependency(ev, opIDMap, loc); ok && !seen[id] {
+			seen[id] = true
+			bar.members = append(bar.members, id)
+		}
+	}
+	return bar
+}
+
+// finishSchedTasks adds to each task's dependencies the soft ones it
+// keeps, which are its barriers' members that come before it in tasks,
+// other than itself, and returns tasks.
+//
+// The scheduler puts each task in the wave after the latest wave among
+// its dependencies, so among one barrier's members only the one in the
+// latest wave decides where a waiter goes. When every hard dependency
+// comes before its task, each task's wave is known by the time it is
+// reached, and each waiter gets that one member for each barrier rather
+// than all of them. The waves come out the same as with every member
+// named, and the edges grow with the tasks rather than with each waiter
+// times its members. Otherwise each waiter names every member it keeps.
+func finishSchedTasks(tasks []*schedTask, place map[string]int, memberOf map[string][]*schedBarrier) []*schedTask {
+	if !hardDepsComeFirst(tasks, place) {
+		for i, task := range tasks {
+			task.addEveryKeptMember(i, place)
+		}
+		return tasks
+	}
+	wave := make(map[string]int, len(tasks))
+	for _, task := range tasks {
+		w := task.addLatestMembers(wave)
+		wave[task.id] = w
+		for _, bar := range memberOf[task.id] {
+			if bar.best == "" || w > bar.bestWave {
+				bar.best, bar.bestWave = task.id, w
+			}
+		}
+	}
+	return tasks
+}
+
+// hardDepsComeFirst reports whether every task's dependencies come
+// before it in tasks, which place gives.
+func hardDepsComeFirst(tasks []*schedTask, place map[string]int) bool {
+	for i, task := range tasks {
+		for _, id := range task.deps {
+			if at, ok := place[id]; !ok || at >= i {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// addEveryKeptMember adds to t's dependencies every member of its
+// barriers that comes before it, at i in the order place gives.
+func (t *schedTask) addEveryKeptMember(i int, place map[string]int) {
+	seen := make(map[string]bool, len(t.deps))
+	for _, id := range t.deps {
+		seen[id] = true
+	}
+	for _, bar := range t.soft {
+		for _, id := range bar.members {
+			if at, ok := place[id]; ok && at < i && !seen[id] {
+				seen[id] = true
+				t.deps = append(t.deps, id)
+			}
+		}
+	}
+}
+
+// addLatestMembers adds to t's dependencies the member of each of its
+// barriers with the latest wave so far, and returns t's wave, given the
+// wave of every task before it.
+func (t *schedTask) addLatestMembers(wave map[string]int) int {
+	w := 0
+	for _, id := range t.deps {
+		w = max(w, wave[id]+1)
+	}
+	for _, bar := range t.soft {
+		if bar.best == "" || slices.Contains(t.deps, bar.best) {
+			continue
+		}
+		t.deps = append(t.deps, bar.best)
+		w = max(w, bar.bestWave+1)
+	}
+	return w
 }
 
 // partitionWave splits an already-sorted wave into the operators that
@@ -402,6 +530,7 @@ func (ev *Evaluator) runConcurrentTasks(ctx context.Context, pool *parallel.Work
 	for _, r := range results {
 		parallelStats.totalOps.Add(1)
 		if r.err != nil {
+			ev.donePending(r.op)
 			parallelStats.totalErrors.Add(1)
 			errs.Append(r.err)
 			continue
@@ -410,6 +539,7 @@ func (ev *Evaluator) runConcurrentTasks(ctx context.Context, pool *parallel.Work
 		treeMu.Lock()
 		applyErr := ev.scrubLiteralError(r.op, ev.applyResponse(r.op, r.resp, r.oldValue))
 		treeMu.Unlock()
+		ev.donePending(r.op)
 
 		if applyErr != nil {
 			parallelStats.totalErrors.Add(1)

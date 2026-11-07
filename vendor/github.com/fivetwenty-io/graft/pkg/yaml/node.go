@@ -17,8 +17,9 @@ import (
 // very *Node that holds the anchor, so a walker can compare pointers to
 // guard against revisiting a node. A << merge key stays in its mapping as
 // a key tagged !!merge, with its value beside it, and nothing is merged
-// in. Unmarshal refuses an alias inside the collection its anchor names,
-// so no tree it returns has a cycle.
+// in, though Node.Decode merges as Unmarshal does. Unmarshal refuses an
+// alias inside the collection its anchor names, so no tree it returns
+// has a cycle.
 //
 // A Node also remembers, out of sight, how its scalar was written, such
 // as quoted or as a block, and the DecodeOptions it was read with, so

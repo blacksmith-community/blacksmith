@@ -610,13 +610,12 @@ func FetchFromKV(js jetstream.JetStream, storePath string, config *Config) (inte
 
 			if looksLikeYAML {
 				// Try to parse as YAML
-				var parsed interface{}
-				err = unmarshalGuarded(value, &parsed)
-				if err == nil && parsed != nil {
+				parsed, parseErr := decodeGuarded(value)
+				if parseErr == nil && parsed != nil {
 					parsed = normalizeYAMLValue(parsed)
 					// Successfully parsed and got non-string result
 					if _, isString := parsed.(string); !isString {
-						// Normalize result from goccy/go-yaml (uint64 → int normalization)
+						// Normalize any uint64 integer to int
 						result = parsed
 					} else {
 						// Parsed but still a string, keep original
@@ -724,35 +723,33 @@ func FetchFromObject(js jetstream.JetStream, storePath string, config *Config) (
 		switch contentType {
 		case "text/yaml", "text/x-yaml", "application/x-yaml", "application/yaml":
 			// Parse as YAML
-			var yamlResult interface{}
-			err = unmarshalGuarded(data, &yamlResult)
-			if err != nil {
+			yamlResult, parseErr := decodeGuarded(data)
+			if parseErr != nil {
 				return nil, errtext.WithPlain(
-					fmt.Errorf("failed to parse YAML from object '%s': %w", objectName, err),
+					fmt.Errorf("failed to parse YAML from object '%s': %w", objectName, parseErr),
 					"failed to parse YAML from the object")
 			}
-			// Normalize result from goccy/go-yaml (uint64 → int normalization)
+			// Normalize any uint64 integer to int
 			result = normalizeYAMLValue(yamlResult)
 		case "application/json", "text/json":
 			// Parse as JSON (YAML parser handles JSON too)
-			err = unmarshalGuarded(data, &result)
-			if err != nil {
+			jsonResult, parseErr := decodeGuarded(data)
+			if parseErr != nil {
 				return nil, errtext.WithPlain(
-					fmt.Errorf("failed to parse JSON from object '%s': %w", objectName, err),
+					fmt.Errorf("failed to parse JSON from object '%s': %w", objectName, parseErr),
 					"failed to parse JSON from the object")
 			}
-			result = normalizeYAMLValue(result)
+			result = normalizeYAMLValue(jsonResult)
 		case "text/plain", "":
 			// Check file extension if no content type
 			if contentType == "" && (strings.HasSuffix(objectName, ".yaml") || strings.HasSuffix(objectName, ".yml")) {
 				// Parse as YAML for .yaml/.yml files
-				var yamlResult interface{}
-				err = unmarshalGuarded(data, &yamlResult)
-				if err != nil {
+				yamlResult, parseErr := decodeGuarded(data)
+				if parseErr != nil {
 					// If parsing fails, return as string
 					result = string(data)
 				} else {
-					// Normalize result from goccy/go-yaml (uint64 → int normalization)
+					// Normalize any uint64 integer to int
 					result = normalizeYAMLValue(yamlResult)
 				}
 			} else {
@@ -907,7 +904,7 @@ func debugLogf(format string, args ...interface{}) {
 	}
 }
 
-// normalizeYAMLValue converts goccy/go-yaml integer types (uint64) to int
+// normalizeYAMLValue converts any uint64 integer in a decoded value to int
 // so callers receive the same Go types the codebase expects.
 func normalizeYAMLValue(v interface{}) interface{} {
 	switch val := v.(type) {

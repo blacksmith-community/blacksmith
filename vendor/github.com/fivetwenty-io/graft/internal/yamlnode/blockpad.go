@@ -104,6 +104,7 @@ func parseText(data []byte, mode parser.Mode, opts ...parser.Option) (*ast.File,
 	toks := yamlprep.Tokenize(text)
 	foldBlockAtEnd(text, toks)
 	readDashContinuations(toks)
+	refuseFlowBlockEntries(toks)
 	if bytes.IndexByte(data, '\t') >= 0 {
 		keepPlainTabs(toks)
 	}

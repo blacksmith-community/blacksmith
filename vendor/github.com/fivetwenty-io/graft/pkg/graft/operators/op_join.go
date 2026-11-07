@@ -95,7 +95,7 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			separator = fmt.Sprintf("%v", arg.Literal)
 		} else { // argument #1..n: list, literal, or expression
 			// Use ResolveOperatorArgument to handle nested expressions
-			val, err := ResolveOperatorArgument(ev, arg)
+			val, fromEnv, err := resolveNotingEnv(ev, arg)
 			if err != nil {
 				DEBUG("     [%d]: resolution failed\n    error: %s", i, err)
 				// ResolveOperatorArgument already formats reference resolution
@@ -103,48 +103,11 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 				return nil, err
 			}
 
-			if val == nil {
-				DEBUG("     [%d]: argument resolved to nil, skipping", i)
-				continue
+			parts, err := joinParts(i, val, fromEnv)
+			if err != nil {
+				return nil, err
 			}
-
-			switch v := val.(type) {
-			case []interface{}:
-				DEBUG("     [%d]: resolved to a list", i)
-				for idx, entry := range v {
-					switch entry.(type) {
-					case []interface{}:
-						DEBUG("     [%d]: entry #%d in list is a list (not a literal)", i, idx)
-						return nil, errtext.Colorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
-
-					case map[string]interface{}:
-						DEBUG("     [%d]: entry #%d in list is a map (not a literal)", i, idx)
-						return nil, errtext.Colorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
-
-					default:
-						*list = append(*list, fmt.Sprintf("%v", entry))
-					}
-				}
-
-			case map[string]interface{}:
-				DEBUG("     [%d]: resolved to a map", i)
-				// Sort keys for consistent output
-				keys := make([]string, 0, len(v))
-				for k := range v {
-					keys = append(keys, k)
-				}
-				sort.Strings(keys)
-
-				// Join key:value pairs
-				for _, k := range keys {
-					pair := fmt.Sprintf("%s:%v", k, v[k])
-					*list = append(*list, pair)
-				}
-
-			default:
-				DEBUG("     [%d]: resolved to a literal value", i)
-				*list = append(*list, fmt.Sprintf("%v", v))
-			}
+			*list = append(*list, parts...)
 		}
 	}
 
@@ -154,6 +117,61 @@ func (JoinOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		Type:  Replace,
 		Value: strings.Join(*list, separator),
 	}, nil
+}
+
+// joinParts gives the strings that val, the resolved argument at index
+// i, adds to the joined list. An environment variable's decoded value is
+// printed whole, the way spruce prints it, so a list reads [a b], a map
+// map[a:b], and a null <nil>. Otherwise a null adds nothing, a list adds
+// each of its entries, and a map adds a key:value pair for each key in
+// sorted order.
+func joinParts(i int, val interface{}, fromEnv bool) ([]string, error) {
+	if fromEnv {
+		DEBUG("     [%d]: resolved to an environment value", i)
+		return []string{fmt.Sprintf("%v", val)}, nil
+	}
+	switch v := val.(type) {
+	case nil:
+		DEBUG("     [%d]: argument resolved to nil, skipping", i)
+		return nil, nil
+
+	case []interface{}:
+		DEBUG("     [%d]: resolved to a list", i)
+		parts := make([]string, 0, len(v))
+		for idx, entry := range v {
+			switch entry.(type) {
+			case []interface{}:
+				DEBUG("     [%d]: entry #%d in list is a list (not a literal)", i, idx)
+				return nil, errtext.Colorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
+
+			case map[string]interface{}:
+				DEBUG("     [%d]: entry #%d in list is a map (not a literal)", i, idx)
+				return nil, errtext.Colorf("entry #%d in list is not compatible for @c{(( join ... ))}", idx)
+
+			default:
+				parts = append(parts, fmt.Sprintf("%v", entry))
+			}
+		}
+		return parts, nil
+
+	case map[string]interface{}:
+		DEBUG("     [%d]: resolved to a map", i)
+		// Sort keys for consistent output
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		// Join key:value pairs
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s:%v", k, v[k]))
+		}
+		return parts, nil
+	}
+	DEBUG("     [%d]: resolved to a literal value", i)
+	return []string{fmt.Sprintf("%v", val)}, nil
 }
 
 //nolint:gochecknoinits // Operator registration must happen at package load time

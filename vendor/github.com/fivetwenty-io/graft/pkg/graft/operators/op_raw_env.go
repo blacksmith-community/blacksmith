@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fivetwenty-io/graft/internal/literal"
+	"github.com/fivetwenty-io/graft/internal/pending"
 	"github.com/fivetwenty-io/graft/pkg/graft/tree"
 )
 
@@ -81,8 +81,9 @@ func resolveRawEnv(ev *Evaluator, e *Expr) (interface{}, error) {
 		if err == nil {
 			return v, nil
 		}
-		if literal.IsRefusal(err) {
-			// A refused literal is never a reason to fall back.
+		if pending.StopsFallback(err) {
+			// A refused literal, or a grab of an operator that has not run,
+			// is never a reason to fall back.
 			return nil, err
 		}
 		return resolveRawEnv(ev, e.Right)

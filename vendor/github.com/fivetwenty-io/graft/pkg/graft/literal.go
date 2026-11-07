@@ -37,8 +37,11 @@ import "github.com/fivetwenty-io/graft/internal/literal"
 // of its error holds a key or a scalar of 3 or more characters from
 // inside any literal in the document, the evaluator replaces that text
 // with a message that names only the path. A shorter text, such as "80",
-// is not withheld, because it turns up in too many ordinary messages,
-// and an operator that read no literal keeps its message. DetailedError
+// is not withheld, so an error can quote literal text of one or two
+// characters. The floor exists because text that short turns up in too
+// many ordinary messages, such as the letter "a" in a word, and
+// withholding it would hide messages that have nothing to do with the
+// literal. An operator that read no literal keeps its message. DetailedError
 // still returns the original text, literal values and all, so a caller
 // should show it only where the literal's content may be seen.
 //
@@ -54,18 +57,22 @@ type LiteralValue = literal.Value
 // NewLiteral wraps a deep copy of v so that graft keeps it whole. A v
 // that is already a LiteralValue is returned unchanged, and v may be nil.
 // NewLiteral copies every map[string]interface{},
-// map[interface{}]interface{}, and []interface{} in v, so a later change
-// to one of those does not reach the document, and nothing graft does to
-// the document reaches v.
+// map[interface{}]interface{}, and []interface{} in v, and it copies every
+// typed slice, array, and map as well, such as a []string, a
+// map[string][]string, or a [][]string, and every pointer to one of
+// those. A later change to any of these does not reach the document, and
+// nothing graft does to the document reaches v. A typed container keeps
+// its type in the copy. A nil slice, map, or pointer stays nil, and an
+// empty one stays empty but is a new container. A struct is not copied,
+// and neither is a pointer to a struct or to a scalar, so a struct's
+// fields and anything a struct points to stay shared with v.
 //
 // On the way NewLiteral turns each map[interface{}]interface{} in v into
 // a map[string]interface{}, with every key printed by fmt, so a path into
 // the result sees the shapes that ParseYAML and encoding/json produce. A
-// typed container, such as a []string or a map[string]string, is kept as
-// it is and is not copied. A path cannot read into one, just as it cannot
-// when the value is not wrapped, and a change to it after the call does
-// reach the document. Put the result anywhere in a document tree, as a
-// map value or a list item.
+// typed container keeps its own type, so a path cannot read into one,
+// just as it cannot when the value is not wrapped. Put the result
+// anywhere in a document tree, as a map value or a list item.
 //
 // NewLiteral panics when a map or list in v contains itself at any
 // depth, because graft cannot hold cyclic data. It finds the cycle the
