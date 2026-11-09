@@ -641,7 +641,7 @@ func (s *SessionImpl) SetWindowSize(width, height int) error {
 	}
 
 	// Send window change request
-	err := s.sshSession.WindowChange(height, width)
+	err := changeWindow(s.sshSession, s.logger, s.id, width, height)
 	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to change window size", err)
 	}
@@ -958,6 +958,30 @@ type ptyRequester interface {
 	RequestPty(term string, h, w int, termmodes ssh.TerminalModes) error
 }
 
+// validTerminalSize reports whether both dimensions are within 1 to
+// maxTerminalDimension.
+func validTerminalSize(width, height int) bool {
+	return width >= 1 && width <= maxTerminalDimension &&
+		height >= 1 && height <= maxTerminalDimension
+}
+
+// windowChanger is the part of an SSH session that resizes its PTY.
+type windowChanger interface {
+	WindowChange(h, w int) error
+}
+
+// changeWindow resizes the PTY to width by height. A size outside the
+// bounds is ignored, so the PTY keeps its current size.
+func changeWindow(session windowChanger, logger Logger, id string, width, height int) error {
+	if !validTerminalSize(width, height) {
+		logger.Infof("Ignored out-of-range resize for session %s: %dx%d", id, width, height)
+
+		return nil
+	}
+
+	return session.WindowChange(height, width)
+}
+
 // ptySize returns the columns and rows the PTY opens at. A width or height
 // outside 1 to maxTerminalDimension, or missing, falls back to the
 // defaults.
@@ -968,8 +992,7 @@ func ptySize(options *SSHOptions) (int, int) {
 		return cols, rows
 	}
 
-	if options.WindowWidth >= 1 && options.WindowWidth <= maxTerminalDimension &&
-		options.WindowHeight >= 1 && options.WindowHeight <= maxTerminalDimension {
+	if validTerminalSize(options.WindowWidth, options.WindowHeight) {
 		cols, rows = options.WindowWidth, options.WindowHeight
 	}
 
