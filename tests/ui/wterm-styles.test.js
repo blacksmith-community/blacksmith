@@ -46,3 +46,9 @@ test('the terminal dialog is not scaled while wterm measures its cells', () => {
   expect(content).toBeDefined();
   expect(content.body).toMatch(/transform:\s*none/);
 });
+
+test('the hidden input does not inherit the page textarea min-height', () => {
+  const [input] = rule('#terminal-modal .wterm textarea');
+  expect(input).toBeDefined();
+  expect(input.body).toMatch(/min-height:\s*0\s*;/);
+});

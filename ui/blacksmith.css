@@ -6791,6 +6791,13 @@ bs-tabs > .cert-tab-pane[hidden] {
   background: rgba(255, 255, 255, 0.3);
 }
 
+/* Oat gives every textarea a 5rem min-height. wterm's hidden input is
+   a textarea sized to 1px, and at 80px it pushes the scroll height past
+   the last row, so each keystroke scrolls the terminal and back. */
+#terminal-modal .wterm textarea {
+  min-height: 0;
+}
+
 /* A terminal that failed to start may never have become a wterm host,
    so the failed element carries the padding and the message has none. */
 #terminal-modal .terminal-instance.terminal-failed {
