@@ -974,7 +974,7 @@ type windowChanger interface {
 // bounds is ignored, so the PTY keeps its current size.
 func changeWindow(session windowChanger, logger Logger, id string, width, height int) error {
 	if !validTerminalSize(width, height) {
-		logger.Infof("Ignored out-of-range resize for session %s: %dx%d", id, width, height)
+		logger.Debugf("Ignored out-of-range resize for session %s: %dx%d", id, width, height)
 
 		return nil
 	}

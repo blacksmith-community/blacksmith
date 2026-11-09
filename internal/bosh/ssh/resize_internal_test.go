@@ -15,7 +15,7 @@ func (f *fakeWindow) WindowChange(h, w int) error {
 
 type discardLogger struct{ Logger }
 
-func (discardLogger) Infof(string, ...interface{}) {}
+func (discardLogger) Debugf(string, ...interface{}) {}
 
 func TestResizeIgnoresOutOfRangeSizes(t *testing.T) {
 	t.Parallel()
