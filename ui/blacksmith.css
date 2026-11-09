@@ -6796,9 +6796,15 @@ bs-tabs > .cert-tab-pane[hidden] {
   padding: 12px;
 }
 
+/* The message carries role="alert" for screen readers, and the page
+   styles alerts as a light box. Light text on that box is unreadable, so
+   the message drops the box and reads as plain text on the terminal. */
 #terminal-modal .terminal-load-error {
   margin: 0;
   padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: #d4d4d4;
   font-family: Menlo, Monaco, "Courier New", monospace;
 }

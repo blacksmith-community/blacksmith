@@ -33,3 +33,10 @@ test('a failed terminal pads its message once', () => {
   expect(failed).toBeDefined();
   expect(failed.body).toMatch(/padding:\s*12px\s*;/);
 });
+
+test('the failure message drops the page alert box so it reads on the black terminal', () => {
+  const [message] = rule('#terminal-modal .terminal-load-error');
+  expect(message.body).toMatch(/background:\s*transparent\s*;/);
+  expect(message.body).toMatch(/border:\s*0\s*;/);
+  expect(message.body).toMatch(/border-radius:\s*0\s*;/);
+});
