@@ -23641,10 +23641,14 @@
 
               // Small delay to ensure backend is ready. The terminal must
               // also be ready, so the start message carries its real grid.
+              // The start goes only to the socket that sent this handshake,
+              // and only while it is still the session's socket, so a retry
+              // never gets a second start from an earlier handshake.
+              const socket = ws;
               setTimeout(() => {
                 terminal.ready.then(started => {
-                  if (started && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
+                  if (started && socket === session.websocket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({
                       type: 'control',
                       meta: {
                         action: 'start',

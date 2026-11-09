@@ -322,3 +322,22 @@ t('a failed start raises no second disconnect notification when its socket close
  expect(sockets.length).toBe(1);
  mgr.closeAll();
 });
+
+t('a retry while the terminal starts sends exactly one start message, on the new socket',async()=>{
+ const env=await start(); const {terms,sockets,open,deliver,sent,mgr}=env;
+ open();
+ const term=terms[0];
+ sockets[0].readyState=1; sockets[0].onopen();
+ deliver(sockets[0],{type:'handshake'});
+ deliver(sockets[0],{type:'error',data:'Session not connected'});
+ await sleep(1100);
+ expect(sockets.length).toBe(2);
+ sockets[1].readyState=1; sockets[1].onopen();
+ deliver(sockets[1],{type:'handshake'});
+ await sleep(150);
+ term.resolveInit(); await sleep(0);
+ const starts=socket=>sent(socket,'control').filter(m=>m.meta.action==='start');
+ expect(starts(sockets[0])).toEqual([]);
+ expect(starts(sockets[1]).length).toBe(1);
+ mgr.closeAll();
+});
