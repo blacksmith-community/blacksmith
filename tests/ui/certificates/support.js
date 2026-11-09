@@ -2,7 +2,7 @@
 // this repository, so it is resolved at run time and the suites skip with one
 // message when it cannot be found.
 const NOTE = 'Skipping the certificate UI suites because jsdom could not be loaded. '
-  + 'Provide it with `bun add --no-save jsdom`, or point JSDOM_PATH at an existing copy, '
+  + 'Provide it with `bun add --no-save jsdom@26`, or point JSDOM_PATH at an existing copy, '
   + 'for example `JSDOM_PATH=/path/to/node_modules/jsdom bun test tests/ui/`.';
 
 function loadJSDOM() {
