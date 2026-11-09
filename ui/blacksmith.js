@@ -23446,6 +23446,29 @@
       let ready = false;
       let disposed = false;
       let focusWhenReady = false;
+      let term = null;
+
+      // Every failure to start, whether the library is missing, its
+      // constructor throws, or init() rejects, ends here. The message is
+      // fixed, so no terminal data reaches the page or the notification. It
+      // shows in the session's tab and as a toast, and the session's socket
+      // closes, or never opens.
+      const fail = () => {
+        disposed = true;
+        pending.length = 0;
+        session.failed = true;
+        const text = 'The terminal could not start. Reload the page and try again.';
+        const message = document.createElement('p');
+        message.className = 'terminal-load-error';
+        message.setAttribute('role', 'alert');
+        message.textContent = text;
+        element.classList.add('terminal-failed');
+        element.replaceChildren(message);
+        window.Feedback.error(text, { toast: true });
+        if (session.websocket) session.websocket.close(1000);
+        return false;
+      };
+
       // Every option is set on purpose. autoResize measures the container,
       // so the grid size comes from wterm, and onResize keeps the remote PTY
       // at the size wterm applied. onData is always set, because without it
@@ -23453,21 +23476,26 @@
       // webmcp and debug stay off, so no in-page agent or debug adapter can
       // read or type into an SSH session. The cursor starts steady, as it
       // did with xterm, and announceOutput is the screen-reader mode.
-      const term = new window.WTermLib.WTerm(element, {
-        wasmUrl: WTERM_WASM_URL,
-        renderer: 'dom',
-        autoResize: true,
-        cursorBlink: false,
-        announceOutput: true,
-        scrollbackLines: 1000,
-        webmcp: false,
-        debug: false,
-        onData: data => session.sendInput(data),
-        onResize: (cols, rows) => session.sendResize(cols, rows)
-      });
+      try {
+        term = new window.WTermLib.WTerm(element, {
+          wasmUrl: WTERM_WASM_URL,
+          renderer: 'dom',
+          autoResize: true,
+          cursorBlink: false,
+          announceOutput: true,
+          scrollbackLines: 1000,
+          webmcp: false,
+          debug: false,
+          onData: data => session.sendInput(data),
+          onResize: (cols, rows) => session.sendResize(cols, rows)
+        });
+      } catch {
+        term = null;
+      }
+
       const view = {
-        get cols() { return term.cols; },
-        get rows() { return term.rows; },
+        get cols() { return term ? term.cols : 0; },
+        get rows() { return term ? term.rows : 0; },
         write(data) {
           if (disposed) return;
           if (ready) term.write(data);
@@ -23494,29 +23522,18 @@
           term.destroy();
         }
       };
-      view.ready = term.init().then(() => {
+
+      if (!term) {
+        view.ready = Promise.resolve(fail());
+        return view;
+      }
+      view.ready = new Promise(resolve => resolve(term.init())).then(() => {
         if (disposed) return false;
         ready = true;
         pending.splice(0).forEach(chunk => term.write(chunk));
         if (focusWhenReady && element.classList.contains('active')) term.focus();
         return true;
-      }, () => {
-        if (disposed) return false;
-        disposed = true;
-        pending.length = 0;
-        session.failed = true;
-        // The message is fixed, so no terminal data reaches the page or the
-        // notification. It shows in the session's tab and as a toast.
-        const text = 'The terminal could not start. Reload the page and try again.';
-        const message = document.createElement('p');
-        message.className = 'terminal-load-error';
-        message.setAttribute('role', 'alert');
-        message.textContent = text;
-        element.replaceChildren(message);
-        window.Feedback.error(text, { toast: true });
-        if (session.websocket) session.websocket.close(1000);
-        return false;
-      });
+      }, () => (disposed ? false : fail()));
       return view;
     },
 

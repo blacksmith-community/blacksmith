@@ -279,3 +279,31 @@ t('a terminal that fails to start says so and closes its socket',async()=>{
  expect(sockets[0].readyState).toBe(3);
  mgr.closeAll();
 });
+
+const FAILED='The terminal could not start. Reload the page and try again.';
+const raisedErrors=(w)=>{ const raised=[]; w.Feedback.error=(message,options)=>{ raised.push({message,options}); }; return raised; };
+
+t('a missing terminal library shows the fixed failure and never opens a socket',async()=>{
+ const env=await start(); const {w,d,sockets,open,mgr}=env;
+ delete w.WTermLib;
+ const raised=raisedErrors(w);
+ open(); await sleep(0);
+ expect(raised).toEqual([{message:FAILED,options:{toast:true}}]);
+ expect(sockets.length).toBe(0);
+ const host=d.getElementById('terminal-blacksmith-broker-node/0');
+ expect(host.querySelector('[role=alert]').textContent).toBe(FAILED);
+ expect(d.getElementById('tab-blacksmith-broker-node/0')).not.toBeNull();
+ mgr.closeAll();
+ expect(d.getElementById('terminal-blacksmith-broker-node/0')).toBeNull();
+});
+
+t('a terminal constructor that throws shows the fixed failure and never opens a socket',async()=>{
+ const env=await start(); const {w,d,sockets,open,mgr}=env;
+ w.WTermLib={WTerm:class{constructor(){throw new Error('synthetic constructor failure');}},version:'0.5.10'};
+ const raised=raisedErrors(w);
+ open(); await sleep(0);
+ expect(raised).toEqual([{message:FAILED,options:{toast:true}}]);
+ expect(sockets.length).toBe(0);
+ expect(d.querySelector('#terminal-blacksmith-broker-node\\/0 [role=alert]').textContent).toBe(FAILED);
+ mgr.closeAll();
+});
