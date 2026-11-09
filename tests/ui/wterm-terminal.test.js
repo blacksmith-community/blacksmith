@@ -396,3 +396,13 @@ t('a reconnect stops the replaced connection from retrying',async()=>{
  expect(sockets.length).toBe(2);
  mgr.closeAll();
 });
+
+test('the terminal keyboard help names the keys wterm keeps from the remote host',()=>{
+ const html=fs.readFileSync(path.join(UI,'index.html'),'utf8');
+ const help=html.match(/<p id="terminal-keyboard-help"[^>]*>([^<]*)<\/p>/)[1];
+ expect(help).toContain('Press Control Shift F6 to leave terminal input and focus terminal controls.');
+ expect(help).toContain('Escape followed by Tab also leaves the terminal.');
+ expect(help).toContain('return to the terminal and press Tab to send it');
+ expect(help).toContain('Control V pastes and Control Shift A selects all terminal text');
+ expect(help).toContain('Control Q');
+});
