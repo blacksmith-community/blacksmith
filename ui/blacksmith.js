@@ -23505,11 +23505,15 @@
         disposed = true;
         pending.length = 0;
         session.failed = true;
+        // The message is fixed, so no terminal data reaches the page or the
+        // notification. It shows in the session's tab and as a toast.
+        const text = 'The terminal could not start. Reload the page and try again.';
         const message = document.createElement('p');
         message.className = 'terminal-load-error';
         message.setAttribute('role', 'alert');
-        message.textContent = 'The terminal could not start. Reload the page and try again.';
+        message.textContent = text;
         element.replaceChildren(message);
+        window.Feedback.error(text, { toast: true });
         if (session.websocket) session.websocket.close(1000);
         return false;
       });

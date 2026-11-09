@@ -262,10 +262,17 @@ t('reconnecting clears the screen and routes keystrokes and resizes to the new s
 });
 
 t('a terminal that fails to start says so and closes its socket',async()=>{
- const env=await start(); const {d,terms,sockets,open,mgr}=env;
+ const env=await start(); const {w,d,terms,sockets,open,mgr}=env;
+ const raised=[]; const error=w.Feedback.error;
+ w.Feedback.error=(message,options)=>{ raised.push({message,options}); };
  open();
  sockets[0].readyState=1; sockets[0].onopen();
  terms[0].rejectInit(); await sleep(0);
+ w.Feedback.error=error;
+ expect(raised.length).toBe(1);
+ expect(raised[0].message).toContain('terminal could not start');
+ expect(raised[0].message).not.toContain('synthetic');
+ expect(raised[0].options).toEqual({toast:true});
  const message=d.querySelector('.terminal-instance [role=alert]');
  expect(message).not.toBeNull();
  expect(message.textContent).toContain('terminal could not start');
