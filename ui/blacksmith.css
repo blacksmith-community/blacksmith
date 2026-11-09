@@ -6663,6 +6663,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   border-bottom: 1px solid var(--border-primary);
   overflow-x: auto;
   min-height: 40px;
+  padding: 0;
 }
 
 .terminal-tab {
