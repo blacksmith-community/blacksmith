@@ -8,9 +8,11 @@ These suites load `ui/blacksmith.js` and `ui/index.html` into jsdom, replace `fe
 We resolve jsdom with a normal import first and then from the `JSDOM_PATH` environment variable, so either of these works.
 
 ```sh
-bun add --no-save jsdom
+bun add --no-save jsdom@26
 JSDOM_PATH=/path/to/node_modules/jsdom bun test tests/ui/
 ```
+
+We pin jsdom 26 because jsdom 30 and later fail 29 keyboard and focus tests under bun 1.4.4.
 
 When neither source works, the certificate suites skip and print one message that says how to provide jsdom, and the navigation checks still run.
 The first option installs jsdom without touching `package.json`, so we never commit it.
