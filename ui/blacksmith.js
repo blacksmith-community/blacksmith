@@ -23471,11 +23471,13 @@
 
       // Every option is set on purpose. autoResize measures the container,
       // so the grid size comes from wterm, and onResize keeps the remote PTY
-      // at the size wterm applied. onData is always set, because without it
-      // wterm echoes input locally and every keystroke would show twice.
-      // webmcp and debug stay off, so no in-page agent or debug adapter can
-      // read or type into an SSH session. The cursor starts steady, as it
-      // did with xterm, and announceOutput is the screen-reader mode.
+      // at the size wterm applied. onData forwards keystrokes to the
+      // websocket so the remote shell echoes them, and it is always set,
+      // because without it wterm echoes input locally and every keystroke
+      // would show twice. webmcp and debug stay off, so no in-page agent or
+      // debug adapter can read or type into an SSH session. The cursor
+      // stays steady whatever the remote application asks for, and
+      // announceOutput reads new output to screen readers.
       try {
         term = new window.WTermLib.WTerm(element, {
           wasmUrl: WTERM_WASM_URL,

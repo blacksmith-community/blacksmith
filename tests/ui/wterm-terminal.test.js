@@ -406,3 +406,9 @@ test('the terminal keyboard help names the keys wterm keeps from the remote host
  expect(help).toContain('Control V pastes and Control Shift A selects all terminal text');
  expect(help).toContain('Control Q');
 });
+
+test('the console code names xterm only as the TERM value it sends',()=>{
+ const files=fs.readdirSync(UI).filter(f=>/\.(js|css|html)$/.test(f));
+ const stray=files.flatMap(f=>fs.readFileSync(path.join(UI,f),'utf8').split('\n').map((line,i)=>({f,i:i+1,line}))).filter(({line})=>/xterm/i.test(line.replace(/xterm-256color/g,'')));
+ expect(stray.map(({f,i})=>`${f}:${i}`)).toEqual([]);
+});
