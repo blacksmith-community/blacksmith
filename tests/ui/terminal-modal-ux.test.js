@@ -23,3 +23,11 @@ test('terminal tabs are compact: 4px vertical padding and no button height floor
   expect(declares(forge, '.terminal-tab', 'padding: 4px 12px')).toBe(true);
   expect(declares(forge, '.terminal-tab > button', 'min-height: 0')).toBe(true);
 });
+
+test('the terminal header keeps its controls inside a narrow dialog', () => {
+  expect(declares(blacksmith, '.terminal-title-details', 'flex-wrap: wrap')).toBe(true);
+  expect(declares(blacksmith, '.terminal-title-seg', 'overflow-wrap: anywhere')).toBe(true);
+  expect(declares(blacksmith, '.terminal-header-controls', 'flex-shrink: 0')).toBe(true);
+  expect(declares(blacksmith, '.terminal-title', 'min-width: 0')).toBe(true);
+  expect(declares(blacksmith, '.terminal-title', 'flex: 1 1 auto')).toBe(true);
+});

@@ -6638,6 +6638,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   gap: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   color: var(--text-secondary);
+  flex-wrap: wrap;
 }
 
 .terminal-title-badge {
@@ -6655,6 +6656,12 @@ bs-tabs > .cert-tab-pane[hidden] {
   border-radius: 3px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-secondary);
+  overflow-wrap: anywhere;
+}
+
+.terminal-title {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .terminal-tabs {
@@ -6865,6 +6872,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .terminal-control-btn {
