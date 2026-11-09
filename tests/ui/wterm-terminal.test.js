@@ -357,3 +357,42 @@ t('a resize between the start message and connected reaches the backend once con
  expect(sent(socket,'control').filter(m=>m.meta.action==='resize').map(m=>m.meta)).toEqual([{action:'resize',width:100,height:30}]);
  mgr.closeAll();
 });
+
+t('a focus request made while the terminal starts is honored for the active session once ready',async()=>{
+ const env=await start(); const {terms,open,mgr}=env;
+ open(); open('node/1');
+ await sleep(150);
+ expect(terms.map(term=>term.focused)).toEqual([0,0]);
+ terms.forEach(term=>term.resolveInit()); await sleep(0);
+ expect(terms[1].focused).toBe(1);
+ expect(terms[0].focused).toBe(0);
+ mgr.closeAll();
+});
+
+t('the keyup of Ctrl+Shift+F6 never reaches the terminal input',async()=>{
+ const env=await start(); const {w,d,terms,open,mgr}=env;
+ open();
+ const term=terms[0]; term.resolveInit(); await sleep(0);
+ const input=d.createElement('textarea'); term.element.appendChild(input);
+ const reached=[]; input.addEventListener('keyup',e=>reached.push(e.key));
+ const chord=new w.KeyboardEvent('keyup',{key:'F6',ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true});
+ input.dispatchEvent(chord);
+ expect(reached).toEqual([]);
+ expect(chord.defaultPrevented).toBe(true);
+ input.dispatchEvent(new w.KeyboardEvent('keyup',{key:'a',bubbles:true,cancelable:true}));
+ expect(reached).toEqual(['a']);
+ mgr.closeAll();
+});
+
+t('a reconnect stops the replaced connection from retrying',async()=>{
+ const env=await start(); const {terms,sockets,open,mgr}=env;
+ open();
+ terms[0].resolveInit(); await sleep(0);
+ mgr.reconnectActive();
+ expect(sockets.length).toBe(2);
+ // The replaced socket closes before any handshake, which would retry.
+ sockets[0].onclose({code:1006});
+ await sleep(1100);
+ expect(sockets.length).toBe(2);
+ mgr.closeAll();
+});
