@@ -341,3 +341,19 @@ t('a retry while the terminal starts sends exactly one start message, on the new
  expect(starts(sockets[1]).length).toBe(1);
  mgr.closeAll();
 });
+
+t('a resize between the start message and connected reaches the backend once connected',async()=>{
+ const env=await start(); const {terms,sockets,open,deliver,sent,mgr}=env;
+ open();
+ const term=terms[0], socket=sockets[0];
+ socket.readyState=1; socket.onopen();
+ deliver(socket,{type:'handshake'});
+ term.resolveInit(120,40);
+ await sleep(150);
+ expect(sent(socket,'control').map(m=>m.meta)).toEqual([{action:'start',width:120,height:40,term:'xterm-256color'}]);
+ term.cols=100; term.rows=30; term.onResize(100,30);
+ expect(sent(socket,'control').length).toBe(1);
+ deliver(socket,{type:'status',meta:{status:'connected'}});
+ expect(sent(socket,'control').filter(m=>m.meta.action==='resize').map(m=>m.meta)).toEqual([{action:'resize',width:100,height:30}]);
+ mgr.closeAll();
+});

@@ -23572,6 +23572,9 @@
       let sessionConnected = false;
       let heartbeatTimer = null;
       let heartbeatSeq = 0;
+      // The grid the start message carried. Resizes before the session is
+      // connected are dropped, so the grid is compared again on connect.
+      let startedSize = null;
 
       const session = {
         terminal: null,
@@ -23624,6 +23627,7 @@
         ws = new WebSocket(wsUrl);
         session.websocket = ws;
         sessionConnected = false; // Reset connection state
+        startedSize = null;
 
         ws.onopen = () => {
           terminal.writeln(`Connecting to ${context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${context.deploymentName} :: ${context.instanceId}`);
@@ -23648,6 +23652,7 @@
               setTimeout(() => {
                 terminal.ready.then(started => {
                   if (started && socket === session.websocket && socket.readyState === WebSocket.OPEN) {
+                    startedSize = { cols: terminal.cols, rows: terminal.rows };
                     socket.send(JSON.stringify({
                       type: 'control',
                       meta: {
@@ -23699,6 +23704,11 @@
             case 'status':
               if (msg.meta && msg.meta.status === 'connected') {
                 sessionConnected = true; // Mark session as ready for input
+                // wterm may have refit the grid while SSH was connecting,
+                // and those resizes were dropped, so send the size it has now.
+                if (startedSize && (terminal.cols !== startedSize.cols || terminal.rows !== startedSize.rows)) {
+                  session.sendResize(terminal.cols, terminal.rows);
+                }
                 terminal.writeln('\r\n[Connected]\r\n');
                 retryCount = 0; // Reset retry count on successful connection
 
