@@ -40,3 +40,9 @@ test('the failure message drops the page alert box so it reads on the black term
   expect(message.body).toMatch(/border:\s*0\s*;/);
   expect(message.body).toMatch(/border-radius:\s*0\s*;/);
 });
+
+test('the terminal dialog is not scaled while wterm measures its cells', () => {
+  const [content] = rule('.terminal-modal-content');
+  expect(content).toBeDefined();
+  expect(content.body).toMatch(/transform:\s*none/);
+});

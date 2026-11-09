@@ -6613,6 +6613,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   max-height: 90vh;
   margin: auto;
   padding: 0;
+  transform: none;
 }
 
 .terminal-header {
