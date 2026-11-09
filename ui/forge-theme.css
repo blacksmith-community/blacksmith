@@ -865,6 +865,8 @@ body > header > .wrap { height: auto; min-height: 56px; padding-block: 8px; box-
 button.version-item { display: block; width: 100%; text-align: left; color: var(--foreground); }
 button.version-item > span { display: block; }
 .terminal-tab > button { color: inherit; background: transparent; border: 0; min-height: 0; }
+.minimized-terminal-tab > button { color: inherit; background: transparent; border: 0; min-height: 0; }
+.minimized-terminal-tab { padding: 2px 8px; }
 .terminal-tab > .terminal-tab-select { padding: 0; text-align: left; }
 .terminal-tab > .tab-close { min-width: 28px; min-height: 28px; padding: 2px; opacity: 1; }
 

@@ -31,3 +31,15 @@ test('the terminal header keeps its controls inside a narrow dialog', () => {
   expect(declares(blacksmith, '.terminal-title', 'min-width: 0')).toBe(true);
   expect(declares(blacksmith, '.terminal-title', 'flex: 1 1 auto')).toBe(true);
 });
+
+test('the minimized bar lays out its sections and resets the tab buttons', () => {
+  const html = read('index.html');
+  const bar = html.slice(html.indexOf('id="minimized-terminal-bar"'));
+  expect(bar).toMatch(/<div class="left-section">\s*<img/);
+  expect(bar).toMatch(/<div class="right-section">\s*<button class="terminal-control-btn"/);
+  expect(declares(forge, '.minimized-terminal-tab > button', 'min-height: 0')).toBe(true);
+  expect(declares(forge, '.minimized-terminal-tab > button', 'background: transparent')).toBe(true);
+  expect(declares(forge, '.minimized-terminal-tab > button', 'border: 0')).toBe(true);
+  expect(declares(forge, '.minimized-terminal-tab > button', 'color: inherit')).toBe(true);
+  expect(declares(forge, '.minimized-terminal-tab', 'padding: 2px 8px')).toBe(true);
+});
