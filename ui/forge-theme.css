@@ -145,6 +145,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 .entity-back { display: none; }
 .minimized-terminal-bar .left-section, .minimized-terminal-bar .right-section, .minimized-terminal-tabs { display: flex; align-items: center; gap: 8px; }
 .terminal-tab, .minimized-terminal-tab { display: inline-flex; align-items: center; gap: 8px; background: var(--secondary); color: var(--foreground); padding: 8px 12px; }
+.terminal-tab { padding: 4px 12px; }
 @media (max-width: 1100px) {
   #blacksmith .entity-navigation, #services .entity-navigation { display: none; }
   .entity-workspace { flex-direction: column; }
@@ -863,7 +864,7 @@ body > header > .wrap { height: auto; min-height: 56px; padding-block: 8px; box-
 
 button.version-item { display: block; width: 100%; text-align: left; color: var(--foreground); }
 button.version-item > span { display: block; }
-.terminal-tab > button { color: inherit; background: transparent; border: 0; }
+.terminal-tab > button { color: inherit; background: transparent; border: 0; min-height: 0; }
 .terminal-tab > .terminal-tab-select { padding: 0; text-align: left; }
 .terminal-tab > .tab-close { min-width: 28px; min-height: 28px; padding: 2px; opacity: 1; }
 
