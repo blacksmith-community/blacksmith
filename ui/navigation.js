@@ -178,7 +178,7 @@
     function blocked() {
       return [...document.querySelectorAll('dialog[open], [role="dialog"], .terminal-modal')]
         .some(el => el !== dialog && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none') ||
-        document.activeElement?.closest('.xterm, #terminal-modal');
+        document.activeElement?.closest('.wterm, #terminal-modal');
     }
     const helpDialog = document.getElementById('keyboard-help-dialog');
     const helpTrigger = document.getElementById('keyboard-help-trigger');

@@ -6750,12 +6750,52 @@ bs-tabs > .cert-tab-pane[hidden] {
   display: block;
 }
 
-/* Ensure xterm elements fill the container */
-.terminal-instance .xterm,
-.terminal-instance .xterm-screen,
-.terminal-instance .xterm-viewport {
-  width: 100% !important;
-  height: 100% !important;
+/* The wterm host fills the container edge to edge. Its theme lives in
+   custom properties, scoped to the terminal modal so nothing else on the
+   page picks up the terminal palette. The palette and font match the
+   console's earlier terminal: a black background and the same 16 colors. */
+#terminal-modal .terminal-instance.wterm {
+  --term-bg: #000000;
+  --term-fg: #d4d4d4;
+  --term-cursor: #d4d4d4;
+  --term-selection-bg: rgba(255, 255, 255, 0.3);
+  --term-font-family: Menlo, Monaco, "Courier New", monospace;
+  --term-font-size: 14px;
+
+  --term-color-0: #000000;
+  --term-color-1: #cd3131;
+  --term-color-2: #0dbc79;
+  --term-color-3: #e5e510;
+  --term-color-4: #2472c8;
+  --term-color-5: #bc3fbc;
+  --term-color-6: #11a8cd;
+  --term-color-7: #e5e5e5;
+  --term-color-8: #666666;
+  --term-color-9: #f14c4c;
+  --term-color-10: #23d18b;
+  --term-color-11: #f5f543;
+  --term-color-12: #3b8eea;
+  --term-color-13: #d670d6;
+  --term-color-14: #29b8db;
+  --term-color-15: #e5e5e5;
+
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border-radius: 0;
+  box-shadow: none;
+  display: none;
+}
+
+#terminal-modal .terminal-instance.wterm.active {
+  display: block;
+}
+
+#terminal-modal .terminal-load-error {
+  margin: 0;
+  padding: 12px;
+  color: #d4d4d4;
+  font-family: Menlo, Monaco, "Courier New", monospace;
 }
 
 /* SSH Button Styles */

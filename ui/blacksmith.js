@@ -23316,6 +23316,11 @@
   window.CertView = CertView;
 
   // Terminal Manager Implementation
+  // wterm ships as the vendored classic script that sets window.WTermLib. Its
+  // WASM core is a separate file on a versioned path, so an upgrade never
+  // meets a stale cached module.
+  const WTERM_WASM_URL = '/vendor/wterm/0.5.10/wterm.wasm';
+
   const TerminalManager = {
     sessions: new Map(),
     activeSession: null,
@@ -23430,98 +23435,113 @@
       });
     },
 
+    // Builds one wterm terminal on the session's element. WTerm loads its
+    // WASM core asynchronously and drops writes made before init() resolves,
+    // so output is queued until then and written in arrival order. The view
+    // stops writing once it is disposed, which covers output that arrives
+    // after a session closes. Keystrokes and grid changes go to the session's
+    // current sendInput and sendResize, which a reconnect replaces.
+    createTerminal(element, session) {
+      const pending = [];
+      let ready = false;
+      let disposed = false;
+      let focusWhenReady = false;
+      // Every option is set on purpose. autoResize measures the container,
+      // so the grid size comes from wterm, and onResize keeps the remote PTY
+      // at the size wterm applied. onData is always set, because without it
+      // wterm echoes input locally and every keystroke would show twice.
+      // webmcp and debug stay off, so no in-page agent or debug adapter can
+      // read or type into an SSH session. The cursor starts steady, as it
+      // did with xterm, and announceOutput is the screen-reader mode.
+      const term = new window.WTermLib.WTerm(element, {
+        wasmUrl: WTERM_WASM_URL,
+        renderer: 'dom',
+        autoResize: true,
+        cursorBlink: false,
+        announceOutput: true,
+        scrollbackLines: 1000,
+        webmcp: false,
+        debug: false,
+        onData: data => session.sendInput(data),
+        onResize: (cols, rows) => session.sendResize(cols, rows)
+      });
+      const view = {
+        get cols() { return term.cols; },
+        get rows() { return term.rows; },
+        write(data) {
+          if (disposed) return;
+          if (ready) term.write(data);
+          else pending.push(data);
+        },
+        writeln(text) { view.write(`${text}\r\n`); },
+        // A reconnect starts a new shell, so the screen gets a full reset
+        // rather than only an erase, and modes the old shell set are dropped.
+        clear() { view.write('\x1bc'); },
+        // A focus request made while the core loads is honored once it is
+        // ready, so the terminal opens with keyboard focus as before.
+        focus() {
+          if (disposed) return;
+          if (ready) term.focus();
+          else focusWhenReady = true;
+        },
+        setActive(active) {
+          if (!disposed) term.setRenderingPaused(!active);
+        },
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          pending.length = 0;
+          term.destroy();
+        }
+      };
+      view.ready = term.init().then(() => {
+        if (disposed) return false;
+        ready = true;
+        pending.splice(0).forEach(chunk => term.write(chunk));
+        if (focusWhenReady && element.classList.contains('active')) term.focus();
+        return true;
+      }, () => {
+        if (disposed) return false;
+        disposed = true;
+        pending.length = 0;
+        session.failed = true;
+        const message = document.createElement('p');
+        message.className = 'terminal-load-error';
+        message.setAttribute('role', 'alert');
+        message.textContent = 'The terminal could not start. Reload the page and try again.';
+        element.replaceChildren(message);
+        if (session.websocket) session.websocket.close(1000);
+        return false;
+      });
+      return view;
+    },
+
     createSession(sessionKey, context) {
       // Show modal
       this.showDialog();
 
-      // Create terminal instance
-      const terminal = new Terminal({
-        cursorBlink: false,
-        screenReaderMode: true,
-        fontSize: 14,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        theme: {
-          background: '#000000',
-          foreground: '#d4d4d4',
-          cursor: '#d4d4d4',
-          selection: 'rgba(255, 255, 255, 0.3)',
-          black: '#000000',
-          red: '#cd3131',
-          green: '#0dbc79',
-          yellow: '#e5e510',
-          blue: '#2472c8',
-          magenta: '#bc3fbc',
-          cyan: '#11a8cd',
-          white: '#e5e5e5',
-          brightBlack: '#666666',
-          brightRed: '#f14c4c',
-          brightGreen: '#23d18b',
-          brightYellow: '#f5f543',
-          brightBlue: '#3b8eea',
-          brightMagenta: '#d670d6',
-          brightCyan: '#29b8db',
-          brightWhite: '#e5e5e5'
-        }
-      });
-
-      // Create container for this terminal
+      // Create container for this terminal. wterm turns it into the terminal
+      // host and gives it the wterm class. The host's label and description
+      // pass through to wterm's own input, which owns the tab stop.
+      const name = `${context.instanceName || context.deploymentName}/${context.instanceId}`;
       const terminalContainer = document.getElementById('terminal-container');
       const terminalDiv = document.createElement('div');
       terminalDiv.className = 'terminal-instance';
       terminalDiv.id = `terminal-${sessionKey}`;
+      terminalDiv.setAttribute('aria-label', `Terminal ${name}`);
+      terminalDiv.setAttribute('aria-describedby', 'terminal-keyboard-help');
       terminalContainer.appendChild(terminalDiv);
 
       // Ctrl+Shift+F6 leaves terminal input without sending a key to SSH.
-      terminal.attachCustomKeyEventHandler(event => {
-        if (event.ctrlKey && event.shiftKey && event.key === 'F6') {
-          if (event.type === 'keydown') document.getElementById('minimize-btn')?.focus();
-          return false;
-        }
-        return true;
-      });
-
-      // Open terminal in the div
-      terminal.open(terminalDiv);
-
-      // Make container focusable and focus terminal after opening
-      terminalDiv.setAttribute('tabindex', '0');
-      terminalDiv.addEventListener('mousedown', () => {
-        terminalDiv.focus();
-        terminal.focus();
-      });
-      setTimeout(() => {
-        terminalDiv.focus();
-        terminal.focus();
-      }, 100);
-
-      // Fit terminal to container size
-      const fitTerminal = () => {
-        const containerWidth = terminalDiv.clientWidth;
-        const containerHeight = terminalDiv.clientHeight;
-
-        if (containerWidth > 0 && containerHeight > 0) {
-          // Calculate cols and rows based on character size
-          const charWidth = 9; // approximate character width
-          const charHeight = 18; // approximate character height
-          const cols = Math.floor(containerWidth / charWidth);
-          const rows = Math.floor(containerHeight / charHeight);
-
-          if (cols > 0 && rows > 0) {
-            terminal.resize(cols, rows);
-          }
-        }
+      // The listener runs in the capture phase, before wterm's input sees it.
+      const leaveTerminal = event => {
+        if (!(event.ctrlKey && event.shiftKey && event.key === 'F6')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.type === 'keydown') document.getElementById('minimize-btn')?.focus();
       };
-
-      // Initial fit
-      setTimeout(fitTerminal, 100);
-
-      // Resize on window resize
-      window.addEventListener('resize', fitTerminal);
-
-      // Create tab
-      this.createTab(sessionKey, context);
-      // Update header title details
-      this.updateTitle(context);
+      terminalDiv.addEventListener('keydown', leaveTerminal, true);
+      terminalDiv.addEventListener('keyup', leaveTerminal, true);
 
       // Create WebSocket connection with retry logic
       let retryCount = 0;
@@ -23532,9 +23552,56 @@
       let heartbeatTimer = null;
       let heartbeatSeq = 0;
 
+      const session = {
+        terminal: null,
+        websocket: null,
+        context,
+        element: terminalDiv,
+        closed: false,
+        failed: false,
+        replaced: false,
+        // Handle terminal input - only send when session is fully connected
+        sendInput: (data) => {
+          if (ws && ws.readyState === WebSocket.OPEN && sessionConnected) {
+            ws.send(JSON.stringify({
+              type: 'input',
+              data: data,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        },
+        // Handle terminal resize - only send when session is fully connected
+        sendResize: (cols, rows) => {
+          if (ws && ws.readyState === WebSocket.OPEN && sessionConnected) {
+            ws.send(JSON.stringify({
+              type: 'control',
+              meta: {
+                action: 'resize',
+                width: cols,
+                height: rows
+              },
+              timestamp: new Date().toISOString()
+            }));
+          }
+        }
+      };
+      const terminal = this.createTerminal(terminalDiv, session);
+      session.terminal = terminal;
+
+      // Create tab
+      this.createTab(sessionKey, context);
+      // Update header title details
+      this.updateTitle(context);
+
+      // A closed or failed session never reconnects, and neither does one
+      // whose connection the Reconnect button has replaced.
+      const canRetry = () => !session.closed && !session.failed && !session.replaced;
+
       const connectWebSocket = () => {
+        if (!canRetry()) return null;
         const wsUrl = this.buildWebSocketUrl(context);
         ws = new WebSocket(wsUrl);
+        session.websocket = ws;
         sessionConnected = false; // Reset connection state
 
         ws.onopen = () => {
@@ -23551,20 +23618,23 @@
               handshakeReceived = true;
               // Don't show "Session Initialized" message to user - keep it clean
 
-              // Small delay to ensure backend is ready
+              // Small delay to ensure backend is ready. The terminal must
+              // also be ready, so the start message carries its real grid.
               setTimeout(() => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({
-                    type: 'control',
-                    meta: {
-                      action: 'start',
-                      width: terminal.cols,
-                      height: terminal.rows,
-                      term: 'xterm-256color'
-                    },
-                    timestamp: new Date().toISOString()
-                  }));
-                }
+                terminal.ready.then(started => {
+                  if (started && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                      type: 'control',
+                      meta: {
+                        action: 'start',
+                        width: terminal.cols,
+                        height: terminal.rows,
+                        term: 'xterm-256color'
+                      },
+                      timestamp: new Date().toISOString()
+                    }));
+                  }
+                });
               }, 100);
 
               // Start application heartbeat to keep client->server traffic flowing for LBs
@@ -23585,7 +23655,7 @@
               break;
             case 'error':
               // Check for specific "Session not connected" error
-              if (msg.data.includes('Session not connected') && retryCount < maxRetries) {
+              if (msg.data.includes('Session not connected') && retryCount < maxRetries && canRetry()) {
                 terminal.writeln(`\r\n[Connection Error] ${msg.data}`);
                 terminal.writeln(`\r\n[Retrying connection... (${retryCount + 1}/${maxRetries})]`);
                 retryCount++;
@@ -23625,7 +23695,7 @@
             clearInterval(heartbeatTimer);
             heartbeatTimer = null;
           }
-          if (!handshakeReceived && retryCount < maxRetries && event.code !== 1000) {
+          if (canRetry() && !handshakeReceived && retryCount < maxRetries && event.code !== 1000) {
             terminal.writeln(`\r\n[Connection closed unexpectedly - Retrying... (${retryCount + 1}/${maxRetries})]`);
             retryCount++;
             const delay = 1000 * Math.pow(2, retryCount - 1);
@@ -23647,41 +23717,10 @@
       };
 
       // Initial connection
-      ws = connectWebSocket();
-
-      // Handle terminal input - only send when session is fully connected
-      terminal.onData((data) => {
-        if (ws && ws.readyState === WebSocket.OPEN && sessionConnected) {
-          ws.send(JSON.stringify({
-            type: 'input',
-            data: data,
-            timestamp: new Date().toISOString()
-          }));
-        }
-      });
-
-      // Handle terminal resize - only send when session is fully connected
-      terminal.onResize((size) => {
-        if (ws && ws.readyState === WebSocket.OPEN && sessionConnected) {
-          ws.send(JSON.stringify({
-            type: 'control',
-            meta: {
-              action: 'resize',
-              width: size.cols,
-              height: size.rows
-            },
-            timestamp: new Date().toISOString()
-          }));
-        }
-      });
+      connectWebSocket();
 
       // Store session
-      this.sessions.set(sessionKey, {
-        terminal,
-        websocket: ws,
-        context,
-        element: terminalDiv
-      });
+      this.sessions.set(sessionKey, session);
 
       // Make this the active session
       this.switchToSession(sessionKey);
@@ -23747,10 +23786,16 @@
         el.querySelector('.terminal-tab-select')?.setAttribute('aria-pressed', 'false');
       });
 
+      // Hidden terminals keep parsing output but stop painting
+      this.sessions.forEach((other, key) => {
+        if (key !== sessionKey) other.terminal?.setActive?.(false);
+      });
+
       // Show selected terminal
       const session = this.sessions.get(sessionKey);
       if (session) {
         session.element.classList.add('active');
+        session.terminal?.setActive?.(true);
         document.getElementById(`tab-${sessionKey}`).classList.add('active');
         document.getElementById(`tab-${sessionKey}`).querySelector('.terminal-tab-select')?.setAttribute('aria-pressed', 'true');
         this.activeSession = sessionKey;
@@ -23774,6 +23819,8 @@
 
       const session = this.sessions.get(sessionKey);
       if (session) {
+        session.closed = true;
+
         // Close WebSocket
         if (session.websocket) {
           session.websocket.close();
@@ -23940,7 +23987,8 @@
       if (!this.activeSession) return;
 
       const session = this.sessions.get(this.activeSession);
-      if (!session) return;
+      if (!session || session.failed) return;
+      session.replaced = true;
 
       // Close existing websocket
       if (session.websocket) {
@@ -23958,17 +24006,20 @@
       ws.onopen = () => {
         session.terminal.writeln(`Reconnecting to ${session.context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${session.context.deploymentName} :: ${session.context.instanceId}`);
 
-        // Send start control message
-        ws.send(JSON.stringify({
-          type: 'control',
-          meta: {
-            action: 'start',
-            width: session.terminal.cols,
-            height: session.terminal.rows,
-            term: 'xterm-256color'
-          },
-          timestamp: new Date().toISOString()
-        }));
+        // Send start control message once the terminal knows its grid
+        session.terminal.ready.then(started => {
+          if (!started || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(JSON.stringify({
+            type: 'control',
+            meta: {
+              action: 'start',
+              width: session.terminal.cols,
+              height: session.terminal.rows,
+              term: 'xterm-256color'
+            },
+            timestamp: new Date().toISOString()
+          }));
+        });
       };
 
       ws.onmessage = (event) => {
@@ -24003,7 +24054,7 @@
       };
 
       // Handle terminal input
-      session.terminal.onData((data) => {
+      session.sendInput = (data) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             type: 'input',
@@ -24011,22 +24062,22 @@
             timestamp: new Date().toISOString()
           }));
         }
-      });
+      };
 
       // Handle terminal resize
-      session.terminal.onResize((size) => {
+      session.sendResize = (cols, rows) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             type: 'control',
             meta: {
               action: 'resize',
-              width: size.cols,
-              height: size.rows
+              width: cols,
+              height: rows
             },
             timestamp: new Date().toISOString()
           }));
         }
-      });
+      };
 
       // Update session with new websocket
       session.websocket = ws;

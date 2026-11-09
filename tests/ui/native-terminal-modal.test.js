@@ -18,7 +18,7 @@ const start=async()=>{
  const env=boot({noDialogs:true,routes:[['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});envs.push(env);
  const {w,d}=env;
  w.eval(OAT);
- w.Terminal=class{constructor(){this.cols=80;this.rows=24;}attachCustomKeyEventHandler(){}open(){}focus(){}resize(){}writeln(){}write(){}onData(){}onResize(){}dispose(){}};
+ w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(){this.readyState=0;}send(){}close(){}};
  const opener=d.createElement('button');opener.id='term-opener';opener.textContent='Open';d.body.appendChild(opener);
  await sleep(60);

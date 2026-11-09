@@ -141,10 +141,10 @@ async (page) => {
   check((await dialog.locator('[role=status]').textContent()).includes('no longer available'), 'Removed destination reports a recoverable error');
   await page.keyboard.press('Escape');
   await page.evaluate(() => { window.serviceInstances['cache-12'] = window.removedFixtureInstance; delete window.removedFixtureInstance; });
-  await page.evaluate(() => { const terminal = document.createElement('div'); terminal.className = 'xterm'; terminal.innerHTML = '<textarea aria-label="Terminal test input"></textarea>'; document.body.append(terminal); terminal.firstChild.focus(); });
+  await page.evaluate(() => { const terminal = document.createElement('div'); terminal.className = 'wterm'; terminal.innerHTML = '<textarea aria-label="Terminal test input"></textarea>'; document.body.append(terminal); terminal.firstChild.focus(); });
   await page.keyboard.press('Control+k');
   check(!(await isOpen()), 'Terminal keyboard input retains Ctrl+K');
-  await page.evaluate(() => document.querySelector('.xterm').remove());
+  await page.evaluate(() => document.querySelector('.wterm').remove());
   await palette('blacksmith manifest');
   await page.keyboard.press('Enter');
   await page.locator('#blacksmith .manifest-tab-btn').first().waitFor();

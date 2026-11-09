@@ -8,12 +8,12 @@
   "sha256": "d989991037b82b99f8c0ea1b984cf03e719150880fcadf7d64fc394fd2ae1cdb"
  },
  "blacksmith.css": {
-  "key": "20261028-oat-342",
-  "sha256": "d845d50865051eb08c9eeaa0d6dfb539d19baa0c6a6a2448252d0357a7c7f0be"
+  "key": "20261028-oat-344",
+  "sha256": "a38a801cde98c9757b493d39c3bc1806b4d5d5cc35f5b858d7b06fd2464e0fb6"
  },
  "blacksmith.js": {
-  "key": "20261028-oat-343",
-  "sha256": "b9af8ba940b99d7a17d4c78dc42d1eeba8f04b0316da4ca15dca0febe25ae963"
+  "key": "20261028-oat-345",
+  "sha256": "3d8bc2c4f47cdd39889caf7460857eaf37d026ecd65d226879a18893827cc4b0"
  },
  "console.css": {
   "key": "20261028-oat-309",
@@ -32,8 +32,8 @@
   "sha256": "83cc251bdeae5c7e39a0f33729189c7307793cfa69e969d878c1f1d67de14324"
  },
  "navigation.js": {
-  "key": "20261028-oat-333",
-  "sha256": "5627c0baa47aa8d5885315f0702c13df7f03594ea5d2bfd3fe7478329f0bccf1"
+  "key": "20261028-oat-346",
+  "sha256": "58d3f6b54870bff347bfdfd76ab93135056e9826dc4d0aa7231fb77aad416d99"
  },
  "routes.css": {
   "key": "20261028-oat-276",

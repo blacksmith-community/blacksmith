@@ -7,7 +7,7 @@ const vendored = path.join(ui, 'vendor', 'lucide', 'icons');
 const read = (f) => fs.readFileSync(path.join(ui, f), 'utf8');
 const files = fs.readdirSync(vendored).filter((f) => f.endsWith('.svg')).map((f) => f.slice(0, -4)).sort();
 
-const sourceFiles = () => fs.readdirSync(ui).filter((f) => f.endsWith('.js') && f !== 'icons.js' && f !== 'xterm.min.js');
+const sourceFiles = () => fs.readdirSync(ui).filter((f) => f.endsWith('.js') && f !== 'icons.js');
 const usedNames = () => {
   const names = new Set();
   sourceFiles().forEach((f) => {

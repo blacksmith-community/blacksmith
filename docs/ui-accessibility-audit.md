@@ -18,7 +18,7 @@ Target: WCAG 2.2 A/AA (https://www.w3.org/TR/WCAG22/).
 - Config versions were clickable divs. They are now native buttons with selected
   state. Operations tab choices and endpoint choices expose their selected state.
 - Terminal session close controls were mouse-only spans. They are separate,
-  named buttons. The terminal dialog is named; xterm screen-reader mode is on,
+  named buttons. The terminal dialog is named; wterm output announcements are on,
   cursor blink is off, and Control+Shift+F6 returns focus to terminal controls.
 - Wrapped header controls could extend outside their contrasting background.
   The header now grows with its controls instead of retaining a fixed height.

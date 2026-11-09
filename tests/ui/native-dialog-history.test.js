@@ -137,7 +137,7 @@ t('Back closes the certificate inspector through the router, and Forward opens i
 
 t('Back through the router closes the task details view but leaves the open terminal in place',async()=>{
  const env=await start(); const {w,d,stubs,traverse,snapshot}=env;
- w.Terminal=class{constructor(){this.cols=80;this.rows=24;}attachCustomKeyEventHandler(){}open(){}focus(){}resize(){}writeln(){}write(){}onData(){}onResize(){}dispose(){}};
+ w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(){this.readyState=0;}send(){}close(){}};
  const before=snapshot();
  await w.showTaskDetails(42); await sleep(100);
