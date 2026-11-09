@@ -307,3 +307,18 @@ t('a terminal constructor that throws shows the fixed failure and never opens a 
  expect(d.querySelector('#terminal-blacksmith-broker-node\\/0 [role=alert]').textContent).toBe(FAILED);
  mgr.closeAll();
 });
+
+t('a failed start raises no second disconnect notification when its socket closes',async()=>{
+ const env=await start(); const {w,d,terms,sockets,open,mgr}=env;
+ const raised=raisedErrors(w);
+ open();
+ sockets[0].readyState=1; sockets[0].onopen();
+ terms[0].rejectInit(); await sleep(0);
+ // A socket closed while connecting reports 1006 in a browser.
+ sockets[0].onclose({code:1006});
+ await sleep(1100);
+ expect(raised.length).toBe(1);
+ expect(d.body.textContent).not.toContain('Disconnected:');
+ expect(sockets.length).toBe(1);
+ mgr.closeAll();
+});

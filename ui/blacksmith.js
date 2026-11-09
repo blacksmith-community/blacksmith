@@ -23716,6 +23716,9 @@
             clearInterval(heartbeatTimer);
             heartbeatTimer = null;
           }
+          // A terminal that failed to start already told the operator, and
+          // its socket closing is part of that failure, not a disconnect.
+          if (session.failed) return;
           if (canRetry() && !handshakeReceived && retryCount < maxRetries && event.code !== 1000) {
             terminal.writeln(`\r\n[Connection closed unexpectedly - Retrying... (${retryCount + 1}/${maxRetries})]`);
             retryCount++;
