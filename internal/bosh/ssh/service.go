@@ -21,6 +21,10 @@ const (
 	terminalColumns  = 80
 	terminalRows     = 24
 
+	// maxTerminalDimension is the largest width or height, in cells, that
+	// a client may request for the PTY.
+	maxTerminalDimension = 1000
+
 	// Channel buffer sizes.
 	outputChannelBuffer = 100
 
@@ -333,8 +337,12 @@ func (s *ServiceImpl) createSessionImpl(ctx context.Context, request *SSHRequest
 		cleanupFunc = func() error { return info.Cleanup(cleanupCtx) }
 	}
 
+	termCols, termRows := ptySize(request.Options)
+
 	return &SessionImpl{
 		id:            sessionID,
+		termCols:      termCols,
+		termRows:      termRows,
 		deployment:    request.Deployment,
 		instance:      request.Instance,
 		index:         request.Index,
@@ -466,6 +474,10 @@ type SessionImpl struct {
 
 	// Ensure Close is only called once
 	closeOnce sync.Once
+
+	// termCols and termRows are the size the PTY opens at.
+	termCols int
+	termRows int
 
 	// connMutex guards closed and cancelStart, and the connection fields
 	// above while Start publishes them and Close takes them. Start builds
@@ -911,7 +923,7 @@ func (s *SessionImpl) setupSSHSession(client *ssh.Client) (*shellConn, error) {
 
 	shell := &shellConn{session: session}
 
-	err = startShell(shell)
+	err = startShell(shell, s.termCols, s.termRows)
 	if err != nil {
 		s.closeQuietly("SSH session", session)
 
@@ -922,8 +934,8 @@ func (s *SessionImpl) setupSSHSession(client *ssh.Client) (*shellConn, error) {
 }
 
 // startShell requests the PTY, takes the pipes, and starts the shell.
-func startShell(shell *shellConn) error {
-	err := setupPTY(shell.session)
+func startShell(shell *shellConn, cols, rows int) error {
+	err := setupPTY(shell.session, cols, rows)
 	if err != nil {
 		return err
 	}
@@ -941,15 +953,39 @@ func startShell(shell *shellConn) error {
 	return nil
 }
 
-// setupPTY sets up the pseudo-terminal.
-func setupPTY(session *ssh.Session) error {
+// ptyRequester is the part of an SSH session that asks for a PTY.
+type ptyRequester interface {
+	RequestPty(term string, h, w int, termmodes ssh.TerminalModes) error
+}
+
+// ptySize returns the columns and rows the PTY opens at. A width or height
+// outside 1 to maxTerminalDimension, or missing, falls back to the
+// defaults.
+func ptySize(options *SSHOptions) (int, int) {
+	cols, rows := terminalColumns, terminalRows
+
+	if options == nil {
+		return cols, rows
+	}
+
+	if options.WindowWidth >= 1 && options.WindowWidth <= maxTerminalDimension &&
+		options.WindowHeight >= 1 && options.WindowHeight <= maxTerminalDimension {
+		cols, rows = options.WindowWidth, options.WindowHeight
+	}
+
+	return cols, rows
+}
+
+// setupPTY sets up the pseudo-terminal at cols by rows. RequestPty takes
+// the height first.
+func setupPTY(session ptyRequester, cols, rows int) error {
 	modes := ssh.TerminalModes{
 		ssh.ECHO:          1,
 		ssh.TTY_OP_ISPEED: terminalBaudRate,
 		ssh.TTY_OP_OSPEED: terminalBaudRate,
 	}
 
-	err := session.RequestPty("xterm-256color", terminalColumns, terminalRows, modes)
+	err := session.RequestPty("xterm-256color", rows, cols, modes)
 	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to request PTY", err)
 	}
