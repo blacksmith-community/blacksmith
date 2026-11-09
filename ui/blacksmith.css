@@ -6779,21 +6779,26 @@ bs-tabs > .cert-tab-pane[hidden] {
   --term-color-14: #29b8db;
   --term-color-15: #e5e5e5;
 
-  width: 100%;
-  height: 100%;
   box-sizing: border-box;
   border-radius: 0;
   box-shadow: none;
-  display: none;
 }
 
-#terminal-modal .terminal-instance.wterm.active {
-  display: block;
+/* wterm's own stylesheet fixes the native selection colour, and
+   --term-selection-bg only colours the scrollback selection overlay. */
+#terminal-modal .wterm ::selection {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* A terminal that failed to start may never have become a wterm host,
+   so the failed element carries the padding and the message has none. */
+#terminal-modal .terminal-instance.terminal-failed {
+  padding: 12px;
 }
 
 #terminal-modal .terminal-load-error {
   margin: 0;
-  padding: 12px;
+  padding: 0;
   color: #d4d4d4;
   font-family: Menlo, Monaco, "Courier New", monospace;
 }
