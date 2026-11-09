@@ -8,8 +8,8 @@
   "sha256": "d989991037b82b99f8c0ea1b984cf03e719150880fcadf7d64fc394fd2ae1cdb"
  },
  "blacksmith.css": {
-  "key": "20261109-oat-347",
-  "sha256": "d9a5c33684059dc51d2d163140c6b620eab653b4eaa4335c5c15262833c51dae"
+  "key": "20261109-oat-348",
+  "sha256": "3fbaea96bc2d68cf99863ffb26f3296b7019f9ce598651afe6e6750aaeeeec3b"
  },
  "blacksmith.js": {
   "key": "20261028-oat-345",
@@ -20,8 +20,8 @@
   "sha256": "cc270c75e8c68c131f79358404ad02bbc41db3fe4a798faba510b249f8df1e7f"
  },
  "forge-theme.css": {
-  "key": "20261028-oat-341",
-  "sha256": "1793bf549d70b631faccf272f8c93c774044a148c1478ffd04cc43d65bc5332d"
+  "key": "20261109-oat-349",
+  "sha256": "8abe8e791be8a7a47058e2fced55c19579f34001b9d77cee976f9ce786b1e8a0"
  },
  "icons.js": {
   "key": "20261028-oat-233",
