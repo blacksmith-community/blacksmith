@@ -128,3 +128,32 @@ t('blocked storage restores no tabs and does not break opening a session',async(
  w.TerminalManager.openWithContext('blacksmith','broker','node/0','node','broker');
  expect(w.TerminalManager.sessions.size).toBe(1);
 });
+
+const entry=(name,id)=>({deploymentType:'service-instance',deploymentName:name,instanceId:id,instanceName:'x',boshDeploymentName:'x'});
+const rec=(...entries)=>JSON.stringify({v:1,active:'',sessions:entries});
+
+for(const bad of ['../evil','a?b','a#b','a/b','..','.','a b','a%2fb']){
+ t(`a stored deployment name ${JSON.stringify(bad)} is dropped`,async()=>{
+  const env=await start(rec(entry(bad,'node/0')));
+  expect(env.mgr.sessions.size).toBe(0);
+ });
+}
+
+for(const bad of ['../0','node/../0','node/0/1','node?x/0','node/a','node/0#','/0']){
+ t(`a stored instance id ${JSON.stringify(bad)} is dropped`,async()=>{
+  const env=await start(rec(entry('abc-123',bad)));
+  expect(env.mgr.sessions.size).toBe(0);
+ });
+}
+
+t('a valid entry next to a bad one still restores',async()=>{
+ const env=await start(rec(entry('../evil','node/0'),entry('0f3c9a-aa.bb_cc','node/2'),entry('x?y','node/1')));
+ expect([...env.mgr.sessions.keys()]).toEqual(['service-instance-0f3c9a-aa.bb_cc-node/2']);
+});
+
+t('buildWebSocketUrl encodes the deployment segment and leaves real names alone',async()=>{
+ const env=await start();
+ const url=(name,id)=>env.mgr.buildWebSocketUrl({deploymentType:'service-instance',deploymentName:name,instanceId:id});
+ expect(url('a/b?c#d','node/0')).toContain('/b/a%2Fb%3Fc%23d/ssh/stream?');
+ expect(url('0f3c9a12-aa.bb_cc','node/2')).toContain('/b/0f3c9a12-aa.bb_cc/ssh/stream?instance=node&index=2');
+});

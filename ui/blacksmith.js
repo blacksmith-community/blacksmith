@@ -23680,11 +23680,20 @@
         const record = JSON.parse(window.sessionStorage.getItem(TERMINAL_STORE_KEY));
         if (!record || record.v !== TERMINAL_STORE_VERSION || !Array.isArray(record.sessions)) return null;
         const text = value => typeof value === 'string' && value !== '' && value.length <= 300;
+        // Names and ids that end up in the websocket path must look like
+        // what the console itself produces: plain name characters, with an
+        // optional numeric index after one slash.
+        const name = value => typeof value === 'string' && value.length <= 200 && /^[A-Za-z0-9._-]+$/.test(value) && value !== '.' && value !== '..';
+        const target = value => {
+          if (typeof value !== 'string') return false;
+          const [group, index, ...extra] = value.split('/');
+          return extra.length === 0 && name(group) && (index === undefined || /^[0-9]{1,6}$/.test(index));
+        };
         const seen = new Set();
         const sessions = [];
         for (const c of record.sessions.slice(0, TERMINAL_STORE_MAX)) {
           if (!c || (c.deploymentType !== 'blacksmith' && c.deploymentType !== 'service-instance')) continue;
-          if (!text(c.deploymentName) || !text(c.instanceId)) continue;
+          if (!name(c.deploymentName) || !target(c.instanceId)) continue;
           const key = `${c.deploymentType}-${c.deploymentName}-${c.instanceId}`;
           if (seen.has(key)) continue;
           seen.add(key);
@@ -24121,7 +24130,7 @@
         const instanceName = parts[0] || '';
         const instanceIndex = parts.length > 1 ? parts[1] : '0';
         const qp = instanceName !== '' ? `?instance=${encodeURIComponent(instanceName)}&index=${encodeURIComponent(instanceIndex)}` : '';
-        return `${protocol}//${host}/b/${context.deploymentName}/ssh/stream${qp}`;
+        return `${protocol}//${host}/b/${encodeURIComponent(context.deploymentName)}/ssh/stream${qp}`;
       }
     },
 
