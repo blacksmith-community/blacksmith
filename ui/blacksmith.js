@@ -24051,6 +24051,19 @@
     },
 
     fillStatusSlot(slot, sessionKey, context, status, options = {}) {
+      // Replacing the focused reconnect button would drop focus to the page.
+      // Focus moves to the session's own control first, while the button is
+      // still in place, so Oat's tooltip hides cleanly instead of finding
+      // its anchor gone.
+      if (slot.contains(document.activeElement)) {
+        const owner = slot.closest('.minimized-terminal-tab, .terminal-tab');
+        const control = owner && owner.querySelector('.minimized-session-open, [role="tab"]');
+        if (control) control.focus();
+      }
+      this.paintStatusSlot(slot, sessionKey, context, status, options);
+    },
+
+    paintStatusSlot(slot, sessionKey, context, status, options = {}) {
       slot.dataset.status = status;
       slot.options = options;
       if (status === 'disconnected') {
@@ -24119,7 +24132,9 @@
           if (event.target !== tabset) return;
           const entry = tabset.tabs[event.detail.index]?.closest('.terminal-tab');
           const key = entry && entry.id.slice(4);
-          if (key && this.sessions.has(key) && key !== this.activeSession) this.switchToSession(key);
+          // Focus stays on the tab, so the next arrow key moves on to the
+          // next tab instead of going to the remote shell.
+          if (key && this.sessions.has(key) && key !== this.activeSession) this.switchToSession(key, { focusTerminal: false });
         });
       }
       const strip = document.getElementById('terminal-tabs');
@@ -24129,7 +24144,7 @@
       strip.scrollControls.reveal(entry);
     },
 
-    switchToSession(sessionKey) {
+    switchToSession(sessionKey, options = {}) {
       // Ensure modal is visible
       this.showDialog();
 
@@ -24162,8 +24177,9 @@
         this.activeSession = sessionKey;
         this.updateVmsButton();
 
-        // Focus the terminal after switching
-        if (session.terminal) {
+        // Focus the terminal after switching, unless the caller is walking
+        // the tabs with the keyboard.
+        if (session.terminal && options.focusTerminal !== false) {
           setTimeout(() => {
             session.terminal.focus();
           }, 100);

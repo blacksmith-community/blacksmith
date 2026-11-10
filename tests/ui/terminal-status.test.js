@@ -225,6 +225,21 @@ t('the minimized bar shows the dot, no status word, and a reconnect button when 
  mgr.closeAll();
 });
 
+t('a keyboard reconnect from the minimized bar leaves focus on that session\'s restore control',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,mgr}=env;
+ open(); await connect(sockets[0],terms[0]);
+ mgr.minimizeAll();
+ sockets[0].onclose({code:1000});
+ const bar=d.querySelector('#minimized-terminal-tabs');
+ const button=slot(d,'#minimized-terminal-tabs',KEY_BK).querySelector('button.terminal-reconnect');
+ button.focus();
+ expect(d.activeElement).toBe(button);
+ button.click();
+ expect(button.isConnected).toBe(false);
+ expect(d.activeElement).toBe(bar.querySelector('.minimized-session-open'));
+ mgr.closeAll();
+});
+
 t('every dot state has a themed colour class in both themes',()=>{
  const css=fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8');
  const pick=(name)=>{ const m=css.match(new RegExp('\\.terminal-status-'+name+'\\s*\\{[^}]*\\}')); return m&&m[0]; };

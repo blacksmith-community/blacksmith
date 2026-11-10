@@ -21,7 +21,7 @@ const start=async()=>{
  const {w,d}=env;
  w.eval(OAT);
  const terms=[];
- w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');terms.push(this);}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
+ w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');terms.push(this);}init(){return Promise.resolve(this);}focus(){this.focused=(this.focused||0)+1;}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  const sockets=[];
  w.WebSocket=class{static get OPEN(){return 1;}constructor(){this.readyState=0;this.sent=[];sockets.push(this);}send(m){this.sent.push(m);}close(){}};
  await sleep(60);
@@ -89,6 +89,31 @@ t('the arrow keys move between session tabs',async()=>{
  tabs()[1].dispatchEvent(new w.KeyboardEvent('keydown',{key:'Home',bubbles:true,cancelable:true}));
  expect(selected()).toEqual([tabs()[0].textContent]);
  expect(mgr(env).activeSession).toBe('blacksmith-broker-node/0');
+ mgr(env).closeAll(); await stubs.settle();
+});
+
+t('the arrow keys keep focus on the tab instead of moving it into the terminal',async()=>{
+ const env=await start(); const {w,d,tabs,terms,stubs}=env;
+ open(env); open(env,1);
+ await sleep(150);
+ tabs()[1].focus();
+ const focused=terms.map(x=>x.focused||0);
+ tabs()[1].dispatchEvent(new w.KeyboardEvent('keydown',{key:'Home',bubbles:true,cancelable:true}));
+ await sleep(150);
+ expect(mgr(env).activeSession).toBe('blacksmith-broker-node/0');
+ expect(d.activeElement).toBe(tabs()[0]);
+ expect(terms.map(x=>x.focused||0)).toEqual(focused);
+ mgr(env).closeAll(); await stubs.settle();
+});
+
+t('a click on a tab still focuses its terminal',async()=>{
+ const env=await start(); const {tabs,terms,stubs}=env;
+ open(env); open(env,1);
+ await sleep(150);
+ const before=terms[0].focused||0;
+ tabs()[0].click();
+ await sleep(150);
+ expect(terms[0].focused||0).toBeGreaterThan(before);
  mgr(env).closeAll(); await stubs.settle();
 });
 
