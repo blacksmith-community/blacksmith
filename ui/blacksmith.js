@@ -7239,7 +7239,6 @@
     }
 
     upgradeTabInitialized = true;
-    console.log('Batch Operations tab initialized');
   };
 
   // Load upgrade settings from API
@@ -9398,7 +9397,6 @@
 
         if (response.ok) {
           const task = await response.json();
-          console.log('Upgrade task created:', task.id);
           resetPauseOnFailure('upgrade');
 
           // Clear selection
@@ -9844,7 +9842,6 @@
 
       // Look for 'update' or 'create' actions
       if (event.action === 'create' || event.action === 'update') {
-        console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} event at ${event.time}`);
         return event.task_id;
       }
     }
@@ -9868,7 +9865,6 @@
 
       // Look for deployment-related events
       if (event.object_type === 'deployment' || event.action === 'deploy') {
-        console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} deployment event at ${event.time}`);
         return event.task_id;
       }
     }
@@ -9878,12 +9874,10 @@
       if (event.task_id && event.task_id !== '' &&
         event.user !== 'hm' &&
         event.action !== 'acquire' && event.action !== 'release') {
-        console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} event (fallback) at ${event.time}`);
         return event.task_id;
       }
     }
 
-    console.log('No suitable task found in events');
     return null;
   };
 
@@ -12144,7 +12138,6 @@
     // Add broker API version header for /v2/* endpoints
     if (url.includes('/v2/')) {
       headers.set('X-Broker-API-Version', '2.16');
-      console.log('Setting X-Broker-API-Version header for', url);
     }
 
     return fetch(url, {
@@ -12359,11 +12352,6 @@
 
   // Helper function to extract user/vhost info from credentials with sophisticated mapping
   const extractConnectionInfo = (creds, serviceType, manifestData = null) => {
-    console.log('Debug: extractConnectionInfo called with:', {
-      serviceType,
-      credsKeys: Object.keys(creds),
-      hasManifestData: !!manifestData
-    });
 
     const info = {
       users: [],
@@ -12376,7 +12364,6 @@
 
       // === MANIFEST-BASED CREDENTIALS ===
       if (manifestData) {
-        console.log('Debug: Manifest data available:', Object.keys(manifestData));
 
         const searchManifestValue = (path) => {
           const keys = path.split('.');
@@ -12420,7 +12407,6 @@
         // Extract manifest admin user from job properties
         const adminUser = findInJobProperties('rabbitmq.admin.user');
         const adminPass = findInJobProperties('rabbitmq.admin.pass');
-        console.log('Debug: Found manifest admin user/pass:', adminUser, adminPass ? '[REDACTED]' : null);
         if (adminUser && adminPass) {
           info.users.push('manifest.admin.user');
           info.userCredentials['manifest.admin.user'] = {
@@ -12432,7 +12418,6 @@
         // Extract manifest app user from job properties
         const appUser = findInJobProperties('rabbitmq.app.user');
         const appPass = findInJobProperties('rabbitmq.app.pass');
-        console.log('Debug: Found manifest app user/pass:', appUser, appPass ? '[REDACTED]' : null);
         if (appUser && appPass) {
           info.users.push('manifest.app.user');
           info.userCredentials['manifest.app.user'] = {
@@ -12444,7 +12429,6 @@
         // Extract manifest monitoring user from job properties
         const monitoringUser = findInJobProperties('rabbitmq.monitoring.user');
         const monitoringPass = findInJobProperties('rabbitmq.monitoring.pass');
-        console.log('Debug: Found manifest monitoring user/pass:', monitoringUser, monitoringPass ? '[REDACTED]' : null);
         if (monitoringUser && monitoringPass) {
           info.users.push('manifest.monitoring.user');
           info.userCredentials['manifest.monitoring.user'] = {
@@ -12455,7 +12439,6 @@
 
         // Extract manifest vhost from job properties
         const manifestVhost = findInJobProperties('rabbitmq.vhost');
-        console.log('Debug: Found manifest vhost:', manifestVhost);
         if (manifestVhost) {
           info.vhosts.push('manifest.vhost');
           info.vhostCredentials['manifest.vhost'] = manifestVhost;
@@ -12516,12 +12499,6 @@
       }
     }
 
-    console.log('Debug: Final extracted connection info:', {
-      users: info.users,
-      vhosts: info.vhosts,
-      userCredMappings: Object.keys(info.userCredentials),
-      vhostCredMappings: Object.keys(info.vhostCredentials)
-    });
     return info;
   };
 
@@ -13075,13 +13052,6 @@
       ? connectionState.connectionParams
       : getConnectionInfo(instanceId);
 
-    // Debug logging to show which connection parameters are being used
-    if (connectionState && connectionState.connected && connectionState.connectionParams) {
-      console.log(`Using stored connection parameters for ${serviceType}:`, connectionInfo);
-    } else {
-      console.log(`Using DOM connection parameters for ${serviceType}:`, connectionInfo);
-    }
-
     // Add connection information to params
     if (serviceType === 'redis') {
       params.use_tls = connectionInfo.type === 'tls';
@@ -13240,7 +13210,6 @@
 
       if (result && !result.error) {
         connectToService(instanceId);
-        console.log('Service connected successfully:', result);
       } else {
         throw new Error(result.error || 'Connection failed');
       }
@@ -13253,7 +13222,6 @@
 
   const handleDisconnect = (instanceId) => {
     disconnectFromService(instanceId);
-    console.log('Service disconnected');
   };
 
   window.executeRedisTest = async (instanceId) => {
@@ -13268,8 +13236,7 @@
 
   window.executeRedisInfo = async (instanceId) => {
     try {
-      const result = await executeServiceOperation(instanceId, 'redis', 'info');
-      console.log('Redis info result:', result);
+      await executeServiceOperation(instanceId, 'redis', 'info');
     } catch (error) {
       console.error('Redis info failed:', error);
     }
@@ -13286,8 +13253,7 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'redis', 'set', { key, value, ttl });
-      console.log('Redis SET result:', result);
+      await executeServiceOperation(instanceId, 'redis', 'set', { key, value, ttl });
     } catch (error) {
       console.error('Redis SET failed:', error);
     }
@@ -13302,8 +13268,7 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'redis', 'get', { key });
-      console.log('Redis GET result:', result);
+      await executeServiceOperation(instanceId, 'redis', 'get', { key });
     } catch (error) {
       console.error('Redis GET failed:', error);
     }
@@ -13320,8 +13285,7 @@
     const keys = keysText.split('\n').map(k => k.trim()).filter(k => k);
 
     try {
-      const result = await executeServiceOperation(instanceId, 'redis', 'delete', { keys });
-      console.log('Redis DELETE result:', result);
+      await executeServiceOperation(instanceId, 'redis', 'delete', { keys });
     } catch (error) {
       console.error('Redis DELETE failed:', error);
     }
@@ -13331,8 +13295,7 @@
     const pattern = document.getElementById(`redis-pattern-${instanceId}`)?.value || '*';
 
     try {
-      const result = await executeServiceOperation(instanceId, 'redis', 'keys', { pattern });
-      console.log('Redis KEYS result:', result);
+      await executeServiceOperation(instanceId, 'redis', 'keys', { pattern });
     } catch (error) {
       console.error('Redis KEYS failed:', error);
     }
@@ -13358,8 +13321,7 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'redis', 'command', { command, args });
-      console.log('Redis COMMAND result:', result);
+      await executeServiceOperation(instanceId, 'redis', 'command', { command, args });
     } catch (error) {
       console.error('Redis COMMAND failed:', error);
     }
@@ -13373,8 +13335,7 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'redis', 'flush', { database });
-      console.log('Redis FLUSH result:', result);
+      await executeServiceOperation(instanceId, 'redis', 'flush', { database });
     } catch (error) {
       console.error('Redis FLUSH failed:', error);
     }
@@ -13403,10 +13364,9 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'publish', {
+      await executeServiceOperation(instanceId, 'rabbitmq', 'publish', {
         queue, exchange, message, persistent
       });
-      console.log('RabbitMQ PUBLISH result:', result);
     } catch (error) {
       console.error('RabbitMQ PUBLISH failed:', error);
     }
@@ -13424,10 +13384,9 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'consume', {
+      await executeServiceOperation(instanceId, 'rabbitmq', 'consume', {
         queue, count, timeout, auto_ack: autoAck
       });
-      console.log('RabbitMQ CONSUME result:', result);
     } catch (error) {
       console.error('RabbitMQ CONSUME failed:', error);
     }
@@ -13435,8 +13394,7 @@
 
   window.executeRabbitMQQueues = async (instanceId) => {
     try {
-      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'queues');
-      console.log('RabbitMQ QUEUES result:', result);
+      await executeServiceOperation(instanceId, 'rabbitmq', 'queues');
     } catch (error) {
       console.error('RabbitMQ QUEUES failed:', error);
     }
@@ -13461,10 +13419,9 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'queue-ops', {
+      await executeServiceOperation(instanceId, 'rabbitmq', 'queue-ops', {
         queue, operation, durable
       });
-      console.log('RabbitMQ QUEUE-OPS result:', result);
     } catch (error) {
       console.error('RabbitMQ QUEUE-OPS failed:', error);
     }
@@ -13481,10 +13438,9 @@
     }
 
     try {
-      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'management', {
+      await executeServiceOperation(instanceId, 'rabbitmq', 'management', {
         path, method, use_ssl: useSSL
       });
-      console.log('RabbitMQ MANAGEMENT result:', result);
     } catch (error) {
       console.error('RabbitMQ MANAGEMENT failed:', error);
     }
@@ -15729,7 +15685,6 @@
 
   // Main initialization
   domReady(async () => {
-    console.log('Blacksmith UI initializing...');
 
     // Tab switching functionality
     const switchTab = async (tabId) => {
@@ -15828,8 +15783,6 @@
       }
 
       const catalog = await catalogResponse.json();
-      console.log('Catalog response:', catalog);
-      console.log('Catalog has services:', catalog?.services?.length || 0);
 
       // Then fetch the status
       const statusResponse = await fetchWithHeaders('/b/status');
@@ -15839,8 +15792,6 @@
       }
 
       const data = await statusResponse.json();
-      console.log('Status response:', data);
-      console.log('Plans from status:', data.plans);
 
       // Normalize plan metadata from status and catalog responses
       const statusPlans = (data.plans && typeof data.plans === 'object') ? data.plans : {};
@@ -15979,10 +15930,8 @@
       // Store plans data BEFORE rendering (renderServicesTemplate needs it)
       if (catalog.services && catalog.services.length > 0) {
         window.plansData = catalog;
-        console.log('Set window.plansData with', catalog.services.length, 'services');
       } else {
         window.plansData = null;
-        console.log('No catalog services available, set window.plansData to null');
       }
 
       // Render services
@@ -16028,7 +15977,6 @@
             const response = await fetch(`/b/${instanceId}/details`, { cache: 'no-cache' });
             if (response.ok) {
               vaultData = await response.json();
-              console.log('Vault data received:', vaultData); // Debug logging
             }
           } catch (error) {
             console.error('Failed to fetch vault data:', error);
@@ -16042,7 +15990,6 @@
                 const manifestData = await manifestResponse.json();
                 if (manifestData && manifestData.parsed && manifestData.parsed.name) {
                   vaultData.deployment_name = manifestData.parsed.name;
-                  console.log(`Extracted deployment name from manifest for ${instanceId}: ${vaultData.deployment_name}`);
                 }
               }
             } catch (error) {
@@ -16292,7 +16239,6 @@
 
                 const catalog = await catalogResponse.json();
                 const data = await statusResponse.json();
-                console.log('Refreshed catalog and status response:', { catalog, data });
 
                 // Process the data to merge catalog and status info (same logic as initial load)
                 const statusPlans = (data.plans && typeof data.plans === 'object') ? data.plans : {};
@@ -17054,7 +17000,6 @@
   // Initialize certificates tab functionality
   const initializeCertificatesTab = () => {
     // Clear any existing state
-    console.log('Certificates tab initialized');
 
     bindCertificateActions(document, {
       'fetch-trusted': () => window.fetchTrustedCertificates(),
@@ -17082,7 +17027,6 @@
 
   // Initialize tasks tab functionality
   const initializeTasksTab = () => {
-    console.log('Tasks tab initialized');
 
     // Set up filter change handlers
     const typeFilter = document.getElementById('task-type-filter');
@@ -17302,7 +17246,6 @@
 
   // Initialize configs tab functionality
   const initializeConfigsTab = () => {
-    console.log('Configs tab initialized');
 
     // Set up filter change handlers
     const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]');
@@ -17329,7 +17272,6 @@
     const refresh = beginDetailRefresh('blacksmith', 'configs');
     if (!refresh?.current()) return;
     const currentSearchFilter = captureSearchFilterState('configs-table');
-    console.log('Refreshing configs table');
 
     const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]:checked');
     const checkedTypes = Array.from(typeCheckboxes).map(cb => cb.value);
@@ -17571,7 +17513,6 @@
       event.preventDefault();
     }
 
-    console.log('Opening config details modal for config:', configId);
 
     // Get the modal
     const modal = document.getElementById('config-details-modal');
@@ -17676,7 +17617,6 @@
       event.preventDefault();
     }
 
-    console.log('Opening config details modal for config:', configType, configName);
 
     const modal = document.getElementById('config-details-modal');
     if (!modal) {
@@ -18120,8 +18060,6 @@
     const prevDisabled = index === 0;
     const nextDisabled = index >= versions.length - 2;
 
-    console.log(`Navigation state: index=${index}, versions.length=${versions.length}, prevDisabled=${prevDisabled}, nextDisabled=${nextDisabled}`);
-    console.log(`Current diff index: ${window.currentDiffIndex}, comparing ${fromVersion.id} → ${toVersion.id}`);
 
     document.getElementById('prev-diff-btn').disabled = prevDisabled;
     document.getElementById('next-diff-btn').disabled = nextDisabled;
@@ -18872,8 +18810,7 @@
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const result = await response.json();
-      console.log('Task cancelled:', result);
+      await response.json();
 
       // Refresh task details
       await loadTaskDetails(taskId);
@@ -19202,7 +19139,6 @@
       const inspectButton = detailsContainer.querySelector('.cert-inspect-btn');
       if (inspectButton) {
         inspectButton.addEventListener('click', () => {
-          console.log('Trusted cert inspect button clicked', certificate);
           window.inspectCertificateFromList(certificate);
         });
       } else {
@@ -19514,7 +19450,6 @@
       return;
     }
 
-    console.log('Inspecting certificate data:', certificateData);
 
     // Use the certificate details if available, otherwise use the whole object
     let certToInspect = certificateData.details || certificateData;
@@ -19538,7 +19473,6 @@
       return;
     }
 
-    console.log('Certificate to inspect:', certToInspect);
 
     // Use the global certificate inspector function
     window.inspectCertificate(certToInspect);
@@ -21548,7 +21482,6 @@
         throw new Error('No certificate data provided');
       }
 
-      console.log('CertificateInspector.inspect called with:', certificateData);
 
       // Validate that we have some certificate information to display
       if (!certificateData.subject && !certificateData.issuer && !certificateData.pemEncoded && !certificateData.textDetails) {
@@ -21557,7 +21490,6 @@
       }
 
       const modal = this.createModal(certificateData, options);
-      console.log('Modal created:', modal);
       return ModalManager.openModal(modal);
     },
 
@@ -22533,8 +22465,6 @@
           showNotification(message, toastType);
         } else if (normalizedType === 'error') {
           console.error(message);
-        } else {
-          console.log(message);
         }
       }
     };
@@ -23339,9 +23269,7 @@
   // Global functions for certificate inspection
   window.inspectCertificate = function (certificateData) {
     try {
-      console.log('Opening certificate inspector with data:', certificateData);
       const result = CertificateInspector.inspect(certificateData);
-      console.log('Certificate inspector result:', result);
       return result;
     } catch (error) {
       console.error('Error in CertificateInspector.inspect:', error, error.stack);
