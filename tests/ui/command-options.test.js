@@ -6,20 +6,20 @@ const t=JSDOM?test:test.skip;
 
 const SECRET='echo SECRET-COMMAND-TEXT-9141';
 const PREVIEW_URL='/b/upgrade/commands/preview';
+const AVAILABILITY_URL='/b/upgrade/commands/availability';
 
-// probes maps the run_as a probe sends to the answer it gets, as [status, body].
+// availability is the answer the broker gives for the two switches, as
+// [status, body]. The console asks once with a GET and never sends a preview
+// to find out.
 // Every env a test boots, checked once the test ends so a dialog error that
 // the UI code swallows still fails it.
 const envs=[];
 afterEach(()=>{ while(envs.length){ const env=envs.pop(); expectNoAlerts(env); expect(env.logs.some(l=>String(l).includes(SECRET))).toBe(false); } });
-async function setup(probes={},{network=false}={}){
+async function setup(availability=[200,{enabled:true,allow_root:true}],{network=false}={}){
  const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
- w.__routes.push([PREVIEW_URL,(u,o,j)=>{
-  if(network) return Promise.reject(new Error('network down'));
-  const answer=probes[JSON.parse(o.body).run_as];
-  return answer?j(answer[0],answer[1]):j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'});
- }]);
+ w.__routes.push([PREVIEW_URL,(u,o,j)=>j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'})]);
+ w.__routes.push([AVAILABILITY_URL,(u,o,j)=>network?Promise.reject(new Error('network down')):j(availability[0],availability[1])]);
  await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
  await w.__T.initUpgradeTab();await sleep(10);
  return env;
@@ -64,18 +64,15 @@ t('the options pane holds the command fields with their defaults',async()=>{
  }finally{w.close();}
 });
 
-t('the probes send no command text and each user is probed',async()=>{
+t('page load makes one availability GET and no preview request',async()=>{
  const env=await setup();const {w}=env;try{
- const probes=env.calls.filter(c=>c.startsWith('POST '+PREVIEW_URL));
- expect(probes.length).toBe(2);
- const bodies=probes.map(c=>JSON.parse(c.slice(('POST '+PREVIEW_URL+' ').length)));
- expect(bodies.map(b=>b.run_as).sort()).toEqual(['root','vcap']);
- bodies.forEach(b=>{expect(b.instance_ids).toEqual([]);expect((b.command||'').length).toBe(0);});
+ expect(env.calls.filter(c=>c.startsWith('GET '+AVAILABILITY_URL)).length).toBe(1);
+ expect(env.calls.filter(c=>c.includes(PREVIEW_URL)).length).toBe(0);
  }finally{w.close();}
 });
 
-t('a root_disabled probe disables root with a note',async()=>{
- const env=await setup({root:refusal('root_disabled','Running as root is switched off.')});const {w,d}=env;try{
+t('allow_root false disables root with a note',async()=>{
+ const env=await setup([200,{enabled:true,allow_root:false}]);const {w,d}=env;try{
  expect(d.getElementById('rotate-op-command').disabled).toBe(false);
  await openOptions(env);
  const root=d.getElementById('command-user-root');
@@ -96,24 +93,18 @@ t('a later preview refusing root disables root too',async()=>{
  }finally{w.close();}
 });
 
-t('a commands_disabled probe disables the radio with the reason',async()=>{
- const env=await setup({vcap:refusal('commands_disabled','Command runs are switched off on this broker.')});const {w,d}=env;try{
+t('enabled false disables the radio with the reason',async()=>{
+ const env=await setup([200,{enabled:false,allow_root:false}]);const {w,d}=env;try{
  const radio=d.getElementById('rotate-op-command');
  expect(radio.disabled).toBe(true);
- expect(d.getElementById(radio.getAttribute('aria-describedby')).textContent).toContain('Command runs are switched off on this broker.');
+ expect(d.getElementById(radio.getAttribute('aria-describedby')).textContent).toContain('Running commands is switched off on this broker.');
  expect(await w.__T.requestOperation('command')).toBe(false);
  expect(d.getElementById('command-text')).toBeNull();
  }finally{w.close();}
 });
 
-t('a commands_disabled answer to the root probe also disables the radio',async()=>{
- const env=await setup({root:refusal('commands_disabled','Off.')});const {w,d}=env;try{
- expect(d.getElementById('rotate-op-command').disabled).toBe(true);
- }finally{w.close();}
-});
-
-t('other probe answers leave the controls enabled',async()=>{
- const env=await setup({vcap:[401,{success:false,error:'Command key needed.',code:'command_credential_required'}]});const {w,d}=env;try{
+t('an availability error leaves the controls enabled and says nothing',async()=>{
+ const env=await setup([403,{success:false,error:'Not allowed.',code:'forbidden'}]);const {w,d}=env;try{
  expect(d.getElementById('rotate-op-command').disabled).toBe(false);
  await openOptions(env);
  expect(d.getElementById('command-user-root').disabled).toBe(false);
@@ -193,7 +184,7 @@ t('leaving the operation hides the command pane and returns the upgrade options'
  }finally{w.close();}
 });
 
-t('a probe that fails on the network leaves the controls enabled',async()=>{
+t('an availability request that fails on the network leaves the controls enabled',async()=>{
  const env=await setup({},{network:true});const {w,d}=env;try{
  expect(d.getElementById('rotate-op-command').disabled).toBe(false);
  await openOptions(env);

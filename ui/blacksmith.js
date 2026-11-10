@@ -3898,9 +3898,11 @@
   const COMMAND_TIMEOUT_MAX = 3600;
   const COMMAND_TIMEOUT_DEFAULT = 600;
   const COMMAND_PREVIEW_URL = '/b/upgrade/commands/preview';
+  const COMMAND_AVAILABILITY_URL = '/b/upgrade/commands/availability';
   const COMMAND_KEY_HEADER = 'X-Blacksmith-Command-Key';
   // Refusals of a preview that name a control on the options step.
   const COMMAND_OPTION_REFUSALS = ['max_in_flight_too_high', 'timeout_out_of_range', 'command_too_long', 'invalid_run_user'];
+  const COMMAND_OFF_NOTE = 'Running commands is switched off on this broker.';
   const COMMAND_ROOT_OFF_NOTE = 'Running as root is switched off on this broker.';
   const COMMAND_NO_PARALLEL_NOTE = 'Parallel runs are not available because the director has too few workers.';
 
@@ -5704,29 +5706,20 @@
     syncCommandOptions();
   };
 
-  // Asks the preview endpoint, with no instances and no command text, whether
-  // command runs and root are switched on. The authorizer answers before it
-  // validates, so a 403 names the true reason and any other answer says
-  // nothing. The real preview at the review step still refuses with the
-  // reason, so those answers leave the controls enabled.
+  // Asks the broker once, with a read-only GET, whether command runs and root
+  // are switched on. The answer holds the two switches and nothing else. A
+  // failed request changes nothing, and the real preview at the review step
+  // still refuses with its own reason.
   const probeCommandAvailability = async () => {
-    const refusalOf = async (runAs) => {
-      try {
-        const response = await fetch(COMMAND_PREVIEW_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ instance_ids: [], run_as: runAs })
-        });
-        if (response.status === 403) return await readApiError(response);
-      } catch (error) {
-        // A failed probe changes nothing.
-      }
-      return null;
-    };
-    const [vcap, root] = await Promise.all([refusalOf('vcap'), refusalOf('root')]);
-    const off = [vcap, root].find((error) => error && error.code === 'commands_disabled');
-    if (off) commandState.unavailable = off.message;
-    if (root && root.code === 'root_disabled') commandState.rootOff = root.message;
+    let availability = null;
+    try {
+      const response = await fetch(COMMAND_AVAILABILITY_URL, { headers: { Accept: 'application/json' } });
+      if (response.ok) availability = await response.json();
+    } catch (error) {
+      // A failed request changes nothing.
+    }
+    if (availability && availability.enabled === false) commandState.unavailable = COMMAND_OFF_NOTE;
+    if (availability && availability.enabled === true && availability.allow_root === false) commandState.rootOff = COMMAND_ROOT_OFF_NOTE;
     const radio = document.getElementById('rotate-op-command');
     if (radio && commandState.unavailable) {
       radio.disabled = true;

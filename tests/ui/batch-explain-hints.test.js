@@ -6,10 +6,10 @@ const t=JSDOM?test:test.skip;
 
 const envs=[];
 afterEach(()=>{while(envs.length){const env=envs.pop();expect(env.alerts).toEqual([]);env.w.close();}});
-async function setupCommand(probes={}){
+async function setupCommand(availability=[200,{enabled:true,allow_root:true}]){
  const env=boot({noDialogs:true}),{w}=env;envs.push(env);
  w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])],
-  ['/b/upgrade/commands/preview',(u,o,j)=>{const answer=probes[JSON.parse(o.body).run_as];return answer?j(answer[0],answer[1]):j(400,{success:false,error:'Select at least one instance to preview.',code:'no_selections'});}]);
+  ['/b/upgrade/commands/availability',(u,o,j)=>j(availability[0],availability[1])]);
  await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
  await w.__T.initUpgradeTab();await sleep(10);
  await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
@@ -29,7 +29,7 @@ t('the timeout and the node limit are described by their hints',async()=>{
 
 t('the root note shows our own sentence when the broker refuses root',async()=>{
  const raw='running commands as root is disabled';
- const {d}=await setupCommand({root:[403,{success:false,error:raw,code:'root_disabled'}]});
+ const {d}=await setupCommand([200,{enabled:true,allow_root:false}]);
  const note=d.getElementById('command-root-note');
  expect(note.textContent).toBe('Running as root is switched off on this broker.');
  expect(note.textContent.includes(raw)).toBe(false);
