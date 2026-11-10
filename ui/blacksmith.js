@@ -23286,6 +23286,15 @@
   // meets a stale cached module.
   const WTERM_WASM_URL = '/vendor/wterm/0.5.10/wterm.wasm';
 
+  // The open terminal tabs survive a reload through sessionStorage, which
+  // belongs to one browser tab, so two console tabs never overwrite each
+  // other. Only what a tab needs to show itself and reconnect is stored, and
+  // nothing the server sent. A missing, blocked, malformed, or unknown
+  // version value means no restored tabs.
+  const TERMINAL_STORE_KEY = 'blacksmith.terminal.sessions';
+  const TERMINAL_STORE_VERSION = 1;
+  const TERMINAL_STORE_MAX = 20;
+
   // Scroll controls for a strip of tabs that can be wider than its box. A
   // chevron button sits at each edge that has hidden tabs, an edge fade
   // class hints at more, a vertical wheel scrolls the strip sideways, and
@@ -23355,6 +23364,7 @@
     activeSession: null,
     maxSessions: 10,
     lastFocusBeforeModal: null,
+    restoring: false,
 
     // The terminal is a native modal dialog. Escape belongs to the shell, so
     // it never closes the dialog, and neither does a click or tap on the
@@ -23638,6 +23648,84 @@
       this.applyMaximized(modal);
     },
 
+    // The tab list as stored: the target of each tab, its label inputs, the
+    // tab order, and the active tab.
+    saveSessions() {
+      if (this.restoring) return;
+      try {
+        if (this.sessions.size === 0) {
+          window.sessionStorage.removeItem(TERMINAL_STORE_KEY);
+          return;
+        }
+        const keys = [...this.sessions.keys()].slice(0, TERMINAL_STORE_MAX);
+        const active = keys.includes(this.activeSession) ? this.activeSession : keys[0];
+        const sessions = keys.map(key => {
+          const c = this.sessions.get(key).context;
+          return {
+            deploymentType: c.deploymentType,
+            deploymentName: c.deploymentName,
+            instanceId: c.instanceId,
+            instanceName: c.instanceName || null,
+            boshDeploymentName: c.boshDeploymentName || c.deploymentName
+          };
+        });
+        window.sessionStorage.setItem(TERMINAL_STORE_KEY, JSON.stringify({ v: TERMINAL_STORE_VERSION, active, sessions }));
+      } catch (_) { }
+    },
+
+    // The stored tab list, checked field by field, or null when there is
+    // nothing usable.
+    readStoredSessions() {
+      try {
+        const record = JSON.parse(window.sessionStorage.getItem(TERMINAL_STORE_KEY));
+        if (!record || record.v !== TERMINAL_STORE_VERSION || !Array.isArray(record.sessions)) return null;
+        const text = value => typeof value === 'string' && value !== '' && value.length <= 300;
+        const seen = new Set();
+        const sessions = [];
+        for (const c of record.sessions.slice(0, TERMINAL_STORE_MAX)) {
+          if (!c || (c.deploymentType !== 'blacksmith' && c.deploymentType !== 'service-instance')) continue;
+          if (!text(c.deploymentName) || !text(c.instanceId)) continue;
+          const key = `${c.deploymentType}-${c.deploymentName}-${c.instanceId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          sessions.push({
+            key,
+            context: {
+              deploymentType: c.deploymentType,
+              deploymentName: c.deploymentName,
+              instanceId: c.instanceId,
+              instanceName: text(c.instanceName) ? c.instanceName : null,
+              boshDeploymentName: text(c.boshDeploymentName) ? c.boshDeploymentName : c.deploymentName
+            }
+          });
+        }
+        if (sessions.length === 0) return null;
+        return { sessions: sessions.slice(0, this.maxSessions), active: typeof record.active === 'string' ? record.active : null };
+      } catch (_) {
+        return null;
+      }
+    },
+
+    // Rebuilds the stored tabs after a page load. Each one comes back
+    // disconnected with its reconnect button, opens no connection, and the
+    // dialog stays closed; the minimized bar shows them.
+    restoreSessions() {
+      if (this.sessions.size > 0) return;
+      const record = this.readStoredSessions();
+      if (!record) return;
+      this.restoring = true;
+      try {
+        record.sessions.forEach(entry => this.createSession(entry.key, entry.context, { restored: true }));
+        const keys = [...this.sessions.keys()];
+        const active = keys.includes(record.active) ? record.active : keys[0];
+        if (active) this.switchToSession(active, { showDialog: false, focusTerminal: false });
+        if (this.sessions.size > 0) this.showMinimizedBar();
+      } catch (_) {
+      } finally {
+        this.restoring = false;
+      }
+    },
+
     openWithContext(deploymentType, deploymentName, instanceId, instanceName, boshDeploymentName) {
       // Remember current focused element to restore after closing
       this.lastFocusBeforeModal = document.activeElement;
@@ -23771,9 +23859,9 @@
       return view;
     },
 
-    createSession(sessionKey, context) {
-      // Show modal
-      this.showDialog();
+    createSession(sessionKey, context, options = {}) {
+      // Show modal. A restored tab leaves the dialog closed.
+      if (!options.restored) this.showDialog();
 
       // Create container for this terminal. wterm turns it into the terminal
       // host and gives it the wterm class. The host's label and description
@@ -23996,10 +24084,18 @@
         return ws;
       };
 
+      // Store session
+      if (options.restored) {
+        // A restored tab opens no connection until the operator asks for one.
+        this.sessions.set(sessionKey, session);
+        this.setStatus(session, 'disconnected');
+        terminal.writeln('Disconnected. Select reconnect to start a new session.');
+        return;
+      }
+
       // Initial connection
       connectWebSocket();
 
-      // Store session
       this.sessions.set(sessionKey, session);
 
       // Make this the active session
@@ -24140,7 +24236,7 @@
           const key = entry && entry.id.slice(4);
           // Focus stays on the tab, so the next arrow key moves on to the
           // next tab instead of going to the remote shell.
-          if (key && this.sessions.has(key) && key !== this.activeSession) this.switchToSession(key, { focusTerminal: false });
+          if (key && this.sessions.has(key) && key !== this.activeSession) this.switchToSession(key, { focusTerminal: false, showDialog: false });
         });
       }
       const strip = document.getElementById('terminal-tabs');
@@ -24152,7 +24248,7 @@
 
     switchToSession(sessionKey, options = {}) {
       // Ensure modal is visible
-      this.showDialog();
+      if (options.showDialog !== false) this.showDialog();
 
       // Hide all terminals
       document.querySelectorAll('.terminal-instance').forEach(el => {
@@ -24182,6 +24278,7 @@
         if (select && select.getAttribute('aria-selected') !== 'true') tabset.activeIndex = tabset.tabs.indexOf(select);
         this.activeSession = sessionKey;
         this.updateVmsButton();
+        this.saveSessions();
 
         // Focus the terminal after switching, unless the caller is walking
         // the tabs with the keyboard.
@@ -24225,6 +24322,7 @@
 
         // Remove from sessions
         this.sessions.delete(sessionKey);
+        this.saveSessions();
 
         // Update minimized bar if it's visible
         const minimizedBar = document.getElementById('minimized-terminal-bar');
@@ -24502,6 +24600,10 @@
 
   // Make TerminalManager available globally
   window.TerminalManager = TerminalManager;
+
+  // The tab set exists once Oat has defined its tabs, so the saved tabs come
+  // back then.
+  if (window.customElements) window.customElements.whenDefined('bs-tabs').then(() => TerminalManager.restoreSessions());
 
   const showResurrectionState = (button, state) => {
     button.dataset.state = state;
