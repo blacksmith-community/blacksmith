@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"blacksmith/internal/config"
+	upgradehandler "blacksmith/internal/handlers/upgrade"
+	"blacksmith/pkg/logger"
 )
 
 const availabilityTarget = "/b/upgrade/commands/availability"
@@ -100,5 +103,53 @@ func TestAvailabilityIsReadOnly(t *testing.T) {
 		if got := send(t, env.handler, method, availabilityTarget, "{}", ""); got.Code != http.StatusNotFound {
 			t.Errorf("%s answered %d, want 404", method, got.Code)
 		}
+	}
+}
+
+// The answer reflects live configuration, so a cache between the console and
+// the broker must never keep one.
+func TestAvailabilityIsNotCached(t *testing.T) {
+	t.Parallel()
+
+	env := commandHandler(t, commandsOn("", true))
+	answer := send(t, env.handler, http.MethodGet, availabilityTarget, "", "")
+
+	if got := answer.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected Cache-Control no-store, got %q", got)
+	}
+}
+
+// A handler built with no commands configuration has no authorizer to ask,
+// and it reports both switches off through the whole chain.
+func TestAvailabilityWithoutAnAuthorizerReportsBothOff(t *testing.T) {
+	t.Parallel()
+
+	handler := upgradehandler.NewHandler(upgradehandler.Dependencies{
+		Logger:   &logger.NoOpLogger{},
+		Director: &vmsDirector{},
+		Vault:    newMemoryVault(),
+	})
+	t.Cleanup(handler.Stop)
+
+	select {
+	case <-handler.GetManager().Loaded():
+	case <-time.After(loadTimeout):
+		t.Fatal("the manager never finished loading the stored tasks")
+	}
+
+	answer := send(t, handler, http.MethodGet, availabilityTarget, "", "")
+	if answer.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", answer.Code, answer.Body.String())
+	}
+
+	var got map[string]any
+
+	err := json.Unmarshal(answer.Body.Bytes(), &got)
+	if err != nil {
+		t.Fatalf("the answer is not JSON: %v", err)
+	}
+
+	if len(got) != 2 || got["enabled"] != false || got["allow_root"] != false {
+		t.Fatalf("expected both off, got %v", got)
 	}
 }

@@ -547,8 +547,10 @@ func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, 
 // answers whether commands are on and whether they may run as root, read from
 // the configuration the authorizer reads, so the console learns the switches
 // without sending a preview that the browser would log as a failure. It takes
-// no input, runs nothing, and answers the two switches and nothing else.
+// no input, runs nothing, and answers the two switches and nothing else. The
+// answer follows live configuration, so it is marked as not storable.
 func (h *Handler) CommandAvailability(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	response.JSON(w, http.StatusOK, h.manager.Authorizer().Availability())
 }
 
