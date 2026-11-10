@@ -106,6 +106,9 @@ type WSConn interface {
 	WriteJSON(v interface{}) error
 	Ping(ctx context.Context) error
 	Close() error
+	// CloseWithCode closes the connection with a WebSocket close code
+	// and a short reason.
+	CloseWithCode(code int, reason string) error
 	SetReadLimit(n int64)
 }
 
@@ -158,6 +161,15 @@ func (c *nhooyrWSConn) Ping(ctx context.Context) error {
 
 func (c *nhooyrWSConn) Close() error {
 	err := c.conn.Close(wsn.StatusNormalClosure, "")
+	if err != nil {
+		return fmt.Errorf("failed to close websocket connection: %w", err)
+	}
+
+	return nil
+}
+
+func (c *nhooyrWSConn) CloseWithCode(code int, reason string) error {
+	err := c.conn.Close(wsn.StatusCode(code), reason)
 	if err != nil {
 		return fmt.Errorf("failed to close websocket connection: %w", err)
 	}
@@ -713,6 +725,12 @@ func (h *SSHHandler) handleSSHReadError(err error, session *SSHStreamSession, ss
 		return false
 	}
 
+	if errors.Is(err, ssh.ErrConnectionLost) {
+		h.endSessionAfterLostConnection(session)
+
+		return false
+	}
+
 	sessionStatus := sshSession.Status()
 	duration := time.Since(state.LastActivityTime)
 
@@ -755,6 +773,24 @@ func (h *SSHHandler) endSessionAfterShellExit(session *SSHStreamSession) {
 	}
 
 	err = session.Conn.Close()
+	if err != nil {
+		h.logger.Debugf("Failed to close WebSocket for session %s: %v", session.ID, err)
+	}
+}
+
+// lostConnectionNotice is what the operator sees when the link to the VM
+// dies. It names no cause, because an SSH error can carry host details.
+const lostConnectionNotice = "The connection to the VM was lost."
+
+// endSessionAfterLostConnection tells the browser that the link to the VM
+// died and closes the WebSocket with the going-away code, so the console
+// offers a reconnect and reports the disconnect. It is not a shell exit.
+func (h *SSHHandler) endSessionAfterLostConnection(session *SSHStreamSession) {
+	h.logger.Errorf("Connection to the VM lost for session: %s", session.ID)
+
+	h.sendErrorMessage(session, lostConnectionNotice)
+
+	err := session.Conn.CloseWithCode(int(wsn.StatusGoingAway), "connection to the VM lost")
 	if err != nil {
 		h.logger.Debugf("Failed to close WebSocket for session %s: %v", session.ID, err)
 	}

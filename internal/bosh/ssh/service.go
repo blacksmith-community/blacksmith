@@ -60,6 +60,9 @@ var (
 	// ErrShellExited means the remote shell ended, through a logout or an
 	// exit, and the session has no more output to give.
 	ErrShellExited = errors.New("the remote shell exited")
+	// ErrConnectionLost means the SSH connection to the VM ended without
+	// the shell reporting an exit, as a reboot or a network failure does.
+	ErrConnectionLost = errors.New("the connection to the VM was lost")
 )
 
 // ServiceImpl implements the SSHService interface.
@@ -615,15 +618,17 @@ func (s *SessionImpl) ReadOutput() ([]byte, error) {
 		outputTimeout = defaultOutputTimeout // Fallback default - increased from 100ms to 2s for better stability
 	}
 
+	// Buffered output comes before any queued error, so a lost link
+	// still shows what the shell printed first.
 	select {
 	case output, open := <-s.outputChan:
-		if !open {
-			// Both output pipes reached end of file, so the remote
-			// shell has ended.
-			return nil, ErrShellExited
-		}
+		return s.outputOrEnd(output, open)
+	default:
+	}
 
-		return output, nil
+	select {
+	case output, open := <-s.outputChan:
+		return s.outputOrEnd(output, open)
 	case err := <-s.errorChan:
 		return nil, err
 	case <-s.closeChan:
@@ -631,6 +636,23 @@ func (s *SessionImpl) ReadOutput() ([]byte, error) {
 	case <-time.After(outputTimeout):
 		return []byte{}, nil
 	}
+}
+
+// outputOrEnd returns one receive from the output channel. A closed
+// channel means both output pipes reached end of file. A connection error
+// queued before the close wins over a shell exit.
+func (s *SessionImpl) outputOrEnd(output []byte, open bool) ([]byte, error) {
+	if open {
+		return output, nil
+	}
+
+	select {
+	case err := <-s.errorChan:
+		return nil, err
+	default:
+	}
+
+	return nil, ErrShellExited
 }
 
 // SetWindowSize sets the window size for terminal sessions.
@@ -1079,15 +1101,21 @@ func (s *SessionImpl) initializeSessionChannels() {
 
 // startBackgroundProcesses starts the background goroutines.
 func (s *SessionImpl) startBackgroundProcesses() {
-	go s.readOutput()
+	go s.readOutput(s.sshSession)
 
 	if s.config.KeepAlive > 0 {
 		go s.keepAlive()
 	}
 }
 
+// shellWaiter is the part of an SSH session that reports how its shell
+// ended.
+type shellWaiter interface {
+	Wait() error
+}
+
 // readOutput continuously reads from stdout and stderr.
-func (s *SessionImpl) readOutput() {
+func (s *SessionImpl) readOutput(shell shellWaiter) {
 	var waitGroup sync.WaitGroup
 	waitGroup.Add(outputPipeGoroutines)
 
@@ -1098,7 +1126,45 @@ func (s *SessionImpl) readOutput() {
 	go s.readFromPipe(s.stderr, &waitGroup, "stderr")
 
 	waitGroup.Wait()
+
+	// Both pipes reach end of file when the shell exits and when the
+	// connection drops. The shell's wait result tells them apart, so a
+	// lost link is queued ahead of the close for ReadOutput to report.
+	err := s.shellEnd(shell)
+	if err != nil {
+		select {
+		case s.errorChan <- err:
+		default:
+		}
+	}
+
 	close(s.outputChan)
+}
+
+// shellEnd returns ErrConnectionLost, wrapping the cause, when the
+// shell ended without exiting, and nil when it exited or when Close
+// already ended the session. An exit status of any value is an exit.
+// The pipes are at end of file when this runs, so Wait returns at once.
+func (s *SessionImpl) shellEnd(shell shellWaiter) error {
+	if shell == nil {
+		return nil
+	}
+
+	err := shell.Wait()
+
+	var exitErr *ssh.ExitError
+
+	if err == nil || errors.As(err, &exitErr) {
+		return nil
+	}
+
+	select {
+	case <-s.closeChan:
+		return nil
+	default:
+	}
+
+	return fmt.Errorf("%w: %w", ErrConnectionLost, err)
 }
 
 // readFromPipe reads from a pipe and sends data to the output channel.

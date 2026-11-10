@@ -465,3 +465,87 @@ func TestShellExitSendsAnExitNoticeAndClosesNormally(t *testing.T) {
 		t.Errorf("%d cleanups after the shell exit, want 1: %v", got, log.snapshot())
 	}
 }
+
+// lostSession is a session whose connection to the VM dropped after it
+// sent its output, as a reboot or a network failure does.
+type lostSession struct{ exitingSession }
+
+func (s *lostSession) ReadOutput() ([]byte, error) {
+	if !s.sent {
+		s.sent = true
+
+		return []byte("working\r\n"), nil
+	}
+
+	return nil, fmt.Errorf("%w: %w", ssh.ErrConnectionLost, errTestStartRefused)
+}
+
+type lostService struct{ recordingService }
+
+//nolint:ireturn // The SSHService interface returns an SSHSession.
+func (s *lostService) CreateSession(_ context.Context, _ *ssh.SSHRequest) (ssh.SSHSession, error) {
+	return &lostSession{exitingSession{recordingSession: recordingSession{
+		log:    s.log,
+		number: 1,
+		status: ssh.SessionStatusConnected,
+	}}}, nil
+}
+
+// A dropped link never reaches the browser as a shell exit. The server
+// says the connection was lost and closes with a code other than normal
+// closure, so the console offers a reconnect and shows its toast, and the
+// SSH session's cleanup still runs.
+func TestLostConnectionIsReportedAsADisconnect(t *testing.T) {
+	t.Parallel()
+
+	log := &eventLog{}
+	conn := openTestTerminal(t, &lostService{recordingService{log: log}})
+
+	sendStart(t, conn)
+
+	var lostNotice string
+
+	ctx, cancel := context.WithTimeout(t.Context(), eventWait)
+	defer cancel()
+
+	var closeErr error
+
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			closeErr = err
+
+			break
+		}
+
+		var msg websocket.WSMessage
+
+		decodeErr := json.Unmarshal(data, &msg)
+		if decodeErr != nil {
+			t.Fatalf("decode %q: %v", data, decodeErr)
+		}
+
+		if msg.Type == websocket.MsgTypeStatus && msg.Meta["status"] == "exited" {
+			t.Fatalf("a lost connection was reported as a shell exit: %+v", msg)
+		}
+
+		if msg.Type == websocket.MsgTypeError {
+			lostNotice = msg.Data
+		}
+	}
+
+	if !strings.Contains(lostNotice, "connection to the VM was lost") {
+		t.Errorf("error notice %q does not say the connection was lost", lostNotice)
+	}
+
+	if strings.Contains(lostNotice, errTestStartRefused.Error()) {
+		t.Errorf("error notice %q carries the cause, which may hold host details", lostNotice)
+	}
+
+	got := wsn.CloseStatus(closeErr)
+	if got == wsn.StatusNormalClosure || got == -1 {
+		t.Errorf("close status is %d (%v), want a code other than normal closure", got, closeErr)
+	}
+
+	log.waitFor(t, "cleanup", 1)
+}
