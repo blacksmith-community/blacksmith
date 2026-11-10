@@ -79,8 +79,9 @@ t('the Show VMs button sits in front of maximize with the server icon',async()=>
  const {w,mgr,open}=await start();
  open();
  const d=w.document;
- const controls=[...d.querySelectorAll('.terminal-header-controls > *')].map(x=>x.id||x.className);
- expect(controls.slice(0,2)).toEqual(['vms-btn','maximize-btn']);
+ const controls=[...d.querySelectorAll('.terminal-header-controls button[id]')].map(x=>x.id);
+ expect(controls[0]).toBe('vms-btn');
+ expect(controls.indexOf('maximize-btn')).toBeGreaterThan(0);
  expect(btn(d).querySelector('svg.lucide-server')).not.toBeNull();
  expect(btn(d).querySelector('svg').getAttribute('aria-hidden')).toBe('true');
 });

@@ -23,7 +23,9 @@ test('the wterm rule sets only the theme and the frame, not size or visibility',
 test('selected terminal text uses the modal palette, not the wterm default', () => {
   const [selection] = rule('#terminal-modal .wterm ::selection');
   expect(selection).toBeDefined();
-  expect(selection.body).toMatch(/background:\s*rgba\(255,\s*255,\s*255,\s*0\.3\)/);
+  expect(selection.body).toMatch(/background:\s*var\(--term-selection-bg,/);
+  const blacksmith = rules.find((r) => r.sel.startsWith('#terminal-modal .terminal-instance.wterm:not('));
+  expect(blacksmith.body).toMatch(/--term-selection-bg:\s*rgba\(255,\s*255,\s*255,\s*0\.3\)/);
 });
 
 test('a failed terminal pads its message once', () => {

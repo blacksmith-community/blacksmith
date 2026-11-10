@@ -6628,7 +6628,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: #000;
+  background: var(--terminal-frame-bg, #000);
 }
 
 #terminal-modal .terminal-tabset > [role="tablist"] {
@@ -6743,8 +6743,8 @@ bs-tabs > .cert-tab-pane[hidden] {
 }
 
 #terminal-modal .terminal-tabset .terminal-tab.active {
-  background: #000;
-  color: #d4d4d4;
+  background: var(--terminal-frame-bg, #000);
+  color: var(--terminal-frame-fg, #d4d4d4);
   border-bottom: 0;
 }
 
@@ -6939,14 +6939,16 @@ bs-tabs > .cert-tab-pane[hidden] {
    custom properties, scoped to the terminal modal so nothing else on the
    page picks up the terminal palette. The palette and font match the
    console's earlier terminal: a black background and the same 16 colors. */
-#terminal-modal .terminal-instance.wterm {
+/* The Blacksmith palette. An ID-scoped palette would outrank wterm's theme
+   classes (Solarized Dark, Monokai, Light), so this one applies only to a
+   terminal that carries none. The scheme menu then only adds or removes a
+   class, and wterm's own palettes are reused as they are. */
+#terminal-modal .terminal-instance.wterm:not(.theme-solarized-dark):not(.theme-monokai):not(.theme-light),
+#terminal-modal .terminal-scheme-swatch.wterm:not(.theme-solarized-dark):not(.theme-monokai):not(.theme-light) {
   --term-bg: #000000;
   --term-fg: #d4d4d4;
   --term-cursor: #d4d4d4;
   --term-selection-bg: rgba(255, 255, 255, 0.3);
-  --term-font-family: Menlo, Monaco, "Courier New", monospace;
-  --term-font-size: 14px;
-
   --term-color-0: #000000;
   --term-color-1: #cd3131;
   --term-color-2: #0dbc79;
@@ -6963,6 +6965,16 @@ bs-tabs > .cert-tab-pane[hidden] {
   --term-color-13: #d670d6;
   --term-color-14: #29b8db;
   --term-color-15: #e5e5e5;
+}
+
+/* Native selection reads on a pale background too. */
+#terminal-modal .terminal-instance.wterm.theme-light {
+  --term-selection-bg: rgba(64, 120, 242, 0.3);
+}
+
+#terminal-modal .terminal-instance.wterm {
+  --term-font-family: Menlo, Monaco, "Courier New", monospace;
+  --term-font-size: 14px;
 
   box-sizing: border-box;
   padding-block: 0;
@@ -6973,7 +6985,7 @@ bs-tabs > .cert-tab-pane[hidden] {
 /* wterm's own stylesheet fixes the native selection colour, and
    --term-selection-bg only colours the scrollback selection overlay. */
 #terminal-modal .wterm ::selection {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--term-selection-bg, rgba(86, 156, 214, 0.3));
 }
 
 /* Oat gives every textarea a 5rem min-height. wterm's hidden input is
@@ -14131,3 +14143,83 @@ tr.row-link { cursor: pointer; }
 .entity-attention .entity-attention-fetched { margin: 12px 0 0; color: var(--muted-foreground); font-size: .8125rem; }
 .main-content tr.row-link a.row-link-anchor { color: var(--primary); font-weight: 600; text-decoration: none; }
 .main-content tr.row-link a.row-link-anchor:hover, .main-content tr.row-link a.row-link-anchor:focus-visible { text-decoration: underline; }
+
+/* The scheme menu is a popover, so the dialog and the tab strip cannot clip
+   it. Each item shows a swatch of the scheme's background with four of its
+   colors, read from the scheme's custom properties. */
+#terminal-modal .terminal-scheme {
+  display: inline-flex;
+}
+
+.terminal-scheme-menu {
+  padding: 4px;
+  min-width: 200px;
+}
+
+.terminal-scheme-menu [role="menu"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.terminal-scheme-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.terminal-scheme-item:hover {
+  background: var(--bg-secondary);
+}
+
+.terminal-scheme-item[aria-checked="true"] {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+}
+
+.terminal-scheme-item[aria-checked="true"]::after {
+  content: "\2713";
+  margin-left: auto;
+}
+
+.terminal-scheme-item:focus-visible {
+  outline: 2px solid var(--border-active, #4a9eff);
+  outline-offset: -2px;
+}
+
+/* all: unset drops wterm's layout rules from the swatch but keeps the
+   theme's custom properties, which all does not touch. */
+#terminal-modal .terminal-scheme-swatch {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  box-sizing: border-box;
+  flex: none;
+  width: 56px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--term-bg);
+}
+
+.terminal-scheme-name {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+#terminal-modal .terminal-scheme-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}

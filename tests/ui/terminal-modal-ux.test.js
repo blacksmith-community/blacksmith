@@ -71,7 +71,7 @@ test('the top row is a fixed 40px grid row with the tabs taking the free width',
 
 test('the tabs round only their top corners and the selected one joins the terminal', () => {
   expect(declares(blacksmith, '#terminal-modal .terminal-tabset .terminal-tab', 'border-radius: var(--radius-large) var(--radius-large) 0 0')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-tabset .terminal-tab.active', 'background: #000')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset .terminal-tab.active', 'background: var(--terminal-frame-bg, #000)')).toBe(true);
 });
 
 test('a tab carries the full deployment name in its tooltip', () => {

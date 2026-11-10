@@ -23381,6 +23381,7 @@
           vmsButton.innerHTML = window.blacksmithIcon('server', { size: 16 });
           vmsButton.addEventListener('click', () => this.showVMs());
         }
+        this.wireSchemeMenu(modal);
         modal.addEventListener('cancel', event => event.preventDefault());
         modal.addEventListener('keydown', event => {
           if (event.key === 'Escape' && modal.open) event.preventDefault();
@@ -23443,6 +23444,149 @@
       btn.setAttribute('aria-label', label);
       btn.setAttribute('title', label);
     },
+    // Color schemes. Blacksmith is our own black palette and puts no theme
+    // class on a terminal. The other three are wterm's shipped themes, which
+    // win over our palette whenever their class is present. "Match console"
+    // picks Light for the console's light themes and Blacksmith for its dark
+    // ones, and follows the console's theme live. The choice recolors every
+    // terminal at once and changes colors only, so no session reconnects and
+    // no resize message goes to a remote terminal.
+    schemeKey: 'blacksmith.terminal.scheme',
+    schemes: [
+      { id: 'blacksmith', name: 'Blacksmith', theme: '' },
+      { id: 'solarized-dark', name: 'Solarized Dark', theme: 'theme-solarized-dark' },
+      { id: 'monokai', name: 'Monokai', theme: 'theme-monokai' },
+      { id: 'light', name: 'Light', theme: 'theme-light' },
+      { id: 'console', name: 'Match console', theme: null }
+    ],
+    scheme: null,
+    readScheme() {
+      if (this.scheme === null) {
+        let saved = null;
+        try { saved = window.localStorage.getItem(this.schemeKey); } catch (_) { saved = null; }
+        this.scheme = this.schemes.some(s => s.id === saved) ? saved : 'blacksmith';
+      }
+      return this.scheme;
+    },
+    resolveTheme(schemeId) {
+      if (schemeId === 'console') {
+        return document.documentElement.getAttribute('data-theme') === 'dark' ? '' : 'theme-light';
+      }
+      const found = this.schemes.find(s => s.id === schemeId);
+      return found ? found.theme : '';
+    },
+    setThemeClass(element, theme) {
+      ['theme-solarized-dark', 'theme-monokai', 'theme-light'].forEach(name => element.classList.toggle(name, name === theme));
+    },
+    applyThemeClass(element) {
+      this.setThemeClass(element, this.resolveTheme(this.readScheme()));
+    },
+    applyScheme(schemeId, options = {}) {
+      const modal = document.getElementById('terminal-modal');
+      if (!modal) return;
+      this.scheme = this.schemes.some(s => s.id === schemeId) ? schemeId : 'blacksmith';
+      if (options.store) {
+        try { window.localStorage.setItem(this.schemeKey, this.scheme); } catch (_) { }
+      }
+      const theme = this.resolveTheme(this.scheme);
+      modal.dataset.terminalScheme = this.scheme;
+      modal.querySelectorAll('.terminal-instance').forEach(el => this.setThemeClass(el, theme));
+      modal.querySelectorAll('#terminal-scheme-menu [role="menuitemradio"]').forEach(button => {
+        button.setAttribute('aria-checked', button.dataset.scheme === this.scheme ? 'true' : 'false');
+        if (button.dataset.scheme === 'console') this.setThemeClass(button.querySelector('.terminal-scheme-swatch'), theme);
+      });
+      this.syncFrame(modal);
+    },
+    // The frame around the grid takes the scheme's background, read from the
+    // active scheme's own custom property.
+    syncFrame(modal) {
+      const swatch = modal.querySelector(`#terminal-scheme-menu [data-scheme="${this.readScheme()}"] .terminal-scheme-swatch`);
+      let color = '';
+      try { color = window.getComputedStyle(swatch).getPropertyValue('--term-bg').trim(); } catch (_) { color = ''; }
+      let fore = '';
+      try { fore = window.getComputedStyle(swatch).getPropertyValue('--term-fg').trim(); } catch (_) { fore = ''; }
+      if (color) modal.style.setProperty('--terminal-frame-bg', color);
+      else modal.style.removeProperty('--terminal-frame-bg');
+      if (fore) modal.style.setProperty('--terminal-frame-fg', fore);
+      else modal.style.removeProperty('--terminal-frame-fg');
+    },
+    wireSchemeMenu(modal) {
+      const button = modal.querySelector('#scheme-btn');
+      const menu = modal.querySelector('#terminal-scheme-menu');
+      const list = menu && menu.querySelector('[role="menu"]');
+      if (!button || !list) return;
+      button.innerHTML = window.blacksmithIcon('palette', { size: 16 });
+      this.schemes.forEach(scheme => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'terminal-scheme-item';
+        item.setAttribute('role', 'menuitemradio');
+        item.setAttribute('aria-checked', 'false');
+        item.dataset.scheme = scheme.id;
+        const swatch = document.createElement('span');
+        swatch.className = 'terminal-scheme-swatch wterm';
+        swatch.setAttribute('aria-hidden', 'true');
+        if (scheme.theme) swatch.classList.add(scheme.theme);
+        for (const n of [1, 2, 4, 6]) {
+          const dot = document.createElement('span');
+          dot.className = 'terminal-scheme-dot';
+          dot.style.background = `var(--term-color-${n})`;
+          swatch.appendChild(dot);
+        }
+        const name = document.createElement('span');
+        name.className = 'terminal-scheme-name';
+        name.textContent = scheme.name;
+        item.append(swatch, name);
+        list.appendChild(item);
+      });
+      const entries = () => [...list.querySelectorAll('[role="menuitemradio"]')];
+      let choosing = false;
+      list.addEventListener('click', event => {
+        const item = event.target.closest && event.target.closest('[role="menuitemradio"]');
+        if (!item) return;
+        choosing = true;
+        this.applyScheme(item.dataset.scheme, { store: true });
+        // Focus leaves the menu first. Closing a popover that still holds
+        // focus makes the browser restore focus to the button in the middle
+        // of the close, which trips Oat's tooltip.
+        const session = this.sessions.get(this.activeSession);
+        if (session && session.terminal) session.terminal.focus();
+        else button.focus();
+        menu.hidePopover();
+      });
+      list.addEventListener('keydown', event => {
+        const all = entries();
+        const at = all.indexOf(document.activeElement);
+        let to = -1;
+        if (event.key === 'ArrowDown') to = (at + 1) % all.length;
+        else if (event.key === 'ArrowUp') to = (at - 1 + all.length) % all.length;
+        else if (event.key === 'Home') to = 0;
+        else if (event.key === 'End') to = all.length - 1;
+        if (to < 0) return;
+        event.preventDefault();
+        all[to].focus();
+      });
+      // Oat's dropdown focuses the first plain menu item and returns focus to
+      // the button on close. These items are radios, so focus goes to the
+      // checked one on open, and a choice sends focus on to the terminal so
+      // the operator can keep typing.
+      menu.addEventListener('toggle', event => {
+        if (event.newState === 'open') {
+          choosing = false;
+          (entries().find(i => i.getAttribute('aria-checked') === 'true') || entries()[0])?.focus();
+        } else if (choosing) {
+          choosing = false;
+          const session = this.sessions.get(this.activeSession);
+          if (session && session.terminal) session.terminal.focus();
+        }
+      });
+      this.applyScheme(this.readScheme());
+      if (typeof window.MutationObserver === 'function') {
+        new window.MutationObserver(() => { if (this.scheme === 'console') this.applyScheme('console'); })
+          .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      }
+    },
+
     // The VMs view that belongs to a session's deployment, or null when the
     // service instance is no longer known to the console. The broker's own
     // deployment is always known.
@@ -23558,6 +23702,7 @@
       // debug adapter can read or type into an SSH session. The cursor
       // stays steady whatever the remote application asks for, and
       // announceOutput reads new output to screen readers.
+      TerminalManager.applyThemeClass(element);
       try {
         term = new window.WTermLib.WTerm(element, {
           wasmUrl: WTERM_WASM_URL,
