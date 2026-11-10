@@ -23951,6 +23951,12 @@
                 setTimeout(() => {
                   terminal.focus();
                 }, 100);
+              } else if (msg.meta && msg.meta.status === 'exited') {
+                // The remote shell ended, through a logout or an exit.
+                // The server closes the socket next, but the session
+                // offers its reconnect as soon as the notice arrives.
+                sessionConnected = false;
+                if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
               }
               break;
           }
@@ -24411,6 +24417,8 @@
             if (msg.meta && msg.meta.status === 'connected') {
               this.setStatus(session, 'connected');
               session.terminal.writeln('\r\n[Reconnected]\r\n');
+            } else if (msg.meta && msg.meta.status === 'exited') {
+              if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
             }
             break;
         }

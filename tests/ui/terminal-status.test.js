@@ -248,3 +248,62 @@ t('every dot state has a themed colour class in both themes',()=>{
  expect(pick('disconnected')).toMatch(/var\(--danger\)/);
  expect(pick('failed')).toMatch(/var\(--danger\)/);
 });
+
+// The server ends a shell exit by sending a status message with the status
+// "exited" and then closing the WebSocket with code 1000. A session must
+// leave the connected state on the notice itself and on any close.
+const expectReconnectOffered=(d,mgr,key)=>{
+ expect(mgr.sessions.get(key).status).toBe('disconnected');
+ for(const scope of ['#terminal-tabs','#minimized-terminal-tabs']){
+  const box=slot(d,scope,key);
+  expect(box.querySelector('.terminal-status-dot')).toBeNull();
+  expect(box.querySelector('button.terminal-reconnect')).not.toBeNull();
+ }
+};
+
+t('an exit notice from the server turns the session disconnected before the close arrives',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,deliver,mgr}=env;
+ open(); await connect(sockets[0],terms[0]);
+ expect(mgr.sessions.get(KEY_BK).status).toBe('connected');
+ deliver(sockets[0],{type:'output',data:'logout\r\n'});
+ deliver(sockets[0],{type:'status',data:'SSH session ended',meta:{status:'exited'}});
+ mgr.minimizeAll();
+ expectReconnectOffered(d,mgr,KEY_BK);
+ expect(mgr.sessions.get(KEY_BK).failed).toBeFalsy();
+ mgr.closeAll();
+});
+
+t('the exit notice followed by a normal close leaves the session disconnected, not failed',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,deliver,mgr}=env;
+ open(); await connect(sockets[0],terms[0]);
+ deliver(sockets[0],{type:'status',meta:{status:'exited'}});
+ sockets[0].readyState=3; sockets[0].onclose({code:1000});
+ mgr.minimizeAll();
+ expectReconnectOffered(d,mgr,KEY_BK);
+ expect(mgr.sessions.get(KEY_BK).failed).toBeFalsy();
+ mgr.closeAll();
+});
+
+t('a server close with code 1000 alone turns the session disconnected',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,mgr}=env;
+ open(); await connect(sockets[0],terms[0]);
+ sockets[0].readyState=3; sockets[0].onclose({code:1000});
+ mgr.minimizeAll();
+ expectReconnectOffered(d,mgr,KEY_BK);
+ mgr.closeAll();
+});
+
+t('a reconnected session also leaves the connected state on the exit notice',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,deliver,mgr}=env;
+ open(); await connect(sockets[0],terms[0]);
+ sockets[0].readyState=3; sockets[0].onclose({code:1000});
+ dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect').click();
+ const socket=sockets[sockets.length-1];
+ socket.readyState=1; socket.onopen();
+ deliver(socket,{type:'status',meta:{status:'connected'}});
+ expect(mgr.sessions.get(KEY_BK).status).toBe('connected');
+ deliver(socket,{type:'status',meta:{status:'exited'}});
+ mgr.minimizeAll();
+ expectReconnectOffered(d,mgr,KEY_BK);
+ mgr.closeAll();
+});
