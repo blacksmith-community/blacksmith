@@ -6759,6 +6759,14 @@ bs-tabs > .cert-tab-pane[hidden] {
   display: block;
 }
 
+/* A whole-pixel host height stops wterm's scroll-to-bottom from bouncing
+   by a sub-pixel on each keystroke. The first height is the fallback for
+   browsers without CSS round(). */
+#terminal-modal .terminal-instance {
+  height: 100%;
+  height: round(down, 100%, 1px);
+}
+
 /* The wterm host fills the container edge to edge. Its theme lives in
    custom properties, scoped to the terminal modal so nothing else on the
    page picks up the terminal palette. The palette and font match the

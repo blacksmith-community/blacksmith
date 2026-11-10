@@ -43,3 +43,9 @@ test('the minimized bar lays out its sections and resets the tab buttons', () =>
   expect(declares(forge, '.minimized-terminal-tab > button', 'color: inherit')).toBe(true);
   expect(declares(forge, '.minimized-terminal-tab', 'padding: 2px 8px')).toBe(true);
 });
+
+test('the terminal host height is rounded down to whole pixels', () => {
+  const [host] = find(blacksmith, '#terminal-modal .terminal-instance');
+  expect(host).toBeDefined();
+  expect(host.body).toMatch(/height:\s*100%\s*;\s*height:\s*round\(down,\s*100%,\s*1px\)\s*;/);
+});
