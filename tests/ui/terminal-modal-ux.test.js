@@ -44,7 +44,7 @@ test('the terminal host height is a whole number of rows', () => {
 });
 
 test('the block padding sits on the container so the host holds only rows', () => {
-  expect(declares(blacksmith, '#terminal-modal .terminal-container', 'padding-block: 12px')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset', 'grid-template-rows: 40px 12px minmax(0, 1fr) 12px')).toBe(true);
   expect(declares(blacksmith, '#terminal-modal .terminal-instance.wterm', 'padding-block: 0')).toBe(true);
 });
 
@@ -52,25 +52,30 @@ test('the dialog has no title row, only one top row of tabs and controls', () =>
   const html = read('index.html');
   const dialog = html.slice(html.indexOf('<dialog id="terminal-modal"'), html.indexOf('</dialog>', html.indexOf('<dialog id="terminal-modal"')));
   expect(dialog).not.toMatch(/terminal-title|terminal-header(?!-)|<h2/);
-  expect(dialog).toMatch(/<div class="terminal-top">\s*<div class="terminal-tabs[^"]*" id="terminal-tabs"><\/div>\s*<div class="terminal-header-controls">/);
+  expect(dialog).toMatch(/<bs-tabs class="terminal-tabset"[^>]*>\s*<div class="terminal-tabs[^"]*" id="terminal-tabs" role="tablist"[^>]*><\/div>\s*<div class="terminal-header-controls">/);
+  expect(dialog).not.toMatch(/terminal-container|terminal-top/);
   expect(dialog).toMatch(/id="terminal-keyboard-help"/);
   expect(blacksmith.some((r) => /terminal-title|\.terminal-header\s*$/.test(r.sel))).toBe(false);
 });
 
-test('the top row is a fixed 40px flex row with the tabs taking the free width', () => {
-  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'display: flex')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'height: 40px')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'padding: 0')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'box-sizing: border-box')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'flex-wrap: nowrap')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-top .terminal-tabs', 'flex: 1 1 auto')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-top .terminal-tabs', 'min-width: 120px')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-top .terminal-tabs', 'overflow-x: auto')).toBe(true);
+test('the top row is a fixed 40px grid row with the tabs taking the free width', () => {
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset', 'display: grid')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset', 'grid-template-columns: minmax(0, 1fr) auto')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset > [role="tablist"]', 'height: 40px')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset > [role="tablist"]', 'flex-wrap: nowrap')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset > [role="tablist"]', 'min-width: 120px')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset > [role="tablist"]', 'overflow-x: auto')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset > .terminal-header-controls', 'height: 40px')).toBe(true);
   expect(declares(blacksmith, '.terminal-header-controls', 'flex-shrink: 0')).toBe(true);
+});
+
+test('the tabs round only their top corners and the selected one joins the terminal', () => {
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset .terminal-tab', 'border-radius: var(--radius-large) var(--radius-large) 0 0')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-tabset .terminal-tab.active', 'background: #000')).toBe(true);
 });
 
 test('a tab carries the full deployment name in its tooltip', () => {
   const js = read('blacksmith.js');
-  const at = js.indexOf('createTab(sessionKey, context) {');
+  const at = js.indexOf('createTab(sessionKey, context, panel) {');
   expect(js.slice(at, at + 1800)).toMatch(/tab\.title\s*=|select\.title\s*=/);
 });

@@ -100,7 +100,7 @@ t('a session builds a wterm terminal on its own element with the versioned WASM 
  // gets a title, bell, binary, clipboard, or alternate core hook.
  ['cols','rows','core','onBinary','onTitle','onBell','onClipboardWrite','onShellIntegration','onWorkingDirectory','maxImageWidth','maxImageHeight'].forEach(key=>expect(term.options[key]).toBeUndefined());
  expect(term.element.classList.contains('terminal-instance')).toBe(true);
- expect(term.element.parentElement.id).toBe('terminal-container');
+ expect(term.element.parentElement.id).toBe('terminal-tabset');
  expect(term.element.getAttribute('aria-describedby')).toBe('terminal-keyboard-help');
  expect(term.element.getAttribute('aria-label')).toContain('node/0');
  expect(term.element.hasAttribute('tabindex')).toBe(false);

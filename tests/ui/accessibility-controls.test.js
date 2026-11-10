@@ -57,11 +57,15 @@ test('registration Escape closes and restores focus to its opener',async()=>{
  }finally{w.close();}
 });
 
-test('terminal tabs have separate named selection and close buttons',()=>{
+test('terminal tabs have separate named selection and close buttons',async()=>{
  const {w,d}=boot();try{
+ w.eval(require('fs').readFileSync(require('path').resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8'));
+ await sleep(60);
  const manager=w.TerminalManager;
- manager.createTab('fixture',{deploymentType:'blacksmith',deploymentName:'broker',instanceId:'node/0'});
+ manager.createTab('fixture',{deploymentType:'blacksmith',deploymentName:'broker',instanceId:'node/0'},d.createElement('div'));
  const tab=d.getElementById('tab-fixture');
+ expect(tab.getAttribute('role')).toBe('presentation');
+ expect(tab.querySelector('[role=tab]')).not.toBeNull();
  expect(tab.querySelectorAll('button').length).toBe(2);
  expect(tab.querySelector('button button')).toBeNull();
  expect(tab.querySelector('.tab-close').getAttribute('aria-label')).toBe('Close terminal broker/node/0');

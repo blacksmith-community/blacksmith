@@ -6616,31 +6616,104 @@ bs-tabs > .cert-tab-pane[hidden] {
   transform: none;
 }
 
-/* The dialog's top edge is one 40px row. The tab strip takes the free
-   width and scrolls when its tabs overflow, and the controls stay pinned
-   on the right. The row border sits inside the 40px. */
-#terminal-modal .terminal-top {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  box-sizing: border-box;
-  height: 40px;
-  flex: none;
-  padding: 0;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-primary);
+/* The dialog is one tab set. Its top edge is a 40px row, with the tab
+   strip taking the free width and the controls pinned on the right. The
+   terminal panels fill the rows below, between two 12px black gaps that
+   the tab set's black background shows. */
+#terminal-modal .terminal-tabset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 40px 12px minmax(0, 1fr) 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: #000;
 }
 
-#terminal-modal .terminal-top .terminal-tabs {
-  flex: 1 1 auto;
+#terminal-modal .terminal-tabset > [role="tablist"] {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 2px;
+  box-sizing: border-box;
+  height: 40px;
   min-width: 120px;
-  min-height: 0;
+  margin: 0;
+  padding: 6px 4px 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--bg-tertiary);
+  border: 0;
+  border-radius: 0;
+}
+
+#terminal-modal .terminal-tabset > .terminal-header-controls {
+  grid-row: 1;
+  grid-column: 2;
+  box-sizing: border-box;
+  height: 40px;
+  padding: 0 8px 0 4px;
+  background: var(--bg-tertiary);
+}
+
+#terminal-modal .terminal-tabset > .terminal-instance {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+/* Browser-style tabs. They keep Oat's colours, round only their top
+   corners, and the selected tab takes the terminal's black so it joins
+   the terminal below it. */
+#terminal-modal .terminal-tabset .terminal-tab {
+  flex: 0 0 auto;
+  align-self: stretch;
+  box-sizing: border-box;
+  max-width: 260px;
+  padding: 0 2px 0 10px;
+  border: 0;
+  border-radius: var(--radius-large) var(--radius-large) 0 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+#terminal-modal .terminal-tabset .terminal-tab:hover {
+  background: var(--bg-secondary);
+}
+
+#terminal-modal .terminal-tabset .terminal-tab.active {
+  background: #000;
+  color: #d4d4d4;
   border-bottom: 0;
 }
 
-#terminal-modal .terminal-top .terminal-header-controls {
-  padding: 0 8px 0 4px;
+#terminal-modal .terminal-tabset .terminal-tab.active::after {
+  content: none;
+}
+
+#terminal-modal .terminal-tabset .terminal-tab [role="tab"] {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+}
+
+#terminal-modal .terminal-tabset .terminal-tab [role="tab"]:focus-visible,
+#terminal-modal .terminal-tabset .terminal-tab .tab-close:focus-visible {
+  outline: 2px solid var(--border-active, #4a9eff);
+  outline-offset: -2px;
 }
 
 .terminal-tabs {
@@ -6720,14 +6793,6 @@ bs-tabs > .cert-tab-pane[hidden] {
   font-weight: bold;
 }
 
-.terminal-container {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-  background: #000;
-  padding: 0;
-}
-
 .terminal-instance {
   width: 100%;
   height: 100%;
@@ -6741,11 +6806,8 @@ bs-tabs > .cert-tab-pane[hidden] {
 /* Rows fill the host exactly, so pinning to the bottom never shows a
    slice of scrollback above row 1, and the height stays a whole pixel,
    which keeps wterm's scroll-to-bottom from bouncing on each keystroke.
-   The vertical padding moves to the container, which is already black.
+   The vertical gap sits in the tab set's grid rows, which are black.
    The first height is the fallback for browsers without CSS round(). */
-#terminal-modal .terminal-container {
-  padding-block: 12px;
-}
 
 #terminal-modal .terminal-instance {
   height: 100%;
@@ -7032,10 +7094,6 @@ body.terminal-minimized .tabs {
 [data-theme="dark"] .terminal-modal-content {
   background: var(--bg-primary);
   color: var(--text-primary);
-}
-
-[data-theme="dark"] .terminal-top {
-  background: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .terminal-tabs {

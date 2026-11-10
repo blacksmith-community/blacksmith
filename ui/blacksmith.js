@@ -921,8 +921,11 @@
   // same order. The active class is mirrored onto the tabs and panels
   // because the route reader and the stylesheet still key on it. Oat reads
   // its tabs and panels once when the element starts, so a tab added later
-  // can be focused by the arrow keys but is never selected. Build the full
-  // strip before it is connected.
+  // can be focused by the arrow keys but is never selected, unless the
+  // element is told through addTab or removeTab, which re-read the list. The
+  // terminal dialog starts empty and gains sessions, so it uses those. An
+  // element with data-local keeps its tab changes off the route. Build any
+  // other strip in full before it is connected.
   const defineBsTabs = () => {
     const Base = window.customElements && window.customElements.get('ot-tabs');
     if (!Base || window.customElements.get('bs-tabs')) return;
@@ -933,15 +936,56 @@
       get panels() { return [...this.querySelectorAll(':scope > [role="tabpanel"]')]; }
       init() {
         this.addEventListener('ot-tab-change', (event) => { if (event.target === this) this.#mirror(event.detail.index); });
-        super.init();
         const list = this.querySelector(':scope > [role="tablist"]');
         if (list) list.blacksmithSelect = (name) => this.select(name);
+        // An element that starts without tabs waits for its first addTab.
+        if (this.tabs.length && this.panels.length) super.init();
         this.#ready = true;
+      }
+      // refresh makes Oat read the tab and panel lists again and selects the
+      // given tab, or keeps the current one. A second read adds no second
+      // click or key listener, because the handler is the same object.
+      refresh(selected) {
+        const tabs = this.tabs;
+        if (!tabs.length || tabs.length !== this.panels.length) return;
+        const keep = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true');
+        const target = tabs.includes(selected) ? selected : (keep || tabs[0]);
+        tabs.forEach((tab) => tab.setAttribute('aria-selected', tab === target ? 'true' : 'false'));
+        super.init();
+      }
+      // addTab appends a tab's wrapper to the tab list and its panel to the
+      // element, then re-reads both. The first tab, or one added with
+      // select, becomes the selected tab.
+      addTab(entry, tab, panel, options = {}) {
+        const list = this.querySelector(':scope > [role="tablist"]');
+        if (!list) return false;
+        const first = this.tabs.length === 0;
+        list.appendChild(entry);
+        this.appendChild(panel);
+        this.refresh(first || options.select ? tab : undefined);
+        return true;
+      }
+      // removeTab removes a tab's wrapper and panel. When the selected tab
+      // goes, the one that took its place is selected.
+      removeTab(tab) {
+        const tabs = this.tabs;
+        const at = tabs.indexOf(tab);
+        if (at < 0) return false;
+        const list = this.querySelector(':scope > [role="tablist"]');
+        const panel = this.panels[at];
+        const wasSelected = tab.getAttribute('aria-selected') === 'true';
+        let entry = tab;
+        while (entry.parentElement && entry.parentElement !== list) entry = entry.parentElement;
+        entry.remove();
+        if (panel) panel.remove();
+        const rest = this.tabs;
+        if (rest.length) this.refresh(wasSelected ? rest[Math.min(at, rest.length - 1)] : undefined);
+        return true;
       }
       #mirror(index) {
         this.tabs.forEach((tab, at) => tab.classList.toggle('active', at === index));
         this.panels.forEach((panel, at) => panel.classList.toggle('active', at === index));
-        if (this.#ready) notifyRoute();
+        if (this.#ready && !this.hasAttribute('data-local')) notifyRoute();
       }
       select(name) {
         const tabs = this.tabs;
@@ -23549,13 +23593,15 @@
       // host and gives it the wterm class. The host's label and description
       // pass through to wterm's own input, which owns the tab stop.
       const name = `${context.instanceName || context.deploymentName}/${context.instanceId}`;
-      const terminalContainer = document.getElementById('terminal-container');
       const terminalDiv = document.createElement('div');
       terminalDiv.className = 'terminal-instance';
       terminalDiv.id = `terminal-${sessionKey}`;
       terminalDiv.setAttribute('aria-label', `Terminal ${name}`);
       terminalDiv.setAttribute('aria-describedby', 'terminal-keyboard-help');
-      terminalContainer.appendChild(terminalDiv);
+      terminalDiv.setAttribute('role', 'tabpanel');
+      // The tab and its panel join the tab set together, so the terminal is
+      // attached before wterm measures it.
+      this.createTab(sessionKey, context, terminalDiv);
 
       // Ctrl+Shift+F6 leaves terminal input without sending a key to SSH.
       // The listener runs in the capture phase, before wterm's input sees it.
@@ -23615,9 +23661,6 @@
       };
       const terminal = this.createTerminal(terminalDiv, session);
       session.terminal = terminal;
-
-      // Create tab
-      this.createTab(sessionKey, context);
 
       // A closed or failed session never reconnects, and neither does one
       // whose connection the Reconnect button has replaced.
@@ -23789,20 +23832,23 @@
       }
     },
 
-    createTab(sessionKey, context) {
-      const tabsContainer = document.getElementById('terminal-tabs');
-      const tab = document.createElement('div');
-      tab.className = `terminal-tab ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
-      tab.id = `tab-${sessionKey}`;
+    createTab(sessionKey, context, panel) {
+      const tabset = document.getElementById('terminal-tabset');
+      const entry = document.createElement('div');
+      entry.className = `terminal-tab ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
+      entry.id = `tab-${sessionKey}`;
+      entry.setAttribute('role', 'presentation');
       const name = `${context.instanceName || context.deploymentName}/${context.instanceId}`;
       const select = document.createElement('button');
       select.type = 'button';
       select.className = 'terminal-tab-select';
+      select.setAttribute('role', 'tab');
       select.textContent = `[${context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}] ${name}`;
-      select.setAttribute('aria-pressed', 'false');
       // The tab label is short, so the tooltip carries the full BOSH
       // deployment name for reading and copying.
       select.title = `${context.boshDeploymentName || context.deploymentName || ''} ${context.instanceId || ''}`.trim();
+      // Oat selects the tab on a click, and this keeps the manager's active
+      // session in step with it.
       select.addEventListener('click', () => this.switchToSession(sessionKey));
       const close = document.createElement('button');
       close.type = 'button';
@@ -23810,8 +23856,19 @@
       close.innerHTML = blacksmithIcon('x', { size: 14 });
       close.setAttribute('aria-label', `Close terminal ${name}`);
       close.addEventListener('click', event => this.closeSession(sessionKey, event));
-      tab.append(select, close);
-      tabsContainer.appendChild(tab);
+      entry.append(select, close);
+      // Keys, like clicks, select a tab through Oat, so the manager follows
+      // the tab set's own change event.
+      if (!tabset.terminalWired) {
+        tabset.terminalWired = true;
+        tabset.addEventListener('ot-tab-change', event => {
+          if (event.target !== tabset) return;
+          const entry = tabset.tabs[event.detail.index]?.closest('.terminal-tab');
+          const key = entry && entry.id.slice(4);
+          if (key && this.sessions.has(key) && key !== this.activeSession) this.switchToSession(key);
+        });
+      }
+      tabset.addTab(entry, select, panel);
     },
 
     switchToSession(sessionKey) {
@@ -23824,9 +23881,8 @@
       });
 
       // Deactivate all tabs
-      document.querySelectorAll('.terminal-tab').forEach(el => {
+      document.querySelectorAll('#terminal-tabs .terminal-tab').forEach(el => {
         el.classList.remove('active');
-        el.querySelector('.terminal-tab-select')?.setAttribute('aria-pressed', 'false');
       });
 
       // Hidden terminals keep parsing output but stop painting
@@ -23839,8 +23895,11 @@
       if (session) {
         session.element.classList.add('active');
         session.terminal?.setActive?.(true);
-        document.getElementById(`tab-${sessionKey}`).classList.add('active');
-        document.getElementById(`tab-${sessionKey}`).querySelector('.terminal-tab-select')?.setAttribute('aria-pressed', 'true');
+        const entry = document.getElementById(`tab-${sessionKey}`);
+        entry.classList.add('active');
+        const tabset = document.getElementById('terminal-tabset');
+        const select = entry.querySelector('[role="tab"]');
+        if (select && select.getAttribute('aria-selected') !== 'true') tabset.activeIndex = tabset.tabs.indexOf(select);
         this.activeSession = sessionKey;
 
         // Focus the terminal after switching
@@ -23871,13 +23930,15 @@
           session.terminal.dispose();
         }
 
-        // Remove elements
+        // Remove the tab and its panel together, so the tab set keeps its
+        // lists in step.
+        const tab = document.getElementById(`tab-${sessionKey}`);
+        const tabset = document.getElementById('terminal-tabset');
+        const select = tab && tab.querySelector('[role="tab"]');
+        if (tabset && select) tabset.removeTab(select);
+        else if (tab) tab.remove();
         if (session.element) {
           session.element.remove();
-        }
-        const tab = document.getElementById(`tab-${sessionKey}`);
-        if (tab) {
-          tab.remove();
         }
 
         // Remove from sessions
