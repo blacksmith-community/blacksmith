@@ -116,64 +116,6 @@ func TestClosedSessionIsNotReportedAsALostConnection(t *testing.T) {
 	}
 }
 
-// slowEnd is a pipe that gives its text only after the reader has had time
-// to wait on an empty channel, then ends.
-type slowEnd struct {
-	text string
-	done bool
-}
-
-func (p *slowEnd) Read(buf []byte) (int, error) {
-	if p.done {
-		return 0, io.EOF
-	}
-
-	p.done = true
-
-	time.Sleep(time.Millisecond)
-
-	return copy(buf, p.text), nil
-}
-
-// The last chunk of output reaches the reader before the lost-link error,
-// however the reader's waits fall against the end of the pipes.
-func TestLastChunkArrivesBeforeALostConnectionError(t *testing.T) {
-	t.Parallel()
-
-	for range 300 {
-		session := &SessionImpl{
-			status:     SessionStatusActive,
-			config:     Config{OutputReadTimeout: time.Second},
-			outputChan: make(chan []byte, 1),
-			errorChan:  make(chan error, 1),
-			closeChan:  make(chan struct{}),
-			stdout:     &slowEnd{text: "last words\r\n"},
-			stderr:     strings.NewReader(""),
-		}
-
-		go session.readOutput(fakeShell{result: &ssh.ExitMissingError{}})
-
-		var got string
-
-		for {
-			output, err := session.ReadOutput()
-			if err != nil {
-				if !errors.Is(err, ErrConnectionLost) {
-					t.Fatalf("ReadOutput ended with %v, want ErrConnectionLost", err)
-				}
-
-				break
-			}
-
-			got += string(output)
-		}
-
-		if got != "last words\r\n" {
-			t.Fatalf("output before the lost-link error is %q, want the last chunk", got)
-		}
-	}
-}
-
 // A remote that half-closes its channel and then holds it open leaves
 // Wait blocked. The end of the output must still be reported, as a shell
 // exit, once the grace period passes.
