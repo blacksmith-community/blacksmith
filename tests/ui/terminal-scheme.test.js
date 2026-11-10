@@ -206,6 +206,32 @@ t('Escape closes the menu and returns focus to the button',async()=>{
  expect(d.activeElement).toBe(b);
 });
 
+t('the dialog leaves an Escape inside the menu uncanceled so the popover can close',async()=>{
+ const {w,open}=await start();
+ open();
+ const d=w.document;
+ d.getElementById('scheme-btn').click(); await sleep(60);
+ const inMenu=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});
+ d.activeElement.dispatchEvent(inMenu);
+ expect(inMenu.defaultPrevented).toBe(false);
+ // Elsewhere in the dialog, Escape stays canceled so the dialog stays open.
+ const elsewhere=new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true});
+ d.getElementById('maximize-btn').dispatchEvent(elsewhere);
+ expect(elsewhere.defaultPrevented).toBe(true);
+ expect(d.getElementById('terminal-modal').open).toBe(true);
+});
+
+t('Escape inside the menu moves focus to the active terminal before the popover closes',async()=>{
+ const {w,open,sockets,terms,connect}=await start();
+ open();
+ await connect(sockets[0],terms[0]);
+ const d=w.document;
+ d.getElementById('scheme-btn').click(); await sleep(60);
+ const before=terms[0].focused;
+ d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ expect(terms[0].focused).toBeGreaterThan(before);
+});
+
 t('the arrow keys move between items and wrap',async()=>{
  const {w,open}=await start();
  open();

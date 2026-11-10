@@ -23377,7 +23377,11 @@
         this.wireSchemeMenu(modal);
         modal.addEventListener('cancel', event => event.preventDefault());
         modal.addEventListener('keydown', event => {
-          if (event.key === 'Escape' && modal.open) event.preventDefault();
+          // A canceled Escape stops a popover from closing, so the color
+          // scheme menu gets its Escape untouched.
+          if (event.key !== 'Escape' || !modal.open) return;
+          if (event.target.closest && event.target.closest('#terminal-scheme-menu')) return;
+          event.preventDefault();
         });
         modal.addEventListener('touchstart', event => {
           if (event.target === modal) event.stopPropagation();
@@ -23548,6 +23552,16 @@
         menu.hidePopover();
       });
       list.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          // The browser closes the popover once this keydown ends. Focus
+          // leaves the menu first, as it does for a choice, so the close
+          // does not restore focus to the button in the middle of itself.
+          // The event stays uncanceled so the close goes ahead.
+          const open = this.sessions.get(this.activeSession);
+          if (open && open.terminal) open.terminal.focus();
+          else button.focus();
+          return;
+        }
         const all = entries();
         const at = all.indexOf(document.activeElement);
         let to = -1;
