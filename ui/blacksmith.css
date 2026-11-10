@@ -6616,109 +6616,31 @@ bs-tabs > .cert-tab-pane[hidden] {
   transform: none;
 }
 
-.terminal-header {
-  padding: 15px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-primary);
+/* The dialog's top edge is one 40px row. The tab strip takes the free
+   width and scrolls when its tabs overflow, and the controls stay pinned
+   on the right. The row border sits inside the 40px. */
+#terminal-modal .terminal-top {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-/* Improve title contrast and add details styling */
-.terminal-title-text {
-  color: var(--text-primary) !important;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-}
-
-.terminal-title-details {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  color: var(--text-secondary);
-  flex-wrap: wrap;
-}
-
-.terminal-title-badge {
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--bg-active);
-  border: 1px solid var(--border-active);
-  color: var(--text-link);
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.terminal-title-seg {
-  padding: 2px 4px;
-  border-radius: 3px;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  box-sizing: border-box;
+  height: 40px;
+  flex: none;
+  padding: 0;
   background: var(--bg-tertiary);
-  border: 1px solid var(--border-secondary);
-  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border-primary);
 }
 
-.terminal-title {
-  min-width: 0;
+#terminal-modal .terminal-top .terminal-tabs {
   flex: 1 1 auto;
+  min-width: 120px;
+  min-height: 0;
+  overflow-x: auto;
+  border-bottom: 0;
 }
 
-/* One compact header row: the title, the chips, and then the controls.
-   The title is an h2, so these rules undo Oat's heading size, margins,
-   and line height, and the bold weight above. Every height here is a
-   whole pixel, which keeps the terminal host on whole pixels too. */
-#terminal-modal .terminal-header {
-  padding: 8px 12px 8px 16px;
-  gap: 12px;
-}
-
-#terminal-modal .terminal-title {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-}
-
-#terminal-modal .terminal-title-text {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: var(--font-semibold, 600);
-  line-height: 1.5rem;
-  letter-spacing: 0;
-}
-
-#terminal-modal .terminal-title-details {
-  font-size: 13px;
-  line-height: 20px;
-  gap: 6px;
-}
-
-/* Narrow screens: the title and the controls share the first line, and
-   the chips get the full width of the line below. */
-@media (max-width: 640px) {
-  #terminal-modal .terminal-header {
-    flex-wrap: wrap;
-    row-gap: 4px;
-  }
-
-  #terminal-modal .terminal-title {
-    display: contents;
-  }
-
-  #terminal-modal .terminal-title-text {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  #terminal-modal .terminal-header-controls {
-    order: 1;
-  }
-
-  #terminal-modal .terminal-title-details {
-    order: 2;
-    flex: 1 1 100%;
-  }
+#terminal-modal .terminal-top .terminal-header-controls {
+  padding: 0 8px 0 4px;
 }
 
 .terminal-tabs {
@@ -7112,12 +7034,8 @@ body.terminal-minimized .tabs {
   color: var(--text-primary);
 }
 
-[data-theme="dark"] .terminal-header {
-  background: var(--bg-secondary);
-}
-
-[data-theme="dark"] .terminal-title-badge {
-  background: rgba(102, 178, 255, 0.15);
+[data-theme="dark"] .terminal-top {
+  background: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .terminal-tabs {

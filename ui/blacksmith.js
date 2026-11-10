@@ -23410,38 +23410,6 @@
       this.applyMaximized(modal);
     },
 
-    updateTitle(context) {
-      try {
-        const detailsEl = document.getElementById('terminal-title-details');
-        if (!detailsEl) return;
-
-        const kind = context.deploymentType === 'blacksmith' ? 'BK' : 'SI';
-
-        // Use the BOSH deployment name (e.g., redis-cache-small-UUID) in the header
-        const deploymentName = context.boshDeploymentName || context.deploymentName || '';
-
-        // instanceId field here often carries job/index like "node/2" or "standalone/0"
-        let jobName = context.instanceId || '';
-        let index = '';
-        if (jobName && jobName.includes('/')) {
-          const parts = jobName.split('/');
-          index = parts.pop();
-          jobName = parts.join('/');
-        }
-
-        const seg = (text) => `<span class=\"terminal-title-seg\">${text}</span>`;
-
-        detailsEl.innerHTML = `
-          <span class=\"terminal-title-badge\">[${kind}]</span>
-          ${seg(deploymentName)}
-          ${jobName ? seg(jobName) : ''}
-          ${index !== '' ? seg('/' + index) : ''}
-        `;
-      } catch (e) {
-        console.error('Failed to update terminal title details:', e);
-      }
-    },
-
     openWithContext(deploymentType, deploymentName, instanceId, instanceName, boshDeploymentName) {
       // Remember current focused element to restore after closing
       this.lastFocusBeforeModal = document.activeElement;
@@ -23650,8 +23618,6 @@
 
       // Create tab
       this.createTab(sessionKey, context);
-      // Update header title details
-      this.updateTitle(context);
 
       // A closed or failed session never reconnects, and neither does one
       // whose connection the Reconnect button has replaced.
@@ -23834,6 +23800,9 @@
       select.className = 'terminal-tab-select';
       select.textContent = `[${context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}] ${name}`;
       select.setAttribute('aria-pressed', 'false');
+      // The tab label is short, so the tooltip carries the full BOSH
+      // deployment name for reading and copying.
+      select.title = `${context.boshDeploymentName || context.deploymentName || ''} ${context.instanceId || ''}`.trim();
       select.addEventListener('click', () => this.switchToSession(sessionKey));
       const close = document.createElement('button');
       close.type = 'button';
@@ -23873,9 +23842,6 @@
         document.getElementById(`tab-${sessionKey}`).classList.add('active');
         document.getElementById(`tab-${sessionKey}`).querySelector('.terminal-tab-select')?.setAttribute('aria-pressed', 'true');
         this.activeSession = sessionKey;
-
-        // Update header title details to reflect the active session
-        this.updateTitle(session.context);
 
         // Focus the terminal after switching
         if (session.terminal) {
@@ -23964,12 +23930,6 @@
         }
         this.lastFocusBeforeModal = null;
       }, 0);
-
-      // Clear title details when no sessions remain
-      if (this.sessions.size === 0) {
-        const detailsEl = document.getElementById('terminal-title-details');
-        if (detailsEl) detailsEl.innerHTML = '';
-      }
     },
 
     minimizeAll() {

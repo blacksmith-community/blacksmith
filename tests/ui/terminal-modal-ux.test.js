@@ -24,14 +24,6 @@ test('terminal tabs are compact: 4px vertical padding and no button height floor
   expect(declares(forge, '.terminal-tab > button', 'min-height: 0')).toBe(true);
 });
 
-test('the terminal header keeps its controls inside a narrow dialog', () => {
-  expect(declares(blacksmith, '.terminal-title-details', 'flex-wrap: wrap')).toBe(true);
-  expect(declares(blacksmith, '.terminal-title-seg', 'overflow-wrap: anywhere')).toBe(true);
-  expect(declares(blacksmith, '.terminal-header-controls', 'flex-shrink: 0')).toBe(true);
-  expect(declares(blacksmith, '.terminal-title', 'min-width: 0')).toBe(true);
-  expect(declares(blacksmith, '.terminal-title', 'flex: 1 1 auto')).toBe(true);
-});
-
 test('the minimized bar lays out its sections and resets the tab buttons', () => {
   const html = read('index.html');
   const bar = html.slice(html.indexOf('id="minimized-terminal-bar"'));
@@ -56,26 +48,29 @@ test('the block padding sits on the container so the host holds only rows', () =
   expect(declares(blacksmith, '#terminal-modal .terminal-instance.wterm', 'padding-block: 0')).toBe(true);
 });
 
-test('the terminal header is one compact row with a toolbar-sized title', () => {
-  expect(declares(blacksmith, '#terminal-modal .terminal-header', 'padding: 8px 12px 8px 16px')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-title', 'display: flex')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-title', 'flex-wrap: wrap')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-title', 'align-items: center')).toBe(true);
-  const sel = '#terminal-modal .terminal-title-text';
-  expect(declares(blacksmith, sel, 'margin: 0')).toBe(true);
-  expect(declares(blacksmith, sel, 'font-size: 1rem')).toBe(true);
-  expect(declares(blacksmith, sel, 'font-weight: var(--font-semibold, 600)')).toBe(true);
-  expect(declares(blacksmith, sel, 'line-height: 1.5rem')).toBe(true);
-  expect(declares(blacksmith, '#terminal-modal .terminal-title-details', 'line-height: 20px')).toBe(true);
+test('the dialog has no title row, only one top row of tabs and controls', () => {
+  const html = read('index.html');
+  const dialog = html.slice(html.indexOf('<dialog id="terminal-modal"'), html.indexOf('</dialog>', html.indexOf('<dialog id="terminal-modal"')));
+  expect(dialog).not.toMatch(/terminal-title|terminal-header(?!-)|<h2/);
+  expect(dialog).toMatch(/<div class="terminal-top">\s*<div class="terminal-tabs[^"]*" id="terminal-tabs"><\/div>\s*<div class="terminal-header-controls">/);
+  expect(dialog).toMatch(/id="terminal-keyboard-help"/);
+  expect(blacksmith.some((r) => /terminal-title|\.terminal-header\s*$/.test(r.sel))).toBe(false);
 });
 
-test('narrow screens put the controls beside the title and the chips below', () => {
-  const css = read('blacksmith.css');
-  const at = css.indexOf('@media (max-width: 640px) {\n  #terminal-modal .terminal-header');
-  expect(at).toBeGreaterThan(-1);
-  const block = css.slice(at, css.indexOf('\n}\n', at));
-  expect(block).toMatch(/#terminal-modal \.terminal-header \{[^}]*flex-wrap: wrap/);
-  expect(block).toMatch(/#terminal-modal \.terminal-title \{[^}]*display: contents/);
-  expect(block).toMatch(/#terminal-modal \.terminal-header-controls \{[^}]*order: 1/);
-  expect(block).toMatch(/#terminal-modal \.terminal-title-details \{[^}]*order: 2[^}]*flex: 1 1 100%/);
+test('the top row is a fixed 40px flex row with the tabs taking the free width', () => {
+  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'display: flex')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'height: 40px')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'padding: 0')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'box-sizing: border-box')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-top', 'flex-wrap: nowrap')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-top .terminal-tabs', 'flex: 1 1 auto')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-top .terminal-tabs', 'min-width: 120px')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-top .terminal-tabs', 'overflow-x: auto')).toBe(true);
+  expect(declares(blacksmith, '.terminal-header-controls', 'flex-shrink: 0')).toBe(true);
+});
+
+test('a tab carries the full deployment name in its tooltip', () => {
+  const js = read('blacksmith.js');
+  const at = js.indexOf('createTab(sessionKey, context) {');
+  expect(js.slice(at, at + 1800)).toMatch(/tab\.title\s*=|select\.title\s*=/);
 });

@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/icon-180.png">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" href="/vendor/oat/oat.min.css">
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261110-oat-353">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261110-oat-356">
   <link rel="stylesheet" href="/vendor/wterm/0.5.10/terminal.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261028-oat-309">
@@ -259,12 +259,9 @@
 
   <!-- Terminal Modal -->
   <dialog id="terminal-modal" class="modal-dialog terminal-modal-content" aria-label="SSH Terminal" aria-describedby="terminal-keyboard-help">
-      <div class="modal-header terminal-header">
-        <div class="terminal-title">
-          <h2 class="terminal-title-text">SSH Terminal</h2>
-          <p id="terminal-keyboard-help" class="visually-hidden">Press Control Shift F6 to leave terminal input and focus terminal controls. Escape followed by Tab also leaves the terminal. The Escape still reaches the remote host, but the Tab does not, so return to the terminal and press Tab to send it. Control V pastes and Control Shift A selects all terminal text, so neither key reaches the remote host. In vim, use Control Q where you would use Control V.</p>
-          <div id="terminal-title-details" class="terminal-title-details"></div>
-        </div>
+      <p id="terminal-keyboard-help" class="visually-hidden">Press Control Shift F6 to leave terminal input and focus terminal controls. Escape followed by Tab also leaves the terminal. The Escape still reaches the remote host, but the Tab does not, so return to the terminal and press Tab to send it. Control V pastes and Control Shift A selects all terminal text, so neither key reaches the remote host. In vim, use Control Q where you would use Control V.</p>
+      <div class="terminal-top">
+        <div class="terminal-tabs min-h-10" id="terminal-tabs"></div>
         <div class="terminal-header-controls">
           <button class="terminal-control-btn" id="reconnect-btn" title="Reconnect" onclick="window.TerminalManager && window.TerminalManager.reconnectActive()">
             <svg class="lucide lucide-refresh-ccw" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" /><path d="M16 16h5v5" /></svg>
@@ -279,7 +276,6 @@
           <button class="modal-close" aria-label="Close all terminals"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button>
         </div>
       </div>
-      <div class="terminal-tabs min-h-10" id="terminal-tabs"></div>
       <div class="terminal-container" id="terminal-container"></div>
   </dialog>
 
@@ -386,7 +382,7 @@
   </dialog>
   <script src="/vendor/wterm/0.5.10/wterm.min.js"></script>
   <script type="text/javascript" src="/icons.js?v=20261110-oat-355"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261110-oat-354"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261110-oat-357"></script>
   <script src="/routes.js?v=20261028-oat-332"></script>
   <script src="/view-guidance.js?v=20261028-oat-316"></script>
   <script src="/action-help.js?v=20261028-oat-268"></script>
