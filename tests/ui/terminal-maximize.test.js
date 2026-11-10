@@ -34,10 +34,10 @@ const mgr=(env)=>env.w.TerminalManager;
 const openIt=(env)=>mgr(env).openWithContext('blacksmith','broker','node/0','node','broker');
 const stored=(w)=>w.localStorage.getItem(KEY);
 
-t('the header holds a maximize button between reconnect and minimize',async()=>{
+t('the header holds a maximize button in front of minimize',async()=>{
  const env=await start(); const {d,btn}=env;
  const ids=[...d.querySelectorAll('#terminal-modal .terminal-header-controls > button')].map(b=>b.id||b.className);
- expect(ids.slice(0,3)).toEqual(['reconnect-btn','maximize-btn','minimize-btn']);
+ expect(ids.slice(0,2)).toEqual(['maximize-btn','minimize-btn']);
  expect(btn().getAttribute('aria-label')).toBe('Maximize terminal');
  expect(btn().getAttribute('title')).toBe('Maximize terminal');
  expect(btn().getAttribute('aria-pressed')).toBe('false');

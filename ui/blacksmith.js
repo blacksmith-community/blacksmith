@@ -23431,6 +23431,7 @@
         disposed = true;
         pending.length = 0;
         session.failed = true;
+        this.setStatus(session, 'failed');
         const text = 'The terminal could not start. Reload the page and try again.';
         const message = document.createElement('p');
         message.className = 'terminal-load-error';
@@ -23558,6 +23559,8 @@
         terminal: null,
         websocket: null,
         context,
+        key: sessionKey,
+        status: 'connecting',
         element: terminalDiv,
         closed: false,
         failed: false,
@@ -23601,6 +23604,7 @@
         session.websocket = ws;
         sessionConnected = false; // Reset connection state
         startedSize = null;
+        this.setStatus(session, 'connecting');
 
         ws.onopen = () => {
           terminal.writeln(`Connecting to ${context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${context.deploymentName} :: ${context.instanceId}`);
@@ -23677,6 +23681,7 @@
             case 'status':
               if (msg.meta && msg.meta.status === 'connected') {
                 sessionConnected = true; // Mark session as ready for input
+                this.setStatus(session, 'connected');
                 // wterm may have refit the grid while SSH was connecting,
                 // and those resizes were dropped, so send the size it has now.
                 if (startedSize && (terminal.cols !== startedSize.cols || terminal.rows !== startedSize.rows)) {
@@ -23713,6 +23718,7 @@
             setTimeout(connectWebSocket, delay);
           } else {
             terminal.writeln('\r\n[Disconnected]');
+            if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
             if (event.code !== 1000) {
               const deploymentName = context.boshDeploymentName || context.deploymentName;
               const instanceName = context.instanceName || context.instanceId;
@@ -23760,21 +23766,84 @@
       }
     },
 
+    // One label for a session, used by the dialog tabs and the minimized
+    // bar so the two cannot drift apart. The title adds the full BOSH
+    // deployment name for reading and copying.
+    sessionLabel(context) {
+      const badge = context.deploymentType === 'blacksmith' ? 'BK' : 'SI';
+      const name = `${context.instanceName || context.deploymentName}/${context.instanceId}`;
+      const text = `[${badge}] ${name}`;
+      const deployment = context.boshDeploymentName || context.deploymentName || '';
+      return { badge, name, text, deployment, title: deployment ? `${text} (${deployment})` : text };
+    },
+
+    statusText(status) {
+      return { connecting: 'Connecting', connected: 'Connected', disconnected: 'Disconnected', failed: 'Failed' }[status] || 'Disconnected';
+    },
+
+    // The status box holds a dot for a session that is connecting,
+    // connected, or failed, and a reconnect button for one that has
+    // disconnected. The box has one fixed size, so a tab never changes
+    // width when its state changes.
+    statusSlot(sessionKey, context, status, options = {}) {
+      const slot = document.createElement('span');
+      slot.className = 'terminal-status-slot';
+      slot.dataset.session = sessionKey;
+      this.fillStatusSlot(slot, sessionKey, context, status, options);
+      return slot;
+    },
+
+    fillStatusSlot(slot, sessionKey, context, status, options = {}) {
+      slot.dataset.status = status;
+      slot.options = options;
+      if (status === 'disconnected') {
+        const label = this.sessionLabel(context);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'terminal-reconnect';
+        button.title = 'Reconnect';
+        button.setAttribute('aria-label', `Reconnect ${label.text}`);
+        button.innerHTML = blacksmithIcon('refresh-ccw', { size: 14 });
+        button.addEventListener('click', event => {
+          event.stopPropagation();
+          this.reconnectSession(sessionKey, { activate: !options.minimized });
+        });
+        slot.replaceChildren(button);
+        return;
+      }
+      const text = this.statusText(status);
+      const dot = document.createElement('span');
+      dot.className = `terminal-status-dot terminal-status-${status}`;
+      dot.setAttribute('role', 'img');
+      dot.setAttribute('aria-label', text);
+      dot.title = text;
+      slot.replaceChildren(dot);
+    },
+
+    // Every status box for the session, in the dialog and the minimized
+    // bar, follows the session's state.
+    setStatus(session, status) {
+      if (!session || session.status === status) return;
+      session.status = status;
+      document.querySelectorAll('.terminal-status-slot').forEach(slot => {
+        if (slot.dataset.session === session.key) this.fillStatusSlot(slot, session.key, session.context, status, slot.options || {});
+      });
+    },
+
     createTab(sessionKey, context, panel) {
       const tabset = document.getElementById('terminal-tabset');
       const entry = document.createElement('div');
       entry.className = `terminal-tab ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
       entry.id = `tab-${sessionKey}`;
       entry.setAttribute('role', 'presentation');
-      const name = `${context.instanceName || context.deploymentName}/${context.instanceId}`;
+      const label = this.sessionLabel(context);
+      const name = label.name;
       const select = document.createElement('button');
       select.type = 'button';
       select.className = 'terminal-tab-select';
       select.setAttribute('role', 'tab');
-      select.textContent = `[${context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}] ${name}`;
-      // The tab label is short, so the tooltip carries the full BOSH
-      // deployment name for reading and copying.
-      select.title = `${context.boshDeploymentName || context.deploymentName || ''} ${context.instanceId || ''}`.trim();
+      select.textContent = label.text;
+      select.title = label.title;
       // Oat selects the tab on a click, and this keeps the manager's active
       // session in step with it.
       select.addEventListener('click', () => this.switchToSession(sessionKey));
@@ -23784,7 +23853,7 @@
       close.innerHTML = blacksmithIcon('x', { size: 14 });
       close.setAttribute('aria-label', `Close terminal ${name}`);
       close.addEventListener('click', event => this.closeSession(sessionKey, event));
-      entry.append(select, close);
+      entry.append(select, this.statusSlot(sessionKey, context, 'connecting'), close);
       // Keys, like clicks, select a tab through Oat, so the manager follows
       // the tab set's own change event.
       if (!tabset.terminalWired) {
@@ -23958,31 +24027,28 @@
         this.sessions.forEach((session, sessionKey) => {
           const tab = document.createElement('div');
           tab.className = `minimized-terminal-tab rounded ${sessionKey === this.activeSession ? 'active ' : ''}`;
-          const identity = `${session.context.boshDeploymentName || session.context.deploymentName}/${session.context.instanceName || session.context.instanceId}`;
-          const connected = session.websocket?.readyState === WebSocket.OPEN;
+          const label = this.sessionLabel(session.context);
+          const status = session.status || (session.websocket?.readyState === WebSocket.OPEN ? 'connected' : 'disconnected');
           const open = document.createElement('button');
           open.type = 'button';
           open.className = 'minimized-session-open';
-          open.setAttribute('aria-label', `Restore terminal ${identity}`);
-          open.title = `Restore terminal ${identity} · ${connected ? 'Connected' : 'Disconnected'}`;
+          open.setAttribute('aria-label', `Restore terminal ${label.text}`);
+          open.title = `${label.title} \u00b7 ${this.statusText(status)}`;
           const name = document.createElement('span');
           name.className = 'minimized-session-label';
-          name.textContent = `${session.context.deploymentType === 'blacksmith' ? '[Broker]' : '[Instance]'} ${identity}`;
+          name.textContent = label.text;
           open.appendChild(name);
           open.addEventListener('click', () => {
             this.switchToSession(sessionKey);
             this.restoreAll();
           });
-          const status = document.createElement('span');
-          status.className = 'minimized-session-status';
-          status.textContent = connected ? 'Connected' : 'Disconnected';
           const close = document.createElement('button');
           close.type = 'button'; close.className = 'tab-close';
           close.innerHTML = blacksmithIcon('x', { size: 14 });
-          close.title = `Close terminal ${identity}`;
+          close.title = `Close terminal ${label.text}`;
           close.setAttribute('aria-label', close.title);
           close.addEventListener('click', event => this.closeSession(sessionKey, event));
-          tab.append(open, status, close);
+          tab.append(open, this.statusSlot(sessionKey, session.context, status, { minimized: true }), close);
 
           minimizedTabs.appendChild(tab);
         });
@@ -24006,12 +24072,14 @@
       }
     },
 
-    reconnectActive() {
-      if (!this.activeSession) return;
-
-      const session = this.sessions.get(this.activeSession);
-      if (!session || session.failed) return;
+    // Reconnect replaces one session's connection and leaves the others
+    // alone. A reconnect from the dialog also makes that tab active.
+    reconnectSession(sessionKey, options = {}) {
+      const session = this.sessions.get(sessionKey);
+      if (!session || session.failed || session.closed) return;
       session.replaced = true;
+      this.setStatus(session, 'connecting');
+      if (options.activate) this.switchToSession(sessionKey);
 
       // Close existing websocket
       if (session.websocket) {
@@ -24057,6 +24125,7 @@
             break;
           case 'status':
             if (msg.meta && msg.meta.status === 'connected') {
+              this.setStatus(session, 'connected');
               session.terminal.writeln('\r\n[Reconnected]\r\n');
             }
             break;
@@ -24069,6 +24138,7 @@
 
       ws.onclose = (event) => {
         session.terminal.writeln('\r\n[Disconnected]');
+        if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
         if (event.code !== 1000) {
           const deploymentName = session.context.boshDeploymentName || session.context.deploymentName;
           const instanceName = session.context.instanceName || session.context.instanceId;

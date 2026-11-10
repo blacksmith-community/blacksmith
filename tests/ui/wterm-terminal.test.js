@@ -247,7 +247,7 @@ t('reconnecting clears the screen and routes keystrokes and resizes to the new s
  open();
  const term=terms[0];
  await connect(sockets[0],term);
- mgr.reconnectActive();
+ mgr.reconnectSession(Array.from(mgr.sessions.keys())[0]);
  expect(sockets.length).toBe(2);
  expect(sockets[0].readyState).toBe(3);
  expect(term.written.join('')).toContain('\x1bc');
@@ -388,7 +388,7 @@ t('a reconnect stops the replaced connection from retrying',async()=>{
  const env=await start(); const {terms,sockets,open,mgr}=env;
  open();
  terms[0].resolveInit(); await sleep(0);
- mgr.reconnectActive();
+ mgr.reconnectSession(Array.from(mgr.sessions.keys())[0]);
  expect(sockets.length).toBe(2);
  // The replaced socket closes before any handshake, which would retry.
  sockets[0].onclose({code:1006});

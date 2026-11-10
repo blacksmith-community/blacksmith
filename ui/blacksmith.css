@@ -6753,6 +6753,68 @@ bs-tabs > .cert-tab-pane[hidden] {
   box-shadow: var(--shadow-secondary);
 }
 
+/* The status box is one fixed size, so a dot and a reconnect button take
+   the same room and a tab never changes width when its state changes. The
+   dot colours come from the theme's status tokens, which have light and
+   dark values. */
+.terminal-status-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+}
+
+.terminal-status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted-foreground, currentColor);
+}
+
+.terminal-status-connected {
+  background: var(--success);
+}
+
+.terminal-status-connecting {
+  background: var(--warning);
+}
+
+.terminal-status-disconnected {
+  background: var(--danger);
+}
+
+.terminal-status-failed {
+  background: var(--danger);
+}
+
+.terminal-reconnect {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.terminal-reconnect:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.2));
+}
+
+.terminal-reconnect:focus-visible {
+  outline: 2px solid var(--border-active, #4a9eff);
+  outline-offset: -2px;
+}
+
 /* Create a crisp seam with the tabs rail */
 .terminal-tab.active::after {
   content: '';
