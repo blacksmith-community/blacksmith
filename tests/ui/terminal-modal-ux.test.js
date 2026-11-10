@@ -44,8 +44,14 @@ test('the minimized bar lays out its sections and resets the tab buttons', () =>
   expect(declares(forge, '.minimized-terminal-tab', 'padding: 2px 8px')).toBe(true);
 });
 
-test('the terminal host height is rounded down to whole pixels', () => {
+test('the terminal host height is a whole number of rows', () => {
   const [host] = find(blacksmith, '#terminal-modal .terminal-instance');
   expect(host).toBeDefined();
-  expect(host.body).toMatch(/height:\s*100%\s*;\s*height:\s*round\(down,\s*100%,\s*1px\)\s*;/);
+  expect(host.body).toMatch(/height:\s*100%\s*;\s*height:\s*round\(down,\s*100%,\s*var\(--term-row-height,\s*17px\)\)\s*;/);
+  expect(host.body).not.toMatch(/round\(down,\s*100%,\s*1px\)/);
+});
+
+test('the block padding sits on the container so the host holds only rows', () => {
+  expect(declares(blacksmith, '#terminal-modal .terminal-container', 'padding-block: 12px')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-instance.wterm', 'padding-block: 0')).toBe(true);
 });
