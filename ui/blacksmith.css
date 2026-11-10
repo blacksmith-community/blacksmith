@@ -6659,6 +6659,62 @@ bs-tabs > .cert-tab-pane[hidden] {
   background: var(--bg-tertiary);
 }
 
+/* The scroll buttons overlay the two edges of the tab list, in its grid
+   cell, so the controls on the right never move. A soft fade at an
+   overflowing edge hints that more tabs are hidden. */
+.tab-scroll-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.tab-scroll-btn:hover {
+  background: var(--bg-hover, var(--bg-secondary));
+  color: var(--text-primary);
+}
+
+.tab-scroll-btn:focus-visible {
+  outline: 2px solid var(--border-active, #4a9eff);
+  outline-offset: -2px;
+}
+
+.tab-scroll-btn[hidden] {
+  display: none;
+}
+
+#terminal-modal .terminal-tabset > .tab-scroll-btn {
+  grid-row: 1;
+  grid-column: 1;
+  align-self: stretch;
+  height: 40px;
+}
+
+#terminal-modal .terminal-tabset > .tab-scroll-btn[data-direction="left"] {
+  justify-self: start;
+}
+
+#terminal-modal .terminal-tabset > .tab-scroll-btn[data-direction="right"] {
+  justify-self: end;
+}
+
+#terminal-modal .terminal-tabset > [role="tablist"] {
+  scrollbar-width: none;
+}
+
+#terminal-modal .terminal-tabset > [role="tablist"]::-webkit-scrollbar {
+  display: none;
+}
+
 #terminal-modal .terminal-tabset > .terminal-instance {
   grid-row: 3;
   grid-column: 1 / -1;
@@ -6672,7 +6728,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   flex: 0 0 auto;
   align-self: stretch;
   box-sizing: border-box;
-  max-width: 260px;
+  max-width: min(260px, 100%);
   padding: 0 2px 0 10px;
   border: 0;
   border-radius: var(--radius-large) var(--radius-large) 0 0;
@@ -6697,8 +6753,11 @@ bs-tabs > .cert-tab-pane[hidden] {
 }
 
 #terminal-modal .terminal-tabset .terminal-tab [role="tab"] {
+  display: block;
+  flex: 1 1 auto;
   min-width: 0;
   padding: 0;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7083,17 +7142,66 @@ bs-tabs > .cert-tab-pane[hidden] {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .minimized-terminal-bar .right-section {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: none;
+}
+
+.minimized-tabs-host {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .minimized-terminal-tabs {
   display: flex;
   gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.minimized-terminal-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.minimized-tabs-host > .tab-scroll-btn {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: auto;
+  border-radius: 4px;
+}
+
+.minimized-tabs-host > .tab-scroll-btn[data-direction="left"] {
+  left: 0;
+}
+
+.minimized-tabs-host > .tab-scroll-btn[data-direction="right"] {
+  right: 0;
+}
+
+.tabs-fade-start > .minimized-terminal-tabs,
+.tabs-fade-end > .minimized-terminal-tabs,
+.tabs-fade-start > #terminal-tabs,
+.tabs-fade-end > #terminal-tabs {
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-start, 0), #000 calc(100% - var(--fade-end, 0px)), transparent 100%);
+}
+
+.tabs-fade-start {
+  --fade-start: 36px;
+}
+
+.tabs-fade-end {
+  --fade-end: 36px;
 }
 
 .minimized-terminal-tab {

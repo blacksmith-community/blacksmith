@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/icon-180.png">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" href="/vendor/oat/oat.min.css">
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261110-oat-361">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261110-oat-363">
   <link rel="stylesheet" href="/vendor/wterm/0.5.10/terminal.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261028-oat-309">
@@ -54,7 +54,9 @@
   <div id="minimized-terminal-bar" class="minimized-terminal-bar is-transparent is-invisible">
     <div class="left-section">
       <img src="/assets/brand/icon-192.png" alt="Blacksmith">
-      <div class="minimized-terminal-tabs" id="minimized-terminal-tabs"></div>
+      <div class="minimized-tabs-host" id="minimized-tabs-host">
+        <div class="minimized-terminal-tabs" id="minimized-terminal-tabs"></div>
+      </div>
     </div>
     <div class="right-section">
       <button class="terminal-control-btn" title="Restore Terminal" onclick="window.TerminalManager && window.TerminalManager.restoreAll()">
@@ -378,7 +380,7 @@
   </dialog>
   <script src="/vendor/wterm/0.5.10/wterm.min.js"></script>
   <script type="text/javascript" src="/icons.js?v=20261110-oat-355"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261110-oat-362"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261110-oat-364"></script>
   <script src="/routes.js?v=20261028-oat-332"></script>
   <script src="/view-guidance.js?v=20261028-oat-316"></script>
   <script src="/action-help.js?v=20261028-oat-268"></script>

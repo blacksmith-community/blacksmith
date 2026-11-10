@@ -23293,6 +23293,70 @@
   // meets a stale cached module.
   const WTERM_WASM_URL = '/vendor/wterm/0.5.10/wterm.wasm';
 
+  // Scroll controls for a strip of tabs that can be wider than its box. A
+  // chevron button sits at each edge that has hidden tabs, an edge fade
+  // class hints at more, a vertical wheel scrolls the strip sideways, and
+  // reveal brings one item fully into view. The dialog's tab list and the
+  // minimized bar both use it. When nothing overflows, the buttons stay
+  // hidden and the strip looks as it did before.
+  const createTabScrollControls = (scroller, host) => {
+    const makeButton = (direction) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'tab-scroll-btn';
+      button.dataset.direction = direction;
+      button.hidden = true;
+      button.setAttribute('aria-label', `Scroll tabs ${direction}`);
+      button.innerHTML = blacksmithIcon(`chevron-${direction}`, { size: 16 });
+      return button;
+    };
+    const left = makeButton('left');
+    const right = makeButton('right');
+    host.append(left, right);
+    const edge = 32;
+    const overflowing = () => scroller.scrollWidth - scroller.clientWidth > 1;
+    const update = () => {
+      const max = scroller.scrollWidth - scroller.clientWidth;
+      const over = max > 1;
+      left.hidden = !over || scroller.scrollLeft <= 1;
+      right.hidden = !over || scroller.scrollLeft >= max - 1;
+      host.classList.toggle('tabs-fade-start', !left.hidden);
+      host.classList.toggle('tabs-fade-end', !right.hidden);
+    };
+    const scrollTo = (target) => {
+      const reduced = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!reduced && typeof scroller.scrollTo === 'function') scroller.scrollTo({ left: target, behavior: 'smooth' });
+      else scroller.scrollLeft = target;
+    };
+    const step = (sign) => {
+      const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      scrollTo(Math.min(max, Math.max(0, scroller.scrollLeft + sign * scroller.clientWidth * 0.8)));
+    };
+    left.addEventListener('click', () => step(-1));
+    right.addEventListener('click', () => step(1));
+    scroller.addEventListener('scroll', update, { passive: true });
+    scroller.addEventListener('wheel', (event) => {
+      if (!overflowing() || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      event.preventDefault();
+      scroller.scrollLeft += event.deltaY;
+      update();
+    }, { passive: false });
+    if (typeof window.ResizeObserver === 'function') new window.ResizeObserver(update).observe(scroller);
+    if (typeof window.MutationObserver === 'function') new window.MutationObserver(update).observe(scroller, { childList: true });
+    const reveal = (item) => {
+      if (!item || !overflowing()) return;
+      const box = scroller.getBoundingClientRect();
+      const at = item.getBoundingClientRect();
+      const startPad = left.hidden ? 0 : edge;
+      const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      if (at.left < box.left + startPad) scroller.scrollLeft = Math.max(0, scroller.scrollLeft + at.left - box.left - edge);
+      else if (at.right > box.right - edge) scroller.scrollLeft = Math.min(max, scroller.scrollLeft + at.right - box.right + edge);
+      update();
+    };
+    update();
+    return { update, reveal };
+  };
+
   const TerminalManager = {
     sessions: new Map(),
     activeSession: null,
@@ -23865,7 +23929,11 @@
           if (key && this.sessions.has(key) && key !== this.activeSession) this.switchToSession(key);
         });
       }
+      const strip = document.getElementById('terminal-tabs');
+      if (!strip.scrollControls) strip.scrollControls = createTabScrollControls(strip, tabset);
       tabset.addTab(entry, select, panel);
+      strip.scrollControls.update();
+      strip.scrollControls.reveal(entry);
     },
 
     switchToSession(sessionKey) {
@@ -23894,6 +23962,7 @@
         session.terminal?.setActive?.(true);
         const entry = document.getElementById(`tab-${sessionKey}`);
         entry.classList.add('active');
+        document.getElementById('terminal-tabs').scrollControls?.reveal(entry);
         const tabset = document.getElementById('terminal-tabset');
         const select = entry.querySelector('[role="tab"]');
         if (select && select.getAttribute('aria-selected') !== 'true') tabset.activeIndex = tabset.tabs.indexOf(select);
@@ -24053,8 +24122,13 @@
           minimizedTabs.appendChild(tab);
         });
 
+        // The strip scrolls through the same controls as the dialog's tabs.
+        if (!minimizedTabs.scrollControls) minimizedTabs.scrollControls = createTabScrollControls(minimizedTabs, minimizedTabs.parentElement);
+        minimizedTabs.scrollControls.update();
+
         // Show the bar
         minimizedBar.classList.add('active');
+        minimizedTabs.scrollControls.reveal(minimizedTabs.querySelector('.minimized-terminal-tab.active'));
       }
     },
 
