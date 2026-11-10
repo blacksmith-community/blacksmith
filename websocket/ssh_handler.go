@@ -707,6 +707,12 @@ func (h *SSHHandler) handleSSHReadError(err error, session *SSHStreamSession, ss
 		return true
 	}
 
+	if errors.Is(err, ssh.ErrShellExited) {
+		h.endSessionAfterShellExit(session)
+
+		return false
+	}
+
 	sessionStatus := sshSession.Status()
 	duration := time.Since(state.LastActivityTime)
 
@@ -724,6 +730,34 @@ func (h *SSHHandler) handleSSHReadError(err error, session *SSHStreamSession, ss
 	h.sendErrorMessage(session, fmt.Sprintf("SSH read error: %v", err))
 
 	return false
+}
+
+// endSessionAfterShellExit tells the browser that the remote shell ended
+// and closes the WebSocket normally. The browser then moves the session
+// to its disconnected state and offers a reconnect. The read loop in
+// handleSession ends when the close arrives, and its deferred cleanup
+// closes the SSH session.
+func (h *SSHHandler) endSessionAfterShellExit(session *SSHStreamSession) {
+	h.logger.Debugf("Remote shell exited for session: %s", session.ID)
+
+	exitMsg := WSMessage{
+		Type:      MsgTypeStatus,
+		Data:      "SSH session ended",
+		Timestamp: time.Now(),
+		Meta: map[string]interface{}{
+			"status": "exited",
+		},
+	}
+
+	err := h.sendMessage(session, exitMsg)
+	if err != nil {
+		h.logger.Debugf("Failed to send exit notice for session %s: %v", session.ID, err)
+	}
+
+	err = session.Conn.Close()
+	if err != nil {
+		h.logger.Debugf("Failed to close WebSocket for session %s: %v", session.ID, err)
+	}
 }
 
 // processSSHOutput processes successful SSH output.

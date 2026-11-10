@@ -391,3 +391,67 @@ func TestStartThatOutlivesItsWebSocketClosesTheSession(t *testing.T) {
 		t.Errorf("events %s, want setup 1,cleanup 1", got)
 	}
 }
+
+// exitingSession is a session whose remote shell ends after it has sent
+// its output, as one does when the operator types exit.
+type exitingSession struct {
+	recordingSession
+	sent bool
+}
+
+func (s *exitingSession) ReadOutput() ([]byte, error) {
+	if !s.sent {
+		s.sent = true
+
+		return []byte("logout\r\n"), nil
+	}
+
+	return nil, ssh.ErrShellExited
+}
+
+type exitingService struct{ recordingService }
+
+//nolint:ireturn // The SSHService interface returns an SSHSession.
+func (s *exitingService) CreateSession(_ context.Context, _ *ssh.SSHRequest) (ssh.SSHSession, error) {
+	return &exitingSession{recordingSession: recordingSession{
+		log:    s.log,
+		number: 1,
+		status: ssh.SessionStatusConnected,
+	}}, nil
+}
+
+// When the remote shell ends, the server tells the browser with an exit
+// notice and closes the WebSocket normally, so the console can offer a
+// reconnect instead of leaving the session looking connected.
+func TestShellExitSendsAnExitNoticeAndClosesNormally(t *testing.T) {
+	t.Parallel()
+
+	conn := openTestTerminal(t, &exitingService{recordingService{log: &eventLog{}}})
+
+	sendStart(t, conn)
+
+	sawOutput, sawExit := false, false
+
+	for !sawExit {
+		msg := readMessage(t, conn)
+
+		switch {
+		case msg.Type == websocket.MsgTypeOutput:
+			sawOutput = true
+		case msg.Type == websocket.MsgTypeStatus && msg.Meta["status"] == "exited":
+			sawExit = true
+		}
+	}
+
+	if !sawOutput {
+		t.Error("the shell's last output did not arrive before the exit notice")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), eventWait)
+	defer cancel()
+
+	_, _, err := conn.Read(ctx)
+	if got := wsn.CloseStatus(err); got != wsn.StatusNormalClosure {
+		t.Errorf("close status after the exit notice is %d (%v), want %d", got, err, wsn.StatusNormalClosure)
+	}
+}

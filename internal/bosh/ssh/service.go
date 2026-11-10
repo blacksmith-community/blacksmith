@@ -57,6 +57,9 @@ var (
 	// ErrUnusableSessionInfo means the director's SSH session has no host
 	// or no key to connect with.
 	ErrUnusableSessionInfo = errors.New("the director's SSH session cannot be connected to")
+	// ErrShellExited means the remote shell ended, through a logout or an
+	// exit, and the session has no more output to give.
+	ErrShellExited = errors.New("the remote shell exited")
 )
 
 // ServiceImpl implements the SSHService interface.
@@ -613,7 +616,13 @@ func (s *SessionImpl) ReadOutput() ([]byte, error) {
 	}
 
 	select {
-	case output := <-s.outputChan:
+	case output, open := <-s.outputChan:
+		if !open {
+			// Both output pipes reached end of file, so the remote
+			// shell has ended.
+			return nil, ErrShellExited
+		}
+
 		return output, nil
 	case err := <-s.errorChan:
 		return nil, err
