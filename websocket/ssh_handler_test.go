@@ -426,7 +426,8 @@ func (s *exitingService) CreateSession(_ context.Context, _ *ssh.SSHRequest) (ss
 func TestShellExitSendsAnExitNoticeAndClosesNormally(t *testing.T) {
 	t.Parallel()
 
-	conn := openTestTerminal(t, &exitingService{recordingService{log: &eventLog{}}})
+	log := &eventLog{}
+	conn := openTestTerminal(t, &exitingService{recordingService{log: log}})
 
 	sendStart(t, conn)
 
@@ -453,5 +454,14 @@ func TestShellExitSendsAnExitNoticeAndClosesNormally(t *testing.T) {
 	_, _, err := conn.Read(ctx)
 	if got := wsn.CloseStatus(err); got != wsn.StatusNormalClosure {
 		t.Errorf("close status after the exit notice is %d (%v), want %d", got, err, wsn.StatusNormalClosure)
+	}
+
+	// The SSH session's cleanup removes the user from the VM.
+	log.waitFor(t, "cleanup", 1)
+
+	time.Sleep(100 * time.Millisecond)
+
+	if got := log.count("cleanup"); got != 1 {
+		t.Errorf("%d cleanups after the shell exit, want 1: %v", got, log.snapshot())
 	}
 }
