@@ -23376,6 +23376,11 @@
         modal.dataset.terminalWired = 'true';
         modal.querySelector('.modal-close')?.addEventListener('click', () => this.closeAll());
         modal.querySelector('#maximize-btn')?.addEventListener('click', () => this.toggleMaximize());
+        const vmsButton = modal.querySelector('#vms-btn');
+        if (vmsButton) {
+          vmsButton.innerHTML = window.blacksmithIcon('server', { size: 16 });
+          vmsButton.addEventListener('click', () => this.showVMs());
+        }
         modal.addEventListener('cancel', event => event.preventDefault());
         modal.addEventListener('keydown', event => {
           if (event.key === 'Escape' && modal.open) event.preventDefault();
@@ -23438,6 +23443,42 @@
       btn.setAttribute('aria-label', label);
       btn.setAttribute('title', label);
     },
+    // The VMs view that belongs to a session's deployment, or null when the
+    // service instance is no longer known to the console. The broker's own
+    // deployment is always known.
+    vmsRoute(context) {
+      if (!context) return null;
+      if (context.deploymentType === 'blacksmith') return { screen: 'blacksmith', section: 'vms' };
+      if (!window.serviceInstances || !window.serviceInstances[context.deploymentName]) return null;
+      return { screen: 'services', instance: context.deploymentName, section: 'vms' };
+    },
+
+    // The Show VMs button names the active session's instance and is
+    // disabled, with a reason, when that instance cannot be resolved.
+    updateVmsButton() {
+      const button = document.getElementById('vms-btn');
+      if (!button) return;
+      const session = this.sessions.get(this.activeSession);
+      const context = session && session.context;
+      const route = this.vmsRoute(context);
+      let label = 'Show VMs';
+      if (context && route) label = `Show VMs for ${context.instanceName || context.deploymentName}`;
+      else if (context) label = `Show VMs unavailable, ${context.instanceName || context.deploymentName} was not found in the console`;
+      button.disabled = !route;
+      button.setAttribute('aria-label', label);
+      button.setAttribute('title', label);
+    },
+
+    // Minimizing keeps every session connected. The router then opens the
+    // deployment's VMs view the way any other link to it does.
+    showVMs() {
+      const session = this.sessions.get(this.activeSession);
+      const route = this.vmsRoute(session && session.context);
+      if (!route) return;
+      this.minimizeAll();
+      if (window.blacksmithRouter) window.blacksmithRouter.navigate(route).catch((error) => console.error('Show VMs failed:', error));
+    },
+
     toggleMaximize() {
       const modal = document.getElementById('terminal-modal');
       if (!modal) return;
@@ -23967,6 +24008,7 @@
         const select = entry.querySelector('[role="tab"]');
         if (select && select.getAttribute('aria-selected') !== 'true') tabset.activeIndex = tabset.tabs.indexOf(select);
         this.activeSession = sessionKey;
+        this.updateVmsButton();
 
         // Focus the terminal after switching
         if (session.terminal) {

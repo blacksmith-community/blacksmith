@@ -7089,6 +7089,11 @@ bs-tabs > .cert-tab-pane[hidden] {
   display: block;
 }
 
+.terminal-control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .terminal-control-btn:focus-visible {
   outline: 2px solid var(--border-active, #4a9eff);
   outline-offset: 2px;

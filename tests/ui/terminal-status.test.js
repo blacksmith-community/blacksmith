@@ -200,7 +200,7 @@ t('the dialog header has no reconnect button and its controls start with maximiz
  expect(d.getElementById('reconnect-btn')).toBeNull();
  expect(typeof env.mgr.reconnectActive).toBe('undefined');
  const ids=[...d.querySelectorAll('#terminal-modal .terminal-header-controls > button')].map(b=>b.id||b.className);
- expect(ids.slice(0,2)).toEqual(['maximize-btn','minimize-btn']);
+ expect(ids.slice(0,3)).toEqual(['vms-btn','maximize-btn','minimize-btn']);
 });
 
 t('the minimized bar shows the dot, no status word, and a reconnect button when disconnected',async()=>{

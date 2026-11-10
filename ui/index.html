@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/icon-180.png">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" href="/vendor/oat/oat.min.css">
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261110-oat-363">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261110-oat-365">
   <link rel="stylesheet" href="/vendor/wterm/0.5.10/terminal.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261028-oat-309">
@@ -265,6 +265,7 @@
       <bs-tabs class="terminal-tabset" id="terminal-tabset" data-local>
         <div class="terminal-tabs" id="terminal-tabs" role="tablist" aria-label="Terminal sessions"></div>
         <div class="terminal-header-controls">
+          <button class="terminal-control-btn" id="vms-btn" type="button" disabled aria-label="Show VMs" title="Show VMs"></button>
           <button class="terminal-control-btn" id="maximize-btn" type="button" aria-pressed="false" aria-label="Maximize terminal" title="Maximize terminal">
             <svg class="lucide lucide-maximize-2 icon-maximize" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 3h6v6" /><path d="m21 3-7 7" /><path d="m3 21 7-7" /><path d="M9 21H3v-6" /></svg>
             <svg class="lucide lucide-minimize-2 icon-restore" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m14 10 7-7" /><path d="M20 10h-6V4" /><path d="m3 21 7-7" /><path d="M4 14h6v6" /></svg>
@@ -379,8 +380,8 @@
     <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
   </dialog>
   <script src="/vendor/wterm/0.5.10/wterm.min.js"></script>
-  <script type="text/javascript" src="/icons.js?v=20261110-oat-355"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261110-oat-364"></script>
+  <script type="text/javascript" src="/icons.js?v=20261110-oat-367"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261110-oat-366"></script>
   <script src="/routes.js?v=20261028-oat-332"></script>
   <script src="/view-guidance.js?v=20261028-oat-316"></script>
   <script src="/action-help.js?v=20261028-oat-268"></script>
