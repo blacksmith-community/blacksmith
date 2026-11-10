@@ -6664,6 +6664,63 @@ bs-tabs > .cert-tab-pane[hidden] {
   flex: 1 1 auto;
 }
 
+/* One compact header row: the title, the chips, and then the controls.
+   The title is an h2, so these rules undo Oat's heading size, margins,
+   and line height, and the bold weight above. Every height here is a
+   whole pixel, which keeps the terminal host on whole pixels too. */
+#terminal-modal .terminal-header {
+  padding: 8px 12px 8px 16px;
+  gap: 12px;
+}
+
+#terminal-modal .terminal-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+#terminal-modal .terminal-title-text {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: var(--font-semibold, 600);
+  line-height: 1.5rem;
+  letter-spacing: 0;
+}
+
+#terminal-modal .terminal-title-details {
+  font-size: 13px;
+  line-height: 20px;
+  gap: 6px;
+}
+
+/* Narrow screens: the title and the controls share the first line, and
+   the chips get the full width of the line below. */
+@media (max-width: 640px) {
+  #terminal-modal .terminal-header {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  #terminal-modal .terminal-title {
+    display: contents;
+  }
+
+  #terminal-modal .terminal-title-text {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  #terminal-modal .terminal-header-controls {
+    order: 1;
+  }
+
+  #terminal-modal .terminal-title-details {
+    order: 2;
+    flex: 1 1 100%;
+  }
+}
+
 .terminal-tabs {
   display: flex;
   background: var(--bg-tertiary);

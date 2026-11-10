@@ -55,3 +55,27 @@ test('the block padding sits on the container so the host holds only rows', () =
   expect(declares(blacksmith, '#terminal-modal .terminal-container', 'padding-block: 12px')).toBe(true);
   expect(declares(blacksmith, '#terminal-modal .terminal-instance.wterm', 'padding-block: 0')).toBe(true);
 });
+
+test('the terminal header is one compact row with a toolbar-sized title', () => {
+  expect(declares(blacksmith, '#terminal-modal .terminal-header', 'padding: 8px 12px 8px 16px')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-title', 'display: flex')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-title', 'flex-wrap: wrap')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-title', 'align-items: center')).toBe(true);
+  const sel = '#terminal-modal .terminal-title-text';
+  expect(declares(blacksmith, sel, 'margin: 0')).toBe(true);
+  expect(declares(blacksmith, sel, 'font-size: 1rem')).toBe(true);
+  expect(declares(blacksmith, sel, 'font-weight: var(--font-semibold, 600)')).toBe(true);
+  expect(declares(blacksmith, sel, 'line-height: 1.5rem')).toBe(true);
+  expect(declares(blacksmith, '#terminal-modal .terminal-title-details', 'line-height: 20px')).toBe(true);
+});
+
+test('narrow screens put the controls beside the title and the chips below', () => {
+  const css = read('blacksmith.css');
+  const at = css.indexOf('@media (max-width: 640px) {\n  #terminal-modal .terminal-header');
+  expect(at).toBeGreaterThan(-1);
+  const block = css.slice(at, css.indexOf('\n}\n', at));
+  expect(block).toMatch(/#terminal-modal \.terminal-header \{[^}]*flex-wrap: wrap/);
+  expect(block).toMatch(/#terminal-modal \.terminal-title \{[^}]*display: contents/);
+  expect(block).toMatch(/#terminal-modal \.terminal-header-controls \{[^}]*order: 1/);
+  expect(block).toMatch(/#terminal-modal \.terminal-title-details \{[^}]*order: 2[^}]*flex: 1 1 100%/);
+});

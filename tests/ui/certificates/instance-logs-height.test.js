@@ -36,5 +36,5 @@ test('the VM tab row scrolls sideways and its tabs keep their width', () => {
 });
 
 test('the stylesheet reference carries the current cache-buster', () => {
-  expect(html).toContain('/blacksmith.css?v=20261110-oat-351');
+  expect(html).toContain('/blacksmith.css?v=20261110-oat-352');
 });
