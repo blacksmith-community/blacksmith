@@ -6970,6 +6970,43 @@ bs-tabs > .cert-tab-pane[hidden] {
   height: 16px;
 }
 
+/* The control group has two icons for the maximize button, and the pressed
+   state shows the other one. */
+#maximize-btn .icon-restore {
+  display: none;
+}
+
+#maximize-btn[aria-pressed="true"] .icon-maximize {
+  display: none;
+}
+
+#maximize-btn[aria-pressed="true"] .icon-restore {
+  display: block;
+}
+
+.terminal-control-btn:focus-visible {
+  outline: 2px solid var(--border-active, #4a9eff);
+  outline-offset: 2px;
+}
+
+/* A maximized dialog fills the viewport. The height rounds to a whole
+   pixel, because a fractional height brings back the keystroke bounce, and
+   the host inside still rounds down to whole rows. The first height is the
+   fallback for browsers without CSS round(). */
+#terminal-modal.terminal-maximized {
+  width: 100vw;
+  max-width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  height: round(down, 100dvh, 1px);
+  max-height: 100vh;
+  max-height: 100dvh;
+  max-height: round(down, 100dvh, 1px);
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
 /* Minimized terminal header bar */
 .minimized-terminal-bar {
   position: fixed;

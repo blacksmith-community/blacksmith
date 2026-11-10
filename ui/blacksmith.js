@@ -23339,6 +23339,7 @@
       if (!modal.dataset.terminalWired) {
         modal.dataset.terminalWired = 'true';
         modal.querySelector('.modal-close')?.addEventListener('click', () => this.closeAll());
+        modal.querySelector('#maximize-btn')?.addEventListener('click', () => this.toggleMaximize());
         modal.addEventListener('cancel', event => event.preventDefault());
         modal.addEventListener('keydown', event => {
           if (event.key === 'Escape' && modal.open) event.preventDefault();
@@ -23353,6 +23354,7 @@
           if (this.sessions.size > 0) this.showDialog();
         });
       }
+      this.applyMaximized(modal);
       const wasInert = modal.hasAttribute('inert');
       modal.removeAttribute('inert');
       modal.showModal();
@@ -23374,6 +23376,38 @@
       const modal = document.getElementById('terminal-modal');
       this.releaseDialog();
       if (modal && modal.open) modal.close();
+    },
+
+    // The maximized choice belongs to the whole dialog, not to a tab. It is
+    // remembered per browser, and a browser that blocks storage keeps it only
+    // for the life of the page. The class on the dialog drives every size
+    // rule, and wterm's own resize observer reports the new grid to the host.
+    maximizedKey: 'blacksmith.terminal.maximized',
+    maximized: null,
+    readMaximized() {
+      if (this.maximized === null) {
+        let saved = null;
+        try { saved = window.localStorage.getItem(this.maximizedKey); } catch (_) { saved = null; }
+        this.maximized = saved === 'true';
+      }
+      return this.maximized;
+    },
+    applyMaximized(modal) {
+      const on = this.readMaximized();
+      modal.classList.toggle('terminal-maximized', on);
+      const btn = modal.querySelector('#maximize-btn');
+      if (!btn) return;
+      const label = on ? 'Restore terminal size' : 'Maximize terminal';
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.setAttribute('aria-label', label);
+      btn.setAttribute('title', label);
+    },
+    toggleMaximize() {
+      const modal = document.getElementById('terminal-modal');
+      if (!modal) return;
+      this.maximized = !this.readMaximized();
+      try { window.localStorage.setItem(this.maximizedKey, this.maximized ? 'true' : 'false'); } catch (_) { }
+      this.applyMaximized(modal);
     },
 
     updateTitle(context) {
