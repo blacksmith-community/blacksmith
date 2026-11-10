@@ -188,6 +188,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.PreviewUpgrade(w, r)
 	case path == "/commands/preview" && r.Method == http.MethodPost:
 		h.PreviewCommand(w, r)
+	case path == "/commands/availability" && r.Method == http.MethodGet:
+		h.CommandAvailability(w, r)
 	case path == "/commands/discard" && r.Method == http.MethodPost:
 		h.DiscardCommand(w, r)
 	case path == "/tasks" && r.Method == http.MethodGet:
@@ -539,6 +541,15 @@ func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, 
 
 	h.logger.Info("Answered certificate task %s, existing: %t", task.ID, existing)
 	response.JSON(w, status, task)
+}
+
+// CommandAvailability handles GET /b/upgrade/commands/availability. It
+// answers whether commands are on and whether they may run as root, read from
+// the configuration the authorizer reads, so the console learns the switches
+// without sending a preview that the browser would log as a failure. It takes
+// no input, runs nothing, and answers the two switches and nothing else.
+func (h *Handler) CommandAvailability(w http.ResponseWriter, _ *http.Request) {
+	response.JSON(w, http.StatusOK, h.manager.Authorizer().Availability())
 }
 
 // PreviewCommand handles POST /b/upgrade/commands/preview. It takes the

@@ -37,6 +37,17 @@ type CommandAuthorizer interface {
 	// queued, resumed, or allowed to run its next node. It has no request
 	// to read, so it checks only what the configuration still allows.
 	AuthorizeStored(ctx context.Context, spec CommandTaskSpec) error
+	// Availability reports the two switches the gates apply, so the console
+	// can show what a request would be allowed to do without sending one.
+	Availability() CommandAvailability
+}
+
+// CommandAvailability is what the console may know about the command
+// switches. It holds the two switches and nothing else, so it never hints
+// at a configured command key or any other setting.
+type CommandAvailability struct {
+	Enabled   bool `json:"enabled"`
+	AllowRoot bool `json:"allow_root"`
 }
 
 // ConfigAuthorizer authorizes commands from the commands configuration. It
@@ -69,6 +80,14 @@ func (a *ConfigAuthorizer) config() config.CommandsConfig {
 	}
 
 	return a.switches()
+}
+
+// Availability reports the feature switch and the root switch from the same
+// configuration the gates read. A missing authorizer reports both off.
+func (a *ConfigAuthorizer) Availability() CommandAvailability {
+	cfg := a.config()
+
+	return CommandAvailability{Enabled: cfg.CommandsEnabled(), AllowRoot: cfg.RootAllowed()}
 }
 
 // AuthorizeRequest refuses a request when commands are off, when the second

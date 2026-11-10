@@ -316,3 +316,38 @@ func TestCommandAuthorizerMessagesSayWhatToDo(t *testing.T) {
 	wantMessage(t, authorize(commandsConfig(nil, boolPtr(true), ""), "admin", nil),
 		"A command runs as root or as vcap, so choose one of those.")
 }
+
+// Availability reads the same switches the gates read, so the console's
+// answer and a real request cannot disagree.
+func TestConfigAuthorizerAvailability(t *testing.T) {
+	t.Parallel()
+
+	yes, no := true, false
+
+	cases := map[string]struct {
+		cfg     config.CommandsConfig
+		enabled bool
+		root    bool
+	}{
+		"defaults":         {commandsConfig(nil, nil, ""), true, false},
+		"root on":          {commandsConfig(nil, &yes, ""), true, true},
+		"commands off":     {commandsConfig(&no, &yes, ""), false, false},
+		"root off":         {commandsConfig(&yes, &no, ""), true, false},
+		"key is not shown": {commandsConfig(nil, &yes, testCommandKey), true, true},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := NewConfigAuthorizer(func() config.CommandsConfig { return tc.cfg }).Availability()
+			if got.Enabled != tc.enabled || got.AllowRoot != tc.root {
+				t.Fatalf("got %+v, want enabled %v and allow_root %v", got, tc.enabled, tc.root)
+			}
+		})
+	}
+
+	if got := (*ConfigAuthorizer)(nil).Availability(); got.Enabled || got.AllowRoot {
+		t.Fatalf("a missing authorizer must report both off, got %+v", got)
+	}
+}

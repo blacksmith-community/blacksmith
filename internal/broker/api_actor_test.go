@@ -38,3 +38,36 @@ func TestActorFromForwardedRequest(t *testing.T) {
 		t.Fatalf("From() = %q", got)
 	}
 }
+
+// The availability route sits under /b/, so a request with no credentials is
+// refused the way every other console route is, and never reaches the
+// handler behind it.
+func TestAvailabilityRouteNeedsTheBrokerCredential(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+	api := broker.API{Username: "admin", Password: "pw", Internal: inner, Primary: broker.NullHandler{}}
+
+	refusal := func(target string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		api.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
+
+		return recorder
+	}
+
+	known := refusal("/b/upgrade/tasks")
+	got := refusal("/b/upgrade/commands/availability")
+
+	if got.Code != http.StatusUnauthorized || got.Code != known.Code {
+		t.Fatalf("availability answered %d, tasks answered %d, want 401 for both", got.Code, known.Code)
+	}
+
+	if got.Header().Get("WWW-Authenticate") != known.Header().Get("WWW-Authenticate") {
+		t.Fatal("the two routes challenge differently")
+	}
+
+	if called {
+		t.Fatal("an unauthenticated request reached the handler")
+	}
+}
