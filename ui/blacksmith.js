@@ -23900,7 +23900,10 @@
         if (disposed) return false;
         ready = true;
         pending.splice(0).forEach(chunk => term.write(chunk));
-        if (focusWhenReady && element.classList.contains('active')) term.focus();
+        // The same conditions as every other focus. The dialog may have been
+        // minimized, or another tab chosen, while the core loaded.
+        const modal = document.getElementById('terminal-modal');
+        if (focusWhenReady && element.classList.contains('active') && modal && modal.open && this.activeSession === session.key) term.focus();
         return true;
       }, () => {
         if (disposed) return false;
