@@ -43,7 +43,14 @@ type fakeValkey struct {
 
 	mu       sync.Mutex
 	commands []string
+	hellos   []string
 }
+
+// valkeyHelloNoAuthReply is what a password-protected node answers to HELLO
+// sent without credentials. go-redis v9 opens every connection with HELLO and
+// carries on to the OnConnect hook when it gets an error reply.
+const valkeyHelloNoAuthReply = "-NOAUTH HELLO must be called with the client already authenticated, " +
+	"otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n"
 
 func newFakeValkey(replies map[string]func(args []string) string) *fakeValkey {
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", valkeyTestHost+":0")
@@ -84,10 +91,20 @@ func (f *fakeValkey) handle(conn net.Conn) {
 		}
 
 		f.mu.Lock()
-		f.commands = append(f.commands, name)
+		if name == "HELLO" {
+			// The handshake is not part of what the broker chose to send, so
+			// received() leaves it out; helloVersions() reports it.
+			f.hellos = append(f.hellos, args[1])
+		} else {
+			f.commands = append(f.commands, name)
+		}
 		f.mu.Unlock()
 
 		reply := "+OK\r\n"
+		if name == "HELLO" {
+			reply = valkeyHelloNoAuthReply
+		}
+
 		if replyFn, ok := f.replies[name]; ok {
 			reply = replyFn(args)
 		}
@@ -115,6 +132,14 @@ func (f *fakeValkey) received() []string {
 	defer f.mu.Unlock()
 
 	return append([]string(nil), f.commands...)
+}
+
+// helloVersions returns the protocol version each HELLO asked for.
+func (f *fakeValkey) helloVersions() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return append([]string(nil), f.hellos...)
 }
 
 func (f *fakeValkey) close() {
@@ -241,6 +266,7 @@ var _ = Describe("Valkey ACL admin failures", func() {
 			Expect(err.Error()).To(ContainSubstring("check the node's server log and free space on its persistent disk"))
 			Expect(err.Error()).NotTo(ContainSubstring(valkeyTestAdminPassword))
 			Expect(fake.received()).To(Equal([]string{"AUTH", "PING"}))
+			Expect(fake.helloVersions()).To(Equal([]string{"2"}))
 		})
 
 		It("logs every failed attempt with the instance, binding, address, transport, and cause", func() {

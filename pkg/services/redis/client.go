@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 
 	"blacksmith/pkg/services/common"
 )
@@ -82,6 +82,11 @@ func (cm *ClientManager) GetClient(ctx context.Context, instanceID string, creds
 	return client, nil
 }
 
+// respProtocol is the wire protocol the broker speaks to tenant instances.
+// go-redis v9 defaults to RESP3, which changes reply shapes (maps, sets,
+// doubles) that v8 callers never saw.
+const respProtocol = 2
+
 // clientOptions builds the client options for a plain-text or a TLS
 // connection. It never falls back from one to the other: Standard needs a
 // plain-text port and TLS needs a TLS port or tls_uri.
@@ -97,6 +102,11 @@ func clientOptions(creds *Credentials, useTLS bool) (*redis.Options, error) {
 		PoolSize:     DefaultPoolSize,
 		MinIdleConns: 1,
 		MaxRetries:   DefaultMaxRetries,
+		// v9 negotiates RESP3 unless told otherwise; the tenant servers and
+		// the reply handling below are written against RESP2 shapes.
+		Protocol: respProtocol,
+		// v9 sends CLIENT SETINFO on every connect; v8 never did.
+		DisableIdentity: true,
 	}
 
 	if !useTLS {
@@ -119,6 +129,10 @@ func clientOptions(creds *Credentials, useTLS bool) (*redis.Options, error) {
 		}
 
 		opts = tlsOpts
+		// A "protocol" query parameter in the URI must not move us to RESP3.
+		opts.Protocol = respProtocol
+		opts.DisableIdentity = true
+
 		if opts.Username == "" {
 			opts.Username = creds.Username
 		}

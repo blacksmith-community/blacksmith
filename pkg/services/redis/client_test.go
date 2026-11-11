@@ -162,6 +162,12 @@ func (s *fakeRedis) handle(conn net.Conn) {
 		reply := "+OK\r\n"
 
 		switch strings.ToUpper(command[0]) {
+		case "HELLO":
+			// go-redis v9 opens every connection with HELLO <proto> and
+			// expects the map a real server returns.
+			reply = "*14\r\n$6\r\nserver\r\n$5\r\nredis\r\n$7\r\nversion\r\n$5\r\n7.2.0\r\n" +
+				"$5\r\nproto\r\n:2\r\n$2\r\nid\r\n:1\r\n$4\r\nmode\r\n$10\r\nstandalone\r\n" +
+				"$4\r\nrole\r\n$6\r\nmaster\r\n$7\r\nmodules\r\n*0\r\n"
 		case "PING":
 			reply = "+PONG\r\n"
 		case "INFO":
@@ -466,18 +472,21 @@ func TestTestConnectionValkeyOverTLS(t *testing.T) {
 
 	commands, _ := server.recorded()
 
-	var auth []string
+	// go-redis v9 authenticates inside its opening HELLO 2 rather than with a
+	// separate AUTH command, so the credentials ride on that handshake.
+	var hello []string
 
 	for _, command := range commands {
-		if strings.EqualFold(command[0], "AUTH") {
-			auth = command
+		if strings.EqualFold(command[0], "HELLO") {
+			hello = command
 
 			break
 		}
 	}
 
-	if len(auth) != 3 || auth[1] != "default" || auth[2] != testPassword {
-		t.Errorf("AUTH did not carry the username and password, got %d args", len(auth))
+	if len(hello) != 5 || hello[1] != "2" || !strings.EqualFold(hello[2], "AUTH") ||
+		hello[3] != "default" || hello[4] != testPassword {
+		t.Errorf("HELLO did not ask for RESP2 with the username and password, got %d args", len(hello))
 	}
 }
 
@@ -525,5 +534,52 @@ func TestTestConnectionStandardOnTLSOnlyInstance(t *testing.T) {
 	_, accepted := server.recorded()
 	if accepted != 0 {
 		t.Errorf("Standard dialed the instance %d times", accepted)
+	}
+}
+
+func TestClientOptionsPinsRESP2(t *testing.T) {
+	t.Parallel()
+
+	pki := newTestPKI(t)
+
+	cases := map[string]struct {
+		creds  *Credentials
+		useTLS bool
+	}{
+		"plain text": {
+			creds: &Credentials{Host: "valkey.example.com", Port: 6379, Password: testPassword},
+		},
+		"tls port": {
+			creds:  &Credentials{Host: "127.0.0.1", TLSPort: 6380, Password: testPassword, CACertificate: pki.caPEM},
+			useTLS: true,
+		},
+		"tls uri asking for resp3": {
+			creds: &Credentials{
+				Host:          "127.0.0.1",
+				TLSURI:        "rediss://127.0.0.1:6380?protocol=3",
+				Password:      testPassword,
+				CACertificate: pki.caPEM,
+			},
+			useTLS: true,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			opts, err := ClientOptions(tc.creds, tc.useTLS)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if opts.Protocol != 2 {
+				t.Errorf("Protocol = %d, expected 2", opts.Protocol)
+			}
+
+			if !opts.DisableIdentity {
+				t.Errorf("CLIENT SETINFO would be sent on connect")
+			}
+		})
 	}
 }

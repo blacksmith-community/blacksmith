@@ -9,13 +9,13 @@ require (
 	github.com/fivetwenty-io/capi/v3 v3.236.0
 	github.com/fivetwenty-io/graft v1.46.0
 	github.com/fivetwenty-io/osbapi/v2 v2.0.5
-	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.44.0
 	github.com/rabbitmq/amqp091-go v1.16.0
+	github.com/redis/go-redis/v9 v9.19.0
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/sony/gobreaker/v2 v2.4.0
 	go.uber.org/zap v1.28.0
@@ -47,7 +47,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cppforlife/go-patch v0.2.0 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dlclark/regexp2/v2 v2.13.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.9 // indirect
@@ -76,6 +75,7 @@ require (
 	github.com/pborman/uuid v1.2.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/mod v0.42.0 // indirect

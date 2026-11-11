@@ -15,8 +15,8 @@ import (
 	"blacksmith/pkg/services/common"
 
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -552,6 +552,10 @@ func connectToValkeyAdmin(ctx context.Context, conn *valkeyConnInfo, host string
 		DialTimeout:  valkeyDialTimeout,
 		ReadTimeout:  valkeyOpTimeout,
 		WriteTimeout: valkeyOpTimeout,
+		// RESP2 as under go-redis v8; v9 would negotiate RESP3, and would
+		// announce itself with CLIENT SETINFO.
+		Protocol:        2,
+		DisableIdentity: true,
 		OnConnect: func(ctx context.Context, cn *redis.Conn) error {
 			connected = true
 
