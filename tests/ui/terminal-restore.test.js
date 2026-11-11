@@ -16,12 +16,12 @@ afterEach(()=>{
 
 // Boots the console as a page load does. Storage given in preset is in place
 // before Oat defines the tab set, which is when saved tabs come back.
-const start=async(preset)=>{
+const start=async(preset,opts={})=>{
  const env=boot({noDialogs:true,routes:[['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});envs.push(env);
  const {w}=env;
  if(preset!==undefined) w.sessionStorage.setItem(KEY,preset);
  const terms=[];const sockets=[];
- w.WTermLib={WTerm:class{constructor(el,o){this.cols=80;this.rows=24;this.written=[];el.classList.add('wterm');terms.push(this);}init(){return Promise.resolve(this);}focus(){}write(x){this.written.push(x);}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
+ w.WTermLib={WTerm:class{constructor(el,o){this.cols=80;this.rows=24;this.written=[];el.classList.add('wterm');terms.push(this);}init(){return opts.failInit?Promise.reject(new Error('wterm: failed to initialize: synthetic')):Promise.resolve(this);}focus(){}write(x){this.written.push(x);}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}send(m){this.sent.push(m);}close(){this.readyState=3;}};
  w.eval(OAT);
  await sleep(80);
@@ -96,6 +96,24 @@ t('reconnect on one restored tab connects only that tab and makes it active',asy
  expect(mgr.activeSession).toBe('blacksmith-broker-node/1');
  expect(mgr.sessions.get('blacksmith-broker-node/0').status).toBe('disconnected');
  expect(env.stored().active).toBe('blacksmith-broker-node/1');
+});
+
+t('a restored tab whose terminal cannot start is failed, offers reconnect, and connects nothing by itself',async()=>{
+ const env=await start(record(['node/0'],'blacksmith-broker-node/0'),{failInit:true});
+ await sleep(30);
+ const {d,w,mgr,sockets}=env;
+ const key='blacksmith-broker-node/0';
+ expect(mgr.sessions.get(key).status).toBe('failed');
+ expect(sockets.length).toBe(0);
+ expect(d.querySelector('#terminal-tabs button.terminal-reconnect')).not.toBeNull();
+ expect(d.querySelector('#minimized-terminal-tabs button.terminal-reconnect')).not.toBeNull();
+ // A working library lets the next click connect that tab.
+ w.WTermLib={WTerm:class{constructor(el){this.cols=80;this.rows=24;el.classList.add('wterm');}init(){return Promise.resolve(this);}focus(){}write(){}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
+ d.querySelector('#terminal-tabs button.terminal-reconnect').click();
+ expect(sockets.length).toBe(1);
+ expect(mgr.sessions.get(key).status).toBe('connecting');
+ expect(mgr.sessions.get(key).failed).toBe(false);
+ env.errors.length=0; env.alerts.length=0;
 });
 
 t('a reconnect to a target that is gone fails through the close path without throwing',async()=>{

@@ -24149,9 +24149,9 @@
       return { connecting: 'Connecting', connected: 'Connected', disconnected: 'Disconnected', failed: 'Failed' }[status] || 'Disconnected';
     },
 
-    // The status box holds a dot for a session that is connecting,
-    // connected, or failed, and a reconnect button for one that has
-    // disconnected. The box has one fixed size, so a tab never changes
+    // The status box holds a dot for a session that is connecting or
+    // connected, and a reconnect button for one that has disconnected or
+    // failed. The slot's data-status tells the two apart. The box has one fixed size, so a tab never changes
     // width when its state changes.
     statusSlot(sessionKey, context, status, options = {}) {
       const slot = document.createElement('span');
@@ -24177,13 +24177,13 @@
     paintStatusSlot(slot, sessionKey, context, status, options = {}) {
       slot.dataset.status = status;
       slot.options = options;
-      if (status === 'disconnected') {
+      if (status === 'disconnected' || status === 'failed') {
         const label = this.sessionLabel(context);
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'terminal-reconnect';
-        button.title = 'Reconnect';
-        button.setAttribute('aria-label', `Reconnect ${label.text}`);
+        button.title = status === 'failed' ? 'Reconnect failed session' : 'Reconnect';
+        button.setAttribute('aria-label', status === 'failed' ? `Reconnect ${label.text}, failed` : `Reconnect ${label.text}`);
         button.innerHTML = blacksmithIcon('refresh-ccw', { size: 14 });
         button.addEventListener('click', event => {
           event.stopPropagation();
@@ -24473,10 +24473,24 @@
     // alone. A reconnect from the dialog also makes that tab active.
     reconnectSession(sessionKey, options = {}) {
       const session = this.sessions.get(sessionKey);
-      if (!session || session.failed || session.closed) return;
+      if (!session || session.closed) return;
       session.replaced = true;
-      this.setStatus(session, 'connecting');
       if (options.activate) this.switchToSession(sessionKey);
+
+      // A failed session has no working terminal, so it gets a new one in
+      // the same panel before it connects. When the new terminal fails to
+      // start too, the session stays failed and opens no connection, and
+      // nothing retries on its own.
+      if (session.failed) {
+        session.failed = false;
+        const old = session.terminal;
+        session.element.classList.remove('terminal-failed');
+        session.element.replaceChildren();
+        if (old) old.dispose();
+        session.terminal = this.createTerminal(session.element, session);
+        if (session.failed) return;
+      }
+      this.setStatus(session, 'connecting');
 
       // Close existing websocket
       if (session.websocket) {
@@ -24536,6 +24550,9 @@
       };
 
       ws.onclose = (event) => {
+        // A terminal that failed to start closes this socket as part of
+        // its failure, which is not a disconnect.
+        if (session.failed) return;
         session.terminal.writeln('\r\n[Disconnected]');
         if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
         if (event.code !== 1000) {

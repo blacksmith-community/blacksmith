@@ -307,3 +307,104 @@ t('a reconnected session also leaves the connected state on the exit notice',asy
  expectReconnectOffered(d,mgr,KEY_BK);
  mgr.closeAll();
 });
+
+// A session whose terminal could not start is failed. It keeps its failed
+// state, and it offers the same reconnect as a disconnected one, in the
+// dialog and in the minimized bar.
+const failSession=async(env,index=0)=>{ env.terms[index].rejectInit(); await sleep(30); };
+
+t('a failed session offers reconnect in the dialog tab and the minimized bar',async()=>{
+ const env=await start(); const {d,open,mgr}=env;
+ open(); await failSession(env);
+ expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
+ mgr.minimizeAll();
+ for(const scope of ['#terminal-tabs','#minimized-terminal-tabs']){
+  const box=slot(d,scope,KEY_BK);
+  expect(box.dataset.status).toBe('failed');
+  expect(box.querySelector('.terminal-status-dot')).toBeNull();
+  const button=box.querySelector('button.terminal-reconnect');
+  expect(button).not.toBeNull();
+  expect(button.getAttribute('aria-label')).toContain('Reconnect [BK] node/node/0');
+  expect(button.getAttribute('aria-label')).toContain('failed');
+ }
+ mgr.closeAll();
+});
+
+t('reconnecting a failed session connects only that tab and makes it active',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,mgr}=env;
+ open(); open('node/1');
+ const keyA=KEY_BK, keyB='blacksmith-broker-node/1';
+ await connect(sockets[1],terms[1]);
+ await failSession(env,0);
+ expect(mgr.activeSession).toBe(keyB);
+ const count=sockets.length, termCount=terms.length;
+ dialogSlot(d,keyA).querySelector('button.terminal-reconnect').click();
+ expect(sockets.length).toBe(count+1);
+ expect(terms.length).toBe(termCount+1);
+ expect(mgr.activeSession).toBe(keyA);
+ const session=mgr.sessions.get(keyA);
+ expect(session.failed).toBe(false);
+ expect(session.status).toBe('connecting');
+ expect(session.element.classList.contains('terminal-failed')).toBe(false);
+ expect(session.element.querySelector('.terminal-load-error')).toBeNull();
+ expect(mgr.sessions.get(keyB).status).toBe('connected');
+ expect(sockets[1].readyState).toBe(1);
+ // The new terminal finishes starting and the session connects.
+ terms[termCount].resolveInit();
+ const fresh=sockets[sockets.length-1]; fresh.readyState=1; fresh.onopen();
+ env.deliver(fresh,{type:'status',meta:{status:'connected'}});
+ await sleep(30);
+ expect(session.status).toBe('connected');
+ expect(session.failed).toBe(false);
+ expect(env.sent(fresh,'control').some(m=>m.meta.action==='start')).toBe(true);
+ mgr.closeAll();
+});
+
+t('a second failure leaves the tab failed with reconnect offered and never retries by itself',async()=>{
+ const env=await start(); const {d,terms,sockets,open,mgr}=env;
+ open(); await failSession(env,0);
+ dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect').click();
+ const count=sockets.length;
+ await failSession(env,1);
+ const session=mgr.sessions.get(KEY_BK);
+ expect(session.failed).toBe(true);
+ expect(session.status).toBe('failed');
+ sockets[sockets.length-1].onclose({code:1006});
+ await sleep(1200);
+ expect(sockets.length).toBe(count);
+ expect(session.status).toBe('failed');
+ expect(session.element.classList.contains('terminal-failed')).toBe(true);
+ mgr.minimizeAll();
+ for(const scope of ['#terminal-tabs','#minimized-terminal-tabs']) expect(slot(d,scope,KEY_BK).querySelector('button.terminal-reconnect')).not.toBeNull();
+ mgr.closeAll();
+});
+
+t('a failed session reconnects when the terminal library is missing, and stays failed',async()=>{
+ const env=await start(); const {d,sockets,open,mgr,w}=env;
+ w.WTermLib=undefined;
+ open();
+ expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
+ const count=sockets.length;
+ dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect').click();
+ expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
+ expect(sockets.length).toBe(count);
+ expect(dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect')).not.toBeNull();
+ mgr.closeAll();
+});
+
+t('the failed and disconnected states stay distinct',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,mgr}=env;
+ open(); open('node/1');
+ await connect(sockets[1],terms[1]);
+ await failSession(env,0);
+ sockets[1].onclose({code:1000});
+ const failed=dialogSlot(d,KEY_BK), gone=dialogSlot(d,'blacksmith-broker-node/1');
+ expect(failed.dataset.status).toBe('failed');
+ expect(gone.dataset.status).toBe('disconnected');
+ expect(mgr.statusText('failed')).toBe('Failed');
+ expect(mgr.statusText('disconnected')).toBe('Disconnected');
+ expect(failed.querySelector('button').getAttribute('aria-label')).not.toBe(gone.querySelector('button').getAttribute('aria-label'));
+ const css=fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8');
+ expect(css).toMatch(/\.terminal-status-slot\[data-status="failed"\]\s+\.terminal-reconnect/);
+ mgr.closeAll();
+});
