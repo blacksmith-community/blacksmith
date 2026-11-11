@@ -38,6 +38,7 @@ func finishedMockTask(taskID int, deployment string) *bosh.Task {
 // MockDirector for testing. Every mutation returns a task that has ended.
 type MockDirector struct {
 	delay     time.Duration
+	gate      chan struct{} // when set, CreateDeployment blocks until it is closed
 	callCount int
 	mu        sync.Mutex
 }
@@ -80,6 +81,10 @@ func (m *MockDirector) GetDeployment(_ context.Context, name string) (*bosh.Depl
 
 func (m *MockDirector) CreateDeployment(_ context.Context, manifest string) (*bosh.Task, error) {
 	m.incrementCallCount()
+
+	if m.gate != nil {
+		<-m.gate
+	}
 
 	if m.delay > 0 {
 		time.Sleep(m.delay)
@@ -717,13 +722,24 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	t.Parallel()
 
-	mockDirector := &MockDirector{delay: 50 * time.Millisecond}
+	// The gate holds the two active requests until the test has read the
+	// stats, so the reading does not depend on how fast the goroutines run.
+	gate := make(chan struct{})
+	mockDirector := &MockDirector{gate: gate}
 	pooled := bosh.NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
 	t.Cleanup(pooled.Stop)
+	// Runs before Stop, so a failed wait never leaves a request held.
+	t.Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
 
 	verifyInitialPoolStats(t, pooled)
 	_, done := launchConcurrentRequests(pooled)
-	verifyMidExecutionPoolStats(t, pooled, done)
+	verifyMidExecutionPoolStats(t, pooled, gate, done)
 	verifyFinalPoolStats(t, pooled)
 }
 
@@ -759,18 +775,25 @@ func launchConcurrentRequests(pooled bosh.Director) (chan bool, chan bool) {
 		<-started
 	}
 
-	time.Sleep(10 * time.Millisecond)
-
 	return started, done
 }
 
-func verifyMidExecutionPoolStats(t *testing.T, pooled bosh.Director, done chan bool) {
+func verifyMidExecutionPoolStats(t *testing.T, pooled bosh.Director, gate chan struct{}, done chan bool) {
 	t.Helper()
 
-	midStats, err := pooled.GetPoolStats()
-	if err != nil {
-		t.Fatalf("Failed to get pool stats: %v", err)
-	}
+	// Wait until two requests are active and the third waits for a slot.
+	var midStats *bosh.PoolStats
+
+	waitUntil(t, "two requests are active and one is queued", func() bool {
+		stats, err := pooled.GetPoolStats()
+		if err != nil {
+			t.Fatalf("Failed to get pool stats: %v", err)
+		}
+
+		midStats = stats
+
+		return stats.ActiveConnections == 2 && stats.QueuedRequests == 1
+	})
 
 	if midStats.ActiveConnections != 2 {
 		t.Errorf("Expected 2 active connections, got %d", midStats.ActiveConnections)
@@ -779,6 +802,8 @@ func verifyMidExecutionPoolStats(t *testing.T, pooled bosh.Director, done chan b
 	if midStats.QueuedRequests != 1 {
 		t.Errorf("Expected 1 queued request, got %d", midStats.QueuedRequests)
 	}
+
+	close(gate)
 
 	for range 3 {
 		<-done
