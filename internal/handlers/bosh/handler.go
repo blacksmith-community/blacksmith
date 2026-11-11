@@ -43,6 +43,9 @@ type Handler struct {
 
 	version string
 	commit  string
+
+	vaultHealth func(ctx context.Context) error
+	health      healthCache
 }
 
 // Dependencies contains all dependencies needed by the BOSH handler.
@@ -63,6 +66,20 @@ type Dependencies struct {
 	// defaults.
 	Version string
 	Commit  string
+
+	// VaultHealth checks that Vault answers. Nil means no check is
+	// configured, and /b/status reports Vault unreachable.
+	VaultHealth func(ctx context.Context) error
+
+	// HealthTimeout bounds each reachability check. Zero means two seconds.
+	HealthTimeout time.Duration
+
+	// HealthCacheTTL is how long /b/status reuses a health result. Zero
+	// means five seconds.
+	HealthCacheTTL time.Duration
+
+	// Now is the clock the health cache reads. Nil means time.Now.
+	Now func() time.Time
 }
 
 // NewHandler creates a new BOSH handler.
@@ -94,6 +111,9 @@ func NewHandler(deps Dependencies) *Handler {
 
 		version: version,
 		commit:  commit,
+
+		vaultHealth: deps.VaultHealth,
+		health:      newHealthCache(deps.HealthTimeout, deps.HealthCacheTTL, deps.Now),
 	}
 }
 
@@ -327,10 +347,11 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 
 	// Compose the status payload
 	environment := h.config.GetEnvironment()
+	health := h.checkHealth(req.Context(), logger)
 	status := map[string]interface{}{
-		"healthy":     true,
-		"bosh":        "connected",
-		"vault":       "connected",
+		"healthy":     health.healthy(),
+		"bosh":        health.boshState(),
+		"vault":       health.vaultState(),
 		"environment": environment,
 		"env":         environment,
 		"version":     h.version,

@@ -121,6 +121,10 @@ func (d *blockingDirector) GetDeployments(ctx context.Context) ([]bosh.Deploymen
 	return nil, fmt.Errorf("listing deployments: %w", ctx.Err())
 }
 
+func (d *blockingDirector) GetInfo(context.Context) (*bosh.Info, error) {
+	return &bosh.Info{}, nil
+}
+
 // statusHandler returns a handler over the director, with two instances
 // in the vault and one plan that declares redis-forge and bpm.
 func statusHandler(director bosh.Director, timeout time.Duration) *boshhandler.Handler {

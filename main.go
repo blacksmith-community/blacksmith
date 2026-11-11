@@ -83,6 +83,8 @@ const (
 	DefaultWSPongTimeout  = 10 * time.Second
 )
 
+var errVaultNotReady = errors.New("vault is sealed or not initialized")
+
 // BuildInfo holds build-time information.
 type BuildInfo struct {
 	Version   string
@@ -1227,6 +1229,38 @@ func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *intern
 	return cfManager
 }
 
+// vaultHealthCheck adapts the vault client's health call, which takes no
+// context, to a check that gives up when its context ends. A vault that is
+// down, sealed, or not yet initialized counts as unhealthy.
+func vaultHealthCheck(vault *internalVault.Vault) func(context.Context) error {
+	if vault == nil {
+		return nil
+	}
+
+	return func(ctx context.Context) error {
+		answered := make(chan error, 1)
+
+		go func() {
+			health, err := vault.HealthCheck()
+			switch {
+			case err != nil:
+				answered <- err
+			case !health.Initialized || health.Sealed:
+				answered <- errVaultNotReady
+			default:
+				answered <- nil
+			}
+		}()
+
+		select {
+		case err := <-answered:
+			return err
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for the vault health check: %w", ctx.Err())
+		}
+	}
+}
+
 func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager,
 	vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, sshService *ssh.ServiceImpl, rabbitmqSSHService *rabbitmq.SSHService,
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
@@ -1285,6 +1319,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Switches:                       certificateSwitches(config),
 		Commands:                       commandSettings(config),
 		BOSH:                           boshSettings(config),
+		VaultHealth:                    vaultHealthCheck(vault),
 		Version:                        buildInfo.Version,
 		Commit:                         buildInfo.GitCommit,
 	})

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -102,6 +103,9 @@ type Dependencies struct {
 	// /b/status reports.
 	Version string
 	Commit  string
+	// VaultHealth checks that Vault answers, for /b/status. When nil,
+	// /b/status reports Vault unreachable.
+	VaultHealth func(ctx context.Context) error
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
@@ -203,6 +207,8 @@ func createBOSHHandler(deps Dependencies) *bosh.Handler {
 		VMMonitor: deps.VMMonitor,
 		Version:   deps.Version,
 		Commit:    deps.Commit,
+
+		VaultHealth: deps.VaultHealth,
 	})
 }
 

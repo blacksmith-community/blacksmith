@@ -310,7 +310,7 @@ forges:
 - `DELETE /v2/service_instances/{instance_id}/service_bindings/{binding_id}` - Delete binding
 
 ### Internal Management API
-- `GET /b/status` - Broker health and status
+- `GET /b/status` - Broker status. Reports the build `version` and `commit`, and whether the BOSH director and Vault answer (`bosh` and `vault`, each `connected` or `unreachable`, with `healthy` true only when both are connected). The health result is cached for five seconds, and a degraded broker still answers 200.
 - `GET /b/instance` - Service instance listing
 - `GET /b/instance/{instance_id}` - Instance details
 - `GET /b/instance/{instance_id}/manifest` - Deployment manifest
