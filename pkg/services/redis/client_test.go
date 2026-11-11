@@ -254,12 +254,12 @@ func TestClientOptionsCarriesUsername(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if opts.Username != "default" {
-		t.Errorf("Username = %q, expected %q", opts.Username, "default")
+	if opts.OnConnect == nil {
+		t.Errorf("no AUTH hook was set, so the credentials would never be sent")
 	}
 
-	if opts.Password != testPassword {
-		t.Errorf("Password was not carried into the client options")
+	if opts.Username != "" || opts.Password != "" {
+		t.Errorf("credentials stayed in the options, where go-redis would put them in HELLO")
 	}
 
 	if opts.Addr != "valkey.example.com:6379" {
@@ -279,12 +279,8 @@ func TestClientOptionsWithoutUsernameSendsPasswordOnly(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if opts.Username != "" {
-		t.Errorf("Username = %q, expected none", opts.Username)
-	}
-
-	if opts.Password != testPassword {
-		t.Errorf("Password was not carried into the client options")
+	if opts.OnConnect == nil {
+		t.Errorf("no AUTH hook was set, so the password would never be sent")
 	}
 }
 
@@ -474,21 +470,25 @@ func TestTestConnectionValkeyOverTLS(t *testing.T) {
 
 	commands, _ := server.recorded()
 
-	// go-redis v9 authenticates inside its opening HELLO 2 rather than with a
-	// separate AUTH command, so the credentials ride on that handshake.
-	var hello []string
+	// The credentials go in an AUTH of their own, as under go-redis v8. The
+	// opening HELLO asks for RESP2 and carries none.
+	var hello, auth []string
 
 	for _, command := range commands {
-		if strings.EqualFold(command[0], "HELLO") {
+		switch {
+		case strings.EqualFold(command[0], "HELLO") && hello == nil:
 			hello = command
-
-			break
+		case strings.EqualFold(command[0], "AUTH") && auth == nil:
+			auth = command
 		}
 	}
 
-	if len(hello) != 5 || hello[1] != "2" || !strings.EqualFold(hello[2], "AUTH") ||
-		hello[3] != "default" || hello[4] != testPassword {
-		t.Errorf("HELLO did not ask for RESP2 with the username and password, got %d args", len(hello))
+	if len(hello) != 2 || hello[1] != "2" {
+		t.Errorf("HELLO = %d args, expected HELLO 2 with no credentials", len(hello))
+	}
+
+	if len(auth) != 3 || auth[1] != "default" || auth[2] != testPassword {
+		t.Errorf("AUTH did not carry the username and password, got %d args", len(auth))
 	}
 }
 

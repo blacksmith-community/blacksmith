@@ -99,6 +99,29 @@ func holdToV8(opts *redis.Options) {
 	opts.DialerRetries = 1
 }
 
+// authOnConnect moves the username and password out of the options and into
+// an OnConnect hook that sends AUTH, with the username when there is one.
+// go-redis v9 puts options credentials into its opening HELLO, which a Redis
+// 5 node rejects as an unknown command while echoing the arguments back, and
+// which v9 then repeats as AUTH. Sending AUTH ourselves keeps the wire
+// traffic what it was under v8, and HELLO carries no credentials.
+func authOnConnect(opts *redis.Options) {
+	username, password := opts.Username, opts.Password
+	opts.Username, opts.Password = "", ""
+
+	if password == "" {
+		return
+	}
+
+	opts.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
+		if username != "" {
+			return cn.AuthACL(ctx, username, password).Err() //nolint:wrapcheck // go-redis unwraps OnConnect errors
+		}
+
+		return cn.Auth(ctx, password).Err() //nolint:wrapcheck // go-redis unwraps OnConnect errors
+	}
+}
+
 // clientOptions builds the client options for a plain-text or a TLS
 // connection. It never falls back from one to the other: Standard needs a
 // plain-text port and TLS needs a TLS port or tls_uri.
@@ -124,6 +147,8 @@ func clientOptions(creds *Credentials, useTLS bool) (*redis.Options, error) {
 		if creds.Port <= 0 {
 			return nil, ErrNoPlainTextPort
 		}
+
+		authOnConnect(opts)
 
 		return opts, nil
 	}
@@ -156,6 +181,7 @@ func clientOptions(creds *Credentials, useTLS bool) (*redis.Options, error) {
 	}
 
 	opts.TLSConfig = tlsConfig
+	authOnConnect(opts)
 
 	return opts, nil
 }
