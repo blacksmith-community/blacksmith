@@ -64,13 +64,12 @@ t('the options pane holds the command fields with their defaults',async()=>{
  }finally{w.close();}
 });
 
-t('the max in flight help says the choices stop at 3 and the review checks the director',async()=>{
+t('the max in flight help says where the choices stop and what the director allows',async()=>{
  const env=await setup();const {w,d}=env;try{
  await openOptions(env);
  const help=d.getElementById('command-max-in-flight-help').textContent;
- expect(help).toContain('The choices go up to 3');
- expect(help).toContain('the review step checks your pick against the director');
- expect(help).toContain('one fewer than its worker count');
+ expect(help).toContain('The choices here stop at 3');
+ expect(help).toContain('the director allows one fewer than its worker count');
  expectNoAlerts(env);
  }finally{w.close();}
 });
