@@ -32,7 +32,7 @@ import (
 
 	osbapibroker "github.com/fivetwenty-io/osbapi/v2/pkg/broker"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 

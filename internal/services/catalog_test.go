@@ -5,7 +5,7 @@ import (
 
 	"blacksmith/internal/services"
 	vaultPkg "blacksmith/pkg/vault"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 

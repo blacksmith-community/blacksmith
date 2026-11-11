@@ -3,7 +3,7 @@ package broker_test
 import (
 	"blacksmith/internal/broker"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
