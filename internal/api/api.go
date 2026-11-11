@@ -98,6 +98,10 @@ type Dependencies struct {
 	// BOSH returns the BOSH configuration, which tells a command preview
 	// how many workers the director has.
 	BOSH func() config.BOSHConfig
+	// Version and Commit are the build's version and git commit, which
+	// /b/status reports.
+	Version string
+	Commit  string
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
@@ -197,6 +201,8 @@ func createBOSHHandler(deps Dependencies) *bosh.Handler {
 		Director:  deps.Director,
 		Broker:    deps.Broker,
 		VMMonitor: deps.VMMonitor,
+		Version:   deps.Version,
+		Commit:    deps.Commit,
 	})
 }
 

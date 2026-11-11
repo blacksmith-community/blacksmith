@@ -1255,6 +1255,8 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		}
 	}
 
+	buildInfo := GetBuildInfo()
+
 	internalAPI := api.NewInternalAPI(api.Dependencies{
 		Config:                         config,
 		Logger:                         logger,
@@ -1283,6 +1285,8 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Switches:                       certificateSwitches(config),
 		Commands:                       commandSettings(config),
 		BOSH:                           boshSettings(config),
+		Version:                        buildInfo.Version,
+		Commit:                         buildInfo.GitCommit,
 	})
 
 	// Provisions and deprovisions wait for the stored tasks to hold their

@@ -23,6 +23,11 @@ const (
 	// defaultDeploymentReleasesTimeout bounds the director call behind
 	// GetDeploymentReleases when the dependencies set no timeout.
 	defaultDeploymentReleasesTimeout = 5 * time.Second
+
+	// defaultVersion and defaultCommit are what /b/status reports when the
+	// build injected nothing. They match the defaults in main.
+	defaultVersion = "(development version)"
+	defaultCommit  = "unknown"
 )
 
 // Handler handles BOSH-related endpoints.
@@ -35,6 +40,9 @@ type Handler struct {
 	vmMonitor interfaces.VMMonitor
 
 	deploymentReleasesTimeout time.Duration
+
+	version string
+	commit  string
 }
 
 // Dependencies contains all dependencies needed by the BOSH handler.
@@ -49,6 +57,12 @@ type Dependencies struct {
 	// DeploymentReleasesTimeout bounds the director call behind
 	// GetDeploymentReleases. Zero means five seconds.
 	DeploymentReleasesTimeout time.Duration
+
+	// Version and Commit are the build's version and git commit, which
+	// /b/status reports. Empty values fall back to the development
+	// defaults.
+	Version string
+	Commit  string
 }
 
 // NewHandler creates a new BOSH handler.
@@ -56,6 +70,16 @@ func NewHandler(deps Dependencies) *Handler {
 	timeout := deps.DeploymentReleasesTimeout
 	if timeout <= 0 {
 		timeout = defaultDeploymentReleasesTimeout
+	}
+
+	version := deps.Version
+	if version == "" {
+		version = defaultVersion
+	}
+
+	commit := deps.Commit
+	if commit == "" {
+		commit = defaultCommit
 	}
 
 	return &Handler{
@@ -67,6 +91,9 @@ func NewHandler(deps Dependencies) *Handler {
 		vmMonitor: deps.VMMonitor,
 
 		deploymentReleasesTimeout: timeout,
+
+		version: version,
+		commit:  commit,
 	}
 }
 
@@ -306,7 +333,8 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 		"vault":       "connected",
 		"environment": environment,
 		"env":         environment,
-		"version":     "0.0.0",
+		"version":     h.version,
+		"commit":      h.commit,
 		"timestamp":   time.Now().Unix(),
 		"instances":   instances,
 		"plans":       plans,
