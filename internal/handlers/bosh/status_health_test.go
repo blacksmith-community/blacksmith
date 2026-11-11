@@ -189,6 +189,19 @@ func TestStatusReportsVaultUnreachableAndUnhealthy(t *testing.T) {
 	}
 }
 
+func TestStatusReportsASealedVaultAsSealedAndUnhealthy(t *testing.T) {
+	t.Parallel()
+
+	probe := &vaultProbe{err: fmt.Errorf("vault at %s: %w", secretText, boshhandler.ErrVaultSealed)}
+	raw, body := healthBody(t, healthHandler(&infoDirector{}, probe, newClock()))
+
+	expectHealth(t, body, false, "connected", "sealed")
+
+	if strings.Contains(raw, "hunter2") {
+		t.Fatalf("the response leaks the underlying error: %s", raw)
+	}
+}
+
 func TestStatusCountsASlowCheckAsUnreachable(t *testing.T) {
 	t.Parallel()
 

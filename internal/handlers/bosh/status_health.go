@@ -20,9 +20,15 @@ const (
 
 	stateConnected   = "connected"
 	stateUnreachable = "unreachable"
+	stateSealed      = "sealed"
 )
 
 var errNotConfigured = errors.New("director is not configured")
+
+// ErrVaultSealed is what a Vault health check returns when Vault answers
+// but is sealed. /b/status reports it as "sealed" rather than
+// "unreachable".
+var ErrVaultSealed = errors.New("vault is sealed")
 
 // urlPattern matches the URLs inside an error message, which can carry
 // credentials or tokens.
@@ -30,15 +36,15 @@ var urlPattern = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://\S+`)
 
 // healthResult is what one round of reachability checks found.
 type healthResult struct {
-	boshUp  bool
-	vaultUp bool
+	boshUp bool
+	vault  string
 }
 
-func (r healthResult) healthy() bool { return r.boshUp && r.vaultUp }
+func (r healthResult) healthy() bool { return r.boshUp && r.vault == stateConnected }
 
 func (r healthResult) boshState() string { return stateOf(r.boshUp) }
 
-func (r healthResult) vaultState() string { return stateOf(r.vaultUp) }
+func (r healthResult) vaultState() string { return r.vault }
 
 func stateOf(up bool) string {
 	if up {
@@ -123,7 +129,7 @@ func (h *Handler) probe(ctx context.Context, logger interfaces.Logger) healthRes
 	go func() {
 		defer group.Done()
 
-		result.vaultUp = h.reachable(ctx, logger, "Vault", h.vaultHealth)
+		result.vault = h.vaultStateOf(ctx, logger)
 	}()
 
 	group.Wait()
@@ -144,13 +150,35 @@ func (h *Handler) directorHealth(ctx context.Context) error {
 	return nil
 }
 
+// vaultStateOf runs the Vault check. A sealed Vault answers, so it is
+// "sealed". Any other failure, or a check that is not configured, is
+// "unreachable".
+func (h *Handler) vaultStateOf(ctx context.Context, logger interfaces.Logger) string {
+	err := h.runCheck(ctx, logger, "Vault", h.vaultHealth)
+
+	switch {
+	case err == nil:
+		return stateConnected
+	case errors.Is(err, ErrVaultSealed):
+		return stateSealed
+	default:
+		return stateUnreachable
+	}
+}
+
 // reachable runs one check under the health timeout. A check that is not
 // configured counts as unreachable.
 func (h *Handler) reachable(ctx context.Context, logger interfaces.Logger, name string, check func(context.Context) error) bool {
+	return h.runCheck(ctx, logger, name, check) == nil
+}
+
+// runCheck runs one check under the health timeout and returns its error.
+// A check that is not configured fails with errNotConfigured.
+func (h *Handler) runCheck(ctx context.Context, logger interfaces.Logger, name string, check func(context.Context) error) error {
 	if check == nil {
 		logger.Debug("%s health check is not configured; reporting it unreachable", name)
 
-		return false
+		return errNotConfigured
 	}
 
 	checkCtx, cancel := context.WithTimeout(ctx, h.health.timeout)
@@ -160,8 +188,8 @@ func (h *Handler) reachable(ctx context.Context, logger interfaces.Logger, name 
 	if err != nil {
 		logger.Debug("%s health check failed: %s", name, urlPattern.ReplaceAllString(err.Error(), "<url>"))
 
-		return false
+		return err
 	}
 
-	return true
+	return nil
 }

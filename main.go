@@ -27,6 +27,7 @@ import (
 	"blacksmith/internal/compression"
 	"blacksmith/internal/config"
 	"blacksmith/internal/credhub"
+	boshhandler "blacksmith/internal/handlers/bosh"
 	upgradehandler "blacksmith/internal/handlers/upgrade"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
@@ -41,6 +42,7 @@ import (
 	"blacksmith/shield"
 	"blacksmith/websocket"
 	osbapibroker "github.com/fivetwenty-io/osbapi/v2/pkg/broker"
+	vaultapi "github.com/hashicorp/vault/api"
 )
 
 // Configuration default constants.
@@ -83,7 +85,7 @@ const (
 	DefaultWSPongTimeout  = 10 * time.Second
 )
 
-var errVaultNotReady = errors.New("vault is sealed or not initialized")
+var errVaultNotInitialized = errors.New("vault is not initialized")
 
 // BuildInfo holds build-time information.
 type BuildInfo struct {
@@ -1231,7 +1233,8 @@ func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *intern
 
 // vaultHealthCheck adapts the vault client's health call, which takes no
 // context, to a check that gives up when its context ends. A vault that is
-// down, sealed, or not yet initialized counts as unhealthy.
+// down or not yet initialized counts as unreachable, and one that answers
+// but is sealed fails with the handler's ErrVaultSealed.
 //
 // HealthCheck takes no context, so a check that outlives its context
 // finishes in the background, within the vault client's own timeout. Its
@@ -1245,15 +1248,7 @@ func vaultHealthCheck(vault *internalVault.Vault) func(context.Context) error {
 		answered := make(chan error, 1)
 
 		go func() {
-			health, err := vault.HealthCheck()
-			switch {
-			case err != nil:
-				answered <- err
-			case !health.Initialized || health.Sealed:
-				answered <- errVaultNotReady
-			default:
-				answered <- nil
-			}
+			answered <- classifyVaultHealth(vault.HealthCheck())
 		}()
 
 		select {
@@ -1262,6 +1257,22 @@ func vaultHealthCheck(vault *internalVault.Vault) func(context.Context) error {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for the vault health check: %w", ctx.Err())
 		}
+	}
+}
+
+// classifyVaultHealth turns the vault client's health answer into the error
+// the status handler expects. An uninitialized Vault is reported as
+// unreachable, and a sealed one as ErrVaultSealed.
+func classifyVaultHealth(health *vaultapi.HealthResponse, err error) error {
+	switch {
+	case err != nil:
+		return err
+	case !health.Initialized:
+		return errVaultNotInitialized
+	case health.Sealed:
+		return boshhandler.ErrVaultSealed
+	default:
+		return nil
 	}
 }
 
