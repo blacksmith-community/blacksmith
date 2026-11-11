@@ -49,6 +49,11 @@ type fakeValkey struct {
 	commands []string
 	hellos   []string
 	done     chan struct{}
+
+	// greeting, when set, is written to every connection as soon as it is
+	// accepted, and the connection is then closed, the way a node at
+	// maxclients refuses a client.
+	greeting string
 }
 
 // valkeyHelloNoAuthReply is what a password-protected node answers to HELLO
@@ -58,10 +63,16 @@ const valkeyHelloNoAuthReply = "-NOAUTH HELLO must be called with the client alr
 	"otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n"
 
 func newFakeValkey(replies map[string]func(args []string) string) *fakeValkey {
+	return newFakeValkeyGreeting(replies, "")
+}
+
+// newFakeValkeyGreeting is newFakeValkey with a greeting set before the fake
+// starts accepting.
+func newFakeValkeyGreeting(replies map[string]func(args []string) string, greeting string) *fakeValkey {
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", valkeyTestHost+":0")
 	Expect(err).NotTo(HaveOccurred())
 
-	fake := &fakeValkey{listener: listener, replies: replies, done: make(chan struct{})}
+	fake := &fakeValkey{listener: listener, replies: replies, done: make(chan struct{}), greeting: greeting}
 
 	go fake.serve()
 
@@ -81,6 +92,12 @@ func (f *fakeValkey) serve() {
 
 func (f *fakeValkey) handle(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
+
+	if f.greeting != "" {
+		_, _ = io.WriteString(conn, f.greeting)
+
+		return
+	}
 
 	reader := bufio.NewReader(conn)
 
@@ -414,6 +431,17 @@ var _ = Describe("Valkey ACL admin failures", func() {
 
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("likely cause: the node is at its maxclients limit"))
+	})
+
+	It("says the node is at maxclients when it refuses the connection before any command", func() {
+		fake := newFakeValkeyGreeting(nil, "-ERR max number of clients reached\r\n")
+		defer fake.close()
+
+		err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("likely cause: the node is at its maxclients limit"))
+		Expect(err.Error()).NotTo(ContainSubstring("does not match the password"))
 	})
 
 	It("makes one attempt when the node answers ACL SETUSER with NOPERM", func() {

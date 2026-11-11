@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"blacksmith/internal/manifest"
@@ -528,6 +529,51 @@ func aclSave(ctx context.Context, client *redis.Client, conn *valkeyConnInfo, ho
 	return nil
 }
 
+// helloErrorHook remembers the error reply a node gives to HELLO. A node at
+// maxclients writes its ERR reply as soon as it accepts the connection and
+// then closes it. Under go-redis v8 the first command read was AUTH, so that
+// reply was the AUTH error. go-redis v9 sends HELLO first, takes the reply as
+// "HELLO is not supported", and carries on, so AUTH then fails on the closed
+// socket and the real cause would be lost without this hook.
+type helloErrorHook struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (h *helloErrorHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *helloErrorHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+
+		var replyErr redis.Error
+		if err != nil && strings.EqualFold(cmd.Name(), "hello") && errors.As(err, &replyErr) {
+			h.mu.Lock()
+			h.err = err
+			h.mu.Unlock()
+		}
+
+		return err //nolint:wrapcheck // a pass-through hook must not change the error
+	}
+}
+
+func (h *helloErrorHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// maxClientsReply returns the recorded HELLO error when it says the node is at
+// its maxclients limit, and nil otherwise.
+func (h *helloErrorHook) maxClientsReply() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.err != nil && strings.HasPrefix(h.err.Error(), "ERR max number of clients") {
+		return h.err
+	}
+
+	return nil
+}
+
 // connectToValkeyAdmin creates a short-lived Redis client on host,
 // authenticated as the default (admin) user, and checks it with PING. A
 // failure comes back as a *valkeyStepError naming the dial, AUTH, or PING
@@ -579,6 +625,9 @@ func connectToValkeyAdmin(ctx context.Context, conn *valkeyConnInfo, host string
 
 	client := redis.NewClient(opts)
 
+	helloHook := &helloErrorHook{}
+	client.AddHook(helloHook)
+
 	pingCtx, cancel := context.WithTimeout(ctx, valkeyDialTimeout)
 	defer cancel()
 
@@ -588,6 +637,10 @@ func connectToValkeyAdmin(ctx context.Context, conn *valkeyConnInfo, host string
 
 		step := valkeyStepPing
 		serverReply := false
+
+		if maxClients := helloHook.maxClientsReply(); maxClients != nil && authErr != nil {
+			authErr = maxClients
+		}
 
 		switch {
 		case authErr != nil:
