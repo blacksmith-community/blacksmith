@@ -242,7 +242,7 @@ func (n *noOpLogger) Errorf(format string, args ...interface{}) {}
 func (d *DirectorAdapter) GetInfo(ctx context.Context) (_ *Info, err error) {
 	defer d.explainContext(ctx, "GetInfo", &err)
 
-	d.log.Infof("Getting BOSH director information")
+	d.log.Debugf("Getting BOSH director information")
 	d.log.Debugf("Calling GET /info")
 
 	info, err := d.api.GetInfo(ctx)
