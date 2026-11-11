@@ -3903,6 +3903,7 @@
   // Refusals of a preview that name a control on the options step.
   const COMMAND_OPTION_REFUSALS = ['max_in_flight_too_high', 'timeout_out_of_range', 'command_too_long', 'invalid_run_user'];
   const COMMAND_OFF_NOTE = 'Running commands is switched off on this broker.';
+  const COMMAND_MAX_IN_FLIGHT_DEFAULT = 2;
   const COMMAND_ROOT_OFF_NOTE = 'Running as root is switched off on this broker.';
   const COMMAND_NO_PARALLEL_NOTE = 'Parallel runs are not available because the director has too few workers.';
 
@@ -3913,7 +3914,7 @@
     user: 'vcap',
     timeout: String(COMMAND_TIMEOUT_DEFAULT),
     parallel: false,
-    maxInFlight: '',
+    maxInFlight: String(COMMAND_MAX_IN_FLIGHT_DEFAULT),
     // Why the operation is unavailable, from a commands_disabled answer.
     unavailable: '',
     // Why root is unavailable, from a root_disabled answer.
@@ -3990,6 +3991,17 @@
 
   const commandOptionsSignature = () => JSON.stringify([commandState.text, commandState.user, commandState.timeout, commandState.parallel, commandState.maxInFlight]);
 
+  // What is wrong with the most nodes to run at once, or an empty string. It
+  // stays empty while the field is hidden, because parallel is unchecked.
+  const commandLimitIssue = () => {
+    if (!commandState.parallel) return '';
+    const limit = commandState.preview ? commandState.preview.limit : 0;
+    const value = wholeNumber(commandState.maxInFlight);
+    if (value === null || value < 1) return 'Set the most nodes to run at once to a whole number of at least 1.';
+    if (limit > 0 && value > limit) return `The director allows at most ${limit} nodes at once. Lower the most nodes to run at once.`;
+    return '';
+  };
+
   // The reason Next stays disabled for a command run, or an empty string.
   const commandOptionIssue = () => {
     if (!commandState.text.trim()) return 'Enter the command to run.';
@@ -3997,12 +4009,8 @@
     if (timeout === null || timeout < COMMAND_TIMEOUT_MIN || timeout > COMMAND_TIMEOUT_MAX) {
       return `Set the timeout to a whole number of seconds from ${COMMAND_TIMEOUT_MIN} to ${COMMAND_TIMEOUT_MAX}.`;
     }
-    if (commandState.parallel) {
-      const limit = commandState.preview ? commandState.preview.limit : 0;
-      const value = wholeNumber(commandState.maxInFlight);
-      if (value === null || value < 1) return 'Set the most nodes to run at once to a whole number of at least 1.';
-      if (limit > 0 && value > limit) return `The director allows at most ${limit} nodes at once. Lower the most nodes to run at once.`;
-    }
+    const limitIssue = commandLimitIssue();
+    if (limitIssue) return limitIssue;
     const refused = commandState.refused;
     if (refused && refused.signature === commandOptionsSignature()) return refused.message;
     return '';
@@ -5115,9 +5123,18 @@
     const parallel = pane.querySelector('#command-parallel');
     parallel.disabled = noParallel;
     parallel.checked = commandState.parallel;
-    pane.querySelector('#command-parallel-note').textContent = noParallel ? COMMAND_NO_PARALLEL_NOTE : 'Parallel runs are off by default, so nodes run one after another, and a failure stops the run early.';
     pane.querySelector('#command-parallel-limit-row').hidden = !commandState.parallel;
     const limit = pane.querySelector('#command-max-in-flight');
+    const limitValue = wholeNumber(commandState.maxInFlight);
+    let parallelNote = 'Nodes run one after another, and a failure stops the run early.';
+    if (noParallel) parallelNote = COMMAND_NO_PARALLEL_NOTE;
+    else if (commandState.parallel) parallelNote = limitValue !== null && limitValue >= 1 ? `Up to ${limitValue} ${limitValue === 1 ? 'node runs' : 'nodes run'} at once.` : 'Set how many nodes may run at once.';
+    pane.querySelector('#command-parallel-note').textContent = parallelNote;
+    const limitIssue = commandLimitIssue();
+    const limitError = pane.querySelector('#command-max-in-flight-error');
+    limitError.textContent = limitIssue;
+    limitError.hidden = !limitIssue;
+    if (limitIssue) limit.setAttribute('aria-invalid', 'true'); else limit.removeAttribute('aria-invalid');
     const bound = commandState.preview ? commandState.preview.limit : 0;
     if (bound > 0) limit.max = String(bound); else limit.removeAttribute('max');
   };
@@ -5603,7 +5620,7 @@
     textLabel.setAttribute('for', 'command-text');
     const text = document.createElement('textarea');
     text.id = 'command-text';
-    text.rows = 6;
+    text.rows = 8;
     text.className = 'command-text';
     text.setAttribute('spellcheck', 'false');
     text.setAttribute('autocomplete', 'off');
@@ -5639,7 +5656,6 @@
     rootNote.id = 'command-root-note';
     userSet.appendChild(rootNote);
     pane.appendChild(userSet);
-    pane.appendChild(rotateEl('p', 'batch-field-help', 'Shell: /bin/bash (fixed in this version)'));
 
     const timeoutRow = rotateEl('div', 'filter-row');
     const timeoutLabel = rotateEl('label', '', 'Timeout per node, in seconds');
@@ -5685,13 +5701,18 @@
     limit.min = '1';
     limit.step = '1';
     limit.value = commandState.maxInFlight;
-    limit.setAttribute('aria-describedby', 'command-max-in-flight-help');
+    limit.className = 'command-limit-input';
+    limit.setAttribute('aria-describedby', 'command-max-in-flight-help command-max-in-flight-error');
     limit.addEventListener('input', () => { commandState.maxInFlight = limit.value; changed(); });
     limitRow.appendChild(limitLabel);
     limitRow.appendChild(limit);
     const limitHelp = rotateEl('p', 'batch-field-help', 'This number must be below the director\'s worker count, so it\'s at most 3 with the default of four workers. The review checks it against your director.');
     limitHelp.id = 'command-max-in-flight-help';
     limitRow.appendChild(limitHelp);
+    const limitError = rotateEl('p', 'batch-field-error');
+    limitError.id = 'command-max-in-flight-error';
+    limitError.hidden = true;
+    limitRow.appendChild(limitError);
     parallelRow.appendChild(limitRow);
     pane.appendChild(parallelRow);
 

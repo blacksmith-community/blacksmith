@@ -46,11 +46,10 @@ t('the options pane holds the command fields with their defaults',async()=>{
  const options=d.getElementById('batch-flow-options');
  expect(options.hidden).toBe(false);
  const text=options.querySelector('#command-text');
- expect(text.tagName).toBe('TEXTAREA');expect(text.rows).toBe(6);expect(text.getAttribute('spellcheck')).toBe('false');expect(text.getAttribute('autocomplete')).toBe('off');
+ expect(text.tagName).toBe('TEXTAREA');expect(text.rows).toBe(8);expect(text.getAttribute('spellcheck')).toBe('false');expect(text.getAttribute('autocomplete')).toBe('off');
  expect(options.querySelector('#command-user-vcap').checked).toBe(true);
  expect(options.querySelector('#command-user-root').checked).toBe(false);
  expect(options.querySelector('#command-user-root').disabled).toBe(false);
- expect(options.textContent).toContain('Shell: /bin/bash (fixed in this version)');
  expect(options.querySelector('#command-timeout').value).toBe('600');
  expect(options.querySelector('#command-timeout').min).toBe('10');expect(options.querySelector('#command-timeout').max).toBe('3600');
  expect(options.querySelector('#command-parallel').checked).toBe(false);
