@@ -3152,7 +3152,8 @@
     next.textContent = batchFlow.submitting ? 'Starting…' : batchFlow.loading ? 'Preparing review…' : step === 3 ? (review?.options.confirmText || 'Refresh review') : ['Next: Options','Next: Instances','Review operation'][step];
     next.disabled = batchFlow.submitting || batchFlow.loading || discardReading() || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
     next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
-    const helpText = issue || blocker || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field. The typed word keeps a stray click or keypress from starting this operation.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
+    const waiting = batchFlow.submitting ? 'The operation is starting. Please wait.' : batchFlow.loading ? 'Preparing the review. The button turns on when it is ready.' : discardReading() ? 'Checking whether the run already started. Please wait.' : '';
+    const helpText = issue || blocker || (step === 3 && waiting) || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field. The typed word keeps a stray click or keypress from starting this operation.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
     if (help.textContent !== helpText) help.textContent = helpText;
     document.getElementById('batch-activity').disabled = batchFlow.submitting;
@@ -24088,8 +24089,12 @@
                 retryCount = 0; // Reset retry count on successful connection
 
                 // Focus the terminal when connection is established
+                // Only an open dialog showing this session takes focus. A
+                // minimized or background session stays quiet, so it never
+                // pulls keystrokes away from a field the operator is using.
                 setTimeout(() => {
-                  terminal.focus();
+                  const modal = document.getElementById('terminal-modal');
+                  if (modal && modal.open && this.activeSession === sessionKey) terminal.focus();
                 }, 100);
               } else if (msg.meta && msg.meta.status === 'exited') {
                 // The remote shell ended, through a logout or an exit.
@@ -24336,7 +24341,8 @@
         // the tabs with the keyboard.
         if (session.terminal && options.focusTerminal !== false) {
           setTimeout(() => {
-            session.terminal.focus();
+            const modal = document.getElementById('terminal-modal');
+            if (modal && modal.open && this.activeSession === sessionKey) session.terminal.focus();
           }, 100);
         }
       }
