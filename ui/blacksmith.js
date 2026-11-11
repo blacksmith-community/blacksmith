@@ -7441,11 +7441,17 @@
   // of a refusal, or the kind of error, and never a header, a body, or a
   // message that might quote one.
   function loggableError(err) {
-    return {
-      name: String((err && err.name) || 'Error'),
-      status: Number((err && err.status) || 0),
-      code: String((err && err.code) || '')
-    };
+    // Many loaders throw new Error('HTTP 404: ...') and set no status. The
+    // three digits are read from the start of that message and nothing else
+    // of the message is kept. A code is kept only when it is a short slug,
+    // because the server chooses its text.
+    let status = Number((err && err.status) || 0);
+    if (!status && err && typeof err.message === 'string') {
+      const match = /^HTTP (\d{3})\b/.exec(err.message);
+      if (match) status = Number(match[1]);
+    }
+    const code = err && typeof err.code === 'string' && /^[a-z0-9_.-]{1,64}$/.test(err.code) ? err.code : '';
+    return { name: String((err && err.name) || 'Error'), status, code };
   }
 
   // Reports a failed task action through the feedback panel.

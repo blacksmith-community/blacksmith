@@ -6,6 +6,9 @@
 //   H.instance  boots a minimal page for the per-instance certificates tab
 //   H.fleet     boots the full page against a scripted certificate inventory
 const fs = require('fs');
+
+// A plain object, such as the fields loggableError returns, shows as JSON so a suite can match on them.
+const plain=(x)=>{ if(x&&typeof x==='object'&&typeof x.message!=='string'){ try{ return JSON.stringify(x); }catch(e){ return String(x); } } return String(x); };
 const path = require('path');
 const { JSDOM } = require('./support.js');
 const { install: installStubs } = require('../dom-stubs.js');
@@ -101,7 +104,7 @@ function boot(opts={}){
   w.HTMLElement.prototype.scrollIntoView=function(){};
   const errors=[]; const calls=[];
   watchUncaught(w,errors);
-  w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(String).join(' ')); w.console.warn=()=>{};
+  w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(plain).join(' ')); w.console.warn=()=>{};
   w.__routes=[];
   const json=(status,body)=>Promise.resolve({ok:status>=200&&status<300,status,statusText:'st',json:()=>Promise.resolve(body),text:()=>Promise.resolve(JSON.stringify(body))});
   w.__json=json;
@@ -179,7 +182,7 @@ async function boot(opts={}){
   w.HTMLElement.prototype.scrollIntoView=function(){};
   const log=[]; const errors=[];
   watchUncaught(w,errors);
-  w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(String).join(' '));
+  w.console.log=()=>{}; w.console.error=(...a)=>errors.push(a.map(plain).join(' '));
   const server={settings:{warning_days:30,critical_days:7,scan_interval_minutes:60,scan_concurrency:4,instance_scan_timeout_seconds:60,probe_enabled:true,pause_on_failure:true,preview_ttl_minutes:15},
     certs:fixture(), mode:'normal', calls:log, scan:{id:'s1',state:'idle',completed_at:iso(now-3600e3),next_at:iso(now+3600e3),progress:{done:5,total:5},errors:[]}, itemFail:false, caps:{credhub:{state:'not_configured',reason:'no credhub block'},director:{version:'282.0.5',force_latest_variables:true},rotation:{enabled:false,reason:'CredHub not configured'},patch_in_place:{enabled:false,reason:'x'},probe:{enabled:true}},
     putStatus:null,delay:0};

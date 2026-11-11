@@ -9,7 +9,7 @@ const {boot,sleep}=H.fleet;
 const OAT=fs.readFileSync(path.resolve(__dirname,'..','..','ui','vendor','oat','oat.min.js'),'utf8');
 
 // The fleet harness has no catalog route, so the page's own catalog load logs one 404 at boot.
-const CATALOG=/^Error loading data: /;
+const CATALOG=/^Error loading data: .*"status":404/;
 const envs=[];
 afterEach(()=>{
  while(envs.length){ const env=envs.pop(); try{ expect(env.errors.filter(e=>!CATALOG.test(e))).toEqual([]); } finally { env.w.close(); } }

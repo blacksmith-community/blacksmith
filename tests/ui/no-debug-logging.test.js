@@ -32,7 +32,7 @@ scripts.forEach(file=>{
 const ID='an identifier the operator already sees in the console, such as an instance, task, or manifest ID, and never a secret';
 const KIND='a fixed internal name from the code, such as a tool, tab, or action name';
 const ALLOWED={
- "`Failed to load ${path}:`, loggableError(err)":KIND+' (an API path)',
+ "`Failed to load ${path}:`, loggableError(err)":'the path is written in the code and never built from user input',
  "`Failed to ${verb} task:`, loggableError(err)":KIND,
  "'No original log text found for job:', jobKey":ID,
  "'Job not found in refreshed data:', jobKey":ID,
@@ -66,7 +66,7 @@ const scanConsoleCalls=(src)=>{
    .replace(/loggableError\(\s*[A-Za-z_$][\w$]*\s*\)/g,'')
    .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\$]|\\.|\$(?!\{))*`/g,'')
    .replace(/\b([A-Za-z_$][\w$]*)\s*&&\s*\1\.name\b/g,'')
-   .replace(/\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.name\b/g,'')
+   .replace(/\b(?:e|err|error|[A-Za-z]*(?:Err|Error))\.name\b/g,'')
    .replace(/[\s,]/g,'');
   if(rest) found.push({line:src.slice(0,m.index).split('\n').length,args});
  }
@@ -88,4 +88,34 @@ test('the scan sees multi-line calls, other variable names, and first arguments'
  expect(scanConsoleCalls("console.error('bad', e && e.name);").length).toBe(0);
  expect(scanConsoleCalls("console.error('bad', loggableError(e));").length).toBe(0);
  expect(scanConsoleCalls("console.error('bad');").length).toBe(0);
+ expect(scanConsoleCalls("console.warn('bad', cert.subject.name);").length).toBe(1);
+ expect(scanConsoleCalls("console.warn('bad', err.name);").length).toBe(0);
+});
+
+// loggableError is the one way a caught error reaches the console. The test
+// runs its source as written in blacksmith.js.
+const loadLoggableError=()=>{
+ const src=fs.readFileSync(path.join(UI,'blacksmith.js'),'utf8');
+ const start=src.indexOf('function loggableError(err) {');
+ expect(start).toBeGreaterThan(-1);
+ const end=src.indexOf('\n  }\n',start)+4;
+ return new Function(src.slice(start,end)+'\nreturn loggableError;')();
+};
+
+test('loggableError keeps the HTTP status from a message that starts with it, and nothing else of the message',()=>{
+ const log=loadLoggableError();
+ expect(log(new Error('HTTP 404: secret-token-abc'))).toEqual({name:'Error',status:404,code:''});
+ expect(log(new Error('HTTP 502'))).toEqual({name:'Error',status:502,code:''});
+ expect(log(new Error('see HTTP 404 here')).status).toBe(0);
+ expect(log(new Error('HTTP 4040')).status).toBe(0);
+ expect(JSON.stringify(log(new Error('HTTP 500: password=hunter2')))).not.toContain('hunter2');
+});
+
+test('loggableError prefers a status property and passes a code only when it is a short slug',()=>{
+ const log=loadLoggableError();
+ const withStatus=Object.assign(new Error('HTTP 500: x'),{status:409,code:'instance_busy'});
+ expect(log(withStatus)).toEqual({name:'Error',status:409,code:'instance_busy'});
+ for(const bad of ['Has Spaces','UPPER','x'.repeat(65),'a;b','tok=abc123!','']) expect(log(Object.assign(new Error('x'),{code:bad})).code).toBe('');
+ expect(log(Object.assign(new Error('x'),{code:'a'.repeat(64)})).code).toBe('a'.repeat(64));
+ expect(log(null)).toEqual({name:'Error',status:0,code:''});
 });
