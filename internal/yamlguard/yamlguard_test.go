@@ -25,10 +25,10 @@ type allowance struct {
 // Any other banned import from that file still fails.
 var allowed = map[string]allowance{
 	"internal/parity/scalars.go": {
-		reason: "the parity harness needs yaml.v3 scalar styles, which graft does not export",
+		reason: "the parity harness needs yaml/v4 scalar styles, which graft does not export",
 		imports: map[string]bool{
 			"go.yaml.in/yaml/v2": true,
-			"gopkg.in/yaml.v3":   true,
+			"go.yaml.in/yaml/v4": true,
 		},
 	},
 }
@@ -36,7 +36,7 @@ var allowed = map[string]allowance{
 // allowedRequires are the direct requirements that stay for the allowed file.
 var allowedRequires = map[string]bool{
 	"go.yaml.in/yaml/v2": true,
-	"gopkg.in/yaml.v3":   true,
+	"go.yaml.in/yaml/v4": true,
 }
 
 func bannedImport(path string) bool {
@@ -204,7 +204,7 @@ func TestOnlyGraftTouchesYAML(t *testing.T) {
 	}
 
 	if len(problems) > 0 {
-		t.Errorf("YAML library imports are only allowed from graft; internal/parity/scalars.go alone may import go.yaml.in/yaml/v2 and gopkg.in/yaml.v3\n  %s",
+		t.Errorf("YAML library imports are only allowed from graft; internal/parity/scalars.go alone may import go.yaml.in/yaml/v2 and go.yaml.in/yaml/v4\n  %s",
 			strings.Join(problems, "\n  "))
 	}
 }
@@ -219,7 +219,7 @@ func TestNoDirectYAMLRequirements(t *testing.T) {
 
 	problems := offendingRequires(string(text))
 	if len(problems) > 0 {
-		t.Errorf("go.mod may require only graft for YAML, besides go.yaml.in/yaml/v2 and gopkg.in/yaml.v3 for internal/parity/scalars.go\n  %s",
+		t.Errorf("go.mod may require only graft for YAML, besides go.yaml.in/yaml/v2 and go.yaml.in/yaml/v4 for internal/parity/scalars.go\n  %s",
 			strings.Join(problems, "\n  "))
 	}
 }
@@ -233,6 +233,7 @@ func TestBannedImport(t *testing.T) {
 		"github.com/fivetwenty-io/graft":                false,
 		"github.com/fivetwenty-io/graftyaml":            true,
 		"gopkg.in/yaml.v3":                              true,
+		"go.yaml.in/yaml/v4":                            true,
 		"gopkg.in/YAML.v3":                              true,
 		"go.yaml.in/yaml/v2":                            true,
 		"sigs.k8s.io/yaml":                              true,
@@ -318,7 +319,7 @@ func TestOffendingImportsWalk(t *testing.T) {
 		"bad/bad.go":                 "package bad\n\nimport y \"gopkg.in/yaml.v3\"\n",
 		"vendor/v/v.go":              "package v\n\nimport \"github.com/goccy/go-yaml\"\n",
 		"broken/broken.go":           "package broken\n\nimport (\n",
-		"internal/parity/scalars.go": "package parity\n\nimport (\n\t\"go.yaml.in/yaml/v2\"\n\t\"gopkg.in/yaml.v3\"\n\t\"github.com/goccy/go-yaml\"\n)\n",
+		"internal/parity/scalars.go": "package parity\n\nimport (\n\t\"go.yaml.in/yaml/v2\"\n\t\"go.yaml.in/yaml/v4\"\n\t\"github.com/goccy/go-yaml\"\n)\n",
 	}
 
 	for name, content := range files {
@@ -360,7 +361,7 @@ func TestOffendingImportsWalk(t *testing.T) {
 func TestRequireParsing(t *testing.T) {
 	t.Parallel()
 
-	goMod := "module x\n\nrequire github.com/a/b v1 // indirect\nrequire github.com/goccy/go-yaml v1\n\nrequire (\n\tgithub.com/c/d v2\n\tsigs.k8s.io/yaml v1 // indirect\n\t// comment\n\tgopkg.in/yaml.v2 v2 //indirect\n\tgopkg.in/yaml.v3 v3\n)\n"
+	goMod := "module x\n\nrequire github.com/a/b v1 // indirect\nrequire github.com/goccy/go-yaml v1\n\nrequire (\n\tgithub.com/c/d v2\n\tsigs.k8s.io/yaml v1 // indirect\n\t// comment\n\tgopkg.in/yaml.v2 v2 //indirect\n\tgo.yaml.in/yaml/v4 v4\n)\n"
 
 	got := strings.Join(offendingRequires(goMod), "|")
 	if got != "go.mod requires github.com/goccy/go-yaml directly" {

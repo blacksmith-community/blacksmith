@@ -9039,7 +9039,7 @@ $	plain	!!str	string	"just a string"
 === odd_tab-indent ===
 ERROR: yaml: line 3: found character that cannot start any token
 === odd_unterminated ===
-ERROR: yaml: line 1: did not find expected ',' or '}'
+ERROR: yaml: line 3: did not find expected ',' or '}'
 === odd_yaml11-scalars ===
 $["name"]#key	plain	!!str	string	"name"
 $["name"]	plain	!!str	string	"fixture"
@@ -9064,7 +9064,7 @@ $["properties"]["numbers"][4]	plain	!!int	int	"1_000"
 $["properties"]["numbers"][5]	plain	!!float	float64	".5"
 $["properties"]["numbers"][6]	plain	!!float	float64	"1.10"
 $["properties"]["numbers"][7]	plain	!!int	int	"+3"
-$["properties"]["numbers"][8]	plain	!!int	int	"-0"
+$["properties"]["numbers"][8]	plain	!!float	int	"-0"
 $["properties"]["numbers"][9]	plain	!!float	float64	".inf"
 $["properties"]["numbers"][10]	plain	!!float	float64	".NaN"
 $["properties"]["nulls"]#key	plain	!!str	string	"nulls"

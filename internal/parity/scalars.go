@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	yamlv2 "go.yaml.in/yaml/v2"
-	yamlv3 "gopkg.in/yaml.v3"
+	yamlv3 "go.yaml.in/yaml/v4"
 )
 
 // Scalars records how YAML text spells and resolves each of its scalars,
