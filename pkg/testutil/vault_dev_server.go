@@ -47,6 +47,7 @@ const (
 	clientTimeout       = 60 * time.Second
 	idleConnTimeout     = 30 * time.Second
 	defaultRetries      = 2
+	kvUpgradingMessage  = "Upgrading from non-versioned to versioned data"
 )
 
 // VaultDevServer represents a real Vault (or OpenBao) dev server running as a
@@ -339,7 +340,11 @@ func (v *VaultDevServer) waitReady() error {
 
 			v.Client = client
 
-			return v.ensureKVMount()
+			if err := v.ensureKVMount(); err != nil {
+				return err
+			}
+
+			return awaitKVWritable(v.Client, readinessDeadline, readinessInterval)
 		}
 
 		time.Sleep(readinessInterval)
@@ -368,6 +373,36 @@ func (v *VaultDevServer) ensureKVMount() error {
 	}
 
 	return nil
+}
+
+// awaitKVWritable returns once a write to the KV v2 mount at secret/ goes
+// through. The server answers its health check before the mount's backend has
+// finished its first-use upgrade, and until then it refuses every write with
+// a 400, so a test that wrote straight away failed now and then. Any other
+// error ends the wait at once.
+func awaitKVWritable(client *api.Client, limit, interval time.Duration) error {
+	const probePath = "secret/data/blacksmith-readiness-probe"
+
+	deadline := time.Now().Add(limit)
+
+	for {
+		_, err := client.Logical().Write(probePath, map[string]interface{}{"data": map[string]interface{}{"ready": "yes"}})
+		if err == nil {
+			_, _ = client.Logical().Delete("secret/metadata/blacksmith-readiness-probe")
+
+			return nil
+		}
+
+		if !strings.Contains(err.Error(), kvUpgradingMessage) {
+			return fmt.Errorf("failed to write a readiness probe at secret/: %w", err)
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: secret/ still upgrading after %s: %w", ErrVaultNotReady, limit, err)
+		}
+
+		time.Sleep(interval)
+	}
 }
 
 // NewVaultDevServerNoCleanup starts a server without registering test cleanup.

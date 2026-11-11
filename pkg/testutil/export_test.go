@@ -3,6 +3,7 @@ package testutil
 import (
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // Test-only exports for the subprocess helpers, so the external test
@@ -52,3 +53,13 @@ func NewFakeGroupServer(script string) (*VaultDevServer, error) {
 
 // Exited reports whether the leader process has been reaped.
 func (v *VaultDevServer) Exited() bool { return v.exited() }
+
+// AwaitKVWritable exposes awaitKVWritable against a client for addr.
+func AwaitKVWritable(addr string, limit, interval time.Duration) error {
+	client, err := newIsolatedClient(addr, "token", 0)
+	if err != nil {
+		return err
+	}
+
+	return awaitKVWritable(client, limit, interval)
+}

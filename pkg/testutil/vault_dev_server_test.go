@@ -2,10 +2,13 @@ package testutil_test
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -377,4 +380,52 @@ func TestCloseKillsStubbornChildOfExitedLeader(t *testing.T) {
 	_ = syscall.Kill(childPid, syscall.SIGKILL)
 
 	t.Errorf("stubborn child %d survived Close", childPid)
+}
+
+// A dev server answers its health check before the KV v2 backend at secret/
+// has finished its first-use upgrade, and it refuses writes until then. The
+// helper must hand the server over only once a write goes through.
+func TestAwaitKVWritableWaitsOutTheBackendUpgrade(t *testing.T) {
+	t.Parallel()
+
+	var writes atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && writes.Add(1) <= 3 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":["Upgrading from non-versioned to versioned data. This backend will be unavailable for a brief period and will resume service shortly."]}`))
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"version":1}}`))
+	}))
+	defer server.Close()
+
+	if err := testutil.AwaitKVWritable(server.URL, 5*time.Second, time.Millisecond); err != nil {
+		t.Fatalf("AwaitKVWritable = %v, want nil once the upgrade is done", err)
+	}
+
+	if got := writes.Load(); got < 4 {
+		t.Errorf("the helper wrote %d times, want it to retry until the fourth write went through", got)
+	}
+}
+
+// A backend that never finishes upgrading is an error, not a hang.
+func TestAwaitKVWritableGivesUpOnAStuckUpgrade(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errors":["Upgrading from non-versioned to versioned data. This backend will be unavailable for a brief period and will resume service shortly."]}`))
+	}))
+	defer server.Close()
+
+	err := testutil.AwaitKVWritable(server.URL, 50*time.Millisecond, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "Upgrading") {
+		t.Fatalf("AwaitKVWritable = %v, want an error that carries the backend's message", err)
+	}
 }
