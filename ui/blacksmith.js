@@ -91,7 +91,7 @@
       sshTerminalConfig = data;
       updateSSHButtonStates();
     } catch (error) {
-      console.error('Failed to fetch SSH terminal configuration:', error);
+      console.error('Failed to fetch SSH terminal configuration:', loggableError(error));
       // Default to enabled on error to avoid breaking functionality
       sshTerminalConfig = { enabled: true, message: 'Unable to fetch configuration' };
     }
@@ -1200,7 +1200,7 @@
       themeToggle.addEventListener('click', toggleTheme);
     }
 
-    try { initTheme(); } catch (error) { console.error('Theme setup failed:', error); }
+    try { initTheme(); } catch (error) { console.error('Theme setup failed:', loggableError(error)); }
 
     // Initialize tables with sorting
     initializeAllTables();
@@ -1260,7 +1260,7 @@
       try {
         return localStorage.getItem(this.BLACKSMITH_LOGS_KEY);
       } catch (e) {
-        console.warn('Failed to read from localStorage:', e);
+        console.warn('Failed to read from localStorage:', loggableError(e));
         return null;
       }
     },
@@ -1270,7 +1270,7 @@
       try {
         localStorage.setItem(this.BLACKSMITH_LOGS_KEY, logPath);
       } catch (e) {
-        console.warn('Failed to save to localStorage:', e);
+        console.warn('Failed to save to localStorage:', loggableError(e));
       }
     },
 
@@ -1280,7 +1280,7 @@
         const key = `${this.INSTANCE_LOGS_PREFIX}.${instanceId}.${jobName}`;
         return localStorage.getItem(key);
       } catch (e) {
-        console.warn('Failed to read from localStorage:', e);
+        console.warn('Failed to read from localStorage:', loggableError(e));
         return null;
       }
     },
@@ -1291,7 +1291,7 @@
         const key = `${this.INSTANCE_LOGS_PREFIX}.${instanceId}.${jobName}`;
         localStorage.setItem(key, logPath);
       } catch (e) {
-        console.warn('Failed to save to localStorage:', e);
+        console.warn('Failed to save to localStorage:', loggableError(e));
       }
     },
 
@@ -1527,7 +1527,7 @@
         button.title = originalTitle;
       }, 2000);
     } catch (err) {
-      console.error('Failed to copy:', err);
+      console.error('Failed to copy:', loggableError(err));
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = text;
@@ -1542,7 +1542,7 @@
         flashCopyIcon(button);
         setTimeout(() => button.classList.remove('copied'), 2000);
       } catch (err) {
-        console.error('Fallback copy failed:', err);
+        console.error('Fallback copy failed:', loggableError(err));
       }
       document.body.removeChild(textarea);
     }
@@ -6469,7 +6469,7 @@
         if (handle && handle.element) handle.element.dataset.origin = origin;
       }
       if (typeof onCreated === 'function') {
-        try { onCreated(body, included || []); } catch (callbackError) { console.error('onCreated failed', callbackError); }
+        try { onCreated(body, included || []); } catch (callbackError) { console.error('onCreated failed', loggableError(callbackError)); }
       }
       fetchUpgradeTasks();
       return { ok: true, task: body, existing };
@@ -6953,7 +6953,7 @@
         }
       }
     } catch (err) {
-      console.error('Failed to load stemcells:', err);
+      console.error('Failed to load stemcells:', loggableError(err));
     }
 
     // The director's releases, grouped by name with the newest versions first, and the
@@ -7110,7 +7110,7 @@
         window[dataKey] = (await response.json()) || empty;
         window[stateKey] = 'loaded';
       } catch (err) {
-        console.error(`Failed to load ${path}:`, err);
+        console.error(`Failed to load ${path}:`, loggableError(err));
         window[stateKey] = 'failed';
       }
       refreshReleaseViews();
@@ -7246,7 +7246,7 @@
         }
       }
     } catch (err) {
-      console.error('Failed to load upgrade settings:', err);
+      console.error('Failed to load upgrade settings:', loggableError(err));
     }
   };
 
@@ -7281,7 +7281,7 @@
         saveBtn.disabled = false;
       }
     } catch (err) {
-      console.error('Failed to save upgrade settings:', err);
+      console.error('Failed to save upgrade settings:', loggableError(err));
       window.Feedback.error(`The setting wasn't saved. ${err.message}`);
       saveBtn.textContent = 'Save';
       saveBtn.disabled = false;
@@ -7440,11 +7440,13 @@
   // What a log line may say about a failed request: the status and code
   // of a refusal, or the kind of error, and never a header, a body, or a
   // message that might quote one.
-  const loggableError = (err) => ({
-    name: String((err && err.name) || 'Error'),
-    status: Number((err && err.status) || 0),
-    code: String((err && err.code) || '')
-  });
+  function loggableError(err) {
+    return {
+      name: String((err && err.name) || 'Error'),
+      status: Number((err && err.status) || 0),
+      code: String((err && err.code) || '')
+    };
+  }
 
   // Reports a failed task action through the feedback panel.
   const reportTaskError = (summary, error) => {
@@ -9421,7 +9423,7 @@
         return;
       }
     } catch (err) {
-      console.error('Failed to start upgrade:', err);
+      console.error('Failed to start upgrade:', loggableError(err));
       window.Feedback.error(`The upgrade wasn't started. ${err.message}`, { toast: true });
     } finally {
       updateUpgradeButton();
@@ -10644,7 +10646,7 @@
         }
       }, 2000);
     } catch (err) {
-      console.error('Failed to copy logs:', err);
+      console.error('Failed to copy logs:', loggableError(err));
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = originalText;
@@ -10669,7 +10671,7 @@
           }
         }, 2000);
       } catch (err) {
-        console.error('Failed to copy using fallback:', err);
+        console.error('Failed to copy using fallback:', loggableError(err));
       } finally {
         document.body.removeChild(textarea);
       }
@@ -10753,7 +10755,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error('Unable to refresh logs.');
-      console.error('Failed to refresh instance logs:', error);
+      console.error('Failed to refresh instance logs:', loggableError(error));
 
       // Visual feedback for error
       button.classList.add('error');
@@ -12163,7 +12165,7 @@
           const configText = await configResponse.text();
           manifestData = JSON.parse(configText);
         } catch (e) {
-          console.warn('Failed to parse config data for fallbacks:', e);
+          console.warn('Failed to parse config data for fallbacks:', e && e.name);
         }
       }
 
@@ -12173,7 +12175,7 @@
         try {
           vaultData = await vaultResponse.json();
         } catch (e) {
-          console.warn('Failed to parse vault data:', e);
+          console.warn('Failed to parse vault data:', e && e.name);
         }
       }
 
@@ -12215,7 +12217,7 @@
 
       return renderServiceTestingInterface(instanceId, serviceType, enhancedCreds);
     } catch (error) {
-      console.error('Error rendering service testing:', error);
+      console.error('Error rendering service testing:', loggableError(error));
       return `<div class="error">Failed to load service testing: ${error.message}</div>`;
     }
   };
@@ -13207,7 +13209,7 @@
         throw new Error(result.error || 'Connection failed');
       }
     } catch (error) {
-      console.error('Connection failed:', error);
+      console.error('Connection failed:', error && error.name);
       updateConnectionStatus(instanceId, false);
       setConnectionLine(instanceId, 'disconnected', `Connection failed. ${error.message}`, 'failed');
     }
@@ -13231,7 +13233,7 @@
     try {
       await executeServiceOperation(instanceId, 'redis', 'info');
     } catch (error) {
-      console.error('Redis info failed:', error);
+      console.error('Redis info failed:', loggableError(error));
     }
   };
 
@@ -13248,7 +13250,7 @@
     try {
       await executeServiceOperation(instanceId, 'redis', 'set', { key, value, ttl });
     } catch (error) {
-      console.error('Redis SET failed:', error);
+      console.error('Redis SET failed:', loggableError(error));
     }
   };
 
@@ -13263,7 +13265,7 @@
     try {
       await executeServiceOperation(instanceId, 'redis', 'get', { key });
     } catch (error) {
-      console.error('Redis GET failed:', error);
+      console.error('Redis GET failed:', loggableError(error));
     }
   };
 
@@ -13280,7 +13282,7 @@
     try {
       await executeServiceOperation(instanceId, 'redis', 'delete', { keys });
     } catch (error) {
-      console.error('Redis DELETE failed:', error);
+      console.error('Redis DELETE failed:', loggableError(error));
     }
   };
 
@@ -13290,7 +13292,7 @@
     try {
       await executeServiceOperation(instanceId, 'redis', 'keys', { pattern });
     } catch (error) {
-      console.error('Redis KEYS failed:', error);
+      console.error('Redis KEYS failed:', loggableError(error));
     }
   };
 
@@ -13316,7 +13318,7 @@
     try {
       await executeServiceOperation(instanceId, 'redis', 'command', { command, args });
     } catch (error) {
-      console.error('Redis COMMAND failed:', error);
+      console.error('Redis COMMAND failed:', loggableError(error));
     }
   };
 
@@ -13330,7 +13332,7 @@
     try {
       await executeServiceOperation(instanceId, 'redis', 'flush', { database });
     } catch (error) {
-      console.error('Redis FLUSH failed:', error);
+      console.error('Redis FLUSH failed:', loggableError(error));
     }
   };
 
@@ -13361,7 +13363,7 @@
         queue, exchange, message, persistent
       });
     } catch (error) {
-      console.error('RabbitMQ PUBLISH failed:', error);
+      console.error('RabbitMQ PUBLISH failed:', loggableError(error));
     }
   };
 
@@ -13381,7 +13383,7 @@
         queue, count, timeout, auto_ack: autoAck
       });
     } catch (error) {
-      console.error('RabbitMQ CONSUME failed:', error);
+      console.error('RabbitMQ CONSUME failed:', loggableError(error));
     }
   };
 
@@ -13389,7 +13391,7 @@
     try {
       await executeServiceOperation(instanceId, 'rabbitmq', 'queues');
     } catch (error) {
-      console.error('RabbitMQ QUEUES failed:', error);
+      console.error('RabbitMQ QUEUES failed:', loggableError(error));
     }
   };
 
@@ -13416,7 +13418,7 @@
         queue, operation, durable
       });
     } catch (error) {
-      console.error('RabbitMQ QUEUE-OPS failed:', error);
+      console.error('RabbitMQ QUEUE-OPS failed:', loggableError(error));
     }
   };
 
@@ -13435,7 +13437,7 @@
         path, method, use_ssl: useSSL
       });
     } catch (error) {
-      console.error('RabbitMQ MANAGEMENT failed:', error);
+      console.error('RabbitMQ MANAGEMENT failed:', loggableError(error));
     }
   };
 
@@ -13565,7 +13567,7 @@
       state.categories = Array.isArray(categories) ? categories : [];
       renderRunnerPicker(kind, root);
     } catch (error) {
-      console.error(`Failed to load ${commandRunners[kind].tool} categories:`, error);
+      console.error(`Failed to load ${commandRunners[kind].tool} categories:`, loggableError(error));
       root.querySelector('[data-runner-picker]').innerHTML = '<option value="">Failed to load commands</option>';
       runnerPart(root, 'count').textContent = '';
     }
@@ -13642,7 +13644,7 @@
       form.innerHTML = renderRunnerForm(kind, instanceId, command, state.running);
     } catch (error) {
       if (pick !== state.pick) return;
-      console.error(`Failed to load ${commandRunners[kind].tool} command details:`, error);
+      console.error(`Failed to load ${commandRunners[kind].tool} command details:`, loggableError(error));
       form.innerHTML = `<div role="alert" data-variant="danger">Failed to load ${escapeHtml(commandName)}.</div>`;
     }
   };
@@ -13782,7 +13784,7 @@
       state.historyStatus = 'loaded';
     } catch (error) {
       if (load !== state.historyLoad) return;
-      console.error(`Failed to load ${kind} history:`, error);
+      console.error(`Failed to load ${kind} history:`, loggableError(error));
       state.historyStatus = 'failed';
     }
     renderRunnerHistory(kind, root, instanceId);
@@ -13865,7 +13867,7 @@
       announce('Copied to clipboard');
       flashCopyIcon(button);
     } catch (error) {
-      console.error('Failed to copy:', error);
+      console.error('Failed to copy:', loggableError(error));
       announce('Copy failed');
     }
   };
@@ -13975,7 +13977,7 @@
       finishRunnerRun('rabbitmqctl', root, instanceId, line, started, result);
 
     } catch (error) {
-      console.error('Command execution failed:', error);
+      console.error('Command execution failed:', loggableError(error));
       failRunnerRun('rabbitmqctl', root, instanceId, line, started, error.message);
     } finally {
       setRunnerRunning('rabbitmqctl', root, instanceId, false);
@@ -13994,7 +13996,7 @@
 
       clearRunnerHistory('rabbitmqctl', instanceId);
     } catch (error) {
-      console.error('Failed to clear history:', error);
+      console.error('Failed to clear history:', loggableError(error));
     }
   };
 
@@ -14081,7 +14083,7 @@
 
         clearRunnerHistory('plugins', instanceId);
       } catch (error) {
-        console.error('Failed to clear plugins history:', error);
+        console.error('Failed to clear plugins history:', loggableError(error));
       }
     }
   };
@@ -14216,7 +14218,7 @@
         button.title = originalTitle;
       }, 2000);
     } catch (err) {
-      console.error('Failed to copy:', err);
+      console.error('Failed to copy:', loggableError(err));
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = text;
@@ -14231,7 +14233,7 @@
         flashCopyIcon(button);
         setTimeout(() => button.classList.remove('copied'), 2000);
       } catch (err) {
-        console.error('Fallback copy failed:', err);
+        console.error('Fallback copy failed:', loggableError(err));
       }
       document.body.removeChild(textarea);
     }
@@ -14302,7 +14304,7 @@
         }
       }, 2000);
     } catch (err) {
-      console.error('Failed to copy table rows:', err);
+      console.error('Failed to copy table rows:', loggableError(err));
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = text;
@@ -14327,7 +14329,7 @@
           }
         }, 2000);
       } catch (err) {
-        console.error('Fallback copy failed:', err);
+        console.error('Fallback copy failed:', loggableError(err));
       }
       document.body.removeChild(textarea);
     }
@@ -14800,7 +14802,7 @@
         if (spanElement) spanElement.textContent = originalText;
       }, 2000);
     } catch (err) {
-      console.error('Failed to copy manifest:', err);
+      console.error('Failed to copy manifest:', loggableError(err));
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = text;
@@ -14820,7 +14822,7 @@
           if (spanElement) spanElement.textContent = originalText;
         }, 2000);
       } catch (err) {
-        console.error('Fallback copy failed:', err);
+        console.error('Fallback copy failed:', loggableError(err));
       }
       document.body.removeChild(textarea);
     }
@@ -14896,7 +14898,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      console.error('Failed to fetch log file:', error);
+      console.error('Failed to fetch log file:', loggableError(error));
       refresh.error(`Unable to load selected log file: ${error.message}`);
     } finally {
       if (refresh.current()) displayContainer.removeAttribute('aria-busy');
@@ -14994,7 +14996,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error(`Refresh failed: ${error.message}`);
-      console.error('Failed to refresh events:', error);
+      console.error('Failed to refresh events:', loggableError(error));
 
       // Visual feedback for error
       button.classList.add('error');
@@ -15086,7 +15088,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error(`Refresh failed: ${error.message}`);
-      console.error('Failed to refresh VMs:', error);
+      console.error('Failed to refresh VMs:', loggableError(error));
 
       // Visual feedback for error (if button exists)
       if (button) {
@@ -15184,7 +15186,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error(`Refresh failed: ${error.message}`);
-      console.error('Failed to refresh service VMs:', error);
+      console.error('Failed to refresh service VMs:', loggableError(error));
 
       // Visual feedback for error (if button exists)
       if (button) {
@@ -15271,7 +15273,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error(`Refresh failed: ${error.message}`);
-      console.error('Failed to refresh service deployment logs:', error);
+      console.error('Failed to refresh service deployment logs:', loggableError(error));
 
       // Visual feedback for error
       button.classList.add('error');
@@ -15354,7 +15356,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error(`Refresh failed: ${error.message}`);
-      console.error('Failed to refresh service debug logs:', error);
+      console.error('Failed to refresh service debug logs:', loggableError(error));
 
       // Visual feedback for error
       button.classList.add('error');
@@ -15442,7 +15444,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error(`Refresh failed: ${error.message}`);
-      console.error('Failed to refresh service events:', error);
+      console.error('Failed to refresh service events:', loggableError(error));
 
       // Visual feedback for error
       button.classList.add('error');
@@ -15544,7 +15546,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       refresh.error(`Refresh failed: ${error.message}`);
-      console.error('Failed to refresh logs:', error);
+      console.error('Failed to refresh logs:', loggableError(error));
 
 
       // Visual feedback for error
@@ -15646,7 +15648,7 @@
       }
     } catch (error) {
       if (!current()) return;
-      console.error('Failed to load more logs:', error);
+      console.error('Failed to load more logs:', loggableError(error));
       if (loadMoreEl) {
         loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Failed to load: ${escapeHtml(error.message)}</span>`;
       }
@@ -15715,7 +15717,7 @@
         try {
           await initUpgradeTab();
         } catch (error) {
-          console.error('Failed to initialize the upgrade tab:', error);
+          console.error('Failed to initialize the upgrade tab:', loggableError(error));
         }
       }
 
@@ -15723,7 +15725,7 @@
         try {
           await initCertificatesTab();
         } catch (error) {
-          console.error('Failed to initialize the certificates tab:', error);
+          console.error('Failed to initialize the certificates tab:', loggableError(error));
         }
       }
 
@@ -15759,13 +15761,13 @@
         const tabId = button.dataset.tab;
         if (tabId) {
           const route = window.blacksmithViews?.read(tabId);
-          (window.blacksmithRouter && route ? window.blacksmithRouter.navigate(route) : switchTab(tabId)).catch((error) => console.error('Tab switch failed:', error));
+          (window.blacksmithRouter && route ? window.blacksmithRouter.navigate(route) : switchTab(tabId)).catch((error) => console.error('Tab switch failed:', loggableError(error)));
         }
       });
     });
 
     // Ensure the default tab (blacksmith) is active on load
-    switchTab('blacksmith').catch((error) => console.error('Tab switch failed:', error));
+    switchTab('blacksmith').catch((error) => console.error('Tab switch failed:', loggableError(error)));
 
     try {
       // First, try to fetch the catalog
@@ -15972,7 +15974,7 @@
               vaultData = await response.json();
             }
           } catch (error) {
-            console.error('Failed to fetch vault data:', error);
+            console.error('Failed to fetch vault data:', loggableError(error));
           }
 
           // Fetch manifest to extract deployment name if not already in vault data
@@ -15986,7 +15988,7 @@
                 }
               }
             } catch (error) {
-              console.error('Failed to fetch manifest data:', error);
+              console.error('Failed to fetch manifest data:', loggableError(error));
             }
           }
 
@@ -16157,7 +16159,7 @@
                       }
                     }
                   } catch (error) {
-                    console.warn(`Failed to fetch manifest for ${instanceId}:`, error);
+                    console.warn(`Failed to fetch manifest for ${instanceId}:`, loggableError(error));
                   }
 
                   // Fallback to constructed deployment name
@@ -16178,7 +16180,7 @@
                 await navigator.clipboard.writeText(text);
                 showCopied();
               } catch (err) {
-                console.error('Failed to copy deployment names:', err);
+                console.error('Failed to copy deployment names:', loggableError(err));
                 // Fallback for older browsers
                 const textarea = document.createElement('textarea');
                 textarea.value = text;
@@ -16190,7 +16192,7 @@
                   document.execCommand('copy');
                   showCopied();
                 } catch (err) {
-                  console.error('Fallback copy failed:', err);
+                  console.error('Fallback copy failed:', loggableError(err));
                 }
                 document.body.removeChild(textarea);
               }
@@ -16400,7 +16402,7 @@
 
                 announce('Service instances refreshed.');
               } catch (error) {
-                console.error('Failed to refresh services:', error);
+                console.error('Failed to refresh services:', loggableError(error));
                 window.Feedback.error('Could not refresh service instances. Try again.', { toast: true });
               } finally {
                 button.disabled = false;
@@ -16723,7 +16725,7 @@
             }
           }
         } catch (error) {
-          console.error('Failed to fetch blacksmith instance details:', error);
+          console.error('Failed to fetch blacksmith instance details:', loggableError(error));
           data.deployment = 'blacksmith'; // Fallback
           window.blacksmithDeploymentName = 'blacksmith';
         }
@@ -16850,7 +16852,7 @@
       document.dispatchEvent(new CustomEvent('blacksmith:ready'));
 
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Error loading data:', loggableError(error));
       const errorMessage = error.message.includes('401')
         ? 'Authentication required. Please check credentials.'
         : `Failed to load data: ${error.message}`;
@@ -17117,7 +17119,7 @@
         }
       }
     } catch (error) {
-      console.warn('Error loading service filter options:', error);
+      console.warn('Error loading service filter options:', loggableError(error));
     }
   };
 
@@ -17559,7 +17561,7 @@
       setupConfigCopyFunctionality();
 
     } catch (error) {
-      console.error('Failed to load config details:', error);
+      console.error('Failed to load config details:', loggableError(error));
       if (loadingDiv) {
         loadingDiv.innerHTML = `<div class="error">Failed to load config details: ${error.message}</div>`;
       }
@@ -17589,7 +17591,7 @@
           announce('Copied to clipboard');
           setTimeout(() => copyButton.classList.remove('copied'), 2000);
         } catch (err) {
-          console.error('Failed to copy config content:', err);
+          console.error('Failed to copy config content:', loggableError(err));
           window.Feedback.error('Failed to copy to clipboard.', { toast: true });
         }
       });
@@ -17761,7 +17763,7 @@
 
     } catch (error) {
       if (inspectionRevision !== configInspectionRevision || !modal.open) return;
-      console.error('Failed to load config versions:', error);
+      console.error('Failed to load config versions:', loggableError(error));
       if (loadingDiv) {
         loadingDiv.innerHTML = `<div class="error">Failed to load config versions: ${error.message}</div>`;
       }
@@ -17814,7 +17816,7 @@
 
     } catch (error) {
       if (inspectionRevision !== configInspectionRevision || !versionItem.isConnected) return;
-      console.error('Failed to load config version content:', error);
+      console.error('Failed to load config version content:', loggableError(error));
       const contentPre = document.getElementById('config-content-text');
       if (contentPre) {
         contentPre.textContent = `Failed to load config content: ${error.message}`;
@@ -17863,7 +17865,7 @@
           announce('Copied to clipboard');
           setTimeout(() => copyButton.classList.remove('copied'), 2000);
         } catch (err) {
-          console.error('Failed to copy config content:', err);
+          console.error('Failed to copy config content:', loggableError(err));
           window.Feedback.error('Failed to copy to clipboard.', { toast: true });
         }
       };
@@ -18011,7 +18013,7 @@
 
     } catch (error) {
       if (!stillCurrent()) return;
-      console.error('Failed to load config diff:', error);
+      console.error('Failed to load config diff:', loggableError(error));
       diffOutput.innerHTML = `Error loading diff: ${error.message}`;
       diffOutput.classList.add('active');
     }
@@ -18109,7 +18111,7 @@
       }
 
     } catch (error) {
-      console.error('Failed to load config diff:', error);
+      console.error('Failed to load config diff:', loggableError(error));
       const loadingMsg = document.getElementById('diff-loading-msg');
       if (loadingMsg) {
         loadingMsg.textContent = `Error loading diff: ${error.message}`;
@@ -18395,7 +18397,7 @@
 
     } catch (error) {
       if (!stillCurrent()) return;
-      console.error('Failed to load task details:', error);
+      console.error('Failed to load task details:', loggableError(error));
       loadingDiv.innerHTML = `<div class="error">Failed to load task details: ${error.message}</div>`;
     }
   };
@@ -18479,7 +18481,7 @@
                 });
               } catch (e) {
                 // Skip malformed JSON lines
-                console.warn('Failed to parse event line:', line, e);
+                console.warn('Failed to parse event line:', loggableError(e));
               }
             }
 
@@ -18552,7 +18554,7 @@
 
     } catch (error) {
       if (!stillCurrent()) return;
-      console.error(`Failed to load ${tabType} content:`, error);
+      console.error(`Failed to load ${tabType} content:`, loggableError(error));
       contentDiv.innerHTML = `<div class="error">Failed to load ${tabType}: ${error.message}</div>`;
     }
   };
@@ -18814,7 +18816,7 @@
       }
 
     } catch (error) {
-      console.error('Failed to cancel task:', error);
+      console.error('Failed to cancel task:', loggableError(error));
       window.Feedback.error(`Failed to cancel task: ${error.message}`, { toast: true });
     }
   };
@@ -18875,7 +18877,7 @@
         if (spanElement) spanElement.textContent = originalText;
       }, 2000);
     } catch (err) {
-      console.error('Failed to copy task raw data:', err);
+      console.error('Failed to copy task raw data:', loggableError(err));
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = text;
@@ -18891,7 +18893,7 @@
           button.classList.remove('copied');
         }, 2000);
       } catch (fallbackErr) {
-        console.error('Fallback copy also failed:', fallbackErr);
+        console.error('Fallback copy also failed:', loggableError(fallbackErr));
       } finally {
         document.body.removeChild(textarea);
       }
@@ -18967,7 +18969,7 @@
       }
 
     } catch (error) {
-      console.error('Failed to fetch trusted certificate files:', error);
+      console.error('Failed to fetch trusted certificate files:', loggableError(error));
 
       const errorMessage = error.name === 'AbortError'
         ? 'Request timed out. The server may be busy.'
@@ -19146,7 +19148,7 @@
       button.classList.add('success');
 
     } catch (error) {
-      console.error('Failed to load certificate file:', error);
+      console.error('Failed to load certificate file:', loggableError(error));
 
       const errorMessage = error.name === 'AbortError'
         ? 'Request timed out. The server may be busy.'
@@ -19239,7 +19241,7 @@
       }
 
     } catch (error) {
-      console.error('Failed to fetch blacksmith certificates:', error);
+      console.error('Failed to fetch blacksmith certificates:', loggableError(error));
       CertView.setError(listContainer, `Failed to load configuration certificates: ${error.message}`);
 
       // Error feedback
@@ -19372,7 +19374,7 @@
       }
 
     } catch (error) {
-      console.error('Failed to fetch endpoint certificate:', error);
+      console.error('Failed to fetch endpoint certificate:', loggableError(error));
 
       const errorMessage = error.name === 'AbortError'
         ? 'Connection timed out. The endpoint may be unreachable.'
@@ -19727,7 +19729,7 @@
         window.showNotification('CF endpoint saved successfully', 'success');
       }
     } catch (error) {
-      console.error('Failed to save CF endpoint:', error);
+      console.error('Failed to save CF endpoint:', loggableError(error));
       errorLine.textContent = 'Failed to save endpoint: ' + error.message;
       errorLine.hidden = false;
     } finally {
@@ -19797,7 +19799,7 @@
       renderCertificateFilesList(listContainer, data.data.files, instanceId);
 
     } catch (error) {
-      console.error('Failed to fetch VM certificate files:', error);
+      console.error('Failed to fetch VM certificate files:', loggableError(error));
       CertView.setError(listContainer, `Failed to list VM certificate files: ${error.message}`);
     }
   };
@@ -19921,7 +19923,7 @@
       `;
 
     } catch (error) {
-      console.error('Failed to load certificate file:', error);
+      console.error('Failed to load certificate file:', loggableError(error));
       CertView.setError(contentDiv, `Failed to load certificate: ${error.message}`);
 
       // Reset button state
@@ -19985,7 +19987,7 @@
       }
 
     } catch (error) {
-      console.error('Failed to fetch service endpoint certificate:', error);
+      console.error('Failed to fetch service endpoint certificate:', loggableError(error));
       CertView.setError(detailsContainer, `Failed to connect to service endpoint: ${error.message}`);
     }
   };
@@ -21565,11 +21567,11 @@
           this.registrations = data.registrations;
           this.renderRegistrationsList();
         } else {
-          console.error('Failed to load registrations:', data.error);
+          console.error('Failed to load registrations');
           this.showError('Failed to load registrations: ' + (data.error || 'Unknown error'));
         }
       } catch (error) {
-        console.error('Error loading registrations:', error);
+        console.error('Error loading registrations:', loggableError(error));
         this.showError('Failed to load registrations: ' + error.message);
       }
     },
@@ -21956,7 +21958,7 @@
           this.showError(`Failed to ${verb} registration: ` + (result.error || 'Unknown error'));
         }
       } catch (error) {
-        console.error('Save registration error:', error);
+        console.error('Save registration error:', loggableError(error));
         this.showError('Failed to save registration: ' + error.message);
       } finally {
         this.savingRegistration = false;
@@ -21998,7 +22000,7 @@
           this.showError('Failed to start registration: ' + (result.error || 'Unknown error'));
         }
       } catch (error) {
-        console.error('Start registration error:', error);
+        console.error('Start registration error:', loggableError(error));
         this.showError('Failed to start registration: ' + error.message);
       }
     },
@@ -22310,7 +22312,7 @@
           this.showError('Failed to delete registration: ' + (result.error || 'Unknown error'));
         }
       } catch (error) {
-        console.error('Delete registration error:', error);
+        console.error('Delete registration error:', loggableError(error));
         this.showError('Failed to delete registration: ' + error.message);
       }
     },
@@ -22457,7 +22459,7 @@
           const toastType = normalizedType === 'warning' ? 'info' : normalizedType;
           showNotification(message, toastType);
         } else if (normalizedType === 'error') {
-          console.error(message);
+          console.error('A feedback error had no toast to show it in');
         }
       }
     };
@@ -22513,7 +22515,7 @@
           try {
             data = await response.json();
           } catch (parseError) {
-            console.warn('CF endpoints response could not be parsed as JSON:', parseError);
+            console.warn('CF endpoints response could not be parsed as JSON:', loggableError(parseError));
             data = null;
           }
         } else if (response.status !== 204) {
@@ -22560,7 +22562,7 @@
         }
       } catch (error) {
         if (request !== this.endpointsRevision) return false;
-        console.error('Error loading CF endpoints:', error);
+        console.error('Error loading CF endpoints:', loggableError(error));
         this.showError('Failed to load CF endpoints: ' + error.message);
 
         const dropdown = document.getElementById('cf-endpoint-select');
@@ -22780,7 +22782,7 @@
           }
         }
       } catch (error) {
-        console.error('Failed to prefill registration form:', error);
+        console.error('Failed to prefill registration form:', loggableError(error));
       }
     },
 
@@ -23051,7 +23053,7 @@
           });
         }
       } catch (error) {
-        console.error('Failed to load service instances:', error);
+        console.error('Failed to load service instances:', loggableError(error));
         if (current()) resultsContainer.innerHTML = `<div class="error">Failed to load services: ${escapeHtml(error.message)}</div>`;
       }
     },
@@ -23090,7 +23092,7 @@
           }
         }
       } catch (error) {
-        console.error(`Failed to load bindings for service ${serviceGuid}:`, error);
+        console.error(`Failed to load bindings for service ${serviceGuid}:`, loggableError(error));
         if (current()) {
           bindingsElement.innerHTML = statusBadge('error');
           bindingsElement.title = 'Failed to load binding information';
@@ -23182,7 +23184,7 @@
         };
         localStorage.setItem('cf-endpoint-data', JSON.stringify(persistentData));
       } catch (error) {
-        console.warn('Failed to save connection states:', error);
+        console.warn('Failed to save connection states:', loggableError(error));
       }
     },
 
@@ -23196,7 +23198,7 @@
           this.selectedEndpoint = persistentData.selectedEndpoint || null;
         }
       } catch (error) {
-        console.warn('Failed to load connection states:', error);
+        console.warn('Failed to load connection states:', loggableError(error));
         this.connectionStates = {};
         this.selectedEndpoint = null;
       }
@@ -23235,7 +23237,7 @@
         }
       }
     }).catch(err => {
-      console.error('Failed to copy to clipboard:', err);
+      console.error('Failed to copy to clipboard:', loggableError(err));
 
       // Fallback for older browsers
       try {
@@ -23254,7 +23256,7 @@
           setTimeout(() => buttonElement.classList.remove('copied'), 1000);
         }
       } catch (fallbackErr) {
-        console.error('Clipboard fallback failed:', fallbackErr);
+        console.error('Clipboard fallback failed:', loggableError(fallbackErr));
       }
     });
   };
@@ -23265,7 +23267,7 @@
       const result = CertificateInspector.inspect(certificateData);
       return result;
     } catch (error) {
-      console.error('Error in CertificateInspector.inspect:', error, error.stack);
+      console.error('Error in CertificateInspector.inspect:', error && error.name);
       window.Feedback.error('Failed to open certificate inspector: ' + error.message, { toast: true });
       return false;
     }
@@ -23637,7 +23639,7 @@
       const route = this.vmsRoute(session && session.context);
       if (!route) return;
       this.minimizeAll();
-      if (window.blacksmithRouter) window.blacksmithRouter.navigate(route).catch((error) => console.error('Show VMs failed:', error));
+      if (window.blacksmithRouter) window.blacksmithRouter.navigate(route).catch((error) => console.error('Show VMs failed:', loggableError(error)));
     },
 
     toggleMaximize() {
@@ -24705,7 +24707,7 @@
         throw new Error(result.error || 'Failed to toggle resurrection');
       }
     } catch (error) {
-      console.error('Error toggling resurrection:', error);
+      console.error('Error toggling resurrection:', loggableError(error));
       showNotification(`Failed to toggle resurrection: ${error.message}`, 'error');
     } finally {
       // Remove loading state
@@ -24762,7 +24764,7 @@
         throw new Error(result.error || 'Failed to delete resurrection config');
       }
     } catch (error) {
-      console.error('Error deleting resurrection config:', error);
+      console.error('Error deleting resurrection config:', loggableError(error));
       showNotification(`Failed to delete resurrection config: ${error.message}`, 'error');
     } finally {
       // Remove loading state
@@ -24844,7 +24846,7 @@
 
       await copyToClipboard(text, button);
     } catch (error) {
-      console.error('Failed to copy service instances table:', error);
+      console.error('Failed to copy service instances table:', loggableError(error));
     }
   };
 
@@ -24867,7 +24869,7 @@
 
       await copyToClipboard(text, button);
     } catch (error) {
-      console.error('Failed to copy marketplace services table:', error);
+      console.error('Failed to copy marketplace services table:', loggableError(error));
     }
   };
 
@@ -24885,7 +24887,7 @@
 
       await CFEndpointManager.loadServiceInstances(endpointName, orgGuid, spaceGuid);
     } catch (error) {
-      console.error('Failed to refresh service instances:', error);
+      console.error('Failed to refresh service instances:', loggableError(error));
     } finally {
       button.classList.remove('refreshing');
       const spanElement = button.querySelector('span');
@@ -24910,7 +24912,7 @@
       // Read the marketplace again into its panel
       await CFEndpointManager.loadTabContent('marketplace', endpointName);
     } catch (error) {
-      console.error('Failed to refresh marketplace services:', error);
+      console.error('Failed to refresh marketplace services:', loggableError(error));
     } finally {
       button.classList.remove('refreshing');
       const spanElement = button.querySelector('span');

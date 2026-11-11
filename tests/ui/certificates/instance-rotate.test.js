@@ -161,6 +161,6 @@ t('instance rotation and overview', async () => {
   ok(d.getElementById('upgrade').dataset.operation==='rotate','drawer: Rotate opens Batch in rotate mode');
   itemGate=null; openGate(); previewStatus=200;
   ok(alerts.length===0,'no alert, confirm, or prompt used');
-  ok(errors.filter(e=>!/HTTP 404/.test(e)).length===0,'no console errors '+errors.filter(e=>!/HTTP 404/.test(e)).join('|'));
+  ok(errors.filter(e=>!/^Error loading data: /.test(e)).length===0,'no console errors '+errors.filter(e=>!/^Error loading data: /.test(e)).join('|'));
   expect(failures).toEqual([]);
 }, 120000);
