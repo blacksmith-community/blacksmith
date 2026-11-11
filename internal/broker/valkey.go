@@ -556,6 +556,10 @@ func connectToValkeyAdmin(ctx context.Context, conn *valkeyConnInfo, host string
 		// announce itself with CLIENT SETINFO.
 		Protocol:        2,
 		DisableIdentity: true,
+		// v9 reads and writes without the context deadline unless asked to,
+		// and dials five times where v8 dialed once.
+		ContextTimeoutEnabled: true,
+		DialerRetries:         1,
 		OnConnect: func(ctx context.Context, cn *redis.Conn) error {
 			connected = true
 

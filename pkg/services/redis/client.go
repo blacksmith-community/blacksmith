@@ -87,6 +87,18 @@ func (cm *ClientManager) GetClient(ctx context.Context, instanceID string, creds
 // doubles) that v8 callers never saw.
 const respProtocol = 2
 
+// holdToV8 sets the options whose go-redis v9 defaults differ from v8's
+// behavior: RESP2 instead of RESP3, no CLIENT SETINFO on connect, socket
+// reads and writes bounded by the caller's context deadline as well as by
+// the read and write timeouts, and a single dial per connection attempt
+// instead of five.
+func holdToV8(opts *redis.Options) {
+	opts.Protocol = respProtocol
+	opts.DisableIdentity = true
+	opts.ContextTimeoutEnabled = true
+	opts.DialerRetries = 1
+}
+
 // clientOptions builds the client options for a plain-text or a TLS
 // connection. It never falls back from one to the other: Standard needs a
 // plain-text port and TLS needs a TLS port or tls_uri.
@@ -105,9 +117,8 @@ func clientOptions(creds *Credentials, useTLS bool) (*redis.Options, error) {
 		// v9 negotiates RESP3 unless told otherwise; the tenant servers and
 		// the reply handling below are written against RESP2 shapes.
 		Protocol: respProtocol,
-		// v9 sends CLIENT SETINFO on every connect; v8 never did.
-		DisableIdentity: true,
 	}
+	holdToV8(opts)
 
 	if !useTLS {
 		if creds.Port <= 0 {
@@ -129,9 +140,8 @@ func clientOptions(creds *Credentials, useTLS bool) (*redis.Options, error) {
 		}
 
 		opts = tlsOpts
-		// A "protocol" query parameter in the URI must not move us to RESP3.
-		opts.Protocol = respProtocol
-		opts.DisableIdentity = true
+		// The URI's own settings must not move us off the v8 behavior.
+		holdToV8(opts)
 
 		if opts.Username == "" {
 			opts.Username = creds.Username

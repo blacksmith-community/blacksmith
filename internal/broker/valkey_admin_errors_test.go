@@ -34,6 +34,10 @@ const (
 // answering, the way a node that resets or times out does.
 const closeConnection = "close-the-connection"
 
+// holdConnection is a reply that makes the fake stop answering and keep the
+// connection open, the way a stopped or wedged node does.
+const holdConnection = "hold-the-connection"
+
 // fakeValkey is a minimal RESP server standing in for a Valkey node. It
 // answers each command with the reply set for it, or +OK, and records the
 // commands it received (without their arguments, which carry passwords).
@@ -44,6 +48,7 @@ type fakeValkey struct {
 	mu       sync.Mutex
 	commands []string
 	hellos   []string
+	done     chan struct{}
 }
 
 // valkeyHelloNoAuthReply is what a password-protected node answers to HELLO
@@ -56,7 +61,7 @@ func newFakeValkey(replies map[string]func(args []string) string) *fakeValkey {
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", valkeyTestHost+":0")
 	Expect(err).NotTo(HaveOccurred())
 
-	fake := &fakeValkey{listener: listener, replies: replies}
+	fake := &fakeValkey{listener: listener, replies: replies, done: make(chan struct{})}
 
 	go fake.serve()
 
@@ -113,6 +118,12 @@ func (f *fakeValkey) handle(conn net.Conn) {
 			return
 		}
 
+		if reply == holdConnection {
+			<-f.done
+
+			return
+		}
+
 		_, err = io.WriteString(conn, reply)
 		if err != nil {
 			return
@@ -143,6 +154,7 @@ func (f *fakeValkey) helloVersions() []string {
 }
 
 func (f *fakeValkey) close() {
+	close(f.done)
 	_ = f.listener.Close()
 }
 
@@ -241,6 +253,22 @@ var _ = Describe("Valkey ACL admin failures", func() {
 
 	AfterEach(func() {
 		restoreRetry()
+	})
+
+	Context("when the node stops answering PING", func() {
+		It("gives up at the caller's deadline, not at the socket read timeout", func() {
+			fake := newFakeValkey(map[string]func([]string) string{"PING": fixedReply(holdConnection)})
+			defer fake.close()
+
+			deadlineCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			defer cancel()
+
+			started := time.Now()
+			err := brokerInstance.DeleteValkeyACLUser(deadlineCtx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+			Expect(err).To(HaveOccurred())
+			Expect(time.Since(started)).To(BeNumerically("<", 3*time.Second))
+		})
 	})
 
 	Context("when the node answers PING with MISCONF", func() {

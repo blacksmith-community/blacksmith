@@ -23,6 +23,8 @@ import (
 
 	"blacksmith/pkg/services/common"
 	. "blacksmith/pkg/services/redis"
+
+	goredis "github.com/redis/go-redis/v9"
 )
 
 const testPassword = "s3cret-test-password"
@@ -579,6 +581,108 @@ func TestClientOptionsPinsRESP2(t *testing.T) {
 
 			if !opts.DisableIdentity {
 				t.Errorf("CLIENT SETINFO would be sent on connect")
+			}
+		})
+	}
+}
+
+// silentServer accepts connections and never answers, the way a stopped or
+// wedged node does.
+func silentServer(t *testing.T) int {
+	t.Helper()
+
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	done := make(chan struct{})
+
+	t.Cleanup(func() {
+		close(done)
+
+		_ = listener.Close()
+	})
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+
+			go func() {
+				<-done
+
+				_ = conn.Close()
+			}()
+		}
+	}()
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatal("listener has no TCP address")
+	}
+
+	return addr.Port
+}
+
+func TestClientGivesUpAtTheCallersDeadline(t *testing.T) {
+	t.Parallel()
+
+	port := silentServer(t)
+
+	opts, err := ClientOptions(&Credentials{Host: "127.0.0.1", Port: port, Password: testPassword}, false)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if opts.ReadTimeout < 10*time.Second {
+		t.Fatalf("ReadTimeout = %v, the test needs it well above the deadline", opts.ReadTimeout)
+	}
+
+	client := goredis.NewClient(opts)
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+
+	err = client.Ping(ctx).Err()
+	if err == nil {
+		t.Fatal("Ping to a silent server succeeded")
+	}
+
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Errorf("Ping took %v, expected it to stop near the 300ms deadline", elapsed)
+	}
+}
+
+func TestClientOptionsHoldV8Dialing(t *testing.T) {
+	t.Parallel()
+
+	pki := newTestPKI(t)
+
+	for name, creds := range map[string]*Credentials{
+		"tls uri": {Host: "127.0.0.1", TLSURI: "rediss://127.0.0.1:6380", CACertificate: pki.caPEM},
+		"tls":     {Host: "127.0.0.1", TLSPort: 6380, CACertificate: pki.caPEM},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			opts, err := ClientOptions(creds, true)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if !opts.ContextTimeoutEnabled {
+				t.Error("socket I/O would ignore the caller's context deadline")
+			}
+
+			if opts.DialerRetries != 1 {
+				t.Errorf("DialerRetries = %d, expected 1", opts.DialerRetries)
 			}
 		})
 	}
