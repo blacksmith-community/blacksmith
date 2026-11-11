@@ -114,6 +114,16 @@ t('root is disabled, noted, and styled as off when the broker switches it off',a
  expect(d.getElementById('command-root-note').textContent).toBe('Running as root is switched off on this broker.');
  const css=fs.readFileSync(path.join(__dirname,'..','..','ui','forge-theme.css'),'utf8');
  expect(/command-user-option[^{]*:disabled[^{]*\{[^}]*(opacity|cursor)/.test(css)||/command-user-option:has\(input:disabled\)[^{]*\{[^}]*(opacity|cursor)/.test(css)).toBe(true);
+ expect(/command-user-option[^{]*\{[^}]*line-through/.test(css)).toBe(false);
+ }finally{w.close();}
+});
+
+t('the timeout input is sized for about six digits, not the column',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
+ expect(d.getElementById('command-timeout')).not.toBeNull();
+ const css=fs.readFileSync(path.join(__dirname,'..','..','ui','forge-theme.css'),'utf8');
+ expect(/#command-timeout[^{]*\{[^}]*width:\s*[0-9.]+(ch|rem|em|px)/.test(css)).toBe(true);
  }finally{w.close();}
 });
 

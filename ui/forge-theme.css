@@ -255,7 +255,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .command-user .batch-field-help { margin: 0; max-width: 100%; }
 #upgrade .command-user-option { display: inline-flex; align-items: center; gap: 8px; margin-inline-end: 24px; }
 #upgrade .command-user-option:has(input:disabled) { opacity: .55; cursor: not-allowed; }
-#upgrade .command-user-option:has(input:disabled) span { text-decoration: line-through; }
+#upgrade #command-timeout { width: 9ch; min-width: 0; box-sizing: content-box; }
 #upgrade .upgrade-targets-panel { margin: 20px 24px; padding: 20px; }
 #upgrade #batch-options-summary { margin: 0 0 16px; font-size: 1rem; }
 #upgrade .upgrade-targets-panel .upgrade-targets { padding: 0; }
