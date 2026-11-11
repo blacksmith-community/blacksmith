@@ -408,3 +408,109 @@ func TestStatusMasksCredentialedURLsInItsDebugLog(t *testing.T) {
 		t.Fatalf("the debug log leaks the credentialed URL: %q", logged)
 	}
 }
+
+// errorRecorder is a logger that keeps what is logged at error level.
+type errorRecorder struct {
+	logger.NoOpLogger
+
+	mu      sync.Mutex
+	entries []string
+}
+
+func (r *errorRecorder) Error(msg string, args ...interface{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.entries = append(r.entries, fmt.Sprintf(msg, args...))
+}
+
+// The handler derives child loggers, which must keep recording.
+func (r *errorRecorder) WithField(string, interface{}) logger.Logger { return r }
+
+func (r *errorRecorder) WithFields(map[string]interface{}) logger.Logger { return r }
+
+func (r *errorRecorder) Named(string) logger.Logger { return r }
+
+func (r *errorRecorder) logged() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return strings.Join(r.entries, "\n")
+}
+
+// panickingDirector is a director whose info call panics with a message
+// that carries a URL with credentials.
+type panickingDirector struct {
+	bosh.Director
+}
+
+func (panickingDirector) GetInfo(context.Context) (*bosh.Info, error) {
+	panic("director client failed at " + secretText)
+}
+
+func TestStatusSurvivesAPanickingCheckAndReportsItUnreachable(t *testing.T) {
+	t.Parallel()
+
+	recorder := &errorRecorder{}
+	clock := newClock()
+
+	handler := boshhandler.NewHandler(boshhandler.Dependencies{
+		Logger:   recorder,
+		Config:   statusConfig{},
+		Director: panickingDirector{},
+		VaultHealth: func(context.Context) error {
+			panic(errors.New("vault client failed at " + secretText))
+		},
+		HealthTimeout:  healthTimeout,
+		HealthCacheTTL: healthWindow,
+		Now:            clock.Now,
+	})
+
+	raw, body := healthBody(t, handler)
+
+	expectHealth(t, body, false, "unreachable", "unreachable")
+
+	if strings.Contains(raw, "hunter2") {
+		t.Fatalf("the response leaks the panic value: %s", raw)
+	}
+
+	// A second request completing shows the cache lock was released.
+	clock.advance(2 * healthWindow)
+
+	_, body = healthBody(t, handler)
+
+	expectHealth(t, body, false, "unreachable", "unreachable")
+
+	logged := recorder.logged()
+	if logged == "" {
+		t.Fatalf("expected the panic to be logged at error level")
+	}
+
+	if strings.Contains(logged, "hunter2") || strings.Contains(logged, "director client failed") {
+		t.Fatalf("the log carries the panic value: %s", logged)
+	}
+
+	if !strings.Contains(logged, "string") || !strings.Contains(logged, "errorString") {
+		t.Fatalf("expected the log to name the panic types, got: %s", logged)
+	}
+}
+
+func TestStatusKeepsTheHealthyDependencyWhenTheOtherPanics(t *testing.T) {
+	t.Parallel()
+
+	handler := boshhandler.NewHandler(boshhandler.Dependencies{
+		Logger:   &logger.NoOpLogger{},
+		Config:   statusConfig{},
+		Director: &infoDirector{},
+		VaultHealth: func(context.Context) error {
+			panic("vault client failed")
+		},
+		HealthTimeout:  healthTimeout,
+		HealthCacheTTL: healthWindow,
+		Now:            newClock().Now,
+	})
+
+	_, body := healthBody(t, handler)
+
+	expectHealth(t, body, false, "connected", "unreachable")
+}

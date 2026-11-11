@@ -122,12 +122,20 @@ func (h *Handler) probe(ctx context.Context, logger interfaces.Logger) healthRes
 
 	go func() {
 		defer group.Done()
+		defer recoverProbe(logger, "BOSH")
 
 		result.boshUp = h.reachable(ctx, logger, "BOSH", h.directorHealth)
 	}()
 
 	go func() {
 		defer group.Done()
+		// A panic leaves the dependency unreachable, not blank.
+		defer func() {
+			if result.vault == "" {
+				result.vault = stateUnreachable
+			}
+		}()
+		defer recoverProbe(logger, "Vault")
 
 		result.vault = h.vaultStateOf(ctx, logger)
 	}()
@@ -135,6 +143,17 @@ func (h *Handler) probe(ctx context.Context, logger interfaces.Logger) healthRes
 	group.Wait()
 
 	return result
+}
+
+// recoverProbe stops a panic in a health check from ending the broker. Go
+// recovers a panic only in the goroutine that serves the request, and the
+// checks run in their own. It logs the type of the panic and never its
+// value, since the value can carry a URL or credentials. The dependency
+// then keeps its zero result, which reads as unreachable.
+func recoverProbe(logger interfaces.Logger, name string) {
+	if recovered := recover(); recovered != nil {
+		logger.Error("%s health check panicked (%T); reporting it unreachable", name, recovered)
+	}
 }
 
 func (h *Handler) directorHealth(ctx context.Context) error {
