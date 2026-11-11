@@ -17,19 +17,19 @@ const fakeWTerm=(terms)=>class FakeWTerm{
  constructor(element,options={}){
   this.element=element;this.options=options;this.cols=80;this.rows=24;
   this.onData=options.onData||null;this.onResize=options.onResize||null;
-  this.written=[];this.dropped=[];this.focused=0;this.destroyed=false;this.ready=false;
+  this.written=[];this.dropped=[];this.focused=0;this.destroyed=false;this.destroyCalls=0;this.ready=false;
   this.paused=options.renderingPaused===true;
   this.initPromise=new Promise((resolve,reject)=>{this._resolve=resolve;this._reject=reject;});
   element.classList.add('wterm');
   terms.push(this);
  }
  resolveInit(cols=120,rows=40){ if(this.destroyed) return this._resolve(this); this.cols=cols;this.rows=rows;this.ready=true;this._resolve(this); }
- rejectInit(){ this.destroyed=true; this._reject(new Error('wterm: failed to initialize: synthetic')); }
+ rejectInit(){ this._reject(new Error('wterm: failed to initialize: synthetic')); }
  init(){ return this.initPromise; }
  write(data){ (this.ready&&!this.destroyed?this.written:this.dropped).push(data); }
  focus(){ this.focused++; }
  setRenderingPaused(paused){ this.paused=paused; }
- destroy(){ this.destroyed=true; }
+ destroy(){ this.destroyCalls++; this.destroyed=true; }
 };
 
 const envs=[];
@@ -404,7 +404,59 @@ t('the failed and disconnected states stay distinct',async()=>{
  expect(mgr.statusText('failed')).toBe('Failed');
  expect(mgr.statusText('disconnected')).toBe('Disconnected');
  expect(failed.querySelector('button').getAttribute('aria-label')).not.toBe(gone.querySelector('button').getAttribute('aria-label'));
- const css=fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8');
- expect(css).toMatch(/\.terminal-status-slot\[data-status="failed"\]\s+\.terminal-reconnect/);
+ expect(failed.querySelector('button').getAttribute('aria-label')).toContain('failed');
+ expect(gone.querySelector('button').getAttribute('aria-label')).not.toContain('failed');
+ mgr.closeAll();
+});
+
+t('repeated reconnects on a tab that stays failed release every terminal and leave no live socket',async()=>{
+ const env=await start(); const {d,terms,sockets,open,mgr}=env;
+ open(); await failSession(env,0);
+ for(let n=1;n<=4;n++){
+  dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect').click();
+  expect(terms.length).toBe(n+1);
+  await failSession(env,n);
+  expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
+  expect(sockets.filter(s=>s.readyState!==3).length).toBe(0);
+ }
+ // Each terminal that failed to start was destroyed exactly once.
+ expect(terms.map(x=>x.destroyCalls)).toEqual([1,1,1,1,1]);
+ expect(sockets.length).toBe(5);
+ expect(d.querySelectorAll('#terminal-blacksmith-broker-node\\/0 .terminal-load-error').length).toBe(1);
+ mgr.closeAll();
+});
+
+t('a late close from the old socket after a reconnect does not disturb the new session',async()=>{
+ const env=await start(); const {d,terms,sockets,open,mgr}=env;
+ open(); await failSession(env,0);
+ const old=sockets[0];
+ dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect').click();
+ const fresh=sockets[sockets.length-1];
+ expect(fresh).not.toBe(old);
+ for(const code of [1006,1000]) old.onclose({code});
+ expect(mgr.sessions.get(KEY_BK).status).toBe('connecting');
+ expect(d.body.textContent).not.toContain('Disconnected:');
+ terms[1].resolveInit(); await sleep(30);
+ expect(terms[1].written.join('')).not.toContain('[Disconnected]');
+ expect(sockets.length).toBe(2);
+ mgr.closeAll();
+});
+
+t('a failed tab still reconnects after the operator switches tabs or minimizes the dialog',async()=>{
+ const env=await start(); const {d,terms,sockets,open,connect,mgr}=env;
+ open(); open('node/1');
+ await connect(sockets[1],terms[1]);
+ await failSession(env,0);
+ const keyB='blacksmith-broker-node/1';
+ mgr.switchToSession(keyB);
+ mgr.minimizeAll(); mgr.restoreAll();
+ expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
+ expect(dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect')).not.toBeNull();
+ const count=sockets.length;
+ dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect').click();
+ expect(sockets.length).toBe(count+1);
+ expect(mgr.activeSession).toBe(KEY_BK);
+ expect(mgr.sessions.get(KEY_BK).status).toBe('connecting');
+ expect(mgr.sessions.get(keyB).status).toBe('connected');
  mgr.closeAll();
 });

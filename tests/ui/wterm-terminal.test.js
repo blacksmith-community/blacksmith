@@ -280,7 +280,7 @@ t('a terminal that fails to start says so and closes its socket',async()=>{
  mgr.closeAll();
 });
 
-const FAILED='The terminal could not start. Reload the page and try again.';
+const FAILED='The terminal could not start. Use the reconnect button to try again.';
 const raisedErrors=(w)=>{ const raised=[]; w.Feedback.error=(message,options)=>{ raised.push({message,options}); }; return raised; };
 
 t('a missing terminal library shows the fixed failure and never opens a socket',async()=>{

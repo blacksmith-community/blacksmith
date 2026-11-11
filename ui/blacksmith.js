@@ -23785,7 +23785,7 @@
         pending.length = 0;
         session.failed = true;
         this.setStatus(session, 'failed');
-        const text = 'The terminal could not start. Reload the page and try again.';
+        const text = 'The terminal could not start. Use the reconnect button to try again.';
         const message = document.createElement('p');
         message.className = 'terminal-load-error';
         message.setAttribute('role', 'alert');
@@ -23864,7 +23864,13 @@
         pending.splice(0).forEach(chunk => term.write(chunk));
         if (focusWhenReady && element.classList.contains('active')) term.focus();
         return true;
-      }, () => (disposed ? false : fail()));
+      }, () => {
+        if (disposed) return false;
+        // A terminal that failed to start still holds the listeners its
+        // constructor registered, and only destroy() removes them.
+        try { term.destroy(); } catch { /* nothing left to release */ }
+        return fail();
+      });
       return view;
     },
 
@@ -24070,7 +24076,7 @@
           }
           // A terminal that failed to start already told the operator, and
           // its socket closing is part of that failure, not a disconnect.
-          if (session.failed) return;
+          if (session.failed || session.websocket !== ws) return;
           if (canRetry() && !handshakeReceived && retryCount < maxRetries && event.code !== 1000) {
             terminal.writeln(`\r\n[Connection closed unexpectedly - Retrying... (${retryCount + 1}/${maxRetries})]`);
             retryCount++;
@@ -24552,7 +24558,7 @@
       ws.onclose = (event) => {
         // A terminal that failed to start closes this socket as part of
         // its failure, which is not a disconnect.
-        if (session.failed) return;
+        if (session.failed || session.websocket !== ws) return;
         session.terminal.writeln('\r\n[Disconnected]');
         if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
         if (event.code !== 1000) {
