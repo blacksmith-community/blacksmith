@@ -1232,6 +1232,10 @@ func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *intern
 // vaultHealthCheck adapts the vault client's health call, which takes no
 // context, to a check that gives up when its context ends. A vault that is
 // down, sealed, or not yet initialized counts as unhealthy.
+//
+// HealthCheck takes no context, so a check that outlives its context
+// finishes in the background, within the vault client's own timeout. Its
+// answer goes to a buffered channel and is dropped.
 func vaultHealthCheck(vault *internalVault.Vault) func(context.Context) error {
 	if vault == nil {
 		return nil
