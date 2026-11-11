@@ -73,7 +73,7 @@ t('a selection that spans two services is allowed and the summary says so',async
  expect(summary.textContent).toBe('Run as root, 1 command, 3 instances, across 2 services');
  d.getElementById('command-user-vcap').click();
  d.getElementById('command-parallel').click();
- type(w,d.getElementById('command-max-in-flight'),'2');
+ d.getElementById('command-max-in-flight-2').click();
  expect(summary.textContent).toBe('Run as vcap, 1 command, 3 instances, across 2 services, 2 at a time');
  expect(summary.hidden||summary.closest('[hidden]')).toBeFalsy();
  expect(summary.textContent.includes(SECRET)).toBe(false);

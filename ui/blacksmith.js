@@ -3904,6 +3904,9 @@
   const COMMAND_OPTION_REFUSALS = ['max_in_flight_too_high', 'timeout_out_of_range', 'command_too_long', 'invalid_run_user'];
   const COMMAND_OFF_NOTE = 'Running commands is switched off on this broker.';
   const COMMAND_MAX_IN_FLIGHT_DEFAULT = 2;
+  // The broker takes a whole number from 1 to one below the director's worker
+  // count and has no value that means all, so the choice offers three numbers.
+  const COMMAND_MAX_IN_FLIGHT_CHOICES = [1, 2, 3];
   const COMMAND_ROOT_OFF_NOTE = 'Running as root is switched off on this broker.';
   const COMMAND_NO_PARALLEL_NOTE = 'Parallel runs are not available because the director has too few workers.';
 
@@ -3997,8 +4000,8 @@
     if (!commandState.parallel) return '';
     const limit = commandState.preview ? commandState.preview.limit : 0;
     const value = wholeNumber(commandState.maxInFlight);
-    if (value === null || value < 1) return 'Set the most nodes to run at once to a whole number of at least 1.';
-    if (limit > 0 && value > limit) return `The director allows at most ${limit} nodes at once. Lower the most nodes to run at once.`;
+    if (value === null || value < 1) return 'Choose how many nodes run at once.';
+    if (limit > 0 && value > limit) return `The director allows at most ${limit} ${limit === 1 ? 'node' : 'nodes'} at once. Choose a lower max in flight.`;
     return '';
   };
 
@@ -5124,8 +5127,8 @@
     parallel.disabled = noParallel;
     parallel.checked = commandState.parallel;
     pane.querySelector('#command-parallel-limit-row').hidden = !commandState.parallel;
-    const limit = pane.querySelector('#command-max-in-flight');
     const limitValue = wholeNumber(commandState.maxInFlight);
+    pane.querySelectorAll('#command-max-in-flight input[type="radio"]').forEach((radio) => { radio.checked = radio.value === String(commandState.maxInFlight); });
     let parallelNote = 'Nodes run one after another, and a failure stops the run early.';
     if (noParallel) parallelNote = COMMAND_NO_PARALLEL_NOTE;
     else if (commandState.parallel) parallelNote = limitValue !== null && limitValue >= 1 ? `Up to ${limitValue} ${limitValue === 1 ? 'node runs' : 'nodes run'} at once.` : 'Set how many nodes may run at once.';
@@ -5134,9 +5137,6 @@
     const limitError = pane.querySelector('#command-max-in-flight-error');
     limitError.textContent = limitIssue;
     limitError.hidden = !limitIssue;
-    if (limitIssue) limit.setAttribute('aria-invalid', 'true'); else limit.removeAttribute('aria-invalid');
-    const bound = commandState.preview ? commandState.preview.limit : 0;
-    if (bound > 0) limit.max = String(bound); else limit.removeAttribute('max');
   };
 
   // Notes what a real preview said about parallel runs, so the limit and the
@@ -5615,7 +5615,7 @@
     pane.appendChild(rotateEl('p', 'rotate-op-hint', OPERATION_HINTS.command));
     const changed = () => { syncCommandOptions(); updateBatchWorkspace(); updateBatchFlow(); };
 
-    const textRow = rotateEl('div', 'filter-row');
+    const textRow = rotateEl('div', 'filter-row command-text-row');
     const textLabel = rotateEl('label', '', 'Command');
     textLabel.setAttribute('for', 'command-text');
     const text = document.createElement('textarea');
@@ -5693,18 +5693,26 @@
     parallelRow.appendChild(parallelNote);
     const limitRow = rotateEl('div', 'filter-row');
     limitRow.id = 'command-parallel-limit-row';
-    const limitLabel = rotateEl('label', '', 'Most nodes to run at once');
-    limitLabel.setAttribute('for', 'command-max-in-flight');
-    const limit = document.createElement('input');
-    limit.type = 'number';
+    // A segmented choice of real radios, so the arrow keys move through it
+    // and a screen reader reads it as one group with its legend.
+    const limit = rotateEl('fieldset', 'command-limit-group');
     limit.id = 'command-max-in-flight';
-    limit.min = '1';
-    limit.step = '1';
-    limit.value = commandState.maxInFlight;
-    limit.className = 'command-limit-input';
     limit.setAttribute('aria-describedby', 'command-max-in-flight-help command-max-in-flight-error');
-    limit.addEventListener('input', () => { commandState.maxInFlight = limit.value; changed(); });
-    limitRow.appendChild(limitLabel);
+    limit.appendChild(rotateEl('legend', '', 'Max in flight'));
+    const segments = rotateEl('div', 'command-segments');
+    COMMAND_MAX_IN_FLIGHT_CHOICES.forEach((choice) => {
+      const segment = rotateEl('label', 'command-segment');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'command-max-in-flight';
+      radio.id = `command-max-in-flight-${choice}`;
+      radio.value = String(choice);
+      radio.addEventListener('change', () => { if (radio.checked) { commandState.maxInFlight = radio.value; changed(); } });
+      segment.appendChild(radio);
+      segment.appendChild(rotateEl('span', '', String(choice)));
+      segments.appendChild(segment);
+    });
+    limit.appendChild(segments);
     limitRow.appendChild(limit);
     const limitHelp = rotateEl('p', 'batch-field-help', 'This number must be below the director\'s worker count, so it\'s at most 3 with the default of four workers. The review checks it against your director.');
     limitHelp.id = 'command-max-in-flight-help';

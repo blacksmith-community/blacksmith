@@ -20,17 +20,41 @@ async function setup(availability=[200,{enabled:true,allow_root:true}]){
 }
 const type=(w,el,value)=>{el.value=value;el.dispatchEvent(new w.Event('input',{bubbles:true}));};
 
-t('the limit field is hidden until parallel is checked and then starts at 2',async()=>{
+t('max in flight is a 1, 2, 3 choice that shows only while parallel is checked and starts at 2',async()=>{
  const env=await setup();const {w,d}=env;try{
  const row=d.getElementById('command-parallel-limit-row');
- const limit=d.getElementById('command-max-in-flight');
+ const group=d.getElementById('command-max-in-flight');
  expect(row.hidden).toBe(true);
  d.getElementById('command-parallel').click();
  expect(row.hidden).toBe(false);
- expect(limit.value).toBe('2');
- expect(Number(limit.getAttribute('size')||limit.style.width.replace(/\D/g,'')||0)>=4||limit.classList.contains('command-limit-input')).toBe(true);
+ expect(group.tagName).toBe('FIELDSET');
+ expect(group.querySelector('legend').textContent).toBe('Max in flight');
+ const radios=[...group.querySelectorAll('input[type=radio]')];
+ expect(radios.map(r=>r.value)).toEqual(['1','2','3']);
+ expect(radios.map(r=>r.checked)).toEqual([false,true,false]);
+ expect(new Set(radios.map(r=>r.name)).size).toBe(1);
+ expect(radios.every(r=>!r.disabled&&r.tabIndex>=0)).toBe(true);
+ expect(group.textContent).not.toContain('All');
  d.getElementById('command-parallel').click();
  expect(row.hidden).toBe(true);
+ }finally{w.close();}
+});
+
+t('choosing a max in flight value updates the state and keeps the same control',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ d.getElementById('command-parallel').click();
+ const group=d.getElementById('command-max-in-flight');
+ const three=group.querySelector('input[value="3"]');
+ three.focus();three.click();
+ expect(w.__T.commandState.maxInFlight).toBe('3');
+ expect(d.getElementById('command-max-in-flight')).toBe(group);
+ expect(group.contains(d.activeElement)).toBe(true);
+ expect(d.activeElement.value).toBe('3');
+ const css=fs.readFileSync(path.join(__dirname,'..','..','ui','forge-theme.css'),'utf8');
+ const rule=(css.match(/#upgrade \.command-segment input[^{}]*\{[^}]*\}/)||[''])[0];
+ expect(rule).not.toContain('display: none');expect(rule).not.toContain('visibility: hidden');
+ expect(css).toMatch(/\.command-segment:has\(input:focus-visible\)/);
+ expect(css).toMatch(/\.command-segment:has\(input:checked\)/);
  }finally{w.close();}
 });
 
@@ -45,24 +69,25 @@ t('Next is enabled with the defaults once a command is typed',async()=>{
  }finally{w.close();}
 });
 
-t('the limit message shows beside the field only while it is visible',async()=>{
+t('a value above the director limit shows its message beside the choice, and only while parallel is on',async()=>{
  const env=await setup();const {w,d}=env;try{
  type(w,d.getElementById('command-text'),'uptime');
  const msg=d.getElementById('command-max-in-flight-error');
- const limit=d.getElementById('command-max-in-flight');
- expect(msg.hidden||msg.textContent==='').toBe(true);
+ const group=d.getElementById('command-max-in-flight');
+ expect(msg.hidden).toBe(true);
+ w.__T.recordCommandPreview({parallel_available:true,worker_count:2,max_in_flight_limit:1});
+ expect(msg.hidden).toBe(true);
  d.getElementById('command-parallel').click();
- expect(msg.hidden||msg.textContent==='').toBe(true);
- type(w,limit,'');
  expect(msg.hidden).toBe(false);
- expect(msg.textContent).toBe('Set the most nodes to run at once to a whole number of at least 1.');
- expect(limit.getAttribute('aria-describedby')).toContain('command-max-in-flight-error');
- expect(limit.getAttribute('aria-invalid')).toBe('true');
- type(w,limit,'3');
- expect(msg.hidden||msg.textContent==='').toBe(true);
- type(w,limit,'');
+ expect(msg.textContent).toBe('The director allows at most 1 node at once. Choose a lower max in flight.');
+ expect(group.getAttribute('aria-describedby')).toContain('command-max-in-flight-error');
+ expect(w.__T.batchOptionIssue()).toBe(msg.textContent);
+ group.querySelector('input[value="1"]').click();
+ expect(msg.hidden).toBe(true);
+ group.querySelector('input[value="2"]').click();
+ expect(msg.hidden).toBe(false);
  d.getElementById('command-parallel').click();
- expect(msg.hidden||msg.textContent==='').toBe(true);
+ expect(msg.hidden).toBe(true);
  }finally{w.close();}
 });
 
@@ -73,9 +98,9 @@ t('the parallel note follows the checkbox and the limit',async()=>{
  expect(note.textContent).not.toContain('off by default');
  d.getElementById('command-parallel').click();
  expect(note.textContent).toBe('Up to 2 nodes run at once.');
- type(w,d.getElementById('command-max-in-flight'),'3');
+ d.querySelector('#command-max-in-flight input[value="3"]').click();
  expect(note.textContent).toBe('Up to 3 nodes run at once.');
- type(w,d.getElementById('command-max-in-flight'),'1');
+ d.querySelector('#command-max-in-flight input[value="1"]').click();
  expect(note.textContent).toBe('Up to 1 node runs at once.');
  d.getElementById('command-parallel').click();
  expect(note.textContent).toBe('Nodes run one after another, and a failure stops the run early.');
@@ -104,6 +129,12 @@ t('the command box is eight rows of monospace text that resizes vertically',asyn
  const css=fs.readFileSync(path.join(__dirname,'..','..','ui','forge-theme.css'),'utf8');
  const rule=(css.match(/#upgrade[^{}]*textarea\.command-text[^{}]*\{[^}]*\}/)||[''])[0];
  expect(rule).toContain('font-family');expect(rule).toContain('resize: vertical');expect(rule).toContain('width: 100%');
+ // The box spans the pane, so neither the pane nor its row may cap it at the reading column.
+ const cap=(sel)=>{const m=css.match(new RegExp(sel.replace(/[.#]/g,'\\$&')+' \\{[^}]*\\}'));return m?m[0]:'';};
+ expect(cap('#upgrade .batch-flow-options .command-pane')).not.toMatch(/max-width: \d/);
+ expect(cap('#upgrade .command-pane .filter-row.command-text-row')).toMatch(/max-width: none/);
+ expect(cap('#upgrade .command-pane .command-text-row .batch-field-help')).toMatch(/max-width: 640px/);
+ expect(d.getElementById('command-text').closest('.filter-row').classList.contains('command-text-row')).toBe(true);
 });
 
 t('each field puts its label first, then its control, then its help',async()=>{
@@ -113,9 +144,9 @@ t('each field puts its label first, then its control, then its help',async()=>{
  const before=(a,b)=>Boolean(a.compareDocumentPosition(b)&4);
  [['command-text','command-text-help'],['command-timeout','command-timeout-help'],['command-max-in-flight','command-max-in-flight-help'],['command-parallel','command-parallel-note']].forEach(([control,help])=>{
   const c=pane.querySelector('#'+control),h=pane.querySelector('#'+help);
-  expect(before(c,h)).toBe(true);
-  const label=c.tagName==='INPUT'&&c.type==='checkbox'?c.closest('label'):pane.querySelector('label[for="'+control+'"]');
-  if(label!==c.closest('label')) expect(before(label,c)).toBe(true);
+  expect(before(c.tagName==='FIELDSET'?c.querySelector('legend'):c,h)).toBe(true);
+  const label=c.tagName==='INPUT'&&c.type==='checkbox'?c.closest('label'):c.tagName==='FIELDSET'?c.querySelector('legend'):pane.querySelector('label[for="'+control+'"]');
+  if(c.tagName!=='FIELDSET'&&label!==c.closest('label')) expect(before(label,c)).toBe(true);
   expect(c.getAttribute('aria-describedby')).toContain(help);
  });
  const css=fs.readFileSync(path.join(__dirname,'..','..','ui','forge-theme.css'),'utf8');

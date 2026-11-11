@@ -135,14 +135,14 @@ t('no warning block shows without mixed_services',async()=>{
 });
 
 t('a limit below the entered value sends the operator back to the options step',async()=>{
- const env=await setup({preview:[200,preview({max_in_flight_limit:3,parallel:true,max_in_flight:8})]});const {w,d}=env;try{
+ const env=await setup({preview:[200,preview({max_in_flight_limit:1,parallel:true,max_in_flight:3})]});const {w,d}=env;try{
  await openInstances(env);
  d.getElementById('command-parallel').click();
- type(w,d.getElementById('command-max-in-flight'),'8');
+ d.getElementById('command-max-in-flight-3').click();
  next(env).click();await sleep(20);
  expect(w.__T.batchFlow.step).toBe(1);
  expect((d.getElementById('batch-flow-review').querySelector('pre'))===null).toBe(true);
- expect(String(d.getElementById('batch-flow-help').textContent).includes('at most 3')).toBe(true);
+ expect(String(d.getElementById('batch-flow-help').textContent).includes('at most 1')).toBe(true);
  expect(creates(env).length).toBe(0);
  }finally{w.close();}
 });

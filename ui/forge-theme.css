@@ -226,17 +226,28 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-flow-options .filter-row > .field-guidance-row { flex: 0 0 auto; }
 #upgrade .batch-flow-options .filter-row select { flex: 1 1 auto; width: auto; min-width: 0; }
 /* Run command stacks every option as label, control, then help, in one column of comfortable reading width. The bottom padding keeps the last field clear of the sticky footer. */
-#upgrade .batch-flow-options .command-pane { max-width: 640px; padding-bottom: 140px; }
+#upgrade .batch-flow-options .command-pane { padding-bottom: 140px; }
 #upgrade .command-pane > .rotate-op-hint { margin: 0 0 20px; }
 #upgrade .command-pane .filter-row { max-width: 640px; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; align-items: start; gap: 8px; margin: 0 0 20px; }
 #upgrade .command-pane .filter-row[hidden] { display: none; }
+/* The command box spans the whole pane. Its help stays in the reading column. */
+#upgrade .command-pane .filter-row.command-text-row { max-width: none; justify-items: stretch; }
+#upgrade .command-pane .command-text-row .batch-field-help { max-width: 640px; }
+#upgrade .command-pane > :is(.batch-optional, details) { max-width: 640px; }
 #upgrade .command-pane .filter-row label { width: auto; min-width: 0; font-weight: 600; white-space: normal; }
 #upgrade .command-pane .filter-row > .field-guidance-row { max-width: 100%; }
 #upgrade .command-pane .filter-row .batch-field-help { margin: 0; max-width: 100%; }
 #upgrade .command-pane .batch-field-error { margin: 0; color: var(--danger); font-size: .875rem; line-height: 1.6; }
 #upgrade .command-pane .batch-field-error[hidden] { display: none; }
 #upgrade textarea.command-text { display: block; box-sizing: border-box; width: 100%; max-width: 100%; font-family: var(--font-mono, monospace); font-size: .875rem; line-height: 1.5; resize: vertical; }
-#upgrade .command-limit-input { width: 7rem; max-width: 100%; }
+#upgrade .command-limit-group { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 8px; justify-items: start; }
+#upgrade .command-limit-group > legend { padding: 0; margin: 0 0 8px; font-weight: 600; }
+#upgrade .command-segments { display: inline-flex; border: 1px solid var(--input); border-radius: 8px; overflow: hidden; background: var(--card); }
+#upgrade .command-segment { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 56px; min-height: 44px; padding: 0 16px; margin: 0; cursor: pointer; font-weight: 600; color: var(--foreground); }
+#upgrade .command-segment + .command-segment { border-inline-start: 1px solid var(--input); }
+#upgrade .command-segment input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+#upgrade .command-segment:has(input:checked) { background: var(--primary); color: var(--primary-foreground); }
+#upgrade .command-segment:has(input:focus-visible) { outline: 3px solid var(--ring); outline-offset: -3px; }
 #upgrade .command-parallel-row { gap: 8px; }
 #upgrade #command-parallel-limit-row { margin: 4px 0 0 28px; max-width: calc(100% - 28px); }
 #upgrade .command-user { max-width: 640px; min-width: 0; margin: 0 0 20px; padding: 0; border: 0; display: grid; gap: 8px; justify-items: start; }

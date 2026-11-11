@@ -54,8 +54,9 @@ t('the options pane holds the command fields with their defaults',async()=>{
  expect(options.querySelector('#command-timeout').min).toBe('10');expect(options.querySelector('#command-timeout').max).toBe('3600');
  expect(options.querySelector('#command-parallel').checked).toBe(false);
  const limit=options.querySelector('#command-max-in-flight');
+ expect(limit.tagName).toBe('FIELDSET');
  expect(limit.closest('[hidden]')).not.toBeNull();
- expect(limit.min).toBe('1');expect(limit.hasAttribute('max')).toBe(false);
+ expect([...limit.querySelectorAll('input[type=radio]')].map(r=>r.value)).toEqual(['1','2','3']);
  expect(options.querySelector('#rotate-name')).not.toBeNull();expect(options.querySelector('#rotate-reason')).not.toBeNull();
  options.querySelector('#command-parallel').click();
  expect(limit.closest('[hidden]')).toBeNull();
@@ -122,10 +123,11 @@ t('the option issue follows the command, timeout, and parallel fields',async()=>
  ['9','3601','','abc','10.5'].forEach(v=>{type(w,timeout,v);expect(issue()).toBeTruthy();expect(next.disabled).toBe(true);});
  ['10','3600','600'].forEach(v=>{type(w,timeout,v);expect(issue()).toBe('');});
  d.getElementById('command-parallel').click();
- const limit=d.getElementById('command-max-in-flight');
- ['','0','-1','x','1.5'].forEach(v=>{type(w,limit,v);expect(issue()).toBeTruthy();expect(next.disabled).toBe(true);});
- type(w,limit,'250');expect(issue()).toBe('');expect(next.disabled).toBe(false);
- d.getElementById('command-parallel').click();type(w,limit,'');expect(issue()).toBe('');
+ w.__T.commandState.maxInFlight='';expect(issue()).toBe('Choose how many nodes run at once.');
+ w.__T.commandState.maxInFlight='0';expect(issue()).toBeTruthy();
+ w.__T.commandState.maxInFlight='1.5';expect(issue()).toBeTruthy();
+ d.getElementById('command-max-in-flight-3').click();expect(issue()).toBe('');expect(next.disabled).toBe(false);
+ w.__T.commandState.maxInFlight='';d.getElementById('command-parallel').click();expect(issue()).toBe('');
  expect(issue().includes(SECRET)).toBe(false);
  }finally{w.close();}
 });
@@ -135,11 +137,10 @@ t('a preview bounds max in flight by its limit',async()=>{
  await openOptions(env);
  type(w,d.getElementById('command-text'),SECRET);
  d.getElementById('command-parallel').click();
- const limit=d.getElementById('command-max-in-flight');
- type(w,limit,'4');expect(w.__T.batchOptionIssue()).toBe('');
- w.__T.recordCommandPreview({parallel_available:true,worker_count:4,max_in_flight_limit:3});
- expect(limit.max).toBe('3');expect(w.__T.batchOptionIssue()).toBeTruthy();
- type(w,limit,'3');expect(w.__T.batchOptionIssue()).toBe('');
+ d.getElementById('command-max-in-flight-3').click();expect(w.__T.batchOptionIssue()).toBe('');
+ w.__T.recordCommandPreview({parallel_available:true,worker_count:3,max_in_flight_limit:2});
+ expect(w.__T.batchOptionIssue()).toBeTruthy();
+ d.getElementById('command-max-in-flight-2').click();expect(w.__T.batchOptionIssue()).toBe('');
  }finally{w.close();}
 });
 
@@ -197,9 +198,8 @@ t('a preview limit of 0 with parallel available sets no upper bound',async()=>{
  type(w,d.getElementById('command-text'),SECRET);
  d.getElementById('command-parallel').click();
  w.__T.recordCommandPreview({parallel_available:true,worker_count:0,max_in_flight_limit:0});
- const limit=d.getElementById('command-max-in-flight');
- expect(limit.hasAttribute('max')).toBe(false);expect(d.getElementById('command-parallel').disabled).toBe(false);
- type(w,limit,'500');expect(w.__T.batchOptionIssue()).toBe('');
+ expect(d.getElementById('command-parallel').disabled).toBe(false);
+ d.getElementById('command-max-in-flight-3').click();expect(w.__T.batchOptionIssue()).toBe('');
  }finally{w.close();}
 });
 
