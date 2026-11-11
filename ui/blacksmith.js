@@ -19461,7 +19461,7 @@
 
     // Validate that we have usable certificate data
     if (!certToInspect || typeof certToInspect !== 'object') {
-      console.error('Invalid certificate data structure:', certToInspect);
+      console.error('Invalid certificate data structure', { type: certToInspect === null ? 'null' : typeof certToInspect });
       window.Feedback.error('Certificate data is not in the expected format and cannot be inspected.', { toast: true });
       return;
     }
@@ -21478,7 +21478,7 @@
 
       // Validate that we have some certificate information to display
       if (!certificateData.subject && !certificateData.issuer && !certificateData.pemEncoded && !certificateData.textDetails) {
-        console.warn('Certificate data missing expected fields:', certificateData);
+        console.warn('Certificate data is missing the fields subject, issuer, pemEncoded, and textDetails');
         // Still try to create the modal, but with limited data
       }
 

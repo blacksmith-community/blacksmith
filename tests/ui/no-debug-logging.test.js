@@ -21,3 +21,16 @@ scripts.forEach(file=>{
   expect(hits).toEqual([]);
  });
 });
+
+// A console call never receives a certificate data object, because that
+// object carries certificate contents.
+scripts.forEach(file=>{
+ test(`${file} passes no certificate data to console calls`,()=>{
+  const lines=fs.readFileSync(path.join(UI,file),'utf8').split('\n');
+  const hits=[];
+  lines.forEach((line,i)=>{
+   if(/\bconsole\s*\.\s*(warn|error)\s*\(.*,\s*(certificateData|certToInspect|certData)\b/.test(line)) hits.push(`${file}:${i+1}`);
+  });
+  expect(hits).toEqual([]);
+ });
+});
