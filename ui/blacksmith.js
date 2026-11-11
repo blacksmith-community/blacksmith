@@ -5715,7 +5715,7 @@
     });
     limit.appendChild(segments);
     limitRow.appendChild(limit);
-    const limitHelp = rotateEl('p', 'batch-field-help', 'This number must be below the director\'s worker count, so it\'s at most 3 with the default of four workers. The review checks it against your director.');
+    const limitHelp = rotateEl('p', 'batch-field-help', 'This number must be below the director\'s worker count, so it\'s at most 3 with the default of four workers. The choices go up to 3, and the review step checks your pick against the director, which allows one fewer than its worker count.');
     limitHelp.id = 'command-max-in-flight-help';
     limitRow.appendChild(limitHelp);
     const limitError = rotateEl('p', 'batch-field-error');
