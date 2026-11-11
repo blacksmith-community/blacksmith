@@ -687,3 +687,46 @@ func TestClientOptionsHoldV8Dialing(t *testing.T) {
 		})
 	}
 }
+
+func TestTLSURIDatabaseAndClientNameFollowAUTH(t *testing.T) {
+	t.Parallel()
+
+	pki := newTestPKI(t)
+	server := newFakeRedis(t, pki)
+
+	opts, err := ClientOptions(&Credentials{
+		Host:          "127.0.0.1",
+		TLSURI:        fmt.Sprintf("rediss://default:%s@127.0.0.1:%d/2?client_name=broker", testPassword, server.port()),
+		CACertificate: pki.caPEM,
+	}, true)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	client := goredis.NewClient(opts)
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	err = client.Ping(context.Background()).Err()
+	if err != nil {
+		t.Fatalf("Ping failed: %v", err)
+	}
+
+	commands, _ := server.recorded()
+
+	var names []string
+
+	for _, command := range commands {
+		name := strings.ToUpper(command[0])
+		if name == "CLIENT" && len(command) > 1 {
+			name += " " + strings.ToUpper(command[1])
+		}
+
+		names = append(names, name)
+	}
+
+	want := []string{"HELLO", "AUTH", "SELECT", "CLIENT SETNAME", "PING"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("commands = %v, expected %v, so AUTH runs before anything that needs it", names, want)
+	}
+}

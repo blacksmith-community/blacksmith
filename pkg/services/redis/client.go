@@ -105,20 +105,46 @@ func holdToV8(opts *redis.Options) {
 // 5 node rejects as an unknown command while echoing the arguments back, and
 // which v9 then repeats as AUTH. Sending AUTH ourselves keeps the wire
 // traffic what it was under v8, and HELLO carries no credentials.
+//
+// A database number or client name in the options would make go-redis send
+// SELECT or CLIENT SETNAME during its own setup, before OnConnect runs, and
+// the node would answer NOAUTH. When AUTH moves, they move with it and follow
+// it, in v8's order, and only when they are set. A tls_uri is the one way
+// they get set.
 func authOnConnect(opts *redis.Options) {
 	username, password := opts.Username, opts.Password
-	opts.Username, opts.Password = "", ""
-
 	if password == "" {
 		return
 	}
 
+	db, clientName := opts.DB, opts.ClientName
+	opts.Username, opts.Password = "", ""
+	opts.DB, opts.ClientName = 0, ""
+
 	opts.OnConnect = func(ctx context.Context, cn *redis.Conn) error {
+		var err error
 		if username != "" {
-			return cn.AuthACL(ctx, username, password).Err() //nolint:wrapcheck // go-redis unwraps OnConnect errors
+			err = cn.AuthACL(ctx, username, password).Err()
+		} else {
+			err = cn.Auth(ctx, password).Err()
 		}
 
-		return cn.Auth(ctx, password).Err() //nolint:wrapcheck // go-redis unwraps OnConnect errors
+		if err != nil {
+			return err //nolint:wrapcheck // go-redis unwraps OnConnect errors
+		}
+
+		if db > 0 {
+			err = cn.Select(ctx, db).Err()
+			if err != nil {
+				return err //nolint:wrapcheck // as above
+			}
+		}
+
+		if clientName != "" {
+			return cn.ClientSetName(ctx, clientName).Err() //nolint:wrapcheck // as above
+		}
+
+		return nil
 	}
 }
 
