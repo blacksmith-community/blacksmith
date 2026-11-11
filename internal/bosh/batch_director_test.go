@@ -1772,6 +1772,11 @@ func TestWatcherCountsTheMaximumWatchFromTheLatestFailedRead(t *testing.T) {
 	base.interrupt <- errBatchTestRejected
 
 	retryUntil(t, batch, clock, clock.Now().Add(watchMax-10*time.Minute))
+
+	// The last advance woke the watcher, which reads again and, with the read
+	// still failing, waits to retry. Flip the read back only once it waits, so
+	// that the read cannot land on either side of the flip unseen.
+	waitUntil(t, "the watcher waits to read the task again", func() bool { return clock.retrySleep() > 0 })
 	base.set(func(f *fakeBatchBase) { f.getErr = nil })
 	clock.advance(clock.retrySleep())
 	waitUntil(t, "the watcher waits for the task again", func() bool { return base.waitCallsFor(taskID) == 2 })
