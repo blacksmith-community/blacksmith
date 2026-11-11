@@ -24148,8 +24148,12 @@
       if (options.restored) {
         // A restored tab opens no connection until the operator asks for one.
         this.sessions.set(sessionKey, session);
-        this.setStatus(session, 'disconnected');
-        terminal.writeln('Disconnected. Select reconnect to start a new session.');
+        // A terminal that failed to start keeps its failed status, which is
+        // the reason the tab offers reconnect.
+        if (!session.failed) {
+          this.setStatus(session, 'disconnected');
+          terminal.writeln('Disconnected. Select reconnect to start a new session.');
+        }
         return;
       }
 

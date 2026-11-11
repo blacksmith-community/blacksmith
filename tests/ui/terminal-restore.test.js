@@ -21,7 +21,7 @@ const start=async(preset,opts={})=>{
  const {w}=env;
  if(preset!==undefined) w.sessionStorage.setItem(KEY,preset);
  const terms=[];const sockets=[];
- w.WTermLib={WTerm:class{constructor(el,o){this.cols=80;this.rows=24;this.written=[];el.classList.add('wterm');terms.push(this);}init(){return opts.failInit?Promise.reject(new Error('wterm: failed to initialize: synthetic')):Promise.resolve(this);}focus(){}write(x){this.written.push(x);}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
+ w.WTermLib={WTerm:class{constructor(el,o){if(opts.throwCtor) throw new Error('wterm: synthetic constructor failure');this.cols=80;this.rows=24;this.written=[];el.classList.add('wterm');terms.push(this);}init(){return opts.failInit?Promise.reject(new Error('wterm: failed to initialize: synthetic')):Promise.resolve(this);}focus(){}write(x){this.written.push(x);}setRenderingPaused(){}destroy(){}},version:'0.5.10'};
  w.WebSocket=class{static get OPEN(){return 1;}constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}send(m){this.sent.push(m);}close(){this.readyState=3;}};
  w.eval(OAT);
  await sleep(80);
@@ -113,6 +113,19 @@ t('a restored tab whose terminal cannot start is failed, offers reconnect, and c
  expect(sockets.length).toBe(1);
  expect(mgr.sessions.get(key).status).toBe('connecting');
  expect(mgr.sessions.get(key).failed).toBe(false);
+ env.errors.length=0; env.alerts.length=0;
+});
+
+t('a restored tab whose terminal fails at once stays failed and says nothing about disconnecting',async()=>{
+ const env=await start(record(['node/0'],'blacksmith-broker-node/0'),{throwCtor:true});
+ await sleep(30);
+ const {d,mgr,sockets}=env;
+ const session=mgr.sessions.get('blacksmith-broker-node/0');
+ expect(session.failed).toBe(true);
+ expect(session.status).toBe('failed');
+ expect(d.querySelector('#terminal-tabs .terminal-status-slot').dataset.status).toBe('failed');
+ expect(session.element.textContent).not.toContain('Disconnected');
+ expect(sockets.length).toBe(0);
  env.errors.length=0; env.alerts.length=0;
 });
 
