@@ -100,3 +100,23 @@ t('the count follows closed sessions and every dock control is labelled and keye
  d.querySelectorAll('#minimized-terminal-tabs .tab-close')[0].click();
  expect(d.getElementById('terminal-dock-toggle').textContent.trim()).toBe('Terminals (1)');
 });
+
+t('the dock keeps clear of the device safe areas',()=>{
+ const bar=bodies('blacksmith.css','.minimized-terminal-bar');
+ expect(bar).toMatch(/padding-bottom:\s*max\(4px,\s*env\(safe-area-inset-bottom\)\)/);
+ expect(bar).toMatch(/padding-left:\s*max\(16px,\s*env\(safe-area-inset-left\)\)/);
+ expect(bar).toMatch(/padding-right:\s*max\(16px,\s*env\(safe-area-inset-right\)\)/);
+});
+
+t('every dock control has a 44px hit area on a coarse pointer',()=>{
+ const css=strip(fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8'));
+ const m=css.match(/@media\s*\(pointer:\s*coarse\)\s*\{([\s\S]*?\n\})/);
+ expect(m).not.toBeNull();
+ const block=m[1];
+ for(const sel of ['.minimized-terminal-bar .terminal-control-btn','.minimized-terminal-bar .terminal-dock-toggle','.minimized-terminal-bar .minimized-session-open','.minimized-terminal-bar .tab-close','.minimized-terminal-bar .terminal-reconnect']){
+  const rule=block.split('}').find((r)=>r.includes(sel));
+  expect(rule).toBeDefined();
+  expect(rule).toMatch(/min-height:\s*44px/);
+  expect(rule).toMatch(/min-width:\s*44px/);
+ }
+});

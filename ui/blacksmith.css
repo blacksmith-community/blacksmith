@@ -7158,6 +7158,9 @@ bs-tabs > .cert-tab-pane[hidden] {
   align-items: center;
   justify-content: space-between;
   padding: 4px 16px;
+  padding-bottom: max(4px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
 }
 
 .minimized-terminal-bar.active {
@@ -7174,7 +7177,7 @@ bs-tabs > .cert-tab-pane[hidden] {
 
 /* On a phone the dock is one Terminals button, and the sessions open as a list above it. */
 @media (max-width: 600px) {
-  .minimized-terminal-bar { padding: 4px 8px; }
+  .minimized-terminal-bar { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
   .minimized-terminal-bar .left-section > img { display: none; }
   .terminal-dock-toggle { display: inline-flex; align-items: center; min-height: 32px; }
   .minimized-terminal-bar .left-section { position: static; }
@@ -7201,6 +7204,15 @@ bs-tabs > .cert-tab-pane[hidden] {
     mask-image: none;
   }
   .minimized-terminal-bar.dock-open .minimized-terminal-tabs { display: flex; }
+}
+
+/* A finger needs a 44px target on every dock control. */
+@media (pointer: coarse) {
+  .minimized-terminal-bar .terminal-control-btn { min-height: 44px; min-width: 44px; }
+  .minimized-terminal-bar .terminal-dock-toggle { min-height: 44px; min-width: 44px; }
+  .minimized-terminal-bar .minimized-session-open { min-height: 44px; min-width: 44px; }
+  .minimized-terminal-bar .tab-close { min-height: 44px; min-width: 44px; }
+  .minimized-terminal-bar .terminal-reconnect { min-height: 44px; min-width: 44px; }
 }
 
 .minimized-terminal-bar .left-section {
