@@ -16,7 +16,7 @@
   else throw new Error('Unknown destination');
   let suffix='';if(r.screen==='certificates'&&typeof r.attention==='boolean')suffix='?attention='+r.attention;
   if(r.screen==='services'&&!r.instance&&r.service)suffix='?service='+encode(r.service)+(r.plan?'&plan='+encode(r.plan):'');
-  if(r.subview)suffix='?view='+encode(r.subview);if(r.endpoint)suffix+=(suffix?'&':'?')+'endpoint='+encode(r.endpoint);
+  if(r.subview)suffix='?view='+encode(r.subview);if(r.endpoint)suffix+=(suffix?'&':'?')+'endpoint='+encode(r.endpoint);if(r.node&&r.section==='vms')suffix+=(suffix?'&':'?')+'node='+encode(r.node);
   if(r.inspection){const params=new URLSearchParams(suffix.replace(/^\?/,''));params.set('inspect',r.inspection.kind);params.set('id',r.inspection.id);if(r.inspection.type)params.set('type',r.inspection.type);if(r.inspection.name)params.set('name',r.inspection.name);suffix='?'+params.toString();}
   return '#/'+p.map(encode).join('/')+suffix;
  }
@@ -35,7 +35,7 @@
    else return null;
    if(r.screen==='certificates'&&['true','false'].includes(q.get('attention')))r.attention=q.get('attention')==='true';
    if(r.screen==='services'&&!r.instance&&q.get('service')){r.service=q.get('service');if(q.get('plan'))r.plan=q.get('plan');}
-   if(q.has('view'))r.subview=q.get('view');if(q.has('endpoint')&&r.section==='broker')r.endpoint=q.get('endpoint');if(q.has('inspect')){if(!['task','config','certificate'].includes(q.get('inspect'))||!q.get('id'))return null;r.inspection={kind:q.get('inspect'),id:q.get('id')};if(r.inspection.kind==='task'&&!/^\d+$/.test(r.inspection.id))return null;if(r.inspection.kind==='config'){if(!q.get('type')||!q.get('name'))return null;r.inspection.type=q.get('type');r.inspection.name=q.get('name');}}return r;
+   if(q.has('view'))r.subview=q.get('view');if(q.has('endpoint')&&r.section==='broker')r.endpoint=q.get('endpoint');if(q.get('node')&&r.screen==='services'&&r.instance&&r.section==='vms')r.node=q.get('node');if(q.has('inspect')){if(!['task','config','certificate'].includes(q.get('inspect'))||!q.get('id'))return null;r.inspection={kind:q.get('inspect'),id:q.get('id')};if(r.inspection.kind==='task'&&!/^\d+$/.test(r.inspection.id))return null;if(r.inspection.kind==='config'){if(!q.get('type')||!q.get('name'))return null;r.inspection.type=q.get('type');r.inspection.name=q.get('name');}}return r;
   }catch(_){return null;}
  }
  function parent(r){if(r.inspection){const n={...r};delete n.inspection;return n;}if(r.plan)return {screen:r.screen,section:'plans'};if(r.subview){const n={...r};delete n.subview;return n;}if(r.instance&&r.section!=='details')return {screen:'services',instance:r.instance,section:'details'};if(r.instance)return {screen:'services'};if(r.screen==='blacksmith')return {screen:'blacksmith',section:'details'};if(r.screen==='upgrade'&&r.task)return {screen:'upgrade',view:'activity'};return {screen:'blacksmith',section:'details'};}

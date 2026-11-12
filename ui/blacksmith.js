@@ -103,6 +103,7 @@
   
   // Update all SSH button states based on configuration
   const updateSSHButtonStates = () => {
+    document.querySelectorAll('.command-node-terminal').forEach((button) => { button.hidden = !sshTerminalConfig.enabled; });
     const sshButtons = document.querySelectorAll('.ssh-btn, .blacksmith-ssh, .service-instance-ssh');
     sshButtons.forEach(button => {
       if (!sshTerminalConfig.enabled) {
@@ -8750,6 +8751,25 @@
   // One row for each node of a command instance: its icon, exit code,
   // duration, a note when it had to be killed, and its output on demand.
   // Everything from the task record goes in through textContent.
+  // The director tasks behind a command run's SSH sessions. A record from
+  // before they were stored has none, and says so.
+  const sshSessionLinksHtml = (instance, rowKey) => {
+    const links = [];
+    (Array.isArray(instance.ssh_sessions) ? instance.ssh_sessions : []).forEach((session, index) => {
+      [['setup', 'SSH setup', session.setup_task_id], ['cleanup', 'SSH cleanup', session.cleanup_task_id]].forEach(([kind, label, raw]) => {
+        const id = Number(raw);
+        if (!Number.isSafeInteger(id) || id <= 0) return;
+        const group = session.group ? ` title="Instance group ${escapeAttribute(session.group)}"` : '';
+        links.push(`<a href="#" class="bosh-task-link ssh-session-link" data-bosh-task-id="${id}" data-keep-key="ssh-${kind}:${escapeAttribute(rowKey)}:${index}"${group}>${label} \u00b7 BOSH task ${id}</a>`);
+      });
+    });
+    return links.length ? links.join(' ') : '<span class="ssh-sessions-missing">SSH session tasks weren\'t recorded for this run.</span>';
+  };
+
+  // True once the instance list has loaded and no longer holds the instance.
+  // A list that never loaded says nothing about it.
+  const instanceIsGone = (instanceId) => Boolean(window.serviceInstances && typeof window.serviceInstances === 'object' && !window.serviceInstances[instanceId]);
+
   const buildCommandInstance = (task, instance) => {
     const wrap = rotateEl('div', 'command-nodes');
     const record = instance.command || {};
@@ -8762,8 +8782,17 @@
       const noOutput = settled && !node.output_path;
       const row = rotateEl('div', 'command-node');
       const head = rotateEl('div', 'command-node-head');
-      const icon = document.createElement('span');
+      const gone = instanceIsGone(instance.instance_id);
+      const nodeRef = `${identity.group}/${identity.index}`;
+      const icon = document.createElement(gone ? 'span' : 'a');
       icon.innerHTML = getInstanceStatusIcon(commandNodeIconStatus(node));
+      if (!gone) {
+        icon.className = 'command-node-link';
+        icon.href = window.BlacksmithRoutes?.format({ screen: 'services', instance: String(instance.instance_id), section: 'vms', node: nodeRef }) || `#/instances/${encodeURIComponent(String(instance.instance_id))}/vms?node=${encodeURIComponent(nodeRef)}`;
+        icon.setAttribute('aria-label', `Show ${nodeRef} in the VMs view`);
+        icon.title = `Show ${nodeRef} in the VMs view`;
+        icon.dataset.keepKey = `node-link:${key}`;
+      }
       head.appendChild(icon);
       head.appendChild(rotateEl('span', 'command-node-name', name));
       const facts = [];
@@ -8774,6 +8803,21 @@
       if (duration) facts.push(duration);
       if (node.killed) facts.push('killed');
       head.appendChild(rotateEl('span', 'command-node-facts', facts.join(', ')));
+      if (gone) {
+        head.appendChild(rotateEl('span', 'command-node-gone', 'Instance no longer exists'));
+      } else {
+        // The record's own deployment name opens the right terminal even
+        // when the instance list has not loaded.
+        const terminal = rotateEl('button', 'copy-btn-inline command-node-terminal');
+        terminal.type = 'button';
+        terminal.hidden = !sshTerminalConfig.enabled;
+        terminal.setAttribute('aria-label', `Open a terminal on ${nodeRef}`);
+        terminal.title = `Open a terminal on ${nodeRef}`;
+        terminal.dataset.keepKey = `node-terminal:${key}`;
+        terminal.innerHTML = blacksmithIcon('terminal', { size: 14 });
+        terminal.addEventListener('click', (event) => window.openTerminal('service-instance', instance.instance_id, nodeRef, event, { boshDeploymentName: instance.deployment_name, instanceName: instance.instance_name }));
+        head.appendChild(terminal);
+      }
       row.appendChild(head);
       if (node.reason || node.error) row.appendChild(rotateEl('div', 'instance-error', [node.reason, node.error].filter(Boolean).join(' ')));
 
@@ -8879,11 +8923,12 @@
         <div class="upgrade-task-instance ${statusClass}"${rowAttrs}>
           <span class="instance-status">${statusIcon}</span>
           <div class="instance-info">
-            <div class="instance-heading"><span class="instance-id">${escapeHtml(instance.instance_name || instance.instance_id)}</span>${isCertificates && instance.certificates ? `<span class="activity-status-label cert-task-phase" title="Phase">${escapeHtml(activityStatus(instance.certificates.phase))}</span>` : ''}</div>
+            <div class="instance-heading"><a class="instance-id instance-link" href="${escapeAttribute(instanceHref(instance.instance_id))}" data-keep-key="inst-link:${escapeAttribute(rowKey)}">${escapeHtml(instance.instance_name || instance.instance_id)}</a>${isCertificates && instance.certificates ? `<span class="activity-status-label cert-task-phase" title="Phase">${escapeHtml(activityStatus(instance.certificates.phase))}</span>` : ''}</div>
             <div class="instance-deployment">${escapeHtml(instance.deployment_name || '')}</div>
             ${(instance.applied_releases || []).length ? `<div class="instance-releases">Applied: ${escapeHtml(instance.applied_releases.map(r => `${r.name}/${r.version}`).join(', '))}</div>` : ''}
             <div class="instance-actions">
               ${boshTaskId ? `<a href="#" class="bosh-task-link" data-bosh-task-id="${boshTaskId}">BOSH task ${boshTaskId}</a>` : ''}
+              ${isCommand ? sshSessionLinksHtml(instance, rowKey) : ''}
             </div>
             ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
             ${isCertificates ? `<div class="cert-task-host" data-cert-index="${index}"></div>` : ''}${isCommand ? `<div class="command-task-host" data-command-index="${index}"></div>` : ''}
@@ -12186,7 +12231,7 @@
     const detailId = `vm-detail-${++vmDetailCounter}`;
     const nameLabel = instanceName !== EMPTY ? instanceName : 'this VM';
     return `
-              <tr class="vm-row">
+              <tr class="vm-row" data-vm-node="${escapeAttribute(vm.job_name && vm.index !== undefined ? `${vm.job_name}/${vm.index}` : '')}">
                 <td class="vm-instance">
                   ${instanceName !== EMPTY ? vmCopyValue(instanceName, 'instance name') : EMPTY_HTML}
                 </td>
@@ -12225,6 +12270,28 @@
     toggle.title = open ? 'Hide details' : 'Show details';
     detail.hidden = !open;
   });
+
+  // Brings the VMs view to the node a command run linked to. A node that is
+  // gone says so and leaves every row as it was.
+  window.highlightVmNode = (node) => {
+    const host = document.querySelector('#services .detail-content');
+    if (!host) return false;
+    host.querySelectorAll('.vm-node-missing').forEach((note) => note.remove());
+    host.querySelectorAll('tr.vm-row.vm-row-target').forEach((row) => row.classList.remove('vm-row-target'));
+    if (!node) return false;
+    const row = [...host.querySelectorAll('tr.vm-row')].find((candidate) => candidate.dataset.vmNode === node);
+    if (!row) {
+      const note = document.createElement('p');
+      note.className = 'vm-node-missing';
+      note.setAttribute('role', 'status');
+      note.textContent = `Node ${node} no longer exists.`;
+      host.prepend(note);
+      return false;
+    }
+    row.classList.add('vm-row-target');
+    if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' });
+    return true;
+  };
 
   const formatVMs = (vms, instanceId = null) => {
     if (!vms || vms.length === 0) {
@@ -16978,7 +17045,7 @@
               if(!window.serviceInstances?.[route.instance])throw new Error(`Service instance ${route.instance} was not found.`);
               throw new Error(`Service instance ${route.instance} could not be opened.`);
             }
-            if(signal?.aborted)return null;selected('services',route.section||'details');await window.loadInstanceSection(route.instance,route.section||'details');
+            if(signal?.aborted)return null;selected('services',route.section||'details');await window.loadInstanceSection(route.instance,route.section||'details');if(route.section==='vms')window.highlightVmNode(route.node||'');
           }
           if(signal?.aborted)return null;
           if(route.plan) {
@@ -24777,7 +24844,7 @@
   };
 
   // Global function for SSH button onclick
-  window.openTerminal = function (deploymentType, deploymentName, instanceId, event) {
+  window.openTerminal = function (deploymentType, deploymentName, instanceId, event, context) {
     if (event) {
       event.preventDefault();
       event.stopPropagation();
@@ -24803,6 +24870,11 @@
         boshDeploymentName = `${instanceData.plan_id}-${deploymentName}`;
       }
     }
+
+    // A caller that holds the record gives its own names, which stand even
+    // when the instance list has not loaded.
+    if (context && context.boshDeploymentName) boshDeploymentName = context.boshDeploymentName;
+    if (context && context.instanceName) instanceName = context.instanceName;
 
     TerminalManager.openWithContext(deploymentType, deploymentName, instanceId, instanceName, boshDeploymentName);
   };

@@ -14256,3 +14256,16 @@ tr.row-link { cursor: pointer; }
 #upgrade .command-block > .command-copy, #upgrade .command-output-block > .command-output-copy { position: absolute; top: 6px; right: 6px; }
 #upgrade .command-output-block > .command-output-copy[hidden] { display: none; }
 #upgrade .command-output-block > details > summary { padding-right: 40px; min-height: 28px; }
+
+/* Links, terminal, and task links on the activity page */
+#upgrade .instance-heading a.instance-link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
+#upgrade .instance-heading a.instance-link:hover { text-decoration-color: currentColor; }
+#upgrade a.command-node-link { display: inline-flex; align-items: center; color: inherit; border-radius: 4px; }
+#upgrade a.command-node-link:hover, #upgrade a.command-node-link:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+#upgrade .command-node-head .command-node-terminal { margin-left: auto; }
+#upgrade .command-node-head .command-node-terminal[hidden] { display: none; }
+#upgrade .command-node-gone, #upgrade .ssh-sessions-missing { margin-left: auto; opacity: .75; font-size: .9em; }
+#upgrade .instance-actions .ssh-sessions-missing { margin-left: 0; }
+#upgrade .instance-actions { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
+.vm-row.vm-row-target > td { background: color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent); box-shadow: inset 0 2px 0 var(--accent, #3b82f6), inset 0 -2px 0 var(--accent, #3b82f6); }
+.vm-node-missing { margin: 0 0 .75rem; padding: .5rem .75rem; border-left: 3px solid var(--warning, #d97706); }
