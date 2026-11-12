@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/icon-180.png">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" href="/vendor/oat/oat.min.css">
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261112-oat-394">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261112-oat-395">
   <link rel="stylesheet" href="/vendor/wterm/0.5.10/terminal.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/console.css?v=20261028-oat-309">
@@ -352,10 +352,13 @@
                 <div id="diffs-panel" class="manifest-tab-pane" data-tab="diffs" data-group="config-tabs" role="tabpanel" aria-labelledby="diffs-tab">
                   <div id="config-diff-content">
                     <div class="diff-controls">
-                      <label for="diff-version-selector">Compare versions:</label>
-                      <select id="diff-version-selector" class="form-control">
+                      <button type="button" id="diff-pair-first" class="btn btn-secondary diff-pair-btn" data-keep-key="config-diff-first" aria-label="First version pair" title="First version pair" disabled></button>
+                      <button type="button" id="diff-pair-prev" class="btn btn-secondary diff-pair-btn" data-keep-key="config-diff-prev" aria-label="Previous version pair" title="Previous version pair" disabled></button>
+                      <select id="diff-version-selector" class="form-control" aria-label="Compare versions">
                         <option value="">Select versions to compare</option>
                       </select>
+                      <button type="button" id="diff-pair-next" class="btn btn-secondary diff-pair-btn" data-keep-key="config-diff-next" aria-label="Next version pair" title="Next version pair" disabled></button>
+                      <button type="button" id="diff-pair-last" class="btn btn-secondary diff-pair-btn" data-keep-key="config-diff-last" aria-label="Last version pair" title="Last version pair" disabled></button>
                     </div>
                     <div id="config-diff-display" class="diff-display">
                       <div id="diff-output" class="diff-output-box"></div>
@@ -386,8 +389,8 @@
     <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
   </dialog>
   <script src="/vendor/wterm/0.5.10/wterm.min.js"></script>
-  <script type="text/javascript" src="/icons.js?v=20261110-oat-370"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261112-oat-413"></script>
+  <script type="text/javascript" src="/icons.js?v=20261112-oat-371"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261112-oat-414"></script>
   <script src="/routes.js?v=20261112-oat-334"></script>
   <script src="/view-guidance.js?v=20261028-oat-316"></script>
   <script src="/action-help.js?v=20261112-oat-277"></script>

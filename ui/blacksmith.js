@@ -18133,6 +18133,8 @@
       if (diffSelector) {
         diffSelector.innerHTML = '<option value="">Select versions to compare</option>';
         diffSelector.value = '';
+        diffSelector.disabled = false;
+        updateDiffPaging();
       }
       const diffOutput = document.getElementById('diff-output');
       if (diffOutput) {
@@ -18352,9 +18354,11 @@
 
       newSelector.addEventListener('change', async (event) => {
         const selectedValue = event.target.value;
+        updateDiffPaging();
         if (selectedValue) {
           const [fromId, toId] = selectedValue.split('|');
           await loadConfigDiffById(fromId, toId);
+          updateDiffPaging();
         } else {
           // Clear diff display
           const diffOutput = document.getElementById('diff-output');
@@ -18369,6 +18373,64 @@
         }
       });
     }
+    setupDiffPaging();
+  };
+
+  // The paging buttons walk the select's own options. The select lists the
+  // newest change first, so the last option is the oldest change. First goes to
+  // the oldest, last to the newest, previous to an older pair, and next to a
+  // newer one. A button sets the select and fires its change event, so it runs
+  // the same handler as a choice made in the select.
+  const DIFF_PAGING_ICONS = {
+    first: () => blacksmithIcon('chevrons-left', { size: 16 }),
+    prev: () => blacksmithIcon('chevron-left', { size: 16 }),
+    next: () => blacksmithIcon('chevron-right', { size: 16 }),
+    last: () => blacksmithIcon('chevrons-right', { size: 16 })
+  };
+  const diffPairOptions = () => {
+    const selector = document.getElementById('diff-version-selector');
+    return selector ? [...selector.options].filter(option => option.value) : [];
+  };
+  const diffPairTarget = (kind) => {
+    const selector = document.getElementById('diff-version-selector');
+    const pairs = diffPairOptions();
+    if (!selector || selector.disabled || pairs.length < 2) return null;
+    const at = pairs.findIndex(option => option.value === selector.value);
+    const oldest = pairs.length - 1;
+    if (kind === 'first') return at === oldest ? null : pairs[oldest];
+    if (kind === 'last') return at === 0 ? null : pairs[0];
+    if (kind === 'prev') return at === oldest ? null : pairs[at < 0 ? oldest : at + 1];
+    return at === 0 ? null : pairs[at < 0 ? 0 : at - 1];
+  };
+  const updateDiffPaging = () => {
+    const selector = document.getElementById('diff-version-selector');
+    const active = document.activeElement;
+    let lost = false;
+    Object.keys(DIFF_PAGING_ICONS).forEach(kind => {
+      const button = document.getElementById('diff-pair-' + kind);
+      if (!button) return;
+      const disabled = !diffPairTarget(kind);
+      if (disabled && !button.disabled && active === button) lost = true;
+      button.disabled = disabled;
+    });
+    // A disabled button cannot hold focus, so the select takes it.
+    if (lost && selector && !selector.disabled) selector.focus();
+  };
+  const setupDiffPaging = () => {
+    Object.keys(DIFF_PAGING_ICONS).forEach(kind => {
+      const button = document.getElementById('diff-pair-' + kind);
+      if (!button || button._pagingBound) return;
+      button._pagingBound = true;
+      button.innerHTML = DIFF_PAGING_ICONS[kind]();
+      button.addEventListener('click', () => {
+        const selector = document.getElementById('diff-version-selector');
+        const target = diffPairTarget(kind);
+        if (!selector || !target) return;
+        selector.value = target.value;
+        selector.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+    updateDiffPaging();
   };
 
   // Initialize config diff tab
@@ -18386,6 +18448,7 @@
         selector.innerHTML = '<option value="">No versions available</option>';
         selector.disabled = true;
       }
+      updateDiffPaging();
       return;
     }
 
@@ -18420,6 +18483,7 @@
       const retained = configInspectionStates.get(configInspectionKey(configType, configName));
       const previous = retained?.diff || '';
       selector.value = [...selector.options].some(option => option.value === previous) ? previous : '';
+      updateDiffPaging();
       if (selector.value) {
         const [fromId, toId] = selector.value.split('|');
         await window.loadConfigDiffById(fromId, toId);
@@ -18477,8 +18541,10 @@
     if (!diffOutput) return;
 
     // Create header
-    let output = `Configuration Changes: ${fromId} → ${toId}\n`;
-    output += '─'.repeat(60) + '\n\n';
+    const heading = document.createElement('strong');
+    heading.className = 'diff-output-heading';
+    heading.textContent = `Configuration Changes Diff: ${fromId} → ${toId}`;
+    let output = '\n' + '─'.repeat(60) + '\n\n';
 
     if (!diffData.has_changes) {
       output += 'No changes detected between these configuration versions.\n';
@@ -18490,7 +18556,8 @@
     }
 
     // Set the text content to preserve formatting
-    diffOutput.textContent = output;
+    diffOutput.textContent = '';
+    diffOutput.append(heading, document.createTextNode(output));
     diffOutput.classList.add('active');
   };
 
