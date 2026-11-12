@@ -130,3 +130,27 @@ test('tooltip inside a dialog stays within the dialog edge, which clips overflow
  expect(parseFloat(tip.style.left)+90).toBeLessThanOrEqual(292);
  }finally{w.close()}
 });
+test('tooltip in a small dialog is capped to the dialog width and stays inside both edges, flipping above when there is no room below',()=>{
+ const w=boot();try{
+ const modal=w.document.getElementById('modal');modal.showModal();
+ // A 300 by 200 dialog, a control near its bottom right, and a tip that wants 350 by 20.
+ w.Element.prototype.getBoundingClientRect=function(){
+  if(this.getAttribute&&this.getAttribute('role')==='tooltip'){
+   const cap=parseFloat(this.style.maxWidth||'9999');const wd=Math.min(350,cap);
+   const l=parseFloat(this.style.left||0),t=parseFloat(this.style.top||0);
+   return {left:l,top:t,right:l+wd,bottom:t+20,width:wd,height:20};
+  }
+  if(this.id==='modal')return {left:0,top:0,right:300,bottom:200,width:300,height:200};
+  return {left:250,top:170,right:290,bottom:195,width:40,height:25};
+ };
+ w.document.getElementById('inside').focus();
+ const tip=modal.querySelector('[role=tooltip]');
+ expect(parseFloat(tip.style.maxWidth)).toBeLessThanOrEqual(284);
+ const l=parseFloat(tip.style.left),t=parseFloat(tip.style.top);
+ expect(l).toBeGreaterThanOrEqual(8);
+ expect(l+Math.min(350,parseFloat(tip.style.maxWidth))).toBeLessThanOrEqual(292);
+ // No room below the control, so the tip sits above it, inside the dialog.
+ expect(t+20).toBeLessThanOrEqual(170);
+ expect(t).toBeGreaterThanOrEqual(8);
+ }finally{w.close()}
+});

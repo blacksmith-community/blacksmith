@@ -52,17 +52,24 @@
   function position() {
     if (!active?.isConnected || !tooltip) return hide();
     const box = active.getBoundingClientRect();
-    const tip = tooltip.getBoundingClientRect();
     const viewport = root.visualViewport;
     const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
     const width = viewport?.width || root.innerWidth, height = viewport?.height || root.innerHeight;
-    // A dialog clips what overflows it, so a tip inside one stays within the dialog too.
+    // A dialog clips what overflows it, so a tip inside one stays within the
+    // dialog and the viewport on both axes.
     const hostBox = tooltip.parentElement && tooltip.parentElement !== document.body ? tooltip.parentElement.getBoundingClientRect() : null;
-    const minX = Math.max(left, hostBox ? hostBox.left : left), maxX = Math.min(left + width, hostBox && hostBox.width > 0 ? hostBox.right : left + width);
+    const hosted = hostBox && hostBox.width > 0;
+    const minX = Math.max(left, hosted ? hostBox.left : left), maxX = Math.min(left + width, hosted ? hostBox.right : left + width);
+    const minY = Math.max(top, hosted ? hostBox.top : top), maxY = Math.min(top + height, hosted ? hostBox.bottom : top + height);
+    // Cap the width to the room there is, then measure, so the text wraps
+    // rather than running past the edge.
+    tooltip.style.maxWidth = `${Math.max(80, Math.min(384, maxX - minX - 16))}px`;
+    const tip = tooltip.getBoundingClientRect();
     const fit = (size) => {
       const wantLeft = Math.max(minX + 8, Math.min(box.left, maxX - size.width - 8));
-      const below = box.bottom + 6;
-      const wantTop = Math.max(top + 8, Math.min(below + size.height <= top + height - 8 ? below : box.top - size.height - 6, top + height - size.height - 8));
+      const below = box.bottom + 6, above = box.top - size.height - 6;
+      const preferred = below + size.height <= maxY - 8 ? below : above >= minY + 8 ? above : below;
+      const wantTop = Math.max(minY + 8, Math.min(preferred, maxY - size.height - 8));
       return [wantLeft, wantTop];
     };
     let [setLeft, setTop] = fit(tip);
