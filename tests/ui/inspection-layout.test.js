@@ -8,12 +8,15 @@ test('config status is explicit while APIs keep the clean config ID',()=>{
  expect(d.querySelector('.configs-help').textContent).not.toContain('*');
  }finally{w.close()}
 });
-test('task metadata uses named facts instead of an eight-column table',async()=>{
+test('task metadata is one table row under seven headers, with the deployment in the title bar',async()=>{
  const {w,d}=boot();try{
  await w.showTaskDetails('1');
- const facts=d.querySelector('.task-summary-facts');expect(facts?.tagName).toBe('DL');
- expect([...facts.querySelectorAll('dt')].map(e=>e.textContent)).toEqual(['State','Description','Deployment','Started','Finished','Duration','User','Context ID']);
- expect(facts.querySelector('#task-description')?.tagName).toBe('DD');expect(d.querySelector('.task-details-table')).toBeNull();expect(d.querySelector('#task-details-content .task-tabs-nav')).not.toBeNull();
+ const table=d.querySelector('#task-details-content .task-summary-table');expect(table?.tagName).toBe('TABLE');
+ expect([...table.querySelectorAll('thead th')].map(e=>e.textContent)).toEqual(['State','Description','Started','Finished','Duration','User','Context ID']);
+ expect(table.querySelectorAll('tbody tr').length).toBe(1);
+ expect([...table.querySelectorAll('tbody td')].map(e=>e.dataset.label)).toEqual(['State','Description','Started','Finished','Duration','User','Context ID']);
+ expect(table.querySelector('#task-description')?.tagName).toBe('TD');expect(d.querySelector('.task-details-table')).toBeNull();expect(d.querySelector('#task-details-content .task-tabs-nav')).not.toBeNull();
+ expect(d.querySelector('#task-details-modal .modal-header #task-deployment')).not.toBeNull();
  }finally{w.close()}
 });
 test('settings describe fields and apply actions, reject fractional limits without writing',async()=>{
@@ -37,5 +40,11 @@ test('settings retain failed edits and do not overwrite edits made during a save
  expect(input.value).toBe('2m');expect(d.getElementById('feedback-reconciler-interval').textContent).toContain('unapplied');
  button.click();complete({ok:false,status:400,json:async()=>({error:'Invalid interval'})});await sleep(0);
  expect(input.value).toBe('2m');expect(input.getAttribute('aria-invalid')).toBe('true');expect(d.getElementById('feedback-reconciler-interval').textContent).toBe('Invalid interval');
+ }finally{w.close()}
+});
+test('the task facts table is not sortable',async()=>{
+ const {w,d}=boot();try{
+ await w.showTaskDetails('1');
+ expect(d.querySelector('#task-details-content .task-summary-table').dataset.sortable).toBe('false');
  }finally{w.close()}
 });

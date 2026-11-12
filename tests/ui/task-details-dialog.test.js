@@ -92,17 +92,48 @@ t('the selected tab is drawn apart from the bar behind it',()=>{
  expect(pill).not.toMatch(/height:\s*48px/);
 });
 
-t('the metadata is one even grid with the instance context spacing and room under the title',()=>{
- const facts=bodies('inspection-layout.css','#task-details-modal .task-summary-facts');
- const ctx=bodies('forge-theme.css','.entity-facts');
- const gap=(b)=>(b.match(/(?:^|[;\s])gap:\s*([^;]+)/)||[])[1].trim();
- expect(gap(facts)).toBe(gap(ctx));
- expect(facts).toMatch(/grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
- expect(bodies('inspection-layout.css','#task-details-modal .task-fact-description')).not.toMatch(/grid-column:\s*span/);
- expect(bodies('inspection-layout.css','#task-details-modal .task-fact-deployment')).not.toMatch(/grid-column:\s*span/);
- expect(bodies('inspection-layout.css','#task-details-modal .task-summary-facts dt')).toMatch(/font-size:\s*\.75rem/);
- expect(bodies('inspection-layout.css','#task-details-modal .task-summary-facts dd')).toMatch(/margin:\s*2px 0 0/);
- expect(bodies('inspection-layout.css','#task-details-modal .task-summary-section')).toMatch(/margin:\s*16px 0 16px/);
+t('the metadata is one compact row table with small bold headers and tight padding',()=>{
+ expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table th')).toMatch(/font-size:\s*\.75rem/);
+ expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table th')).toMatch(/font-weight:\s*(600|700)/);
+ expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table td')).toMatch(/padding:\s*\.25rem/);
+ expect(bodies('inspection-layout.css','#task-details-modal .task-summary-section')).not.toMatch(/border-bottom/);
+ expect(bodies('inspection-layout.css','#task-details-modal .task-summary-section')).toMatch(/margin:\s*8px 0 4px/);
+ const css=require('fs').readFileSync('ui/inspection-layout.css','utf8');
+ expect(css).toMatch(/task-summary-table td:not\(\.task-meta-description\)\s*\{\s*white-space:\s*nowrap/);
+ expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*td::before\s*\{\s*content:\s*attr\(data-label\)/);
+ expect(css).not.toContain('task-summary-facts');
+});
+
+t('the title bar holds the title, the deployment, and the close button, in that order',async()=>{
+ const {d}=await start('done',ALL);
+ const header=d.querySelector('#task-details-modal .modal-header');
+ const kids=[...header.children].map((e)=>e.id||e.className);
+ expect(kids.indexOf('task-details-modal-title')).toBeLessThan(kids.indexOf('task-deployment'));
+ expect(kids.indexOf('task-deployment')).toBeLessThan(kids.indexOf('modal-close'));
+ const group=d.getElementById('task-deployment');
+ expect(group.getAttribute('role')).toBe('group');
+ expect(group.getAttribute('aria-label')).toBe('Deployment');
+ expect(group.querySelector('dt, th, label')).toBeNull();
+ expect(d.querySelector('#task-details-content .task-summary-facts')).toBeNull();
+});
+
+t('a long deployment name is cut by CSS and keeps its full name in title and in the copy value',async()=>{
+ const LONG='valkey-standalone-ab009e66-d788-4139-a35a-2e344d987769';
+ const env=boot({noDialogs:true,routes:[
+  ['/b/tasks/44/output',(u,o,j)=>j(200,{output:''})],
+  ['/b/tasks/44',(u,o,j)=>j(200,{task:{id:44,state:'done',description:'x',user:'admin',deployment:LONG}})],
+  ['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],
+  ['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});
+ envs.push(env);env.w.eval(OAT);await sleep(60);
+ await env.w.showTaskDetails(44);await sleep(60);
+ const name=env.d.getElementById('task-deployment-text');
+ expect(name.textContent).toBe(LONG);
+ expect(name.title).toBe(LONG);
+ expect(env.d.getElementById('task-deployment-copy').dataset.copyValue).toBe(LONG);
+ const rule=bodies('inspection-layout.css','#task-details-modal .task-title-deployment .task-deployment-name');
+ expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+ expect(rule).toMatch(/white-space:\s*nowrap/);
+ expect(rule).toMatch(/overflow:\s*hidden/);
 });
 
 t('event times use the shared timestamp format, with the ISO value in the title',async()=>{
@@ -175,11 +206,13 @@ t('the Deployment copy icon is hidden when the task has no deployment',async()=>
  await env.w.showTaskDetails(43);await sleep(60);
  const dd=env.d.getElementById('task-deployment');
  expect(dd.querySelector('button').hidden).toBe(true);
- expect(dd.querySelector('.empty-value')).not.toBeNull();
+ expect(dd.textContent.trim()).toBe('');
+ expect(env.d.getElementById('task-deployment-text').hasAttribute('title')).toBe(false);
+ expect(env.d.querySelector('#task-details-modal .modal-header').getBoundingClientRect).toBeDefined();
 });
 
 t('the field labels are heavier and use the foreground token',()=>{
- const body=bodies('inspection-layout.css','#task-details-modal .task-summary-facts dt');
+ const body=bodies('inspection-layout.css','#task-details-modal .task-summary-table th');
  expect(body).toMatch(/font-weight:\s*(600|700)/);
  expect(body).toMatch(/color:\s*var\(--foreground\)/);
  expect(body).not.toMatch(/muted-foreground/);

@@ -1,22 +1,27 @@
-/* Inspection metadata is a readable set of facts, not a wide one-row data table.
-   The grid and spacing match the facts in the instance context card. */
-#task-details-modal .task-summary-facts {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px 24px; margin: 0; padding: 0;
-}
-#task-details-modal .task-summary-facts > div { min-width: 0; padding: 0; }
-#task-details-modal .task-summary-facts dt { color: var(--foreground); font-size: .75rem; font-weight: 700; margin: 0; }
-#task-details-modal .task-fact-deployment dd { display: flex; align-items: center; gap: 8px; }
-#task-details-modal .task-summary-facts dd { color: var(--foreground); font-size: .875rem; margin: 2px 0 0; overflow-wrap: anywhere; }
-#task-details-modal .task-summary-section { padding: 0 0 16px; margin: 16px 0 16px; border-bottom: 1px solid var(--border); }
+/* The BOSH task dialog keeps its facts in one compact row. The deployment
+   sits in the title bar, between the title and the close button. */
+#task-details-modal .modal-header { flex-wrap: wrap; }
+#task-details-modal .modal-header h3 { flex: 0 0 auto; }
+#task-details-modal .task-title-deployment { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; }
+#task-details-modal .task-title-deployment .task-deployment-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: .9375rem; }
+#task-details-modal .task-title-deployment button { flex: none; }
+#task-details-modal .task-summary-section { padding: 0; margin: 8px 0 4px; border: 0; }
+#task-details-modal .task-summary-table { width: 100%; border-collapse: collapse; table-layout: auto; margin: 0; }
+#task-details-modal .task-summary-table th, #task-details-modal .task-summary-table td { padding: .25rem .75rem .25rem 0; text-align: left; vertical-align: top; border: 0; background: transparent; }
+#task-details-modal .task-summary-table th { color: var(--foreground); font-size: .75rem; font-weight: 700; white-space: nowrap; }
+#task-details-modal .task-summary-table td { color: var(--foreground); font-size: .875rem; }
+#task-details-modal .task-summary-table td:not(.task-meta-description) { white-space: nowrap; }
+#task-details-modal .task-summary-table td.task-meta-description { overflow-wrap: anywhere; min-width: 10rem; }
 #blacksmith .config-id { white-space: nowrap; }
 #blacksmith .config-active-label { display: inline-block; margin-left: 8px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--foreground); background: var(--secondary); font-size: .75rem; }
 #blacksmith .blacksmith-settings .settings-row { align-items: center; }
 #blacksmith .blacksmith-settings .settings-feedback { white-space: normal; overflow-wrap: anywhere; }
 #blacksmith .blacksmith-settings [aria-invalid="true"] { border-color: var(--danger); outline: 1px solid var(--danger); }
-@media (max-width: 900px) {
-  #task-details-modal .task-summary-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 600px) {
-  #task-details-modal .task-summary-facts { grid-template-columns: 1fr; }
+@media (max-width: 760px) {
+  #task-details-modal .modal-header .task-title-deployment { order: 4; flex: 1 1 100%; justify-content: flex-start; }
+  #task-details-modal .task-summary-table, #task-details-modal .task-summary-table tbody, #task-details-modal .task-summary-table tr, #task-details-modal .task-summary-table td { display: block; }
+  #task-details-modal .task-summary-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #task-details-modal .task-summary-table td { display: flex; gap: .75rem; padding: .25rem 0; }
+  #task-details-modal .task-summary-table td::before { content: attr(data-label); flex: 0 0 6.5rem; font-size: .75rem; font-weight: 700; color: var(--foreground); }
+  #task-details-modal .task-summary-table td:not(.task-meta-description) { white-space: normal; }
 }

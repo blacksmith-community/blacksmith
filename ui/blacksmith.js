@@ -17615,6 +17615,7 @@
         <dialog id="task-details-modal" class="modal-dialog" aria-labelledby="task-details-modal-title">
               <div class="modal-header">
                 <h3 id="task-details-modal-title">BOSH task</h3>
+                <div class="task-title-deployment" id="task-deployment" role="group" aria-label="Deployment"><button type="button" id="task-deployment-copy" class="copy-btn-inline" hidden aria-label="Copy deployment name" title="Copy deployment name" data-keep-key="task-deployment-copy">${blacksmithIcon('copy', { size: 14 })}</button><span id="task-deployment-text" class="task-deployment-name"></span></div>
                 <div class="task-actions">
                   <button id="cancel-task-btn" class="btn btn-secondary" style="display: none;" onclick="cancelTaskAndRefresh()">Cancel Task</button>
                 </div>
@@ -17624,16 +17625,18 @@
                 <div id="task-details-loading" class="loading">Loading task details...</div>
                 <div id="task-details-content" class="task-details-content" style="display: none;">
                   <div class="task-summary task-summary-section">
-                    <dl class="task-summary-facts">
-                      <div><dt>State</dt><dd id="task-state-badge"></dd></div>
-                      <div class="task-fact-description"><dt>Description</dt><dd id="task-description"></dd></div>
-                      <div class="task-fact-deployment"><dt>Deployment</dt><dd id="task-deployment"><button type="button" id="task-deployment-copy" class="copy-btn-inline" hidden aria-label="Copy deployment name" title="Copy deployment name" data-keep-key="task-deployment-copy">${blacksmithIcon('copy', { size: 14 })}</button><span id="task-deployment-text"></span></dd></div>
-                      <div><dt>Started</dt><dd id="task-started"></dd></div>
-                      <div><dt>Finished</dt><dd id="task-finished"></dd></div>
-                      <div><dt>Duration</dt><dd id="task-duration"></dd></div>
-                      <div><dt>User</dt><dd id="task-user"></dd></div>
-                      <div><dt>Context ID</dt><dd id="task-context-id"></dd></div>
-                    </dl>
+                    <table class="task-summary-table task-meta-table" data-sortable="false">
+                      <thead><tr><th scope="col">State</th><th scope="col">Description</th><th scope="col">Started</th><th scope="col">Finished</th><th scope="col">Duration</th><th scope="col">User</th><th scope="col">Context ID</th></tr></thead>
+                      <tbody><tr>
+                        <td data-label="State" id="task-state-badge"></td>
+                        <td data-label="Description" id="task-description" class="task-meta-description"></td>
+                        <td data-label="Started" id="task-started"></td>
+                        <td data-label="Finished" id="task-finished"></td>
+                        <td data-label="Duration" id="task-duration"></td>
+                        <td data-label="User" id="task-user"></td>
+                        <td data-label="Context ID" id="task-context-id"></td>
+                      </tr></tbody>
+                    </table>
                   </div>
 
                   <bs-tabs class="task-tabs">
@@ -18626,12 +18629,16 @@
       document.getElementById('task-details-modal-title').textContent = `BOSH task ${task.id}`;
       contentDiv.dataset.taskState = task.state || '';
       setCellText(document.getElementById('task-description'), task.description);
-      setCellText(document.getElementById('task-deployment-text'), task.deployment);
       {
-        // The copy icon leads the value and only shows when there is a name.
+        // The title bar shows the deployment with its copy icon first. With no
+        // deployment the slot stays empty, and a long name is cut with an
+        // ellipsis while title keeps the whole of it.
         const copy = document.getElementById('task-deployment-copy');
+        const name = document.getElementById('task-deployment-text');
         copy.dataset.copyValue = isEmptyValue(task.deployment) ? '' : String(task.deployment);
         copy.hidden = !copy.dataset.copyValue;
+        name.textContent = copy.dataset.copyValue;
+        if (copy.dataset.copyValue) name.title = copy.dataset.copyValue; else name.removeAttribute('title');
       }
       setCellText(document.getElementById('task-user'), task.user);
       setCellText(document.getElementById('task-context-id'), task.context_id);
