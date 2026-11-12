@@ -23974,6 +23974,7 @@
       button.dataset.direction = direction;
       button.hidden = true;
       button.setAttribute('aria-label', `Scroll tabs ${direction}`);
+      if (scroller.id) button.setAttribute('data-keep-key', `tab-scroll:${scroller.id}:${direction}`);
       button.innerHTML = blacksmithIcon(`chevron-${direction}`, { size: 16 });
       return button;
     };
@@ -24867,6 +24868,7 @@
         button.title = status === 'failed' ? 'Reconnect failed session' : 'Reconnect';
         button.setAttribute('aria-label', status === 'failed' ? `Reconnect ${label.text}, failed` : `Reconnect ${label.text}`);
         button.innerHTML = blacksmithIcon('refresh-ccw', { size: 14 });
+        if (options.minimized) button.setAttribute('data-keep-key', `terminal-dock:reconnect:${sessionKey}`);
         button.addEventListener('click', event => {
           event.stopPropagation();
           this.reconnectSession(sessionKey, { activate: !options.minimized });
@@ -25113,6 +25115,7 @@
           name.className = 'minimized-session-label';
           name.textContent = label.text;
           open.appendChild(name);
+          open.setAttribute('data-keep-key', `terminal-dock:open:${sessionKey}`);
           open.addEventListener('click', () => {
             this.switchToSession(sessionKey);
             this.restoreAll();
@@ -25122,11 +25125,31 @@
           close.innerHTML = blacksmithIcon('x', { size: 14 });
           close.title = `Close terminal ${label.text}`;
           close.setAttribute('aria-label', close.title);
+          close.setAttribute('data-keep-key', `terminal-dock:close:${sessionKey}`);
           close.addEventListener('click', event => this.closeSession(sessionKey, event));
           tab.append(open, this.statusSlot(sessionKey, session.context, status, { minimized: true }), close);
 
           minimizedTabs.appendChild(tab);
         });
+
+        // The phone shows one Terminals button that opens the same entries as a list.
+        const toggle = document.getElementById('terminal-dock-toggle');
+        if (toggle) {
+          toggle.textContent = `Terminals (${this.sessions.size})`;
+          if (!toggle.dataset.bound) {
+            toggle.dataset.bound = 'true';
+            toggle.addEventListener('click', () => this.setDockList(!minimizedBar.classList.contains('dock-open')));
+            document.addEventListener('click', event => {
+              if (minimizedBar.classList.contains('dock-open') && !minimizedBar.contains(event.target)) this.setDockList(false);
+            });
+            document.addEventListener('keydown', event => {
+              if (event.key === 'Escape' && minimizedBar.classList.contains('dock-open')) {
+                this.setDockList(false);
+                try { toggle.focus(); } catch (_) { }
+              }
+            });
+          }
+        }
 
         // The strip scrolls through the same controls as the dialog's tabs.
         if (!minimizedTabs.scrollControls) minimizedTabs.scrollControls = createTabScrollControls(minimizedTabs, minimizedTabs.parentElement);
@@ -25138,9 +25161,18 @@
       }
     },
 
+    // Opens or shuts the phone's list of docked sessions.
+    setDockList(open) {
+      const minimizedBar = document.getElementById('minimized-terminal-bar');
+      const toggle = document.getElementById('terminal-dock-toggle');
+      if (minimizedBar) minimizedBar.classList.toggle('dock-open', Boolean(open));
+      if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    },
+
     hideMinimizedBar() {
       const minimizedBar = document.getElementById('minimized-terminal-bar');
       if (minimizedBar) {
+        this.setDockList(false);
         minimizedBar.classList.remove('active');
         document.body.classList.remove('terminal-minimized');
 

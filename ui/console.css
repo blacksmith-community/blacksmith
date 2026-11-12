@@ -43,7 +43,6 @@ body > header { height: 56px; box-shadow: none; }
 body > header > .wrap { height: 100%; gap: 12px; }
 body > header #logo { font-size: 18px; font-weight: 650; }
 body > header .theme-toggle { height: 32px; margin-top: 0; border-color: #8999ad; padding: 4px 10px; }
-#minimized-terminal-bar { top: 56px; }
 .main-content > .wrap { min-height: 0; padding-bottom: 12px; }
 /* The breadcrumb row, the main tabs, and the content read as one rounded box. */
 .main-content #route-context { margin-top: 14px; flex-shrink: 0; border: 1px solid var(--border-primary); border-radius: 10px 10px 0 0; }

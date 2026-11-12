@@ -249,6 +249,8 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-flow-options .filter-row select { flex: 1 1 auto; width: auto; min-width: 0; }
 /* Run command stacks every option as label, control, then help, in one column of comfortable reading width. The bottom padding keeps the last field clear of the sticky footer. */
 #upgrade .batch-flow-options .command-pane { padding-bottom: 140px; }
+/* Every operation's options pane, not only Run command, ends clear of the sticky footer. */
+#upgrade .batch-flow-options > :last-child { padding-bottom: 140px; }
 #upgrade .command-pane > .rotate-op-hint { margin: 0 0 20px; }
 #upgrade .command-pane .filter-row { max-width: 640px; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; align-items: start; gap: 8px; margin: 0 0 20px; }
 #upgrade .command-pane .filter-row[hidden] { display: none; }

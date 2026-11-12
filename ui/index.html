@@ -10,11 +10,11 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/icon-180.png">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" href="/vendor/oat/oat.min.css">
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261112-oat-396">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261112-oat-397">
   <link rel="stylesheet" href="/vendor/wterm/0.5.10/terminal.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/console.css?v=20261028-oat-310">
-  <link rel="stylesheet" href="/forge-theme.css?v=20261112-oat-363">
+  <link rel="stylesheet" href="/console.css?v=20261028-oat-311">
+  <link rel="stylesheet" href="/forge-theme.css?v=20261112-oat-364">
   <link rel="stylesheet" href="/inspection-layout.css?v=20261112-oat-341">
   <link rel="stylesheet" href="/routes.css?v=20261028-oat-276">
   <link rel="stylesheet" href="/view-guidance.css?v=20261028-oat-18">
@@ -50,23 +50,6 @@
     </div>
   </header>
 
-  <!-- Minimized Terminal Bar -->
-  <div id="minimized-terminal-bar" class="minimized-terminal-bar is-transparent is-invisible">
-    <div class="left-section">
-      <img src="/assets/brand/icon-192.png" alt="Blacksmith">
-      <div class="minimized-tabs-host" id="minimized-tabs-host">
-        <div class="minimized-terminal-tabs" id="minimized-terminal-tabs"></div>
-      </div>
-    </div>
-    <div class="right-section">
-      <button class="terminal-control-btn" title="Restore Terminal" onclick="window.TerminalManager && window.TerminalManager.restoreAll()">
-        <svg class="lucide lucide-maximize" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M21 8V5a2 2 0 0 0-2-2h-3" /><path d="M3 16v3a2 2 0 0 0 2 2h3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" /></svg>
-      </button>
-      <button class="terminal-control-btn" title="Close All Terminals" onclick="window.TerminalManager && window.TerminalManager.closeAll()">
-        <svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-      </button>
-    </div>
-  </div>
 
   <main class="main-content" id="console-main" tabindex="-1">
     <div class="wrap">
@@ -157,6 +140,25 @@
       </div>
     </div>
   </main>
+
+  <!-- Terminal dock: the minimized SSH sessions, in the page flow at the bottom -->
+  <div id="minimized-terminal-bar" class="minimized-terminal-bar is-transparent is-invisible" role="region" aria-label="Terminal sessions">
+    <div class="left-section">
+      <img src="/assets/brand/icon-192.png" alt="Blacksmith">
+      <button type="button" id="terminal-dock-toggle" class="terminal-dock-toggle" aria-expanded="false" aria-controls="minimized-terminal-tabs" data-keep-key="terminal-dock:toggle">Terminals (0)</button>
+      <div class="minimized-tabs-host" id="minimized-tabs-host">
+        <div class="minimized-terminal-tabs" id="minimized-terminal-tabs"></div>
+      </div>
+    </div>
+    <div class="right-section">
+      <button class="terminal-control-btn" title="Restore Terminal" aria-label="Restore terminals" data-keep-key="terminal-dock:restore" onclick="window.TerminalManager && window.TerminalManager.restoreAll()">
+        <svg class="lucide lucide-maximize" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M21 8V5a2 2 0 0 0-2-2h-3" /><path d="M3 16v3a2 2 0 0 0 2 2h3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" /></svg>
+      </button>
+      <button class="terminal-control-btn" title="Close All Terminals" aria-label="Close all terminals" data-keep-key="terminal-dock:close-all" onclick="window.TerminalManager && window.TerminalManager.closeAll()">
+        <svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+      </button>
+    </div>
+  </div>
 
   <!-- CF Registration Modal -->
   <dialog id="registration-modal" class="modal-dialog" aria-labelledby="registration-modal-title">
@@ -390,7 +392,7 @@
   </dialog>
   <script src="/vendor/wterm/0.5.10/wterm.min.js"></script>
   <script type="text/javascript" src="/icons.js?v=20261112-oat-371"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261112-oat-423"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261112-oat-424"></script>
   <script src="/routes.js?v=20261112-oat-335"></script>
   <script src="/view-guidance.js?v=20261028-oat-316"></script>
   <script src="/action-help.js?v=20261112-oat-277"></script>

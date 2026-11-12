@@ -7143,30 +7143,64 @@ bs-tabs > .cert-tab-pane[hidden] {
   border-radius: 0;
 }
 
-/* Minimized terminal header bar */
+/* Terminal dock. The minimized sessions sit in the page flow, as the last row
+   of the page, so the content above it shrinks by the dock's height and
+   nothing is covered. Its z-index stays below every drawer, dialog, toast,
+   and tooltip. */
 .minimized-terminal-bar {
-  position: fixed;
-  top: 30px;
-  left: 0;
-  right: 0;
-  height: 40px;
+  position: relative;
+  z-index: 1;
+  flex: none;
+  min-height: 40px;
   background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-primary);
-  display: flex;
+  border-top: 1px solid var(--border-primary);
+  display: none;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  z-index: 9999;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-100%);
-  transition: all 0.3s ease;
+  padding: 4px 16px;
 }
 
 .minimized-terminal-bar.active {
+  display: flex;
   opacity: 1;
   visibility: visible;
-  transform: translateY(0);
+}
+
+.terminal-dock-toggle {
+  display: none;
+  flex: none;
+  white-space: nowrap;
+}
+
+/* On a phone the dock is one Terminals button, and the sessions open as a list above it. */
+@media (max-width: 600px) {
+  .minimized-terminal-bar { padding: 4px 8px; }
+  .minimized-terminal-bar .left-section > img { display: none; }
+  .terminal-dock-toggle { display: inline-flex; align-items: center; min-height: 32px; }
+  .minimized-terminal-bar .left-section { position: static; }
+  .minimized-terminal-bar .minimized-tabs-host { position: static; }
+  .minimized-terminal-bar .minimized-terminal-tab { width: 100%; box-sizing: border-box; }
+  .minimized-terminal-bar .minimized-terminal-tab .minimized-session-open { flex: 1 1 auto; min-width: 0; text-align: left; }
+  .minimized-terminal-bar .minimized-session-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .minimized-terminal-bar .minimized-tabs-host > .tab-scroll-btn { display: none; }
+  .minimized-terminal-bar .minimized-terminal-tabs {
+    display: none;
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    max-height: 50vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 6px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px 8px 0 0;
+    mask-image: none;
+  }
+  .minimized-terminal-bar.dock-open .minimized-terminal-tabs { display: flex; }
 }
 
 .minimized-terminal-bar .left-section {
@@ -7284,11 +7318,6 @@ bs-tabs > .cert-tab-pane[hidden] {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
-}
-
-/* Hide main tabs when minimized bar is active */
-body.terminal-minimized .tabs {
-  margin-top: 40px;
 }
 
 /* Dark theme adjustments */
