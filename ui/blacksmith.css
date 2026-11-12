@@ -14532,6 +14532,12 @@ tr.row-link { cursor: pointer; }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[data-label=""]::before { display: none; }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[colspan] { display: block; padding: 12px 0; text-align: center; }
 
+  /* The wide certificate columns stay hidden below 1281px, as in the table. */
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td.cert-col-wide { display: none; }
+  .cert-table-wrap { overflow-x: visible; border: 0; }
+  .cert-table { min-width: 0; }
+  :is(#blacksmith, #services, #certificates) table.cert-table[data-cards="true"] > tbody > tr > td[colspan] { text-align: left; padding: 8px 0; }
+
   /* Org and Space: each label sits beside its select, one pair per row. */
   .org-space-table, .org-space-table tbody { display: block; width: 100%; }
   .org-space-table tr { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 6px 10px; }

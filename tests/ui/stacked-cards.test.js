@@ -203,3 +203,33 @@ t('the Org and Space pairs stack under 700px', () => {
   const outside = css().replace(rules, '');
   expect(outside).toMatch(/\.org-space-table select \{[^}]*width: 200px/);
 });
+
+const H = require('./certificates/harness.js');
+
+t('the certificate tables are in the card list and keep wide columns hidden', () => {
+  const src = fs.readFileSync(path.join(UI, 'blacksmith.js'), 'utf8');
+  const list = src.match(/const CARD_TABLE_SELECTOR = \[([^\]]*)\]/)[1];
+  expect(list).toContain('.cert-table');
+  const rules = phoneRules();
+  expect(rules).toMatch(/td\.cert-col-wide[^{]*\{[^}]*display: none/);
+});
+
+t('every fleet certificate row is a card of labelled pairs', async () => {
+  const { boot: bootFleet, sleep: nap, iso, now, day } = H.fleet;
+  const { w, d, server } = await bootFleet();
+  try {
+    server.certs = [{ id: 'A', key: '/ws/A', variable: 'A', kind: 'leaf', common_name: 'cn-A', issuer: 'CN=X', owners: [{ kind: 'instance', instance_id: 'i1', instance_name: 'one', service_name: 'valkey', plan_name: 's' }], affected_instances: 1, effective_not_after: iso(now + 40 * day), days_left: 40, expiry: 'ok', health: 'ok', attention: true, findings: [], observations: [], coverage: { expected_listeners: 1, observed_listeners: 1, failed_listeners: 0, complete: true }, rotation: { allowed: true }, versions: {} }];
+    // The page starts its table observer on DOMContentLoaded, so the rows render as they do live.
+    d.dispatchEvent(new w.Event('DOMContentLoaded'));
+    await w.blacksmithNav.switchTab('certificates');
+    await nap(250);
+    const table = d.getElementById('cert-table');
+    expect(table.getAttribute('data-cards')).toBe('true');
+    const row = d.querySelector('#cert-tbody tr.cert-row');
+    const names = Array.from(row.cells).map((c) => c.getAttribute('data-label'));
+    expect(names.slice(1, 6)).toEqual(['Expiry', 'Health', 'Certificate', 'Owner', 'Expires']);
+    // The checkbox cell carries no visible label, only its own accessible name.
+    expect(names[0]).toBe('');
+    expect(row.cells[0].querySelector('input').getAttribute('aria-label')).toMatch(/^Rotate /);
+  } finally { w.close(); }
+});
