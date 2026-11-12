@@ -162,3 +162,23 @@ t('the card tables are named in one selector list in the script', () => {
   const list = src.match(/const CARD_TABLE_SELECTOR = \[([^\]]*)\]/)[1];
   ['.tasks-table', '.vms-table', '.events-table', '.configs-table-container table'].forEach((name) => expect(list).toContain(name));
 });
+
+t('the log tables become cards with a label on every cell', () => {
+  const { w, d } = boot();
+  try {
+    const broker = mount(w, d, w.__T.formatBlacksmithLogs('2026-10-31T10:00:00Z INFO first\n2026-10-31T10:00:01Z ERROR second', null, { total_lines: 2, has_more: false })).querySelector('table.logs-table');
+    expect(broker.getAttribute('data-cards')).toBe('true');
+    const brokerLabels = labels(broker);
+    expect(brokerLabels.length).toBeGreaterThan(0);
+    brokerLabels.forEach((label) => expect(label).toBeTruthy());
+    const inst = mount(w, d, w.__T.formatInstanceLogs({ 'node/a': { 'a.log': 'INFO first' } }, false)).querySelector('table.instance-logs-table');
+    expect(inst.getAttribute('data-cards')).toBe('true');
+    expect(labels(inst)).toEqual(['Timestamp (UTC)', 'Level', 'Message']);
+  } finally { w.close(); }
+});
+
+t('the deployment and debug log tables are in the card list', () => {
+  const src = fs.readFileSync(path.join(UI, 'blacksmith.js'), 'utf8');
+  const list = src.match(/const CARD_TABLE_SELECTOR = \[([^\]]*)\]/)[1];
+  ['.deployment-log-table', '.debug-log-table', '.instance-logs-table', '.logs-table'].forEach((name) => expect(list).toContain(name));
+});

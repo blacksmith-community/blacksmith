@@ -1173,7 +1173,8 @@
   // shows only its controls. The tables keep their markup, so sorting,
   // filtering, and the controls in each row work as before.
   const CARD_TABLE_SELECTOR = [
-    '.tasks-table', '.vms-table', '.events-table', '.configs-table-container table'
+    '.tasks-table', '.vms-table', '.events-table', '.configs-table-container table',
+    '.logs-table', '.instance-logs-table', '.deployment-log-table', '.debug-log-table'
   ].join(',');
   let cardSortSeq = 0;
   const cardHeaderLabels = (table) => {
