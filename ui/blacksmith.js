@@ -1229,7 +1229,7 @@
   // CIDs run to about 180 characters on the Proxmox CPI, so a cell shows the
   // start of each one, keeps the whole value in its title, and copies it whole.
   const cidText = (value) => `<span class="cid-value" title="${escapeAttribute(String(value))}">${escapeHtml(String(value))}</span>`;
-  const cidCopy = (value, label) => `<span class="copy-wrapper">${cidText(value)}<button class="copy-btn-inline" onclick="window.copyValue(event, '${value}')" title="Copy to clipboard" aria-label="Copy ${label}">${blacksmithIcon('copy', { size: 14 })}</button></span>`;
+  const cidCopy = (value, label) => copyFirst(cidText(value), `<button class="copy-btn-inline" onclick="window.copyValue(event, '${value}')" title="Copy to clipboard" aria-label="Copy ${label}">${blacksmithIcon('copy', { size: 14 })}</button>`);
   const cidList = (values, label, withCopy) => `<div class="cid-list">${values.map(value => `<div class="cid-line">${withCopy ? cidCopy(value, label) : cidText(value)}</div>`).join('')}</div>`;
   const vmDiskCids = (vm) => (vm.disk_cids && vm.disk_cids.length > 0 ? vm.disk_cids : (vm.disk_cid ? [vm.disk_cid] : []));
 
@@ -12423,7 +12423,9 @@
     if (state === 'stopped') return 'vm-state-stopped';
     return '';
   };
-  const vmCopyValue = (value, label) => `<span class="copy-wrapper"><span>${value}</span><button class="copy-btn-inline" onclick="window.copyValue(event, '${value}')" title="Copy to clipboard" aria-label="Copy ${label}">${blacksmithIcon('copy', { size: 14 })}</button></span>`;
+  const vmCopyValue = (value, label) => copyFirst(`<span>${value}</span>`, `<button class="copy-btn-inline" onclick="window.copyValue(event, '${value}')" title="Copy to clipboard" aria-label="Copy ${label}">${blacksmithIcon('copy', { size: 14 })}</button>`);
+  // A cell with no value keeps the slot a copy icon would fill, so values line up.
+  const vmEmptyCopy = () => copyFirst(EMPTY_HTML, '');
   const vmDetailGrid = (vm) => {
     const vmType = vm.vm_type || vm.resource_pool || EMPTY;
     const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : EMPTY;
@@ -12431,14 +12433,14 @@
     const diskCids = vmDiskCids(vm);
     const field = (label, className, html) => `<div class="vm-detail-field"><dt>${label}</dt><dd class="${className}">${html}</dd></div>`;
     return `<dl class="vm-detail-grid">${[
-      field('VM CID', 'vm-cid', vm.vm_cid ? cidCopy(vm.vm_cid, 'VM CID') : EMPTY_HTML),
-      field('Agent ID', 'vm-agent-id', vm.agent_id ? cidCopy(vm.agent_id, 'agent ID') : EMPTY_HTML),
+      field('VM CID', 'vm-cid', vm.vm_cid ? cidCopy(vm.vm_cid, 'VM CID') : vmEmptyCopy()),
+      field('Agent ID', 'vm-agent-id', vm.agent_id ? cidCopy(vm.agent_id, 'agent ID') : vmEmptyCopy()),
       field('Bootstrap', 'vm-bootstrap', vm.bootstrap ? 'Yes' : 'No'),
-      field('VM type', 'vm-type', vmType !== EMPTY ? vmCopyValue(vmType, 'VM type') : EMPTY_HTML),
+      field('VM type', 'vm-type', vmType !== EMPTY ? vmCopyValue(vmType, 'VM type') : vmEmptyCopy()),
       field('Active', 'vm-active', showEmpty(active)),
       field('DNS', 'vm-dns', showEmpty(dns)),
       field('Created at', 'vm-created-at', showEmpty(stampHtml(vm.vm_created_at))),
-      field('Disk CIDs', 'vm-disk-cids', diskCids.length > 0 ? cidList(diskCids, 'disk CID', true) : EMPTY_HTML),
+      field('Disk CIDs', 'vm-disk-cids', diskCids.length > 0 ? cidList(diskCids, 'disk CID', true) : vmEmptyCopy()),
       field('Resurrection', 'vm-resurrection', vm.resurrection_paused ? 'Paused' : 'Active')
     ].join('')}</dl>`;
   };
@@ -12460,15 +12462,15 @@
     return `
               <tr class="vm-row" data-vm-node="${escapeAttribute(vm.job_name && vm.index !== undefined ? `${vm.job_name}/${vm.index}` : '')}">
                 <td class="vm-instance">
-                  ${instanceName !== EMPTY ? vmCopyValue(instanceName, 'instance name') : EMPTY_HTML}
+                  ${instanceName !== EMPTY ? vmCopyValue(instanceName, 'instance name') : vmEmptyCopy()}
                 </td>
                 <td class="vm-state ${vmStateClass(vm.state)}">${vm.state || EMPTY_HTML}</td>
                 <td class="vm-job-state ${vmStateClass(vm.job_state)}">${vm.job_state || EMPTY_HTML}</td>
                 <td class="vm-ips">
-                  ${ips !== EMPTY ? vmCopyValue(ips, 'IP addresses') : EMPTY_HTML}
+                  ${ips !== EMPTY ? vmCopyValue(ips, 'IP addresses') : vmEmptyCopy()}
                 </td>
                 <td class="vm-az">
-                  ${!isEmptyValue(vm.az) ? vmCopyValue(vm.az, 'availability zone') : EMPTY_HTML}
+                  ${!isEmptyValue(vm.az) ? vmCopyValue(vm.az, 'availability zone') : vmEmptyCopy()}
                 </td>
                 <td class="vm-actions"><div class="vm-actions-group">
                   <button type="button" class="vm-expand" aria-expanded="false" aria-controls="${detailId}" aria-label="Show details for ${escapeAttribute(String(nameLabel))}" title="Show details">

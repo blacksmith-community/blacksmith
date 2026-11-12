@@ -196,3 +196,36 @@ t('a copy calls flashCopyIcon once per success path', () => {
     expect(near.length).toBe(0);
   });
 });
+
+// Every key/value screen puts the copy icon in front of its value text. The
+// list is pinned by screen, so a screen that falls back to the old order, or
+// one added without the order, shows up here by name.
+const textBeforeCopy = (host) => {
+  const bad = [];
+  Array.from(host.querySelectorAll('button.copy-btn-inline[data-entity-copy], button.copy-btn-inline[onclick]')).forEach((button) => {
+    const cell = button.closest('td, dd');
+    if (!cell) return;
+    const walker = host.ownerDocument.createTreeWalker(cell, 4);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.nodeValue.trim() || node.parentElement.closest('button')) continue;
+      if (button.compareDocumentPosition(node) & 2) { bad.push(button.getAttribute('aria-label') + ' after ' + node.nodeValue.trim().slice(0, 20)); break; }
+    }
+  });
+  return bad;
+};
+const VM = { id: 'abc', job_name: 'node', index: 0, state: 'running', job_state: 'running', az: 'z1', vm_type: 'small', ips: ['10.0.0.4'], vm_cid: 'vm-1', agent_id: 'agent-1', disk_cids: ['disk-1'] };
+const LEADING_SCREENS = [
+  ['Instance Summary, Instance context and Instance metadata', (T) => { T.renderServiceDetail('id-1', { service_id: 'valkey', plan: { name: 'small' } }, { instance_name: 'a', deployment_name: 'b', organization_name: 'c', space_name: 'd', created_at: '2026-10-31T10:00:00Z' }); return T.window.serviceInstanceDetailsContent['id-1']; }],
+  ['Blacksmith Broker Summary, Deployment context and technical details', (T) => T.renderBlacksmithOverview({ deployment: 'blacksmith', env: 'lab', instances: {}, plans: {} }, { BOSH: { address: 'https://10.0.0.6:25555' } })],
+  ['instance and broker VMs, table and details', (T) => T.formatVMs([VM], 'inst-1')],
+];
+LEADING_SCREENS.forEach(([name, render]) => {
+  t('copy icons lead on ' + name, () => {
+    const { w, d } = boot();
+    try {
+      const host = mount(d, render(Object.assign({ window: w }, w.__T)));
+      expect(host.querySelectorAll('button.copy-btn-inline').length).toBeGreaterThan(0);
+      expect(textBeforeCopy(host)).toEqual([]);
+    } finally { w.close(); }
+  });
+});

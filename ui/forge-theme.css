@@ -138,6 +138,8 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .entity-context-table .entity-facts-table :is(th, td) { padding: 6px 10px; text-align: left; vertical-align: middle; border: 0; border-top: 1px solid var(--border); font-size: .875rem; }
 .entity-context-table .entity-facts-table tr:first-child > :is(th, td) { border-top: 0; }
 .entity-context-table .entity-facts-table th { width: 1%; white-space: nowrap; font-weight: 700; color: var(--foreground); }
+/* The instance pane pads every div with an id selector. The VM detail fields and their CID lines are divs, so each rule here repeats the id to take the padding back. */
+#services .detail-content :is(.vm-detail-field, .cid-line, .cid-list) { padding: 0; }
 /* One icon button for every copy control, drawn in currentColor. The id in
    the list lifts the whole selector above the older per-view rules. */
 button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-width: 28px; height: 28px; min-height: 28px; padding: 0 6px; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; vertical-align: middle; }
