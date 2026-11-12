@@ -12,6 +12,7 @@
   --success: #21603d; --success-foreground: #ffffff;
   --warning: #805600; --warning-foreground: #ffffff;
   --border: #c5bdb2; --input: #837a70; --ring: #954516;
+  --table-head-edge: #9c9285; --table-head-tint: rgba(36, 39, 43, .05); --table-radius: 6px;
 }
 [data-theme="dark"] {
   color-scheme: dark;
@@ -28,6 +29,7 @@
   --success: #8cdbac; --success-foreground: #171b20;
   --warning: #f0c469; --warning-foreground: #171b20;
   --border: var(--surface-border); --input: #939da7; --ring: #e8934a;
+  --table-head-edge: #8a95a0; --table-head-tint: rgba(255, 255, 255, .06);
 }
 :root, [data-theme="dark"] {
   --bg-primary: var(--background); --bg-secondary: var(--card);
@@ -611,7 +613,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
   position: static; flex: 0 0 auto; margin: 0; padding: .75rem 1rem;
   background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);
 }
-.job-logs-container > .logs-table-container { flex: 1 1 0; min-height: 0; overflow: auto; padding: 0; }
+.job-logs-container > .logs-table-container { flex: 1 1 0; min-height: 0; overflow: auto; padding: 0; border-radius: var(--table-radius); }
 /* The instance pane pads every div with an id selector, so this rule repeats the id. Padding on the scroll container would leave a gap above the sticky header for rows to show through. */
 #services .detail-content .job-logs-container > .logs-table-container { padding: 0; }
 .job-logs-container .instance-logs-table { margin: 0; border-collapse: separate; border-spacing: 0; }
@@ -1118,3 +1120,14 @@ button:is(.refresh-btn-logs, .copy-btn-logs, .refresh-btn, .copy-deployment-name
 #services .detail-content .service-testing-container .testing-history { padding-top: 10px; border-top-width: 1px; }
 .service-testing-container .history-header { margin-bottom: 8px; }
 @media (max-width: 720px) { .service-testing-container .operation-tabs { flex-direction: column; gap: 8px; } }
+
+/* Every table header row shares one style. The first row's cells get a
+   stronger edge on the top, bottom, and sides, a slight tint laid over
+   whatever background the table sets, and rounded top corners. A sticky
+   header sits flush at the top of a scroll container that uses the same
+   radius, so the container clips the rows at the same arc and nothing shows
+   through behind a corner. */
+table > thead > tr:first-child > th { background-image: linear-gradient(var(--table-head-tint), var(--table-head-tint)); box-shadow: inset 0 1px 0 var(--table-head-edge), inset 0 -1px 0 var(--table-head-edge); }
+table > thead > tr:first-child > th:first-child { border-top-left-radius: var(--table-radius); box-shadow: inset 1px 0 0 var(--table-head-edge), inset 0 1px 0 var(--table-head-edge), inset 0 -1px 0 var(--table-head-edge); }
+table > thead > tr:first-child > th:last-child { border-top-right-radius: var(--table-radius); box-shadow: inset -1px 0 0 var(--table-head-edge), inset 0 1px 0 var(--table-head-edge), inset 0 -1px 0 var(--table-head-edge); }
+table > thead > tr:first-child > th:only-child { border-top-left-radius: var(--table-radius); border-top-right-radius: var(--table-radius); box-shadow: inset 1px 0 0 var(--table-head-edge), inset -1px 0 0 var(--table-head-edge), inset 0 1px 0 var(--table-head-edge), inset 0 -1px 0 var(--table-head-edge); }
