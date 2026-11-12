@@ -51,6 +51,10 @@
   "key": "20261112-oat-1.0.0",
   "sha256": "237913c2d580c74b3682b15008eed60e93ed139a3ac0cd3adf0e46c62a5666b6"
  },
+ "touch.css": {
+  "key": "20261112-oat-1",
+  "sha256": "4f13247ebe105caa2a659c0fa31f2e41569d5ecdf87a6ec4bf2fc0c27b84d83f"
+ },
  "view-guidance.css": {
   "key": "20261028-oat-18",
   "sha256": "7f5f6575505d7a83f92e575363e74a5cc07309e1512bb415563fe26da01c6f90"
