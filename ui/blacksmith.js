@@ -1077,6 +1077,7 @@
       // Mark table as initialized
       table.setAttribute('data-sorting-initialized', 'true');
     });
+    prepareCardTables();
   };
 
   // Sort table by column
@@ -1165,6 +1166,86 @@
     });
   };
 
+  // Stacked cards on a phone. Under 700px the stylesheet turns each row of
+  // these tables into a card, and prints each cell's column name in front of
+  // its value, so every cell carries that name in data-label. A column with
+  // no heading text, such as Actions or a checkbox, gets an empty label and
+  // shows only its controls. The tables keep their markup, so sorting,
+  // filtering, and the controls in each row work as before.
+  const CARD_TABLE_SELECTOR = [
+    '.tasks-table', '.vms-table', '.events-table', '.configs-table-container table'
+  ].join(',');
+  let cardSortSeq = 0;
+  const cardHeaderLabels = (table) => {
+    const rows = Array.from(table.tHead ? table.tHead.rows : []).filter((row) => !row.classList.contains('table-controls-row'));
+    const head = rows[rows.length - 1];
+    const labels = [];
+    if (!head) return labels;
+    Array.from(head.cells).forEach((th) => {
+      const clone = th.cloneNode(true);
+      clone.querySelectorAll('.visually-hidden, .sr-only, svg').forEach((node) => node.remove());
+      const text = /^actions$/i.test(clone.textContent.trim()) ? '' : clone.textContent.replace(/\s+/g, ' ').trim();
+      for (let i = 0; i < (th.colSpan || 1); i += 1) labels.push(text);
+    });
+    return labels;
+  };
+  const labelCardRows = (table, labels) => {
+    Array.from(table.tBodies).forEach((body) => {
+      Array.from(body.rows).forEach((row) => {
+        if (Array.from(row.cells).some((cell) => cell.colSpan > 1)) return;
+        Array.from(row.cells).forEach((cell, index) => {
+          const label = index < labels.length ? labels[index] : '';
+          if (cell.getAttribute('data-label') !== label) cell.setAttribute('data-label', label);
+        });
+      });
+    });
+  };
+  const addCardSort = (table) => {
+    if (table.previousElementSibling && table.previousElementSibling.classList.contains('cards-sort')) return;
+    const headers = Array.from(table.querySelectorAll('thead th.sortable'));
+    if (!headers.length) return;
+    const id = `cards-sort-${++cardSortSeq}`;
+    const bar = document.createElement('div');
+    bar.className = 'cards-sort';
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = 'Sort by';
+    const choices = headers.map((header) => {
+      const name = escapeHtml(header.textContent.replace(/\s+/g, ' ').trim());
+      return ['ascending', 'descending'].map((direction) => `<option value="${header.cellIndex}:${direction}">${name}, ${direction}</option>`).join('');
+    }).join('');
+    bar.innerHTML = `<select id="${id}"><option value="">Choose a column</option>${choices}</select>`;
+    const select = bar.firstElementChild;
+    select.addEventListener('change', () => {
+      if (!select.value) return;
+      const [index, direction] = select.value.split(':');
+      const header = table.tHead.querySelector(`th.sortable[data-column-index="${index}"]`) || headers.find((h) => String(h.cellIndex) === index);
+      if (!header) return;
+      // sortTableByColumn flips direction from the header's own state.
+      header.classList.remove('sort-asc', 'sort-desc');
+      if (direction === 'descending') {
+        sortTableByColumn(table, header.cellIndex, header);
+        sortTableByColumn(table, header.cellIndex, header);
+      } else {
+        sortTableByColumn(table, header.cellIndex, header);
+      }
+    });
+    bar.prepend(label);
+    table.insertAdjacentElement('beforebegin', bar);
+  };
+  const prepareCardTable = (table) => {
+    labelCardRows(table, cardHeaderLabels(table));
+    table.setAttribute('data-cards', 'true');
+    addCardSort(table);
+  };
+  const prepareCardTables = (root = document) => {
+    const found = new Set();
+    if (root.matches && root.matches(CARD_TABLE_SELECTOR)) found.add(root);
+    if (root.closest) { const own = root.closest(CARD_TABLE_SELECTOR); if (own) found.add(own); }
+    if (root.querySelectorAll) root.querySelectorAll(CARD_TABLE_SELECTOR).forEach((table) => found.add(table));
+    found.forEach((table) => { if (table.matches('table')) prepareCardTable(table); });
+  };
+
   // Set up observer for dynamic content
   const setupTableObserver = () => {
     // Create a MutationObserver to watch for new tables added to the DOM
@@ -1174,6 +1255,7 @@
           // Check if any added nodes contain tables
           mutation.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE) {
+              if (!node.classList.contains('cards-sort')) prepareCardTables(node);
               // Check if the node itself is a table or contains tables
               const tables = node.tagName === 'TABLE' ? [node] : node.querySelectorAll('table');
               if (tables.length > 0) {

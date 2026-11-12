@@ -14492,3 +14492,43 @@ tr.row-link { cursor: pointer; }
 #upgrade .command-skipped { margin: .5rem 0 0; color: var(--text-secondary); }
 #upgrade .command-skipped-summary { cursor: pointer; padding: 4px 0; font-size: .875rem; overflow-wrap: anywhere; }
 #upgrade .command-skipped .command-node { padding: 2px 0 2px 1rem; }
+
+/* Stacked cards: wide tables become one card per row on a phone. The script
+   puts data-cards on each such table and each cell's column name in
+   data-label. Above 700px none of this applies. */
+.cards-sort { display: none; }
+
+@media (max-width: 699.98px) { /* stacked cards */
+  .cards-sort { display: flex; align-items: center; gap: 8px; margin: 0; padding: 8px 8px 10px; }
+  :is(#blacksmith, #services) .table-controls-container > .search-filter-container { flex: 1 1 100%; min-width: 0; }
+  .cards-sort label { font-weight: 600; font-size: .875rem; white-space: nowrap; }
+  .cards-sort select { flex: 1 1 auto; min-width: 0; margin: 0; }
+
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] {
+    display: block; width: 100%; min-width: 0; max-width: 100%;
+    border: 0; background: transparent; table-layout: auto; box-sizing: border-box; padding: 0 8px;
+  }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] :is(thead, tbody, tfoot) { display: block; width: 100%; max-height: none; }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > thead > tr:not(.table-controls-row) {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] .table-controls-row,
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] .table-controls-row > th { display: block; width: 100%; padding: 0; border: 0; background: transparent; }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr {
+    display: block; margin: 0 0 10px; padding: 4px 14px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr:hover { background: var(--bg-hover, var(--card)); }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td {
+    display: flow-root; width: auto; min-width: 0; max-width: none; padding: 7px 0; border: 0;
+    border-bottom: 1px solid var(--border-secondary, var(--border));
+    text-align: left; white-space: normal; overflow-wrap: anywhere; font-size: .875rem;
+  }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td:last-child { border-bottom: 0; }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td::before {
+    content: attr(data-label); float: left; width: 6.5rem; margin-right: 10px;
+    font-family: var(--font-sans, sans-serif); font-size: .75rem; font-weight: 600; color: var(--muted-foreground, var(--text-secondary));
+  }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[data-label=""]::before { display: none; }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[colspan] { display: block; padding: 12px 0; text-align: center; }
+}
