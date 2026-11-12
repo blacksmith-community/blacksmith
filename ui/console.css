@@ -95,6 +95,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   #upgrade .upgrade-instances { flex: none; max-height: 320px; min-height: 100px; }
   #upgrade .upgrade-tasks { overflow: visible; }
 }
+/* Own breakpoint: the header tightens its Go to button below 600px, which a 700px edge would move. */
 @media (max-width: 600px) {
   .wrap { width: calc(100% - 24px); margin: 0 12px; }
   body > header #logo { font-size: 0.9375rem; }
@@ -258,7 +259,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   outline: 2px solid var(--border-active);
   outline-offset: 3px;
 }
-@media (max-width: 640px) {
+@media (max-width: 699.98px) {
   #upgrade .upgrade-targets-panel { margin: 0 12px 12px; }
   #upgrade .upgrade-services, #upgrade .upgrade-footer { padding: 12px; }
   #upgrade .upgrade-instance-item { padding: 10px 12px; flex-wrap: wrap; }

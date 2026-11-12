@@ -1,3 +1,12 @@
+/* Breakpoints. Media queries cannot read custom properties, so the set is written here and a test holds the stylesheets to it.
+   Every max-width query uses one of these widths, except the few marked below, and the widths line up with the rail's 700px and 1100px edges.
+   1099.98px everything below the rail's 1100px edge, where the rail narrows
+   900px    stacked two-pane layouts
+   768px    tablet portrait, the width of the large tablet shots
+   699.98px everything below the rail's 700px edge, which is the phone layout
+   480px    a small phone
+   A rule that cannot move to one of these widths without changing the page keeps its own width. A comment that starts
+   "Own breakpoint" on the line before it says why. */
 /* Universal Table Styling - Theme-based consistent table appearance */
 table {
   width: 100%;
@@ -526,7 +535,7 @@ table tbody {
   overflow: hidden;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 699.98px) {
   .instance-log-job-tab {
     padding: 10px 12px;
   }
@@ -7066,7 +7075,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 }
 
 /* On a phone the dock is one Terminals button, and the sessions open as a list above it. */
-@media (max-width: 600px) {
+@media (max-width: 699.98px) {
   .minimized-terminal-bar { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
   .minimized-terminal-bar .left-section > img { display: none; }
   .terminal-dock-toggle { display: inline-flex; align-items: center; min-height: 32px; }
@@ -12258,7 +12267,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 /* On a very narrow screen the header's keyboard hint is dropped so the
    page does not scroll sideways. */
-@media (max-width: 360px) {
+@media (max-width: 480px) {
   #navigation-trigger kbd {
     display: none;
   }
@@ -12565,7 +12574,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   list-style: disc;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .cert-fleet-drawer {
     width: 100%;
   }
@@ -14313,7 +14322,7 @@ tr.row-link { cursor: pointer; }
 #upgrade .task-notice { margin: 0; padding: 8px 10px; overflow-wrap: anywhere; }
 #upgrade .upgrade-right-panel.job-detail .upgrade-poll-updated { display: none; }
 #route-context .route-updated { margin-left: auto; flex: none; font-size: .75rem; color: var(--muted-foreground, var(--text-secondary)); white-space: nowrap; }
-@media (max-width: 540px) {
+@media (max-width: 480px) {
   #route-context { flex-wrap: wrap; }
   #route-context .route-updated { flex-basis: 100%; margin-left: 0; white-space: normal; }
   #upgrade .task-detail-header { flex-wrap: wrap; }

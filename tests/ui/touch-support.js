@@ -40,7 +40,7 @@ const mediaRules = (file, test) => {
 };
 
 const coarseRules = (file) => mediaRules(file, (cond) => /pointer:\s*coarse/.test(cond));
-const narrowRules = (file) => mediaRules(file, (cond) => /max-width:\s*640px/.test(cond));
+const narrowRules = (file) => mediaRules(file, (cond) => /max-width:\s*699\.98px/.test(cond));
 
 const decl = (body, prop) => {
   const m = body.match(new RegExp('(?:^|;)\\s*' + prop + '\\s*:\\s*([^;]+)', 'i'));

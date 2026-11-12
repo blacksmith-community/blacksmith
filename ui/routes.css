@@ -8,7 +8,7 @@
 .route-back { flex:none; padding:4px 9px; min-height:32px; }
 #route-error { padding:10px 14px; }
 /* On a phone the breadcrumb keeps to one line, and a long name ends in an ellipsis. */
-@media(max-width:699px){
+@media(max-width:699.98px){
  .route-context {padding:6px 12px;gap:8px;}
  .route-context nav {flex:1;overflow:hidden;}
  .route-context ol {flex-wrap:nowrap;font-size:.8125rem;white-space:nowrap;}
@@ -93,7 +93,7 @@ body > header { position: sticky; top: 0; z-index: 20; box-sizing: border-box; m
 .rail-drawer .rail-collapse { display: none; }
 
 /* Under 700px the rail lives in the drawer, and the header keeps to one row. */
-@media (max-width: 699px) {
+@media (max-width: 699.98px) {
  .console-shell > .console-rail { display: none; }
  .rail-toggle { display: inline-flex; }
  body > header > .wrap { flex-wrap: nowrap; gap: 8px; margin-inline: 8px; width: calc(100% - 16px); }
@@ -106,7 +106,7 @@ body > header { position: sticky; top: 0; z-index: 20; box-sizing: border-box; m
 }
 
 /* From 700px to 1099px an open instance takes the whole content column. */
-@media (min-width: 700px) and (max-width: 1099px) {
+@media (min-width: 700px) and (max-width: 1099.98px) {
  #services.instance-open .services-list { display: none; }
  #services.instance-open .service-detail { flex: 1 1 auto; min-width: 0; }
  #services.instance-open .entity-back { display: inline-flex; flex-shrink: 0; }

@@ -56,7 +56,7 @@
 
 /* The upgrade options table stacks its rows on a phone. An id-scoped rule gives
    the first column 20% of the width, which squeezed "System" into two lines. */
-@media (max-width: 640px) {
+@media (max-width: 699.98px) {
   #upgrade .batch-upgrade-options-table tbody th:first-child {
     width: 100%;
     overflow-wrap: normal;

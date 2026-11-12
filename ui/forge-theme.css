@@ -152,10 +152,10 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 .minimized-terminal-bar .left-section, .minimized-terminal-bar .right-section, .minimized-terminal-tabs { display: flex; align-items: center; gap: 8px; }
 .terminal-tab, .minimized-terminal-tab { display: inline-flex; align-items: center; gap: 8px; background: var(--secondary); color: var(--foreground); padding: 8px 12px; }
 .terminal-tab { padding: 4px 12px; }
-@media (max-width: 1100px) {
+@media (max-width: 1099.98px) {
   .entity-workspace { flex-direction: column; }
 }
-@media (max-width: 700px) {
+@media (max-width: 699.98px) {
   .wrap { margin-inline: 12px; width: calc(100% - 24px); }
   #services.tab-panel.active { overflow: hidden; }
   #services .services-items-container { max-height: none; }
@@ -264,7 +264,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .command-segments { max-width: 100%; overflow-x: auto; }
 #upgrade .command-segments-select { display: block; border: 0; border-radius: 0; overflow: visible; background: none; }
 #upgrade .command-segments-select select { min-width: 96px; min-height: 44px; }
-@media (max-width: 640px) { #upgrade .command-segment { min-width: 44px; padding: 0 10px; } }
+@media (max-width: 699.98px) { #upgrade .command-segment { min-width: 44px; padding: 0 10px; } }
 #upgrade .command-parallel-row { gap: 8px; }
 #upgrade #command-parallel-limit-row { margin: 4px 0 0 28px; max-width: calc(100% - 28px); }
 #upgrade .command-user { max-width: 640px; min-width: 0; margin: 0 0 20px; padding: 0; border: 0; display: grid; gap: 8px; justify-items: start; }
@@ -290,6 +290,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-flow-footer { margin-top: auto; }
 #upgrade .batch-pagination { position: static; }
 #upgrade { scroll-padding-block: 75px 120px; }
+/* Own breakpoint: the batch options stack at 750px, and the batch pages change at 768px if this moves. */
 @media (max-width: 750px) {
  #upgrade .batch-flow-options .filter-row { flex-wrap: wrap; }
  #upgrade .batch-flow-options .filter-row select { flex-basis: 12rem; }
@@ -388,6 +389,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-flow-review .command-review-table :is(th,td) { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 #upgrade .batch-flow-review .rotate-preview-cards { gap: 16px; }
 #upgrade .batch-flow-review .rotate-preview-card { padding: 16px; }
+/* Own breakpoint: the batch mode panes become one column at 750px, a width the 768px set would change. */
 @media (max-width: 750px) {
  #upgrade .upgrade-mode-pane:not([hidden]) { display: grid; grid-template-columns: 1fr; }
  #upgrade .upgrade-targets-panel { padding: 16px; }
@@ -441,6 +443,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-flow-footer p { flex: 1 1 130px; font-size: .8125rem; line-height: 1.4; }
 #upgrade .batch-flow-footer > div { gap: 8px; margin-left: auto; }
 #upgrade .batch-flow-footer button { min-height: 44px; padding-block: 8px; margin: 0; }
+/* Own breakpoint: the batch summary and footer stack at 750px, a width the 768px set would change. */
 @media (max-width: 750px) {
  #upgrade .batch-upgrade-summary { grid-template-columns: minmax(0,1fr); gap: 16px; }
  #upgrade .batch-flow-footer { padding: 8px 16px; }
@@ -484,7 +487,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 .batch-release-picker .batch-release-selected-filter input { width: 18px; height: 18px; }
 .batch-release-picker .batch-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
 .batch-release-picker .batch-field-help { color: var(--muted-foreground); font-size: .875rem; margin: 0 0 12px; }
-@media(max-width:640px) {
+@media(max-width:699.98px) {
  #upgrade .batch-upgrade-options-table thead { display: none; }
  #upgrade .batch-upgrade-options-table :is(tbody,tr,th,td) { display: block; width: 100%; }
  #upgrade .batch-upgrade-options-table tbody th { width: 100%; padding-top: 16px; background: var(--secondary); }
@@ -583,7 +586,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .cert-validation-details summary { padding: .65rem .75rem; }
 #upgrade .cert-task-vm-body > :last-child { margin-bottom: 0; }
 
-@media (max-width: 640px) {
+@media (max-width: 699.98px) {
   #upgrade .cert-evidence-table, #upgrade .cert-evidence-table tbody,
   #upgrade .cert-evidence-table tr, #upgrade .cert-evidence-table td { display: block; width: 100%; }
   #upgrade .cert-evidence-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -624,11 +627,11 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 .log-info-toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; flex: 0 0 auto; width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 6px; background: transparent; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 50%; box-shadow: none; }
 .log-info-toggle:hover, .log-info-toggle[aria-expanded="true"] { color: var(--foreground); background: var(--secondary); }
 .instance-logs-notice[hidden] { display: none; }
-@media (max-width: 640px) {
+@media (max-width: 699.98px) {
   .log-node-select { flex-basis: 100%; width: 100%; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 699.98px) {
   .job-logs-container > .table-controls-container, .logs-controls-row { flex-direction: row; align-items: center; }
   .job-logs-container .search-filter-container, .job-logs-container .log-file-selector,
   .logs-controls-row .search-filter-container, .logs-controls-row .log-file-selector { flex-basis: 100%; }
@@ -695,7 +698,7 @@ details.credential-pem-disclosure > .credential-multiline {
 .logs-pagination-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .5rem; padding: .375rem .75rem; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-primary); }
 .logs-pagination-row .logs-line-count { grid-column: 1; padding: 0; background: transparent; white-space: normal; }
 .logs-pagination-row .logs-load-more { grid-column: 2; margin: 0; border: 0; background: transparent; padding: .375rem .75rem; }
-@media (max-width: 700px) {
+@media (max-width: 699.98px) {
   .logs-pagination-row { grid-template-columns: 1fr; }
   .logs-pagination-row .logs-load-more { grid-column: 1; justify-self: start; padding-left: 0; }
 }
@@ -753,6 +756,7 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 #navigation-dialog .navigation-result-location { overflow-wrap: anywhere; }
 #navigation-dialog .navigation-result-detail { overflow-wrap: anywhere; }
 #navigation-dialog .navigation-help { padding: 9px 16px; margin: 0; border-top: 1px solid var(--border); font-size: .75rem; color: var(--muted-foreground); flex-shrink: 0; }
+/* Own breakpoint: the navigation results re-flow at 540px, where the 480px set would leave them cramped. */
 @media (max-width: 540px) {
   #navigation-dialog .navigation-result-row { grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; }
   #navigation-dialog .navigation-result-location { grid-column: 1 / -1; }
@@ -872,6 +876,7 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 :root[data-contrast="high"] #navigation-results [aria-selected="true"] { outline: 2px solid var(--primary); outline-offset: -2px; }
 body > header > .wrap > div:last-child { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 body > header .theme-toggle { flex-shrink: 0; white-space: nowrap; }
+/* Own breakpoint: the header controls wrap at 540px, before the 480px phone rules begin. */
 @media (max-width: 540px) {
   body > header > .wrap { flex-wrap: wrap; gap: 8px; }
   body > header > .wrap > div:last-child { flex: 1 1 100%; }
@@ -903,6 +908,7 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 #services .entity-identity { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; min-width: 0; flex: 1 1 auto; }
 #services .entity-identity h2 { margin: 0; min-width: 0; }
 #services .entity-identity .entity-context-line { margin: 0; }
+/* Own breakpoint: the instance header tightens at 540px, which the instance and VMs pages show. */
 @media (max-width: 540px) {
   #services .entity-header { padding: 10px 12px; }
   #services .entity-identity { flex-basis: 100%; }
@@ -929,7 +935,7 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 #navigation-dialog .navigation-result-row strong { min-width: 0; overflow-wrap: anywhere; }
 #navigation-dialog .navigation-result-detail { font-size: .75rem; color: var(--muted-foreground); }
 #navigation-dialog #navigation-results { overscroll-behavior: contain; scrollbar-gutter: stable; }
-@media (max-width: 600px), (max-height: 500px) {
+@media (max-width: 699.98px), (max-height: 500px) {
   #navigation-dialog { margin: 8px auto; max-height: calc(100dvh - 16px); width: calc(100vw - 16px); }
   #navigation-dialog .navigation-heading { padding: 8px 12px; }
   #navigation-dialog #navigation-search { margin: 8px 12px 0; width: calc(100% - 24px); }
@@ -1000,7 +1006,7 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .cert-expansion .cert-credhub-table tr { display: block; background: none; border: 0; }
 .cert-expansion .cert-credhub-table th { display: block; width: auto; padding: 0; border: 0; background: none; font-size: .75rem; font-weight: 400; color: var(--muted-foreground); text-align: left; }
 .cert-expansion .cert-credhub-table td { display: block; padding: 0; border: 0; margin: 2px 0 0; }
-@media (max-width: 600px) {
+@media (max-width: 699.98px) {
   .cert-expansion .cert-credhub-table tbody { grid-template-columns: minmax(0,1fr); }
 }
 
@@ -1105,7 +1111,7 @@ button:is(.refresh-btn-logs, .copy-btn-logs, .refresh-btn, .copy-deployment-name
 .service-testing-container .operation-form p { margin: 0 0 8px; }
 #services .detail-content .service-testing-container .testing-history { padding-top: 10px; border-top-width: 1px; }
 .service-testing-container .history-header { margin-bottom: 8px; }
-@media (max-width: 720px) { .service-testing-container .operation-tabs { flex-direction: column; gap: 8px; } }
+@media (max-width: 768px) { .service-testing-container .operation-tabs { flex-direction: column; gap: 8px; } }
 
 /* Every table header row shares one style. The first row's cells get a
    stronger edge on the top, bottom, and sides, a slight tint laid over

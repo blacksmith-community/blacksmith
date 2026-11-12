@@ -85,7 +85,7 @@ t('the card fills a rounded box with minimal padding and bold, comfortably padde
 });
 
 t('on a phone the fields stack as labelled pairs without horizontal scroll', () => {
-  const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  const phone = css.slice(css.indexOf('@media (max-width: 699.98px)'));
   // Both row groups share one key column, so no seam shows between them.
   expect(phone).toMatch(/\.entity-facts-table tbody\s*\{[^}]*display:\s*grid/);
   expect(phone).toMatch(/\.entity-facts-table tbody\s*\{[^}]*grid-template-columns:\s*max-content minmax\(0, 1fr\)/);
@@ -121,5 +121,5 @@ t('short values never wrap while long identifiers wrap where they must', () => {
   expect(cells[2].classList.contains('fact-short')).toBe(false);
   expect(cells[5].classList.contains('fact-short')).toBe(false);
   expect(rule('.entity-context-table .entity-facts-table td.fact-short')).toMatch(/white-space:\s*nowrap/);
-  expect(css.slice(css.indexOf('@media (max-width: 700px)'))).toMatch(/td\.fact-short\s*\{[^}]*white-space:\s*normal/);
+  expect(css.slice(css.indexOf('@media (max-width: 699.98px)'))).toMatch(/td\.fact-short\s*\{[^}]*white-space:\s*normal/);
 });

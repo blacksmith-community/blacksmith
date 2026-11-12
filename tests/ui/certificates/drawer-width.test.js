@@ -16,7 +16,7 @@ const open = async (d, index) => {
 t('the drawer takes at least half the viewport, and all of it on a phone', () => {
   const rule = css.match(/\.cert-fleet-drawer \{([^}]*)\}/)[1];
   expect(rule).toContain('width: min(max(50vw, 520px), 100vw)');
-  expect(css).toMatch(/@media \(max-width: 767px\) \{\s*\.cert-fleet-drawer \{\s*width: 100%;/);
+  expect(css).toMatch(/@media \(max-width: 768px\) \{\s*\.cert-fleet-drawer \{\s*width: 100%;/);
 });
 
 t('the drawer closes from its button and Escape, and a second cert replaces the first', async () => {

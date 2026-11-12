@@ -32,9 +32,9 @@ test('the VM tab row scrolls sideways and its tabs keep their width', () => {
   const tab = rule('.instance-log-job-tab');
   expect(tab).toMatch(/flex:\s*0 0 auto;/);
   expect(tab).toMatch(/white-space:\s*nowrap;/);
-  expect(css).toMatch(/@media \(max-width: 700px\) \{\s*\.instance-log-job-tab \{\s*padding:\s*10px 12px;/);
+  expect(css).toMatch(/@media \(max-width: 699\.98px\) \{\s*\.instance-log-job-tab \{\s*padding:\s*10px 12px;/);
 });
 
 test('the stylesheet reference carries the current cache-buster', () => {
-  expect(html).toContain('/blacksmith.css?v=20261112-oat-416');
+  expect(html).toContain('/blacksmith.css?v=20261112-oat-417');
 });

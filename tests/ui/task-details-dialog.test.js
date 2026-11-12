@@ -104,7 +104,7 @@ t('the metadata is one compact row table with small bold headers and tight paddi
  expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table th')).toMatch(/background:\s*color-mix\(/);
  const css=require('fs').readFileSync('ui/inspection-layout.css','utf8');
  expect(css).toMatch(/task-summary-table td:not\(\.task-meta-description\)\s*\{\s*white-space:\s*nowrap/);
- expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*td::before\s*\{\s*content:\s*attr\(data-label\)/);
+ expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*td::before\s*\{\s*content:\s*attr\(data-label\)/);
  expect(css).not.toContain('task-summary-facts');
 });
 

@@ -19,7 +19,7 @@
 #blacksmith .blacksmith-settings .settings-row { align-items: center; }
 #blacksmith .blacksmith-settings .settings-feedback { white-space: normal; overflow-wrap: anywhere; }
 #blacksmith .blacksmith-settings [aria-invalid="true"] { border-color: var(--danger); outline: 1px solid var(--danger); }
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   #task-details-modal .modal-header .task-title-deployment { order: 4; flex: 1 1 100%; justify-content: flex-start; }
   #task-details-modal .task-summary-table, #task-details-modal .task-summary-table tbody, #task-details-modal .task-summary-table tr, #task-details-modal .task-summary-table td { display: block; }
   #task-details-modal .task-summary-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

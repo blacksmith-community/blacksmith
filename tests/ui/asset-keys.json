@@ -8,36 +8,36 @@
   "sha256": "dc406974e17ece26cbf102f7f72797044d57fceb3675fa7349efcdd3cbd229fa"
  },
  "blacksmith.css": {
-  "key": "20261112-oat-416",
-  "sha256": "ebb26125528d566b64383257d0b721d8264d4fee7fa0398182d7eb27f7e9a9b2"
+  "key": "20261112-oat-417",
+  "sha256": "c531c94afd969fe583425aa5e3af5a3b4a7e69f8592aa99cfa5bdc6b91735095"
  },
  "blacksmith.js": {
   "key": "20261112-oat-467",
   "sha256": "621d89146eee5c65362fa19b2957acd0cfa8b5d6c78dd0d639954a88fd6d1bc5"
  },
  "console.css": {
-  "key": "20261112-oat-315",
-  "sha256": "7bb2205a69fb09d1e80594496c3d145da619b9464c2f9cc4e8df8ecc14f4b38a"
+  "key": "20261112-oat-316",
+  "sha256": "c672e5563148bd48436619b4987e5965da5dd6edf69b4bc524514758fdb08686"
  },
  "forge-theme.css": {
-  "key": "20261112-oat-370",
-  "sha256": "3f89b29876f6e1315bee4612ee57772cfc76eb5e395ad27a19de7979db2e224a"
+  "key": "20261112-oat-371",
+  "sha256": "5929957ba9250fc6fd739316cec1ecc3ad3c1a36382f71651b9da2d37bb9a0ec"
  },
  "icons.js": {
   "key": "20261112-oat-371",
   "sha256": "b2d4629f75a1d469b7974235f602390b08226ba7dfb8e84406d1cc35cd8afc52"
  },
  "inspection-layout.css": {
-  "key": "20261112-oat-342",
-  "sha256": "9bf0f97a3699ab96139f5c2c57d66918d7081bf7dd7a4ea56c47e006904041b4"
+  "key": "20261112-oat-343",
+  "sha256": "835787373a5779b54a729d694212e439ba43c7bde92a3cdf145e1e1f2aa7cd77"
  },
  "navigation.js": {
   "key": "20261112-oat-347",
   "sha256": "09bca4e79752e78ca134d48f1aeb0e816a025c3348301c1f1d131450270e19b9"
  },
  "routes.css": {
-  "key": "20261112-oat-278",
-  "sha256": "c919d50e5a588c59a45ecb0574fd165d914f307f67c687ce62a4740275f351e4"
+  "key": "20261112-oat-279",
+  "sha256": "20291a16a991cf0257bc4ae7a2bc1a0d6d3a7bb2bda6d26397701daaf80c60ac"
  },
  "routes.js": {
   "key": "20261112-oat-336",
@@ -52,12 +52,12 @@
   "sha256": "237913c2d580c74b3682b15008eed60e93ed139a3ac0cd3adf0e46c62a5666b6"
  },
  "touch.css": {
-  "key": "20261112-oat-8",
-  "sha256": "0b6a13ee08b9d5aa99c7f51976169ddd70c11848156f441c25975d9b0704803a"
+  "key": "20261112-oat-9",
+  "sha256": "0a4ec00fed84fb89f9d70173d21f9b33f56d34124e8efaa8fc4826479d360caf"
  },
  "view-guidance.css": {
-  "key": "20261028-oat-18",
-  "sha256": "7f5f6575505d7a83f92e575363e74a5cc07309e1512bb415563fe26da01c6f90"
+  "key": "20261028-oat-19",
+  "sha256": "1c929837081ea50ea9ae0de71739af43792e528bd6975ee22ee66db93f71d86c"
  },
  "view-guidance.js": {
   "key": "20261028-oat-316",

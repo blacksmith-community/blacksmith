@@ -43,6 +43,7 @@
 #blacksmith .plan-vms-table pre { white-space: pre; margin: 0; padding: 4px; max-width: 32rem; overflow-x: auto; }
 #blacksmith .plan-detail .tags { list-style: none; }
 #blacksmith .plan-collection-link { display: none; }
+/* Own breakpoint: the plan list and detail stack at 800px, and the plans pages have no screenshot to prove a move. */
 @media (max-width: 800px) {
   #blacksmith .detail-content.plans-view { flex-wrap: wrap; gap: 8px; }
   #blacksmith .plans-view > .plans-list { flex: 1 1 100%; width: 100%; }
