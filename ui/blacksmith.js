@@ -9704,8 +9704,8 @@
     return typeof value === 'string' && isSecretEntry(key, value);
   };
 
-  // A secret value as a masked cell with a reveal button and a copy button.
-  // The copy button always copies the real value.
+  // A secret value as a masked cell with a copy button first, then the mask,
+  // then the reveal button. The copy button always copies the real value.
   const secretValue = (value, label) => {
     const text = String(value);
     if (secretValues.size > 200) {
@@ -9714,9 +9714,10 @@
     const id = `secret-${++secretCounter}`;
     secretValues.set(id, text);
     const name = escapeAttribute(label);
-    return `<span class="secret-value" data-secret-id="${id}"><span class="secret-text credential-value-text">${SECRET_MASK}</span>`
-      + `<button type="button" class="secret-toggle" data-secret-toggle aria-pressed="false" aria-label="Show ${name}" title="Show ${name}">${blacksmithIcon('eye', { size: 14 })}</button>`
-      + `<button type="button" class="copy-btn-inline secret-copy" data-secret-copy aria-label="Copy ${name}" title="Copy ${name}">${COPY_ICON_SVG}</button></span>`;
+    return `<span class="secret-value" data-secret-id="${id}">`
+      + `<button type="button" class="copy-btn-inline secret-copy" data-secret-copy aria-label="Copy ${name}" title="Copy ${name}">${COPY_ICON_SVG}</button>`
+      + `<span class="secret-text credential-value-text">${SECRET_MASK}</span>`
+      + `<button type="button" class="secret-toggle" data-secret-toggle aria-pressed="false" aria-label="Show ${name}" title="Show ${name}">${blacksmithIcon('eye', { size: 14 })}</button></span>`;
   };
 
   document.addEventListener('click', async (event) => {
@@ -9818,10 +9819,10 @@
     }
 
     const valueCell = (item) => {
-      if (item.value === '') return EMPTY_HTML;
+      if (item.value === '') return emptyManifestValue();
       if (isSecretEntry(item.key, item.value) || hasSecretDeep(item.key, item.raw)) return secretValue(item.value, item.key);
       if (item.value.includes('-----BEGIN CERTIFICATE-----')) {
-        return `<span class="manifest-value">${pemCertificate(item.value)}${entityCopy(item.value, item.key)}</span>`;
+        return `<span class="manifest-value">${entityCopy(item.value, item.key)}${pemCertificate(item.value)}</span>`;
       }
       return manifestValue(item.value, item.key);
     };
@@ -14568,13 +14569,16 @@
   // Format manifest details with tabbed view
   document.addEventListener('change',event=>{if(event.target.matches('#cf-endpoint-select'))notifyRoute();});
 
-  // One value cell for every table of values. The value sits at the left in
-  // the monospace face with its copy button right after it, and a long value
+  // One value cell for every table of values. The copy button leads, then the
+  // value in the monospace face, and a long value
   // cuts off at the cell edge while the title and the copy button keep all of
-  // it. A missing value is the shared empty value, with no copy button.
+  // it. A missing value is the shared empty value after an empty slot.
   const MANIFEST_PLACEHOLDERS = ['Not specified', 'N/A'];
+  // A missing value keeps an empty slot as wide as the copy button, so the
+  // dash lines up with the values above and below it.
+  const emptyManifestValue = () => `<span class="manifest-value manifest-value-empty"><span class="copy-slot" aria-hidden="true"></span>${EMPTY_HTML}</span>`;
   const manifestValue = (value, label, options = {}) => {
-    if (isEmptyValue(value) || MANIFEST_PLACEHOLDERS.includes(value)) return EMPTY_HTML;
+    if (isEmptyValue(value) || MANIFEST_PLACEHOLDERS.includes(value)) return emptyManifestValue();
     const text = String(value);
     const copy = options.copy === undefined ? text : String(options.copy);
     const title = escapeAttribute(text);
@@ -14583,12 +14587,12 @@
     else if (options.link && /^https?:\/\//i.test(text)) shown = `<a class="manifest-value-text" href="${title}" target="_blank" rel="noopener noreferrer" title="${title}">${escapeHtml(text)}</a>`;
     else shown = `<span class="manifest-value-text" title="${title}">${escapeHtml(text)}</span>`;
     if (options.plain) return `<span class="manifest-value">${shown}</span>`;
-    return `<span class="manifest-value">${shown}<button type="button" class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(copy))})" title="Copy ${escapeAttribute(label)}" aria-label="Copy ${escapeAttribute(label)}">${blacksmithIcon('copy', { size: 14 })}</button></span>`;
+    return `<span class="manifest-value"><button type="button" class="copy-btn-inline" onclick="window.copyValue(event, ${escapeAttribute(JSON.stringify(copy))})" title="Copy ${escapeAttribute(label)}" aria-label="Copy ${escapeAttribute(label)}">${blacksmithIcon('copy', { size: 14 })}</button>${shown}</span>`;
   };
 
   // A manifest property of any type, shown as plain text whatever its type.
   const manifestPropertyValue = (value, label) => {
-    if (value === null || value === undefined) return EMPTY_HTML;
+    if (value === null || value === undefined) return emptyManifestValue();
     if (Array.isArray(value)) {
       const text = value.length === 0 ? '[]' : typeof value[0] === 'string' ? value.join(', ') : `[${value.length} items]`;
       return manifestValue(text, label, { copy: JSON.stringify(value) });

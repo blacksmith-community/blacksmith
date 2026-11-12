@@ -8,12 +8,12 @@
   "sha256": "d989991037b82b99f8c0ea1b984cf03e719150880fcadf7d64fc394fd2ae1cdb"
  },
  "blacksmith.css": {
-  "key": "20261112-oat-384",
-  "sha256": "2eda3fd4dbefa95e4f1da6cc0326b1c717d172f4c5df72b162e156b0d73a9be8"
+  "key": "20261112-oat-385",
+  "sha256": "10c5a0901aa4f201f779f62d29296772df12396ae588f9fdf7ad9ef3cf7743d6"
  },
  "blacksmith.js": {
-  "key": "20261112-oat-401",
-  "sha256": "50e42717364e2a659de4c57b5abe6f223b30959273217f9875a469364c690b14"
+  "key": "20261112-oat-402",
+  "sha256": "751fccd7cd255249f152216e4f729b61d6a89d16d8b9c78206941a56e8481919"
  },
  "console.css": {
   "key": "20261028-oat-309",

@@ -36,26 +36,26 @@ const render=async()=>{
 const pane=(d,name)=>d.querySelector(`.manifest-tab-pane[data-tab="${name}"]`);
 const rows=(d,name)=>[...pane(d,name).querySelectorAll('tbody tr')];
 
-t('a value cell shows the value first and its copy button right after it',async()=>{
+t('a value cell leads with its copy button and the value follows',async()=>{
  const {w,d}=await render();
  try{
   const sha=rows(d,'releases')[0].cells[3];
   const cell=sha.querySelector('.manifest-value');
   expect(cell).not.toBeNull();
-  expect(cell.children[0].classList.contains('manifest-value-text')).toBe(true);
-  expect(cell.children[0].textContent).toBe(SHA);
-  expect(cell.children[0].getAttribute('title')).toBe(SHA);
-  expect(cell.children[1].tagName).toBe('BUTTON');
-  expect(cell.children[1].getAttribute('aria-label')).toBe('Copy release SHA1');
+  expect(cell.children[1].classList.contains('manifest-value-text')).toBe(true);
+  expect(cell.children[1].textContent).toBe(SHA);
+  expect(cell.children[1].getAttribute('title')).toBe(SHA);
+  expect(cell.children[0].tagName).toBe('BUTTON');
+  expect(cell.children[0].getAttribute('aria-label')).toBe('Copy release SHA1');
   expect(sha.querySelector('code')).toBeNull();
-  expect(cell.children[1].getAttribute('onclick')).toContain(SHA);
+  expect(cell.children[0].getAttribute('onclick')).toContain(SHA);
   const url=rows(d,'releases')[0].cells[2].querySelector('.manifest-value a');
   expect(url.getAttribute('href')).toBe(URL_);
   expect(url.getAttribute('title')).toBe(URL_);
    const instanceCells=[...pane(d,'instance-groups').querySelectorAll('.instance-group-pane.active tbody tr td:nth-child(2)')];
  for(const td of instanceCells){
    if(td.querySelector('.empty-value')) continue;
-   expect(td.querySelector('.manifest-value > .manifest-value-text + button')).not.toBeNull();
+   expect(td.querySelector('.manifest-value > button + .manifest-value-text')).not.toBeNull();
   }
  }finally{w.close()}
 });

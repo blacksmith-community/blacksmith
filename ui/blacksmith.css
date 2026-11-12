@@ -3161,7 +3161,7 @@ bs-tabs > .manifest-tab-pane {
 }
 
 /* A manifest value reads left to right in monospace, with its copy button
-   right after it. A long value cuts off with an ellipsis. */
+   in front of it. A long value cuts off with an ellipsis. */
 .manifest-value {
   display: inline-flex;
   align-items: center;
@@ -14269,3 +14269,9 @@ tr.row-link { cursor: pointer; }
 #upgrade .instance-actions { display: flex; flex-wrap: wrap; gap: .25rem 1rem; }
 .vm-row.vm-row-target > td { background: color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent); box-shadow: inset 0 2px 0 var(--accent, #3b82f6), inset 0 -2px 0 var(--accent, #3b82f6); }
 .vm-node-missing { margin: 0 0 .75rem; padding: .5rem .75rem; border-left: 3px solid var(--warning, #d97706); }
+
+/* The copy button leads a value cell, and an empty cell keeps a slot of the
+   same width so every value starts at the same place. */
+.manifest-value > .copy-slot { display: inline-block; flex: 0 0 28px; width: 28px; height: 28px; }
+.config-table .manifest-value > .copy-slot { flex-basis: 24px; width: 24px; height: 24px; }
+.manifest-value-empty { color: var(--muted-foreground); }
