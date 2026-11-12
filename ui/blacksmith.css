@@ -14563,3 +14563,31 @@ tr.row-link { cursor: pointer; }
   #blacksmith .compact-tasks-controls.table-controls-container .filter-group select { flex: 1 1 auto; min-width: 0; }
   #blacksmith .compact-tasks-controls.table-controls-container .checkbox-group { flex-wrap: wrap; gap: 6px 12px; }
 }
+
+/* Compact fleet header. At 1280 by 800 the summary, notices, horizon, chips,
+   timeline, and filters used to fill the screen before the first row. The
+   same controls and counts stay, with tighter spacing, the Custom range
+   button beside the timeline, and each filter label beside its field. */
+@media (min-width: 700px) { /* compact certificate header */
+  #certificates .cert-fleet-header { margin-bottom: 4px; }
+  #certificates .cert-notices { gap: 4px; margin-bottom: 4px; }
+  #certificates .cert-notice { padding: 4px 10px; }
+  #certificates .cert-horizon-scroll { margin-block: 2px; }
+  #certificates .cert-horizon-table caption { padding: 0; margin: 0 0 2px; }
+  #certificates #cert-horizon .cert-horizon-table :is(th, td) { padding-block: 1px; }
+  #certificates .cert-horizon-gaps { margin: 2px 0 0; }
+  #certificates .cert-strips { margin-bottom: 4px; gap: 4px 8px; }
+  #certificates .cert-strip { gap: 4px 8px; }
+  #certificates #cert-fleet-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  #certificates #cert-fleet-main > * { grid-column: 1 / -1; min-width: 0; }
+  #certificates #cert-fleet-main > .cert-timeline-wrap { grid-column: 1; }
+  #certificates #cert-fleet-main > .cert-range-wrap { grid-column: 2; }
+  #certificates #cert-fleet-main > .cert-range-wrap:has(> .cert-range:not([hidden])) { grid-column: 1 / -1; }
+  #certificates #cert-fleet-main > .cert-chips { grid-column: 1; }
+  #certificates #cert-fleet-main > .cert-selection-line { grid-column: 2; white-space: nowrap; }
+  #certificates .cert-timeline-wrap { margin-bottom: 4px; }
+  #certificates .cert-toolbar { align-items: center; margin-bottom: 4px; }
+  #certificates .cert-field { flex-direction: row; align-items: center; gap: 6px; }
+  #certificates .cert-field-search { flex: 1 1 240px; }
+  #certificates .cert-field-search input { flex: 1 1 auto; }
+}
