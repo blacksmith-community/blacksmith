@@ -69,7 +69,11 @@
   // word match when they agree after trimming, folding case, and collapsing
   // runs of spaces.
   const normalizeConfirmText = (value) => String(value == null ? '' : value).trim().replace(/\s+/g, ' ').toLowerCase();
-  const confirmWordMatches = (typed, word) => normalizeConfirmText(typed) === normalizeConfirmText(word);
+  // The label shows the phrase in quotation marks, so one matching pair around
+  // the typed text is ignored. Nothing else about the match is loosened.
+  const QUOTE_PAIRS = ['""', "''", '\u201c\u201d', '\u2018\u2019'];
+  const stripConfirmQuotes = (text) => (text.length > 1 && QUOTE_PAIRS.includes(text[0] + text[text.length - 1]) ? text.slice(1, -1).trim() : text);
+  const confirmWordMatches = (typed, word) => stripConfirmQuotes(normalizeConfirmText(typed)) === normalizeConfirmText(word);
   const confirmWordLabel = (label, before, word, after) => {
     label.textContent = '';
     label.appendChild(document.createTextNode(before));

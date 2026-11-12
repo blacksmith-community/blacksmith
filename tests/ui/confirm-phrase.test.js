@@ -66,3 +66,8 @@ t('the dialog uses the same label and placeholder',async()=>{
   expect(ov.querySelector('.dialog-modal-ack-input').placeholder).toBe('patch in place');
  }finally{w.close();}
 });
+
+t('the phrase typed inside a pair of quotation marks still matches',async()=>{
+ const r=await review('run as vcap',['"run as vcap"','“run as vcap”',"'run as vcap'",'‘run as vcap’','  "Run  As VCAP" ','confirm','"confirm"','"run as vcap','run as vcap"','“run as vcap"']);
+ expect(r.steps.map(s=>s.disabled)).toEqual([false,false,false,false,false,true,true,true,true,true]);
+});
