@@ -3929,6 +3929,9 @@
     // The most nodes the availability read said a run may use, or 0 while it
     // is unknown or when the read failed.
     availableLimit: 0,
+    // True when the broker said plainly that the director allows no parallel
+    // run. A missing answer or a failed read leaves it false.
+    availableNoParallel: false,
     // What the control says about a value it replaced, or an empty string.
     maxInFlightNote: '',
     // Why the operation is unavailable, from a commands_disabled answer.
@@ -4010,9 +4013,13 @@
   // The most nodes a run may use, from the availability read or else from a
   // real preview, or 0 while neither has said.
   const commandKnownLimit = () => {
-    if (commandState.availableLimit > 0) return commandState.availableLimit;
-    return commandState.preview && commandState.preview.limit > 0 ? commandState.preview.limit : 0;
+    // A preview is fresher than the availability read, so it wins.
+    if (commandState.preview && commandState.preview.limit > 0) return commandState.preview.limit;
+    return commandState.availableLimit > 0 ? commandState.availableLimit : 0;
   };
+  // The key that says which control a set of choices builds, so a rebuild
+  // happens only when the control would differ.
+  const commandChoicesKey = (choices) => (choices.length > COMMAND_MAX_IN_FLIGHT_RADIOS ? `select:${choices.length}` : choices.join(','));
 
   // The values the Max in flight control offers, and the one it starts on.
   const commandChoices = () => {
@@ -5186,7 +5193,7 @@
   const syncMaxInFlightChoices = (pane) => {
     const segments = pane.querySelector('#command-max-in-flight-choices');
     const choices = commandChoices();
-    const key = choices.length > COMMAND_MAX_IN_FLIGHT_RADIOS ? `select:${choices.length}` : choices.join(',');
+    const key = commandChoicesKey(choices);
     if (segments.dataset.choices !== key) {
       segments.dataset.choices = key;
       buildMaxInFlightChoices(segments, choices);
@@ -5223,7 +5230,7 @@
     root.checked = commandState.user === 'root';
     const rootNote = pane.querySelector('#command-root-note');
     rootNote.textContent = commandState.rootOff ? COMMAND_ROOT_OFF_NOTE : 'Root can change anything on the VM, so choose it only when vcap can\'t do the job.';
-    const noParallel = Boolean(commandState.preview && !commandState.preview.available);
+    const noParallel = Boolean(commandState.preview ? !commandState.preview.available : commandState.availableNoParallel);
     if (noParallel) commandState.parallel = false;
     const parallel = pane.querySelector('#command-parallel');
     parallel.disabled = noParallel;
@@ -5808,7 +5815,7 @@
     segments.id = 'command-max-in-flight-choices';
     segments.addEventListener('command-choice', () => changed());
     buildMaxInFlightChoices(segments, commandChoices());
-    segments.dataset.choices = commandChoices().join(',');
+    segments.dataset.choices = commandChoicesKey(commandChoices());
     limit.appendChild(segments);
     limitRow.appendChild(limit);
     const limitHelp = rotateEl('p', 'batch-field-help', 'Choose how many nodes may run at once. The choices go up to what the director allows, which is one fewer than its worker count. The review checks your choice against your director.');
@@ -5856,6 +5863,7 @@
     if (availability && availability.enabled === true && availability.allow_root === false) commandState.rootOff = COMMAND_ROOT_OFF_NOTE;
     const availableLimit = availability ? Number(availability.max_in_flight_limit) : 0;
     commandState.availableLimit = Number.isInteger(availableLimit) && availableLimit > 0 ? availableLimit : 0;
+    commandState.availableNoParallel = Boolean(availability) && availability.enabled !== false && availability.max_in_flight_limit === 0;
     const radio = document.getElementById('rotate-op-command');
     if (radio && commandState.unavailable) {
       radio.disabled = true;

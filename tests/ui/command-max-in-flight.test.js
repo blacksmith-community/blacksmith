@@ -102,9 +102,68 @@ t('a failed availability request keeps 1, 2, and 3 and the review check',async()
  }finally{w.close();}
 });
 
-t('a limit of 0 from the broker keeps the fallback choices',async()=>{
+t('a definite limit of 0 turns parallel off and disables it with the usual note',async()=>{
  const env=await setup(0);const {w,d}=env;try{
- expect(radios(d).map(r=>r.value)).toEqual(['1','2','3']);
+ const box=d.getElementById('command-parallel');
+ expect(box.disabled).toBe(true);expect(box.checked).toBe(false);
+ expect(d.getElementById('command-parallel-note').textContent).toContain('too few workers');
+ expect(w.__T.commandValues().parallel).toBe(false);
+ expect(w.__T.commandValues().max_in_flight).toBe(0);
+ }finally{w.close();}
+});
+
+t('a missing limit key or a failed read leaves parallel available',async()=>{
+ for(const limit of [null,'fail']){
+  const env=await setup(limit);const {w,d}=env;try{
+   expect(d.getElementById('command-parallel').disabled).toBe(false);
+  }finally{w.close();}
+ }
+});
+
+t('a preview limit wins over an older availability limit',async()=>{
+ const env=await setup(5);const {w,d}=env;try{
+ d.getElementById('command-parallel').click();
+ d.getElementById('command-max-in-flight-4').click();
+ w.__T.recordCommandPreview({parallel_available:true,worker_count:3,max_in_flight_limit:2});
+ expect(radios(d).map(r=>r.value)).toEqual(['1','2']);
+ expect(w.__T.commandState.maxInFlight).toBe('2');
+ expect(note(d).hidden).toBe(false);
+ expect(note(d).textContent).toContain('went from 4 back to 2');
+ }finally{w.close();}
+});
+
+t('a value held when a lower availability limit arrives late falls back with a note',async()=>{
+ const env=boot({noDialogs:true}),{w,d}=env;envs.push(env);
+ let release;const gate=new Promise((r)=>{release=r;});
+ w.__routes.push(['/b/bosh/stemcells',(u,o,j)=>j(200,[])],['/b/bosh/releases',(u,o,j)=>j(200,[])],['/b/bosh/deployment-releases',(u,o,j)=>j(200,{})],['/b/upgrade/settings',(u,o,j)=>j(200,{})],['/b/upgrade/tasks',(u,o,j)=>j(200,[])]);
+ w.__routes.push([AVAILABILITY_URL,async(u,o,j)=>{await gate;return j(200,{enabled:true,allow_root:true,max_in_flight_limit:2});}]);
+ try{
+ await sleep(30);w.serviceInstances={cache:{service_id:'valkey',plan_id:'small'}};
+ await w.__T.initUpgradeTab();await sleep(10);
+ await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
+ d.getElementById('command-parallel').click();
+ d.getElementById('command-max-in-flight-3').click();
+ expect(w.__T.commandState.maxInFlight).toBe('3');
+ release();await sleep(30);
+ expect(radios(d).map(r=>r.value)).toEqual(['1','2']);
+ expect(w.__T.commandState.maxInFlight).toBe('2');
+ expect(checked(d)).toBe('2');
+ expect(note(d).hidden).toBe(false);
+ expect(note(d).textContent).toContain('went from 3 back to 2');
+ }finally{release();w.close();}
+});
+
+t('rebuilding the options builds the select once, not twice',async()=>{
+ const env=await setup(12);const {w,d}=env;try{
+ await w.__T.requestOperation('upgrade');w.__T.setBatchStep(1,false);
+ let built=0;
+ const watch=new w.MutationObserver((records)=>records.forEach((r)=>r.addedNodes.forEach((n)=>{ if(n.querySelectorAll) built+=(n.tagName==='SELECT'&&n.id==='command-max-in-flight-select'?1:0)+n.querySelectorAll('#command-max-in-flight-select').length; })));
+ watch.observe(d.body,{childList:true,subtree:true});
+ await w.__T.requestOperation('command');w.__T.setBatchStep(1,false);
+ await sleep(10);
+ expect(selectOf(d)).not.toBeNull();
+ expect(built).toBe(1);
+ watch.disconnect();
  }finally{w.close();}
 });
 
