@@ -63,10 +63,10 @@ func TestAvailabilityDisabled(t *testing.T) {
 	}
 }
 
-// The answer holds the two switches and the max in flight limit, and nothing else, so it never hints at
-// a configured command key or any other setting, and it answers the same
-// with or without the key header.
-func TestAvailabilityHasExactlyTwoKeys(t *testing.T) {
+// The answer holds the two switches and the max in flight limit and
+// nothing else, so it never hints at a configured command key or any other
+// setting, and it answers the same with or without the key header.
+func TestAvailabilityHasExactlyThreeKeys(t *testing.T) {
 	t.Parallel()
 
 	env := commandHandler(t, commandsOn(cmdKey, true))
@@ -151,6 +151,11 @@ func TestAvailabilityWithoutAnAuthorizerReportsBothOff(t *testing.T) {
 
 	if len(got) != 3 || got["enabled"] != false || got["allow_root"] != false {
 		t.Fatalf("expected both off, got %v", got)
+	}
+
+	limit, present := got["max_in_flight_limit"]
+	if !present || limit != float64(3) {
+		t.Fatalf("expected a max_in_flight_limit of 3 from the default four workers, got %v (present %t)", limit, present)
 	}
 }
 
