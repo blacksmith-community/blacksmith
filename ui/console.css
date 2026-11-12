@@ -45,7 +45,9 @@ body > header #logo { font-size: 18px; font-weight: 650; }
 body > header .theme-toggle { height: 32px; margin-top: 0; border-color: #8999ad; padding: 4px 10px; }
 #minimized-terminal-bar { top: 56px; }
 .main-content > .wrap { min-height: 0; padding-bottom: 12px; }
-.main-content .tabs { margin-top: 14px; flex-shrink: 0; border: 1px solid var(--border-primary); border-radius: 10px 10px 0 0; box-shadow: none; }
+/* The breadcrumb row, the main tabs, and the content read as one rounded box. */
+.main-content #route-context { margin-top: 14px; flex-shrink: 0; border: 1px solid var(--border-primary); border-radius: 10px 10px 0 0; }
+.main-content .tabs { margin-top: 0; flex-shrink: 0; border: 1px solid var(--border-primary); border-top: 0; border-radius: 0; box-shadow: none; }
 .main-content .tab-button { padding: 13px 18px; }
 .main-content .tab-content { border: 1px solid var(--border-primary); border-top: 0; border-radius: 0 0 10px 10px; min-height: 0; }
 #blacksmith .detail-tabs, #services .detail-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 12px; height: auto; min-height: 48px; overflow: visible; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-primary); flex-shrink: 0; }
@@ -110,7 +112,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   body > header #deployment-name, body > header #ident { display: none; }
   body > header .space-x-4 { gap: 8px; }
   #navigation-trigger { gap: 10px; padding: 5px 8px; }
-  .main-content .tabs { margin-top: 10px; }
+  .main-content #route-context { margin-top: 10px; }
   .main-content .tab-button { padding: 10px 6px; font-size: 12px; }
   #services.tab-panel.active { flex-direction: column; overflow: auto; }
   #services .services-list { flex: none; width: 100%; max-width: none; max-height: none; overflow: visible; }

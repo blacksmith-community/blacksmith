@@ -180,7 +180,9 @@
  // keep their own spelling.
  const testingViews={test:'Connection',queues:'Queue info','queue-ops':'Queue ops',rabbitmqctl:'rabbitmqctl'};
  function render(route){
-  let bar=doc.getElementById('route-context');if(!bar){bar=doc.createElement('div');bar.id='route-context';bar.className='route-context';doc.querySelector('.tab-content')?.before(bar);}
+  let bar=doc.getElementById('route-context');if(!bar){bar=doc.createElement('div');bar.id='route-context';bar.className='route-context';}
+  // The bar is the first row of the page, directly above the main tabs.
+  const anchor=doc.querySelector('.tabs')||doc.querySelector('.tab-content');if(anchor&&bar.nextElementSibling!==anchor)anchor.before(bar);
   if(!bar)return;bar.replaceChildren();const back=doc.createElement('button');back.type='button';back.className='route-back';back.textContent='← Back';back.addEventListener('click',()=>root.blacksmithRouter.back());bar.append(back);
   const nav=doc.createElement('nav');nav.setAttribute('aria-label','Breadcrumb');const list=doc.createElement('ol');nav.append(list);bar.append(nav);
   const crumbs=[];const push=(label,r)=>crumbs.push({label,r});

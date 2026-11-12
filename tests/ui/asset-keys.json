@@ -16,8 +16,8 @@
   "sha256": "3207c0b2abe984356fefe9f81fe720dda17db9c2798986c0f80322ee4f3c2b11"
  },
  "console.css": {
-  "key": "20261028-oat-309",
-  "sha256": "cc270c75e8c68c131f79358404ad02bbc41db3fe4a798faba510b249f8df1e7f"
+  "key": "20261028-oat-310",
+  "sha256": "88864e842268355b615753cf0c716dc9f47d144f975ca6e9d0bb7b2cbd28e27f"
  },
  "forge-theme.css": {
   "key": "20261112-oat-354",
@@ -40,8 +40,8 @@
   "sha256": "368c3a3bde5e3c7d4c3eaa1704007edd19ebe1e7dde85c97797031b3bf5f2e65"
  },
  "routes.js": {
-  "key": "20261112-oat-334",
-  "sha256": "49f03848f5d20426a9401a7dea13b6223736dddf2786f983aec4cfc4bcd59acd"
+  "key": "20261112-oat-335",
+  "sha256": "5790276a64895c21246bf5982a33d8125dad2bae884ce52da9fa799504ba3445"
  },
  "view-guidance.css": {
   "key": "20261028-oat-17",
