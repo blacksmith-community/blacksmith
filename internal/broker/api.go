@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -24,6 +25,12 @@ type API struct {
 func (api API) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	api.logIncomingRequest(req)
 
+	if api.WebRoot != nil && isPublicInstallAsset(req) {
+		api.WebRoot.ServeHTTP(writer, req)
+
+		return
+	}
+
 	username, password, ok := req.BasicAuth()
 	if !ok {
 		api.handleMissingAuth(writer, req)
@@ -42,6 +49,50 @@ func (api API) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	req = req.WithContext(audit.WithActor(req.Context(), audit.ActorFromRequest(req, username)))
 
 	api.routeRequest(writer, req, username)
+}
+
+// publicInstallFiles are the install assets outside the brand directory
+// that a browser may fetch without the broker credential. A browser asks
+// for the manifest and the favicon, and an installed app for its icons,
+// before it has a password to send. None of them holds any data.
+var publicInstallFiles = map[string]bool{
+	"/manifest.webmanifest": true,
+	"/favicon.ico":          true,
+}
+
+// brandIconPrefix is the one directory whose icons are public. Only names
+// that brandIconName matches are public inside it.
+const brandIconPrefix = "/assets/brand/"
+
+// brandIconName matches the brand icon file names, such as icon-192.png.
+// It allows no slash, dot segment, or other file in the directory.
+var brandIconName = regexp.MustCompile(`\Aicon-[0-9]{1,4}\.png\z`)
+
+// isPublicInstallAsset reports whether req may skip basic auth. Only GET and
+// HEAD qualify, and only for an exact path in publicInstallFiles or a brand
+// icon directly under brandIconPrefix. A percent-encoded letter, digit,
+// dot, dash, or slash leaves RawPath set, and such a request is refused,
+// so no encoded form can stand in for a public name. Any other encoded
+// byte decodes to a character that no public name contains. The decoded
+// path is matched whole, so a dot segment, a doubled slash, or a trailing
+// slash never matches either.
+func isPublicInstallAsset(req *http.Request) bool {
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return false
+	}
+
+	if req.URL == nil || req.URL.Opaque != "" || req.URL.RawPath != "" {
+		return false
+	}
+
+	path := req.URL.Path
+	if publicInstallFiles[path] {
+		return true
+	}
+
+	name, found := strings.CutPrefix(path, brandIconPrefix)
+
+	return found && brandIconName.MatchString(name)
 }
 
 func (api API) logIncomingRequest(req *http.Request) {
