@@ -4346,6 +4346,15 @@ bs-tabs > .cert-tab-pane[hidden] {
   background: var(--bg-hover);
 }
 
+/* Stacking order. The terminal dock sits below drawers, and toasts and
+   tooltips sit above them. Native dialogs use the top layer. */
+:root {
+  --z-terminal-dock: 1;
+  --z-drawer: 9500;
+  --z-toast: 10000;
+  --z-tooltip: 20000;
+}
+
 /* Certificate field values */
 .cert-field-value {
   position: relative;
@@ -4366,6 +4375,31 @@ bs-tabs > .cert-tab-pane[hidden] {
   border-radius: 3px;
   font-family: 'Courier New', monospace;
   font-size: 13px;
+}
+
+/* The copy icon leads each value. An empty slot keeps the values aligned in
+   a table that has copy icons, and takes no room in one that has none. */
+.cert-copy-slot {
+  flex: 0 0 28px;
+  width: 28px;
+  min-height: 28px;
+}
+
+.cert-copy-slot:empty {
+  display: none;
+}
+
+table:has(.cert-copy-btn) .cert-copy-slot:empty {
+  display: block;
+}
+
+.cert-drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px;
 }
 
 /* Copy button for certificate fields */
@@ -7149,7 +7183,7 @@ bs-tabs > .cert-tab-pane[hidden] {
    and tooltip. */
 .minimized-terminal-bar {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-terminal-dock);
   flex: none;
   min-height: 40px;
   background: var(--bg-secondary);
@@ -7555,7 +7589,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   color: var(--bg-primary);
   font-size: 14px;
   font-weight: 500;
-  z-index: 10000;
+  z-index: var(--z-toast);
   opacity: 0;
   transform: translateY(-20px);
   transition: all 0.3s ease;
@@ -12456,7 +12490,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   position: fixed;
   top: 0;
   right: 0;
-  z-index: 9000;
+  z-index: var(--z-drawer);
   display: flex;
   flex-direction: column;
   width: min(max(50vw, 520px), 100vw);

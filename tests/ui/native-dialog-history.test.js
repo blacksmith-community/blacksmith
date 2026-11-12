@@ -35,7 +35,7 @@ const start=async()=>{
  const snapshot=()=>JSON.stringify({
   surfaces:w.blacksmithSurfaces.size(),
   inert:[...d.querySelectorAll('[inert]')].map(n=>n.id||n.tagName),
-  hidden:[...d.querySelectorAll('[aria-hidden]')].filter(n=>!n.closest('dialog')).map(n=>(n.id||n.tagName)+'='+n.getAttribute('aria-hidden'))
+  hidden:[...d.querySelectorAll('[aria-hidden]')].filter(n=>!n.closest('dialog, #cert-fleet-drawer')).map(n=>(n.id||n.tagName)+'='+n.getAttribute('aria-hidden'))
  });
  const traverse=async(direction)=>{ events.length=0; w.history[direction](); await sleep(150); };
  return {...env,events,snapshot,traverse};

@@ -21211,6 +21211,9 @@
       tr.appendChild(el('th', null, label));
       const td = el('td');
       const wrap = el('div', 'cert-field-value');
+      // The slot comes first so every value in the table starts in one column.
+      const slot = el('span', 'cert-copy-slot');
+      wrap.appendChild(slot);
       const span = el('span', 'cert-field-text');
       if (title) span.setAttribute('title', title);
       const missing = text === EMPTY || copyValue === EMPTY;
@@ -21220,7 +21223,7 @@
         setCellText(span, text);
       }
       wrap.appendChild(span);
-      if (copyValue && !missing) wrap.appendChild(copyButton(`Copy ${label}`, copyValue));
+      if (copyValue && !missing) slot.appendChild(copyButton(`Copy ${label}`, copyValue));
       td.appendChild(wrap);
       tr.appendChild(td);
       return tr;
@@ -27647,8 +27650,10 @@
         const tr = el('tr', 'cert-probe-row');
         const endpoint = el('td');
         const value = el('div', 'cert-field-value');
+        const copySlot = el('span', 'cert-copy-slot');
+        if (obs.locator) copySlot.appendChild(CertView.copyButton('Copy endpoint', obs.locator));
+        value.appendChild(copySlot);
         value.appendChild(el('span', 'cert-field-text', obs.locator || 'listener'));
-        if (obs.locator) value.appendChild(CertView.copyButton('Copy endpoint', obs.locator));
         endpoint.appendChild(value);
         tr.appendChild(endpoint);
         tr.appendChild(el('td', obs.state === 'failed' ? 'cert-probe-failed' : null, probeResultText(obs)));
@@ -27657,11 +27662,16 @@
           const print = el('td');
           if (obs.sha256_fingerprint) {
             const box = el('div', 'cert-field-value');
+            const copySlot = el('span', 'cert-copy-slot');
+            copySlot.appendChild(CertView.copyButton(`Copy fingerprint ${obs.sha256_fingerprint}`, obs.sha256_fingerprint));
+            box.appendChild(copySlot);
             box.appendChild(el('span', 'cert-field-text', obs.sha256_fingerprint));
-            box.appendChild(CertView.copyButton(`Copy fingerprint ${obs.sha256_fingerprint}`, obs.sha256_fingerprint));
             print.appendChild(box);
           } else {
-            print.textContent = 'Not seen';
+            const box = el('div', 'cert-field-value');
+            box.appendChild(el('span', 'cert-copy-slot'));
+            box.appendChild(el('span', 'cert-field-text', 'Not seen'));
+            print.appendChild(box);
           }
           tr.appendChild(print);
         }
@@ -27711,10 +27721,12 @@
         columns.forEach((c) => {
           const td = el('td');
           const value = c.has && !c.has(o) ? '' : c.text(o);
-          if (c.copy && c.copy(o)) {
+          if (c.copy) {
             const box = el('div', 'cert-field-value');
+            const copySlot = el('span', 'cert-copy-slot');
+            if (c.copy(o)) copySlot.appendChild(CertView.copyButton(`Copy ${c.label}`, c.copy(o)));
+            box.appendChild(copySlot);
             box.appendChild(el('span', 'cert-field-text', value));
-            box.appendChild(CertView.copyButton(`Copy ${c.label}`, c.copy(o)));
             td.appendChild(box);
           } else {
             td.textContent = value;
@@ -27912,7 +27924,9 @@
       title.id = 'cert-drawer-title';
       title.tabIndex = -1;
       header.appendChild(title);
-      const close = button('cert-action-btn cert-drawer-close', 'Close');
+      const close = button('cert-action-btn cert-drawer-close');
+      close.innerHTML = blacksmithIcon('x', { size: 16 });
+      close.dataset.keepKey = 'cert-drawer-close';
       close.setAttribute('aria-label', 'Close certificate details');
       close.addEventListener('click', () => { closeDrawer(); });
       header.appendChild(close);

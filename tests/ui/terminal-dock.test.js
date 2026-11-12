@@ -52,7 +52,8 @@ t('the dock sits in the page flow, so it reserves its own height',()=>{
 });
 
 t('the dock stays below drawers, dialogs, and toasts',()=>{
- const z=Number((bodies('blacksmith.css','.minimized-terminal-bar').match(/z-index:\s*(\d+)/)||[])[1]);
+ expect(bodies('blacksmith.css','.minimized-terminal-bar')).toMatch(/z-index:\s*var\(--z-terminal-dock\)/);
+ const z=Number((bodies('blacksmith.css',':root').match(/--z-terminal-dock:\s*(\d+)/)||[])[1]);
  expect(z).toBeLessThanOrEqual(5);
 });
 

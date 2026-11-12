@@ -3,7 +3,7 @@
 .blacksmith-action-help .ot-tooltip { visibility: hidden !important; pointer-events: none !important; }
 /* Action help shares the active theme and remains inside modal top layers. */
 .action-tooltip {
-  position: fixed; z-index: 20000; max-width: min(24rem, calc(100vw - 16px));
+  position: fixed; z-index: var(--z-tooltip, 20000); max-width: min(24rem, calc(100vw - 16px));
   padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--foreground); color: var(--background); font-size: .8125rem;
   line-height: 1.4; width: max-content; overflow-wrap: break-word; box-shadow: 0 2px 8px #0003;
