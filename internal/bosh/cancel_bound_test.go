@@ -68,8 +68,16 @@ func TestGetInstancesCancelKeepsTenSecondsForASlowDirector(t *testing.T) {
 	})
 	director := newTaskAdapter(t, server.Director)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-	defer cancel()
+	// The deadline passes once the director has been asked to read the task,
+	// not 200 ms after the call starts, so a slow sign-in under load cannot
+	// use it up before the request is ever sent.
+	ctx, expire := newExpiringContext(t.Context())
+	defer expire()
+
+	go func() {
+		<-server.firstPoll
+		expire()
+	}()
 
 	err := callWithin(t, 30*time.Second, func() error { return instanceListing().call(ctx, director) })
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -77,4 +85,26 @@ func TestGetInstancesCancelKeepsTenSecondsForASlowDirector(t *testing.T) {
 	}
 
 	_ = checkCallError(t, err, instanceListing().operation, bosh.TaskCancelRequested)
+}
+
+// expiringContext is a context that ends with context.DeadlineExceeded when
+// its test calls expire, as a deadline would, at a moment the test picks.
+type expiringContext struct {
+	context.Context
+
+	expire context.CancelFunc
+}
+
+func newExpiringContext(parent context.Context) (*expiringContext, context.CancelFunc) {
+	inner, cancel := context.WithCancel(parent)
+
+	return &expiringContext{Context: inner, expire: cancel}, cancel
+}
+
+func (c *expiringContext) Err() error {
+	if err := c.Context.Err(); err != nil {
+		return context.DeadlineExceeded
+	}
+
+	return nil
 }
