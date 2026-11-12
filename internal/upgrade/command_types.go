@@ -89,6 +89,7 @@ type CommandVM struct {
 	StderrReceived  int               `json:"stderr_received,omitempty"`
 	StdoutTruncated bool              `json:"stdout_truncated,omitempty"`
 	StderrTruncated bool              `json:"stderr_truncated,omitempty"`
+	Merged          bool              `json:"merged,omitempty"`
 	Killed          bool              `json:"killed,omitempty"`
 	Survived        bool              `json:"survived,omitempty"`
 	OutputPath      string            `json:"output_path,omitempty"`

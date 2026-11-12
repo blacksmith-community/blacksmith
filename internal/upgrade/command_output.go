@@ -25,7 +25,12 @@ var errCommandOutputSegment = fmt.Errorf("%w: a command output path segment is n
 
 // CommandOutput is what one node printed, as it is stored in Vault. The
 // streams are base64 in JSON, so any bytes survive. Kept is how much of a
-// stream was stored and Received is how much the node sent.
+// stream was stored and Received is how much the node sent. When Merged is
+// true, the command's stderr joined its stdout on the node, so Stdout holds
+// both in the order the command wrote them, its counts describe that one
+// stream, and Stderr is empty. An entry saved before output was merged has
+// no merged field, so it reads back with Merged false and both streams as
+// they were saved.
 type CommandOutput struct {
 	Stdout          []byte `json:"stdout"`
 	Stderr          []byte `json:"stderr"`
@@ -35,6 +40,7 @@ type CommandOutput struct {
 	StderrReceived  int64  `json:"stderr_received"`
 	StdoutTruncated bool   `json:"stdout_truncated"`
 	StderrTruncated bool   `json:"stderr_truncated"`
+	Merged          bool   `json:"merged,omitempty"`
 }
 
 // validCommandOutputSegment accepts ASCII letters, digits, dot, underscore,
@@ -82,8 +88,11 @@ func commandOutputPath(taskID, instanceID string, vm CommandVMIdentity) (string,
 }
 
 // storeCommandOutput saves what one node printed in a single Vault entry
-// and returns its path. The entry exists even when both streams are empty,
-// so a node that ran and printed nothing differs from one that never ran.
+// and returns its path. The entry exists even when the stream is empty, so
+// a node that ran and printed nothing differs from one that never ran. The
+// result's stdout is the merged stream, and its stderr holds only the
+// wrapper's own lines, such as the one about a command it could not start,
+// which the node's status already explains, so the entry leaves them out.
 // Nothing here logs the output, and an error names the path at most.
 func (m *Manager) storeCommandOutput(ctx context.Context, taskID, instanceID string, vm CommandVMIdentity, result ssh.Result) (string, error) {
 	path, err := commandOutputPath(taskID, instanceID, vm)
@@ -93,13 +102,11 @@ func (m *Manager) storeCommandOutput(ctx context.Context, taskID, instanceID str
 
 	entry := CommandOutput{
 		Stdout:          nonNilBytes(result.Stdout),
-		Stderr:          nonNilBytes(result.Stderr),
+		Stderr:          []byte{},
 		StdoutKept:      int64(len(result.Stdout)),
 		StdoutReceived:  result.StdoutReceived,
-		StderrKept:      int64(len(result.Stderr)),
-		StderrReceived:  result.StderrReceived,
 		StdoutTruncated: result.StdoutTruncated,
-		StderrTruncated: result.StderrTruncated,
+		Merged:          true,
 	}
 
 	err = m.vault.Put(ctx, path, entry)

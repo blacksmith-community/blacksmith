@@ -33,6 +33,8 @@ const (
 	// runCommandText is the marker no log line, error, or Vault record
 	// other than the task record may hold.
 	runCommandText = "echo marker-9f3a71c2-secret-in-command"
+	// runStdout is what the fixture's exec prints by default.
+	runStdout = "out"
 )
 
 // runCleanupDone is the cleanup record of a command that finished.
@@ -702,12 +704,19 @@ func TestRunCommandNodeSettlesTheNode(t *testing.T) {
 			t.Errorf("%s: exit code %v", name, node.ExitCode)
 		}
 
-		if node.StdoutKept != 3 || node.StdoutReceived != 3 || node.StderrKept != 2 || node.StderrReceived != 500 {
+		// The command's stderr joins its stdout on the node, so the
+		// stdout counts describe the merged stream. What the session got
+		// on stderr is the wrapper's own, and none of it is counted.
+		if node.StdoutKept != 3 || node.StdoutReceived != 3 || node.StderrKept != 0 || node.StderrReceived != 0 {
 			t.Errorf("%s: counts %d/%d and %d/%d", name, node.StdoutKept, node.StdoutReceived, node.StderrKept, node.StderrReceived)
 		}
 
-		if node.StdoutTruncated || !node.StderrTruncated {
+		if node.StdoutTruncated || node.StderrTruncated {
 			t.Errorf("%s: truncated flags %v and %v", name, node.StdoutTruncated, node.StderrTruncated)
+		}
+
+		if !node.Merged {
+			t.Errorf("%s: the node does not say its output is merged", name)
 		}
 
 		if node.StartedAt == nil || node.EndedAt == nil || node.EndedAt.Sub(*node.StartedAt) != 4*time.Second {
@@ -724,8 +733,12 @@ func TestRunCommandNodeSettlesTheNode(t *testing.T) {
 	}
 
 	out, err := fix.manager.ReadCommandOutput(context.Background(), runTaskID, "", "redis-0")
-	if err != nil || string(out.Stdout) != "out" || string(out.Stderr) != "er" {
-		t.Fatalf("the stored output did not come back: err=%v", err)
+	if err != nil || string(out.Stdout) != runStdout || len(out.Stderr) != 0 || !out.Merged {
+		t.Fatalf("the stored output did not come back merged: err=%v", err)
+	}
+
+	if out.StderrKept != 0 || out.StderrReceived != 0 || out.StderrTruncated {
+		t.Errorf("the stored stderr counts %d/%d/%v, want none", out.StderrKept, out.StderrReceived, out.StderrTruncated)
 	}
 
 	fix.assertNoCommandText()
@@ -1151,6 +1164,10 @@ func TestRunCommandNodeKeepsPartialOutputOnATransportError(t *testing.T) {
 	node := fix.vault.stored(t)
 	if node.Status != CommandStatusFailed || node.ExitCode != nil || node.OutputPath == "" {
 		t.Errorf("status %s exit %v output %q", node.Status, node.ExitCode, node.OutputPath)
+	}
+
+	if !node.Merged || node.StdoutKept != 3 || node.StderrKept != 0 {
+		t.Errorf("merged %v, kept %d and %d", node.Merged, node.StdoutKept, node.StderrKept)
 	}
 }
 

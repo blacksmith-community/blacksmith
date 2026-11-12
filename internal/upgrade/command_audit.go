@@ -61,6 +61,7 @@ type CommandNodeAudit struct {
 	StderrReceived  int               `json:"stderr_received,omitempty"`
 	StdoutTruncated bool              `json:"stdout_truncated,omitempty"`
 	StderrTruncated bool              `json:"stderr_truncated,omitempty"`
+	Merged          bool              `json:"merged,omitempty"`
 	Killed          bool              `json:"killed,omitempty"`
 	Survived        bool              `json:"survived,omitempty"`
 	// Reason says why the node was skipped or stopped, and Error what
@@ -261,6 +262,7 @@ func (m *Manager) commandNodeRecordLocked(task *UpgradeTask, inst *InstanceUpgra
 		StderrReceived:  node.StderrReceived,
 		StdoutTruncated: node.StdoutTruncated,
 		StderrTruncated: node.StderrTruncated,
+		Merged:          node.Merged,
 		Killed:          node.Killed,
 		Survived:        node.Survived,
 		Reason:          auditText(node.Reason),

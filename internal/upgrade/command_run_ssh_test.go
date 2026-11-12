@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh/sshconn"
+	"blacksmith/pkg/logger"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -353,5 +354,76 @@ func TestNewCommandRunnerNeedsADirector(t *testing.T) {
 
 	if NewCommandRunner(nil, &captureLog{}) != nil {
 		t.Fatal("a nil director gave a runner")
+	}
+}
+
+// printBytes is a command that reads its stdin and prints n bytes on
+// stdout.
+func printBytes(n int) func(channel gossh.Channel, stop <-chan struct{}) uint32 {
+	return func(channel gossh.Channel, _ <-chan struct{}) uint32 {
+		_, _ = io.Copy(io.Discard, channel)
+		_, _ = io.Copy(channel, io.LimitReader(repeatReader('x'), int64(n)))
+
+		return 0
+	}
+}
+
+// repeatReader is an endless stream of one byte.
+type repeatReader byte
+
+func (r repeatReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(r)
+	}
+
+	return len(p), nil
+}
+
+// A command's merged stream may be 2 MiB. The exec op on a command
+// session keeps that much and counts the rest, while the patch session's
+// commands and the command session's other ops keep their 64 KiB.
+func TestCommandExecKeepsTwoMiBOfOutput(t *testing.T) {
+	t.Parallel()
+
+	const sent = 2<<20 + 4096
+
+	cases := map[string]struct {
+		build func(*sshDirector, logger.Logger) func(context.Context, string, string, []int) (PatchSession, error)
+		op    string
+		kept  int
+	}{
+		"command exec": {build: func(d *sshDirector, l logger.Logger) func(context.Context, string, string, []int) (PatchSession, error) {
+			return NewCommandRunner(d, l)
+		}, op: opRunExec, kept: 2 << 20},
+		"command prepare": {build: func(d *sshDirector, l logger.Logger) func(context.Context, string, string, []int) (PatchSession, error) {
+			return NewCommandRunner(d, l)
+		}, op: opRunPrepare, kept: 64 << 10},
+		"patch exec": {build: func(d *sshDirector, l logger.Logger) func(context.Context, string, string, []int) (PatchSession, error) {
+			return NewPatchRunner(d, l)
+		}, op: opRunExec, kept: 64 << 10},
+	}
+
+	for name, want := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			director := &sshDirector{vm: startSSHVM(t, printBytes(sent)), t: t}
+
+			sess, err := want.build(director, &captureLog{})(t.Context(), "dep", "redis", []int{0})
+			if err != nil {
+				t.Fatalf("opening the session: %v", err)
+			}
+
+			t.Cleanup(func() { _ = sess.Close() })
+
+			result, err := sess.Run(t.Context(), 0, want.op, []string{runTaskID}, strings.NewReader(""))
+			if err != nil {
+				t.Fatalf("the run failed: %v", err)
+			}
+
+			if len(result.Stdout) != want.kept || !result.StdoutTruncated || result.StdoutReceived != sent {
+				t.Errorf("kept %d of %d, truncated %v, want %d kept", len(result.Stdout), result.StdoutReceived, result.StdoutTruncated, want.kept)
+			}
+		})
 	}
 }

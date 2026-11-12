@@ -902,8 +902,11 @@ cleanup() {
 # fixed values, umask 022, stdin at end of file, and the home of its user
 # as its working directory. The vcap command runs under setpriv, inside
 # timeout, with no supplementary groups and no way to gain privileges
-# through setuid programs. The wrapper exits with the code the command
-# ended with, which it also records in the exit file.
+# through setuid programs. The command's stderr joins its stdout, so its
+# output arrives as one stream in the order it was written, and stderr
+# carries only the wrapper's own line about a command it could not start.
+# The wrapper exits with the code the command ended with, which it also
+# records in the exit file.
 execute() {
 	[ "$#" -eq 4 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return "$EXIT_USAGE"
@@ -988,15 +991,20 @@ execute() {
 	# fixed line, so it is not taken for a command that exited 1, and it
 	# removes the started marker first, so cleanup reports started=no and
 	# the broker tells the failed launch from a command that ran and
-	# exited 125. The brace group sends the command's stderr through
+	# exited 125. The brace group sends the launcher's stderr through
 	# descriptor 3 and the shell's own job notice, such as "Killed", to
 	# /dev/null. The launch closes descriptor 3 for everything it starts,
-	# so the command cannot write to the notice channel. A command that
-	# outlives the kill-after is killed together with timeout, and shows
-	# up as 137, not 124.
+	# so the command cannot write to the notice channel. The exec at the
+	# end of the launch points the stderr of timeout, and so of the
+	# command, at its stdout, so both streams share one pipe and the
+	# broker reads them merged in the order the command wrote them. The
+	# launch's own line about a command that was not started is written
+	# before that exec, so it stays on stderr, apart from the command's
+	# output. A command that outlives the kill-after is killed together
+	# with timeout, and shows up as 137, not 124.
 	# shellcheck disable=SC2016
 	{
-		"$setsid" --wait /bin/bash -c 'mark=$4; nostart() { rm -f -- "$mark"; echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; [ -n "${f[19]:-}" ] && echo "${f[19]}" > "$2" && echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 4; exec "$@"' \
+		"$setsid" --wait /bin/bash -c 'mark=$4; nostart() { rm -f -- "$mark"; echo "run.sh: the command was not started" >&2; exit 125; }; set -C; { IFS= read -r -d "" rec < /proc/$$/stat; rec=${rec##*) }; read -ra f <<< "$rec"; [ -n "${f[19]:-}" ] && echo "${f[19]}" > "$2" && echo $$ > "$1"; } 2> /dev/null || nostart; cd -- "$3" 2> /dev/null || nostart; umask 022; shift 4; exec "$@" 2>&1' \
 			_ "$dir/pgid" "$dir/starttime" "$home" "$dir/started" \
 			"$timeout" -k 10 "$secs" ${priv[@]+"${priv[@]}"} \
 			env -i HOME="$homepath" USER="$user" LOGNAME="$user" SHELL=/bin/bash \

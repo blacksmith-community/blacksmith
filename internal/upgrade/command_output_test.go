@@ -77,20 +77,59 @@ func TestCommandOutputRoundTrip(t *testing.T) {
 		t.Fatalf("load: found=%v err=%v", found, err)
 	}
 
-	if !bytes.Equal(got.Stdout, result.Stdout) || !bytes.Equal(got.Stderr, result.Stderr) {
+	// The command's stderr joined its stdout on the node, so stdout is
+	// the merged stream, and what the session got on stderr is the
+	// wrapper's own, which the entry leaves out.
+	if !got.Merged {
+		t.Error("the entry does not say it holds the merged stream")
+	}
+
+	if !bytes.Equal(got.Stdout, result.Stdout) || got.Stderr == nil || len(got.Stderr) != 0 {
 		t.Errorf("streams = %q / %q", got.Stdout, got.Stderr)
 	}
 
-	if got.StdoutKept != int64(len(result.Stdout)) || got.StderrKept != 3 {
+	if got.StdoutKept != int64(len(result.Stdout)) || got.StderrKept != 0 {
 		t.Errorf("kept = %d / %d", got.StdoutKept, got.StderrKept)
 	}
 
-	if got.StdoutReceived != 900 || got.StderrReceived != 3 {
+	if got.StdoutReceived != 900 || got.StderrReceived != 0 {
 		t.Errorf("received = %d / %d", got.StdoutReceived, got.StderrReceived)
 	}
 
 	if !got.StdoutTruncated || got.StderrTruncated {
 		t.Errorf("truncated = %v / %v", got.StdoutTruncated, got.StderrTruncated)
+	}
+}
+
+// An entry saved before output was merged has no merged field. It reads
+// back as it was saved, with both streams and merged false.
+func TestCommandOutputReadsAnEntryFromBeforeMergingUnmerged(t *testing.T) {
+	t.Parallel()
+
+	manager, vault := newOutputManager()
+	ctx := context.Background()
+	path := "command-output/" + outputTaskID + "/inst-1/redis-0"
+
+	err := vault.Put(ctx, path, map[string]interface{}{
+		"stdout": []byte("old out"), "stderr": []byte("old err"),
+		"stdout_kept": 3, "stdout_received": 3, "stderr_kept": 3, "stderr_received": 9,
+		"stdout_truncated": false, "stderr_truncated": true,
+	})
+	if err != nil {
+		t.Fatalf("seeding the entry: %v", err)
+	}
+
+	got, found, err := manager.loadCommandOutput(ctx, path)
+	if err != nil || !found {
+		t.Fatalf("load: found=%v err=%v", found, err)
+	}
+
+	if got.Merged {
+		t.Error("an entry from before merging reads as merged")
+	}
+
+	if string(got.Stdout) != "old out" || string(got.Stderr) != "old err" || got.StderrReceived != 9 || !got.StderrTruncated {
+		t.Errorf("the entry changed on the way back: %q / %q, %d, %v", got.Stdout, got.Stderr, got.StderrReceived, got.StderrTruncated)
 	}
 }
 

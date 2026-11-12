@@ -939,16 +939,21 @@ func (r *commandRun) settle(ctx context.Context, outcome commandOutcome) bool {
 }
 
 // recordOutput records on the node what it printed and where that is kept.
+// The command's stderr joins its stdout on the node, so the stdout counts
+// describe the merged stream and the node keeps no stderr counts. What the
+// session got on stderr is the wrapper's own, which storeCommandOutput
+// leaves out too.
 func recordOutput(node *CommandVM, outcome commandOutcome) {
 	res := outcome.result
 
 	node.OutputPath = outcome.path
+	node.Merged = true
 	node.StdoutKept = len(res.Stdout)
 	node.StdoutReceived = int(res.StdoutReceived)
-	node.StderrKept = len(res.Stderr)
-	node.StderrReceived = int(res.StderrReceived)
 	node.StdoutTruncated = res.StdoutTruncated
-	node.StderrTruncated = res.StderrTruncated
+	node.StderrKept = 0
+	node.StderrReceived = 0
+	node.StderrTruncated = false
 }
 
 // strand leaves the node in the phase it is in, because cleanup could not

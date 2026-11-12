@@ -225,7 +225,7 @@ func TestCommandAuditRecordsAWholeRun(t *testing.T) {
 			t.Errorf("reviewed %+v matched %+v", node.Reviewed, node.Matched)
 		}
 
-		if node.StdoutKept != len("out") || node.Killed || node.Survived {
+		if node.StdoutKept != len("out") || node.StderrKept != 0 || !node.Merged || node.Killed || node.Survived {
 			t.Errorf("node counts and flags %+v", node)
 		}
 

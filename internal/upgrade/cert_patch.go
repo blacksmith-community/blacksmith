@@ -64,6 +64,9 @@ const opRestart = "restart"
 const (
 	// patchOutputLimit bounds what one command may print.
 	patchOutputLimit = 64 << 10
+	// commandOutputLimit bounds the merged stream of an operator's
+	// command, which exec on a command session returns as its stdout.
+	commandOutputLimit = 2 << 20
 	// patchCommandTimeout bounds one command on a VM.
 	patchCommandTimeout = 2 * time.Minute
 	// patchGateWaitDefault is how long a patched VM's health gate may
@@ -153,7 +156,7 @@ func (s *sshPatchSession) Run(ctx context.Context, vm int, op string, args []str
 		program, argv = scripts.SudoCheckCommand, nil
 	}
 
-	result, err := runner.Run(ctx, program, argv, stdin, patchOutputLimit)
+	result, err := runner.Run(ctx, program, argv, stdin, s.outputLimit(op))
 	if err != nil && (errors.Is(err, ssh.ErrRunnerClosed) || ctx.Err() != nil) {
 		// A deadline closes the runner's connection, so the next command
 		// on this VM connects again.
@@ -244,6 +247,18 @@ func (s *sshPatchSession) Close() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// outputLimit is how much of each stream an op keeps. Exec on a command
+// session returns an operator's command, whose merged stream may reach
+// commandOutputLimit. Every other op, and every op of a patch session,
+// keeps patchOutputLimit.
+func (s *sshPatchSession) outputLimit(op string) int64 {
+	if s.quiet && op == opRunExec {
+		return commandOutputLimit
+	}
+
+	return patchOutputLimit
 }
 
 // patchSessions holds the sessions one rotation or preview opened, one

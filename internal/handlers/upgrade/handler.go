@@ -722,7 +722,9 @@ func (h *Handler) commandKeyConfigured() bool {
 
 // commandOutputResponse is what one node printed. The streams are decoded
 // text, and the counts and flags say how much was kept of how much the node
-// sent.
+// sent. Merged is true when stdout holds the command's stderr too, in the
+// order it was written, and stderr is empty. An entry saved before output
+// was merged answers false, with both streams as they were saved.
 type commandOutputResponse struct {
 	Stdout          string `json:"stdout"`
 	Stderr          string `json:"stderr"`
@@ -732,6 +734,7 @@ type commandOutputResponse struct {
 	StderrReceived  int64  `json:"stderr_received"`
 	StdoutTruncated bool   `json:"stdout_truncated"`
 	StderrTruncated bool   `json:"stderr_truncated"`
+	Merged          bool   `json:"merged"`
 }
 
 // GetCommandOutput handles GET /b/upgrade/tasks/{id}/output?vm=<group>-<index>
@@ -768,6 +771,7 @@ func (h *Handler) GetCommandOutput(w http.ResponseWriter, r *http.Request, taskI
 		StderrReceived:  output.StderrReceived,
 		StdoutTruncated: output.StdoutTruncated,
 		StderrTruncated: output.StderrTruncated,
+		Merged:          output.Merged,
 	})
 }
 

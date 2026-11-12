@@ -1514,7 +1514,7 @@ func TestRunExecRootPassesOutputAndExitCode(t *testing.T) {
 				t.Fatalf("exit = %d, want %d; stderr %q", code, want, errOut)
 			}
 
-			if out != "out\n" || errOut != "err\n" {
+			if out != "out\nerr\n" || errOut != "" {
 				t.Errorf("stdout %q, stderr %q", out, errOut)
 			}
 
@@ -1758,7 +1758,7 @@ func TestRunExecRootCommandLeadsItsOwnSessionAndGroup(t *testing.T) {
 
 	tree := newRunTree(t)
 
-	code, _, errOut := tree.stageAndExec(t, `read -r _ _ _ _ pgrp sid _ < /proc/$$/stat
+	code, out, errOut := tree.stageAndExec(t, `read -r _ _ _ _ pgrp sid _ < /proc/$$/stat
 echo "$pgrp $sid" >&2
 `)
 	if code != 0 {
@@ -1767,8 +1767,8 @@ echo "$pgrp $sid" >&2
 
 	pgid := strings.TrimSpace(tree.taskFile(t, wordPgid))
 
-	if errOut != pgid+" "+pgid+"\n" {
-		t.Errorf("the command reported group and session %q, the pgid file holds %q", errOut, pgid)
+	if out != pgid+" "+pgid+"\n" {
+		t.Errorf("the command reported group and session %q, the pgid file holds %q", out, pgid)
 	}
 
 	if pgid == strconv.Itoa(syscall.Getpgrp()) {
@@ -1912,9 +1912,47 @@ func TestRunExecRootKilledAfterTheDeadlineKeepsStderrClean(t *testing.T) {
 		t.Fatalf("prepare exited %d", code)
 	}
 
-	code, _, errOut := tree.execRoot(t, "1", digestOf([]byte(command)))
-	if code != 137 || errOut != "err\n" {
-		t.Errorf("exit %d, stderr %q; want 137 and only the command's own line", code, errOut)
+	code, out, errOut := tree.execRoot(t, "1", digestOf([]byte(command)))
+	if code != 137 || out != "err\n" || errOut != "" {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 137 and only the command's own line", code, out, errOut)
+	}
+}
+
+// interleaved writes to both streams one line at a time, and each write
+// reaches its descriptor before the next one starts, so the order the
+// lines arrive in is the order the command wrote them.
+const interleaved = "echo out1\necho err1 >&2\necho out2\nprintf 'err2' >&2\nprintf '\\nout3\\n'\n"
+
+// interleavedWant is what the merged stream holds for interleaved.
+const interleavedWant = "out1\nerr1\nout2\nerr2\nout3\n"
+
+func TestRunExecRootMergesStderrIntoStdoutInOrder(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	code, out, errOut := tree.stageAndExec(t, interleaved)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr %q", code, errOut)
+	}
+
+	if out != interleavedWant || errOut != "" {
+		t.Errorf("stdout %q, stderr %q; want %q and nothing on stderr", out, errOut, interleavedWant)
+	}
+}
+
+func TestRunExecVcapMergesStderrIntoStdoutInOrder(t *testing.T) {
+	t.Parallel()
+
+	tree := newRunTree(t)
+
+	code, out, errOut := tree.stageAndExecVcap(t, interleaved)
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr %q", code, errOut)
+	}
+
+	if out != interleavedWant || errOut != "" {
+		t.Errorf("stdout %q, stderr %q; want %q and nothing on stderr", out, errOut, interleavedWant)
 	}
 }
 

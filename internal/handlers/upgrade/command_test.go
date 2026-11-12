@@ -228,6 +228,74 @@ func TestOutputReadOfRootRunWithRootOff(t *testing.T) {
 	}
 }
 
+// The answer says whether stdout holds the merged stream. An entry saved
+// before output was merged has no merged field, and it is served with
+// merged false and both streams as they were saved.
+func TestOutputReadSaysWhetherTheOutputIsMerged(t *testing.T) {
+	t.Parallel()
+
+	type answer struct {
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+		Merged *bool  `json:"merged"`
+	}
+
+	read := func(t *testing.T, env *cmdEnv, taskID string) answer {
+		t.Helper()
+
+		recorder := send(t, env.handler, http.MethodGet, outputURL(taskID), "", "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
+		}
+
+		var got answer
+
+		err := json.Unmarshal(recorder.Body.Bytes(), &got)
+		if err != nil {
+			t.Fatalf("decoding the answer: %v", err)
+		}
+
+		if got.Merged == nil {
+			t.Fatalf("the answer has no merged field: %s", recorder.Body.String())
+		}
+
+		return got
+	}
+
+	t.Run("merged", func(t *testing.T) {
+		t.Parallel()
+
+		env := commandHandler(t, commandsOn("", true))
+		taskID := ranCommandTask(t, env, "vcap", "")
+
+		env.vault.store(t, "command-output/"+taskID+"/i1/redis-0", upgrade.CommandOutput{
+			Stdout: []byte("out1\nerr1\nout2\n"), Stderr: []byte{}, StdoutKept: 15, StdoutReceived: 15, Merged: true,
+		})
+
+		got := read(t, env, taskID)
+		if !*got.Merged || got.Stdout != "out1\nerr1\nout2\n" || got.Stderr != "" {
+			t.Errorf("merged %v, stdout %q, stderr %q", *got.Merged, got.Stdout, got.Stderr)
+		}
+	})
+
+	t.Run("saved before merging", func(t *testing.T) {
+		t.Parallel()
+
+		env := commandHandler(t, commandsOn("", true))
+		taskID := ranCommandTask(t, env, "vcap", "")
+
+		env.vault.store(t, "command-output/"+taskID+"/i1/redis-0", map[string]interface{}{
+			"stdout": []byte("out"), "stderr": []byte("err"),
+			"stdout_kept": 3, "stdout_received": 3, "stderr_kept": 3, "stderr_received": 3,
+		})
+
+		got := read(t, env, taskID)
+		if *got.Merged || got.Stdout != "out" || got.Stderr != "err" {
+			t.Errorf("merged %v, stdout %q, stderr %q", *got.Merged, got.Stdout, got.Stderr)
+		}
+	})
+}
+
 func TestOutputReadRefusals(t *testing.T) {
 	t.Parallel()
 
