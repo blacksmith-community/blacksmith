@@ -382,10 +382,13 @@ t('a second failure leaves the tab failed with reconnect offered and never retri
 t('a failed session reconnects when the terminal library is missing, and stays failed',async()=>{
  const env=await start(); const {d,sockets,open,mgr,w}=env;
  w.WTermLib=undefined;
- open();
+ // Every attempt to load the library fails, as a missing script would.
+ const missing=async()=>{ d.querySelector('script[src^="/vendor/wterm/"]').dispatchEvent(new w.Event('error')); await sleep(0); };
+ open(); await missing();
  expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
  const count=sockets.length;
  dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect').click();
+ await missing();
  expect(mgr.sessions.get(KEY_BK).status).toBe('failed');
  expect(sockets.length).toBe(count);
  expect(dialogSlot(d,KEY_BK).querySelector('button.terminal-reconnect')).not.toBeNull();

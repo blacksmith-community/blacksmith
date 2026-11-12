@@ -71,12 +71,15 @@ const start=async()=>{
  return {...env,terms,sockets,mgr,open,deliver,connect,sent};
 };
 
-t('the page loads the vendored wterm bundle and stylesheet and no xterm asset',()=>{
+t('the console loads the vendored wterm bundle and stylesheet on demand, and no xterm asset',()=>{
  const html=fs.readFileSync(path.join(UI,'index.html'),'utf8');
  expect(html).not.toMatch(/xterm/i);
- expect(html).toContain('<link rel="stylesheet" href="/vendor/wterm/0.5.10/terminal.css">');
- expect(html).toContain('<script src="/vendor/wterm/0.5.10/wterm.min.js"></script>');
- expect(html.indexOf('/vendor/wterm/0.5.10/wterm.min.js')).toBeLessThan(html.indexOf('/blacksmith.js'));
+ // The page leaves wterm out, and blacksmith.js loads it when a terminal
+ // first opens (terminal-lazy-load.test.js).
+ expect(html).not.toContain('/vendor/wterm/');
+ const js=fs.readFileSync(path.join(UI,'blacksmith.js'),'utf8');
+ expect(js).toContain("'/vendor/wterm/0.5.10/wterm.min.js?v=0.5.10'");
+ expect(js).toContain("'/vendor/wterm/0.5.10/terminal.css?v=0.5.10'");
  expect(fs.existsSync(path.join(UI,'xterm.min.js'))).toBe(false);
  expect(fs.existsSync(path.join(UI,'xterm.css'))).toBe(false);
 });
@@ -287,7 +290,10 @@ t('a missing terminal library shows the fixed failure and never opens a socket',
  const env=await start(); const {w,d,sockets,open,mgr}=env;
  delete w.WTermLib;
  const raised=raisedErrors(w);
- open(); await sleep(0);
+ open();
+ // The console tries to load the library, and the script never arrives.
+ d.querySelector('script[src^="/vendor/wterm/"]').dispatchEvent(new w.Event('error'));
+ await sleep(0);
  expect(raised).toEqual([{message:FAILED,options:{toast:true}}]);
  expect(sockets.length).toBe(0);
  const host=d.getElementById('terminal-blacksmith-broker-node/0');

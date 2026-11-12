@@ -23948,8 +23948,12 @@
   // Terminal Manager Implementation
   // wterm ships as the vendored classic script that sets window.WTermLib. Its
   // WASM core is a separate file on a versioned path, so an upgrade never
-  // meets a stale cached module.
+  // meets a stale cached module. The script and its stylesheet load the first
+  // time a terminal opens, not with the page, and their cache keys let the
+  // browser keep them until the version changes.
   const WTERM_WASM_URL = '/vendor/wterm/0.5.10/wterm.wasm';
+  const WTERM_SCRIPT_URL = '/vendor/wterm/0.5.10/wterm.min.js?v=0.5.10';
+  const WTERM_STYLE_URL = '/vendor/wterm/0.5.10/terminal.css?v=0.5.10';
 
   // The open terminal tabs survive a reload through sessionStorage, which
   // belongs to one browser tab, so two console tabs never overwrite each
@@ -24031,6 +24035,12 @@
     maxSessions: 10,
     lastFocusBeforeModal: null,
     restoring: false,
+    // The terminal library loads once, for every terminal. terminalAssets
+    // maps each injected URL to its element and load promise, and
+    // terminalLibrary is the load in progress, if any.
+    terminalAssets: new Map(),
+    terminalLibrary: null,
+    terminalLibraryLoaded: false,
 
     // The terminal is a native modal dialog. Escape belongs to the shell, so
     // it never closes the dialog, and neither does a click or tap on the
@@ -24169,6 +24179,78 @@
         if (button.dataset.scheme === 'console') this.setThemeClass(button.querySelector('.terminal-scheme-swatch'), theme);
       });
       this.syncFrame(modal);
+    },
+    // A library already on the page, or one this page has loaded, is used at
+    // once. Otherwise a terminal waits for loadTerminalLibrary.
+    terminalLibraryReady() {
+      return Boolean(window.WTermLib) && (this.terminalLibraryLoaded || this.terminalAssets.size === 0);
+    },
+    // Injects one script or stylesheet and settles when it loads or fails. A
+    // failed asset is removed and forgotten, so the next attempt fetches it
+    // again, while one that loaded is kept and never fetched twice.
+    loadTerminalAsset(tag, attrs) {
+      const url = attrs.src || attrs.href;
+      const known = this.terminalAssets.get(url);
+      if (known) return known.promise;
+      const element = document.createElement(tag);
+      Object.keys(attrs).forEach(name => element.setAttribute(name, attrs[name]));
+      const promise = new Promise((resolve, reject) => {
+        element.addEventListener('load', () => resolve(), { once: true });
+        element.addEventListener('error', () => reject(new Error('A terminal asset did not load.')), { once: true });
+      });
+      const entry = { element, promise };
+      this.terminalAssets.set(url, entry);
+      promise.catch(() => this.forgetTerminalAsset(url));
+      // The stylesheet takes the place it had in the page, straight after
+      // blacksmith.css, so the cascade between the two stays the same.
+      const anchor = tag === 'link' && document.querySelector('link[rel="stylesheet"][href^="/blacksmith.css"]');
+      if (anchor) anchor.after(element);
+      else document.head.appendChild(element);
+      return promise;
+    },
+    forgetTerminalAsset(url) {
+      const entry = this.terminalAssets.get(url);
+      if (!entry) return;
+      this.terminalAssets.delete(url);
+      entry.element.remove();
+    },
+    // Resolves once both the script and its stylesheet have loaded and the
+    // script has defined the library. Terminals that open during the load
+    // share it. A failure rejects every waiting terminal, and the next
+    // terminal or Reconnect starts a fresh load of whatever is missing.
+    loadTerminalLibrary() {
+      if (this.terminalLibraryReady()) return Promise.resolve();
+      if (this.terminalLibrary) return this.terminalLibrary;
+      const load = Promise.all([
+        this.loadTerminalAsset('link', { rel: 'stylesheet', href: WTERM_STYLE_URL }),
+        this.loadTerminalAsset('script', { src: WTERM_SCRIPT_URL })
+      ]).then(() => {
+        if (!window.WTermLib) {
+          this.forgetTerminalAsset(WTERM_SCRIPT_URL);
+          throw new Error('The terminal library did not load.');
+        }
+        this.terminalLibraryLoaded = true;
+        // The scheme swatches take their colours from the stylesheet that
+        // just arrived, so the frame is read again.
+        const modal = document.getElementById('terminal-modal');
+        if (modal && modal.dataset.terminalWired) this.syncFrame(modal);
+      });
+      this.terminalLibrary = load;
+      const settle = () => {
+        if (this.terminalLibrary === load) this.terminalLibrary = null;
+      };
+      load.then(settle, settle);
+      return load;
+    },
+    // Runs start once the library is ready, at once when it already is. A
+    // load that fails is reported by the terminal that waited on it, so
+    // nothing more happens here.
+    whenTerminalLibraryReady(start) {
+      if (this.terminalLibraryReady()) {
+        start();
+        return;
+      }
+      this.loadTerminalLibrary().then(start, () => { /* the terminal shows the failure */ });
     },
     // The frame around the grid takes the scheme's background, read from the
     // active scheme's own custom property.
@@ -24441,7 +24523,7 @@
       let focusWhenReady = false;
       let term = null;
 
-      // Every failure to start, whether the library is missing, its
+      // Every failure to start, whether the library fails to load, its
       // constructor throws, or init() rejects, ends here. The message is
       // fixed, so no terminal data reaches the page or the notification. It
       // shows in the session's tab and as a toast, and the session's socket
@@ -24473,22 +24555,24 @@
       // stays steady whatever the remote application asks for, and
       // announceOutput reads new output to screen readers.
       TerminalManager.applyThemeClass(element);
-      try {
-        term = new window.WTermLib.WTerm(element, {
-          wasmUrl: WTERM_WASM_URL,
-          renderer: 'dom',
-          autoResize: true,
-          cursorBlink: false,
-          announceOutput: true,
-          scrollbackLines: 1000,
-          webmcp: false,
-          debug: false,
-          onData: data => session.sendInput(data),
-          onResize: (cols, rows) => session.sendResize(cols, rows)
-        });
-      } catch {
-        term = null;
-      }
+      const construct = () => {
+        try {
+          term = new window.WTermLib.WTerm(element, {
+            wasmUrl: WTERM_WASM_URL,
+            renderer: 'dom',
+            autoResize: true,
+            cursorBlink: false,
+            announceOutput: true,
+            scrollbackLines: 1000,
+            webmcp: false,
+            debug: false,
+            onData: data => session.sendInput(data),
+            onResize: (cols, rows) => session.sendResize(cols, rows)
+          });
+        } catch {
+          term = null;
+        }
+      };
 
       const view = {
         get cols() { return term ? term.cols : 0; },
@@ -24509,22 +24593,22 @@
           if (ready) term.focus();
           else focusWhenReady = true;
         },
+        // While the library loads there is no terminal yet, so pausing has
+        // nothing to act on and disposing only stops it being built.
         setActive(active) {
-          if (!disposed) term.setRenderingPaused(!active);
+          if (!disposed && term) term.setRenderingPaused(!active);
         },
         dispose() {
           if (disposed) return;
           disposed = true;
           pending.length = 0;
-          term.destroy();
+          if (term) term.destroy();
         }
       };
 
-      if (!term) {
-        view.ready = Promise.resolve(fail());
-        return view;
-      }
-      view.ready = new Promise(resolve => resolve(term.init())).then(() => {
+      // init() loads the WASM core. Output that arrived meanwhile is written
+      // in order once it resolves.
+      const start = () => new Promise(resolve => resolve(term.init())).then(() => {
         if (disposed) return false;
         ready = true;
         pending.splice(0).forEach(chunk => term.write(chunk));
@@ -24540,6 +24624,20 @@
         try { term.destroy(); } catch { /* nothing left to release */ }
         return fail();
       });
+
+      // A terminal opened before the library has loaded waits for it, and
+      // its tab shows meanwhile. A load that fails ends in the same fixed
+      // failure as a terminal that cannot start.
+      if (!TerminalManager.terminalLibraryReady()) {
+        view.ready = TerminalManager.loadTerminalLibrary().then(() => {
+          if (disposed) return false;
+          construct();
+          return term ? start() : fail();
+        }, () => (disposed ? false : fail()));
+        return view;
+      }
+      construct();
+      view.ready = term ? start() : Promise.resolve(fail());
       return view;
     },
 
@@ -24785,8 +24883,9 @@
         return;
       }
 
-      // Initial connection
-      connectWebSocket();
+      // The initial connection waits for the terminal library, so a terminal
+      // that cannot start never opens an SSH session.
+      this.whenTerminalLibraryReady(connectWebSocket);
 
       this.sessions.set(sessionKey, session);
 
@@ -25207,104 +25306,109 @@
       }
       this.setStatus(session, 'connecting');
 
-      // Close existing websocket
-      if (session.websocket) {
-        session.websocket.close();
-      }
-
-      // Clear terminal and show reconnecting message
-      session.terminal.clear();
-      session.terminal.writeln('Reconnecting...');
-
-      // Create new WebSocket connection
-      const wsUrl = this.buildWebSocketUrl(session.context);
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        session.terminal.writeln(`Reconnecting to ${session.context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${session.context.deploymentName} :: ${session.context.instanceId}`);
-
-        // Send start control message once the terminal knows its grid
-        session.terminal.ready.then(started => {
-          if (!started || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(JSON.stringify({
-            type: 'control',
-            meta: {
-              action: 'start',
-              width: session.terminal.cols,
-              height: session.terminal.rows,
-              term: 'xterm-256color'
-            },
-            timestamp: new Date().toISOString()
-          }));
-        });
-      };
-
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-
-        switch (msg.type) {
-          case 'output':
-            session.terminal.write(msg.data);
-            break;
-          case 'error':
-            session.terminal.writeln(`\r\n[ERROR] ${msg.data}`);
-            break;
-          case 'status':
-            if (msg.meta && msg.meta.status === 'connected') {
-              this.setStatus(session, 'connected');
-              session.terminal.writeln('\r\n[Reconnected]\r\n');
-            } else if (msg.meta && msg.meta.status === 'exited') {
-              if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
-            }
-            break;
+      // The new connection waits for the terminal library too. A terminal
+      // that fails to load leaves the session failed with no connection.
+      this.whenTerminalLibraryReady(() => {
+        if (session.closed || session.failed) return;
+        // Close existing websocket
+        if (session.websocket) {
+          session.websocket.close();
         }
-      };
 
-      ws.onerror = (error) => {
-        session.terminal.writeln(`\r\n[Reconnection Error] ${error.message || 'WebSocket connection failed'}`);
-      };
+        // Clear terminal and show reconnecting message
+        session.terminal.clear();
+        session.terminal.writeln('Reconnecting...');
 
-      ws.onclose = (event) => {
-        // A terminal that failed to start closes this socket as part of
-        // its failure, which is not a disconnect.
-        if (session.failed || session.websocket !== ws) return;
-        session.terminal.writeln('\r\n[Disconnected]');
-        if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
-        if (event.code !== 1000) {
-          const deploymentName = session.context.boshDeploymentName || session.context.deploymentName;
-          const instanceName = session.context.instanceName || session.context.instanceId;
-          showNotification(`Disconnected: ${deploymentName}/${instanceName}`, 'info');
-        }
-      };
+        // Create new WebSocket connection
+        const wsUrl = this.buildWebSocketUrl(session.context);
+        const ws = new WebSocket(wsUrl);
 
-      // Handle terminal input
-      session.sendInput = (data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'input',
-            data: data,
-            timestamp: new Date().toISOString()
-          }));
-        }
-      };
+        ws.onopen = () => {
+          session.terminal.writeln(`Reconnecting to ${session.context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${session.context.deploymentName} :: ${session.context.instanceId}`);
 
-      // Handle terminal resize
-      session.sendResize = (cols, rows) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'control',
-            meta: {
-              action: 'resize',
-              width: cols,
-              height: rows
-            },
-            timestamp: new Date().toISOString()
-          }));
-        }
-      };
+          // Send start control message once the terminal knows its grid
+          session.terminal.ready.then(started => {
+            if (!started || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({
+              type: 'control',
+              meta: {
+                action: 'start',
+                width: session.terminal.cols,
+                height: session.terminal.rows,
+                term: 'xterm-256color'
+              },
+              timestamp: new Date().toISOString()
+            }));
+          });
+        };
 
-      // Update session with new websocket
-      session.websocket = ws;
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data);
+
+          switch (msg.type) {
+            case 'output':
+              session.terminal.write(msg.data);
+              break;
+            case 'error':
+              session.terminal.writeln(`\r\n[ERROR] ${msg.data}`);
+              break;
+            case 'status':
+              if (msg.meta && msg.meta.status === 'connected') {
+                this.setStatus(session, 'connected');
+                session.terminal.writeln('\r\n[Reconnected]\r\n');
+              } else if (msg.meta && msg.meta.status === 'exited') {
+                if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
+              }
+              break;
+          }
+        };
+
+        ws.onerror = (error) => {
+          session.terminal.writeln(`\r\n[Reconnection Error] ${error.message || 'WebSocket connection failed'}`);
+        };
+
+        ws.onclose = (event) => {
+          // A terminal that failed to start closes this socket as part of
+          // its failure, which is not a disconnect.
+          if (session.failed || session.websocket !== ws) return;
+          session.terminal.writeln('\r\n[Disconnected]');
+          if (session.websocket === ws && !session.closed) this.setStatus(session, 'disconnected');
+          if (event.code !== 1000) {
+            const deploymentName = session.context.boshDeploymentName || session.context.deploymentName;
+            const instanceName = session.context.instanceName || session.context.instanceId;
+            showNotification(`Disconnected: ${deploymentName}/${instanceName}`, 'info');
+          }
+        };
+
+        // Handle terminal input
+        session.sendInput = (data) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'input',
+              data: data,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        };
+
+        // Handle terminal resize
+        session.sendResize = (cols, rows) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'control',
+              meta: {
+                action: 'resize',
+                width: cols,
+                height: rows
+              },
+              timestamp: new Date().toISOString()
+            }));
+          }
+        };
+
+        // Update session with new websocket
+        session.websocket = ws;
+      });
     }
   };
 
