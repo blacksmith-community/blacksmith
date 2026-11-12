@@ -5225,7 +5225,7 @@
   };
 
   // sudo as a word where a command can start: the beginning, or after ; & | or a newline.
-  const COMMAND_SUDO_START = /(?:^|[;&|\n])[ \t]*sudo(?=\s|$)/;
+  const COMMAND_SUDO_START = /(?:^|[;&|\n(])[ \t]*sudo(?=\s|$)/;
 
   // Brings the command pane's controls in line with commandState. Every
   // change to the state, or to what the broker reported, ends here.

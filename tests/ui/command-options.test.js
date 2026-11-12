@@ -270,7 +270,7 @@ t('a sudo command run as vcap shows a warning that never quotes the command, and
  expect(warning().hidden).toBe(true);
  const vcap=d.querySelector('#command-user-vcap');vcap.checked=true;vcap.dispatchEvent(new w.Event('change',{bubbles:true}));
  expect(warning().hidden).toBe(false);
- for(const cmd of ['sudo ls','ls;sudo ls','ls || sudo ls','cat x | sudo tee y','ls\nsudo ls']){ type(w,text,cmd);expect(warning().hidden).toBe(false); }
+ for(const cmd of ['sudo ls','ls;sudo ls','ls || sudo ls','cat x | sudo tee y','ls\nsudo ls','(sudo ls)','x=$(sudo ls)']){ type(w,text,cmd);expect(warning().hidden).toBe(false); }
  for(const cmd of ['pseudo ls','echo sudoers','ls /usr/bin/sudo','echo "a" # sudoku']){ type(w,text,cmd);expect(warning().hidden).toBe(true); }
  // The form still submits: the warning blocks nothing.
  type(w,text,'sudo ls');
