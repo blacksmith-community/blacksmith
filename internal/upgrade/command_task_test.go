@@ -470,6 +470,7 @@ func (f *taskFixture) snapshot() UpgradeTask {
 	for i := range f.task.Instances {
 		inst := f.task.Instances[i]
 		inst.Command = inst.Command.clone()
+		inst.SSHSessions = slices.Clone(inst.SSHSessions)
 		copied.Instances = append(copied.Instances, inst)
 	}
 

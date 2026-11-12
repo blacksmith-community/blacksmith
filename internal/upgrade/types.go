@@ -106,6 +106,10 @@ type InstanceUpgrade struct {
 	// difference in the saved record while leaving the field out of an
 	// ordinary upgrade's record.
 	ApprovedAdditional []VersionPair `json:"approved_additional,omitzero"`
+	// SSHSessions names the BOSH tasks that set up and removed each SSH
+	// session a command task opened on the instance, one entry for each
+	// session in the order they opened. It is set on a command task only.
+	SSHSessions []SSHSessionTasks `json:"ssh_sessions,omitempty"`
 }
 
 // UpgradeTask represents a batch upgrade task.

@@ -49,6 +49,16 @@ type CommandTaskSpec struct {
 	CredentialPresented bool   `json:"credential_presented,omitempty"`
 }
 
+// SSHSessionTasks names the BOSH tasks of one SSH session a command task
+// opened on an instance group. A task ID of zero means that task was not
+// recorded, because the director never accepted it or Blacksmith never
+// sent it.
+type SSHSessionTasks struct {
+	Group         string `json:"group"`
+	SetupTaskID   int    `json:"setup_task_id"`
+	CleanupTaskID int    `json:"cleanup_task_id"`
+}
+
 // InstanceCommand is the command record of one service instance, and holds
 // a record for each of the instance's nodes.
 type InstanceCommand struct {

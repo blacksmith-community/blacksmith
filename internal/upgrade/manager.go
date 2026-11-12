@@ -3300,6 +3300,7 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 			instance.Certificates = instance.Certificates.Clone()
 			instance.Command = instance.Command.clone()
 			instance.ApprovedAdditional = slices.Clone(instance.ApprovedAdditional)
+			instance.SSHSessions = slices.Clone(instance.SSHSessions)
 			copied.Instances[i] = instance
 		}
 	}

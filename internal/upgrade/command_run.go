@@ -1403,7 +1403,7 @@ func (m *Manager) runCommandInstance(task *UpgradeTask, inst *InstanceUpgrade, c
 		return false
 	}
 
-	sessions := m.newCommandSessions(inst.Command.Deployment)
+	sessions := m.commandSessionsFor(task, inst)
 	defer sessions.close()
 
 	// Processes that outlived KILL in an earlier run are checked again
@@ -2528,7 +2528,7 @@ func (m *Manager) cleanCancelledCommand(task *UpgradeTask, inst *InstanceUpgrade
 
 	m.logger.Info("Command task %s is %s, so it cleans up the nodes of instance %s that still hold its command", task.ID, status, inst.InstanceID)
 
-	sessions := m.newCommandSessions(inst.Command.Deployment)
+	sessions := m.commandSessionsFor(task, inst)
 	defer sessions.close()
 
 	persistCtx := context.WithoutCancel(m.ctx)

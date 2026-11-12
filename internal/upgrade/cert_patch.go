@@ -270,6 +270,9 @@ type patchSessions struct {
 	// missing is what group returns when there is no way to open a
 	// session. It defaults to errNoPatchRunner.
 	missing error
+	// observe, when set, gives the context each session of the group
+	// opens with, so a caller can hear the session's BOSH tasks.
+	observe func(ctx context.Context, group string) context.Context
 
 	mu      sync.Mutex
 	byGroup map[string]PatchSession
@@ -291,6 +294,10 @@ func (s *patchSessions) group(ctx context.Context, group string, indices []int) 
 
 	if s.open == nil {
 		return nil, s.noRunner()
+	}
+
+	if s.observe != nil {
+		ctx = s.observe(ctx, group)
 	}
 
 	sess, err := s.open(ctx, s.deployment, group, indices)

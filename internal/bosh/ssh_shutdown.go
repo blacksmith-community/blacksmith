@@ -25,6 +25,10 @@ type sshSessionCleanup struct {
 	target         boshapi.SSHTarget
 	user           string
 	setupContextID string
+	// observer is the task observer the session was opened with. A
+	// cleanup runs on its caller's context, which may not carry it, so
+	// each send puts it back.
+	observer sshconn.TaskObserver
 
 	// claimed is guarded by the adapter's sshUsers mutex.
 	claimed bool
@@ -62,6 +66,7 @@ func (d *DirectorAdapter) openSSHSessionCleanup(ctx context.Context, session *ss
 		target:         session.Target,
 		user:           session.User,
 		setupContextID: setupContextID,
+		observer:       sshconn.TaskObserverFrom(ctx),
 		done:           make(chan struct{}),
 	}
 
@@ -71,6 +76,7 @@ func (d *DirectorAdapter) openSSHSessionCleanup(ctx context.Context, session *ss
 
 	return func(ctx context.Context) error {
 		if d.claimSessionCleanup(cleanup) {
+			ctx = sshconn.WithTaskObserver(ctx, cleanup.observer)
 			cleanup.finish(d.cleanUpSSH(ctx, cleanup.deployment, cleanup.target, cleanup.user, cleanup.setupContextID))
 		}
 
@@ -325,9 +331,12 @@ func (d *DirectorAdapter) closeSSH() ([]*sshSessionCleanup, map[string]sshUserSt
 
 // sendSSHCleanupAtShutdown sends one session's cleanup within ctx without
 // waiting for its task, and releases the user. The user's record stays
-// either way, for the next sweep.
+// either way, for the next sweep. The session's task observer hears the
+// cleanup task.
 func (d *DirectorAdapter) sendSSHCleanupAtShutdown(ctx context.Context, cleanup *sshSessionCleanup) error {
 	defer d.releaseSSHUser(cleanup.user)
+
+	ctx = sshconn.WithTaskObserver(ctx, cleanup.observer)
 
 	instance := sshconn.TargetName(cleanup.target)
 

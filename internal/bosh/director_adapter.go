@@ -2666,6 +2666,11 @@ func sshGroupTarget(group string, indices []int) (boshapi.SSHTarget, error) {
 // returns at once, and the user's cleanup follows in the background once
 // the setup task has ended. checkHosts, when it is not nil, judges the
 // hosts the setup returned, and a refusal is handled as such a failure.
+//
+// The sshconn.TaskObserver that ctx carries hears the setup task as soon
+// as the director accepts it, before the wait for it, and hears the
+// user's cleanup task however the cleanup is sent: by the session's
+// Cleanup, by ShutdownSSH, or in the background after a failed setup.
 func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment string, target boshapi.SSHTarget, checkHosts func([]sshconn.Host) error) (*sshconn.Session, error) {
 	ctx, contextID, err := mutationContext(ctx, operation)
 	if err != nil {
@@ -2696,6 +2701,8 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 	if err != nil {
 		return nil, err
 	}
+
+	sshconn.TaskObserverFrom(ctx).SetupStarted(task.ID)
 
 	hosts, err := d.sshSetupHosts(ctx, operation, deployment, task.ID, credentials.User)
 	if err == nil && checkHosts != nil {
@@ -2894,7 +2901,8 @@ func (d *DirectorAdapter) sendSSHCleanup(ctx context.Context, deployment string,
 // requestSSHCleanup sends the cleanup of user on target with a fresh
 // context ID of its own, and returns the task the director started and
 // that context ID. It does not wait for the task. A lost answer is logged
-// at Error by accepted.
+// at Error by accepted. The sshconn.TaskObserver that ctx carries hears
+// the task once the director accepts it.
 func (d *DirectorAdapter) requestSSHCleanup(ctx context.Context, deployment string, target boshapi.SSHTarget, user, setupContextID string) (*Task, string, error) {
 	contextID := uuid.NewString()
 	ctx = boshapi.WithContextID(ctx, contextID)
@@ -2911,6 +2919,9 @@ func (d *DirectorAdapter) requestSSHCleanup(ctx context.Context, deployment stri
 		contextID:  contextID,
 		what:       fmt.Sprintf("remove SSH user %s from %s of deployment %s", user, instance, deployment),
 	}, sent, err)
+	if err == nil {
+		sshconn.TaskObserverFrom(ctx).CleanupStarted(task.ID)
+	}
 
 	return task, contextID, err
 }
