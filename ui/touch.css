@@ -25,7 +25,7 @@
     align-items: center;
     min-height: 44px;
   }
-  :is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .copy-btn, .secret-toggle, .secret-copy, .entity-copy, .ssh-btn, .delete-resurrection-btn, .refresh-btn-logs, .copy-deployment-names-btn, .clear-filters-btn, .vm-expand, .tab-close, .cert-horizon-btn) {
+  :is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .copy-btn, .secret-toggle, .secret-copy, .entity-copy, .ssh-btn, .delete-resurrection-btn, .refresh-btn-logs, .copy-deployment-names-btn, .clear-filters-btn, .vm-expand, .tab-close, .cert-horizon-btn, .resurrection-action) {
     min-width: 44px !important;
     min-height: 44px !important;
     justify-content: center;

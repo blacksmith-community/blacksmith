@@ -10,6 +10,8 @@ const SQUARES = [
   '.copy-btn-inline', '.copy-btn-logs', '.copy-btn-manifest', '.copy-btn', '.secret-toggle', '.secret-copy',
   '.entity-copy', '.ssh-btn', '.delete-resurrection-btn', '.refresh-btn-logs', '.copy-deployment-names-btn',
   '.clear-filters-btn', '.vm-expand', '.tab-close', '.cert-horizon-btn', '.task-link', '.config-link', '.bosh-task-link',
+  // The instance VMs toolbar: the resurrection button, plus the refresh and copy buttons named above.
+  '.resurrection-action',
 ];
 
 for (const name of SQUARES) {
