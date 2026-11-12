@@ -33,6 +33,8 @@ func installAPI() *broker.API {
 // broker credential. A browser or an installed app fetches these before
 // it has a password to send.
 func TestInstallAssetsReferencedByThePageNeedNoCredentials(t *testing.T) {
+	t.Parallel()
+
 	page, err := os.ReadFile(filepath.Join("ui", "index.html"))
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +51,8 @@ func TestInstallAssetsReferencedByThePageNeedNoCredentials(t *testing.T) {
 		} `json:"icons"`
 	}
 
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+	err = json.Unmarshal(raw, &manifest)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,6 +86,8 @@ func TestInstallAssetsReferencedByThePageNeedNoCredentials(t *testing.T) {
 // other files in the brand directory are refused without the credential
 // from the real UI.
 func TestRealUIStillNeedsCredentials(t *testing.T) {
+	t.Parallel()
+
 	api := installAPI()
 
 	for _, target := range []string{"/", "/index.html", "/blacksmith.js", "/assets/brand/", "/assets/brand/README.md", "/assets/brand/forge-master.png", "/vendor/oat/oat.min.js"} {

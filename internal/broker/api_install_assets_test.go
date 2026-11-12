@@ -5,140 +5,168 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"blacksmith/internal/broker"
 )
 
-// publicInstallAssets is every path a browser may fetch without the broker
+const (
+	installUser     = "admin"
+	installPassword = "pw"
+	catalogPath     = "/v2/catalog"
+)
+
+// publicInstallAssets returns every path a browser may fetch without the broker
 // credential. The manifest, the favicon, and the brand icons are what a
 // browser or an installed app asks for before it has a password to send.
-var publicInstallAssets = []string{
-	"/manifest.webmanifest",
-	"/favicon.ico",
-	"/assets/brand/icon-16.png",
-	"/assets/brand/icon-32.png",
-	"/assets/brand/icon-48.png",
-	"/assets/brand/icon-180.png",
-	"/assets/brand/icon-192.png",
-	"/assets/brand/icon-512.png",
+func publicInstallAssets() []string {
+	return []string{
+		"/manifest.webmanifest",
+		"/favicon.ico",
+		"/assets/brand/icon-16.png",
+		"/assets/brand/icon-32.png",
+		"/assets/brand/icon-48.png",
+		"/assets/brand/icon-180.png",
+		"/assets/brand/icon-192.png",
+		"/assets/brand/icon-512.png",
+	}
 }
 
-// guardedPaths must all still need the credential. They cover the document,
-// the other UI assets, the internal and broker APIs, near misses on every
-// allowlisted name, path traversal in plain and percent-encoded forms,
-// encoded slashes, and doubled or trailing slashes.
-var guardedPaths = []string{
-	// The document and the rest of the UI.
-	"/",
-	"/index.html",
-	"/blacksmith.js",
-	"/blacksmith.js?v=20261112-oat-422",
-	"/vendor/oat/oat.min.css",
-	"/assets/",
-	"/assets/brand",
-	"/assets/brand/",
-	"/assets/brand/README.md",
-	"/assets/brand/forge-master.png",
-	"/secret.txt",
+// guardedPaths returns paths that must all still need the credential. They
+// cover the document, the other UI assets, the internal and broker APIs,
+// near misses on every allowlisted name, path traversal in plain and
+// percent-encoded forms, encoded slashes, and doubled or trailing slashes.
+func guardedPaths() []string {
+	return slices.Concat(guardedRoutes(), guardedNearMisses(), guardedEncodings())
+}
 
-	// The internal API and the broker API.
-	"/b/",
-	"/b/upgrade/tasks",
-	"/b/upgrade/commands/availability",
-	"/b/status",
-	"/v2/",
-	"/v2/catalog",
-	"/v2/service_instances/x",
+// guardedRoutes returns the document, other UI files, and API routes.
+func guardedRoutes() []string {
+	return []string{
+		// The document and the rest of the UI.
+		"/",
+		"/index.html",
+		"/blacksmith.js",
+		"/blacksmith.js?v=20261112-oat-422",
+		"/vendor/oat/oat.min.css",
+		"/assets/",
+		"/assets/brand",
+		"/assets/brand/",
+		"/assets/brand/README.md",
+		"/assets/brand/forge-master.png",
+		"/secret.txt",
 
-	// Near misses on the allowlisted names.
-	"/manifest.json",
-	"/manifest.webmanifest.bak",
-	"/manifest.webmanifest/",
-	"/manifest.webmanifestx",
-	"/Manifest.webmanifest",
-	"/MANIFEST.WEBMANIFEST",
-	"/favicon.ico/",
-	"/favicon.ico.map",
-	"/favicon.icox",
-	"/Favicon.ico",
-	"/favicon.ico;x",
-	"/assets/brand/icon-192.png/",
-	"/assets/brand/icon-192.png.map",
-	"/assets/brand/icon-192.PNG",
-	"/assets/brand/Icon-192.png",
-	"/assets/brand/icon-.png",
-	"/assets/brand/icon-x.png",
-	"/assets/brand/icon-192.svg",
-	"/assets/brand/icon-192-.png",
-	"/assets/brand/icon--192.png",
-	"/assets/brand/icon-192.png;x",
-	"/assets/brand/sub/icon-192.png",
-	"/assets/brand/icon-192.png/icon-192.png",
-	"/assets/Brand/icon-192.png",
-	"/x/assets/brand/icon-192.png",
-	"/x/favicon.ico",
-	"/b/manifest.webmanifest",
-	"/v2/favicon.ico",
+		// The internal API and the broker API.
+		"/b/",
+		"/b/upgrade/tasks",
+		"/b/upgrade/commands/availability",
+		"/b/status",
+		"/v2/",
+		catalogPath,
+		"/v2/service_instances/x",
+	}
+}
 
-	// Doubled slashes and dot segments.
-	"//manifest.webmanifest",
-	"//favicon.ico",
-	"/./favicon.ico",
-	"/assets//brand/icon-192.png",
-	"/assets/brand//icon-192.png",
-	"/assets/brand/./icon-192.png",
-	"/assets/./brand/icon-192.png",
+// guardedNearMisses returns near misses on the allowlisted names, doubled
+// slashes, dot segments, and plain traversal in and out of them.
+func guardedNearMisses() []string {
+	return []string{
+		// Near misses on the allowlisted names.
+		"/manifest.json",
+		"/manifest.webmanifest.bak",
+		"/manifest.webmanifest/",
+		"/manifest.webmanifestx",
+		"/Manifest.webmanifest",
+		"/MANIFEST.WEBMANIFEST",
+		"/favicon.ico/",
+		"/favicon.ico.map",
+		"/favicon.icox",
+		"/Favicon.ico",
+		"/favicon.ico;x",
+		"/assets/brand/icon-192.png/",
+		"/assets/brand/icon-192.png.map",
+		"/assets/brand/icon-192.PNG",
+		"/assets/brand/Icon-192.png",
+		"/assets/brand/icon-.png",
+		"/assets/brand/icon-x.png",
+		"/assets/brand/icon-192.svg",
+		"/assets/brand/icon-192-.png",
+		"/assets/brand/icon--192.png",
+		"/assets/brand/icon-192.png;x",
+		"/assets/brand/sub/icon-192.png",
+		"/assets/brand/icon-192.png/icon-192.png",
+		"/assets/Brand/icon-192.png",
+		"/x/assets/brand/icon-192.png",
+		"/x/favicon.ico",
+		"/b/manifest.webmanifest",
+		"/v2/favicon.ico",
 
-	// Traversal out of an allowlisted path.
-	"/assets/brand/../../index.html",
-	"/assets/brand/../../secret.txt",
-	"/assets/brand/../../b/upgrade/tasks",
-	"/assets/brand/../../v2/catalog",
-	"/assets/brand/icon-192.png/../../../secret.txt",
-	"/favicon.ico/../secret.txt",
-	"/favicon.ico/../b/upgrade/tasks",
-	"/manifest.webmanifest/../v2/catalog",
-	"/manifest.webmanifest/../index.html",
+		// Doubled slashes and dot segments.
+		"//manifest.webmanifest",
+		"//favicon.ico",
+		"/./favicon.ico",
+		"/assets//brand/icon-192.png",
+		"/assets/brand//icon-192.png",
+		"/assets/brand/./icon-192.png",
+		"/assets/./brand/icon-192.png",
 
-	// Traversal into an allowlisted path.
-	"/b/../favicon.ico",
-	"/v2/../manifest.webmanifest",
-	"/secret/../assets/brand/icon-192.png",
+		// Traversal out of an allowlisted path.
+		"/assets/brand/../../index.html",
+		"/assets/brand/../../secret.txt",
+		"/assets/brand/../../b/upgrade/tasks",
+		"/assets/brand/../../v2/catalog",
+		"/assets/brand/icon-192.png/../../../secret.txt",
+		"/favicon.ico/../secret.txt",
+		"/favicon.ico/../b/upgrade/tasks",
+		"/manifest.webmanifest/../v2/catalog",
+		"/manifest.webmanifest/../index.html",
 
-	// Percent-encoded dots, slashes, and letters.
-	"/assets/brand/..%2f..%2fsecret.txt",
-	"/assets/brand/..%2F..%2Fb%2Fupgrade%2Ftasks",
-	"/assets/brand/%2e%2e/%2e%2e/secret.txt",
-	"/assets/brand/%2E%2E/%2E%2E/index.html",
-	"/assets/brand/icon-192.png%2f..%2f..%2f..%2fsecret.txt",
-	"/assets%2fbrand%2ficon-192.png",
-	"/assets/brand%2ficon-192.png",
-	"/favicon%2eico",
-	"/favicon.ic%6f",
-	"/%66avicon.ico",
-	"/manifest%2Ewebmanifest",
-	"/%6d%61%6e%69%66%65%73%74.webmanifest",
-	"/assets/brand/icon%2d192.png",
-	"/assets/brand/icon-192%2epng",
-	"/assets/brand/icon-%31%39%32.png",
-	"/favicon.ico%2f..%2fsecret.txt",
-	"/favicon.ico%00",
-	"/assets/brand/icon-192.png%00",
-	"/assets/brand/icon-192.png%00.txt",
-	"/%2e/favicon.ico",
-	"/%2f/favicon.ico",
-	"/favicon.ico%3f",
-	"/favicon.ico%23",
-	"/assets/brand/%69con-192.png",
-	"/assets/brand/icon-192.png%20",
-	"/b%2f..%2ffavicon.ico",
+		// Traversal into an allowlisted path.
+		"/b/../favicon.ico",
+		"/v2/../manifest.webmanifest",
+		"/secret/../assets/brand/icon-192.png",
+	}
+}
 
-	// Backslashes, which some servers read as separators.
-	"/assets/brand/..%5c..%5csecret.txt",
-	"/assets/brand/icon-192.png%5c..%5csecret.txt",
-	"/assets\\brand\\icon-192.png",
+// guardedEncodings returns percent-encoded and backslash forms of the
+// allowlisted names and of traversal out of them.
+func guardedEncodings() []string {
+	return []string{
+		// Percent-encoded dots, slashes, and letters.
+		"/assets/brand/..%2f..%2fsecret.txt",
+		"/assets/brand/..%2F..%2Fb%2Fupgrade%2Ftasks",
+		"/assets/brand/%2e%2e/%2e%2e/secret.txt",
+		"/assets/brand/%2E%2E/%2E%2E/index.html",
+		"/assets/brand/icon-192.png%2f..%2f..%2f..%2fsecret.txt",
+		"/assets%2fbrand%2ficon-192.png",
+		"/assets/brand%2ficon-192.png",
+		"/favicon%2eico",
+		"/favicon.ic%6f",
+		"/%66avicon.ico",
+		"/manifest%2Ewebmanifest",
+		"/%6d%61%6e%69%66%65%73%74.webmanifest",
+		"/assets/brand/icon%2d192.png",
+		"/assets/brand/icon-192%2epng",
+		"/assets/brand/icon-%31%39%32.png",
+		"/favicon.ico%2f..%2fsecret.txt",
+		"/favicon.ico%00",
+		"/assets/brand/icon-192.png%00",
+		"/assets/brand/icon-192.png%00.txt",
+		"/%2e/favicon.ico",
+		"/%2f/favicon.ico",
+		"/favicon.ico%3f",
+		"/favicon.ico%23",
+		"/assets/brand/%69con-192.png",
+		"/assets/brand/icon-192.png%20",
+		"/b%2f..%2ffavicon.ico",
+
+		// Backslashes, which some servers read as separators.
+		"/assets/brand/..%5c..%5csecret.txt",
+		"/assets/brand/icon-192.png%5c..%5csecret.txt",
+		"/assets\\brand\\icon-192.png",
+	}
 }
 
 // installAssetAPI builds an API whose handlers record whether they ran and
@@ -156,27 +184,26 @@ func installAssetAPI(t *testing.T, webRoot http.Handler) (*broker.API, *[]string
 		})
 	}
 
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
 	return &broker.API{
-		Username: "admin",
-		Password: "pw",
-		Internal: record("internal", ok),
-		Primary:  record("primary", ok),
+		Username: installUser,
+		Password: installPassword,
+		Internal: record("internal", okHandler()),
+		Primary:  record("primary", okHandler()),
 		WebRoot:  record("webroot", webRoot),
 	}, &reached
 }
 
-func serve(t *testing.T, api *broker.API, method, target string, header http.Header) *httptest.ResponseRecorder {
+// okHandler answers every request with 200 and no body.
+func okHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+}
+
+// serve sends one request with no credential.
+func serve(t *testing.T, api *broker.API, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequestWithContext(t.Context(), method, target, nil)
-	for name, values := range header {
-		req.Header[name] = values
-	}
-
 	rec := httptest.NewRecorder()
-	api.ServeHTTP(rec, req)
+	api.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, target, nil))
 
 	return rec
 }
@@ -188,15 +215,13 @@ func serve(t *testing.T, api *broker.API, method, target string, header http.Hea
 func TestInstallAssetsAreServedWithoutCredentials(t *testing.T) {
 	t.Parallel()
 
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		for _, target := range append(append([]string{}, publicInstallAssets...), "/manifest.webmanifest?v=1", "/assets/brand/icon-192.png?v=1") {
+		for _, target := range append(publicInstallAssets(), "/manifest.webmanifest?v=1", "/assets/brand/icon-192.png?v=1") {
 			t.Run(method+" "+target, func(t *testing.T) {
 				t.Parallel()
 
-				api, reached := installAssetAPI(t, ok)
-				rec := serve(t, api, method, target, nil)
+				api, reached := installAssetAPI(t, okHandler())
+				rec := serve(t, api, method, target)
 
 				if rec.Code != http.StatusOK {
 					t.Fatalf("status %d, want %d", rec.Code, http.StatusOK)
@@ -217,10 +242,8 @@ func TestInstallAssetsAreServedWithoutCredentials(t *testing.T) {
 func TestInstallAssetsIgnoreCredentials(t *testing.T) {
 	t.Parallel()
 
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
-	for _, user := range [][2]string{{"admin", "pw"}, {"admin", "wrong"}} {
-		api, reached := installAssetAPI(t, ok)
+	for _, user := range [][2]string{{installUser, installPassword}, {installUser, "wrong"}} {
+		api, reached := installAssetAPI(t, okHandler())
 
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/manifest.webmanifest", nil)
 		req.SetBasicAuth(user[0], user[1])
@@ -241,13 +264,11 @@ func TestInstallAssetsIgnoreCredentials(t *testing.T) {
 func TestEveryOtherPathStillNeedsCredentials(t *testing.T) {
 	t.Parallel()
 
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
 	assertRefused := func(t *testing.T, method, target string) {
 		t.Helper()
 
-		api, reached := installAssetAPI(t, ok)
-		rec := serve(t, api, method, target, nil)
+		api, reached := installAssetAPI(t, okHandler())
+		rec := serve(t, api, method, target)
 
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %q: status %d, want %d", method, target, rec.Code, http.StatusUnauthorized)
@@ -262,13 +283,13 @@ func TestEveryOtherPathStillNeedsCredentials(t *testing.T) {
 		}
 	}
 
-	for _, target := range guardedPaths {
+	for _, target := range guardedPaths() {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			assertRefused(t, method, target)
 		}
 	}
 
-	for _, target := range publicInstallAssets {
+	for _, target := range publicInstallAssets() {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions, "PROPFIND"} {
 			assertRefused(t, method, target)
 		}
@@ -281,20 +302,18 @@ func TestEveryOtherPathStillNeedsCredentials(t *testing.T) {
 func TestGuardedPathsStillWorkWithCredentials(t *testing.T) {
 	t.Parallel()
 
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-
 	for target, want := range map[string]string{
 		"/":                 "webroot /",
 		"/blacksmith.js":    "webroot /blacksmith.js",
 		"/b/upgrade/tasks":  "internal /b/upgrade/tasks",
-		"/v2/catalog":       "primary /v2/catalog",
+		catalogPath:         "primary " + catalogPath,
 		"/assets/brand/":    "webroot /assets/brand/",
 		"/assets/brand/x.y": "webroot /assets/brand/x.y",
 	} {
-		api, reached := installAssetAPI(t, ok)
+		api, reached := installAssetAPI(t, okHandler())
 
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
-		req.SetBasicAuth("admin", "pw")
+		req.SetBasicAuth(installUser, installPassword)
 
 		rec := httptest.NewRecorder()
 		api.ServeHTTP(rec, req)
@@ -303,10 +322,10 @@ func TestGuardedPathsStillWorkWithCredentials(t *testing.T) {
 			t.Errorf("%s: status %d, reached %q, want %q", target, rec.Code, *reached, want)
 		}
 
-		api, reached = installAssetAPI(t, ok)
+		api, reached = installAssetAPI(t, okHandler())
 
 		req = httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
-		req.SetBasicAuth("admin", "wrong")
+		req.SetBasicAuth(installUser, "wrong")
 
 		rec = httptest.NewRecorder()
 		api.ServeHTTP(rec, req)
@@ -345,26 +364,29 @@ func TestInstallAssetsNeverLeakOtherFiles(t *testing.T) {
 
 	for name, body := range files {
 		full := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+
+		err := os.MkdirAll(filepath.Dir(full), 0o750)
+		if err != nil {
 			t.Fatal(err)
 		}
 
-		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+		err = os.WriteFile(full, []byte(body), 0o600)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	api, _ := installAssetAPI(t, http.FileServer(http.Dir(root)))
 
-	for _, target := range guardedPaths {
-		rec := serve(t, api, http.MethodGet, target, nil)
+	for _, target := range guardedPaths() {
+		rec := serve(t, api, http.MethodGet, target)
 		if strings.Contains(rec.Body.String(), "secret") || strings.Contains(rec.Body.String(), "public-") {
 			t.Errorf("GET %q without a credential returned %d with a file body", target, rec.Code)
 		}
 	}
 
-	for _, target := range publicInstallAssets {
-		rec := serve(t, api, http.MethodGet, target, nil)
+	for _, target := range publicInstallAssets() {
+		rec := serve(t, api, http.MethodGet, target)
 		want := files[strings.TrimPrefix(target, "/")]
 
 		if rec.Code != http.StatusOK || rec.Body.String() != want {

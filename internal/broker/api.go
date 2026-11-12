@@ -51,13 +51,18 @@ func (api API) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	api.routeRequest(writer, req, username)
 }
 
-// publicInstallFiles are the install assets outside the brand directory
-// that a browser may fetch without the broker credential. A browser asks
-// for the manifest and the favicon, and an installed app for its icons,
-// before it has a password to send. None of them holds any data.
-var publicInstallFiles = map[string]bool{
-	"/manifest.webmanifest": true,
-	"/favicon.ico":          true,
+// isPublicInstallFile reports whether path is one of the install assets
+// outside the brand directory that a browser may fetch without the broker
+// credential. A browser asks for the manifest and the favicon, and an
+// installed app for its icons, before it has a password to send. None of
+// them holds any data.
+func isPublicInstallFile(path string) bool {
+	switch path {
+	case "/manifest.webmanifest", "/favicon.ico":
+		return true
+	default:
+		return false
+	}
 }
 
 // brandIconPrefix is the one directory whose icons are public. Only names
@@ -69,7 +74,7 @@ const brandIconPrefix = "/assets/brand/"
 var brandIconName = regexp.MustCompile(`\Aicon-[0-9]{1,4}\.png\z`)
 
 // isPublicInstallAsset reports whether req may skip basic auth. Only GET and
-// HEAD qualify, and only for an exact path in publicInstallFiles or a brand
+// HEAD qualify, and only for a path isPublicInstallFile accepts or a brand
 // icon directly under brandIconPrefix. A percent-encoded letter, digit,
 // dot, dash, or slash leaves RawPath set, and such a request is refused,
 // so no encoded form can stand in for a public name. Any other encoded
@@ -86,7 +91,7 @@ func isPublicInstallAsset(req *http.Request) bool {
 	}
 
 	path := req.URL.Path
-	if publicInstallFiles[path] {
+	if isPublicInstallFile(path) {
 		return true
 	}
 

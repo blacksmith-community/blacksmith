@@ -54,6 +54,8 @@ func assertWASMResponse(t *testing.T, handler http.Handler, path string) {
 // .webmanifest extension, so without one the file can go out as plain text
 // and a browser may refuse to read it.
 func TestUIHandlerServesWebManifestAsManifestJSON(t *testing.T) {
+	t.Parallel()
+
 	handler := getUIHandler(&config.Config{WebRoot: "ui"})
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {

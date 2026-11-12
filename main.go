@@ -1201,15 +1201,15 @@ func uiCacheControl(next http.Handler) http.Handler {
 	})
 }
 
-// isKeyedAssetRequest reports whether r asks for a file by a ?v= key. The
+// isKeyedAssetRequest reports whether req asks for a file by a ?v= key. The
 // document and directories never count, whatever their query.
-func isKeyedAssetRequest(r *http.Request) bool {
-	path := r.URL.Path
+func isKeyedAssetRequest(req *http.Request) bool {
+	path := req.URL.Path
 	if path == "" || strings.HasSuffix(path, "/") || strings.HasSuffix(path, ".html") {
 		return false
 	}
 
-	return r.URL.Query().Get("v") != ""
+	return req.URL.Query().Get("v") != ""
 }
 
 // keyedAssetWriter upgrades the cache policy to keyedAssetCacheControl

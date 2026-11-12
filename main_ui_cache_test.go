@@ -24,27 +24,9 @@ const (
 // included, is revalidated on every load, so a deploy is picked up without
 // a hard reload.
 func TestUIHandlerCacheControl(t *testing.T) {
-	root := t.TempDir()
-	files := map[string]string{
-		"index.html":           "<html></html>",
-		"blacksmith.js":        "void 0",
-		"vendor/oat/oat.css":   "a{}",
-		"assets/brand/x.png":   "png",
-		"manifest.webmanifest": "{}",
-	}
+	t.Parallel()
 
-	for name, body := range files {
-		full := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			t.Fatal(err)
-		}
-
-		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	handler := getUIHandler(&config.Config{WebRoot: root})
+	handler := getUIHandler(&config.Config{WebRoot: writeCacheWebRoot(t)})
 
 	cases := []struct {
 		name   string
@@ -69,36 +51,76 @@ func TestUIHandlerCacheControl(t *testing.T) {
 		{"a keyed directory listing", http.MethodGet, "/vendor/oat/?v=1", http.StatusOK, wantRevalidatedControl},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 
-			if rec.Code != tc.status {
-				t.Fatalf("%s %s: status %d, want %d", tc.method, tc.path, rec.Code, tc.status)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), testCase.method, testCase.path, nil))
+
+			if rec.Code != testCase.status {
+				t.Fatalf("%s %s: status %d, want %d", testCase.method, testCase.path, rec.Code, testCase.status)
 			}
 
-			if got := rec.Header().Get("Cache-Control"); got != tc.want {
-				t.Errorf("%s %s: Cache-Control %q, want %q", tc.method, tc.path, got, tc.want)
+			if got := rec.Header().Get("Cache-Control"); got != testCase.want {
+				t.Errorf("%s %s: Cache-Control %q, want %q", testCase.method, testCase.path, got, testCase.want)
 			}
 		})
 	}
+}
 
-	t.Run("a keyed revalidation that is not modified", func(t *testing.T) {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/blacksmith.js?v=1", nil)
-		req.Header.Set("If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
+// TestUIHandlerKeyedNotModifiedStaysImmutable checks a keyed revalidation
+// answered with 304 keeps the long-lived policy, so the browser goes on
+// trusting its copy.
+func TestUIHandlerKeyedNotModifiedStaysImmutable(t *testing.T) {
+	t.Parallel()
 
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
+	handler := getUIHandler(&config.Config{WebRoot: writeCacheWebRoot(t)})
 
-		if rec.Code != http.StatusNotModified {
-			t.Fatalf("status %d, want %d", rec.Code, http.StatusNotModified)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/blacksmith.js?v=1", nil)
+	req.Header.Set("If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("status %d, want %d", rec.Code, http.StatusNotModified)
+	}
+
+	if got := rec.Header().Get("Cache-Control"); got != wantKeyedCacheControl {
+		t.Errorf("Cache-Control %q, want %q", got, wantKeyedCacheControl)
+	}
+}
+
+// writeCacheWebRoot writes a small web root with a document, a script, a
+// vendor stylesheet, an image, and a manifest, and returns its path.
+func writeCacheWebRoot(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	files := map[string]string{
+		"index.html":           "<html></html>",
+		"blacksmith.js":        "void 0",
+		"vendor/oat/oat.css":   "a{}",
+		"assets/brand/x.png":   "png",
+		"manifest.webmanifest": "{}",
+	}
+
+	for name, body := range files {
+		full := filepath.Join(root, filepath.FromSlash(name))
+
+		err := os.MkdirAll(filepath.Dir(full), 0o750)
+		if err != nil {
+			t.Fatal(err)
 		}
 
-		if got := rec.Header().Get("Cache-Control"); got != wantKeyedCacheControl {
-			t.Errorf("Cache-Control %q, want %q", got, wantKeyedCacheControl)
+		err = os.WriteFile(full, []byte(body), 0o600)
+		if err != nil {
+			t.Fatal(err)
 		}
-	})
+	}
+
+	return root
 }
 
 // TestUIHandlerKeyedPageAssetsAreImmutable serves every asset the real page
@@ -106,6 +128,8 @@ func TestUIHandlerCacheControl(t *testing.T) {
 // It also checks the Oat files carry a key, since an upgrade must replace
 // them in every browser that has the old copy.
 func TestUIHandlerKeyedPageAssetsAreImmutable(t *testing.T) {
+	t.Parallel()
+
 	page, err := os.ReadFile(filepath.Join("ui", "index.html"))
 	if err != nil {
 		t.Fatal(err)
