@@ -1603,7 +1603,7 @@ td a {
   padding: 1em 0;
   max-height: 100%;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 
 .credentials-container h3 {
@@ -9006,7 +9006,8 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .configs-table-container {
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--border-primary);
   border-radius: 6px;
   max-height: calc(100vh - 350px);

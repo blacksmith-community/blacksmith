@@ -99,7 +99,7 @@ t('the metadata is one compact row table with small bold headers and tight paddi
  expect(bodies('inspection-layout.css','#task-details-modal .task-summary-section')).not.toMatch(/border-bottom/);
  const box=bodies('inspection-layout.css','#task-details-modal .task-summary-section');
  expect(box).toMatch(/border-radius:\s*\.5rem/);
- expect(box).toMatch(/overflow:\s*hidden/);
+ expect(box).toMatch(/overflow-x:\s*auto/);
  expect(box).toMatch(/margin:\s*8px 0 (8|9|10|11|12)px/);
  expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table th')).toMatch(/background:\s*color-mix\(/);
  const css=require('fs').readFileSync('ui/inspection-layout.css','utf8');

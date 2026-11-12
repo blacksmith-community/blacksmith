@@ -5,7 +5,7 @@
 #task-details-modal .task-title-deployment { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; }
 #task-details-modal .task-title-deployment .task-deployment-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); font-size: .9375rem; }
 #task-details-modal .task-title-deployment button { flex: none; }
-#task-details-modal .task-summary-section { padding: 0; margin: 8px 0 10px; border: 1px solid var(--border-primary); border-radius: .5rem; background: var(--card); overflow: hidden; }
+#task-details-modal .task-summary-section { padding: 0; margin: 8px 0 10px; border: 1px solid var(--border-primary); border-radius: .5rem; background: var(--card); overflow-x: auto; overflow-y: hidden; }
 #task-details-modal .task-summary-table { width: 100%; border-collapse: collapse; table-layout: auto; margin: 0; }
 #task-details-modal .task-summary-table th, #task-details-modal .task-summary-table td { padding: 8px 10px; text-align: left; vertical-align: middle; border: 0; border-left: 1px solid var(--border-primary); background: transparent; }
 #task-details-modal .task-summary-table th:first-child, #task-details-modal .task-summary-table td:first-child { border-left: 0; }
@@ -26,5 +26,8 @@
   #task-details-modal .task-summary-table td { display: flex; align-items: center; gap: .75rem; padding: 6px 10px; border-left: 0; }
   #task-details-modal .task-summary-table tbody td:not(:first-child) { border-top: 0; }
   #task-details-modal .task-summary-table td::before { content: attr(data-label); flex: 0 0 6.5rem; font-size: .75rem; font-weight: 700; color: var(--foreground); }
+  #task-details-modal .task-summary-table td:not(.task-meta-description) { white-space: normal; }
+}
+@media (max-width: 900px) {
   #task-details-modal .task-summary-table td:not(.task-meta-description) { white-space: normal; }
 }
