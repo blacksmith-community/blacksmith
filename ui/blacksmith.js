@@ -1176,7 +1176,7 @@
     '.tasks-table', '.vms-table', '.events-table', '.configs-table-container table',
     '.logs-table', '.instance-logs-table', '.deployment-log-table', '.debug-log-table',
     '.marketplace-services-table', '.service-instances-table',
-    '.cert-table'
+    '.cert-table', '.cert-horizon-table'
   ].join(',');
   let cardSortSeq = 0;
   const cardHeaderLabels = (table) => {

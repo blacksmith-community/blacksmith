@@ -210,6 +210,7 @@ t('the certificate tables are in the card list and keep wide columns hidden', ()
   const src = fs.readFileSync(path.join(UI, 'blacksmith.js'), 'utf8');
   const list = src.match(/const CARD_TABLE_SELECTOR = \[([^\]]*)\]/)[1];
   expect(list).toContain('.cert-table');
+  expect(list).toContain('.cert-horizon-table');
   const rules = phoneRules();
   expect(rules).toMatch(/td\.cert-col-wide[^{]*\{[^}]*display: none/);
 });

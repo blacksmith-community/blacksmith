@@ -14554,6 +14554,8 @@ tr.row-link { cursor: pointer; }
 :is(#blacksmith, #services) .resurrection-toggle-container { flex: 1 1 auto; min-width: 0; }
 
 @media (max-width: 699.98px) { /* phone toolbars */
+  :is(#blacksmith, #services) .logs-controls-row .log-file-selector { flex: 1 1 100%; min-width: 0; max-width: 100%; }
+  :is(#blacksmith, #services) .logs-controls-row .log-file-selector select { width: 100%; min-width: 0; max-width: 100%; }
   #blacksmith .compact-tasks-controls.table-controls-container .search-filter-container { flex: 1 1 100%; max-width: 100%; }
   #blacksmith .compact-tasks-controls.table-controls-container .filter-group { display: flex; flex: 1 1 100%; flex-wrap: nowrap; align-items: center; min-width: 0; }
   #blacksmith .compact-tasks-controls.table-controls-container .filter-group:has(.checkbox-group) { flex-wrap: wrap; }

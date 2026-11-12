@@ -39,3 +39,9 @@ test('the phone toolbar rules never shrink a control below the coarse-pointer si
   expect(rules).not.toMatch(/min-height:\s*(?!44)\d+px/);
   expect(rules).not.toMatch(/\b(width|height):\s*\d+px/);
 });
+
+test('the log file select fills its row under 700px instead of running past the edge', () => {
+  const rules = block();
+  expect(rules).toMatch(/logs-controls-row \.log-file-selector \{[^}]*flex: 1 1 100%[^}]*min-width: 0/);
+  expect(rules).toMatch(/logs-controls-row \.log-file-selector select \{[^}]*width: 100%[^}]*max-width: 100%/);
+});
