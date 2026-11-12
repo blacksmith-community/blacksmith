@@ -14515,13 +14515,14 @@ tr.row-link { cursor: pointer; }
   }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] .table-controls-row,
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] .table-controls-row > th { display: block; width: 100%; padding: 0; border: 0; background: transparent; }
+  :is(#blacksmith, #services, #certificates) table[data-cards="true"] > thead > tr.table-controls-row > th.table-controls-header { background: transparent !important; background-image: none; box-shadow: none; border: 0; }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr {
     display: block; margin: 0 0 10px; padding: 4px 14px;
     background: var(--card); border: 1px solid var(--border); border-radius: 8px;
   }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr:hover { background: var(--bg-hover, var(--card)); }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td {
-    display: flow-root; width: auto; min-width: 0; max-width: none; padding: 7px 0; border: 0;
+    display: flow-root; width: auto; min-width: 0; max-width: none; padding: 7px 0; border: 0; background: transparent;
     border-bottom: 1px solid var(--border-secondary, var(--border));
     text-align: left; white-space: normal; overflow-wrap: anywhere; font-size: .875rem;
   }

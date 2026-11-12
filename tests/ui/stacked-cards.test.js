@@ -234,3 +234,10 @@ t('every fleet certificate row is a card of labelled pairs', async () => {
     expect(row.cells[0].querySelector('input').getAttribute('aria-label')).toMatch(/^Rotate /);
   } finally { w.close(); }
 });
+
+t('card cells and the toolbar row stay transparent so the card shows one surface', () => {
+  const rules = phoneRules();
+  expect(rules).toMatch(/> tbody > tr > td \{[^}]*background: transparent/);
+  // The dark theme paints the toolbar header with an important rule, so the card rule has to as well.
+  expect(rules).toMatch(/th\.table-controls-header \{[^}]*background: transparent !important/);
+});
