@@ -34,6 +34,7 @@ t('a command run summary is one data row with Status first and Created last',asy
  const table=d.querySelector('#upgrade .task-detail-summary table.task-summary-table');
  expect(table).not.toBeNull();
  expect(table.querySelectorAll('tbody tr').length).toBe(1);
+ expect(table.getAttribute('data-sortable')).toBe('false');
  expect(headers(d)).toEqual(['Status','Run as','Shell','Timeout','Parallel','Reason','Progress','Instances','Created']);
  expect(d.querySelector('#upgrade .task-detail-summary .summary-row')).toBeNull();
 });

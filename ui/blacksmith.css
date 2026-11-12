@@ -14275,3 +14275,6 @@ tr.row-link { cursor: pointer; }
 .manifest-value > .copy-slot { display: inline-block; flex: 0 0 28px; width: 28px; height: 28px; }
 .config-table .manifest-value > .copy-slot { flex-basis: 24px; width: 24px; height: 24px; }
 .manifest-value-empty { color: var(--muted-foreground); }
+
+/* The secret cell spaces its copy button, mask, and eye button evenly. */
+.secret-value { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
