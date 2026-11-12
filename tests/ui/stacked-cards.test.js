@@ -182,3 +182,24 @@ t('the deployment and debug log tables are in the card list', () => {
   const list = src.match(/const CARD_TABLE_SELECTOR = \[([^\]]*)\]/)[1];
   ['.deployment-log-table', '.debug-log-table', '.instance-logs-table', '.logs-table'].forEach((name) => expect(list).toContain(name));
 });
+
+t('the Marketplace and Services tables become cards and keep their toolbar row', () => {
+  const { w, d } = boot();
+  try {
+    const wrap = (cls, heads, cells) => `<div class="logs-table-container"><table class="${cls}"><thead><tr class="table-controls-row"><th colspan="${heads.length}" class="table-controls-header"><div class="table-controls-container"><button type="button">Refresh</button></div></th></tr><tr>${heads.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody><tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr></tbody></table></div>`;
+    const market = mount(w, d, wrap('marketplace-services-table', ['Service', 'Description', 'Plans', 'Available'], ['blacksmith', 'broker', '2 plan(s)', 'Yes'])).querySelector('table');
+    expect(labels(market)).toEqual(['Service', 'Description', 'Plans', 'Available']);
+    expect(market.getAttribute('data-cards')).toBe('true');
+    expect(market.querySelector('.table-controls-row button')).not.toBeNull();
+    const svc = mount(w, d, wrap('service-instances-table', ['Name', 'Type', 'Status', 'Bindings'], ['db', 'managed', 'succeeded', '<span>1</span>'])).querySelector('table');
+    expect(labels(svc)).toEqual(['Name', 'Type', 'Status', 'Bindings']);
+  } finally { w.close(); }
+});
+
+t('the Org and Space pairs stack under 700px', () => {
+  const rules = phoneRules();
+  expect(rules).toMatch(/\.org-space-table[^{]*\{[^}]*display: (block|grid)/);
+  expect(rules).toMatch(/\.org-space-table select[^{]*\{[^}]*width: 100%/);
+  const outside = css().replace(rules, '');
+  expect(outside).toMatch(/\.org-space-table select \{[^}]*width: 200px/);
+});

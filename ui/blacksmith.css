@@ -14531,6 +14531,13 @@ tr.row-link { cursor: pointer; }
   }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[data-label=""]::before { display: none; }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[colspan] { display: block; padding: 12px 0; text-align: center; }
+
+  /* Org and Space: each label sits beside its select, one pair per row. */
+  .org-space-table, .org-space-table tbody { display: block; width: 100%; }
+  .org-space-table tr { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 6px 10px; }
+  .org-space-table td { display: block; min-width: 0; padding: 0; }
+  .org-space-table td:last-child { grid-column: 1 / -1; }
+  .org-space-table select { width: 100%; max-width: 100%; }
 }
 
 /* Toolbars wrap at any width, so expanded button labels never push a
