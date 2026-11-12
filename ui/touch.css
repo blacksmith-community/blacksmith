@@ -16,6 +16,15 @@
   :is(button, [role="button"], summary, select, input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="url"], input[type="password"], input[type="number"], input[type="tel"], input[type="button"], input[type="submit"]):not(:is(.tabs, .route-context) *) {
     min-height: 44px !important;
   }
+  :is(button, [role="button"], summary, select):not(:is(.tabs, .route-context) *) {
+    min-width: 44px !important;
+  }
+  /* A link that leads a list item or stands alone on a line of its own. */
+  :is(li > a[href]:first-child, p > a[href]:only-child):not(:is(.tabs, .route-context) *) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
   :is(.copy-btn-inline, .copy-btn-logs, .copy-btn-manifest, .copy-btn, .secret-toggle, .secret-copy, .entity-copy, .ssh-btn, .delete-resurrection-btn, .refresh-btn-logs, .copy-deployment-names-btn, .clear-filters-btn, .vm-expand, .tab-close, .cert-horizon-btn) {
     min-width: 44px !important;
     min-height: 44px !important;

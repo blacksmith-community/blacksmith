@@ -48,3 +48,18 @@ test('a label around a checkbox is a 44 pixel target and the box itself is 24 pi
   expect(px(decl(box.body, 'width'))).toBeGreaterThanOrEqual(24);
   expect(px(decl(box.body, 'height'))).toBeGreaterThanOrEqual(24);
 });
+
+test('on a coarse pointer a button or select is never narrower than 44 pixels', () => {
+  const rule = rules.find((r) => /\bbutton\b/.test(r.selector) && /\bselect\b/.test(r.selector) && decl(r.body, 'min-width'));
+  expect(rule).toBeDefined();
+  expect(px(decl(rule.body, 'min-width'))).toBeGreaterThanOrEqual(44);
+  expect(rule.body).toContain('!important');
+});
+
+test('on a coarse pointer a link that leads a list item or stands alone is 44 pixels tall', () => {
+  const rule = rules.find((r) => /li > a\[href\]:first-child, p > a\[href\]:only-child/.test(r.selector));
+  expect(rule).toBeDefined();
+  expect(px(decl(rule.body, 'min-height'))).toBeGreaterThanOrEqual(44);
+  expect(decl(rule.body, 'display')).toBe('inline-flex');
+  expect(rule.selector).toContain(':not(:is(.tabs, .route-context) *)');
+});
