@@ -592,6 +592,8 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
   background: var(--bg-secondary); border-bottom: 1px solid var(--border-primary);
 }
 .job-logs-container > .logs-table-container { flex: 1 1 0; min-height: 0; overflow: auto; padding: 0; }
+/* The instance pane pads every div with an id selector, so this rule repeats the id. Padding on the scroll container would leave a gap above the sticky header for rows to show through. */
+#services .detail-content .job-logs-container > .logs-table-container { padding: 0; }
 .job-logs-container .instance-logs-table { margin: 0; border-collapse: separate; border-spacing: 0; }
 .job-logs-container .instance-logs-table thead { position: sticky; top: 0; z-index: 2; background: var(--bg-tertiary); }
 .job-logs-container .instance-logs-table thead th { top: 0; background: var(--bg-tertiary); }
