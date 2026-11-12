@@ -273,6 +273,8 @@ type patchSessions struct {
 	// observe, when set, gives the context each session of the group
 	// opens with, so a caller can hear the session's BOSH tasks.
 	observe func(ctx context.Context, group string) context.Context
+	// closed, when set, runs at the end of each close.
+	closed func()
 
 	mu      sync.Mutex
 	byGroup map[string]PatchSession
@@ -322,7 +324,7 @@ func (s *patchSessions) noRunner() error {
 	return errNoPatchRunner
 }
 
-// close closes every session it opened.
+// close closes every session it opened, and then runs closed.
 func (s *patchSessions) close() {
 	s.mu.Lock()
 	sessions := s.byGroup
@@ -334,6 +336,10 @@ func (s *patchSessions) close() {
 		if err != nil && s.log != nil {
 			s.log.Error("Closing the patch session of %s in %s: %v", group, s.deployment, err)
 		}
+	}
+
+	if s.closed != nil {
+		s.closed()
 	}
 }
 

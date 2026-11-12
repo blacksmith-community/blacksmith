@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"blacksmith/internal/bosh/sshconn"
 )
@@ -29,8 +30,9 @@ const firstSetupTaskID = 501
 // sshTaskRunner opens the fixture's fake sessions the way the director
 // does. It tells the observer on the open's context of a setup task before
 // it returns, and the session's Close tells that observer of the cleanup
-// task. After each setup it checks whether the task record in Vault
-// already holds that setup task.
+// task. After each setup it waits, as the director's setup task runs, for
+// the task record in Vault to hold that setup task, and notes whether it
+// did before the open returned.
 type sshTaskRunner struct {
 	fix *taskFixture
 
@@ -39,7 +41,16 @@ type sshTaskRunner struct {
 	saved map[int]bool
 	// failOpen makes each open fail once the setup was heard.
 	failOpen bool
+	// noWait makes each open return as soon as the setup was heard.
+	noWait bool
 }
+
+// setupRuns is how long the fake setup task runs at most while it waits
+// for its ID to be saved.
+const setupRuns = 2 * time.Second
+
+// promptly is how long a call that must not wait for Vault may take.
+const promptly = time.Second
 
 var errSetupFailed = errors.New("the SSH setup task failed")
 
@@ -58,16 +69,19 @@ func (r *sshTaskRunner) open(ctx context.Context, deployment, _ string, indices 
 	setup := r.next
 	r.next += 2
 	failOpen := r.failOpen
+	noWait := r.noWait
 	r.mu.Unlock()
 
 	observer := sshconn.TaskObserverFrom(ctx)
 	observer.SetupStarted(setup)
 
-	saved := r.fix.storedSetup(ctx, deployment, setup)
+	if !noWait {
+		saved := r.fix.awaitStoredSetup(ctx, deployment, setup)
 
-	r.mu.Lock()
-	r.saved[setup] = saved
-	r.mu.Unlock()
+		r.mu.Lock()
+		r.saved[setup] = saved
+		r.mu.Unlock()
+	}
 
 	if failOpen {
 		observer.CleanupStarted(setup + 1)
@@ -127,10 +141,22 @@ func (f *taskFixture) storedSessions(ctx context.Context, deployment string) []S
 	return nil
 }
 
-// storedSetup reports whether the task record in Vault names the setup
-// task for the instance on deployment.
-func (f *taskFixture) storedSetup(ctx context.Context, deployment string, setup int) bool {
-	return slices.ContainsFunc(f.storedSessions(ctx, deployment), func(s SSHSessionTasks) bool { return s.SetupTaskID == setup })
+// awaitStoredSetup reports whether the task record in Vault names the
+// setup task for the instance on deployment within setupRuns.
+func (f *taskFixture) awaitStoredSetup(ctx context.Context, deployment string, setup int) bool {
+	deadline := time.Now().Add(setupRuns)
+
+	for {
+		if slices.ContainsFunc(f.storedSessions(ctx, deployment), func(s SSHSessionTasks) bool { return s.SetupTaskID == setup }) {
+			return true
+		}
+
+		if time.Now().After(deadline) {
+			return false
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // awaitStoredSessions waits until the task record in Vault holds want for
@@ -289,4 +315,137 @@ func TestCommandSessionsRecordEachSessionTheyOpen(t *testing.T) {
 		{Group: certJob, SetupTaskID: firstSetupTaskID + 2, CleanupTaskID: firstSetupTaskID + 3},
 		{Group: certJob, SetupTaskID: firstSetupTaskID + 4, CleanupTaskID: firstSetupTaskID + 5},
 	})
+}
+
+// holdSessionSave makes the first save of the task record that names an
+// SSH session block until the release it returns is called, which the
+// test's cleanup calls too.
+func holdSessionSave(fix *taskFixture) (<-chan struct{}, func()) {
+	held, release := fix.vault.holdNext(func(task UpgradeTask) bool {
+		return len(task.Instances[0].SSHSessions) > 0
+	})
+	fix.t.Cleanup(release)
+
+	return held, release
+}
+
+// within fails the test unless done closes within promptly.
+func within(t *testing.T, what string, done <-chan struct{}) {
+	t.Helper()
+
+	select {
+	case <-done:
+	case <-time.After(promptly):
+		t.Fatalf("%s waited for the blocked save", what)
+	}
+}
+
+// A save of the IDs that Vault holds up delays neither the setup nor the
+// cleanup that reported them.
+//
+//nolint:paralleltest // it runs alone, like every other task fixture test
+func TestSSHSessionTasksDoNotWaitForTheirSave(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	held, _ := holdSessionSave(fix)
+	observer := fix.manager.sshSessionObserver(fix.task, &fix.task.Instances[0], certJob)
+
+	setup := make(chan struct{})
+
+	go func() {
+		observer.Setup(firstSetupTaskID)
+		close(setup)
+	}()
+
+	within(t, "the setup", setup)
+	within(t, "the save of the setup task", held)
+
+	cleanup := make(chan struct{})
+
+	go func() {
+		observer.Cleanup(firstSetupTaskID + 1)
+		close(cleanup)
+	}()
+
+	within(t, "the cleanup", cleanup)
+}
+
+// The cleanup task heard while the save of the setup task is held up is
+// in the record once the sessions close, and closing them waits for that
+// save rather than leaving it behind.
+//
+//nolint:paralleltest // it runs alone, like every other task fixture test
+func TestSSHSessionTasksHeardDuringASaveAreSaved(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	runner := observeSSHTasks(fix)
+	runner.noWait = true
+	held, release := holdSessionSave(fix)
+
+	sessions := fix.manager.commandSessionsFor(fix.task, &fix.task.Instances[0])
+
+	_, err := sessions.group(t.Context(), certJob, []int{0})
+	if err != nil {
+		t.Fatalf("opening the session: %v", err)
+	}
+
+	within(t, "the save of the setup task", held)
+
+	closed := make(chan struct{})
+
+	go func() {
+		sessions.close()
+		close(closed)
+	}()
+
+	waitUntil(t, "the cleanup task is heard", func() bool {
+		return slices.Equal(fix.snapshot().Instances[0].SSHSessions, []SSHSessionTasks{{Group: certJob, SetupTaskID: firstSetupTaskID, CleanupTaskID: firstSetupTaskID + 1}})
+	})
+
+	select {
+	case <-closed:
+		t.Fatal("the sessions closed before the held save of their tasks ended")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+	within(t, "closing the sessions", closed)
+
+	want := []SSHSessionTasks{{Group: certJob, SetupTaskID: firstSetupTaskID, CleanupTaskID: firstSetupTaskID + 1}}
+	if got := fix.storedSessions(t.Context(), sessionDeployment0); !slices.Equal(got, want) {
+		t.Errorf("Vault holds sessions %+v once the sessions closed, want %+v", got, want)
+	}
+}
+
+// The writer that saves a task's session IDs ends once nothing is left to
+// save, and closing the sessions waits for it to end.
+//
+//nolint:paralleltest // it runs alone, like every other task fixture test
+func TestSSHSessionSaveWriterEnds(t *testing.T) {
+	fix := newTaskFixture(t, 1, 1)
+	held, release := holdSessionSave(fix)
+	observer := fix.manager.sshSessionObserver(fix.task, &fix.task.Instances[0], certJob)
+
+	observer.Setup(firstSetupTaskID)
+	within(t, "the save of the setup task", held)
+	observer.Cleanup(firstSetupTaskID + 1)
+
+	fix.manager.mu.RLock()
+	writer := fix.manager.sshSaves[fix.task]
+	fix.manager.mu.RUnlock()
+
+	if writer == nil {
+		t.Fatal("no writer saves the session IDs")
+	}
+
+	release()
+	within(t, "the writer", writer.done)
+
+	fix.manager.mu.RLock()
+	left := len(fix.manager.sshSaves)
+	fix.manager.mu.RUnlock()
+
+	if left != 0 {
+		t.Errorf("%d writers are left once the saves ended, want none", left)
+	}
+
+	fix.awaitStoredSessions(sessionDeployment0, []SSHSessionTasks{{Group: certJob, SetupTaskID: firstSetupTaskID, CleanupTaskID: firstSetupTaskID + 1}})
 }

@@ -142,6 +142,29 @@ type runVault struct {
 	failPhase CommandPhase
 	// failWhen refuses each save of the task whose record it accepts.
 	failWhen func(UpgradeTask) bool
+	// hold, when set, blocks one save, as holdNext describes.
+	hold *heldSave
+}
+
+// heldSave is a save of the task record that blocks until it is released.
+type heldSave struct {
+	accept  func(UpgradeTask) bool
+	taken   bool
+	held    chan struct{}
+	release chan struct{}
+}
+
+// awaitRelease blocks a save that hold takes until the hold is released
+// or the save's context ends.
+func (h *heldSave) awaitRelease(ctx context.Context) error {
+	close(h.held)
+
+	select {
+	case <-h.release:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("the held save: %w", ctx.Err())
+	}
 }
 
 // refuseWhen makes the vault refuse each save of the task whose record
@@ -180,10 +203,23 @@ func (v *runVault) Put(ctx context.Context, path string, data interface{}) error
 		v.saves = append(v.saves, runSave{seq: v.seq.Add(1), task: task})
 		fail := v.failPhase != "" && v.failPhase == phase || v.failWhen != nil && v.failWhen(task)
 
+		var hold *heldSave
+		if v.hold != nil && !v.hold.taken && v.hold.accept(task) {
+			v.hold.taken = true
+			hold = v.hold
+		}
+
 		if !fail {
 			v.writes = append(v.writes, runWrite{seq: v.seq.Add(1), phase: phase, matched: node.Matched})
 		}
 		v.mu.Unlock()
+
+		if hold != nil {
+			err = hold.awaitRelease(ctx)
+			if err != nil {
+				return err
+			}
+		}
 
 		if fail {
 			return errPutRefused
@@ -191,6 +227,21 @@ func (v *runVault) Put(ctx context.Context, path string, data interface{}) error
 	}
 
 	return v.confirmVault.Put(ctx, path, data)
+}
+
+// holdNext makes the next save of the task whose record accept accepts
+// block, as a slow Vault does, until release is called or the save's
+// context ends. The channel it returns closes once that save is blocked.
+func (v *runVault) holdNext(accept func(UpgradeTask) bool) (<-chan struct{}, func()) {
+	hold := &heldSave{accept: accept, held: make(chan struct{}), release: make(chan struct{})}
+
+	v.mu.Lock()
+	v.hold = hold
+	v.mu.Unlock()
+
+	var once sync.Once
+
+	return hold.held, func() { once.Do(func() { close(hold.release) }) }
 }
 
 func (v *runVault) savedTasks() []runSave {

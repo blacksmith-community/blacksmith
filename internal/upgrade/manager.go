@@ -197,6 +197,10 @@ type Manager struct {
 	// Callback when max_batch_jobs changes (used to update BatchDirector pool)
 	onMaxBatchJobsChanged func(maxJobs int)
 
+	// sshSaves holds, under mu, the writer of each task whose SSH session
+	// tasks are being saved, as requestSSHSaveLocked describes.
+	sshSaves map[*UpgradeTask]*sshSaveWriter
+
 	// snapshotSeq numbers the copies of tasks that are saved, in the order
 	// they were taken under mu, so a save never overwrites a newer one.
 	snapshotSeq atomic.Uint64
@@ -386,6 +390,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		cancelledResumeWait: cancelledResumeWaitDefault,
 		cancelCleaned:       make(map[string]bool),
 		liveSwaps:           make(map[string]bool),
+		sshSaves:            make(map[*UpgradeTask]*sshSaveWriter),
 
 		patchGateWait:     patchGateWaitDefault,
 		patchGateInterval: patchGateIntervalDefault,
