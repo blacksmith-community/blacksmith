@@ -1,7 +1,7 @@
 const {test,expect}=require('bun:test');
 const fs=require('fs'),path=require('path');
 const css=fs.readFileSync(path.join(__dirname,'..','..','ui','blacksmith.css'),'utf8');
-const rule=(sel)=>{ const i=css.lastIndexOf(sel+' {'); if(i<0) return ''; return css.slice(i,css.indexOf('}',i)); };
+const rule=(sel)=>{ const i=css.lastIndexOf('\n'+sel+' {')+1; if(i<=0) return ''; return css.slice(i,css.indexOf('}',i)); };
 
 // The marketplace table sits in a panel that already has a frame, so its own
 // container adds a second box. The Services selector card does the same.
@@ -56,4 +56,9 @@ test('the active endpoint tab has an underline marker',()=>{
 test('the endpoint view marks its tab set',()=>{
  const js=fs.readFileSync(path.join(__dirname,'..','..','ui','blacksmith.js'),'utf8');
  expect(js).toMatch(/<bs-tabs class="cf-endpoint-tabs">\s*<div class="broker-tabs-nav"/);
+});
+
+test('the selection table has no fill of its own, so dark mode shows no card',()=>{
+ expect(rule('[data-theme="dark"] .broker-details-container .org-space-table td')).toMatch(/background:\s*transparent/);
+ expect(rule('.broker-details-container .org-space-table')).toMatch(/background:\s*transparent/);
 });

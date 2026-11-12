@@ -8421,11 +8421,18 @@ bs-tabs > .broker-tab-pane[hidden] {
 .broker-details-container .org-space-table {
   border: 0;
   border-collapse: collapse;
+  background: transparent;
 }
 
 .broker-details-container .org-space-table td {
   padding: 5px 8px;
   border: 0;
+  background: transparent;
+}
+
+/* The dark theme fills every table cell from forge-theme.css, so the selector
+   table names the theme to keep its cells clear. */
+[data-theme="dark"] .broker-details-container .org-space-table td {
   background: transparent;
 }
 
