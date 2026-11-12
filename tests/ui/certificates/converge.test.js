@@ -46,7 +46,7 @@ t('converge preview and create', async () => {
   const nBefore=posts(/"instance_ids"/).length;
   p=T.startUpgrade(); await waitDialog(); confirmBtn().click(); await sleep(100);
   ok(d.querySelector('#dialog-modal[open]')&&/not converged/.test(dlgText()),'confirm dialog opens for a diverged instance');
-  ok(/To continue, type upgrade below\./.test(dlgText()),'a diverged upgrade asks for the word upgrade');
+  ok(/To continue, type "upgrade" below\./.test(dlgText()),'a diverged upgrade asks for the word upgrade');
   ok(dlgText().includes('2026-10-21 14:00:00 UTC')&&!dlgText().includes('2026-10-21T14')&&dlgText().includes(EVIL)&&dlgText().includes('/s/other_crt')&&dlgText().includes('/s/a_crt')&&d.querySelectorAll('#dialog-modal img,#dialog-modal script').length===0,'dialog names the instance and its additional variables, hostile inert');
   ok(posts(/"instance_ids"/).length===nBefore+1,'no create before confirm (preview only)');
   cancelBtn().click(); await p; await sleep(30);

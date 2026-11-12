@@ -126,7 +126,7 @@ t('rotate preview and create', async () => {
   createAnswers=[];
   const bigBefore=posts(/"kind":"certificates"/).length;
   d.getElementById('rotate-preview').click(); await waitDialog();
-  ok(!!dlg().querySelector('.dialog-modal-ack-input')&&/To continue, type redeploy below\./.test(dlg().textContent),'11 instances require typing redeploy');
+  ok(!!dlg().querySelector('.dialog-modal-ack-input')&&/To continue, type "redeploy" below\./.test(dlg().textContent),'11 instances require typing redeploy');
   confirmBtn().click(); await sleep(30);
   ok(dlg().open&&posts(/"kind":"certificates"/).length===bigBefore,'confirm without typing does not proceed');
   dlg().querySelector('.dialog-modal-ack-input').value='redeploy'; confirmBtn().click(); await sleep(80);

@@ -45,13 +45,13 @@ t('an upgrade above ten instances asks for upgrade',async()=>{
  const {w,d}=await upgradeReview(11,false);
  try{
   const label=d.querySelector('.batch-ack-label');
-  expect(label.textContent).toBe('To confirm, type upgrade below.');
+  expect(label.textContent).toBe('To confirm, type "upgrade" below.');
   expect(label.querySelector('strong').textContent).toBe('upgrade');
  }finally{w.close();}
 });
 t('an upgrade with diverged instances asks for upgrade at any size',async()=>{
  const {w,d}=await upgradeReview(1,true);
- try{ expect(d.querySelector('.batch-ack-label').textContent).toBe('To confirm, type upgrade below.'); }finally{w.close();}
+ try{ expect(d.querySelector('.batch-ack-label').textContent).toBe('To confirm, type "upgrade" below.'); }finally{w.close();}
 });
 t('a small clean upgrade asks for nothing',async()=>{
  const {w,d}=await upgradeReview(2,false);
@@ -73,7 +73,7 @@ async function typedReview(requireText,typed){
 }
 t('the batch review shows the lowercase word and accepts forgiving input',async()=>{
  const a=await typedReview('patch in place','Patch In Place');
- expect(a.label).toBe('To confirm, type patch in place below.');
+ expect(a.label).toBe('To confirm, type "patch in place" below.');
  expect(a.disabled).toBe(false);
  expect((await typedReview('patch in place','  patch   in place ')).disabled).toBe(false);
  const wrong=await typedReview('patch in place','rotate');
@@ -87,7 +87,7 @@ t('the modal accepts the same forgiving input and names the word',async()=>{
   const p=w.__T.showConfirmDialog({title:'T',message:'m',requireText:'patch in place',confirmText:'Go',cancelText:'No'});
   await sleep(30);
   const ov=d.querySelector('#dialog-modal');
-  expect(ov.querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type patch in place below.');
+  expect(ov.querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type "patch in place" below.');
   const input=ov.querySelector('.dialog-modal-ack-input');
   input.value='rotate';ov.querySelector('[data-dialog-role="confirm"]').click();await sleep(30);
   expect(ov.textContent).toContain('Type "patch in place" in the field to continue.');

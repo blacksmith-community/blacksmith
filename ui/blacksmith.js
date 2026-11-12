@@ -351,7 +351,7 @@
     if (options.requireText) {
       const wrap = make('div', 'dialog-modal-ack');
       const label = make('label', 'dialog-modal-ack-label');
-      confirmWordLabel(label, 'To continue, type ', normalizeConfirmText(options.requireText), ' below.');
+      confirmWordLabel(label, 'To continue, type "', normalizeConfirmText(options.requireText), '" below.');
       label.setAttribute('for', 'dialog-modal-ack-input');
       const input = make('input', 'dialog-modal-input dialog-modal-ack-input');
       input.type = 'text';
@@ -3226,7 +3226,7 @@
     if (options.requireText) {
       host.appendChild(rotateEl('h3','batch-review-section-title','Confirm this operation'));
       const label = rotateEl('label', 'batch-ack-label');
-      confirmWordLabel(label, 'To confirm, type ', normalizeConfirmText(options.requireText), ' below.');
+      confirmWordLabel(label, 'To confirm, type "', normalizeConfirmText(options.requireText), '" below.');
       const input = document.createElement('input'); input.id = 'batch-flow-ack'; input.placeholder = normalizeConfirmText(options.requireText); input.autocomplete = 'off'; input.spellcheck = false;
       input.addEventListener('input', updateBatchFlow); label.appendChild(input); host.appendChild(label);
     }
