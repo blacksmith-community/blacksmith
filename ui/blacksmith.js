@@ -8700,7 +8700,10 @@
   const fillCommandOutput = (body, context) => {
     context.copyText = '';
     fillCommandOutputBody(body, context);
-    if (context.copyButton) context.copyButton.hidden = !context.copyText;
+    if (context.copyButton) {
+      context.copyButton.hidden = !context.copyText;
+      if (context.placeCopy) context.placeCopy();
+    }
   };
 
   const paintCommandOutput = (key) => {
@@ -8842,12 +8845,32 @@
       body.commandOutputContext = context;
       fillCommandOutput(body, context);
       details.append(summary, body);
+      const outputBlock = rotateEl('div', 'command-output-block');
+      // The button rides right after the header text and is centred on the
+      // header's line. The summary spans the whole row, so the text is
+      // measured, not the summary.
+      const placeCopy = () => {
+        if (copyButton.hidden || typeof document.createRange !== 'function') return;
+        const range = document.createRange();
+        range.selectNodeContents(summary);
+        if (typeof range.getClientRects !== 'function') return;
+        // A header that wraps puts the button after its last line.
+        const lines = range.getClientRects();
+        const text = lines[lines.length - 1];
+        if (!text) return;
+        const box = outputBlock.getBoundingClientRect();
+        const size = copyButton.getBoundingClientRect();
+        copyButton.style.left = `${Math.round(text.right - box.left + 8)}px`;
+        copyButton.style.top = `${Math.round(text.top - box.top + (text.height - size.height) / 2)}px`;
+      };
+      context.placeCopy = placeCopy;
       details.addEventListener('toggle', () => {
         if (details.open && settled && !noOutput && !commandOutputs.has(key)) loadCommandOutput(context);
+        placeCopy();
       });
-      const outputBlock = rotateEl('div', 'command-output-block');
       outputBlock.append(details, copyButton);
       row.appendChild(outputBlock);
+      if (typeof ResizeObserver === 'function') new ResizeObserver(placeCopy).observe(outputBlock);
       wrap.appendChild(row);
     });
     return wrap;

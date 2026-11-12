@@ -124,3 +124,41 @@ t('every new control has a distinct keep key',async()=>{
  const keys=[...d.querySelectorAll('#upgrade [data-keep-key]')].map((e)=>e.dataset.keepKey);
  expect(new Set(keys).size).toBe(keys.length);
 });
+
+t('the Output copy button is placed right after the header text, centred on its line',async()=>{
+ const {w,d}=await setup(task(),merged());
+ const block=d.querySelector('#upgrade .command-output-block');
+ const button=outCopy(d);
+ w.Range.prototype.getClientRects=()=>[{left:116,right:150,top:190,height:20,width:34},{left:116,right:180,top:210,height:20,width:64}];
+ const orig=w.HTMLElement.prototype.getBoundingClientRect;
+ w.HTMLElement.prototype.getBoundingClientRect=function(){
+  if(this===block) return {left:100,top:200,right:700,height:300,width:600};
+  if(this===button) return {left:0,top:0,right:28,height:28,width:28};
+  return orig.call(this);
+ };
+ await openOut(d);
+ expect(button.style.left).toBe('88px');
+ expect(button.style.top).toBe('6px');
+ expect(details(d).contains(button)).toBe(false);
+ button.click();await sleep(10);
+ expect(details(d).open).toBe(true);
+});
+
+t('the output block sizes to its content and keeps a capped height',()=>{
+ const fs=require('fs');const path=require('path');
+ const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','blacksmith.css'),'utf8');
+ const m=css.match(/#upgrade pre\.command-output\s*\{([^}]*)\}/g)||[];
+ const rule=m.join(' ');
+ expect(rule).toMatch(/min-height:\s*0/);
+ expect(rule).toMatch(/max-height:\s*\d+px/);
+ expect(rule).toMatch(/overflow:\s*auto/);
+ expect(rule).toMatch(/flex:\s*none/);
+});
+
+t('the node icon looks and behaves like a link',()=>{
+ const fs=require('fs');const path=require('path');
+ const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','blacksmith.css'),'utf8');
+ expect(css).toMatch(/#upgrade a\.command-node-link\s*\{[^}]*cursor:\s*pointer/);
+ expect(css).toMatch(/#upgrade a\.command-node-link:hover[^{]*\{[^}]*background/);
+ expect(css).toMatch(/#upgrade a\.command-node-link:focus-visible[^{]*\{[^}]*outline:\s*2px/);
+});

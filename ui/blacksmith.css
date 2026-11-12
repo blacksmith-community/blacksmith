@@ -14253,15 +14253,17 @@ tr.row-link { cursor: pointer; }
 #upgrade .command-block, #upgrade .command-output-block { position: relative; }
 #upgrade .command-block { margin: .75rem 0; }
 #upgrade .command-block > div > pre.command-text { margin: 0; padding-right: 40px; }
-#upgrade .command-block > .command-copy, #upgrade .command-output-block > .command-output-copy { position: absolute; top: 6px; right: 6px; }
+#upgrade .command-block > .command-copy { position: absolute; top: 6px; right: 6px; }
+#upgrade .command-output-block > .command-output-copy { position: absolute; top: 6px; left: 150px; z-index: 1; }
 #upgrade .command-output-block > .command-output-copy[hidden] { display: none; }
-#upgrade .command-output-block > details > summary { padding-right: 40px; min-height: 28px; }
+#upgrade .command-output-block > details > summary { min-height: 36px; }
 
 /* Links, terminal, and task links on the activity page */
 #upgrade .instance-heading a.instance-link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 #upgrade .instance-heading a.instance-link:hover { text-decoration-color: currentColor; }
-#upgrade a.command-node-link { display: inline-flex; align-items: center; color: inherit; border-radius: 4px; }
-#upgrade a.command-node-link:hover, #upgrade a.command-node-link:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+#upgrade a.command-node-link { display: inline-flex; align-items: center; color: inherit; border-radius: 999px; cursor: pointer; text-decoration: none; transition: background-color .12s, box-shadow .12s; }
+#upgrade a.command-node-link:hover { background: color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3b82f6) 18%, transparent); }
+#upgrade a.command-node-link:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 3px; }
 #upgrade .command-node-head .command-node-terminal { margin-left: auto; }
 #upgrade .command-node-head .command-node-terminal[hidden] { display: none; }
 #upgrade .command-node-gone, #upgrade .ssh-sessions-missing { margin-left: auto; opacity: .75; font-size: .9em; }
@@ -14278,3 +14280,6 @@ tr.row-link { cursor: pointer; }
 
 /* The secret cell spaces its copy button, mask, and eye button evenly. */
 .secret-value { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* The output sizes to its content and scrolls only when it is long. */
+#upgrade pre.command-output { flex: none; min-height: 0; max-height: 320px; overflow: auto; }
