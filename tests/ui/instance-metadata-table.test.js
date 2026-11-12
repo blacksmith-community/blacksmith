@@ -61,3 +61,13 @@ t('the key column sizes to its content on the instance and broker screens', () =
 t('the instance table stays in its box on a phone', () => {
   expect(css).not.toMatch(/@media \(max-width: 540px\) \{ #blacksmith \.entity-technical \.service-info-table th\.info-key \{ width: 8rem; \} \}/);
 });
+
+t('the metadata table fills the panel to its right edge', () => {
+  const at = css.indexOf(':is(#blacksmith, #services) .entity-technical .service-info-table {');
+  expect(at).toBeGreaterThan(-1);
+  const body = css.slice(at, css.indexOf('}', at));
+  expect(body).toMatch(/width:\s*100%/);
+  expect(body).toMatch(/max-width:\s*none/);
+  expect(body).toMatch(/margin:\s*0/);
+  expect(css).toMatch(/\.entity-technical\s*\{[^}]*overflow:\s*hidden/);
+});

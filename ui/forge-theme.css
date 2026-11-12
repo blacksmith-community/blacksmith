@@ -150,7 +150,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content):is(:hover, :focus-visible) { background: var(--secondary); border-color: var(--primary); color: var(--primary); }
 button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content).copied { background: var(--success); border-color: var(--success); color: var(--success-foreground); }
 button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) svg { width: 14px; height: 14px; }
-.entity-technical { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; }
+.entity-technical { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
 .entity-technical > summary { padding: 14px 16px; cursor: pointer; font-weight: 600; }
 .entity-technical .service-info-table { margin: 0; table-layout: fixed; min-width: 0 !important; }
 .entity-technical .info-key { width: 30%; text-align: left; }
@@ -896,7 +896,7 @@ body > header .theme-toggle { flex-shrink: 0; white-space: nowrap; }
 :root[data-contrast="high"] :is(body,button,input,select,textarea,a) { transition: none; }
 
 /* The key column is as wide as its longest key and no wider, so the values take the rest of the panel. */
-:is(#blacksmith, #services) .entity-technical .service-info-table { table-layout: auto; width: 100%; }
+:is(#blacksmith, #services) .entity-technical .service-info-table { table-layout: auto; width: 100%; max-width: none; margin: 0; border-radius: 0; box-shadow: none; }
 :is(#blacksmith, #services) .entity-technical .service-info-table th.info-key { width: 1%; white-space: nowrap; font-weight: 700; }
 :is(#blacksmith, #services) .entity-technical .info-value { width: auto; max-width: none; }
 
