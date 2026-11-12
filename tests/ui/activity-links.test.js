@@ -153,3 +153,30 @@ t('the target row has a visible highlight style',()=>{
  const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','blacksmith.css'),'utf8');
  expect(css).toMatch(/\.vm-row\.vm-row-target/);
 });
+
+t('a failed VM fetch keeps its error and says nothing about the node',async()=>{
+ const {w,d}=await vmsPage([vm('node',0)]);
+ const content=d.querySelector('#services .detail-content');
+ content.innerHTML='<div class="error">Failed to load vms: HTTP 503: Service Unavailable</div>';
+ expect(w.highlightVmNode('node/0')).toBe(false);
+ expect(d.querySelector('.vm-node-missing')).toBeNull();
+ expect(content.textContent).toContain('Failed to load vms');
+});
+
+t('a node link that waited on a failed load is highlighted once a later load works',async()=>{
+ const {w,d}=await vmsPage([vm('node',0)]);
+ const content=d.querySelector('#services .detail-content');
+ content.innerHTML='<div class="error">Failed to load vms: HTTP 503</div>';
+ w.highlightVmNode('node/0');
+ const w2=w;
+ content.innerHTML=w2.__T.formatVMs([vm('node',0),vm('node',1)],'val-a');
+ w2.__T.applyPendingVmNode();
+ expect(d.querySelector('tr.vm-row-target')?.dataset.vmNode).toBe('node/0');
+ expect(d.querySelector('.vm-node-missing')).toBeNull();
+});
+
+t('an empty loaded inventory still reports the node as gone',async()=>{
+ const {w,d}=await vmsPage([]);
+ expect(w.highlightVmNode('node/0')).toBe(false);
+ expect(d.querySelector('.vm-node-missing').textContent).toBe('Node node/0 no longer exists.');
+});

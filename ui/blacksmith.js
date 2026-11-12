@@ -12298,13 +12298,23 @@
 
   // Brings the VMs view to the node a command run linked to. A node that is
   // gone says so and leaves every row as it was.
+  let pendingVmNode = '';
+  const applyPendingVmNode = () => { if (pendingVmNode) window.highlightVmNode(pendingVmNode); };
   window.highlightVmNode = (node) => {
     const host = document.querySelector('#services .detail-content');
     if (!host) return false;
     host.querySelectorAll('.vm-node-missing').forEach((note) => note.remove());
     host.querySelectorAll('tr.vm-row.vm-row-target').forEach((row) => row.classList.remove('vm-row-target'));
+    pendingVmNode = '';
     if (!node) return false;
     const row = [...host.querySelectorAll('tr.vm-row')].find((candidate) => candidate.dataset.vmNode === node);
+    // A node is only gone once the inventory has loaded. A failed or unfinished
+    // load says nothing about it, and the node is highlighted if a later load works.
+    const inventoryLoaded = !host.querySelector('.error') && (host.querySelector('tr.vm-row') || host.querySelector('.no-data'));
+    if (!row && !inventoryLoaded) {
+      pendingVmNode = node;
+      return false;
+    }
     if (!row) {
       const note = document.createElement('p');
       note.className = 'vm-node-missing';
@@ -15415,6 +15425,7 @@
         const detailContent = refresh.container;
         if (detailContent) {
           detailContent.innerHTML = formatVMs(vms, instanceId);
+          applyPendingVmNode();
           // Re-initialize sorting and filtering
           setTimeout(() => {
             if (!refresh.current()) return;
