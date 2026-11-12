@@ -106,16 +106,20 @@
     const pageSize = 40;
     const more = dialog.querySelector('[data-load-more]');
     let navigationController;
-    const mainButton = id => [...document.querySelectorAll('.tabs > .tab-button')].find(b => b.dataset.tab === id);
-    const sectionButton = (screen, id) => [...document.getElementById(screen).querySelectorAll('.detail-tab')].find(b => b.dataset.tab === id);
+    // The rail names every screen and every broker section.
+    const railArea = id => document.querySelector(`#console-rail [data-area="${id}"]`);
+    const areaLabel = id => railArea(id)?.querySelector('.rail-label')?.textContent.trim() || '';
+    const brokerSections = () => [...document.querySelectorAll('#rail-sections-blacksmith a.rail-link[data-section]')];
+    const sectionLabel = (screen, id) => screen === 'services'
+      ? (instanceSections.find(([section]) => section === id) || [])[1] || ''
+      : brokerSections().find(a => a.dataset.section === id)?.textContent.trim() || '';
     const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K';
     trigger.querySelector('kbd').textContent = shortcut;
 
-    const buttonLabel = button => [...button.childNodes].filter(node => node.nodeType === 3).map(node => node.textContent).join('').trim();
     function inventory() {
-      const screens = [...document.querySelectorAll('.tabs > .tab-button')].map(button => ({
-        id: button.dataset.tab, label: buttonLabel(button),
-        sections: button.dataset.tab === 'blacksmith' ? [...document.querySelectorAll('#blacksmith .detail-tab')].map(b => ({ id: b.dataset.tab, label: b.textContent.trim() })) : []
+      const screens = [...document.querySelectorAll('#console-rail [data-area]')].map(area => ({
+        id: area.dataset.area, label: areaLabel(area.dataset.area),
+        sections: area.dataset.area === 'blacksmith' ? brokerSections().map(a => ({ id: a.dataset.section, label: a.textContent.trim() })) : []
       }));
       const all = destinations(screens, root.serviceInstances, root.plansData);
       // Conditional sub-screens are indexed only while their parent view exists.
@@ -209,12 +213,13 @@
         ['Esc', 'Close the current dialog']
       ]);
       const panel = document.querySelector('.tab-panel.active');
-      const rows = [['Arrow keys / Home / End', 'Focus a navigation tab; Enter or Space opens it'],
-        ['Arrow keys', 'Choose radio, mode, or select options']];
+      const rows = [['Arrow keys', 'Choose radio, mode, or select options']];
       const names = {'batch-new':'New Operation (keeps your draft)', 'batch-activity':'Activity',
         'batch-flow-next':'Next step; on Review, focus confirmation', 'batch-flow-back':'Previous step',
         'rotate-op-upgrade':'Upgrade options', 'rotate-op-rotate':'Rotate certificate options', 'rotate-op-converge':'Converge options', 'rotate-op-command':'Run command options'};
-      panel?.querySelectorAll('[aria-keyshortcuts]').forEach(control => {
+      // The batch view links live in the rail, and their shortcuts belong to the batch page.
+      const controls = [...(panel?.id === 'upgrade' ? document.querySelectorAll('#console-rail [aria-keyshortcuts]') : []), ...(panel?.querySelectorAll('[aria-keyshortcuts]') || [])];
+      controls.forEach(control => {
         if (!names[control.id] && (!control.getClientRects().length || control.disabled)) return;
         rows.push([control.getAttribute('aria-keyshortcuts').replaceAll('Alt','Alt/Option'),
           names[control.id] || control.getAttribute('aria-label') || control.getAttribute('placeholder') || control.textContent.trim()]);
@@ -280,49 +285,26 @@
           close();
           return;
         }
-        if (root.blacksmithRouter && !entry.button) {
+        if (!entry.button) {
+          if (!root.blacksmithRouter && !root.blacksmithViews) throw new Error('This screen is not available yet. Please try again.');
           input.disabled = true;
           status.textContent = 'Opening destination…';
           const route = entry.instanceId ? {screen:'services',instance:entry.instanceId,section:entry.section} : {screen:entry.screen,...(entry.section?{section:entry.section}:{}),...(entry.planId!==undefined?{service:entry.serviceId,plan:entry.planId}:{})};
-          const opened = await root.blacksmithRouter.navigate(route,{signal:controller.signal});
+          const opened = root.blacksmithRouter ? await root.blacksmithRouter.navigate(route,{signal:controller.signal}) : await root.blacksmithViews.activate(route,{signal:controller.signal});
           if (controller.signal.aborted || !dialog.open) return;
           if (!opened) throw new Error('This destination is not available. Check the navigation message.');
           close(false);
+          root.BlacksmithRail?.sync();
           docFocus();
+          updateContext();
           return;
         }
-        let target;
-        if (entry.button) {
-          if (!entry.button.isConnected) throw new Error('This screen is no longer available. Close and reopen navigation.');
-          target = entry.button;
-        } else if (entry.instanceId) {
-          if (!root.navigateToInstance) throw new Error('Instances are still loading. Please try again.');
-          // Keep the modal open while the existing selection handler resolves.
-          input.disabled = true;
-          status.textContent = 'Opening instance…';
-          const opened = await root.navigateToInstance(entry.instanceId, controller.signal);
-          if (controller.signal.aborted || !dialog.open) return;
-          if (!opened) throw new Error('This instance is no longer available. Close and reopen navigation.');
-          mainButton('services').click();
-          target = sectionButton('services', entry.section);
-        } else {
-          target = mainButton(entry.screen);
-          if (entry.section) {
-            target.click();
-            target = sectionButton(entry.screen, entry.section);
-          }
-          if (entry.planId !== undefined) {
-            target?.click();
-            const serviceIndex = (root.plansData?.services || []).findIndex(service => service.id === entry.serviceId);
-            const planIndex = root.plansData?.services?.[serviceIndex]?.plans?.findIndex(plan => plan.id === entry.planId);
-            target = [...document.querySelectorAll('#blacksmith .plan-item')].find(item =>
-              item.dataset.serviceIndex === String(serviceIndex) && item.dataset.planIndex === String(planIndex));
-          }
-        }
-        if (!target || target.disabled) throw new Error('This screen is not available yet. Please try again.');
+        const target = entry.button;
+        if (!target.isConnected) throw new Error('This screen is no longer available. Close and reopen navigation.');
+        if (target.disabled) throw new Error('This screen is not available yet. Please try again.');
         close(false);
         target.click();
-        (target.getClientRects().length ? target : target.closest('.entity-workspace')?.querySelector('.entity-section-select'))?.focus();
+        target.focus();
         updateContext();
       } catch (error) {
         status.textContent = error.message;
@@ -376,40 +358,27 @@
     function updateContext() {
       const panel = document.querySelector('.tab-panel.active');
       if (!panel) return;
-      const main = (mainButton(panel.id) ? buttonLabel(mainButton(panel.id)) : '') || 'Blacksmith';
+      const main = areaLabel(panel.id) || 'Blacksmith';
       const detailVisible = panel.id !== 'services' || panel.classList.contains('instance-open');
-      const section = detailVisible ? panel.querySelector('.detail-tab.active')?.textContent.trim() : '';
+      const workspace = detailVisible ? panel.querySelector('.entity-workspace') : null;
+      const sectionId = workspace?.dataset.section || '';
+      const section = sectionId ? sectionLabel(panel.id, sectionId) : '';
       const instance = panel.id === 'services' && detailVisible ? (root.currentInstanceInfo?.name || root.currentInstanceInfo?.id) : '';
       document.getElementById('console-title').textContent = [main, instance, section].filter(Boolean).join(' / ');
-      document.querySelectorAll('.detail-tabs').forEach(group => {
-        group.setAttribute('role', 'tablist');
-        group.setAttribute('aria-orientation', group.classList.contains('entity-navigation') ? 'vertical' : 'horizontal');
-        group.setAttribute('aria-label', group.closest('#services') ? 'Instance sections' : 'Blacksmith sections');
-        group.querySelectorAll('.detail-tab').forEach(tab => {
-          tab.setAttribute('role', 'tab');
-          const selected = tab.classList.contains('active');
-          tab.setAttribute('aria-selected', String(selected));
-          tab.tabIndex = selected ? 0 : -1;
-          const entity = group.closest('#blacksmith, .service-detail');
-          const content = entity?.querySelector('.detail-content');
-          tab.id ||= `${group.closest('#services') ? 'instance' : 'broker'}-section-${tab.dataset.tab}`;
-          if (content) {
-            content.id ||= `${group.closest('#services') ? 'instance' : 'broker'}-section-content`;
-            tab.setAttribute('aria-controls', content.id);
-            if (selected) {
-              content.setAttribute('role', 'tabpanel');
-              content.setAttribute('aria-labelledby', tab.id);
-              content.removeAttribute('aria-label');
-              content.tabIndex = 0;
-              const heading = entity.querySelector('.entity-current-title');
-              if (heading && heading.textContent !== tab.textContent) heading.textContent = tab.textContent;
-              const select = entity.querySelector('.entity-section-select');
-              if (select) select.value = tab.dataset.tab;
-              const hint = entity.querySelector('.entity-read-hint');
-              if (hint) hint.hidden = tab.dataset.tab !== 'details';
-            }
-          }
-        });
+      // The open section is a named region that takes focus; the rail is its navigation.
+      document.querySelectorAll('.entity-workspace').forEach(entity => {
+        const content = entity.querySelector('.detail-content');
+        const label = sectionLabel(entity.closest('#services') ? 'services' : 'blacksmith', entity.dataset.section || 'details') || 'Summary';
+        if (!content) return;
+        content.id ||= `${entity.closest('#services') ? 'instance' : 'broker'}-section-content`;
+        content.setAttribute('role', 'region');
+        content.removeAttribute('aria-labelledby');
+        if (content.getAttribute('aria-label') !== label) content.setAttribute('aria-label', label);
+        content.tabIndex = 0;
+        const heading = entity.querySelector('.entity-current-title');
+        if (heading && heading.textContent !== label) heading.textContent = label;
+        const hint = entity.querySelector('.entity-read-hint');
+        if (hint) hint.hidden = (entity.dataset.section || 'details') !== 'details';
       });
       document.querySelectorAll('.service-item, .plan-item, .endpoint-item').forEach(item => {
         item.tabIndex = 0;
@@ -418,20 +387,13 @@
       });
     }
     document.addEventListener('click', event => {
-      if (event.target.closest('.tab-button, .detail-tab, .service-item, .entity-back')) queueMicrotask(updateContext);
+      if (event.target.closest('.rail-link, .service-item, .entity-back')) queueMicrotask(updateContext);
     });
     document.addEventListener('keydown', event => {
       const item = event.target.closest('.service-item, .plan-item, .endpoint-item');
       if (item && event.target === item && ['Enter', ' '].includes(event.key)) { event.preventDefault(); item.click(); }
-      const tab = event.target.closest('.tab-button, .detail-tab');
-      if (tab && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
-        const siblings = [...(tab.closest('.detail-tabs') || tab.parentElement).querySelectorAll('.detail-tab, .tab-button')];
-        let index = siblings.indexOf(tab);
-        index = event.key === 'Home' ? 0 : event.key === 'End' ? siblings.length - 1 : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + siblings.length) % siblings.length;
-        event.preventDefault(); siblings[index].focus();
-      }
     });
-    new MutationObserver(updateContext).observe(document.querySelector('.tab-content'), { childList: true, subtree: true });
+    new MutationObserver(updateContext).observe(document.querySelector('.tab-content'), { childList: true, subtree: true, attributes: true, attributeFilter: ['data-section'] });
     updateContext();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

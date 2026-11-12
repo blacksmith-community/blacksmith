@@ -76,7 +76,7 @@ test('the Tasks toolbar has no one-off near-black background', () => {
 });
 
 test('the dark side navigation and sub-tabs carry a fill and the accent edge', () => {
-  const nav = block(theme, '[data-theme="dark"] #blacksmith .entity-navigation .detail-tab.active, [data-theme="dark"] #services .entity-navigation .detail-tab.active');
+  const nav = block(theme, '[data-theme="dark"] .console-rail .rail-link[aria-current="page"]');
   expect(nav).toMatch(/background:\s*var\(--surface-raised\)/);
   expect(nav).toMatch(/border-left-color:\s*var\(--primary\)/);
   for (const tab of ['manifest-tab-btn', 'cert-tab-btn']) {
@@ -91,7 +91,7 @@ test('dark panels, nested cards, and tables sit on different surfaces', () => {
   expect(metric).toMatch(/background:\s*var\(--surface-raised\)/);
   const cell = block(theme, '[data-theme="dark"] .main-content table td');
   expect(cell).toMatch(/background:\s*var\(--surface-page\)/);
-  expect(theme).toMatch(/\[data-theme="dark"\] #blacksmith \.entity-navigation[^{]*\{[^}]*var\(--surface-nav\)/);
+  expect(theme).toMatch(/\[data-theme="dark"\] \.console-rail[^{]*\{[^}]*var\(--surface-nav\)/);
 });
 
 test('the expanded VM detail row takes a dark fill that beats the generic table cell', () => {

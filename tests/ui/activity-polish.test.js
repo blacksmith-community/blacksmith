@@ -78,12 +78,9 @@ t('the deployment name shares the instance heading line',async()=>{
  expect(bodies(CSS,'#upgrade .instance-heading .instance-deployment')).toMatch(/var\(--text-secondary\)/);
 });
 
-t('the breadcrumb row and the main tabs share one rounded outline',()=>{
- const bar=bodies('console.css','.main-content #route-context');
- expect(bar).toMatch(/border:\s*1px solid/);
- expect(bar).toMatch(/border-radius:\s*10px 10px 0 0/);
- const tabs=bodies('console.css','.main-content .tabs');
- expect(tabs).toMatch(/margin-top:\s*0/);
- expect(tabs).toMatch(/border-top:\s*0/);
- expect(tabs).toMatch(/border-radius:\s*0/);
+t('the breadcrumb row opens the content column with no tab strip under it',()=>{
+ const html=fs.readFileSync(path.join(UI,'index.html'),'utf8');
+ expect(html).not.toMatch(/class="tabs"/);
+ expect(bodies('console.css','.main-content .tabs')).toBe('');
+ expect(bodies('routes.css','.route-context')).toMatch(/border-bottom:\s*1px solid/);
 });

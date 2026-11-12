@@ -39,9 +39,7 @@ t('manifest table headers are not drawn in capitals', () => {
 t('Broker settings is sentence case in the navigation and routes', () => {
   const { w, d } = boot();
   try {
-    const host = d.createElement('div');
-    host.innerHTML = w.__T.renderBlacksmithTemplate({});
-    const labels = Array.from(host.querySelectorAll('.detail-tab')).map((tab) => tab.textContent.trim());
+    const labels = Array.from(d.querySelectorAll('#console-rail a.rail-link')).map((link) => link.textContent.trim());
     expect(labels).toContain('Broker settings');
     expect(labels).not.toContain('Broker Settings');
   } finally { w.close(); }

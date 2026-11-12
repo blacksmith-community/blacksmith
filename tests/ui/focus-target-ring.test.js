@@ -9,7 +9,7 @@ const css=read('forge-theme.css').replace(/\/\*[\s\S]*?\*\//g,'');
 // readers start at the content. The navigation script gives that panel tabindex 0,
 // so the router marks the element it focuses, and the marker is what hides the ring.
 const boot=async()=>{
- const dom=new JSDOM('<button id="navigation-trigger"><kbd></kbd></button><dialog id="navigation-dialog"><input><div role="listbox"></div><button data-load-more></button><button data-close></button><div role="status"></div></dialog><div id="console-title"></div><main class="tab-content"><section id="blacksmith" class="tab-panel active"><nav class="detail-tabs entity-navigation"><button class="detail-tab active" data-tab="details">Summary</button></nav><div class="detail-content"></div></section></main>',{url:'http://localhost/#/broker/summary',runScripts:'outside-only',pretendToBeVisual:true});
+ const dom=new JSDOM('<button id="navigation-trigger"><kbd></kbd></button><dialog id="navigation-dialog"><input><div role="listbox"></div><button data-load-more></button><button data-close></button><div role="status"></div></dialog><div id="console-title"></div><main class="tab-content"><section id="blacksmith" class="tab-panel active"><div class="entity-workspace" data-section="details"><div class="detail-content"></div></div></section></main>',{url:'http://localhost/#/broker/summary',runScripts:'outside-only',pretendToBeVisual:true});
  const w=watchUncaught(dom.window);
  w.blacksmithViews={activate:async r=>r};
  w.eval(read('navigation.js'));

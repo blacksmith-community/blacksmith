@@ -6,6 +6,15 @@ async (page) => {
   const writes = [];
   let delayCredentials = false;
   const check = (condition, message) => { if (!condition) throw new Error(message); checks.push(message); };
+  // Follows a rail link the way an operator would: through the phone drawer
+  // under 700px, and by opening the link's area when it is collapsed.
+  const rail = async (selector) => {
+    if (await page.locator('#rail-toggle').isVisible()) await page.locator('#rail-toggle').click();
+    const link = page.locator('#console-rail').locator(selector).first();
+    if (!await link.isVisible()) await page.locator('#console-rail .rail-area').filter({ has: link }).locator('> .rail-area-toggle').click();
+    await link.click();
+  };
+  const section = (screen) => page.locator(`#${screen} .entity-workspace`).getAttribute('data-section');
   const catalog = { services: [{ id: 'valkey', name: 'valkey', description: 'Managed cache', plans: [{ id: 'small', name: 'small', description: 'Single node cache' }] }] };
   const instances = Object.fromEntries(Array.from({ length: 1003 }, (_, i) => [`cache-${i + 1}`, {
     service_id: 'valkey', plan_id: 'small', instance_name: `Application cache ${i + 1}`,
@@ -42,16 +51,15 @@ async (page) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('http://127.0.0.1:4202');
   await page.locator('#blacksmith .entity-overview').waitFor();
-  await page.locator('.tab-button[data-tab="services"]').click();
+  await rail('a[data-screen="services"]:not([data-instance])');
   check(await page.locator('#services .service-item').count() === 50, 'Only 50 of 1003 instances are mounted');
   await page.locator('#instance-next').click();
   check(await page.locator('#services .service-item').first().getAttribute('data-instance-id') === 'cache-51', 'Next instance page advances');
   await page.locator('#instance-search').fill('Application cache 1003');
   check(await page.locator('#services .service-item').count() === 1, 'Instance search covers the full fleet');
   await page.locator('#clear-filters').click();
-  await page.locator('.tab-button[data-tab="blacksmith"]').click();
   for (const id of ['vms','tasks','events','blacksmith-logs','certificates','plans','broker','configs','config','manifest','details']) {
-    await page.locator(`#blacksmith .detail-tab[data-tab="${id}"]`).click();
+    await rail(`#rail-sections-blacksmith a[data-section="${id}"]`);
     await page.waitForFunction(() => !document.querySelector('#blacksmith .detail-content > .loading'));
     check(await page.locator('#blacksmith .detail-content').isVisible(), `Broker ${id} renders with Oat alone`);
   }
@@ -88,14 +96,14 @@ async (page) => {
   await palette('cache-1 events');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !document.getElementById('navigation-dialog').open);
-  check(await page.locator('#services .detail-tab.active').getAttribute('data-tab') === 'events', 'Instance destination opens requested section');
+  check(await section('services') === 'events', 'Instance destination opens requested section');
   check(await page.locator('#services .service-item.active').getAttribute('data-instance-id') === 'cache-1', 'Instance destination selects correct instance');
   await page.locator('#services .service-item[data-instance-id="cache-3"]').focus();
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.currentInstanceInfo.id === 'cache-3');
   check(await page.locator('#services .service-item.active').getAttribute('data-instance-id') === 'cache-3', 'Instance rows support keyboard activation');
   for (const id of ['details','vms','events','instance-logs','certificates','credentials','testing','manifest']) {
-    await page.locator(`#services .detail-tab[data-tab="${id}"]`).click();
+    await rail(`.rail-instance a[data-section="${id}"]`);
     await page.waitForFunction(() => !document.querySelector('#services .detail-content > .loading'));
     check(await page.locator('#services .detail-content').isVisible(), `Instance ${id} renders with Oat alone`);
   }
@@ -107,21 +115,22 @@ async (page) => {
   check(await page.evaluate(() => window.currentInstanceInfo.id === 'cache-3'), 'Cancelling slow navigation preserves the previous instance');
   await palette('blacksmith plans');
   await page.keyboard.press('Enter');
-  check(await page.locator('#blacksmith .detail-tab.active').getAttribute('data-tab') === 'plans', 'Blacksmith section navigation uses existing handler');
+  check(await section('blacksmith') === 'plans', 'Blacksmith section navigation uses existing handler');
   await page.locator('#blacksmith .plan-item').first().click();
   check(await page.locator('#blacksmith .plan-details-table').count() === 1, 'Plan selection opens its details');
   delayCredentials = true;
-  await page.locator('#blacksmith .detail-tab[data-tab="details"]').click();
-  await page.locator('#blacksmith .detail-tab[data-tab="plans"]').click();
+  await rail('#rail-sections-blacksmith a[data-section="details"]');
+  await rail('#rail-sections-blacksmith a[data-section="plans"]');
   await page.waitForTimeout(300);
   check(await page.locator('#blacksmith .plan-item').count() === 1, 'Slow previous screen cannot overwrite the selected screen');
   delayCredentials = false;
   await palette('valkey small');
   await page.keyboard.press('Enter');
   check(await page.locator('#blacksmith .plan-details-table').count() === 1, 'Palette opens catalog plan details');
-  await page.locator('#blacksmith .detail-tab[data-tab="plans"]').focus();
-  await page.keyboard.press('ArrowRight');
-  check(await page.locator('#blacksmith .detail-tab.active').getAttribute('data-tab') === 'broker', 'Section tabs support arrow navigation');
+  await page.locator('#rail-sections-blacksmith a[data-section="broker"]').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('#blacksmith .entity-workspace')?.dataset.section === 'broker');
+  check(await page.locator('#rail-sections-blacksmith a[data-section="broker"]').getAttribute('aria-current') === 'page', 'Rail links open from the keyboard and mark the current page');
   await page.locator('.broker-tab-btn').first().waitFor();
   await palette('marketplace');
   check(await page.locator('#navigation-results [role=option]').count() >= 1, 'Contextual broker screens appear in navigation');
@@ -171,8 +180,7 @@ async (page) => {
 
   for (const theme of ['light', 'dark']) {
     await page.evaluate(theme => { document.documentElement.setAttribute('data-theme', theme); }, theme);
-    await page.locator('.tab-button[data-tab="blacksmith"]').click();
-    await page.locator('#blacksmith .detail-tab[data-tab="details"]').click();
+    await rail('#rail-sections-blacksmith a[data-section="details"]');
     await page.locator('#blacksmith .entity-metric').first().waitFor();
     const colors = await page.locator('#blacksmith .entity-metric').first().evaluate(el => ({ color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor }));
     check(colors.color !== colors.background, `${theme} details have distinct foreground/background`);
@@ -182,8 +190,8 @@ async (page) => {
     await page.keyboard.press('Escape');
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const screen of ['blacksmith', 'services', 'upgrade']) {
-    await page.locator(`.tab-button[data-tab="${screen}"]`).click();
+  for (const [screen, link] of [['blacksmith', '#rail-sections-blacksmith a[data-section="details"]'], ['services', '.rail-instance a[data-section="details"]'], ['upgrade', '#batch-new']]) {
+    await rail(link);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${screen} does not overflow narrow viewport`);
     if (screen === 'services') { await page.locator('.entity-back').click(); }
     if (screen === 'services') check(await page.locator('#services .services-items-container').evaluate(el => Math.min(el.getBoundingClientRect().bottom, el.parentElement.getBoundingClientRect().bottom) - el.getBoundingClientRect().top >= 120), 'Mobile instance list retains usable scrolling space');
@@ -200,14 +208,15 @@ async (page) => {
   await palette('cache-1003 events');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => !document.getElementById('navigation-dialog').open);
-  check(await page.locator('#services .entity-section-select').evaluate(el => el === document.activeElement), 'Mobile navigation focuses the visible section picker');
-  await page.locator('#services .entity-section-select').selectOption('details');
-  check(await page.locator('#services .entity-overview').isVisible(), 'Mobile picker opens overview');
+  check(await page.locator('#services .detail-content').evaluate(el => el === document.activeElement), 'Mobile navigation focuses the opened section');
+  await rail('.rail-instance a[data-section="details"]');
+  await page.waitForFunction(() => !document.getElementById('rail-drawer').open);
+  check(await page.locator('#services .entity-overview').isVisible(), 'The phone drawer opens the instance overview');
   await page.screenshot({path:'output/playwright/mobile-instance.png'});
   await page.locator('.entity-back').click();
   check(await page.locator('#console-title').textContent() === 'Service Instances', 'Returning to the list clears stale instance context');
   await page.setViewportSize({width:640,height:400});
-  await page.locator('.tab-button[data-tab="blacksmith"]').click();
+  await rail('#rail-sections-blacksmith a[data-section="details"]');
   await page.evaluate(()=>document.documentElement.style.fontSize='200%');
   check(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth), 'Enlarged text and narrow reflow do not overflow the viewport');
   await page.evaluate(()=>document.documentElement.style.fontSize='');

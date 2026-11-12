@@ -179,11 +179,21 @@
  // Testing tabs whose label is not their id in sentence case. Tool names
  // keep their own spelling.
  const testingViews={test:'Connection',queues:'Queue info','queue-ops':'Queue ops',rabbitmqctl:'rabbitmqctl'};
+ function topLevel(r){
+  if(r.inspection||r.subview||r.plan)return false;
+  if(r.screen==='blacksmith')return (r.section||'details')==='details';
+  if(r.screen==='services')return !r.instance;
+  if(r.screen==='certificates')return true;
+  if(r.screen==='upgrade')return r.view==='activity'?!r.task:!(r.step>0);
+  return false;
+ }
  function render(route){
   let bar=doc.getElementById('route-context');if(!bar){bar=doc.createElement('div');bar.id='route-context';bar.className='route-context';}
-  // The bar is the first row of the page, directly above the main tabs.
-  const anchor=doc.querySelector('.tabs')||doc.querySelector('.tab-content');if(anchor&&bar.nextElementSibling!==anchor)anchor.before(bar);
-  if(!bar)return;bar.replaceChildren();const back=doc.createElement('button');back.type='button';back.className='route-back';back.textContent='← Back';back.addEventListener('click',()=>root.blacksmithRouter.back());bar.append(back);
+  // The bar is the first row of the content column, directly above the panels.
+  const anchor=doc.querySelector('.tab-content');if(anchor&&bar.nextElementSibling!==anchor)anchor.before(bar);
+  bar.replaceChildren();const back=doc.createElement('button');back.type='button';back.className='route-back';back.textContent='← Back';back.addEventListener('click',()=>root.blacksmithRouter.back());
+  // A page the rail opens directly has nothing above it to go back to.
+  back.hidden=topLevel(route);bar.append(back);
   const nav=doc.createElement('nav');nav.setAttribute('aria-label','Breadcrumb');const list=doc.createElement('ol');nav.append(list);bar.append(nav);
   const crumbs=[];const push=(label,r)=>crumbs.push({label,r});
   push(route.screen==='upgrade'?'Batch Operations':labels[route.screen],route.screen==='blacksmith'?{screen:'blacksmith',section:'details'}:{screen:route.screen,...(route.screen==='upgrade'?{view:'new',operation:route.operation||'upgrade',step:0}:{})});
@@ -197,6 +207,7 @@
   doc.title=crumbs.map(c=>c.label).reverse().join(' · ')+' — Blacksmith';
   const heading=doc.getElementById('console-title');if(heading)heading.textContent=crumbs.map(c=>c.label).join(' / ');
   root.BlacksmithViewGuidance?.mount(bar,route);
+  root.BlacksmithRail?.sync(route);
   // A job page shows when it last refreshed at the right end of the bar.
   if(route.screen==='upgrade'&&route.view==='activity'&&route.task){const stamp=doc.createElement('span');stamp.id='route-updated';stamp.className='route-updated';stamp.textContent=root.blacksmithPollStamp?.()||'';bar.append(stamp);}
  }

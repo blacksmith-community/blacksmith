@@ -10,7 +10,7 @@ const read=(name)=>fs.readFileSync(path.join(__dirname,'../../ui',name),'utf8');
 // it focus again with no marker. The second is a destination picked from the navigation dialog, which
 // focuses the panel a second time after the dialog closes, and that second focus carried no marker.
 const boot=async(hash='#/broker/manifest')=>{
- const dom=new JSDOM('<button id="navigation-trigger"><kbd></kbd></button><dialog id="navigation-dialog"><input id="navigation-search"><div role="listbox"></div><button data-load-more></button><button data-close></button><div role="status"></div></dialog><div id="console-title"></div><nav class="tabs"><button class="tab-button" data-tab="blacksmith">Blacksmith Broker</button></nav><main class="tab-content"><section id="blacksmith" class="tab-panel active"><nav class="detail-tabs entity-navigation"><button class="detail-tab active" data-tab="details">Summary</button><button class="detail-tab" data-tab="manifest">Manifest</button></nav><div class="detail-content"></div></section></main>',{url:'http://localhost/'+hash,runScripts:'outside-only',pretendToBeVisual:true});
+ const dom=new JSDOM('<button id="navigation-trigger"><kbd></kbd></button><dialog id="navigation-dialog"><input id="navigation-search"><div role="listbox"></div><button data-load-more></button><button data-close></button><div role="status"></div></dialog><div id="console-title"></div><nav id="console-rail" aria-label="Primary"><ul class="rail-areas"><li class="rail-area" data-area="blacksmith"><button type="button" class="rail-area-toggle" aria-expanded="true" aria-controls="rail-sections-blacksmith"><span class="rail-label">Blacksmith Broker</span></button><div id="rail-sections-blacksmith"><ul class="rail-list"><li><a class="rail-link" href="#/broker/summary" data-screen="blacksmith" data-section="details">Summary</a></li><li><a class="rail-link" href="#/broker/manifest" data-screen="blacksmith" data-section="manifest">Manifest</a></li></ul></div></li></ul></nav><main class="tab-content"><section id="blacksmith" class="tab-panel active"><div class="entity-workspace" data-section="details"><div class="detail-content"></div></div></section></main>',{url:'http://localhost/'+hash,runScripts:'outside-only',pretendToBeVisual:true});
  const w=watchUncaught(dom.window);
  const loaded={release:null};
  w.blacksmithViews={activate:async r=>{if(r.section==='manifest')await new Promise(done=>{loaded.release=done;});return r;}};
@@ -66,7 +66,7 @@ test('moving focus to another control still ends the marker',async()=>{
  await new Promise(r=>setTimeout(r,20));
  loaded.release();
  await done;
- w.document.querySelector('.detail-tab').focus();
+ w.document.querySelector('#console-rail .rail-link').focus();
  await Promise.resolve();
  expect(panel.hasAttribute('data-route-focus')).toBe(false);
  w.blacksmithRouter.destroy();w.close();

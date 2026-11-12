@@ -39,12 +39,12 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/icon-180.png">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" href="/vendor/oat/oat.min.css?v=20261112-oat-1.0.0">
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261112-oat-412">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20261112-oat-413">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <link rel="stylesheet" href="/console.css?v=20261028-oat-311">
-  <link rel="stylesheet" href="/forge-theme.css?v=20261112-oat-367">
+  <link rel="stylesheet" href="/console.css?v=20261112-oat-312">
+  <link rel="stylesheet" href="/forge-theme.css?v=20261112-oat-368">
   <link rel="stylesheet" href="/inspection-layout.css?v=20261112-oat-342">
-  <link rel="stylesheet" href="/routes.css?v=20261028-oat-276">
+  <link rel="stylesheet" href="/routes.css?v=20261112-oat-277">
   <link rel="stylesheet" href="/view-guidance.css?v=20261028-oat-18">
   <link rel="stylesheet" href="/action-help.css?v=20261112-oat-272">
   <link rel="stylesheet" href="/touch.css?v=20261112-oat-7">
@@ -57,7 +57,7 @@
   <header>
     <div class="wrap">
       <div>
-
+        <button type="button" id="rail-toggle" class="rail-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="rail-drawer"><span class="rail-toggle-bars" aria-hidden="true"></span></button>
         <span id="logo">
           <img src="/assets/brand/icon-192.png" alt="Blacksmith">
           Blacksmith
@@ -80,36 +80,68 @@
   </header>
 
 
+  <div class="console-shell">
+    <!-- The rail is the console's navigation. Each entry is a link to its route. -->
+    <nav id="console-rail" class="console-rail" aria-label="Primary">
+      <div class="rail-panel">
+      <ul class="rail-areas">
+        <li class="rail-area" data-area="blacksmith">
+          <button type="button" class="rail-area-toggle" id="rail-area-blacksmith" aria-expanded="true" aria-controls="rail-sections-blacksmith"><span class="rail-icon" data-icon="server"></span><span class="rail-label">Blacksmith Broker</span><svg class="lucide lucide-chevron-down rail-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></button>
+          <div class="rail-sections" id="rail-sections-blacksmith">
+            <span class="rail-group-label" id="rail-group-blacksmith-overview">Overview</span>
+            <ul class="rail-list" aria-labelledby="rail-group-blacksmith-overview">
+              <li><a class="rail-link" href="#/broker/summary" data-screen="blacksmith" data-section="details">Summary</a></li>
+            </ul>
+            <span class="rail-group-label" id="rail-group-blacksmith-operate">Operate</span>
+            <ul class="rail-list" aria-labelledby="rail-group-blacksmith-operate">
+              <li><a class="rail-link" href="#/broker/vms" data-screen="blacksmith" data-section="vms">Blacksmith VM</a></li>
+              <li><a class="rail-link" href="#/broker/tasks" data-screen="blacksmith" data-section="tasks">Tasks</a></li>
+              <li><a class="rail-link" href="#/broker/events" data-screen="blacksmith" data-section="events">Events</a></li>
+              <li><a class="rail-link" href="#/broker/logs" data-screen="blacksmith" data-section="blacksmith-logs">Logs</a></li>
+              <li><a class="rail-link" href="#/broker/certificates" data-screen="blacksmith" data-section="certificates">Certificates</a></li>
+            </ul>
+            <span class="rail-group-label" id="rail-group-blacksmith-configure">Configure</span>
+            <ul class="rail-list" aria-labelledby="rail-group-blacksmith-configure">
+              <li><a class="rail-link" href="#/broker/plans" data-screen="blacksmith" data-section="plans">Service plans</a></li>
+              <li><a class="rail-link" href="#/broker/endpoints" data-screen="blacksmith" data-section="broker">Endpoints</a></li>
+              <li><a class="rail-link" href="#/broker/configs" data-screen="blacksmith" data-section="configs">BOSH configs</a></li>
+              <li><a class="rail-link" href="#/broker/settings" data-screen="blacksmith" data-section="config">Broker settings</a></li>
+              <li><a class="rail-link" href="#/broker/manifest" data-screen="blacksmith" data-section="manifest">Manifest</a></li>
+            </ul>
+          </div>
+        </li>
+        <li class="rail-area" data-area="services">
+          <button type="button" class="rail-area-toggle" id="rail-area-services" aria-expanded="false" aria-controls="rail-sections-services"><span class="rail-icon" data-icon="package"></span><span class="rail-label">Service Instances</span><svg class="lucide lucide-chevron-down rail-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></button>
+          <div class="rail-sections" id="rail-sections-services" hidden>
+            <ul class="rail-list">
+              <li><a class="rail-link" href="#/instances" data-screen="services">All instances</a></li>
+            </ul>
+            <div class="rail-instance" hidden></div>
+          </div>
+        </li>
+        <li class="rail-area" data-area="certificates">
+          <a class="rail-link rail-area-link" href="#/certificates" data-screen="certificates"><span class="rail-icon" data-icon="file-text"></span><span class="rail-label">Certificates</span> <span id="certificates-badge" class="cert-nav-badge" role="img" hidden></span></a>
+        </li>
+        <li class="rail-area" data-area="upgrade">
+          <button type="button" class="rail-area-toggle" id="rail-area-upgrade" aria-expanded="false" aria-controls="rail-sections-upgrade"><span class="rail-icon" data-icon="wrench"></span><span class="rail-label">Batch Operations</span><svg class="lucide lucide-chevron-down rail-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></button>
+          <div class="rail-sections" id="rail-sections-upgrade" hidden>
+            <ul class="rail-list">
+              <li><a class="rail-link" id="batch-new" href="#/batch/new/upgrade/operation" data-screen="upgrade" data-view="new">New Operation</a></li>
+              <li><a class="rail-link" id="batch-activity" href="#/batch/activity" data-screen="upgrade" data-view="activity">Activity</a></li>
+            </ul>
+          </div>
+        </li>
+      </ul>
+      <button type="button" id="rail-collapse" class="rail-collapse" aria-pressed="false" aria-label="Minimize navigation" title="Minimize navigation"><svg class="lucide lucide-chevrons-left" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m11 17-5-5 5-5" /><path d="m18 17-5-5 5-5" /></svg></button>
+      </div>
+    </nav>
+
   <main class="main-content" id="console-main" tabindex="-1">
     <div class="wrap">
       <h1 id="console-title" class="visually-hidden">Blacksmith</h1>
-      <!-- Tab navigation -->
-      <div class="tabs" role="tablist" aria-label="Main navigation">
-        <button class="tab-button active" data-tab="blacksmith" role="tab" aria-selected="true"
-          aria-controls="blacksmith">Blacksmith Broker</button>
-        <button class="tab-button" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service Instances</button>
-        <button class="tab-button" data-tab="certificates" role="tab" aria-selected="false" aria-controls="certificates">Certificates <span id="certificates-badge" class="cert-nav-badge" role="img" hidden></span></button>
-        <button class="tab-button" data-tab="upgrade" role="tab" aria-selected="false" aria-controls="upgrade">Batch Operations</button>
-      </div>
-
       <!-- Tab content panels -->
       <div class="tab-content">
         <div id="blacksmith" class="tab-panel active" role="tabpanel" aria-hidden="false">
-          <!-- Blacksmith sub-tabs -->
-          <div class="detail-tabs" role="tablist" aria-label="Blacksmith sections">
-            <button class="detail-tab active" data-tab="details" role="tab" aria-selected="true" aria-controls="details-content">Details</button>
-            <button class="detail-tab" data-tab="plans" role="tab" aria-selected="false" aria-controls="plans-content">Plans</button>
-            <button class="detail-tab" data-tab="broker" role="tab" aria-selected="false" aria-controls="broker-content">Broker</button>
-            <button class="detail-tab" data-tab="blacksmith-logs" role="tab" aria-selected="false" aria-controls="logs-content">Logs</button>
-            <button class="detail-tab" data-tab="vms" role="tab" aria-selected="false" aria-controls="vms-content">VMs</button>
-            <button class="detail-tab" data-tab="events" role="tab" aria-selected="false" aria-controls="events-content">Events</button>
-            <button class="detail-tab" data-tab="tasks" role="tab" aria-selected="false" aria-controls="tasks-content">Tasks</button>
-            <button class="detail-tab" data-tab="configs" role="tab" aria-selected="false" aria-controls="configs-content">Configs</button>
-            <button class="detail-tab" data-tab="certificates" role="tab" aria-selected="false" aria-controls="certificates-content">Certificates</button>
-            <button class="detail-tab" data-tab="manifest" role="tab" aria-selected="false" aria-controls="manifest-content">Manifest</button>
-            <button class="detail-tab" data-tab="config" role="tab" aria-selected="false" aria-controls="config-content">Config</button>
-          </div>
-          
           <!-- Blacksmith detail content -->
           <div class="detail-content">
             <div class="loading">loading, please wait...</div>
@@ -121,10 +153,6 @@
         </div>
 
         <div id="upgrade" class="tab-panel" role="tabpanel" aria-hidden="true">
-          <nav class="batch-view-nav" aria-label="Batch operations views">
-            <button id="batch-new" class="btn-secondary" aria-pressed="true">New Operation</button>
-            <button id="batch-activity" class="btn-secondary" aria-pressed="false">Activity</button>
-          </nav>
           <div class="upgrade-main">
             <div class="upgrade-top">
               <section class="upgrade-targets-panel">
@@ -169,6 +197,7 @@
       </div>
     </div>
   </main>
+  </div>
 
   <!-- Terminal dock: the minimized SSH sessions, in the page flow at the bottom -->
   <div id="minimized-terminal-bar" class="minimized-terminal-bar is-transparent is-invisible" role="region" aria-label="Terminal sessions">
@@ -410,6 +439,10 @@
     <div class="keyboard-help-content"></div>
     <p class="keyboard-help-copyright"><span class="keyboard-help-copyright-icon" aria-hidden="true"></span> Copyright &copy; 2026 Blacksmith Community</p>
   </dialog>
+  <!-- On a phone the rail opens here, as a modal drawer over the page. -->
+  <dialog id="rail-drawer" class="rail-drawer" aria-label="Navigation">
+    <div class="rail-drawer-heading"><span class="rail-drawer-title" aria-hidden="true">Blacksmith</span><button type="button" class="dialog-close" data-close aria-label="Close navigation"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button></div>
+  </dialog>
   <dialog id="navigation-dialog" aria-labelledby="navigation-title">
     <div class="navigation-heading"><h2 id="navigation-title">Quick Navigation</h2><button type="button" class="dialog-close" data-close aria-label="Close navigation" title="Close navigation (Esc)"><svg class="lucide lucide-x" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg></button></div>
     <label class="visually-hidden" for="navigation-search">Search screens, instances, or themes</label>
@@ -420,11 +453,12 @@
     <p class="navigation-help">↑ ↓ to select · Enter to open · Esc to close</p>
   </dialog>
   <script type="text/javascript" src="/icons.js?v=20261112-oat-371"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20261112-oat-466"></script>
-  <script src="/routes.js?v=20261112-oat-335"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20261112-oat-467"></script>
+  <script src="/routes.js?v=20261112-oat-336"></script>
+  <script src="/rail.js?v=20261112-oat-1"></script>
   <script src="/view-guidance.js?v=20261028-oat-316"></script>
   <script src="/action-help.js?v=20261112-oat-277"></script>
-  <script src="/navigation.js?v=20261028-oat-346"></script>
+  <script src="/navigation.js?v=20261112-oat-347"></script>
 </body>
 
 </html>

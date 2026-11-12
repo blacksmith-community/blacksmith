@@ -38,20 +38,12 @@
   --border-active: #8ab8ff;
   color-scheme: dark;
 }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.45; color: var(--text-primary); height: 100dvh; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
 body > header { height: 56px; box-shadow: none; }
 body > header > .wrap { height: 100%; gap: 12px; }
 body > header #logo { font-size: 18px; font-weight: 650; }
 body > header .theme-toggle { height: 32px; margin-top: 0; border-color: #8999ad; padding: 4px 10px; }
 .main-content > .wrap { min-height: 0; padding-bottom: 12px; }
-/* The breadcrumb row, the main tabs, and the content read as one rounded box. */
-.main-content #route-context { margin-top: 14px; flex-shrink: 0; border: 1px solid var(--border-primary); border-radius: 10px 10px 0 0; }
-.main-content .tabs { margin-top: 0; flex-shrink: 0; border: 1px solid var(--border-primary); border-top: 0; border-radius: 0; box-shadow: none; }
-.main-content .tab-button { padding: 13px 18px; }
-.main-content .tab-content { border: 1px solid var(--border-primary); border-top: 0; border-radius: 0 0 10px 10px; min-height: 0; }
-#blacksmith .detail-tabs, #services .detail-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 12px; height: auto; min-height: 48px; overflow: visible; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-primary); flex-shrink: 0; }
-#blacksmith .detail-tab, #services .detail-tab { color: var(--text-secondary); font-size: 13px; line-height: 1.4; padding: 8px 11px; border-radius: 6px; min-height: 34px; }
-#blacksmith .detail-tab.active, #services .detail-tab.active { color: var(--text-link); background: var(--bg-secondary); box-shadow: 0 0 0 1px var(--border-primary); font-weight: 650; }
 /* Generated utility colors must follow the console's data-theme state. */
 .main-content .service-info-table td.info-key { background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; letter-spacing: .035em; }
 .main-content .service-info-table td.info-value { background: var(--bg-secondary); color: var(--text-primary); }
@@ -111,8 +103,6 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   body > header #deployment-name, body > header #ident { display: none; }
   body > header .space-x-4 { gap: 8px; }
   #navigation-trigger { gap: 10px; padding: 5px 8px; }
-  .main-content #route-context { margin-top: 10px; }
-  .main-content .tab-button { padding: 10px 6px; font-size: 12px; }
   #services.tab-panel.active { flex-direction: column; overflow: auto; }
   #services .services-list { flex: none; width: 100%; max-width: none; max-height: none; overflow: visible; }
   #services .services-filter-section { position: static; }
@@ -145,19 +135,6 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   position: relative;
 }
 #upgrade [hidden] { display: none !important; }
-#upgrade .batch-view-nav {
-  display: flex;
-  gap: 8px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border-primary);
-  background: var(--bg-primary);
-  flex: 0 0 auto;
-}
-#upgrade .batch-view-nav [aria-pressed="true"] {
-  background: var(--rotate-pressed-bg);
-  border-color: var(--rotate-pressed-bg);
-  color: var(--rotate-pressed-text);
-}
 #upgrade .upgrade-main,
 #upgrade .upgrade-right-panel {
   flex: 0 0 auto;
@@ -293,7 +270,6 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   .dialog-modal.batch-review-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
 }
 
-#upgrade .batch-view-nav button,
 .batch-pagination button {
   border: 1px solid var(--border-primary);
   border-radius: 6px;
@@ -303,12 +279,5 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   color: var(--text-primary);
   cursor: pointer;
 }
-#upgrade .batch-view-nav button[aria-pressed="true"] {
-  background: var(--rotate-pressed-bg);
-  border-color: var(--rotate-pressed-bg);
-  color: var(--rotate-pressed-text);
-}
 .batch-pagination button:disabled { opacity: .5; cursor: default; }
 
-#upgrade .batch-view-nav { position: sticky; top: 0; z-index: 4; }
-#upgrade .batch-pagination { top: 59px; }

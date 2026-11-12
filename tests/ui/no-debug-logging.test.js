@@ -41,7 +41,7 @@ const ALLOWED={
  "`Failed to load ${kind} history:`, loggableError(error)":KIND,
  "`Table ${tableSelector} not found`":'a CSS selector written in the code',
  "'Manifest text not found for ID:', manifestId":ID,
- "'Tab or panel not found:', tabId":KIND,
+ "'Panel not found:', tabId":KIND,
  "`Failed to fetch manifest for ${instanceId}:`, loggableError(error)":ID,
  "'Diff panels not found:', { leftPanel: !!leftPanel, rightPanel: !!rightPanel }":'two booleans',
  "`Failed to load ${tabType} content:`, loggableError(error)":KIND,

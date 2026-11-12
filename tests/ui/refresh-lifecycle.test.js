@@ -14,12 +14,12 @@ for(const [label,owner,section,container,method,path] of cases){
  test(`${label} late refresh cannot overwrite a different section`,async()=>{
   const {w,d}=boot();await sleep(50);
   const root=d.getElementById(owner);root.classList.add('active');
-  root.innerHTML=`<button class="detail-tab active" data-tab="${section}"></button><div class="detail-content"><div class="${container}"><button id="refresh"><span>Refresh</span></button></div></div>`;
+  root.innerHTML=`<div class="entity-workspace" data-section="${section}"><div class="detail-content"><div class="${container}"><button id="refresh"><span>Refresh</span></button></div></div></div>`;
   w.currentInstanceInfo={id:'one'};
   let release;w.__routes.push([path,()=>new Promise(r=>release=()=>r({ok:true,json:async()=>[],text:async()=> '[]'}))]);
   const fn=w[method]||w.__T[method]; const event={currentTarget:d.getElementById('refresh')};
   const promise=owner==='services'?fn('one',event):fn(event);
-  root.querySelector('.detail-tab').dataset.tab='details';
+  root.querySelector('.entity-workspace').dataset.section='details';
   root.querySelector('.detail-content').innerHTML='<p>Current summary</p>';
   release();await promise;await sleep(120);
   expect(root.querySelector('.detail-content').textContent).toBe('Current summary');
@@ -30,7 +30,7 @@ for(const [label,owner,section,container,method,path] of cases){
 test('instance log refresh cannot mutate a different instance context',async()=>{
  const {w,d}=boot();await sleep(50);
  const root=d.getElementById('services');root.classList.add('active');
- root.innerHTML='<button class="service-instance-item active" data-id="one"></button><button class="detail-tab active" data-tab="instance-logs"></button><div class="detail-content"><button id="refresh"></button></div>';
+ root.innerHTML='<button class="service-instance-item active" data-id="one"></button><div class="entity-workspace" data-section="instance-logs"><div class="detail-content"><button id="refresh"></button></div></div>';
  w.currentInstanceInfo={id:'one'};w.instanceLogsData={original:true};
  let release;w.__routes.push(['/b/one/logs',()=>new Promise(r=>release=()=>r({ok:true,text:async()=>JSON.stringify({node:{logs:'new logs'}})}))]);
  const pending=w.refreshInstanceLogs('node',{currentTarget:d.getElementById('refresh')});
@@ -40,7 +40,7 @@ test('instance log refresh cannot mutate a different instance context',async()=>
 
 test('failed refresh retains prior results and adds a recoverable inline error',async()=>{
  const {w,d}=boot();await sleep(50);
- d.getElementById('blacksmith').innerHTML='<button class="detail-tab active" data-tab="events"></button><div class="detail-content"><div class="events-table-container"><button id="refresh"></button><p>Prior events</p></div></div>';
+ d.getElementById('blacksmith').innerHTML='<div class="entity-workspace" data-section="events"><div class="detail-content"><div class="events-table-container"><button id="refresh"></button><p>Prior events</p></div></div></div>';
  w.__routes.push(['/events',{ok:false,status:503,statusText:'Unavailable'}]);
  await w.refreshBlacksmithEvents({currentTarget:d.getElementById('refresh')});
  expect(d.querySelector('.detail-content').textContent).toContain('Prior events');
@@ -49,7 +49,7 @@ test('failed refresh retains prior results and adds a recoverable inline error',
 
 test('latest broker log file selection wins over earlier responses',async()=>{
  const {w,d}=boot();await sleep(50);
- d.getElementById('blacksmith').innerHTML='<button class="detail-tab active" data-tab="blacksmith-logs"></button><div class="detail-content"><div id="blacksmith-logs-display"></div></div>';
+ d.getElementById('blacksmith').innerHTML='<div class="entity-workspace" data-section="blacksmith-logs"><div class="detail-content"><div id="blacksmith-logs-display"></div></div></div>';
  const releases=[];w.__routes.push(['/b/blacksmith/logs',()=>new Promise(r=>releases.push(r))]);
  const a=w.selectBlacksmithLogFile('a.log');const b=w.selectBlacksmithLogFile('b.log');
  releases[1]({ok:true,json:async()=>({logs:'',total_lines:0})});await b;

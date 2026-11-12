@@ -1,5 +1,14 @@
 // Run after batch-browser-check.js and preloading axe-core.
 async page => {
+ const rail=async(page,selector)=>{
+  // Follows a rail link the way an operator would: through the phone drawer
+  // under 700px, and by opening the link's area when it is collapsed.
+  if(await page.locator('#rail-toggle').isVisible()) await page.locator('#rail-toggle').click();
+  const link=page.locator('#console-rail').locator(selector).first();
+  if(!await link.isVisible()) await page.locator('#console-rail .rail-area').filter({has:link}).locator('> .rail-area-toggle').click();
+  await link.click();
+ };
+
  if (!await page.evaluate(() => typeof axe !== 'undefined')) throw new Error('Preload axe-core before this check.');
  const results=[];
  for(const theme of ['light','dark','high-contrast-light','high-contrast-dark']){
@@ -8,7 +17,7 @@ async page => {
   for(const width of [1440,390]){
    await page.setViewportSize({width,height:900});
    for(const screen of ['upgrade','certificates']){
-    await page.locator(`.tabs .tab-button[data-tab="${screen}"]`).click();
+    await rail(page,screen==='upgrade'?'#batch-new':'a[data-screen="certificates"]');
     await page.waitForTimeout(300);
     await page.locator(`#${screen}`).evaluate(e=>e.scrollTop=0);
     const violations=await page.evaluate(async()=>(await axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa','wcag22aa']}})).violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})));
@@ -16,7 +25,7 @@ async page => {
    }
   }
  }
- await page.locator('.tabs .tab-button[data-tab="upgrade"]').click();
+ await rail(page,'#batch-new');
  await page.locator('#batch-flow-next').click();
  await page.locator('#batch-flow-review .batch-review-title').first().waitFor();
  const modalViolations=await page.evaluate(async()=>(await axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa','wcag22aa']}})).violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})));

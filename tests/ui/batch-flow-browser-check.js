@@ -36,7 +36,7 @@ async (page) => {
   await page.setViewportSize({width:1440,height:900});
   await page.goto('http://127.0.0.1:4202');
 
-  await page.locator('.tabs [data-tab="upgrade"]').click();
+  await page.locator('#rail-area-upgrade').click();await page.locator('#batch-new').click();
   const next=page.locator('#batch-flow-next');
   const back=page.locator('#batch-flow-back');
   const crumb=n=>page.locator(`[data-batch-step="${n}"]`);

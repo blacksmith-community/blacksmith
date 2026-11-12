@@ -50,9 +50,8 @@ t('the first tab stays the active connection check',async()=>{
 
 t('the instance sections, the route label, and the help all say Operations',()=>{
  const {w,d}=boot();try{
- const host=d.createElement('div');host.innerHTML=w.__T.renderServiceDetail('id-1',{service_id:'valkey',plan_id:'cluster'},null);
- expect(host.querySelector('[data-tab="testing"]').textContent).toBe('Operations');
- expect(host.querySelector('select option[value="testing"]').textContent).toBe('Operations');
+ w.BlacksmithRail.sync({screen:'services',instance:'id-1',section:'details'});
+ expect(d.querySelector('#console-rail .rail-instance a.rail-link[data-section="testing"]').textContent).toBe('Operations');
  w.eval(fs.readFileSync(path.join(__dirname,'../../ui/view-guidance.js'),'utf8'));
  expect(w.BlacksmithViewGuidance.get({screen:'services',section:'testing'}).label).toBe('Operations');
  }finally{w.close();}

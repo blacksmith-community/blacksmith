@@ -18,7 +18,7 @@ async (page) => {
   });
   await page.setViewportSize({width:1440,height:1000});
   await page.goto('http://127.0.0.1:4209');
-  await page.locator('.tabs [data-tab="upgrade"]').click();
+  await page.locator('#rail-area-upgrade').click();await page.locator('#batch-new').click();
   await page.locator('#batch-activity').click();
   await page.locator('[data-task-id="upgrade-job"]').focus();
   await page.keyboard.press('Enter');

@@ -32,7 +32,7 @@ async (page) => {
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.setViewportSize({width:1440,height:900});
   await page.goto('http://127.0.0.1:4202');
-  await page.locator('[data-tab="upgrade"]').click();
+  await page.locator('#rail-area-upgrade').click();await page.locator('#batch-new').click();
   await page.locator('#batch-flow-next').waitFor();
   await page.locator('#rotate-op-rotate').check();
   await page.locator('#batch-flow-next').click();

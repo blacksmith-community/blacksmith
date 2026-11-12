@@ -152,7 +152,7 @@ t('quick navigation selects each operation and opens Options',async()=>{
   expect(await w.blacksmithBatch.openOperation(mode)).toBe(true);
   expect(w.__T.batchFlow.step).toBe(1);
   expect(d.getElementById('rotate-op-'+mode).checked).toBe(true);
-  expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');
+  expect(w.blacksmithBatch.view()).toBe('new');
  }
  w.blacksmithNav.switchTab=async()=>false;
  expect(await w.blacksmithBatch.openOperation('rotate')).toBe(false);
@@ -162,12 +162,15 @@ t('quick navigation selects each operation and opens Options',async()=>{
 
 t('batch shortcuts navigate views and steps without submitting or intercepting typing',async()=>{
  const {w,d}=await setup();try{
+ // The batch page is the one page showing, so the rail marks its view.
+ d.querySelectorAll('.tab-panel.active').forEach(p=>p.classList.remove('active'));
  const panel=d.getElementById('upgrade');panel.classList.add('active');
+ const shown=(id)=>{expect(d.getElementById(id).getAttribute('aria-current')).toBe('page');expect(w.blacksmithBatch.view()).toBe(id==='batch-new'?'new':'activity');};
  const key=(code,target=panel)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{code,key:code.replace('Key',''),altKey:true,shiftKey:true,bubbles:true,cancelable:true}));
- key('KeyA');expect(d.getElementById('batch-activity').getAttribute('aria-pressed')).toBe('true');
+ key('KeyA');shown('batch-activity');
  key('KeyN');expect(w.__T.batchFlow.step).toBe(0);
  const modal=d.createElement('dialog');modal.setAttribute('open','');d.body.append(modal);
- key('KeyA');expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');modal.remove();
+ key('KeyA');shown('batch-new');modal.remove();
  key('KeyR');await sleep(0);expect(d.getElementById('rotate-op-rotate').checked).toBe(true);expect(w.__T.batchFlow.step).toBe(1);
  key('KeyU');await sleep(0);key('KeyN');
 
@@ -175,10 +178,10 @@ t('batch shortcuts navigate views and steps without submitting or intercepting t
  key('ArrowRight');expect(w.__T.batchFlow.step).toBe(1); // no target selected
  key('ArrowLeft');expect(w.__T.batchFlow.step).toBe(0);
  const input=d.getElementById('batch-search');
- key('KeyA',input);expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');
+ key('KeyA',input);shown('batch-new');
  w.__T.batchFlow.step=3;let clicked=0;d.getElementById('batch-flow-next').addEventListener('click',()=>clicked++);
  key('ArrowRight');expect(clicked).toBe(0);
- panel.classList.remove('active');key('KeyA');expect(d.getElementById('batch-new').getAttribute('aria-pressed')).toBe('true');
+ panel.classList.remove('active');key('KeyA');expect(w.blacksmithBatch.view()).toBe('new');
  }finally{w.close();}
 });
 

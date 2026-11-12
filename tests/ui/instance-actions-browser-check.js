@@ -37,7 +37,7 @@ async (page) => {
   await page.addInitScript(()=>{window.copiedTexts=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copiedTexts.push(text);}}});});
   await page.goto('http://127.0.0.1:4202');
 
-  await page.locator('.tabs [data-tab="services"]').click();
+  await page.locator('#rail-area-services').click();await page.locator('#console-rail a[data-screen="services"]:not([data-instance])').click();
   await page.locator('#refresh-services').waitFor();
   for(const width of [1440,390]){
     await page.setViewportSize({width,height:900});

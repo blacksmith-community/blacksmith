@@ -687,8 +687,7 @@ select option {
 body {
   background-color: var(--bg-primary);
   font-family: sans-serif;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100dvh;
   margin: 0;
   padding: 0;
   display: flex;
@@ -773,89 +772,6 @@ header span#ident {
 
 .theme-toggle:hover svg {
   transform: rotate(20deg);
-}
-
-/* Tab navigation styles */
-.tabs {
-  display: flex;
-  background-color: var(--bg-tertiary);
-  border-radius: 4px 4px 0 0;
-  margin-top: 40px;
-  overflow: hidden;
-  box-shadow: var(--shadow-secondary);
-  gap: 1px;
-  /* Visual separator between tabs */
-}
-
-.tab-button {
-  flex: 1;
-  background-color: transparent;
-  border: none;
-  border-bottom: 3px solid transparent;
-  padding: 15px 24px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  transition: all 0.3s ease;
-  position: relative;
-}
-
-.tab-button:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.tab-button.active {
-  background-color: white;
-  border-bottom: 3px solid var(--border-active);
-  color: var(--text-link);
-  font-weight: 600;
-  box-shadow: var(--shadow-secondary);
-}
-
-.tab-button.active::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 1px;
-  background-color: white;
-}
-
-/* Dark theme support for main tabs */
-[data-theme="dark"] .tab-button.active {
-  background-color: var(--bg-secondary);
-}
-
-[data-theme="dark"] .tab-button.active::after {
-  background-color: var(--bg-secondary);
-}
-
-/* Dark theme support for detail tabs */
-[data-theme="dark"] #blacksmith .detail-tabs,
-[data-theme="dark"] #services .detail-tabs {
-  background: var(--bg-table-header);
-  border-color: var(--border-table);
-}
-
-[data-theme="dark"] #blacksmith .detail-tab,
-[data-theme="dark"] #services .detail-tab {
-  color: var(--text-secondary);
-}
-
-[data-theme="dark"] #blacksmith .detail-tab:hover,
-[data-theme="dark"] #services .detail-tab:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-[data-theme="dark"] #blacksmith .detail-tab.active,
-[data-theme="dark"] #services .detail-tab.active {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-secondary);
 }
 
 /* Dark theme support for operation tabs */
@@ -1522,43 +1438,6 @@ td a {
 }
 
 
-#services .detail-tabs {
-  display: flex;
-  gap: 2px;
-  background: var(--bg-table-header);
-  padding: 4px;
-  border-radius: 8px 8px 0 0;
-  border: 1px solid var(--border-table);
-  border-bottom: none;
-  overflow-x: auto;
-  flex-wrap: wrap;
-  flex-shrink: 0;
-}
-
-#services .detail-tab {
-  background: transparent;
-  border: none;
-  padding: 8px 16px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 6px;
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-
-#services .detail-tab:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-#services .detail-tab.active {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-secondary);
-}
-
 #services .detail-content {
   flex: 1;
   padding: 1em 2em;
@@ -1811,43 +1690,6 @@ td a {
 
 #blacksmith .service-detail-header {
   flex-shrink: 0;
-}
-
-#blacksmith .detail-tabs {
-  display: flex;
-  gap: 2px;
-  background: var(--bg-table-header);
-  padding: 4px;
-  border-radius: 8px 8px 0 0;
-  border: 1px solid var(--border-table);
-  border-bottom: none;
-  overflow-x: auto;
-  flex-wrap: wrap;
-  flex-shrink: 0;
-}
-
-#blacksmith .detail-tab {
-  background: transparent;
-  border: none;
-  padding: 8px 16px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 6px;
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-
-#blacksmith .detail-tab:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-#blacksmith .detail-tab.active {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-secondary);
 }
 
 #blacksmith .detail-content {

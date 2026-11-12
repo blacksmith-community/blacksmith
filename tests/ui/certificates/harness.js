@@ -22,6 +22,8 @@ const { watchUncaught } = require('../watch-uncaught.js');
 const UI = path.resolve(__dirname, '..', '..', '..', 'ui');
 // icons.js loads before blacksmith.js in the page, so every boot evaluates it first.
 const ICONS = fs.readFileSync(path.join(UI, 'icons.js'), 'utf8');
+// rail.js builds the navigation every full page boot has.
+const RAIL = fs.readFileSync(path.join(UI, 'rail.js'), 'utf8');
 
 const main=(()=>{
 const SRC=path.join(UI,'blacksmith.js');
@@ -39,9 +41,13 @@ function boot(opts={}){
   const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};
   w.matchMedia=w.matchMedia||(()=>({matches:false,addListener(){},addEventListener(){}}));
+  // media answers each query, so a suite can boot the page at a given width.
+  if(opts.media) w.matchMedia=(q)=>({matches:!!opts.media(q),media:q,onchange:null,addListener(){},removeListener(){},addEventListener(){},removeEventListener(){}});
   w.navigator.clipboard={writeText:()=>Promise.resolve()};
   w.CSS=w.CSS||{escape:(x)=>String(x).replace(/[^\w-]/g,'\\$&')};
   w.HTMLElement.prototype.scrollIntoView=function(){};
+  // setup runs before any page code, for state such as storage the page reads at load.
+  if(opts.setup) opts.setup(w);
   const errors=[]; const calls=[]; const alerts=[];
   // A suite that passes noDialogs has every dialog call recorded and thrown, so
   // it fails on the first one and can assert alerts stays empty.
@@ -78,6 +84,8 @@ function boot(opts={}){
   if(opts.guidance) w.eval(fs.readFileSync(path.join(UI,'view-guidance.js'),'utf8'));
   // The hash router loads after the views it drives, and starts once they exist.
   if(opts.router) w.eval(fs.readFileSync(path.join(UI,'routes.js'),'utf8'));
+  // The rail loads after the router, and links its entries with the router's format when it is there.
+  w.eval(RAIL);
   // Oat loads after the page's own script, and defines the tabs element's base class.
   if(opts.oat) w.eval(fs.readFileSync(path.join(UI,'vendor','oat','oat.min.js'),'utf8'));
   return {w,d:w.document,errors,logs,calls,alerts,json,stubs};
@@ -93,7 +101,7 @@ const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const day=86400000, now=Date.now(), iso=(ms)=>new Date(ms).toISOString();
 
 function boot(opts={}){
-  const dom=new JSDOM('<!DOCTYPE html><html><body><button class="tab-button" data-tab="blacksmith"></button><div id="blacksmith" class="tab-panel"></div><div id="services"></div><button id="opener">o</button></body></html>',{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
+  const dom=new JSDOM('<!DOCTYPE html><html><body><div id="blacksmith" class="tab-panel"></div><div id="services"></div><button id="opener">o</button></body></html>',{runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/'});
   const w=dom.window;
   const stubs=installStubs(w);
   w.Element.prototype.getClientRects=function(){return [1]};

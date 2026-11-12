@@ -25,6 +25,10 @@ const noKeyIn=(d)=>!hasKey(d.documentElement.outerHTML)&&[...d.querySelectorAll(
 // Looks the input up, proves it exists, then types into it.
 const typeKey=(root,sel='input[type="password"]',val=KEY)=>{const i=root.querySelector(sel);expect(i!==null).toBe(true);i.value=val;return i;};
 const press=(root,sel)=>{const b=root.querySelector(sel);expect(b!==null).toBe(true);b.click();};
+// Leaving for the instance list and coming back by the Activity entry both go
+// through the navigation rail.
+const leave=(d)=>press(d,'#console-rail a.rail-link[data-screen="services"]');
+const toActivity=(d)=>press(d,'#batch-activity');
 const panel=(d)=>d.querySelector('#upgrade .upgrade-tasks');
 const when=(d,s)=>new Date(Date.UTC(2026,9,26,12,0,0)+s*1000).toISOString();
 
@@ -250,7 +254,7 @@ t('switching to another top-level tab drops the key and leaves no command text o
  const first=await openDetails(env,0);
  expect(first.querySelectorAll('pre').length).toBe(2);
  const stray=first.ownerDocument.createElement('input');stray.type='password';stray.className='command-output-key';stray.value=KEY;first.appendChild(stray);expect(first.contains(stray)).toBe(true);
- d.querySelector('.tab-button[data-tab="services"]').click();await sleep(30);
+ leave(d);await sleep(30);
  expect(stray.value==='').toBe(true);
  expect(noKeyIn(d)).toBe(true);
  expect(hasSecret(d.body.textContent)).toBe(false);
@@ -258,7 +262,7 @@ t('switching to another top-level tab drops the key and leaves no command text o
  expect(d.querySelector('pre.command-text')===null).toBe(true);
  // Coming back asks for the key before it shows anything.
  const reads=env.details.length;
- d.querySelector('.tab-button[data-tab="upgrade"]').click();await sleep(60);
+ toActivity(d);await sleep(60);
  expect(d.body.textContent.includes('hello out')).toBe(false);
  expect(panel(d).querySelector('input[type="password"]')!==null).toBe(true);
  expect(env.details.slice(reads).every(r=>r.headers['X-Blacksmith-Command-Key']===undefined)).toBe(true);
@@ -381,8 +385,8 @@ t('cancelling or leaving the tab while a resume prompt is up never leads to a re
  press(d,'.resume-btn');await sleep(30);
  expect(env.resumes.length).toBe(1);
  expect(panel(d).querySelector('.command-key-prompt')!==null).toBe(true);
- d.querySelector('.tab-button[data-tab="services"]').click();await sleep(30);
- d.querySelector('.tab-button[data-tab="upgrade"]').click();await sleep(60);
+ leave(d);await sleep(30);
+ toActivity(d);await sleep(60);
  expect(env.resumes.length).toBe(1);
  expect(noKeyIn(d)).toBe(true);
  }finally{w.close();}
@@ -736,7 +740,7 @@ t('a tab switch clears the cached detail and a read held in flight across it lea
  w.__routes.unshift([new RegExp(DETAIL_URL+'$'),async(u,o,j)=>{env.details.push({headers:o.headers||{}});await gate;return j(200,task());}]);
  const pending=w.__T.selectUpgradeTask(TASK);
  await sleep(5);
- d.querySelector('.tab-button[data-tab="services"]').click();await sleep(20);
+ leave(d);await sleep(20);
  expect(w.__T.taskDetailCache.get(TASK)===undefined).toBe(true);
  release();await pending;await sleep(30);
  expect(hasSecret(d.body.textContent)).toBe(false);
@@ -797,7 +801,7 @@ t('a rejected key blanks stray key inputs, purges the caches, and the next read 
 t('only command tasks are sent the key, and the holder cache never keeps the command text',async()=>{
  const CERT='22222222-2222-4222-8222-222222222222';
  const env=await setup({gated:true});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
  await unlock(d);
  const certReads=[];
@@ -851,7 +855,7 @@ t('a detail read that answers after the operator left the task paints nothing an
 
 t('a holder read held in flight across a dropped key stores nothing',async()=>{
  const env=await setup({gated:true});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
  await unlock(d);
  w.__T._setSelectedTask(null);
@@ -861,7 +865,7 @@ t('a holder read held in flight across a dropped key stores nothing',async()=>{
  await w.__T.fetchUpgradeTasks();await sleep(20);
  const held=env.details[env.details.length-1];
  expect(held.headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
- press(d,'.tab-button[data-tab="services"]');await sleep(20);
+ leave(d);await sleep(20);
  release();await sleep(30);
  expect(w.__T.holderDetails.has(TASK)).toBe(false);
  }finally{w.close();}
@@ -928,7 +932,7 @@ t('a detail body that arrives after the key was dropped paints and caches nothin
   const pending=via==='select'?w.__T.selectUpgradeTask(TASK):w.__T.fetchUpgradeTasks();
   await sleep(10);
   expect(env.details[env.details.length-1].headers['X-Blacksmith-Command-Key']===KEY).toBe(true);
-  press(d,'.tab-button[data-tab="services"]');await sleep(20);
+  leave(d);await sleep(20);
   held.release();
   const result=await pending;await sleep(30);
   if(via==='poll') expect(result).toBe(true);
@@ -937,7 +941,7 @@ t('a detail body that arrives after the key was dropped paints and caches nothin
   expect(noKeyIn(d)).toBe(true);
   // Coming back, nothing is shown and no key is sent.
   const seen=env.details.length;
-  press(d,'.tab-button[data-tab="upgrade"]');await sleep(60);
+  toActivity(d);await sleep(60);
   expect(hasSecret(d.body.textContent)).toBe(false);
   expect(env.details.slice(seen).every(r=>r.headers['X-Blacksmith-Command-Key']===undefined)).toBe(true);
   }finally{w.close();}
@@ -1049,7 +1053,7 @@ for(const code of [0x061C,0x200B,0x200C,0x200D,0x2060,0xFEFF,0x00AD]){
 
 t('with a key configured and none held, holder reads stop asking for command task detail',async()=>{
  const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  // The first read learns that the broker wants a key. Reads after it send nothing.
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const learned=env.details.length;
@@ -1070,7 +1074,7 @@ t('with a key configured and none held, holder reads stop asking for command tas
 
 t('a broker without a command key keeps serving holder reads to a page with none',async()=>{
  const env=await setup({detail:task({status:'running'})});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const first=env.details.length;
  expect(first>0).toBe(true);
@@ -1081,7 +1085,7 @@ t('a broker without a command key keeps serving holder reads to a page with none
 
 t('an instance held by a command task still shows as held when its detail is out of reach',async()=>{
  const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const learned=env.details.length;
  // A list entry that names its instances holds them without a detail read.
@@ -1099,7 +1103,7 @@ t('an instance held by a command task still shows as held when its detail is out
 
 t('a command task list entry that names the instances it holds keeps them busy on a page with no key',async()=>{
  const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const learned=env.details.length;
  // The summary names the held instances by ID alone, with no instances array.
@@ -1118,7 +1122,7 @@ t('a command task list entry that names the instances it holds keeps them busy o
 
 t('an ended command task frees the instances its list entry named',async()=>{
  const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const listed={id:TASK,kind:'command',status:'running',name:'restart check',held_instance_ids:['val-a']};
  w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
@@ -1174,7 +1178,7 @@ t('a keyless page keeps a command task holder on the first refresh when the deta
  const env=await setup({gated:true,detail:task({status:'running'})});const {w,d}=env;try{
  const listed={id:TASK,kind:'command',status:'running',name:'restart check',held_instance_ids:['val-a']};
  w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  expect(env.details.length>0).toBe(true);
  const kept=w.__T.holderDetails.get(TASK);
@@ -1184,7 +1188,7 @@ t('a keyless page keeps a command task holder on the first refresh when the deta
 
 t('an empty held list in the task list frees what an older detail read held',async()=>{
  const env=await setup({detail:task({status:'running',instances:[inst('val-a',[node('node',0)],{status:'running'})]})});const {w,d}=env;try{
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  expect(w.__T.holderDetails.get(TASK).detail.instances[0].instance_id).toBe('val-a');
  // The detail can no longer be read, and the list says the task holds nothing.
@@ -1290,7 +1294,7 @@ t('a cancelled command task keeps the instances it holds for cleanup busy',async
  w.__routes.unshift([LIST_ONLY,(u,o,j)=>j(200,[listed])]);
  const holders=await w.blacksmithRotate.readHolders();
  expect(holders.get('val-a')).toBe('command run "restart check"');
- press(d,'.tab-button[data-tab="upgrade"]');await sleep(30);
+ toActivity(d);await sleep(30);
  await w.__T.fetchUpgradeTasks();await sleep(40);
  expect(w.__T.holderDetails.has(TASK)).toBe(true);
  // Once the cleanup ends, the list names nothing and the instance is free.

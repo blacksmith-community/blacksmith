@@ -2516,27 +2516,22 @@
   });
 
   // Template rendering functions
-  const ENTITY_SECTIONS = {
-    blacksmith: [
-      ['Overview', [['details', 'Summary']]],
-      ['Operate', [['vms', 'Blacksmith VM'], ['tasks', 'Tasks'], ['events', 'Events'], ['blacksmith-logs', 'Logs'], ['certificates', 'Certificates']]],
-      ['Configure', [['plans', 'Service plans'], ['broker', 'Endpoints'], ['configs', 'BOSH configs'], ['config', 'Broker settings'], ['manifest', 'Manifest']]]
-    ],
-    instance: [
-      ['Overview', [['details', 'Summary']]],
-      ['Operate', [['vms', 'VMs'], ['events', 'Events'], ['instance-logs', 'Logs'], ['certificates', 'Certificates']]],
-      ['Connect', [['credentials', 'Credentials'], ['testing', 'Operations']]],
-      ['Inspect', [['manifest', 'Manifest']]]
-    ]
+  // A move the operator did not make by hand puts focus on the panel it
+  // opened. The router marks the panel so its ring stays hidden.
+  const focusRoutePanel = (panel) => {
+    if (!panel) return;
+    if (window.blacksmithRouteFocus) { window.blacksmithRouteFocus(panel); return; }
+    if (!panel.hasAttribute('tabindex')) panel.setAttribute('tabindex', '-1');
+    panel.focus({ preventScroll: true });
   };
-
-  const renderEntityNavigation = (kind) => {
-    const groups = ENTITY_SECTIONS[kind];
-    const options = groups.map(([label, entries]) => `<optgroup label="${label}">${entries.map(([id, name]) => `<option value="${id}">${name}</option>`).join('')}</optgroup>`).join('');
-    return `<label class="entity-section-picker">View section<select class="entity-section-select" aria-label="View section">${options}</select></label>
-      <nav class="detail-tabs entity-navigation" aria-label="${kind === 'instance' ? 'Instance' : 'Blacksmith'} sections">
-      ${groups.map(([label, entries]) => `<div class="entity-section-group" role="presentation"><h4 class="entity-group-label" role="presentation" aria-hidden="true" id="entity-group-${kind}-${label.toLowerCase()}">${label}</h4>${entries.map(([id, name]) => `<button type="button" class="detail-tab ghost ${id === 'details' ? 'active' : ''}" data-tab="${id}" aria-describedby="entity-group-${kind}-${label.toLowerCase()}">${name}</button>`).join('')}</div>`).join('')}</nav>`;
+  // The open section of a broker or instance page lives on its workspace,
+  // and the rail follows it.
+  const markSection = (container, section) => {
+    const workspace = container?.closest('.entity-workspace');
+    if (workspace) workspace.dataset.section = section;
+    window.BlacksmithRail?.sync();
   };
+  const openSection = (screen) => document.querySelector(`#${screen} .entity-workspace`)?.dataset.section;
 
   const entityCopy = (value, label) => `<button type="button" class="copy-btn-inline entity-copy" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}" title="Copy ${escapeAttribute(label)}">${COPY_ICON_SVG}</button>`;
   // A value cell leads with its copy icon. A cell with no value keeps an empty
@@ -2673,7 +2668,7 @@
   // The broker header is a single heading; an instance header adds its
   // kind above the name and its service and plan below it.
   const renderEntityShell = (kind, title, context) => `<header class="service-detail-header entity-header"><div class="entity-identity">${kind === 'instance' ? `<h2>${escapeHtml(title)}</h2><p class="entity-context-line">${escapeHtml(context)}</p>` : `<h2>${escapeHtml(title)}</h2>`}</div>${kind === 'instance' ? '<button type="button" class="outline entity-back">All instances</button>' : ''}</header>
-    <div class="entity-workspace">${renderEntityNavigation(kind)}<section class="entity-main"><div class="entity-section-toolbar"><h3 class="entity-current-title">Overview</h3><span class="entity-read-hint">Snapshot · reload to update</span></div><div class="detail-content" aria-label="Overview"><div class="loading" role="status">Loading…</div></div></section></div>`;
+    <div class="entity-workspace" data-section="details"><section class="entity-main"><div class="entity-section-toolbar"><h3 class="entity-current-title">Overview</h3><span class="entity-read-hint">Snapshot · reload to update</span></div><div class="detail-content" aria-label="Overview"><div class="loading" role="status">Loading…</div></div></section></div>`;
 
   document.addEventListener('click', async (event) => {
     const headerCopy = event.target.closest('#copy-header-deployment');
@@ -2705,15 +2700,15 @@
     if (jump) {
       if (jump.dataset.entitySection === 'instances') {
         if (window.blacksmithRouter) { await window.blacksmithRouter.navigate({screen:'services'}); return; }
-        await window.blacksmithNav.switchTab('services');
-        document.querySelector('.tab-button[data-tab="services"]')?.focus();
+        await window.blacksmithViews.activate({screen:'services'});
+        focusRoutePanel(document.getElementById('services'));
         return;
       }
       const root = jump.closest('#blacksmith, .service-detail');
-      const target = Array.from(root?.querySelectorAll('.detail-tab') || []).find(tab => tab.dataset.tab === jump.dataset.entitySection);
-      if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:root.closest('#services') ? 'services' : 'blacksmith',section:jump.dataset.entitySection,...(root.closest('#services') ? {instance:window.currentInstanceInfo?.id} : {})}); return; }
-      target?.click();
-      (target?.getClientRects().length ? target : root?.querySelector('.entity-section-select'))?.focus();
+      const route = {screen:root.closest('#services') ? 'services' : 'blacksmith',section:jump.dataset.entitySection,...(root.closest('#services') ? {instance:window.currentInstanceInfo?.id} : {})};
+      if (window.blacksmithRouter) { window.blacksmithRouter.navigate(route); return; }
+      await window.blacksmithViews.activate(route);
+      focusRoutePanel(root.querySelector('.detail-content'));
     }
     if (event.target.closest('.entity-back')) {
       if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:'services'}); return; }
@@ -2721,12 +2716,6 @@
       window.revealServiceInstance?.(window.currentInstanceInfo?.id);
       document.querySelector('#services .service-item.active')?.focus();
     }
-  });
-  document.addEventListener('change', (event) => {
-    if (!event.target.matches('.entity-section-select')) return;
-    const root = event.target.closest('.entity-workspace');
-    if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:root.closest('#services') ? 'services' : 'blacksmith',section:event.target.value,...(root.closest('#services') ? {instance:window.currentInstanceInfo?.id} : {})}); return; }
-    Array.from(root.querySelectorAll('.detail-tab')).find(tab => tab.dataset.tab === event.target.value)?.click();
   });
 
   const renderBlacksmithTemplate = (data) => {
@@ -3260,8 +3249,9 @@
     const helpText = issue || blocker || (step === 3 && waiting) || (step === 3 && needsWord && !acknowledged ? (normalizeConfirmText(document.getElementById('batch-flow-ack')?.value) ? `That doesn't match. Type "${normalizeConfirmText(needsWord)}" exactly, with the phrase shown in the label.` : `To confirm, type "${normalizeConfirmText(needsWord)}" in the field above. Typing it keeps a stray click or keypress from starting this operation.`) : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
     if (help.textContent !== helpText) help.textContent = helpText;
-    document.getElementById('batch-activity').disabled = batchFlow.submitting;
-    document.getElementById('batch-new').disabled = batchFlow.submitting;
+    // The rail's batch links cannot be disabled, so they say so and ignore a click.
+    document.getElementById('batch-activity')?.setAttribute('aria-disabled', String(batchFlow.submitting));
+    document.getElementById('batch-new')?.setAttribute('aria-disabled', String(batchFlow.submitting));
   };
   const setBatchStep = (step, focus = true) => {
     if (!batchFlow.installed || batchFlow.submitting) return;
@@ -3379,7 +3369,10 @@
       event.preventDefault();
       if (code === 'KeyA') {
         setBatchView('activity');
-        document.getElementById('batch-activity').focus();
+        // The Activity link is in the rail, which can be closed on a phone.
+        const activity = document.getElementById('batch-activity');
+        if (activity?.getClientRects().length) activity.focus();
+        else focusRoutePanel(panel.querySelector('.upgrade-right-panel'));
       } else if (code === 'KeyN') {
         setBatchView('new'); setBatchStep(0);
         document.querySelector('#rotate-operation input:checked')?.focus();
@@ -3498,22 +3491,23 @@
     container.prepend(nav);
   };
 
+  // The batch page shows either the New Operation flow or Activity. The
+  // rail's two batch links choose between them.
+  let batchView = 'new';
   const setBatchView = (view) => {
     const panel = document.getElementById('upgrade');
     if (!panel) return;
     const activity = view === 'activity';
+    batchView = activity ? 'activity' : 'new';
     if (activity) dropCommandReview();
     panel.querySelector('.upgrade-main').hidden = activity;
     panel.querySelector('.upgrade-right-panel').hidden = !activity;
     notifyRoute();
-    document.getElementById('batch-new')?.setAttribute('aria-pressed', String(!activity));
-    document.getElementById('batch-activity')?.setAttribute('aria-pressed', String(activity));
+    window.BlacksmithRail?.sync();
   };
 
   const installBatchWorkspace = () => {
     const panel = document.getElementById('upgrade');
-    document.getElementById('batch-new')?.addEventListener('click', () => setBatchView('new'));
-    document.getElementById('batch-activity')?.addEventListener('click', () => setBatchView('activity'));
     setBatchView('new');
     const search = document.getElementById('batch-search');
     search.addEventListener('input', () => {
@@ -7045,7 +7039,9 @@
     document.getElementById('upgrade').scrollTop = 0;
     return true;
   };
-  window.blacksmithBatch = { openRotate: openBatchRotate, openOperation: openBatchOperation };
+  window.blacksmithBatch = { openRotate: openBatchRotate, openOperation: openBatchOperation, setView: setBatchView,
+    view: () => batchView,
+    draft: () => ({ screen: 'upgrade', view: 'new', operation: upgradeOperation, step: batchFlow.step || 0 }) };
 
   // The footer button of rotate and converge mode.
   const startRotatePreview = async ({flowReview = false} = {}) => {
@@ -9723,7 +9719,8 @@
     closeBtn.title = taskId ? 'Dismiss this notice. The job keeps running.' : 'Dismiss this notice';
     const close = () => {
       container.textContent = '';
-      const target = container.closest('#upgrade') ? document.getElementById('batch-activity') : opener;
+      const activity = document.getElementById('batch-activity');
+      const target = container.closest('#upgrade') && activity?.getClientRects().length ? activity : opener;
       if (target?.isConnected) target.focus();
       if (typeof options.onClose === 'function') options.onClose();
     };
@@ -15548,7 +15545,7 @@
     const current = () => container.isConnected && panel.classList.contains('active') &&
       detailRefreshRequests.get(container) === request && mountedViews.get(container) === viewKey &&
       (!instanceId || window.currentInstanceInfo?.id === instanceId) &&
-      (!panel.querySelector('.detail-tab.active') || panel.querySelector('.detail-tab.active').dataset.tab === section);
+      (!panel.querySelector('.entity-workspace')?.dataset.section || panel.querySelector('.entity-workspace').dataset.section === section);
     return {container, current, fetched: () => markFetched(container), error(message) {
       if (!current()) return;
       let note = container.querySelector('.view-refresh-error');
@@ -16205,7 +16202,7 @@
     if (!displayContainer) return;
 
     const selectedFile = pagination.currentFile;
-    const current = () => displayContainer.isConnected && window.blacksmithLogsPagination === pagination && pagination.currentFile === selectedFile && document.querySelector('#blacksmith .detail-tab.active')?.dataset.tab === 'blacksmith-logs';
+    const current = () => displayContainer.isConnected && window.blacksmithLogsPagination === pagination && pagination.currentFile === selectedFile && openSection('blacksmith') === 'blacksmith-logs';
 
     // Set loading state
     pagination.isLoading = true;
@@ -16319,28 +16316,19 @@
         window.blacksmithCerts.closeDrawer({ restore: false });
       }
       const targetPanel = document.getElementById(tabId);
-      const targetButton = document.querySelector(`.tab-button[data-tab="${tabId}"]`);
 
-      if (!targetPanel || !targetButton) {
-        console.error('Tab or panel not found:', tabId);
+      if (!targetPanel?.classList.contains('tab-panel')) {
+        console.error('Panel not found:', tabId);
         return false;
       }
 
-      // Remove active class from all buttons and panels
-      document.querySelectorAll('.tab-button').forEach(btn => {
-        btn.classList.remove('active');
-        btn.setAttribute('aria-selected', 'false');
-      });
       document.querySelectorAll('.tab-panel').forEach(panel => {
         panel.classList.remove('active');
         panel.setAttribute('aria-hidden', 'true');
       });
-
-      // Add active class to target button and panel
-      targetButton.classList.add('active');
-      targetButton.setAttribute('aria-selected', 'true');
       targetPanel.classList.add('active');
       targetPanel.setAttribute('aria-hidden', 'false');
+      window.BlacksmithRail?.sync();
 
       // Tab-specific initialization
       // (broker now handled as a sub-tab under blacksmith)
@@ -16384,18 +16372,6 @@
 
     // Let code outside this callback switch tabs
     resolveNavReady(switchTab);
-
-    // Set up click handlers for tabs
-    document.querySelectorAll('.tab-button').forEach(button => {
-      button.addEventListener('click', (e) => {
-        e.preventDefault();
-        const tabId = button.dataset.tab;
-        if (tabId) {
-          const route = window.blacksmithViews?.read(tabId);
-          (window.blacksmithRouter && route ? window.blacksmithRouter.navigate(route) : switchTab(tabId)).catch((error) => console.error('Tab switch failed:', loggableError(error)));
-        }
-      });
-    });
 
     // Ensure the default tab (blacksmith) is active on load
     switchTab('blacksmith').catch((error) => console.error('Tab switch failed:', loggableError(error)));
@@ -16649,9 +16625,6 @@
 
           // Load initial tab content (details)
           loadDetailTab(instanceId, 'details');
-
-          // Set up detail tab handlers
-          setupDetailTabHandlers(instanceId);
           return true;
         };
         const setupServiceHandlers = () => {
@@ -17085,28 +17058,12 @@
           applyFilters();
         };
 
-        // Set up detail tab handlers
-        const setupDetailTabHandlers = (instanceId) => {
-          document.querySelectorAll('#services .detail-tab').forEach(tab => {
-            tab.addEventListener('click', function () {
-              const tabType = this.dataset.tab;
-              if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:'services',instance:instanceId,section:tabType}); return; }
-
-              // Update active state
-              document.querySelectorAll('#services .detail-tab').forEach(t => t.classList.remove('active'));
-              this.classList.add('active');
-
-              // Load tab content
-              loadDetailTab(instanceId, tabType);
-            });
-          });
-        };
-
         let detailRequestSequence = 0;
         // Load detail tab content
         const loadDetailTab = async (instanceId, tabType) => {
           const request = ++detailRequestSequence;
           const contentContainer = document.querySelector('#services .detail-content');
+          markSection(contentContainer, tabType);
           if (retainView(contentContainer, JSON.stringify(['instance',instanceId,tabType]))) return;
           contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
@@ -17188,27 +17145,11 @@
         setupServiceHandlers();
       }
 
-      // Helper functions for Blacksmith tabs
-      const setupBlacksmithDetailTabHandlers = () => {
-        document.querySelectorAll('#blacksmith .detail-tab').forEach(tab => {
-          tab.addEventListener('click', function () {
-            const tabType = this.dataset.tab;
-            if (window.blacksmithRouter) { window.blacksmithRouter.navigate({screen:'blacksmith',section:tabType}); return; }
-
-            // Update active state
-            document.querySelectorAll('#blacksmith .detail-tab').forEach(t => t.classList.remove('active'));
-            this.classList.add('active');
-
-            // Load tab content
-            loadBlacksmithDetailTab(tabType);
-          });
-        });
-      };
-
       let blacksmithRequestSequence = 0;
       const loadBlacksmithDetailTab = async (tabType) => {
         const request = ++blacksmithRequestSequence;
         const contentContainer = document.querySelector('#blacksmith .detail-content');
+        markSection(contentContainer, tabType);
         if (retainView(contentContainer, JSON.stringify(['broker',tabType]))) { if (tabType === 'details') refreshAttentionRequired(contentContainer); return; }
         // Clean up any special layout classes
         contentContainer.classList.remove('plans-view');
@@ -17370,15 +17311,11 @@
 
         // Load initial tab content (details)
         loadBlacksmithDetailTab('details');
-
-        // Set up Blacksmith detail tab handlers
-        setupBlacksmithDetailTabHandlers();
       }
 
       const readRoute = (screen = document.querySelector('.tab-panel.active')?.id || 'blacksmith') => {
         if (screen === 'upgrade') {
-          const activity = document.getElementById('batch-activity')?.getAttribute('aria-pressed') === 'true';
-          return activity ? {screen,view:'activity',...(selectedTaskId ? {task:selectedTaskId} : {})} : {screen,view:'new',operation:upgradeOperation,step:batchFlow.step||0};
+          return batchView === 'activity' ? {screen,view:'activity',...(selectedTaskId ? {task:selectedTaskId} : {})} : {screen,view:'new',operation:upgradeOperation,step:batchFlow.step||0};
         }
         if(screen === 'certificates') { const attention = window.blacksmithCerts.routeAttention(); return attention === undefined ? {screen} : {screen, attention}; }
         const route={screen};
@@ -17390,7 +17327,7 @@
           }
           route.instance=window.currentInstanceInfo?.id;
         }
-        route.section=document.querySelector(`#${screen} .detail-tab.active`)?.dataset.tab||'details';
+        route.section=openSection(screen)||'details';
         if(route.section==='plans') {const item=document.querySelector('#blacksmith .plan-item.active');if(item){const svc=window.plansData?.services?.[item.dataset.serviceIndex];const plan=svc?.plans?.[item.dataset.planIndex];if(svc&&plan){route.service=svc.id;route.plan=plan.id;}}}
         const content=document.querySelector(`#${screen} .detail-content`);
         const sub=content?.querySelector('.manifest-tabs-nav .manifest-tab-btn.active, .broker-tab-btn.active, .operation-tab.active');
@@ -17429,7 +17366,7 @@
           if(signal?.aborted)return null;
           const restoreAttention=route.screen==='certificates'?window.blacksmithCerts.setAttention(route.attention):null;
           if(await switchTab(route.screen)===false||signal?.aborted){restoreAttention?.();return null;}
-          const selected=(screen,section)=>document.querySelectorAll(`#${screen} .detail-tab`).forEach(tab=>{const on=tab.dataset.tab===section;tab.classList.toggle('active',on);tab.setAttribute('aria-selected',String(on));tab.tabIndex=on?0:-1;});
+          const selected=(screen,section)=>markSection(document.querySelector(`#${screen} .detail-content`),section);
           if(route.screen==='blacksmith') {selected('blacksmith',route.section||'details');await loadBlacksmithDetailTab(route.section||'details');}
           if(route.screen==='services') {
             if(!route.instance){
@@ -17692,8 +17629,7 @@
     // Set up auto-refresh for running tasks every 30 seconds
     const autoRefreshInterval = setInterval(() => {
       // Only auto-refresh if tasks tab is active and there are running tasks
-      const tasksTab = document.querySelector('.detail-tab[data-tab="tasks"]');
-      if (tasksTab && tasksTab.classList.contains('active')) {
+      if (document.querySelector('#blacksmith .entity-workspace[data-section="tasks"]')) {
         const runningTasks = document.querySelectorAll('.tasks-table .status-badge[data-state="processing"], .tasks-table .status-badge[data-state="queued"]');
         if (runningTasks.length > 0) {
           refreshTasksTable();
@@ -19524,7 +19460,7 @@
       await loadTaskDetails(taskId);
 
       // Refresh tasks table if visible
-      if (document.querySelector('.detail-tab[data-tab="tasks"].active')) {
+      if (document.querySelector('#blacksmith .entity-workspace[data-section="tasks"]')) {
         refreshTasksTable();
       }
 

@@ -8,20 +8,20 @@
   "sha256": "dc406974e17ece26cbf102f7f72797044d57fceb3675fa7349efcdd3cbd229fa"
  },
  "blacksmith.css": {
-  "key": "20261112-oat-412",
-  "sha256": "61735eaad2151b29b749a419bde1c6deadc573bd704f574431645551a7faee04"
+  "key": "20261112-oat-413",
+  "sha256": "9ced4088c952aa455c00cbe363e991ccf57d910dc2f14b752840687f0f1a3a76"
  },
  "blacksmith.js": {
-  "key": "20261112-oat-466",
-  "sha256": "72288ad55d4fe2c7ff311ec58e3fb30bd1f7b90a6d8f3238ad588901395906af"
+  "key": "20261112-oat-467",
+  "sha256": "621d89146eee5c65362fa19b2957acd0cfa8b5d6c78dd0d639954a88fd6d1bc5"
  },
  "console.css": {
-  "key": "20261028-oat-311",
-  "sha256": "f3c85996cbfb48cb7796bf5b07861e506b1e4f1bff648df33f5c9d756f316122"
+  "key": "20261112-oat-312",
+  "sha256": "c12eb4ab22c9a0cb525d7523fd066932c1d6cd3a31fed5e7e9cdd41a1e0dbf00"
  },
  "forge-theme.css": {
-  "key": "20261112-oat-367",
-  "sha256": "b15ca9061bf26a2dd163cc2983e939e5aeafd34aece3809b649965fd8ebadf2e"
+  "key": "20261112-oat-368",
+  "sha256": "7ec46c7a35c654b57aa6dcadbe59f6d4614365383dd0f0f69e410bf971e7df04"
  },
  "icons.js": {
   "key": "20261112-oat-371",
@@ -32,16 +32,16 @@
   "sha256": "9bf0f97a3699ab96139f5c2c57d66918d7081bf7dd7a4ea56c47e006904041b4"
  },
  "navigation.js": {
-  "key": "20261028-oat-346",
-  "sha256": "58d3f6b54870bff347bfdfd76ab93135056e9826dc4d0aa7231fb77aad416d99"
+  "key": "20261112-oat-347",
+  "sha256": "09bca4e79752e78ca134d48f1aeb0e816a025c3348301c1f1d131450270e19b9"
  },
  "routes.css": {
-  "key": "20261028-oat-276",
-  "sha256": "368c3a3bde5e3c7d4c3eaa1704007edd19ebe1e7dde85c97797031b3bf5f2e65"
+  "key": "20261112-oat-277",
+  "sha256": "256846aebcba038cf547bbe42d6e5419d0bf32f82abb5bf598bef12ba29ec6b0"
  },
  "routes.js": {
-  "key": "20261112-oat-335",
-  "sha256": "5790276a64895c21246bf5982a33d8125dad2bae884ce52da9fa799504ba3445"
+  "key": "20261112-oat-336",
+  "sha256": "734c0734aadfb5b49b680992ed465e86bd56acbfd6e04593458d1a7da13d4d2f"
  },
  "vendor/oat/oat.min.css": {
   "key": "20261112-oat-1.0.0",
@@ -62,5 +62,9 @@
  "view-guidance.js": {
   "key": "20261028-oat-316",
   "sha256": "d7709b302dea54871f4b7b1264e4e85ce077bc74281bc82fe9f92e182a61f824"
+ },
+ "rail.js": {
+  "key": "20261112-oat-1",
+  "sha256": "0429f2776160be913d64f8449178eff5e874771ad437e9f1984b2109174c0599"
  }
 }

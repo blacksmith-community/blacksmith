@@ -102,19 +102,20 @@ test('the console renders the chosen instance section while the section loads',a
  expect(last()).toBe('Logs');
  w.blacksmithRouter.destroy();w.close();
 });
-test('the breadcrumb bar is the first row above the main tabs',async()=>{
+test('the breadcrumb bar is the first row of the content column',async()=>{
  const {w}=boot();const d=w.document;
- d.body.insertAdjacentHTML('beforeend','<div class="wrap" id="shell"><div class="tabs" role="tablist"><button role="tab">One</button></div><div class="tab-content"></div></div>');
+ d.body.insertAdjacentHTML('beforeend','<main id="console-main"><div class="wrap" id="shell"><div class="tab-content"></div></div></main>');
  w.blacksmithViews={activate:async r=>r};
  d.dispatchEvent(new w.Event('blacksmith:ready'));
  await new Promise(resolve=>setTimeout(resolve,10));
  await w.blacksmithRouter.navigate({screen:'services',instance:'abc',section:'certificates'});
  const bar=d.getElementById('route-context');
- expect(bar.nextElementSibling.classList.contains('tabs')).toBe(true);
+ expect(bar.nextElementSibling.classList.contains('tab-content')).toBe(true);
  expect(bar.parentElement.firstElementChild).toBe(bar);
+ expect(d.querySelector('#console-main .wrap').firstElementChild).toBe(bar);
  // A second render keeps the bar where it is.
  await w.blacksmithRouter.navigate({screen:'services',instance:'abc',section:'instance-logs'});
  expect(d.getElementById('route-context')).toBe(bar);
- expect(bar.nextElementSibling.classList.contains('tabs')).toBe(true);
+ expect(bar.nextElementSibling.classList.contains('tab-content')).toBe(true);
  w.blacksmithRouter.destroy();w.close();
 });

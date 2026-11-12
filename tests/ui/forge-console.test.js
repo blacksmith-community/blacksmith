@@ -22,24 +22,28 @@ t('broker overview distinguishes known context from unverified health', () => {
 });
 
 t('Blacksmith and instance navigation retain all destinations in named groups', () => {
-  const {w,d}=boot();
+  const {w,d}=boot({router:true});
   try {
     const broker=d.createElement('div');broker.innerHTML=w.__T.renderBlacksmithTemplate({});
     const instance=d.createElement('div');instance.innerHTML=w.__T.renderServiceDetail('id-1',{service_id:'valkey',plan_id:'cluster'},null);
-    expect(broker.querySelectorAll('.detail-tab')).toHaveLength(11);
-    expect(instance.querySelectorAll('.detail-tab')).toHaveLength(8);
+    // The rail holds every section. The pages carry no section list or picker of their own.
+    w.BlacksmithRail.sync({screen:'services',instance:'id-1',section:'details'});
+    const rail={broker:d.getElementById('rail-sections-blacksmith'),instance:d.querySelector('#rail-sections-services .rail-instance')};
+    expect(rail.broker.querySelectorAll('a.rail-link[data-section]')).toHaveLength(11);
+    expect(rail.instance.querySelectorAll('a.rail-link[data-section]')).toHaveLength(8);
+    for (const group of Object.values(rail)) {
+      expect(group.querySelector('ul.rail-list').getAttribute('aria-labelledby')).toMatch(/^rail-group-/);
+      expect(group.querySelector('a.rail-link[data-section="details"]').textContent).toBe('Summary');
+    }
     for (const host of [broker,instance]) {
-      expect(host.querySelector('.entity-section-group').getAttribute('role')).toBe('presentation');
-      expect(host.querySelector('.detail-tab').getAttribute('aria-describedby')).toMatch(/^entity-group-/);
-      expect(host.querySelector('[data-tab="details"]').textContent).toBe('Summary');
-      expect(host.querySelector('.entity-section-select').getAttribute('aria-label')).toBe('View section');
+      expect(host.querySelector('.entity-navigation, .detail-tab, .entity-section-select')).toBeNull();
       expect(host.querySelector('.service-detail-header h2')).not.toBeNull();
     }
     const overview=d.createElement('div');overview.innerHTML=w.serviceInstanceDetailsContent['id-1'];
     expect(overview.textContent).toContain('Not reported');
     expect(overview.querySelector('details').open).toBe(false);
     expect(overview.textContent).toContain('cluster');
-  } finally { w.close(); }
+  } finally { w.blacksmithRouter?.destroy?.(); w.close(); }
 });
 
 t('explicit light and dark choices control the Oat color scheme', () => {
@@ -130,7 +134,9 @@ t('confirmation isolates the background and restores prior inert state',async()=
  const {w,d}=boot();
  try {
  await new Promise(resolve=>setTimeout(resolve,50));
- const main=d.querySelector('main'); const header=d.querySelector('body > header');
+ // The shell holds the rail and the content, so isolating it covers both.
+ const main=d.querySelector('body > .console-shell'); const header=d.querySelector('body > header');
+ expect(main.contains(d.querySelector('main'))&&main.contains(d.getElementById('console-rail'))).toBe(true);
  header.setAttribute('inert','');
  const result=w.__T.showConfirmDialog({title:'Review',message:'Confirm this change'});
  expect(main.hasAttribute('inert')).toBe(true);
@@ -141,11 +147,14 @@ t('confirmation isolates the background and restores prior inert state',async()=
  }finally{w.close();}
 });
 
-test('the tabs sit at the top with the page title kept for assistive tech', () => {
+test('the rail sits beside the content with the page title kept for assistive tech', () => {
   const html = fs.readFileSync(path.join(ui, 'index.html'), 'utf8');
   expect(html).not.toContain('Manage services, inspect deployments, and monitor batch operations.');
   expect(html).not.toContain('console-heading');
-  expect(html).toMatch(/<h1 id="console-title" class="visually-hidden">Blacksmith<\/h1>\s*<!-- Tab navigation -->/);
+  expect(html).not.toContain('<!-- Tab navigation -->');
+  expect(html).toMatch(/<div class="console-shell">\s*(?:<!--[^>]*-->\s*)?<nav id="console-rail" class="console-rail" aria-label="Primary">/);
+  expect(html.indexOf('id="console-rail"')).toBeLessThan(html.indexOf('<main'));
+  expect(html).toMatch(/<main[^>]*>\s*<div class="wrap">\s*<h1 id="console-title" class="visually-hidden">Blacksmith<\/h1>/);
 });
 
 t('the broker header is one line of environment and deployment', () => {
@@ -170,7 +179,7 @@ t('the broker header is one line of environment and deployment', () => {
 
 test('the broker tab is named Blacksmith Broker and the instance list has no visible heading', () => {
   const html = fs.readFileSync(path.join(ui, 'index.html'), 'utf8');
-  expect(html).toMatch(/data-tab="blacksmith"[^>]*>\s*Blacksmith Broker<\/button>/);
+  expect(html).toMatch(/id="rail-area-blacksmith"[^>]*>(?:(?!<\/button>)[\s\S])*<span class="rail-label">Blacksmith Broker<\/span>/);
   const js = fs.readFileSync(path.join(ui, 'blacksmith.js'), 'utf8');
   expect(js).not.toContain('<h2>Service Instances</h2>');
   expect(js).toContain('<div class="services-list" role="region" aria-label="Service instances">');
@@ -200,7 +209,6 @@ t('instance identity omits redundant eyebrow and keeps context beside the name',
  expect(host.querySelector('.entity-eyebrow')).toBeNull();
  expect(host.querySelector('.entity-identity h2').textContent).toBe('Cache <one>');
  expect(host.querySelector('.entity-identity .entity-context-line').textContent).toBe('valkey / cluster');
- expect(host.querySelector('[data-tab="testing"]').textContent).toBe('Operations');
- expect(host.querySelector('[data-tab="details"]').textContent).toBe('Summary');
+ expect(host.querySelector('.detail-tab')).toBeNull();
  }finally{w.close();}
 });
