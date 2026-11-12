@@ -14301,3 +14301,5 @@ tr.row-link { cursor: pointer; }
 #upgrade .upgrade-tasks:has(> .upgrade-task-detail) { padding-top: .25rem; }
 #route-context .route-updated { order: 1; }
 #route-context > .view-guidance { order: 2; margin-left: auto; }
+#upgrade .instance-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .5rem; }
+#upgrade .instance-heading .instance-deployment { margin: 0; font-size: .8125rem; color: var(--text-secondary); overflow-wrap: anywhere; }

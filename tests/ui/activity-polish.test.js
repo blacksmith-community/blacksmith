@@ -63,3 +63,17 @@ t('the route row orders breadcrumbs, Updated, then the icons at the far right',(
  expect(guide).toMatch(/order:\s*2/);
  expect(guide).toMatch(/margin-left:\s*auto/);
 });
+
+t('the deployment name shares the instance heading line',async()=>{
+ const env=boot({noDialogs:true});envs.push(env);
+ await sleep(60);
+ env.w.__T.renderTaskDetail(certTask());
+ const heading=env.d.querySelector('#upgrade .upgrade-task-instance .instance-heading');
+ const dep=heading.querySelector('.instance-deployment');
+ expect(dep.textContent).toBe('valkey-cluster-3-9b4685ff');
+ expect(heading.querySelector('.instance-id').textContent).toBe('certmgmt-valkey-c3');
+ expect(env.d.querySelectorAll('#upgrade .upgrade-task-instance .instance-deployment').length).toBe(1);
+ const css=bodies(CSS,'#upgrade .instance-heading');
+ expect(css).toMatch(/flex-wrap:\s*wrap/);
+ expect(bodies(CSS,'#upgrade .instance-heading .instance-deployment')).toMatch(/var\(--text-secondary\)/);
+});

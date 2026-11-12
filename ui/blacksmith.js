@@ -8947,8 +8947,7 @@
         <div class="upgrade-task-instance ${statusClass}"${rowAttrs}>
           <span class="instance-status">${statusIcon}</span>
           <div class="instance-info">
-            <div class="instance-heading"><a class="instance-id instance-link" href="${escapeAttribute(instanceHref(instance.instance_id))}" data-keep-key="inst-link:${escapeAttribute(rowKey)}">${escapeHtml(instance.instance_name || instance.instance_id)}</a>${isCertificates && instance.certificates ? `<span class="activity-status-label cert-task-phase" title="Phase">${escapeHtml(activityStatus(instance.certificates.phase))}</span>` : ''}</div>
-            <div class="instance-deployment">${escapeHtml(instance.deployment_name || '')}</div>
+            <div class="instance-heading"><a class="instance-id instance-link" href="${escapeAttribute(instanceHref(instance.instance_id))}" data-keep-key="inst-link:${escapeAttribute(rowKey)}">${escapeHtml(instance.instance_name || instance.instance_id)}</a>${instance.deployment_name ? `<span class="instance-deployment">${escapeHtml(instance.deployment_name)}</span>` : ''}${isCertificates && instance.certificates ? `<span class="activity-status-label cert-task-phase" title="Phase">${escapeHtml(activityStatus(instance.certificates.phase))}</span>` : ''}</div>
             ${(instance.applied_releases || []).length ? `<div class="instance-releases">Applied: ${escapeHtml(instance.applied_releases.map(r => `${r.name}/${r.version}`).join(', '))}</div>` : ''}
             <div class="instance-actions">
               ${boshTaskId ? `<a href="#" class="bosh-task-link" data-bosh-task-id="${boshTaskId}">BOSH task ${boshTaskId}</a>` : ''}
