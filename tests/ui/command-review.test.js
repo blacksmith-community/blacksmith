@@ -142,7 +142,8 @@ t('a limit below the entered value sends the operator back to the options step',
  next(env).click();await sleep(20);
  expect(w.__T.batchFlow.step).toBe(1);
  expect((d.getElementById('batch-flow-review').querySelector('pre'))===null).toBe(true);
- expect(String(d.getElementById('batch-flow-help').textContent).includes('at most 1')).toBe(true);
+ expect(d.getElementById('command-max-in-flight-note').textContent).toContain('at most 1');
+ expect(w.__T.commandState.maxInFlight).toBe('1');
  expect(creates(env).length).toBe(0);
  }finally{w.close();}
 });

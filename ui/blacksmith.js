@@ -3906,8 +3906,13 @@
   const COMMAND_OFF_NOTE = 'Running commands is switched off on this broker.';
   const COMMAND_MAX_IN_FLIGHT_DEFAULT = 2;
   // The broker takes a whole number from 1 to one below the director's worker
-  // count and has no value that means all, so the choice offers three numbers.
-  const COMMAND_MAX_IN_FLIGHT_CHOICES = [1, 2, 3];
+  // count and has no value that means all. The options step learns that limit
+  // from the availability read and offers every value up to it. Until the
+  // limit is known, or when it can't be fetched, the choices are these three,
+  // and the review step checks the choice against the director.
+  const COMMAND_MAX_IN_FLIGHT_FALLBACK = [1, 2, 3];
+  // The most radios the row holds. A longer range uses a native select.
+  const COMMAND_MAX_IN_FLIGHT_RADIOS = 10;
   const COMMAND_ROOT_OFF_NOTE = 'Running as root is switched off on this broker.';
   const COMMAND_NO_PARALLEL_NOTE = 'Parallel runs are not available because the director has too few workers.';
 
@@ -3919,6 +3924,13 @@
     timeout: String(COMMAND_TIMEOUT_DEFAULT),
     parallel: false,
     maxInFlight: String(COMMAND_MAX_IN_FLIGHT_DEFAULT),
+    // Whether the operator chose the value, as opposed to the default.
+    maxInFlightChosen: false,
+    // The most nodes the availability read said a run may use, or 0 while it
+    // is unknown or when the read failed.
+    availableLimit: 0,
+    // What the control says about a value it replaced, or an empty string.
+    maxInFlightNote: '',
     // Why the operation is unavailable, from a commands_disabled answer.
     unavailable: '',
     // Why root is unavailable, from a root_disabled answer.
@@ -3994,6 +4006,24 @@
   const wholeNumber = (value) => (/^\d+$/.test(String(value).trim()) ? Number(String(value).trim()) : null);
 
   const commandOptionsSignature = () => JSON.stringify([commandState.text, commandState.user, commandState.timeout, commandState.parallel, commandState.maxInFlight]);
+
+  // The most nodes a run may use, from the availability read or else from a
+  // real preview, or 0 while neither has said.
+  const commandKnownLimit = () => {
+    if (commandState.availableLimit > 0) return commandState.availableLimit;
+    return commandState.preview && commandState.preview.limit > 0 ? commandState.preview.limit : 0;
+  };
+
+  // The values the Max in flight control offers, and the one it starts on.
+  const commandChoices = () => {
+    const limit = commandKnownLimit();
+    if (limit < 1) return COMMAND_MAX_IN_FLIGHT_FALLBACK.slice();
+    return Array.from({ length: limit }, (unused, index) => index + 1);
+  };
+  const commandDefaultChoice = () => {
+    const limit = commandKnownLimit();
+    return limit > 0 ? Math.min(COMMAND_MAX_IN_FLIGHT_DEFAULT, limit) : COMMAND_MAX_IN_FLIGHT_DEFAULT;
+  };
 
   // What is wrong with the most nodes to run at once, or an empty string. It
   // stays empty while the field is hidden, because parallel is unchecked.
@@ -5110,6 +5140,77 @@
     container.appendChild(pane);
   };
 
+  // Builds the Max in flight choices for the current limit into the segments
+  // element. Up to ten values are radios, so the arrow keys move through the
+  // row. A longer range is a native select, because ten radios fill the row.
+  const buildMaxInFlightChoices = (segments, choices) => {
+    segments.textContent = '';
+    const choose = (value) => {
+      commandState.maxInFlight = value;
+      commandState.maxInFlightChosen = true;
+      commandState.maxInFlightNote = '';
+      segments.dispatchEvent(new Event('command-choice', { bubbles: true }));
+    };
+    if (choices.length > COMMAND_MAX_IN_FLIGHT_RADIOS) {
+      segments.classList.add('command-segments-select');
+      // Selects are built as markup so the form-control style scan sees them.
+      segments.insertAdjacentHTML('beforeend', '<select id="command-max-in-flight-select" aria-label="Max in flight"></select>');
+      const select = segments.firstElementChild;
+      choices.forEach((choice) => {
+        const option = document.createElement('option');
+        option.value = String(choice);
+        option.textContent = String(choice);
+        select.appendChild(option);
+      });
+      select.addEventListener('change', () => choose(select.value));
+      return;
+    }
+    segments.classList.remove('command-segments-select');
+    choices.forEach((choice) => {
+      const segment = rotateEl('label', 'command-segment');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'command-max-in-flight';
+      radio.id = `command-max-in-flight-${choice}`;
+      radio.value = String(choice);
+      radio.addEventListener('change', () => { if (radio.checked) choose(radio.value); });
+      segment.appendChild(radio);
+      segment.appendChild(rotateEl('span', '', String(choice)));
+      segments.appendChild(segment);
+    });
+  };
+
+  // Keeps the Max in flight choices, the selected value, and the note in line
+  // with the limit. A value above the limit falls back to the default, and
+  // says so when the operator had chosen it.
+  const syncMaxInFlightChoices = (pane) => {
+    const segments = pane.querySelector('#command-max-in-flight-choices');
+    const choices = commandChoices();
+    const key = choices.length > COMMAND_MAX_IN_FLIGHT_RADIOS ? `select:${choices.length}` : choices.join(',');
+    if (segments.dataset.choices !== key) {
+      segments.dataset.choices = key;
+      buildMaxInFlightChoices(segments, choices);
+    }
+    const limit = commandKnownLimit();
+    const value = wholeNumber(commandState.maxInFlight);
+    if (limit > 0 && value !== null && value > limit) {
+      const fallback = commandDefaultChoice();
+      if (commandState.maxInFlightChosen) {
+        commandState.maxInFlightNote = `The director allows at most ${limit} ${limit === 1 ? 'node' : 'nodes'} at once, so Max in flight went from ${value} back to ${fallback}.`;
+      }
+      commandState.maxInFlight = String(fallback);
+      commandState.maxInFlightChosen = false;
+    }
+    const selected = String(commandState.maxInFlight);
+    pane.querySelectorAll('#command-max-in-flight input[type="radio"]').forEach((radio) => { radio.checked = radio.value === selected; });
+    const select = pane.querySelector('#command-max-in-flight-select');
+    if (select) select.value = selected;
+    pane.querySelector('#command-max-in-flight-only').hidden = limit !== 1;
+    const note = pane.querySelector('#command-max-in-flight-note');
+    note.textContent = commandState.maxInFlightNote;
+    note.hidden = !commandState.maxInFlightNote;
+  };
+
   // Brings the command pane's controls in line with commandState. Every
   // change to the state, or to what the broker reported, ends here.
   const syncCommandOptions = () => {
@@ -5128,8 +5229,8 @@
     parallel.disabled = noParallel;
     parallel.checked = commandState.parallel;
     pane.querySelector('#command-parallel-limit-row').hidden = !commandState.parallel;
+    syncMaxInFlightChoices(pane);
     const limitValue = wholeNumber(commandState.maxInFlight);
-    pane.querySelectorAll('#command-max-in-flight input[type="radio"]').forEach((radio) => { radio.checked = radio.value === String(commandState.maxInFlight); });
     let parallelNote = 'Nodes run one after another, and a failure stops the run early.';
     if (noParallel) parallelNote = COMMAND_NO_PARALLEL_NOTE;
     else if (commandState.parallel) parallelNote = limitValue !== null && limitValue >= 1 ? `Up to ${limitValue} ${limitValue === 1 ? 'node runs' : 'nodes run'} at once.` : 'Set how many nodes may run at once.';
@@ -5504,8 +5605,11 @@
           return;
         }
         if (revision !== batchFlow.revision) return;
+        const chosenBefore = commandState.maxInFlight;
         recordCommandPreview(preview);
-        if (commandOptionIssue()) { leave(1); return; }
+        // A limit below the choice resets the choice, so the preview no
+        // longer matches the controls and the operator sees the note.
+        if (commandOptionIssue() || commandState.maxInFlight !== chosenBefore) { leave(1); return; }
         commandRun.signature = commandSignatureOf(values);
 
         nodes = commandTargets(preview);
@@ -5698,26 +5802,26 @@
     // and a screen reader reads it as one group with its legend.
     const limit = rotateEl('fieldset', 'command-limit-group');
     limit.id = 'command-max-in-flight';
-    limit.setAttribute('aria-describedby', 'command-max-in-flight-help command-max-in-flight-error');
+    limit.setAttribute('aria-describedby', 'command-max-in-flight-help command-max-in-flight-only command-max-in-flight-note command-max-in-flight-error');
     limit.appendChild(rotateEl('legend', '', 'Max in flight'));
     const segments = rotateEl('div', 'command-segments');
-    COMMAND_MAX_IN_FLIGHT_CHOICES.forEach((choice) => {
-      const segment = rotateEl('label', 'command-segment');
-      const radio = document.createElement('input');
-      radio.type = 'radio';
-      radio.name = 'command-max-in-flight';
-      radio.id = `command-max-in-flight-${choice}`;
-      radio.value = String(choice);
-      radio.addEventListener('change', () => { if (radio.checked) { commandState.maxInFlight = radio.value; changed(); } });
-      segment.appendChild(radio);
-      segment.appendChild(rotateEl('span', '', String(choice)));
-      segments.appendChild(segment);
-    });
+    segments.id = 'command-max-in-flight-choices';
+    segments.addEventListener('command-choice', () => changed());
+    buildMaxInFlightChoices(segments, commandChoices());
+    segments.dataset.choices = commandChoices().join(',');
     limit.appendChild(segments);
     limitRow.appendChild(limit);
-    const limitHelp = rotateEl('p', 'batch-field-help', 'This number must be below the director\'s worker count, so it\'s at most 3 with the default of four workers. The review checks it against your director. The choices here stop at 3, and the director allows one fewer than its worker count.');
+    const limitHelp = rotateEl('p', 'batch-field-help', 'Choose how many nodes may run at once. The choices go up to what the director allows, which is one fewer than its worker count. The review checks your choice against your director.');
     limitHelp.id = 'command-max-in-flight-help';
     limitRow.appendChild(limitHelp);
+    const limitOnly = rotateEl('p', 'batch-field-help', 'The director allows one node at a time.');
+    limitOnly.id = 'command-max-in-flight-only';
+    limitOnly.hidden = true;
+    limitRow.appendChild(limitOnly);
+    const limitNote = rotateEl('p', 'batch-field-help');
+    limitNote.id = 'command-max-in-flight-note';
+    limitNote.hidden = true;
+    limitRow.appendChild(limitNote);
     const limitError = rotateEl('p', 'batch-field-error');
     limitError.id = 'command-max-in-flight-error';
     limitError.hidden = true;
@@ -5750,6 +5854,8 @@
     }
     if (availability && availability.enabled === false) commandState.unavailable = COMMAND_OFF_NOTE;
     if (availability && availability.enabled === true && availability.allow_root === false) commandState.rootOff = COMMAND_ROOT_OFF_NOTE;
+    const availableLimit = availability ? Number(availability.max_in_flight_limit) : 0;
+    commandState.availableLimit = Number.isInteger(availableLimit) && availableLimit > 0 ? availableLimit : 0;
     const radio = document.getElementById('rotate-op-command');
     if (radio && commandState.unavailable) {
       radio.disabled = true;

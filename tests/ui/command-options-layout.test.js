@@ -69,25 +69,24 @@ t('Next is enabled with the defaults once a command is typed',async()=>{
  }finally{w.close();}
 });
 
-t('a value above the director limit shows its message beside the choice, and only while parallel is on',async()=>{
+t('a chosen value above the director limit is replaced with a note beside the choice, and only while parallel is on',async()=>{
  const env=await setup();const {w,d}=env;try{
  type(w,d.getElementById('command-text'),'uptime');
  const msg=d.getElementById('command-max-in-flight-error');
+ const note=d.getElementById('command-max-in-flight-note');
  const group=d.getElementById('command-max-in-flight');
- expect(msg.hidden).toBe(true);
+ expect(msg.hidden).toBe(true);expect(note.hidden).toBe(true);
+ d.getElementById('command-parallel').click();
+ group.querySelector('input[value="3"]').click();
  w.__T.recordCommandPreview({parallel_available:true,worker_count:2,max_in_flight_limit:1});
+ expect(note.hidden).toBe(false);
+ expect(note.textContent).toBe('The director allows at most 1 node at once, so Max in flight went from 3 back to 1.');
+ expect(group.getAttribute('aria-describedby')).toContain('command-max-in-flight-note');
  expect(msg.hidden).toBe(true);
+ expect(w.__T.batchOptionIssue()).toBe('');
+ expect(note.closest('#command-parallel-limit-row').hidden).toBe(false);
  d.getElementById('command-parallel').click();
- expect(msg.hidden).toBe(false);
- expect(msg.textContent).toBe('The director allows at most 1 node at once. Choose a lower max in flight.');
- expect(group.getAttribute('aria-describedby')).toContain('command-max-in-flight-error');
- expect(w.__T.batchOptionIssue()).toBe(msg.textContent);
- group.querySelector('input[value="1"]').click();
- expect(msg.hidden).toBe(true);
- group.querySelector('input[value="2"]').click();
- expect(msg.hidden).toBe(false);
- d.getElementById('command-parallel').click();
- expect(msg.hidden).toBe(true);
+ expect(note.closest('#command-parallel-limit-row').hidden).toBe(true);
  }finally{w.close();}
 });
 

@@ -248,6 +248,10 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .command-segment input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 #upgrade .command-segment:has(input:checked) { background: var(--primary); color: var(--primary-foreground); }
 #upgrade .command-segment:has(input:focus-visible) { outline: 3px solid var(--ring); outline-offset: -3px; }
+#upgrade .command-segments { max-width: 100%; overflow-x: auto; }
+#upgrade .command-segments-select { display: block; border: 0; border-radius: 0; overflow: visible; background: none; }
+#upgrade .command-segments-select select { min-width: 96px; min-height: 44px; }
+@media (max-width: 640px) { #upgrade .command-segment { min-width: 44px; padding: 0 10px; } }
 #upgrade .command-parallel-row { gap: 8px; }
 #upgrade #command-parallel-limit-row { margin: 4px 0 0 28px; max-width: calc(100% - 28px); }
 #upgrade .command-user { max-width: 640px; min-width: 0; margin: 0 0 20px; padding: 0; border: 0; display: grid; gap: 8px; justify-items: start; }

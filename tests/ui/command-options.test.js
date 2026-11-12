@@ -64,12 +64,12 @@ t('the options pane holds the command fields with their defaults',async()=>{
  }finally{w.close();}
 });
 
-t('the max in flight help says where the choices stop and what the director allows',async()=>{
+t('the max in flight help says the choices go up to what the director allows',async()=>{
  const env=await setup();const {w,d}=env;try{
  await openOptions(env);
  const help=d.getElementById('command-max-in-flight-help').textContent;
- expect(help).toContain('The choices here stop at 3');
- expect(help).toContain('the director allows one fewer than its worker count');
+ expect(help).toContain('up to what the director allows');
+ expect(help).toContain('one fewer than its worker count');
  expectNoAlerts(env);
  }finally{w.close();}
 });
@@ -142,15 +142,15 @@ t('the option issue follows the command, timeout, and parallel fields',async()=>
  }finally{w.close();}
 });
 
-t('a preview bounds max in flight by its limit',async()=>{
+t('a preview limit narrows the choices and resets a higher chosen value',async()=>{
  const env=await setup();const {w,d}=env;try{
  await openOptions(env);
  type(w,d.getElementById('command-text'),SECRET);
  d.getElementById('command-parallel').click();
  d.getElementById('command-max-in-flight-3').click();expect(w.__T.batchOptionIssue()).toBe('');
  w.__T.recordCommandPreview({parallel_available:true,worker_count:3,max_in_flight_limit:2});
- expect(w.__T.batchOptionIssue()).toBeTruthy();
- d.getElementById('command-max-in-flight-2').click();expect(w.__T.batchOptionIssue()).toBe('');
+ expect(w.__T.commandState.maxInFlight).toBe('2');expect(w.__T.batchOptionIssue()).toBe('');
+ expect([...d.querySelectorAll('#command-max-in-flight input[type=radio]')].map(r=>r.value)).toEqual(['1','2']);
  }finally{w.close();}
 });
 
