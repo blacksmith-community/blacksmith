@@ -56,3 +56,10 @@ t('the title sits close to the tab bar and its rule',()=>{
  expect(head).toMatch(/padding-bottom:\s*\.25rem/);
  expect(head).toMatch(/margin-bottom:\s*\.5rem/);
 });
+
+t('the route row orders breadcrumbs, Updated, then the icons at the far right',()=>{
+ expect(bodies(CSS,'#route-context .route-updated')).toMatch(/order:\s*1/);
+ const guide=bodies(CSS,'#route-context > .view-guidance');
+ expect(guide).toMatch(/order:\s*2/);
+ expect(guide).toMatch(/margin-left:\s*auto/);
+});
