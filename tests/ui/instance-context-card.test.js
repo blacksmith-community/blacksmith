@@ -86,8 +86,10 @@ t('the card fills a rounded box with minimal padding and bold, comfortably padde
 
 t('on a phone the fields stack as labelled pairs without horizontal scroll', () => {
   const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
-  expect(phone).toMatch(/\.entity-facts-table tr\s*\{[^}]*display:\s*grid/);
-  expect(phone).toMatch(/\.entity-facts-table tr\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\)/);
+  // Both row groups share one key column, so no seam shows between them.
+  expect(phone).toMatch(/\.entity-facts-table tbody\s*\{[^}]*display:\s*grid/);
+  expect(phone).toMatch(/\.entity-facts-table tbody\s*\{[^}]*grid-template-columns:\s*max-content minmax\(0, 1fr\)/);
+  expect(phone).toMatch(/\.entity-facts-table tr\s*\{[^}]*display:\s*contents/);
   expect(phone).toMatch(/\.entity-context-table h3\s*\{[^}]*padding/);
 });
 

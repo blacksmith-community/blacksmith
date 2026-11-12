@@ -187,8 +187,9 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
   .entity-context.card.entity-context-table { padding: 0; }
   .entity-context-table .entity-facts-table td.fact-short { white-space: normal; }
   .entity-context-table h3 { padding: 4px 8px; font-size: .875rem; }
-  .entity-context-table .entity-facts-table, .entity-context-table .entity-facts-table tbody { display: block; }
-  .entity-context-table .entity-facts-table tr { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+  .entity-context-table .entity-facts-table { display: block; }
+  .entity-context-table .entity-facts-table tbody { display: grid; grid-template-columns: max-content minmax(0, 1fr); }
+  .entity-context-table .entity-facts-table tr { display: contents; }
   .entity-context-table .entity-facts-table :is(th, td) { display: block; padding: 5px 8px; }
   .entity-context-table .entity-facts-table th { width: auto; border-top: 1px solid var(--border); }
   .entity-context-table .entity-facts-table tr:first-child > :is(th, td):nth-child(-n+2) { border-top: 0; }
