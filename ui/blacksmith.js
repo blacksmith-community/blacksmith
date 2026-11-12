@@ -2024,17 +2024,16 @@
     }
 
     // For instance logs tables, skip the control row and get the actual header row
+    // A search box sits in a controls row at the top of some table heads. That
+    // row is not a column header, so it takes no sort icon and no column.
     let headers;
-    if (tableClass.startsWith('instance-logs-table-')) {
-      // Find the row with actual column headers (not the controls row)
+    {
       const headerRows = table.querySelectorAll('thead tr');
       const headerRow = Array.from(headerRows).find(row => {
         const firstTh = row.querySelector('th');
         return firstTh && !firstTh.classList.contains('table-controls-header');
       });
       headers = headerRow ? headerRow.querySelectorAll('th') : [];
-    } else {
-      headers = table.querySelectorAll('thead th');
     }
 
     const columns = getTableColumns(tableClass);
@@ -23546,7 +23545,6 @@
 
         // Initialize table features
         attachSearchFilter('marketplace-services-table');
-        initializeSorting('marketplace-services-table');
       } else {
         throw new Error(data.error || 'Failed to load marketplace services');
       }
@@ -23711,7 +23709,6 @@
 
           // Initialize table features
           attachSearchFilter('service-instances-table');
-          initializeSorting('service-instances-table');
 
           // Load bindings for each service instance
           data.services.forEach(service => {

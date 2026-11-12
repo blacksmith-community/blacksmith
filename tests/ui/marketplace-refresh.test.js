@@ -51,3 +51,22 @@ t('Refresh marketplace reads the marketplace again and redraws the table',async(
  expect(table.textContent).not.toContain('service-read-1');
  expect(panel.querySelector('.refresh-btn-logs').classList.contains('refreshing')).toBe(false);
 });
+
+// A search box sits in a controls row at the top of the table head. That row is not a column header, so it
+// gets no sort icon, and the real headers sort the rows.
+t('the controls row has no sort icon and the column headers sort the rows',async()=>{
+ const {w,panel}=await start();
+ const controls=panel.querySelector('.table-controls-header');
+ expect(controls.querySelector('.sort-icon')).toBeNull();
+ expect(controls.classList.contains('sortable-header')).toBe(false);
+ const heads=[...panel.querySelectorAll('.marketplace-services-table thead tr:not(.table-controls-row) th')];
+ expect(heads.length).toBe(4);
+ expect(heads.every(h=>h.classList.contains('sortable')||h.classList.contains('sortable-header'))).toBe(true);
+ expect(panel.querySelectorAll('.marketplace-services-table .sort-icon').length).toBe(0);
+ const order=()=>[...panel.querySelectorAll('.marketplace-services-table tbody tr td:first-child')].map(x=>x.textContent);
+ const before=order();
+ expect(before.length).toBeGreaterThan(0);
+ heads[0].click(); await sleep(20);
+ expect(order()).toEqual([...before].sort());
+ w.close();
+});
