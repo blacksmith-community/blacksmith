@@ -56,9 +56,30 @@
     const viewport = root.visualViewport;
     const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
     const width = viewport?.width || root.innerWidth, height = viewport?.height || root.innerHeight;
-    tooltip.style.left = `${Math.max(left + 8, Math.min(box.left, left + width - tip.width - 8))}px`;
-    const below = box.bottom + 6;
-    tooltip.style.top = `${Math.max(top + 8, Math.min(below + tip.height <= top + height - 8 ? below : box.top - tip.height - 6, top + height - tip.height - 8))}px`;
+    // A dialog clips what overflows it, so a tip inside one stays within the dialog too.
+    const hostBox = tooltip.parentElement && tooltip.parentElement !== document.body ? tooltip.parentElement.getBoundingClientRect() : null;
+    const minX = Math.max(left, hostBox ? hostBox.left : left), maxX = Math.min(left + width, hostBox && hostBox.width > 0 ? hostBox.right : left + width);
+    const fit = (size) => {
+      const wantLeft = Math.max(minX + 8, Math.min(box.left, maxX - size.width - 8));
+      const below = box.bottom + 6;
+      const wantTop = Math.max(top + 8, Math.min(below + size.height <= top + height - 8 ? below : box.top - size.height - 6, top + height - size.height - 8));
+      return [wantLeft, wantTop];
+    };
+    let [setLeft, setTop] = fit(tip);
+    tooltip.style.left = `${setLeft}px`; tooltip.style.top = `${setTop}px`;
+    // A dialog with a transform or containment becomes the containing block for
+    // fixed children, so check where the tip really landed and correct for it,
+    // using its settled size.
+    if (tip.width > 0) {
+      for (let pass = 0; pass < 3; pass++) {
+        const placed = tooltip.getBoundingClientRect();
+        const [wantLeft, wantTop] = fit(placed);
+        const dx = wantLeft - placed.left, dy = wantTop - placed.top;
+        if (Math.abs(dx) <= 0.5 && Math.abs(dy) <= 0.5) break;
+        setLeft += dx; setTop += dy;
+        tooltip.style.left = `${setLeft}px`; tooltip.style.top = `${setTop}px`;
+      }
+    }
   }
   function show(control) {
     if (control.hasAttribute('data-context-help') || dismissed === control || !control.isConnected || control.closest('[inert]')) return;
@@ -76,7 +97,12 @@
     // An identical accessible name is already announced; do not repeat it as a description.
     // Supplementary help is described while existing field descriptions remain intact.
     const host = control.closest('dialog[open], [role="dialog"], .terminal-modal') || document.body;
+    // Measure from the left edge so the control's own position cannot squeeze the tip.
+    tooltip.style.left = '0px'; tooltip.style.top = '0px';
     host.append(tooltip); describe(); position();
+    // A dialog that is still opening moves its controls, so place the tip again
+    // once the motion has settled.
+    for (const delay of [120, 350]) setTimeout(() => { if (active === control) position(); }, delay);
   }
   function maybeHide() {
     clearTimeout(closeTimer);

@@ -83,3 +83,50 @@ test('help uses titles migrated by Oat without losing field-specific copy labels
  b.dispatchEvent(new w.MouseEvent('click',{bubbles:true}));expect(b.title).toBe('Copy to clipboard');
  }finally{w.close()}
 });
+test('tooltip is measured at the left edge and sized to its content so it never shrinks at the viewport edge',()=>{
+ const css=fs.readFileSync('ui/action-help.css','utf8');
+ const rule=css.match(/\.action-tooltip\s*\{[^}]*\}/)[0];
+ expect(rule).toMatch(/width:\s*max-content/);
+ expect(rule).not.toMatch(/overflow-wrap:\s*anywhere/);
+ const w=boot();try{
+ const b=w.document.getElementById('copy');
+ const seen=[];
+ w.Element.prototype.getBoundingClientRect=function(){
+  if(this.getAttribute&&this.getAttribute('role')==='tooltip'){seen.push(this.style.left);const l=parseFloat(this.style.left||0)+33,t=parseFloat(this.style.top||0)+5;return {left:l,top:t,right:l+90,bottom:t+20,width:90,height:20};}
+  return {left:w.innerWidth-30,top:10,right:w.innerWidth,bottom:40,width:30,height:30};
+ };
+ b.focus();
+ const tip=w.document.querySelector('[role=tooltip]');
+ expect(seen[0]).toBe('0px');
+ // The tip lands 33px right of where it was told, as in a dialog that is the containing block.
+ expect(parseFloat(tip.style.left)+33).toBe(w.innerWidth-90-8);
+ }finally{w.close()}
+});
+test('tooltip is placed again after a dialog that was still moving settles',async()=>{
+ const w=boot();try{
+ const b=w.document.getElementById('copy');
+ let shift=20;
+ w.Element.prototype.getBoundingClientRect=function(){
+  if(this.getAttribute&&this.getAttribute('role')==='tooltip')return {left:parseFloat(this.style.left||0),top:0,right:90,bottom:20,width:90,height:20};
+  return {left:100+shift,top:10,right:140+shift,bottom:40,width:40,height:30};
+ };
+ b.focus();
+ const tip=w.document.querySelector('[role=tooltip]');
+ expect(parseFloat(tip.style.left)).toBe(120);
+ shift=0;await sleep(450);
+ expect(parseFloat(tip.style.left)).toBe(100);
+ }finally{w.close()}
+});
+test('tooltip inside a dialog stays within the dialog edge, which clips overflow',()=>{
+ const w=boot();try{
+ const modal=w.document.getElementById('modal');modal.showModal();
+ w.Element.prototype.getBoundingClientRect=function(){
+  if(this.getAttribute&&this.getAttribute('role')==='tooltip')return {left:parseFloat(this.style.left||0),top:0,right:0,bottom:0,width:90,height:20};
+  if(this.id==='modal')return {left:0,top:0,right:300,bottom:400,width:300,height:400};
+  return {left:270,top:10,right:296,bottom:36,width:26,height:26};
+ };
+ w.document.getElementById('inside').focus();
+ const tip=modal.querySelector('[role=tooltip]');
+ expect(parseFloat(tip.style.left)+90).toBeLessThanOrEqual(292);
+ }finally{w.close()}
+});

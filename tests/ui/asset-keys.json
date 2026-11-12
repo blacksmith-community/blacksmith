@@ -1,11 +1,11 @@
 {
  "action-help.css": {
-  "key": "20261028-oat-269",
-  "sha256": "aec1ba658b98275f8a5095cb2bfb56089d4df604b240c325faaecc5871767365"
+  "key": "20261112-oat-270",
+  "sha256": "a147800d1d4bd83bb56586defd650dc118cfb56bdcccc73f4a37341560c593b8"
  },
  "action-help.js": {
-  "key": "20261028-oat-268",
-  "sha256": "d989991037b82b99f8c0ea1b984cf03e719150880fcadf7d64fc394fd2ae1cdb"
+  "key": "20261112-oat-275",
+  "sha256": "6844b9e68d98c13647c390de143bd966073a737509e801dc1b3ae390349ea610"
  },
  "blacksmith.css": {
   "key": "20261112-oat-387",
