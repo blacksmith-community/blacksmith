@@ -439,8 +439,15 @@ func TestWaitOrCancelStillCancelsWhenACheckDeadlinePasses(t *testing.T) {
 	server := newDetailsDirector(t, detailsConfig{state: queuedUntilCancelled})
 	director := newTaskAdapter(t, server.Director)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-	defer cancel()
+	// The deadline passes once the director has been asked to read the task,
+	// so a slow sign-in under load cannot use it up before the request is sent.
+	ctx, expire := newExpiringContext(t.Context())
+	defer expire()
+
+	go func() {
+		<-server.firstPoll
+		expire()
+	}()
 
 	err := callWithin(t, 10*time.Second, func() error { return vmListing().call(ctx, director) })
 
