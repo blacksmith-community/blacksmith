@@ -73,7 +73,7 @@ t('a field with no value keeps an empty slot where the copy icon would be', () =
 
 t('the card fills a rounded box with minimal padding and bold, comfortably padded cells', () => {
   const card = rule('.entity-context.card.entity-context-table');
-  expect(card).toMatch(/padding:\s*[0-4]px/);
+  expect(card).toMatch(/padding:\s*[0-4](px)?\s*;/);
   expect(card).toMatch(/border-radius:\s*\d+px/);
   expect(card).toMatch(/overflow:\s*hidden/);
   const cells = rule('.entity-context-table .entity-facts-table :is(th, td)');
@@ -102,4 +102,22 @@ t('the broker Deployment context uses the same compact table', () => {
   expect([...row.querySelectorAll('th')].map((h) => h.textContent)).toEqual(['Deployment', 'Environment']);
   expect(row.querySelector('td:last-child').getAttribute('colspan')).toBe('3');
   card.querySelectorAll('td').forEach((cell) => expect(cell.firstElementChild.firstElementChild.tagName).toBe('BUTTON'));
+});
+
+t('the table reaches the card edges and its corners follow the card radius', () => {
+  const card = rule('.entity-context.card.entity-context-table');
+  expect(card).toMatch(/padding:\s*0\s*;/);
+  expect(card).toMatch(/overflow:\s*hidden/);
+  expect(rule('.entity-context-table .entity-facts-table')).toMatch(/border-radius:\s*0/);
+});
+
+t('short values never wrap while long identifiers wrap where they must', () => {
+  const card = summary(VAULT).querySelector('article.entity-context');
+  const cells = [...card.querySelectorAll('td')];
+  expect(cells[0].textContent).toContain('Application cache');
+  expect(cells[0].classList.contains('fact-short')).toBe(true);
+  expect(cells[2].classList.contains('fact-short')).toBe(false);
+  expect(cells[5].classList.contains('fact-short')).toBe(false);
+  expect(rule('.entity-context-table .entity-facts-table td.fact-short')).toMatch(/white-space:\s*nowrap/);
+  expect(css.slice(css.indexOf('@media (max-width: 700px)'))).toMatch(/td\.fact-short\s*\{[^}]*white-space:\s*normal/);
 });

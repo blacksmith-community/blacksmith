@@ -2463,7 +2463,7 @@
   const entityFacts = (pairs, title = 'Context') => {
     const rows = [];
     for (let i = 0; i < pairs.length; i += 3) rows.push(pairs.slice(i, i + 3));
-    const body = rows.map(row => `<tr>${row.map(([label,value], i) => `<th scope="row" class="fact-key">${escapeHtml(label)}</th><td class="fact-value"${i === row.length - 1 && row.length < 3 ? ` colspan="${1 + 2 * (3 - row.length)}"` : ''}>${copyFirst(`<span class="copy-first-text">${escapeHtml(value === undefined || value === null || value === '' ? 'Not reported' : String(value))}</span>`, value ? entityCopy(value,label) : '')}</td>`).join('')}</tr>`).join('');
+    const body = rows.map(row => `<tr>${row.map(([label,value], i) => `<th scope="row" class="fact-key">${escapeHtml(label)}</th><td class="fact-value${String(value ?? '').length <= 24 ? ' fact-short' : ''}"${i === row.length - 1 && row.length < 3 ? ` colspan="${1 + 2 * (3 - row.length)}"` : ''}>${copyFirst(`<span class="copy-first-text">${escapeHtml(value === undefined || value === null || value === '' ? 'Not reported' : String(value))}</span>`, value ? entityCopy(value,label) : '')}</td>`).join('')}</tr>`).join('');
     return `<table class="entity-facts-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${body}</tbody></table>`;
   };
   // The link reads "View service plans", so the label's first letter drops to

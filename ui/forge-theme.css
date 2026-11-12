@@ -134,11 +134,13 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .copy-first > .copy-slot { flex: 0 0 28px; width: 28px; height: 28px; }
 .copy-first > :not(button, .copy-slot) { min-width: 0; overflow-wrap: break-word; }
 /* The context card is a compact table that fills its rounded box. */
-.entity-context.card.entity-context-table { padding: 4px; overflow: hidden; border-radius: 8px; }
+.entity-context.card.entity-context-table { padding: 0; overflow: hidden; border-radius: 8px; }
 .entity-context-table h3 { margin: 0; padding: 6px 10px; font-size: .9375rem; }
-.entity-context-table .entity-facts-table { width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; border-radius: 5px; overflow: hidden; table-layout: auto; min-width: 0; }
+.entity-context-table .entity-facts-table { width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; border-radius: 0; overflow: hidden; table-layout: auto; min-width: 0; }
 .entity-context-table .entity-facts-table :is(th, td) { padding: 6px 10px; text-align: left; vertical-align: middle; border: 0; border-top: 1px solid var(--border); font-size: .875rem; }
 .entity-context-table .entity-facts-table tr:first-child > :is(th, td) { border-top: 0; }
+.entity-context-table .entity-facts-table td.fact-short { white-space: nowrap; }
+.entity-context-table .entity-facts-table td.fact-short .copy-first-text { overflow-wrap: normal; }
 .entity-context-table .entity-facts-table th { width: 1%; white-space: nowrap; font-weight: 700; color: var(--foreground); }
 /* The instance pane pads every div with an id selector. The VM detail fields and their CID lines are divs, so each rule here repeats the id to take the padding back. */
 #services .detail-content :is(.vm-detail-field, .cid-line, .cid-list) { padding: 0; }
@@ -182,7 +184,8 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
   .entity-metrics { grid-template-columns: 1fr; gap: 8px; }
   .entity-metric.card { padding: 12px; }
   .entity-facts { grid-template-columns: 1fr; }
-  .entity-context.card.entity-context-table { padding: 2px; }
+  .entity-context.card.entity-context-table { padding: 0; }
+  .entity-context-table .entity-facts-table td.fact-short { white-space: normal; }
   .entity-context-table h3 { padding: 4px 8px; font-size: .875rem; }
   .entity-context-table .entity-facts-table, .entity-context-table .entity-facts-table tbody { display: block; }
   .entity-context-table .entity-facts-table tr { display: grid; grid-template-columns: auto minmax(0, 1fr); }
