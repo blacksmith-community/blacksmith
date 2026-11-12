@@ -264,11 +264,14 @@ func keyString(k ast.MapKeyNode) string {
 }
 
 // structKeys records, for a struct type, the types of the fields that
-// read each key. goccy hands an ,inline map every key of the mapping, so
-// every holds the element types of those maps, and opaque is set when an
-// ,inline field decodes itself and so reads every key as written.
+// read each key, and in index the path of field indexes that leads to
+// each of those fields, through any ,inline structs, in the same order.
+// goccy hands an ,inline map every key of the mapping, so every holds the
+// element types of those maps, and opaque is set when an ,inline field
+// decodes itself and so reads every key as written.
 type structKeys struct {
 	named  map[string][]reflect.Type
+	index  map[string][][]int
 	every  []reflect.Type
 	opaque bool
 }
@@ -300,34 +303,47 @@ func (w *textWalk) structKeys(t reflect.Type) *structKeys {
 	if got, ok := w.structs[t]; ok {
 		return got
 	}
-	got := &structKeys{named: make(map[string][]reflect.Type)}
+	got := &structKeys{named: make(map[string][]reflect.Type), index: make(map[string][][]int)}
 	// Entering the cache first ends the walk of a struct that inlines
 	// itself through a pointer.
 	w.structs[t] = got
 	for i := range t.NumField() {
 		f := t.Field(i)
-		tag := f.Tag.Get("yaml")
-		if tag == "" {
-			tag = f.Tag.Get("json")
-		}
-		if (f.PkgPath != "" && !f.Anonymous) || tag == "-" {
+		if !decodesField(f) {
 			continue
 		}
-		name, opts, _ := strings.Cut(tag, ",")
+		name, opts, _ := strings.Cut(fieldTag(f), ",")
 		if hasOption(opts, "inline") {
-			w.addInline(got, f.Type)
+			w.addInline(got, i, f.Type)
 			continue
 		}
 		if name == "" {
 			name = strings.ToLower(f.Name)
 		}
 		got.named[name] = append(got.named[name], f.Type)
+		got.index[name] = append(got.index[name], []int{i})
 	}
 	return got
 }
 
-// addInline adds to keys what an ,inline field of type ft reads.
-func (w *textWalk) addInline(keys *structKeys, ft reflect.Type) {
+// fieldTag returns the tag goccy reads for the struct field f, which is
+// its yaml tag, or its json tag when it has no yaml tag.
+func fieldTag(f reflect.StructField) string {
+	if tag := f.Tag.Get("yaml"); tag != "" {
+		return tag
+	}
+	return f.Tag.Get("json")
+}
+
+// decodesField reports whether goccy decodes into the struct field f,
+// which it does unless f is unexported and not embedded, or tagged "-".
+func decodesField(f reflect.StructField) bool {
+	return (f.PkgPath == "" || f.Anonymous) && fieldTag(f) != "-"
+}
+
+// addInline adds to keys what an ,inline field of type ft, at index i of
+// its struct, reads.
+func (w *textWalk) addInline(keys *structKeys, i int, ft reflect.Type) {
 	for ft.Kind() == reflect.Pointer {
 		ft = ft.Elem()
 	}
@@ -341,6 +357,11 @@ func (w *textWalk) addInline(keys *structKeys, ft reflect.Type) {
 		}
 		for name, types := range inner.named {
 			keys.named[name] = append(keys.named[name], types...)
+		}
+		for name, paths := range inner.index {
+			for _, path := range paths {
+				keys.index[name] = append(keys.index[name], append([]int{i}, path...))
+			}
 		}
 		keys.every = append(keys.every, inner.every...)
 		keys.opaque = keys.opaque || inner.opaque

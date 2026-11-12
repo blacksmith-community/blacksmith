@@ -66,7 +66,7 @@ func MarshalYAMLWithComments(v interface{}, comments []YAMLHeadComment) ([]byte,
 // MarshalYAMLWithComments, but orders every map's keys with less. A nil
 // less keeps spruce's order.
 func MarshalYAMLWithCommentsWith(v interface{}, comments []YAMLHeadComment, less func(a, b string) bool) ([]byte, error) {
-	return marshalYAML(v, comments, less, false)
+	return marshalYAML(v, comments, less, false, Layout{})
 }
 
 // PlainScalar is a scalar MarshalYAMLTyped writes exactly as given, with
@@ -90,18 +90,44 @@ type FlowValue struct {
 // resolves as a timestamp is double-quoted. graft merge does not use
 // it, and its output is unchanged.
 func MarshalYAMLTyped(v interface{}, less func(a, b string) bool) ([]byte, error) {
-	return marshalYAML(v, nil, less, true)
+	return marshalYAML(v, nil, less, true, Layout{})
+}
+
+// Layout is how far the encoder indents. Its zero value is an indent of
+// 2 with sequences written at their key's column, which is what every
+// other entry point writes.
+type Layout struct {
+	// Indent is the number of columns a nested mapping, and a block
+	// scalar's content, sits past its parent key. Zero means 2.
+	Indent int
+	// IndentSequence writes a sequence under a mapping key Indent columns
+	// past the key, and a root sequence Indent columns in.
+	IndentSequence bool
+}
+
+// indent is the indent the layout asks for, with the zero value read as 2.
+func (l Layout) indent() int {
+	if l.Indent == 0 {
+		return scalarBestIndent
+	}
+	return l.Indent
+}
+
+// MarshalYAMLTypedLayout is MarshalYAMLTyped with the indentation layout
+// given.
+func MarshalYAMLTypedLayout(v interface{}, less func(a, b string) bool, layout Layout) ([]byte, error) {
+	return marshalYAML(v, nil, less, true, layout)
 }
 
 // marshalYAML is the encoder behind the exported functions. typed turns
 // on the quoted timestamps that MarshalYAMLTyped describes.
-func marshalYAML(v interface{}, comments []YAMLHeadComment, less func(a, b string) bool, typed bool) ([]byte, error) {
+func marshalYAML(v interface{}, comments []YAMLHeadComment, less func(a, b string) bool, typed bool, layout Layout) ([]byte, error) {
 	// A literal wrapper is graft's own marker for a value it keeps whole.
 	// Output never shows it, so the encoder sees the plain value.
 	v = literal.Strip(v)
-	enc, prepared := newScalarEncoder(v, comments, less, typed)
+	enc, prepared := newScalarEncoder(v, comments, less, typed, layout)
 
-	opts := []yaml.EncodeOption{yaml.Indent(2)}
+	opts := []yaml.EncodeOption{yaml.Indent(layout.indent()), yaml.IndentSequence(layout.IndentSequence)}
 	if len(comments) > 0 {
 		cm := yaml.CommentMap{}
 		for _, c := range comments {
@@ -238,41 +264,55 @@ type nodePosition struct {
 }
 
 // rootPosition is the document root. A root scalar's continuation lines
-// sit at libyaml's best indent.
-var rootPosition = nodePosition{scalarIndent: scalarBestIndent, indention: true}
+// sit at libyaml's best indent, and a root sequence sits at the indent
+// when sequences are indented.
+func (l Layout) rootPosition() nodePosition {
+	pos := nodePosition{scalarIndent: l.indent(), indention: true}
+	if l.IndentSequence {
+		pos.seqColumn = l.indent()
+	}
+	return pos
+}
 
 // mapValuePosition is the value of a simple key of width keyWidth in a
-// mapping whose keys sit at column m. A sequence there is indentless.
-func mapValuePosition(m, keyWidth int) nodePosition {
-	return nodePosition{
+// mapping whose keys sit at column m. A sequence there is indentless
+// unless the layout indents sequences.
+func (l Layout) mapValuePosition(m, keyWidth int) nodePosition {
+	pos := nodePosition{
 		scalarColumn: m + keyWidth + 2,
-		scalarIndent: m + scalarBestIndent,
-		mapColumn:    m + scalarBestIndent,
+		scalarIndent: m + l.indent(),
+		mapColumn:    m + l.indent(),
 		seqColumn:    m,
 	}
+	if l.IndentSequence {
+		pos.seqColumn = m + l.indent()
+	}
+	return pos
 }
 
 // complexValuePosition is the value of a "? key" in a mapping whose keys
 // sit at column m. It follows ": " and, unlike a simple key's value, a
 // sequence there is indented.
-func complexValuePosition(m int) nodePosition {
+func (l Layout) complexValuePosition(m int) nodePosition {
 	return nodePosition{
 		scalarColumn: m + 2,
-		scalarIndent: m + scalarBestIndent,
+		scalarIndent: m + l.indent(),
 		indention:    true,
-		mapColumn:    m + scalarBestIndent,
-		seqColumn:    m + scalarBestIndent,
+		mapColumn:    m + l.indent(),
+		seqColumn:    m + l.indent(),
 	}
 }
 
 // seqItemPosition is an item of a sequence whose dashes sit at column d.
-func seqItemPosition(d int) nodePosition {
+// Its content starts two columns past the dash, and a block scalar's
+// continuation lines sit at the indent past the dash.
+func (l Layout) seqItemPosition(d int) nodePosition {
 	return nodePosition{
 		scalarColumn: d + 2,
-		scalarIndent: d + scalarBestIndent,
+		scalarIndent: d + l.indent(),
 		indention:    true,
-		mapColumn:    d + scalarBestIndent,
-		seqColumn:    d + scalarBestIndent,
+		mapColumn:    d + 2,
+		seqColumn:    d + 2,
 	}
 }
 
@@ -290,18 +330,20 @@ type scalarEncoder struct {
 	// quoteTimestamps double-quotes a string a YAML 1.1 reader would
 	// resolve as a timestamp.
 	quoteTimestamps bool
+	// layout is the indentation the output is written in.
+	layout Layout
 }
 
 // newScalarEncoder prepares v for goccy and returns the encoder that
 // fills its placeholders back in.
-func newScalarEncoder(v interface{}, comments []YAMLHeadComment, less func(a, b string) bool, quoteTimestamps bool) (*scalarEncoder, interface{}) {
+func newScalarEncoder(v interface{}, comments []YAMLHeadComment, less func(a, b string) bool, quoteTimestamps bool, layout Layout) (*scalarEncoder, interface{}) {
 	if less == nil {
 		less = spruceKeyLess
 	}
 	prefix := scalarPlaceholderPrefix
 	for {
-		e := &scalarEncoder{prefix: prefix, less: less, quoteTimestamps: quoteTimestamps}
-		prepared, ok := e.prepare(v, rootPosition)
+		e := &scalarEncoder{prefix: prefix, less: less, quoteTimestamps: quoteTimestamps, layout: layout}
+		prepared, ok := e.prepare(v, layout.rootPosition())
 		if ok && !commentsContain(comments, prefix) {
 			return e, prepared
 		}
@@ -405,7 +447,7 @@ func (e *scalarEncoder) prepareMapSlice(val yaml.MapSlice, pos nodePosition) (in
 // prepareList is prepare for a []interface{}.
 func (e *scalarEncoder) prepareList(val []interface{}, pos nodePosition) (interface{}, bool) {
 	out := make([]interface{}, len(val))
-	itemPos := seqItemPosition(pos.seqColumn)
+	itemPos := e.layout.seqItemPosition(pos.seqColumn)
 	for i, item := range val {
 		prepared, ok := e.prepare(item, itemPos)
 		if !ok {
@@ -427,7 +469,7 @@ func (e *scalarEncoder) prepareValue(s string, pos nodePosition) (interface{}, b
 		return s, true
 	}
 	style := timestampStyle(s, e.quoteTimestamps, false)
-	if renderValueScalarAs(s, style, pos.scalarColumn, pos.scalarIndent, pos.indention) == s && goccyWritesVerbatim(s) {
+	if renderValueScalarAs(s, style, pos.scalarColumn, pos.scalarIndent, e.layout.indent(), pos.indention) == s && goccyWritesVerbatim(s) {
 		return s, true
 	}
 	return e.placeholder(scalarSlot{s: s, kind: valueSlot, indent: pos.scalarIndent, indention: pos.indention, style: style}), true
@@ -443,7 +485,7 @@ func (e *scalarEncoder) prepareItemKey(key interface{}, m int, value interface{}
 		if strings.Contains(string(k), e.prefix) {
 			return nil, nodePosition{}, false
 		}
-		pos := mapValuePosition(m, utf8.RuneCountInString(string(k)))
+		pos := e.layout.mapValuePosition(m, utf8.RuneCountInString(string(k)))
 		return e.placeholder(scalarSlot{s: string(k), kind: rawSlot}), pos, true
 	default:
 		return e.prepareKey(fmt.Sprintf("%v", key), m, value)
@@ -457,23 +499,23 @@ func (e *scalarEncoder) prepareKey(k string, m int, value interface{}) (interfac
 		return nil, nodePosition{}, false
 	}
 	if !utf8.ValidString(k) {
-		return k, mapValuePosition(m, len(k)), true
+		return k, e.layout.mapValuePosition(m, len(k)), true
 	}
 	style := timestampStyle(k, e.quoteTimestamps, true)
-	text, simple := renderSimpleKeyAs(k, style, m)
+	text, simple := renderSimpleKeyAs(k, style, m, e.layout.indent())
 	if !simple && e.quoteTimestamps && fitsQuotedKey(k) {
 		// goccy's parser misreads some explicit "? key" forms, such as a
 		// double-quoted key before a block scalar, and two literal keys
 		// with blank lines, so the key is written on one line instead.
 		quoted := strconv.Quote(k)
-		return e.placeholder(scalarSlot{s: quoted, kind: rawSlot}), mapValuePosition(m, utf8.RuneCountInString(quoted)), true
+		return e.placeholder(scalarSlot{s: quoted, kind: rawSlot}), e.layout.mapValuePosition(m, utf8.RuneCountInString(quoted)), true
 	}
 	if !simple {
 		slot := scalarSlot{s: k, kind: complexKeySlot, indent: m, style: style}
 		slot.mapValue, slot.seqValue = blockCollectionKind(value)
-		return e.placeholder(slot), complexValuePosition(m), true
+		return e.placeholder(slot), e.layout.complexValuePosition(m), true
 	}
-	pos := mapValuePosition(m, utf8.RuneCountInString(text))
+	pos := e.layout.mapValuePosition(m, utf8.RuneCountInString(text))
 	if text == k && goccyWritesVerbatim(k) {
 		return k, pos, true
 	}
@@ -606,12 +648,12 @@ func (e *scalarEncoder) encodedPath(prepared interface{}, path string) string {
 // placeholder at the column it lands on. After a "? key" whose value is
 // a block mapping or sequence it also moves that value up onto the ":"
 // line, as libyaml writes it, and indents the rest of such a sequence
-// by two more columns, since libyaml does not write it indentless.
+// by the layout's shift, since libyaml does not write it indentless.
 func (e *scalarEncoder) substitute(in []byte) []byte {
 	if len(e.slots) == 0 {
 		return in
 	}
-	st := &substitution{in: in, out: make([]byte, 0, len(in)+len(in)/8)}
+	st := &substitution{in: in, out: make([]byte, 0, len(in)+len(in)/8), layout: e.layout}
 	lineStart := true
 	for i := 0; i < len(in); {
 		if lineStart {
@@ -637,10 +679,22 @@ type substitution struct {
 	out    []byte
 	column int
 	shifts []int
+	layout Layout
+}
+
+// seqShift is how many columns libyaml writes a sequence under a "? key"
+// past where goccy does. goccy writes it at the key's column, so the
+// shift is the indent, unless the layout already indents sequences, when
+// goccy writes it where libyaml does.
+func (st *substitution) seqShift() int {
+	if st.layout.IndentSequence {
+		return 0
+	}
+	return st.layout.indent()
 }
 
 // startLine indents a line of goccy's output that lies inside a
-// sequence moved under a "? key" by two columns per such sequence,
+// sequence moved under a "? key" by the shift per such sequence,
 // first dropping each sequence the line has left.
 func (st *substitution) startLine(i int) {
 	if len(st.shifts) == 0 || st.in[i] == '\n' {
@@ -655,10 +709,11 @@ func (st *substitution) startLine(i int) {
 		}
 		st.shifts = st.shifts[:len(st.shifts)-1]
 	}
-	for j := 0; j < 2*len(st.shifts); j++ {
+	pad := st.seqShift() * len(st.shifts)
+	for j := 0; j < pad; j++ {
 		st.out = append(st.out, ' ')
 	}
-	st.column += 2 * len(st.shifts)
+	st.column += pad
 }
 
 // copyByte copies one byte of goccy's output and reports whether it
@@ -681,16 +736,16 @@ func (st *substitution) writeSlot(slot scalarSlot, i int) (int, bool) {
 	var text string
 	switch slot.kind {
 	case valueSlot:
-		text = renderValueScalarAs(slot.s, slot.style, st.column, slot.indent, slot.indention)
+		text = renderValueScalarAs(slot.s, slot.style, st.column, slot.indent, st.layout.indent(), slot.indention)
 	case rawSlot:
 		text = slot.s
 	case simpleKeySlot:
-		text, _ = renderSimpleKeyAs(slot.s, slot.style, st.column)
+		text, _ = renderSimpleKeyAs(slot.s, slot.style, st.column, st.layout.indent())
 	case complexKeySlot:
 		if i < len(st.in) && st.in[i] == ':' {
 			i++
 		}
-		text = renderComplexKeyAs(slot.s, slot.style, slot.indent)
+		text = renderComplexKeyAs(slot.s, slot.style, slot.indent, st.layout.indent())
 	}
 	st.out = append(st.out, text...)
 	st.column = advanceColumn(st.column, text)
@@ -723,8 +778,20 @@ func (st *substitution) joinComplexValue(i int, slot scalarSlot) int {
 	if slot.seqValue && !isDashIndicator(rest) {
 		return i
 	}
-	st.out = append(st.out, ' ')
-	st.column++
+	// libyaml pads the value out to its indent, which is one space when
+	// the indent is 2 and more when it is wider.
+	target := n
+	if slot.seqValue {
+		target += st.seqShift()
+	}
+	pad := target - st.column
+	if pad < 1 {
+		pad = 1
+	}
+	for j := 0; j < pad; j++ {
+		st.out = append(st.out, ' ')
+	}
+	st.column += pad
 	if slot.seqValue {
 		st.shifts = append(st.shifts, n)
 	}

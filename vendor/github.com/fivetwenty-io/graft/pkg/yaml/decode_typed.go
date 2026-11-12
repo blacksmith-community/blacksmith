@@ -18,6 +18,12 @@ var boolType = reflect.TypeFor[bool]()
 // pointer that checkTarget accepted, with goccy's own decoder. Every
 // error it returns is a *DecodeError.
 //
+// When owners is set, src records in it the Node each token came from,
+// and every place in v that an Unmarshaler fills is a hole that goccy
+// leaves alone. Once goccy and the fixer are done, each of those places
+// has its method called in document order, with the Node that holds its
+// value, and the first failure ends the decode.
+//
 // The document comes with every alias expanded, as a merge parses it,
 // and goccy decodes it into v natively. In YAML 1.1 mode a hook reads
 // plain yes, no, on, and off into bool fields. Afterwards, a
@@ -27,7 +33,7 @@ var boolType = reflect.TypeFor[bool]()
 // gives. Generic values come from goccy rather than from a hook, because
 // a hook receives the node's source text, and an expanded alias keeps
 // the indentation of the place its anchor was defined.
-func decodeTyped(src source, v any, opts DecodeOptions) error {
+func decodeTyped(src source, v any, opts DecodeOptions, owners *tokenOwners) error {
 	target := reflect.TypeOf(v)
 	generic := reachesType(target, isInterface)
 	// Quoted YAML 1.1 words need the marker only where the conversion
@@ -43,6 +49,13 @@ func decodeTyped(src source, v any, opts DecodeOptions) error {
 		return nil
 	}
 
+	var sites []hookSite
+	if owners != nil {
+		if body, sites = hookSites(body, target.Elem(), owners, opts); body == nil {
+			// The root itself is a hook site, so goccy has nothing to do.
+			return runHookSites(reflect.ValueOf(v).Elem(), sites)
+		}
+	}
 	body, own := asWritten(body, target.Elem())
 	err = decodeBody(body, v, opts)
 	if generic {
@@ -59,7 +72,10 @@ func decodeTyped(src source, v any, opts DecodeOptions) error {
 	if err != nil {
 		return translate(own.locate(locate(err, body, target), target.Elem()))
 	}
-	return own.badTime()
+	if err := own.badTime(); err != nil {
+		return err
+	}
+	return runHookSites(reflect.ValueOf(v).Elem(), sites)
 }
 
 // decodeBody decodes body into v with goccy, and returns a decoder panic
@@ -281,11 +297,17 @@ func reachesType(t reflect.Type, leaf func(reflect.Type) bool) bool {
 	return w.reaches(t)
 }
 
-// typeWalk searches a type for one that satisfies leaf. seen holds every
-// type the walk has entered, so a recursive type is walked once.
+// typeWalk searches a type for one that satisfies leaf. It enters the
+// element of a pointer, a slice, an array, or a map, and each struct
+// field that field accepts, or each exported or embedded field when
+// field is nil. It never looks inside a type that opaque accepts, when
+// opaque is set. seen holds every type the walk has entered, so a
+// recursive type is walked once.
 type typeWalk struct {
-	leaf func(reflect.Type) bool
-	seen map[reflect.Type]bool
+	leaf   func(reflect.Type) bool
+	opaque func(reflect.Type) bool
+	field  func(reflect.StructField) bool
+	seen   map[reflect.Type]bool
 }
 
 func (w typeWalk) reaches(t reflect.Type) bool {
@@ -296,16 +318,27 @@ func (w typeWalk) reaches(t reflect.Type) bool {
 	if w.leaf(t) {
 		return true
 	}
+	if w.opaque != nil && w.opaque(t) {
+		return false
+	}
 	switch t.Kind() {
 	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
 		return w.reaches(t.Elem())
 	case reflect.Struct:
 		for i := range t.NumField() {
-			if field := t.Field(i); (field.IsExported() || field.Anonymous) && w.reaches(field.Type) {
+			if field := t.Field(i); w.enters(field) && w.reaches(field.Type) {
 				return true
 			}
 		}
 	default:
 	}
 	return false
+}
+
+// enters reports whether the walk looks inside the struct field f.
+func (w typeWalk) enters(f reflect.StructField) bool {
+	if w.field != nil {
+		return w.field(f)
+	}
+	return f.IsExported() || f.Anonymous
 }

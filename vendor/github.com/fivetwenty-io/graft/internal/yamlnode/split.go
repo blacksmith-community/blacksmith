@@ -18,6 +18,7 @@ type chunk struct {
 	index     int  // the document's position in the stream
 	marker    bool // a "---" follows the chunk, or it ends with "..."
 	afterEnd  bool // a "..." ended the document before this one
+	content   bool // a token other than a comment, a directive, or a marker
 
 	// endComments holds the comments that sit on the "..." lines that
 	// end the document before this one. yaml.v3 gives them to this
@@ -208,6 +209,7 @@ func (s *splitter) emit(endLine int, marker bool) bool {
 		index:       len(s.chunks),
 		marker:      marker,
 		afterEnd:    s.afterEnd,
+		content:     s.hasContent,
 	})
 	return true
 }

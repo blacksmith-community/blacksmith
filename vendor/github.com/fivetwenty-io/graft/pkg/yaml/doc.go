@@ -141,9 +141,16 @@ decoder's, and it is not recovered, even when the method misuses package
 reflect and the panic starts inside it.
 
 A type with an UnmarshalText method receives the formatted text of a scalar,
-not the source text, so 1.10 arrives as "1.1". A type with an UnmarshalYAML
-method receives the YAML as flow-style text, which keeps every value but not
-the layout or the comments of the input.
+not the source text, so 1.10 arrives as "1.1". A type whose UnmarshalYAML
+method takes a byte slice, in goccy's form, receives the source text of its
+value, without its comments, from Unmarshal, UnmarshalWith, and
+Decoder.Decode when the target holds no Unmarshaler. Under Node.Decode, and
+whenever the target also holds an Unmarshaler, it receives flow-style text,
+which keeps every value but not the layout of the input. A method that takes
+a callback, in goccy's other form, decodes the same values on either route.
+We keep those forms working so that existing code runs unchanged, but
+Unmarshaler is the supported hook, and a major release may stop calling the
+others.
 
 A whole float inside the int64 range marshals as integer digits, so 3.0
 becomes 3 and 1e6 becomes 1000000. Reading that output into an any gives an
@@ -164,6 +171,69 @@ Marshal refuses a value that holds a Node, because writing a Node tree back
 out is not supported. It also refuses a cycle and a key order other than the
 zero value, sortkeys.Spruce, and sortkeys.Lexical. Each refusal is an error
 that names a Go type and a field path, and it never quotes a value.
+
+# Indentation and sequences
+
+MarshalWith with EncodeOptions{Indent: n} writes each nested mapping, and
+each block scalar's content, n columns past its parent key. Zero means 2,
+and any value from 2 through 9 is accepted. Any other value is an error.
+EncodeOptions{IndentSequence: true} also indents a sequence under a mapping
+key, and a root sequence, by Indent columns, where the default leaves a
+sequence at the column of its key.
+
+# Ordered maps
+
+A MapSlice is a list of MapItem values, each holding a Key and a Value, and
+Marshal writes its items in the order they sit, at any depth, whatever
+KeyOrder says. The Go maps inside its values still follow KeyOrder. A key
+follows the rules for a map key, so a collection is refused, and so are
+two items whose keys write the same text. Only MapSlice and *MapSlice are
+written as ordered mappings. Unmarshal into a MapSlice is refused, because
+the type is for encoding. Decode into a Node when the order of keys
+matters on the way in.
+
+# Streams of documents
+
+An Encoder, from NewEncoder or NewEncoderWith, writes one document for each
+call to Encode, with the bytes MarshalWith gives, and puts a "---" line
+before every document after the first. Close ends the stream, writes
+nothing, and makes later calls to Encode fail.
+
+A Decoder, from NewDecoder or NewDecoderWith, reads one document for each
+call to Decode into a pointer, as UnmarshalWith would, and returns io.EOF
+when the documents run out. It reads all of its reader on the first call.
+It skips a document that holds only comments, directives, or markers.
+Lines in errors, in duplicate-key reports, and in Node values count from
+the start of the stream. Only a framing error ends the stream for good.
+A framing error is a reader error, invalid UTF-16 after a byte order mark,
+or content after a "..." with no "---" before it. Any other error fails
+only its own document, and the next call to Decode moves on to the next
+one. An alias cannot point at an anchor in an earlier document, because
+YAML scopes an anchor to its own document.
+
+# Types that decode themselves
+
+A type with an UnmarshalYAML(*Node) method is an Unmarshaler. Node.Decode,
+Unmarshal, UnmarshalWith, and Decoder.Decode all call the method, with the
+Node that holds the value, wherever a value of the type sits in the target.
+The method reads the node's Line, Column, and Tag, or calls node.Decode,
+usually into a private type of its own with no such method, so that it does
+not call itself again. A null never reaches the method, whether it has no
+tag or the tag !!null, as in yaml.v3. It decodes as it would for a type
+without the method, so a struct field and the value at the root keep what
+they held, a pointer below the root becomes nil, and a map value or a list
+item becomes the zero value. A type that is a map key, or a named ,inline
+field, is refused, because no method can run there. Embedding a type that
+has the method gives the outer type the method too, so the outer type
+decodes through it, and its other fields stay unset unless the method
+fills them. When more than one struct field reads the same key, the method
+does not run for that key, and the fields get a plain decode.
+
+The error an Unmarshaler returns comes back as a *DecodeError, and Unwrap
+on it returns the method's own error, so errors.Is and errors.As reach it.
+Error never prints that cause. If goccy's own decode of the document fails
+first, no method runs, and that error comes back even when a method would
+also have failed.
 
 # Known limitations
 
@@ -300,11 +370,11 @@ A Node that Unmarshal returned keeps its whole input document, and the first
 Decode on that tree parses it one more time. The cost is one extra parse and
 the memory of one document for each tree that is read.
 
-A type that decodes through its own UnmarshalYAML method, or that keeps what
-it decodes in an unexported field, receives goccy's raw values. In the
-default mode, a quoted or block scalar holding yes, no, on, or off can reach
-that method with an internal marker character in front of it when the
-target also holds a value of interface type.
+A type that decodes through an UnmarshalYAML method that takes a callback,
+or that keeps what it decodes in an unexported field, receives goccy's raw
+values. In the default mode, a quoted or block scalar holding yes, no, on,
+or off can reach that method with an internal marker character in front of
+it when the target also holds a value of interface type.
 
 # Stability
 

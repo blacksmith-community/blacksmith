@@ -328,6 +328,9 @@ type scalarWriter struct {
 	indent     int
 	whitespace bool
 	indention  bool
+	// bestIndent is the indent a block scalar's indentation indicator
+	// names. Zero means scalarBestIndent.
+	bestIndent int
 }
 
 // put, putBreak, write, writeAll, and writeBreak port libyaml's PUT,
@@ -585,7 +588,11 @@ func (w *scalarWriter) writeDoubleQuoted(value []byte, allowBreaks bool) {
 // chomping indicator.
 func (w *scalarWriter) writeBlockScalarHints(value []byte) {
 	if isSpace(value, 0) || isBreak(value, 0) {
-		w.writeIndicator(string(rune('0'+scalarBestIndent)), false, false)
+		hint := w.bestIndent
+		if hint == 0 {
+			hint = scalarBestIndent
+		}
+		w.writeIndicator(string(rune('0'+hint)), false, false)
 	}
 	chomp := ""
 	if len(value) == 0 {
@@ -661,11 +668,11 @@ func (w *scalarWriter) writeScalar(value []byte, style scalarStyle, simpleKey bo
 // enclosing mapping or sequence); indention says whether only
 // indentation and indicators precede it on its line, as after "- ". The
 // result never includes the separating space.
-func renderValueScalarAs(s string, requested scalarStyle, column, indent int, indention bool) string {
+func renderValueScalarAs(s string, requested scalarStyle, column, indent, bestIndent int, indention bool) string {
 	value := []byte(s)
 	a := analyzeScalar(value)
 	style := selectScalarStyle(value, requested, a, false)
-	w := scalarWriter{column: column, indent: indent, whitespace: true, indention: indention}
+	w := scalarWriter{column: column, indent: indent, whitespace: true, indention: indention, bestIndent: bestIndent}
 	w.writeScalar(value, style, false)
 	return string(w.buf)
 }
@@ -673,14 +680,14 @@ func renderValueScalarAs(s string, requested scalarStyle, column, indent int, in
 // renderSimpleKeyAs returns spruce's text for string s written as a
 // simple mapping key, or ok=false when spruce writes s in the explicit
 // "? key" form instead.
-func renderSimpleKeyAs(s string, requested scalarStyle, column int) (text string, ok bool) {
+func renderSimpleKeyAs(s string, requested scalarStyle, column, bestIndent int) (text string, ok bool) {
 	value := []byte(s)
 	a := analyzeScalar(value)
 	if !isSimpleKey(value, a) {
 		return "", false
 	}
 	style := selectScalarStyle(value, requested, a, true)
-	w := scalarWriter{column: column, indent: column + scalarBestIndent, whitespace: true, indention: true}
+	w := scalarWriter{column: column, indent: column + bestIndent, whitespace: true, indention: true, bestIndent: bestIndent}
 	w.writeScalar(value, style, true)
 	return string(w.buf), true
 }
@@ -690,13 +697,13 @@ func renderSimpleKeyAs(s string, requested scalarStyle, column int) (text string
 // the "? " indicator, the key scalar, a line break where libyaml writes
 // one, and the ":" that introduces the value. The value follows the
 // colon, separated by a single space.
-func renderComplexKeyAs(s string, requested scalarStyle, keyColumn int) string {
+func renderComplexKeyAs(s string, requested scalarStyle, keyColumn, bestIndent int) string {
 	value := []byte(s)
 	a := analyzeScalar(value)
 	style := selectScalarStyle(value, requested, a, false)
-	w := scalarWriter{column: keyColumn, indent: keyColumn, whitespace: true, indention: true}
+	w := scalarWriter{column: keyColumn, indent: keyColumn, whitespace: true, indention: true, bestIndent: bestIndent}
 	w.writeIndicator("?", true, true)
-	w.indent = keyColumn + scalarBestIndent
+	w.indent = keyColumn + bestIndent
 	w.writeScalar(value, style, false)
 	w.indent = keyColumn
 	w.writeIndent()

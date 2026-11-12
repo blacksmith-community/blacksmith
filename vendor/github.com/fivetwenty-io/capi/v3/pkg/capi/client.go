@@ -101,6 +101,10 @@ type Client interface {
 	ResourceClients
 	InfoClient
 	AdminClient
+
+	// Raw sends a request to an endpoint the typed methods do not cover.
+	// See RawRequest for the path rules and RawResponse for the result.
+	Raw(ctx context.Context, req RawRequest) (*RawResponse, error)
 }
 
 // Logger interface for logging.

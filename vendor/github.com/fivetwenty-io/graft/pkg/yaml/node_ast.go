@@ -47,32 +47,44 @@ const (
 // meets the limit Unmarshal sets.
 func (n *Node) source() source {
 	return func(tag bool) (ast.Node, error) {
-		root, de := documentRoot(n)
-		if de != nil {
-			return nil, de
+		body, err := n.syntaxTree(nil)
+		if err != nil || body == nil {
+			return nil, err
 		}
-		if root == nil {
-			return nil, nil
-		}
-		b := &astBuilder{
-			refs:    make(map[*Node]int),
-			open:    make(map[*Node]bool),
-			anchors: make(map[*Node]string),
-			yaml12:  n.opts.YAML12,
-		}
-		if de := b.scan(root, 0); de != nil {
-			return nil, de
-		}
-		body := b.value(root, false)
-		if b.err != nil {
-			return nil, b.err
-		}
-		body, err := yamlcodec.PrepareBody(body, tag)
+		body, err = yamlcodec.PrepareBody(body, tag)
 		if err != nil {
 			return nil, translate(err)
 		}
 		return body, nil
 	}
+}
+
+// syntaxTree builds the syntax tree for n, before the step that follows
+// the parse, and returns nil for a document with no root. When owners is
+// set, it records the Node each of the tree's tokens came from.
+func (n *Node) syntaxTree(owners *tokenOwners) (ast.Node, error) {
+	root, de := documentRoot(n)
+	if de != nil {
+		return nil, de
+	}
+	if root == nil {
+		return nil, nil
+	}
+	b := &astBuilder{
+		refs:    make(map[*Node]int),
+		open:    make(map[*Node]bool),
+		anchors: make(map[*Node]string),
+		yaml12:  n.opts.YAML12,
+		owners:  owners,
+	}
+	if de := b.scan(root, 0); de != nil {
+		return nil, de
+	}
+	body := b.value(root, false)
+	if b.err != nil {
+		return nil, b.err
+	}
+	return body, nil
 }
 
 // documentRoot returns the node Decode reads for n, which is n itself or
@@ -139,6 +151,7 @@ func isZero(n *Node) bool {
 // joins one chain in the order the text would hold it, since goccy's
 // formatter, which writes a value out for a type's own UnmarshalYAML
 // method, walks that chain. err is the first duplicate key found.
+// owners, when set, records the Node that each value's tokens came from.
 type astBuilder struct {
 	refs    map[*Node]int
 	open    map[*Node]bool
@@ -146,6 +159,23 @@ type astBuilder struct {
 	yaml12  bool
 	last    *token.Token
 	err     *DecodeError
+	owners  *tokenOwners
+}
+
+// own records tk as a token of the node t, which is never an alias, when
+// the builder keeps a record, and returns tk.
+func (b *astBuilder) own(tk *token.Token, t *Node) *token.Token {
+	if b.owners != nil {
+		b.owners.add(tk, t)
+	}
+	return tk
+}
+
+// owned records the token of n, which the builder built for t, and
+// returns n.
+func (b *astBuilder) owned(n ast.Node, t *Node) ast.Node {
+	b.own(n.GetToken(), t)
+	return n
 }
 
 // target follows x through any aliases to the node they name.
@@ -261,14 +291,14 @@ func (b *astBuilder) value(x *Node, key bool) ast.Node {
 	}
 	if name, ok := b.anchors[t]; ok {
 		pos := tokenPosition(x)
-		alias := ast.Alias(b.tok(token.Alias(" *", pos)))
+		alias := ast.Alias(b.own(b.tok(token.Alias(" *", pos)), t))
 		alias.Value = ast.String(b.tok(token.New(name, name, after(pos))))
 		return alias
 	}
 	name := "a" + strconv.Itoa(len(b.anchors)+1)
 	b.anchors[t] = name
 	pos := position(t)
-	anchor := ast.Anchor(b.tok(token.Anchor(" &", pos)))
+	anchor := ast.Anchor(b.own(b.tok(token.Anchor(" &", pos)), t))
 	anchor.Name = ast.String(b.tok(token.New(name, name, after(pos))))
 	anchor.Value = b.node(t, key)
 	return anchor
@@ -285,11 +315,11 @@ func after(pos *token.Position) *token.Position {
 func (b *astBuilder) node(t *Node, key bool) ast.Node {
 	switch t.Kind {
 	case MappingNode:
-		return b.tagged(t, func() ast.Node { return b.mapping(t) })
+		return b.tagged(t, func() ast.Node { return b.owned(b.mapping(t), t) })
 	case SequenceNode:
-		return b.tagged(t, func() ast.Node { return b.sequence(t) })
+		return b.tagged(t, func() ast.Node { return b.owned(b.sequence(t), t) })
 	default:
-		return b.tagged(t, func() ast.Node { return b.scalar(t, key) })
+		return b.tagged(t, func() ast.Node { return b.owned(b.scalar(t, key), t) })
 	}
 }
 
@@ -303,7 +333,7 @@ func (b *astBuilder) tagged(t *Node, build func() ast.Node) ast.Node {
 	// The parser's tag token holds the space after the tag, so the text
 	// a type's own method receives separates them as the input did, and
 	// a tag as Unmarshal read it keeps its own text.
-	n := ast.Tag(b.tok(token.Tag(text, " "+text+" ", position(t))))
+	n := ast.Tag(b.own(b.tok(token.Tag(text, " "+text+" ", position(t))), t))
 	n.Value = build()
 	read := t.parsed()
 	switch null, ok := n.Value.(*ast.NullNode); {

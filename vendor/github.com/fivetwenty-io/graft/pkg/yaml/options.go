@@ -76,4 +76,13 @@ type EncodeOptions struct {
 	// sortkeys.Spruce, sortkeys.Lexical is also accepted, and
 	// sortkeys.None is refused because Go maps have no order to keep.
 	KeyOrder sortkeys.Mode
+	// Indent is how many columns a nested mapping sits past its parent
+	// key, and a block scalar's content sits past its key. The zero value
+	// means 2, 2 through 9 are accepted, and any other value is refused.
+	Indent int
+	// IndentSequence indents a sequence under a mapping key by Indent
+	// columns, and a root sequence by Indent columns too, as goccy's
+	// IndentSequence(true) does. Without it a sequence sits at its key's
+	// column.
+	IndentSequence bool
 }

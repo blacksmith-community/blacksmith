@@ -471,6 +471,17 @@ func ParseFirstBodyAsWritten(data []byte) (ast.Node, error) {
 // rewrites body in place, so a caller passes a body that nothing else
 // holds.
 func PrepareBody(body ast.Node, tag bool) (ast.Node, error) {
+	return PrepareBodyTracked(body, tag, nil)
+}
+
+// PrepareBodyTracked is PrepareBody for a caller that keeps a record of
+// body's tokens. When moved is set, the steps call it with each token
+// they put in the place of another, such as the new token of a scalar
+// whose tag resolves, so the caller's record can follow. The quoted
+// boolean marker changes a scalar's value in place and keeps its token,
+// and alias expansion and the merge fold keep the token of every value
+// they meet, so moved hears only of tag resolution.
+func PrepareBodyTracked(body ast.Node, tag bool, moved func(from, to *token.Token)) (ast.Node, error) {
 	if err := CheckAnchors(body); err != nil {
 		return nil, err
 	}
@@ -479,7 +490,7 @@ func PrepareBody(body ast.Node, tag bool) (ast.Node, error) {
 	// makes reads as a quoted string, which no coercion turns into a
 	// boolean, and before expansion, so an alias copies the resolved
 	// scalar.
-	body, err := ResolveTags(body)
+	body, err := tagResolver{moved: moved}.resolveTagsIn(body)
 	if err != nil {
 		return nil, err
 	}

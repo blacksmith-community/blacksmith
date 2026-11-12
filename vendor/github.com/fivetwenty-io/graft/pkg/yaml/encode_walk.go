@@ -104,6 +104,9 @@ func (n *normalizer) value(v reflect.Value, path string) (any, error) {
 // composite normalizes a slice, an array, a map, or a struct.
 func (n *normalizer) composite(v reflect.Value, path string) (any, error) {
 	t := v.Type()
+	if t == mapSliceType {
+		return n.orderedItems(v, path)
+	}
 	switch v.Kind() {
 	case reflect.Slice:
 		if v.IsNil() || v.Len() == 0 {
@@ -220,6 +223,36 @@ func (n *normalizer) mapItems(v reflect.Value, path string) (goyaml.MapSlice, er
 	}
 	n.sortItems(items)
 	return items, nil
+}
+
+// orderedItems normalizes a yaml.MapSlice into items in the order it
+// holds them, and refuses two items whose keys write the same text.
+func (n *normalizer) orderedItems(v reflect.Value, path string) (any, error) {
+	if v.Len() == 0 {
+		return goyaml.MapSlice{}, nil
+	}
+	return n.enter(walkID{ptr: v.Pointer(), typ: v.Type(), len: v.Len()}, path, func() (any, error) {
+		items := make(goyaml.MapSlice, 0, v.Len())
+		seen := make(map[string]bool, v.Len())
+		for i := range v.Len() {
+			item := v.Index(i)
+			key, err := n.key(item.Field(0), path+"{key}")
+			if err != nil {
+				return nil, err
+			}
+			text := sortText(key)
+			if seen[text] {
+				return nil, refuse("Marshal does not support a key repeated in a yaml.MapSlice, which %s holds at item %d", path, i)
+			}
+			seen[text] = true
+			value, err := n.value(item.Field(1), path+"{value}")
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, goyaml.MapItem{Key: key, Value: value})
+		}
+		return items, nil
+	})
 }
 
 // key normalizes a map key to a string, which the encoder styles, or to a

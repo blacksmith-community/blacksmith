@@ -61,7 +61,8 @@ func Marshal(v any) ([]byte, error) {
 
 // MarshalWith is Marshal with the options given. It returns an error
 // and no output for a KeyOrder other than the zero value, which means
-// sortkeys.Spruce, and sortkeys.Lexical.
+// sortkeys.Spruce, and sortkeys.Lexical, or for an Indent outside 0 and
+// 2 through 9.
 func MarshalWith(v any, opts EncodeOptions) (out []byte, err error) {
 	mode := opts.KeyOrder
 	switch mode {
@@ -70,6 +71,10 @@ func MarshalWith(v any, opts EncodeOptions) (out []byte, err error) {
 	case sortkeys.Spruce, sortkeys.Lexical:
 	default:
 		return nil, &encodeError{msg: fmt.Sprintf("MarshalWith does not support key order %q; use the zero value, sortkeys.Spruce, or sortkeys.Lexical", string(mode))}
+	}
+
+	if opts.Indent != 0 && (opts.Indent < 2 || opts.Indent > 9) {
+		return nil, &encodeError{msg: fmt.Sprintf("MarshalWith does not support indent %d; use 0, which means 2, or 2 through 9", opts.Indent)}
 	}
 
 	defer func() {
@@ -91,7 +96,7 @@ func MarshalWith(v any, opts EncodeOptions) (out []byte, err error) {
 			return nil, werr
 		}
 	}
-	out, err = yamlcodec.MarshalYAMLTyped(generic, less)
+	out, err = yamlcodec.MarshalYAMLTypedLayout(generic, less, yamlcodec.Layout{Indent: opts.Indent, IndentSequence: opts.IndentSequence})
 	if err != nil {
 		return nil, &encodeError{msg: "cannot encode Go value of type " + typeName(v)}
 	}

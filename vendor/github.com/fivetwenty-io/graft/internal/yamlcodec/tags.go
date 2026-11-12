@@ -65,28 +65,50 @@ func (e *TagValueError) Error() string {
 // takes the place of the tag's and the scalar's tokens, so goccy's
 // formatter still reads the document.
 func ResolveTags(body ast.Node) (ast.Node, error) {
-	return resolveTagsIn(body)
+	return tagResolver{}.resolveTagsIn(body)
 }
 
-func resolveTagsIn(n ast.Node) (ast.Node, error) {
+// tagResolver is the walk ResolveTags makes. moved, when set, hears of
+// each token the walk puts in the place of another, so a caller that
+// keeps a record keyed by token can follow the change.
+type tagResolver struct {
+	moved func(from, to *token.Token)
+}
+
+// replace tells moved that to now stands where from stood.
+func (r tagResolver) replace(from, to *token.Token) {
+	if r.moved != nil && from != nil {
+		r.moved(from, to)
+	}
+}
+
+// splice is spliceTokens, and it tells moved that tk stands where the
+// tag's token and the scalar's first token stood.
+func (r tagResolver) splice(tag, first, last, tk *token.Token) {
+	spliceTokens(tag, first, last, tk)
+	r.replace(tag, tk)
+	r.replace(first, tk)
+}
+
+func (r tagResolver) resolveTagsIn(n ast.Node) (ast.Node, error) {
 	var err error
 	switch x := n.(type) {
 	case *ast.TagNode:
-		return resolveTagNode(x)
+		return r.resolveTagNode(x)
 	case *ast.AnchorNode:
-		x.Value, err = resolveTagsIn(x.Value)
+		x.Value, err = r.resolveTagsIn(x.Value)
 	case *ast.MappingKeyNode:
-		x.Value, err = resolveTagsIn(x.Value)
+		x.Value, err = r.resolveTagsIn(x.Value)
 	case *ast.MappingValueNode:
-		err = resolveMappingValue(x)
+		err = r.resolveMappingValue(x)
 	case *ast.MappingNode:
 		for _, mv := range x.Values {
-			if err = resolveMappingValue(mv); err != nil {
+			if err = r.resolveMappingValue(mv); err != nil {
 				break
 			}
 		}
 	case *ast.SequenceNode:
-		err = resolveSequence(x)
+		err = r.resolveSequence(x)
 	}
 	if err != nil {
 		return nil, err
@@ -96,32 +118,32 @@ func resolveTagsIn(n ast.Node) (ast.Node, error) {
 
 // resolveSequence resolves the tags in seq's items, keeping its entries,
 // which the formatter reads, in step with its values.
-func resolveSequence(seq *ast.SequenceNode) error {
+func (r tagResolver) resolveSequence(seq *ast.SequenceNode) error {
 	for i, v := range seq.Values {
-		r, err := resolveTagsIn(v)
+		got, err := r.resolveTagsIn(v)
 		if err != nil {
 			return err
 		}
-		seq.Values[i] = r
+		seq.Values[i] = got
 		if i < len(seq.Entries) && seq.Entries[i] != nil && seq.Entries[i].Value == v {
-			seq.Entries[i].Value = r
+			seq.Entries[i].Value = got
 		}
 	}
 	return nil
 }
 
-func resolveMappingValue(mv *ast.MappingValueNode) error {
+func (r tagResolver) resolveMappingValue(mv *ast.MappingValueNode) error {
 	if mv == nil {
 		return nil
 	}
-	k, err := resolveTagsIn(mv.Key)
+	k, err := r.resolveTagsIn(mv.Key)
 	if err != nil {
 		return err
 	}
 	if key, ok := k.(ast.MapKeyNode); ok {
 		mv.Key = key
 	}
-	v, err := resolveTagsIn(mv.Value)
+	v, err := r.resolveTagsIn(mv.Value)
 	if err != nil {
 		return err
 	}
@@ -136,7 +158,7 @@ func resolveMappingValue(mv *ast.MappingValueNode) error {
 // spruce, whose parser stops there. The error for a second tag names the
 // line of that tag, where spruce's names the line before it, or none on
 // the first line.
-func resolveTagNode(t *ast.TagNode) (ast.Node, error) {
+func (r tagResolver) resolveTagNode(t *ast.TagNode) (ast.Node, error) {
 	inner := t.Value
 	if a, ok := inner.(*ast.AnchorNode); ok {
 		inner = a.Value
@@ -151,10 +173,10 @@ func resolveTagNode(t *ast.TagNode) (ast.Node, error) {
 	tag := coreTag(t)
 	scalar, anchor := taggedScalar(t.Value)
 	if tag == "" && scalar != nil {
-		return keepTaggedText(t, scalar, anchor), nil
+		return r.keepTaggedText(t, scalar, anchor), nil
 	}
 	if tag == "" || scalar == nil {
-		v, err := resolveTagsIn(t.Value)
+		v, err := r.resolveTagsIn(t.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +200,7 @@ func resolveTagNode(t *ast.TagNode) (ast.Node, error) {
 		return nil, err
 	}
 	out := replacementNode(tag, in, value, scalar, t)
-	spliceTokens(t.Start, first, last, out.GetToken())
+	r.splice(t.Start, first, last, out.GetToken())
 	if anchor != nil {
 		anchor.Value = out
 		return anchor, nil
@@ -223,11 +245,11 @@ func tagName(t *ast.TagNode) string {
 // turn into a boolean, and no text at all, which goccy reads as null and
 // spruce as the empty string. That word, or the empty string, becomes a
 // quoted string under the same tag, and any other scalar stays as it is.
-func keepTaggedText(t *ast.TagNode, scalar ast.ScalarNode, anchor *ast.AnchorNode) ast.Node {
+func (r tagResolver) keepTaggedText(t *ast.TagNode, scalar ast.ScalarNode, anchor *ast.AnchorNode) ast.Node {
 	in, first, last := scalarSource(scalar)
 	if tagName(t) == yamlnode.TagTimestamp {
 		out := replacementNode(yamlnode.TagStr, in, in, scalar, t)
-		spliceTokens(t.Start, first, last, out.GetToken())
+		r.splice(t.Start, first, last, out.GetToken())
 		if anchor != nil {
 			anchor.Value = out
 			return anchor
@@ -242,6 +264,7 @@ func keepTaggedText(t *ast.TagNode, scalar ast.ScalarNode, anchor *ast.AnchorNod
 	}
 	out := replacementNode(yamlnode.TagStr, in, in, scalar, t)
 	tk := out.GetToken()
+	r.replace(first, tk)
 	lead, trail := " ", ""
 	if first != nil && first.Position != nil {
 		pos := *first.Position

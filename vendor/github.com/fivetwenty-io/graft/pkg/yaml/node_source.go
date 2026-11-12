@@ -7,19 +7,72 @@ import (
 	"github.com/goccy/go-yaml/ast"
 	"github.com/goccy/go-yaml/token"
 
+	"github.com/fivetwenty-io/graft/internal/yamlcodec"
 	"github.com/fivetwenty-io/graft/internal/yamlnode"
 	"github.com/fivetwenty-io/graft/internal/yamlprep"
 )
+
+// tokenOwners records, for the syntax tree Decode builds from a Node
+// tree, the Node each token came from, so the decode can hand an
+// Unmarshaler the very node that holds its value. A node reached through
+// an alias is recorded as the node that holds the anchor.
+type tokenOwners struct {
+	byToken map[*token.Token]*Node
+}
+
+// add records tk as a token of n.
+func (o *tokenOwners) add(tk *token.Token, n *Node) {
+	if tk != nil {
+		o.byToken[tk] = n
+	}
+}
+
+// moved records that to stands where from stood, so to has from's owner.
+func (o *tokenOwners) moved(from, to *token.Token) {
+	if n, ok := o.byToken[from]; ok && to != nil {
+		o.byToken[to] = n
+	}
+}
+
+// of returns the Node that the syntax node n came from, or nil when the
+// record holds none.
+func (o *tokenOwners) of(n ast.Node) *Node {
+	if n == nil {
+		return nil
+	}
+	return o.byToken[n.GetToken()]
+}
+
+// trackedSource is the source Decode reads n through when the target can
+// hold an Unmarshaler. It builds the same tree that n.source builds, and
+// fills owners with the Node each of that tree's tokens came from, as the
+// steps after the parse leave them.
+func (n *Node) trackedSource(owners *tokenOwners) source {
+	return func(tag bool) (ast.Node, error) {
+		owners.byToken = make(map[*token.Token]*Node)
+		body, err := n.syntaxTree(owners)
+		if err != nil || body == nil {
+			return nil, err
+		}
+		body, err = yamlcodec.PrepareBodyTracked(body, tag, owners.moved)
+		if err != nil {
+			return nil, translate(err)
+		}
+		return body, nil
+	}
+}
 
 // readText is the document a tree was read from. Unmarshal's own parser
 // reads some scalars differently from the tree, which follows yaml.v3,
 // such as the trailing spaces of a block scalar, which it drops.
 // So Decode parses the document again, once for the whole tree, to learn
-// how Unmarshal read each scalar.
+// how Unmarshal read each scalar. The tree's lines count from the start
+// of the stream, which is lineOffset lines before the start of doc.
 type readText struct {
-	doc     []byte
-	once    sync.Once
-	scalars map[[2]int][]*parsedScalar
+	doc        []byte
+	lineOffset int
+	once       sync.Once
+	scalars    map[[2]int][]*parsedScalar
 }
 
 // parsedScalar is how Unmarshal's parser read a scalar, with its token's
@@ -54,18 +107,18 @@ func (n *Node) parsed() *parsedScalar {
 	return n.text.scalar(n.tokenLine, n.tokenColumn, n.Value, block, n.Kind != ScalarNode)
 }
 
-// scalar returns the scalar whose token sits at line and col in the
-// parse of the document, parsing it on first use. A block scalar is
-// taken only when block is set, and then whatever it holds, since goccy's
-// parser reads the last spaces of a block scalar differently. Any other
-// scalar is taken when it holds value, or is the null of an empty value
-// and value is empty. The parser can put two tokens at one place, such
-// as an explicit key and an empty value after it, so a scalar that holds
-// something else is never taken. With collection set, it returns the
-// collection recorded at the place.
+// scalar returns the scalar whose token sits at line, counted from the
+// start of the stream, and col in the parse of the document, parsing it
+// on first use. A block scalar is taken only when block is set, and then
+// whatever it holds, since goccy's parser reads the last spaces of a
+// block scalar differently. Any other scalar is taken when it holds
+// value, or is the null of an empty value and value is empty. The parser
+// can put two tokens at one place, such as an explicit key and an empty
+// value after it, so a scalar that holds something else is never taken.
+// With collection set, it returns the collection recorded at the place.
 func (r *readText) scalar(line, col int, value string, block, collection bool) *parsedScalar {
 	r.once.Do(r.parse)
-	for _, s := range r.scalars[[2]int{line, col}] {
+	for _, s := range r.scalars[[2]int{line - r.lineOffset, col}] {
 		switch {
 		case s.collection != collection, s.block != block:
 		case collection, block, s.value == value,

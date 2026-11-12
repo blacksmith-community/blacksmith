@@ -16,6 +16,11 @@ import (
 // DecodeError reports why Unmarshal failed, and its text never quotes the
 // input, so it is safe to log when the input holds credentials.
 //
+// When a type's own UnmarshalYAML(*Node) method fails, the DecodeError
+// carries that method's error, which Unwrap returns, so errors.Is and
+// errors.As reach it. Error never prints it, because a method's error
+// often quotes the value it refused.
+//
 // Only the fields are stable. The text Error returns may change between
 // releases.
 type DecodeError struct {
@@ -27,6 +32,17 @@ type DecodeError struct {
 	Kind ErrorKind
 	// Msg describes the failure without quoting any scalar from the input.
 	Msg string
+
+	// cause is the error an UnmarshalYAML method returned, and nil for
+	// any other failure.
+	cause error
+}
+
+// Unwrap returns the error a type's UnmarshalYAML(*Node) method returned
+// when that method failed, and nil for any other failure. That error is
+// the caller's own and may quote the input.
+func (e *DecodeError) Unwrap() error {
+	return e.cause
 }
 
 // Error formats the failure as "yaml: line N: Msg", or "yaml: Msg" when
@@ -61,7 +77,8 @@ func typeError(format string, args ...any) *DecodeError {
 // translate turns an error from graft's codec or from goccy into a
 // DecodeError. It keeps only a message and a position, since the errors
 // it reads can print the source lines around the failure, and those may
-// hold credentials. It never wraps err, for the same reason.
+// hold credentials. It never wraps err, for the same reason, so the only
+// cause a DecodeError carries is one an UnmarshalYAML method gave it.
 func translate(err error) *DecodeError {
 	if err == nil {
 		return nil
