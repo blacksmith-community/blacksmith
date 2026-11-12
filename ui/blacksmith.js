@@ -7508,6 +7508,17 @@
       .reduce((sum, key) => sum + activityCount(task[key]), 0);
     return total ? Math.min(100, Math.round(settled / total * 100)) : 0;
   };
+  // Instances that finished, whatever their outcome, and the total.
+  const upgradeTaskSettled = task => ['completed_count', 'failed_count', 'cancelled_count', 'skipped_count', 'unknown_count']
+    .reduce((sum, key) => sum + activityCount(task[key]), 0);
+  // A percentage only reads right when every settled instance succeeded.
+  // Otherwise it says how many finished, so a failed run never reads 100%.
+  const upgradeProgressLabel = task => {
+    const total = activityCount(task.total_count);
+    const settled = upgradeTaskSettled(task);
+    if (total && settled > activityCount(task.completed_count)) return `${Math.min(settled, total)} of ${total} finished`;
+    return `${upgradeTaskProgress(task)}%`;
+  };
   const activityStatus = status => String(status || 'unknown').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
   // The title a job carries on its Activity card, on its own page, and in
@@ -9193,7 +9204,7 @@
     }
     if (!isCommand) columns.push({ label: 'After a failure', html: escapeHtml(taskFailureText(task)), className: 'task-pause-on-failure' });
     const nodes = isCommand ? commandNodeProgress(task) : null;
-    columns.push({ label: 'Progress', html: `${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} instances completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)${nodes && nodes.total ? (nodes.failed || nodes.skipped ? `; nodes: ${[`${nodes.ran} ran`, nodes.failed ? `${nodes.failed} failed` : '', nodes.skipped ? `${nodes.skipped} skipped` : '', nodes.total - nodes.done ? `${nodes.total - nodes.done} waiting` : ''].filter(Boolean).join(', ')}` : `, ${nodes.done}/${nodes.total} nodes`) : ''}` });
+    columns.push({ label: 'Progress', html: `${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} instances completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${upgradeProgressLabel(task)})${nodes && nodes.total ? (nodes.failed || nodes.skipped ? `; nodes: ${[`${nodes.ran} ran`, nodes.failed ? `${nodes.failed} failed` : '', nodes.skipped ? `${nodes.skipped} skipped` : '', nodes.total - nodes.done ? `${nodes.total - nodes.done} waiting` : ''].filter(Boolean).join(', ')}` : `, ${nodes.done}/${nodes.total} nodes`) : ''}` });
     columns.push({ label: 'Instances', html: String(instances.length) });
     columns.push({ label: 'Created', html: escapeHtml(formatTaskTime(task.created_at)) });
     const summaryTable = `<table class="task-summary-table" data-sortable="false"><thead><tr>${columns.map((c) => `<th scope="col" class="label">${escapeHtml(c.label)}</th>`).join('')}</tr></thead><tbody><tr>${columns.map((c) => `<td class="value${c.className ? ` ${c.className}` : ''}" data-label="${escapeAttribute(c.label)}">${c.html}</td>`).join('')}</tr></tbody></table>`;

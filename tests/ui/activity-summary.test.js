@@ -54,7 +54,7 @@ t('Instances is a count in its own cell and the old heading is gone',async()=>{
 
 t('progress names its unit and a command run adds node progress',async()=>{
  const up=await start(upgradeTask());
- expect(cells(up.d).Progress).toBe('1/2 instances completed, 1 failed (100%)');
+ expect(cells(up.d).Progress).toBe('1/2 instances completed, 1 failed (2 of 2 finished)');
  const cmd=await start(commandTask());
  expect(cells(cmd.d).Progress).toContain('instances completed');
  expect(cells(cmd.d).Progress).toContain('2/3 nodes');
@@ -119,4 +119,19 @@ t('a poll moves the stamp in the route bar and hides the old line on a job page'
  expect(stamp.textContent).toMatch(/^Updated \d{4}-\d\d-\d\d \d\d:\d\d:\d\d [A-Z]+$/);
  const css=fs.readFileSync(path.join(UI,'blacksmith.css'),'utf8');
  expect(css).toMatch(/#upgrade \.upgrade-right-panel\.job-detail \.upgrade-poll-updated\s*\{\s*display:\s*none/);
+});
+
+t('a run whose only instance failed does not read as 100 percent on any page',async()=>{
+ const over={total_count:1,completed_count:0,failed_count:1};
+ for(const task of [upgradeTask({...over,status:'failed',instances:[{instance_id:'a',instance_name:'a',status:'failed'}]}),commandTask({...over,status:'failed'}),certTask({...over,status:'failed'})]){
+  const {d}=await start(task);
+  const text=cells(d).Progress;
+  expect(text.startsWith('0/1 instances completed, 1 failed')).toBe(true);
+  expect(text).toContain('(1 of 1 finished)');
+  expect(text).not.toContain('100%');
+ }
+});
+t('a run that completes every instance still shows its percentage',async()=>{
+ const {d}=await start(certTask());
+ expect(cells(d).Progress).toBe('1/1 instances completed (100%)');
 });
