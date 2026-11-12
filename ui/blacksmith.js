@@ -351,10 +351,11 @@
     if (options.requireText) {
       const wrap = make('div', 'dialog-modal-ack');
       const label = make('label', 'dialog-modal-ack-label');
-      confirmWordLabel(label, 'Type ', normalizeConfirmText(options.requireText), ' to continue');
+      confirmWordLabel(label, 'To continue, type ', normalizeConfirmText(options.requireText), ' below.');
       label.setAttribute('for', 'dialog-modal-ack-input');
       const input = make('input', 'dialog-modal-input dialog-modal-ack-input');
       input.type = 'text';
+      input.placeholder = normalizeConfirmText(options.requireText);
       input.id = 'dialog-modal-ack-input';
       input.setAttribute('autocomplete', 'off');
       input.setAttribute('autocapitalize', 'off');
@@ -3153,7 +3154,7 @@
     next.disabled = batchFlow.submitting || batchFlow.loading || discardReading() || Boolean(issue) || Boolean(blocker) || (step === 3 && !acknowledged);
     next.dataset.variant = step === 3 && review?.options.danger ? 'danger' : 'primary';
     const waiting = batchFlow.submitting ? 'The operation is starting. Please wait.' : batchFlow.loading ? 'Preparing the review. The button turns on when it is ready.' : discardReading() ? 'Checking whether the run already started. Please wait.' : '';
-    const helpText = issue || blocker || (step === 3 && waiting) || (step === 3 && needsWord && !acknowledged ? `Type ${normalizeConfirmText(needsWord)} in the confirmation field. The typed word keeps a stray click or keypress from starting this operation.` : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
+    const helpText = issue || blocker || (step === 3 && waiting) || (step === 3 && needsWord && !acknowledged ? (normalizeConfirmText(document.getElementById('batch-flow-ack')?.value) ? `That doesn't match. Type "${normalizeConfirmText(needsWord)}" exactly, with the phrase shown in the label.` : `To confirm, type "${normalizeConfirmText(needsWord)}" in the field above. Typing it keeps a stray click or keypress from starting this operation.`) : step === 3 ? 'Confirming creates a task. Track its progress in Activity.' : 'Your choices are kept when you move between steps.');
     const help = document.getElementById('batch-flow-help');
     if (help.textContent !== helpText) help.textContent = helpText;
     document.getElementById('batch-activity').disabled = batchFlow.submitting;
@@ -3225,8 +3226,8 @@
     if (options.requireText) {
       host.appendChild(rotateEl('h3','batch-review-section-title','Confirm this operation'));
       const label = rotateEl('label', 'batch-ack-label');
-      confirmWordLabel(label, 'Type ', normalizeConfirmText(options.requireText), ' to confirm');
-      const input = document.createElement('input'); input.id = 'batch-flow-ack'; input.autocomplete = 'off'; input.spellcheck = false;
+      confirmWordLabel(label, 'To confirm, type ', normalizeConfirmText(options.requireText), ' below.');
+      const input = document.createElement('input'); input.id = 'batch-flow-ack'; input.placeholder = normalizeConfirmText(options.requireText); input.autocomplete = 'off'; input.spellcheck = false;
       input.addEventListener('input', updateBatchFlow); label.appendChild(input); host.appendChild(label);
     }
     return new Promise(resolve => {

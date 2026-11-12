@@ -8,7 +8,7 @@ const html=fs.readFileSync(path.join(UI,'index.html'),'utf8');
 // Each pair is copy that said what without why, and the text that replaced it.
 const rewrites=[
  ["'Certificate inventory is turned off.'","Certificate inventory is turned off on this broker, so certificate operations can\\'t start here. An administrator turns it on with certificates.inventory.enabled."],
- ['in the confirmation field.`','in the confirmation field. The typed word keeps a stray click or keypress from starting this operation.`'],
+ ['in the confirmation field.`','in the field above. Typing it keeps a stray click or keypress from starting this operation.`'],
  ['Shown in Activity, e.g.','A name helps you find this job in Activity later, such as “October service update”. Leave it blank to use a generated name.'],
  ["'The last attempt to start this run did not finish.'","The last attempt to start this run didn\\'t finish, so check Activity before you run it again."],
  ['The selected service’s primary release. Choose a service above to enable.','This is the service’s own release. Each service has a different one, so choose a single service above to pick a version.'],

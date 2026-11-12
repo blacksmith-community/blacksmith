@@ -14229,3 +14229,16 @@ tr.row-link { cursor: pointer; }
   height: 8px;
   border-radius: 50%;
 }
+
+/* The phrase an operator must type, set apart from the sentence around it. */
+.confirm-word {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--border-color, currentColor);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .95em;
+  font-weight: 600;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  overflow-wrap: anywhere;
+}
