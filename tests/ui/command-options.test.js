@@ -255,3 +255,25 @@ t('the Run as options keep room between them',async()=>{
  expectNoAlerts(env);
  }finally{w.close();}
 });
+
+t('a sudo command run as vcap shows a warning that never quotes the command, and root clears it',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await openOptions(env);
+ const text=d.querySelector('#command-text');
+ const warning=()=>d.querySelector('#command-sudo-warning');
+ expect(warning().hidden).toBe(true);
+ type(w,text,'echo hi && sudo ls /var/vcap');
+ expect(warning().hidden).toBe(false);
+ expect(warning().textContent).toBe("sudo doesn't work for commands that run as vcap. Choose root instead.");
+ expect([...warning().attributes].some((a)=>a.value.includes('sudo ls'))).toBe(false);
+ const root=d.querySelector('#command-user-root');root.checked=true;root.dispatchEvent(new w.Event('change',{bubbles:true}));
+ expect(warning().hidden).toBe(true);
+ const vcap=d.querySelector('#command-user-vcap');vcap.checked=true;vcap.dispatchEvent(new w.Event('change',{bubbles:true}));
+ expect(warning().hidden).toBe(false);
+ for(const cmd of ['sudo ls','ls;sudo ls','ls || sudo ls','cat x | sudo tee y','ls\nsudo ls']){ type(w,text,cmd);expect(warning().hidden).toBe(false); }
+ for(const cmd of ['pseudo ls','echo sudoers','ls /usr/bin/sudo','echo "a" # sudoku']){ type(w,text,cmd);expect(warning().hidden).toBe(true); }
+ // The form still submits: the warning blocks nothing.
+ type(w,text,'sudo ls');
+ expect(d.querySelector('#command-text').disabled).toBe(false);
+ }finally{w.close();}
+});

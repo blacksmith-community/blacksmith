@@ -151,3 +151,17 @@ t('the error tint is built from a theme token',()=>{
  expect(m[1]).toMatch(/color-mix\([^)]*var\(--danger\)/);
  expect(m[1]).not.toMatch(/#[0-9a-f]{3,6}\b|rgb\(/i);
 });
+
+t('a sudo failure under vcap says vcap cannot use sudo and replaces the generic hint',async()=>{
+ const out='sudo: The "no new privileges" flag is set, which prevents sudo from running as root.\nPermission denied\n';
+ const {d}=await setup(task([failedNode({exit_code:1,reason:'The command exited with status 1.'})]),merged(out));
+ const hints=text(explain(d));
+ expect(hints).toContain("Commands that run as vcap can't use sudo. Choose root under Run as, and leave sudo out of the command.");
+ expect(hints).not.toMatch(/choose root under Run as if it needs/);
+ const line=await setup(task([failedNode({exit_code:1})]),merged('sudo: a password is required\n'));
+ expect(text(explain(line.d))).toContain("can't use sudo");
+ const root=await setup(task([failedNode({exit_code:1})],{},{run_as:'root'}),merged(out));
+ expect(text(explain(root.d))).not.toContain("can't use sudo");
+ const plain=await setup(task([failedNode({exit_code:1})]),merged('the word sudo: is fine mid line\nPermission denied\n'));
+ expect(text(explain(plain.d))).not.toContain("can't use sudo");
+});

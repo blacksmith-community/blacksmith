@@ -5224,6 +5224,9 @@
     note.hidden = !commandState.maxInFlightNote;
   };
 
+  // sudo as a word where a command can start: the beginning, or after ; & | or a newline.
+  const COMMAND_SUDO_START = /(?:^|[;&|\n])[ \t]*sudo(?=\s|$)/;
+
   // Brings the command pane's controls in line with commandState. Every
   // change to the state, or to what the broker reported, ends here.
   const syncCommandOptions = () => {
@@ -5234,6 +5237,8 @@
     root.disabled = Boolean(commandState.rootOff);
     pane.querySelector('#command-user-vcap').checked = commandState.user === 'vcap';
     root.checked = commandState.user === 'root';
+    const sudoWarning = pane.querySelector('#command-sudo-warning');
+    if (sudoWarning) sudoWarning.hidden = !(commandState.user === 'vcap' && COMMAND_SUDO_START.test(commandState.text || ''));
     const rootNote = pane.querySelector('#command-root-note');
     rootNote.textContent = commandState.rootOff ? COMMAND_ROOT_OFF_NOTE : 'Root can change anything on the VM, so choose it only when vcap can\'t do the job.';
     const noParallel = Boolean(commandState.preview ? !commandState.preview.available : commandState.availableNoParallel);
@@ -5773,6 +5778,11 @@
     const rootNote = rotateEl('p', 'batch-field-help');
     rootNote.id = 'command-root-note';
     userSet.appendChild(rootNote);
+    // A warning only. It never quotes the command and never blocks the form.
+    const sudoWarning = rotateEl('p', 'batch-field-help command-sudo-warning', 'sudo doesn\'t work for commands that run as vcap. Choose root instead.');
+    sudoWarning.id = 'command-sudo-warning';
+    sudoWarning.hidden = true;
+    userSet.appendChild(sudoWarning);
     pane.appendChild(userSet);
 
     const timeoutRow = rotateEl('div', 'filter-row');
@@ -8697,7 +8707,10 @@
     if (exit === 124 || node.status === 'timed_out') hints.push('The command timed out.');
     if (exit === 130) hints.push('The command was interrupted.');
     if (exit === 137) hints.push('The command was killed, often because the node ran out of memory.');
-    if (runAs === 'vcap' && /permission denied/i.test(outputText || '')) hints.push('It ran as vcap, so choose root under Run as if it needs root access.');
+    // A vcap command runs with no new privileges, so sudo can never work. That
+    // hint outranks the general permission one.
+    if (runAs === 'vcap' && (/no new privileges/i.test(outputText || '') || /^\s*sudo:/im.test(outputText || ''))) hints.push('Commands that run as vcap can\'t use sudo. Choose root under Run as, and leave sudo out of the command.');
+    else if (runAs === 'vcap' && /permission denied/i.test(outputText || '')) hints.push('It ran as vcap, so choose root under Run as if it needs root access.');
     return hints;
   };
 
