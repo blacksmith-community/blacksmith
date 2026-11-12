@@ -8328,6 +8328,44 @@ bs-tabs > .broker-tab-pane[hidden] {
   display: none;
 }
 
+/* Endpoint Marketplace and Services views. The tab panel already draws the
+   frame, so the boxes nested inside it lose theirs, and the gap under the tab
+   row is 10px. These selectors reach only the endpoint views. */
+.broker-details-container bs-tabs > .cf-detail-panel {
+  padding-top: 10px;
+}
+
+.broker-details-container .marketplace-services-table-container {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin-top: 0;
+}
+
+.broker-details-container .org-space-selector {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  margin-bottom: 0.5rem;
+}
+
+.broker-details-container .org-space-table {
+  border: 0;
+  border-collapse: collapse;
+}
+
+.broker-details-container .org-space-table td {
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+}
+
+.broker-details-container .org-space-table td:first-child,
+.broker-details-container .org-space-table td:nth-child(3) {
+  font-weight: 600;
+}
+
 /* Responsive design for broker tab */
 @media (max-width: 768px) {
   .endpoint-selector-table {
