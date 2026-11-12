@@ -47,7 +47,7 @@ test('headings are styled as muted uppercase labels apart from the links', () =>
   expect(css).not.toMatch(/\.rail-group-label:(hover|active|focus)/);
   const option = css.match(/\.rail-list \.rail-link \{([^}]*)\}/)[1];
   expect(option).toMatch(/padding: 6px 10px 6px 35px/);
-  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/forge-theme.css?v=20261112-oat-368');
-  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.css?v=20261112-oat-413');
+  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/forge-theme.css?v=20261112-oat-369');
+  expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.css?v=20261112-oat-414');
   expect(fs.readFileSync(path.join(UI, 'index.html'), 'utf8')).toContain('/blacksmith.js?v=20261112-oat-467');
 });

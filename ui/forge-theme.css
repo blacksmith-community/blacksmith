@@ -46,7 +46,6 @@
   --rotate-pressed-bg: var(--primary); --rotate-pressed-text: var(--primary-foreground);
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-body { margin: 0; background: var(--background); font-size: 15px; line-height: 1.5; }
 body > header { background: #171b20; color: #f7f3ea; }
 body > header > .wrap, body > header > .wrap > div { display: flex; align-items: center; gap: 12px; }
 body > header > .wrap { justify-content: space-between; }
@@ -896,9 +895,6 @@ button.version-item > span { display: block; }
 .minimized-terminal-tab { padding: 2px 8px; }
 .terminal-tab > .terminal-tab-select { padding: 0; text-align: left; }
 .terminal-tab > .tab-close { min-width: 28px; min-height: 28px; padding: 2px; opacity: 1; }
-
-/* Switch text and surfaces together; crossfading inherited text loses contrast. */
-body { transition: none; }
 
 th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 

@@ -684,15 +684,21 @@ select option {
   --log-text: #e0e0e0;
 }
 
+/* The one definition of the page body. Narrower rules for the body, such as
+   the full-height shell in routes.css, stay beside the layouts they belong to. */
 body {
-  background-color: var(--bg-primary);
-  font-family: sans-serif;
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
   min-height: 100dvh;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  /* Text and surfaces switch together, because crossfading inherited text loses contrast. */
+  transition: none;
 }
 
 
