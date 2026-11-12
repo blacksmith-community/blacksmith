@@ -127,7 +127,7 @@ t('the instance creation time uses the shared formatter with an ISO title', () =
       const host = w.document.createElement('div');
       host.innerHTML = w.serviceInstanceDetailsContent.i1;
       const row = Array.from(host.querySelectorAll('tr')).find((tr) => tr.querySelector('th').textContent === 'created at');
-      return row.querySelector('.copy-wrapper > span');
+      return row.querySelector('.copy-first-text');
     };
     const created = render({ created_at: moment });
     expect(created.textContent).toBe('2026-10-31 23:06:32 EDT');

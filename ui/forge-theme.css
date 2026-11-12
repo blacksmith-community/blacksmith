@@ -885,14 +885,10 @@ body > header .theme-toggle { flex-shrink: 0; white-space: nowrap; }
 
 :root[data-contrast="high"] :is(body,button,input,select,textarea,a) { transition: none; }
 
-#blacksmith .entity-technical .service-info-table { table-layout: auto; }
-#blacksmith .entity-technical .service-info-table th.info-key { width: 12rem; white-space: normal; }
-#blacksmith .entity-technical .info-value { width: auto; max-width: none; }
-#blacksmith .entity-technical .copy-wrapper { display: flex; align-items: flex-start; gap: 8px; }
-#blacksmith .entity-technical .copy-wrapper > span { min-width: 0; overflow-wrap: anywhere; }
-#blacksmith .entity-technical .entity-copy { flex-shrink: 0; }
-
-@media (max-width: 540px) { #blacksmith .entity-technical .service-info-table th.info-key { width: 8rem; } }
+/* The key column is as wide as its longest key and no wider, so the values take the rest of the panel. */
+:is(#blacksmith, #services) .entity-technical .service-info-table { table-layout: auto; width: 100%; }
+:is(#blacksmith, #services) .entity-technical .service-info-table th.info-key { width: 1%; white-space: nowrap; font-weight: 700; }
+:is(#blacksmith, #services) .entity-technical .info-value { width: auto; max-width: none; }
 
 /* Wrapped header controls must retain their dark surface and visible focus. */
 body > header { height: auto; min-height: 56px; flex-shrink: 0; }

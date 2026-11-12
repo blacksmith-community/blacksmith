@@ -2470,7 +2470,11 @@
   // lowercase unless its first word is an acronym such as VM.
   const metricLinkLabel = (label) => (/[A-Z]/.test(label.split(/\s/)[0].slice(1)) ? label : label.charAt(0).toLowerCase() + label.slice(1));
   const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(metricLinkLabel(label))} →</span></button>`;
-  const entityMetadata = (pairs, title = 'Technical details', titles = {}) => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span${titles[label] ? ` title="${escapeAttribute(titles[label])}"` : ''}>${escapeHtml(typeof value === 'object' ? JSON.stringify(value,null,2) : String(value ?? 'Not reported'))}</span>${entityCopy(typeof value === 'object' ? JSON.stringify(value,null,2) : value,label)}</span></td></tr>`).join('')}</tbody></table></details>`;
+  const entityMetadata = (pairs, title = 'Technical details', titles = {}) => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => {
+    const empty = value === undefined || value === null || value === '';
+    const text = empty ? 'Not reported' : typeof value === 'object' ? JSON.stringify(value,null,2) : String(value);
+    return `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value">${copyFirst(`<span class="copy-first-text"${titles[label] ? ` title="${escapeAttribute(titles[label])}"` : ''}>${escapeHtml(text)}</span>`, empty ? '' : entityCopy(text,label))}</td></tr>`;
+  }).join('')}</tbody></table></details>`;
 
   const hasVmAlert = (instance) => !!instance.vm_status && instance.vm_status !== 'running';
 
