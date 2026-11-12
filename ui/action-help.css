@@ -23,8 +23,11 @@
 body[data-action-labels] [data-icon-help] { width: auto !important; max-width: 100%; gap: 6px; }
 body[data-action-labels] [data-icon-help]::after { display: inline; content: attr(data-action-help); font-size: .8125rem; white-space: normal; }
 @media (hover: none) and (pointer: coarse) {
-  [data-icon-help] { width: auto !important; min-height: 40px; max-width: 100%; gap: 6px; }
-  [data-icon-help]::after { display: inline; content: attr(data-action-help); font-size: .8125rem; white-space: normal; }
+  /* Icon buttons stay icon-only squares in tables and the header. Only a
+     toolbar with room for the words lets the label expand. */
+  [data-icon-help] { min-width: 44px; min-height: 44px; }
+  :is(.table-controls-container, [data-label-room]) [data-icon-help] { width: auto !important; max-width: 100%; gap: 6px; }
+  :is(.table-controls-container, [data-label-room]) [data-icon-help]::after { display: inline; content: attr(data-action-help); font-size: .8125rem; white-space: normal; }
 }
 .minimized-terminal-tab { display: inline-flex; align-items: center; gap: 4px; }
 .minimized-terminal-tab .minimized-session-open { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 24rem; padding: 4px 6px; background: transparent; color: inherit; border: 0; }
