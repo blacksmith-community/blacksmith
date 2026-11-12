@@ -58,9 +58,9 @@ test('the registration step marks are Lucide check and x in the markup, not CSS 
   expect(pages['blacksmith.js']).not.toContain('<div class="step-icon"></div>');
 });
 
-test('Back to Jobs shows a Lucide arrow-left beside its text', () => {
+test('the command key prompt keeps a Back to Jobs with a Lucide arrow-left, and the job page has none', () => {
   const src = read('blacksmith.js');
   expect(src).not.toMatch(/&#8592;|\\u2190|←/);
-  expect(src).toMatch(/class="back-to-list"[^>]*>\$\{blacksmithIcon\('arrow-left'[^}]*\}\)\}\s*Back to Jobs/);
+  expect(src).not.toMatch(/class="back-to-list"/);
   expect(src).toMatch(/const back = rotateEl\('button', 'back-to-list'\);[\s\S]{0,200}blacksmithIcon\('arrow-left'/);
 });

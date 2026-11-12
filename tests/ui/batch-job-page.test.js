@@ -64,7 +64,7 @@ t('the status is the same pill the Activity card uses',async()=>{
  expect(pill.textContent).toBe('Completed');
 });
 
-t('the job page marks the panel so the settings and the back link hide',async()=>{
+t('the job page marks the panel so the settings and the key prompt back link hide',async()=>{
  const {w,d}=await start();
  const panel=d.querySelector('#upgrade .upgrade-right-panel');
  expect(panel.classList.contains('job-detail')).toBe(true);

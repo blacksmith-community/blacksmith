@@ -513,7 +513,7 @@ t('hidden control and bidi characters in the command and reason show as escapes,
  const pre=d.querySelector('#upgrade pre.command-text');
  expect(pre.textContent==='echo a\\u0007b\\u001Bc\\u202Ed\ne\tf').toBe(true);
  expect(d.querySelector('#upgrade .command-hidden-note')!==null).toBe(true);
- const reason=[...d.querySelectorAll('#upgrade .summary-row')].find(r=>r.textContent.startsWith('Reason'));
+ const reason=d.querySelector('#upgrade .task-summary-table td[data-label="Reason"]');
  expect(reason.textContent.includes('‮')).toBe(false);expect(reason.textContent.includes('\\u202E')).toBe(true);
  expect(/[\u0007\u001b‮]/.test(d.querySelector('#upgrade .upgrade-task-detail').textContent)).toBe(false);
  // Copy still sends the real text.
@@ -707,12 +707,12 @@ t('every hidden character shows as an escape in the command, the reason, and the
  await open(env);
  const host=d.querySelector('#upgrade .upgrade-task-detail');
  // A clean command still gets a note about the reason.
- const reasonRow=[...host.querySelectorAll('.summary-row')].find(r=>r.textContent.startsWith('Reason'));
- expect(reasonRow!==undefined).toBe(true);
+ const reasonRow=host.querySelector('.task-summary-table td[data-label="Reason"]');
+ expect(reasonRow!==null).toBe(true);
  expect(reasonRow.textContent.includes(want)).toBe(true);
  expect(reasonRow.querySelector('.command-hidden-note')!==null).toBe(true);
  expect(reasonRow.querySelector('p')).toBeNull();
- expect(reasonRow.querySelector('.value .command-hidden-note').tagName).toBe('SPAN');
+ expect(reasonRow.querySelector('.command-hidden-note').tagName).toBe('SPAN');
  expect(codes.some(c=>host.textContent.includes(String.fromCharCode(c)))).toBe(false);
  expect(host.querySelectorAll('.command-hidden-note').length).toBe(1);
  env.state.detail=task({command:{...task().command,command:raw,reason:'clean'}});

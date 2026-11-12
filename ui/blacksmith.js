@@ -7648,6 +7648,9 @@
     return bar;
   };
 
+  // The route bar reads the line from here when it draws a job page.
+  window.blacksmithPollStamp = () => (upgradePollUpdatedAt && !upgradePollFailed ? `Updated ${clockTime(upgradePollUpdatedAt)}` : '');
+
   const renderPollStatus = () => {
     const bar = ensurePollStatus();
     if (!bar) return;
@@ -7655,6 +7658,12 @@
     const updated = bar.querySelector('.upgrade-poll-updated');
     const failed = bar.querySelector('.upgrade-poll-failed');
     updated.textContent = stamp && !upgradePollFailed ? `Updated ${stamp}` : '';
+    // A job page shows the same line at the end of the route bar.
+    const routeStamp = document.getElementById('route-updated');
+    if (routeStamp) {
+      routeStamp.textContent = updated.textContent;
+      if (stamp) routeStamp.setAttribute('title', stampIso(upgradePollUpdatedAt));
+    }
     if (stamp) updated.setAttribute('title', stampIso(upgradePollUpdatedAt));
     updated.hidden = upgradePollFailed || !stamp;
     failed.hidden = !upgradePollFailed;
@@ -8768,19 +8777,32 @@
     return wrap;
   };
 
-  const buildCommandSummaryRows = (spec) => {
-    const rows = document.createElement('div');
-    const add = (label, value, extra) => {
-      const row = rotateEl('div', 'summary-row');
-      row.appendChild(rotateEl('span', 'label', `${label}:`));
-      const cell = rotateEl('span', 'value');
-      if (extra) cell.appendChild(extra); else cell.textContent = value;
-      row.appendChild(cell);
-      rows.appendChild(row);
-      return cell;
-    };
-    const holder = document.createElement('div');
-    holder.appendChild(buildRevealedPre('command-text', spec.command || ''));
+  // The command's own settings as summary columns, in the order the shared
+  // summary table shows them. The command text itself sits below the table.
+  const commandSummaryColumns = (spec) => {
+    const columns = [
+      { label: 'Run as', html: escapeHtml(spec.run_as || '') },
+      { label: 'Shell', html: escapeHtml(spec.shell || '/bin/bash') },
+      { label: 'Timeout', html: `${Number(spec.timeout_seconds) || 0} seconds` },
+      { label: 'Parallel', html: spec.parallel ? `Yes, ${Number(spec.max_in_flight) || 1} at a time` : 'No' }
+    ];
+    if (spec.reason) {
+      const reason = revealHiddenChars(spec.reason);
+      columns.push({ label: 'Reason', html: `${escapeHtml(reason.shown)}${reason.hidden ? '<span class="command-hidden-note">The reason contains hidden control characters, shown here as \\u escapes.</span>' : ''}` });
+    }
+    return columns;
+  };
+
+  // How many nodes of a command task have finished, out of all of them.
+  const commandNodeProgress = (task) => {
+    const nodes = (task.instances || []).flatMap((instance) => (instance && instance.command && instance.command.vms) || []);
+    return { total: nodes.length, done: nodes.filter((node) => node && (node.phase === 'settled' || node.phase === 'skipped')).length };
+  };
+
+  // The command as a full-width block below the summary table.
+  const buildCommandBlock = (spec) => {
+    const block = rotateEl('div', 'command-block');
+    block.appendChild(buildRevealedPre('command-text', spec.command || ''));
     const copy = rotateEl('button', 'command-copy', 'Copy');
     copy.type = 'button';
     copy.addEventListener('click', () => {
@@ -8791,18 +8813,8 @@
         if (pending && typeof pending.catch === 'function') pending.catch(() => {});
       } catch (err) { /* nothing visible, and nothing logged */ }
     });
-    holder.appendChild(copy);
-    add('Command', '', holder);
-    add('Run as', spec.run_as || '');
-    add('Shell', spec.shell || '/bin/bash');
-    add('Timeout', `${Number(spec.timeout_seconds) || 0} seconds`);
-    add('Parallel', spec.parallel ? `Yes, ${Number(spec.max_in_flight) || 1} at a time` : 'No');
-    if (spec.reason) {
-      const reason = revealHiddenChars(spec.reason);
-      const cell = add('Reason', reason.shown);
-      if (reason.hidden) cell.appendChild(rotateEl('span', 'command-hidden-note', 'The reason contains hidden control characters, shown here as \\u escapes.'));
-    }
-    return rows;
+    block.appendChild(copy);
+    return block;
   };
 
   // Render task detail view
@@ -8892,69 +8904,42 @@
     const targets = describeUpgradeTargets(task);
     const spec = task.certificates || {};
     const jobName = jobTitle(task);
-    const targetRows = isCommand
-      ? '<div class="command-summary-host"></div>'
-      : isCertificates
-      ? `
-          <div class="summary-row">
-            <span class="label">Mode</span>
-            <span class="value">${escapeHtml(({patch: 'Patch in place', redeploy: 'Redeploy', converge: 'Converge'})[spec.mode] || spec.mode || '')}</span>
-          </div>
-          ${spec.reason ? `
-          <div class="summary-row">
-            <span class="label">Reason</span>
-            <span class="value">${escapeHtml(spec.reason)}</span>
-          </div>` : ''}`
-      : `
-          <div class="summary-row">
-            <span class="label">System</span>
-            <span class="value">${escapeHtml(targets.stemcell) || 'keep current'}</span>
-          </div>
-          ${targets.releases.length ? `
-          <div class="summary-row">
-            <span class="label">Releases</span>
-            <span class="value">${escapeHtml(targets.releases.join(', '))}</span>
-          </div>` : ''}`;
-    const failureRow = isCommand ? '' : `
-          <div class="summary-row">
-            <span class="label">After a failure</span>
-            <span class="value task-pause-on-failure">${escapeHtml(taskFailureText(task))}</span>
-          </div>`;
+    // Status leads, then the job's own settings, then the counts and the
+    // creation time. Every kind of job shares this one row.
+    const statusHtml = `<span class="activity-status-label">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : escapeHtml(activityStatus(task.status))}</span>${(isCertificates || isCommand) && isPaused ? '' : isPaused ? ' (waiting to resume)' : awaitsCleanup ? ' (cleanup waits for a resume)' : ''}`;
+    const columns = [{ label: 'Status', html: statusHtml, className: `status-${escapeAttribute(task.status)}` }];
+    if (isCommand) {
+      commandSummaryColumns(task.command || {}).forEach((column) => columns.push(column));
+    } else if (isCertificates) {
+      columns.push({ label: 'Mode', html: escapeHtml(({patch: 'Patch in place', redeploy: 'Redeploy', converge: 'Converge'})[spec.mode] || spec.mode || '') });
+      if (spec.reason) columns.push({ label: 'Reason', html: escapeHtml(spec.reason) });
+    } else {
+      columns.push({ label: 'System', html: escapeHtml(targets.stemcell) || 'keep current' });
+      if (targets.releases.length) columns.push({ label: 'Releases', html: escapeHtml(targets.releases.join(', ')) });
+    }
+    if (!isCommand) columns.push({ label: 'After a failure', html: escapeHtml(taskFailureText(task)), className: 'task-pause-on-failure' });
+    const nodes = isCommand ? commandNodeProgress(task) : null;
+    columns.push({ label: 'Progress', html: `${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} instances completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)${nodes && nodes.total ? `, ${nodes.done}/${nodes.total} nodes` : ''}` });
+    columns.push({ label: 'Instances', html: String(instances.length) });
+    columns.push({ label: 'Created', html: escapeHtml(formatTaskTime(task.created_at)) });
+    const summaryTable = `<table class="task-summary-table"><thead><tr>${columns.map((c) => `<th scope="col" class="label">${escapeHtml(c.label)}</th>`).join('')}</tr></thead><tbody><tr>${columns.map((c) => `<td class="value${c.className ? ` ${c.className}` : ''}" data-label="${escapeAttribute(c.label)}">${c.html}</td>`).join('')}</tr></tbody></table>`;
+    const notices = `${pausedOnFailure ? `
+          <p class="task-notice"><strong>Paused because</strong> <span class="task-pause-reason">${escapeHtml(task.pause_reason)}</span></p>` : ''}${(isCertificates || isCommand || pausedOnFailure) && isPaused && hasFailedInstance ? `
+          <p class="task-notice"><strong>Resume</strong> The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.</p>` : ''}`;
 
     rerenderTaskPanel(tasksContainer, `detail:${task.id}`, () => {
       tasksContainer.innerHTML = `
       <div class="upgrade-task-detail">
         <div class="task-detail-header">
-          <button type="button" class="back-to-list" data-task-action="back" data-keep-key="action:back">${blacksmithIcon('arrow-left', { size: 16 })}Back to Jobs</button>
           <h3 tabindex="-1" data-keep-key="task-heading">${escapeHtml(jobName)}</h3>
           ${controlButtonsHtml}
         </div>
         <div class="task-detail-summary">
-          ${targetRows}${failureRow}
-          <div class="summary-row">
-            <span class="label">Status</span>
-            <span class="value status-${escapeAttribute(task.status)}"><span class="activity-status-label">${(isCertificates || isCommand) && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : escapeHtml(activityStatus(task.status))}</span>${(isCertificates || isCommand) && isPaused ? '' : isPaused ? ' (waiting to resume)' : awaitsCleanup ? ' (cleanup waits for a resume)' : ''}</span>
-          </div>${pausedOnFailure ? `
-          <div class="summary-row">
-            <span class="label">Paused because</span>
-            <span class="value task-pause-reason">${escapeHtml(task.pause_reason)}</span>
-          </div>` : ''}${(isCertificates || isCommand || pausedOnFailure) && isPaused && hasFailedInstance ? `
-          <div class="summary-row">
-            <span class="label">Resume</span>
-            <span class="value">The Continue remaining instances button never retries the failed instance. It moves on to the instances still waiting, so look at that failure before you resume.</span>
-          </div>` : ''}
-          <div class="summary-row">
-            <span class="label">Progress</span>
-            <span class="value">${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)</span>
-          </div>
-          <div class="summary-row">
-            <span class="label">Created</span>
-            <span class="value">${escapeHtml(formatTaskTime(task.created_at))}</span>
-          </div>
+          ${summaryTable}${notices}
         </div>
+        ${isCommand ? '<div class="command-block-host"></div>' : ''}
         <div class="task-detail-instances">
-          <h4>Instances (${instances.length})</h4>
-          <div class="instances-list" data-keep-scroll="instances">${instancesHtml}</div>
+          <div class="instances-list" role="group" aria-label="Instances" data-keep-scroll="instances">${instancesHtml}</div>
         </div>
       </div>
     `;
@@ -8966,8 +8951,8 @@
         }
       }
       if (isCommand) {
-        const summaryHost = tasksContainer.querySelector('.command-summary-host');
-        if (summaryHost) summaryHost.replaceWith(...buildCommandSummaryRows(task.command || {}).childNodes);
+        const blockHost = tasksContainer.querySelector('.command-block-host');
+        if (blockHost) blockHost.replaceWith(buildCommandBlock(task.command || {}));
         tasksContainer.querySelectorAll('.command-task-host').forEach((host) => {
           const instance = instances[Number(host.dataset.commandIndex)];
           if (instance) host.appendChild(buildCommandInstance(task, instance));
@@ -8992,16 +8977,11 @@
     }
 
     const actions = {
-      back: () => window.backToTaskList(),
       pause: (event) => window.pauseTask(task.id, event),
       resume: (event) => window.resumeTask(task.id, event),
       cancel: (event) => window.cancelTask(task.id, event)
     };
     tasksContainer.querySelectorAll('[data-task-action]').forEach((button) => {
-      if (button.dataset.taskAction === 'back') {
-        button.addEventListener('click', actions.back);
-        return;
-      }
       // Pause, Continue, and Cancel wait for their request, so a second press
       // sends nothing. The button comes back whether the request worked or not.
       button.addEventListener('click', (event) => {

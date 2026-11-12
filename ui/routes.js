@@ -195,6 +195,8 @@
   doc.title=crumbs.map(c=>c.label).reverse().join(' · ')+' — Blacksmith';
   const heading=doc.getElementById('console-title');if(heading)heading.textContent=crumbs.map(c=>c.label).join(' / ');
   root.BlacksmithViewGuidance?.mount(bar,route);
+  // A job page shows when it last refreshed at the right end of the bar.
+  if(route.screen==='upgrade'&&route.view==='activity'&&route.task){const stamp=doc.createElement('span');stamp.id='route-updated';stamp.className='route-updated';stamp.textContent=root.blacksmithPollStamp?.()||'';bar.append(stamp);}
  }
  root.blacksmithRefreshContext=()=>{const current=root.blacksmithRouter?.current;if(current&&current.view==='activity'&&current.task)render(current);};
  function error(error){let node=doc.getElementById('route-error');if(!node){node=doc.createElement('div');node.id='route-error';node.setAttribute('data-variant','danger');node.setAttribute('role','alert');doc.querySelector('.tab-content')?.before(node);}node.textContent=error.message+' Use Back or select a destination from the navigation.';}
