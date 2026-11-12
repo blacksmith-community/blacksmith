@@ -5,7 +5,36 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#f5f2ec">
+  <script>
+    // Applies the saved theme before first paint, the way setTheme in
+    // blacksmith.js does, so a dark-theme user never sees a light frame.
+    // blacksmith.js applies the same theme again once it loads.
+    (function () {
+      var themes = ['light', 'dark', 'high-contrast-light', 'high-contrast-dark'];
+      var theme = null;
+      try { theme = localStorage.getItem('theme'); } catch (_) { theme = null; }
+      if (!theme) {
+        var dark = false;
+        try { dark = Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch (_) { dark = false; }
+        theme = dark ? 'dark' : 'light';
+      }
+      if (themes.indexOf(theme) < 0) theme = 'light';
+      try {
+        var isDark = theme.slice(-4) === 'dark';
+        var highContrast = theme.indexOf('high-contrast-') === 0;
+        var root = document.documentElement;
+        root.style.colorScheme = isDark ? 'dark' : 'light';
+        if (highContrast) root.setAttribute('data-contrast', 'high');
+        else root.removeAttribute('data-contrast');
+        if (isDark) root.setAttribute('data-theme', 'dark');
+        else root.removeAttribute('data-theme');
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', highContrast ? (isDark ? '#000000' : '#ffffff') : (isDark ? '#171b20' : '#f5f2ec'));
+      } catch (_) { /* blacksmith.js applies the theme once it loads */ }
+    })();
+  </script>
   <meta name="apple-mobile-web-app-title" content="Blacksmith">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/brand/icon-180.png">
   <title>Blacksmith Management Console</title>
