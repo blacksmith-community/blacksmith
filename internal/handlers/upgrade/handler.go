@@ -547,11 +547,22 @@ func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, 
 // answers whether commands are on and whether they may run as root, read from
 // the configuration the authorizer reads, so the console learns the switches
 // without sending a preview that the browser would log as a failure. It takes
-// no input, runs nothing, and answers the two switches and nothing else. The
-// answer follows live configuration, so it is marked as not storable.
-func (h *Handler) CommandAvailability(w http.ResponseWriter, _ *http.Request) {
+// no input, runs nothing, and answers the two switches and the most nodes a
+// parallel run may use, which is the limit a preview reports from the same
+// worker count, and nothing else. The answer follows live configuration, so
+// it is marked as not storable.
+func (h *Handler) CommandAvailability(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	response.JSON(w, http.StatusOK, h.manager.Authorizer().Availability())
+	response.JSON(w, http.StatusOK, commandAvailabilityAnswer{
+		CommandAvailability: h.manager.Authorizer().Availability(),
+		MaxInFlightLimit:    h.manager.CommandMaxInFlightLimit(r.Context()),
+	})
+}
+
+// commandAvailabilityAnswer is the body of the availability answer.
+type commandAvailabilityAnswer struct {
+	upgrade.CommandAvailability
+	MaxInFlightLimit int `json:"max_in_flight_limit"`
 }
 
 // PreviewCommand handles POST /b/upgrade/commands/preview. It takes the

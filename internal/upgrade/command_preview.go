@@ -161,6 +161,31 @@ func (m *Manager) commandWorkerCount(ctx context.Context) int {
 	return cfg.DirectorWorkerCount()
 }
 
+// commandParallelLimits returns the director's worker count, the most nodes
+// a parallel run may use, and whether a parallel run is possible at all. A
+// preview and the console's read of the limit both answer from here, so the
+// two cannot disagree.
+func (m *Manager) commandParallelLimits(ctx context.Context) (workers, limit int, available bool) {
+	workers = m.commandWorkerCount(ctx)
+	available = workers >= minParallelWorkers
+
+	if available {
+		limit = workers - 1
+	}
+
+	return workers, limit, available
+}
+
+// CommandMaxInFlightLimit returns the most nodes a parallel command run may
+// use, which is one below the director's worker count, or 0 when the
+// director has too few workers for a parallel run. It reads nothing but the
+// worker count, so the console can ask before any preview.
+func (m *Manager) CommandMaxInFlightLimit(ctx context.Context) int {
+	_, limit, _ := m.commandParallelLimits(ctx)
+
+	return limit
+}
+
 // maxInFlightRefusal says why the number of nodes to run at once was
 // refused, and names the range the director allows, or says to turn
 // parallel runs off when it allows none.
@@ -226,13 +251,7 @@ func (m *Manager) PreviewCommand(ctx context.Context, req CommandPreviewRequest)
 		return nil, apierr.New(http.StatusInternalServerError, apierr.CodeInternal, "Blacksmith is not set up to preview commands.")
 	}
 
-	workers := m.commandWorkerCount(ctx)
-	available := workers >= minParallelWorkers
-
-	limit := 0
-	if available {
-		limit = workers - 1
-	}
+	workers, limit, available := m.commandParallelLimits(ctx)
 
 	maxInFlight := 0
 

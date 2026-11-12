@@ -63,7 +63,7 @@ func TestAvailabilityDisabled(t *testing.T) {
 	}
 }
 
-// The answer holds the two switches and nothing else, so it never hints at
+// The answer holds the two switches and the max in flight limit, and nothing else, so it never hints at
 // a configured command key or any other setting, and it answers the same
 // with or without the key header.
 func TestAvailabilityHasExactlyTwoKeys(t *testing.T) {
@@ -84,8 +84,8 @@ func TestAvailabilityHasExactlyTwoKeys(t *testing.T) {
 		t.Fatalf("the answer is not JSON: %v", err)
 	}
 
-	if len(got) != 2 || got["enabled"] == nil || got["allow_root"] == nil {
-		t.Fatalf("expected exactly enabled and allow_root, got %v", got)
+	if len(got) != 3 || got["enabled"] == nil || got["allow_root"] == nil || got["max_in_flight_limit"] == nil {
+		t.Fatalf("expected exactly enabled, allow_root, and max_in_flight_limit, got %v", got)
 	}
 
 	if strings.Contains(plain.Body.String(), cmdKey) {
@@ -149,7 +149,18 @@ func TestAvailabilityWithoutAnAuthorizerReportsBothOff(t *testing.T) {
 		t.Fatalf("the answer is not JSON: %v", err)
 	}
 
-	if len(got) != 2 || got["enabled"] != false || got["allow_root"] != false {
+	if len(got) != 3 || got["enabled"] != false || got["allow_root"] != false {
 		t.Fatalf("expected both off, got %v", got)
+	}
+}
+
+// The answer carries the most nodes a parallel run may use, which is one
+// below the director's worker count, the same number a preview reports.
+func TestAvailabilityReportsTheMaxInFlightLimit(t *testing.T) {
+	t.Parallel()
+
+	got := availabilityOf(t, commandsOn("", true))
+	if got["max_in_flight_limit"] != float64(3) {
+		t.Fatalf("expected a limit of 3 for the default four workers, got %v", got["max_in_flight_limit"])
 	}
 }

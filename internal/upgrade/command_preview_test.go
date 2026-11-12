@@ -421,6 +421,28 @@ func TestPreviewCommandWorkerCountSources(t *testing.T) {
 	}
 }
 
+// The limit the console reads before a preview is the limit a preview
+// reports, from the same worker count, so the two never disagree.
+func TestCommandMaxInFlightLimitMatchesPreview(t *testing.T) {
+	t.Parallel()
+
+	for _, workers := range []int{1, 2, 5, 13} {
+		env := newCmdEnv(t, func(d *Deps) {
+			d.WorkerCount = func(context.Context) (int, bool) { return workers, true }
+		})
+
+		preview, err := env.manager.PreviewCommand(context.Background(), cmdReq("i1"))
+		if err != nil {
+			t.Fatalf("PreviewCommand: %v", err)
+		}
+
+		got := env.manager.CommandMaxInFlightLimit(context.Background())
+		if got != preview.MaxInFlightLimit {
+			t.Fatalf("with %d workers the limit is %d, the preview says %d", workers, got, preview.MaxInFlightLimit)
+		}
+	}
+}
+
 func TestDirectorWorkerCountSeamIsUnknown(t *testing.T) {
 	t.Parallel()
 
