@@ -14532,3 +14532,18 @@ tr.row-link { cursor: pointer; }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[data-label=""]::before { display: none; }
   :is(#blacksmith, #services, #certificates) table[data-cards="true"] > tbody > tr > td[colspan] { display: block; padding: 12px 0; text-align: center; }
 }
+
+/* Toolbars wrap at any width, so expanded button labels never push a
+   button past the edge of the scroll container. */
+:is(#blacksmith, #services) .table-controls-container { flex-wrap: wrap; max-width: 100%; }
+:is(#blacksmith, #services) .table-controls-container > * { min-width: 0; max-width: 100%; }
+:is(#blacksmith, #services) .table-toolbar-actions { flex-wrap: wrap; flex-shrink: 1; }
+:is(#blacksmith, #services) .resurrection-toggle-container { flex: 1 1 auto; min-width: 0; }
+
+@media (max-width: 699.98px) { /* phone toolbars */
+  #blacksmith .compact-tasks-controls.table-controls-container .search-filter-container { flex: 1 1 100%; max-width: 100%; }
+  #blacksmith .compact-tasks-controls.table-controls-container .filter-group { display: flex; flex: 1 1 100%; flex-wrap: nowrap; align-items: center; min-width: 0; }
+  #blacksmith .compact-tasks-controls.table-controls-container .filter-group:has(.checkbox-group) { flex-wrap: wrap; }
+  #blacksmith .compact-tasks-controls.table-controls-container .filter-group select { flex: 1 1 auto; min-width: 0; }
+  #blacksmith .compact-tasks-controls.table-controls-container .checkbox-group { flex-wrap: wrap; gap: 6px 12px; }
+}
