@@ -140,3 +140,8 @@ formatters:
 # Issues configuration
 issues:
   max-same-issues: 12
+  # Baseline: commit 2ec57c77e1b96e6c7a9ae3531f57bbb69d85f429 on dev.
+  # Findings that predate it are held back so CI fails only on new
+  # ones. The old findings are left for a later cleanup. CI checks out
+  # full history so the filter can reach this commit.
+  new-from-rev: 2ec57c77e1b96e6c7a9ae3531f57bbb69d85f429

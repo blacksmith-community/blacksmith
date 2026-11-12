@@ -182,15 +182,23 @@ deadcode: ## Run deadcode to find unused code
 	@deadcode -test $(shell go list ./... | grep -v vendor | grep -v tmp) || true
 	@echo "$(GREEN)✓ Deadcode analysis complete$(RESET)"
 
-.PHONY: golangci
-golangci: ## Run golangci-lint comprehensive linter
-	@echo "$(GREEN)Running golangci-lint...$(RESET)"
-	@command -v golangci-lint >/dev/null 2>&1 || { \
-		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
-		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin; \
-	}
-	@golangci-lint run ./...
+# golangci-lint release that local runs and CI both use. It must be built
+# with Go 1.27.4 or newer to lint this module.
+GOLANGCI_LINT_VERSION := v2.15.0
+
+.PHONY: golangci-lint
+golangci-lint: ## Run golangci-lint, failing only on findings newer than the baseline in .golangci.yml
+	@echo "$(GREEN)Running golangci-lint $(GOLANGCI_LINT_VERSION)...$(RESET)"
+	@export PATH="$$(go env GOPATH)/bin:$$PATH"; \
+	if [ "$$(golangci-lint version --short 2>/dev/null)" != "$(GOLANGCI_LINT_VERSION:v%=%)" ]; then \
+		echo "$(YELLOW)Installing golangci-lint $(GOLANGCI_LINT_VERSION)...$(RESET)"; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	fi; \
+	golangci-lint run ./...
 	@echo "$(GREEN)✓ Golangci-lint analysis complete$(RESET)"
+
+.PHONY: golangci
+golangci: golangci-lint ## Alias for golangci-lint
 
 .PHONY: trivy
 trivy: ## Run Trivy container and dependency scanner
@@ -305,5 +313,5 @@ deps-tidy: ## Clean up go.mod and go.sum
 
 # Include all phony targets
 .PHONY: build linux dev test test-short test-race test-all coverage coverage-html report fmt vet lint \
-        govulncheck gosec staticcheck gocyclo ineffassign errcheck goimports deadcode golangci-lint \
+        govulncheck gosec staticcheck gocyclo ineffassign errcheck goimports deadcode golangci golangci-lint \
         trivy security check check-all clean shipit version deps deps-update deps-tidy help
