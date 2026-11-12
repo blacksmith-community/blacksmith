@@ -95,9 +95,13 @@ t('the selected tab is drawn apart from the bar behind it',()=>{
 t('the metadata is one compact row table with small bold headers and tight padding',()=>{
  expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table th')).toMatch(/font-size:\s*\.75rem/);
  expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table th')).toMatch(/font-weight:\s*(600|700)/);
- expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table td')).toMatch(/padding:\s*\.25rem/);
+ expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table td')).toMatch(/padding:\s*8px 10px/);
  expect(bodies('inspection-layout.css','#task-details-modal .task-summary-section')).not.toMatch(/border-bottom/);
- expect(bodies('inspection-layout.css','#task-details-modal .task-summary-section')).toMatch(/margin:\s*8px 0 4px/);
+ const box=bodies('inspection-layout.css','#task-details-modal .task-summary-section');
+ expect(box).toMatch(/border-radius:\s*\.5rem/);
+ expect(box).toMatch(/overflow:\s*hidden/);
+ expect(box).toMatch(/margin:\s*8px 0 (8|9|10|11|12)px/);
+ expect(bodies('inspection-layout.css','#task-details-modal .task-summary-table th')).toMatch(/background:\s*color-mix\(/);
  const css=require('fs').readFileSync('ui/inspection-layout.css','utf8');
  expect(css).toMatch(/task-summary-table td:not\(\.task-meta-description\)\s*\{\s*white-space:\s*nowrap/);
  expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*td::before\s*\{\s*content:\s*attr\(data-label\)/);
