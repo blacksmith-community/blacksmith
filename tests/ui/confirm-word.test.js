@@ -46,7 +46,7 @@ t('an upgrade above ten instances asks for upgrade',async()=>{
  try{
   const label=d.querySelector('.batch-ack-label');
   expect(label.textContent).toBe('To confirm, type "upgrade" below.');
-  expect(label.querySelector('strong').textContent).toBe('upgrade');
+  expect(label.querySelector('strong').textContent).toBe('"upgrade"');
  }finally{w.close();}
 });
 t('an upgrade with diverged instances asks for upgrade at any size',async()=>{

@@ -82,7 +82,7 @@ const refresh=(env)=>env.d.getElementById('batch-flow-ack').dispatchEvent(new en
 t('typing the exact word the prompt shows enables the run button',async()=>{
  const env=await setup();const {d}=env;try{
  await review(env,['val-a']);
- const word=d.querySelector('.confirm-word').textContent;
+ const word=d.querySelector('.confirm-word').textContent.replace(/^"|"$/g,'');
  expect(help(env)).toContain(word);
  expect(next(env).disabled).toBe(true);
  ack(env,word);
@@ -97,7 +97,7 @@ t('typing the exact word the prompt shows enables the run button',async()=>{
 t('a held instance keeps the button off and the help says which one',async()=>{
  const env=await setup({preview:[200,preview({instances:[blockedInstance('val-a'),instance('val-b')]})]});const {d}=env;try{
  await review(env,['val-a','val-b']);
- ack(env,d.querySelector('.confirm-word').textContent);
+ ack(env,d.querySelector('.confirm-word').textContent.replace(/^"|"$/g,''));
  expect(next(env).disabled).toBe(true);
  expect(help(env)).toBe('Another operation holds val-a-name. Deselect it to continue.');
  }finally{env.w.close();}
@@ -106,7 +106,7 @@ t('a held instance keeps the button off and the help says which one',async()=>{
 t('a selection with no node to run keeps the button off and the help says why',async()=>{
  const env=await setup({preview:[200,preview({instances:[instance('val-a',{vms:[vm(0,{targeted:false})]})]})]});const {d}=env;try{
  await review(env,['val-a']);
- ack(env,d.querySelector('.confirm-word').textContent);
+ ack(env,d.querySelector('.confirm-word').textContent.replace(/^"|"$/g,''));
  expect(next(env).disabled).toBe(true);
  expect(help(env)).toBe('No node in this selection can run the command. Change the selection to continue.');
  }finally{env.w.close();}
@@ -115,7 +115,7 @@ t('a selection with no node to run keeps the button off and the help says why',a
 t('while the review is loading, the help says so even with the word typed',async()=>{
  const env=await setup();const {w,d}=env;try{
  await review(env,['val-a']);
- ack(env,d.querySelector('.confirm-word').textContent);
+ ack(env,d.querySelector('.confirm-word').textContent.replace(/^"|"$/g,''));
  expect(next(env).disabled).toBe(false);
  w.__T.batchFlow.loading=true;refresh(env);
  expect(next(env).disabled).toBe(true);
@@ -129,7 +129,7 @@ t('while the review is loading, the help says so even with the word typed',async
 t('while the run is starting, the help says so even with the word typed',async()=>{
  const env=await setup();const {w,d}=env;try{
  await review(env,['val-a']);
- ack(env,d.querySelector('.confirm-word').textContent);
+ ack(env,d.querySelector('.confirm-word').textContent.replace(/^"|"$/g,''));
  w.__T.batchFlow.submitting=true;refresh(env);
  expect(next(env).disabled).toBe(true);
  expect(help(env)).toBe('The operation is starting. Please wait.');

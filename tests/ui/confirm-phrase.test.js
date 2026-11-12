@@ -22,7 +22,7 @@ async function review(requireText,typedSteps){
 t('the label sets the phrase apart and never ends in confirm',async()=>{
  const r=await review('run as vcap');
  expect(r.labelText).toBe('To confirm, type "run as vcap" below.');
- expect(r.chip).toBe('run as vcap');
+ expect(r.chip).toBe('"run as vcap"');
  expect(r.labelText.endsWith('confirm')).toBe(false);
  expect(/run as vcap\s*confirm/i.test(r.labelText)).toBe(false);
 });
@@ -51,7 +51,7 @@ t('typing the phrase one character at a time enables the button only at the end'
 t('a rotation patch confirmation gets the same label and placeholder',async()=>{
  const r=await review('patch in place',['x']);
  expect(r.labelText).toBe('To confirm, type "patch in place" below.');
- expect(r.chip).toBe('patch in place');
+ expect(r.chip).toBe('"patch in place"');
  expect(r.placeholder).toBe('patch in place');
  expect(r.steps[0].help).toContain('That doesn\'t match.');
 });
@@ -62,7 +62,7 @@ t('the dialog uses the same label and placeholder',async()=>{
   await sleep(30);
   const ov=d.querySelector('#dialog-modal');
   expect(ov.querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type "patch in place" below.');
-  expect(ov.querySelector('.dialog-modal-ack-label .confirm-word').textContent).toBe('patch in place');
+  expect(ov.querySelector('.dialog-modal-ack-label .confirm-word').textContent).toBe('"patch in place"');
   expect(ov.querySelector('.dialog-modal-ack-input').placeholder).toBe('patch in place');
  }finally{w.close();}
 });
