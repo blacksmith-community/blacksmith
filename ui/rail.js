@@ -245,7 +245,13 @@
   });
  }
 
+ // The rail stops above the terminal dock. The dock is taller on a coarse
+ // pointer, so the rail reads its real height instead of a fixed guess.
+ const dock=doc.getElementById('minimized-terminal-bar');
+ const fitDock=()=>{if(dock)doc.body.style.setProperty('--shell-dock',dock.offsetHeight+'px');};
+ if(dock&&root.ResizeObserver)new root.ResizeObserver(fitDock).observe(dock);
+
  layout();
  sync();
- root.BlacksmithRail={sync,layout,sections:INSTANCE_SECTIONS};
+ root.BlacksmithRail={sync,layout,fitDock,sections:INSTANCE_SECTIONS};
 })(globalThis);

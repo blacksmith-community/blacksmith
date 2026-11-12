@@ -255,3 +255,32 @@ t('the shell no longer locks the page height, and the rail and drawer pad for th
  expect(shell).toMatch(/@media \(min-width: 700px\) and \(min-height: 641px\)/);
  for(const sel of ['body > header','.console-rail','.rail-drawer']) expect(shell).toMatch(new RegExp(sel.replace(/[.>]/g,'\\$&')+'[^{]*\\{[^}]*env\\(safe-area-inset-'));
 });
+
+t('on a short window the sticky rail spans the column, even as the icon strip',()=>{
+ const css=fs.readFileSync(path.join(UI,'routes.css'),'utf8').replace(/\/\*[\s\S]*?\*\//g,'');
+ // In document-scroll mode a max-height alone lets the short icon strip stop
+ // partway down, so the rail takes the visible column height outright.
+ const base=css.match(/\n\.console-rail \{([^}]*)\}/)[1];
+ expect(base).toMatch(/position:\s*sticky/);
+ expect(base).toMatch(/(^|;)\s*height:\s*calc\(100dvh - var\(--shell-header\) - var\(--shell-dock\)\)/);
+ // The fixed shell stretches the rail instead, so it drops that height.
+ const tall=css.slice(css.indexOf('@media (min-width: 700px) and (min-height: 641px)'));
+ const rule=tall.match(/\.console-rail \{([^}]*)\}/)[1];
+ expect(rule).toMatch(/height:\s*auto/);
+ expect(rule).toMatch(/align-self:\s*stretch/);
+});
+
+t('the rail reserves the dock its measured height, not a guess',async()=>{
+ const {w,d}=await start();
+ const dock=d.getElementById('minimized-terminal-bar');
+ // A coarse pointer or a wrapped row changes the dock's height, so the rail
+ // tracks it and never leaves a gap above the dock or slides under it.
+ Object.defineProperty(dock,'offsetHeight',{configurable:true,get:()=>45});
+ w.BlacksmithRail.fitDock();
+ expect(d.body.style.getPropertyValue('--shell-dock')).toBe('45px');
+ Object.defineProperty(dock,'offsetHeight',{configurable:true,get:()=>0});
+ w.BlacksmithRail.fitDock();
+ expect(d.body.style.getPropertyValue('--shell-dock')).toBe('0px');
+ const src=fs.readFileSync(path.join(UI,'rail.js'),'utf8');
+ expect(src).toMatch(/new root\.ResizeObserver\(fitDock\)\.observe\(dock\)/);
+});

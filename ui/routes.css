@@ -35,7 +35,7 @@ body > header { position: sticky; top: 0; z-index: 20; box-sizing: border-box; m
 .minimized-terminal-bar { position: sticky; bottom: 0; z-index: 15; }
 
 /* The rail. */
-.console-rail { position: sticky; top: var(--shell-header); align-self: flex-start; z-index: 12; flex: none; display: flex; flex-direction: column; box-sizing: border-box; width: calc(220px + env(safe-area-inset-left, 0px)); max-height: calc(100dvh - var(--shell-header) - var(--shell-dock)); padding-left: env(safe-area-inset-left, 0px); background: var(--card); border-right: 1px solid var(--border); }
+.console-rail { position: sticky; top: var(--shell-header); align-self: flex-start; z-index: 12; flex: none; display: flex; flex-direction: column; box-sizing: border-box; width: calc(220px + env(safe-area-inset-left, 0px)); height: calc(100dvh - var(--shell-header) - var(--shell-dock)); padding-left: env(safe-area-inset-left, 0px); background: var(--card); border-right: 1px solid var(--border); }
 .rail-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; overscroll-behavior: contain; padding: 12px 8px; box-sizing: border-box; background: var(--card); }
 .rail-areas, .rail-list { list-style: none; margin: 0; padding: 0; }
 .rail-areas { display: flex; flex-direction: column; gap: 2px; }
@@ -118,7 +118,7 @@ body > header { position: sticky; top: 0; z-index: 20; box-sizing: border-box; m
  body { height: 100dvh; overflow: hidden; }
  body > header { position: relative; }
  .console-shell { flex: 1 1 auto; min-height: 0; }
- .console-rail { position: relative; top: auto; align-self: stretch; max-height: none; }
+ .console-rail { position: relative; top: auto; align-self: stretch; height: auto; max-height: none; }
  #console-main.main-content { overflow: hidden; }
  #console-main > .wrap { flex: 1 1 auto; min-height: 0; height: 100%; }
  #console-main .tab-content { flex: 1 1 auto; min-height: 0; overflow: hidden; }
