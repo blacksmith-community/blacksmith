@@ -10524,7 +10524,9 @@
         try {
           const responseData = JSON.parse(text);
           if (!isCurrent()) return '';
-          return formatInstanceLogs(responseData.logs || responseData, responseData.truncated);
+          const html = formatInstanceLogs(responseData.logs || responseData, responseData.truncated);
+          loadNodeIndex(instanceId);
+          return html;
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -10801,11 +10803,61 @@
     `;
   };
 
+  // Log nodes are keyed job/<uuid>. Once the instance's VMs are known the picker reads
+  // job/<index> with the short id after it; until then, or if the fetch fails, it keeps
+  // the raw key. The logs never wait on this lookup.
+  const nodeIndexByUuid = new Map();
+  const nodeIndexLoads = new Map();
+  const splitNodeKey = key => {
+    const at = String(key).lastIndexOf('/');
+    return at < 0 ? null : { job: key.slice(0, at), uuid: key.slice(at + 1) };
+  };
+  const nodeIndexOf = key => {
+    const parts = splitNodeKey(key);
+    return parts && nodeIndexByUuid.has(parts.uuid) ? nodeIndexByUuid.get(parts.uuid) : null;
+  };
+  const shortNodeId = key => splitNodeKey(key).uuid.slice(0, 8);
+  const nodeOptionText = key => {
+    const mapped = nodeIndexOf(key);
+    return mapped ? `${mapped} (${shortNodeId(key)})` : key;
+  };
+  const nodeLabelHtml = key => {
+    const mapped = nodeIndexOf(key);
+    return mapped ? `${escapeHtml(mapped)} <span class="log-node-id">${escapeHtml(shortNodeId(key))}</span>` : escapeHtml(key);
+  };
+  const applyNodeLabels = () => {
+    document.querySelectorAll('.log-node-select option').forEach(option => {
+      option.textContent = nodeOptionText(option.value);
+    });
+    document.querySelectorAll('.log-node-label[data-node]').forEach(label => {
+      const strong = label.querySelector('strong');
+      label.innerHTML = `${strong ? strong.outerHTML : ''} ${nodeLabelHtml(label.dataset.node)}`;
+    });
+  };
+  const loadNodeIndex = instanceId => {
+    if (nodeIndexLoads.has(instanceId)) return nodeIndexLoads.get(instanceId);
+    const load = fetch(`/b/${instanceId}/vms`, { credentials: 'same-origin' })
+      .then(response => (response.ok ? response.json() : Promise.reject(new Error('vms'))))
+      .then(body => {
+        (Array.isArray(body) ? body : (body && body.vms) || []).forEach(vm => {
+          if (vm && vm.id && vm.job_name !== undefined && vm.index !== undefined) {
+            nodeIndexByUuid.set(vm.id, `${vm.job_name}/${vm.index}`);
+          }
+        });
+        applyNodeLabels();
+      })
+      .catch(() => nodeIndexLoads.delete(instanceId));
+    nodeIndexLoads.set(instanceId, load);
+    return load;
+  };
+
   // Helper function to format job log content with dropdown and content
   const formatJobLogContent = (jobKey, jobData, preferredFile = '') => {
     const nodes = Object.keys(window.instanceLogsData || {[jobKey]: jobData});
-    const nodeSelector = nodes.length === 1 ? `<span class="log-node-label"><strong>Node:</strong> ${escapeHtml(jobKey)}</span>` : `<select class="log-node-select" aria-label="Node" data-job="${escapeAttribute(jobKey)}" data-instance-log="select-job">
-                      ${Object.keys(window.instanceLogsData || {[jobKey]: jobData}).map(job => `<option value="${escapeAttribute(job)}"${job === jobKey ? ' selected' : ''}>${escapeHtml(job)}</option>`).join('')}
+    const nodeSelector = nodes.length === 1
+      ? `<span class="log-node-label" data-node="${escapeAttribute(jobKey)}"><strong>Node:</strong> ${nodeLabelHtml(jobKey)}</span>`
+      : `<select class="log-node-select" aria-label="Node" data-job="${escapeAttribute(jobKey)}" data-instance-log="select-job">
+                      ${nodes.map(job => `<option value="${escapeAttribute(job)}" title="${escapeAttribute(job)}"${job === jobKey ? ' selected' : ''}>${escapeHtml(nodeOptionText(job))}</option>`).join('')}
                     </select>`;
     const empty = message => `<div class="job-logs-container"><div class="table-controls-container">${nodeSelector}</div><div class="no-data">${message}</div></div>`;
     if (!jobData) {

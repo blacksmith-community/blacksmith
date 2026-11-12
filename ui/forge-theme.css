@@ -626,6 +626,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
   display: flex; align-items: center; flex-wrap: wrap; gap: .5rem;
   padding: .5rem .75rem;
 }
+.log-node-id { color: var(--muted-foreground); font-size: 0.85em; margin-left: 0.25rem; }
 .log-node-select { flex: 0 1 20rem; width: 20rem; min-width: 10rem; max-width: 100%; }
 .job-logs-container .search-filter-container, .logs-controls-row .search-filter-container { flex: 0 1 16rem; min-width: 10rem; }
 .job-logs-container .log-file-selector, .logs-controls-row .log-file-selector { flex: 0 1 22rem; min-width: 10rem; }
