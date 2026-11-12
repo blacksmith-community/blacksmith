@@ -45,3 +45,7 @@ test('the log file select fills its row under 700px instead of running past the 
   expect(rules).toMatch(/logs-controls-row \.log-file-selector \{[^}]*flex: 1 1 100%[^}]*min-width: 0/);
   expect(rules).toMatch(/logs-controls-row \.log-file-selector select \{[^}]*width: 100%[^}]*max-width: 100%/);
 });
+
+test('the search box keeps a usable width and wraps to its own row before it shrinks', () => {
+  expect(css).toMatch(/\.table-controls-container > \.search-filter-container \{[^}]*flex: 1 1 11rem[^}]*min-width: min\(11rem, 100%\)/);
+});

@@ -14552,6 +14552,7 @@ tr.row-link { cursor: pointer; }
 :is(#blacksmith, #services) .table-controls-container { flex-wrap: wrap; max-width: 100%; }
 :is(#blacksmith, #services) .table-controls-container > * { min-width: 0; max-width: 100%; }
 :is(#blacksmith, #services) .table-toolbar-actions { flex-wrap: wrap; flex-shrink: 1; }
+:is(#blacksmith, #services) .table-controls-container > .search-filter-container { flex: 1 1 11rem; min-width: min(11rem, 100%); }
 :is(#blacksmith, #services) .resurrection-toggle-container { flex: 1 1 auto; min-width: 0; }
 
 @media (max-width: 699.98px) { /* phone toolbars */
