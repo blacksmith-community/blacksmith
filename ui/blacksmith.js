@@ -8486,6 +8486,8 @@
   // What each node's output read has come to, keyed by task, instance, and
   // node, so a redraw of the detail never reads it again.
   const commandOutputs = new Map();
+  // Nodes whose output the operator closed, so a failed node does not reopen it.
+  const commandOutputClosed = new Set();
   const COMMAND_OUTPUT_PLACEHOLDER = 'The output appears when the node finishes.';
 
   // Forgets the key and blanks every key input. When a key was held, it also
@@ -8654,6 +8656,91 @@
     }
   };
 
+  // A line of output that looks like an error. The page picks these out on
+  // its own, from output it already holds, so nothing here reaches the API.
+  const COMMAND_ERROR_LINE = /permission denied|no such file|not found|error|fatal|cannot|denied|failed/i;
+  const COMMAND_ERROR_LINES_SHOWN = 3;
+  const COMMAND_ERROR_LINE_LIMIT = 200;
+
+  // The error-looking lines of one stream, cut to a readable length.
+  const commandErrorLines = (text) => {
+    const all = stripControlChars(text).split('\n').map((line) => line.trim()).filter((line) => line && COMMAND_ERROR_LINE.test(line));
+    return {
+      total: all.length,
+      shown: all.slice(0, COMMAND_ERROR_LINES_SHOWN).map((line) => (line.length > COMMAND_ERROR_LINE_LIMIT ? `${line.slice(0, COMMAND_ERROR_LINE_LIMIT)}\u2026` : line))
+    };
+  };
+
+  const commandNodeFailed = (node) => Boolean(node) && node.phase === 'settled' && (node.status === 'failed' || node.status === 'timed_out');
+
+  // A run time that keeps its tenths when the command was quick.
+  const commandPreciseDuration = (node) => {
+    const ms = new Date(node.ended_at) - new Date(node.started_at);
+    if (!node.started_at || !node.ended_at || !Number.isFinite(ms) || ms < 0) return '';
+    return ms < 1000 ? `${(ms / 1000).toFixed(1)}s` : commandDurationText(node);
+  };
+
+  // Line one of a failed node's explanation.
+  const commandExplainSummary = (node, runAs) => {
+    const exit = Number.isInteger(node.exit_code) ? node.exit_code : null;
+    const what = node.status === 'timed_out' ? 'Timed out' : exit !== null ? `Exited with status ${exit}` : 'Failed';
+    const duration = commandPreciseDuration(node);
+    return `${what}${duration ? ` after ${duration}` : ''}${runAs ? `, running as ${runAs}` : ''}.`;
+  };
+
+  // What well-known exit codes and a vcap permission failure mean.
+  const commandExplainHints = (node, runAs, outputText) => {
+    const hints = [];
+    const exit = Number.isInteger(node.exit_code) ? node.exit_code : null;
+    if (exit === 126) hints.push('The command is not executable on the node.');
+    if (exit === 127) hints.push('The shell could not find the command (command not found).');
+    if (exit === 124 || node.status === 'timed_out') hints.push('The command timed out.');
+    if (exit === 130) hints.push('The command was interrupted.');
+    if (exit === 137) hints.push('The command was killed, often because the node ran out of memory.');
+    if (runAs === 'vcap' && /permission denied/i.test(outputText || '')) hints.push('It ran as vcap, so choose root under Run as if it needs root access.');
+    return hints;
+  };
+
+  // The pre for one stream. A failed node gets its error lines tinted, and
+  // the text of the pre stays exactly what the node printed.
+  const commandOutputPre = (className, text, highlight) => {
+    const pre = rotateEl('pre', className, highlight ? '' : text);
+    if (!highlight) return pre;
+    const lines = text.split('\n');
+    lines.forEach((line, index) => {
+      if (line.trim() && COMMAND_ERROR_LINE.test(line)) pre.appendChild(rotateEl('span', 'command-output-error-line', line));
+      else if (line) pre.appendChild(document.createTextNode(line));
+      if (index < lines.length - 1) pre.appendChild(document.createTextNode('\n'));
+    });
+    return pre;
+  };
+
+  // The explanation above a failed node's output. It shows at once what the
+  // record knows, then adds the error lines when the output has loaded.
+  const fillCommandExplain = (context) => {
+    const host = context.explainHost;
+    if (!host) return;
+    host.replaceChildren();
+    host.appendChild(rotateEl('p', 'command-node-explain-summary', commandExplainSummary(context.node, context.runAs)));
+    const entry = commandOutputs.get(context.key);
+    let outputText = '';
+    if (entry && entry.status === 'loaded') {
+      const out = stripControlChars(entry.data.stdout);
+      const err = entry.data.merged === true ? '' : stripControlChars(entry.data.stderr);
+      outputText = `${out}\n${err}`;
+      // A record with its own stderr is read from stderr first.
+      let found = commandErrorLines(err);
+      if (!found.total) found = commandErrorLines(out);
+      if (found.shown.length) {
+        const list = rotateEl('ul', 'command-node-explain-lines');
+        found.shown.forEach((line) => list.appendChild(rotateEl('li', '', line)));
+        host.appendChild(list);
+      }
+      if (found.total > COMMAND_ERROR_LINES_SHOWN) host.appendChild(rotateEl('p', 'command-node-explain-count', `${found.total} lines in the output report errors.`));
+    }
+    commandExplainHints(context.node, context.runAs, outputText).forEach((hint) => host.appendChild(rotateEl('p', 'command-node-hint', hint)));
+  };
+
   // Fills the body of a node's output <details> from what is known now.
   const fillCommandOutputBody = (body, context) => {
     const entry = commandOutputs.get(context.key);
@@ -8673,16 +8760,16 @@
       const out = stripControlChars(entry.data.stdout);
       if (entry.data.merged === true) {
         // One stream in the order the process wrote it, so there is nothing to label.
-        if (out) body.appendChild(rotateEl('pre', 'command-output command-output-merged', out));
+        if (out) body.appendChild(commandOutputPre('command-output command-output-merged', out, context.failed));
         context.copyText = out;
       } else {
         // A run stored before the streams were merged keeps them apart.
         const err = stripControlChars(entry.data.stderr);
         if (out && err) body.appendChild(rotateEl('p', 'command-output-note', 'This run stored stdout and stderr separately, so their original order is unknown.'));
-        if (out) body.appendChild(rotateEl('pre', 'command-output command-output-stdout', out));
+        if (out) body.appendChild(commandOutputPre('command-output command-output-stdout', out, context.failed));
         if (err) {
           body.appendChild(rotateEl('div', 'command-output-label', 'stderr'));
-          body.appendChild(rotateEl('pre', 'command-output command-output-stderr', err));
+          body.appendChild(commandOutputPre('command-output command-output-stderr', err, context.failed));
         }
         context.copyText = out && err && !out.endsWith('\n') ? `${out}\n${err}` : `${out}${err}`;
       }
@@ -8708,6 +8795,7 @@
   const fillCommandOutput = (body, context) => {
     context.copyText = '';
     fillCommandOutputBody(body, context);
+    fillCommandExplain(context);
     if (context.copyButton) context.copyButton.hidden = !context.copyText;
   };
 
@@ -8778,17 +8866,39 @@
   // A list that never loaded says nothing about it.
   const instanceIsGone = (instanceId) => Boolean(window.serviceInstances && typeof window.serviceInstances === 'object' && !window.serviceInstances[instanceId]);
 
+  // The names of skipped nodes as one phrase, such as "node-1 to node-5".
+  const commandNodeRange = (names, identities) => {
+    if (names.length === 1) return names[0];
+    const sameGroup = identities.every((identity) => identity.group === identities[0].group);
+    const consecutive = sameGroup && identities.every((identity, i) => i === 0 || Number(identity.index) === Number(identities[i - 1].index) + 1);
+    if (consecutive) return `${names[0]} to ${names[names.length - 1]}`;
+    if (names.length <= 4) return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+    return `${names.slice(0, 2).join(', ')}, and ${names.length - 2} more`;
+  };
+
+  const commandNodeName = (node) => { const identity = commandNodeIdentity(node); return `${identity.group}-${identity.index}`; };
+
+  // One line for the instance row that says what the run did, so the long
+  // explanation lives on the failed node alone.
+  const commandInstanceSummary = (instance) => {
+    const nodes = (instance.command && instance.command.vms) || [];
+    const failed = nodes.filter(commandNodeFailed);
+    if (!failed.length) return '';
+    const names = failed.map((node) => {
+      const exit = Number.isInteger(node.exit_code) ? ` (exit ${node.exit_code})` : '';
+      return node.status === 'timed_out' ? `${commandNodeName(node)} timed out` : `${commandNodeName(node)} failed${exit}`;
+    });
+    const skipped = nodes.filter((node) => node.phase === 'skipped').length;
+    return `${names.join(', ')}.${skipped ? ` ${skipped} node${skipped === 1 ? ' was' : 's were'} skipped.` : ''}`;
+  };
+
   const buildCommandInstance = (task, instance) => {
     const wrap = rotateEl('div', 'command-nodes');
     const record = instance.command || {};
-    (record.vms || []).forEach((node) => {
-      const identity = commandNodeIdentity(node);
-      const name = `${identity.group}-${identity.index}`;
-      const key = [task.id, instance.instance_id, name].join('\u0000');
-      const settled = node.phase === 'settled';
-      // A node that settled before it ran anything has no stored output to read.
-      const noOutput = settled && !node.output_path;
-      const row = rotateEl('div', 'command-node');
+    const runAs = (task.command && task.command.run_as) || '';
+    const skippedNodes = [];
+    // The head of a node row: its icon and link, name, facts, and terminal.
+    const buildHead = (node, identity, name, key, settled, withFacts) => {
       const head = rotateEl('div', 'command-node-head');
       const gone = instanceIsGone(instance.instance_id);
       const nodeRef = `${identity.group}/${identity.index}`;
@@ -8803,14 +8913,16 @@
       }
       head.appendChild(icon);
       head.appendChild(rotateEl('span', 'command-node-name', name));
-      const facts = [];
-      if (node.status) facts.push(String(node.status).replace(/_/g, ' '));
-      else if (node.phase) facts.push(String(node.phase));
-      if (settled && Number.isInteger(node.exit_code)) facts.push(`exit ${node.exit_code}`);
-      const duration = commandDurationText(node);
-      if (duration) facts.push(duration);
-      if (node.killed) facts.push('killed');
-      head.appendChild(rotateEl('span', 'command-node-facts', facts.join(', ')));
+      if (withFacts) {
+        const facts = [];
+        if (node.status) facts.push(String(node.status).replace(/_/g, ' '));
+        else if (node.phase) facts.push(String(node.phase));
+        if (settled && Number.isInteger(node.exit_code)) facts.push(`exit ${node.exit_code}`);
+        const duration = commandDurationText(node);
+        if (duration) facts.push(duration);
+        if (node.killed) facts.push('killed');
+        head.appendChild(rotateEl('span', 'command-node-facts', facts.join(', ')));
+      }
       if (gone) {
         head.appendChild(rotateEl('span', 'command-node-gone', 'Instance no longer exists'));
       } else {
@@ -8826,8 +8938,30 @@
         terminal.addEventListener('click', (event) => window.openTerminal('service-instance', instance.instance_id, nodeRef, event, { boshDeploymentName: instance.deployment_name, instanceName: instance.instance_name }));
         head.appendChild(terminal);
       }
-      row.appendChild(head);
-      if (node.reason || node.error) row.appendChild(rotateEl('div', 'instance-error', [node.reason, node.error].filter(Boolean).join(' ')));
+      return head;
+    };
+    (record.vms || []).forEach((node) => {
+      const identity = commandNodeIdentity(node);
+      const name = `${identity.group}-${identity.index}`;
+      const key = [task.id, instance.instance_id, name].join('\u0000');
+      // A node that never ran has no output to open. The instance lists
+      // those together under one muted line.
+      if (node.phase === 'skipped') { skippedNodes.push({ node, identity, name, key }); return; }
+      const settled = node.phase === 'settled';
+      // A node that settled before it ran anything has no stored output to read.
+      const noOutput = settled && !node.output_path;
+      const failed = commandNodeFailed(node);
+      const row = rotateEl('div', 'command-node');
+      row.appendChild(buildHead(node, identity, name, key, settled, true));
+      let explainHost = null;
+      if (failed) {
+        explainHost = rotateEl('div', 'command-node-explain');
+        row.appendChild(explainHost);
+      }
+      // A failed node's summary replaces the record's one-line reason. The
+      // reason stays for a node that never started, which has no exit.
+      const reasonText = failed ? node.error : [node.reason, node.error].filter(Boolean).join(' ');
+      if (reasonText) row.appendChild(rotateEl('div', 'instance-error', reasonText));
 
       const sizes = node.merged === true
         ? commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)
@@ -8859,14 +8993,21 @@
       copyButton.setAttribute('aria-label', 'Copy output');
       copyButton.dataset.keepKey = `output-copy:${key}`;
       copyButton.innerHTML = blacksmithIcon('copy', { size: 14 });
-      const context = { key, taskId: task.id, instanceId: instance.instance_id, vm: name, settled, noOutput, reason: node.reason || '', skipped: node.phase === 'skipped', copyButton, copyText: '' };
+      const context = { key, taskId: task.id, instanceId: instance.instance_id, vm: name, settled, noOutput, reason: node.reason || '', skipped: false, copyButton, copyText: '', node, runAs, failed, explainHost };
       copyButton.addEventListener('click', () => { if (context.copyText) copyToClipboard(context.copyText, copyButton); });
       body.commandOutputContext = context;
+      // A failed node opens its own output, unless the operator closed it.
+      if (failed && settled && !noOutput && !commandOutputClosed.has(key)) {
+        toggle.setAttribute('aria-expanded', 'true');
+        body.hidden = false;
+        if (!commandOutputs.has(key)) loadCommandOutput(context);
+      }
       fillCommandOutput(body, context);
       toggle.addEventListener('click', () => {
         const open = toggle.getAttribute('aria-expanded') !== 'true';
         toggle.setAttribute('aria-expanded', String(open));
         body.hidden = !open;
+        if (open) commandOutputClosed.delete(key); else commandOutputClosed.add(key);
         if (open && settled && !noOutput && !commandOutputs.has(key)) loadCommandOutput(context);
       });
       header.append(toggle, copyButton);
@@ -8874,6 +9015,20 @@
       row.appendChild(outputBlock);
       wrap.appendChild(row);
     });
+    if (skippedNodes.length) {
+      const failedNode = (record.vms || []).find(commandNodeFailed);
+      const phrase = commandNodeRange(skippedNodes.map((s) => s.name), skippedNodes.map((s) => s.identity));
+      const because = failedNode ? ` because ${commandNodeName(failedNode)} failed` : '';
+      const details = rotateEl('details', 'command-skipped');
+      details.dataset.keepKey = `skipped:${[task.id, instance.instance_id].join('\u0000')}`;
+      details.appendChild(rotateEl('summary', 'command-skipped-summary', `${phrase} ${skippedNodes.length === 1 ? 'was' : 'were'} skipped${because}.`));
+      skippedNodes.forEach(({ node, identity, name, key }) => {
+        const row = rotateEl('div', 'command-node command-node-skipped');
+        row.appendChild(buildHead(node, identity, name, key, false, false));
+        details.appendChild(row);
+      });
+      wrap.appendChild(details);
+    }
     return wrap;
   };
 
@@ -8896,7 +9051,9 @@
   // How many nodes of a command task have finished, out of all of them.
   const commandNodeProgress = (task) => {
     const nodes = (task.instances || []).flatMap((instance) => (instance && instance.command && instance.command.vms) || []);
-    return { total: nodes.length, done: nodes.filter((node) => node && (node.phase === 'settled' || node.phase === 'skipped')).length };
+    const skipped = nodes.filter((node) => node && node.phase === 'skipped').length;
+    const ran = nodes.filter((node) => node && node.phase === 'settled').length;
+    return { total: nodes.length, done: ran + skipped, ran, skipped, failed: nodes.filter(commandNodeFailed).length };
   };
 
   // The command as a full-width block below the summary table.
@@ -8953,7 +9110,15 @@
               ${boshTaskId ? `<a href="#" class="bosh-task-link" data-bosh-task-id="${boshTaskId}">BOSH task ${boshTaskId}</a>` : ''}
               ${isCommand ? sshSessionLinksHtml(instance, rowKey) : ''}
             </div>
-            ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
+            ${(() => {
+              // A command instance says what its nodes did, and leaves the long
+              // explanation to the failed node.
+              const nodeReasons = isCommand ? ((instance.command && instance.command.vms) || []).map((n) => n && n.reason) : [];
+              const summary = isCommand ? commandInstanceSummary(instance) : '';
+              const own = instance.error && !(summary && nodeReasons.includes(instance.error)) ? instance.error : '';
+              const line = [summary, own].filter(Boolean).join(' ');
+              return line ? `<div class="instance-error">${escapeHtml(line)}</div>` : '';
+            })()}
             ${isCertificates ? `<div class="cert-task-host" data-cert-index="${index}"></div>` : ''}${isCommand ? `<div class="command-task-host" data-command-index="${index}"></div>` : ''}
           </div>
         </div>
@@ -9015,7 +9180,7 @@
     }
     if (!isCommand) columns.push({ label: 'After a failure', html: escapeHtml(taskFailureText(task)), className: 'task-pause-on-failure' });
     const nodes = isCommand ? commandNodeProgress(task) : null;
-    columns.push({ label: 'Progress', html: `${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} instances completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)${nodes && nodes.total ? `, ${nodes.done}/${nodes.total} nodes` : ''}` });
+    columns.push({ label: 'Progress', html: `${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} instances completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)${nodes && nodes.total ? (nodes.failed || nodes.skipped ? `; nodes: ${[`${nodes.ran} ran`, nodes.failed ? `${nodes.failed} failed` : '', nodes.skipped ? `${nodes.skipped} skipped` : '', nodes.total - nodes.done ? `${nodes.total - nodes.done} waiting` : ''].filter(Boolean).join(', ')}` : `, ${nodes.done}/${nodes.total} nodes`) : ''}` });
     columns.push({ label: 'Instances', html: String(instances.length) });
     columns.push({ label: 'Created', html: escapeHtml(formatTaskTime(task.created_at)) });
     const summaryTable = `<table class="task-summary-table" data-sortable="false"><thead><tr>${columns.map((c) => `<th scope="col" class="label">${escapeHtml(c.label)}</th>`).join('')}</tr></thead><tbody><tr>${columns.map((c) => `<td class="value${c.className ? ` ${c.className}` : ''}" data-label="${escapeAttribute(c.label)}">${c.html}</td>`).join('')}</tr></tbody></table>`;

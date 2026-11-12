@@ -14303,3 +14303,15 @@ tr.row-link { cursor: pointer; }
 #route-context > .view-guidance { order: 2; margin-left: auto; }
 #upgrade .instance-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .5rem; }
 #upgrade .instance-heading .instance-deployment { margin: 0; font-size: .8125rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+
+/* Failed command nodes, skipped nodes, and tinted error lines */
+#upgrade .command-node-explain { margin: .25rem 0 .5rem; padding: 0 .25rem; overflow-wrap: anywhere; }
+#upgrade .command-node-explain p { margin: .25rem 0; }
+#upgrade .command-node-explain-summary { font-weight: 600; }
+#upgrade .command-node-explain-lines { margin: .25rem 0; padding-left: 1.25rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8125rem; }
+#upgrade .command-node-explain-count { color: var(--text-secondary); font-size: .8125rem; }
+#upgrade .command-node-hint { color: var(--text-primary); }
+#upgrade .command-output-error-line { background: color-mix(in srgb, var(--danger) 16%, transparent); border-radius: 2px; }
+#upgrade .command-skipped { margin: .5rem 0 0; color: var(--text-secondary); }
+#upgrade .command-skipped-summary { cursor: pointer; padding: 4px 0; font-size: .875rem; overflow-wrap: anywhere; }
+#upgrade .command-skipped .command-node { padding: 2px 0 2px 1rem; }

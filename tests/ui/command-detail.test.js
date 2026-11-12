@@ -32,7 +32,7 @@ const node=(group,index,over={})=>({reviewed:{group,index,id:'vm-'+index,cid:'c'
 const inst=(id,vms,over={})=>({instance_id:id,instance_name:id+'-name',deployment_name:'dep-'+id,status:'success',command:{deployment:'dep-'+id,vms},...over});
 const task=(over={})=>({id:TASK,kind:'command',status:'completed',name:'',target:'Run as vcap on 2 nodes',total_count:1,completed_count:1,failed_count:0,created_at:when(0,0),
  command:{command:SECRET,command_digest:'abcdef0123456789abcdef',command_length:SECRET.length,run_as:'vcap',shell:'/bin/bash',timeout_seconds:600,parallel:true,max_in_flight:2,reason:'rolling restart check'},
- instances:[inst('val-a',[node('node',0),node('node',1,{status:'failed',exit_code:3})])],...over});
+ instances:[inst('val-a',[node('node',0),node('node',1,{status:'succeeded',exit_code:3})])],...over});
 const output=(over={})=>({stdout:'hello out\n',stderr:'oops err\n',stdout_kept:10,stdout_received:10,stderr_kept:9,stderr_received:9,stdout_truncated:false,stderr_truncated:false,...over});
 
 // routes.detail is the task detail answer, routes.output answers [status, body]
