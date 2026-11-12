@@ -8646,7 +8646,7 @@
   };
 
   // Fills the body of a node's output <details> from what is known now.
-  const fillCommandOutput = (body, context) => {
+  const fillCommandOutputBody = (body, context) => {
     const entry = commandOutputs.get(context.key);
     body.replaceChildren();
     if (!context.settled) {
@@ -8661,13 +8661,23 @@
     if (entry.status === 'loading') {
       body.appendChild(rotateEl('p', 'command-output-note', 'Loading output...'));
     } else if (entry.status === 'loaded') {
-      [['stdout', entry.data.stdout], ['stderr', entry.data.stderr]].forEach(([label, text]) => {
-        const clean = stripControlChars(text);
-        if (!clean) return;
-        body.appendChild(rotateEl('div', 'command-output-label', label));
-        body.appendChild(rotateEl('pre', `command-output command-output-${label}`, clean));
-      });
-      if (!body.children.length) body.appendChild(rotateEl('p', 'command-output-note', 'The node printed nothing.'));
+      const out = stripControlChars(entry.data.stdout);
+      if (entry.data.merged === true) {
+        // One stream in the order the process wrote it, so there is nothing to label.
+        if (out) body.appendChild(rotateEl('pre', 'command-output command-output-merged', out));
+        context.copyText = out;
+      } else {
+        // A run stored before the streams were merged keeps them apart.
+        const err = stripControlChars(entry.data.stderr);
+        if (out && err) body.appendChild(rotateEl('p', 'command-output-note', 'This run stored stdout and stderr separately, so their original order is unknown.'));
+        if (out) body.appendChild(rotateEl('pre', 'command-output command-output-stdout', out));
+        if (err) {
+          body.appendChild(rotateEl('div', 'command-output-label', 'stderr'));
+          body.appendChild(rotateEl('pre', 'command-output command-output-stderr', err));
+        }
+        context.copyText = out && err && !out.endsWith('\n') ? `${out}\n${err}` : `${out}${err}`;
+      }
+      if (!body.querySelector('pre')) body.appendChild(rotateEl('p', 'command-output-note', 'The node printed nothing.'));
     } else if (entry.status === 'credential') {
       body.appendChild(buildCommandKeyPrompt(commandKeyMessage(false).replace('show this', 'show this output'), 'Show output', () => {
         commandOutputs.delete(context.key);
@@ -8682,6 +8692,14 @@
         body.appendChild(retry);
       }
     }
+  };
+
+  // Fills the output body and shows the copy button only while there is
+  // text to copy, which is the text the pane displays.
+  const fillCommandOutput = (body, context) => {
+    context.copyText = '';
+    fillCommandOutputBody(body, context);
+    if (context.copyButton) context.copyButton.hidden = !context.copyText;
   };
 
   const paintCommandOutput = (key) => {
@@ -8761,17 +8779,31 @@
 
       const details = rotateEl('details', 'command-output-details');
       details.dataset.keepKey = `output:${key}`;
-      const summary = rotateEl('summary', '', !settled ? 'Output' : noOutput ? 'Output (none kept)' : `Output (stdout ${commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)}, stderr ${commandStreamText(node.stderr_kept, node.stderr_received, node.stderr_truncated)})`);
+      const sizes = node.merged === true
+        ? commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)
+        : `stdout ${commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)}, stderr ${commandStreamText(node.stderr_kept, node.stderr_received, node.stderr_truncated)}`;
+      const summary = rotateEl('summary', '', !settled ? 'Output' : noOutput ? 'Output (none kept)' : `Output (${sizes})`);
       const body = rotateEl('div', 'command-output-body');
       body.dataset.outputKey = key;
-      const context = { key, taskId: task.id, instanceId: instance.instance_id, vm: name, settled, noOutput, reason: node.reason || '', skipped: node.phase === 'skipped' };
+      // The copy button sits beside the header, outside the summary, so
+      // pressing it does not open or close the panel.
+      const copyButton = rotateEl('button', 'copy-btn-inline command-output-copy');
+      copyButton.type = 'button';
+      copyButton.hidden = true;
+      copyButton.setAttribute('aria-label', 'Copy output');
+      copyButton.dataset.keepKey = `output-copy:${key}`;
+      copyButton.innerHTML = blacksmithIcon('copy', { size: 14 });
+      const context = { key, taskId: task.id, instanceId: instance.instance_id, vm: name, settled, noOutput, reason: node.reason || '', skipped: node.phase === 'skipped', copyButton, copyText: '' };
+      copyButton.addEventListener('click', () => { if (context.copyText) copyToClipboard(context.copyText, copyButton); });
       body.commandOutputContext = context;
       fillCommandOutput(body, context);
       details.append(summary, body);
       details.addEventListener('toggle', () => {
         if (details.open && settled && !noOutput && !commandOutputs.has(key)) loadCommandOutput(context);
       });
-      row.appendChild(details);
+      const outputBlock = rotateEl('div', 'command-output-block');
+      outputBlock.append(details, copyButton);
+      row.appendChild(outputBlock);
       wrap.appendChild(row);
     });
     return wrap;
@@ -8803,16 +8835,12 @@
   const buildCommandBlock = (spec) => {
     const block = rotateEl('div', 'command-block');
     block.appendChild(buildRevealedPre('command-text', spec.command || ''));
-    const copy = rotateEl('button', 'command-copy', 'Copy');
+    const copy = rotateEl('button', 'copy-btn-inline command-copy');
     copy.type = 'button';
-    copy.addEventListener('click', () => {
-      const clipboard = window.navigator && window.navigator.clipboard;
-      if (!clipboard || typeof clipboard.writeText !== 'function') return;
-      try {
-        const pending = clipboard.writeText(spec.command || '');
-        if (pending && typeof pending.catch === 'function') pending.catch(() => {});
-      } catch (err) { /* nothing visible, and nothing logged */ }
-    });
+    copy.setAttribute('aria-label', 'Copy command');
+    copy.dataset.keepKey = 'command-copy';
+    copy.innerHTML = blacksmithIcon('copy', { size: 14 });
+    copy.addEventListener('click', () => copyToClipboard(spec.command || '', copy));
     block.appendChild(copy);
     return block;
   };
