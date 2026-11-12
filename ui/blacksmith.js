@@ -7684,6 +7684,9 @@
     container.querySelectorAll('details[data-keep-key]').forEach((node) => {
       if (node.open) open.add(node.dataset.keepKey);
     });
+    container.querySelectorAll('button[data-disclosure][data-keep-key]').forEach((node) => {
+      if (node.getAttribute('aria-expanded') === 'true') open.add(node.dataset.keepKey);
+    });
     const active = document.activeElement;
     const focusKey = active && container.contains(active) && active.dataset ? (active.dataset.keepKey || '') : '';
     const scrollTop = container.scrollTop;
@@ -7696,6 +7699,11 @@
     if (!sameView) return;
     container.querySelectorAll('details[data-keep-key]').forEach((node) => {
       if (open.has(node.dataset.keepKey)) node.open = true;
+    });
+    // A disclosure button reopens by the same press that opened it, which
+    // also reads its output again only when nothing is cached.
+    container.querySelectorAll('button[data-disclosure][data-keep-key]').forEach((node) => {
+      if (open.has(node.dataset.keepKey) && node.getAttribute('aria-expanded') !== 'true') node.click();
     });
     scrolls.forEach(([key, top]) => {
       const node = Array.from(container.querySelectorAll('[data-keep-scroll]')).find((n) => n.dataset.keepScroll === key);
@@ -8700,10 +8708,7 @@
   const fillCommandOutput = (body, context) => {
     context.copyText = '';
     fillCommandOutputBody(body, context);
-    if (context.copyButton) {
-      context.copyButton.hidden = !context.copyText;
-      if (context.placeCopy) context.placeCopy();
-    }
+    if (context.copyButton) context.copyButton.hidden = !context.copyText;
   };
 
   const paintCommandOutput = (key) => {
@@ -8824,16 +8829,30 @@
       row.appendChild(head);
       if (node.reason || node.error) row.appendChild(rotateEl('div', 'instance-error', [node.reason, node.error].filter(Boolean).join(' ')));
 
-      const details = rotateEl('details', 'command-output-details');
-      details.dataset.keepKey = `output:${key}`;
       const sizes = node.merged === true
         ? commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)
         : `stdout ${commandStreamText(node.stdout_kept, node.stdout_received, node.stdout_truncated)}, stderr ${commandStreamText(node.stderr_kept, node.stderr_received, node.stderr_truncated)}`;
-      const summary = rotateEl('summary', '', !settled ? 'Output' : noOutput ? 'Output (none kept)' : `Output (${sizes})`);
+      // The Output panel is a disclosure. A header row holds the toggle button
+      // and, right after it, the Copy output button, so pressing Copy never
+      // opens or closes the panel and nothing needs measuring.
+      const bodyId = `command-output-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+      const outputBlock = rotateEl('div', 'command-output-block');
+      const header = rotateEl('div', 'command-output-header');
+      const toggle = rotateEl('button', 'command-output-toggle');
+      toggle.type = 'button';
+      toggle.dataset.disclosure = '';
+      toggle.dataset.keepKey = `output:${key}`;
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-controls', bodyId);
+      toggle.append(rotateEl('span', 'command-output-title', !settled ? 'Output' : noOutput ? 'Output (none kept)' : `Output (${sizes})`));
+      const chevron = rotateEl('span', 'command-output-chevron');
+      chevron.setAttribute('aria-hidden', 'true');
+      chevron.innerHTML = blacksmithIcon('chevron-down', { size: 16 });
+      toggle.append(chevron);
       const body = rotateEl('div', 'command-output-body');
+      body.id = bodyId;
+      body.hidden = true;
       body.dataset.outputKey = key;
-      // The copy button sits beside the header, outside the summary, so
-      // pressing it does not open or close the panel.
       const copyButton = rotateEl('button', 'copy-btn-inline command-output-copy');
       copyButton.type = 'button';
       copyButton.hidden = true;
@@ -8844,33 +8863,15 @@
       copyButton.addEventListener('click', () => { if (context.copyText) copyToClipboard(context.copyText, copyButton); });
       body.commandOutputContext = context;
       fillCommandOutput(body, context);
-      details.append(summary, body);
-      const outputBlock = rotateEl('div', 'command-output-block');
-      // The button rides right after the header text and is centred on the
-      // header's line. The summary spans the whole row, so the text is
-      // measured, not the summary.
-      const placeCopy = () => {
-        if (copyButton.hidden || typeof document.createRange !== 'function') return;
-        const range = document.createRange();
-        range.selectNodeContents(summary);
-        if (typeof range.getClientRects !== 'function') return;
-        // A header that wraps puts the button after its last line.
-        const lines = range.getClientRects();
-        const text = lines[lines.length - 1];
-        if (!text) return;
-        const box = outputBlock.getBoundingClientRect();
-        const size = copyButton.getBoundingClientRect();
-        copyButton.style.left = `${Math.round(text.right - box.left + 8)}px`;
-        copyButton.style.top = `${Math.round(text.top - box.top + (text.height - size.height) / 2)}px`;
-      };
-      context.placeCopy = placeCopy;
-      details.addEventListener('toggle', () => {
-        if (details.open && settled && !noOutput && !commandOutputs.has(key)) loadCommandOutput(context);
-        placeCopy();
+      toggle.addEventListener('click', () => {
+        const open = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', String(open));
+        body.hidden = !open;
+        if (open && settled && !noOutput && !commandOutputs.has(key)) loadCommandOutput(context);
       });
-      outputBlock.append(details, copyButton);
+      header.append(toggle, copyButton);
+      outputBlock.append(header, body);
       row.appendChild(outputBlock);
-      if (typeof ResizeObserver === 'function') new ResizeObserver(placeCopy).observe(outputBlock);
       wrap.appendChild(row);
     });
     return wrap;

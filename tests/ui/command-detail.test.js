@@ -66,8 +66,9 @@ async function setup(routes={}){
  return {...env,outputs,resumes,details,state};
 }
 const open=async(env)=>{await env.w.__T.selectUpgradeTask(TASK);await sleep(10);};
-const detailsOf=(d)=>[...d.querySelectorAll('#upgrade .upgrade-tasks details')];
-const openDetails=async(env,i=0)=>{const el=detailsOf(env.d)[i];el.open=true;await sleep(30);return el;};
+const detailsOf=(d)=>[...d.querySelectorAll('#upgrade .upgrade-tasks .command-output-block')];
+const isOpen=(el)=>el.querySelector('.command-output-toggle').getAttribute('aria-expanded')==='true';
+const openDetails=async(env,i=0)=>{const el=detailsOf(env.d)[i];if(!isOpen(el))el.querySelector('.command-output-toggle').click();await sleep(30);return el;};
 const pageText=(d)=>d.body.textContent;
 
 t('the task list badges a command task with the digest prefix and never the text',async()=>{
@@ -148,7 +149,7 @@ t('the output summary reports kept of received, truncation, and empty streams',a
   node('node',0,{stdout_kept:1229,stdout_received:1229,stderr_kept:0,stderr_received:0}),
   node('node',1,{stdout_kept:65536,stdout_received:133120,stdout_truncated:true,stderr_kept:5,stderr_received:5})])]})});const {w,d}=env;try{
  await open(env);
- const s=detailsOf(d).map(x=>x.querySelector('summary').textContent);
+ const s=detailsOf(d).map(x=>x.querySelector('.command-output-title').textContent);
  expect(s[0]).toBe('Output (stdout 1.2 KiB, stderr 0 B)');
  expect(s[1].startsWith('Output (stdout 64.0 KiB of 130.0 KiB')).toBe(true);
  expect(s[1].includes('truncated')).toBe(true);
@@ -593,7 +594,7 @@ t('a node that has not settled says its output appears later and sends no reques
  await open(env);
  const el=await openDetails(env,0);
  expect(el.textContent.includes('appears when the node finishes')).toBe(true);
- expect(el.querySelector('summary').textContent).toBe('Output');
+ expect(el.querySelector('.command-output-title').textContent).toBe('Output');
  await openDetails(env,1);
  expect(env.outputs.length).toBe(0);
  }finally{w.close();}
@@ -609,7 +610,7 @@ t('a re-render keeps fetched output, keeps the details open, and sends no second
  await w.__T.fetchUpgradeTasks();await sleep(40);
  const again=detailsOf(d)[0];
  expect(again!==el).toBe(true);
- expect(again.open).toBe(true);
+ expect(isOpen(again)).toBe(true);
  expect(again.querySelectorAll('pre').length).toBe(2);
  expect(again.querySelectorAll('pre')[0].textContent).toBe('hello out\n');
  expect(env.outputs.length).toBe(1);
@@ -1018,7 +1019,7 @@ t('a settled node with no kept output says so, reads nothing, and offers no Retr
  const env=await setup({detail:task({instances:[inst('val-a',[gone('node',0),gone('node',1,{reason:undefined})])]})});const {w,d}=env;try{
  await open(env);
  const first=detailsOf(d)[0];
- expect(first.querySelector('summary').textContent).toBe('Output (none kept)');
+ expect(first.querySelector('.command-output-title').textContent).toBe('Output (none kept)');
  await openDetails(env,0);await openDetails(env,1);
  expect(env.outputs.length).toBe(0);
  const body=detailsOf(d)[0].querySelector('.command-output-body');
@@ -1026,7 +1027,7 @@ t('a settled node with no kept output says so, reads nothing, and offers no Retr
  expect(body.textContent.includes('the node moved to another VM')).toBe(true);
  expect(detailsOf(d)[1].querySelector('.command-output-body').textContent.includes('Blacksmith kept no output for this node.')).toBe(true);
  expect(pageText(d).includes('produced no output')).toBe(false);
- expect(detailsOf(d).every(el=>el.querySelector('button')===null)).toBe(true);
+ expect(detailsOf(d).every(el=>el.querySelector('.command-output-body button')===null)).toBe(true);
  expect(pageText(d).includes('Could not read the output')).toBe(false);
  }finally{w.close();}
 });

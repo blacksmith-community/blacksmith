@@ -14250,13 +14250,20 @@ tr.row-link { cursor: pointer; }
 }
 
 /* The command and output blocks */
-#upgrade .command-block, #upgrade .command-output-block { position: relative; }
+#upgrade .command-block { position: relative; }
 #upgrade .command-block { margin: .75rem 0; }
 #upgrade .command-block > div > pre.command-text { margin: 0; padding-right: 40px; }
 #upgrade .command-block > .command-copy { position: absolute; top: 6px; right: 6px; }
-#upgrade .command-output-block > .command-output-copy { position: absolute; top: 6px; left: 150px; z-index: 1; }
-#upgrade .command-output-block > .command-output-copy[hidden] { display: none; }
-#upgrade .command-output-block > details > summary { min-height: 36px; }
+#upgrade .command-output-block { margin: .5rem 0 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+#upgrade .command-output-header { display: flex; align-items: center; gap: 8px; padding: 2px 8px; min-height: 40px; flex-wrap: nowrap; }
+#upgrade .command-output-toggle { display: inline-flex; align-items: center; flex: 0 1 auto; gap: 6px; width: auto; min-width: 0; max-width: 100%; margin: 0; padding: 4px 6px; border: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; font-weight: 600; text-align: left; white-space: normal; cursor: pointer; }
+#upgrade .command-output-toggle .command-output-title { overflow-wrap: anywhere; }
+#upgrade .command-output-chevron { display: inline-flex; flex: none; transition: transform .12s; }
+#upgrade .command-output-toggle[aria-expanded="true"] .command-output-chevron { transform: rotate(180deg); }
+#upgrade .command-output-header > .command-output-copy { flex: none; }
+#upgrade .command-output-header > .command-output-copy[hidden] { display: none; }
+#upgrade .command-output-block > .command-output-body { padding: 8px 12px 12px; border-top: 1px solid var(--border); }
+#upgrade .command-output-block > .command-output-body[hidden] { display: none; }
 
 /* Links, terminal, and task links on the activity page */
 #upgrade .instance-heading a.instance-link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }

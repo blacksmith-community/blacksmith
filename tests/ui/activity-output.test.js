@@ -32,9 +32,10 @@ async function setup(detail,answer){
  await w.__T.selectUpgradeTask(TASK);await sleep(10);
  return {...env,copied};
 }
-const details=(d)=>d.querySelector('#upgrade .command-output-details');
+const details=(d)=>d.querySelector('#upgrade .command-output-block');
+const toggleOf=(d)=>d.querySelector('#upgrade .command-output-toggle');
 const outCopy=(d)=>d.querySelector('#upgrade button.command-output-copy');
-const openOut=async(d)=>{const el=details(d);el.open=true;el.dispatchEvent(new d.defaultView.Event('toggle'));await sleep(40);};
+const openOut=async(d)=>{toggleOf(d).click();await sleep(40);};
 
 t('the command sits in a block below the table with an icon-only copy button',async()=>{
  const {d,copied}=await setup(task(),merged());
@@ -58,9 +59,10 @@ t('the Output copy button sits outside the summary, shows once output loads, and
  const block=d.querySelector('#upgrade .command-output-block');
  expect(block).not.toBeNull();
  expect(outCopy(d).hidden).toBe(true);
- expect(details(d).querySelector('summary button')).toBeNull();
+ expect(toggleOf(d).contains(outCopy(d))).toBe(false);
  expect(block.contains(outCopy(d))).toBe(true);
- expect(details(d).contains(outCopy(d))).toBe(false);
+ expect(outCopy(d).previousElementSibling).toBe(toggleOf(d));
+ expect(outCopy(d).parentElement.classList.contains('command-output-header')).toBe(true);
  await openOut(d);
  const button=outCopy(d);
  expect(button.hidden).toBe(false);
@@ -70,7 +72,7 @@ t('the Output copy button sits outside the summary, shows once output loads, and
  expect([...d.querySelectorAll('*')].some((e)=>e.id!=='x'&&[...e.attributes].some((a)=>a.value.includes(OUTPUT)))).toBe(false);
  button.click();await sleep(10);
  expect(copied).toEqual([`${OUTPUT}\n`]);
- expect(details(d).open).toBe(true);
+ expect(toggleOf(d).getAttribute('aria-expanded')).toBe('true');
 });
 
 t('merged output is one block with no stream labels',async()=>{
@@ -82,7 +84,7 @@ t('merged output is one block with no stream labels',async()=>{
  expect(pres[0].textContent).toBe(`${OUTPUT}\nsecond\n`);
  expect(details(d).querySelector('.command-output-label')).toBeNull();
  expect(details(d).textContent).not.toContain('stdout');
- expect(details(d).querySelector('summary').textContent).not.toMatch(/stdout|stderr/);
+ expect(toggleOf(d).textContent).not.toMatch(/stdout|stderr/);
 });
 
 t('an older record shows stdout, a captioned stderr, and the ordering note',async()=>{
@@ -125,25 +127,6 @@ t('every new control has a distinct keep key',async()=>{
  expect(new Set(keys).size).toBe(keys.length);
 });
 
-t('the Output copy button is placed right after the header text, centred on its line',async()=>{
- const {w,d}=await setup(task(),merged());
- const block=d.querySelector('#upgrade .command-output-block');
- const button=outCopy(d);
- w.Range.prototype.getClientRects=()=>[{left:116,right:150,top:190,height:20,width:34},{left:116,right:180,top:210,height:20,width:64}];
- const orig=w.HTMLElement.prototype.getBoundingClientRect;
- w.HTMLElement.prototype.getBoundingClientRect=function(){
-  if(this===block) return {left:100,top:200,right:700,height:300,width:600};
-  if(this===button) return {left:0,top:0,right:28,height:28,width:28};
-  return orig.call(this);
- };
- await openOut(d);
- expect(button.style.left).toBe('88px');
- expect(button.style.top).toBe('6px');
- expect(details(d).contains(button)).toBe(false);
- button.click();await sleep(10);
- expect(details(d).open).toBe(true);
-});
-
 t('the output block sizes to its content and keeps a capped height',()=>{
  const fs=require('fs');const path=require('path');
  const css=fs.readFileSync(path.resolve(__dirname,'..','..','ui','blacksmith.css'),'utf8');
@@ -161,4 +144,43 @@ t('the node icon looks and behaves like a link',()=>{
  expect(css).toMatch(/#upgrade a\.command-node-link\s*\{[^}]*cursor:\s*pointer/);
  expect(css).toMatch(/#upgrade a\.command-node-link:hover[^{]*\{[^}]*background/);
  expect(css).toMatch(/#upgrade a\.command-node-link:focus-visible[^{]*\{[^}]*outline:\s*2px/);
+});
+
+t('the Output panel is a disclosure button with a matching body, driven by Enter and Space',async()=>{
+ const {w,d}=await setup(task(),merged());
+ const toggle=toggleOf(d);
+ expect(toggle.tagName).toBe('BUTTON');
+ expect(d.querySelector('#upgrade .command-output-block details, #upgrade .command-output-block summary')).toBeNull();
+ const body=d.getElementById(toggle.getAttribute('aria-controls'));
+ expect(body).not.toBeNull();
+ expect(toggle.getAttribute('aria-expanded')).toBe('false');
+ expect(body.hidden).toBe(true);
+ expect(toggle.dataset.keepKey).toMatch(/^output:/);
+ expect(toggle.nextElementSibling).toBe(outCopy(d));
+ expect(outCopy(d).dataset.keepKey).toMatch(/^output-copy:/);
+ // A real browser turns Enter and Space on a button into a click, and so does jsdom.
+ for(const key of ['Enter',' ']){
+  toggle.focus();
+  toggle.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true}));
+  toggle.dispatchEvent(new w.KeyboardEvent('keyup',{key,bubbles:true}));
+  toggle.click();await sleep(30);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  expect(body.hidden).toBe(false);
+  toggle.click();await sleep(10);
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(body.hidden).toBe(true);
+ }
+});
+
+t('a poll re-render keeps the panel open and the toggle focused without reading the output again',async()=>{
+ const {w,d}=await setup(task(),merged());
+ await openOut(d);
+ const before=toggleOf(d);before.focus();
+ w.__T.renderTaskDetail(task({status:'running'}));await sleep(30);
+ const after=toggleOf(d);
+ expect(after).not.toBe(before);
+ expect(after.getAttribute('aria-expanded')).toBe('true');
+ expect(d.getElementById(after.getAttribute('aria-controls')).hidden).toBe(false);
+ expect(d.activeElement).toBe(after);
+ expect(d.querySelector('#upgrade pre.command-output-merged')).not.toBeNull();
 });
