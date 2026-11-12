@@ -40,11 +40,11 @@
 }
 body > header { height: 56px; box-shadow: none; }
 body > header > .wrap { height: 100%; gap: 12px; }
-body > header #logo { font-size: 18px; font-weight: 650; }
+body > header #logo { font-size: 1.125rem; font-weight: 650; }
 body > header .theme-toggle { height: 32px; margin-top: 0; border-color: #8999ad; padding: 4px 10px; }
 .main-content > .wrap { min-height: 0; padding-bottom: 12px; }
 /* Generated utility colors must follow the console's data-theme state. */
-.main-content .service-info-table td.info-key { background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; letter-spacing: .035em; }
+.main-content .service-info-table td.info-key { background: var(--bg-tertiary); color: var(--text-secondary); font-size: 0.75rem; letter-spacing: .035em; }
 .main-content .service-info-table td.info-value { background: var(--bg-secondary); color: var(--text-primary); }
 .main-content .service-info-table { background: var(--bg-secondary); color: var(--text-primary); }
 .main-content .plan-details-table td, .main-content .plan-details-table th { color: var(--text-primary); background: var(--bg-secondary); border-color: var(--border-primary); }
@@ -59,34 +59,34 @@ body > header .theme-toggle { height: 32px; margin-top: 0; border-color: #8999ad
 #services .service-instance-name { font-weight: 600; margin: 3px 0; }
 .main-content .no-selection, .main-content .no-data, .main-content .loading { color: var(--text-secondary); font-style: normal; line-height: 1.6; }
 #upgrade .upgrade-main { min-width: 0; }
-#upgrade .upgrade-main h2, #upgrade .upgrade-right-panel h2 { font-size: 16px; padding: 14px 16px; color: var(--text-primary); }
+#upgrade .upgrade-main h2, #upgrade .upgrade-right-panel h2 { font-size: 1rem; padding: 14px 16px; color: var(--text-primary); }
 #upgrade .upgrade-services-panel { flex-basis: 44%; max-width: 44%; }
 #upgrade .upgrade-filters .filter-row { flex-wrap: wrap; gap: 6px; }
 #upgrade .upgrade-filters .filter-row label { min-width: 0; width: 100%; }
 #upgrade .upgrade-filters .filter-row select { min-width: 0; width: 100%; }
 #upgrade .upgrade-actions, #upgrade .range-inputs { flex-wrap: wrap; }
 #upgrade .upgrade-footer { align-items: center; gap: 16px; }
-.upgrade-guidance { margin: 0; color: var(--text-secondary); font-size: 12px; flex: 1; }
+.upgrade-guidance { margin: 0; color: var(--text-secondary); font-size: 0.75rem; flex: 1; }
 #upgrade .upgrade-footer button { flex-shrink: 0; min-height: 38px; }
 #upgrade .upgrade-instance-id, #upgrade .instance-id { overflow-wrap: anywhere; }
 button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:focus-visible { outline: 2px solid var(--border-active); outline-offset: 3px; }
 .skip-link { position: fixed; left: 12px; top: -100px; z-index: 20000; padding: 12px; color: var(--text-primary); background: var(--bg-secondary); }
 .skip-link:focus { top: 8px; }
 #navigation-trigger { display: inline-flex; align-items: center; gap: 26px; min-height: 34px; padding: 5px 12px; border: 1px solid #8495ad; border-radius: 7px; color: #f1f5ff; background: #ffffff0a; font: inherit; cursor: pointer; white-space: nowrap; }
-#navigation-trigger kbd { color: #d5e0f0; font-size: 12px; border: 1px solid #8495ad; padding: 1px 5px; border-radius: 4px; }
+#navigation-trigger kbd { color: #d5e0f0; font-size: 0.75rem; border: 1px solid #8495ad; padding: 1px 5px; border-radius: 4px; }
 #navigation-dialog { box-sizing: border-box; margin: 12vh auto auto; margin: 12dvh auto auto; width: min(620px, calc(100vw - 24px)); max-height: 76dvh; padding: 20px; border: 1px solid var(--border-primary); border-radius: 14px; background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 24px 80px #0006; overflow: auto; }
 #navigation-dialog::backdrop { background: #0b1428a6; }
 .navigation-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-.navigation-heading h2 { font-size: 18px; font-weight: 650; }
-#navigation-dialog label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 7px; }
-#navigation-search { box-sizing: border-box; width: 100%; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-primary); font-size: 16px; padding: 12px; border-radius: 8px; }
+.navigation-heading h2 { font-size: 1.125rem; font-weight: 650; }
+#navigation-dialog label { display: block; font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 7px; }
+#navigation-search { box-sizing: border-box; width: 100%; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-primary); font-size: 1rem; padding: 12px; border-radius: 8px; }
 #navigation-results { margin-top: 12px; max-height: 42dvh; overflow-y: auto; }
 #navigation-results [role="option"] { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; margin: 3px; border-radius: 7px; cursor: pointer; overflow-wrap: anywhere; }
-#navigation-results strong { font-weight: 600; font-size: 14px; }
-#navigation-results span { color: var(--text-secondary); font-size: 12px; }
+#navigation-results strong { font-weight: 600; font-size: 0.875rem; }
+#navigation-results span { color: var(--text-secondary); font-size: 0.75rem; }
 #navigation-results [aria-selected="true"] { background: var(--bg-active); box-shadow: inset 3px 0 var(--border-active); }
-#navigation-dialog [role="status"] { color: var(--text-secondary); font-size: 12px; margin: 12px 0 0; }
-.navigation-help { color: var(--text-secondary); font-size: 12px; margin-top: 12px; border-top: 1px solid var(--border-primary); padding-top: 12px; }
+#navigation-dialog [role="status"] { color: var(--text-secondary); font-size: 0.75rem; margin: 12px 0 0; }
+.navigation-help { color: var(--text-secondary); font-size: 0.75rem; margin-top: 12px; border-top: 1px solid var(--border-primary); padding-top: 12px; }
 @media (max-width: 900px) {
   #upgrade.tab-panel.active { flex-direction: column; overflow: auto; }
   #upgrade .upgrade-main, #upgrade .upgrade-right-panel { flex: none; width: 100%; height: auto; min-width: 0; overflow: visible; }
@@ -97,7 +97,7 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
 }
 @media (max-width: 600px) {
   .wrap { width: calc(100% - 24px); margin: 0 12px; }
-  body > header #logo { font-size: 15px; }
+  body > header #logo { font-size: 0.9375rem; }
   body > header #logo img { display: none; }
   body > header #deployment-name, body > header #ident { display: none; }
   body > header .space-x-4 { gap: 8px; }

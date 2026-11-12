@@ -132,7 +132,7 @@ table tbody td {
 .vms-table thead th,
 .vms-table tbody td {
   white-space: nowrap;
-  font-size: 13px;   /* consistent size */
+  font-size: 0.8125rem;   /* consistent size */
   font-weight: 400;  /* normalize weight */
 }
 
@@ -149,7 +149,7 @@ table tbody td {
 .vms-table td.vm-created-at,
 .vms-table td.vm-disk-cids,
 .vms-table td.vm-resurrection {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 400;
   color: var(--text-primary);
 }
@@ -230,7 +230,7 @@ table tbody td {
 
 .vms-table .vm-detail-field dt {
   flex: none;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 700;
   color: var(--text-primary);
   white-space: nowrap;
@@ -240,7 +240,7 @@ table tbody td {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
 }
 
@@ -279,7 +279,7 @@ table tbody td {
 .cert-details-table td,
 #task-details-modal .task-details-table th,
 #task-details-modal .task-details-table td {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 400;
 }
 
@@ -301,7 +301,7 @@ table tbody td {
 .deployment-log-table .log-message,
 .debug-log-table .log-timestamp,
 .debug-log-table .log-message {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 400;
 }
 
@@ -359,7 +359,7 @@ table tbody td {
 .events-table .event-object,
 .events-table .event-task,
 .events-table .event-error {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 400;
 }
 
@@ -445,7 +445,7 @@ table tbody {
   border-left-width: 4px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .instance-logs-notice p {
@@ -475,7 +475,7 @@ table tbody {
   border: none;
   border-right: 1px solid var(--border-primary);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--text-secondary);
   transition: all 0.2s;
@@ -536,7 +536,7 @@ table tbody {
 
 .log-select-label {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-primary);
 }
 
@@ -549,7 +549,7 @@ select option {
 /* Special overrides for log file dropdown - needs monospace font and wider width */
 .log-file-dropdown {
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
   min-width: 400px;
   max-width: 700px;
   text-overflow: ellipsis;
@@ -572,7 +572,7 @@ select option {
   padding: 15px;
   padding-bottom: 30px;
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -690,7 +690,7 @@ body {
   background: var(--background);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 15px;
+  font-size: 0.9375rem;
   line-height: 1.5;
   min-height: 100dvh;
   margin: 0;
@@ -753,7 +753,7 @@ header span#ident {
   padding: 2px 8px;
   cursor: pointer;
   color: var(--text-header);
-  font-size: 12px;
+  font-size: 0.75rem;
   transition: all 0.3s ease;
   display: inline-flex;
   align-items: center;
@@ -1124,7 +1124,7 @@ td a {
 }
 
 #services .filter-row label {
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-primary);
   font-weight: 500;
   min-width: 80px;
@@ -1158,7 +1158,7 @@ td a {
   border-radius: 4px;
   background-color: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
@@ -1180,7 +1180,7 @@ td a {
   border-radius: 4px;
   background-color: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
@@ -1212,7 +1212,7 @@ td a {
 }
 
 #services .filter-status {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
   font-style: italic;
   border-top: 1px solid var(--border-secondary);
@@ -1251,7 +1251,7 @@ td a {
 
 #services .service-item .service-id {
   font-family: monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   margin-top: 0.25em;
   overflow: hidden;
@@ -1617,7 +1617,7 @@ td a {
 
 .settings-label {
   display: block;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 6px;
@@ -1633,7 +1633,7 @@ td a {
 .settings-input {
   flex: 1;
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-family: monospace;
 }
 
@@ -1643,7 +1643,7 @@ td a {
   border-radius: 6px;
   background: var(--text-link);
   color: #fff;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -1661,14 +1661,14 @@ td a {
 
 .settings-hint {
   display: block;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   margin-top: 4px;
 }
 
 .settings-feedback {
   display: block;
-  font-size: 12px;
+  font-size: 0.75rem;
   margin-top: 4px;
   min-height: 18px;
 }
@@ -2518,12 +2518,12 @@ th[style*="cursor: pointer"]:hover {
   border: none;
   background: transparent;
   width: 180px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .filter-count {
   margin-left: 8px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: #6b7280;
   font-weight: 500;
 }
@@ -2856,7 +2856,7 @@ th[style*="cursor: pointer"]:hover {
   padding: 8px 16px;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
   border-radius: 6px;
   transition: all 0.2s;
@@ -2922,14 +2922,14 @@ bs-tabs > .manifest-tab-pane {
   padding: 10px;
   border-bottom: 2px solid var(--border-table);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
 .manifest-table td {
   padding: 10px;
   border-bottom: 1px solid var(--border-table-row);
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
 }
 
@@ -2942,7 +2942,7 @@ bs-tabs > .manifest-tab-pane {
   padding: 2px 6px;
   border-radius: 3px;
   font-family: 'Monaco', 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-code);
 }
 
@@ -2953,7 +2953,7 @@ bs-tabs > .manifest-tab-pane {
   padding: 4px 12px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 0.6875rem;
   transition: background 0.2s;
 }
 
@@ -2979,14 +2979,14 @@ bs-tabs > .manifest-tab-pane {
   white-space: nowrap;
   font-weight: 500;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .instance-group-select,
 .job-select {
   padding-block: 6px;
   padding-inline-start: 12px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   min-width: 200px;
 }
 
@@ -3010,7 +3010,7 @@ bs-tabs > .manifest-tab-pane {
 .instance-group-pane h5 {
   color: var(--text-secondary);
   margin: 20px 0 10px 0;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
   border-bottom: 1px solid var(--border-table);
   padding-bottom: 5px;
@@ -3030,7 +3030,7 @@ bs-tabs > .manifest-tab-pane {
   min-width: 0;
   font-family: var(--font-mono, monospace);
   font-style: normal;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-primary);
 }
 
@@ -3074,7 +3074,7 @@ bs-tabs > .manifest-tab-pane {
   min-width: 0;
   overflow-wrap: anywhere;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-style: normal;
 }
 
@@ -3094,7 +3094,7 @@ bs-tabs > .manifest-tab-pane {
 .addon-item h5 {
   margin: 0 0 10px 0;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -3166,7 +3166,7 @@ bs-tabs > .manifest-tab-pane {
   gap: 4px;
   padding: 4px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   margin-top: 8px;
   cursor: pointer;
@@ -3263,7 +3263,7 @@ bs-tabs > .manifest-tab-pane {
 }
 
 .vm-count {
-  font-size: 12px;
+  font-size: 0.75rem;
   opacity: 0.8;
   margin-left: 4px;
 }
@@ -3317,7 +3317,7 @@ bs-tabs > .manifest-tab-pane {
   margin-top: 8px;
   margin-right: 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.2s;
@@ -3417,7 +3417,7 @@ bs-tabs > .manifest-tab-pane {
   margin-top: 8px;
   margin-right: 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   background-color: #f8d7da;
   color: #721c24;
@@ -3486,7 +3486,7 @@ bs-tabs > .manifest-tab-pane {
 }
 
 .connection-field label {
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -3633,7 +3633,7 @@ select[id*="connection-vhost"] {
   border-radius: 4px;
   background-color: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
@@ -3877,7 +3877,7 @@ select[id*="connection-vhost"] {
 }
 
 .modal-title {
-  font-size: 18px;
+  font-size: 1.125rem;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -3951,7 +3951,7 @@ select[id*="connection-vhost"] {
 }
 
 .dialog-modal-title {
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -3985,7 +3985,7 @@ select[id*="connection-vhost"] {
   bottom: 10px;
   transform: translateX(-50%);
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: 0.75rem;
   border-radius: 999px;
   color: var(--text-primary);
   background: var(--bg-hover);
@@ -4010,7 +4010,7 @@ select[id*="connection-vhost"] {
 .dialog-modal-footnote-inline {
   display: none;
   margin: 12px 0 0 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
 }
 
@@ -4022,7 +4022,7 @@ select[id*="connection-vhost"] {
 .dialog-modal-footnote {
   margin: 0;
   padding: 10px 20px 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
   background: var(--bg-secondary);
   border-top: 1px solid var(--border-primary);
@@ -4033,7 +4033,7 @@ select[id*="connection-vhost"] {
 }
 
 .dialog-modal-message {
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-secondary);
   line-height: 1.5;
   margin: 0 0 16px 0;
@@ -4041,7 +4041,7 @@ select[id*="connection-vhost"] {
 
 .dialog-modal-input {
   padding: 10px 12px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .dialog-modal-footer {
@@ -4056,7 +4056,7 @@ select[id*="connection-vhost"] {
 
 .dialog-modal-btn {
   padding: 8px 16px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   border-radius: 6px;
   cursor: pointer;
@@ -4124,7 +4124,7 @@ select[id*="connection-vhost"] {
   padding: 8px 16px;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
   border-radius: 6px;
   transition: all 0.2s;
@@ -4173,7 +4173,7 @@ bs-tabs > .cert-tab-pane[hidden] {
 .cert-details-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-details-table th {
@@ -4228,7 +4228,7 @@ bs-tabs > .cert-tab-pane[hidden] {
   padding: 2px 6px;
   border-radius: 3px;
   font-family: 'Courier New', monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 /* The copy icon leads each value. An empty slot keeps the values aligned in
@@ -4269,7 +4269,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .cert-copy-btn:hover {
@@ -4319,7 +4319,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 
 .cert-pem-text {
   font-family: 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.4;
   white-space: pre;
   overflow: auto;
@@ -4360,7 +4360,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 
 .cert-text-output {
   font-family: 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.4;
   white-space: pre;
   overflow: auto;
@@ -4397,7 +4397,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 
 .cert-list-count {
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-list {
@@ -4432,18 +4432,18 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .cert-item-name {
   font-weight: 500;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-item-subject {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-family: 'Courier New', monospace;
 }
 
 .cert-item-path {
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-style: italic;
 }
 
@@ -4454,7 +4454,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   border-radius: 4px;
   padding: 8px 16px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   transition: all 0.2s ease;
   flex-shrink: 0;
@@ -4544,12 +4544,12 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .cert-form-label {
   font-weight: 500;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-form-input {
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-fetch-btn {
@@ -4559,7 +4559,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   border-radius: 4px;
   padding: 8px 16px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   transition: background-color 0.2s ease;
   white-space: nowrap;
@@ -4643,7 +4643,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .cert-file-name {
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 .cert-file-load-btn {
@@ -4655,7 +4655,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   color: var(--accent-text);
   border: none;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.2s ease;
@@ -4681,7 +4681,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 }
 
 .cert-file-path {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   font-family: var(--font-mono);
   margin-bottom: 12px;
@@ -4709,12 +4709,12 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   font-weight: 600;
   color: var(--text-secondary);
   min-width: 80px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-detail-value {
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
   flex: 1;
   word-break: break-word;
 }
@@ -4735,7 +4735,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   color: var(--accent-text);
   border: none;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -4795,7 +4795,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .cert-files-header p {
   margin: 0 0 16px 0;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* Responsive adjustments for file list */
@@ -4852,7 +4852,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 
 .registrations-header h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: 1.5rem;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -4883,7 +4883,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 }
 
 .registration-name {
-  font-size: 18px;
+  font-size: 1.125rem;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -4903,14 +4903,14 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 }
 
 .registration-detail-label {
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--text-secondary);
   text-transform: uppercase;
 }
 
 .registration-detail-value {
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-primary);
   font-family: var(--font-mono);
 }
@@ -4954,13 +4954,13 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .form-group input[type="password"] {
   width: 100%;
   padding: 10px 12px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .form-group small {
   display: block;
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -5100,7 +5100,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 }
 
 .step-message {
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-secondary);
 }
 
@@ -5437,7 +5437,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   width: 100%;
   padding: 8px;
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 
@@ -5452,7 +5452,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .arguments-help h6 {
   margin: 0 0 10px 0;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .arguments-list {
@@ -5473,7 +5473,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 
 .argument-help small {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .rabbitmqctl-output-container {
@@ -5871,7 +5871,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   width: 100%;
   padding-block: 8px;
   padding-inline-start: 12px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .plugins-command-details .execution-section {
@@ -6343,7 +6343,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
@@ -6689,7 +6689,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   border-right: 1px solid var(--border-primary);
   cursor: pointer;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 0.875rem;
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
@@ -6793,7 +6793,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   margin-left: 8px;
   cursor: pointer;
   opacity: 0.6;
-  font-size: 18px;
+  font-size: 1.125rem;
   line-height: 1;
 }
 
@@ -6878,7 +6878,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 
 #terminal-modal .terminal-instance.wterm {
   --term-font-family: Menlo, Monaco, "Courier New", monospace;
-  --term-font-size: 14px;
+  --term-font-size: 0.875rem;
 
   box-sizing: border-box;
   padding-block: 0;
@@ -6926,7 +6926,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   color: var(--text-primary);
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 0.75rem;
   transition: all 0.2s;
   display: inline-flex;
   align-items: center;
@@ -7177,7 +7177,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   border: 1px solid var(--border-primary);
   border-radius: 4px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: 0.75rem;
   cursor: pointer;
   transition: background 0.2s;
   display: flex;
@@ -7199,7 +7199,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .minimized-terminal-tab .tab-close {
   cursor: pointer;
   opacity: 0.6;
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1;
 }
 
@@ -7289,7 +7289,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -7344,7 +7344,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
 .toggle-text-off,
 .toggle-text-on {
   position: absolute;
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 600;
   color: var(--bg-primary);
   text-transform: uppercase;
@@ -7444,7 +7444,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   padding: 12px 16px;
   border-radius: 4px;
   color: var(--bg-primary);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   z-index: var(--z-toast);
   opacity: 0;
@@ -8183,7 +8183,7 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   padding: 8px 16px;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
   border-radius: 6px;
   transition: all 0.2s;
@@ -8376,7 +8376,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .filter-group select {
   padding-block: 0.375rem;
   padding-inline-start: 0.75rem;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .checkbox-group {
@@ -9799,7 +9799,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   white-space: nowrap;
   border-right: 1px solid rgba(128, 128, 128, 0.15);
   border-bottom: 1px solid rgba(128, 128, 128, 0.1);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 400;
 }
 
@@ -9960,7 +9960,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   min-width: 600px;
   /* Minimum width to ensure horizontal scroll */
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .config-overview-table table {
@@ -9982,7 +9982,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   background-color: var(--bg-table-header);
   color: var(--text-secondary);
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .config-overview-table td {
@@ -9991,7 +9991,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   color: var(--text-primary);
   white-space: nowrap;
   font-family: monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 /* Dark theme support */
@@ -10286,7 +10286,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 1rem;
   background: var(--bg-code);
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
 
@@ -10402,7 +10402,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   font-family: 'Monaco', 'Menlo', 'Consolas', 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.5;
   overflow: auto;
   height: 90%;
@@ -10930,7 +10930,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   width: 1.75rem;
   text-align: right;
   padding-right: 0.375rem;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
   flex-shrink: 0;
@@ -10960,7 +10960,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 #upgrade .upgrade-instance-release {
   display: inline-block;
   padding: 0.125rem 0.5rem;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
   background-color: var(--bg-secondary);
   color: var(--text-secondary);
@@ -11087,7 +11087,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: bold;
 }
 
@@ -11507,7 +11507,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 2px 8px;
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   line-height: 1.5;
   white-space: nowrap;
@@ -11633,7 +11633,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .dialog-modal-details {
   margin: 0 0 16px 0;
   padding: 0 0 0 20px;
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-primary);
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -11649,7 +11649,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   margin: 0 0 12px 0;
   padding: 8px 12px;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 0.8125rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-primary);
@@ -11660,7 +11660,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .dialog-modal-run-warning {
   margin: 0 0 16px 0;
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.5;
   color: var(--text-secondary);
 }
@@ -11674,7 +11674,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .dialog-modal-choice-legend {
   padding: 0;
   margin-bottom: 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -11685,13 +11685,13 @@ bs-tabs > .broker-tab-pane[hidden] {
   column-gap: 8px;
   align-items: start;
   margin-bottom: 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-primary);
 }
 
 .dialog-modal-choice-hint {
   grid-column: 2;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
 }
 
@@ -11702,7 +11702,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .dialog-modal-ack-label {
   display: block;
   margin-bottom: 6px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -11711,7 +11711,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 8px 10px;
   border: 1px solid var(--cert-expired);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--cert-expired-fg);
   background: var(--cert-expired-bg);
 }
@@ -11736,7 +11736,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   margin-left: 6px;
   padding: 1px 7px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 700;
   line-height: 1.5;
   text-align: center;
@@ -11774,13 +11774,13 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-fleet-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 1.125rem;
   font-weight: 600;
 }
 
 .cert-fleet-summary {
   margin: 0;
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-secondary);
 }
 
@@ -11796,7 +11796,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 6px 12px;
   border: 1px solid var(--cert-control-border);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
   background: var(--bg-secondary);
   cursor: pointer;
@@ -11834,7 +11834,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-export-link {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
   text-decoration: none;
 }
@@ -11849,7 +11849,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   max-width: 260px;
   margin: 0;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
 }
 
@@ -11866,7 +11866,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-state-panel h3 {
   margin: 0 0 8px;
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 .cert-notices {
@@ -11881,7 +11881,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   border: 1px solid var(--border-primary);
   border-left: 4px solid var(--border-active);
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 0.875rem;
   background: var(--bg-secondary);
 }
 
@@ -11892,13 +11892,13 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-notice-help {
   margin-top: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-notice-list {
   margin: 6px 0 0 18px;
   padding: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   list-style: disc;
   overflow-wrap: anywhere;
 }
@@ -11931,7 +11931,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   border: 1px solid var(--cert-control-border);
   border-left-width: 4px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
   background: var(--bg-secondary);
   cursor: pointer;
@@ -11959,7 +11959,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   border-left-width: 4px;
   border-left-color: var(--border-active);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
   background: var(--bg-secondary);
   cursor: default;
@@ -11994,7 +11994,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-field-label {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -12004,7 +12004,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   min-width: 0;
   padding-block: 6px;
   padding-inline-start: 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-more-panel {
@@ -12027,7 +12027,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-more-group legend {
   padding: 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -12036,7 +12036,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-chips {
@@ -12048,7 +12048,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-chips-label {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
 }
 
@@ -12059,7 +12059,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 3px 10px;
   border: 1px solid var(--border-active);
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
   background: var(--bg-secondary);
   cursor: pointer;
@@ -12076,7 +12076,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   align-items: center;
   gap: 12px;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-count--muted {
@@ -12094,7 +12094,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   width: 100%;
   min-width: 640px;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-table th,
@@ -12106,7 +12106,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-table th {
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-secondary);
   background: var(--bg-table-header);
@@ -12146,7 +12146,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-subname {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -12164,7 +12164,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   grid-template-columns: max-content 1fr;
   gap: 2px 12px;
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-facts dt {
@@ -12181,7 +12181,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   margin: 0 0 8px;
   padding: 0;
   list-style: none;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-finding-severity,
@@ -12279,7 +12279,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .cert-timeline-title {
   flex: 0 0 auto;
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -12307,7 +12307,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 2px;
   border: 1px solid transparent;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 0.6875rem;
   line-height: 1.25;
   color: var(--text-primary);
   background: transparent;
@@ -12365,7 +12365,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-groupby-label {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
 }
 
@@ -12457,7 +12457,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-drawer-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 1rem;
   overflow-wrap: anywhere;
 }
 
@@ -12553,7 +12553,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   margin: 0;
   padding: 8px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   white-space: pre-wrap;
   background: var(--bg-tertiary);
 }
@@ -12561,7 +12561,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .cert-runbook-notes {
   margin: 8px 0 0 18px;
   padding: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   list-style: disc;
 }
 
@@ -12586,13 +12586,13 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-horizon-table {
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-horizon-caption {
   padding: 0 0 2px;
   text-align: left;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -12605,7 +12605,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-horizon-table th {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -12613,7 +12613,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 0 8px;
   border: 1px solid var(--cert-control-border);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
   background: var(--bg-secondary);
   cursor: pointer;
@@ -12629,7 +12629,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 .cert-horizon-gaps {
   display: block;
   margin: 4px 0 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-settings-modal {
@@ -12657,7 +12657,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 .cert-settings-label {
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -12670,18 +12670,18 @@ bs-tabs > .broker-tab-pane[hidden] {
 .cert-settings-field input[type="number"] {
   max-width: 180px;
   padding: 6px 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .cert-settings-help {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
 }
 
 .cert-settings-error {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--cert-expired-fg);
 }
@@ -12733,7 +12733,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-ov-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 600;
 }
 
@@ -12750,7 +12750,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-ov-rotate-note {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-ov .cert-notice {
@@ -12776,14 +12776,14 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-ov-stale {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-style: italic;
   color: var(--cert-warning-fg);
 }
 
 .cert-ov-finding {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 0.75rem;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
 }
@@ -12798,7 +12798,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-ov-listeners {
   margin: 12px 0 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .cert-ov-listener-list {
@@ -12820,7 +12820,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-ov-footer {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 /* ================================================================
@@ -12861,7 +12861,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .cert-ov-runbook-heading {
   margin: 12px 0 4px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -12880,7 +12880,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   align-items: center;
   gap: 8px;
   padding: 4px 1em;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -12907,7 +12907,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 1px 8px;
   border: 1px solid var(--border-primary);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -12938,7 +12938,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 .result-panel-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 600;
 }
 
@@ -13298,7 +13298,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding: 1px 8px;
   border: 1px solid var(--cert-warning);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 600;
   color: var(--cert-warning-fg);
   background: var(--cert-warning-bg);
@@ -13307,7 +13307,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 #upgrade .upgrade-task-target {
   margin: 2px 0 6px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
@@ -13343,7 +13343,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .cert-task-phase {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -13352,7 +13352,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 #upgrade .cert-decision-changes {
   margin: 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-primary);
 }
 
@@ -13382,13 +13382,13 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 #upgrade .cert-decision-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
 #upgrade .cert-decision-text {
   margin: 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -13404,11 +13404,11 @@ bs-tabs > .broker-tab-pane[hidden] {
 
 #upgrade .cert-candidate-head {
   font-weight: 600;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 #upgrade .cert-candidate-facts {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -13421,7 +13421,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 #upgrade .cert-decision-error {
   padding: 6px 10px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
 
@@ -13465,7 +13465,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 /* Rotation preview inside the confirm dialog */
 .rotate-preview-scroll {
   margin: 0 0 16px 0;
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-primary);
   overflow-wrap: anywhere;
 }
@@ -13474,7 +13474,7 @@ bs-tabs > .broker-tab-pane[hidden] {
   margin: 0;
   padding: 10px 20px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--text-primary);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-primary);
@@ -13527,7 +13527,7 @@ summary.rotate-preview-card-head:focus-visible {
   padding: 4px 12px;
   min-height: 32px;
   min-width: 32px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text-primary);
   background: var(--bg-hover);
   border: 1px solid var(--border-primary);
@@ -13567,7 +13567,7 @@ summary.rotate-preview-card-head {
 
 .rotate-preview-meta,
 .rotate-preview-tag {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -13576,7 +13576,7 @@ summary.rotate-preview-card-head {
 }
 
 .rotate-preview-exceptions {
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -13614,7 +13614,7 @@ summary.rotate-preview-card-head {
 }
 
 .rotate-preview-chevron {
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1;
   display: inline-block;
   transition: transform 0.1s ease;
@@ -13632,7 +13632,7 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 
 .rotate-preview-subhead {
   margin: 8px 0 4px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -13664,12 +13664,12 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 }
 
 .rotate-preview-cert-name {
-  font-size: 13px;
+  font-size: 0.8125rem;
   overflow-wrap: anywhere;
 }
 
 .rotate-preview-path {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   overflow-wrap: break-word;
   word-break: normal;
@@ -13730,7 +13730,7 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 #upgrade .task-command-digest {
   margin-left: 6px;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -13743,7 +13743,7 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: 0.75rem;
   border: 1px solid var(--border-primary);
   border-radius: 6px;
 }
@@ -13762,7 +13762,7 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 #upgrade .command-output-note,
 #upgrade .command-output-label {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 #upgrade .command-output-key {
@@ -13782,7 +13782,7 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 .filter-range-error,
 .cert-range-error {
   flex-basis: 100%;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-error);
 }
 
@@ -13811,7 +13811,7 @@ details[open] > .rotate-preview-row .rotate-preview-chevron {
 }
 
 .cert-range label {
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -13860,7 +13860,7 @@ bs-tabs { display: contents; }
 
 .command-runner-field label,
 .command-runner-arg label {
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--muted-foreground);
 }
@@ -13872,7 +13872,7 @@ bs-tabs { display: contents; }
 
 .command-runner-count {
   padding-bottom: 10px;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted-foreground);
 }
 
@@ -13893,7 +13893,7 @@ bs-tabs { display: contents; }
   padding: 8px 0;
   background: none;
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 0.875rem;
   white-space: nowrap;
 }
 
@@ -13915,7 +13915,7 @@ bs-tabs { display: contents; }
 
 .command-runner-option {
   padding-bottom: 8px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .command-runner-option code {
@@ -13929,7 +13929,7 @@ bs-tabs { display: contents; }
 
 .command-runner-description {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted-foreground);
 }
 
@@ -13938,13 +13938,13 @@ bs-tabs { display: contents; }
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .command-runner-help > summary,
 .command-runner-history > summary {
   cursor: pointer;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .command-runner-help > summary {
@@ -13956,7 +13956,7 @@ bs-tabs { display: contents; }
   grid-template-columns: max-content 1fr;
   gap: 6px 16px;
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .command-runner-help dt {
@@ -13987,12 +13987,12 @@ bs-tabs { display: contents; }
 
 .command-runner-ran {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 0.8125rem;
   overflow-wrap: anywhere;
 }
 
 .command-runner-meta {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted-foreground);
 }
 
@@ -14039,7 +14039,7 @@ bs-tabs { display: contents; }
   border-radius: 6px;
   color: var(--foreground);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 0.8125rem;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -14051,7 +14051,7 @@ bs-tabs { display: contents; }
 
 .command-runner-empty {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted-foreground);
 }
 
@@ -14080,7 +14080,7 @@ bs-tabs { display: contents; }
 
 .command-runner-history-note {
   margin: 8px 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted-foreground);
 }
 
@@ -14106,13 +14106,13 @@ bs-tabs { display: contents; }
   overflow: hidden;
   background: none;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 0.8125rem;
   text-overflow: ellipsis;
 }
 
 .command-runner-history-entry .command-runner-history-time {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted-foreground);
 }
 
@@ -14235,7 +14235,7 @@ tr.row-link { cursor: pointer; }
   border-radius: 6px;
   background: transparent;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 0.8125rem;
   text-align: left;
   cursor: pointer;
 }

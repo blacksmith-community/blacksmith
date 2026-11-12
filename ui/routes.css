@@ -99,7 +99,7 @@ body > header { position: sticky; top: 0; z-index: 20; box-sizing: border-box; m
  body > header > .wrap { flex-wrap: nowrap; gap: 8px; margin-inline: 8px; width: calc(100% - 16px); }
  body > header > .wrap > div:first-child { flex: none; gap: 8px; }
  body > header > .wrap > div:last-child { flex: 1 1 auto; flex-wrap: nowrap; min-width: 0; gap: 6px; }
- body > header #logo { font-size: 15px; }
+ body > header #logo { font-size: 0.9375rem; }
  body > header .header-deployment, body > header #ident, body > header #keyboard-help-trigger { display: none; }
  body > header #themeText { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
  body > header #navigation-trigger { white-space: nowrap; }

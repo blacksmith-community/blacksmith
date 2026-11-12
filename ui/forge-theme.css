@@ -547,7 +547,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
   border-radius: 999px;
   padding: 1px 8px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -759,7 +759,7 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 }
 
 
-#keyboard-help-trigger { min-width: 36px; height: 34px; padding: 4px 8px; border: 1px solid #8495ad; border-radius: 7px; color: #f1f5ff; background: transparent; font-size: 20px; }
+#keyboard-help-trigger { min-width: 36px; height: 34px; padding: 4px 8px; border: 1px solid #8495ad; border-radius: 7px; color: #f1f5ff; background: transparent; font-size: 1.25rem; }
 #keyboard-help-dialog { width: min(700px, calc(100vw - 24px)); max-height: 84dvh; margin: 8dvh auto auto; overflow: hidden; border-radius: 12px; }
 #keyboard-help-dialog[open] { display: flex; flex-direction: column; }
 #keyboard-help-dialog::backdrop { background: #0b1428a6; }
@@ -991,7 +991,7 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .cert-files-table .cert-file-path { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace; font-size: .8125rem; color: var(--text-secondary); margin: 0; }
 .cert-files-table .cert-file-expansion td { padding: 0; border-bottom: 0; }
 .cert-files-table .cert-file-content { margin: 0; padding: 8px 10px 12px; background: none; border: 0; border-radius: 0; }
-.cert-files-table .load-cert-btn.btn-secondary { min-width: 0; padding: 4px 10px; font-size: 13px; font-weight: 500; background-color: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 6px; }
+.cert-files-table .load-cert-btn.btn-secondary { min-width: 0; padding: 4px 10px; font-size: 0.8125rem; font-weight: 500; background-color: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border-primary); border-radius: 6px; }
 .cert-files-table .load-cert-btn.btn-secondary:hover:not(:disabled) { background-color: var(--bg-secondary); transform: none; }
 
 /* CredHub Details in an expanded row uses the label and value grid of the task header. */
