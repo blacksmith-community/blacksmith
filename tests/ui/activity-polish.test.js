@@ -49,3 +49,10 @@ t('the badge keeps its distance from the cell border',()=>{
  const cell=bodies(CSS,'#upgrade .task-summary-table th')+bodies(CSS,'#upgrade .task-summary-table td');
  expect(cell).toMatch(/padding:\s*\d+px\s+10px/);
 });
+
+t('the title sits close to the tab bar and its rule',()=>{
+ expect(bodies(CSS,'#upgrade .upgrade-tasks:has(> .upgrade-task-detail)')).toMatch(/padding-top:\s*\.25rem/);
+ const head=bodies(CSS,'#upgrade .task-detail-header');
+ expect(head).toMatch(/padding-bottom:\s*\.25rem/);
+ expect(head).toMatch(/margin-bottom:\s*\.5rem/);
+});

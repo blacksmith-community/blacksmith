@@ -14295,3 +14295,7 @@ tr.row-link { cursor: pointer; }
 
 /* The output sizes to its content and scrolls only when it is long. */
 #upgrade pre.command-output { flex: none; min-height: 0; max-height: 320px; overflow: auto; }
+
+/* Title spacing, breadcrumb row, and the instance heading */
+#upgrade .task-detail-header { padding-bottom: .25rem; margin-bottom: .5rem; }
+#upgrade .upgrade-tasks:has(> .upgrade-task-detail) { padding-top: .25rem; }
