@@ -17592,7 +17592,7 @@
                     <dl class="task-summary-facts">
                       <div><dt>State</dt><dd id="task-state-badge"></dd></div>
                       <div class="task-fact-description"><dt>Description</dt><dd id="task-description"></dd></div>
-                      <div class="task-fact-deployment"><dt>Deployment</dt><dd id="task-deployment"></dd></div>
+                      <div class="task-fact-deployment"><dt>Deployment</dt><dd id="task-deployment"><button type="button" id="task-deployment-copy" class="copy-btn-inline" hidden aria-label="Copy deployment name" title="Copy deployment name" data-keep-key="task-deployment-copy">${blacksmithIcon('copy', { size: 14 })}</button><span id="task-deployment-text"></span></dd></div>
                       <div><dt>Started</dt><dd id="task-started"></dd></div>
                       <div><dt>Finished</dt><dd id="task-finished"></dd></div>
                       <div><dt>Duration</dt><dd id="task-duration"></dd></div>
@@ -17629,6 +17629,8 @@
       document.body.insertAdjacentHTML('beforeend', modalHTML);
       modal = document.getElementById('task-details-modal');
       modal.querySelector('.modal-close').addEventListener('click', () => window.hideTaskDetailsModal());
+      const deploymentCopy = modal.querySelector('#task-deployment-copy');
+      deploymentCopy.addEventListener('click', () => { if (deploymentCopy.dataset.copyValue) copyToClipboard(deploymentCopy.dataset.copyValue, deploymentCopy); });
 
       // Set up modal tab switching
       setupTaskModalTabs();
@@ -18589,7 +18591,13 @@
       document.getElementById('task-details-modal-title').textContent = `BOSH task ${task.id}`;
       contentDiv.dataset.taskState = task.state || '';
       setCellText(document.getElementById('task-description'), task.description);
-      setCellText(document.getElementById('task-deployment'), task.deployment);
+      setCellText(document.getElementById('task-deployment-text'), task.deployment);
+      {
+        // The copy icon leads the value and only shows when there is a name.
+        const copy = document.getElementById('task-deployment-copy');
+        copy.dataset.copyValue = isEmptyValue(task.deployment) ? '' : String(task.deployment);
+        copy.hidden = !copy.dataset.copyValue;
+      }
       setCellText(document.getElementById('task-user'), task.user);
       setCellText(document.getElementById('task-context-id'), task.context_id);
       setStamp(document.getElementById('task-started'), timestampMoment(task.started_at));

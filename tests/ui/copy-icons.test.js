@@ -105,12 +105,13 @@ t('every copy button in the markup uses the one icon and has a name', () => {
     ['copyTaskRaw(', 'copyTaskRaw'],
     ['id="copy-header-deployment"', 'copy-header-deployment'],
     ['id="copy-config-content"', 'copy-config-content'],
+    ['id="task-deployment-copy"', 'task-deployment-copy'],
   ];
   const found = buttons.map((markup) => (hooks.find(([needle]) => markup.includes(needle)) || [null, 'unknown'])[1]).sort();
   expect(found).toEqual([
     'copy-config-content', 'copy-deployment-names', 'copy-header-deployment', 'copyManifest', 'copyTableRowsAsText',
     'copyTaskRaw', 'copyValue(event, \'${value}\')', 'copyValue(event, \'${value}\')', 'copyValue(event, copy)',
-    'data-entity-copy', 'data-secret-copy',
+    'data-entity-copy', 'data-secret-copy', 'task-deployment-copy',
   ].sort());
   buttons.forEach((markup) => {
     const open = markup.split(/>\s*(?:<svg|\$\{COPY_ICON_SVG|\$\{blacksmithIcon\()/)[0];

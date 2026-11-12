@@ -147,3 +147,40 @@ t('a finished task shows no summary',async()=>{
  const {d}=await start('done',ALL);
  expect(d.querySelector('#task-details-content .task-end-summary')).toBeNull();
 });
+
+t('the Deployment value has a front copy icon that copies the name and hides without a deployment',async()=>{
+ const {w,d}=await start('done',ALL);
+ const copied=[];
+ w.navigator.clipboard={writeText:(x)=>{copied.push(x);return Promise.resolve();}};
+ const dd=d.getElementById('task-deployment');
+ const button=dd.querySelector('button.copy-btn-inline');
+ expect(dd.firstElementChild).toBe(button);
+ expect(button.getAttribute('aria-label')).toBe('Copy deployment name');
+ expect(button.dataset.keepKey).toBe('task-deployment-copy');
+ expect(button.querySelector('svg')).not.toBeNull();
+ expect(button.hidden).toBe(false);
+ expect(dd.textContent.trim()).toBe('d');
+ button.click();await sleep(10);
+ expect(copied).toEqual(['d']);
+ expect(button.classList.contains('copied')).toBe(true);
+});
+
+t('the Deployment copy icon is hidden when the task has no deployment',async()=>{
+ const env=boot({noDialogs:true,routes:[
+  ['/b/tasks/43/output',(u,o,j)=>j(200,{output:''})],
+  ['/b/tasks/43',(u,o,j)=>j(200,{task:{id:43,state:'done',description:'x',user:'admin'}})],
+  ['/b/status',(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',instances:{},plans:{}})],
+  ['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{})],['/v2/catalog',(u,o,j)=>j(200,{services:[]})]]});
+ envs.push(env);env.w.eval(OAT);await sleep(60);
+ await env.w.showTaskDetails(43);await sleep(60);
+ const dd=env.d.getElementById('task-deployment');
+ expect(dd.querySelector('button').hidden).toBe(true);
+ expect(dd.querySelector('.empty-value')).not.toBeNull();
+});
+
+t('the field labels are heavier and use the foreground token',()=>{
+ const body=bodies('inspection-layout.css','#task-details-modal .task-summary-facts dt');
+ expect(body).toMatch(/font-weight:\s*(600|700)/);
+ expect(body).toMatch(/color:\s*var\(--foreground\)/);
+ expect(body).not.toMatch(/muted-foreground/);
+});
