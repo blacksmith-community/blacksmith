@@ -1084,10 +1084,6 @@ button:is(.refresh-btn-logs, .copy-btn-logs, .refresh-btn, .copy-deployment-name
 /* A label around a checkbox is the click target, so it is as tall as the
    smallest hit area and shows the pointer over its whole text. */
 :is(.checkbox-group, .filter-row) label:has(> input[type="checkbox"]), label.checkbox-label { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; cursor: pointer; }
-.operation-tabs { align-items: flex-start; gap: 8px 20px; }
-.operation-tab-group { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
-.operation-group-label { flex-basis: 100%; margin: 0; padding: 0 8px; border: 0; background: transparent; color: var(--muted-foreground); font-size: .75rem; font-weight: 600; }
-@media (max-width: 720px) { .operation-tab-group { flex-direction: column; align-items: stretch; } }
 
 /* Credentials and the connection target stay compact. The instance pane
    pads every div, so the value wrappers are reset and the cells carry the
@@ -1099,3 +1095,26 @@ button:is(.refresh-btn-logs, .copy-btn-logs, .refresh-btn, .copy-deployment-name
 .connection-operation .connection-target > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 0; }
 .connection-operation .connection-target dt { font-size: .875rem; font-weight: 700; color: var(--foreground); }
 .connection-operation .connection-target dd { margin: 0; overflow-wrap: anywhere; }
+
+/* The Operations view reads as tabs. The instance pane pads every div by
+   8px, which spread the groups, the panes, and the history apart, so the
+   wrappers are reset here and the strip, the panes, and the history carry
+   the only spacing. */
+#services .detail-content .service-testing-container :is(.testing-operations, .operation-tabs, .operation-tab-group, .operation-tab-row, .operation-content, .operation-form, .form-row, .testing-history, .history-header, .history-entries) { padding: 0; }
+.service-testing-container .testing-operations { margin-bottom: 10px; }
+#services .detail-content .service-testing-container .operation-tabs { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 20px; padding: 8px 10px; background: var(--secondary); border: 1px solid var(--border); border-radius: 8px 8px 0 0; }
+.service-testing-container .operation-tab-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.service-testing-container .operation-tab-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.service-testing-container .operation-group-label { margin: 0; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); font-size: .75rem; font-weight: 600; }
+.service-testing-container .operation-tab { padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-size: .875rem; font-weight: 500; line-height: 1.4; cursor: pointer; box-shadow: none; }
+.service-testing-container .operation-tab:hover { background: var(--background); border-color: var(--input); color: var(--foreground); }
+.service-testing-container .operation-tab:is(.active, [aria-selected="true"]) { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); font-weight: 700; box-shadow: none; }
+.service-testing-container .operation-tab:is(.active, [aria-selected="true"]):hover { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.service-testing-container .operation-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+#services .detail-content .service-testing-container .operation-content { padding-top: 10px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 8px 8px; padding-inline: 10px; padding-bottom: 10px; }
+.service-testing-container .operation-form .form-row { margin-bottom: 8px; }
+.service-testing-container .operation-form h5 { margin: 0 0 6px; }
+.service-testing-container .operation-form p { margin: 0 0 8px; }
+#services .detail-content .service-testing-container .testing-history { padding-top: 10px; border-top-width: 1px; }
+.service-testing-container .history-header { margin-bottom: 8px; }
+@media (max-width: 720px) { .service-testing-container .operation-tabs { flex-direction: column; gap: 8px; } }

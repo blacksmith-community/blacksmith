@@ -13051,7 +13051,7 @@
             ${getOperationTabs(serviceType, instanceId)}
           </div>
 
-          <div class="operation-content" id="operation-content-${instanceId}">
+          <div class="operation-content" id="operation-content-${instanceId}" role="tabpanel" aria-labelledby="operation-tab-${TESTING_TABS[serviceType] ? TESTING_TABS[serviceType][0][0] : 'test'}-${instanceId}">
             ${getDefaultOperationContent(serviceType, instanceId)}
           </div>
         </div>
@@ -13091,13 +13091,13 @@
     return headings.map((heading, group) => {
       const buttons = tabs.map((tab, index) => [tab, index]).filter(([[operation]]) => headingOf(operation) === heading)
         .map(([[operation, label], index]) => operationTabButton(instanceId, operation, label, index)).join('\n');
-      return `<div class="operation-tab-group" role="group" aria-labelledby="operation-group-${group}-${instanceId}"><h4 class="operation-group-label" id="operation-group-${group}-${instanceId}">${heading}</h4>${buttons}</div>`;
+      return `<div class="operation-tab-group" role="group" aria-labelledby="operation-group-${group}-${instanceId}"><h4 class="operation-group-label" id="operation-group-${group}-${instanceId}">${heading}</h4><div class="operation-tab-row" role="tablist" aria-labelledby="operation-group-${group}-${instanceId}">${buttons}</div></div>`;
     }).join('\n');
   };
 
   const operationTabButton = (instanceId, operation, label, index) => {
     const connection = operation === 'test';
-    return `<button class="operation-tab${index === 0 ? ' active' : ''}" aria-pressed="${index === 0}" data-operation="${operation}" data-instance="${instanceId}"${connection ? ` title="${CONNECTION_STATES.idle}"` : ''}>${connection ? '<span class="connection-status-indicator" data-state="idle" aria-hidden="true"></span>' : ''}${label}</button>`;
+    return `<button class="operation-tab${index === 0 ? ' active' : ''}" id="operation-tab-${operation}-${instanceId}" role="tab" aria-selected="${index === 0}" aria-controls="operation-content-${instanceId}" tabindex="${index === 0 ? 0 : -1}" data-operation="${operation}" data-instance="${instanceId}"${connection ? ` title="${CONNECTION_STATES.idle}"` : ''}>${connection ? '<span class="connection-status-indicator" data-state="idle" aria-hidden="true"></span>' : ''}${label}</button>`;
   };
 
   const getDefaultOperationContent = (serviceType, instanceId) => {
@@ -14565,6 +14565,24 @@
     if (history) history.style.display = Object.hasOwn(commandRunners, operation) ? 'none' : '';
   };
 
+  // The arrow keys, Home, and End move focus across every operation tab,
+  // wrapping at the ends. Enter and Space select the focused tab, since each
+  // tab is a button.
+  const operationTabKeydown = (event) => {
+    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    const current = event.target.closest && event.target.closest('.operation-tab');
+    if (!current || !keys.includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
+    const tabs = Array.from(current.closest('.operation-tabs').querySelectorAll('.operation-tab'));
+    const from = tabs.indexOf(current);
+    let target;
+    if (event.key === 'Home') target = tabs[0];
+    else if (event.key === 'End') target = tabs[tabs.length - 1];
+    else target = tabs[(from + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    event.preventDefault();
+    if (target) target.focus();
+  };
+  document.addEventListener('keydown', operationTabKeydown);
+
   // Operation Tab Switching
   window.switchTestingOperation = (instanceId, operation) => {
     const selectedOperation = Array.from(document.querySelectorAll('.operation-tab')).find(tab=>tab.dataset.instance===instanceId&&tab.dataset.operation===operation);
@@ -14573,11 +14591,15 @@
     // Update active tab
     document.querySelectorAll(`.operation-tab[data-instance="${instanceId}"]`).forEach(tab => {
       tab.classList.remove('active');
-      tab.setAttribute('aria-pressed', 'false');
+      tab.setAttribute('aria-selected', 'false');
+      tab.setAttribute('tabindex', '-1');
     });
     const selected = document.querySelector(`.operation-tab[data-operation="${operation}"][data-instance="${instanceId}"]`);
     selected.classList.add('active');
-    selected.setAttribute('aria-pressed', 'true');
+    selected.setAttribute('aria-selected', 'true');
+    selected.setAttribute('tabindex', '0');
+    const panel = document.getElementById(`operation-content-${instanceId}`);
+    if (panel && selected.id) panel.setAttribute('aria-labelledby', selected.id);
 
     // Get service type from global storage
     const testingInstance = window.currentTestingInstance;
