@@ -5,7 +5,7 @@ async page => {
   // under 700px, and by opening the link's area when it is collapsed.
   if(await page.locator('#rail-toggle').isVisible()) await page.locator('#rail-toggle').click();
   const link=page.locator('#console-rail').locator(selector).first();
-  if(!await link.isVisible()) await page.locator('#console-rail .rail-area').filter({has:link}).locator('> .rail-area-toggle').click();
+  if(!await link.isVisible()) await page.locator('#console-rail .rail-area').filter({has:page.locator(selector)}).locator(':scope > .rail-area-toggle').click();
   await link.click();
  };
 

@@ -11,7 +11,7 @@ async (page) => {
   const rail = async (selector) => {
     if (await page.locator('#rail-toggle').isVisible()) await page.locator('#rail-toggle').click();
     const link = page.locator('#console-rail').locator(selector).first();
-    if (!await link.isVisible()) await page.locator('#console-rail .rail-area').filter({ has: link }).locator('> .rail-area-toggle').click();
+    if (!await link.isVisible()) await page.locator('#console-rail .rail-area').filter({has:page.locator(selector)}).locator(':scope > .rail-area-toggle').click();
     await link.click();
   };
   const section = (screen) => page.locator(`#${screen} .entity-workspace`).getAttribute('data-section');
@@ -80,7 +80,7 @@ async (page) => {
   await input.focus();
   await input.fill('not-a-real-destination');
   check(await page.locator('#navigation-results [role=option]').count() === 0, 'No-results search clears options');
-  check((await dialog.locator('[role=status]').textContent()).includes('No matching'), 'No-results feedback is announced');
+  check((await dialog.locator('.navigation-count').textContent()).includes('No matching'), 'No-results feedback is announced');
   await input.fill('blacksmith');
   await page.keyboard.press('ArrowDown');
   check(await input.getAttribute('aria-activedescendant') === 'navigation-option-1', 'Arrow selection updates active descendant');
@@ -147,7 +147,7 @@ async (page) => {
   await palette('cache-12 events');
   await page.evaluate(() => { window.removedFixtureInstance = window.serviceInstances['cache-12']; delete window.serviceInstances['cache-12']; });
   await page.keyboard.press('Enter');
-  check((await dialog.locator('[role=status]').textContent()).includes('no longer available'), 'Removed destination reports a recoverable error');
+  check((await dialog.locator('.navigation-count').textContent()).includes('no longer available'), 'Removed destination reports a recoverable error');
   await page.keyboard.press('Escape');
   await page.evaluate(() => { window.serviceInstances['cache-12'] = window.removedFixtureInstance; delete window.removedFixtureInstance; });
   await page.evaluate(() => { const terminal = document.createElement('div'); terminal.className = 'wterm'; terminal.innerHTML = '<textarea aria-label="Terminal test input"></textarea>'; document.body.append(terminal); terminal.firstChild.focus(); });
