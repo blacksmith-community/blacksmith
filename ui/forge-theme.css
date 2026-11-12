@@ -802,7 +802,7 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 #blacksmith .plan-detail-header .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; }
 #blacksmith .plan-detail-header .tags li { margin: 0; padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--secondary); color: var(--muted-foreground); font-family: inherit; font-size: .75rem; }
 #blacksmith .plan-detail-content { padding: 12px 16px; }
-#blacksmith .plan-details-table .info-key { width: 12rem; background: var(--secondary); font-weight: 500; white-space: normal; }
+#blacksmith .plan-details-table .info-key { width: 1%; background: var(--secondary); font-weight: 700; white-space: nowrap; }
 #blacksmith .plan-details-table .info-value { font-family: inherit; }
 #blacksmith .plan-detail .service-description { margin-top: 16px; }
 #blacksmith .plan-detail .service-description h3 { margin: 0 0 8px; padding: 0; border: 0; font-size: .875rem; font-weight: 600; }

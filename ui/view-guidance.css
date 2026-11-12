@@ -50,7 +50,6 @@
   #blacksmith .plans-view.plan-selected > .plans-list { display: none; }
   #blacksmith .plans-view.plan-selected .plan-collection-link { display: inline-block; flex-basis: 100%; padding: 6px 0; }
   #blacksmith .plan-detail-header, #blacksmith .plan-detail-content { padding: 8px 0; }
-  #blacksmith .plan-details-table .info-key { width: 7rem; }
 }
 @media (forced-colors: active) {
   .view-guidance-button { border-color: ButtonText; color: ButtonText; }

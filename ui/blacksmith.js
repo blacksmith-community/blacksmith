@@ -2735,7 +2735,7 @@
       ['Service', serviceName, true], ['Plan', planName, true],
       ['Description', plan.description || 'Not provided'],
       ['Current instances', currentInstances], ['Instance limit', instanceLimit]
-    ].map(([label,value,copy]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value"><span class="copy-wrapper"><span>${escapeHtml(String(value))}</span>${copy ? entityCopy(value,label.toLowerCase()) : ''}</span></td></tr>`).join('');
+    ].map(([label,value,copy]) => `<tr><th scope="row" class="info-key">${escapeHtml(label)}</th><td class="info-value">${copyFirst(`<span class="copy-first-text">${escapeHtml(String(value))}</span>`, copy ? entityCopy(value,label.toLowerCase()) : '')}</td></tr>`).join('');
     const tags = Array.isArray(service.tags) ? service.tags : [];
     const tagsHtml = tags.length ? `<ul class="tags" aria-label="Service tags">${tags.map(tag => `<li>${escapeHtml(String(tag))}</li>`).join('')}</ul>` : '';
     const vms = Array.isArray(plan.vms) ? plan.vms.filter(Boolean) : [];
