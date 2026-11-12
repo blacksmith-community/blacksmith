@@ -1088,3 +1088,14 @@ button:is(.refresh-btn-logs, .copy-btn-logs, .refresh-btn, .copy-deployment-name
 .operation-tab-group { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .operation-group-label { flex-basis: 100%; margin: 0; padding: 0 8px; border: 0; background: transparent; color: var(--muted-foreground); font-size: .75rem; font-weight: 600; }
 @media (max-width: 720px) { .operation-tab-group { flex-direction: column; align-items: stretch; } }
+
+/* Credentials and the connection target stay compact. The instance pane
+   pads every div, so the value wrappers are reset and the cells carry the
+   only vertical padding. */
+#services .detail-content :is(.credentials-container, .credential-value-layout, .credential-value-text) { padding: 0; }
+.credentials-table :is(th, td) { padding: 5px 10px; vertical-align: top; }
+.credentials-table td.cred-key { font-weight: 700; color: var(--foreground); }
+.connection-operation .connection-target { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin: 0 0 12px; }
+.connection-operation .connection-target > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 0; }
+.connection-operation .connection-target dt { font-size: .875rem; font-weight: 700; color: var(--foreground); }
+.connection-operation .connection-target dd { margin: 0; overflow-wrap: anywhere; }

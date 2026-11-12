@@ -218,6 +218,7 @@ const LEADING_SCREENS = [
   ['Instance Summary, Instance context and Instance metadata', (T) => { T.renderServiceDetail('id-1', { service_id: 'valkey', plan: { name: 'small' } }, { instance_name: 'a', deployment_name: 'b', organization_name: 'c', space_name: 'd', created_at: '2026-10-31T10:00:00Z' }); return T.window.serviceInstanceDetailsContent['id-1']; }],
   ['Blacksmith Broker Summary, Deployment context and technical details', (T) => T.renderBlacksmithOverview({ deployment: 'blacksmith', env: 'lab', instances: {}, plans: {} }, { BOSH: { address: 'https://10.0.0.6:25555' } })],
   ['instance and broker VMs, table and details', (T) => T.formatVMs([VM], 'inst-1')],
+  ['instance Credentials', (T) => T.formatCredentials({ username: 'admin', host: 'cache.example', port: 6379 })],
   ['broker Service plans, plan details', (T) => T.renderPlanDetail({ name: 'valkey' }, { name: 'small', blacksmith: { instances: 1, limit: 5 } })],
 ];
 LEADING_SCREENS.forEach(([name, render]) => {
