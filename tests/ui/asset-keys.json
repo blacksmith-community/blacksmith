@@ -43,6 +43,14 @@
   "key": "20261112-oat-335",
   "sha256": "5790276a64895c21246bf5982a33d8125dad2bae884ce52da9fa799504ba3445"
  },
+ "vendor/oat/oat.min.css": {
+  "key": "20261112-oat-1.0.0",
+  "sha256": "129d3c21c5af7eb7dcf1c4e6681fab467d5843a31ba602ab3635f0ce5630499b"
+ },
+ "vendor/oat/oat.min.js": {
+  "key": "20261112-oat-1.0.0",
+  "sha256": "237913c2d580c74b3682b15008eed60e93ed139a3ac0cd3adf0e46c62a5666b6"
+ },
  "view-guidance.css": {
   "key": "20261028-oat-18",
   "sha256": "7f5f6575505d7a83f92e575363e74a5cc07309e1512bb415563fe26da01c6f90"

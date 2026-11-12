@@ -1147,24 +1147,96 @@ func setupBOSHResources(ctx context.Context, config *config.Config, boshDirector
 
 func getUIHandler(config *config.Config) http.Handler {
 	if config.WebRoot != "" {
-		return noCacheHTML(http.FileServer(http.Dir(config.WebRoot)))
+		return uiCacheControl(http.FileServer(http.Dir(config.WebRoot)))
 	}
 
 	return &broker.NullHandler{}
 }
 
-// noCacheHTML makes browsers revalidate the HTML document on every load.
-// The page carries the cache-busting stamps for its JS and CSS, so a stale
-// copy of it keeps operators on old assets after a deploy. The versioned
-// assets themselves are left alone.
-func noCacheHTML(next http.Handler) http.Handler {
+const (
+	// keyedAssetCacheControl lets a browser keep a keyed asset for a year
+	// without revalidating it. The key names one build of the file, so a
+	// changed file is always requested under a new URL. It is private
+	// because every UI response but the install assets sits behind basic
+	// auth.
+	keyedAssetCacheControl = "private, max-age=31536000, immutable"
+
+	// revalidatedCacheControl makes the browser check every other response
+	// with the broker before using its copy.
+	revalidatedCacheControl = "no-cache"
+)
+
+// uiCacheControl sets the cache policy of every UI response. A request
+// that carries a non-empty ?v= key gets keyedAssetCacheControl when it is
+// answered with the file. The document, a directory, an error, a redirect,
+// and every unkeyed asset get revalidatedCacheControl. The document must
+// be revalidated because it carries the keys for everything else, and a
+// stale copy of it keeps operators on old assets after a deploy.
+func uiCacheControl(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", revalidatedCacheControl)
+
+		if isKeyedAssetRequest(r) {
+			w = &keyedAssetWriter{ResponseWriter: w}
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isKeyedAssetRequest reports whether r asks for a file by a ?v= key. The
+// document and directories never count, whatever their query.
+func isKeyedAssetRequest(r *http.Request) bool {
+	path := r.URL.Path
+	if path == "" || strings.HasSuffix(path, "/") || strings.HasSuffix(path, ".html") {
+		return false
+	}
+
+	return r.URL.Query().Get("v") != ""
+}
+
+// keyedAssetWriter upgrades the cache policy to keyedAssetCacheControl
+// once the status shows the file itself is being sent. The file server
+// answers a missing file or a directory with an error or a redirect, and
+// those keep revalidatedCacheControl so a key that once missed never
+// sticks.
+type keyedAssetWriter struct {
+	http.ResponseWriter
+
+	wroteHeader bool
+}
+
+func (w *keyedAssetWriter) WriteHeader(status int) {
+	if !w.wroteHeader && status >= http.StatusOK {
+		w.wroteHeader = true
+
+		switch status {
+		case http.StatusOK, http.StatusPartialContent, http.StatusNotModified:
+			w.Header().Set("Cache-Control", keyedAssetCacheControl)
+		default:
+			w.Header().Set("Cache-Control", revalidatedCacheControl)
+		}
+	}
+
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *keyedAssetWriter) Write(body []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	written, err := w.ResponseWriter.Write(body)
+	if err != nil {
+		return written, fmt.Errorf("writing keyed asset: %w", err)
+	}
+
+	return written, nil
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (w *keyedAssetWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 // newBroker builds the broker around the one mutation guard. The API reads

@@ -5,24 +5,41 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"blacksmith/internal/config"
 )
 
-// TestUIHandlerHTMLIsNotCached checks that the HTML document is always
-// revalidated, so a deploy is picked up without a hard reload, while the
-// versioned assets keep their normal caching behavior.
-func TestUIHandlerHTMLIsNotCached(t *testing.T) {
+const (
+	wantKeyedCacheControl  = "private, max-age=31536000, immutable"
+	wantRevalidatedControl = "no-cache"
+)
+
+// TestUIHandlerCacheControl checks the two cache policies. A request that
+// carries a ?v= key names one exact build of an asset, so the browser may
+// keep it for a year without asking again. Everything else, the document
+// included, is revalidated on every load, so a deploy is picked up without
+// a hard reload.
+func TestUIHandlerCacheControl(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"index.html":    "<html></html>",
-		"blacksmith.js": "console.log(1)",
+		"index.html":           "<html></html>",
+		"blacksmith.js":        "void 0",
+		"vendor/oat/oat.css":   "a{}",
+		"assets/brand/x.png":   "png",
+		"manifest.webmanifest": "{}",
 	}
 
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+		full := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -30,22 +47,101 @@ func TestUIHandlerHTMLIsNotCached(t *testing.T) {
 	handler := getUIHandler(&config.Config{WebRoot: root})
 
 	cases := []struct {
-		path    string
-		noCache bool
+		name   string
+		method string
+		path   string
+		status int
+		want   string
 	}{
-		{"/", true},
-		{"/index.html", true},
-		{"/blacksmith.js", false},
+		{"the document", http.MethodGet, "/", http.StatusOK, wantRevalidatedControl},
+		{"the document by name", http.MethodGet, "/index.html", http.StatusMovedPermanently, wantRevalidatedControl},
+		{"the document with a key", http.MethodGet, "/?v=1", http.StatusOK, wantRevalidatedControl},
+		{"an unkeyed script", http.MethodGet, "/blacksmith.js", http.StatusOK, wantRevalidatedControl},
+		{"a keyed script", http.MethodGet, "/blacksmith.js?v=20261112-oat-1", http.StatusOK, wantKeyedCacheControl},
+		{"a keyed script by HEAD", http.MethodHead, "/blacksmith.js?v=20261112-oat-1", http.StatusOK, wantKeyedCacheControl},
+		{"an empty key", http.MethodGet, "/blacksmith.js?v=", http.StatusOK, wantRevalidatedControl},
+		{"a keyed vendor stylesheet", http.MethodGet, "/vendor/oat/oat.css?v=oat-1.0.0", http.StatusOK, wantKeyedCacheControl},
+		{"an unkeyed vendor stylesheet", http.MethodGet, "/vendor/oat/oat.css", http.StatusOK, wantRevalidatedControl},
+		{"an unkeyed image", http.MethodGet, "/assets/brand/x.png", http.StatusOK, wantRevalidatedControl},
+		{"the manifest", http.MethodGet, "/manifest.webmanifest", http.StatusOK, wantRevalidatedControl},
+		{"a keyed missing file", http.MethodGet, "/missing.js?v=1", http.StatusNotFound, wantRevalidatedControl},
+		{"a keyed directory redirect", http.MethodGet, "/vendor/oat?v=1", http.StatusMovedPermanently, wantRevalidatedControl},
+		{"a keyed directory listing", http.MethodGet, "/vendor/oat/?v=1", http.StatusOK, wantRevalidatedControl},
 	}
 
 	for _, tc := range cases {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil))
 
-		got := strings.Contains(rec.Header().Get("Cache-Control"), "no-cache")
-		if got != tc.noCache {
-			t.Errorf("%s: no-cache = %v, want %v (status %d, header %q)",
-				tc.path, got, tc.noCache, rec.Code, rec.Header().Get("Cache-Control"))
+			if rec.Code != tc.status {
+				t.Fatalf("%s %s: status %d, want %d", tc.method, tc.path, rec.Code, tc.status)
+			}
+
+			if got := rec.Header().Get("Cache-Control"); got != tc.want {
+				t.Errorf("%s %s: Cache-Control %q, want %q", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("a keyed revalidation that is not modified", func(t *testing.T) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/blacksmith.js?v=1", nil)
+		req.Header.Set("If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
+
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotModified {
+			t.Fatalf("status %d, want %d", rec.Code, http.StatusNotModified)
+		}
+
+		if got := rec.Header().Get("Cache-Control"); got != wantKeyedCacheControl {
+			t.Errorf("Cache-Control %q, want %q", got, wantKeyedCacheControl)
+		}
+	})
+}
+
+// TestUIHandlerKeyedPageAssetsAreImmutable serves every asset the real page
+// asks for with a ?v= key, and checks each one is found and cached for good.
+// It also checks the Oat files carry a key, since an upgrade must replace
+// them in every browser that has the old copy.
+func TestUIHandlerKeyedPageAssetsAreImmutable(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("ui", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := getUIHandler(&config.Config{WebRoot: "ui"})
+	keyed := regexp.MustCompile(`(?:href|src)="(/[^"?]+\?v=[^"]+)"`).FindAllStringSubmatch(string(page), -1)
+
+	if len(keyed) == 0 {
+		t.Fatal("the page references no keyed assets")
+	}
+
+	seen := map[string]bool{}
+
+	for _, match := range keyed {
+		target := match[1]
+		file, _, _ := strings.Cut(target, "?")
+		seen[file] = true
+
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: status %d, want %d", target, rec.Code, http.StatusOK)
+
+			continue
+		}
+
+		if got := rec.Header().Get("Cache-Control"); got != wantKeyedCacheControl {
+			t.Errorf("%s: Cache-Control %q, want %q", target, got, wantKeyedCacheControl)
+		}
+	}
+
+	for _, oat := range []string{"/vendor/oat/oat.min.css", "/vendor/oat/oat.min.js"} {
+		if !seen[oat] {
+			t.Errorf("%s is not loaded with a ?v= key", oat)
 		}
 	}
 }
