@@ -25,7 +25,7 @@ test('icon help opens on focus, uses specific name, and restores title before ac
 });
 test('tooltip observes changed titles, contains focus help inside modal, and consumes Escape only when shown',async()=>{
  const w=boot();try{
- const modal=w.document.getElementById('modal');modal.showModal();const b=w.document.getElementById('inside');b.focus();
+ const modal=w.document.getElementById('modal');modal.showModal();await sleep(300);const b=w.document.getElementById('inside');b.focus();
  expect(modal.querySelector('[role=tooltip]')).not.toBeNull();
  b.title='Certificate copied';await sleep(0);
  expect(modal.querySelector('[role=tooltip]')?.textContent).toBe('Certificate copied');
@@ -117,9 +117,9 @@ test('tooltip is placed again after a dialog that was still moving settles',asyn
  expect(parseFloat(tip.style.left)).toBe(100);
  }finally{w.close()}
 });
-test('tooltip inside a dialog stays within the dialog edge, which clips overflow',()=>{
+test('tooltip inside a dialog stays within the dialog edge, which clips overflow',async()=>{
  const w=boot();try{
- const modal=w.document.getElementById('modal');modal.showModal();
+ const modal=w.document.getElementById('modal');modal.showModal();await sleep(300);
  w.Element.prototype.getBoundingClientRect=function(){
   if(this.getAttribute&&this.getAttribute('role')==='tooltip')return {left:parseFloat(this.style.left||0),top:0,right:0,bottom:0,width:90,height:20};
   if(this.id==='modal')return {left:0,top:0,right:300,bottom:400,width:300,height:400};
@@ -130,9 +130,9 @@ test('tooltip inside a dialog stays within the dialog edge, which clips overflow
  expect(parseFloat(tip.style.left)+90).toBeLessThanOrEqual(292);
  }finally{w.close()}
 });
-test('tooltip in a small dialog is capped to the dialog width and stays inside both edges, flipping above when there is no room below',()=>{
+test('tooltip in a small dialog is capped to the dialog width and stays inside both edges, flipping above when there is no room below',async()=>{
  const w=boot();try{
- const modal=w.document.getElementById('modal');modal.showModal();
+ const modal=w.document.getElementById('modal');modal.showModal();await sleep(300);
  // A 300 by 200 dialog, a control near its bottom right, and a tip that wants 350 by 20.
  w.Element.prototype.getBoundingClientRect=function(){
   if(this.getAttribute&&this.getAttribute('role')==='tooltip'){
@@ -152,5 +152,24 @@ test('tooltip in a small dialog is capped to the dialog width and stays inside b
  // No room below the control, so the tip sits above it, inside the dialog.
  expect(t+20).toBeLessThanOrEqual(170);
  expect(t).toBeGreaterThanOrEqual(8);
+ }finally{w.close()}
+});
+
+test('focus that code sets as a dialog opens shows no tooltip, and later keyboard focus does',async()=>{
+ const w=boot();try{
+ const modal=w.document.getElementById('modal');modal.showModal();
+ const b=w.document.getElementById('inside');b.focus();
+ expect(w.document.querySelector('[role=tooltip]')).toBeNull();
+ b.blur();await sleep(300);b.focus();
+ expect(w.document.querySelector('[role=tooltip]')).not.toBeNull();
+ }finally{w.close()}
+});
+
+test('focus that is not focus-visible shows no tooltip',async()=>{
+ const w=boot();try{
+ const b=w.document.getElementById('copy');
+ const original=b.matches;b.matches=function(s){return s===':focus-visible'?false:original.call(this,s);};
+ b.focus();
+ expect(w.document.querySelector('[role=tooltip]')).toBeNull();
  }finally{w.close()}
 });

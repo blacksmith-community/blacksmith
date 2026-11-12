@@ -167,7 +167,22 @@
       if (active && tooltip) { const text = label(active); if (tooltip.textContent !== text) tooltip.textContent = text; describe(); position(); }
     });
     observer.observe(document.body, {subtree:true,childList:true,attributes:true,attributeFilter:['title','aria-label','data-help','data-tooltip']});
-    document.addEventListener('focusin', event => { const control = event.target.closest(selector); if (control) show(control); });
+    // Focus that code sets as a dialog opens is not the operator asking for
+    // help, so it shows nothing. Focus that matches :focus-visible, which is
+    // keyboard focus, does show it, as long as it is not that opening focus.
+    const DIALOG_OPEN_QUIET_MS = 250;
+    const dialogProto = root.HTMLDialogElement && root.HTMLDialogElement.prototype;
+    const stampOpen = proto => {
+      const original = proto && Object.prototype.hasOwnProperty.call(proto, 'showModal') ? proto.showModal : null;
+      if (typeof original !== 'function' || original.stampsOpen) return;
+      const wrapped = function (...args) { this.helpOpenedAt = Date.now(); return original.apply(this, args); };
+      wrapped.stampsOpen = true;
+      proto.showModal = wrapped;
+    };
+    stampOpen(dialogProto); stampOpen(root.HTMLElement && root.HTMLElement.prototype);
+    const visibleFocus = target => { try { return target.matches(':focus-visible'); } catch (error) { return true; } };
+    const openingFocus = target => { const dialog = target.closest('dialog'); return Boolean(dialog && dialog.helpOpenedAt && Date.now() - dialog.helpOpenedAt < DIALOG_OPEN_QUIET_MS); };
+    document.addEventListener('focusin', event => { const control = event.target.closest(selector); if (control && visibleFocus(event.target) && !openingFocus(event.target)) show(control); });
     document.addEventListener('focusout', () => { dismissed = null; maybeHide(); });
     document.addEventListener('pointerover', event => {
       if (event.pointerType === 'touch') return;
