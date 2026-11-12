@@ -20831,6 +20831,29 @@
   // addEventListener. Copy values live in a Map keyed by a generated ID,
   // so no handler is ever built from data.
 
+  // The inspection modal reads the legacy certificate shape. Both the fleet
+  // drawer and the instance Manifest list convert an inventory item to it.
+  const certificateItemToLegacy = (item) => {
+    // The fingerprint comes from the facts, which describe the same
+    // certificate as the serial, dates, and PEM. An observation can hold
+    // another version, such as CredHub's latest after a patch in place.
+    const f = item.facts || {};
+    return {
+      version: f.version,
+      serialNumber: f.serial,
+      subject: f.common_name ? `CN=${f.common_name}` : '',
+      issuer: f.issuer,
+      notBefore: f.not_before,
+      notAfter: f.not_after,
+      signatureAlgorithm: f.signature_algorithm,
+      publicKey: { algorithm: f.key_algorithm, bits: f.key_bits },
+      subjectAltNames: [].concat(f.dns_names || [], f.ip_addresses || []),
+      extKeyUsage: f.ext_key_usages || [],
+      fingerprints: { sha256: f.sha256_fingerprint || '' },
+      pemEncoded: item.pem
+    };
+  };
+
   const CertView = (() => {
     const COPY_ICON = COPY_ICON_SVG;
     const INSPECT_ICON = blacksmithIcon('search', { size: 12, style: 'margin-right: 4px;' });
@@ -21879,6 +21902,17 @@
       return items;
     };
 
+    // Inspect reads the full item, which carries the facts and the PEM, and
+    // hands it to the same modal the Trusted view opens.
+    const inspectManifestItem = async (cert) => {
+      const res = cert && cert.id ? await request(`/b/certificates/items/${encodeURIComponent(cert.id)}`) : null;
+      if (!res || !res.ok || !res.body || typeof res.body !== 'object') {
+        window.Feedback.error(res ? errorText(res, 'The certificate') : 'This certificate has no details to inspect.', { toast: true });
+        return;
+      }
+      window.inspectCertificate(certificateItemToLegacy(res.body));
+    };
+
     const loadManifest = async (instanceId, resultsContainer, listContainer) => {
       listContainer.replaceChildren(loading('Reading the deployed manifest...'));
       resultsContainer.style.display = 'block';
@@ -21908,7 +21942,7 @@
         header.appendChild(el('h4', 'cert-list-title', 'Manifest Certificates'));
         header.appendChild(el('span', 'cert-list-count', `${items.length} certificate${items.length === 1 ? '' : 's'}`));
         const list = el('div', 'cert-list');
-        items.forEach((item) => list.appendChild(CertView.summary(item, { fallbackName: 'Certificate' })));
+        items.forEach((item) => list.appendChild(CertView.summary(item, { fallbackName: 'Certificate', onInspect: inspectManifestItem })));
         nodes.push(header, list);
       }
       listContainer.replaceChildren(...nodes);
@@ -27305,27 +27339,6 @@
 
     // ----- drawer -----
 
-    const toLegacy = (item) => {
-      // The fingerprint comes from the facts, which describe the same
-      // certificate as the serial, dates, and PEM. An observation can hold
-      // another version, such as CredHub's latest after a patch in place.
-      const f = item.facts || {};
-      return {
-        version: f.version,
-        serialNumber: f.serial,
-        subject: f.common_name ? `CN=${f.common_name}` : '',
-        issuer: f.issuer,
-        notBefore: f.not_before,
-        notAfter: f.not_after,
-        signatureAlgorithm: f.signature_algorithm,
-        publicKey: { algorithm: f.key_algorithm, bits: f.key_bits },
-        subjectAltNames: [].concat(f.dns_names || [], f.ip_addresses || []),
-        extKeyUsage: f.ext_key_usages || [],
-        fingerprints: { sha256: f.sha256_fingerprint || '' },
-        pemEncoded: item.pem
-      };
-    };
-
     const runbookPanel = (title, intro, commands, notes) => {
       const box = el('section', 'cert-runbook');
       box.appendChild(el('h4', 'cert-runbook-title', title));
@@ -27626,7 +27639,7 @@
       const actions = el('div', 'cert-drawer-actions');
       const inspect = button('cert-action-btn', 'Inspect');
       inspect.disabled = d.status !== 'ready';
-      inspect.addEventListener('click', () => { if (d.item) window.inspectCertificate(toLegacy(d.item)); });
+      inspect.addEventListener('click', () => { if (d.item) window.inspectCertificate(certificateItemToLegacy(d.item)); });
       actions.appendChild(inspect);
       const pairs = instancePairs(cert);
       if (pairs.length > 0) {
@@ -27674,7 +27687,7 @@
         block.setAttribute('role', 'alert');
         detailBox.appendChild(block);
       } else {
-        detailBox.appendChild(CertView.detail(toLegacy(d.item)));
+        detailBox.appendChild(CertView.detail(certificateItemToLegacy(d.item)));
       }
       nodes.push(detailBox);
 
