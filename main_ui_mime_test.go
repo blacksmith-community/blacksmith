@@ -48,3 +48,31 @@ func assertWASMResponse(t *testing.T, handler http.Handler, path string) {
 		t.Errorf("%s: Content-Type %q, want %q", path, got, "application/wasm")
 	}
 }
+
+// TestUIHandlerServesWebManifestAsManifestJSON checks the web app manifest
+// is served as application/manifest+json. Go has no built-in type for the
+// .webmanifest extension, so without one the file can go out as plain text
+// and a browser may refuse to read it.
+func TestUIHandlerServesWebManifestAsManifestJSON(t *testing.T) {
+	handler := getUIHandler(&config.Config{WebRoot: "ui"})
+
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, "/manifest.webmanifest", nil))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d, want %d", method, rec.Code, http.StatusOK)
+		}
+
+		if got := rec.Header().Get("Content-Type"); got != "application/manifest+json" {
+			t.Errorf("%s: Content-Type %q, want %q", method, got, "application/manifest+json")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/missing.webmanifest", nil))
+
+	if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") == "application/manifest+json" {
+		t.Errorf("a missing manifest: status %d, Content-Type %q, want a plain 404", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}

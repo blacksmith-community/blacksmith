@@ -1147,10 +1147,27 @@ func setupBOSHResources(ctx context.Context, config *config.Config, boshDirector
 
 func getUIHandler(config *config.Config) http.Handler {
 	if config.WebRoot != "" {
-		return uiCacheControl(http.FileServer(http.Dir(config.WebRoot)))
+		return uiCacheControl(uiContentTypes(http.FileServer(http.Dir(config.WebRoot))))
 	}
 
 	return &broker.NullHandler{}
+}
+
+// webManifestContentType is the registered type of a web app manifest.
+const webManifestContentType = "application/manifest+json"
+
+// uiContentTypes sets the type of the UI files whose extension Go does not
+// know. Without it the manifest goes out as whatever the host's MIME table
+// or content sniffing gives, often text/plain. The file server keeps a
+// type that is already set, and an error replaces it with text/plain.
+func uiContentTypes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".webmanifest") {
+			w.Header().Set("Content-Type", webManifestContentType)
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 const (
