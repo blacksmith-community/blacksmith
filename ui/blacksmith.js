@@ -20214,7 +20214,7 @@
         <div class="feedback-panel" data-feedback-context="cf-endpoint" role="alert" aria-live="polite"></div>
 
         <!-- CF Detail Tabs (matching Manifest styling) -->
-        <bs-tabs>
+        <bs-tabs class="cf-endpoint-tabs">
           <div class="broker-tabs-nav" role="tablist" aria-label="Cloud Foundry views">
             <button type="button" role="tab" class="broker-tab-btn active" data-tab="marketplace" data-cftab="marketplace">Marketplace</button>
             <button type="button" role="tab" class="broker-tab-btn" data-tab="services" data-cftab="services">Services</button>

@@ -33,3 +33,27 @@ test('the selection table is compact and borderless',()=>{
 test('the shared table rules are untouched',()=>{
  expect(css).not.toMatch(/\.broker-details-container\s+(th|thead|table)\b/);
 });
+
+// Round four. The tab panel's own frame goes, so the tabs read as a plain strip with an underline marker.
+test('the endpoint tabs are a plain strip with no frame around the panel',()=>{
+ const nav=rule('.cf-endpoint-tabs > .broker-tabs-nav');
+ expect(nav).toMatch(/background:\s*transparent/);
+ expect(nav).toMatch(/border-radius:\s*0/);
+ expect(nav).toMatch(/border-bottom:\s*1px solid/);
+ const pane=rule('.cf-endpoint-tabs > .broker-tab-pane');
+ expect(pane).toMatch(/border:\s*(none|0)/);
+ expect(pane).toMatch(/border-radius:\s*0/);
+ expect(pane).toMatch(/background:\s*transparent/);
+ expect(pane).toMatch(/padding-inline:\s*0|padding-left:\s*0/);
+});
+test('the active endpoint tab has an underline marker',()=>{
+ const active=rule('.cf-endpoint-tabs .broker-tab-btn.active');
+ expect(active).toMatch(/border-bottom-color:\s*var\(--/);
+ expect(active).toMatch(/font-weight:\s*(600|700)/);
+ expect(active).toMatch(/box-shadow:\s*none/);
+ expect(rule('.cf-endpoint-tabs .broker-tab-btn')).toMatch(/border-bottom:\s*2px solid transparent/);
+});
+test('the endpoint view marks its tab set',()=>{
+ const js=fs.readFileSync(path.join(__dirname,'..','..','ui','blacksmith.js'),'utf8');
+ expect(js).toMatch(/<bs-tabs class="cf-endpoint-tabs">\s*<div class="broker-tabs-nav"/);
+});

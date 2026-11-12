@@ -8369,6 +8369,40 @@ bs-tabs > .broker-tab-pane[hidden] {
   padding-top: 10px;
 }
 
+/* The endpoint tabs are a plain strip with an underline marker. The panel has
+   no frame, so the content sits directly under the strip. */
+.cf-endpoint-tabs > .broker-tabs-nav {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-table);
+  border-radius: 0;
+  padding: 0;
+  gap: 4px;
+}
+
+.cf-endpoint-tabs .broker-tab-btn {
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 8px 14px;
+}
+
+.cf-endpoint-tabs .broker-tab-btn.active {
+  background: transparent;
+  box-shadow: none;
+  border-bottom-color: var(--border-active);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.cf-endpoint-tabs > .broker-tab-pane {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding-inline: 0;
+  min-height: 0;
+}
+
 .broker-details-container .marketplace-services-table-container {
   border: 0;
   border-radius: 0;
