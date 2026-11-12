@@ -127,6 +127,17 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .entity-facts dt { font-size: .75rem; color: var(--muted-foreground); }
 .entity-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 .entity-facts .entity-copy { margin-left: 8px; }
+/* A value cell leads with its copy icon, and an empty cell keeps a slot of the same width. */
+.copy-first { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.copy-first > .copy-slot { flex: 0 0 28px; width: 28px; height: 28px; }
+.copy-first > :not(button, .copy-slot) { min-width: 0; overflow-wrap: break-word; }
+/* The context card is a compact table that fills its rounded box. */
+.entity-context.card.entity-context-table { padding: 4px; overflow: hidden; border-radius: 8px; }
+.entity-context-table h3 { margin: 0; padding: 6px 10px; font-size: .9375rem; }
+.entity-context-table .entity-facts-table { width: 100%; margin: 0; border-collapse: separate; border-spacing: 0; border-radius: 5px; overflow: hidden; table-layout: auto; min-width: 0; }
+.entity-context-table .entity-facts-table :is(th, td) { padding: 6px 10px; text-align: left; vertical-align: middle; border: 0; border-top: 1px solid var(--border); font-size: .875rem; }
+.entity-context-table .entity-facts-table tr:first-child > :is(th, td) { border-top: 0; }
+.entity-context-table .entity-facts-table th { width: 1%; white-space: nowrap; font-weight: 700; color: var(--foreground); }
 /* One icon button for every copy control, drawn in currentColor. The id in
    the list lifts the whole selector above the older per-view rules. */
 button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, .cert-copy-btn, .copy-btn, #copy-config-content) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-width: 28px; height: 28px; min-height: 28px; padding: 0 6px; background: transparent; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; color: var(--muted-foreground); font-size: .8125rem; cursor: pointer; vertical-align: middle; }
@@ -167,6 +178,13 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
   .entity-metrics { grid-template-columns: 1fr; gap: 8px; }
   .entity-metric.card { padding: 12px; }
   .entity-facts { grid-template-columns: 1fr; }
+  .entity-context.card.entity-context-table { padding: 2px; }
+  .entity-context-table h3 { padding: 4px 8px; font-size: .875rem; }
+  .entity-context-table .entity-facts-table, .entity-context-table .entity-facts-table tbody { display: block; }
+  .entity-context-table .entity-facts-table tr { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+  .entity-context-table .entity-facts-table :is(th, td) { display: block; padding: 5px 8px; }
+  .entity-context-table .entity-facts-table th { width: auto; border-top: 1px solid var(--border); }
+  .entity-context-table .entity-facts-table tr:first-child > :is(th, td):nth-child(-n+2) { border-top: 0; }
   .entity-header h2 { font-size: 1rem; }
   .entity-read-hint { display: none; }
   #navigation-trigger kbd { display: none; }

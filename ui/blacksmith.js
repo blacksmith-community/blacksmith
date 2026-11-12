@@ -2455,7 +2455,17 @@
   };
 
   const entityCopy = (value, label) => `<button type="button" class="copy-btn-inline entity-copy" data-entity-copy="${escapeAttribute(String(value ?? ''))}" aria-label="Copy ${escapeAttribute(label)}" title="Copy ${escapeAttribute(label)}">${COPY_ICON_SVG}</button>`;
-  const entityFacts = (pairs) => `<dl class="entity-facts">${pairs.map(([label,value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value ?? 'Not reported'))}${value ? entityCopy(value,label) : ''}</dd></div>`).join('')}</dl>`;
+  // A value cell leads with its copy icon. A cell with no value keeps an empty
+  // slot the width of the icon, so every value starts at the same place.
+  const copyFirst = (valueHtml, copyHtml) => `<span class="copy-first">${copyHtml || '<span class="copy-slot" aria-hidden="true"></span>'}${valueHtml}</span>`;
+  // The facts sit in a compact table, three labelled fields to a row. A short
+  // last row stretches its final value cell across the columns it leaves free.
+  const entityFacts = (pairs, title = 'Context') => {
+    const rows = [];
+    for (let i = 0; i < pairs.length; i += 3) rows.push(pairs.slice(i, i + 3));
+    const body = rows.map(row => `<tr>${row.map(([label,value], i) => `<th scope="row" class="fact-key">${escapeHtml(label)}</th><td class="fact-value"${i === row.length - 1 && row.length < 3 ? ` colspan="${1 + 2 * (3 - row.length)}"` : ''}>${copyFirst(`<span class="copy-first-text">${escapeHtml(value === undefined || value === null || value === '' ? 'Not reported' : String(value))}</span>`, value ? entityCopy(value,label) : '')}</td>`).join('')}</tr>`).join('');
+    return `<table class="entity-facts-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${body}</tbody></table>`;
+  };
   // The link reads "View service plans", so the label's first letter drops to
   // lowercase unless its first word is an acronym such as VM.
   const metricLinkLabel = (label) => (/[A-Z]/.test(label.split(/\s/)[0].slice(1)) ? label : label.charAt(0).toLowerCase() + label.slice(1));
@@ -2567,7 +2577,7 @@
       <p class="entity-status-note">${instances.length} active instance${instances.length === 1 ? '' : 's'}. VM exceptions reflect reported status; missing status is not a health check.</p>
       ${renderAttentionRequired(data)}
       ${renderServicesAndPlans(data)}
-      <article class="card entity-context"><h3>Deployment context</h3>${entityFacts(facts)}</article>
+      <article class="card entity-context entity-context-table"><h3>Deployment context</h3>${entityFacts(facts,'Deployment context')}</article>
       ${entityMetadata(technical,'Connection and technical details')}
     </section>`;
   };
@@ -9889,7 +9899,7 @@
     window.serviceInstanceDetailsContent = window.serviceInstanceDetailsContent || {};
     window.serviceInstanceDetailsContent[id] = `<section class="entity-overview" aria-label="Instance overview">
       <div class="entity-metrics">${entityMetric(status,'VM job state','vms')}${entityMetric(details.vm_count ?? 'Not reported','Virtual machines','vms')}${entityMetric(details.plan?.name || details.plan_id || 'Not reported','Plan','manifest')}</div>
-      <article class="card entity-context"><h3>Instance context</h3>${entityFacts([['Name',name],['Service',details.service_id],['Deployment',deployment],['Instance ID',id],['Organization',metadata.organization_name],['Space',metadata.space_name]])}</article>
+      <article class="card entity-context entity-context-table"><h3>Instance context</h3>${entityFacts([['Name',name],['Service',details.service_id],['Deployment',deployment],['Organization',metadata.organization_name],['Space',metadata.space_name],['Instance ID',id]],'Instance context')}</article>
       <p class="entity-status-note">Use Certificates for expiry and trust, or Events and Logs to investigate changes.</p>
       ${entityMetadata(pairs,'Instance metadata',createdIso ? {'created at': createdIso} : {})}
     </section>`;
