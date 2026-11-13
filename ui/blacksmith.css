@@ -14464,7 +14464,9 @@ tr.row-link { cursor: pointer; }
   :is(#blacksmith, #services) .logs-controls-row .log-file-selector select { width: 100%; min-width: 0; max-width: 100%; }
   #blacksmith .compact-tasks-controls.table-controls-container .search-filter-container { flex: 1 1 100%; max-width: 100%; }
   #blacksmith .compact-tasks-controls.table-controls-container .filter-group { display: flex; flex: 1 1 100%; flex-wrap: nowrap; align-items: center; min-width: 0; }
-  #blacksmith .compact-tasks-controls.table-controls-container .filter-group:has(.checkbox-group) { flex-wrap: wrap; }
+  #blacksmith .compact-tasks-controls.table-controls-container .toolbar-group { flex: 1 1 100%; align-items: flex-start; }
+  #blacksmith .compact-tasks-controls.table-controls-container .toolbar-group > legend { line-height: var(--toolbar-h); }
+  #blacksmith .compact-tasks-controls.table-controls-container .toolbar-chips { flex: 1 1 0; min-width: 0; }
   #blacksmith .compact-tasks-controls.table-controls-container .filter-group select { flex: 1 1 auto; min-width: 0; }
   #blacksmith .compact-tasks-controls.table-controls-container .checkbox-group { flex-wrap: wrap; gap: 6px 12px; }
 }

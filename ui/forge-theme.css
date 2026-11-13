@@ -776,14 +776,44 @@ dialog button.dialog-close:hover, dialog button.modal-close:hover { color: var(-
 #keyboard-help-dialog .keyboard-help-copyright { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: .75rem; }
 #keyboard-help-dialog kbd { white-space: normal; }
 #keyboard-help-dialog p { font-size: .8125rem; margin: 0; }
-#blacksmith .compact-tasks-controls { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; padding: 0 0 8px; }
-#blacksmith .compact-tasks-controls :is(.tasks-controls-row-1,.tasks-controls-row-2) { display: contents; }
-#blacksmith .compact-tasks-controls .filter-group { flex-wrap: wrap; gap: 6px; margin: 0; }
-#blacksmith .compact-tasks-controls .search-filter-container { flex: 0 1 230px; min-width: 160px; max-width: 100%; }
-#blacksmith .compact-tasks-controls :is(input,select,label) { margin: 0; }
-#blacksmith .compact-tasks-controls select { min-height: 34px; padding-block: 4px; padding-inline-start: 8px; max-width: 100%; }
-#blacksmith .compact-tasks-controls .tasks-action-buttons { order: 1; margin: 0 0 0 auto; }
-#blacksmith .compact-tasks-controls .checkbox-group { gap: 8px; }
+/* Table toolbar filters share one label pattern. The label sits to the left
+   of its control on the same line and is the control's accessible name, and
+   a group of checkboxes is a fieldset whose legend plays the label's part.
+   Every control in the row is one height, set by --toolbar-h, and each group
+   stays whole. The flexible space in the row is the gap before the actions. */
+.table-controls-container { --toolbar-h: 2rem; }
+@media (pointer: coarse) { .table-controls-container { --toolbar-h: 2.75rem; } }
+.toolbar-field { display: flex; align-items: center; gap: 6px; margin: 0; flex: 0 0 auto; }
+.table-controls-container .toolbar-field > label, .table-controls-container fieldset.toolbar-group > legend { margin: 0; padding: 0; font-size: .8125rem; font-weight: 500; line-height: 1; white-space: nowrap; color: var(--muted-foreground); }
+.table-controls-container .toolbar-field select { box-sizing: border-box; height: var(--toolbar-h); min-height: var(--toolbar-h); margin: 0; padding-block: 0; padding-inline-start: 8px; max-width: 100%; font-size: .8125rem; }
+fieldset.toolbar-group { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0; margin: 0; padding: 0; border: 0; }
+fieldset.toolbar-group > legend { float: left; }
+.toolbar-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.table-controls-container .toolbar-chips label { position: relative; display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box; height: var(--toolbar-h); min-height: var(--toolbar-h); margin: 0; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font-size: .8125rem; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer; }
+.table-controls-container .toolbar-chips label:has(input:checked) { border-color: var(--primary); background: var(--secondary); }
+.table-controls-container .toolbar-chips label:has(input:checked)::before { content: "\2713"; font-size: .75rem; color: var(--primary); }
+.table-controls-container .toolbar-chips label:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: 1px; }
+/* The checkbox stays in the page for the keyboard and for screen readers, and the chip shows its state. */
+.table-controls-container .toolbar-chips input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+
+#blacksmith .compact-tasks-controls { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 10px; padding: 0 0 8px; }
+#blacksmith .compact-tasks-controls > * { margin-block: 0; }
+#blacksmith .compact-tasks-controls .search-filter-container { flex: 0 1 14rem; min-width: 9rem; max-width: 100%; }
+#blacksmith .compact-tasks-controls :is(input, select, label) { margin: 0; }
+#blacksmith .compact-tasks-controls .table-search-input { box-sizing: border-box; width: 100%; max-width: none; height: var(--toolbar-h); min-height: var(--toolbar-h); }
+#blacksmith .compact-tasks-controls .tasks-action-buttons { flex: 0 0 auto; flex-wrap: nowrap; margin: 0 0 0 auto; }
+/* Between a phone and a wide window the first row holds the search, Type, Scope, and the actions at its right end, and States takes the row below it. */
+@media (min-width: 700px) {
+  #blacksmith .compact-tasks-controls .tasks-action-buttons { order: 1; }
+  #blacksmith .compact-tasks-controls fieldset.toolbar-group { order: 2; flex: 1 1 100%; }
+}
+/* Own breakpoint. The whole row needs about 1010px beside the rail, which a 1280px window has, and no named width sits there. The search gives up room before anything else does. */
+@media (min-width: 1280px) {
+  #blacksmith .compact-tasks-controls { flex-wrap: nowrap; }
+  #blacksmith .compact-tasks-controls .tasks-action-buttons { order: 0; }
+  #blacksmith .compact-tasks-controls fieldset.toolbar-group { order: 0; flex: 0 0 auto; }
+  #blacksmith .compact-tasks-controls .search-filter-container { min-width: 8rem; }
+}
 
 #blacksmith .broker-certificates-workspace { border: 0; border-radius: 0; padding: 0; margin: 0; height: auto; overflow: visible; }
 #blacksmith .broker-certificates-workspace .manifest-details-container { height: auto; margin: 0; }

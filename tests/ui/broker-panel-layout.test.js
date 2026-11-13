@@ -3,9 +3,9 @@ const {main:{boot}}=require('./certificates/harness.js');
 test('Tasks filters have labels reflecting their purpose',()=>{
  const {w,d}=boot();try{
  const host=d.createElement('div');host.innerHTML=w.__T.formatTasks([]);
- expect(host.querySelector('label[for="task-filter"]').textContent).toBe('Scope:');
- expect(host.querySelector('#task-filter').getAttribute('aria-label')).toBe('Task scope');
- expect(host.querySelector('.checkbox-group').getAttribute('aria-labelledby')).toBe('task-states-label');
+ expect(host.querySelector('label[for="task-filter"]').textContent).toBe('Scope');
+ expect(host.querySelector('#task-filter').hasAttribute('aria-label')).toBe(false);
+ expect(host.querySelector('fieldset.toolbar-group legend').textContent).toBe('States');
  }finally{w.close();}
 });
 

@@ -1513,14 +1513,16 @@
   };
 
   // Table search filter functionality
-  const createSearchFilter = (tableId, placeholder = 'Search...') => {
+  const createSearchFilter = (tableId, placeholder = 'Search...', { label = '', keepKey = '' } = {}) => {
     return `
       <div class="table-search-container">
+        ${label ? `<label class="visually-hidden" for="search-${tableId}">${label}</label>` : ''}
         ${blacksmithIcon('search', { size: 16, className: 'table-search-icon' })}
         <input type="text"
                class="table-search-input"
                id="search-${tableId}"
                placeholder="${placeholder}"
+               ${keepKey ? `data-keep-key="${keepKey}"` : ''}
                autocomplete="off">
         <button class="clear-search-btn"
                 id="clear-${tableId}"
@@ -11437,38 +11439,18 @@
 
     return `
       <div class="table-controls-container compact-tasks-controls">
-        <div class="tasks-controls-row-1">
-          <div class="search-filter-container">
-            ${createSearchFilter(tableId, 'Search tasks...')}
-          </div>
-          <div class="filter-group">
-            <label for="task-type-filter">Type:</label>
-            <select id="task-type-filter" aria-label="Task type">
+        <div class="search-filter-container">
+          ${createSearchFilter(tableId, 'Search tasks...', { label: 'Search tasks', keepKey: 'tasks-search' })}
+        </div>
+        ${tableToolbarField({ id: 'task-type-filter', label: 'Type', keepKey: 'tasks-type', options: `
               <option value="recent">Recent</option>
               <option value="current">Current</option>
-              <option value="all">All</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label for="task-filter">Scope:</label>
-            <select id="task-filter" aria-label="Task scope">
-              <option value="blacksmith">${TASK_SCOPE_ALL_LABEL}</option>
-            </select>
-          </div>
-          ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'tasks', refresh: 'id="refresh-tasks-btn"', wrapperClass: 'tasks-action-buttons' })}
-        </div>
-        <div class="tasks-controls-row-2">
-          <div class="filter-group">
-            <span id="task-states-label">States:</span>
-            <div class="checkbox-group" role="group" aria-labelledby="task-states-label">
-              <label><input type="checkbox" value="processing" checked> Processing</label>
-              <label><input type="checkbox" value="queued" checked> Queued</label>
-              <label><input type="checkbox" value="done" checked> Done</label>
-              <label><input type="checkbox" value="error" checked> Error</label>
-              <label><input type="checkbox" value="cancelled" checked> Cancelled</label>
-            </div>
-          </div>
-        </div>
+              <option value="all">All</option>` })}
+        ${tableToolbarField({ id: 'task-filter', label: 'Scope', keepKey: 'tasks-scope', options: `
+              <option value="blacksmith">${TASK_SCOPE_ALL_LABEL}</option>` })}
+        ${tableToolbarChips({ legend: 'States', keepPrefix: 'tasks-state', chips: [
+          ['processing', 'Processing'], ['queued', 'Queued'], ['done', 'Done'], ['error', 'Error'], ['cancelled', 'Cancelled']] })}
+        ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'tasks', refresh: 'id="refresh-tasks-btn"', wrapperClass: 'tasks-action-buttons' })}
       </div>
       <div class="tasks-table-container">
         <table class="${tableId}">
@@ -12358,6 +12340,23 @@
             ${blacksmithIcon('copy', { size: 16 })}
           </button>
         </div>`;
+
+  // The shared label pattern for a toolbar filter. The label sits to the left
+  // of its control on one line and is the control's accessible name. A group
+  // of checkboxes is a fieldset whose legend plays the same part, and each
+  // option is a chip. Any table toolbar that gains a filter uses these two.
+  const tableToolbarField = ({ id, label, keepKey, options }) => `<div class="filter-group toolbar-field">
+          <label for="${id}">${label}</label>
+          <select id="${id}" data-keep-key="${keepKey}">${options}
+          </select>
+        </div>`;
+
+  const tableToolbarChips = ({ legend, keepPrefix, chips }) => `<fieldset class="toolbar-group">
+          <legend>${legend}</legend>
+          <div class="checkbox-group toolbar-chips">
+            ${chips.map(([value, text]) => `<label><input type="checkbox" value="${value}" data-keep-key="${keepPrefix}:${value}" checked> ${text}</label>`).join('\n            ')}
+          </div>
+        </fieldset>`;
 
   const renderLogRow = (logEntry, columns = null) => {
     // Default to showing all columns if no column config provided (backward compatibility)
