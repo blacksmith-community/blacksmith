@@ -73,3 +73,6 @@ t('the versions table is compact, with the optional note inline',()=>{
  expect(declared('#upgrade .batch-steps','margin-bottom')).toBe('var(--space-2)');
  expect(declared('#upgrade #batch-version-floor-help','margin')).toBe('var(--space-2) 0 var(--space-3)');
 });
+t('every step puts the same small gap between its title and its first control',()=>{
+ expect(declared('#upgrade .batch-flow-options','padding')).toBe('var(--space-2) var(--space-6) 0');
+});
