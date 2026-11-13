@@ -49,3 +49,17 @@ t('the scroll padding reads the footer height and no pane adds a fixed clearance
  expect(rules('#upgrade .batch-flow-options > :last-child')).toEqual([]);
  expect(rules('#upgrade .batch-flow-options .command-pane')).toEqual([]);
 });
+t('the selected badge takes no line until its card is selected',()=>{
+ expect(rules('#upgrade .batch-operation-selected').join(';')).not.toContain('visibility');
+ expect(declared('#upgrade .rotate-operation-option.is-selected .batch-operation-selected','display')).not.toBe('none');
+ expect(declared('#upgrade .batch-operation-selected','display')).toBe('none');
+});
+t('the operation cards fit the row instead of wrapping a fourth card alone',()=>{
+ expect(declared('#upgrade .rotate-operation','grid-template-columns')).toMatch(/^repeat\(auto-fit,\s*minmax\(/);
+});
+t('the step rhythm uses spacing tokens and no double margins',()=>{
+ for(const [sel,prop] of [['#upgrade .batch-flow-options','padding'],['#upgrade .rotate-operation','padding'],['#upgrade .rotate-operation-option','padding'],['#upgrade #batch-version-floor-help','margin'],['#upgrade .batch-additional-releases','padding-top']]){
+  expect([sel,declared(sel,prop)]).toEqual([sel,expect.stringContaining('var(--space-')]);
+ }
+ expect(declared('#upgrade .batch-pause-row + .batch-optional','margin-top')).toBe('0');
+});

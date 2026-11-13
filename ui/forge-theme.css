@@ -221,17 +221,18 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-flow-heading[hidden], #upgrade #batch-flow-context[hidden] { display: none; }
 #upgrade #batch-flow-title { padding: 0; margin: 0; font-size: 1.375rem; overflow-wrap: anywhere; }
 #upgrade #batch-flow-context { margin: 0; color: var(--muted-foreground); font-size: .875rem; }
-#upgrade .rotate-operation { padding: 20px 24px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+#upgrade .rotate-operation { padding: var(--space-4) var(--space-6); display: grid; grid-template-columns: repeat(auto-fit,minmax(14rem,1fr)); gap: var(--space-4); }
 #upgrade .rotate-operation legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-#upgrade .rotate-operation-option { display: grid; grid-template-columns: 24px 1fr; align-items: start; gap: 8px 10px; margin: 0; padding: 20px; background: var(--card); color: var(--foreground); border: 2px solid var(--input); border-radius: 8px; cursor: pointer; }
+#upgrade .rotate-operation-option { display: grid; grid-template-columns: 24px 1fr; align-items: start; gap: 8px 10px; margin: 0; padding: var(--space-4); background: var(--card); color: var(--foreground); border: 2px solid var(--input); border-radius: 8px; cursor: pointer; }
 #upgrade .rotate-operation-option input { width: 20px; height: 20px; margin: 2px 0 0; }
 #upgrade .rotate-operation-option strong { font-size: 1rem; }
 #upgrade .batch-operation-description { grid-column: 2; color: var(--muted-foreground); font-size: .875rem; }
-#upgrade .batch-operation-selected { grid-column: 2; color: var(--primary); font-size: .875rem; font-weight: 700; visibility: hidden; }
+/* An unselected card does not hold an empty line for the badge. */
+#upgrade .batch-operation-selected { grid-column: 2; color: var(--primary); font-size: .875rem; font-weight: 700; display: none; }
 #upgrade .rotate-operation-option.is-selected { border-color: var(--primary); background: var(--secondary); box-shadow: inset 0 0 0 1px var(--primary); }
-#upgrade .rotate-operation-option.is-selected .batch-operation-selected { visibility: visible; }
+#upgrade .rotate-operation-option.is-selected .batch-operation-selected { display: inline; }
 #upgrade .rotate-operation-option:focus-within { outline: 3px solid var(--ring); outline-offset: 3px; }
-#upgrade .batch-flow-options { padding: 20px 24px 0; }
+#upgrade .batch-flow-options { padding: var(--space-4) var(--space-6) 0; }
 #upgrade .batch-flow-options .filter-row { max-width: 560px; display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 12px; }
 #upgrade .batch-flow-options .filter-row label { flex: 0 0 auto; width: auto; min-width: 0; font-weight: 600; white-space: nowrap; }
 #upgrade .batch-flow-options .filter-row > .field-guidance-row { flex: 0 0 auto; }
@@ -270,7 +271,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .command-user-option { display: inline-flex; align-items: center; gap: 8px; margin-inline-end: 24px; }
 #upgrade .command-user-option:has(input:disabled) { opacity: .55; cursor: not-allowed; }
 #upgrade #command-timeout { width: 9ch; min-width: 0; box-sizing: content-box; }
-#upgrade .upgrade-targets-panel { margin: 20px 24px; padding: 20px; }
+#upgrade .upgrade-targets-panel { margin: var(--space-4) var(--space-6); padding: var(--space-5); }
 #upgrade #batch-options-summary { margin: 0 0 16px; font-size: 1rem; }
 #upgrade .upgrade-targets-panel .upgrade-targets { padding: 0; }
 #upgrade .upgrade-services-panel h2 { display: none; }
@@ -348,6 +349,8 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .upgrade-filters .filter-row.batch-pause-row:last-child { margin-bottom: 16px; }
 #upgrade .upgrade-filters .filter-row label.batch-pause-option { display: inline-flex; align-items: center; gap: 8px; flex: 0 1 auto; width: auto; min-width: 0; white-space: normal; }
 #upgrade .batch-pause-row .batch-field-help { margin: 0; }
+/* The pause row's own bottom margin already separates it from the optional box. */
+#upgrade .batch-pause-row + .batch-optional { margin-top: 0; }
 /* Keep native checkbox semantics without the misleading decorative box. */
 #upgrade .upgrade-instance-checkbox { position: relative; flex-shrink: 0; margin: 0; grid-column: 1; }
 #upgrade .upgrade-instance-checkbox input { position: absolute; width: 1px; height: 1px; padding: 0; clip-path: inset(50%); overflow: hidden; }
@@ -468,12 +471,12 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-upgrade-options thead th, .batch-release-picker thead th { color: var(--muted-foreground); font-size: .8125rem; font-weight: 600; background: var(--secondary); }
 #upgrade .batch-upgrade-options select, .batch-release-picker select { width: 100%; min-width: 0; min-height: 44px; }
 .batch-cell-help, .batch-column-note { display: block; font-size: .8125rem; font-weight: 400; color: var(--muted-foreground); line-height: 1.5; margin-top: 6px; }
-#upgrade #batch-version-floor-help { max-width: none; margin: 12px 0 24px; }
+#upgrade #batch-version-floor-help { max-width: none; margin: var(--space-3) 0 var(--space-4); }
 #upgrade .batch-release-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
 #upgrade .batch-release-toolbar h3 { margin: 0 0 6px; font-size: 1rem; }
 #upgrade .batch-release-toolbar p { margin: 0; color: var(--muted-foreground); font-size: .875rem; }
 #upgrade .batch-release-toolbar button:not(.field-guidance-button) { flex-shrink: 0; min-height: 44px; }
-#upgrade .batch-additional-releases { border-top: 1px solid var(--border); padding-top: 20px; }
+#upgrade .batch-additional-releases { border-top: 1px solid var(--border); padding-top: var(--space-4); }
 #upgrade .batch-release-summary-table th:last-child { width: 120px; }
 .batch-release-dialog { width: min(960px,calc(100vw - 32px)); max-width: 960px; }
 .batch-release-dialog .dialog-modal-icon { display: none; }
