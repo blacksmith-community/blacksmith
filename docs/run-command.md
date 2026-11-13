@@ -104,13 +104,13 @@ Next stays disabled while the command is empty or only whitespace, while the tim
 
 ### Choosing vcap or root
 
-A command that runs as `vcap` can't gain privileges. The wrapper starts it under `setpriv --no-new-privs`, so `sudo`, `su`, and every other setuid program fail inside it. The failure from `sudo` reads like this.
+A command that runs as `vcap` can't gain privileges. The wrapper starts it under `setpriv --no-new-privs`, so `sudo`, `su`, and every other setuid program fail inside it. The failure from `sudo` reads like this:
 
 ```
 sudo: The "no new privileges" flag is set, which prevents sudo from running as root.
 ```
 
-This differs from `bosh ssh`, where `sudo` works because the director creates a temporary `bosh_*` user with passwordless sudo. Run command deliberately steps down to `vcap` with no new privileges, so that `allow_root: false` really keeps root off.
+This differs from `bosh ssh`, where `sudo` works because the director creates a temporary `bosh_*` user with passwordless sudo. Run command deliberately steps down to `vcap` with no new privileges, so that `allow_root: false` keeps root off.
 
 When a command needs privileges, the operator chooses root under Run as and leaves `sudo` out of the command, because the command is already running as root. The options step shows a warning when it sees `sudo`, `su`, `doas`, or `pkexec` where a command starts and Run as is vcap. The warning never quotes the command.
 
