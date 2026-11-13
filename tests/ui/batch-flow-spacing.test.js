@@ -66,3 +66,10 @@ t('the step rhythm uses spacing tokens and no double margins',()=>{
 t('a long step title wraps inside the row and never widens the page',()=>{
  expect(declared('#upgrade #batch-flow-title','max-width')).toBe('100%');
 });
+t('the versions table is compact, with the optional note inline',()=>{
+ expect(declared('#upgrade .batch-upgrade-options-table th:first-child','width')).toBe('8rem');
+ expect(css).toMatch(/#upgrade \.batch-upgrade-options :is\(th,td\)[^{]*\{ padding: var\(--space-2\) var\(--space-3\);/);
+ expect(declared('#upgrade .batch-upgrade-options .batch-column-note','display')).toBe('inline');
+ expect(declared('#upgrade .batch-steps','margin-bottom')).toBe('var(--space-2)');
+ expect(declared('#upgrade #batch-version-floor-help','margin')).toBe('var(--space-2) 0 var(--space-3)');
+});
