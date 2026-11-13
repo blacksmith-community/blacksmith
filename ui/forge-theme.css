@@ -236,10 +236,7 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .batch-flow-options .filter-row label { flex: 0 0 auto; width: auto; min-width: 0; font-weight: 600; white-space: nowrap; }
 #upgrade .batch-flow-options .filter-row > .field-guidance-row { flex: 0 0 auto; }
 #upgrade .batch-flow-options .filter-row select { flex: 1 1 auto; width: auto; min-width: 0; }
-/* Run command stacks every option as label, control, then help, in one column of comfortable reading width. The bottom padding keeps the last field clear of the sticky footer. */
-#upgrade .batch-flow-options .command-pane { padding-bottom: 140px; }
-/* Every operation's options pane, not only Run command, ends clear of the sticky footer. */
-#upgrade .batch-flow-options > :last-child { padding-bottom: 140px; }
+/* Run command stacks every option as label, control, then help, in one column of comfortable reading width. */
 #upgrade .command-pane > .rotate-op-hint { margin: 0 0 20px; }
 #upgrade .command-pane .filter-row { max-width: 640px; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; align-items: start; gap: 8px; margin: 0 0 20px; }
 #upgrade .command-pane .filter-row[hidden] { display: none; }
@@ -289,7 +286,8 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 #upgrade .upgrade-main { flex: 1 0 auto; display: flex; flex-direction: column; }
 #upgrade .batch-flow-footer { margin-top: auto; }
 #upgrade .batch-pagination { position: static; }
-#upgrade { scroll-padding-block: 75px 120px; }
+/* The footer sits in the flow after the last field, so only keyboard focus needs clearance. It is the footer's measured height, which the page script keeps current. */
+#upgrade { scroll-padding-block-start: 75px; scroll-padding-block-end: calc(var(--batch-footer-height, 4rem) + var(--space-2)); }
 /* Own breakpoint: the batch options stack at 750px, and the batch pages change at 768px if this moves. */
 @media (max-width: 750px) {
  #upgrade .batch-flow-options .filter-row { flex-wrap: wrap; }

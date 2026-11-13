@@ -61,10 +61,6 @@ t('the dock row scrolls sideways inside itself',()=>{
  expect(bodies('blacksmith.css','.minimized-terminal-tabs')).toMatch(/overflow-x:\s*auto/);
 });
 
-t('every options pane clears the sticky footer, not only Run command',()=>{
- expect(bodies('forge-theme.css','#upgrade .batch-flow-options > :last-child')).toMatch(/padding-bottom:\s*1[0-9][0-9]px/);
-});
-
 t('docked tabs get a Terminals button that opens a list on a phone, with a count',async()=>{
  const env=await start(record(['node/0','node/1','node/2'],'blacksmith-broker-node/1'));
  const {d}=env;

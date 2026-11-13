@@ -3410,6 +3410,13 @@
     const footer = rotateEl('div','batch-flow-footer');
     footer.innerHTML = '<p id="batch-flow-help" role="status"></p><div><button id="batch-flow-back" type="button" class="outline">Back</button><button id="batch-flow-next" type="button" aria-describedby="batch-flow-help">Next: Options</button></div>';
     main.appendChild(footer);
+    // The scroll padding that keeps a focused field clear of the sticky footer reads the footer's real height, which changes when its buttons stack on a narrow window.
+    const syncFooterHeight = () => {
+      const height = Math.ceil(footer.getBoundingClientRect().height);
+      if (height > 0) panel.style.setProperty('--batch-footer-height', `${height}px`);
+    };
+    syncFooterHeight();
+    if (typeof window.ResizeObserver === 'function') new window.ResizeObserver(syncFooterHeight).observe(footer);
     header.querySelectorAll('[data-batch-step]').forEach(button => button.addEventListener('click', () => {
       const step = Number(button.dataset.batchStep); if (step === batchFlow.step) return;
       if (step === 3) runBatchReview(); else setBatchStep(step);

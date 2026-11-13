@@ -164,7 +164,8 @@ t('each field puts its label first, then its control, then its help',async()=>{
  expect(row).toMatch(/display: grid|flex-direction: column/);
 });
 
-t('the pane leaves room below the last field for the sticky footer',()=>{
+t('the pane ends at the footer and keyboard focus clears it by its measured height',()=>{
  const css=fs.readFileSync(path.join(__dirname,'..','..','ui','forge-theme.css'),'utf8');
- expect(/#upgrade \.batch-flow-options \.command-pane \{[^}]*padding-bottom: (1[0-9][0-9]|[2-9][0-9][0-9])px/.test(css)).toBe(true);
+ expect(/#upgrade \.batch-flow-options \.command-pane \{[^}]*padding-bottom/.test(css)).toBe(false);
+ expect(css).toContain('scroll-padding-block-end: calc(var(--batch-footer-height, 4rem)');
 });
