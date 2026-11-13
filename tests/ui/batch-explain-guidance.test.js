@@ -58,3 +58,10 @@ test('batch and field copy reads as spoken sentences',()=>{
   expect(body.trim().endsWith('.')).toBe(true);
  }
 });
+
+test('the Run as help opens with the vcap limit and points privileged work at root',()=>{
+ const {api}=start();
+ const body=api.getField('command-user').body;
+ expect(body.startsWith("A vcap command can't use sudo, su, or any other way to gain privileges, so choose root, without sudo, for privileged work.")).toBe(true);
+ expect(body).toContain('commands.allow_root');
+});

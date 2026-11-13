@@ -5857,7 +5857,7 @@
     const userLegend = rotateEl('legend', '', 'Run as');
     userSet.appendChild(userLegend);
     addFieldHelp(userLegend, 'command-user');
-    [['vcap', 'vcap'], ['root', 'root (use with care)']].forEach(([user, name]) => {
+    [['vcap', 'vcap (can\'t use sudo)'], ['root', 'root (use with care)']].forEach(([user, name]) => {
       const label = rotateEl('label', 'command-user-option');
       const radio = document.createElement('input');
       radio.type = 'radio';

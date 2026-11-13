@@ -277,3 +277,14 @@ t('a sudo command run as vcap shows a warning that never quotes the command, and
  expect(d.querySelector('#command-text').disabled).toBe(false);
  }finally{w.close();}
 });
+
+t('the vcap choice says it cannot use sudo, and the visible label is the accessible name',async()=>{
+ const env=await setup();const {w,d}=env;try{
+ await openOptions(env);
+ const vcap=d.querySelector('#command-user-vcap'), root=d.querySelector('#command-user-root');
+ expect(vcap.parentElement.textContent.trim()).toBe("vcap (can't use sudo)");
+ expect(root.parentElement.textContent.trim()).toBe('root (use with care)');
+ expect(vcap.value).toBe('vcap');expect(root.value).toBe('root');
+ for(const radio of [vcap,root]){ expect(radio.hasAttribute('aria-label')).toBe(false);expect(radio.hasAttribute('aria-labelledby')).toBe(false);expect(radio.parentElement.tagName).toBe('LABEL'); }
+ }finally{w.close();}
+});
