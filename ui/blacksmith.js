@@ -5316,8 +5316,11 @@
     note.hidden = !commandState.maxInFlightNote;
   };
 
-  // sudo as a word where a command can start: the beginning, or after ; & | or a newline.
-  const COMMAND_SUDO_START = /(?:^|[;&|\n(])[ \t]*sudo(?=\s|$)/;
+  // sudo, su, doas, or pkexec as a word where a command can start: the
+  // beginning, after ; & | ( { a backtick or a newline, after a ! that stands
+  // alone, or after a shell keyword such as then, do, else, elif, if, while,
+  // or until. The $( case is the ( case.
+  const COMMAND_SUDO_START = /(?:^|[;&|\n({`]|(?:^|\s)!|\b(?:then|do|else|elif|if|while|until))[ \t]*(?:sudo|su|doas|pkexec)(?=[\s;&|)`]|$)/;
 
   // Brings the command pane's controls in line with commandState. Every
   // change to the state, or to what the broker reported, ends here.
@@ -5871,7 +5874,7 @@
     rootNote.id = 'command-root-note';
     userSet.appendChild(rootNote);
     // A warning only. It never quotes the command and never blocks the form.
-    const sudoWarning = rotateEl('p', 'batch-field-help command-sudo-warning', 'sudo doesn\'t work for commands that run as vcap. Choose root instead.');
+    const sudoWarning = rotateEl('p', 'batch-field-help command-sudo-warning', 'sudo, su, and other commands that raise privileges don\'t work for commands that run as vcap. Choose root instead.');
     sudoWarning.id = 'command-sudo-warning';
     sudoWarning.hidden = true;
     userSet.appendChild(sudoWarning);

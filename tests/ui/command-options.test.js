@@ -264,14 +264,14 @@ t('a sudo command run as vcap shows a warning that never quotes the command, and
  expect(warning().hidden).toBe(true);
  type(w,text,'echo hi && sudo ls /var/vcap');
  expect(warning().hidden).toBe(false);
- expect(warning().textContent).toBe("sudo doesn't work for commands that run as vcap. Choose root instead.");
+ expect(warning().textContent).toBe("sudo, su, and other commands that raise privileges don't work for commands that run as vcap. Choose root instead.");
  expect([...warning().attributes].some((a)=>a.value.includes('sudo ls'))).toBe(false);
  const root=d.querySelector('#command-user-root');root.checked=true;root.dispatchEvent(new w.Event('change',{bubbles:true}));
  expect(warning().hidden).toBe(true);
  const vcap=d.querySelector('#command-user-vcap');vcap.checked=true;vcap.dispatchEvent(new w.Event('change',{bubbles:true}));
  expect(warning().hidden).toBe(false);
- for(const cmd of ['sudo ls','ls;sudo ls','ls || sudo ls','cat x | sudo tee y','ls\nsudo ls','(sudo ls)','x=$(sudo ls)']){ type(w,text,cmd);expect(warning().hidden).toBe(false); }
- for(const cmd of ['pseudo ls','echo sudoers','ls /usr/bin/sudo','echo "a" # sudoku']){ type(w,text,cmd);expect(warning().hidden).toBe(true); }
+ for(const cmd of ['sudo ls','ls;sudo ls','ls || sudo ls','cat x | sudo tee y','ls\nsudo ls','(sudo ls)','x=$(sudo ls)','if true; then sudo ls; fi','for i in 1; do sudo ls; done','false || { sudo ls; }','x=`sudo ls`','! sudo ls','if x; then :; else sudo ls; fi','if x; then :; elif y; then sudo ls; fi','su -','su root -c ls','echo a; doas ls','pkexec ls','ls | su','x=$(su -c id)','while true; do sudo ls; done']){ type(w,text,cmd);expect(warning().hidden).toBe(false); }
+ for(const cmd of ['pseudo ls','echo sudoers','ls /usr/bin/sudo','echo "a" # sudoku','pseudo ls','sudoku','ls suite','/usr/bin/sudoers-check','echo issue','echo su','echo then sudoers','x=${sudo}','ls | suspend','echo doas1','pkexecute ls']){ type(w,text,cmd);expect(warning().hidden).toBe(true); }
  // The form still submits: the warning blocks nothing.
  type(w,text,'sudo ls');
  expect(d.querySelector('#command-text').disabled).toBe(false);
