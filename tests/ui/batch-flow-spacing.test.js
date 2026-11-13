@@ -63,3 +63,6 @@ t('the step rhythm uses spacing tokens and no double margins',()=>{
  }
  expect(declared('#upgrade .batch-pause-row + .batch-optional','margin-top')).toBe('0');
 });
+t('a long step title wraps inside the row and never widens the page',()=>{
+ expect(declared('#upgrade #batch-flow-title','max-width')).toBe('100%');
+});
