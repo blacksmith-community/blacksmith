@@ -90,7 +90,7 @@ The Options step holds the command, the user, and the limits.
 
 - The command box accepts text of any shape. The help line reminds the operator that the command runs under `/bin/bash` on every node with stdin closed and a fixed `PATH`.
 
-- A radio pair picks the user, with `vcap` as the default. Root is marked as needing care, and it is disabled with a note when the preview reports that root is off.
+- A radio pair picks the user, with `vcap` as the default. Root is marked as needing care, and it is disabled with a note when the preview reports that root is off. See [Choosing vcap or root](#choosing-vcap-or-root).
 
 - A read-only line shows the shell, which is `/bin/bash` and fixed in this version.
 
@@ -101,6 +101,22 @@ The Options step holds the command, the user, and the limits.
 - The optional job name and reason inputs work as they do for the other operations.
 
 Next stays disabled while the command is empty or only whitespace, while the timeout is not a whole number in range, and while parallel is on and the max in flight is empty, below 1, or above the limit the preview reports. It also stays disabled after the broker refuses a set of options, until the operator changes them.
+
+### Choosing vcap or root
+
+A command that runs as `vcap` can't gain privileges. The wrapper starts it under `setpriv --no-new-privs`, so `sudo`, `su`, and every other setuid program fail inside it. The failure from `sudo` reads like this.
+
+```
+sudo: The "no new privileges" flag is set, which prevents sudo from running as root.
+```
+
+This differs from `bosh ssh`, where `sudo` works because the director creates a temporary `bosh_*` user with passwordless sudo. Run command deliberately steps down to `vcap` with no new privileges, so that `allow_root: false` really keeps root off.
+
+When a command needs privileges, the operator chooses root under Run as and leaves `sudo` out of the command, because the command is already running as root. The options step shows a warning when it sees `sudo`, `su`, `doas`, or `pkexec` where a command starts and Run as is vcap. The warning never quotes the command.
+
+Root is off by default. Until an administrator sets `commands.allow_root` to true and redeploys the broker, the root choice is greyed out, and the broker refuses a request for root with a 403 `root_disabled` error. A kit deployment sets `commands_allow_root: true` in the environment file's `params:` section to do this.
+
+Root deserves care. A root command can change anything on the VM, and nothing the broker does can contain what it starts. We recommend `vcap` whenever it can do the job, which includes most service maintenance, such as running the service tools under `/var/vcap/packages`.
 
 ### Instances
 
@@ -129,6 +145,8 @@ Retry resends the identical request. Discard asks the broker to give the request
 ### Activity and the task view
 
 Activity shows a Command badge beside the Certificates one, with the first twelve characters of the command's digest and never the text. The task detail shows the command, the user, the shell, the timeout, the parallel settings, and the reason, and it lists each node with its status, exit code, and duration.
+
+When a node that ran as `vcap` fails with the no-new-privileges message in its output, the node's explanation says that the command ran as vcap, which can't use sudo, and that the operator should run it again as root, without sudo. The page works this out from the output it has already fetched, so the output never reaches a label, a title, a toast, or the address.
 
 When the broker has a second credential configured, the task detail asks for the command key before it shows the task. The pane shows a password input and a Show task button. An output read asks for the key the same way, with a Show output button, and a resume that sends a command asks with a Use key button. When the broker does not accept a key, the operator is taken to the task detail pane, which says so and asks for the key again. The held key is dropped when the operator clears it, and doing so also drops the command text and the output from the page.
 
