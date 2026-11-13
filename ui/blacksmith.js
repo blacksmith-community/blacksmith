@@ -8817,7 +8817,7 @@
     if (exit === 137) hints.push('The command was killed, often because the node ran out of memory.');
     // A vcap command runs with no new privileges, so sudo can never work. That
     // hint outranks the general permission one.
-    if (runAs === 'vcap' && (/no new privileges/i.test(outputText || '') || /^\s*sudo:/im.test(outputText || ''))) hints.push('Commands that run as vcap can\'t use sudo. Choose root under Run as, and leave sudo out of the command.');
+    if (runAs === 'vcap' && (/no new privileges/i.test(outputText || '') || /^\s*sudo:/im.test(outputText || ''))) hints.push('This command ran as vcap, which can\'t use sudo. Run it again as root, without sudo.');
     else if (runAs === 'vcap' && /permission denied/i.test(outputText || '')) hints.push('It ran as vcap, so choose root under Run as if it needs root access.');
     return hints;
   };
