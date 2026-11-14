@@ -113,6 +113,14 @@ button svg { width: 18px; height: 18px; flex-shrink: 0; }
 .entity-metric strong { font-size: 1.4rem; line-height: 1.25; overflow-wrap: anywhere; }
 .entity-metric > span { font-size: .875rem; }
 .entity-metric .entity-metric-link { font-size: .75rem; color: var(--primary); margin-top: auto; }
+.entity-metric-static:hover { border-color: var(--border); background: var(--card); }
+.entity-metric-static .entity-metric-detail { color: var(--muted-foreground); }
+.operation-history { margin: 0 0 16px; padding: 16px; background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: 8px; }
+.operation-history h3 { margin: 0 0 8px; }
+.operation-history .entity-status-note { margin: 0 0 8px; }
+.operation-history .table-scroll { overflow-x: auto; }
+.entity-metrics:has(> [data-last-change]) { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.operation-history-table td { vertical-align: top; overflow-wrap: anywhere; }
 .entity-context.card { padding: 20px; margin-bottom: 20px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
 .entity-context h3 { font-size: 1rem; margin: 0 0 16px; }
 .entity-facts { margin: 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 24px; }

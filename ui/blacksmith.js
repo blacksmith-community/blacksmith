@@ -2534,6 +2534,7 @@
   const markSection = (container, section) => {
     const workspace = container?.closest('.entity-workspace');
     if (workspace) workspace.dataset.section = section;
+    stopOperationHistory();
     window.BlacksmithRail?.sync();
   };
   const openSection = (screen) => document.querySelector(`#${screen} .entity-workspace`)?.dataset.section;
@@ -10145,6 +10146,147 @@
   };
 
   // Service detail rendering functions
+  // The instance's Vault history as the Summary shows it. Each entry holds a
+  // unix time, an action, a description, and since the broker began recording
+  // them a state and a BOSH task ID. Entries are shown newest first.
+  const HISTORY_POLL_MS = 5000;
+  // A running entry is polled for 10 minutes at most, and only while it was
+  // recorded in the last 30 minutes. After a broker restart an entry can read
+  // as running for ever, and the page must not poll for it for ever.
+  const HISTORY_MAX_TICKS = 120;
+  const HISTORY_FRESH_SECONDS = 1800;
+  const HISTORY_ACTIVE = new Set(['in_progress', 'initializing']);
+  const HISTORY_STATES = {
+    initializing: ['active', 'Starting'],
+    deleted: ['neutral', 'Deleted'],
+    outcome_unknown: ['warning', 'Outcome unknown']
+  };
+  const historyEntries = (history) => (Array.isArray(history) ? history : [])
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => (Number(b.entry.timestamp) || 0) - (Number(a.entry.timestamp) || 0) || b.index - a.index)
+    .map(({ entry }) => entry);
+  const historyStamp = (entry) => (Number(entry.timestamp) > 0 ? new Date(Number(entry.timestamp) * 1000) : null);
+  const historyAction = (entry) => sentenceCase(entry.action || '');
+  const historyBadge = (entry) => {
+    const state = String(entry.state || '');
+    if (!state) return EMPTY_HTML;
+    const known = HISTORY_STATES[state];
+    return known ? statusBadge(state, { kind: known[0], label: known[1] }) : statusBadge(state);
+  };
+  // A failed entry reads "<step>: <reason>", so the step and the reason split
+  // at the first colon. Any other entry shows its whole description as the step.
+  const historyParts = (entry) => {
+    const text = String(entry.description ?? '');
+    if (entry.state !== 'failed') return { step: text, failure: '' };
+    const at = text.indexOf(': ');
+    return at > 0 ? { step: text.slice(0, at), failure: text.slice(at + 2) } : { step: '', failure: text };
+  };
+  const historyReadsRunning = (history) => {
+    const [latest] = historyEntries(history);
+    return !!latest && HISTORY_ACTIVE.has(latest.state);
+  };
+  // Worth polling: the newest entry reads as running and is recent.
+  const historyIsActive = (history) => {
+    const [latest] = historyEntries(history);
+    return historyReadsRunning(history) && Date.now() / 1000 - (Number(latest.timestamp) || 0) <= HISTORY_FRESH_SECONDS;
+  };
+  const renderOperationHistory = (id, history, options = {}) => {
+    const entries = historyEntries(history);
+    const linked = new Set();
+    const rows = entries.map((entry) => {
+      const { step, failure } = historyParts(entry);
+      const taskId = Number(entry.task_id);
+      // Each task links once, on its newest entry, so the key is unique and stays put as entries are added.
+      let task = '';
+      if (Number.isInteger(taskId) && taskId > 0) {
+        task = linked.has(taskId) ? ` BOSH task ${taskId}`
+          : ` <a href="#" class="bosh-task-link" data-history-task-id="${taskId}" data-keep-key="history-task:${escapeAttribute(id)}:${taskId}">BOSH task ${taskId}</a>`;
+        linked.add(taskId);
+      }
+      const stamp = historyStamp(entry);
+      return `<tr><td>${stamp ? stampHtml(stamp) : EMPTY_HTML}</td><td>${escapeHtml(historyAction(entry))}</td><td>${step ? escapeHtml(step) : EMPTY_HTML}${task}</td><td>${historyBadge(entry)}</td><td>${failure ? escapeHtml(failure) : EMPTY_HTML}</td></tr>`;
+    }).join('');
+    const body = entries.length
+      ? `<div class="table-scroll"><table class="operation-history-table" data-sortable="false"><thead><tr><th>Time</th><th>Operation</th><th>Step</th><th>State</th><th>Failure</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : '<p class="no-data">No operations recorded for this instance.</p>';
+    let live = '';
+    if (historyIsActive(history) && !options.stalled) live = `<p class="entity-status-note" role="status">An operation is running. This list refreshes every ${HISTORY_POLL_MS / 1000} seconds.</p>`;
+    else if (historyReadsRunning(history)) live = '<p class="entity-status-note">The newest entry still reads as running, but this list is no longer refreshing. Reload the page to check again.</p>';
+    return `<section class="card operation-history" aria-labelledby="operation-history-title-${escapeAttribute(id)}" data-operation-history><h3 id="operation-history-title-${escapeAttribute(id)}">Operation history</h3>${live}${body}</section>`;
+  };
+  const renderLastChange = (history) => {
+    const [latest] = historyEntries(history);
+    const stamp = latest && historyStamp(latest);
+    const detail = latest ? [historyAction(latest), sentenceCase(HISTORY_STATES[latest.state]?.[1] || latest.state || '')].filter(Boolean).join(' · ') : 'No operation recorded';
+    return `<div class="card entity-metric entity-metric-static" data-last-change><strong>${stamp ? stampHtml(stamp) : 'Not reported'}</strong><span>Last change</span><span class="entity-metric-detail">${escapeHtml(detail)}</span></div>`;
+  };
+  // One poll at most runs, for the Summary on show. Anything that leaves the
+  // Summary, such as a tab change, another instance, or another screen, stops
+  // it through stopOperationHistory, and a tick that finds the Summary gone
+  // stops itself.
+  const historyPolls = new Map();
+  const renderedHtml = new WeakMap();
+  const stopOperationHistory = () => {
+    historyPolls.forEach((poll) => window.clearTimeout(poll.timer));
+    historyPolls.clear();
+  };
+  const summaryShowing = (container) => {
+    const workspace = container.closest('.entity-workspace');
+    return container.isConnected && (!workspace || workspace.dataset.section === 'details') && !!container.querySelector('[data-operation-history]');
+  };
+  // Swaps a rendered piece in place only when its markup changed, and puts
+  // focus back on the control that held it, found by its keep key.
+  const patchRendered = (container, selector, html) => {
+    const current = container.querySelector(selector);
+    if (!current || renderedHtml.get(current) === html) return;
+    const active = document.activeElement;
+    const key = active && current.contains(active) ? active.dataset?.keepKey : null;
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const fresh = template.content.firstElementChild;
+    renderedHtml.set(fresh, html);
+    current.replaceWith(fresh);
+    if (key) [...fresh.querySelectorAll('[data-keep-key]')].find((node) => node.dataset.keepKey === key)?.focus();
+  };
+  // Shows the history now, then again every few seconds while the newest entry
+  // is running, up to a limit.
+  const mountOperationHistory = (container, id) => {
+    if (!container) return;
+    stopOperationHistory();
+    const poll = { timer: 0, ticks: 0 };
+    historyPolls.set(id, poll);
+    const live = () => historyPolls.get(id) === poll && window.currentInstanceInfo?.id === id && summaryShowing(container);
+    const show = (history, stalled) => {
+      patchRendered(container, '[data-operation-history]', renderOperationHistory(id, history, { stalled }));
+      patchRendered(container, '[data-last-change]', renderLastChange(history));
+    };
+    const refresh = async () => {
+      poll.timer = 0;
+      if (!live()) return;
+      let history = null;
+      try {
+        const response = await fetch(`/b/${id}/details`, { cache: 'no-cache' });
+        if (response.ok) history = (await response.json())?.history ?? [];
+      } catch (_) { /* The list stays as it was until the next refresh. */ }
+      if (!live()) return;
+      if (history) {
+        poll.history = history;
+        if (!historyIsActive(history)) { show(history, false); return; }
+      } else if (!poll.history && !container.querySelector('.operation-history .entity-status-note')) return;
+      if (++poll.ticks > HISTORY_MAX_TICKS) { if (poll.history) show(poll.history, true); return; }
+      if (history) show(history, false);
+      poll.timer = window.setTimeout(refresh, HISTORY_POLL_MS);
+    };
+    refresh();
+  };
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest?.('a[data-history-task-id]');
+    if (!link) return;
+    event.preventDefault();
+    window.showTaskDetails?.(Number(link.dataset.historyTaskId), event);
+  });
+
   const renderServiceDetail = (id, details, vaultData) => {
     const metadata = vaultData || {instance_id:id,service_id:details.service_id,plan_id:details.plan?.name || details.plan_id,created_at:formatCreatedTimestamp(details)};
     const name = metadata.instance_name || details.instance_name || id;
@@ -10155,8 +10297,9 @@
     const createdIso = stampIso(metadata.created_at);
     window.serviceInstanceDetailsContent = window.serviceInstanceDetailsContent || {};
     window.serviceInstanceDetailsContent[id] = `<section class="entity-overview" aria-label="Instance overview">
-      <div class="entity-metrics">${entityMetric(status,'VM job state','vms')}${entityMetric(details.vm_count ?? 'Not reported','Virtual machines','vms')}${entityMetric(details.plan?.name || details.plan_id || 'Not reported','Plan','manifest')}</div>
+      <div class="entity-metrics">${entityMetric(status,'VM job state','vms')}${entityMetric(details.vm_count ?? 'Not reported','Virtual machines','vms')}${entityMetric(details.plan?.name || details.plan_id || 'Not reported','Plan','manifest')}${renderLastChange(metadata.history)}</div>
       <article class="card entity-context entity-context-table"><h3>Instance context</h3>${entityFacts([['Name',name],['Service',details.service_id],['Deployment',deployment],['Organization',metadata.organization_name],['Space',metadata.space_name],['Instance ID',id]],'Instance context')}</article>
+      ${renderOperationHistory(id, metadata.history)}
       <p class="entity-status-note">Use Certificates for expiry and trust, or Events and Logs to investigate changes.</p>
       ${entityMetadata(pairs,'Instance metadata',createdIso ? {'created at': createdIso} : {})}
     </section>`;
@@ -16723,6 +16866,7 @@
         window.showInstancesOverview = () => {
           const detailHost = document.querySelector('#services .service-detail');
           if (!detailHost) return;
+          stopOperationHistory();
           if (mountedInstance) { const fragment = document.createDocumentFragment(); while (detailHost.firstChild) fragment.appendChild(detailHost.firstChild); instanceShells.set(mountedInstance, {fragment, info: window.currentInstanceInfo, context: captureInspectionContext()}); mountedInstance = null; }
           if (!detailHost.querySelector('.instances-overview')) mountInstancesOverview(detailHost);
         };
@@ -16737,7 +16881,10 @@
           if (instanceShells.has(instanceId)) {
             if (mountedInstance) { const fragment = document.createDocumentFragment(); while(detailHost.firstChild) fragment.appendChild(detailHost.firstChild); instanceShells.set(mountedInstance,{fragment,info:window.currentInstanceInfo,context:captureInspectionContext()}); }
             const cached = instanceShells.get(instanceId); instanceShells.delete(instanceId);
+            stopOperationHistory();
             detailHost.replaceChildren(cached.fragment); restoreInspectionContext(cached.context); window.currentInstanceInfo=cached.info; mountedInstance=instanceId;
+            // The poll died with the shell. A Summary that is still running starts it again.
+            if (detailHost.querySelector('.entity-workspace')?.dataset.section === 'details') mountOperationHistory(detailHost.querySelector('.detail-content'), instanceId);
             servicesPanel.classList.add('instance-open'); window.serviceInstanceElements.forEach((node,id)=>node.classList.toggle('active',id===instanceId));
             revealCard();
             return true;
@@ -17233,12 +17380,13 @@
           const request = ++detailRequestSequence;
           const contentContainer = document.querySelector('#services .detail-content');
           markSection(contentContainer, tabType);
-          if (retainView(contentContainer, JSON.stringify(['instance',instanceId,tabType]))) return;
+          if (retainView(contentContainer, JSON.stringify(['instance',instanceId,tabType]))) { if (tabType === 'details') mountOperationHistory(contentContainer, instanceId); return; }
           contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
           // Handle the Details tab
           if (tabType === 'details') {
             contentContainer.innerHTML = window.serviceInstanceDetailsContent[instanceId] || '<div class="no-data">No details available</div>';
+            mountOperationHistory(contentContainer, instanceId);
             return;
           }
 
@@ -17309,7 +17457,7 @@
         };
 
         window.loadInstanceSection = loadDetailTab;
-        window.cancelInstanceSection = () => { detailRequestSequence++; instanceSelectionSequence++; };
+        window.cancelInstanceSection = () => { detailRequestSequence++; instanceSelectionSequence++; stopOperationHistory(); };
 
         setupServiceHandlers();
       }
