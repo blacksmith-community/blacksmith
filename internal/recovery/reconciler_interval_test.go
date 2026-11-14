@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"blacksmith/internal/config"
+	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/reconciler"
+	"blacksmith/pkg/testutil"
 )
 
 // Interval values the tests share.
@@ -19,6 +21,8 @@ const (
 	notSoon       = "soon"
 	twoMinutes    = "120"
 	usingDefault  = "using the 5m0s default"
+	usingEnv      = "using 2m0s from BLACKSMITH_RECONCILER_INTERVAL"
+	savedKey      = "reconciler_interval"
 )
 
 func TestBuildReconcilerConfigIntervalForms(t *testing.T) {
@@ -207,6 +211,76 @@ func TestBuildReconcilerConfigRaisesIntervalToMinimum(t *testing.T) {
 			if got, running := adapter.GetInterval(), adapter.buildManager().GetInterval(); got != running {
 				t.Errorf("adapter reports %v while the manager runs at %v", got, running)
 			}
+		})
+	}
+}
+
+// savedIntervalCase is a value saved in Vault and what loading it must do
+// while the environment sets 2m and the config file sets 10m.
+type savedIntervalCase struct {
+	name  string
+	saved string
+	want  time.Duration
+	warn  []string
+}
+
+func savedIntervalCases() []savedIntervalCase {
+	return []savedIntervalCase{
+		{name: "go duration", saved: "20m", want: 20 * time.Minute},
+		{name: "bare seconds", saved: "3600", want: time.Hour},
+		{name: "not a duration", saved: notSoon, want: 2 * time.Minute, warn: []string{savedKey, `"soon"`, usingEnv}},
+		{name: "negative", saved: "-5", want: 2 * time.Minute, warn: []string{savedKey, `"-5"`, usingEnv}},
+		{
+			name: "under the minimum", saved: "5", want: reconciler.MinInterval,
+			warn: []string{savedKey, `"5"`, "10s minimum", "using 10s from Vault settings"},
+		},
+	}
+}
+
+// A saved interval goes through the same parser as the config file and the
+// environment, so it may be bare seconds, and it wins over both. A saved
+// value that won't parse is skipped with a warning and the starting
+// interval stays. A saved value under the minimum is raised to it with a
+// warning.
+func TestLoadSettingsFromVaultParsesSavedInterval(t *testing.T) {
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("starting the in-process vault: %v", err)
+	}
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+
+	for _, testCase := range savedIntervalCases() {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv(reconcilerIntervalEnvKey, twoMinutes)
+
+			err := vaultClient.Put(t.Context(), "blacksmith/settings", map[string]interface{}{savedKey: testCase.saved})
+			if err != nil {
+				t.Fatalf("persisting the setting: %v", err)
+			}
+
+			cfg := &config.Config{}
+			cfg.Reconciler.Interval = tenMinutes
+
+			reconcilerConfig, source := buildReconcilerConfig(cfg, &warnRecorder{})
+			rec := &warnRecorder{}
+			adapter := &ReconcilerAdapter{vault: vaultClient, logger: rec, config: reconcilerConfig, intervalSource: source}
+
+			adapter.loadSettingsFromVault(t.Context())
+
+			if got := adapter.GetInterval(); got != testCase.want {
+				t.Errorf("interval = %v, want %v", got, testCase.want)
+			}
+
+			if len(testCase.warn) == 0 {
+				if len(rec.messages) != 0 {
+					t.Errorf("unexpected warnings %q", rec.messages)
+				}
+
+				return
+			}
+
+			requireOneWarning(t, rec, testCase.warn...)
 		})
 	}
 }

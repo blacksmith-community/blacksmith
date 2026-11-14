@@ -632,14 +632,28 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 		return
 	}
 
-	if intervalStr, ok := settings["reconciler_interval"].(string); ok {
-		d, err := time.ParseDuration(intervalStr)
-		if err == nil && d >= reconciler.MinInterval {
-			r.log().Info("Reconciler interval: %s, replacing %s", describeInterval(d, reconcilerIntervalVault), describeIntervalSource(r.config.Interval, r.intervalSourceName()))
-			r.config.Interval = d
-			r.intervalSource = reconcilerIntervalVault
-		}
+	intervalStr, ok := settings["reconciler_interval"].(string)
+	if !ok {
+		return
 	}
+
+	current, source := r.config.Interval, r.intervalSourceName()
+
+	saved, err := reconciler.ParseInterval(intervalStr)
+	if err != nil {
+		r.log().Warn("Ignoring %s reconciler_interval %q: %s; %s", reconcilerIntervalVault, intervalStr, err, describeInterval(current, source))
+
+		return
+	}
+
+	saved, raised := raiseToMinimum(saved)
+	if raised {
+		r.log().Warn("Raising %s reconciler_interval %q to the %v minimum; %s", reconcilerIntervalVault, intervalStr, reconciler.MinInterval, describeInterval(saved, reconcilerIntervalVault))
+	}
+
+	r.log().Info("Reconciler interval: %s, replacing %s", describeInterval(saved, reconcilerIntervalVault), describeIntervalSource(current, source))
+	r.config.Interval = saved
+	r.intervalSource = reconcilerIntervalVault
 }
 
 // isVaultReady checks if Vault is ready for operations.
