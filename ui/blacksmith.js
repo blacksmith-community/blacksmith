@@ -2982,13 +2982,7 @@
     name: item.querySelector('.service-instance-name')?.textContent, id: item.dataset.instanceId, service: item.dataset.service, plan: item.dataset.plan});
   // The list's search box and the overview's search box are one filter.
   const instanceSearchBoxes = () => [document.getElementById('instance-search'), document.getElementById('search-instances-overview-table')];
-  const syncInstanceSearch = (source) => {
-    for (const box of instanceSearchBoxes()) {
-      if (!box || box === source || box.value === source.value) continue;
-      box.value = source.value;
-      box.dispatchEvent(new Event('input', {bubbles: true}));
-    }
-  };
+  const syncInstanceSearch = (source) => setInstanceSearch(source.value);
   // Every programmatic change goes through here, so both boxes and both
   // views always show the same query.
   const setInstanceSearch = (value) => {
