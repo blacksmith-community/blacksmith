@@ -289,3 +289,30 @@ t('a retained shell restarts the poll', async () => {
   await sleep(40);
   expect(timers.length).toBe(1);
 });
+
+t('returning to the Summary through a retained view restarts the poll', async () => {
+  const routes = [['/v2/catalog', (u, o, j) => j(200, { services: [] })],
+    ['/b/status', (u, o, j) => j(200, { env: 'lab', deployment: 'blacksmith', instances: { [ID]: { service_id: 'valkey', plan_id: 'small', plan: { id: 'small', name: 'small' }, instance_name: 'cache' } }, plans: {} })],
+    [`/b/${ID}/details`, (u, o, j) => j(200, { instance_name: 'cache', history: RUNNING() })],
+    [`/b/${ID}/vms`, (u, o, j) => j(200, [])]];
+  const env = boot({ noDialogs: true, routes });
+  envs.push(env);
+  const { w } = env;
+  await sleep(80);
+  const real = w.setTimeout.bind(w);
+  const timers = [];
+  let nextTimer = 0;
+  w.setTimeout = (fn, ms, ...rest) => { if (ms !== 5000) return real(fn, ms, ...rest); timers.push({ fn, ms, id: -(++nextTimer) }); return -nextTimer; };
+  w.clearTimeout = (id) => { const at = timers.findIndex((x) => x.id === id); if (at >= 0) timers.splice(at, 1); };
+  await w.navigateToInstance(ID);
+  await w.loadInstanceSection(ID, 'details');
+  await sleep(40);
+  expect(timers.length).toBe(1);
+  await w.loadInstanceSection(ID, 'vms');
+  await sleep(40);
+  expect(timers.length).toBe(0);
+  // The Summary comes back from the retained view, not from a fresh render.
+  await w.loadInstanceSection(ID, 'details');
+  await sleep(40);
+  expect(timers.length).toBe(1);
+});
