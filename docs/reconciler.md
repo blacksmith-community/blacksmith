@@ -82,21 +82,40 @@ The reconciler is implemented as a modular system with clean separation of conce
 
 ## Configuration
 
-The reconciler can be configured through both the `blacksmith.conf` file and environment variables
-(environment variables take precedence):
+The reconciler can be configured through both the `blacksmith.conf` file and environment variables, and environment variables take precedence over the file. The interval is the one exception, because an interval saved through the UI or the settings API outranks both. See [Interval Format and Precedence](#interval-format-and-precedence).
 
 ### Configuration Options
 
 | Environment Variable | Config File | Default | Description |
 |---------------------|-------------|---------|-------------|
 | `BLACKSMITH_RECONCILER_ENABLED` | `reconciler.enabled` | `true` | Enable/disable the reconciler |
-| `BLACKSMITH_RECONCILER_INTERVAL` | `reconciler.interval` | `1h` | Time between reconciliation runs |
+| `BLACKSMITH_RECONCILER_INTERVAL` | `reconciler.interval` | `5m` | Time between reconciliation runs (Go duration or bare seconds) |
 | `BLACKSMITH_RECONCILER_MAX_CONCURRENCY` | `reconciler.max_concurrency` | `5` | Maximum concurrent deployment processing |
 | `BLACKSMITH_RECONCILER_BATCH_SIZE` | `reconciler.batch_size` | `10` | Number of deployments to process per batch |
 | `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `reconciler.retry_attempts` | `3` | Number of retry attempts for failed operations |
 | `BLACKSMITH_RECONCILER_RETRY_DELAY` | `reconciler.retry_delay` | `10s` | Delay between retry attempts |
 | `BLACKSMITH_RECONCILER_CACHE_TTL` | `reconciler.cache_ttl` | `5m` | Cache time-to-live for deployment details |
 | `BLACKSMITH_RECONCILER_DEBUG` | `reconciler.debug` | `false` | Enable detailed debug logging |
+
+#### Interval Format and Precedence
+
+The reconciler interval accepts a Go duration such as `"5m"`, `"30m"`, or `"1h30m"`, or a bare number of seconds such as `3600`. The default is five minutes, and the shortest interval the reconciler runs at is ten seconds. A value that can't be parsed doesn't stop Blacksmith from starting. Instead, Blacksmith logs a warning that names the setting, shows the bad value, and says which interval it uses in its place and where that interval came from.
+
+A value under ten seconds from the environment variable, the config file, or Vault is raised to ten seconds, and Blacksmith logs a warning that names the setting, shows the value, and gives the minimum. The settings API rejects a value under ten seconds with a 400 response that names the minimum. Either way, Blacksmith and `GET /b/blacksmith/settings` report the interval the reconciler actually runs at.
+
+Blacksmith takes the interval from the first of these sources that holds a valid value:
+
+1. An interval saved through the UI or the settings API (`/b/blacksmith/settings`), which Blacksmith stores in Vault at `blacksmith/settings`
+
+2. The `BLACKSMITH_RECONCILER_INTERVAL` environment variable
+
+3. The `reconciler.interval` setting in the config file
+
+4. The default of `5m`
+
+A saved interval takes effect at once, and because it lives in Vault, it persists across restarts and redeploys. It overrides the environment variable and the config file, so operators can change the interval without a redeploy. Changing the environment variable or the config file has no effect on the interval while a saved value exists, so save a new interval through the UI or the settings API instead.
+
+The settings API takes the same forms as the config file. At startup, Blacksmith logs the interval it starts with and its source, and when it loads a saved interval from Vault, it logs which value the saved one replaces. If Blacksmith can't read the saved interval from Vault at startup, for example because Vault is still sealed, it logs a warning that says so and names the interval it runs with instead.
 
 #### Backup Configuration
 
@@ -326,10 +345,15 @@ export BLACKSMITH_RECONCILER_BACKUP_ON_DELETE=true
 
 ### Configuration Precedence
 
-Configuration values are applied in the following order (highest precedence first):
+Configuration values are applied in the following order, with the highest precedence first:
+
 1. Environment variables
+
 2. Configuration file (`blacksmith.conf`)
+
 3. Default values
+
+The reconciler interval is the exception. An interval saved through the UI or the settings API outranks the environment variable and the config file, and every source is held to a ten-second minimum. See [Interval Format and Precedence](#interval-format-and-precedence).
 
 ### Disabling Backups
 

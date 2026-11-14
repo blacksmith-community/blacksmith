@@ -120,7 +120,7 @@ Environment variables control reconciler behavior:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BLACKSMITH_RECONCILER_ENABLED` | `true` | Enable/disable reconciler |
-| `BLACKSMITH_RECONCILER_INTERVAL` | `1h` | Scan interval |
+| `BLACKSMITH_RECONCILER_INTERVAL` | `5m` | Scan interval, overridden by an interval saved through the UI |
 | `BLACKSMITH_RECONCILER_MAX_CONCURRENCY` | `5` | Parallel operations |
 | `BLACKSMITH_RECONCILER_BATCH_SIZE` | `10` | Instances per batch |
 | `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `3` | Retry failed operations |

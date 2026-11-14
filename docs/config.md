@@ -808,7 +808,7 @@ The `reconciler` section configures the deployment reconciler that monitors and 
 ```yaml
 reconciler:
   enabled: true                    # Enable reconciler
-  interval: "5m"                   # Reconciliation interval
+  interval: "5m"                   # Reconciliation interval (Go duration or bare seconds, e.g. 3600)
   max_concurrency: 5              # Maximum concurrent reconciliations
   batch_size: 10                  # Batch size for processing instances
   retry_attempts: 3               # Retry attempts for failed operations
@@ -835,7 +835,9 @@ Enable or disable the deployment reconciler. When enabled, Blacksmith will monit
 #### `interval` (string)
 **Default:** `"5m"`
 
-How often the reconciler runs to check for inconsistencies. Supports duration formats like `"30s"`, `"5m"`, `"1h"`.
+How often the reconciler runs to check for inconsistencies. It accepts Go durations such as `"30s"`, `"5m"`, and `"1h"`, and it also accepts a bare number of seconds such as `3600`. When a value can't be parsed, Blacksmith logs a warning that names the setting, shows the bad value, and says which interval it uses instead. The shortest interval the reconciler runs at is ten seconds, so a shorter value is raised to ten seconds with a warning that names the setting, shows the value, and gives the minimum.
+
+An interval saved through the UI or the settings API overrides this value, and so does the `BLACKSMITH_RECONCILER_INTERVAL` environment variable. A saved interval is stored in Vault, so it persists across restarts and redeploys, and it outranks the environment variable. See [Interval Format and Precedence](reconciler.md#interval-format-and-precedence).
 
 #### `max_concurrency` (integer)
 **Default:** `5`
