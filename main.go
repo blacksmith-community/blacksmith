@@ -27,6 +27,7 @@ import (
 	"blacksmith/internal/compression"
 	"blacksmith/internal/config"
 	"blacksmith/internal/credhub"
+	"blacksmith/internal/handlers/blacksmith"
 	boshhandler "blacksmith/internal/handlers/bosh"
 	upgradehandler "blacksmith/internal/handlers/upgrade"
 	"blacksmith/internal/interfaces"
@@ -1190,14 +1191,14 @@ const (
 // be revalidated because it carries the keys for everything else, and a
 // stale copy of it keeps operators on old assets after a deploy.
 func uiCacheControl(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", revalidatedCacheControl)
+	return http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		writer.Header().Set("Cache-Control", revalidatedCacheControl)
 
-		if isKeyedAssetRequest(r) {
-			w = &keyedAssetWriter{ResponseWriter: w}
+		if isKeyedAssetRequest(req) {
+			writer = &keyedAssetWriter{ResponseWriter: writer}
 		}
 
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(writer, req)
 	})
 }
 
@@ -1416,7 +1417,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		RabbitMQPluginsAuditService:    rabbitmqPluginsAuditService,
 		WebSocketHandler:               webSocketHandler,
 		SecurityMiddleware:             services.NewSecurityMiddleware(logger.Named("security").Debug),
-		Reconciler:                     reconciler,
+		Reconciler:                     apiReconciler(reconciler),
 		Certificates:                   certificates,
 		Guard:                          brokerInstance.Guard,
 		CredHub:                        brokerInstance.CredHubClient,
@@ -1719,7 +1720,18 @@ func setupReconciler(config *config.Config, brokerInstance *broker.Broker, vault
 
 	logger.Warn("BOSH director unavailable - reconciler will be disabled")
 
-	return &recovery.ReconcilerAdapter{}
+	return nil
+}
+
+// apiReconciler gives the API its reconciler. A nil adapter becomes a nil
+// interface, because a nil pointer wrapped in an interface passes the
+// handler's nil check and then fails on the first call.
+func apiReconciler(reconciler *recovery.ReconcilerAdapter) blacksmith.ReconcilerInterface {
+	if reconciler == nil {
+		return nil
+	}
+
+	return reconciler
 }
 
 // setupVMMonitor builds the vm-monitor over the broker, which it asks for
