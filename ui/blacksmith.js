@@ -1533,6 +1533,8 @@
     `;
   };
 
+  // A table can match its rows on chosen fields instead of the row text.
+  const tableRowMatchers = {};
   const attachSearchFilter = (tableId) => {
     const searchInput = document.getElementById(`search-${tableId}`);
     const clearBtn = document.getElementById(`clear-${tableId}`);
@@ -1548,8 +1550,9 @@
       let visibleCount = 0;
 
       rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        if (text.includes(filter)) {
+        const matcher = tableRowMatchers[tableId];
+        const matches = matcher ? matcher(row, filter) : row.textContent.toLowerCase().includes(filter);
+        if (matches) {
           row.style.display = '';
           visibleCount++;
         } else {
@@ -2939,15 +2942,70 @@
       <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table"><caption class="visually-hidden">Every service instance with its service, plan, VM job state, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">VM job state</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   };
+  // Opening another instance keeps the section the operator is on. Operations
+  // exists only for services the testing screen supports, so a service it
+  // names as unsupported opens on Summary. A sub-view never carries over.
+  const serviceLacksTesting = (name) => {
+    const lower = String(name || '').trim().toLowerCase();
+    if (!lower || classifyServiceName(lower)?.type) return false;
+    return [...UNSUPPORTED_SERVICES].some(unsupported => lower.includes(unsupported));
+  };
+  const instanceOpenRoute = (id) => {
+    const current = window.blacksmithRouter?.current;
+    let section = 'details';
+    if (current?.screen === 'services' && current.instance && current.section) {
+      section = current.section;
+      const details = window.serviceInstances?.[id];
+      const serviceName = (window.plansData?.services || []).find(s => s && s.id === details?.service_id)?.name || details?.service_id;
+      if (section === 'testing' && serviceLacksTesting(serviceName)) section = 'details';
+    }
+    return {screen: 'services', instance: id, section};
+  };
   const openOverviewInstance = (row) => {
     const id = row.dataset.instanceId;
-    if (window.blacksmithRouter) window.blacksmithRouter.navigate({screen: 'services', instance: id, section: 'details'});
+    if (window.blacksmithRouter) window.blacksmithRouter.navigate(instanceOpenRoute(id));
     else window.navigateToInstance?.(id);
   };
   document.addEventListener('click', (event) => {
     if (event.target.closest?.('a, button')) return;
     const row = event.target.closest?.('tr[data-instance-row]');
     if (row) openOverviewInstance(row);
+  });
+  // The list and the overview match a query on the same four fields.
+  const instanceMatchesQuery = (query, {name, id, service, plan}) => {
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    return !needle || [name, id, service, plan].some(value => String(value || '').toLocaleLowerCase().includes(needle));
+  };
+  tableRowMatchers['instances-overview-table'] = (row, query) => instanceMatchesQuery(query, {
+    name: row.cells[0]?.textContent, id: row.dataset.instanceId, service: row.cells[1]?.textContent, plan: row.cells[2]?.textContent});
+  const listItemMatches = (item, query) => instanceMatchesQuery(query, {
+    name: item.querySelector('.service-instance-name')?.textContent, id: item.dataset.instanceId, service: item.dataset.service, plan: item.dataset.plan});
+  // The list's search box and the overview's search box are one filter.
+  const instanceSearchBoxes = () => [document.getElementById('instance-search'), document.getElementById('search-instances-overview-table')];
+  const syncInstanceSearch = (source) => {
+    for (const box of instanceSearchBoxes()) {
+      if (!box || box === source || box.value === source.value) continue;
+      box.value = source.value;
+      box.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+  };
+  // Every programmatic change goes through here, so both boxes and both
+  // views always show the same query.
+  const setInstanceSearch = (value) => {
+    for (const box of instanceSearchBoxes()) {
+      if (!box || box.value === value) continue;
+      box.value = value;
+      box.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+  };
+  document.addEventListener('input', (event) => {
+    if (instanceSearchBoxes().includes(event.target)) syncInstanceSearch(event.target);
+  });
+  document.addEventListener('click', (event) => {
+    if (event.target.closest?.('#clear-instances-overview-table')) {
+      const box = document.getElementById('search-instances-overview-table');
+      if (box) syncInstanceSearch(box);
+    }
   });
   // The overview comes back whenever no instance is open, from the current list.
   const mountInstancesOverview = (host) => {
@@ -2956,12 +3014,17 @@
     const {serviceIdToName} = buildServiceFilterIndex(instances);
     host.innerHTML = renderInstancesOverview(Object.entries(instances), serviceIdToName);
     attachSearchFilter('instances-overview-table');
+    const listSearch = document.getElementById('instance-search');
+    const overviewSearch = document.getElementById('search-instances-overview-table');
+    if (listSearch?.value && overviewSearch) setInstanceSearch(listSearch.value);
     initializeAllTables();
     fillInstanceCertificates();
   };
 
   const renderServicesTemplate = (instances) => {
-    const instancesList = isEmpty(instances) ? [] : Object.entries(instances);
+    const byName = (a, b) => String(a[1]?.instance_name || a[0]).localeCompare(String(b[1]?.instance_name || b[0]), undefined, {numeric: true, sensitivity: 'base'})
+      || String(a[0]).localeCompare(String(b[0]), undefined, {numeric: true});
+    const instancesList = isEmpty(instances) ? [] : Object.entries(instances).sort(byName);
 
     const hasCatalog = window.plansData && window.plansData.services && window.plansData.services.length > 0;
     const {serviceIdToName, plansPerService, missingServices} = buildServiceFilterIndex(instances);
@@ -3075,7 +3138,7 @@
         </div>
       </div>
       <div class="service-detail">
-        ${renderInstancesOverview(instancesList, serviceIdToName)}
+        ${renderInstancesOverview(isEmpty(instances) ? [] : Object.entries(instances), serviceIdToName)}
       </div>
     `;
   };
@@ -16642,7 +16705,7 @@
           initializeAllTables();
           if (document.getElementById('services')?.classList.contains('active')) fillInstanceCertificates();
           document.querySelectorAll('#services .service-item').forEach(item => {
-            item.addEventListener('click', () => window.blacksmithRouter ? window.blacksmithRouter.navigate({screen:'services',instance:item.dataset.instanceId,section:'details'}) : window.navigateToInstance(item.dataset.instanceId));
+            item.addEventListener('click', () => window.blacksmithRouter ? window.blacksmithRouter.navigate(instanceOpenRoute(item.dataset.instanceId)) : window.navigateToInstance(item.dataset.instanceId));
           });
           setupFilterHandlers();
         };
@@ -16670,7 +16733,7 @@
               (!serviceFilter?.value || item.dataset.service === serviceFilter.value) &&
               (!planFilter?.value || item.dataset.plan === planFilter.value) &&
               (!hideDeletedFilter?.checked || item.dataset.deleted !== 'true') &&
-              (!query || item.textContent.toLocaleLowerCase().includes(query)));
+              (!query || listItemMatches(item, query)));
             page = Math.min(Math.max(0, requestedPage), Math.max(0, Math.ceil(matching.length / 50) - 1));
             const visible = matching.slice(page * 50, (page + 1) * 50);
             itemsContainer.replaceChildren(...visible);
@@ -16691,7 +16754,7 @@
           window.revealServiceInstance = id => {
             const target = window.serviceInstanceElements.get(id);
             if (!matching.includes(target)) {
-              search.value = '';
+              setInstanceSearch('');
               if (serviceFilter) serviceFilter.value = '';
               if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
               if (target?.dataset.deleted === 'true' && hideDeletedFilter) hideDeletedFilter.checked = false;
@@ -16722,7 +16785,7 @@
             planFilter.dispatchEvent(new Event('change'));
           };
           clearFiltersBtn?.addEventListener('click', () => {
-            search.value = '';
+            setInstanceSearch('');
             if (serviceFilter) serviceFilter.value = '';
             if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
             if (hideDeletedFilter) hideDeletedFilter.checked = true;
