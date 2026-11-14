@@ -12,7 +12,7 @@ t('broker overview distinguishes known context from unverified health', () => {
     const data = {deployment:'lab <img src=x>',env:'Forge lab',instances:{a:{},b:{deleted:true}},plans:{small:{}}};
     const host=d.createElement('div');
     host.innerHTML=w.__T.renderBlacksmithOverview(data);
-    expect(host.querySelectorAll('.entity-metric')).toHaveLength(3);
+    expect(host.querySelectorAll('.entity-metric')).toHaveLength(4);
     expect(host.textContent).toContain('1 active instance');
     expect(host.textContent).not.toContain('Running');
     expect(host.querySelector('img')).toBeNull();

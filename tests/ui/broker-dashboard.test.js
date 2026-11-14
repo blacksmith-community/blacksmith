@@ -39,7 +39,7 @@ t('the panel lists every type and plan, sorted, with active and alert counts tha
  const {w,d}=start();try{
   const host=render(w,d,fixture());
   const tiles=[...host.querySelectorAll('.entity-metric strong')].map(x=>x.textContent);
-  expect(tiles).toEqual(['6','4','2']);
+  expect(tiles).toEqual(['6','3','4','2']);
   const names=rows(host).map(r=>[r.className.includes('entity-plan-row')?'plan':'type',r.querySelector('th').textContent.replace(/\s+/g,' ').trim()]);
   expect(names).toEqual([
    ['type','legacy Not in the catalog'],['plan','old Not in the catalog'],
@@ -126,7 +126,7 @@ t('the panel says so when the broker has no plans or instances',()=>{
   expect(panel.querySelector('h3').textContent).toBe('Services and plans');
   expect(panel.textContent).toContain('The broker has no service plans or instances yet.');
   expect(!!panel.querySelector('table')).toBe(false);
-  expect(host.querySelectorAll('.entity-metric')).toHaveLength(3);
+  expect(host.querySelectorAll('.entity-metric')).toHaveLength(4);
   const noInstances=render(w,d,{plans:{'redis/small':plan('redis','small')},instances:{}});
   expect(rows(noInstances)).toHaveLength(2);
   expect(noInstances.querySelector('.entity-services').textContent).not.toContain('no service plans');

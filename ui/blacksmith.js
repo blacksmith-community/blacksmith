@@ -2553,7 +2553,18 @@
   // The link reads "View service plans", so the label's first letter drops to
   // lowercase unless its first word is an acronym such as VM.
   const metricLinkLabel = (label) => (/[A-Z]/.test(label.split(/\s/)[0].slice(1)) ? label : label.charAt(0).toLowerCase() + label.slice(1));
-  const entityMetric = (value, label, section) => `<button class="card entity-metric" data-entity-section="${section}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(metricLinkLabel(label))} →</span></button>`;
+  // A card names itself in full, because its text reads as one run of words.
+  // options.one is the label to read when the count is exactly one, and
+  // options.anchor is the id of a place on the same page to move focus to.
+  const entityMetric = (value, label, section, options = {}) => {
+    const spoken = String(value) === '1' && options.one ? options.one : metricLinkLabel(label);
+    const aria = /^\d+$/.test(String(value)) ? `${value} ${spoken}. View ${metricLinkLabel(label)}` : `${label}: ${value}. View ${metricLinkLabel(label)}`;
+    const target = options.anchor ? `data-entity-anchor="${escapeAttribute(options.anchor)}"` : `data-entity-section="${section}"`;
+    const keep = options.keepKey ? ` data-keep-key="${escapeAttribute(options.keepKey)}"` : '';
+    // A card with nothing behind it says so and does not act like a button.
+    if (options.disabled) return `<button class="card entity-metric" aria-disabled="true"${keep} aria-label="${escapeAttribute(`${value} ${spoken}. Nothing to show`)}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">Nothing to show</span></button>`;
+    return `<button class="card entity-metric" ${target}${keep} aria-label="${escapeAttribute(aria)}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><span class="entity-metric-link">View ${escapeHtml(metricLinkLabel(label))} →</span></button>`;
+  };
   const entityMetadata = (pairs, title = 'Technical details', titles = {}) => `<details class="entity-technical"><summary>${escapeHtml(title)}</summary><table class="service-info-table"><caption class="visually-hidden">${escapeHtml(title)}</caption><tbody>${pairs.map(([label,value]) => {
     const empty = value === undefined || value === null || value === '';
     const text = empty ? 'Not reported' : typeof value === 'object' ? JSON.stringify(value,null,2) : String(value);
@@ -2613,7 +2624,7 @@
       const limit = Number.isFinite(plan.limit) && plan.limit > 0 ? `<span class="entity-plan-limit">Limit ${plan.limit}</span>` : '';
       return `<tr class="entity-plan-row" data-service="${escapeAttribute(type.name)}" data-plan="${escapeAttribute(plan.name)}"><th scope="row">${entry(type, plan, plan.name, plan.count)}${note(plan.inCatalog)}</th><td>${escapeHtml(String(plan.description))}${plan.description && limit ? ' ' : ''}${limit}</td>${counts(plan)}</tr>`;
     }).join('')}</tbody>`).join('');
-    return shell(`<div class="entity-services-scroll" role="region" tabindex="0" aria-labelledby="entity-services-heading"><table class="entity-services-table"><caption class="visually-hidden">Active instances and instances with VM alerts for each service type and plan</caption><thead><tr><th scope="col">Service type or plan</th><th scope="col">Details</th><th scope="col">Instances</th><th scope="col">Instances with VM alerts</th></tr></thead>${body}</table></div>`);
+    return shell(`<div class="entity-services-scroll" id="entity-services" role="region" tabindex="0" aria-label="Service types and plans table"><table class="entity-services-table"><caption class="visually-hidden">Active instances and instances with VM alerts for each service type and plan</caption><thead><tr><th scope="col">Service type or plan</th><th scope="col">Details</th><th scope="col">Instances</th><th scope="col">Instances with VM alerts</th></tr></thead>${body}</table></div>`);
   };
 
   // The summary's first stop for problems. VM alerts come from the instance
@@ -2654,6 +2665,7 @@
     const instances = Object.values(data.instances || {}).filter(instance => instance && !instance.deleted);
     const plans = Object.keys(data.plans || {}).length;
     const attention = instances.filter(hasVmAlert).length;
+    const serviceTypes = groupServicesAndPlans(data).length;
     const facts = [['Deployment',data.deployment || 'blacksmith'],['Environment',data.env || 'Not reported']];
     const technical = [['BOSH DNS',data.boshDNS || 'Not reported']];
     for (const [service, fields] of Object.entries({BOSH:['address','username','network'],Vault:['address'],Broker:['username','port','bind_ip']})) {
@@ -2661,7 +2673,7 @@
     }
     return `<section class="entity-overview" aria-label="Blacksmith overview">
       <p class="entity-intro">Manage the broker and its service fleet. Inspect health, activity, and configuration using the sections alongside.</p>
-      <div class="entity-metrics">${entityMetric(instances.length,'Service instances','instances')}${entityMetric(plans,'Service plans','plans')}${entityMetric(attention,'Instances with VM alerts','instances')}</div>
+      <div class="entity-metrics">${entityMetric(instances.length,'Service instances','instances',{one:'service instance'})}${entityMetric(serviceTypes,'Service types','instances',{one:'service type',anchor:'entity-services',keepKey:'summary-card:service-types',disabled:serviceTypes === 0})}${entityMetric(plans,'Service plans','plans',{one:'service plan'})}${entityMetric(attention,'Instances with VM alerts','instances',{one:'instance with VM alerts'})}</div>
       <p class="entity-status-note">${instances.length} active instance${instances.length === 1 ? '' : 's'}. VM exceptions reflect reported status; missing status is not a health check.</p>
       ${renderAttentionRequired(data)}
       ${renderServicesAndPlans(data)}
@@ -2699,6 +2711,12 @@
         await window.blacksmithNav.switchTab('services');
         window.applyServicesFilter?.(service, plan);
       } catch (error) { announce(error.message); }
+      return;
+    }
+    const anchor = event.target.closest('[data-entity-anchor]');
+    if (anchor && anchor.getAttribute('aria-disabled') !== 'true') {
+      const place = document.getElementById(anchor.dataset.entityAnchor);
+      if (place) { place.scrollIntoView?.({block: 'start'}); place.focus({preventScroll: true}); }
       return;
     }
     const jump = event.target.closest('[data-entity-section]');
