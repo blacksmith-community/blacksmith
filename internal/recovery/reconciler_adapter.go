@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -132,7 +133,7 @@ type ReconcilerAdapter struct {
 func buildReconcilerConfig(cfg *config.Config) reconciler.ReconcilerConfig {
 	reconcilerConfig := reconciler.ReconcilerConfig{
 		Enabled:  getEnvBoolWithDefault("BLACKSMITH_RECONCILER_ENABLED", cfg.Reconciler.Enabled, true),
-		Interval: getEnvDurationWithDefault("BLACKSMITH_RECONCILER_INTERVAL", parseDuration(cfg.Reconciler.Interval), DefaultReconcilerInterval),
+		Interval: getEnvIntervalWithDefault("BLACKSMITH_RECONCILER_INTERVAL", parseDuration(cfg.Reconciler.Interval), DefaultReconcilerInterval),
 		Debug:    getEnvBoolWithDefault("BLACKSMITH_RECONCILER_DEBUG", cfg.Reconciler.Debug, cfg.Debug),
 	}
 
@@ -305,9 +306,29 @@ func parseDuration(s string) time.Duration {
 		return 0
 	}
 
-	d, _ := time.ParseDuration(s)
+	d, err := parseIntervalString(s)
+	if err != nil {
+		return 0
+	}
 
 	return d
+}
+
+// parseIntervalString reads a reconciler interval written either as a Go
+// duration ("5m", "1h30m") or as bare seconds (3600, 60.5), which is how a
+// YAML integer arrives once it is stored as a string.
+func parseIntervalString(value string) (time.Duration, error) {
+	interval, err := time.ParseDuration(value)
+	if err == nil {
+		return interval, nil
+	}
+
+	seconds, numErr := strconv.ParseFloat(value, 64)
+	if numErr == nil {
+		return time.Duration(seconds * float64(time.Second)), nil
+	}
+
+	return 0, fmt.Errorf("invalid duration %q: not a Go duration or numeric seconds: %w", value, err)
 }
 
 // Start starts the reconciler.
@@ -885,6 +906,23 @@ func getEnvIntWithDefault(key string, configValue int, defaultValue int) int {
 		_, err := fmt.Sscanf(val, "%d", &intVal)
 		if err == nil {
 			return intVal
+		}
+	}
+
+	if configValue != 0 {
+		return configValue
+	}
+
+	return defaultValue
+}
+
+// getEnvIntervalWithDefault is getEnvDurationWithDefault for the reconciler
+// interval, which also accepts bare seconds.
+func getEnvIntervalWithDefault(key string, configValue time.Duration, defaultValue time.Duration) time.Duration {
+	if val := os.Getenv(key); val != "" {
+		duration, err := parseIntervalString(val)
+		if err == nil {
+			return duration
 		}
 	}
 
