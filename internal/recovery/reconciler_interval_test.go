@@ -17,6 +17,7 @@ const (
 	notAnInterval = "every hour"
 	notSoon       = "soon"
 	twoMinutes    = "120"
+	usingDefault  = "using the 5m0s default"
 )
 
 func TestBuildReconcilerConfigIntervalForms(t *testing.T) {
@@ -99,17 +100,29 @@ func invalidIntervalCases() []invalidIntervalCase {
 			name: "config value", yaml: notAnInterval,
 			key: reconcilerIntervalConfigKey, bad: notAnInterval,
 			want: DefaultReconcilerInterval, wantSource: reconcilerIntervalDefault,
-			using: "using the 5m0s default",
+			using: usingDefault,
 		},
 		{
 			name: "env value", env: notSoon,
 			key: reconcilerIntervalEnvKey, bad: notSoon,
 			want: DefaultReconcilerInterval, wantSource: reconcilerIntervalDefault,
-			using: "using the 5m0s default",
+			using: usingDefault,
 		},
 		{
 			name: "bad env falls back to config", yaml: tenMinutes, env: notSoon,
 			key: reconcilerIntervalEnvKey, bad: notSoon,
+			want: 10 * time.Minute, wantSource: reconcilerIntervalConfigKey,
+			using: "using 10m0s from reconciler.interval",
+		},
+		{
+			name: "negative config value", yaml: "-5",
+			key: reconcilerIntervalConfigKey, bad: "-5",
+			want: DefaultReconcilerInterval, wantSource: reconcilerIntervalDefault,
+			using: usingDefault,
+		},
+		{
+			name: "zero env value", yaml: tenMinutes, env: "0",
+			key: reconcilerIntervalEnvKey, bad: "0",
 			want: 10 * time.Minute, wantSource: reconcilerIntervalConfigKey,
 			using: "using 10m0s from reconciler.interval",
 		},

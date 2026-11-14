@@ -39,3 +39,20 @@ func TestParseIntervalRejectsOtherText(t *testing.T) {
 		}
 	}
 }
+
+// A negative interval panics in time.NewTicker, and NaN, infinite, or
+// overflowing seconds have no meaningful Duration, so none of them may
+// reach the reconciler.
+func TestParseIntervalRejectsNonPositiveAndNonFinite(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"0", "0s", "0.0", "-5", "-5s", "-0.5",
+		"NaN", "nan", "Inf", "+Inf", "-Inf", "infinity", "1e300",
+	} {
+		got, err := reconciler.ParseInterval(input)
+		if !errors.Is(err, reconciler.ErrInvalidInterval) {
+			t.Errorf("ParseInterval(%q) = %v, %v, want ErrInvalidInterval", input, got, err)
+		}
+	}
+}
