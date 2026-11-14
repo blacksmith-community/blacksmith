@@ -284,3 +284,79 @@ func TestLoadSettingsFromVaultParsesSavedInterval(t *testing.T) {
 		})
 	}
 }
+
+// newStartingAdapter returns an adapter on vaultClient whose interval came
+// from the environment, as Start would see it before reading Vault. The
+// caller sets the environment.
+func newStartingAdapter(t *testing.T, vaultClient *internalVault.Vault) (*ReconcilerAdapter, *warnRecorder) {
+	t.Helper()
+
+	reconcilerConfig, source := buildReconcilerConfig(&config.Config{}, &warnRecorder{})
+	rec := &warnRecorder{}
+
+	return &ReconcilerAdapter{vault: vaultClient, logger: rec, config: reconcilerConfig, intervalSource: source}, rec
+}
+
+// A Vault read that fails at startup leaves the interval from the
+// environment in place, and the warning says so without the response body
+// or the token. A missing secret stays quiet.
+func TestLoadSettingsFromVaultWarnsWhenTheReadFails(t *testing.T) {
+	t.Setenv(reconcilerIntervalEnvKey, twoMinutes)
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("starting the in-process vault: %v", err)
+	}
+
+	t.Run("missing secret", func(t *testing.T) {
+		t.Setenv(reconcilerIntervalEnvKey, twoMinutes)
+
+		adapter, rec := newStartingAdapter(t, internalVault.New(server.Addr, server.RootToken, true))
+		adapter.loadSettingsFromVault(t.Context())
+
+		if len(rec.messages) != 0 {
+			t.Errorf("unexpected warnings %q", rec.messages)
+		}
+	})
+
+	t.Run("read refused", func(t *testing.T) {
+		t.Setenv(reconcilerIntervalEnvKey, twoMinutes)
+
+		const badToken = "not-the-root-token"
+
+		adapter, rec := newStartingAdapter(t, internalVault.New(server.Addr, badToken, true))
+		adapter.loadSettingsFromVault(t.Context())
+
+		if got := adapter.GetInterval(); got != 2*time.Minute {
+			t.Errorf("interval = %v, want 2m0s", got)
+		}
+
+		requireOneWarning(t, rec, "saved reconciler interval", "HTTP 403", usingEnv)
+
+		for _, secret := range []string{badToken, "permission denied"} {
+			if strings.Contains(rec.messages[0], secret) {
+				t.Errorf("warning %q carries %q", rec.messages[0], secret)
+			}
+		}
+	})
+
+	t.Run("not a string", func(t *testing.T) {
+		t.Setenv(reconcilerIntervalEnvKey, twoMinutes)
+
+		vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+
+		err := vaultClient.Put(t.Context(), "blacksmith/settings", map[string]interface{}{savedKey: 300})
+		if err != nil {
+			t.Fatalf("persisting the setting: %v", err)
+		}
+
+		adapter, rec := newStartingAdapter(t, vaultClient)
+		adapter.loadSettingsFromVault(t.Context())
+
+		if got := adapter.GetInterval(); got != 2*time.Minute {
+			t.Errorf("interval = %v, want 2m0s", got)
+		}
+
+		requireOneWarning(t, rec, savedKey, "not a string", usingEnv)
+	})
+}

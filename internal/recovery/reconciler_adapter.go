@@ -627,17 +627,30 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 
 	var settings map[string]interface{}
 
-	exists, err := r.vault.Get(ctx, "blacksmith/settings", &settings)
-	if err != nil || !exists {
-		return
-	}
-
-	intervalStr, ok := settings["reconciler_interval"].(string)
-	if !ok {
-		return
-	}
-
 	current, source := r.config.Interval, r.intervalSourceName()
+
+	exists, err := r.vault.Get(ctx, "blacksmith/settings", &settings)
+	if err != nil {
+		r.log().Warn("Could not read the saved reconciler interval from %s (%s); %s", reconcilerIntervalVault, describeVaultReadError(err), describeInterval(current, source))
+
+		return
+	}
+
+	if !exists {
+		return
+	}
+
+	rawInterval, found := settings["reconciler_interval"]
+	if !found {
+		return
+	}
+
+	intervalStr, ok := rawInterval.(string)
+	if !ok {
+		r.log().Warn("Ignoring %s reconciler_interval: not a string (%T); %s", reconcilerIntervalVault, rawInterval, describeInterval(current, source))
+
+		return
+	}
 
 	saved, err := reconciler.ParseInterval(intervalStr)
 	if err != nil {
@@ -654,6 +667,23 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 	r.log().Info("Reconciler interval: %s, replacing %s", describeInterval(saved, reconcilerIntervalVault), describeIntervalSource(current, source))
 	r.config.Interval = saved
 	r.intervalSource = reconcilerIntervalVault
+}
+
+// describeVaultReadError says why a Vault read failed without its text,
+// which can carry the response body.
+func describeVaultReadError(err error) string {
+	var responseErr *api.ResponseError
+
+	switch {
+	case errors.As(err, &responseErr):
+		return fmt.Sprintf("Vault answered HTTP %d", responseErr.StatusCode)
+	case errors.Is(err, context.DeadlineExceeded):
+		return "the read timed out"
+	case errors.Is(err, context.Canceled):
+		return "the read was cancelled"
+	default:
+		return "the read failed"
+	}
 }
 
 // isVaultReady checks if Vault is ready for operations.
