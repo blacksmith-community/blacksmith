@@ -127,8 +127,19 @@ type ReconcilerAdapter struct {
 	config    reconciler.ReconcilerConfig
 	cfManager interface{} // CF connection manager as interface for package compatibility
 
+	// configMu guards config.Interval and intervalSource, which the
+	// settings endpoint reads and writes from request goroutines while
+	// Start reads them. Nothing slow runs while it is held.
+	configMu sync.RWMutex
 	// intervalSource names where config.Interval came from, for logs.
 	intervalSource string
+
+	// intervalMu orders interval changes. UpdateInterval holds it across
+	// the manager, memory, and Vault, so concurrent saves leave all three
+	// agreeing. Start holds it from loading the saved value until the
+	// manager is published, so a save can't land in between and miss the
+	// manager. Take it before mu or configMu, never after.
+	intervalMu sync.Mutex
 }
 
 // Names for the places a reconciler interval can come from, used in logs.
@@ -137,6 +148,7 @@ const (
 	reconcilerIntervalConfigKey = "reconciler.interval"
 	reconcilerIntervalDefault   = "default"
 	reconcilerIntervalVault     = "Vault settings"
+	reconcilerIntervalAPI       = "the settings API (not saved)"
 )
 
 // intervalCandidate is one source of a reconciler interval.
@@ -454,22 +466,12 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 		r.log().Error("Vault is nil - reconciler will run with severely limited functionality")
 	}
 
-	// Load persisted settings from Vault (e.g., reconciler interval)
-	r.loadSettingsFromVault(ctx)
-
-	manager := r.buildManager()
-
-	r.mu.Lock()
-
-	if r.stopped || ctx.Err() != nil {
-		r.mu.Unlock()
+	manager := r.loadSettingsAndPublishManager(ctx)
+	if manager == nil {
 		r.log().Info("Deployment reconciler was stopped before it started")
 
-		return nil //nolint:nilerr // a start that shutdown cancelled is not a failure
+		return nil
 	}
-
-	r.manager = manager
-	r.mu.Unlock()
 
 	// Start the reconciler
 	err := manager.Start(ctx)
@@ -532,12 +534,15 @@ func (r *ReconcilerAdapter) ForceReconcile() error {
 
 // UpdateInterval changes the reconciler interval at runtime and persists it to Vault.
 func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Duration) error {
+	r.intervalMu.Lock()
+	defer r.intervalMu.Unlock()
+
 	manager := r.currentManager()
 	if manager != nil {
 		manager.UpdateInterval(interval)
 	}
 
-	r.config.Interval = interval
+	r.setInterval(interval, reconcilerIntervalAPI)
 
 	// Persist to Vault so it survives redeployment
 	if r.vault != nil {
@@ -549,7 +554,7 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 			return fmt.Errorf("failed to persist interval: %w", err)
 		}
 
-		r.intervalSource = reconcilerIntervalVault
+		r.setInterval(interval, reconcilerIntervalVault)
 	}
 
 	r.log().Info("Reconciler interval updated to %v and persisted to Vault", interval)
@@ -559,17 +564,58 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 
 // GetInterval returns the current reconciler interval.
 func (r *ReconcilerAdapter) GetInterval() time.Duration {
+	r.configMu.RLock()
+	defer r.configMu.RUnlock()
+
 	return r.config.Interval
 }
 
-// intervalSourceName names where the interval came from, treating an
-// adapter built without NewReconcilerAdapter as using the default.
-func (r *ReconcilerAdapter) intervalSourceName() string {
-	if r.intervalSource == "" {
-		return reconcilerIntervalDefault
+// loadSettingsAndPublishManager applies the interval saved in Vault, builds
+// the manager, and publishes it, all under intervalMu, so an interval saved
+// meanwhile either lands before the manager copies the config or finds the
+// published manager. It returns nil when shutdown got there first.
+func (r *ReconcilerAdapter) loadSettingsAndPublishManager(ctx context.Context) reconciler.Manager {
+	r.intervalMu.Lock()
+	defer r.intervalMu.Unlock()
+
+	// Load persisted settings from Vault (e.g., reconciler interval)
+	r.loadSettingsFromVault(ctx)
+
+	manager := r.buildManager()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.stopped || ctx.Err() != nil {
+		return nil
 	}
 
-	return r.intervalSource
+	r.manager = manager
+
+	return manager
+}
+
+// currentInterval returns the interval and the name of its source under
+// configMu, treating an adapter built without NewReconcilerAdapter as
+// using the default.
+func (r *ReconcilerAdapter) currentInterval() (time.Duration, string) {
+	r.configMu.RLock()
+	defer r.configMu.RUnlock()
+
+	if r.intervalSource == "" {
+		return r.config.Interval, reconcilerIntervalDefault
+	}
+
+	return r.config.Interval, r.intervalSource
+}
+
+// setInterval records the interval and its source under configMu.
+func (r *ReconcilerAdapter) setInterval(interval time.Duration, source string) {
+	r.configMu.Lock()
+	defer r.configMu.Unlock()
+
+	r.config.Interval = interval
+	r.intervalSource = source
 }
 
 // log returns the adapter's logger, or the global one for a zero-value adapter.
@@ -592,9 +638,15 @@ func (r *ReconcilerAdapter) buildManager() reconciler.Manager {
 	wrappedVault := &vaultWrapper{vault: r.vault}
 	wrappedLogger := &loggerWrapper{logger: r.log()}
 
+	// Copy the config under configMu, because the settings endpoint may be
+	// changing the interval.
+	r.configMu.RLock()
+	managerConfig := r.config
+	r.configMu.RUnlock()
+
 	// Create the reconciler manager with CF manager (as interface{})
 	manager := reconciler.NewReconcilerManager(
-		r.config,
+		managerConfig,
 		wrappedBroker,
 		wrappedVault,
 		r.bosh,
@@ -627,7 +679,7 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 
 	var settings map[string]interface{}
 
-	current, source := r.config.Interval, r.intervalSourceName()
+	current, source := r.currentInterval()
 
 	exists, err := r.vault.Get(ctx, "blacksmith/settings", &settings)
 	if err != nil {
@@ -665,8 +717,7 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 	}
 
 	r.log().Info("Reconciler interval: %s, replacing %s", describeInterval(saved, reconcilerIntervalVault), describeIntervalSource(current, source))
-	r.config.Interval = saved
-	r.intervalSource = reconcilerIntervalVault
+	r.setInterval(saved, reconcilerIntervalVault)
 }
 
 // describeVaultReadError says why a Vault read failed without its text,

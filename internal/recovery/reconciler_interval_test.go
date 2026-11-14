@@ -4,6 +4,7 @@ package recovery
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -359,4 +360,126 @@ func TestLoadSettingsFromVaultWarnsWhenTheReadFails(t *testing.T) {
 
 		requireOneWarning(t, rec, savedKey, "not a string", usingEnv)
 	})
+}
+
+// The settings endpoint changes and reads the interval from separate
+// request goroutines while Start may be building the manager, so none of
+// GetInterval, UpdateInterval, and buildManager may race. Run with -race
+// to catch a regression.
+func TestAdapterIntervalConcurrentUpdateAndRead(t *testing.T) {
+	t.Setenv(reconcilerIntervalEnvKey, "")
+
+	reconcilerConfig, source := buildReconcilerConfig(&config.Config{}, &warnRecorder{})
+	adapter := &ReconcilerAdapter{logger: &warnRecorder{}, config: reconcilerConfig, intervalSource: source}
+	adapter.manager = adapter.buildManager()
+
+	const rounds = 200
+
+	var waitGroup sync.WaitGroup
+
+	waitGroup.Go(func() {
+		for i := range rounds {
+			err := adapter.UpdateInterval(t.Context(), time.Duration(i+1)*time.Minute)
+			if err != nil {
+				t.Errorf("UpdateInterval: %v", err)
+
+				return
+			}
+		}
+	})
+
+	waitGroup.Go(func() {
+		for range rounds {
+			if adapter.GetInterval() <= 0 {
+				t.Error("GetInterval returned a non-positive interval")
+
+				return
+			}
+		}
+	})
+
+	waitGroup.Go(func() {
+		for range rounds / 10 {
+			if adapter.buildManager() == nil {
+				t.Error("buildManager returned nil")
+
+				return
+			}
+		}
+	})
+
+	waitGroup.Wait()
+
+	want := rounds * time.Minute
+	if got := adapter.GetInterval(); got != want {
+		t.Errorf("adapter interval = %v, want %v", got, want)
+	}
+
+	if got := adapter.currentManager().GetInterval(); got != want {
+		t.Errorf("manager interval = %v, want %v", got, want)
+	}
+}
+
+// A save that lands while Start is between copying the config into the
+// manager and publishing it must still reach the running manager. The
+// newManager hook copies the interval, as buildManager does, and then
+// holds Start in that window until the save has had its chance.
+func TestSaveDuringStartReachesTheRunningManager(t *testing.T) {
+	t.Setenv(reconcilerIntervalEnvKey, "")
+
+	reconcilerConfig, source := buildReconcilerConfig(&config.Config{}, &warnRecorder{})
+	adapter := &ReconcilerAdapter{logger: &warnRecorder{}, config: reconcilerConfig, intervalSource: source}
+
+	building := make(chan struct{})
+	release := make(chan struct{})
+
+	adapter.newManager = func() reconciler.Manager {
+		managerConfig := reconcilerConfig
+		managerConfig.Interval = adapter.GetInterval()
+
+		close(building)
+		<-release
+
+		return reconciler.NewReconcilerManager(managerConfig, nil, nil, nil, &loggerWrapper{logger: adapter.log()}, nil)
+	}
+
+	published := make(chan reconciler.Manager, 1)
+
+	go func() { published <- adapter.loadSettingsAndPublishManager(t.Context()) }()
+
+	<-building
+
+	const saved = 20 * time.Minute
+
+	saveDone := make(chan error, 1)
+
+	go func() { saveDone <- adapter.UpdateInterval(t.Context(), saved) }()
+
+	// Without intervalMu the save finishes at once, before the manager is
+	// published. With it, the save waits, so give it a moment and go on.
+	select {
+	case err := <-saveDone:
+		saveDone <- err
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	manager := <-published
+	if manager == nil {
+		t.Fatal("no manager was published")
+	}
+
+	err := <-saveDone
+	if err != nil {
+		t.Fatalf("UpdateInterval: %v", err)
+	}
+
+	if got := manager.GetInterval(); got != saved {
+		t.Errorf("running manager interval = %v, want the saved %v", got, saved)
+	}
+
+	if got := adapter.GetInterval(); got != saved {
+		t.Errorf("adapter interval = %v, want the saved %v", got, saved)
+	}
 }

@@ -78,7 +78,8 @@ type ReconcilerManager struct {
 	wg           sync.WaitGroup
 	shutdownOnce sync.Once
 
-	// Ticker for reconciliation loop (stored for runtime interval updates)
+	// Ticker for reconciliation loop (stored for runtime interval updates).
+	// tickerMu guards ticker and config.Interval.
 	ticker   *time.Ticker
 	tickerMu sync.Mutex
 
@@ -498,6 +499,9 @@ func (r *ReconcilerManager) UpdateInterval(interval time.Duration) {
 
 // GetInterval returns the current reconciliation interval.
 func (r *ReconcilerManager) GetInterval() time.Duration {
+	r.tickerMu.Lock()
+	defer r.tickerMu.Unlock()
+
 	return r.config.Interval
 }
 
@@ -551,7 +555,7 @@ func (r *ReconcilerManager) logCredentialHooks() {
 
 func (r *ReconcilerManager) logStartupConfiguration() {
 	r.logger.Infof("Starting reconciler with configuration:")
-	r.logger.Infof("  Interval: %v", r.config.Interval)
+	r.logger.Infof("  Interval: %v", r.GetInterval())
 	r.logger.Infof("  Max Concurrent: %d", r.config.Concurrency.MaxConcurrent)
 	r.logger.Infof("  Worker Pool Size: %d", r.config.Concurrency.WorkerPoolSize)
 	r.logger.Infof("  Queue Size: %d", r.config.Concurrency.QueueSize)
