@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// MinInterval is the shortest interval the reconciler runs at. The settings
+// API rejects anything shorter, and the manager, the environment, the
+// config file, and a value saved in Vault raise anything shorter to it.
+const MinInterval = 10 * time.Second
+
 // ErrInvalidInterval is returned for a value that can't be a reconciler
 // interval. Its messages leave the value out, so callers name the value
 // and where it came from.

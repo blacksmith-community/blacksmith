@@ -10,6 +10,7 @@ import (
 
 	handlerpkg "blacksmith/internal/handlers/blacksmith"
 	"blacksmith/pkg/logger"
+	"blacksmith/pkg/reconciler"
 )
 
 // intervalRecorder is a reconciler that remembers the interval it was given.
@@ -74,6 +75,10 @@ func TestUpdateSettingsReconcilerIntervalForms(t *testing.T) {
 
 			if testCase.wantCode != http.StatusOK && recorder.updated {
 				t.Errorf("reconciler was updated to %v for a rejected value", recorder.interval)
+			}
+
+			if testCase.wantCode == http.StatusBadRequest && !strings.Contains(response.Body.String(), reconciler.MinInterval.String()) {
+				t.Errorf("rejection %q does not name the %v minimum", response.Body.String(), reconciler.MinInterval)
 			}
 		})
 	}

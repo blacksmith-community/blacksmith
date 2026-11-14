@@ -511,10 +511,10 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 	// Update reconciler interval if provided
 	if body.ReconcilerInterval != nil {
 		interval, err := reconciler.ParseInterval(*body.ReconcilerInterval)
-		if err != nil || interval < 10*time.Second {
+		if err != nil || interval < reconciler.MinInterval {
 			responseWriter.WriteHeader(http.StatusBadRequest)
 			response.HandleJSON(responseWriter, map[string]interface{}{
-				"error": "reconciler_interval must be a valid duration >= 10s (e.g. '5m', '1h', or 3600 for seconds)",
+				"error": fmt.Sprintf("reconciler_interval must be a valid duration of at least %v (e.g. '5m', '1h', or 3600 for seconds)", reconciler.MinInterval),
 			}, nil)
 
 			return

@@ -141,21 +141,47 @@ const (
 
 // intervalCandidate is one source of a reconciler interval.
 type intervalCandidate struct {
-	key string
-	raw string
-	err error
+	key    string
+	raw    string
+	err    error
+	raised bool
+}
+
+// warn reports a candidate that was ignored or raised to the minimum, and
+// says which interval is in use instead.
+func (c intervalCandidate) warn(log logger.Logger, effective time.Duration, source string) {
+	if c.err != nil {
+		log.Warn("Ignoring %s %q: %s; %s", c.key, c.raw, c.err, describeInterval(effective, source))
+
+		return
+	}
+
+	log.Warn("Raising %s %q to the %v minimum; %s", c.key, c.raw, reconciler.MinInterval, describeInterval(effective, source))
+}
+
+// raiseToMinimum returns interval, or reconciler.MinInterval when interval
+// is shorter, and reports whether it raised it. The manager runs no faster
+// than the minimum, so the adapter keeps the raised value to report the
+// interval actually in effect.
+func raiseToMinimum(interval time.Duration) (time.Duration, bool) {
+	if interval < reconciler.MinInterval {
+		return reconciler.MinInterval, true
+	}
+
+	return interval, false
 }
 
 // resolveReconcilerInterval picks the starting interval from
 // BLACKSMITH_RECONCILER_INTERVAL, then reconciler.interval, then the
 // default, and names the source it used. A value that won't parse is
-// skipped with a warning that gives its key, the value, and the interval
-// used in its place. A value saved in Vault replaces this one when the
-// adapter starts (see loadSettingsFromVault).
+// skipped, and a value under reconciler.MinInterval is raised to it. Both
+// get a warning that gives the key, the value, and the interval in use.
+// A value saved in Vault replaces this one when the adapter starts (see
+// loadSettingsFromVault).
 func resolveReconcilerInterval(cfg *config.Config, log logger.Logger) (time.Duration, string) {
 	effective, source := DefaultReconcilerInterval, reconcilerIntervalDefault
 
-	var rejected []intervalCandidate
+	var flagged []intervalCandidate
 
 	for _, candidate := range []intervalCandidate{
 		{key: reconcilerIntervalEnvKey, raw: os.Getenv(reconcilerIntervalEnvKey)},
@@ -168,9 +194,14 @@ func resolveReconcilerInterval(cfg *config.Config, log logger.Logger) (time.Dura
 		interval, err := reconciler.ParseInterval(candidate.raw)
 		if err != nil {
 			candidate.err = err
-			rejected = append(rejected, candidate)
+			flagged = append(flagged, candidate)
 
 			continue
+		}
+
+		interval, candidate.raised = raiseToMinimum(interval)
+		if candidate.raised {
+			flagged = append(flagged, candidate)
 		}
 
 		if source == reconcilerIntervalDefault {
@@ -178,8 +209,8 @@ func resolveReconcilerInterval(cfg *config.Config, log logger.Logger) (time.Dura
 		}
 	}
 
-	for _, candidate := range rejected {
-		log.Warn("Ignoring %s %q: %s; %s", candidate.key, candidate.raw, candidate.err, describeInterval(effective, source))
+	for _, candidate := range flagged {
+		candidate.warn(log, effective, source)
 	}
 
 	return effective, source
@@ -603,7 +634,7 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 
 	if intervalStr, ok := settings["reconciler_interval"].(string); ok {
 		d, err := time.ParseDuration(intervalStr)
-		if err == nil && d >= 10*time.Second {
+		if err == nil && d >= reconciler.MinInterval {
 			r.log().Info("Reconciler interval: %s, replacing %s", describeInterval(d, reconcilerIntervalVault), describeIntervalSource(r.config.Interval, r.intervalSourceName()))
 			r.config.Interval = d
 			r.intervalSource = reconcilerIntervalVault

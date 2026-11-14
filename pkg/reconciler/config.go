@@ -18,7 +18,6 @@ const (
 	defaultHealthCheckTimeout       = 30 * time.Second
 	defaultShutdownGracePeriod      = 30 * time.Second
 	defaultMetricsRetentionPeriod   = 24 * time.Hour
-	minReconcileInterval            = 10 * time.Second
 	defaultCircuitBreakerTimeout    = 60 * time.Second
 
 	// Default multipliers and ratios.
@@ -367,8 +366,8 @@ func (c *ReconcilerConfig) loadHistoryRetentionDefaults() {
 
 // validateBasicSettings validates basic configuration settings.
 func (c *ReconcilerConfig) validateBasicSettings() {
-	if c.Interval < 10*time.Second {
-		c.Interval = minReconcileInterval // Set safe minimum
+	if c.Interval < MinInterval {
+		c.Interval = MinInterval
 	}
 }
 

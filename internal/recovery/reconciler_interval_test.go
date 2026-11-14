@@ -9,6 +9,7 @@ import (
 
 	"blacksmith/internal/config"
 	"blacksmith/pkg/logger"
+	"blacksmith/pkg/reconciler"
 )
 
 // Interval values the tests share.
@@ -166,5 +167,46 @@ func TestBuildReconcilerConfigStaysQuietOnValidInterval(t *testing.T) {
 
 	if len(rec.messages) != 0 {
 		t.Errorf("unexpected warnings %q", rec.messages)
+	}
+}
+
+// An interval under the manager's minimum is raised to it with a warning,
+// so the adapter, and through it GET /b/blacksmith/settings, reports the
+// interval the manager actually runs at.
+func TestBuildReconcilerConfigRaisesIntervalToMinimum(t *testing.T) {
+	tests := []struct {
+		name       string
+		yaml       string
+		env        string
+		key        string
+		bad        string
+		wantSource string
+	}{
+		{name: "env seconds", env: "5", key: reconcilerIntervalEnvKey, bad: "5", wantSource: reconcilerIntervalEnvKey},
+		{name: "config seconds", yaml: "5", key: reconcilerIntervalConfigKey, bad: "5", wantSource: reconcilerIntervalConfigKey},
+		{name: "config duration", yaml: "500ms", key: reconcilerIntervalConfigKey, bad: "500ms", wantSource: reconcilerIntervalConfigKey},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv(reconcilerIntervalEnvKey, testCase.env)
+
+			cfg := &config.Config{}
+			cfg.Reconciler.Interval = testCase.yaml
+
+			rec := &warnRecorder{}
+
+			reconcilerConfig, source := buildReconcilerConfig(cfg, rec)
+			if reconcilerConfig.Interval != reconciler.MinInterval || source != testCase.wantSource {
+				t.Errorf("interval = %v from %q, want %v from %q", reconcilerConfig.Interval, source, reconciler.MinInterval, testCase.wantSource)
+			}
+
+			requireOneWarning(t, rec, testCase.key, `"`+testCase.bad+`"`, "10s minimum")
+
+			adapter := &ReconcilerAdapter{logger: rec, config: reconcilerConfig, intervalSource: source}
+			if got, running := adapter.GetInterval(), adapter.buildManager().GetInterval(); got != running {
+				t.Errorf("adapter reports %v while the manager runs at %v", got, running)
+			}
+		})
 	}
 }
