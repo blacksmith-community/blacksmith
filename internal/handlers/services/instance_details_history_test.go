@@ -3,6 +3,7 @@ package services_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,10 +14,10 @@ import (
 	"blacksmith/pkg/testutil"
 )
 
-// historyVault answers the instance record and the metadata record that
-// holds the instance's operation history.
 const instanceID = "inst-1"
 
+// historyVault answers the instance record and the metadata record that
+// holds the instance's operation history.
 type historyVault struct {
 	testutil.InstanceVault
 
@@ -37,10 +38,15 @@ func (v *historyVault) Get(_ context.Context, path string, out interface{}) (boo
 
 	body, err := json.Marshal(record)
 	if err != nil {
-		return false, err //nolint:wrapcheck // a test double
+		return false, fmt.Errorf("encode the stored record: %w", err)
 	}
 
-	return true, json.Unmarshal(body, out) //nolint:wrapcheck // a test double
+	err = json.Unmarshal(body, out)
+	if err != nil {
+		return false, fmt.Errorf("decode the stored record: %w", err)
+	}
+
+	return true, nil
 }
 
 func detailsHandler(history []interface{}, deployment *bosh.DeploymentDetail, deploymentErr error) *services.Handler {
