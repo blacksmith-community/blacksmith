@@ -10,7 +10,7 @@ afterEach(()=>{while(envs.length){const e=envs.pop();e.w.blacksmithRouter?.destr
 
 const inst=(name,service='redis')=>({instance_name:name,service_id:service,plan_id:'small',plan:{name:'small'}});
 const status={env:'lab',deployment:'blacksmith',plans:{},instances:{
- 'id-b':inst('cache-b'),
+ 'id-b':{...inst('cache-b'),vm_status:'failing'},
  'id-c':inst('cache-c'),
  'id-pg':inst('orders-db','postgres')}};
 const routes=[['/v2/catalog',(u,o,j)=>j(200,{services:[]})],['/b/status',(u,o,j)=>j(200,status)]];
@@ -145,4 +145,29 @@ t('revealing an instance that the search hides empties both boxes',async()=>{
  expect(left.value).toBe('');
  expect(table.value).toBe('');
  expect(shownRows(d)).toBe(3);
+});
+
+t('the list matches name, ID, service, and plan but not the VM state badge',async()=>{
+ const {w,d}=await start();
+ await w.blacksmithRouter.navigate({screen:'services'});
+ await sleep(80);
+ const {left}=boxes(d);
+ type(w,left,'failing');
+ expect(d.querySelectorAll('#services .service-item').length).toBe(0);
+ expect(shownRows(d)).toBe(0);
+ type(w,left,'small');
+ expect(d.querySelectorAll('#services .service-item').length).toBe(3);
+});
+
+t('an overview mounted after the operator typed starts with the same search',async()=>{
+ const {w,d}=await start();
+ await w.blacksmithRouter.navigate({screen:'services'});
+ await sleep(80);
+ type(w,boxes(d).left,'cache-b');
+ await w.blacksmithRouter.navigate({screen:'services',instance:'id-b',section:'details'});
+ await sleep(120);
+ await w.blacksmithRouter.navigate({screen:'services'});
+ await sleep(120);
+ expect(boxes(d).table.value).toBe('cache-b');
+ expect(shownRows(d)).toBe(1);
 });
