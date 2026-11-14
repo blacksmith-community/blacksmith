@@ -90,7 +90,7 @@ func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, desc
 		return err
 	}
 
-	return vault.AppendHistory(ctx, instanceID, action, description)
+	return vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(TaskStateSucceeded, taskID))
 }
 
 // settledRecord returns a copy of replaced with the terminal state and
@@ -169,7 +169,7 @@ func (vault *Vault) TrackDeleted(ctx context.Context, instanceID, contextID, des
 		return err
 	}
 
-	return vault.AppendHistory(ctx, instanceID, action, description)
+	return vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(TaskStateDeleted, 0))
 }
 
 // indexKey is the key of the instance index at the root of the mount.
@@ -567,7 +567,7 @@ func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action
 	logger.Debug("successfully stored task progress with ID %d", taskID)
 
 	// Append to history
-	return vault.AppendHistory(ctx, instanceID, action, description)
+	return vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(state, taskID))
 }
 
 // keptUnknownOutcome returns the state, the context ID, and the
@@ -686,7 +686,7 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 		return fmt.Errorf("the unknown outcome of context ID %s was not recorded in %d attempts: %w", contextID, outcomeUnknownWriteAttempts, err)
 	}
 
-	return vault.AppendHistory(ctx, instanceID, action, description)
+	return vault.appendHistory(ctx, instanceID, action, description, progressHistoryExtras(TaskStateOutcomeUnknown, 0))
 }
 
 // writeTaskRecord writes the record that build returns to <instance>/task,
@@ -745,8 +745,27 @@ func (vault *Vault) writeTaskRecordGuarded(ctx context.Context, instanceID, acti
 	return vault.Put(ctx, instanceID+"/task", build(replaced))
 }
 
+// progressHistoryExtras returns the fields a history entry records beyond
+// its time, action, and description. The state tells a reader whether the
+// step is running, finished, or failed, and a positive taskID names the
+// BOSH task the step ran as.
+func progressHistoryExtras(state string, taskID int) map[string]interface{} {
+	extras := map[string]interface{}{"state": state}
+	if taskID > 0 {
+		extras["task_id"] = taskID
+	}
+
+	return extras
+}
+
 // AppendHistory adds an entry to the instance's history log.
 func (vault *Vault) AppendHistory(ctx context.Context, instanceID, action, description string) error {
+	return vault.appendHistory(ctx, instanceID, action, description, nil)
+}
+
+// appendHistory adds an entry to the instance's history log, with extras as
+// further fields of the entry.
+func (vault *Vault) appendHistory(ctx context.Context, instanceID, action, description string, extras map[string]interface{}) error {
 	logger := logger.Get().Named("vault history " + instanceID)
 	logger.Debug("appending to history: %s - %s", action, description)
 
@@ -790,6 +809,8 @@ func (vault *Vault) AppendHistory(ctx context.Context, instanceID, action, descr
 		"action":      action,
 		"description": description,
 	}
+	maps.Copy(entry, extras)
+
 	history = append(history, entry)
 
 	// Apply retention policy (time-based + max entries safety cap)

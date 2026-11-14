@@ -177,5 +177,23 @@ var _ = Describe("Vault read errors", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(stored["history"]).To(HaveLen(2))
 		})
+
+		It("records the state and the task ID of the progress it logs", func() {
+			instanceID := "history-state-" + suffix
+
+			Expect(client.TrackProgress(ctx, instanceID, "provision", "Deploying", 12, nil)).To(Succeed())
+			Expect(client.TrackProgress(ctx, instanceID, "provision", "Deploy failed", -1, nil)).To(Succeed())
+
+			stored, err := server.ReadSecret(instanceID + "/metadata")
+			Expect(err).ToNot(HaveOccurred())
+
+			history, ok := stored["history"].([]interface{})
+			Expect(ok).To(BeTrue())
+			Expect(history).To(HaveLen(2))
+			Expect(history[0]).To(HaveKeyWithValue("state", "in_progress"))
+			Expect(history[0]).To(HaveKey("task_id"))
+			Expect(history[1]).To(HaveKeyWithValue("state", "failed"))
+			Expect(history[1]).ToNot(HaveKey("task_id"))
+		})
 	})
 })

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -735,12 +736,15 @@ func (h *Handler) GetInstanceDetails(writer http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	deployment, err := h.fetchDeploymentForDetails(ctx, writer, logger, deploymentName, instanceID)
+	extra := h.instanceHistoryAnswer(ctx, logger, instanceID)
+
+	deployment, err := h.fetchDeploymentForDetails(ctx, writer, logger, deploymentName, instanceID, extra)
 	if err != nil {
 		return
 	}
 
 	details := h.buildInstanceDetails(instanceID, deployment, inst)
+	maps.Copy(details, extra)
 	response.HandleJSON(writer, details, nil)
 }
 
@@ -835,6 +839,29 @@ func (h *Handler) GetInstanceTaskLog(writer http.ResponseWriter, req *http.Reque
 	}
 
 	response.HandleJSON(writer, parseResultOutputToEvents(taskOutput), nil)
+}
+
+// instanceHistoryAnswer returns the instance's operation history from its
+// metadata record as the "history" key of the details answer, or nothing
+// when the record holds none or cannot be read. The entries pass through
+// as stored, and the UI renders them as text.
+func (h *Handler) instanceHistoryAnswer(ctx context.Context, logger interfaces.Logger, instanceID string) map[string]interface{} {
+	var metadata struct {
+		History []map[string]interface{} `json:"history"`
+	}
+
+	exists, err := h.vault.Get(ctx, instanceID+"/metadata", &metadata)
+	if err != nil {
+		logger.Error("Unable to read the history of instance %s: %v", instanceID, err)
+
+		return nil
+	}
+
+	if !exists || len(metadata.History) == 0 {
+		return nil
+	}
+
+	return map[string]interface{}{"history": metadata.History}
 }
 
 func (h *Handler) parseCertificateFileRequest(writer http.ResponseWriter, req *http.Request) (struct{ FilePath string }, error) {
@@ -1749,17 +1776,23 @@ func (h *Handler) getInstanceDataForDetails(writer http.ResponseWriter, ctx cont
 	return inst, inst.DeploymentName, nil
 }
 
-func (h *Handler) fetchDeploymentForDetails(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName, instanceID string) (*bosh.DeploymentDetail, error) {
+func (h *Handler) fetchDeploymentForDetails(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName, instanceID string, extra ...map[string]interface{}) (*bosh.DeploymentDetail, error) {
 	deployment, err := h.director.GetDeployment(ctx, deploymentName)
 	if err != nil {
 		// Only the director's not-found answer means the instance is gone.
 		if errors.Is(err, bosh.ErrDeploymentNotFound) {
 			logger.Info("Deployment %s doesn't exist (404), returning success for deleted instance", deploymentName)
-			response.HandleJSON(writer, map[string]interface{}{
+
+			answer := map[string]interface{}{
 				"instance_id": instanceID,
 				"deleted":     true,
 				"message":     "Instance has been deleted",
-			}, nil)
+			}
+			for _, more := range extra {
+				maps.Copy(answer, more)
+			}
+
+			response.HandleJSON(writer, answer, nil)
 
 			return nil, fmt.Errorf("deployment not found: %w", err)
 		}
