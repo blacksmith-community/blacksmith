@@ -2709,14 +2709,14 @@
     if (attentionHealth.status === 'unhealthy') tier1.push(row('broker-health', 'critical', `<p>Broker health: ${attentionHealth.unhealthy.length ? `${escapeHtml(attentionHealth.unhealthy.join(', '))} not healthy` : 'Not healthy'}</p>`));
     else if (attentionHealth.status === 'unknown') tier1.push(row('broker-health', 'notice', '<p>Broker health: <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The health request failed</span></p>'));
     else if (attentionHealth.status !== 'ready') tier1.push(row('broker-health', 'notice', '<p>Broker health: <span class="entity-attention-unknown">Loading</span></p>'));
-    if (alerts.length) tier1.push(row('instances', 'critical', `<p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">VM job state: ${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul>${fetched(window.blacksmithDataFetchedAt)}`));
-    const link = (n, text) => `<a href="#/certificates?attention=true" data-attention-link>${plural(n, 'certificate')} ${text}</a>`;
+    if (alerts.length) tier1.push(row('instances', 'critical', `<p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary" data-keep-key="attention-link:instance:${escapeAttribute(String(id))}">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">VM job state: ${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul>${fetched(window.blacksmithDataFetchedAt)}`));
+    const link = (n, text, key) => `<a href="#/certificates?attention=true" data-attention-link data-keep-key="${key}">${plural(n, 'certificate')} ${text}</a>`;
     const tier2 = [];
     const tier3 = [];
     if (cert.status === 'ready') {
-      if (expired) tier2.push(row('certificates-expired', 'critical', `<p>Expired certificates: ${link(expired, 'expired')}</p>${fetched(cert.fetchedAt)}`));
-      if (expiring) tier3.push(row('certificates-expiring', 'warning', `<p>Expiring certificates: ${link(expiring, 'expiring soon')}</p>${expired ? '' : fetched(cert.fetchedAt)}`));
-      if (other) tier3.push(row('certificates', 'notice', `<p>Certificates needing attention: <a href="#/certificates?attention=true" data-attention-link>${plural(other, 'certificate')} need${other === 1 ? 's' : ''} attention</a></p>${expired || expiring ? '' : fetched(cert.fetchedAt)}`));
+      if (expired) tier2.push(row('certificates-expired', 'critical', `<p>Expired certificates: ${link(expired, 'expired', 'attention-link:certificates-expired')}</p>${fetched(cert.fetchedAt)}`));
+      if (expiring) tier3.push(row('certificates-expiring', 'warning', `<p>Expiring certificates: ${link(expiring, 'expiring soon', 'attention-link:certificates-expiring')}</p>${expired ? '' : fetched(cert.fetchedAt)}`));
+      if (other) tier3.push(row('certificates', 'notice', `<p>Certificates needing attention: <a href="#/certificates?attention=true" data-attention-link data-keep-key="attention-link:certificates">${plural(other, 'certificate')} need${other === 1 ? 's' : ''} attention</a></p>${expired || expiring ? '' : fetched(cert.fetchedAt)}`));
     } else if (cert.status === 'unknown') {
       tier3.push(row('certificates', 'notice', `<p>Certificates needing attention: <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">${escapeHtml(cert.reason)}</span></p>`));
     } else {

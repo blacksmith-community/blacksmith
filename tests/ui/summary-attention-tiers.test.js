@@ -188,3 +188,30 @@ test('opening the tasks route with state=error leaves only Error pressed and onl
  }finally{w.close();}
 });
 
+
+test('a repaint keeps focus on a certificate link and a VM-alert link',async()=>{
+ let release;const slow=new Promise(r=>{release=r;});
+ const input=data();
+ const {w,d}=boot({routes:[certs([{id:'e',expiry:'expired'}]),['/b/tasks',(u,o,json)=>slow.then(()=>json(200,[]))],['/b/internal/health',(u,o,json)=>slow.then(()=>json(200,okHealth))]]});
+ try{
+  const host=d.createElement('div');d.body.appendChild(host);host.innerHTML=w.__T.renderBlacksmithOverview(input);
+  const done=w.__T.refreshAttentionRequired(host,input);
+  await new Promise(r=>setTimeout(r,60));
+  for(const selector of ['[data-attention="certificates-expired"] a','[data-attention="instances"] a']){
+   const link=host.querySelector(selector);
+   link.focus();
+   const key=link.dataset.keepKey;
+   expect(key).toBeTruthy();
+   release();await done;
+   expect(d.activeElement.dataset.keepKey).toBe(key);
+   expect(d.activeElement.closest('.entity-attention')).not.toBeNull();
+  }
+ }finally{w.close();}
+});
+
+test('the attention links carry keep keys that appear once in the UI',()=>{
+ const fs=require('fs'),path=require('path');
+ const ui=path.join(__dirname,'..','..','ui');
+ const all=fs.readdirSync(ui).filter(f=>f.endsWith('.js')||f.endsWith('.html')).map(f=>fs.readFileSync(path.join(ui,f),'utf8')).join('\n');
+ for(const key of ['attention-link:certificates-expired','attention-link:certificates-expiring','attention-link:certificates"','attention-link:instance:'])expect(all.split(key).length-1).toBe(1);
+});
