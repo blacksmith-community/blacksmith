@@ -12774,6 +12774,19 @@ bs-tabs > .broker-tab-pane[hidden] {
   min-width: 560px;
 }
 
+/* The Certificate column takes the width the other columns leave and wraps
+   long names and subjects, so Expires and Deployed vs latest stay in view. */
+.cert-ov-table .cert-ov-name {
+  width: 100%;
+  max-width: 0;
+  min-width: 160px;
+  overflow-wrap: anywhere;
+}
+
+.cert-ov-table td:not(.cert-ov-name) {
+  white-space: nowrap;
+}
+
 .cert-ov-row--stale td {
   opacity: 0.75;
 }
