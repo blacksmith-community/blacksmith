@@ -2627,38 +2627,123 @@
     return shell(`<div class="entity-services-scroll" id="entity-services" role="region" tabindex="0" aria-label="Service types and plans table"><table class="entity-services-table"><caption class="visually-hidden">Active instances and instances with VM alerts for each service type and plan</caption><thead><tr><th scope="col">Service type or plan</th><th scope="col">Details</th><th scope="col">Instances</th><th scope="col">Instances with VM alerts</th></tr></thead>${body}</table></div>`);
   };
 
-  // The summary's first stop for problems. VM alerts come from the instance
-  // list the summary already holds. Certificates come from the one fleet
-  // request. Until it returns, and whenever it cannot say, the row says so
-  // and never reports zero.
+  // The summary's first stop for problems, in three fixed tiers. The first
+  // holds failed tasks, VM alerts, and an unhealthy broker, the second holds
+  // expired certificates, and the third holds certificates that expire soon
+  // or need a look for another reason. VM alerts come from the instance list
+  // the summary already holds. Certificates, tasks, and health each come from
+  // one request. Until a request returns, and whenever it cannot say, its row
+  // says so and never reports zero.
+  const ATTENTION_TASK_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const ATTENTION_TASK_LIMIT = 200;
+  const ATTENTION_TIMEOUT_MS = 8000;
+  const attentionTasks = {status: 'idle', failed: 0, atLeast: false, loadedAt: 0, pending: null};
+  const attentionHealth = {status: 'idle', unhealthy: [], loadedAt: 0, pending: null};
+  // A request that never answers must not hold the box, so each one gives up
+  // after a time and its row says Unknown.
+  const attentionFetch = (url) => {
+    const limit = Number(window.blacksmithAttentionTimeoutMs) > 0 ? Number(window.blacksmithAttentionTimeoutMs) : ATTENTION_TIMEOUT_MS;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer;
+    const timeout = new Promise((_, reject) => { timer = setTimeout(() => { controller?.abort(); reject(new Error('timeout')); }, limit); });
+    return Promise.race([fetchWithHeaders(url, controller ? {signal: controller.signal} : {}), timeout]).finally(() => clearTimeout(timer));
+  };
+  // Both loaders share one in-flight request and a short reuse window, as the
+  // certificate loader does.
+  const attentionLoader = (state, work) => () => {
+    if (state.pending) return state.pending;
+    if ((state.status === 'ready' || state.status === 'unhealthy') && Date.now() - state.loadedAt < ATTENTION_REUSE_MS) return Promise.resolve(state);
+    state.status = 'loading';
+    state.pending = (async () => {
+      try { Object.assign(state, await work(), {loadedAt: Date.now()}); }
+      catch (_) { Object.assign(state, {status: 'unknown', loadedAt: 0}); }
+      finally { state.pending = null; }
+      return state;
+    })();
+    return state.pending;
+  };
+  // The server filters to error tasks, so the cap is spent on failures. The
+  // director cannot filter by time, so the 24 hours are counted here. A full
+  // response means more may exist, and the count is then a lower bound.
+  const loadAttentionTasks = attentionLoader(attentionTasks, async () => {
+    const response = await attentionFetch(`/b/tasks?type=recent&limit=${ATTENTION_TASK_LIMIT}&states=error`);
+    if (!response.ok) throw new Error('unavailable');
+    const list = await response.json();
+    if (!Array.isArray(list)) throw new Error('unavailable');
+    const since = Date.now() - ATTENTION_TASK_WINDOW_MS;
+    const failed = list.filter(task => task && task.state === 'error' && new Date(task.ended_at || task.started_at).getTime() >= since).length;
+    return {status: 'ready', failed, atLeast: list.length >= ATTENTION_TASK_LIMIT};
+  });
+  const loadAttentionHealth = attentionLoader(attentionHealth, async () => {
+    const response = await attentionFetch('/b/internal/health');
+    if (!response.ok) throw new Error('unavailable');
+    const body = await response.json();
+    if (!body || typeof body.overall_status !== 'string') throw new Error('unavailable');
+    const parts = [['bosh', 'BOSH'], ['vault', 'Vault'], ['cf', 'Cloud Foundry']];
+    const healthy = body.overall_status === 'healthy';
+    const unhealthy = healthy ? [] : parts.filter(([key]) => body[key] && body[key].status && body[key].status !== 'healthy' && body[key].enabled !== false).map(([, name]) => name);
+    return {status: healthy ? 'ready' : 'unhealthy', unhealthy};
+  });
+  const ATTENTION_ICON = {critical: 'circle-x', warning: 'hourglass', notice: 'info'};
+  const ATTENTION_WORD = {critical: 'Critical', warning: 'Warning', notice: 'Notice'};
   const renderAttentionRequired = (data) => {
     const alerts = Object.entries(data.instances || {}).filter(([, instance]) => instance && !instance.deleted && hasVmAlert(instance));
     const cert = attentionCertificates;
-    const certificates = cert.status === 'ready' ? cert.certificates.length : null;
+    const certList = cert.status === 'ready' ? cert.certificates : [];
+    const expired = certList.filter(item => item?.expiry === 'expired').length;
+    const expiring = certList.filter(item => item && (item.expiry === 'critical' || item.expiry === 'warning')).length;
+    const other = certList.length - expired - expiring;
     const fetched = (at) => at ? `<p class="entity-attention-fetched">Data fetched ${stampHtml(at)}</p>` : '';
     const heading = '<h3 id="entity-attention-heading">Attention required</h3>';
     const shell = (body) => `<section class="card entity-attention" aria-labelledby="entity-attention-heading">${heading}${body}</section>`;
-    if (!alerts.length && certificates === 0) return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${fetched(cert.fetchedAt)}`);
+    const failedTasks = attentionTasks.status === 'ready' ? attentionTasks.failed : 0;
+    if (!alerts.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && attentionHealth.status === 'ready') {
+      return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${fetched(cert.fetchedAt)}`);
+    }
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-    const instanceRow = alerts.length
-      ? `<div data-attention="instances"><p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">VM job state: ${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul>${fetched(window.blacksmithDataFetchedAt)}</div>`
-      : '';
-    let value;
-    if (cert.status === 'ready') value = certificates === 0 ? '0' : `<a href="#/certificates?attention=true" data-attention-link>${plural(certificates, 'certificate')} need${certificates === 1 ? 's' : ''} attention</a>`;
-    else if (cert.status === 'unknown') value = `<span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">${escapeHtml(cert.reason)}</span>`;
-    else value = '<span class="entity-attention-unknown">Loading</span>';
-    const certificateRow = `<div data-attention="certificates"><p>Certificates needing attention: ${value}</p>${cert.status === 'ready' ? fetched(cert.fetchedAt) : ''}</div>`;
-    return shell(`${instanceRow}${certificateRow}`);
+    const row = (name, tone, body) => `<li class="entity-attention-row" data-attention="${name}" data-tone="${tone}"><span class="entity-attention-badge">${blacksmithIcon(ATTENTION_ICON[tone])}<span class="entity-attention-severity">${ATTENTION_WORD[tone]}</span></span><div class="entity-attention-body">${body}</div></li>`;
+    const tier1 = [];
+    if (attentionTasks.status === 'ready' && failedTasks) tier1.push(row('failed-tasks', 'critical', `<p>Failed tasks (24h): ${attentionTasks.atLeast ? 'at least ' : ''}${failedTasks} <a href="#/broker/tasks?state=error" data-attention-link data-keep-key="attention-link:failed-tasks">View failed tasks</a></p>`));
+    else if (attentionTasks.status === 'unknown') tier1.push(row('failed-tasks', 'notice', '<p>Failed tasks (24h): <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The task request failed</span></p>'));
+    else if (attentionTasks.status !== 'ready') tier1.push(row('failed-tasks', 'notice', '<p>Failed tasks (24h): <span class="entity-attention-unknown">Loading</span></p>'));
+    if (attentionHealth.status === 'unhealthy') tier1.push(row('broker-health', 'critical', `<p>Broker health: ${attentionHealth.unhealthy.length ? `${escapeHtml(attentionHealth.unhealthy.join(', '))} not healthy` : 'Not healthy'}</p>`));
+    else if (attentionHealth.status === 'unknown') tier1.push(row('broker-health', 'notice', '<p>Broker health: <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The health request failed</span></p>'));
+    else if (attentionHealth.status !== 'ready') tier1.push(row('broker-health', 'notice', '<p>Broker health: <span class="entity-attention-unknown">Loading</span></p>'));
+    if (alerts.length) tier1.push(row('instances', 'critical', `<p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">VM job state: ${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul>${fetched(window.blacksmithDataFetchedAt)}`));
+    const link = (n, text) => `<a href="#/certificates?attention=true" data-attention-link>${plural(n, 'certificate')} ${text}</a>`;
+    const tier2 = [];
+    const tier3 = [];
+    if (cert.status === 'ready') {
+      if (expired) tier2.push(row('certificates-expired', 'critical', `<p>Expired certificates: ${link(expired, 'expired')}</p>${fetched(cert.fetchedAt)}`));
+      if (expiring) tier3.push(row('certificates-expiring', 'warning', `<p>Expiring certificates: ${link(expiring, 'expiring soon')}</p>${expired ? '' : fetched(cert.fetchedAt)}`));
+      if (other) tier3.push(row('certificates', 'notice', `<p>Certificates needing attention: <a href="#/certificates?attention=true" data-attention-link>${plural(other, 'certificate')} need${other === 1 ? 's' : ''} attention</a></p>${expired || expiring ? '' : fetched(cert.fetchedAt)}`));
+    } else if (cert.status === 'unknown') {
+      tier3.push(row('certificates', 'notice', `<p>Certificates needing attention: <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">${escapeHtml(cert.reason)}</span></p>`));
+    } else {
+      tier3.push(row('certificates', 'notice', '<p>Certificates needing attention: <span class="entity-attention-unknown">Loading</span></p>'));
+    }
+    return shell(`<ul class="entity-attention-list">${[...tier1, ...tier2, ...tier3].join('')}</ul>`);
   };
   // The section is taken before the wait, and replaced where it sits after
   // it, so a summary set aside while the request ran still gets its answer.
   const refreshAttentionRequired = async (container, data = window.blacksmithData || {}) => {
     const section = container?.querySelector('.entity-attention');
     if (!section) return;
-    await loadAttentionCertificates();
-    const holder = document.createElement('template');
-    holder.innerHTML = renderAttentionRequired(data);
-    if (section.parentNode) section.replaceWith(holder.content.firstElementChild);
+    // Each source repaints the box when it settles, so a slow one never holds
+    // the others back. The section is found again each time, because an
+    // earlier repaint replaced it.
+    let current = section;
+    const repaint = () => {
+      const holder = document.createElement('template');
+      holder.innerHTML = renderAttentionRequired(data);
+      const next = holder.content.firstElementChild;
+      if (!current.parentNode) return;
+      const keep = current.contains(document.activeElement) ? document.activeElement.dataset?.keepKey : null;
+      current.replaceWith(next);
+      current = next;
+      if (keep) [...next.querySelectorAll('[data-keep-key]')].find(node => node.dataset.keepKey === keep)?.focus({preventScroll: true});
+    };
+    await Promise.allSettled([loadAttentionCertificates, loadAttentionTasks, loadAttentionHealth].map(load => load().then(repaint, repaint)));
   };
 
   const renderBlacksmithOverview = (data, creds = {}) => {
@@ -17397,6 +17482,8 @@
         loadBlacksmithDetailTab('details');
       }
 
+      const TASK_STATES = ['processing', 'queued', 'done', 'error', 'cancelled'];
+      const taskStateBoxes = () => [...document.querySelectorAll('#blacksmith .compact-tasks-controls input[type="checkbox"][value]')].filter(box => TASK_STATES.includes(box.value));
       const readRoute = (screen = document.querySelector('.tab-panel.active')?.id || 'blacksmith') => {
         if (screen === 'upgrade') {
           return batchView === 'activity' ? {screen,view:'activity',...(selectedTaskId ? {task:selectedTaskId} : {})} : {screen,view:'new',operation:upgradeOperation,step:batchFlow.step||0};
@@ -17416,6 +17503,7 @@
         const content=document.querySelector(`#${screen} .detail-content`);
         const sub=content?.querySelector('.manifest-tabs-nav .manifest-tab-btn.active, .broker-tab-btn.active, .operation-tab.active');
         if(sub) route.subview=sub.dataset.tab||sub.dataset.cftab||sub.dataset.operation;
+        if(screen==='blacksmith'&&route.section==='tasks'){const pressed=taskStateBoxes().filter(box=>box.checked);if(pressed.length===1&&pressed.length<taskStateBoxes().length)route.state=pressed[0].value;}
         if(route.section==='broker' && window.CFEndpointManager?.selectedEndpoint)route.endpoint=window.CFEndpointManager.selectedEndpoint;
         return route;
       };
@@ -17434,6 +17522,15 @@
           if(batchFlow.submitting)throw new Error('Wait for the operation submission to finish before navigating.');
           const finish = async destination => {
             if (signal?.aborted) return null;
+            if (route.screen === 'blacksmith' && route.section === 'tasks') {
+              // A link from the Summary arrives with the one state it is about,
+              // and a plain visit shows every state again.
+              const before = taskStateBoxes().map(box => box.checked).join();
+              taskStateBoxes().forEach(box => { box.checked = !route.state || box.value === route.state; });
+              // The table holds only the states it last asked for, so a changed set reloads it.
+              if (before !== taskStateBoxes().map(box => box.checked).join()) await refreshTasksTable();
+              else applyTasksFilter();
+            }
             if (route.inspection) {
               const item = route.inspection;
               if (item.kind === 'task') await window.showTaskDetails(Number(item.id));

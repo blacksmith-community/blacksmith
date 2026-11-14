@@ -14498,3 +14498,22 @@ tr.row-link { cursor: pointer; }
   #certificates .cert-field-search { flex: 1 1 240px; }
   #certificates .cert-field-search input { flex: 1 1 auto; }
 }
+
+/* Attention rows. Each row names its severity in words and an icon as well
+   as colour, and its left border takes the certificate tone for that
+   severity. */
+.entity-attention .entity-attention-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.entity-attention .entity-attention-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-left: 4px solid var(--cert-unknown); background: var(--cert-unknown-bg); color: var(--cert-unknown-fg); border-radius: 4px; }
+.entity-attention .entity-attention-row[data-tone="critical"] { border-left-color: var(--cert-expired); background: var(--cert-expired-bg); color: var(--cert-expired-fg); }
+.entity-attention .entity-attention-row[data-tone="warning"] { border-left-color: var(--cert-warning); background: var(--cert-warning-bg); color: var(--cert-warning-fg); }
+.entity-attention .entity-attention-row[data-tone="notice"] { border-left-color: var(--cert-unknown); }
+.entity-attention .entity-attention-badge { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; min-width: 6.5rem; }
+.entity-attention .entity-attention-body { flex: 1; min-width: 0; }
+.entity-attention .entity-attention-body p { margin: 0; }
+.entity-attention .entity-attention-body ul { margin: 6px 0 0; }
+.entity-attention .entity-attention-row .entity-attention-state,
+.entity-attention .entity-attention-row .entity-attention-unknown,
+.entity-attention .entity-attention-row .entity-attention-reason,
+.entity-attention .entity-attention-row .entity-attention-fetched { color: inherit; }
+.entity-attention a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.entity-not-reported-note { display: block; color: var(--muted-foreground); font-size: .8125rem; }
