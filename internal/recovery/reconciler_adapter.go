@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -127,13 +126,87 @@ type ReconcilerAdapter struct {
 	logger    logger.Logger
 	config    reconciler.ReconcilerConfig
 	cfManager interface{} // CF connection manager as interface for package compatibility
+
+	// intervalSource names where config.Interval came from, for logs.
+	intervalSource string
 }
 
-// NewReconcilerAdapter creates a new reconciler adapter.
-func buildReconcilerConfig(cfg *config.Config) reconciler.ReconcilerConfig {
+// Names for the places a reconciler interval can come from, used in logs.
+const (
+	reconcilerIntervalEnvKey    = "BLACKSMITH_RECONCILER_INTERVAL"
+	reconcilerIntervalConfigKey = "reconciler.interval"
+	reconcilerIntervalDefault   = "default"
+	reconcilerIntervalVault     = "Vault settings"
+)
+
+// intervalCandidate is one source of a reconciler interval.
+type intervalCandidate struct {
+	key string
+	raw string
+	err error
+}
+
+// resolveReconcilerInterval picks the starting interval from
+// BLACKSMITH_RECONCILER_INTERVAL, then reconciler.interval, then the
+// default, and names the source it used. A value that won't parse is
+// skipped with a warning that gives its key, the value, and the interval
+// used in its place. A value saved in Vault replaces this one when the
+// adapter starts (see loadSettingsFromVault).
+func resolveReconcilerInterval(cfg *config.Config, log logger.Logger) (time.Duration, string) {
+	effective, source := DefaultReconcilerInterval, reconcilerIntervalDefault
+
+	var rejected []intervalCandidate
+
+	for _, candidate := range []intervalCandidate{
+		{key: reconcilerIntervalEnvKey, raw: os.Getenv(reconcilerIntervalEnvKey)},
+		{key: reconcilerIntervalConfigKey, raw: cfg.Reconciler.Interval},
+	} {
+		if candidate.raw == "" {
+			continue
+		}
+
+		interval, err := reconciler.ParseInterval(candidate.raw)
+		if err != nil {
+			candidate.err = err
+			rejected = append(rejected, candidate)
+
+			continue
+		}
+
+		if source == reconcilerIntervalDefault {
+			effective, source = interval, candidate.key
+		}
+	}
+
+	for _, candidate := range rejected {
+		log.Warn("Ignoring %s %q: %s; %s", candidate.key, candidate.raw, candidate.err, describeInterval(effective, source))
+	}
+
+	return effective, source
+}
+
+// describeInterval says which interval is in use and where it came from.
+func describeInterval(interval time.Duration, source string) string {
+	return "using " + describeIntervalSource(interval, source)
+}
+
+// describeIntervalSource names an interval and where it came from.
+func describeIntervalSource(interval time.Duration, source string) string {
+	if source == reconcilerIntervalDefault {
+		return fmt.Sprintf("the %v default", interval)
+	}
+
+	return fmt.Sprintf("%v from %s", interval, source)
+}
+
+// buildReconcilerConfig assembles the reconciler configuration and returns
+// the source of its interval alongside it.
+func buildReconcilerConfig(cfg *config.Config, log logger.Logger) (reconciler.ReconcilerConfig, string) {
+	interval, intervalSource := resolveReconcilerInterval(cfg, log)
+
 	reconcilerConfig := reconciler.ReconcilerConfig{
 		Enabled:  getEnvBoolWithDefault("BLACKSMITH_RECONCILER_ENABLED", cfg.Reconciler.Enabled, true),
-		Interval: getEnvIntervalWithDefault("BLACKSMITH_RECONCILER_INTERVAL", parseDuration(cfg.Reconciler.Interval), DefaultReconcilerInterval),
+		Interval: interval,
 		Debug:    getEnvBoolWithDefault("BLACKSMITH_RECONCILER_DEBUG", cfg.Reconciler.Debug, cfg.Debug),
 	}
 
@@ -145,7 +218,7 @@ func buildReconcilerConfig(cfg *config.Config) reconciler.ReconcilerConfig {
 	reconcilerConfig.Backup = buildBackupConfig(cfg)
 	reconcilerConfig.Metrics = buildMetricsConfig()
 
-	return reconcilerConfig
+	return reconcilerConfig, intervalSource
 }
 
 func buildConcurrencyConfig(cfg *config.Config) reconciler.ConcurrencyConfig {
@@ -283,7 +356,9 @@ func buildMetricsConfig() reconciler.MetricsConfig {
 func NewReconcilerAdapter(cfg *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDir bosh.Director, cfManager interface{}) *ReconcilerAdapter {
 	logger := logger.Get().Named("reconciler")
 
-	reconcilerConfig := buildReconcilerConfig(cfg)
+	reconcilerConfig, intervalSource := buildReconcilerConfig(cfg, logger)
+
+	logger.Info("Reconciler interval: %s", describeInterval(reconcilerConfig.Interval, intervalSource))
 
 	logger.Info("Reconciler configured with production safety features")
 	logger.Info("BOSH rate limit: %d req/s, CF rate limit: %d req/s, Vault rate limit: %d req/s",
@@ -292,43 +367,14 @@ func NewReconcilerAdapter(cfg *config.Config, brokerInstance *broker.Broker, vau
 		int(reconcilerConfig.APIs.Vault.RateLimit.RequestsPerSecond))
 
 	return &ReconcilerAdapter{
-		broker:    brokerInstance,
-		vault:     vault,
-		bosh:      boshDir,
-		logger:    logger,
-		config:    reconcilerConfig,
-		cfManager: cfManager,
+		broker:         brokerInstance,
+		vault:          vault,
+		bosh:           boshDir,
+		logger:         logger,
+		config:         reconcilerConfig,
+		cfManager:      cfManager,
+		intervalSource: intervalSource,
 	}
-}
-
-func parseDuration(s string) time.Duration {
-	if s == "" {
-		return 0
-	}
-
-	d, err := parseIntervalString(s)
-	if err != nil {
-		return 0
-	}
-
-	return d
-}
-
-// parseIntervalString reads a reconciler interval written either as a Go
-// duration ("5m", "1h30m") or as bare seconds (3600, 60.5), which is how a
-// YAML integer arrives once it is stored as a string.
-func parseIntervalString(value string) (time.Duration, error) {
-	interval, err := time.ParseDuration(value)
-	if err == nil {
-		return interval, nil
-	}
-
-	seconds, numErr := strconv.ParseFloat(value, 64)
-	if numErr == nil {
-		return time.Duration(seconds * float64(time.Second)), nil
-	}
-
-	return 0, fmt.Errorf("invalid duration %q: not a Go duration or numeric seconds: %w", value, err)
 }
 
 // Start starts the reconciler.
@@ -471,6 +517,8 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 			r.log().Error("Failed to persist reconciler interval to Vault: %s", err)
 			return fmt.Errorf("failed to persist interval: %w", err)
 		}
+
+		r.intervalSource = reconcilerIntervalVault
 	}
 
 	r.log().Info("Reconciler interval updated to %v and persisted to Vault", interval)
@@ -481,6 +529,16 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 // GetInterval returns the current reconciler interval.
 func (r *ReconcilerAdapter) GetInterval() time.Duration {
 	return r.config.Interval
+}
+
+// intervalSourceName names where the interval came from, treating an
+// adapter built without NewReconcilerAdapter as using the default.
+func (r *ReconcilerAdapter) intervalSourceName() string {
+	if r.intervalSource == "" {
+		return reconcilerIntervalDefault
+	}
+
+	return r.intervalSource
 }
 
 // log returns the adapter's logger, or the global one for a zero-value adapter.
@@ -546,8 +604,9 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 	if intervalStr, ok := settings["reconciler_interval"].(string); ok {
 		d, err := time.ParseDuration(intervalStr)
 		if err == nil && d >= 10*time.Second {
+			r.log().Info("Reconciler interval: %s, replacing %s", describeInterval(d, reconcilerIntervalVault), describeIntervalSource(r.config.Interval, r.intervalSourceName()))
 			r.config.Interval = d
-			r.log().Info("Loaded reconciler interval from Vault: %v", d)
+			r.intervalSource = reconcilerIntervalVault
 		}
 	}
 }
@@ -906,23 +965,6 @@ func getEnvIntWithDefault(key string, configValue int, defaultValue int) int {
 		_, err := fmt.Sscanf(val, "%d", &intVal)
 		if err == nil {
 			return intVal
-		}
-	}
-
-	if configValue != 0 {
-		return configValue
-	}
-
-	return defaultValue
-}
-
-// getEnvIntervalWithDefault is getEnvDurationWithDefault for the reconciler
-// interval, which also accepts bare seconds.
-func getEnvIntervalWithDefault(key string, configValue time.Duration, defaultValue time.Duration) time.Duration {
-	if val := os.Getenv(key); val != "" {
-		duration, err := parseIntervalString(val)
-		if err == nil {
-			return duration
 		}
 	}
 

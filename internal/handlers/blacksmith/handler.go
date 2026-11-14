@@ -18,6 +18,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
+	"blacksmith/pkg/reconciler"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
 
@@ -509,11 +510,11 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 
 	// Update reconciler interval if provided
 	if body.ReconcilerInterval != nil {
-		d, err := time.ParseDuration(*body.ReconcilerInterval)
-		if err != nil || d < 10*time.Second {
+		interval, err := reconciler.ParseInterval(*body.ReconcilerInterval)
+		if err != nil || interval < 10*time.Second {
 			responseWriter.WriteHeader(http.StatusBadRequest)
 			response.HandleJSON(responseWriter, map[string]interface{}{
-				"error": "reconciler_interval must be a valid duration >= 10s (e.g. '5m', '1h')",
+				"error": "reconciler_interval must be a valid duration >= 10s (e.g. '5m', '1h', or 3600 for seconds)",
 			}, nil)
 
 			return
@@ -528,7 +529,7 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 			return
 		}
 
-		err = h.reconciler.UpdateInterval(ctx, d)
+		err = h.reconciler.UpdateInterval(ctx, interval)
 		if err != nil {
 			logger.Error("Failed to update reconciler interval: %v", err)
 			responseWriter.WriteHeader(http.StatusInternalServerError)
@@ -539,8 +540,8 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 			return
 		}
 
-		logger.Info("Reconciler interval updated to %v", d)
-		result["reconciler_interval"] = d.String()
+		logger.Info("Reconciler interval updated to %v", interval)
+		result["reconciler_interval"] = interval.String()
 	}
 
 	response.HandleJSON(responseWriter, result, nil)
