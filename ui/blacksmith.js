@@ -86,19 +86,24 @@
 
   // SSH Terminal Configuration State
   let sshTerminalConfig = { enabled: true, message: '' };
+  // The title a disabled button last got, so a later check can take it back off.
+  let sshDisabledTitle = '';
   
   // Fetch SSH terminal configuration status
   const fetchSSHTerminalConfig = async () => {
     try {
       const response = await fetch('/b/config/ssh/ui-terminal-status');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
+      if (!data || typeof data.enabled !== 'boolean') throw new Error('The SSH status answer was not readable.');
       sshTerminalConfig = data;
-      updateSSHButtonStates();
     } catch (error) {
       console.error('Failed to fetch SSH terminal configuration:', loggableError(error));
-      // Default to enabled on error to avoid breaking functionality
-      sshTerminalConfig = { enabled: true, message: 'Unable to fetch configuration' };
+      // The status is unknown, so the buttons stay usable and carry no title
+      // about it. The next poll asks again.
+      sshTerminalConfig = { enabled: true, message: '' };
     }
+    updateSSHButtonStates();
   };
   
   // Update all SSH button states based on configuration
@@ -109,7 +114,8 @@
       if (!sshTerminalConfig.enabled) {
         button.disabled = true;
         button.classList.add('is-busy');
-        button.title = sshTerminalConfig.message || 'SSH Terminal is disabled in configuration';
+        sshDisabledTitle = sshTerminalConfig.message || 'SSH Terminal is disabled in configuration';
+        button.title = sshDisabledTitle;
         // Mark as processed to avoid re-adding listeners
         if (!button.dataset.sshDisabled) {
           button.dataset.sshDisabled = 'true';
@@ -140,7 +146,8 @@
         }
         // Restore original title if it was changed
         if (button.title === 'SSH Terminal is disabled in configuration' ||
-            button.title === sshTerminalConfig.message) {
+            (sshDisabledTitle && button.title === sshDisabledTitle) ||
+            (sshTerminalConfig.message && button.title === sshTerminalConfig.message)) {
           const instanceName = button.closest('tr')?.querySelector('.vm-instance')?.textContent?.trim() || 'instance';
           button.title = `SSH to ${instanceName}`;
         }
