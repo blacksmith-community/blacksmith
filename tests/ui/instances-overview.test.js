@@ -26,11 +26,11 @@ test('with no instance open the detail pane lists the instances in a searchable 
   expect(pane.querySelector('.no-selection')).toBeNull();
   expect(pane.textContent).not.toContain('Select a service instance');
   const table=pane.querySelector('table.instances-overview-table');
-  expect([...table.querySelectorAll('thead th')].map(th=>th.textContent)).toEqual(['Name','Service','Plan','VM job state','Certificates']);
-  expect([...table.querySelectorAll('tbody tr')].map(cells).map(r=>r.slice(0,4))).toEqual([
-   ['cache-a','Redis','small','running'],
-   ['b2','Redis','large','failing'],
-   ['kv-c','Valkey','solo','—']]);
+  expect([...table.querySelectorAll('thead th')].map(th=>th.textContent)).toEqual(['Name','Service','Plan','Org / Space','VM job state','Certificates']);
+  expect([...table.querySelectorAll('tbody tr')].map(cells).map(r=>r.slice(0,5))).toEqual([
+   ['cache-a','Redis','small','Not reported','running'],
+   ['b2','Redis','large','Not reported','failing'],
+   ['kv-c','Valkey','solo','Not reported','—']]);
   expect(pane.querySelector('.table-controls-container .table-search-input')).not.toBeNull();
   expect(pane.querySelector('.table-toolbar-actions .copy-btn-logs')).not.toBeNull();
   expect(host.querySelectorAll('.services-list .service-item').length).toBe(4);

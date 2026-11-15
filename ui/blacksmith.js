@@ -3054,13 +3054,19 @@
   // With no instance open, the detail pane lists every instance. A row opens
   // its instance exactly as the card in the list beside it does.
   const instanceHref = (id) => window.BlacksmithRoutes?.format({screen: 'services', instance: String(id), section: 'details'}) || `#/instances/${encodeURIComponent(String(id))}/details`;
+  // The Summary says "Not reported" for an org or space the record lacks, and
+  // so does the column. When neither is known it says so once.
+  const orgSpaceText = (org, space) => !org && !space ? 'Not reported' : `${org || 'Not reported'} / ${space || 'Not reported'}`;
   const renderInstancesOverview = (instancesList, serviceIdToName) => {
     const rows = instancesList.filter(([, details]) => details && details.deleted !== true).map(([id, details]) => {
       const name = String(details.instance_name || id);
       const service = String(serviceIdToName[details.service_id] || details.service_id || '');
       const plan = String(details.plan?.name || details.plan_id || '');
       const status = details.vm_status ? String(details.vm_status) : '';
-      return `<tr class="row-link" data-instance-row data-instance-id="${escapeAttribute(String(id))}" title="Open ${escapeAttribute(name)}"><td><a class="row-link-anchor" href="${escapeAttribute(instanceHref(id))}">${escapeHtml(name)}</a></td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">Unknown</td></tr>`;
+      const org = String(details.organization_name || '');
+      const space = String(details.space_name || '');
+      const ips = (Array.isArray(details.vm_ips) ? details.vm_ips : []).join(' ');
+      return `<tr class="row-link" data-instance-row data-instance-id="${escapeAttribute(String(id))}" data-org="${escapeAttribute(org)}" data-space="${escapeAttribute(space)}" data-ips="${escapeAttribute(ips)}" title="Open ${escapeAttribute(name)}"><td><a class="row-link-anchor" href="${escapeAttribute(instanceHref(id))}">${escapeHtml(name)}</a></td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${escapeHtml(orgSpaceText(org, space))}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">Unknown</td></tr>`;
     }).join('');
     if (!rows) return '<div class="no-data">No services have been provisioned yet.</div>';
     return `<div class="instances-overview">
@@ -3068,7 +3074,7 @@
         <div class="search-filter-container">${createSearchFilter('instances-overview-table', 'Search instances...')}</div>
         ${tableToolbarActions({ tableSelector: '.instances-overview-table', noun: 'instances' })}
       </div>
-      <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table"><caption class="visually-hidden">Every service instance with its service, plan, VM job state, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">VM job state</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table"><caption class="visually-hidden">Every service instance with its service, plan, org and space, VM job state, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">Org / Space</th><th scope="col">VM job state</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   };
   // Opening another instance keeps the section the operator is on. Operations
@@ -3100,18 +3106,54 @@
     const row = event.target.closest?.('tr[data-instance-row]');
     if (row) openOverviewInstance(row);
   });
-  // The list and the overview match a query on the same four fields.
-  const instanceMatchesQuery = (query, {name, id, service, plan}) => {
-    const needle = String(query || '').trim().toLocaleLowerCase();
-    return !needle || [name, id, service, plan].some(value => String(value || '').toLocaleLowerCase().includes(needle));
+  // An IPv4 or IPv6 address in one canonical spelling, or '' for anything
+  // else. navigation.js reads addresses the same way.
+  const normalizeAddress = (value) => {
+    const text = String(value || '').trim();
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(text)) {
+      const parts = text.split('.').map(Number);
+      return parts.every(part => part <= 255) ? parts.join('.') : '';
+    }
+    if (!text.includes(':') || !/^[0-9a-f:.]+$/i.test(text)) return '';
+    try { return new URL(`http://[${text}]/`).hostname.slice(1, -1); } catch (_) { return ''; }
   };
+  // The list and the overview match a query on the same fields. A query that
+  // is an address matches the instance whose VM holds exactly that address.
+  const instanceMatchesQuery = (query, {name, id, service, plan, org, space, ips}) => {
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    if (!needle) return true;
+    if ([name, id, service, plan, org, space].some(value => String(value || '').toLocaleLowerCase().includes(needle))) return true;
+    const address = normalizeAddress(needle);
+    return !!address && (ips || []).some(ip => normalizeAddress(ip) === address);
+  };
+  const splitAddresses = (value) => String(value || '').split(/\s+/).filter(Boolean);
   tableRowMatchers['instances-overview-table'] = (row, query) => instanceMatchesQuery(query, {
-    name: row.cells[0]?.textContent, id: row.dataset.instanceId, service: row.cells[1]?.textContent, plan: row.cells[2]?.textContent});
+    name: row.cells[0]?.textContent, id: row.dataset.instanceId, service: row.cells[1]?.textContent, plan: row.cells[2]?.textContent,
+    org: row.dataset.org, space: row.dataset.space, ips: splitAddresses(row.dataset.ips)});
+  // The org and space filters sit in the list beside the service and plan
+  // filters, and they narrow the overview rows through its row gate.
+  tableRowGates.set('instances-overview-table', (row) => {
+    const org = document.getElementById('org-filter')?.value;
+    const space = document.getElementById('space-filter')?.value;
+    return (!org || row.dataset.org === org) && (!space || row.dataset.space === space);
+  });
   const listItemMatches = (item, query) => instanceMatchesQuery(query, {
-    name: item.querySelector('.service-instance-name')?.textContent, id: item.dataset.instanceId, service: item.dataset.service, plan: item.dataset.plan});
+    name: item.querySelector('.service-instance-name')?.textContent, id: item.dataset.instanceId, service: item.dataset.service, plan: item.dataset.plan,
+    org: item.dataset.org, space: item.dataset.space, ips: splitAddresses(item.dataset.ips)});
+  // An address that nothing matches reads as "no such instance" unless no
+  // instance has reported its VM addresses yet, and then it says so.
+  const IP_NOT_READY = 'VM addresses are not available yet, so an IP cannot be matched. Try again after the VM monitor has run.';
+  const ipLookupPending = (query) => !!normalizeAddress(query)
+    && !Object.values(window.serviceInstances || {}).some(item => item && Array.isArray(item.vm_ips) && item.vm_ips.length);
   // The list's search box and the overview's search box are one filter.
   const instanceSearchBoxes = () => [document.getElementById('instance-search'), document.getElementById('search-instances-overview-table')];
-  const syncInstanceSearch = (source) => setInstanceSearch(source.value);
+  const syncInstanceSearch = (source) => {
+    setInstanceSearch(source.value);
+    // The overview has filtered by now, so its empty result can say why.
+    if (!ipLookupPending(source.value)) return;
+    const note = document.querySelector('.instances-overview .no-results-msg');
+    if (note) note.textContent = IP_NOT_READY;
+  };
   // Every programmatic change goes through here, so both boxes and both
   // views always show the same query.
   const setInstanceSearch = (value) => {
@@ -3160,9 +3202,26 @@
     // Only show filter if we have catalog data and services
     const showFilter = hasCatalog && services.size > 0;
 
+    const orgs = [...new Set(Object.values(instances || {}).map(details => details?.organization_name).filter(Boolean))].sort();
+    const spaces = [...new Set(Object.values(instances || {}).map(details => details?.space_name).filter(Boolean))].sort();
+    const optionList = (values) => values.map(value => `<option value="${escapeAttribute(String(value))}">${escapeAttribute(String(value))}</option>`).join('');
+    const orgSpaceFilters = orgs.length || spaces.length ? `
+        <div class="filter-row">
+          <select id="org-filter" class="filter-select" aria-label="Organization" data-keep-key="instance-org-filter">
+            <option value="">All Orgs</option>
+            ${optionList(orgs)}
+          </select>
+        </div>
+        <div class="filter-row">
+          <select id="space-filter" class="filter-select" aria-label="Space" data-keep-key="instance-space-filter">
+            <option value="">All Spaces</option>
+            ${optionList(spaces)}
+          </select>
+        </div>` : '';
+
     const filterSection = `
       <div class="services-filter-section">
-        <input aria-label="Find an instance" id="instance-search" type="search" placeholder="Name, ID, service, or plan" autocomplete="off">
+        <input aria-label="Find an instance" id="instance-search" type="search" placeholder="Name, ID, service, plan, org, space, or IP" autocomplete="off">
         ${showFilter ? `
         <div class="filter-row">
           <select id="service-filter" class="filter-select" aria-label="Service">
@@ -3179,6 +3238,7 @@
           <label>Service Filter:</label>
           <span class="catalog-unavailable">Catalog data not available</span>
         </div>`}
+        ${orgSpaceFilters}
         <div class="filter-row">
           <label class="checkbox-label">
             <input type="checkbox" id="hide-deleted-filter" class="filter-checkbox" checked>
@@ -3239,7 +3299,7 @@
         const displayServiceName = serviceName || details.service_id;
 
         return `
-            <div class="service-item ${isDeleting ? 'deleting' : ''} ${isDeleted ? 'deleted' : ''}" data-instance-id="${escapeAttribute(String(id))}" data-service="${escapeAttribute(String(serviceName))}" data-plan="${escapeAttribute(String(details.plan?.name || ''))}" data-deleted="${isDeleted}">
+            <div class="service-item ${isDeleting ? 'deleting' : ''} ${isDeleted ? 'deleted' : ''}" data-instance-id="${escapeAttribute(String(id))}" data-service="${escapeAttribute(String(serviceName))}" data-plan="${escapeAttribute(String(details.plan?.name || ''))}" data-org="${escapeAttribute(String(details.organization_name || ''))}" data-space="${escapeAttribute(String(details.space_name || ''))}" data-ips="${escapeAttribute((Array.isArray(details.vm_ips) ? details.vm_ips : []).join(' '))}" data-deleted="${isDeleted}">
               <div class="service-instance-name">${escapeAttribute(String(details.instance_name || id))}</div>
               <div class="service-meta">
                 <span class="service-meta-text">${escapeAttribute(String(displayServiceName))} / ${escapeAttribute(String(details.plan?.name || details.plan_id || 'unknown'))}</span>
@@ -17008,6 +17068,8 @@
         const setupFilterHandlers = () => {
           const serviceFilter = document.getElementById('service-filter');
           const planFilter = document.getElementById('plan-filter');
+          const orgFilter = document.getElementById('org-filter');
+          const spaceFilter = document.getElementById('space-filter');
           const hideDeletedFilter = document.getElementById('hide-deleted-filter');
           const clearFiltersBtn = document.getElementById('clear-filters');
           const copyDeploymentNamesBtn = document.getElementById('copy-deployment-names');
@@ -17026,6 +17088,8 @@
             matching = allItems.filter(item =>
               (!serviceFilter?.value || item.dataset.service === serviceFilter.value) &&
               (!planFilter?.value || item.dataset.plan === planFilter.value) &&
+              (!orgFilter?.value || item.dataset.org === orgFilter.value) &&
+              (!spaceFilter?.value || item.dataset.space === spaceFilter.value) &&
               (!hideDeletedFilter?.checked || item.dataset.deleted !== 'true') &&
               (!query || listItemMatches(item, query)));
             page = Math.min(Math.max(0, requestedPage), Math.max(0, Math.ceil(matching.length / 50) - 1));
@@ -17040,7 +17104,8 @@
             previous.disabled = page === 0;
             next.disabled = (page + 1) * 50 >= matching.length;
             pageLabel.textContent = `${page + 1} / ${Math.max(1, Math.ceil(matching.length / 50))}`;
-            filterCount.textContent = `${matching.length} matching · ${allItems.length} total`;
+            filterCount.textContent = !matching.length && ipLookupPending(search.value) ? IP_NOT_READY : `${matching.length} matching · ${allItems.length} total`;
+            applyTableVisibility('instances-overview-table');
           };
           search.addEventListener('input', () => applyFilters());
           previous.addEventListener('click', () => applyFilters(page - 1));
@@ -17051,6 +17116,8 @@
               setInstanceSearch('');
               if (serviceFilter) serviceFilter.value = '';
               if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
+              if (orgFilter) orgFilter.value = '';
+              if (spaceFilter) spaceFilter.value = '';
               if (target?.dataset.deleted === 'true' && hideDeletedFilter) hideDeletedFilter.checked = false;
               applyFilters();
             }
@@ -17059,14 +17126,21 @@
           };
           // The Services route names a type and plan by their filter values. A
           // value the filters no longer offer is refused before anything changes.
-          window.applyServicesFilter = (service = '', plan = '') => {
+          window.applyServicesFilter = (service = '', plan = '', org = '', space = '') => {
+            const offers = (select, value) => !!select && [...select.options].some(option => option.value === value);
+            if (org && !offers(orgFilter, org)) throw new Error('This organization is no longer available.');
+            if (orgFilter) {
+              orgFilter.value = org;
+              orgFilter.dispatchEvent(new Event('change'));
+            }
+            if (space && !offers(spaceFilter, space)) throw new Error('This space is no longer available.');
+            if (spaceFilter) spaceFilter.value = space;
             if (!service) {
               if (serviceFilter) serviceFilter.value = '';
               if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
               applyFilters();
               return;
             }
-            const offers = (select, value) => !!select && [...select.options].some(option => option.value === value);
             if (!offers(serviceFilter, service)) throw new Error('This service type is no longer available.');
             serviceFilter.value = service;
             serviceFilter.dispatchEvent(new Event('change'));
@@ -17082,6 +17156,8 @@
             setInstanceSearch('');
             if (serviceFilter) serviceFilter.value = '';
             if (planFilter) { planFilter.value = ''; planFilter.disabled = true; }
+            if (orgFilter) orgFilter.value = '';
+            if (spaceFilter) { spaceFilter.value = ''; offerSpaces(''); }
             if (hideDeletedFilter) hideDeletedFilter.checked = true;
             applyFilters();
             window.blacksmithViews?.notify({replace: true});
@@ -17188,6 +17264,8 @@
                 const planFilter = document.getElementById('plan-filter');
                 const currentServiceFilter = serviceFilter ? serviceFilter.value : '';
                 const currentPlanFilter = planFilter ? planFilter.value : '';
+                const currentOrgFilter = document.getElementById('org-filter')?.value || '';
+                const currentSpaceFilter = document.getElementById('space-filter')?.value || '';
 
                 // Re-fetch the catalog and status data
                 const [catalogResponse, statusResponse] = await Promise.all([
@@ -17348,6 +17426,16 @@
                   // Restore filter state after rendering
                   const newServiceFilter = document.getElementById('service-filter');
                   const newPlanFilter = document.getElementById('plan-filter');
+                  const newOrgFilter = document.getElementById('org-filter');
+                  const newSpaceFilter = document.getElementById('space-filter');
+                  if (newOrgFilter && currentOrgFilter && [...newOrgFilter.options].some(option => option.value === currentOrgFilter)) {
+                    newOrgFilter.value = currentOrgFilter;
+                    newOrgFilter.dispatchEvent(new Event('change'));
+                  }
+                  if (newSpaceFilter && currentSpaceFilter && [...newSpaceFilter.options].some(option => option.value === currentSpaceFilter)) {
+                    newSpaceFilter.value = currentSpaceFilter;
+                    newSpaceFilter.dispatchEvent(new Event('change'));
+                  }
 
                   if (newServiceFilter && currentServiceFilter) {
                     newServiceFilter.value = currentServiceFilter;
@@ -17381,6 +17469,25 @@
               }
             });
           }
+
+          // The space choices follow the chosen org, as the plan choices follow the service.
+          const offerSpaces = (org) => {
+            if (!spaceFilter) return;
+            const chosen = spaceFilter.value;
+            const names = [...new Set(Object.values(window.serviceInstances || {})
+              .filter(details => details && (!org || details.organization_name === org)).map(details => details.space_name).filter(Boolean))].sort();
+            spaceFilter.replaceChildren(new Option('All Spaces', ''), ...names.map(name => new Option(name, name)));
+            spaceFilter.value = names.includes(chosen) ? chosen : '';
+          };
+          orgFilter?.addEventListener('change', () => {
+            offerSpaces(orgFilter.value);
+            applyFilters();
+            window.blacksmithViews?.notify({replace: true});
+          });
+          spaceFilter?.addEventListener('change', () => {
+            applyFilters();
+            window.blacksmithViews?.notify({replace: true});
+          });
 
           // Only set up dropdown filter handlers if filters exist (catalog is available)
           if (!serviceFilter || !planFilter) {
@@ -17692,6 +17799,9 @@
           if(!document.getElementById('services').classList.contains('instance-open')) {
             const service=document.getElementById('service-filter')?.value, plan=document.getElementById('plan-filter')?.value;
             if(service) {route.service=service;if(plan)route.plan=plan;}
+            const org=document.getElementById('org-filter')?.value, space=document.getElementById('space-filter')?.value;
+            if(org) route.org=org;
+            if(space) route.space=space;
             return route;
           }
           route.instance=window.currentInstanceInfo?.id;
@@ -17752,7 +17862,7 @@
               document.getElementById('services').classList.remove('instance-open');
               window.showInstancesOverview?.();
               // A route without a filter clears one only when the route being left carried it.
-              if(route.service||routeFilterApplied){window.applyServicesFilter?.(route.service,route.plan);routeFilterApplied=!!route.service;}
+              if(route.service||route.org||route.space||routeFilterApplied){window.applyServicesFilter?.(route.service,route.plan,route.org,route.space);routeFilterApplied=!!(route.service||route.org||route.space);}
               return finish(route);
             }
             if(!await instanceListReady(signal)){if(signal?.aborted)return null;throw new Error('The service instance list is still loading. Try again in a moment.');}

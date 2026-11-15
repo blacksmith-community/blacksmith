@@ -30,7 +30,8 @@
       const detail = [id, service?.name||instance.service_id, plan?.name||instance.plan_id, instance.deleted ? 'Deleted' : ''].filter(Boolean).join(' · ');
       entries.push({screen:'services', instanceId:id, section:'details', label,
         context:[label, detail].join(' · '), type:'Instance', breadcrumb:'Service Instances > Summary',
-        detail, keywords:[instance.service_id,instance.plan_id].filter(Boolean).join(' '), deleted:!!instance.deleted});
+        detail, keywords:[instance.service_id,instance.plan_id,instance.organization_name,instance.space_name].filter(Boolean).join(' '),
+        ips:Array.isArray(instance.vm_ips)?instance.vm_ips:[], deleted:!!instance.deleted});
     }
     [['upgrade', 'Upgrade'], ['converge', 'Converge'], ['rotate', 'Rotate certificates']].forEach(([operation, label]) =>
       entries.push({ screen: 'upgrade', operation, label, type: 'Operation', context: 'Batch Operations', breadcrumb: 'Batch Operations > Options', keywords: operation }));
@@ -47,18 +48,37 @@
   }
   const index = new WeakMap();
   const normalize = value => String(value || '').toLocaleLowerCase();
+  // An IPv4 or IPv6 address in one canonical spelling, or '' for anything else.
+  // The list search in blacksmith.js reads addresses the same way.
+  function normalizeAddress(value) {
+    const text = String(value || '').trim();
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(text)) {
+      const parts = text.split('.').map(Number);
+      return parts.every(part => part <= 255) ? parts.join('.') : '';
+    }
+    if (!text.includes(':') || !/^[0-9a-f:.]+$/i.test(text)) return '';
+    try { return new URL(`http://[${text}]/`).hostname.slice(1, -1); } catch (_) { return ''; }
+  }
+  // When an address is searched for and no instance has reported its VM
+  // addresses yet, an empty result would mislead, so this says why.
+  function ipLookupNote(instances, query) {
+    if (!normalizeAddress(query)) return '';
+    const known = Object.values(instances || {}).some(item => item && Array.isArray(item.vm_ips) && item.vm_ips.length);
+    return known ? '' : 'VM addresses are not available yet, so an IP cannot be matched. Try again after the VM monitor has run.';
+  }
   function indexed(entry) {
     if (!index.has(entry)) index.set(entry, {
-      label:normalize(entry.label), id:normalize(entry.instanceId),
+      label:normalize(entry.label), id:normalize(entry.instanceId), ips:(entry.ips || []).map(normalizeAddress).filter(Boolean),
       text:normalize(`${entry.label} ${entry.context || ''} ${entry.breadcrumb || ''} ${entry.keywords || ''}`)
     });
     return index.get(entry);
   }
   function matcher(query) {
-    const normalized=normalize(query).trim(), words=normalized.split(/\s+/);
+    const normalized=normalize(query).trim(), words=normalized.split(/\s+/), address=normalizeAddress(normalized);
     return entry => {
       if (!normalized && entry.instanceId) return null;
       const data=indexed(entry);
+      if (address && data.ips.includes(address)) return {entry,rank:0};
       const matches=text=>words.every(word=>text.includes(word));
       let result=entry;
       if (entry.rotation ? !words.every(word=>data.text.split(/[^a-z0-9]+/).some(token=>token.startsWith(word))) : !matches(data.text)) {
@@ -90,7 +110,7 @@
     }
     return signal?.aborted?null:ordered(buckets);
   }
-  root.BlacksmithNavigation = { destinations, search, searchAsync };
+  root.BlacksmithNavigation = { destinations, search, searchAsync, ipLookupNote };
   if (!root.document) return;
   const document = root.document;
 
@@ -140,7 +160,7 @@
     }
     function updateCount() {
       const empty=!input.value.trim();
-      status.textContent = !results.length ? 'No matches. Try an instance name, ID, service, plan, or screen.' :
+      status.textContent = !results.length ? (ipLookupNote(root.serviceInstances, input.value) || 'No matches. Try an instance name, ID, service, plan, org, space, IP, or screen.') :
         empty ? `${results.length} shortcuts. Search by instance name or ID; add “logs” or “VMs” to open a section.` :
         `${results.length.toLocaleString()} matches · ${rendered.toLocaleString()} shown`;
       more.hidden=rendered>=results.length;
