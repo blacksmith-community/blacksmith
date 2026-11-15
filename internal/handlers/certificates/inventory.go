@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/http/response"
@@ -52,6 +53,7 @@ type InventoryHandler struct {
 	svc       InventoryService
 	previewer RotationPreviewer
 	log       logger.Logger
+	changes   *audit.ChangeStore
 }
 
 // NewInventoryHandler returns a handler for the inventory API. A nil service
@@ -63,6 +65,16 @@ func NewInventoryHandler(svc InventoryService, previewer RotationPreviewer, log 
 	}
 
 	return &InventoryHandler{svc: svc, previewer: previewer, log: log}
+}
+
+// certificateSettingsTarget names the certificate settings in a change
+// record.
+const certificateSettingsTarget = "certificates"
+
+// SetChanges hands the handler the store that keeps a record of every
+// certificate settings change. Without one, none is kept.
+func (h *InventoryHandler) SetChanges(store *audit.ChangeStore) {
+	h.changes = store
 }
 
 // ServeHTTP resolves the route first, so a path that names no route answers
@@ -323,6 +335,8 @@ func (h *InventoryHandler) saveSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	old := h.svc.Settings()
+
 	if err := h.svc.SaveSettings(r.Context(), settings); err != nil {
 		var apiErr *apierr.Error
 		if errors.As(err, &apiErr) {
@@ -337,5 +351,6 @@ func (h *InventoryHandler) saveSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.changes.RecordSettings(r.Context(), certificateSettingsTarget, old, settings)
 	response.JSON(w, http.StatusOK, settings)
 }
