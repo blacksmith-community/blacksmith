@@ -293,7 +293,8 @@ t('deleting a queue sends nothing on Cancel and the same request on Confirm',asy
  d.getElementById('dialog-modal').querySelector('[data-dialog-role="cancel"]').click(); await sleep(20);
  expect(requests(s,/queue-ops/)).toEqual([]);
  press(s.w,button()); await sleep(20);
- expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-message').textContent).toBe('Are you sure you want to delete queue "orders"?');
+ expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-title').textContent).toBe('Delete a queue from i1?');
+ expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-command').textContent).toBe('orders');
  d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
  expect(requests(s,/queue-ops/)).toStrictEqual([{url:'/b/i1/rabbitmq/queue-ops',options:{method:'POST',cache:'no-cache',headers:{'Content-Type':'application/json'},body:rabbitBody({queue:'orders',operation:'delete',durable:true})}}]);
 });

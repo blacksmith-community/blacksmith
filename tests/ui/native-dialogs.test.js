@@ -40,10 +40,10 @@ const flows=[
  // Flush asks for the instance name, so its dialog opens on the typed field.
  {name:'flush the Redis database',match:/redis.*flush/i,text:/deletes every key in database 0 of i1/,focus:'.dialog-modal-ack-input',ack:'i1',
   run:({w})=>w.executeRedisFlush('i1')},
- {name:'delete a RabbitMQ queue',match:/queue-ops/,text:/delete queue "orders"/,
+ {name:'delete a RabbitMQ queue',match:/queue-ops/,text:/deleted from i1/,
   setup:({d})=>{ d.body.insertAdjacentHTML('beforeend','<input id="rabbitmq-queue-ops-name-i1" value="orders"><input id="rabbitmq-operation-i1" value="delete">'); },
   run:({w})=>w.executeRabbitMQQueueOps('i1')},
- {name:'purge a RabbitMQ queue',match:/queue-ops/,text:/purge all messages from queue "orders"/,
+ {name:'purge a RabbitMQ queue',match:/queue-ops/,text:/Every message in the queue is removed from i1/,
   setup:({d})=>{ d.body.insertAdjacentHTML('beforeend','<input id="rabbitmq-queue-ops-name-i1" value="orders"><input id="rabbitmq-operation-i1" value="purge">'); },
   run:({w})=>w.executeRabbitMQQueueOps('i1')},
  {name:'clear the rabbitmqctl history',match:/DELETE .*rabbitmqctl\/history/,text:/clear all command history/,
@@ -70,7 +70,7 @@ flows.forEach((flow)=>{
   const {env,done}=await open(); const {d}=env;
   const overlay=overlayOf(d);
   expect(overlay.open).toBe(true);
-  expect(overlay.querySelector('.dialog-modal-message').textContent).toMatch(flow.text);
+  expect(overlay.querySelector('.dialog-modal-message').textContent+(overlay.querySelector('.dialog-modal-run-warning')?.textContent||'')).toMatch(flow.text);
   expect(d.activeElement).toBe(overlay.querySelector(flow.focus||'[data-dialog-role="cancel"]'));
   expect(hits(env)).toEqual([]);
   overlay.querySelector('[data-dialog-role="cancel"]').click(); await done;

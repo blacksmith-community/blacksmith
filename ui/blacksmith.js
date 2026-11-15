@@ -15293,11 +15293,24 @@
       return;
     }
 
-    if (operation === 'delete' && !await showConfirmDialog({ title: 'Delete queue', message: `Are you sure you want to delete queue "${queue}"?`, confirmText: 'Delete queue', cancelText: 'Cancel', danger: true })) {
+    const name = instanceNameOf(instanceId);
+    if (operation === 'delete' && !await confirmRedisRun({
+      title: `Delete a queue from ${name}?`,
+      identity: instanceIdentityDetails(instanceId),
+      lines: [queue],
+      warning: `The queue and its messages are deleted from ${name} and can't be restored.`,
+      confirmText: 'Delete queue'
+    })) {
       return;
     }
 
-    if (operation === 'purge' && !await showConfirmDialog({ title: 'Purge queue', message: `Are you sure you want to purge all messages from queue "${queue}"?`, confirmText: 'Purge messages', cancelText: 'Cancel', danger: true })) {
+    if (operation === 'purge' && !await confirmRedisRun({
+      title: `Purge a queue on ${name}?`,
+      identity: instanceIdentityDetails(instanceId),
+      lines: [queue],
+      warning: `Every message in the queue is removed from ${name} and can't be restored.`,
+      confirmText: 'Purge messages'
+    })) {
       return;
     }
 
