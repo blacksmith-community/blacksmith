@@ -191,3 +191,59 @@ t('a marketplace that cannot load shows the panel without the broker message',as
  expect(env.calls.filter((c)=>c.includes('/marketplace')).length).toBe(before+1);
  expect(panel.querySelector('[data-load-error]')).toBeNull();
 });
+
+// A load that fails after its handlers are registered, then retried, must
+// leave one handler per control, not two.
+const lateFailure=async()=>{
+ const state={failing:true};
+ const status=(u,o,j)=>j(200,{env:'test',deployment:'blacksmith',plans:{},instances:{
+  'i1':{plan_id:'p1',service_id:'s1',deployment_name:'s1-p1-i1',created_at:'2026-01-01T00:00:00Z'}}});
+ const catalog=(u,o,j)=>j(200,{services:[{id:'s1',name:'svc',plans:[{id:'p1',name:'small'}]}]});
+ const env=boot({noDialogs:true,
+  setup:(w)=>{
+   // The blacksmith panel render, which comes after the services handlers
+   // are registered, fails the first time it is written.
+   const panel=w.document.getElementById('blacksmith');
+   const proto=Object.getOwnPropertyDescriptor(w.Element.prototype,'innerHTML');
+   Object.defineProperty(panel,'innerHTML',{configurable:true,get(){ return proto.get.call(this); },set(v){
+    if(state.failing&&String(v).length>300&&!String(v).includes('data-load-error')){ state.failing=false; throw new Error('HTTP 500: late failure'); }
+    proto.set.call(this,v);
+   }});
+   w.__copies=0;
+   Object.defineProperty(w.navigator,'clipboard',{configurable:true,value:{writeText:()=>{ w.__copies++; return Promise.resolve(); }}});
+  },
+  routes:[['/v2/catalog',catalog],['/b/status',status],['/b/instance',(u,o,j)=>j(200,{deployment:'blacksmith',id:'b'})],['/b/config/ssh/ui-terminal-status',(u,o,j)=>j(200,{enabled:true})]]});
+ envs.push(env);
+ await sleep(120);
+ return {env,state};
+};
+
+t('a load that fails late and is retried registers each handler once',async()=>{
+ const {env}=await lateFailure();
+ const {w,d}=env;
+ const retry=d.querySelector('#blacksmith [data-load-retry]');
+ expect(retry).not.toBeNull();
+ retry.click();
+ await sleep(150);
+ expect(d.querySelector('[data-load-error]')).toBeNull();
+ const copy=d.getElementById('copy-deployment-names');
+ expect(copy).not.toBeNull();
+ copy.click();
+ await sleep(30);
+ expect(w.__copies).toBe(1);
+ const before=env.calls.filter((c)=>c.includes('/v2/catalog')).length;
+ d.getElementById('refresh-services').click();
+ await sleep(60);
+ expect(env.calls.filter((c)=>c.includes('/v2/catalog')).length).toBe(before+1);
+ // One change event on the service filter reaches the route notifier once.
+ let notified=0;
+ const notify=w.blacksmithViews.notify;
+ w.blacksmithViews.notify=(...a)=>{ notified++; return notify.apply(w.blacksmithViews,a); };
+ const filter=d.getElementById('service-filter');
+ filter.value='s1';
+ filter.dispatchEvent(new w.Event('change'));
+ expect(notified).toBe(1);
+ // The page announced itself once, however many loads it took.
+ expect(env.errors.filter((e)=>!e.includes('late failure')&&!e.includes('Error loading data'))).toEqual([]);
+});
+
