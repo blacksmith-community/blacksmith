@@ -41,8 +41,8 @@ t('the Connection tab is a form with a heading, a description, and one row endin
  const root=s.content();
  expect(root.querySelector('table')).toBeNull();
  const form=root.querySelector('div.operation-form');
- expect(form.querySelector('h5').textContent).toBe('Test connection');
- expect(form.querySelector('h5 + p').textContent).toBe('Test a connection to this instance with its own credentials.');
+ expect(form.querySelector('h4').textContent).toBe('Test connection');
+ expect(form.querySelector('h4 + p').textContent).toBe('Test a connection to this instance with its own credentials.');
  const row=form.querySelector('.connection-row');
  const kids=[...row.children];
  expect(kids[0].classList.contains('connection-field')).toBe(true);

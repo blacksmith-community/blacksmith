@@ -13503,7 +13503,7 @@
 
         <div class="testing-history">
           <div class="history-header">
-            <h5>Response history</h5>
+            <h4>Response history</h4>
             <button class="btn btn-secondary" data-variant="secondary" id="clear-history-${instanceId}" onclick="clearTestingHistory('${instanceId}')" disabled>Clear history</button>
           </div>
           <div class="history-entries is-empty" id="history-entries-${instanceId}">
@@ -13536,7 +13536,7 @@
     return headings.map((heading, group) => {
       const buttons = tabs.map((tab, index) => [tab, index]).filter(([[operation]]) => headingOf(operation) === heading)
         .map(([[operation, label], index]) => operationTabButton(instanceId, operation, label, index)).join('\n');
-      return `<div class="operation-tab-group" role="group" aria-labelledby="operation-group-${group}-${instanceId}"><h4 class="operation-group-label" id="operation-group-${group}-${instanceId}">${heading}</h4><div class="operation-tab-row" role="tablist" aria-labelledby="operation-group-${group}-${instanceId}">${buttons}</div></div>`;
+      return `<div class="operation-tab-group" role="group" aria-labelledby="operation-group-${group}-${instanceId}"><h3 class="operation-group-label" id="operation-group-${group}-${instanceId}">${heading}</h3><div class="operation-tab-row" role="tablist" aria-labelledby="operation-group-${group}-${instanceId}">${buttons}</div></div>`;
     }).join('\n');
   };
 
@@ -13605,7 +13605,7 @@
 
     return `
       <div class="operation-form connection-operation">
-        <h5>Test connection</h5>
+        <h4>Test connection</h4>
         <p>Test a connection to this instance with its own credentials.</p>
         <div class="connection-selector connection-row">
           ${connectionFields}
@@ -13641,7 +13641,7 @@
   const renderRedisInfoOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>${redisFamilyLabel()} INFO</h5>
+        <h4>${redisFamilyLabel()} INFO</h4>
         <p>Get ${redisFamilyLabel()} server information and statistics.</p>
         <button class="btn btn-primary" onclick="executeRedisInfo('${instanceId}')">Get server info</button>
       </div>
@@ -13651,7 +13651,7 @@
   const renderRedisSetOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>${redisFamilyLabel()} SET</h5>
+        <h4>${redisFamilyLabel()} SET</h4>
         <div class="form-row">
           <label for="redis-key-${instanceId}">Key</label>
           <input type="text" id="redis-key-${instanceId}" placeholder="Enter key name" />
@@ -13672,7 +13672,7 @@
   const renderRedisGetOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>${redisFamilyLabel()} GET</h5>
+        <h4>${redisFamilyLabel()} GET</h4>
         <div class="form-row">
           <label for="redis-get-key-${instanceId}">Key</label>
           <input type="text" id="redis-get-key-${instanceId}" placeholder="Enter key name" />
@@ -13685,7 +13685,7 @@
   const renderRedisDeleteOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>${redisFamilyLabel()} DELETE</h5>
+        <h4>${redisFamilyLabel()} DELETE</h4>
         <div class="form-row">
           <label for="redis-delete-keys-${instanceId}">Keys (one per line)</label>
           <textarea id="redis-delete-keys-${instanceId}" placeholder="Enter key names, one per line" rows="3"></textarea>
@@ -13698,7 +13698,7 @@
   const renderRedisKeysOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>${redisFamilyLabel()} KEYS</h5>
+        <h4>${redisFamilyLabel()} KEYS</h4>
         <div class="form-row">
           <label for="redis-pattern-${instanceId}">Pattern</label>
           <input type="text" id="redis-pattern-${instanceId}" placeholder="* (default)" value="*" />
@@ -13711,7 +13711,7 @@
   const renderRedisCommandOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>${redisFamilyLabel()} COMMAND</h5>
+        <h4>${redisFamilyLabel()} COMMAND</h4>
         <div class="form-row">
           <label for="redis-cmd-${instanceId}">Command</label>
           <input type="text" id="redis-cmd-${instanceId}" placeholder="e.g., PING, DBSIZE, TYPE" />
@@ -13728,7 +13728,7 @@
   const renderRedisFlushOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>${redisFamilyLabel()} FLUSH</h5>
+        <h4>${redisFamilyLabel()} FLUSH</h4>
         <p role="note" data-variant="danger">This will delete all data in the database.</p>
         <div class="form-row">
           <label for="redis-flush-db-${instanceId}">Database</label>
@@ -13745,7 +13745,7 @@
   const renderRabbitMQPublishOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Publish message</h5>
+        <h4>Publish message</h4>
         <div class="form-row">
           <label for="rabbitmq-queue-${instanceId}">Queue name</label>
           <input type="text" id="rabbitmq-queue-${instanceId}" placeholder="test-queue" />
@@ -13772,7 +13772,7 @@
   const renderRabbitMQConsumeOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Consume messages</h5>
+        <h4>Consume messages</h4>
         <div class="form-row">
           <label for="rabbitmq-consume-queue-${instanceId}">Queue name</label>
           <input type="text" id="rabbitmq-consume-queue-${instanceId}" placeholder="test-queue" />
@@ -13799,7 +13799,7 @@
   const renderRabbitMQQueuesOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Queue information</h5>
+        <h4>Queue information</h4>
         <p>List all queues and their current status.</p>
         <button class="btn btn-primary" onclick="executeRabbitMQQueues('${instanceId}')">Get queue info</button>
       </div>
@@ -13809,7 +13809,7 @@
   const renderRabbitMQQueueOpsOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Queue operations</h5>
+        <h4>Queue operations</h4>
         <div class="form-row">
           <label for="rabbitmq-queue-ops-name-${instanceId}">Queue name</label>
           <input type="text" id="rabbitmq-queue-ops-name-${instanceId}" placeholder="queue-name" />
@@ -13836,7 +13836,7 @@
   const renderRabbitMQManagementOperation = (instanceId) => {
     return `
       <div class="operation-form">
-        <h5>Management API</h5>
+        <h4>Management API</h4>
         <div class="form-row">
           <label for="rabbitmq-mgmt-path-${instanceId}">API path</label>
           <input type="text" id="rabbitmq-mgmt-path-${instanceId}" placeholder="/b/overview" />
@@ -14425,7 +14425,7 @@
         </section>
         <section class="testing-history command-runner-history-block" data-runner-part="history-block">
           <div class="history-header">
-            <h5>Response history</h5>
+            <h4>Response history</h4>
             <button type="button" class="btn btn-secondary" data-variant="secondary" data-runner-action="clear-history" disabled>Clear history</button>
           </div>
           <div class="history-entries is-empty" data-runner-part="history-entries">
@@ -17840,7 +17840,7 @@
                 <table class="operation-form">
                   <tr>
                     <td>
-                      <h5>Network Endpoint Certificate</h5>
+                      <h3>Network Endpoint Certificate</h3>
                       <p>Connect to a network endpoint and retrieve its SSL/TLS certificate.</p>
                       <div class="form-row">
                         <label>Endpoint Address:</label>
@@ -17855,7 +17855,7 @@
                       </div>
                       <div id="endpoint-certificate-results" class="testing-history" style="display: none;">
                         <div class="history-header">
-                          <h5>Endpoint Certificate</h5>
+                          <h4>Endpoint Certificate</h4>
                         </div>
                         <div id="endpoint-certificate-details" class="cert-list-container">
                           <!-- Certificate details will be populated here -->
@@ -19984,7 +19984,7 @@
     }
 
     const header = CertView.el('div', 'cert-list-header');
-    header.appendChild(CertView.el('h4', null, 'BOSH Trusted Certificate Files'));
+    header.appendChild(CertView.el('h3', null, 'BOSH Trusted Certificate Files'));
     header.appendChild(CertView.el('span', 'cert-list-count', `${files.length} file${files.length === 1 ? '' : 's'}`));
 
     const list = CertView.el('div', 'cert-file-list');
@@ -20384,7 +20384,7 @@
   // Render a list of certificates through the safe certificate views
   const renderCertificateRows = (container, certificates, sourceLabel) => {
     const header = CertView.el('div', 'cert-list-header');
-    header.appendChild(CertView.el('h4', 'cert-list-title', `${sourceLabel} Certificates`));
+    header.appendChild(CertView.el(container.closest('.cert-source-pane') ? 'h4' : 'h3', 'cert-list-title', `${sourceLabel} Certificates`));
     header.appendChild(CertView.el('span', 'cert-list-count',
       `${certificates.length} certificate${certificates.length === 1 ? '' : 's'}`));
 
@@ -20474,7 +20474,7 @@
             <!-- Manifest Certificates Tab -->
             <div role="tabpanel" class="manifest-tab-pane cert-source-pane" data-tab="manifest" data-group="${tabGroupId}">
               <div class="cert-source-head">
-                <h5>Deployment Manifest Certificates</h5>
+                <h3>Deployment Manifest Certificates</h3>
                 <p>Read the certificates in the manifest the director has deployed for this instance.</p>
                 <div class="cert-source-actions">
                   <button class="execute-btn" data-cert-action="fetch-manifest" data-instance-id="${safeId}">
@@ -20493,7 +20493,7 @@
             <!-- Trusted Certificates Tab -->
             <div role="tabpanel" class="manifest-tab-pane cert-source-pane" data-tab="trusted" data-group="${tabGroupId}">
               <div class="cert-source-head">
-                <h5>Service VM Certificate Store</h5>
+                <h3>Service VM Certificate Store</h3>
                 <p>Access the trusted certificate store on service instance virtual machines.</p>
                 <div class="cert-source-actions">
                   <button class="execute-btn" data-cert-action="fetch-vm" data-instance-id="${safeId}">
@@ -20512,7 +20512,7 @@
             <!-- Service Endpoint Certificate Tab -->
             <div role="tabpanel" class="manifest-tab-pane cert-source-pane" data-tab="endpoint" data-group="${tabGroupId}">
               <div class="cert-source-head">
-                <h5>Service Endpoint Certificate</h5>
+                <h3>Service Endpoint Certificate</h3>
                 <p>Connect to the service instance endpoint and retrieve its certificate.</p>
                 <div class="cert-source-actions">
                   <label for="service-endpoint-address-${safeId}">Service Endpoint:</label>
@@ -22021,7 +22021,7 @@
 
     const instanceHeader = (state, onRescan, rotateOptions) => {
       const bar = el('div', 'cert-ov-bar');
-      const title = el('h4', 'cert-ov-title', 'Certificates on this instance');
+      const title = el('h3', 'cert-ov-title', 'Certificates on this instance');
       bar.appendChild(title);
       const actions = el('div', 'cert-ov-actions');
       const rescan = button('cert-action-btn cert-ov-rescan', 'Rescan');
@@ -22417,7 +22417,7 @@
 
       const bar = (busy) => {
         const row = el('div', 'cert-ov-bar');
-        row.appendChild(el('h4', 'cert-ov-title', 'Broker and platform certificates'));
+        row.appendChild(el('h3', 'cert-ov-title', 'Broker and platform certificates'));
         const actions = el('div', 'cert-ov-actions');
         const rescan = button('cert-action-btn cert-ov-rescan', 'Rescan');
         rescan.textContent = '';

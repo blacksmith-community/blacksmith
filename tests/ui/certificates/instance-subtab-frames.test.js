@@ -41,7 +41,7 @@ t('each sub-tab panel is one frame holding a heading, a line, and a row of actio
     expect(p.querySelector('.operation-content, table.operation-form, .testing-history, .history-header')).toBeNull();
     const head = p.querySelector(':scope > .cert-source-head');
     expect(head).not.toBeNull();
-    expect(head.querySelector(':scope > h5')).not.toBeNull();
+    expect(head.querySelector(':scope > h3')).not.toBeNull();
     expect(head.querySelectorAll(':scope > p').length).toBe(1);
     expect(head.querySelector(':scope > .cert-source-actions [data-cert-action]')).not.toBeNull();
   }

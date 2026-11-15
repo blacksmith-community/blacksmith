@@ -24,8 +24,8 @@ async function screen(creds,details={}){
  return env;
 }
 const groups=(d)=>[...d.querySelectorAll('.operation-tab-group')].map((g)=>({
- heading:g.querySelector('h4').textContent,
- labelled:g.getAttribute('aria-labelledby')===g.querySelector('h4').id,
+ heading:g.querySelector('.operation-group-label').textContent,
+ labelled:g.getAttribute('aria-labelledby')===g.querySelector('.operation-group-label').id,
  tabs:[...g.querySelectorAll('.operation-tab')].map((b)=>b.dataset.operation)}));
 
 t('the RabbitMQ tab strip separates the connection check from what changes the instance',async()=>{

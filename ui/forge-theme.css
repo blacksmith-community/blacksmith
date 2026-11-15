@@ -1021,7 +1021,7 @@ th:is(.sortable,.sortable-header):focus-visible { outline-offset: -3px; }
 .cert-sources-container { width: 100%; }
 .cert-sources-container bs-tabs > .cert-source-pane { padding: 16px 20px; min-height: 0; max-height: none; flex: 1 1 auto; }
 .cert-source-pane > div { flex: none; overflow: visible; max-height: none; }
-.cert-source-head h5 { margin: 0 0 4px; font-size: 1.05em; color: var(--text-primary); }
+.cert-source-head :where(h3, h5) { margin: 0 0 4px; font-size: 1.05em; color: var(--text-primary); }
 .cert-source-head p { margin: 0 0 12px; color: var(--text-secondary); font-size: .9em; }
 .cert-source-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 16px; }
 .cert-source-actions input[type="text"] { flex: 1 1 18rem; min-width: 0; }
@@ -1149,7 +1149,7 @@ button:is(.refresh-btn-logs, .copy-btn-logs, .refresh-btn, .copy-deployment-name
 .service-testing-container .operation-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 #services .detail-content .service-testing-container .operation-content { padding-top: 10px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 8px 8px; padding-inline: 10px; padding-bottom: 10px; }
 .service-testing-container .operation-form .form-row { margin-bottom: 8px; }
-.service-testing-container .operation-form h5 { margin: 0 0 6px; }
+.service-testing-container .operation-form :where(h3, h4, h5) { margin: 0 0 6px; }
 .service-testing-container .operation-form p { margin: 0 0 8px; }
 #services .detail-content .service-testing-container .testing-history { padding-top: 10px; border-top-width: 1px; }
 .service-testing-container .history-header { margin-bottom: 8px; }

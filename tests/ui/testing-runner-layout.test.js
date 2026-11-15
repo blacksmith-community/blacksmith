@@ -394,7 +394,7 @@ for(const tab of ['rabbitmqctl','plugins']){
   const block=s.content().querySelector('.testing-history');
   expect(block).not.toBeNull();
   expect(visible(block)).toBe(true);
-  expect(text(block.querySelector('.history-header h5'))).toBe('Response history');
+  expect(text(block.querySelector('.history-header h4'))).toBe('Response history');
   const entries=block.querySelector('.history-entries');
   expect(entries.classList.contains('is-empty')).toBe(true);
   // The plugins history sits on the server and is read when Runs opens, so

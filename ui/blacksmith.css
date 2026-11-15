@@ -3585,7 +3585,7 @@ select[id*="connection-vhost"] {
   vertical-align: top;
 }
 
-.operation-form h5 {
+.operation-form :where(h3, h4, h5) {
   margin: 0 0 10px 0;
   color: var(--text-primary);
   font-size: 1.1em;
@@ -3685,7 +3685,7 @@ select[id*="connection-vhost"] {
   margin-bottom: 15px;
 }
 
-.history-header h5 {
+.history-header :where(h4, h5) {
   margin: 0;
   color: var(--text-primary);
   font-size: 1.1em;
@@ -4397,7 +4397,13 @@ table:has(.cert-copy-btn) .cert-copy-slot:empty {
   align-items: center;
 }
 
+.cert-list-header > h3:not(.cert-list-title) {
+  margin: 0;
+  font-size: var(--text-4);
+}
+
 .cert-list-title {
+  font-size: var(--text-4);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;

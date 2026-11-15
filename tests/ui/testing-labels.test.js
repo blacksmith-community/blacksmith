@@ -94,7 +94,7 @@ t('the RabbitMQ forms use sentence-case titles and labels',async()=>{
  const seen=[];
  for(const operation of ['publish','consume','queues','queue-ops']){
   s.w.switchTestingOperation('i1',operation); await sleep(10);
-  seen.push(s.content().querySelector('h5').textContent);
+  seen.push(s.content().querySelector('h4').textContent);
   seen.push(...[...s.content().querySelectorAll('label')].map(l=>l.textContent.trim()));
  }
  expect(seen).toEqual(['Publish message','Queue name','Exchange (optional)','Message','Persistent message',
@@ -106,7 +106,7 @@ t('the RabbitMQ forms use sentence-case titles and labels',async()=>{
 t('the shared Response History clears with a secondary button',async()=>{
  const s=await screen(rabbitCreds);
  const history=s.d.querySelector('.service-testing-container > .testing-history');
- expect(history.querySelector('h5').textContent).toBe('Response history');
+ expect(history.querySelector('h4').textContent).toBe('Response history');
  const clear=history.querySelector('button[onclick*="clearTestingHistory"]');
  expect(clear.textContent).toBe('Clear history');
  expect(clear.className).toBe('btn btn-secondary');
