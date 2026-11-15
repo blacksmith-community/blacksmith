@@ -1058,9 +1058,16 @@
   // and never with the inline display the filters set, so the two never undo
   // each other. A table watches its own body, so it needs no call from a
   // filter or a sort.
+  //
+  // A table can set data-row-cap-skip to a selector for rows that are not
+  // data, such as group headings, which are neither counted nor hidden, and
+  // data-row-cap-detail to a selector for rows that belong to the row above,
+  // which follow it in and out of view. The key a table's button carries comes
+  // from the table's id or class, so it survives a re-render, and the number
+  // of rows the reader revealed is kept under that key for the same reason.
   const ROW_CAP_DEFAULT = 100;
   const rowCapTables = new WeakSet();
-  let rowCapSeq = 0;
+  const rowCapRevealed = new Map();
   const installRowCap = (table) => {
     if (!table.hasAttribute('data-row-cap') || rowCapTables.has(table)) return;
     const tbody = table.tBodies[0];
@@ -1068,7 +1075,10 @@
     rowCapTables.add(table);
     const size = Math.max(1, Math.floor(Number(table.dataset.rowCap)) || ROW_CAP_DEFAULT);
     const noun = table.dataset.rowCapNoun || 'rows';
-    let shown = size;
+    const capKey = `row-cap:${table.id || table.classList[0] || 'table'}`;
+    const skipSelector = table.dataset.rowCapSkip || '';
+    const detailSelector = `.row-detail${table.dataset.rowCapDetail ? `, ${table.dataset.rowCapDetail}` : ''}`;
+    let shown = Math.max(size, rowCapRevealed.get(capKey) || 0);
     const bar = document.createElement('div');
     bar.className = 'row-cap';
     bar.hidden = true;
@@ -1081,20 +1091,22 @@
     const more = document.createElement('button');
     more.type = 'button';
     more.className = 'row-cap-more';
-    more.dataset.keepKey = `row-cap:${table.classList[0] || table.id || 'table'}:${++rowCapSeq}`;
+    more.dataset.keepKey = capKey;
     bar.append(status, more);
     (table.closest('[role="region"], .table-scroll') || table).insertAdjacentElement('afterend', bar);
 
     const apply = () => {
-      const rows = Array.from(tbody.rows).filter((row) => !row.classList.contains('row-detail'));
+      const rows = Array.from(tbody.rows).filter((row) => !row.matches(detailSelector) && !(skipSelector && row.matches(skipSelector)));
       let matching = 0;
       rows.forEach((row) => {
-        const detail = row.nextElementSibling?.classList.contains('row-detail') ? row.nextElementSibling : null;
+        const detail = row.nextElementSibling?.matches(detailSelector) ? row.nextElementSibling : null;
         const capped = row.style.display !== 'none' && ++matching > shown;
         row.classList.toggle('row-capped', capped);
         detail?.classList.toggle('row-capped', capped);
       });
-      if (matching <= size) shown = size;
+      // A table with no matching rows keeps what was revealed, because it may be empty only until its rows arrive.
+      if (matching > 0 && matching <= size) shown = size;
+      rowCapRevealed.set(capKey, shown);
       bar.hidden = matching <= size;
       const showing = Math.min(shown, matching);
       const text = `Showing ${showing} of ${matching} ${noun}`;
@@ -11704,7 +11716,7 @@
                   </div>
         ${preferredFile && preferredFile !== defaultFile ? `<p class="log-file-fallback" role="status">${escapeHtml(preferredFile)} is not available on this node. Showing ${escapeHtml(defaultFile)}.</p>` : ''}
         <div class="logs-table-container" id="log-display-${domKey}">
-          <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}">
+          <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}" data-row-cap="100" data-row-cap-noun="log entries">
             <thead>
               <tr>
                 <th class="log-col-timestamp">Timestamp (UTC)</th>
@@ -26831,7 +26843,7 @@
           <div class="cert-selection-line" id="cert-selection-line"></div>
           <div class="cert-groupby" id="cert-groupby"></div>
           <div class="cert-table-wrap" id="cert-table-wrap" tabindex="0" role="region" aria-label="Certificate table">
-            <table class="cert-table" id="cert-table">
+            <table class="cert-table" id="cert-table" data-row-cap="100" data-row-cap-noun="certificates" data-row-cap-skip=".cert-group-row, .cert-skeleton-row" data-row-cap-detail=".cert-row-detail">
               <caption class="visually-hidden">Certificates in the fleet</caption>
               <thead id="cert-thead"></thead>
               <tbody id="cert-tbody"></tbody>
