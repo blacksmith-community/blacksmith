@@ -115,3 +115,54 @@ t('an instance without a recorded name is named by its ID',async()=>{
  expect(dialog(d).querySelector('.dialog-modal-title').textContent).toBe('Restart 7a1b?');
  dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
 });
+
+t('a lost director answer says the action may have started and links the deployment tasks',async()=>{
+ const env=mount(); const {w,host,d}=env;
+ w.__routes.unshift(['/b/7a1b/restart',(u,o,json)=>json(504,{success:false,code:'outcome_unknown',error:"The director's answer was lost.",instance_id:'7a1b',deployment:'redis-small-7a1b',operation:'restart'})]);
+ actionButton(host,'restart').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ const node=status(d);
+ expect(node.dataset.state).toBe('unknown');
+ expect(node.textContent).toContain('Restart of orders-cache may have started');
+ expect(node.textContent).not.toContain('failed');
+ const link=node.querySelector('a');
+ expect(link.getAttribute('href')).toBe('#/instances/7a1b/events');
+ expect(link.textContent).toBe('the deployment\'s tasks in Events');
+ expect(link.dataset.keepKey).toBe('instance-action-events:7a1b');
+ expect(node.querySelector('button')).toBeNull();
+ const keys=[...d.querySelectorAll('[data-keep-key]')].map(n=>n.dataset.keepKey);
+ expect(new Set(keys).size).toBe(keys.length);
+ // The next attempt warns that the last one may have started.
+ actionButton(host,'recreate').click(); await sleep(10);
+ expect(dialog(d).textContent).toContain('The last restart of orders-cache may have started');
+ dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+ expect(posts(env,'recreate')).toEqual([]);
+});
+
+t('a locked deployment names the action and links the running task',async()=>{
+ const env=mount(); const {w,host,d}=env;
+ w.__routes.unshift(['/b/7a1b/recreate',(u,o,json)=>json(409,{success:false,code:'deployment_locked',error:'The director is running task 812.',instance_id:'7a1b',deployment:'redis-small-7a1b',operation:'recreate',task_id:812})]);
+ actionButton(host,'recreate').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ const node=status(d);
+ expect(node.dataset.state).toBe('blocked');
+ expect(node.textContent).toBe('Recreate of orders-cache didn\'t start, because BOSH task 812 is running on its deployment.');
+ const link=node.querySelector('a.bosh-task-link');
+ expect(link.textContent).toBe('BOSH task 812');
+ expect(link.dataset.historyTaskId).toBe('812');
+ expect(link.dataset.keepKey).toBe('instance-action-running-task:7a1b:812');
+ expect(actionButton(host,'recreate').disabled).toBe(false);
+ let opened=null; w.showTaskDetails=(id)=>{ opened=id; };
+ link.click();
+ expect(opened).toBe(812);
+});
+
+t('the dialog names the org and space when the broker knows them',async()=>{
+ const env=mount(); const {w,host,d}=env;
+ w.serviceInstances['7a1b'].organization_name='payments';
+ w.serviceInstances['7a1b'].space_name='prod';
+ actionButton(host,'restart').click(); await sleep(10);
+ const rows=[...dialog(d).querySelectorAll('.dialog-modal-details li')].map(n=>n.textContent);
+ expect(rows).toEqual(['Instance: orders-cache','Instance ID: 7a1b','Organization: payments','Space: prod']);
+ dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
+});

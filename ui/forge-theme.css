@@ -619,6 +619,8 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 .instance-action-status { font-size: .875rem; color: var(--text-primary); overflow-wrap: anywhere; }
 .instance-action-status:empty { display: none; }
 .instance-action-status[data-state="failed"] { color: var(--text-error); font-weight: 600; }
+.instance-action-status[data-state="unknown"],
+.instance-action-status[data-state="blocked"] { color: var(--text-warning); font-weight: 600; }
 
 /* Keep log controls outside the only scrolling region. */
 .job-logs-container { padding: 0; min-height: 0; }

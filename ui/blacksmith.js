@@ -13639,6 +13639,17 @@
 
   // The name an operator gave a service instance, or its ID when it has none.
   const instanceNameOf = (id) => window.serviceInstances?.[id]?.instance_name || window.serviceInstances?.[id]?.name || id;
+  // The rows that tell an operator which instance a dialog acts on: its name
+  // when it has one, its ID, and its org and space when the broker knows them.
+  const instanceIdentityDetails = (id) => {
+    const entry = window.serviceInstances?.[id] || {};
+    const name = instanceNameOf(id);
+    const rows = name === id ? [] : [{ label: 'Instance', value: name }];
+    rows.push({ label: 'Instance ID', value: id });
+    if (entry.organization_name) rows.push({ label: 'Organization', value: entry.organization_name });
+    if (entry.space_name) rows.push({ label: 'Space', value: entry.space_name });
+    return rows;
+  };
 
   // Restart and Recreate act on every VM of a service instance through the
   // broker, which checks that it owns the instance. The last outcome per
@@ -13656,6 +13667,12 @@
     const subject = `${INSTANCE_ACTIONS[outcome.action].label} of ${escapeHtml(instanceNameOf(instanceId))}`;
     if (outcome.state === 'running') return `${subject} is starting…`;
     if (outcome.state === 'failed') return `${subject} failed. ${escapeHtml(outcome.message)}`;
+    if (outcome.state === 'unknown') {
+      const id = String(instanceId);
+      const href = window.BlacksmithRoutes?.format({ screen: 'services', instance: id, section: 'events' }) || `#/instances/${encodeURIComponent(id)}/events`;
+      return `${subject} may have started. The director's answer was lost, so check <a href="${escapeAttribute(href)}" data-keep-key="instance-action-events:${escapeAttribute(id)}">the deployment's tasks in Events</a> before you try again.`;
+    }
+    if (outcome.state === 'blocked') return `${subject} didn't start, because <a href="#" class="bosh-task-link" data-history-task-id="${outcome.taskId}" data-keep-key="instance-action-running-task:${escapeAttribute(instanceId)}:${outcome.taskId}">BOSH task ${outcome.taskId}</a> is running on its deployment.`;
     return `${subject} started. <a href="#" class="bosh-task-link" data-history-task-id="${outcome.taskId}" data-keep-key="instance-action-task:${escapeAttribute(instanceId)}:${outcome.taskId}">BOSH task ${outcome.taskId}</a>`;
   };
 
@@ -13690,13 +13707,14 @@
     const spec = INSTANCE_ACTIONS[action];
     if (!spec || !instanceId || instanceActionsBusy.has(instanceId)) return;
     const name = instanceNameOf(instanceId);
-    const details = name === instanceId
-      ? [{ label: 'Instance ID', value: instanceId }]
-      : [{ label: 'Instance', value: name }, { label: 'Instance ID', value: instanceId }];
+    const last = instanceActionOutcomes.get(instanceId);
+    const lastLost = last?.state === 'unknown'
+      ? ` The last ${last.action} of ${name} may have started, because the director's answer was lost. Check the deployment's tasks in Events before you go on.`
+      : '';
     const confirmed = await showConfirmDialog({
       title: `${spec.label} ${name}?`,
-      message: spec.message,
-      details,
+      message: spec.message + lastLost,
+      details: instanceIdentityDetails(instanceId),
       confirmText: spec.label,
       cancelText: 'Cancel',
       danger: true
@@ -13709,6 +13727,18 @@
     try {
       const response = await fetch(`/b/${encodeURIComponent(instanceId)}/${action}`, { method: 'POST', cache: 'no-cache' });
       const result = await response.json().catch(() => ({}));
+      if (result.code === 'outcome_unknown') {
+        // The task may be running, so this is not a failure and offers no
+        // retry. The status links to the deployment's tasks instead.
+        instanceActionOutcomes.set(instanceId, { action, state: 'unknown' });
+        showNotification(`${spec.label} of ${name} may have started. Check its deployment's tasks before you try again.`, 'warning');
+        return;
+      }
+      if (result.code === 'deployment_locked' && Number(result.task_id) > 0) {
+        instanceActionOutcomes.set(instanceId, { action, state: 'blocked', taskId: Number(result.task_id) });
+        showNotification(`${spec.label} of ${name} didn't start, because BOSH task ${Number(result.task_id)} is running on its deployment.`, 'warning');
+        return;
+      }
       if (!response.ok || !result.task_id) {
         throw new Error(result.error || `The broker answered ${response.status}.`);
       }
