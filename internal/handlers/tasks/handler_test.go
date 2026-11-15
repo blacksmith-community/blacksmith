@@ -320,8 +320,8 @@ func TestListTasksCountsWithoutStatesAsksForOneWindow(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if fakeDir.gotLimit != 3 || len(fakeDir.gotStates) != 0 {
-		t.Fatalf("director asked with limit %d and states %v, want the requested limit and no states", fakeDir.gotLimit, fakeDir.gotStates)
+	if fakeDir.gotLimit != 4 || len(fakeDir.gotStates) != 0 {
+		t.Fatalf("director asked with limit %d and states %v, want the requested limit and one more, and no states", fakeDir.gotLimit, fakeDir.gotStates)
 	}
 
 	if len(payload.Tasks) != 3 || payload.Window != 3 || payload.StateCounts["done"] != 2 || payload.StateCounts[errorState] != 1 {
@@ -333,7 +333,7 @@ func TestListTasksWithoutCountsStaysAnArray(t *testing.T) {
 	t.Parallel()
 
 	fakeDir := newFakeDirector()
-	fakeDir.tasks = []bosh.Task{{ID: 1, State: "done"}, {ID: 2, State: "error"}}
+	fakeDir.tasks = []bosh.Task{{ID: 1, State: "done"}, {ID: 2, State: errorState}}
 
 	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
 	if err != nil {

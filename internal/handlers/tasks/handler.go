@@ -19,6 +19,7 @@ import (
 // Error variables for err113 compliance.
 var (
 	errTaskEndpointNotFound = errors.New("task endpoint not found")
+	errInvalidOffset        = errors.New("invalid offset")
 )
 
 // Handler handles BOSH task-related endpoints.
@@ -120,11 +121,25 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 
 	if limitStr := strings.TrimSpace(query.Get("limit")); limitStr != "" {
 		parsedLimit, parseErr := strconv.Atoi(limitStr)
-		if parseErr == nil && parsedLimit > 0 && parsedLimit <= 200 {
+		if parseErr == nil && parsedLimit > 0 && parsedLimit <= maxTaskWindow {
 			limit = parsedLimit
 		} else {
 			logger.Debug("Invalid limit parameter '%s', using default", limitStr)
 		}
+	}
+
+	offset := 0
+
+	if offsetStr := strings.TrimSpace(query.Get("offset")); offsetStr != "" {
+		parsedOffset, parseErr := strconv.Atoi(offsetStr)
+		if parseErr != nil || parsedOffset < 0 || parsedOffset > maxTaskOffset {
+			writer.WriteHeader(http.StatusBadRequest)
+			response.HandleJSON(writer, nil, fmt.Errorf("%w: offset must be a number from 0 to %d", errInvalidOffset, maxTaskOffset))
+
+			return
+		}
+
+		offset = parsedOffset
 	}
 
 	var states []string
@@ -142,20 +157,34 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 		team = "blacksmith"
 	}
 
-	logger.Debug("Fetching tasks from director", "type", taskType, "limit", limit, "states", states, "team", team)
-
 	wantCounts := query.Get("counts") == "1"
+	wantObject := wantCounts || query.Get("paged") == "1"
 
-	// With counts and no states, the one window the director returns is both
-	// counted and returned. With states as well, the director is asked for
-	// its whole window so every state can still be counted, and the chosen
-	// states and the limit are applied here.
-	fetchLimit, fetchStates := limit, states
-	if wantCounts && len(states) > 0 {
-		fetchLimit, fetchStates = maxTaskWindow, nil
+	// A single state with no states list is an exact filter too, so the
+	// director applies it before the page is cut.
+	if len(states) == 0 && stateFilter != "" && !wantCounts {
+		states, stateFilter = []string{strings.ToLower(stateFilter)}, ""
 	}
 
-	directorTasks, err := h.director.GetTasks(ctx, taskType, fetchLimit, fetchStates, team)
+	logger.Debug("Fetching tasks from director", "type", taskType, "limit", limit, "offset", offset, "states", states, "team", team)
+
+	// A page is read as the first offset+limit rows plus one more, so the
+	// answer can say whether a later page exists. With counts and no
+	// states, those rows are both counted and returned. With states as
+	// well, the director is asked for its whole window unfiltered so every
+	// state can still be counted, and the chosen states are applied here.
+	asked := offset + limit
+	fetchStates := states
+
+	if wantCounts {
+		fetchStates = nil
+
+		if len(states) > 0 {
+			asked = max(asked, maxTaskWindow)
+		}
+	}
+
+	listing, err := bosh.ListTasksFrom(ctx, h.director, taskType, asked, fetchStates, team)
 	if err != nil {
 		logger.Error("Failed to fetch tasks from director: %v", err)
 
@@ -164,18 +193,20 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	scanned := listing.Tasks
+
 	var stateCounts map[string]int
 
 	if wantCounts {
 		stateCounts = map[string]int{"processing": 0, "queued": 0, "done": 0, "error": 0, "cancelled": 0}
-		for _, directorTask := range directorTasks {
+		for _, directorTask := range scanned {
 			stateCounts[directorTask.State]++
 		}
 	}
 
-	result := make([]Task, 0, len(directorTasks))
+	matching := make([]Task, 0, len(scanned))
 
-	for _, directorTask := range directorTasks {
+	for _, directorTask := range scanned {
 		if wantCounts && len(states) > 0 && !slices.Contains(states, directorTask.State) {
 			continue
 		}
@@ -185,31 +216,67 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 			continue
 		}
 
-		if wantCounts && len(result) >= limit {
-			break
-		}
-
-		result = append(result, hTask)
+		matching = append(matching, hTask)
 	}
 
-	if !wantCounts {
+	result := matching[min(offset, len(matching)):]
+	hasMore := listing.More
+
+	if len(result) > limit {
+		result, hasMore = result[:limit], true
+	}
+
+	writer.Header().Set(headerHasMore, strconv.FormatBool(hasMore))
+	writer.Header().Set(headerExact, strconv.FormatBool(listing.Exact))
+
+	if !wantObject {
 		response.HandleJSON(writer, result, nil)
 
 		return
 	}
 
-	response.HandleJSON(writer, listWithCounts{Tasks: result, StateCounts: stateCounts, Window: len(directorTasks)}, nil)
+	page := taskPage{Tasks: result, Offset: offset, Limit: limit, HasMore: hasMore, Exact: listing.Exact}
+
+	if wantCounts {
+		window := len(scanned)
+		page.StateCounts, page.Window = stateCounts, &window
+	}
+
+	response.HandleJSON(writer, page, nil)
 }
 
-// maxTaskWindow is the most tasks the director adapter returns in one call.
-const maxTaskWindow = 200
+const (
+	// maxTaskWindow is the most tasks one page returns.
+	maxTaskWindow = 200
 
-// listWithCounts is the answer to a list request that asked for counts. The
-// plain answer stays a bare array, so existing callers are unaffected.
-type listWithCounts struct {
+	// maxTaskOffset is the deepest offset a page can start at, so that a
+	// page's offset plus the largest page is within what the director
+	// adapter will list.
+	maxTaskOffset = 1800
+
+	// headerHasMore and headerExact carry the paging answer on the bare
+	// array form, whose body has no room for it.
+	headerHasMore = "X-Blacksmith-Has-More"
+	headerExact   = "X-Blacksmith-Exact"
+)
+
+// taskPage is the answer to a list request that asked for the object form,
+// with counts=1, paged=1, or both. The plain answer stays a bare array, so
+// existing callers are unaffected.
+//
+// HasMore says that a task beyond this page matches the request. Exact is
+// false when the listing stopped before it could tell, in which case HasMore
+// is true. StateCounts and Window appear only when counts were asked for, and
+// they describe the rows from the newest through the end of this page, which
+// are the rows a caller that has loaded each page in turn holds.
+type taskPage struct {
 	Tasks       []Task         `json:"tasks"`
-	StateCounts map[string]int `json:"state_counts"`
-	Window      int            `json:"window"`
+	Offset      int            `json:"offset"`
+	Limit       int            `json:"limit"`
+	HasMore     bool           `json:"has_more"`
+	Exact       bool           `json:"exact"`
+	StateCounts map[string]int `json:"state_counts,omitempty"`
+	Window      *int           `json:"window,omitempty"`
 }
 
 func convertTask(task bosh.Task) Task {
