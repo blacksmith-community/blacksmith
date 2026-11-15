@@ -85,6 +85,9 @@
   const QUOTE_PAIRS = ['""', "''", '\u201c\u201d', '\u2018\u2019'];
   const stripConfirmQuotes = (text) => (text.length > 1 && QUOTE_PAIRS.includes(text[0] + text[text.length - 1]) ? text.slice(1, -1).trim() : text);
   const confirmWordMatches = (typed, word) => stripConfirmQuotes(normalizeConfirmText(typed)) === normalizeConfirmText(word);
+  // The phrase as the dialog shows it, trimmed and with its spaces collapsed
+  // but in its own case, so a name like Orders-Cache reads as it is spelled.
+  const displayConfirmText = (value) => String(value == null ? '' : value).trim().replace(/\s+/g, ' ');
   const confirmWordLabel = (label, before, word, after) => {
     label.textContent = '';
     label.appendChild(document.createTextNode(before));
@@ -375,11 +378,11 @@
     if (options.requireText) {
       const wrap = make('div', 'dialog-modal-ack');
       const label = make('label', 'dialog-modal-ack-label');
-      confirmWordLabel(label, 'To continue, type ', normalizeConfirmText(options.requireText), ' below.');
+      confirmWordLabel(label, 'To continue, type ', displayConfirmText(options.requireText), ' below.');
       label.setAttribute('for', 'dialog-modal-ack-input');
       const input = make('input', 'dialog-modal-input dialog-modal-ack-input');
       input.type = 'text';
-      input.placeholder = normalizeConfirmText(options.requireText);
+      input.placeholder = displayConfirmText(options.requireText);
       input.id = 'dialog-modal-ack-input';
       input.setAttribute('autocomplete', 'off');
       input.setAttribute('autocapitalize', 'off');
@@ -673,7 +676,7 @@
         if (options.requireText) {
           text = extras.ackInput.value.trim();
           if (!confirmWordMatches(text, options.requireText)) {
-            problems.push(`Type "${normalizeConfirmText(options.requireText)}" in the field to continue.`);
+            problems.push(`Type "${displayConfirmText(options.requireText)}" in the field to continue.`);
             focusTarget = focusTarget || extras.ackInput;
           }
         }
@@ -14876,10 +14879,21 @@
   // Delete key and Command ask in the page's dialog first. The dialog shows
   // each key or the command line as visible text, and never puts it in an
   // attribute, because key names and commands can carry customer data.
-  const confirmRedisRun = async ({ title, lines, warning, confirmText }) => {
+  const confirmRedisRun = async ({ title, identity, lines, warning, confirmText }) => {
     const body = document.createElement('div');
     body.className = 'dialog-modal-run';
     body.id = 'dialog-modal-run';
+    const rows = document.createElement('ul');
+    rows.className = 'dialog-modal-details';
+    identity.forEach(({ label, value }) => {
+      const row = document.createElement('li');
+      const name = document.createElement('strong');
+      name.textContent = `${label}: `;
+      row.appendChild(name);
+      row.appendChild(document.createTextNode(String(value)));
+      rows.appendChild(row);
+    });
+    body.appendChild(rows);
     lines.forEach((text) => {
       const code = document.createElement('code');
       code.className = 'dialog-modal-command';
@@ -14953,6 +14967,7 @@
     const noun = keys.length === 1 ? 'key' : 'keys';
     if (!await confirmRedisRun({
       title: `Delete ${keys.length} ${noun} from ${name}?`,
+      identity: instanceIdentityDetails(instanceId),
       lines: keys,
       warning: `The ${noun} ${keys.length === 1 ? 'is' : 'are'} deleted from ${name} and can't be restored.`,
       confirmText: 'Delete'
@@ -14998,11 +15013,17 @@
 
     const name = instanceNameOf(instanceId);
     const words = Array.isArray(args) ? args : [args];
-    const line = [command, ...words.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))].join(' ');
+    // A word that is empty or holds spaces, quotes, backslashes, or control
+    // characters is shown in quotation marks, so the operator can see where
+    // each argument starts and ends.
+    const needsQuotes = (word) => typeof word === 'string' && (word === '' || /[\s"'\\\u0000-\u001f\u007f]/.test(word));
+    const shown = [command, ...words].map((word) => (typeof word === 'string' && !needsQuotes(word) ? word : JSON.stringify(word)));
+    const quoted = [command, ...words].some(needsQuotes);
     if (!await confirmRedisRun({
       title: `Run a command on ${name}?`,
-      lines: [line],
-      warning: `The command runs on ${name} as written, and a command that writes or deletes data can't be undone.`,
+      identity: instanceIdentityDetails(instanceId),
+      lines: [shown.join(' ')],
+      warning: `${quoted ? 'Quotation marks show where an argument with spaces, or an empty one, starts and ends. ' : ''}The command runs on ${name} as written, and a command that writes or deletes data can't be undone.`,
       confirmText: 'Run'
     })) {
       return;
@@ -15022,6 +15043,7 @@
     if (!await showConfirmDialog({
       title: `Flush database ${database} of ${name}?`,
       message: `This deletes every key in database ${database} of ${name}, and it can't be undone.`,
+      details: instanceIdentityDetails(instanceId),
       requireText: name,
       confirmText: 'Flush database',
       cancelText: 'Cancel',

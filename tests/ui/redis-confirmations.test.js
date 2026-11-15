@@ -138,3 +138,50 @@ t('Set runs with no dialog',async()=>{
  expect(overlay(d)?.open||false).toBe(false);
  expect(posts(env,'set').length).toBe(1);
 });
+
+// The instance's identity rows, so an operator with several caches named
+// alike can tell which one the dialog acts on.
+const identity=(d)=>[...overlay(d).querySelectorAll('.dialog-modal-details li')].map(n=>n.textContent);
+const placed=(w)=>{ w.serviceInstances={'i1':{instance_name:'Orders-Cache',organization_name:'payments',space_name:'prod'}}; };
+const IDENTITY=['Instance: Orders-Cache','Instance ID: i1','Organization: payments','Space: prod'];
+
+t('Flush shows the instance ID, org, and space, and the name in its own case',async()=>{
+ const env=start(); const {w,d}=env;
+ placed(w);
+ const done=w.executeRedisFlush('i1'); await sleep(10);
+ expect(identity(d)).toEqual(IDENTITY);
+ expect(overlay(d).querySelector('.dialog-modal-ack-label').textContent).toBe('To continue, type "Orders-Cache" below.');
+ const input=overlay(d).querySelector('.dialog-modal-ack-input');
+ expect(input.placeholder).toBe('Orders-Cache');
+ input.value='Orders-Cache'; input.dispatchEvent(new w.Event('input',{bubbles:true}));
+ confirmBtn(d).click(); await done; await sleep(10);
+ expect(posts(env,'flush').length).toBe(1);
+});
+
+t('Delete key shows the instance ID, org, and space beside the keys',async()=>{
+ const env=start(); const {w,d}=env;
+ placed(w);
+ d.getElementById('redis-delete-keys-i1').value=KEY;
+ const done=w.executeRedisDelete('i1'); await sleep(10);
+ expect(identity(d)).toEqual(IDENTITY);
+ expect([...overlay(d).querySelectorAll('.dialog-modal-command')].map(n=>n.textContent)).toEqual([KEY]);
+ expect(leaks(env,KEY)).toEqual(none);
+ cancelBtn(d).click(); await done; await sleep(10);
+});
+
+t('Command shows where each argument starts and ends, as visible text only',async()=>{
+ const env=start(); const {w,d}=env;
+ placed(w);
+ d.getElementById('redis-cmd-i1').value='SET';
+ d.getElementById('redis-args-i1').value=JSON.stringify(['my SECRET-ARG key','','plain',7,'say "hi"']);
+ const done=w.executeRedisCommand('i1'); await sleep(10);
+ expect(identity(d)).toEqual(IDENTITY);
+ expect(overlay(d).querySelector('.dialog-modal-command').textContent).toBe('SET "my SECRET-ARG key" "" plain 7 "say \\"hi\\""');
+ expect(overlay(d).querySelector('.dialog-modal-run-warning').textContent).toContain('Quotation marks show where an argument with spaces, or an empty one, starts and ends.');
+ expect(leaks(env,'SECRET-ARG')).toEqual(none);
+ confirmBtn(d).click(); await done; await sleep(10);
+ expect(posts(env,'command')[0]).toContain('"args":["my SECRET-ARG key","","plain",7,"say \\"hi\\""]');
+ expect(leaks(env,'SECRET-ARG').toasts).toEqual([]);
+ expect(leaks(env,'SECRET-ARG').logs).toEqual([]);
+ expect(leaks(env,'SECRET-ARG').urls).toEqual([]);
+});
