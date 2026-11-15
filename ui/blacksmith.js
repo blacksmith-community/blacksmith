@@ -16242,7 +16242,7 @@
       if (!current()) return;
       let note = container.querySelector('.view-refresh-error');
       if (!note) { note = document.createElement('p'); note.className = 'view-refresh-error'; note.setAttribute('data-variant', 'danger'); note.setAttribute('role', 'status'); container.prepend(note); }
-      note.textContent = `${message} Existing results are retained; use Refresh to retry.`;
+      note.textContent = `${message} The page still shows the last data it loaded. Use Refresh to try again.`;
     }};
   };
 
@@ -16314,7 +16314,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
       console.error('Failed to refresh events:', loggableError(error));
 
       // Visual feedback for error
@@ -16406,7 +16406,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
       console.error('Failed to refresh VMs:', loggableError(error));
 
       // Visual feedback for error (if button exists)
@@ -16505,7 +16505,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
       console.error('Failed to refresh service VMs:', loggableError(error));
 
       // Visual feedback for error (if button exists)
@@ -16592,7 +16592,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
       console.error('Failed to refresh service deployment logs:', loggableError(error));
 
       // Visual feedback for error
@@ -16675,7 +16675,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
       console.error('Failed to refresh service debug logs:', loggableError(error));
 
       // Visual feedback for error
@@ -16763,7 +16763,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
       console.error('Failed to refresh service events:', loggableError(error));
 
       // Visual feedback for error
@@ -16865,7 +16865,7 @@
 
     } catch (error) {
       if (!refresh.current()) return;
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
       console.error('Failed to refresh logs:', loggableError(error));
 
 
@@ -18560,7 +18560,7 @@
         }, 50);
       }
     } catch (error) {
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
     }
   };
 
@@ -18641,7 +18641,7 @@
         }, 100);
       }
     } catch (error) {
-      refresh.error(`Refresh failed: ${error.message}`);
+      refresh.error('The refresh failed.');
     }
   };
 

@@ -44,7 +44,7 @@ test('failed refresh retains prior results and adds a recoverable inline error',
  w.__routes.push(['/events',{ok:false,status:503,statusText:'Unavailable'}]);
  await w.refreshBlacksmithEvents({currentTarget:d.getElementById('refresh')});
  expect(d.querySelector('.detail-content').textContent).toContain('Prior events');
- expect(d.querySelector('.view-refresh-error')?.textContent).toContain('retained');w.close();
+ expect(d.querySelector('.view-refresh-error')?.textContent).toContain('still shows the last data it loaded');w.close();
 });
 
 test('latest broker log file selection wins over earlier responses',async()=>{

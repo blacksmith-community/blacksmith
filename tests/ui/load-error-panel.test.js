@@ -510,3 +510,22 @@ t('a handler is dropped when its panel is gone and kept while the panel is on th
  await sleep(60);
  expect(callsTo(env,'/b/configs')).toBe(before+1);
 });
+
+// A refresh that fails says so in plain words, and the page keeps its last data.
+t('a failed events refresh says the page still shows the last data, with no status line',async()=>{
+ const {env}=await detailStart([['/events',fail(503,'Service Unavailable')]]);
+ const {w,d}=env;
+ const host=d.querySelector('#blacksmith .detail-content');
+ host.insertAdjacentHTML('beforeend','<div class="events-table-container"><table id="events-table-events"><tbody><tr><td>kept row</td></tr></tbody></table></div>');
+ const button=d.createElement('button'); host.appendChild(button);
+ d.querySelector('#blacksmith .entity-workspace').dataset.section='events';
+ await w.refreshBlacksmithEvents({currentTarget:button});
+ const note=host.querySelector('.view-refresh-error');
+ expect(note).not.toBeNull();
+ expect(note.getAttribute('role')).toBe('status');
+ expect(note.textContent).toContain('refresh failed');
+ expect(note.textContent).toContain('last data');
+ expect(note.textContent).not.toMatch(/HTTP|503|Service Unavailable/);
+ expect(note.textContent).not.toContain(SECRET);
+ expect(host.textContent).toContain('kept row');
+});
