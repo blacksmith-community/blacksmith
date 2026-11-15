@@ -11908,9 +11908,15 @@
     const name = snakeKey(part);
     return SECRET_KEY.test(name) || RECENT_CHANGE_WORD.test(name);
   });
+  // The password of a URL inside a value, found the way the broker finds it,
+  // so a record from an older broker still never shows one.
+  const RECENT_CHANGE_URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^\/?#\s@:"]*):[^\/?#\s"]+@/gi;
   const recentChangeValue = (record, value) => {
     if (recentChangeSecret(record.key)) return escapeHtml(RECENT_CHANGE_HIDDEN);
-    return value === undefined || value === null || value === '' ? EMPTY_HTML : `<code>${escapeHtml(String(value))}</code>`;
+    if (value === undefined || value === null || value === '') return EMPTY_HTML;
+    let text = String(value);
+    if (URI_PASSWORD.test(text)) text = text.replace(RECENT_CHANGE_URL_PASSWORD, `$1:${RECENT_CHANGE_HIDDEN}@`);
+    return `<code>${escapeHtml(text)}</code>`;
   };
   const recentChangeRow = (record) => {
     const target = RECENT_CHANGE_TARGETS[record.target] || String(record.target || '');

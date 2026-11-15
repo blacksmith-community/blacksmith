@@ -162,3 +162,14 @@ t('deleting a registration loads the endpoint changes again',async()=>{
  await sleep(20);
  expect(state.requests.length).toBe(2);
 });
+
+// A record from an older broker can still hold a URL with its password.
+// The page replaces the password and keeps the rest of the URL.
+t('a password inside a URL never reaches the page',async()=>{
+ const RAW_URL_PW='url-raw-pw-5c3a';
+ const state={changes:[{id:'u1',at:at(6),scope:'endpoints',actor:'operator',target:'prod-cf',change:'update',key:'api_url',old:'https://api.old.example.test',new:`https://admin:${RAW_URL_PW}@api.example.test/v3`}],requests:[]};
+ const s=await brokerScreen(state);
+ const table=rows(s.section());
+ expect(table[0].slice(4)).toEqual(['https://api.old.example.test','https://admin:(changed)@api.example.test/v3']);
+ expect(leaks(s,s.host,[RAW_URL_PW])).toEqual([]);
+});
