@@ -181,3 +181,17 @@ t('a page that adds no new rows ends the list instead of leaving a button that l
     expect(status(host).textContent).toContain('not listed here');
   } finally { w.close(); }
 });
+
+t('a failed Load more says so in plain words and keeps the button', async () => {
+  const { w, host } = await mount(history(250));
+  try {
+    w.__routes.unshift([`/b/${ID}/events`, (u, o, json) => json(500, { error: 'boom' })]);
+    more(host).click();
+    for (let waited = 0; !host.querySelector('.events-load-error') && waited < 3000; waited += 20) await sleep(20);
+    const note = host.querySelector('.events-load-error');
+    expect(note.textContent).toBe('Older events could not be loaded.');
+    expect(note.textContent).not.toContain('HTTP');
+    expect(rows(host).length).toBe(100);
+    expect(more(host).disabled).toBe(false);
+  } finally { w.close(); }
+});

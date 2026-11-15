@@ -12166,7 +12166,7 @@
       if (added) { added.tabIndex = -1; added.focus(); }
     } catch (error) {
       button.disabled = false;
-      failure(`Could not load more events: ${error.message}`);
+      failure('Older events could not be loaded.');
     }
   };
 
