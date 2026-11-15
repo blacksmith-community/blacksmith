@@ -563,3 +563,47 @@ t('after older logs fail, scrolling does not load again until the line is activa
  await w.loadMoreBlacksmithLogs();
  expect(logCalls(env)).toBe(failedAt+1);
 });
+
+// The config version content and the config diff.
+t('a config version that cannot load shows the panel in the content pane and Retry loads it again',async()=>{
+ const state={answer:fail(503,'Service Unavailable')};
+ const {env}=await detailStart([['/b/configs/c9',answers(state)]]);
+ const {w,d}=env;
+ const item=d.createElement('button'); item.className='version-item'; d.body.appendChild(item);
+ await w.loadConfigVersion('c9',item);
+ const pre=d.getElementById('config-content-text');
+ const box=pre.querySelector('[data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.classList.contains('load-error--compact')).toBe(true);
+ expect(box.textContent).toContain('503');
+ expect(pre.textContent).not.toContain('Failed to load config content');
+ expect(pre.textContent).not.toContain(SECRET);
+ state.answer=okJson({id:'c9',name:'n',type:'cloud',content:'fresh: 1'});
+ box.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(pre.textContent).toBe('fresh: 1');
+});
+
+t('a config diff that cannot load shows the panel, never markup from the broker, and Retry loads it again',async()=>{
+ const evil='<img src=x onerror=alert(1)>';
+ const state={answer:()=>Promise.resolve({ok:false,status:502,statusText:evil,json:()=>Promise.resolve({error:evil}),text:()=>Promise.resolve(evil)})};
+ const {env}=await detailStart([['/diff?',answers(state)]]);
+ const {w,d}=env;
+ w.currentConfigInfo={type:'cloud',name:'cfg',versions:[]};
+ await w.loadConfigDiffById('1','2');
+ const out=d.getElementById('diff-output');
+ const box=out.querySelector('[data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.classList.contains('load-error--compact')).toBe(true);
+ expect(box.textContent).toContain('502');
+ expect(out.querySelector('img')).toBeNull();
+ expect(out.textContent).not.toContain('Error loading diff');
+ expect(out.textContent).not.toContain('onerror');
+ const before=callsTo(env,'/diff?');
+ state.answer=okJson({has_changes:true,diff_string:'- a\n+ b'});
+ box.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(callsTo(env,'/diff?')).toBe(before+1);
+ expect(out.querySelector('[data-load-error]')).toBeNull();
+ expect(out.textContent).toContain('+ b');
+});

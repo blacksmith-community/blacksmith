@@ -19182,7 +19182,10 @@
       console.error('Failed to load config version content:', loggableError(error));
       const contentPre = document.getElementById('config-content-text');
       if (contentPre) {
-        contentPre.textContent = `Failed to load config content: ${error.message}`;
+        contentPre.innerHTML = loadFailureHtml({
+          what: 'the config content', error, key: `config-version:${versionId}`, compact: true,
+          retry: retryModalLoad(contentPre, 'Loading config content...', () => inspectionRevision === configInspectionRevision && versionItem.isConnected, () => window.loadConfigVersion(versionId, versionItem))
+        });
       }
     } finally {
       if (inspectionRevision === configInspectionRevision) loadingConfigVersion = false;
@@ -19439,7 +19442,10 @@
     } catch (error) {
       if (!stillCurrent()) return;
       console.error('Failed to load config diff:', loggableError(error));
-      diffOutput.innerHTML = `Error loading diff: ${error.message}`;
+      diffOutput.innerHTML = loadFailureHtml({
+        what: 'the config diff', error, key: `config-diff:${fromId}:${toId}`, compact: true,
+        retry: retryModalLoad(diffOutput, 'Loading diff...', stillCurrent, () => window.loadConfigDiffById(fromId, toId))
+      });
       diffOutput.classList.add('active');
     }
   };
@@ -19469,84 +19475,6 @@
     diffOutput.textContent = '';
     diffOutput.append(heading, document.createTextNode(output));
     diffOutput.classList.add('active');
-  };
-
-  // DEPRECATED: Old load config diff function - to be removed
-  const loadConfigDiff = async (index) => {
-    const versions = window.currentConfigInfo.versions;
-    if (index < 0 || index >= versions.length - 1) return;
-
-    const fromVersion = versions[index + 1]; // Older version (N-1)
-    const toVersion = versions[index]; // Newer version (N)
-
-    // Update navigation buttons
-    const prevDisabled = index === 0;
-    const nextDisabled = index >= versions.length - 2;
-
-
-    document.getElementById('prev-diff-btn').disabled = prevDisabled;
-    document.getElementById('next-diff-btn').disabled = nextDisabled;
-
-    // Update info display
-    const diffInfo = document.getElementById('diff-info');
-    if (diffInfo) {
-      diffInfo.textContent = `Comparing ${fromVersion.id} → ${toVersion.id}`;
-    }
-
-    // Show loading in diff display
-    const diffDisplay = document.getElementById('config-diff-display');
-    const placeholder = document.getElementById('diff-placeholder');
-    const diffPanels = document.querySelector('.diff-panels');
-
-    if (placeholder) placeholder.style.display = 'none';
-    if (diffPanels) diffPanels.style.display = 'none';
-
-    // Create or update loading message without destroying the diff panels
-    let loadingMsg = document.getElementById('diff-loading-msg');
-    if (!loadingMsg) {
-      loadingMsg = document.createElement('p');
-      loadingMsg.id = 'diff-loading-msg';
-      diffDisplay.appendChild(loadingMsg);
-    }
-    loadingMsg.textContent = 'Loading diff...';
-    loadingMsg.style.display = 'block';
-
-    try {
-      // Fetch diff from API
-      const response = await fetch(
-        `/b/configs/${window.currentConfigInfo.type}/${window.currentConfigInfo.name}/diff?from=${fromVersion.id}&to=${toVersion.id}`,
-        { cache: 'no-cache' }
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const diffData = await response.json();
-
-      // Display the diff using the config diff string if available
-      if (diffData.diff_string && diffData.has_changes) {
-        displayConfigDiffText(diffData.diff_string, fromVersion, toVersion);
-      } else if (!diffData.has_changes) {
-        displayNoChangesMessage(fromVersion, toVersion);
-      } else {
-        // Fallback to side-by-side if no diff string
-        const [fromContent, toContent] = await Promise.all([
-          fetchConfigContent(fromVersion.id),
-          fetchConfigContent(toVersion.id)
-        ]);
-        displayConfigDiff(fromContent, toContent, diffData.changes);
-      }
-
-    } catch (error) {
-      console.error('Failed to load config diff:', loggableError(error));
-      const loadingMsg = document.getElementById('diff-loading-msg');
-      if (loadingMsg) {
-        loadingMsg.textContent = `Error loading diff: ${error.message}`;
-        loadingMsg.className = 'error';
-        loadingMsg.style.display = 'block';
-      }
-    }
   };
 
   // Fetch config content by ID
