@@ -11200,7 +11200,7 @@
     const endpoints = {
       manifest: `/b/${instanceId}/manifest`,
       credentials: `/b/${instanceId}/credentials`,
-      events: `/b/${instanceId}/events`,
+      events: `/b/${instanceId}/events?paged=1&limit=${EVENTS_PAGE}`,
       vms: `/b/${instanceId}/vms`,
       logs: `/b/${instanceId}/task/log`,
       debug: `/b/${instanceId}/task/debug`,
@@ -11227,9 +11227,9 @@
       if (type === 'events') {
         const text = await response.text();
         try {
-          const events = JSON.parse(text);
+          const loaded = readEventsResponse(JSON.parse(text));
           if (!isCurrent()) return '';
-          return formatEvents(events, 'service-events', instanceId);
+          return formatEvents(loaded.events, 'service-events', instanceId, loaded);
         } catch (e) {
           return `<pre>${text}</pre>`;
         }
@@ -12091,7 +12091,115 @@
     }
   };
 
-  const formatEvents = (events, dataKey = 'events', instanceId = null) => {
+  // The rows one page of an instance's events holds.
+  const EVENTS_PAGE = 100;
+
+  // Re-apply the sort a header shows, without cycling it, so rows added to a
+  // sorted table fall into place.
+  const resortInPlace = (table) => {
+    const header = table.querySelector('th.sort-asc, th.sort-desc');
+    if (!header) return;
+    const flipped = header.classList.contains('sort-asc') ? 'sort-desc' : 'sort-asc';
+    header.classList.remove('sort-asc', 'sort-desc');
+    header.classList.add(flipped);
+    sortTableByColumn(table, header.cellIndex, header);
+  };
+
+  // Load more events reads the next page by offset and adds the rows that are
+  // new to the table, so the search, the sort, and the reader's place stay.
+  const loadMoreEvents = async (button) => {
+    const instanceId = button.dataset.instanceId;
+    const dataKey = button.dataset.eventsKey || 'service-events';
+    const tableId = `events-table-${dataKey}`;
+    const held = tableOriginalData.get(dataKey) || [];
+    const table = document.querySelector(`.${CSS.escape(tableId)}`);
+    const holder = button.closest('.events-load-more');
+    if (!table || !holder) return;
+    const failure = (message) => {
+      let note = holder.querySelector('.events-load-error');
+      if (!note) { note = document.createElement('p'); note.className = 'events-load-error'; note.setAttribute('role', 'status'); holder.prepend(note); }
+      note.textContent = message;
+    };
+    try {
+      const response = await fetch(`/b/${instanceId}/events?paged=1&limit=${EVENTS_PAGE}&offset=${held.length}`, { cache: 'no-cache' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const loaded = readEventsResponse(await response.json());
+      if (!table.isConnected) return;
+      // An event that arrived meanwhile pushes older ones down a page, so one can come twice.
+      const seen = new Set(held.map(event => event.id));
+      const fresh = loaded.events.filter(event => event.id === undefined || !seen.has(event.id));
+      const all = held.concat(fresh);
+      tableOriginalData.set(dataKey, all);
+      const tbody = table.tBodies[0];
+      const first = tbody.rows.length;
+      tbody.insertAdjacentHTML('beforeend', fresh.map(eventRowHtml).join(''));
+      resortInPlace(table);
+      applyTableVisibility(tableId);
+      if (loaded.hasMore) {
+        holder.querySelector('.events-load-status').textContent = `Showing ${all.length} events. Older events are available.`;
+        holder.querySelector('.events-load-error')?.remove();
+        button.disabled = false;
+      } else {
+        holder.innerHTML = `<p class="events-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing all ${all.length} events.</p>`;
+      }
+      const added = tbody.rows[first];
+      if (added) { added.tabIndex = -1; added.focus(); }
+    } catch (error) {
+      button.disabled = false;
+      failure(`Could not load more events: ${error.message}`);
+    }
+  };
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-events-load-more]');
+    if (!button || button.disabled) return;
+    event.preventDefault();
+    button.disabled = true;
+    loadMoreEvents(button);
+  });
+
+  // One row of an events table. The instance events table adds rows to itself
+  // when more are loaded, so a row is built in one place.
+  const eventRowHtml = (event) => {
+    const time = timestampHtml(event.time);
+    // Handle object info - check if it's already a combined string or separate fields
+    let objectInfo = EMPTY;
+    if (event.object_type && event.object_name) {
+      objectInfo = `${event.object_type}: ${event.object_name}`;
+    } else if (event.object_type || event.object_name) {
+      objectInfo = event.object_type || event.object_name;
+    }
+
+    const taskId = event.task_id || event.task;
+    let taskInfo = EMPTY;
+
+    // Make task ID clickable if it exists and is numeric
+    if (taskId && taskId !== '-' && !isNaN(taskId)) {
+      taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
+    } else if (!isEmptyValue(taskId)) {
+      taskInfo = taskId;
+    }
+
+    return `
+              <tr class="${event.error ? 'error-row' : ''}">
+                <td class="event-timestamp">${showEmpty(time)}</td>
+                <td class="event-user">${event.user || EMPTY_HTML}</td>
+                <td class="event-action">${event.action || EMPTY_HTML}</td>
+                <td class="event-object">${showEmpty(objectInfo)}</td>
+                <td class="event-task">${showEmpty(taskInfo)}</td>
+                <td class="event-error">${event.error || EMPTY_HTML}</td>
+              </tr>
+            `;
+  };
+
+  // The events endpoint answers an object with the page and has_more when a
+  // page is asked for, and a bare array otherwise or from an older broker.
+  const readEventsResponse = (body) => {
+    if (Array.isArray(body)) return { events: body, hasMore: false };
+    return { events: Array.isArray(body?.events) ? body.events : [], hasMore: body?.has_more === true };
+  };
+
+  const formatEvents = (events, dataKey = 'events', instanceId = null, meta = {}) => {
     if (!events || events.length === 0) {
       return '<div class="no-data">No events recorded</div>';
     }
@@ -12127,40 +12235,14 @@
             </tr>
           </thead>
           <tbody>
-            ${events.map(event => {
-      const time = timestampHtml(event.time);
-      // Handle object info - check if it's already a combined string or separate fields
-      let objectInfo = EMPTY;
-      if (event.object_type && event.object_name) {
-        objectInfo = `${event.object_type}: ${event.object_name}`;
-      } else if (event.object_type || event.object_name) {
-        objectInfo = event.object_type || event.object_name;
-      }
-
-      const taskId = event.task_id || event.task;
-      let taskInfo = EMPTY;
-
-      // Make task ID clickable if it exists and is numeric
-      if (taskId && taskId !== '-' && !isNaN(taskId)) {
-        taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
-      } else if (!isEmptyValue(taskId)) {
-        taskInfo = taskId;
-      }
-
-      return `
-                <tr class="${event.error ? 'error-row' : ''}">
-                  <td class="event-timestamp">${showEmpty(time)}</td>
-                  <td class="event-user">${event.user || EMPTY_HTML}</td>
-                  <td class="event-action">${event.action || EMPTY_HTML}</td>
-                  <td class="event-object">${showEmpty(objectInfo)}</td>
-                  <td class="event-task">${showEmpty(taskInfo)}</td>
-                  <td class="event-error">${event.error || EMPTY_HTML}</td>
-                </tr>
-              `;
-    }).join('')}
+            ${events.map(eventRowHtml).join('')}
           </tbody>
         </table>
       </div>
+      ${meta.hasMore === true && instanceId ? `<div class="events-load-more">
+        <p class="events-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing ${events.length} events. Older events are available.</p>
+        <button type="button" class="events-load-more-btn" data-events-load-more data-instance-id="${escapeAttribute(String(instanceId))}" data-events-key="${escapeAttribute(dataKey)}" data-keep-key="events-load-more:${escapeAttribute(dataKey)}">Load more events</button>
+      </div>` : ''}
     `;
   };
 
@@ -16810,7 +16892,7 @@
 
     try {
       // Fetch events for the service instance
-      const response = await fetch(`/b/${instanceId}/events`, { cache: 'no-cache' });
+      const response = await fetch(`/b/${instanceId}/events?paged=1&limit=${EVENTS_PAGE}`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -16818,13 +16900,14 @@
       const text = await response.text();
       if (!refresh.current()) return;
       refresh.fetched();
-      let events;
+      let loaded;
       try {
-        events = JSON.parse(text);
+        loaded = readEventsResponse(JSON.parse(text));
       } catch (e) {
         displayContainer.parentElement.innerHTML = `<pre>${escapeHtml(text)}</pre>`;
         return;
       }
+      const events = loaded.events;
 
       if (!events || events.length === 0) {
         // Find the detail-content container and update it
@@ -16836,7 +16919,7 @@
         // Update the detail-content with formatted events
         const detailContent = refresh.container;
         if (detailContent) {
-          detailContent.innerHTML = formatEvents(events, 'service-events', instanceId);
+          detailContent.innerHTML = formatEvents(events, 'service-events', instanceId, loaded);
           // Re-initialize sorting and filtering
           setTimeout(() => {
             if (!refresh.current()) return;

@@ -14567,3 +14567,6 @@ tr.row-capped { display: none !important; }
 .tasks-load-more { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px; }
 .tasks-load-more .tasks-load-status { margin: 0; font-size: .8125rem; }
 .tasks-load-more .tasks-load-more-btn { cursor: pointer; }
+.events-load-more { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px; }
+.events-load-more .events-load-status, .events-load-more .events-load-error { margin: 0; font-size: .8125rem; }
+.events-load-more .events-load-more-btn { cursor: pointer; }
