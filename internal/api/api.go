@@ -351,6 +351,12 @@ func handleServiceRouting(writer http.ResponseWriter, req *http.Request, handler
 		return
 	}
 
+	if handlers.deployments.CanHandleInstanceAction(req.URL.Path) {
+		handlers.deployments.ServeInstanceAction(writer, req)
+
+		return
+	}
+
 	// Check for resurrection endpoints on any instance (/b/{instance_id}/resurrection)
 	if strings.HasSuffix(req.URL.Path, "/resurrection") {
 		switch req.Method {

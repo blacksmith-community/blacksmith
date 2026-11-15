@@ -38,6 +38,8 @@ var (
 	errDeploymentNotAssociatedWithSvcInst = errors.New("deployment not associated with any service instance")
 	errDirectorNotConfigured              = errors.New("no director is configured")
 	errDirectorReturnedNoDeployment       = errors.New("the director returned no deployment")
+	errDirectorReturnedNoTask             = errors.New("the director returned no task")
+	errUnknownInstanceAction              = errors.New("unknown instance action")
 )
 
 // Handler handles deployment-related endpoints.
