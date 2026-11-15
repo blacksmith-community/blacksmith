@@ -103,6 +103,7 @@ test('a chain that is not known yet says so and offers no buttons', async () => 
   const r = row(host);
   expect(r).not.toBeNull();
   expect(r.textContent).toMatch(/not known yet/i);
+  expect(r.textContent).toMatch(/when the broker can read the signing CA/i);
   expect(r.querySelectorAll('button').length).toBe(0);
 });
 

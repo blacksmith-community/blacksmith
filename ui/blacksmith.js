@@ -10607,7 +10607,7 @@
     } else if (ca.state === 'none') {
       cell = '<span class="issuing-ca-text">No issuing CA is on record for this certificate.</span>';
     } else {
-      cell = '<span class="issuing-ca-text">The issuing CA is not known yet. It appears after the next certificate scan.</span>';
+      cell = '<span class="issuing-ca-text">The issuing CA is not known yet. It appears after the next certificate scan, when the broker can read the signing CA.</span>';
     }
     return `<tr class="issuing-ca-row" data-issuing-ca-instance="${escapeAttribute(instanceId)}"><td class="cred-key">Issuing CA</td><td class="cred-value">${cell}</td></tr>`;
   };
