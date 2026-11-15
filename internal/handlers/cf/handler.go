@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 	cfservices "blacksmith/pkg/services/cf"
@@ -23,6 +24,8 @@ type Handler struct {
 	config    interfaces.Config
 	cfManager interfaces.CFManager
 	vault     interfaces.Vault
+	// changes keeps a record of every endpoint change. Nil records none.
+	changes *audit.ChangeStore
 
 	newCFOperations  func() cfOperations
 	persistProgress  func(ctx context.Context, registrationID string, progress cfservices.RegistrationProgress) error

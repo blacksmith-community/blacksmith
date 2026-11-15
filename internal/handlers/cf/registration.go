@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 	cfservices "blacksmith/pkg/services/cf"
@@ -164,6 +165,7 @@ func (h *Handler) CreateRegistration(writer http.ResponseWriter, req *http.Reque
 	}
 
 	logger.Info("created CF registration")
+	h.recordRegistration(req.Context(), audit.ChangeCreate, getStringFromMap(regReq, "id"), nil, regReq)
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"message":      "Registration created successfully",
@@ -294,6 +296,7 @@ func (h *Handler) UpdateRegistration(writer http.ResponseWriter, req *http.Reque
 	}
 
 	logger.Info("updated CF registration: %s", registrationID)
+	h.recordRegistration(req.Context(), audit.ChangeUpdate, registrationID, existingReg, regReq)
 	response.HandleJSON(writer, map[string]interface{}{
 		"message":      "Registration updated successfully",
 		"registration": withoutPassword(regReq),
@@ -339,6 +342,7 @@ func (h *Handler) DeleteRegistration(writer http.ResponseWriter, req *http.Reque
 	}
 
 	logger.Info("deleted CF registration: %s", registrationID)
+	h.recordRegistration(req.Context(), audit.ChangeDelete, registrationID, registration, nil)
 	response.HandleJSON(writer, map[string]interface{}{
 		"message": "Registration deleted successfully",
 		"id":      registrationID,
@@ -377,6 +381,7 @@ func (h *Handler) StartRegistration(writer http.ResponseWriter, req *http.Reques
 		return
 	}
 
+	h.recordRegistrationStart(ctx, registrationID, registration)
 	h.startAsyncRegistration(writer, ctx, logger, registrationID, regReq, operations)
 }
 

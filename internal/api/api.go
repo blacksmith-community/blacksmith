@@ -140,7 +140,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 	return apiHandlers{
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
 		inventory:         createInventoryHandler(deps, upgradeHandler.GetManager(), changes),
-		cf:                cf.NewHandler(deps.Logger, deps.Config, deps.CFManager, deps.Vault),
+		cf:                createCFHandler(deps, changes),
 		instance:          instances.NewHandler(deps.Logger),
 		redis:             redis.NewHandler(deps.Logger, deps.Vault, deps.ServicesManager),
 		rabbitMQTesting:   createRabbitMQTestingHandler(deps),
@@ -218,6 +218,13 @@ func createBOSHHandler(deps Dependencies) *bosh.Handler {
 
 		VaultHealth: deps.VaultHealth,
 	})
+}
+
+func createCFHandler(deps Dependencies, changes *audit.ChangeStore) *cf.Handler {
+	handler := cf.NewHandler(deps.Logger, deps.Config, deps.CFManager, deps.Vault)
+	handler.SetChanges(changes)
+
+	return handler
 }
 
 // createChangeStore keeps change records in the broker's Vault. A broker
