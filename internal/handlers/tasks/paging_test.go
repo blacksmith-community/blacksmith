@@ -23,6 +23,7 @@ type pagedBody struct {
 	Exact       bool           `json:"exact"`
 	StateCounts map[string]int `json:"state_counts"`
 	Window      *int           `json:"window"`
+	Ceiling     bool           `json:"ceiling"`
 }
 
 // historyHandler serves the tasks list over a real director adapter that
@@ -217,12 +218,89 @@ func TestAnInexactListingIsMarkedInexact(t *testing.T) {
 	}
 }
 
-func TestAnOffsetBeyondTheCeilingIsRejected(t *testing.T) {
+// A request that names a state with counts still gets an exact list, and the
+// counts still describe the latest unfiltered window.
+func TestCountsWithStatesListsExactlyAndCountsTheLatestWindow(t *testing.T) {
+	t.Parallel()
+
+	handler := historyHandler(t, 2500, map[int]bool{7: true})
+
+	for _, query := range []string{"states=error", "state=error"} {
+		page := decodePage(t, get(t, handler, "/b/tasks?type=recent&limit=200&counts=1&"+query))
+
+		if len(page.Tasks) != 1 || page.Tasks[0].ID != 7 || !page.Exact || page.HasMore {
+			t.Fatalf("%s: expected only failed task 7, exact, got %+v", query, page)
+		}
+
+		if page.Window == nil || *page.Window != 200 || page.StateCounts[pagedDone] != 200 || page.StateCounts[errorState] != 0 {
+			t.Fatalf("%s: counts %v window %v, want the latest 200 unfiltered tasks", query, page.StateCounts, page.Window)
+		}
+	}
+}
+
+// Paging through a states query with counts keeps the window the same on
+// every page, so the chip counts do not change as the operator loads more.
+func TestCountsWithStatesKeepTheWindowAcrossPages(t *testing.T) {
+	t.Parallel()
+
+	failed := map[int]bool{}
+	for id := 1; id <= 2000; id += 100 {
+		failed[id] = true
+	}
+
+	handler := historyHandler(t, 2500, failed)
+
+	first := decodePage(t, get(t, handler, "/b/tasks?counts=1&limit=10&states=error"))
+	second := decodePage(t, get(t, handler, "/b/tasks?counts=1&limit=10&offset=10&states=error"))
+
+	if len(first.Tasks) != 10 || len(second.Tasks) != 10 || second.Tasks[0].ID >= first.Tasks[9].ID {
+		t.Fatalf("pages overlap or are short: %d then %d", len(first.Tasks), len(second.Tasks))
+	}
+
+	if *first.Window != 200 || *second.Window != 200 || first.StateCounts[errorState] != second.StateCounts[errorState] {
+		t.Fatalf("window changed between pages: %v %v", first.StateCounts, second.StateCounts)
+	}
+}
+
+// The page that reaches the deepest listable row says so, and a request past
+// it is answered with an empty page that says so, never with a 400.
+func TestThePagingCeilingIsSignalled(t *testing.T) {
+	t.Parallel()
+
+	handler := historyHandler(t, 2500, nil)
+
+	last := decodePage(t, get(t, handler, "/b/tasks?paged=1&limit=200&offset=1800"))
+	if len(last.Tasks) != 200 || last.Tasks[0].ID != 700 || !last.HasMore || !last.Ceiling {
+		t.Fatalf("deepest page: %d tasks, more %v, ceiling %v", len(last.Tasks), last.HasMore, last.Ceiling)
+	}
+
+	beyond := decodePage(t, get(t, handler, "/b/tasks?paged=1&limit=200&offset=2000"))
+	if len(beyond.Tasks) != 0 || !beyond.Ceiling {
+		t.Fatalf("past the ceiling: %d tasks, ceiling %v", len(beyond.Tasks), beyond.Ceiling)
+	}
+
+	bare := get(t, handler, "/b/tasks?limit=200&offset=1800")
+	if bare.Header().Get("X-Blacksmith-Ceiling") != "true" {
+		t.Errorf("the bare form must carry the ceiling in a header, got %v", bare.Header())
+	}
+
+	short := decodePage(t, get(t, handler, "/b/tasks?paged=1&limit=10&offset=100"))
+	if short.Ceiling {
+		t.Error("a page far from the ceiling must not report it")
+	}
+
+	exact := decodePage(t, get(t, historyHandler(t, 2000, nil), "/b/tasks?paged=1&limit=200&offset=1800"))
+	if exact.Ceiling || exact.HasMore {
+		t.Errorf("a history that ends at the ceiling has no more and no ceiling: %+v", exact)
+	}
+}
+
+func TestAnUnusableOffsetIsRejected(t *testing.T) {
 	t.Parallel()
 
 	handler := historyHandler(t, 10, nil)
 
-	for _, target := range []string{"/b/tasks?offset=1801", "/b/tasks?offset=-1", "/b/tasks?offset=abc"} {
+	for _, target := range []string{"/b/tasks?offset=-1", "/b/tasks?offset=abc"} {
 		recorder := httptest.NewRecorder()
 		handler.ListTasks(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
 
