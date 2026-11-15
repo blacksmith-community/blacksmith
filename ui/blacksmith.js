@@ -91,18 +91,19 @@
   
   // Fetch SSH terminal configuration status
   const fetchSSHTerminalConfig = async () => {
+    // The status is unknown unless a 2xx answer says enabled or not. Then the
+    // buttons stay usable and carry no title about it, and the next poll asks again.
+    let known = null;
     try {
       const response = await fetch('/b/config/ssh/ui-terminal-status');
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      if (!data || typeof data.enabled !== 'boolean') throw new Error('The SSH status answer was not readable.');
-      sshTerminalConfig = data;
+      if (response.ok) {
+        const data = await response.json();
+        if (data && typeof data.enabled === 'boolean') known = data;
+      }
     } catch (error) {
       console.error('Failed to fetch SSH terminal configuration:', loggableError(error));
-      // The status is unknown, so the buttons stay usable and carry no title
-      // about it. The next poll asks again.
-      sshTerminalConfig = { enabled: true, message: '' };
     }
+    sshTerminalConfig = known || { enabled: true, message: '' };
     updateSSHButtonStates();
   };
   
