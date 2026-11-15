@@ -134,7 +134,8 @@ func (v *failingInstanceVault) FindInstance(context.Context, string) (*vaultPkg.
 	return nil, false, errVaultDown
 }
 
-// auditLogger records every Info line a handler logs.
+// auditLogger records every line a handler logs at Info, Warning, or
+// Error.
 type auditLogger struct {
 	*logger.NoOpLogger
 
@@ -153,7 +154,21 @@ func (l *auditLogger) Info(msg string, args ...interface{}) {
 	l.lines = append(l.lines, fmt.Sprintf(msg, args...))
 }
 
-func (l *auditLogger) Infof(msg string, args ...interface{}) { l.Info(msg, args...) }
+func (l *auditLogger) Infof(msg string, args ...interface{})    { l.Info(msg, args...) }
+func (l *auditLogger) Warning(msg string, args ...interface{})  { l.Info(msg, args...) }
+func (l *auditLogger) Warningf(msg string, args ...interface{}) { l.Info(msg, args...) }
+func (l *auditLogger) Warn(msg string, args ...interface{})     { l.Info(msg, args...) }
+func (l *auditLogger) Warnf(msg string, args ...interface{})    { l.Info(msg, args...) }
+func (l *auditLogger) Error(msg string, args ...interface{})    { l.Info(msg, args...) }
+func (l *auditLogger) Errorf(msg string, args ...interface{})   { l.Info(msg, args...) }
+
+// all returns every line the handler logged, at any level.
+func (l *auditLogger) all() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return append([]string(nil), l.lines...)
+}
 
 func (l *auditLogger) audits() []string {
 	l.mu.Lock()
@@ -915,22 +930,47 @@ func TestInstanceActionsAuditRefusals(t *testing.T) {
 	}
 }
 
-// An instance ID from the path is quoted in the audit line, so a decoded
-// newline can't forge a second line.
-func TestInstanceActionsQuoteTheInstanceInTheAudit(t *testing.T) {
+// An instance ID from the path is quoted in every line the handler logs,
+// so a decoded newline can't forge a line that reads as an audit record.
+// The unowned refusal and the failed index read both log the ID before
+// the audit line does.
+func TestInstanceActionsQuoteTheInstanceInEveryLogLine(t *testing.T) {
 	t.Parallel()
 
-	setup := newInstanceActionSetup(deployments.Dependencies{})
+	const forged = "evil\naudit=instance-action outcome=\"accepted\""
 
-	serveInstanceAction(t, setup.handler, http.MethodPost, "/b/evil%0Aaudit=instance-action/restart")
+	path := "/b/evil%0Aaudit=instance-action%20outcome=%22accepted%22/restart"
 
-	lines := setup.log.audits()
-	if len(lines) != 1 {
-		t.Fatalf("audit lines = %q, want one", lines)
-	}
+	for name, deps := range map[string]deployments.Dependencies{
+		"not owned":        {},
+		"vault unreadable": {Vault: &failingInstanceVault{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	if strings.Contains(lines[0], "\n") || !strings.Contains(lines[0], `instance="evil\naudit=instance-action"`) {
-		t.Errorf("audit line %q does not quote the instance", lines[0])
+			setup := newInstanceActionSetup(deps)
+
+			serveInstanceAction(t, setup.handler, http.MethodPost, path)
+
+			lines := setup.log.all()
+			if len(lines) < 2 {
+				t.Fatalf("logged lines = %q, want the refusal and its audit line", lines)
+			}
+
+			for _, line := range lines {
+				if strings.Contains(line, "\n") {
+					t.Errorf("line %q holds a raw newline", line)
+				}
+
+				if !strings.Contains(line, fmt.Sprintf("%q", forged)) {
+					t.Errorf("line %q does not quote the instance", line)
+				}
+			}
+
+			if audits := setup.log.audits(); len(audits) != 1 {
+				t.Errorf("audit lines = %q, want one", audits)
+			}
+		})
 	}
 }
 

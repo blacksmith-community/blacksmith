@@ -113,7 +113,7 @@ func answerInstanceAction(writer http.ResponseWriter, logger interfaces.Logger, 
 	instanceID, deployment, action := subject.InstanceID, subject.Deployment, subject.Operation
 
 	if errors.Is(err, bosh.ErrOutcomeUnknown) {
-		logger.Error("The director's answer to the %s of deployment %s of instance %s was lost: %v", action, deployment, instanceID, err)
+		logger.Error("The director's answer to the %s of deployment %q of instance %q was lost: %v", action, deployment, instanceID, err)
 		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "unknown", 0)
 
 		subject.Code = apierr.CodeOutcomeUnknown
@@ -124,7 +124,7 @@ func answerInstanceAction(writer http.ResponseWriter, logger interfaces.Logger, 
 	}
 
 	if err != nil {
-		logger.Error("Failed to %s deployment %s of instance %s: %v", action, deployment, instanceID, err)
+		logger.Error("Failed to %s deployment %q of instance %q: %v", action, deployment, instanceID, err)
 		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "failed", 0)
 		writeInstanceActionError(writer, deployment, err)
 
@@ -163,7 +163,7 @@ type instanceActionResponse struct {
 func (h *Handler) deploymentIsIdle(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, instanceID, deployment, action string) (int, bool) {
 	running, err := h.director.FindRunningTasksForDeployment(ctx, deployment)
 	if err != nil {
-		logger.Error("Failed to list the running tasks of deployment %s before the %s of instance %s: %v", deployment, action, instanceID, err)
+		logger.Error("Failed to list the running tasks of deployment %q before the %s of instance %q: %v", deployment, action, instanceID, err)
 		apierr.Write(writer, apierr.New(http.StatusBadGateway, apierr.CodeInternal,
 			fmt.Sprintf("The director did not list the tasks of deployment %s, so the %s of instance %s didn't start: %v", deployment, action, instanceID, err)), http.StatusBadGateway)
 
@@ -175,7 +175,7 @@ func (h *Handler) deploymentIsIdle(ctx context.Context, writer http.ResponseWrit
 	}
 
 	taskID := running[0].ID
-	logger.Warning("Refusing the %s of instance %s: the director is running task %d on deployment %s", action, instanceID, taskID, deployment)
+	logger.Warning("Refusing the %s of instance %q: the director is running task %d on deployment %q", action, instanceID, taskID, deployment)
 	response.JSON(writer, http.StatusConflict, instanceActionProblem{
 		Code:       apierr.CodeDeploymentLocked,
 		Error:      fmt.Sprintf("The director is running task %d on deployment %s, so the %s of instance %s didn't start. Wait for that task to finish.", taskID, deployment, action, instanceID),
@@ -205,7 +205,9 @@ type instanceActionProblem struct {
 // ownedDeployment looks the instance up in the broker's index and returns
 // the deployment its entry records. An instance the index doesn't hold
 // answers 404, and an index that can't be read answers 503, because then
-// nobody knows whether the broker owns the instance.
+// nobody knows whether the broker owns the instance. Both log the ID from
+// the path quoted, as every log line of the handler does, because Go's
+// regexp lets the path segment hold a decoded newline.
 func (h *Handler) ownedDeployment(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, instanceID string) (string, bool) {
 	if h.vault == nil {
 		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeVaultUnavailable, errVaultNotConfigured.Error()), http.StatusServiceUnavailable)
@@ -215,7 +217,7 @@ func (h *Handler) ownedDeployment(ctx context.Context, writer http.ResponseWrite
 
 	inst, found, err := h.vault.FindInstance(ctx, instanceID)
 	if err != nil {
-		logger.Error("Unable to read the service index for instance %s: %v", instanceID, err)
+		logger.Error("Unable to read the service index for instance %q: %v", instanceID, err)
 		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeVaultUnavailable,
 			"the service index could not be read, so the broker can't tell whether it owns instance "+instanceID), http.StatusServiceUnavailable)
 
@@ -223,7 +225,7 @@ func (h *Handler) ownedDeployment(ctx context.Context, writer http.ResponseWrite
 	}
 
 	if !found || inst == nil {
-		logger.Warning("Refusing an action on %s, which is not a service instance this broker owns", instanceID)
+		logger.Warning("Refusing an action on %q, which is not a service instance this broker owns", instanceID)
 		apierr.Write(writer, apierr.New(http.StatusNotFound, apierr.CodeInstanceNotFound,
 			"no service instance "+instanceID+" is provisioned by this broker"), http.StatusNotFound)
 
@@ -239,7 +241,7 @@ func (h *Handler) ownedDeployment(ctx context.Context, writer http.ResponseWrite
 func (h *Handler) reserveInstance(writer http.ResponseWriter, logger interfaces.Logger, instanceID, deployment, action string) (func(), bool) {
 	if !h.tasksLoaded() {
 		message := fmt.Sprintf("the stored upgrade and certificate tasks are still loading, so the %s of instance %s can't start yet", action, instanceID)
-		logger.Warning("Refusing the %s of instance %s: %s", action, instanceID, message)
+		logger.Warning("Refusing the %s of instance %q: the stored upgrade and certificate tasks are still loading", action, instanceID)
 		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeTasksLoading, message), http.StatusServiceUnavailable)
 
 		return nil, false
@@ -257,13 +259,13 @@ func (h *Handler) reserveInstance(writer http.ResponseWriter, logger interfaces.
 	var busy *mutation.BusyError
 	if errors.As(err, &busy) {
 		message := fmt.Sprintf("instance %s is busy with %s", instanceID, busy.Holder.Description)
-		logger.Warning("Refusing the %s of instance %s: %s", action, instanceID, message)
+		logger.Warning("Refusing the %s of instance %q: it is busy with %q", action, instanceID, busy.Holder.Description)
 		apierr.Write(writer, apierr.New(http.StatusConflict, apierr.CodeInstanceBusy, message), http.StatusConflict)
 
 		return nil, false
 	}
 
-	logger.Error("Failed to reserve instance %s for the %s: %v", instanceID, action, err)
+	logger.Error("Failed to reserve instance %q for the %s: %v", instanceID, action, err)
 	apierr.Write(writer, err, http.StatusInternalServerError)
 
 	return nil, false
