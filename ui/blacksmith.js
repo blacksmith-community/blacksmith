@@ -1,6 +1,17 @@
 (function (document, window) {
   'use strict';
 
+  // A request that never got an answer rejects from fetch itself. That error
+  // is tagged here, so a page can tell it from a TypeError raised later while
+  // it read or drew an answer. The lookup of window.fetch happens on each call.
+  const markNetworkFailure = (error) => {
+    if (error && typeof error === 'object' && error.name !== 'AbortError') {
+      try { error.networkFailure = true; } catch (_) { /* a frozen error stays untagged */ }
+    }
+    throw error;
+  };
+  const fetch = (...args) => window.fetch(...args).catch(markNetworkFailure);
+
   // An empty value reads the same everywhere, as one em dash in the muted
   // color. EMPTY is the text, EMPTY_HTML is the markup for a table cell or a
   // detail value, showEmpty turns a held EMPTY into that markup, and
@@ -11667,7 +11678,8 @@
     const status = loadFailureStatus(error);
     if (status === 401) return 'Authentication required. Please check credentials.';
     if (status) return `The broker answered with HTTP ${status} ${LOAD_STATUS_WORDS[status] || (status >= 500 ? 'Server Error' : 'Client Error')}.`;
-    if (error && error.name === 'TypeError') return 'The broker could not be reached.';
+    if (error && error.networkFailure === true) return 'The broker could not be reached.';
+    if (error && error.name === 'AbortError') return 'The request timed out.';
     return 'The page could not read the broker\'s answer.';
   };
   const loadRetryHandlers = new Map();

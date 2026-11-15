@@ -379,3 +379,27 @@ t('every compact panel Retry keeps its own keep key',async()=>{
  expect(keys.length).toBe(2);
  expect(new Set(keys).size).toBe(2);
 });
+
+// Round 3. "Could not be reached" is only for a request that never got an answer.
+t('a render error that is a TypeError does not say the broker could not be reached',async()=>{
+ const {env}=await detailStart([['/b/inst1/manifest',()=>Promise.resolve({ok:true,status:200,statusText:'OK',json:()=>Promise.reject(new TypeError('x is not a function'))})]]);
+ const {w,d}=env;
+ const host=d.createElement('div'); host.className='detail-content'; d.getElementById('services').appendChild(host);
+ w.currentInstanceInfo={id:'inst1'};
+ await w.loadInstanceSection('inst1','manifest');
+ await sleep(30);
+ const panel=host.querySelector('[data-load-error]');
+ expect(panel).not.toBeNull();
+ expect(panel.textContent).not.toContain('could not be reached');
+ expect(panel.textContent).toContain('could not read');
+});
+
+t('a request that never got an answer says the broker could not be reached',async()=>{
+ const {env}=await detailStart([['/b/inst1/vms',()=>Promise.reject(new TypeError('Failed to fetch'))]]);
+ const {w,d}=env;
+ const host=d.createElement('div'); host.className='detail-content'; d.getElementById('services').appendChild(host);
+ w.currentInstanceInfo={id:'inst1'};
+ await w.loadInstanceSection('inst1','vms');
+ await sleep(30);
+ expect(host.querySelector('[data-load-error]').textContent).toContain('could not be reached');
+});
