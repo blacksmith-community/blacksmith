@@ -54,6 +54,19 @@ t('the note says what the chip counts cover, and does not claim completeness it 
   } finally { w.close(); }
 });
 
+t('a failed Load more says loading more tasks failed and re-enables the button', async () => {
+  const { w, d } = await mount(history(450));
+  try {
+    w.__routes.unshift(['/b/tasks?', (u, o, json) => json(500, { error: 'x' })]);
+    more(d).click();
+    await sleep(200);
+    const text = d.querySelector('#blacksmith .view-refresh-error').textContent;
+    expect(text).toContain('Loading more tasks failed.');
+    expect(text).not.toContain('The refresh failed.');
+    expect(more(d).disabled).toBe(false);
+  } finally { w.close(); }
+});
+
 t('Load more asks for the next page by offset and the table then holds every row loaded', async () => {
   const { w, d, calls } = await mount(history(450));
   try {

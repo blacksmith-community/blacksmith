@@ -19229,7 +19229,7 @@
       }
     } catch (error) {
       document.querySelectorAll('[data-tasks-load-more]').forEach(button => { button.disabled = false; });
-      refresh.error('The refresh failed.');
+      refresh.error(more ? 'Loading more tasks failed.' : 'The refresh failed.');
     }
   };
 
