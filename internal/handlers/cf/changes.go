@@ -2,6 +2,7 @@ package cf
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 
 	"blacksmith/internal/audit"
@@ -46,14 +47,19 @@ func registrationFormField(key string) bool {
 	}
 }
 
-// diffRegistrations lists what differs between two registrations. The
-// form's fields are compared and recorded by value. Any other top-level
-// key a client sent is compared whole and recorded once, with both its
-// values hidden, so a field the form doesn't know never shows its value
-// and can't spread into a record for each key nested inside it.
+// diffRegistrations lists what differs between two registrations. A form
+// field whose old and new values are both scalars is compared and
+// recorded by value. Any other top-level key a client sent, a form field
+// holding a map or a list included, is compared whole and recorded once,
+// with both its values hidden, so it never shows a value and can't spread
+// into a record for each key nested inside it.
 func diffRegistrations(old, current map[string]interface{}) []audit.KeyChange {
-	oldForm, oldOther := splitRegistration(old)
-	currentForm, currentOther := splitRegistration(current)
+	byValue := func(key string) bool {
+		return registrationFormField(key) && scalarValue(old[key]) && scalarValue(current[key])
+	}
+
+	oldForm, oldOther := splitRegistration(old, byValue)
+	currentForm, currentOther := splitRegistration(current, byValue)
 
 	changes := audit.Diff(oldForm, currentForm)
 
@@ -66,24 +72,36 @@ func diffRegistrations(old, current map[string]interface{}) []audit.KeyChange {
 	return changes
 }
 
-// splitRegistration returns the form's fields flattened by value, and
+// splitRegistration returns the keys byValue names as their values, and
 // every other key the operator could set as the JSON of its whole value,
 // which is compared and never recorded.
-func splitRegistration(registration map[string]interface{}) (map[string]string, map[string]string) {
-	form := make(map[string]interface{})
+func splitRegistration(registration map[string]interface{}, byValue func(key string) bool) (map[string]string, map[string]string) {
+	form := make(map[string]string)
 	other := make(map[string]string)
 
 	for key, value := range registration {
 		switch {
 		case registrationBookkeeping(key):
-		case registrationFormField(key):
-			form[key] = value
+		case byValue(key):
+			form[key] = audit.Value(value)
 		default:
 			other[key] = audit.Value(value)
 		}
 	}
 
-	return audit.Flatten(form), other
+	return form, other
+}
+
+// scalarValue reports whether a decoded JSON value is a string, a number,
+// a boolean, or null, which a record can hold by value. A missing key
+// reads as null.
+func scalarValue(value interface{}) bool {
+	switch value.(type) {
+	case nil, string, bool, float64, json.Number, int, int64:
+		return true
+	default:
+		return false
+	}
 }
 
 // registrationTarget names a registration in its change records by the

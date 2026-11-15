@@ -391,3 +391,66 @@ func TestARegistrationBodyIsBounded(t *testing.T) {
 		}
 	}
 }
+
+// nestedFieldValue is a value sent nested under a form field, which no
+// record, Vault write, or log line may hold.
+const nestedFieldValue = "nested-field-raw-4d19"
+
+// A form field that holds a map or a list is recorded like an unknown
+// key, as one record whose values are both hidden, so a value nested
+// under it never reaches the trail.
+func TestRegistrationHidesAValueNestedUnderAFormField(t *testing.T) {
+	t.Parallel()
+
+	changes := newRegistrationChanges()
+	changes.serve(t, http.MethodPost, "/b/cf/registrations",
+		`{"id":"reg-1","name":{"note":"`+nestedFieldValue+`"},"username":["admin","`+nestedFieldValue+`"],"api_url":"https://api.cf.example.com"}`)
+	changes.serve(t, http.MethodPut, "/b/cf/registrations/reg-1",
+		`{"id":"reg-1","name":"lab-cf","username":"admin","api_url":{"host":"`+nestedFieldValue+`"}}`)
+
+	records, err := changes.store.List(t.Context(), audit.ScopeEndpoints, audit.MaxChangeList)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	seen := map[string]int{}
+
+	for _, rec := range records {
+		seen[rec.Change+" "+rec.Key]++
+
+		if strings.Contains(rec.Key, ".") {
+			t.Errorf("a form field was recorded by its nested key %q", rec.Key)
+		}
+
+		if strings.Contains(rec.Old+rec.New, nestedFieldValue) {
+			t.Errorf("record %s %s holds the nested value", rec.Change, rec.Key)
+		}
+	}
+
+	for _, key := range []string{audit.ChangeCreate + " " + keyName, audit.ChangeCreate + " " + keyUsername, audit.ChangeUpdate + " " + keyName, audit.ChangeUpdate + " " + keyUsername, audit.ChangeUpdate + " " + keyAPIURL} {
+		if seen[key] != 1 {
+			t.Errorf("%d records for %q, want one", seen[key], key)
+		}
+	}
+
+	for _, rec := range records {
+		key := rec.Change + " " + rec.Key
+		if key == audit.ChangeCreate+" "+keyAPIURL {
+			if rec.New != changeAPIURL {
+				t.Errorf("a scalar form field lost its value: %+v", rec)
+			}
+
+			continue
+		}
+
+		if rec.Old != audit.Changed || rec.New != audit.Changed {
+			t.Errorf("record %s = %+v, want both values hidden", key, rec)
+		}
+	}
+
+	for where, text := range map[string]string{whereVault: changes.kv.Dump(), whereLog: changes.log.Text()} {
+		if strings.Contains(text, nestedFieldValue) {
+			t.Fatalf("a value nested under a form field reached %s", where)
+		}
+	}
+}
