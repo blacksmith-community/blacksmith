@@ -14,14 +14,16 @@ import (
 
 // A failed save of the reconciler interval leaves the adapter, its source,
 // and the running manager on the interval they had, so nothing takes
-// effect that Vault does not hold.
+// effect that Vault does not hold. The fake Vault refuses with a 403,
+// which the Vault client doesn't retry, so the test fails the save at
+// once.
 func TestUpdateIntervalChangesNothingWhenTheSaveFails(t *testing.T) {
 	t.Setenv(reconcilerIntervalEnvKey, "")
 
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusInternalServerError)
-		_, _ = writer.Write([]byte(`{"errors":["storage is down"]}`))
+		writer.WriteHeader(http.StatusForbidden)
+		_, _ = writer.Write([]byte(`{"errors":["permission denied"]}`))
 	}))
 	defer server.Close()
 
