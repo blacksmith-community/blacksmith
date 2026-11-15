@@ -73,8 +73,8 @@ t('the breadcrumb says Operations and the old route still opens',async()=>{
  probe.window.eval(source);
  const hash=probe.window.BlacksmithRoutes.format({screen:'services',instance:'i1',section:'testing'});
  probe.window.close();
- expect(hash).toContain('testing');
- const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/'+hash,runScripts:'outside-only',pretendToBeVisual:true});
+ expect(hash).toContain('operations');
+ const dom=new JSDOM('<main id="console-main"><h1 id="console-title">Blacksmith</h1><div class="tab-content"></div></main>',{url:'http://localhost/'+hash.replace('operations','testing'),runScripts:'outside-only',pretendToBeVisual:true});
  const w=watchUncaught(dom.window);
  w.blacksmithViews={activate:async r=>r};
  w.eval(source);

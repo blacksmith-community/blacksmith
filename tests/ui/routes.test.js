@@ -119,3 +119,14 @@ test('the breadcrumb bar is the first row of the content column',async()=>{
  expect(bar.nextElementSibling.classList.contains('tab-content')).toBe(true);
  w.blacksmithRouter.destroy();w.close();
 });
+test('operations is the canonical instance route and testing stays an alias',async()=>{
+ const {api,w}=boot();
+ const route={screen:'services',instance:'inst-1',section:'testing'};
+ expect(api.format(route)).toBe('#/instances/inst-1/operations');
+ expect(api.parse('#/instances/inst-1/operations')).toEqual(route);
+ expect(api.parse('#/instances/inst-1/testing')).toEqual(route);
+ w.history.replaceState(null,'','#/instances/inst-1/testing');
+ const router=api.create(w,{activate:async r=>r});await router.start();
+ expect(w.location.hash).toBe('#/instances/inst-1/operations');
+ router.destroy();w.close();
+});
