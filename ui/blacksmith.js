@@ -16218,7 +16218,7 @@
     } catch (error) {
       if (!refresh.current()) return;
       console.error('Failed to fetch log file:', loggableError(error));
-      refresh.error(`Unable to load selected log file: ${error.message}`);
+      refresh.error('The selected log file could not be loaded.');
     } finally {
       if (refresh.current()) displayContainer.removeAttribute('aria-busy');
     }

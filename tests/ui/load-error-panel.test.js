@@ -530,6 +530,21 @@ t('a failed events refresh says the page still shows the last data, with no stat
  expect(host.textContent).toContain('kept row');
 });
 
+// A log file that cannot be fetched says so in plain words, with no status text.
+t('a failed log file load shows a plain sentence and no HTTP text',async()=>{
+ const {env}=await detailStart([['/b/blacksmith/logs',fail(503,'Service Unavailable')]]);
+ const {w,d}=env;
+ const host=d.querySelector('#blacksmith .detail-content');
+ host.insertAdjacentHTML('beforeend','<div class="logs-table-container" id="blacksmith-logs-display"><p>kept lines</p></div>');
+ d.querySelector('#blacksmith .entity-workspace').dataset.section='blacksmith-logs';
+ await w.selectBlacksmithLogFile('f.log');
+ const note=host.querySelector('.view-refresh-error');
+ expect(note).not.toBeNull();
+ expect(note.textContent).toContain('The selected log file could not be loaded.');
+ expect(note.textContent).not.toMatch(/HTTP|503|Service Unavailable/);
+ expect(note.textContent).not.toContain(SECRET);
+});
+
 // Older logs stop loading on scroll after a failure, until the operator activates the line.
 const olderLogs=async()=>{
  const state={answer:okJson({logs:'2026-01-01T00:00:00Z INFO first line\n',has_more:true,total_lines:50,limit:1,file:'f',files:[]})};
