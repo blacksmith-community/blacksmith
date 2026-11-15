@@ -2770,17 +2770,28 @@
     })();
     return state.pending;
   };
-  // The server filters to error tasks, so the cap is spent on failures. The
-  // director cannot filter by time, so the 24 hours are counted here. A full
-  // response means more may exist, and the count is then a lower bound.
+  // The server filters to error tasks at the director, so the cap is spent on
+  // failures and an error behind any number of newer tasks is still found. The
+  // director cannot filter by time, so the 24 hours are counted here, from the
+  // newest error back. A count is a lower bound when more errors exist beyond
+  // the page and the page has not yet reached back past 24 hours. When the
+  // server says it could not settle the search, and the page has not reached
+  // back past 24 hours either, nothing can be said about the errors it did
+  // not see, so the row says so instead of showing a count.
   const loadAttentionTasks = attentionLoader(attentionTasks, async () => {
-    const response = await attentionFetch(`/b/tasks?type=recent&limit=${ATTENTION_TASK_LIMIT}&states=error`);
+    const response = await attentionFetch(`/b/tasks?type=recent&limit=${ATTENTION_TASK_LIMIT}&states=error&paged=1`);
     if (!response.ok) throw new Error('unavailable');
-    const list = await response.json();
+    const body = await response.json();
+    const list = Array.isArray(body) ? body : body?.tasks;
     if (!Array.isArray(list)) throw new Error('unavailable');
     const since = Date.now() - ATTENTION_TASK_WINDOW_MS;
-    const failed = list.filter(task => task && task.state === 'error' && new Date(task.ended_at || task.started_at).getTime() >= since).length;
-    return {status: 'ready', failed, atLeast: list.length >= ATTENTION_TASK_LIMIT};
+    const when = (task) => new Date(task.ended_at || task.started_at).getTime();
+    const failed = list.filter(task => task && task.state === 'error' && when(task) >= since).length;
+    const last = list[list.length - 1];
+    const reachedOlder = !!last && when(last) < since;
+    const more = Array.isArray(body) ? list.length >= ATTENTION_TASK_LIMIT : body.has_more === true;
+    const exact = Array.isArray(body) || body.exact !== false;
+    return {status: 'ready', failed, atLeast: more && !reachedOlder, incomplete: !exact && !reachedOlder};
   });
   const loadAttentionHealth = attentionLoader(attentionHealth, async () => {
     const response = await attentionFetch('/b/internal/health');
@@ -2805,13 +2816,15 @@
     const heading = '<h3 id="entity-attention-heading">Attention required</h3>';
     const shell = (body) => `<section class="card entity-attention" aria-labelledby="entity-attention-heading">${heading}${body}</section>`;
     const failedTasks = attentionTasks.status === 'ready' ? attentionTasks.failed : 0;
-    if (!alerts.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && attentionHealth.status === 'ready') {
+    const tasksUnsettled = attentionTasks.status === 'ready' && !failedTasks && attentionTasks.incomplete;
+    if (!alerts.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready') {
       return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${fetched(cert.fetchedAt)}`);
     }
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     const row = (name, tone, body) => `<li class="entity-attention-row" data-attention="${name}" data-tone="${tone}"><span class="entity-attention-badge">${blacksmithIcon(ATTENTION_ICON[tone])}<span class="entity-attention-severity">${ATTENTION_WORD[tone]}</span></span><div class="entity-attention-body">${body}</div></li>`;
     const tier1 = [];
     if (attentionTasks.status === 'ready' && failedTasks) tier1.push(row('failed-tasks', 'critical', `<p>Failed tasks (24h): ${attentionTasks.atLeast ? 'at least ' : ''}${failedTasks} <a href="#/broker/tasks?state=error" data-attention-link data-keep-key="attention-link:failed-tasks">View failed tasks</a></p>`));
+    else if (tasksUnsettled) tier1.push(row('failed-tasks', 'notice', '<p>Failed tasks (24h): <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The broker could not check every task, so a failure may be missing</span></p>'));
     else if (attentionTasks.status === 'unknown') tier1.push(row('failed-tasks', 'notice', '<p>Failed tasks (24h): <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The task request failed</span></p>'));
     else if (attentionTasks.status !== 'ready') tier1.push(row('failed-tasks', 'notice', '<p>Failed tasks (24h): <span class="entity-attention-unknown">Loading</span></p>'));
     if (attentionHealth.status === 'unhealthy') tier1.push(row('broker-health', 'critical', `<p>Broker health: ${attentionHealth.unhealthy.length ? `${escapeHtml(attentionHealth.unhealthy.join(', '))} not healthy` : 'Not healthy'}</p>`));
