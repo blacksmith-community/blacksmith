@@ -15,6 +15,7 @@ import (
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/boshtest"
 	"blacksmith/internal/handlers/deployments"
 	"blacksmith/internal/mutation"
 	"blacksmith/pkg/logger"
@@ -26,6 +27,8 @@ const (
 	ownedInstance   = "7a1b"
 	ownedDeployment = "redis-small-7a1b"
 	instanceTaskID  = 4321
+	actionRestart   = "restart"
+	actionRecreate  = "recreate"
 )
 
 var errInstanceDirectorRefused = errors.New("director refused the job-state change")
@@ -232,8 +235,8 @@ func TestInstanceActionsRunOnTheOwnedDeployment(t *testing.T) {
 	t.Parallel()
 
 	for _, action := range []struct{ name, call string }{
-		{name: "restart", call: "RestartDeployment"},
-		{name: "recreate", call: "RecreateDeployment"},
+		{name: actionRestart, call: "RestartDeployment"},
+		{name: actionRecreate, call: "RecreateDeployment"},
 	} {
 		t.Run(action.name, func(t *testing.T) {
 			t.Parallel()
@@ -492,20 +495,69 @@ func TestInstanceActionsReportADirectorRefusal(t *testing.T) {
 }
 
 // A director that has no such deployment answers 404 with not_found.
+// newAdapterSetup serves the instance actions through the broker's real
+// director adapter, against a test director that answers with answer. A
+// request answer declines gets the test director's defaults.
+func newAdapterSetup(t *testing.T, answer boshtest.Handler) (instanceActionSetup, *boshtest.Director) {
+	t.Helper()
+
+	server := boshtest.New(t, answer)
+
+	director, err := bosh.NewDirectorAdapter(bosh.Config{
+		Address:  server.URL,
+		Username: "admin",
+		Password: "admin",
+		CACert:   server.CACert,
+	})
+	if err != nil {
+		t.Fatalf("creating the director adapter: %v", err)
+	}
+
+	setup := instanceActionSetup{
+		guard: mutation.NewGuard(time.Now),
+		log:   &auditLogger{NoOpLogger: &logger.NoOpLogger{}},
+	}
+	setup.handler = deployments.NewHandler(deployments.Dependencies{
+		Logger:   setup.log,
+		Director: director,
+		Guard:    setup.guard,
+		Vault:    ownedVault(),
+	})
+
+	return setup, server
+}
+
+// A director that has no deployment for an instance the index still lists
+// answers code 70000, which the adapter maps to ErrDeploymentNotFound. The
+// action then answers 404 and says the deployment is gone, not that the
+// director failed.
 func TestInstanceActionsReportAMissingDeployment(t *testing.T) {
 	t.Parallel()
 
-	setup := newInstanceActionSetup(deployments.Dependencies{})
-	setup.director.fail = fmt.Errorf("%w: code 70000", bosh.ErrDeploymentNotFound)
+	for _, action := range []string{actionRestart, actionRecreate} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
 
-	recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/recreate")
+			setup, _ := newAdapterSetup(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				if request.Method != http.MethodPut || request.URL.Path != "/deployments/"+ownedDeployment+"/jobs/*" {
+					return false
+				}
 
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404: %s", recorder.Code, recorder.Body.String())
-	}
+				boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment '"+ownedDeployment+"' doesn't exist")
 
-	if body := decodeBody(t, recorder); body["code"] != apierr.CodeNotFound {
-		t.Errorf("body = %v, want %s", body, apierr.CodeNotFound)
+				return true
+			})
+
+			recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/"+action)
+
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", recorder.Code, recorder.Body.String())
+			}
+
+			if body := decodeBody(t, recorder); body["code"] != apierr.CodeNotFound {
+				t.Errorf("body = %v, want %s", body, apierr.CodeNotFound)
+			}
+		})
 	}
 }
 

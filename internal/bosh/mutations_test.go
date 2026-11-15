@@ -771,6 +771,56 @@ func TestDeleteDeploymentMapsCode70000ToNotFound(t *testing.T) {
 	}
 }
 
+// Restart and recreate change the state of every job. A director that has
+// no such deployment answers code 70000, which reads as
+// ErrDeploymentNotFound with the director's answer still reachable, the
+// same way a delete does. A route 404 never does.
+func TestJobStateChangesMapCode70000ToNotFound(t *testing.T) {
+	t.Parallel()
+
+	changes := map[string]func(context.Context, bosh.Director) (*bosh.Task, error){
+		"restart": func(ctx context.Context, director bosh.Director) (*bosh.Task, error) {
+			return director.RestartDeployment(ctx, jobStateDeployment, bosh.RestartOpts{})
+		},
+		"recreate": func(ctx context.Context, director bosh.Director) (*bosh.Task, error) {
+			return director.RecreateDeployment(ctx, jobStateDeployment, bosh.RecreateOpts{})
+		},
+	}
+
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
+				boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment 'x' doesn't exist")
+			})
+
+			_, err := change(t.Context(), newReadAdapter(t, server, nil))
+			if !errors.Is(err, bosh.ErrDeploymentNotFound) {
+				t.Fatalf("expected ErrDeploymentNotFound, got %v", err)
+			}
+
+			if errors.Is(err, bosh.ErrOutcomeUnknown) {
+				t.Errorf("a director that answered 70000 started no task, got %v", err)
+			}
+
+			var apiErr *boshapi.APIError
+			if !errors.As(err, &apiErr) || apiErr.Code != boshtest.CodeDeploymentNotFound {
+				t.Errorf("expected the director's answer to stay reachable, got %v", err)
+			}
+
+			routeServer, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, request *http.Request) {
+				boshtest.WriteRouteNotFound(writer, request)
+			})
+
+			_, err = change(t.Context(), newReadAdapter(t, routeServer, nil))
+			if err == nil || errors.Is(err, bosh.ErrDeploymentNotFound) {
+				t.Errorf("a route 404 says nothing about the deployment, got %v", err)
+			}
+		})
+	}
+}
+
 func TestDeleteDeploymentRoute404IsARouteNotFoundError(t *testing.T) {
 	server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, request *http.Request) {
 		boshtest.WriteRouteNotFound(writer, request)

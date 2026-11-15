@@ -374,6 +374,13 @@ func (d *DirectorAdapter) changeJobState(ctx context.Context, operation, name st
 
 	task, err := d.api.Instances().UpdateJobState(ctx, name, allJobs, opts)
 
+	var apiErr *boshapi.APIError
+	if errors.As(err, &apiErr) && apiErr.Code == boshapi.ErrorCodeDeploymentNotFound {
+		d.log.Infof("The director has no deployment %s to change to %s", name, opts.NewState)
+
+		return nil, fmt.Errorf("%w: %w", ErrDeploymentNotFound, err)
+	}
+
 	return d.accepted(ctx, mutation{
 		operation:  operation,
 		deployment: name,
