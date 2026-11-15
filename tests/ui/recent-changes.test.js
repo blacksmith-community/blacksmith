@@ -174,6 +174,23 @@ t('a password inside a URL never reaches the page',async()=>{
  expect(leaks(s,s.host,[RAW_URL_PW])).toEqual([]);
 });
 
+// The page strips a password from every value the broker does, from the
+// same list of cases, so the two guards never drift apart. The page shows
+// ten rows, so the cases go through in groups of ten.
+t('the page hides URL passwords the way the broker does',async()=>{
+ const root=path.resolve(__dirname,'..','..');
+ const {leak,cases}=JSON.parse(fs.readFileSync(path.join(root,'internal','audit','testdata','url-passwords.json'),'utf8'));
+ expect(cases.length).toBeGreaterThan(20);
+ for(let first=0;first<cases.length;first+=10){
+  const group=cases.slice(first,first+10);
+  const changes=group.map((c,i)=>({id:'v'+(first+i),at:at(50-i),scope:'endpoints',actor:'operator',target:'prod-cf',change:'update',key:'api_url',old:c.value,new:c.value}));
+  const s=await brokerScreen({changes,requests:[]});
+  const table=rows(s.section());
+  expect(table.map(r=>r.slice(4))).toEqual(group.map(c=>[c.want,c.want]));
+  expect(leaks(s,s.host,[leak])).toEqual([]);
+ }
+});
+
 // The page decides a secret key the way the broker does, so a record whose
 // values the broker did not hide still shows none.
 t('the page hides every key the broker treats as a secret',async()=>{

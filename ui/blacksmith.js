@@ -11919,15 +11919,34 @@
     const joined = words.join('');
     return RECENT_CHANGE_SECRET_FRAGMENTS.some((fragment) => joined.includes(fragment));
   };
-  // The password of a URL inside a value, found the way the broker finds it,
-  // so a record from an older broker still never shows one.
-  const RECENT_CHANGE_URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^\/?#\s@:"]*):[^\/?#\s"]+@/gi;
+  // The password in the userinfo of each word of a value, found the way the
+  // broker finds it, so a record from an older broker still never shows one.
+  // Words break at ASCII white space and double quotes. The userinfo ends at
+  // the word's last @, with a scheme or without one, and the username runs
+  // to the first colon. A host and port followed by a path is left alone.
+  // The broker's test and this page's test share one list of cases.
+  const RECENT_CHANGE_WORD_BREAK = /([\t\n\v\f\r "])/;
+  const recentChangeWordPassword = (word) => {
+    const userEnd = word.lastIndexOf('@');
+    if (userEnd < 0) return word;
+    const scheme = word.indexOf('://');
+    const start = scheme >= 0 && scheme < userEnd ? scheme + 3 : 0;
+    const colon = word.indexOf(':', start);
+    if (colon < 0 || colon >= userEnd) return word;
+    if (/[\/?#@]/.test(word.slice(start, colon))) return word;
+    const password = word.slice(colon + 1, userEnd);
+    if (!password) return word;
+    const cut = password.search(/[\/?#]/);
+    if (cut >= 0 && /^[0-9]{1,5}$/.test(password.slice(0, cut))) return word;
+    return word.slice(0, colon + 1) + RECENT_CHANGE_HIDDEN + word.slice(userEnd);
+  };
+  const recentChangeStripPasswords = (text) => (text.includes('@')
+    ? text.split(RECENT_CHANGE_WORD_BREAK).map((part, index) => (index % 2 ? part : recentChangeWordPassword(part))).join('')
+    : text);
   const recentChangeValue = (record, value) => {
     if (recentChangeSecret(record.key)) return escapeHtml(RECENT_CHANGE_HIDDEN);
     if (value === undefined || value === null || value === '') return EMPTY_HTML;
-    let text = String(value);
-    if (URI_PASSWORD.test(text)) text = text.replace(RECENT_CHANGE_URL_PASSWORD, `$1:${RECENT_CHANGE_HIDDEN}@`);
-    return `<code>${escapeHtml(text)}</code>`;
+    return `<code>${escapeHtml(recentChangeStripPasswords(String(value)))}</code>`;
   };
   const recentChangeRow = (record) => {
     const target = RECENT_CHANGE_TARGETS[record.target] || String(record.target || '');
