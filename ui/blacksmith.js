@@ -1051,12 +1051,75 @@
   };
   if (window.customElements) window.customElements.whenDefined('ot-tabs').then(defineBsTabs);
 
+  // Row cap. A table that carries data-row-cap shows its first rows and a
+  // "Show more" button for the rest. Every row stays in the table, so sorting
+  // and searching act on the whole data set, and the cap is applied last, to
+  // the rows that the filters leave visible. The cap hides rows with a class
+  // and never with the inline display the filters set, so the two never undo
+  // each other. A table watches its own body, so it needs no call from a
+  // filter or a sort.
+  const ROW_CAP_DEFAULT = 100;
+  const rowCapTables = new WeakSet();
+  let rowCapSeq = 0;
+  const installRowCap = (table) => {
+    if (!table.hasAttribute('data-row-cap') || rowCapTables.has(table)) return;
+    const tbody = table.tBodies[0];
+    if (!tbody) return;
+    rowCapTables.add(table);
+    const size = Math.max(1, Math.floor(Number(table.dataset.rowCap)) || ROW_CAP_DEFAULT);
+    const noun = table.dataset.rowCapNoun || 'rows';
+    let shown = size;
+    const bar = document.createElement('div');
+    bar.className = 'row-cap';
+    bar.hidden = true;
+    const status = document.createElement('p');
+    status.className = 'row-cap-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.setAttribute('aria-atomic', 'true');
+    status.tabIndex = -1;
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'row-cap-more';
+    more.dataset.keepKey = `row-cap:${table.classList[0] || table.id || 'table'}:${++rowCapSeq}`;
+    bar.append(status, more);
+    (table.closest('[role="region"], .table-scroll') || table).insertAdjacentElement('afterend', bar);
+
+    const apply = () => {
+      const rows = Array.from(tbody.rows).filter((row) => !row.classList.contains('row-detail'));
+      let matching = 0;
+      rows.forEach((row) => {
+        const detail = row.nextElementSibling?.classList.contains('row-detail') ? row.nextElementSibling : null;
+        const capped = row.style.display !== 'none' && ++matching > shown;
+        row.classList.toggle('row-capped', capped);
+        detail?.classList.toggle('row-capped', capped);
+      });
+      if (matching <= size) shown = size;
+      bar.hidden = matching <= size;
+      const showing = Math.min(shown, matching);
+      const text = `Showing ${showing} of ${matching} ${noun}`;
+      if (status.textContent !== text) status.textContent = text;
+      const left = matching - showing;
+      more.hidden = left <= 0;
+      more.textContent = `Show ${Math.min(size, left)} more`;
+    };
+    more.addEventListener('click', () => {
+      shown += size;
+      apply();
+      if (more.hidden) status.focus();
+    });
+    new MutationObserver(apply).observe(tbody, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+    apply();
+  };
+
   // Universal Table Initialization - Auto-sort functionality
   const initializeAllTables = () => {
     // Find all tables in the document
     const tables = document.querySelectorAll('table');
 
     tables.forEach(table => {
+      installRowCap(table);
+
       // Skip if table already has sorting initialized
       if (table.hasAttribute('data-sorting-initialized') || table.dataset.sortable === 'false') {
         return;
@@ -3093,7 +3156,7 @@
         <div class="search-filter-container">${createSearchFilter('instances-overview-table', 'Search instances...')}</div>
         ${tableToolbarActions({ tableSelector: '.instances-overview-table', noun: 'instances' })}
       </div>
-      <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table"><caption class="visually-hidden">Every service instance with its service, plan, org and space, VM job state, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">Org / Space</th><th scope="col">VM job state</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="instances-overview-scroll" role="region" tabindex="0" aria-label="Service instances overview"><table class="instances-overview-table" data-row-cap="100" data-row-cap-noun="instances"><caption class="visually-hidden">Every service instance with its service, plan, org and space, VM job state, and the number of certificates needing attention. Choose a row to open the instance.</caption><thead><tr><th scope="col">Name</th><th scope="col">Service</th><th scope="col">Plan</th><th scope="col">Org / Space</th><th scope="col">VM job state</th><th scope="col">Certificates</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>`;
   };
   // Opening another instance keeps the section the operator is on. Operations
@@ -11253,7 +11316,7 @@
           ${tableToolbarActions({ tableSelector: '.deployment-log-table', noun: 'deployment logs', refresh: instanceId ? `onclick="${refreshFunction}"` : '' })}
         </div>
         <div class="deployment-log-table-container">
-        <table class="deployment-log-table">
+        <table class="deployment-log-table" data-row-cap="100" data-row-cap-noun="log entries">
         <thead>
           <tr>
             <th>Timestamp</th>
@@ -11327,7 +11390,7 @@
           ${tableToolbarActions({ tableSelector: '.debug-log-table', noun: 'debug logs', refresh: instanceId ? `onclick="${refreshFunction}"` : '' })}
         </div>
         <div class="debug-log-table-container">
-        <table class="debug-log-table">
+        <table class="debug-log-table" data-row-cap="100" data-row-cap-noun="log entries">
         <thead>
           <tr>
             <th>Timestamp</th>
@@ -24185,7 +24248,7 @@
           const html = `
             <div class="service-instances-table-container">
               <div class="logs-table-container">
-                <table class="service-instances-table">
+                <table class="service-instances-table" data-row-cap="100" data-row-cap-noun="service instances">
                   <thead>
                     <tr class="table-controls-row">
                       <th colspan="4" class="table-controls-header">

@@ -14554,3 +14554,11 @@ tr.row-link { cursor: pointer; }
 .load-error button { margin-top: var(--space-2); }
 /* Inside a modal or a tab of one, the panel sits flush with its pane. */
 .load-error--compact { margin: 0; padding: var(--space-2) var(--space-3); }
+
+/* Row cap. The rows past the cap stay in the table so sorting and searching
+   see them, and the class hides them. */
+tr.row-capped { display: none !important; }
+.row-cap { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px; }
+.row-cap[hidden] { display: none; }
+.row-cap .row-cap-status { margin: 0; color: var(--muted-foreground); font-size: .8125rem; }
+.row-cap .row-cap-more { cursor: pointer; }
