@@ -838,11 +838,12 @@ func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
 }
 
 const (
-	chainLeafName = "/ws-bosh/redis-i1/leaf_crt"
-	chainMidName  = "mid-ca"
-	chainRootName = "root-ca"
-	chainCAVar    = "/ws-bosh/ca"
-	chainLeafCN   = "leaf"
+	chainLeafName  = "/ws-bosh/redis-i1/leaf_crt"
+	chainMidName   = "mid-ca"
+	chainRootName  = "root-ca"
+	chainOtherName = "other-ca"
+	chainCAVar     = "/ws-bosh/ca"
+	chainLeafCN    = "leaf"
 )
 
 // chainFleet aggregates one instance scan whose leaf names signer as its
@@ -962,7 +963,7 @@ func TestItemIssuerChainCAThatDoesNotSignLeafIsUnknown(t *testing.T) {
 	t.Parallel()
 
 	ca := issue(t, issueSpec{cn: "ca", serial: 1, isCA: true})
-	other := issue(t, issueSpec{cn: "other-ca", serial: 2, isCA: true})
+	other := issue(t, issueSpec{cn: chainOtherName, serial: 2, isCA: true})
 	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 3, parent: &ca})
 
 	fleet, id := chainFleet(t, leaf.cert, "/ws-bosh/other", map[string]*x509.Certificate{"/ws-bosh/other": other.cert}, true)
@@ -1088,5 +1089,20 @@ func TestKeepLastGoodKeepsChainWhenCredHubWentDown(t *testing.T) {
 	// CredHub reachable at the start, down for the CA reads: nothing read.
 	if got := carriedChain(t, ScanMaterial{CAsRead: false, SigningCAs: map[string]*x509.Certificate{}}); got == nil || len(*got) != 1 {
 		t.Fatalf("chain after a CredHub outage = %v, want the carried chain", got)
+	}
+}
+
+func TestItemIssuerChainSelfSignedLeafWithoutCAConstraintIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	other := issue(t, issueSpec{cn: chainOtherName, serial: 1, isCA: true})
+	// No parent and not a CA: a self-signed end-entity certificate.
+	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 2})
+
+	fleet, id := chainFleet(t, leaf.cert, "/ws-bosh/other", map[string]*x509.Certificate{"/ws-bosh/other": other.cert}, true)
+
+	item, _ := fleet.Item(id)
+	if item.IssuerChain == nil || len(*item.IssuerChain) != 0 {
+		t.Fatalf("a self-signed leaf must give a known empty chain, got %v", item.IssuerChain)
 	}
 }

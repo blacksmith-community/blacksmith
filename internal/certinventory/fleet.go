@@ -532,11 +532,19 @@ func caPool(scans []InstanceScan) []*x509.Certificate {
 // A certificate only seen on a listener proves nothing, since its issuer may
 // simply not have been read.
 func noSigner(cert *Certificate, leaf *x509.Certificate) bool {
-	if leaf.CheckSignatureFrom(leaf) == nil && bytes.Equal(leaf.RawIssuer, leaf.RawSubject) {
+	if selfSigned(leaf) {
 		return true
 	}
 
 	return cert.Versions != nil && cert.Versions.SigningCA == ""
+}
+
+// selfSigned says leaf names itself as issuer and its own key made the
+// signature. It checks the signature directly, because CheckSignatureFrom
+// refuses a parent that is not a CA, which an end-entity certificate is not.
+func selfSigned(leaf *x509.Certificate) bool {
+	return bytes.Equal(leaf.RawIssuer, leaf.RawSubject) &&
+		leaf.CheckSignature(leaf.SignatureAlgorithm, leaf.RawTBSCertificate, leaf.Signature) == nil
 }
 
 // issuerChain returns the CA certificates from pool that verify leaf,
