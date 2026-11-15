@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/audit"
@@ -33,6 +34,9 @@ type Handler struct {
 	commands func() config.CommandsConfig
 	// changes keeps a record of every settings change. Nil records none.
 	changes *audit.ChangeStore
+	// saves serialises settings saves, so the old value each record
+	// holds is the one its own save replaced.
+	saves sync.Mutex
 }
 
 // taskManager is the part of the upgrade manager that the handlers call.
@@ -919,6 +923,10 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	settings := upgrade.Settings(req)
+
+	h.saves.Lock()
+	defer h.saves.Unlock()
+
 	old := h.tasks.GetSettings()
 
 	if err := h.tasks.UpdateSettings(r.Context(), settings); err != nil {

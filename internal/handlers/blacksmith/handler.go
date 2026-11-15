@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"time"
 
@@ -75,6 +76,9 @@ type Handler struct {
 	director   interfaces.Director
 	reconciler ReconcilerInterface
 	changes    *audit.ChangeStore
+	// saves serialises settings saves, so the old value each record
+	// holds is the one its own save replaced.
+	saves sync.Mutex
 }
 
 // Dependencies contains all dependencies needed by the Blacksmith handler.
@@ -479,6 +483,9 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 	}
 
 	result := map[string]interface{}{"success": true}
+
+	h.saves.Lock()
+	defer h.saves.Unlock()
 
 	// Update vault max_versions if provided
 	if body.VaultMaxVersions != nil {

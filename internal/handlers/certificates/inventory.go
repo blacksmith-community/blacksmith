@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"blacksmith/internal/apierr"
@@ -54,6 +55,9 @@ type InventoryHandler struct {
 	previewer RotationPreviewer
 	log       logger.Logger
 	changes   *audit.ChangeStore
+	// saves serialises settings saves, so the old value each record
+	// holds is the one its own save replaced.
+	saves sync.Mutex
 }
 
 // NewInventoryHandler returns a handler for the inventory API. A nil service
@@ -334,6 +338,9 @@ func (h *InventoryHandler) saveSettings(w http.ResponseWriter, r *http.Request) 
 
 		return
 	}
+
+	h.saves.Lock()
+	defer h.saves.Unlock()
 
 	old := h.svc.Settings()
 

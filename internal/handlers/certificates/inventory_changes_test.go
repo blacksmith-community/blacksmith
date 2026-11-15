@@ -75,8 +75,8 @@ func TestSaveSettingsRecordsNoRefusedOrUnsavedSave(t *testing.T) {
 		body string
 	}{
 		"invalid": {svc: &fakeInventory{enabled: true}, body: `{"warning_days":7,"critical_days":7}`},
-		"unsaved": {svc: &fakeInventory{enabled: true, saveErr: errSettingsStoreDown}, body: `{"warning_days":45}`},
-		"off":     {svc: &fakeInventory{}, body: `{"warning_days":45}`},
+		"unsaved": {svc: &fakeInventory{enabled: true, saveErr: errSettingsStoreDown}, body: warningDays45},
+		"off":     {svc: &fakeInventory{}, body: warningDays45},
 	} {
 		if _, records := saveInventorySettings(t, testCase.svc, testCase.body); len(records) != 0 {
 			t.Errorf("%s save left records %+v", name, records)
