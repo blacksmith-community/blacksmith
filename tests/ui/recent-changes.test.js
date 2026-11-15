@@ -173,3 +173,36 @@ t('a password inside a URL never reaches the page',async()=>{
  expect(table[0].slice(4)).toEqual(['https://api.old.example.test','https://admin:(changed)@api.example.test/v3']);
  expect(leaks(s,s.host,[RAW_URL_PW])).toEqual([]);
 });
+
+// The page decides a secret key the way the broker does, so a record whose
+// values the broker did not hide still shows none.
+t('the page hides every key the broker treats as a secret',async()=>{
+ // Nine secret keys and one plain key fill the ten rows the page shows.
+ const keys=['admin_pw','passcode','privatekey','sshkey','sessionid','client_assertion','p\u0430ssword','x-api-key','credentials.username'];
+ const raw=(i)=>`raw-value-${i}-77e1`;
+ const changes=keys.map((key,i)=>({id:'k'+i,at:at(10),scope:'settings',target:'broker',change:'update',key,old:raw(i),new:raw(i)+'n'}));
+ changes.push({id:'plain',at:at(9),scope:'settings',target:'broker',change:'update',key:'power_state',old:'off',new:'on'});
+ const state={changes,requests:[]};
+ const s=await settingsScreen(state);
+ const table=rows(s.section());
+ const byKey=Object.fromEntries(table.map(r=>[r[2].replace(/^Broker /,''),r.slice(4)]));
+ for(const key of keys) expect([key,...(byKey[key]||[])]).toEqual([key,'(changed)','(changed)']);
+ expect(byKey.power_state).toEqual(['off','on']);
+ expect(leaks(s,s.host,keys.map((k,i)=>raw(i)))).toEqual([]);
+});
+
+// The page's secret words and fragments are the broker's, word for word.
+test('the page and the broker share one list of secret words',()=>{
+ const root=path.resolve(__dirname,'..','..');
+ const go=fs.readFileSync(path.join(root,'internal','audit','secret.go'),'utf8');
+ const js=fs.readFileSync(path.join(root,'ui','blacksmith.js'),'utf8');
+ const quoted=(text)=>[...text.matchAll(/["']([^"']+)["']/g)].map(m=>m[1]).sort();
+ const goWords=quoted(go.match(/func secretWord[\s\S]*?case ([^:]+):/)[1]);
+ const goFragments=quoted(go.match(/func secretFragments\(\)[\s\S]*?\{([\s\S]*?)\}\n\}/)[1]);
+ const jsWords=quoted(js.match(/RECENT_CHANGE_SECRET_WORDS = new Set\(\[([^\]]+)\]/)[1]);
+ const jsFragments=quoted(js.match(/RECENT_CHANGE_SECRET_FRAGMENTS = \[([^\]]+)\]/)[1]);
+ expect(goWords.length).toBeGreaterThan(10);
+ expect(goFragments.length).toBeGreaterThan(10);
+ expect(jsWords).toEqual(goWords);
+ expect(jsFragments).toEqual(goFragments);
+});

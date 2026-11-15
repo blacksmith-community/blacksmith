@@ -11900,14 +11900,25 @@
   // markup. Values only ever appear as cell text, never in an attribute.
   const RECENT_CHANGES_LIMIT = 10;
   const RECENT_CHANGE_HIDDEN = '(changed)';
-  const RECENT_CHANGE_WORD = /(^|_)(key|keys|pass|pwd|pin|cred|creds|pem|jwt|otp|seed|salt|nonce|auth|authorization|cookie|session)(_|$)|credential|bearer|apikey|accesskey/;
   const RECENT_CHANGE_LABELS = { create: 'Created', update: 'Changed', delete: 'Removed', register: 'Registration started' };
   const RECENT_CHANGE_TARGETS = { broker: 'Broker', batch: 'Batch operations', certificates: 'Certificates' };
   const RECENT_CHANGE_NOUNS = { settings: 'settings', endpoints: 'endpoint' };
-  const recentChangeSecret = (key) => String(key || '').split('.').some((part) => {
-    const name = snakeKey(part);
-    return SECRET_KEY.test(name) || RECENT_CHANGE_WORD.test(name);
-  });
+  // A key names a secret by the same rule the broker's audit.SecretKey
+  // uses, so the two lists stay one list. The key splits into lower-case
+  // words at each character that is not a letter or a digit and at each
+  // change from lower to upper case. It is a secret when a word is one of
+  // the secret words, when the joined words hold a secret fragment, or
+  // when it has any character outside ASCII.
+  const RECENT_CHANGE_SECRET_WORDS = new Set(['key', 'keys', 'pass', 'pw', 'pwd', 'pin', 'cred', 'creds', 'pem', 'jwt', 'otp', 'seed', 'salt', 'nonce', 'auth', 'authorization', 'cookie', 'session']);
+  const RECENT_CHANGE_SECRET_FRAGMENTS = ['password', 'passwd', 'passphrase', 'secret', 'token', 'credential', 'privatekey', 'apikey', 'accesskey', 'signingkey', 'encryptionkey', 'unsealkey', 'bearer', 'passcode', 'privkey', 'sshkey', 'masterkey', 'authkey', 'session', 'assertion'];
+  const recentChangeSecret = (key) => {
+    const text = String(key || '');
+    if (/[^\x00-\x7f]/.test(text)) return true;
+    const words = text.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    if (words.some((word) => RECENT_CHANGE_SECRET_WORDS.has(word))) return true;
+    const joined = words.join('');
+    return RECENT_CHANGE_SECRET_FRAGMENTS.some((fragment) => joined.includes(fragment));
+  };
   // The password of a URL inside a value, found the way the broker finds it,
   // so a record from an older broker still never shows one.
   const RECENT_CHANGE_URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^\/?#\s@:"]*):[^\/?#\s"]+@/gi;
