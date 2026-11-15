@@ -190,6 +190,10 @@ type Manager struct {
 	// Settings
 	settings     Settings
 	settingsLock sync.RWMutex
+	// settingsSave serialises each save of the settings with the apply
+	// that follows it, so the running settings are always the last ones
+	// Vault took.
+	settingsSave sync.Mutex
 
 	// Parallel job control - nil means no limit
 	jobSemaphore chan struct{}
@@ -1792,8 +1796,18 @@ func (m *Manager) GetSettings() Settings {
 	return m.settings
 }
 
-// UpdateSettings updates the settings and persists them.
+// UpdateSettings saves the settings to Vault and applies them once the save
+// lands. A save that fails changes nothing, so the running settings, the
+// job semaphore, and the BatchDirector pool always match what Vault holds.
 func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
+	m.settingsSave.Lock()
+	defer m.settingsSave.Unlock()
+
+	err := m.vault.Put(ctx, upgradeSettingsVaultPath, settings)
+	if err != nil {
+		return fmt.Errorf("failed to save settings to vault: %w", err)
+	}
+
 	m.settingsLock.Lock()
 	m.settings = settings
 	m.settingsLock.Unlock()
@@ -1804,12 +1818,6 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 	// Notify callback (e.g., to update BatchDirector pool size)
 	if m.onMaxBatchJobsChanged != nil {
 		m.onMaxBatchJobsChanged(settings.MaxBatchJobs)
-	}
-
-	// Persist settings
-	err := m.vault.Put(ctx, upgradeSettingsVaultPath, settings)
-	if err != nil {
-		return fmt.Errorf("failed to save settings to vault: %w", err)
 	}
 
 	m.logger.Info("Updated upgrade settings: max_batch_jobs=%d", settings.MaxBatchJobs)
