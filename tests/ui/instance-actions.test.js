@@ -166,3 +166,40 @@ t('the dialog names the org and space when the broker knows them',async()=>{
  expect(rows).toEqual(['Instance: orders-cache','Instance ID: 7a1b','Organization: payments','Space: prod']);
  dialog(d).querySelector('[data-dialog-role="cancel"]').click(); await sleep(10);
 });
+
+// When the broker's own answer never reaches the browser, the action may
+// still have started, so the tab shows the unknown outcome, not a failure.
+const expectUnknown=(d,label)=>{
+ const node=status(d);
+ expect(node.dataset.state).toBe('unknown');
+ expect(node.textContent).toContain(`${label} of orders-cache may have started`);
+ expect(node.textContent).not.toContain('failed');
+ expect(node.querySelector('a').getAttribute('href')).toBe('#/instances/7a1b/events');
+ expect(node.querySelector('button')).toBeNull();
+};
+
+t('a fetch that fails shows the unknown outcome',async()=>{
+ const env=mount(); const {w,host,d}=env;
+ w.__routes.unshift(['/b/7a1b/restart',()=>Promise.reject(new w.TypeError('Failed to fetch'))]);
+ actionButton(host,'restart').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ expectUnknown(d,'Restart');
+ expect(actionButton(host,'restart').disabled).toBe(false);
+});
+
+t('a gateway error with no broker code shows the unknown outcome',async()=>{
+ const env=mount(); const {w,host,d}=env;
+ w.__routes.unshift(['/b/7a1b/recreate',()=>Promise.resolve({ok:false,status:504,statusText:'Gateway Timeout',json:()=>Promise.reject(new w.SyntaxError('Unexpected token <')),text:()=>Promise.resolve('<html>Gateway Timeout</html>')})]);
+ actionButton(host,'recreate').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ expectUnknown(d,'Recreate');
+});
+
+t('a broker 5xx that carries its own code still reads as a failure',async()=>{
+ const env=mount(); const {w,host,d}=env;
+ w.__routes.unshift(['/b/7a1b/restart',(u,o,json)=>json(503,{success:false,code:'tasks_loading',error:'the stored tasks are still loading'})]);
+ actionButton(host,'restart').click(); await sleep(10);
+ dialog(d).querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ expect(status(d).dataset.state).toBe('failed');
+ expect(status(d).textContent).toContain('the stored tasks are still loading');
+});

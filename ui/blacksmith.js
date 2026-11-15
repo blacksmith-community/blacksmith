@@ -13728,9 +13728,14 @@
     instanceActionOutcomes.set(instanceId, { action, state: 'running' });
     paintInstanceActions(instanceId);
     try {
-      const response = await fetch(`/b/${encodeURIComponent(instanceId)}/${action}`, { method: 'POST', cache: 'no-cache' });
-      const result = await response.json().catch(() => ({}));
-      if (result.code === 'outcome_unknown') {
+      // A fetch that fails, or a 5xx without a broker code, such as a
+      // gateway's error page, means the broker's answer never arrived. The
+      // request may still have reached the director, so it reads as the
+      // unknown outcome the broker reports when the director's answer is lost.
+      const response = await fetch(`/b/${encodeURIComponent(instanceId)}/${action}`, { method: 'POST', cache: 'no-cache' }).catch(() => null);
+      const result = response ? await response.json().catch(() => ({})) : {};
+      const answerLost = !response || (response.status >= 500 && !result.code);
+      if (answerLost || result.code === 'outcome_unknown') {
         // The task may be running, so this is not a failure and offers no
         // retry. The status links to the deployment's tasks instead.
         instanceActionOutcomes.set(instanceId, { action, state: 'unknown' });
