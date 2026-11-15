@@ -14562,3 +14562,8 @@ tr.row-capped { display: none !important; }
 .row-cap[hidden] { display: none; }
 .row-cap .row-cap-status { margin: 0; color: var(--muted-foreground); font-size: .8125rem; }
 .row-cap .row-cap-more { cursor: pointer; }
+
+/* Load more for the Tasks table. The status says how many rows are shown. */
+.tasks-load-more { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px; }
+.tasks-load-more .tasks-load-status { margin: 0; font-size: .8125rem; }
+.tasks-load-more .tasks-load-more-btn { cursor: pointer; }

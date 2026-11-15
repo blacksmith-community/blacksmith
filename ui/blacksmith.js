@@ -12187,9 +12187,27 @@
 
   // The list answers with a bare array, or with the rows plus a count of every
   // state across the window the server looked at when counts were asked for.
+  // hasMore is undefined when the broker does not say, so an older broker's
+  // answer keeps the note it always had.
   const readTasksResponse = (body) => {
-    if (Array.isArray(body)) return { tasks: body, stateCounts: null, window: 0 };
-    return { tasks: body?.tasks || [], stateCounts: body?.state_counts || null, window: Number(body?.window) || 0 };
+    if (Array.isArray(body)) return { tasks: body, stateCounts: null, window: 0, hasMore: false, exact: true };
+    return {
+      tasks: body?.tasks || [],
+      stateCounts: body?.state_counts || null,
+      window: Number(body?.window) || 0,
+      hasMore: typeof body?.has_more === 'boolean' ? body.has_more : undefined,
+      exact: body?.exact !== false,
+    };
+  };
+
+  // What the chip counts cover. They are counted over the rows the table holds
+  // and the note says so, including when older tasks remain unloaded or the
+  // broker could not check every task.
+  const tasksCountNote = (meta) => {
+    if (!meta.window) return 'State counts cover the tasks loaded here.';
+    if (meta.exact === false) return `State counts cover the latest ${meta.window} tasks loaded here. The broker could not check every task, so a state with none there can still have older tasks.`;
+    if (meta.hasMore === false) return `State counts cover all ${meta.window} tasks the director lists.`;
+    return `State counts cover the latest ${meta.window} tasks, so a state with none there can still have older tasks.`;
   };
 
   const formatTasks = (tasks, dataKey = 'tasks', meta = {}) => {
@@ -12215,7 +12233,7 @@
         ${tableToolbarChips({ legend: 'States', keepPrefix: 'tasks-state', chips: TASK_STATE_CHIPS.map(([value, text]) => [value, text, meta.stateCounts ? Number(meta.stateCounts[value]) || 0 : (tasks || []).filter((task) => task.state === value).length]) })}
         ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'tasks', refresh: 'id="refresh-tasks-btn"', wrapperClass: 'tasks-action-buttons' })}
       </div>
-      <p class="tasks-count-note muted">${meta.window ? `State counts cover the latest ${meta.window} tasks, so a state with none there can still have older tasks.` : 'State counts cover the tasks loaded here.'}</p>
+      <p class="tasks-count-note muted">${tasksCountNote(meta)}</p>
       <div class="tasks-table-container">
         <table class="${tableId}">
           <thead>
@@ -12275,6 +12293,10 @@
           </tbody>
         </table>
       </div>
+      ${meta.hasMore === true ? `<div class="tasks-load-more">
+        <p class="tasks-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing ${tasks.length} tasks. Older tasks are available.</p>
+        <button type="button" class="tasks-load-more-btn" data-tasks-load-more data-keep-key="tasks-load-more">Load more tasks</button>
+      </div>` : ''}
     `;
   };
 
@@ -18540,7 +18562,11 @@
   };
 
   // Refresh tasks table
-  const refreshTasksTable = async () => {
+  // With more set, the next page of older tasks is read by offset and added to
+  // the rows already held. Without it, the table goes back to the first page.
+  const refreshTasksTable = async (options) => {
+    const more = options?.more === true;
+    const held = more ? (tableOriginalData.get('tasks') || []) : [];
     const refresh = beginDetailRefresh('blacksmith', 'tasks');
     if (!refresh?.current()) return;
     const currentSearchFilter = captureSearchFilterState('tasks-table');
@@ -18563,21 +18589,35 @@
       // The page asks for the whole window with no states, so the rows it
       // holds and the chip counts describe the same tasks. The chips then
       // filter those rows in the page.
-      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(taskFilterValue)}&counts=1`;
+      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(taskFilterValue)}&counts=1${more ? `&offset=${held.length}` : ''}`;
 
       const response = await fetch(url, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const loaded = readTasksResponse(await response.json());
-      const tasks = loaded.tasks;
+      let loaded = readTasksResponse(await response.json());
+      let tasks = loaded.tasks;
+      if (more) {
+        // A task that arrived meanwhile pushes older ones down a page, so a row
+        // can come twice. The counts are then taken from the rows held, which
+        // is the set the note describes.
+        const seen = new Set(held.map(task => task.id));
+        tasks = held.concat(tasks.filter(task => !seen.has(task.id)));
+        loaded = { ...loaded, tasks, stateCounts: null, window: tasks.length };
+      }
       if (!refresh.current()) return;
       refresh.fetched();
       const contentContainer = refresh.container;
 
       if (contentContainer) {
         contentContainer.innerHTML = formatTasks(tasks, 'tasks', loaded);
+        if (more) {
+          // The button that was pressed is gone, so focus moves to the first
+          // row it added, which keeps the reader's place.
+          const added = document.querySelectorAll('#blacksmith .tasks-table tbody tr')[held.length];
+          if (added) { added.tabIndex = -1; added.focus(); }
+        }
 
         // The new rows hold every state, so the unpressed chips hide theirs at
         // once and no hidden row shows while the handlers are restored.
@@ -18641,9 +18681,18 @@
         }, 50);
       }
     } catch (error) {
+      document.querySelectorAll('[data-tasks-load-more]').forEach(button => { button.disabled = false; });
       refresh.error('The refresh failed.');
     }
   };
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-tasks-load-more]');
+    if (!button || button.disabled) return;
+    event.preventDefault();
+    button.disabled = true;
+    refreshTasksTable({ more: true });
+  });
 
   // A task row is shown only when its state chip is pressed. Rows without a
   // state, such as the empty-table message, are never hidden by the chips.
