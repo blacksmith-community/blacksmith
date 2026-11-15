@@ -12268,13 +12268,20 @@
   // The most tasks the broker will list at once, and so the window the chips count.
   const TASKS_WINDOW = 200;
 
+  // The deepest the broker lists, so a table that holds this many tasks has everything it can load.
+  const TASKS_LISTED_MAX = 2000;
+
   const TASK_STATE_CHIPS = [['processing', 'Processing'], ['queued', 'Queued'], ['done', 'Done'], ['error', 'Error'], ['cancelled', 'Cancelled']];
 
   // A state with no tasks has nothing to show, so its chip is disabled and
   // dimmed. One that is pressed stays enabled so it can be turned off.
+  // The counts cover the latest window, and a state with none there can still
+  // have older tasks, so a chip is dimmed only when the window is the whole
+  // list.
+  let tasksWindowComplete = true;
   const syncTaskStateChips = () => {
     document.querySelectorAll('#blacksmith .toolbar-chips input[type="checkbox"][data-count]').forEach((input) => {
-      const idle = Number(input.dataset.count) === 0 && !input.checked;
+      const idle = tasksWindowComplete && Number(input.dataset.count) === 0 && !input.checked;
       input.disabled = idle;
       if (idle) input.setAttribute('aria-disabled', 'true'); else input.removeAttribute('aria-disabled');
       input.closest('label')?.classList.toggle('chip-dim', idle);
@@ -12286,13 +12293,14 @@
   // hasMore is undefined when the broker does not say, so an older broker's
   // answer keeps the note it always had.
   const readTasksResponse = (body) => {
-    if (Array.isArray(body)) return { tasks: body, stateCounts: null, window: 0, hasMore: false, exact: true };
+    if (Array.isArray(body)) return { tasks: body, stateCounts: null, window: 0, hasMore: false, exact: true, ceiling: false };
     return {
       tasks: body?.tasks || [],
       stateCounts: body?.state_counts || null,
       window: Number(body?.window) || 0,
       hasMore: typeof body?.has_more === 'boolean' ? body.has_more : undefined,
       exact: body?.exact !== false,
+      ceiling: body?.ceiling === true,
     };
   };
 
@@ -12300,6 +12308,7 @@
   // and the note says so, including when older tasks remain unloaded or the
   // broker could not check every task.
   const tasksCountNote = (meta) => {
+    if (meta.filtered && meta.window) return `State counts cover the latest ${meta.window} tasks of every state, not only the states pressed here. The rows listed are the pressed states' tasks, however old.`;
     if (!meta.window) return 'State counts cover the tasks loaded here.';
     if (meta.exact === false) return `State counts cover the latest ${meta.window} tasks loaded here. The broker could not check every task, so a state with none there can still have older tasks.`;
     if (meta.hasMore === false) return `State counts cover all ${meta.window} tasks the director lists.`;
@@ -12309,6 +12318,8 @@
   const formatTasks = (tasks, dataKey = 'tasks', meta = {}) => {
     // Always store data for sorting, even if empty
     tableOriginalData.set(dataKey, tasks || []);
+    // With states pressed the window is read on its own, and it is the whole list when it came back short.
+    tasksWindowComplete = meta.exact !== false && (meta.filtered ? meta.window < TASKS_WINDOW : meta.hasMore !== true);
 
     const tableId = `tasks-table`;
 
@@ -12389,7 +12400,9 @@
           </tbody>
         </table>
       </div>
-      ${meta.hasMore === true ? `<div class="tasks-load-more">
+      ${meta.ceiling === true ? `<div class="tasks-load-more">
+        <p class="tasks-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing ${tasks.length} tasks. Older tasks are not listed here, because the broker lists at most ${TASKS_LISTED_MAX} tasks.</p>
+      </div>` : meta.hasMore === true ? `<div class="tasks-load-more">
         <p class="tasks-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing ${tasks.length} tasks. Older tasks are available.</p>
         <button type="button" class="tasks-load-more-btn" data-tasks-load-more data-keep-key="tasks-load-more">Load more tasks</button>
       </div>` : ''}
@@ -18571,10 +18584,11 @@
       });
     }
 
-    // Handle state filter changes
+    // A chip asks the broker for the states it leaves pressed, so the list is
+    // exact whatever the age of the tasks.
     stateCheckboxes.forEach(checkbox => {
       checkbox.addEventListener('change', () => {
-        applyTasksFilter();
+        refreshTasksTable();
       });
     });
 
@@ -18600,7 +18614,7 @@
       if (document.querySelector('#blacksmith .entity-workspace[data-section="tasks"]')) {
         const runningTasks = document.querySelectorAll('.tasks-table .status-badge[data-state="processing"], .tasks-table .status-badge[data-state="queued"]');
         if (runningTasks.length > 0) {
-          refreshTasksTable();
+          refreshTasksTable({ keep: true });
         }
       }
     }, 30000);
@@ -18658,12 +18672,43 @@
     }
   };
 
+  // Reads the pages of a task list. A chip pressed for some states, but not
+  // all, asks the broker for just those states, which it filters at the
+  // director so an older task of that state is found. Pages are read in turn
+  // by offset, from the rows already held, until the table holds the target
+  // number of rows or the broker has no more or says it has hit its ceiling.
+  const readTaskPages = async ({ taskType, team, states, existing, target }) => {
+    const rows = existing.slice();
+    const seen = new Set(rows.map(task => task.id));
+    let first = null;
+    let last = null;
+    let pages = 0;
+    do {
+      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(team)}&counts=1${states.length ? `&states=${encodeURIComponent(states.join(','))}` : ''}${rows.length ? `&offset=${rows.length}` : ''}`;
+      const response = await fetch(url, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      last = readTasksResponse(await response.json());
+      first = first || last;
+      pages += 1;
+      const before = rows.length;
+      // A task that arrived meanwhile pushes older ones down a page, so a row can come twice.
+      last.tasks.forEach((task) => { if (!seen.has(task.id)) { seen.add(task.id); rows.push(task); } });
+      if (rows.length === before) break;
+    } while (rows.length < target && last.hasMore === true && !last.ceiling);
+    return { rows, first, last, pages };
+  };
+
   // Refresh tasks table
   // With more set, the next page of older tasks is read by offset and added to
-  // the rows already held. Without it, the table goes back to the first page.
+  // the rows already held. With keep set, the pages already held are read
+  // again, so a refresh does not take the reader back to the first page.
+  // Without either, the table goes back to the first page.
   const refreshTasksTable = async (options) => {
     const more = options?.more === true;
-    const held = more ? (tableOriginalData.get('tasks') || []) : [];
+    const keep = options?.keep === true;
+    const held = more || keep ? (tableOriginalData.get('tasks') || []) : [];
     const refresh = beginDetailRefresh('blacksmith', 'tasks');
     if (!refresh?.current()) return;
     const currentSearchFilter = captureSearchFilterState('tasks-table');
@@ -18683,25 +18728,30 @@
     }
 
     try {
-      // The page asks for the whole window with no states, so the rows it
-      // holds and the chip counts describe the same tasks. The chips then
-      // filter those rows in the page.
-      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(taskFilterValue)}&counts=1${more ? `&offset=${held.length}` : ''}`;
-
-      const response = await fetch(url, { cache: 'no-cache' });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      let loaded = readTasksResponse(await response.json());
-      let tasks = loaded.tasks;
-      if (more) {
-        // A task that arrived meanwhile pushes older ones down a page, so a row
-        // can come twice. The counts are then taken from the rows held, which
-        // is the set the note describes.
-        const seen = new Set(held.map(task => task.id));
-        tasks = held.concat(tasks.filter(task => !seen.has(task.id)));
-        loaded = { ...loaded, tasks, stateCounts: null, window: tasks.length };
+      // Every state pressed, or none, is the plain latest window. Some pressed
+      // asks the broker for those states alone.
+      const states = checkedStates.length > 0 && uncheckedStates.length > 0 ? checkedStates : [];
+      const { rows: tasks, first, last, pages } = await readTaskPages({
+        taskType,
+        team: taskFilterValue,
+        states,
+        existing: more ? held : [],
+        target: more ? held.length + 1 : (keep ? held.length : 1),
+      });
+      let loaded = {
+        tasks,
+        stateCounts: first.stateCounts,
+        window: first.window,
+        hasMore: last.hasMore,
+        exact: first.exact && last.exact,
+        ceiling: last.ceiling,
+        filtered: states.length > 0,
+      };
+      // A page that added nothing leaves a button that would load nothing, so it ends here.
+      if (more && tasks.length === held.length && loaded.hasMore === true) loaded.ceiling = true;
+      if (!loaded.filtered && (more || pages > 1)) {
+        // The counts are then taken from the rows held, which is the set the note describes.
+        loaded = { ...loaded, stateCounts: null, window: tasks.length };
       }
       if (!refresh.current()) return;
       refresh.fetched();
@@ -18755,7 +18805,7 @@
             if (checkbox) {
               checkbox.checked = true;
               checkbox.addEventListener('change', () => {
-                applyTasksFilter();
+                refreshTasksTable();
               });
             }
           });
@@ -18764,7 +18814,7 @@
             if (checkbox) {
               checkbox.checked = false;
               checkbox.addEventListener('change', () => {
-                applyTasksFilter();
+                refreshTasksTable();
               });
             }
           });

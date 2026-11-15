@@ -4,22 +4,7 @@ const { JSDOM } = require('./certificates/support.js');
 
 const t = JSDOM ? test : test.skip;
 
-const row = (id, state) => ({ id, state, description: `task ${id}`, started_at: '2026-10-31T10:00:00Z', timestamp: 1793000000 + id });
-// The director's history, newest first. Every tenth task failed.
-const history = (total) => Array.from({ length: total }, (_, i) => { const id = total - i; return row(id, id % 10 === 0 ? 'error' : 'done'); });
-
-// A stand-in for the broker's list that pages by offset and answers with the
-// object form, with counts over the rows from the newest through the page.
-const serve = (all, shift = () => 0) => (u) => {
-  const q = new URL(u, 'http://localhost').searchParams;
-  const limit = Number(q.get('limit')) || 50;
-  const offset = Number(q.get('offset')) || 0;
-  const through = all.slice(0, offset + limit);
-  const counts = { processing: 0, queued: 0, done: 0, error: 0, cancelled: 0 };
-  through.forEach((task) => { counts[task.state] += 1; });
-  const start = Math.max(0, offset - shift());
-  return { tasks: all.slice(start, offset + limit), offset, limit, has_more: all.length > offset + limit, exact: true, state_counts: counts, window: through.length };
-};
+const { row, history, serve } = require('./tasks-stub.js');
 
 const mount = async (all, shift) => {
   const { w, d, calls } = boot();
@@ -29,7 +14,7 @@ const mount = async (all, shift) => {
   root.innerHTML = '<div class="entity-workspace" data-section="tasks"><div class="detail-content"></div></div>';
   w.__routes.push(['/b/tasks?', (u, o, json) => json(200, serve(all, shift)(u))]);
   const first = serve(all)('/b/tasks?type=recent&limit=200&counts=1');
-  d.querySelector('#blacksmith .detail-content').innerHTML = w.__T.formatTasks(first.tasks, 'tasks', { stateCounts: first.state_counts, window: first.window, hasMore: first.has_more, exact: first.exact });
+  d.querySelector('#blacksmith .detail-content').innerHTML = w.__T.formatTasks(first.tasks, 'tasks', { stateCounts: first.state_counts, window: first.window, hasMore: first.has_more, exact: first.exact, ceiling: first.ceiling });
   return { w, d, calls };
 };
 const rows = (d) => Array.from(d.querySelectorAll('.tasks-table tbody tr')).filter((r) => r.querySelector('.task-id'));
@@ -119,16 +104,130 @@ t('a task that moved down while paging is not shown twice, and the counts follow
   } finally { w.close(); }
 });
 
-t('a state chip still filters the rows that Load more added', async () => {
-  const { w, d } = await mount(history(450));
+// Presses one state chip alone, as the Summary link and a reader both do.
+const pressOnly = (d, state) => {
+  d.querySelectorAll('#blacksmith .toolbar-chips input[type="checkbox"]').forEach((box) => { box.checked = box.value === state; });
+};
+const lastTasksUrl = (calls) => calls.filter((c) => c.includes('/b/tasks?')).pop();
+const ids = (d) => rows(d).map((r) => r.querySelector('.task-id').textContent);
+
+t('a pressed chip asks the broker for its state, and Load more pages through that exact result', async () => {
+  const { w, d, calls } = await mount(history(2500));
+  try {
+    pressOnly(d, 'error');
+    await w.__T.refreshTasksTable();
+    await sleep(150);
+    const url = lastTasksUrl(calls);
+    expect(url).toContain('states=error');
+    expect(url).toContain('counts=1');
+    expect(url).toContain('limit=200');
+    expect(rows(d).length).toBe(200);
+    expect(rows(d).every((r) => r.querySelector('.status-badge').dataset.state === 'error')).toBe(true);
+    // The chip counts are the latest window's, and the note says so.
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('20/180');
+    expect(note(d)).toContain('latest 200 tasks of every state');
+    more(d).click();
+    await sleep(200);
+    const next = lastTasksUrl(calls);
+    expect(next).toContain('states=error');
+    expect(next).toContain('offset=200');
+    expect(rows(d).length).toBe(250);
+    expect(rows(d)[249].querySelector('.task-id').textContent).toBe('10');
+    expect(count(d, 'error') + '/' + count(d, 'done')).toBe('20/180');
+    expect(more(d)).toBeNull();
+  } finally { w.close(); }
+});
+
+t('a pressed chip still shows its rows after a refresh, a keeping refresh, and a change of chip', async () => {
+  const { w, d, calls } = await mount(history(450));
+  try {
+    pressOnly(d, 'error');
+    await w.__T.refreshTasksTable();
+    await sleep(150);
+    expect(rows(d).length).toBe(45);
+    await w.__T.refreshTasksTable({ keep: true });
+    await sleep(150);
+    expect(rows(d).length).toBe(45);
+    await w.__T.refreshTasksTable();
+    await sleep(150);
+    expect(rows(d).length).toBe(45);
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="error"]').checked).toBe(true);
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').checked).toBe(false);
+    // Pressing the done chip as well asks for both states, through the chip's own handler.
+    const done = d.querySelector('#blacksmith .toolbar-chips input[value="done"]');
+    done.checked = true;
+    done.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await sleep(200);
+    expect(decodeURIComponent(lastTasksUrl(calls))).toContain('states=done,error');
+    expect(rows(d).length).toBe(200);
+  } finally { w.close(); }
+});
+
+t('an error task behind more than 200 newer tasks shows up when the Summary link is followed', async () => {
+  // The Summary row links to this address, and the router carries the state to the Tasks page.
+  const all = history(450, [7]);
+  const { w, d, calls } = boot({
+    noDialogs: true,
+    router: true,
+    url: 'http://localhost/#/broker/tasks?state=error',
+    routes: [
+      ['/b/tasks?', (u, o, json) => json(200, serve(all)(u))],
+      ['/b/service-filter-options', (u, o, json) => json(200, { options: ['blacksmith'] })],
+      ['/b/status', (u, o, json) => json(200, { env: 'lab', deployment: 'blacksmith', instances: {}, plans: {} })],
+      ['/v2/catalog', (u, o, json) => json(200, { services: [] })],
+    ],
+  });
+  try {
+    await sleep(700);
+    expect(lastTasksUrl(calls)).toContain('states=error');
+    expect(ids(d)).toEqual(['7']);
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="error"]').checked).toBe(true);
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').checked).toBe(false);
+  } finally { w.close(); }
+});
+
+t('a keeping refresh reads every page the reader loaded and stays on them', async () => {
+  const { w, d, calls } = await mount(history(900));
   try {
     more(d).click();
     await sleep(200);
-    const box = d.querySelector('#blacksmith .toolbar-chips input[value="done"]');
-    box.checked = false;
-    box.dispatchEvent(new w.Event('change', { bubbles: true }));
-    const visible = rows(d).filter((r) => r.style.display !== 'none');
-    expect(visible.length).toBe(40);
+    more(d).click();
+    await sleep(200);
+    expect(rows(d).length).toBe(600);
+    const before = calls.length;
+    await w.__T.refreshTasksTable({ keep: true });
+    await sleep(250);
+    const urls = calls.slice(before).filter((c) => c.includes('/b/tasks?'));
+    expect(urls.length).toBe(3);
+    expect(urls[0]).not.toContain('offset=');
+    expect(urls[2]).toContain('offset=400');
+    expect(rows(d).length).toBe(600);
+    expect(more(d)).not.toBeNull();
+  } finally { w.close(); }
+});
+
+t('a chip with none in the latest window stays pressable while older tasks exist', async () => {
+  const { w, d } = await mount(history(450, [7]));
+  try {
+    const error = d.querySelector('#blacksmith .toolbar-chips input[value="error"]');
+    w.__T.syncTaskStateChips();
+    expect(count(d, 'error')).toBe('0');
+    expect(error.disabled).toBe(false);
+  } finally { w.close(); }
+});
+
+t('at the broker ceiling the button is gone and the status says older tasks are not listed', async () => {
+  const { w, d } = await mount(history(2500));
+  try {
+    for (let page = 1; page < 10; page++) {
+      more(d).click();
+      await sleep(120);
+    }
+    expect(rows(d).length).toBe(2000);
+    expect(more(d)).toBeNull();
+    const status = d.querySelector('.tasks-load-status');
+    expect(status.textContent).toContain('Older tasks are not listed here');
+    expect(status.getAttribute('role')).toBe('status');
   } finally { w.close(); }
 });
 

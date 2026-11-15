@@ -234,7 +234,7 @@ const serve = (all) => (u) => {
   return q.get('counts') === '1' ? { tasks: rows, state_counts: counts, window: all.length } : rows;
 };
 
-t('a refresh asks for the whole window with counts and no states, and the chips count from state_counts', async () => {
+t('a refresh with some chips pressed asks for those states, and the chips count from state_counts', async () => {
   const { w, d, calls } = await mountTasks({ body: serve([row(1, 'error'), row(2, 'error'), row(3, 'done'), row(4, 'done'), row(5, 'done')]) });
   try {
     press(d, 'done', false); press(d, 'processing', false);
@@ -243,11 +243,11 @@ t('a refresh asks for the whole window with counts and no states, and the chips 
     const url = calls.filter((c) => c.includes('/b/tasks?')).pop();
     expect(url).toContain('counts=1');
     expect(url).toContain('limit=200');
-    expect(url).not.toMatch(/[?&]states=/);
+    expect(decodeURIComponent(url)).toContain('states=queued,error,cancelled');
     const count = (s) => d.querySelector(`#blacksmith .toolbar-chips input[value="${s}"]`).closest('label').querySelector('.chip-count').textContent;
     expect(count('done')).toBe('3');
     expect(count('error')).toBe('2');
-    expect(d.querySelector('#blacksmith .tasks-count-note').textContent).toContain('latest 5');
+    expect(d.querySelector('#blacksmith .tasks-count-note').textContent).toContain('latest 5 tasks of every state');
     expect(shown(d).length).toBe(2);
   } finally { w.close(); }
 });
@@ -260,6 +260,7 @@ t('a chip that reads Done 3 shows 3 rows after it is unpressed, refreshed, and p
     await sleep(200);
     expect(shown(d).length).toBe(1);
     press(d, 'done', true);
+    await sleep(250);
     expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').closest('label').querySelector('.chip-count').textContent).toBe('3');
     expect(shown(d).length).toBe(4);
   } finally { w.close(); }
@@ -281,6 +282,7 @@ t('typing a search never brings back a row the state chips hide, and a refresh k
     await w.__T.refreshTasksTable();
     await sleep(200);
     ['processing', 'queued', 'done', 'cancelled'].forEach((s) => press(d, s, false));
+    await sleep(250);
     expect(shown(d).length).toBe(2);
     const input = d.getElementById('search-tasks-table');
     input.value = 'task';
@@ -296,19 +298,24 @@ t('typing a search never brings back a row the state chips hide, and a refresh k
     await sleep(200);
     expect(shown(d).length).toBe(2);
     press(d, 'done', true);
+    await sleep(250);
     expect(shown(d).length).toBe(3);
-    input.value = '';
+    d.getElementById('search-tasks-table').value = '';
   } finally { w.close(); }
 });
 
-t('unpressing a chip whose state has no tasks disables it at once', async () => {
+t('unpressing a chip whose state has no tasks disables it once the list is read', async () => {
   const { w, d } = await mountTasks({ body: serve([row(1, 'done')]) });
   try {
     await w.__T.refreshTasksTable();
     await sleep(200);
-    const box = press(d, 'cancelled', false);
+    press(d, 'cancelled', false);
+    await sleep(250);
+    const box = d.querySelector('#blacksmith .toolbar-chips input[value="cancelled"]');
     expect(box.disabled).toBe(true);
     expect(box.closest('label').classList.contains('chip-dim')).toBe(true);
-    expect(press(d, 'done', false).disabled).toBe(false);
+    press(d, 'done', false);
+    await sleep(250);
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').disabled).toBe(false);
   } finally { w.close(); }
 });
