@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/audit"
@@ -20,6 +21,23 @@ import (
 const (
 	instanceActionRestart  = "restart"
 	instanceActionRecreate = "recreate"
+)
+
+// An instance action stops waiting for the director before the HTTP
+// server's write timeout, so the broker always writes its own answer.
+const (
+	// defaultActionWriteTimeout is the server's write timeout when the
+	// broker sets none, which main.go also uses.
+	defaultActionWriteTimeout = 120 * time.Second
+
+	// actionDeadlineMargin is how long before the write timeout an action
+	// stops waiting, which leaves time to write the answer.
+	actionDeadlineMargin = 10 * time.Second
+
+	// shortActionTimeoutDivisor divides the write timeout to give the least
+	// time an action may wait, for a write timeout too short to leave much
+	// once actionDeadlineMargin is taken off it.
+	shortActionTimeoutDivisor = 2
 )
 
 // instanceActionPattern matches POST /b/{instance_id}/restart and
@@ -46,7 +64,9 @@ func (h *Handler) CanHandleInstanceAction(path string) bool {
 // is one. It answers 202 with the BOSH task the director created. When the
 // director's answer is lost after the request went out, the task may have
 // started, so it answers 504 outcome_unknown rather than reporting a
-// failure.
+// failure. The director calls end before the server's write timeout, and
+// an action whose wait runs out answers outcome_unknown too, so the broker
+// always writes its own answer.
 //
 // The broker's basic-auth wrapper puts the authenticated actor in the
 // request context, as it does for every /b/ request. Each action that
@@ -96,14 +116,44 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 	}
 	defer release()
 
-	if runningTask, idle := h.deploymentIsIdle(req.Context(), writer, logger, instanceID, deployment, action); !idle {
+	ctx, cancel := h.instanceActionContext(req.Context())
+	defer cancel()
+
+	if runningTask, idle := h.deploymentIsIdle(ctx, writer, logger, instanceID, deployment, action); !idle {
 		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "refused", runningTask)
 
 		return
 	}
 
-	task, err := h.runInstanceAction(req.Context(), deployment, action)
+	task, err := h.runInstanceAction(ctx, deployment, action)
+	err = outOfTime(ctx, err)
 	answerInstanceAction(writer, logger, actor, instanceActionProblem{InstanceID: instanceID, Deployment: deployment, Operation: action}, task, err)
+}
+
+// instanceActionContext bounds the director calls of an instance action to
+// the server's write timeout less actionDeadlineMargin, or to half the write
+// timeout when that is longer, as the logs request does.
+func (h *Handler) instanceActionContext(parent context.Context) (context.Context, context.CancelFunc) {
+	writeTimeout := defaultActionWriteTimeout
+	if h.config != nil && h.config.GetBrokerConfig().WriteTimeout > 0 {
+		writeTimeout = time.Duration(h.config.GetBrokerConfig().WriteTimeout) * time.Second
+	}
+
+	limit := max(writeTimeout-actionDeadlineMargin, writeTimeout/shortActionTimeoutDivisor)
+	cause := fmt.Errorf("%w, because the write timeout of %d seconds is near", errInstanceActionOutOfTime, int(writeTimeout/time.Second))
+
+	return context.WithTimeoutCause(parent, limit, cause)
+}
+
+// outOfTime marks an action error as an unknown outcome when the action's
+// deadline ended the wait, because the request may already have reached
+// the director by then. Any other error is returned as it is.
+func outOfTime(ctx context.Context, err error) error {
+	if err != nil && errors.Is(context.Cause(ctx), errInstanceActionOutOfTime) {
+		return fmt.Errorf("%w: %w: %w", bosh.ErrOutcomeUnknown, context.Cause(ctx), err)
+	}
+
+	return err
 }
 
 // answerInstanceAction answers the director's reply to an instance action
@@ -117,7 +167,7 @@ func answerInstanceAction(writer http.ResponseWriter, logger interfaces.Logger, 
 		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "unknown", 0)
 
 		subject.Code = apierr.CodeOutcomeUnknown
-		subject.Error = fmt.Sprintf("The director's answer was lost, so the %s of instance %s may have started. Check the tasks of deployment %s before you try again.", action, instanceID, deployment)
+		subject.Error = fmt.Sprintf("The director's answer was lost or came too late, so the %s of instance %s may have started. Check the tasks of deployment %s before you try again.", action, instanceID, deployment)
 		response.JSON(writer, http.StatusGatewayTimeout, subject)
 
 		return

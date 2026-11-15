@@ -16,6 +16,7 @@ import (
 	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
+	"blacksmith/internal/config"
 	"blacksmith/internal/handlers/deployments"
 	"blacksmith/internal/mutation"
 	"blacksmith/pkg/logger"
@@ -52,13 +53,17 @@ type instanceDirector struct {
 	fail    error
 	running []bosh.Task
 	listErr error
+	// stall makes each restart and recreate wait until its context ends,
+	// as a director that never answers does.
+	stall bool
 
-	mu       sync.Mutex
-	lookups  []string
-	calls    []string
-	held     []bool
-	restarts []bosh.RestartOpts
-	recreate []bosh.RecreateOpts
+	mu        sync.Mutex
+	deadlines []time.Time
+	lookups   []string
+	calls     []string
+	held      []bool
+	restarts  []bosh.RestartOpts
+	recreate  []bosh.RecreateOpts
 }
 
 func newInstanceDirector(guard *mutation.Guard) *instanceDirector {
@@ -79,23 +84,29 @@ func (d *instanceDirector) FindRunningTasksForDeployment(_ context.Context, depl
 	return d.running, nil
 }
 
-func (d *instanceDirector) RestartDeployment(_ context.Context, name string, opts bosh.RestartOpts) (*bosh.Task, error) {
+func (d *instanceDirector) RestartDeployment(ctx context.Context, name string, opts bosh.RestartOpts) (*bosh.Task, error) {
 	d.mu.Lock()
 	d.restarts = append(d.restarts, opts)
 	d.mu.Unlock()
 
-	return d.task("RestartDeployment", name)
+	return d.task(ctx, "RestartDeployment", name)
 }
 
-func (d *instanceDirector) RecreateDeployment(_ context.Context, name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
+func (d *instanceDirector) RecreateDeployment(ctx context.Context, name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
 	d.mu.Lock()
 	d.recreate = append(d.recreate, opts)
 	d.mu.Unlock()
 
-	return d.task("RecreateDeployment", name)
+	return d.task(ctx, "RecreateDeployment", name)
 }
 
-func (d *instanceDirector) task(method, deployment string) (*bosh.Task, error) {
+func (d *instanceDirector) task(ctx context.Context, method, deployment string) (*bosh.Task, error) {
+	deadline, _ := ctx.Deadline()
+
+	d.mu.Lock()
+	d.deadlines = append(d.deadlines, deadline)
+	d.mu.Unlock()
+
 	heldBoth := false
 
 	if d.guard != nil {
@@ -109,11 +120,24 @@ func (d *instanceDirector) task(method, deployment string) (*bosh.Task, error) {
 	d.held = append(d.held, heldBoth)
 	d.mu.Unlock()
 
+	if d.stall {
+		<-ctx.Done()
+
+		return nil, fmt.Errorf("waiting for the director: %w", ctx.Err())
+	}
+
 	if d.fail != nil {
 		return nil, d.fail
 	}
 
 	return &bosh.Task{ID: instanceTaskID, State: queuedTaskState}, nil
+}
+
+func (d *instanceDirector) recordedDeadlines() []time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return append([]time.Time(nil), d.deadlines...)
 }
 
 func (d *instanceDirector) recorded() ([]string, []bool) {
@@ -991,5 +1015,85 @@ func assertRefusalAudited(t *testing.T, lines []string, deployment string, taskI
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("audit line %q lacks %q", lines[0], want)
 		}
+	}
+}
+
+// writeTimeoutConfig is a broker config whose HTTP write timeout is the
+// given number of seconds.
+type writeTimeoutConfig struct{ seconds int }
+
+func (writeTimeoutConfig) IsSSHUITerminalEnabled() bool       { return false }
+func (writeTimeoutConfig) GetEnvironment() string             { return "test" }
+func (writeTimeoutConfig) GetBOSHConfig() config.BOSHConfig   { return config.BOSHConfig{} }
+func (writeTimeoutConfig) GetVaultConfig() config.VaultConfig { return config.VaultConfig{} }
+func (writeTimeoutConfig) GetCFConfig() config.CFBrokerConfig { return config.CFBrokerConfig{} }
+func (c writeTimeoutConfig) GetBrokerConfig() config.BrokerConfig {
+	return config.BrokerConfig{WriteTimeout: c.seconds}
+}
+
+// The wait for the director ends before the server's write timeout, so
+// the broker writes its own answer. A wait that runs out may have sent the
+// request, so it answers 504 outcome_unknown and audits it as unknown.
+func TestInstanceActionsAnswerBeforeTheWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	setup := newInstanceActionSetup(deployments.Dependencies{Config: writeTimeoutConfig{seconds: 1}})
+	setup.director.stall = true
+
+	start := time.Now()
+	recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/restart")
+	elapsed := time.Since(start)
+
+	if elapsed >= time.Second {
+		t.Errorf("the action answered after %v, at or past the write timeout of 1s", elapsed)
+	}
+
+	if recorder.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if body := decodeBody(t, recorder); body["code"] != apierr.CodeOutcomeUnknown || body["operation"] != actionRestart {
+		t.Errorf("body = %v, want %s for the restart", body, apierr.CodeOutcomeUnknown)
+	}
+
+	lines := setup.log.audits()
+	if len(lines) != 1 || !strings.Contains(lines[0], `outcome="unknown"`) || !strings.Contains(lines[0], `actor="operator"`) {
+		t.Errorf("audit lines = %q, want one unknown line with the actor", lines)
+	}
+}
+
+// The deadline comes from the configured write timeout less a margin, and
+// from the server's default of 120 seconds when none is configured.
+func TestInstanceActionsTakeTheDeadlineFromTheWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	for name, test := range map[string]struct {
+		deps        deployments.Dependencies
+		least, most time.Duration
+	}{
+		"default":    {deps: deployments.Dependencies{}, least: 100 * time.Second, most: 120 * time.Second},
+		"configured": {deps: deployments.Dependencies{Config: writeTimeoutConfig{seconds: 300}}, least: 280 * time.Second, most: 300 * time.Second},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			setup := newInstanceActionSetup(test.deps)
+
+			start := time.Now()
+			recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/recreate")
+
+			if recorder.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202: %s", recorder.Code, recorder.Body.String())
+			}
+
+			deadlines := setup.director.recordedDeadlines()
+			if len(deadlines) != 1 || deadlines[0].IsZero() {
+				t.Fatalf("deadlines = %v, want one", deadlines)
+			}
+
+			if left := deadlines[0].Sub(start); left < test.least || left >= test.most {
+				t.Errorf("the director got %v, want at least %v and under %v", left, test.least, test.most)
+			}
+		})
 	}
 }

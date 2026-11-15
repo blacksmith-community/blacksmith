@@ -40,6 +40,7 @@ var (
 	errDirectorReturnedNoDeployment       = errors.New("the director returned no deployment")
 	errDirectorReturnedNoTask             = errors.New("the director returned no task")
 	errUnknownInstanceAction              = errors.New("unknown instance action")
+	errInstanceActionOutOfTime            = errors.New("the instance action ran out of time")
 )
 
 // Handler handles deployment-related endpoints.
