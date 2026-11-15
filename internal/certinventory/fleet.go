@@ -15,6 +15,11 @@ type Fleet struct {
 	certs []Certificate
 	reps  map[string]*x509.Certificate
 	index map[string]int
+	// cas is every signing CA the scans read, the pool an issuer chain
+	// is built from. chainRead holds the IDs of certificates whose owning
+	// scan recorded its CA reads.
+	cas       map[string]*x509.Certificate
+	chainRead map[string]bool
 	// everScanned says at least one scan in the input had succeeded at some
 	// point, so an empty fleet means nothing was found and not that nothing
 	// was ever read.
@@ -27,6 +32,14 @@ type ItemDetail struct {
 	Certificate
 	PEM   string    `json:"pem"`
 	Facts CertFacts `json:"facts"`
+	// IssuerChain is the PEM of each CA certificate that verifies the
+	// leaf, from the issuing CA up to the root. It is nil, and so left
+	// out of the JSON, when the chain is not known yet, and it is an empty
+	// list when the chain is known to be empty. It holds certificates only.
+	IssuerChain *[]string `json:"issuer_chain,omitempty"`
+	// IssuerChainFacts describes each IssuerChain entry in the same order,
+	// and is present exactly when IssuerChain is.
+	IssuerChainFacts *[]CertFacts `json:"issuer_chain_facts,omitempty"`
 }
 
 // Certificates returns the fleet's certificates sorted by ID. Callers must
@@ -55,6 +68,11 @@ func (f *Fleet) Item(id string) (ItemDetail, bool) {
 	if rep := f.reps[id]; rep != nil {
 		detail.PEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rep.Raw}))
 		detail.Facts = Facts(rep)
+
+		if f.chainRead[id] {
+			chain, facts := issuerChain(rep, f.cas)
+			detail.IssuerChain, detail.IssuerChainFacts = &chain, &facts
+		}
 	}
 
 	return detail, true
@@ -142,6 +160,9 @@ func Aggregate(scans []InstanceScan, s Settings, caps Capabilities, div map[stri
 	}
 
 	fleet.stampCredHub(primary, extras)
+
+	fleet.cas = cas
+	fleet.chainRead = chainKnown(fleet, byInstance, cas)
 
 	expected := map[string]int{}
 
@@ -438,4 +459,71 @@ func markDivergedListeners(diverged map[string]bool, c *Certificate, e *Divergen
 			diverged[c.ID+"|"+o.Locator] = true
 		}
 	}
+}
+
+// maxChainDepth bounds how far an issuer chain climbs.
+const maxChainDepth = 10
+
+// chainKnown returns the IDs of certificates whose issuer chain can be
+// stated. One qualifies when an owning scan recorded its CA reads and, if
+// the certificate names a signing CA, that CA was read.
+func chainKnown(f *Fleet, byInstance map[string]*InstanceScan, cas map[string]*x509.Certificate) map[string]bool {
+	known := map[string]bool{}
+
+	for i := range f.certs {
+		cert := &f.certs[i]
+
+		if cert.Versions != nil && cert.Versions.SigningCA != "" && cas[cert.Versions.SigningCA] == nil {
+			continue
+		}
+
+		for _, owner := range cert.Owners {
+			if scan := byInstance[owner.InstanceID]; scan != nil && scan.Material.CAsRead {
+				known[cert.ID] = true
+
+				break
+			}
+		}
+	}
+
+	return known
+}
+
+// issuerChain returns the CA certificates from pool that verify leaf,
+// ordered from its issuer up to the root, as PEM and as parsed facts. Each
+// link must verify the one below it by signature, so a CA that did not sign
+// the chain is left out. Only certificates are encoded, never keys.
+func issuerChain(leaf *x509.Certificate, pool map[string]*x509.Certificate) ([]string, []CertFacts) {
+	out := []string{}
+	facts := []CertFacts{}
+	seen := map[string]bool{string(leaf.Raw): true}
+	cur := leaf
+
+	for range maxChainDepth {
+		var next *x509.Certificate
+
+		for _, name := range sortedKeys(pool) {
+			issuer := pool[name]
+			if issuer == nil || seen[string(issuer.Raw)] || !issuer.IsCA {
+				continue
+			}
+
+			if cur.CheckSignatureFrom(issuer) == nil {
+				next = issuer
+
+				break
+			}
+		}
+
+		if next == nil {
+			break
+		}
+
+		seen[string(next.Raw)] = true
+		out = append(out, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: next.Raw})))
+		facts = append(facts, Facts(next))
+		cur = next
+	}
+
+	return out, facts
 }

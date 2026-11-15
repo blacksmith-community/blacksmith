@@ -93,6 +93,10 @@ type ScanMaterial struct {
 	// ServicesCADrift says the broker's services CA file differs from the
 	// copy in CredHub. Only the broker scan sets it.
 	ServicesCADrift bool
+	// CAsRead says the scan went through the signing CA step, so an
+	// issuer chain built from SigningCAs is a known answer. A scan
+	// without it has no chain, which is different from an empty one.
+	CAsRead bool
 }
 
 // InstanceScan is the result of scanning one instance. A failed scan carries
@@ -288,6 +292,7 @@ func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings
 
 		scan.Material.CredHub, scan.Material.SigningCAs, failed = s.readCredHub(ctx, director, deployment, facts, vars, owner)
 		scan.Material.Raw = append(scan.Material.Raw, failed...)
+		scan.Material.CAsRead = true
 	}
 
 	hosts, hostsFailed := s.readHosts(ctx, ref.ID, owner)
