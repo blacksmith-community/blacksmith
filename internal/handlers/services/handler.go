@@ -602,7 +602,19 @@ func (h *Handler) GetInstanceEvents(writer http.ResponseWriter, req *http.Reques
 	deploymentName := inst.DeploymentName
 	logger.Debug("Getting events for deployment: %s", deploymentName)
 
-	events, err := h.director.GetEvents(ctx, deploymentName)
+	paging, paged := parseEventPaging(req)
+
+	var events []bosh.Event
+
+	if paged {
+		err = h.listEventPage(ctx, deploymentName, paging, writer)
+		if err == nil {
+			return
+		}
+	} else {
+		events, err = h.director.GetEvents(ctx, deploymentName)
+	}
+
 	if err != nil {
 		logger.Error("Failed to fetch events: %v", err)
 		response.HandleJSON(writer, map[string]interface{}{
@@ -614,6 +626,43 @@ func (h *Handler) GetInstanceEvents(writer http.ResponseWriter, req *http.Reques
 	}
 
 	response.HandleJSON(writer, events, nil)
+}
+
+const (
+	defaultEventPage = 100
+	maxEventPage     = 500
+	maxEventOffset   = 1500
+)
+
+// eventPaging is a request for one page of a deployment's events.
+type eventPaging struct {
+	offset, limit int
+	object        bool
+}
+
+// parseEventPaging reads the limit, offset, and paged parameters. A request
+// with none of them gets the director's one page as a bare array, as it
+// always has. paged is false for it. An unusable number falls back to its
+// default rather than failing the request.
+func parseEventPaging(req *http.Request) (eventPaging, bool) {
+	query := req.URL.Query()
+	paging := eventPaging{limit: defaultEventPage, object: query.Get("paged") == "1"}
+
+	if !paging.object && !query.Has("limit") && !query.Has("offset") {
+		return paging, false
+	}
+
+	limit, err := strconv.Atoi(strings.TrimSpace(query.Get("limit")))
+	if err == nil && limit > 0 {
+		paging.limit = min(limit, maxEventPage)
+	}
+
+	offset, err := strconv.Atoi(strings.TrimSpace(query.Get("offset")))
+	if err == nil && offset > 0 {
+		paging.offset = min(offset, maxEventOffset)
+	}
+
+	return paging, true
 }
 
 // GetInstanceManifest returns the manifest for a service instance.
@@ -839,6 +888,36 @@ func (h *Handler) GetInstanceTaskLog(writer http.ResponseWriter, req *http.Reque
 	}
 
 	response.HandleJSON(writer, parseResultOutputToEvents(taskOutput), nil)
+}
+
+// listEventPage writes one page of events. The object form carries the
+// offset, the limit, and has_more beside the events. The bare form carries
+// has_more in the X-Blacksmith-Has-More header, so its body is the array it
+// always was.
+func (h *Handler) listEventPage(ctx context.Context, deployment string, paging eventPaging, writer http.ResponseWriter) error {
+	listing, err := bosh.ListEventsFrom(ctx, h.director, deployment, paging.offset+paging.limit)
+	if err != nil {
+		return fmt.Errorf("list events for %s: %w", deployment, err)
+	}
+
+	page := append([]bosh.Event{}, listing.Events[min(paging.offset, len(listing.Events)):]...)
+
+	writer.Header().Set("X-Blacksmith-Has-More", strconv.FormatBool(listing.More))
+
+	if !paging.object {
+		response.HandleJSON(writer, page, nil)
+
+		return nil
+	}
+
+	response.HandleJSON(writer, map[string]interface{}{
+		"events":   page,
+		"offset":   paging.offset,
+		"limit":    paging.limit,
+		"has_more": listing.More,
+	}, nil)
+
+	return nil
 }
 
 // instanceHistoryAnswer returns the instance's operation history from its
