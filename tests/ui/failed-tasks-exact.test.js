@@ -86,3 +86,12 @@ test('an older broker that answers a bare array still counts',async()=>{
   expect(failedRow(panel).textContent).toContain('Failed tasks (24h): 2');
  }finally{w.close();}
 });
+
+test('how far back the list reaches comes from its oldest row, not its last',async()=>{
+ // Ordered by id, the last row ended recently, but an earlier row is older than 24 hours, so the page reached back past the window.
+ const {w,panel}=await mount([certs,health,answer({tasks:[err(9,2),err(8,40),err(7,3)],has_more:true})]);
+ try{
+  expect(failedRow(panel).textContent).toContain('Failed tasks (24h): 2');
+  expect(failedRow(panel).textContent).not.toContain('at least');
+ }finally{w.close();}
+});

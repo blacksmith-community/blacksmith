@@ -2799,8 +2799,10 @@
     const since = Date.now() - ATTENTION_TASK_WINDOW_MS;
     const when = (task) => new Date(task.ended_at || task.started_at).getTime();
     const failed = list.filter(task => task && task.state === 'error' && when(task) >= since).length;
-    const last = list[list.length - 1];
-    const reachedOlder = !!last && when(last) < since;
+    // The list is ordered by id, which is not the order the tasks ended in, so
+    // how far back it reaches comes from the oldest row it holds.
+    const times = list.map(when).filter(Number.isFinite);
+    const reachedOlder = times.length > 0 && Math.min(...times) < since;
     const more = Array.isArray(body) ? list.length >= ATTENTION_TASK_LIMIT : body.has_more === true;
     const exact = Array.isArray(body) || body.exact !== false;
     return {status: 'ready', failed, atLeast: more && !reachedOlder, incomplete: !exact && !reachedOlder};
