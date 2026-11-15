@@ -134,6 +134,11 @@ func (f fakeFailingStopper) Stop() error {
 	return nil
 }
 
+// changeDrainFunc is a change store's drain made of a function.
+type changeDrainFunc func(ctx context.Context) bool
+
+func (f changeDrainFunc) Drain(ctx context.Context) bool { return f(ctx) }
+
 // sshShutdownFunc is an SSH shutdown made of a function.
 type sshShutdownFunc func(ctx context.Context)
 
@@ -228,12 +233,12 @@ func TestShutdownSendsTheSSHCleanupsRightAfterTheServers(t *testing.T) {
 
 	pool := bosh.NewPooledDirector(nil, 1, time.Second, nil)
 
-	wired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, pool, newShutdownLog())
+	wired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, pool, newShutdownLog())
 	if wired.ssh != pool {
 		t.Errorf("expected shutdown to send the SSH cleanups through the pooled director, got %#v", wired.ssh)
 	}
 
-	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.ssh != nil {
+	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.ssh != nil {
 		t.Errorf("expected no SSH cleanups without a director, got %#v", unwired.ssh)
 	}
 }
@@ -513,11 +518,11 @@ func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logge
 	// manager with no endpoints.
 	cfManager := internalCF.NewManagerFromExternal(nil, logger)
 
-	apiHandler, upgradeHandler := createAPIHandler(cfg, brokerInstance, vault, boshDirector, batchDirector, cfManager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
+	apiHandler, upgradeHandler, changes := createAPIHandler(cfg, brokerInstance, vault, boshDirector, batchDirector, cfManager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
 
 	_, cancel := context.WithCancelCause(context.Background())
 
-	return apiHandler, shutdownDepsFor(nil, cancel, nil, nil, upgradeHandler, nil, brokerInstance, batchDirector, boshDirector, logger)
+	return apiHandler, shutdownDepsFor(nil, cancel, nil, nil, upgradeHandler, nil, changes, brokerInstance, batchDirector, boshDirector, logger)
 }
 
 //nolint:paralleltest // the test reads the package's shutdown deadlines
@@ -607,7 +612,54 @@ func TestBootAndShutdownWithoutABOSHDirector(t *testing.T) {
 		t.Fatalf("expected no director to stop, got batch %#v, pool %#v, and SSH %#v", deps.batch, deps.pool, deps.ssh)
 	}
 
+	if deps.changes == nil {
+		t.Fatal("the change store built at boot never reached shutdown")
+	}
+
 	shutdown(deps)
+}
+
+// Shutdown waits for the change records still queued, under a budget of
+// its own, once the broker's background work is done and before the
+// directors stop, so a setting saved just before a stop still reaches
+// Vault. A broker without a store leaves the step out.
+//
+//nolint:paralleltest // the test reads the package's shutdown deadlines
+func TestShutdownSavesTheQueuedChangeRecords(t *testing.T) {
+	log := &stepLog{}
+
+	var (
+		deadline    time.Time
+		hasDeadline bool
+	)
+
+	deps := fakeShutdownDeps(log, newShutdownLog())
+	deps.changes = changeDrainFunc(func(ctx context.Context) bool {
+		deadline, hasDeadline = ctx.Deadline()
+
+		log.ran("changes")
+
+		return true
+	})
+
+	began := time.Now()
+
+	shutdown(deps)
+
+	ended := time.Now()
+
+	want := []string{"servers", "ssh", "cancel", "reconciler", "monitor", "upgrades", "background", "changes", "batch", "pool"}
+	if got := log.order(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected the shutdown steps in the order %v, got %v", want, got)
+	}
+
+	if !hasDeadline || deadline.Before(began.Add(changeShutdownBudget)) || deadline.After(ended.Add(changeShutdownBudget)) {
+		t.Errorf("the change records got a deadline %v after the shutdown began, want their budget of %v", deadline.Sub(began), changeShutdownBudget)
+	}
+
+	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.changes != nil {
+		t.Errorf("expected no change step without a store, got %#v", unwired.changes)
+	}
 }
 
 // Shutdown stops the certificate scheduler, and a broker with no inventory
@@ -627,7 +679,7 @@ func TestShutdownStopsCertificateScheduler(t *testing.T) {
 		t.Fatalf("expected the shutdown steps in the order %v, got %v", want, got)
 	}
 
-	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.certificates != nil {
+	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.certificates != nil {
 		t.Errorf("expected no certificate step without a service, got %#v", unwired.certificates)
 	}
 
@@ -638,7 +690,7 @@ func TestShutdownStopsCertificateScheduler(t *testing.T) {
 	})
 	svc.Start(t.Context())
 
-	wired := shutdownDepsFor(nil, nil, nil, nil, nil, svc, nil, nil, nil, newShutdownLog())
+	wired := shutdownDepsFor(nil, nil, nil, nil, nil, svc, nil, nil, nil, nil, newShutdownLog())
 	if wired.certificates == nil {
 		t.Fatal("the certificate service never reached shutdown")
 	}

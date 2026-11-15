@@ -32,7 +32,7 @@ func TestBrokerAndManagerShareOneGuard(t *testing.T) {
 
 	brokerInstance := newBroker(cfg, vault, nil, nil, guard)
 
-	_, upgradeHandler := createAPIHandler(cfg, brokerInstance, vault, nil, nil, internalCF.NewManagerFromExternal(nil, logger),
+	_, upgradeHandler, _ := createAPIHandler(cfg, brokerInstance, vault, nil, nil, internalCF.NewManagerFromExternal(nil, logger),
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
 	t.Cleanup(upgradeHandler.Stop)
 

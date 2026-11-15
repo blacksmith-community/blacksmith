@@ -35,9 +35,11 @@ const (
 
 const (
 	// changeAttempts is how many times a record's write is tried.
-	changeAttempts = 3
-	// changeRetryDefault is the wait between two tries.
-	changeRetryDefault = 500 * time.Millisecond
+	changeAttempts = 6
+	// changeRetryDefault is the wait before the second try. Each later
+	// wait doubles, so the six tries span about half a minute, and a
+	// Vault that is briefly down or sealed still gets the record.
+	changeRetryDefault = time.Second
 	// changeWriteTimeout bounds one try, and one read of the records.
 	changeWriteTimeout = 10 * time.Second
 	// maxChangeText bounds each text field of a record, in bytes.
@@ -94,7 +96,8 @@ type Logger interface {
 // ChangeStoreOption changes how a store works, for tests.
 type ChangeStoreOption func(*ChangeStore)
 
-// WithRetryDelay sets the wait between two tries of a write.
+// WithRetryDelay sets the wait before a write's second try. Each later
+// wait doubles.
 func WithRetryDelay(delay time.Duration) ChangeStoreOption {
 	return func(store *ChangeStore) { store.retry = delay }
 }
@@ -119,6 +122,7 @@ type ChangeStore struct {
 	logger Logger
 	now    func() time.Time
 	retry  time.Duration
+	sleep  func(time.Duration)
 
 	// mu guards pending and running. A record stays in pending until its
 	// write ends, so List can show it while Vault is still taking it.
@@ -133,7 +137,7 @@ type ChangeStore struct {
 
 // NewChangeStore returns a store that saves to kv and logs to logger.
 func NewChangeStore(kv KV, logger Logger, options ...ChangeStoreOption) *ChangeStore {
-	store := &ChangeStore{kv: kv, logger: logger, now: time.Now, retry: changeRetryDefault}
+	store := &ChangeStore{kv: kv, logger: logger, now: time.Now, retry: changeRetryDefault, sleep: time.Sleep}
 	store.idle = sync.NewCond(&store.mu)
 
 	for _, option := range options {
@@ -193,6 +197,44 @@ func (s *ChangeStore) Wait() {
 	for s.running {
 		s.idle.Wait()
 	}
+}
+
+// Drain waits until every queued record has been written or given up,
+// or until ctx ends, and reports whether the queue emptied. Shutdown
+// calls it with a deadline. When ctx ends first, every record still
+// queued is logged as unsaved, by its key alone, and keeps being
+// written in the background for as long as the process lives.
+func (s *ChangeStore) Drain(ctx context.Context) bool {
+	if s == nil {
+		return true
+	}
+
+	// The wake broadcast takes mu, so the waiting loop below either sees
+	// ctx end before it waits or is woken once it waits.
+	stop := context.AfterFunc(ctx, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		s.idle.Broadcast()
+	})
+	defer stop()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for s.running && ctx.Err() == nil {
+		s.idle.Wait()
+	}
+
+	if !s.running {
+		return true
+	}
+
+	for _, rec := range s.pending {
+		s.logError("audit=change id=%s scope=%s key=%q was not saved before the broker stopped: %v", rec.ID, rec.Scope, rec.Key, context.Cause(ctx))
+	}
+
+	return false
 }
 
 // List returns the newest records of the scope, newest first, up to limit
@@ -420,11 +462,14 @@ func (s *ChangeStore) drain() {
 	}
 }
 
-// save tries the record's write up to three times, and logs each failure.
+// save tries the record's write up to six times, waiting twice as long
+// before each try as before the one before it, and logs each failure.
 // A record that never lands is logged as an error and dropped, and its log
 // line is all that is left of it.
 func (s *ChangeStore) save(rec ChangeRecord) {
 	var err error
+
+	wait := s.retry
 
 	for attempt := 1; attempt <= changeAttempts; attempt++ {
 		err = s.writeChange(rec)
@@ -435,7 +480,8 @@ func (s *ChangeStore) save(rec ChangeRecord) {
 		s.logError("audit=change id=%s scope=%s key=%q could not be saved on try %d of %d: %v", rec.ID, rec.Scope, rec.Key, attempt, changeAttempts, err)
 
 		if attempt < changeAttempts {
-			time.Sleep(s.retry)
+			s.sleep(wait)
+			wait *= 2
 		}
 	}
 

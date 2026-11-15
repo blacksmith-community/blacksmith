@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"blacksmith/internal/api"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/broker"
@@ -70,10 +71,12 @@ const (
 	// Application defaults. Shutdown gets one deadline for all its steps,
 	// and the HTTP servers get a shorter one inside it to drain requests in
 	// flight. Sending the SSH cleanups gets its own shorter one, so the
-	// steps after it keep most of the deadline.
+	// steps after it keep most of the deadline, and so does saving the
+	// change records still queued, which leaves the directors time to stop.
 	DefaultShutdownTimeout       = 15 * time.Second
 	DefaultServerShutdownTimeout = 5 * time.Second
 	sshShutdownBudget            = 5 * time.Second
+	changeShutdownBudget         = 5 * time.Second
 	DefaultMinArgsRequired       = 3
 
 	// Vault defaults.
@@ -1371,7 +1374,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
 	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
 	rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService, rabbitmqPluginsAuditService *rabbitmq.PluginsAuditService,
-	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, certificates *certinventory.Service, logger loggerPkg.Logger) (*broker.API, *upgradehandler.Handler) {
+	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, certificates *certinventory.Service, logger loggerPkg.Logger) (*broker.API, *upgradehandler.Handler, *audit.ChangeStore) {
 	// A nil director pointer inside an interface would not compare equal to
 	// nil, so the API gets a true nil for each director initializeBOSH did
 	// not build. The upgrade handler then falls back to the pooled director,
@@ -1444,7 +1447,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Logger:   logger.Named("api"),
 		Internal: internalAPI,
 		Primary:  osbapibroker.NewHandler(brokerInstance, osbapibroker.WithLogger(broker.NewOSBAPILogger(logger.Named("osbapi")))),
-	}, upgradeHandler
+	}, upgradeHandler, internalAPI.Changes()
 }
 
 // readoptServiceOperations re-adopts the provisions and deprovisions a
@@ -1592,7 +1595,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
 
-	sshService, apiHandler, upgradeHandler, certificates := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
+	sshService, apiHandler, upgradeHandler, certificates, changes := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
 
 	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancelWithCause, logger)
@@ -1603,7 +1606,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	waitForShutdownSignal(sigChan, ctx, logger)
 
-	shutdown(shutdownDepsFor(servers, cancelWithCause, reconciler, vmMonitor, upgradeHandler, certificates, brokerInstance, batchDirector, boshDirector, logger))
+	shutdown(shutdownDepsFor(servers, cancelWithCause, reconciler, vmMonitor, upgradeHandler, certificates, changes, brokerInstance, batchDirector, boshDirector, logger))
 	serverWaitGroup.Wait()
 
 	return nil
@@ -1751,19 +1754,19 @@ func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirecto
 	return nil
 }
 
-func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API, *upgradehandler.Handler, *certinventory.Service) {
+func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API, *upgradehandler.Handler, *certinventory.Service, *audit.ChangeStore) {
 	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
 
 	uiHandler := getUIHandler(config)
 
 	certificates := newCertificateService(config, brokerInstance, vault, boshDirector, logger)
 
-	apiHandler, upgradeHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler,
+	apiHandler, upgradeHandler, changes := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
 		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, certificates, logger)
 
-	return sshService, apiHandler, upgradeHandler, certificates
+	return sshService, apiHandler, upgradeHandler, certificates, changes
 }
 
 func closeSSHService(sshService *ssh.ServiceImpl, logger loggerPkg.Logger) {
@@ -1817,6 +1820,11 @@ type backgroundWaiter interface {
 	WaitForBackground(ctx context.Context)
 }
 
+// changeDrainer is the change store's wait for the records still queued.
+type changeDrainer interface {
+	Drain(ctx context.Context) bool
+}
+
 // shutdownDeps holds everything shutdown stops. A nil field is skipped.
 type shutdownDeps struct {
 	servers      []httpServer
@@ -1827,6 +1835,7 @@ type shutdownDeps struct {
 	upgrades     stopper
 	certificates stopper
 	background   backgroundWaiter
+	changes      changeDrainer
 	batch        stopper
 	pool         stopper
 	logger       loggerPkg.Logger
@@ -1846,8 +1855,9 @@ type shutdownStep struct {
 // context is cancelled next, which ends the async provisions and
 // deprovisions and their monitors. The reconciler and the VM monitor stop
 // then, so neither calls a director once the directors stop. The upgrade
-// manager stops before the broker's wait, and the directors stop last,
-// after everything that uses them.
+// manager stops before the broker's wait. The change records still queued
+// are saved after it, once no request can make another, and the
+// directors stop last, after everything that uses them.
 func (deps shutdownDeps) steps() []shutdownStep {
 	var steps []shutdownStep
 
@@ -1883,6 +1893,10 @@ func (deps shutdownDeps) steps() []shutdownStep {
 		steps = append(steps, shutdownStep{name: "wait for the broker's background work", run: deps.background.WaitForBackground})
 	}
 
+	if deps.changes != nil {
+		steps = append(steps, shutdownStep{name: "save the queued change records", run: deps.saveChanges})
+	}
+
 	if deps.batch != nil {
 		steps = append(steps, shutdownStep{name: "stop the batch director", run: func(context.Context) { deps.batch.Stop() }})
 	}
@@ -1892,6 +1906,18 @@ func (deps shutdownDeps) steps() []shutdownStep {
 	}
 
 	return steps
+}
+
+// saveChanges waits for the change records still queued, within
+// changeShutdownBudget or the shutdown's deadline, whichever ends first.
+// The store logs each record it could not save in time.
+func (deps shutdownDeps) saveChanges(ctx context.Context) {
+	changesCtx, cancel := context.WithTimeout(ctx, changeShutdownBudget)
+	defer cancel()
+
+	if !deps.changes.Drain(changesCtx) {
+		deps.logger.Error("Shutdown could not save every queued change record within %s", changeShutdownBudget)
+	}
 }
 
 // stopReconciler stops the reconciler and logs a failure to stop it.
@@ -1942,7 +1968,7 @@ func (deps shutdownDeps) stopServers(ctx context.Context) {
 // so each part the broker does not have becomes a true nil, which shutdown
 // skips.
 func shutdownDepsFor(servers []*http.Server, cancel context.CancelCauseFunc, reconciler *recovery.ReconcilerAdapter, vmMonitor *vmmonitor.Monitor,
-	upgradeHandler *upgradehandler.Handler, certificates *certinventory.Service, brokerInstance *broker.Broker, batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector,
+	upgradeHandler *upgradehandler.Handler, certificates *certinventory.Service, changes *audit.ChangeStore, brokerInstance *broker.Broker, batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector,
 	logger loggerPkg.Logger) shutdownDeps {
 	deps := shutdownDeps{cancel: cancel, logger: logger}
 
@@ -1970,6 +1996,10 @@ func shutdownDepsFor(servers []*http.Server, cancel context.CancelCauseFunc, rec
 
 	if brokerInstance != nil {
 		deps.background = brokerInstance
+	}
+
+	if changes != nil {
+		deps.changes = changes
 	}
 
 	if batchDirector != nil {

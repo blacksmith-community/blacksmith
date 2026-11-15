@@ -286,7 +286,7 @@ func TestRecordDoesNotWaitAndListShowsAPendingRecord(t *testing.T) {
 	}
 }
 
-// A Vault that refuses the write is tried three times, every failure is
+// A Vault that refuses the write is tried six times, every failure is
 // logged, and the record is then given up with an error line.
 func TestAFailedWriteIsRetriedAndLogged(t *testing.T) {
 	t.Parallel()
@@ -315,8 +315,8 @@ func TestAFailedWriteIsRetriedAndLogged(t *testing.T) {
 		}
 	}
 
-	if tries != 3 || givenUp != 1 {
-		t.Fatalf("logged %d failed tries and %d give-ups, want 3 and 1: %q", tries, givenUp, log.Lines())
+	if tries != 6 || givenUp != 1 {
+		t.Fatalf("logged %d failed tries and %d give-ups, want 6 and 1: %q", tries, givenUp, log.Lines())
 	}
 
 	_, err := store.List(t.Context(), audit.ScopeSettings, 10)

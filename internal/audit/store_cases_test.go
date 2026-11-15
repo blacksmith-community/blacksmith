@@ -12,6 +12,9 @@ import (
 	"blacksmith/internal/audit/audittest"
 )
 
+// unsavedValue is a value no record ID or log line could hold by chance.
+const unsavedValue = "limit-8c4e"
+
 var errLostAnswer = errors.New("the answer to the index write was lost")
 
 // A value longer than 1024 bytes is cut to 1024 bytes in the record, at a
@@ -128,5 +131,78 @@ func TestListKeepsToTheScopeTheBodyNames(t *testing.T) {
 
 	if len(records) != 0 {
 		t.Fatalf("records = %+v, want none, since the body names another scope", records)
+	}
+}
+
+// blockingKV holds every write until release is closed.
+type blockingKV struct {
+	*audittest.KV
+
+	release chan struct{}
+}
+
+func (k *blockingKV) Put(ctx context.Context, path string, data interface{}) error {
+	<-k.release
+
+	return k.KV.Put(ctx, path, data) //nolint:wrapcheck // the fake passes the store's own error through
+}
+
+// Drain returns once the queue is written, so a shutdown that drains the
+// store keeps every record Vault takes in time.
+func TestDrainReturnsOnceTheQueueIsWritten(t *testing.T) {
+	t.Parallel()
+
+	vault := &blockingKV{KV: audittest.NewKV(), release: make(chan struct{})}
+	store := newStore(vault, &audittest.Logger{}, time.Now())
+
+	store.Record(actorContext(t), audit.ChangeRecord{Scope: audit.ScopeSettings, Key: keyBatchJobs, Old: "5", New: "10"})
+
+	time.AfterFunc(50*time.Millisecond, func() { close(vault.release) })
+
+	if !store.Drain(t.Context()) {
+		t.Fatal("Drain gave up before the record was written")
+	}
+
+	if paths := vault.Paths(); len(paths) != 2 {
+		t.Fatalf("Vault holds %v once Drain returned, want the record and the index", paths)
+	}
+
+	if !(*audit.ChangeStore)(nil).Drain(t.Context()) {
+		t.Fatal("a nil store has nothing queued, so Drain reports the queue empty")
+	}
+}
+
+// Drain gives up when its context ends, and logs every record still
+// queued by its key, so the operator knows which changes Vault never got.
+func TestDrainLogsWhatItCouldNotSave(t *testing.T) {
+	t.Parallel()
+
+	vault := &blockingKV{KV: audittest.NewKV(), release: make(chan struct{})}
+	log := &audittest.Logger{}
+	store := newStore(vault, log, time.Now())
+
+	t.Cleanup(func() {
+		close(vault.release)
+		store.Wait()
+	})
+
+	store.Record(actorContext(t), audit.ChangeRecord{Scope: audit.ScopeSettings, Key: keyBatchJobs, Old: "5", New: unsavedValue})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+
+	if store.Drain(ctx) {
+		t.Fatal("Drain reported the queue empty while Vault still held the write")
+	}
+
+	if waited := time.Since(started); waited < 50*time.Millisecond {
+		t.Fatalf("Drain returned after %v, before its context ended", waited)
+	}
+
+	text := log.Text()
+	if !strings.Contains(text, "was not saved before the broker stopped") || !strings.Contains(text, keyBatchJobs) || strings.Contains(text, unsavedValue) {
+		t.Fatalf("log = %s, want the unsaved record named by key alone", text)
 	}
 }

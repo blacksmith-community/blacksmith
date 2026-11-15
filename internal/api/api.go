@@ -56,6 +56,7 @@ type InternalAPI struct {
 	configurationHandler     *configuration.Handler
 	servicesHandler          *serviceshandler.Handler
 	upgradeHandler           *upgradehandler.Handler
+	changes                  *audit.ChangeStore
 }
 
 // Dependencies contains all the dependencies needed by the internal API.
@@ -126,6 +127,7 @@ type apiHandlers struct {
 	configuration     *configuration.Handler
 	services          *serviceshandler.Handler
 	upgrade           *upgradehandler.Handler
+	changes           *audit.ChangeStore
 }
 
 func createHandlers(deps Dependencies) apiHandlers {
@@ -153,6 +155,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 		configuration:     createConfigurationHandler(deps),
 		services:          createServicesHandler(deps),
 		upgrade:           upgradeHandler,
+		changes:           changes,
 	}
 }
 
@@ -493,6 +496,7 @@ func NewInternalAPI(deps Dependencies) *InternalAPI {
 		configurationHandler:     handlers.configuration,
 		servicesHandler:          handlers.services,
 		upgradeHandler:           handlers.upgrade,
+		changes:                  handlers.changes,
 	}
 }
 
@@ -657,6 +661,13 @@ func getSystemHealthStatus(deps Dependencies) SystemHealth {
 // stop its manager.
 func (api *InternalAPI) UpgradeHandler() *upgradehandler.Handler {
 	return api.upgradeHandler
+}
+
+// Changes returns the store that keeps the API's change records, so
+// shutdown can wait for the records still queued. A broker without Vault
+// has none.
+func (api *InternalAPI) Changes() *audit.ChangeStore {
+	return api.changes
 }
 
 // ServeHTTP implements the http.Handler interface.
