@@ -247,3 +247,135 @@ t('a load that fails late and is retried registers each handler once',async()=>{
  expect(env.errors.filter((e)=>!e.includes('late failure')&&!e.includes('Error loading data'))).toEqual([]);
 });
 
+// Modals and the screens inside them take the compact panel, and each Retry
+// repeats that screen's own load.
+const okJson=(body)=>(u,o,j)=>j(200,body);
+const configBody={id:'c1',name:'cfg',type:'cloud',team:'t',created_at:'2026-01-01T00:00:00Z',content:'a: 1',metadata:{}};
+const taskBody={task:{id:5,state:'done',description:'d',user:'u',started_at:'2026-01-01T00:00:00Z',ended_at:'2026-01-01T00:01:00Z',deployment:'dep'},events:[]};
+const callsTo=(env,part)=>env.calls.filter((c)=>c.includes(part)).length;
+
+t('config details that cannot load show a compact panel and Retry loads them again',async()=>{
+ const state={answer:fail(503,'Service Unavailable')};
+ const {env}=await detailStart([['/b/configs/c1',answers(state)]]);
+ const {w,d}=env;
+ await w.showConfigDetails('c1');
+ const box=d.querySelector('#config-details-loading [data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.classList.contains('load-error--compact')).toBe(true);
+ expect(box.getAttribute('role')).toBe('alert');
+ expect(box.textContent).toContain('503');
+ expect(d.getElementById('config-details-loading').textContent).not.toContain('Failed to load');
+ expect(d.getElementById('config-details-loading').textContent).not.toContain(SECRET);
+ const before=callsTo(env,'/b/configs/c1');
+ state.answer=okJson(configBody);
+ box.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(callsTo(env,'/b/configs/c1')).toBe(before+1);
+ expect(d.querySelector('#config-details-loading [data-load-error]')).toBeNull();
+ expect(d.getElementById('config-name').textContent).toBe('cfg');
+});
+
+t('config versions that cannot load show a compact panel and Retry loads them again',async()=>{
+ const state={answer:fail(502,'Bad Gateway')};
+ const {env}=await detailStart([['/versions',answers(state)]]);
+ const {w,d}=env;
+ await w.showConfigVersions('cloud','cfg','c1');
+ const box=d.querySelector('#config-details-loading [data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.classList.contains('load-error--compact')).toBe(true);
+ expect(box.textContent).toContain('502');
+ expect(box.textContent).not.toContain(SECRET);
+ const before=callsTo(env,'/versions');
+ state.answer=okJson({configs:[]});
+ box.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(callsTo(env,'/versions')).toBe(before+1);
+ expect(d.querySelector('#config-details-loading [data-load-error]')).toBeNull();
+});
+
+t('task details that cannot load show a compact panel and Retry loads them again',async()=>{
+ const state={answer:fail(503,'Service Unavailable')};
+ const {env}=await detailStart([['/b/tasks/5/output',okJson({output:''})],['/b/tasks/5',answers(state)]]);
+ const {w,d}=env;
+ await w.showTaskDetails(5);
+ await sleep(60);
+ const box=d.querySelector('#task-details-loading [data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.classList.contains('load-error--compact')).toBe(true);
+ expect(box.textContent).toContain('503');
+ expect(box.textContent).not.toContain(SECRET);
+ expect(d.getElementById('task-details-loading').textContent).not.toContain('Failed to load');
+ const before=callsTo(env,'/b/tasks/5');
+ state.answer=okJson(taskBody);
+ box.querySelector('[data-load-retry]').click();
+ await sleep(100);
+ expect(callsTo(env,'/b/tasks/5')).toBeGreaterThan(before);
+ expect(d.querySelector('#task-details-loading [data-load-error]')).toBeNull();
+});
+
+t('a task output tab that cannot load shows a compact panel and Retry loads it again',async()=>{
+ const out={answer:fail(500,'Internal Server Error')};
+ const {env}=await detailStart([['/b/tasks/5/output',answers(out)],['/b/tasks/5',okJson(taskBody)]]);
+ const {w,d}=env;
+ await w.showTaskDetails(5);
+ await sleep(100);
+ const pane=d.getElementById('task-task-content');
+ const box=pane.querySelector('[data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.classList.contains('load-error--compact')).toBe(true);
+ expect(box.textContent).toContain('500');
+ expect(box.textContent).not.toContain(SECRET);
+ const before=callsTo(env,'/b/tasks/5/output');
+ out.answer=okJson({output:'line'});
+ box.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(callsTo(env,'/b/tasks/5/output')).toBe(before+1);
+ expect(pane.querySelector('[data-load-error]')).toBeNull();
+});
+
+t('a service list that cannot load shows the panel and Retry loads it again',async()=>{
+ const state={answer:fail(502,'Bad Gateway')};
+ const {env}=await detailStart([['/spaces/sp1/services',answers(state)]]);
+ const {w,d}=env;
+ const host=d.createElement('div');
+ host.innerHTML='<select id="org-selector"><option value="o1" selected>o</option></select><select id="space-selector"><option value="sp1" selected>s</option></select><div id="services-results"></div>';
+ d.body.appendChild(host);
+ w.CFEndpointManager.selectedEndpoint='e1';
+ await w.CFEndpointManager.loadServiceInstances('e1','o1','sp1');
+ const box=d.querySelector('#services-results [data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.textContent).toContain('502');
+ expect(box.textContent).not.toContain(SECRET);
+ const before=callsTo(env,'/spaces/sp1/services');
+ state.answer=okJson({services:[]});
+ box.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(callsTo(env,'/spaces/sp1/services')).toBe(before+1);
+ expect(d.querySelector('#services-results [data-load-error]')).toBeNull();
+});
+
+t('older logs that cannot load say what happened without the broker body',async()=>{
+ const {env}=await detailStart([['/b/blacksmith/logs',fail(503,'Service Unavailable')]]);
+ const {w,d}=env;
+ const ws=d.querySelector('#blacksmith .entity-workspace')||(()=>{ const x=d.createElement('div'); x.className='entity-workspace'; d.getElementById('blacksmith').appendChild(x); return x; })();
+ ws.dataset.section='blacksmith-logs';
+ d.body.insertAdjacentHTML('beforeend','<div id="blacksmith-logs-display"></div><button id="logs-load-more"></button>');
+ w.blacksmithLogsPagination={hasMore:true,isLoading:false,currentFile:'f',currentOffset:0,totalLines:10};
+ await w.loadMoreBlacksmithLogs();
+ const more=d.getElementById('logs-load-more');
+ expect(more.textContent).toContain('503 Service Unavailable');
+ expect(more.textContent).toContain('Click to retry');
+ expect(more.textContent).not.toContain(SECRET);
+ expect(more.textContent).not.toContain('HTTP 503:');
+});
+
+t('every compact panel Retry keeps its own keep key',async()=>{
+ const {env}=await detailStart([['/b/configs/c1',fail(503,'Service Unavailable')],['/b/tasks/5',fail(503,'Service Unavailable')]]);
+ const {w,d}=env;
+ await w.showConfigDetails('c1');
+ await w.showTaskDetails(5);
+ await sleep(60);
+ const keys=[...d.querySelectorAll('[data-load-retry]')].map((b)=>b.getAttribute('data-keep-key'));
+ expect(keys.length).toBe(2);
+ expect(new Set(keys).size).toBe(2);
+});

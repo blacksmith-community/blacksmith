@@ -14552,3 +14552,5 @@ tr.row-link { cursor: pointer; }
 .load-error p { margin: 0 0 var(--space-2); }
 .load-error .load-error-title { font-weight: 600; }
 .load-error button { margin-top: var(--space-2); }
+/* Inside a modal or a tab of one, the panel sits flush with its pane. */
+.load-error--compact { margin: 0; padding: var(--space-2) var(--space-3); }

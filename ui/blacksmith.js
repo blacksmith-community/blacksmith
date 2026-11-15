@@ -11671,9 +11671,9 @@
     return 'The page could not read the broker\'s answer.';
   };
   const loadRetryHandlers = new Map();
-  const loadFailureHtml = ({ what, error, key, retry }) => {
+  const loadFailureHtml = ({ what, error, key, retry, compact = false }) => {
     loadRetryHandlers.set(key, retry);
-    return `<div class="load-error" data-load-error role="alert" data-variant="danger">
+    return `<div class="load-error${compact ? ' load-error--compact' : ''}" data-load-error role="alert" data-variant="danger">
       <p class="load-error-title">Could not load ${escapeHtml(what)}.</p>
       <p class="load-error-detail">${escapeHtml(loadFailureDetail(error))}</p>
       <button type="button" class="btn-secondary" data-load-retry="${escapeAttribute(key)}" data-keep-key="${escapeAttribute(`load-retry:${key}`)}">Retry</button>
@@ -11690,6 +11690,13 @@
       if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); }
     });
   });
+  // A modal or a tab inside one keeps its own note, so its retry puts the
+  // loading note back and runs that screen's own load again while it is still open.
+  const retryModalLoad = (host, note, stillOpen, load) => () => {
+    if (!host || !host.isConnected || !stillOpen()) return;
+    host.textContent = note;
+    return load();
+  };
   const loadWhat = (type) => `the ${String(type).replace(/[-_]+/g, ' ')} view`;
   const detailFailure = (scope, type, error, retry) => loadFailureHtml({ what: loadWhat(type), error, key: `${scope}:${type}`, retry });
   // An HTTP answer that was not a success, as an error that carries only its status.
@@ -16924,7 +16931,7 @@
       if (!current()) return;
       console.error('Failed to load more logs:', loggableError(error));
       if (loadMoreEl) {
-        loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Failed to load: ${escapeHtml(error.message)}</span>`;
+        loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Could not load older logs. ${escapeHtml(loadFailureDetail(error))} Click to retry.</span>`;
       }
     } finally {
       pagination.isLoading = false;
@@ -18859,7 +18866,10 @@
     } catch (error) {
       console.error('Failed to load config details:', loggableError(error));
       if (loadingDiv) {
-        loadingDiv.innerHTML = `<div class="error">Failed to load config details: ${error.message}</div>`;
+        loadingDiv.innerHTML = loadFailureHtml({
+          what: 'the config details', error, key: `config-details:${configId}`, compact: true,
+          retry: retryModalLoad(loadingDiv, 'Loading config details...', () => modal.open, () => window.showConfigDetails(configId))
+        });
       }
     }
   };
@@ -18900,6 +18910,10 @@
       event?.preventDefault();
       return window.blacksmithRouter.inspect({kind: 'config', id: String(currentId), type: String(configType), name: String(configName)});
     }
+    return openConfigVersions(configType, configName, currentId, event);
+  };
+  // The load behind the config versions view, which Retry on its error panel also runs.
+  const openConfigVersions = async (configType, configName, currentId, event) => {
     rememberConfigInspection();
     const retained = configInspectionStates.get(configInspectionKey(configType, configName));
     const inspectionRevision = ++configInspectionRevision;
@@ -19063,7 +19077,10 @@
       if (inspectionRevision !== configInspectionRevision || !modal.open) return;
       console.error('Failed to load config versions:', loggableError(error));
       if (loadingDiv) {
-        loadingDiv.innerHTML = `<div class="error">Failed to load config versions: ${error.message}</div>`;
+        loadingDiv.innerHTML = loadFailureHtml({
+          what: 'the config versions', error, key: `config-versions:${configType}/${configName}`, compact: true,
+          retry: retryModalLoad(loadingDiv, 'Loading config versions...', () => modal.open && inspectionRevision === configInspectionRevision, () => openConfigVersions(configType, configName, currentId))
+        });
       }
     }
   };
@@ -19771,7 +19788,10 @@
     } catch (error) {
       if (!stillCurrent()) return;
       console.error('Failed to load task details:', loggableError(error));
-      loadingDiv.innerHTML = `<div class="error">Failed to load task details: ${error.message}</div>`;
+      loadingDiv.innerHTML = loadFailureHtml({
+        what: 'the task details', error, key: `task-details:${taskId}`, compact: true,
+        retry: retryModalLoad(loadingDiv, 'Loading task details...', stillCurrent, () => loadTaskDetails(taskId))
+      });
     }
   };
 
@@ -19928,7 +19948,10 @@
     } catch (error) {
       if (!stillCurrent()) return;
       console.error(`Failed to load ${tabType} content:`, loggableError(error));
-      contentDiv.innerHTML = `<div class="error">Failed to load ${tabType}: ${error.message}</div>`;
+      contentDiv.innerHTML = loadFailureHtml({
+        what: `the task ${tabType}`, error, key: `task-tab:${taskId}:${tabType}`, compact: true,
+        retry: () => (stillCurrent() && contentDiv.isConnected ? loadTaskTabContent(taskId, tabType) : undefined)
+      });
     }
   };
 
@@ -24247,10 +24270,10 @@
       const revision = this.selectionRevision;
       current ||= () => panel.isConnected && this.selectedEndpoint === endpointName && this.selectionRevision === revision;
       const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/marketplace`);
+      if (!response.ok) throw httpFailure(response);
       const data = await response.json();
 
       if (!current()) return;
-      if (!response.ok) throw httpFailure(response);
       if (Array.isArray(data.services)) {
         const html = `
           <div class="marketplace-content">
@@ -24411,10 +24434,11 @@
       const current = () => this.selectedEndpoint === endpointName && this.selectionRevision === revision && resultsContainer?.isConnected && document.getElementById('services-results') === resultsContainer && document.getElementById('org-selector')?.value === orgGuid && document.getElementById('space-selector')?.value === spaceGuid;
       try {
         const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces/${spaceGuid}/services`);
+        if (!response.ok) throw httpFailure(response);
         const data = await response.json();
 
         if (!current()) return;
-        if (!response.ok || !Array.isArray(data.services)) throw new Error(data.error || 'Could not load service instances');
+        if (!Array.isArray(data.services)) throw new Error('The service list was not readable.');
         if (resultsContainer && data.services) {
           const html = `
             <div class="service-instances-table-container">
@@ -24467,7 +24491,12 @@
         }
       } catch (error) {
         console.error('Failed to load service instances:', loggableError(error));
-        if (current()) resultsContainer.innerHTML = `<div class="error">Failed to load services: ${escapeHtml(error.message)}</div>`;
+        if (current()) {
+          resultsContainer.innerHTML = loadFailureHtml({
+            what: 'the service instances', error, key: `endpoint-services:${endpointName}:${spaceGuid}`,
+            retry: () => (current() ? this.loadServiceInstances(endpointName, orgGuid, spaceGuid) : undefined)
+          });
+        }
       }
     },
 
