@@ -741,31 +741,9 @@ func (d *DirectorAdapter) listTasks(ctx context.Context, what string, opts *bosh
 // listAllTasks merges the running tasks with the recent ones, each task
 // once, newest first.
 func (d *DirectorAdapter) listAllTasks(ctx context.Context, limit int) ([]Task, error) {
-	running, err := d.listTasks(ctx, "list running tasks", &boshapi.TaskListOptions{State: runningTaskStates, Verbose: 1})
-	if err != nil {
-		return nil, err
-	}
+	merged, _, err := d.listAllTasksWith(ctx, limit*taskFetchMultiplier, "")
 
-	recent, err := d.listTasks(ctx, "list recent tasks", &boshapi.TaskListOptions{Limit: limit * taskFetchMultiplier, Verbose: 1})
-	if err != nil {
-		return nil, err
-	}
-
-	seen := make(map[int]bool, len(running)+len(recent))
-	merged := make([]Task, 0, len(running)+len(recent))
-
-	for _, task := range append(running, recent...) {
-		if seen[task.ID] {
-			continue
-		}
-
-		seen[task.ID] = true
-		merged = append(merged, task)
-	}
-
-	sort.SliceStable(merged, func(i, j int) bool { return merged[i].ID > merged[j].ID })
-
-	return merged, nil
+	return merged, err
 }
 
 // CancelTask asks the director to cancel a queued or processing task, on
@@ -958,23 +936,7 @@ func (d *DirectorAdapter) GetEvents(ctx context.Context, deployment string) (_ [
 		return nil, d.requestFailure("list events for deployment "+deployment, err)
 	}
 
-	// Convert director events to our Event type
-	events := make([]Event, 0, len(directorEvents))
-	for _, dirEvent := range directorEvents {
-		events = append(events, Event{
-			ID:         dirEvent.ID,
-			Time:       time.Unix(dirEvent.Timestamp, 0).UTC(),
-			User:       dirEvent.User,
-			Action:     dirEvent.Action,
-			ObjectType: dirEvent.ObjectType,
-			ObjectName: dirEvent.ObjectName,
-			TaskID:     dirEvent.TaskID,
-			Deployment: dirEvent.DeploymentName,
-			Instance:   dirEvent.Instance,
-			Context:    fmt.Sprintf("%v", dirEvent.Context),
-			Error:      dirEvent.Error,
-		})
-	}
+	events := convertAPIEvents(directorEvents)
 
 	d.log.Infof("Successfully retrieved %d events for deployment %s", len(events), deployment)
 
@@ -2189,6 +2151,39 @@ func (d *DirectorAdapter) FindTaskByContextID(ctx context.Context, contextID str
 	d.explainContext(ctx, "FindTaskByContextID", &err)
 
 	return task, err
+}
+
+// listAllTasksWith is listAllTasks with the number of recent tasks to ask for
+// and the state the director filters them by. It also returns how many
+// recent tasks the director gave, so a caller can tell whether it ran dry.
+func (d *DirectorAdapter) listAllTasksWith(ctx context.Context, fetch int, state string) ([]Task, int, error) {
+	running, err := d.listTasks(ctx, "list running tasks", &boshapi.TaskListOptions{State: runningTaskStates, Verbose: 1})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	recent, err := d.listTasks(ctx, "list recent tasks", &boshapi.TaskListOptions{State: state, Limit: fetch, Verbose: 1})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	recentCount := len(recent)
+
+	seen := make(map[int]bool, len(running)+len(recent))
+	merged := make([]Task, 0, len(running)+len(recent))
+
+	for _, task := range append(running, recent...) {
+		if seen[task.ID] {
+			continue
+		}
+
+		seen[task.ID] = true
+		merged = append(merged, task)
+	}
+
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].ID > merged[j].ID })
+
+	return merged, recentCount, nil
 }
 
 func (d *DirectorAdapter) findTaskByContextID(ctx context.Context, contextID string) (*Task, error) {
