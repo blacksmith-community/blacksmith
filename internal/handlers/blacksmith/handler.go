@@ -15,6 +15,7 @@ import (
 
 	"time"
 
+	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
@@ -73,6 +74,7 @@ type Handler struct {
 	vault      interfaces.Vault
 	director   interfaces.Director
 	reconciler ReconcilerInterface
+	changes    *audit.ChangeStore
 }
 
 // Dependencies contains all dependencies needed by the Blacksmith handler.
@@ -82,6 +84,8 @@ type Dependencies struct {
 	Vault      interfaces.Vault
 	Director   interfaces.Director
 	Reconciler ReconcilerInterface
+	// Changes keeps a record of every settings change. Nil records none.
+	Changes *audit.ChangeStore
 }
 
 // NewHandler creates a new Blacksmith management handler.
@@ -92,6 +96,7 @@ func NewHandler(deps Dependencies) *Handler {
 		vault:      deps.Vault,
 		director:   deps.Director,
 		reconciler: deps.Reconciler,
+		changes:    deps.Changes,
 	}
 }
 
@@ -496,6 +501,8 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 			return
 		}
 
+		oldVersions := h.settingBefore(ctx)
+
 		err := h.vault.SetKVMaxVersions(ctx, mv)
 		if err != nil {
 			logger.Error("Failed to set vault max_versions: %v", err)
@@ -508,6 +515,7 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 		}
 
 		logger.Info("Vault max_versions updated to %d", mv)
+		h.recordSetting(ctx, settingVaultMaxVersions, oldVersions, strconv.Itoa(mv))
 		result["vault_max_versions"] = mv
 	}
 
@@ -532,6 +540,8 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 			return
 		}
 
+		oldInterval := h.reconciler.GetInterval().String()
+
 		err = h.reconciler.UpdateInterval(ctx, interval)
 		if err != nil {
 			logger.Error("Failed to update reconciler interval: %v", err)
@@ -544,6 +554,7 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 		}
 
 		logger.Info("Reconciler interval updated to %v", interval)
+		h.recordSetting(ctx, settingReconcilerInterval, oldInterval, interval.String())
 		result["reconciler_interval"] = interval.String()
 	}
 

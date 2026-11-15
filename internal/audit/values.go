@@ -7,6 +7,10 @@ import (
 	"strconv"
 )
 
+// Unknown stands for an old value the broker could not read before the
+// change.
+const Unknown = "(unknown)"
+
 // Value is one setting as a change record holds it, the text of a string
 // and the JSON of anything else, so a number, a boolean, and a string all
 // read as the operator typed them. A nil value is empty.

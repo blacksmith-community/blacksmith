@@ -239,6 +239,10 @@ func (s *ChangeStore) List(ctx context.Context, scope string, limit int) ([]Chan
 
 	sortNewestFirst(records)
 
+	if records == nil {
+		records = []ChangeRecord{}
+	}
+
 	if len(records) > limit {
 		records = records[:limit]
 	}

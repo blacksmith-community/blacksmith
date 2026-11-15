@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/audit"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/config"
 	"blacksmith/internal/credhub"
@@ -132,6 +133,10 @@ func createHandlers(deps Dependencies) apiHandlers {
 	// deployment actions back until the stored tasks hold their instances.
 	upgradeHandler := createUpgradeHandler(deps)
 
+	// One store keeps the change records of every handler that changes a
+	// setting, an endpoint, or an instance.
+	changes := createChangeStore(deps)
+
 	return apiHandlers{
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
 		inventory:         createInventoryHandler(deps, upgradeHandler.GetManager()),
@@ -142,7 +147,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 		rabbitMQWebSocket: createRabbitMQWebSocketHandler(deps),
 		sshWebSocket:      createSSHWebSocketHandler(deps),
 		bosh:              createBOSHHandler(deps),
-		blacksmith:        createBlacksmithHandler(deps),
+		blacksmith:        createBlacksmithHandler(deps, changes),
 		tasks:             createTasksHandler(deps),
 		deployments:       createDeploymentsHandler(deps, upgradeHandler.GetManager()),
 		configuration:     createConfigurationHandler(deps),
@@ -212,13 +217,24 @@ func createBOSHHandler(deps Dependencies) *bosh.Handler {
 	})
 }
 
-func createBlacksmithHandler(deps Dependencies) *blacksmith.Handler {
+// createChangeStore keeps change records in the broker's Vault. A broker
+// without Vault keeps none.
+func createChangeStore(deps Dependencies) *audit.ChangeStore {
+	if deps.Vault == nil {
+		return nil
+	}
+
+	return audit.NewChangeStore(deps.Vault, deps.Logger.Named("change-audit"))
+}
+
+func createBlacksmithHandler(deps Dependencies, changes *audit.ChangeStore) *blacksmith.Handler {
 	return blacksmith.NewHandler(blacksmith.Dependencies{
 		Logger:     deps.Logger,
 		Config:     deps.Config,
 		Vault:      deps.Vault,
 		Director:   deps.Director,
 		Reconciler: deps.Reconciler,
+		Changes:    changes,
 	})
 }
 
@@ -411,6 +427,7 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 	router.RegisterHandler("/b/blacksmith/credentials", http.HandlerFunc(handlers.blacksmith.GetCredentials))
 	router.RegisterHandler("/b/blacksmith/config", http.HandlerFunc(handlers.blacksmith.GetConfig))
 	router.RegisterHandler("/b/blacksmith/settings", http.HandlerFunc(handlers.blacksmith.HandleSettings))
+	router.RegisterHandler("/b/blacksmith/changes", http.HandlerFunc(handlers.blacksmith.HandleChanges))
 	router.RegisterHandler("/b/cleanup", http.HandlerFunc(handlers.blacksmith.Cleanup))
 	router.RegisterHandler("/b/orphans", http.HandlerFunc(handlers.blacksmith.GetOrphans))
 
