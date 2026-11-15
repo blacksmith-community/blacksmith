@@ -216,6 +216,23 @@ for (const [label, next] of [['none', { issuer_chain: [], issuer_chain_facts: []
   });
 }
 
+for (const action of ['copy', 'download']) {
+  test(`a ${action} click with no PEM says the certificate is not available`, async () => {
+    const { env, host } = await mount('c15m' + action, { item: known });
+    const { w } = env;
+    // A button whose chain is gone, as when a later load found none.
+    const stale = row(host).querySelector(`[data-issuing-ca-action="${action}"]`);
+    stale.dataset.issuingCaKey = 'no-such-instance';
+    const toasts = [];
+    const say = (m) => toasts.push(String(m));
+    w.Feedback = { success: say, info: say, warning: say, error: say };
+    stale.click();
+    await sleep(20);
+    expect(toasts).toEqual(['The issuing CA certificate is not available.']);
+    expect(toasts.join(' ')).not.toContain('BEGIN CERTIFICATE');
+  });
+}
+
 test('an incomplete chain says it stops short of the root', async () => {
   const { host } = await mount('c16', { item: { ...known, issuer_chain_incomplete: true } });
   expect(row(host).textContent).toMatch(/does not reach a root|stops short/i);

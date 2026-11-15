@@ -10786,7 +10786,10 @@
       const button = event.target.closest && event.target.closest('[data-issuing-ca-action]');
       if (!button) return;
       const pemText = issuingCaPems.get(button.dataset.issuingCaKey);
-      if (!pemText) return;
+      if (!pemText) {
+        window.Feedback.warning('The issuing CA certificate is not available.', { toast: true });
+        return;
+      }
       if (button.dataset.issuingCaAction === 'copy') {
         try {
           await navigator.clipboard.writeText(pemText);
