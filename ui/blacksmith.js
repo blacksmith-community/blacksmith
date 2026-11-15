@@ -12316,6 +12316,7 @@
   // and the note says so, including when older tasks remain unloaded or the
   // broker could not check every task.
   const tasksCountNote = (meta) => {
+    if (meta.exact === false && meta.filtered) return `The broker could not check every task, so the list of the pressed states may be incomplete. State counts cover the latest ${meta.window} tasks of every state.`;
     if (meta.filtered && meta.window) return `State counts cover the latest ${meta.window} tasks of every state, not only the states pressed here. The rows listed are the pressed states' tasks, however old.`;
     if (!meta.window) return 'State counts cover the tasks loaded here.';
     if (meta.exact === false) return `State counts cover the latest ${meta.window} tasks loaded here. The broker could not check every task, so a state with none there can still have older tasks.`;

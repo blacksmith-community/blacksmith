@@ -242,3 +242,14 @@ t('a plain refresh goes back to the first page and its server counts', async () 
     expect(more(d)).not.toBeNull();
   } finally { w.close(); }
 });
+
+t('a pressed chip with an inexact answer says the list may be incomplete', () => {
+  const { w, d } = boot();
+  try {
+    const host = d.createElement('div');
+    host.innerHTML = w.__T.formatTasks([row(7, 'error')], 'tasks', { filtered: true, exact: false, window: 200, hasMore: false });
+    const text = host.querySelector('.tasks-count-note').textContent;
+    expect(text).toContain('may be incomplete');
+    expect(text).not.toContain('however old');
+  } finally { w.close(); }
+});
