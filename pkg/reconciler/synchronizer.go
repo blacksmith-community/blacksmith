@@ -870,43 +870,21 @@ func (s *IndexSynchronizer) cleanupStaleOrphans(idx map[string]interface{}) int 
 			continue
 		}
 
-		orphaned, _ := dataMap["orphaned"].(bool)
-		if !orphaned {
+		removal := OrphanRemovalFor(dataMap, time.Now(), 0)
+		if !removal.Orphaned || !removal.Due {
 			continue
 		}
 
-		shouldDelete := false
 		var reason string
 
-		// Check time-based: orphaned > 24 hours
-		if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
-			if t, err := time.Parse(time.RFC3339, orphanedAt); err == nil {
-				if time.Since(t) > OrphanRemovalAfter {
-					shouldDelete = true
-					reason = fmt.Sprintf("orphaned for >24 hours (since %s)", orphanedAt)
-				}
-			}
+		if removal.Basis == OrphanRemovalByAge {
+			reason = fmt.Sprintf("orphaned for >24 hours (since %s)", removal.OrphanedAt)
+		} else {
+			reason = fmt.Sprintf("orphaned for 24+ check cycles (count: %d)", removal.Count)
 		}
 
-		// Check count-based: orphaned 24+ check cycles
-		if !shouldDelete {
-			count := 0
-			if c, ok := dataMap["orphan_check_count"].(int); ok {
-				count = c
-			} else if c, ok := dataMap["orphan_check_count"].(float64); ok {
-				count = int(c)
-			}
-
-			if count >= OrphanRemovalChecks {
-				shouldDelete = true
-				reason = fmt.Sprintf("orphaned for 24+ check cycles (count: %d)", count)
-			}
-		}
-
-		if shouldDelete {
-			s.logger.Infof("Removing orphaned instance %s from index: %s", instanceID, reason)
-			toDelete = append(toDelete, instanceID)
-		}
+		s.logger.Infof("Removing orphaned instance %s from index: %s", instanceID, reason)
+		toDelete = append(toDelete, instanceID)
 	}
 
 	for _, id := range toDelete {

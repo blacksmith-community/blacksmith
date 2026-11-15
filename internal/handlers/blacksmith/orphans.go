@@ -1,7 +1,6 @@
 package blacksmith
 
 import (
-	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -28,12 +27,16 @@ type orphanEntry struct {
 	OrphanedAt     string `json:"orphaned_at,omitempty"`
 	Reason         string `json:"reason,omitempty"`
 	CheckCount     int    `json:"check_count"`
-	// SecondsLeft is the time before the reconciler removes the entry. It is
-	// null when the entry has no usable orphaned_at and no check count has
-	// reached the limit.
+	// SecondsLeft is the estimated time before the reconciler removes the
+	// entry, the earlier of the age limit and the check-count limit. It is
+	// null when neither can be timed.
 	SecondsLeft *int64 `json:"seconds_left"`
 	// Due means the removal is already owed and happens on the next run.
 	Due bool `json:"due"`
+	// Basis names the limit behind the time left, "age" or "checks". The
+	// time is an estimate, because the sweep runs once per reconciler
+	// interval and the interval can change.
+	Basis string `json:"basis,omitempty"`
 }
 
 // unclaimedEntry is one BOSH deployment with no index entry and no CF
@@ -90,7 +93,7 @@ func (h *Handler) GetOrphans(responseWriter http.ResponseWriter, req *http.Reque
 	}
 
 	body := orphansResponse{
-		Orphans:             orphansFromIndex(index, now),
+		Orphans:             orphansFromIndex(index, now, h.reconcilerInterval()),
 		Unclaimed:           []unclaimedEntry{},
 		RemovalAfterSeconds: int64(reconciler.OrphanRemovalAfter.Seconds()),
 		Timestamp:           now.Unix(),
@@ -115,10 +118,20 @@ func (h *Handler) GetOrphans(responseWriter http.ResponseWriter, req *http.Reque
 	response.HandleJSON(responseWriter, body, nil)
 }
 
-// orphansFromIndex picks the orphan-marked entries out of the index, soonest
-// removal first. A tombstone is the vm-monitor's record of a deletion, not an
-// orphan, and the reconciler's marking skips it too.
-func orphansFromIndex(index map[string]interface{}, now time.Time) []orphanEntry {
+// reconcilerInterval is how often the reconciler runs now, or zero when there
+// is no reconciler to ask.
+func (h *Handler) reconcilerInterval() time.Duration {
+	if h.reconciler == nil {
+		return 0
+	}
+
+	return h.reconciler.GetInterval()
+}
+
+// orphansFromIndex picks the entries the sweep would remove or is waiting to
+// remove, soonest first. It asks the reconciler's own rule, so a tombstone that
+// is still marked orphaned is listed exactly when the sweep treats it as one.
+func orphansFromIndex(index map[string]interface{}, now time.Time, interval time.Duration) []orphanEntry {
 	orphans := make([]orphanEntry, 0)
 
 	for instanceID, raw := range index {
@@ -127,19 +140,12 @@ func orphansFromIndex(index map[string]interface{}, now time.Time) []orphanEntry
 			continue
 		}
 
-		if marked, _ := data["orphaned"].(bool); !marked {
+		removal := reconciler.OrphanRemovalFor(data, now, interval)
+		if !removal.Orphaned {
 			continue
 		}
 
-		if status, _ := data["status"].(string); status == reconciler.StatusDeleted {
-			continue
-		}
-
-		if deleted, _ := data["deleted"].(bool); deleted {
-			continue
-		}
-
-		orphans = append(orphans, buildOrphanEntry(instanceID, data, now))
+		orphans = append(orphans, buildOrphanEntry(instanceID, data, removal))
 	}
 
 	sort.Slice(orphans, func(first, second int) bool {
@@ -160,54 +166,18 @@ func orphansFromIndex(index map[string]interface{}, now time.Time) []orphanEntry
 	return orphans
 }
 
-func buildOrphanEntry(instanceID string, data map[string]interface{}, now time.Time) orphanEntry {
-	entry := orphanEntry{InstanceID: instanceID, CheckCount: orphanCheckCount(data["orphan_check_count"])}
+func buildOrphanEntry(instanceID string, data map[string]interface{}, removal reconciler.OrphanRemoval) orphanEntry {
+	entry := orphanEntry{InstanceID: instanceID, CheckCount: removal.Count, OrphanedAt: removal.OrphanedAt, Due: removal.Due, Basis: removal.Basis}
 	entry.InstanceName, _ = data["instance_name"].(string)
 	entry.DeploymentName, _ = data["deployment_name"].(string)
 	entry.ServiceID, _ = data["service_id"].(string)
 	entry.PlanID, _ = data["plan_id"].(string)
 	entry.Reason, _ = data["orphaned_reason"].(string)
-	entry.OrphanedAt, _ = data["orphaned_at"].(string)
 
-	var left *int64
-
-	marked, err := time.Parse(time.RFC3339, entry.OrphanedAt)
-	if err == nil {
-		remaining := int64((reconciler.OrphanRemovalAfter - now.Sub(marked)).Seconds())
-		if remaining < 0 {
-			remaining = 0
-		}
-
-		left = &remaining
-		entry.Due = remaining == 0
+	if removal.Known {
+		left := int64(removal.Remaining.Seconds())
+		entry.SecondsLeft = &left
 	}
-
-	if entry.CheckCount >= reconciler.OrphanRemovalChecks {
-		none := int64(0)
-		left = &none
-		entry.Due = true
-	}
-
-	entry.SecondsLeft = left
 
 	return entry
-}
-
-// orphanCheckCount reads the count of runs that found the entry orphaned. The
-// index holds it as a number that may come back as an int, a float, or a
-// json.Number.
-func orphanCheckCount(value interface{}) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case float64:
-		return int(typed)
-	case json.Number:
-		parsed, err := typed.Int64()
-		if err == nil {
-			return int(parsed)
-		}
-	}
-
-	return 0
 }
