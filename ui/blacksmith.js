@@ -1078,7 +1078,7 @@
     rowCapTables.add(table);
     const size = Math.max(1, Math.floor(Number(table.dataset.rowCap)) || ROW_CAP_DEFAULT);
     const noun = table.dataset.rowCapNoun || 'rows';
-    const capKey = `row-cap:${table.id || table.classList[0] || 'table'}`;
+    const capKey = `row-cap:${table.dataset.rowCapKey || table.id || table.classList[0] || 'table'}`;
     const skipSelector = table.dataset.rowCapSkip || '';
     const detailSelector = `.row-detail${table.dataset.rowCapDetail ? `, ${table.dataset.rowCapDetail}` : ''}`;
     let shown = Math.max(size, rowCapRevealed.get(capKey) || 0);
@@ -11780,7 +11780,7 @@
                   </div>
         ${preferredFile && preferredFile !== defaultFile ? `<p class="log-file-fallback" role="status">${escapeHtml(preferredFile)} is not available on this node. Showing ${escapeHtml(defaultFile)}.</p>` : ''}
         <div class="logs-table-container" id="log-display-${domKey}">
-          <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}" data-row-cap="100" data-row-cap-noun="log entries">
+          <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}" data-row-cap="100" data-row-cap-key="instance-logs-${domKey}" data-row-cap-noun="log entries">
             <thead>
               <tr>
                 <th class="log-col-timestamp">Timestamp (UTC)</th>
