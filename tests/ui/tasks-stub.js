@@ -14,13 +14,13 @@ const history = (total, failed) => Array.from({ length: total }, (_, i) => {
   return row(id, (failed ? failed.includes(id) : id % 10 === 0) ? 'error' : 'done');
 });
 
-const serve = (all, shift = () => 0) => (u) => {
+const serve = (all, shift = () => 0, deep = LISTED_MAX) => (u) => {
   const q = new URL(u, 'http://localhost').searchParams;
   const wanted = (q.get('states') || q.get('state') || '').split(',').filter(Boolean);
   const limit = Number(q.get('limit')) || 50;
   const offset = Number(q.get('offset')) || 0;
   const list = wanted.length ? all.filter((task) => wanted.includes(task.state)) : all;
-  const room = Math.min(limit, LISTED_MAX - offset);
+  const room = Math.min(limit, deep - offset);
   if (room <= 0) return { tasks: [], offset, limit: 0, has_more: true, exact: true, ceiling: true, state_counts: {}, window: 0 };
   const hasMore = list.length > offset + room;
   const counted = wanted.length ? all.slice(0, WINDOW) : all.slice(0, offset + room);
@@ -29,7 +29,7 @@ const serve = (all, shift = () => 0) => (u) => {
   const start = Math.max(0, offset - shift());
   return {
     tasks: list.slice(start, offset + room), offset, limit: room, has_more: hasMore, exact: true,
-    ceiling: hasMore && offset + room >= LISTED_MAX, state_counts: counts, window: counted.length,
+    ceiling: hasMore && offset + room >= deep, state_counts: counts, window: counted.length,
   };
 };
 

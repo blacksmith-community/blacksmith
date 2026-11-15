@@ -6,14 +6,14 @@ const t = JSDOM ? test : test.skip;
 
 const { row, history, serve } = require('./tasks-stub.js');
 
-const mount = async (all, shift) => {
+const mount = async (all, shift, deep) => {
   const { w, d, calls } = boot();
   await sleep(50);
   const root = d.getElementById('blacksmith');
   root.classList.add('active');
   root.innerHTML = '<div class="entity-workspace" data-section="tasks"><div class="detail-content"></div></div>';
-  w.__routes.push(['/b/tasks?', (u, o, json) => json(200, serve(all, shift)(u))]);
-  const first = serve(all)('/b/tasks?type=recent&limit=200&counts=1');
+  w.__routes.push(['/b/tasks?', (u, o, json) => json(200, serve(all, shift, deep)(u))]);
+  const first = serve(all, undefined, deep)('/b/tasks?type=recent&limit=200&counts=1');
   d.querySelector('#blacksmith .detail-content').innerHTML = w.__T.formatTasks(first.tasks, 'tasks', { stateCounts: first.state_counts, window: first.window, hasMore: first.has_more, exact: first.exact, ceiling: first.ceiling });
   return { w, d, calls };
 };
@@ -217,13 +217,11 @@ t('a chip with none in the latest window stays pressable while older tasks exist
 });
 
 t('at the broker ceiling the button is gone and the status says older tasks are not listed', async () => {
-  const { w, d } = await mount(history(2500));
+  const { w, d } = await mount(history(500), undefined, 300);
   try {
-    for (let page = 1; page < 10; page++) {
-      more(d).click();
-      await sleep(120);
-    }
-    expect(rows(d).length).toBe(2000);
+    more(d).click();
+    await sleep(150);
+    expect(rows(d).length).toBe(300);
     expect(more(d)).toBeNull();
     const status = d.querySelector('.tasks-load-status');
     expect(status.textContent).toContain('Older tasks are not listed here');
