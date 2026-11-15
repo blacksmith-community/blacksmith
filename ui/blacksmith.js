@@ -14843,6 +14843,36 @@
     }
   };
 
+  // Delete key and Command ask in the page's dialog first. The dialog shows
+  // each key or the command line as visible text, and never puts it in an
+  // attribute, because key names and commands can carry customer data.
+  const confirmRedisRun = async ({ title, lines, warning, confirmText }) => {
+    const body = document.createElement('div');
+    body.className = 'dialog-modal-run';
+    body.id = 'dialog-modal-run';
+    lines.forEach((text) => {
+      const code = document.createElement('code');
+      code.className = 'dialog-modal-command';
+      code.textContent = text;
+      body.appendChild(code);
+    });
+    const note = document.createElement('p');
+    note.className = 'dialog-modal-run-warning';
+    note.textContent = warning;
+    body.appendChild(note);
+    const result = await showConfirmDialog({
+      title,
+      body,
+      describedBy: 'dialog-modal-run',
+      confirmText,
+      cancelText: 'Cancel',
+      danger: true,
+      closeButton: 'Close',
+      initialFocus: 'cancel'
+    });
+    return Boolean(result);
+  };
+
   window.executeRedisSet = async (instanceId) => {
     const key = document.getElementById(`redis-key-${instanceId}`)?.value;
     const value = document.getElementById(`redis-value-${instanceId}`)?.value;
@@ -14884,6 +14914,21 @@
     }
 
     const keys = keysText.split('\n').map(k => k.trim()).filter(k => k);
+    if (keys.length === 0) {
+      window.Feedback.warning('Please provide keys to delete.', { toast: true });
+      return;
+    }
+
+    const name = instanceNameOf(instanceId);
+    const noun = keys.length === 1 ? 'key' : 'keys';
+    if (!await confirmRedisRun({
+      title: `Delete ${keys.length} ${noun} from ${name}?`,
+      lines: keys,
+      warning: `The ${noun} ${keys.length === 1 ? 'is' : 'are'} deleted from ${name} and can't be restored.`,
+      confirmText: 'Delete'
+    })) {
+      return;
+    }
 
     try {
       await executeServiceOperation(instanceId, 'redis', 'delete', { keys });
@@ -14921,6 +14966,18 @@
       }
     }
 
+    const name = instanceNameOf(instanceId);
+    const words = Array.isArray(args) ? args : [args];
+    const line = [command, ...words.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))].join(' ');
+    if (!await confirmRedisRun({
+      title: `Run a command on ${name}?`,
+      lines: [line],
+      warning: `The command runs on ${name} as written, and a command that writes or deletes data can't be undone.`,
+      confirmText: 'Run'
+    })) {
+      return;
+    }
+
     try {
       await executeServiceOperation(instanceId, 'redis', 'command', { command, args });
     } catch (error) {
@@ -14931,7 +14988,15 @@
   window.executeRedisFlush = async (instanceId) => {
     const database = parseInt(document.getElementById(`redis-flush-db-${instanceId}`)?.value) || 0;
 
-    if (!await showConfirmDialog({ title: 'Flush database', message: 'Are you sure you want to flush the database? This will delete all data!', confirmText: 'Flush database', cancelText: 'Cancel', danger: true })) {
+    const name = instanceNameOf(instanceId);
+    if (!await showConfirmDialog({
+      title: `Flush database ${database} of ${name}?`,
+      message: `This deletes every key in database ${database} of ${name}, and it can't be undone.`,
+      requireText: name,
+      confirmText: 'Flush database',
+      cancelText: 'Cancel',
+      danger: true
+    })) {
       return;
     }
 

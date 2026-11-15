@@ -37,7 +37,8 @@ const overlayOf=(d)=>d.getElementById('dialog-modal');
 const press=(w,d,key)=>d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));
 
 const flows=[
- {name:'flush the Redis database',match:/redis.*flush/i,text:/flush the database/,
+ // Flush asks for the instance name, so its dialog opens on the typed field.
+ {name:'flush the Redis database',match:/redis.*flush/i,text:/deletes every key in database 0 of i1/,focus:'.dialog-modal-ack-input',ack:'i1',
   run:({w})=>w.executeRedisFlush('i1')},
  {name:'delete a RabbitMQ queue',match:/queue-ops/,text:/delete queue "orders"/,
   setup:({d})=>{ d.body.insertAdjacentHTML('beforeend','<input id="rabbitmq-queue-ops-name-i1" value="orders"><input id="rabbitmq-operation-i1" value="delete">'); },
@@ -70,7 +71,7 @@ flows.forEach((flow)=>{
   const overlay=overlayOf(d);
   expect(overlay.open).toBe(true);
   expect(overlay.querySelector('.dialog-modal-message').textContent).toMatch(flow.text);
-  expect(d.activeElement).toBe(overlay.querySelector('[data-dialog-role="cancel"]'));
+  expect(d.activeElement).toBe(overlay.querySelector(flow.focus||'[data-dialog-role="cancel"]'));
   expect(hits(env)).toEqual([]);
   overlay.querySelector('[data-dialog-role="cancel"]').click(); await done;
  });
@@ -96,6 +97,7 @@ flows.forEach((flow)=>{
  t(`${flow.name} runs only after Confirm`,async()=>{
   const {env,done}=await open(); const {d}=env;
   expect(hits(env)).toEqual([]);
+  if(flow.ack) overlayOf(d).querySelector('.dialog-modal-ack-input').value=flow.ack;
   overlayOf(d).querySelector('[data-dialog-role="confirm"]').click(); await done; await sleep(10);
   expect(hits(env).length).toBe(1);
  });

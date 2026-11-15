@@ -321,9 +321,14 @@ t('Redis Command sends the same request and refuses invalid JSON',async()=>{
  d.getElementById('redis-args-i1').value='["a", 2';
  press(s.w,button()); await sleep(20);
  expect(s.warnings).toEqual(['Please provide a command.','Invalid JSON in arguments field.']);
+ expect(requests(s,/redis\/command/)).toEqual([]);
+ await confirmRun(s,/redis\/command/,{title:'Run a command on i1?',line:'PING'});
  d.getElementById('redis-cmd-i1').value='TYPE';
  d.getElementById('redis-args-i1').value='["k1", 2]';
  press(s.w,button()); await sleep(20);
+ expect(requests(s,/redis\/command/).length).toBe(1);
+ expect(dialog(s).querySelector('.dialog-modal-command').textContent).toBe('TYPE k1 2');
+ dialog(s).querySelector('[data-dialog-role="confirm"]').click(); await sleep(30);
  expect(requests(s,/redis\/command/)).toStrictEqual([redisPost('command',{command:'PING',args:[]}),redisPost('command',{command:'TYPE',args:['k1',2]})]);
 });
 
@@ -351,7 +356,10 @@ t('Redis Flush sends nothing on Cancel and the same request on Confirm',async()=
  d.getElementById('dialog-modal').querySelector('[data-dialog-role="cancel"]').click(); await sleep(20);
  expect(requests(s,/redis\/flush/)).toEqual([]);
  press(s.w,button()); await sleep(20);
- expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-message').textContent).toBe('Are you sure you want to flush the database? This will delete all data!');
+ expect(d.getElementById('dialog-modal').querySelector('.dialog-modal-message').textContent).toBe("This deletes every key in database 2 of i1, and it can't be undone.");
+ d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
+ expect(requests(s,/redis\/flush/)).toEqual([]);
+ d.getElementById('dialog-modal').querySelector('.dialog-modal-ack-input').value='i1';
  d.getElementById('dialog-modal').querySelector('[data-dialog-role="confirm"]').click(); await sleep(20);
  expect(requests(s,/redis\/flush/)).toStrictEqual([redisPost('flush',{database:2})]);
 });
