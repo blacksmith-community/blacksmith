@@ -10505,14 +10505,93 @@
     return `<div class="credential-value-layout">${entityCopy(text, key)}<div class="credential-value-text">${display}</div></div>`;
   };
 
+  // The Issuing CA row on Credentials. The chain PEM lives only in this map,
+  // keyed by instance. It never goes into markup, so it reaches nothing but
+  // the clipboard and the downloaded file.
+  const issuingCaPems = new Map();
+  let issuingCaActionsInstalled = false;
+
+  // Reads the instance's listener certificate from the cached inventory and
+  // its issuer chain from the item. It returns null when there is nothing to
+  // show, 'unknown' for a chain the inventory has not recorded yet, 'none'
+  // for a recorded chain with no CA in it, and 'known' with the subject and
+  // expiry of the issuing CA. The item leaves issuer_chain out until known.
+  const loadIssuingCa = async (instanceId) => {
+    try {
+      const inv = await fetch(`/b/certificates/inventory?instance=${encodeURIComponent(instanceId)}`, { headers: { Accept: 'application/json' }, cache: 'no-cache' });
+      if (!inv.ok) return null;
+      const certs = (await inv.json()).certificates;
+      const listener = (Array.isArray(certs) ? certs : []).find((c) => c && c.id && (c.observations || []).some((o) => o.source === 'probe' && o.owner && o.owner.instance_id === instanceId));
+      if (!listener) return null;
+      const res = await fetch(`/b/certificates/items/${encodeURIComponent(listener.id)}`, { headers: { Accept: 'application/json' }, cache: 'no-cache' });
+      if (!res.ok) return null;
+      const item = await res.json();
+      if (!item || !Array.isArray(item.issuer_chain)) return { state: 'unknown' };
+      if (item.issuer_chain.length === 0) { issuingCaPems.delete(instanceId); return { state: 'none' }; }
+      const first = (Array.isArray(item.issuer_chain_facts) && item.issuer_chain_facts[0]) || {};
+      issuingCaPems.set(instanceId, item.issuer_chain.join(''));
+      return { state: 'known', instanceId, subject: first.common_name || '', notAfter: first.not_after || '', count: item.issuer_chain.length };
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const issuingCaRow = (ca) => {
+    if (!ca) return '';
+    let cell;
+    if (ca.state === 'known') {
+      const id = escapeAttribute(ca.instanceId);
+      const expiry = certDay(ca.notAfter);
+      const more = ca.count > 1 ? ` The chain has ${ca.count} certificates.` : '';
+      cell = `<span class="issuing-ca-text">${escapeHtml(ca.subject || 'Unnamed CA')}${expiry ? `, expires ${escapeHtml(expiry)}.` : '.'}${more}</span>
+        <span class="issuing-ca-actions"><button type="button" class="issuing-ca-copy" data-issuing-ca-action="copy" data-issuing-ca-key="${id}" data-keep-key="issuing-ca-copy:${id}">Copy PEM</button>
+        <button type="button" class="issuing-ca-download" data-issuing-ca-action="download" data-issuing-ca-key="${id}" data-keep-key="issuing-ca-download:${id}">Download (.pem)</button></span>`;
+    } else if (ca.state === 'none') {
+      cell = '<span class="issuing-ca-text">No issuing CA is on record for this certificate.</span>';
+    } else {
+      cell = '<span class="issuing-ca-text">The issuing CA is not known yet. It appears after the next certificate scan.</span>';
+    }
+    return `<tr class="issuing-ca-row"><td class="cred-key">Issuing CA</td><td class="cred-value">${cell}</td></tr>`;
+  };
+
+  const installIssuingCaActions = () => {
+    if (issuingCaActionsInstalled) return;
+    issuingCaActionsInstalled = true;
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest && event.target.closest('[data-issuing-ca-action]');
+      if (!button) return;
+      const pemText = issuingCaPems.get(button.dataset.issuingCaKey);
+      if (!pemText) return;
+      if (button.dataset.issuingCaAction === 'copy') {
+        try {
+          await navigator.clipboard.writeText(pemText);
+          window.Feedback.success('Issuing CA copied', { toast: true });
+        } catch (_) {
+          window.Feedback.error('Clipboard unavailable. Use Download instead.', { toast: true });
+        }
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([pemText], { type: 'application/x-pem-file' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'issuing-ca.pem';
+      link.hidden = true;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+  };
+
   // Format credentials as table from JSON. Plain objects flatten one level.
-  const formatCredentials = (creds) => {
+  // issuerRow is the finished Issuing CA row, or empty when there is none.
+  const formatCredentials = (creds, issuerRow = '') => {
     if (!creds || Object.keys(creds).length === 0) return '<div class="no-data">No credentials available</div>';
     const isPlain = (v) => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.keys(v).length > 0;
     const rows = Object.entries(creds).flatMap(([section, values]) => isPlain(values) ? Object.entries(values) : [[section, values]]);
     return `<div class="credentials-container"><table class="credentials-table" data-sortable="false">
       <thead><tr><th>Property</th><th>Value</th></tr></thead><tbody>
-      ${rows.map(([key, value]) => `<tr><td class="cred-key">${escapeHtml(key)}</td><td class="cred-value">${credentialCell(key, value)}</td></tr>`).join('')}</tbody></table></div>`;
+      ${rows.map(([key, value]) => `<tr><td class="cred-key">${escapeHtml(key)}</td><td class="cred-value">${credentialCell(key, value)}</td></tr>`).join('')}${issuerRow}</tbody></table></div>`;
   };
 
   // Format config as a read-only table grouped by the first segment of each
@@ -11005,8 +11084,10 @@
         }
       } else if (type === 'credentials') {
         const creds = await response.json();
+        const issuer = await loadIssuingCa(instanceId);
         if (!isCurrent()) return '';
-        return formatCredentials(creds);
+        installIssuingCaActions();
+        return formatCredentials(creds, issuingCaRow(issuer));
       } else if (type === 'logs') {
         const text = await response.text();
         try {
