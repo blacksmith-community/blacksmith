@@ -11683,8 +11683,30 @@
     return 'The page could not read the broker\'s answer.';
   };
   const loadRetryHandlers = new Map();
+  const loadRetryRunning = new Set();
+  // A handler lives only as long as a panel that can press it. After any change
+  // to the page, a pass drops the handlers whose Retry button is on neither the
+  // page nor a view the page has set aside.
+  let loadRetrySweepQueued = false;
+  const loadRetryShown = (key) => {
+    const selector = `[data-load-retry="${key.replace(/["\\]/g, '\\$&')}"]`;
+    if (document.querySelector(selector)) return true;
+    for (const saved of retainedViews.values()) if (saved.fragment.querySelector(selector)) return true;
+    return false;
+  };
+  const sweepLoadRetries = () => {
+    loadRetrySweepQueued = false;
+    for (const key of [...loadRetryHandlers.keys()]) if (!loadRetryShown(key)) loadRetryHandlers.delete(key);
+  };
+  const queueLoadRetrySweep = () => {
+    if (loadRetrySweepQueued || !loadRetryHandlers.size) return;
+    loadRetrySweepQueued = true;
+    setTimeout(sweepLoadRetries, 0);
+  };
+  new MutationObserver(queueLoadRetrySweep).observe(document.documentElement, { childList: true, subtree: true });
   const loadFailureHtml = ({ what, error, key, retry, compact = false }) => {
     loadRetryHandlers.set(key, retry);
+    queueLoadRetrySweep();
     return `<div class="load-error${compact ? ' load-error--compact' : ''}" data-load-error role="alert" data-variant="danger">
       <p class="load-error-title">Could not load ${escapeHtml(what)}.</p>
       <p class="load-error-detail">${escapeHtml(loadFailureDetail(error))}</p>
@@ -11693,12 +11715,17 @@
   };
   document.addEventListener('click', (event) => {
     const button = event.target.closest?.('[data-load-retry]');
-    const retry = button && loadRetryHandlers.get(button.dataset.loadRetry);
+    const key = button && button.dataset.loadRetry;
+    const retry = key && loadRetryHandlers.get(key);
     if (!retry) return;
     event.preventDefault();
+    // A second press while the first load runs is the same request.
+    if (loadRetryRunning.has(key)) return;
+    loadRetryRunning.add(key);
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
     Promise.resolve().then(() => retry(button)).catch((error) => console.error('Retry failed:', loggableError(error))).finally(() => {
+      loadRetryRunning.delete(key);
       if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); }
     });
   });
@@ -17042,6 +17069,7 @@
     switchTab('blacksmith').catch((error) => console.error('Tab switch failed:', loggableError(error)));
 
     // The first read of the catalog and status. Retry on the error panel runs it again.
+    let initialRetryRun = null;
     const loadInitialData = async () => {
     try {
       // First, try to fetch the catalog
@@ -18155,10 +18183,13 @@
 
     } catch (error) {
       console.error('Error loading data:', loggableError(error));
+      // Both panels retry the same load, so a press on either while it runs joins it.
       const retryLoad = () => {
+        if (initialRetryRun) return initialRetryRun;
         document.querySelector('#blacksmith').innerHTML = '<div class="loading">Loading...</div>';
         document.querySelector('#services').innerHTML = '<div class="loading">Loading...</div>';
-        return loadInitialData();
+        initialRetryRun = loadInitialData().finally(() => { initialRetryRun = null; });
+        return initialRetryRun;
       };
       document.querySelector('#blacksmith').innerHTML = loadFailureHtml({ what: 'the broker data', error, key: 'initial:blacksmith', retry: retryLoad });
       document.querySelector('#services').innerHTML = loadFailureHtml({ what: 'the service instances', error, key: 'initial:services', retry: retryLoad });

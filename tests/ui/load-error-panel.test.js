@@ -221,6 +221,12 @@ const lateFailure=async()=>{
 t('a load that fails late and is retried registers each handler once',async()=>{
  const {env}=await lateFailure();
  const {w,d}=env;
+ // The failure replaced the half-built services pane, so none of its controls linger.
+ expect(d.querySelector('#services [data-load-error]')).not.toBeNull();
+ expect(d.getElementById('copy-deployment-names')).toBeNull();
+ expect(d.getElementById('refresh-services')).toBeNull();
+ expect(d.getElementById('service-filter')).toBeNull();
+ expect(d.querySelectorAll('#services .service-item').length).toBe(0);
  const retry=d.querySelector('#blacksmith [data-load-retry]');
  expect(retry).not.toBeNull();
  retry.click();
@@ -402,4 +408,105 @@ t('a request that never got an answer says the broker could not be reached',asyn
  await w.loadInstanceSection('inst1','vms');
  await sleep(30);
  expect(host.querySelector('[data-load-error]').textContent).toContain('could not be reached');
+});
+
+// Retry presses that race, or that come after the operator has moved on.
+t('a double-clicked first-load Retry starts one load',async()=>{
+ const {env,state}=await start(fail(503,'Service Unavailable'));
+ const {w,d}=env;
+ const button=d.querySelector('#blacksmith [data-load-retry]');
+ const other=d.querySelector('#services [data-load-retry]');
+ expect(state.calls).toBe(1);
+ state.catalog=okCatalog;
+ for(const target of [button,button,other]) target.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
+ await sleep(120);
+ expect(state.calls).toBe(2);
+});
+
+t('a double-clicked detail Retry reloads the view once',async()=>{
+ const state={answer:fail(503,'Service Unavailable')};
+ const {env}=await detailStart([['/b/configs',answers(state)]]);
+ const {w,d}=env;
+ await w.loadBlacksmithSection('configs');
+ await sleep(30);
+ const button=d.querySelector('#blacksmith .detail-content [data-load-retry]');
+ const before=callsTo(env,'/b/configs');
+ state.answer=(u,o,j)=>j(200,[]);
+ for(let i=0;i<2;i++) button.dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
+ await sleep(100);
+ expect(callsTo(env,'/b/configs')).toBe(before+1);
+});
+
+t('Retry after the operator left the instance does nothing',async()=>{
+ const state={answer:fail(502,'Bad Gateway')};
+ const {env}=await detailStart([['/b/inst1/vms',answers(state)]]);
+ const {w,d}=env;
+ const host=d.createElement('div'); host.className='detail-content'; d.getElementById('services').appendChild(host);
+ w.currentInstanceInfo={id:'inst1'};
+ await w.loadInstanceSection('inst1','vms');
+ await sleep(30);
+ const button=host.querySelector('[data-load-retry]');
+ const before=callsTo(env,'/b/inst1/vms');
+ w.currentInstanceInfo={id:'inst2'};
+ state.answer=okJson([]);
+ button.click();
+ await sleep(60);
+ expect(callsTo(env,'/b/inst1/vms')).toBe(before);
+ expect(host.querySelector('[data-load-error]')).not.toBeNull();
+});
+
+t('Retry after the operator opened another broker section does nothing',async()=>{
+ const state={answer:fail(503,'Service Unavailable')};
+ const {env}=await detailStart([['/b/configs',answers(state)]]);
+ const {w,d}=env;
+ await w.loadBlacksmithSection('configs');
+ await sleep(30);
+ const workspace=d.querySelector('#blacksmith .entity-workspace');
+ expect(workspace).not.toBeNull();
+ const button=d.querySelector('#blacksmith .detail-content [data-load-retry]');
+ const before=callsTo(env,'/b/configs');
+ workspace.dataset.section='tasks';
+ state.answer=(u,o,j)=>j(200,[]);
+ button.click();
+ await sleep(60);
+ expect(callsTo(env,'/b/configs')).toBe(before);
+});
+
+t('Retry after the operator picked another endpoint does nothing',async()=>{
+ const state={answer:fail(502,'Bad Gateway')};
+ const {env}=await detailStart([['/marketplace',answers(state)]]);
+ const {w,d}=env;
+ const panel=d.createElement('div'); panel.setAttribute('data-panel','marketplace'); d.body.appendChild(panel);
+ w.CFEndpointManager.selectedEndpoint='e1';
+ await w.CFEndpointManager.loadTabContent('marketplace','e1');
+ const button=panel.querySelector('[data-load-retry]');
+ const before=callsTo(env,'/marketplace');
+ w.CFEndpointManager.selectedEndpoint='e2';
+ state.answer=okJson({services:[]});
+ button.click();
+ await sleep(60);
+ expect(callsTo(env,'/marketplace')).toBe(before);
+});
+
+t('a handler is dropped when its panel is gone and kept while the panel is on the page',async()=>{
+ const state={answer:fail(503,'Service Unavailable')};
+ const {env}=await detailStart([['/b/configs',answers(state)]]);
+ const {w,d}=env;
+ await w.loadBlacksmithSection('configs');
+ await sleep(30);
+ const saved=d.querySelector('#blacksmith .detail-content [data-load-error]').outerHTML;
+ // An unrelated change to the page keeps the handler of a panel that is still shown.
+ d.body.appendChild(d.createElement('div'));
+ await sleep(30);
+ const before=callsTo(env,'/b/configs');
+ state.answer=(u,o,j)=>j(200,[]);
+ d.querySelector('#blacksmith .detail-content [data-load-retry]').click();
+ await sleep(80);
+ expect(callsTo(env,'/b/configs')).toBe(before+1);
+ // The panel was replaced, so a copy of it that comes back has nothing to run.
+ await sleep(30);
+ const holder=d.createElement('div'); holder.innerHTML=saved; d.body.appendChild(holder);
+ holder.querySelector('[data-load-retry]').click();
+ await sleep(60);
+ expect(callsTo(env,'/b/configs')).toBe(before+1);
 });
