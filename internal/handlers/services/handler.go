@@ -631,7 +631,9 @@ func (h *Handler) GetInstanceEvents(writer http.ResponseWriter, req *http.Reques
 const (
 	defaultEventPage = 100
 	maxEventPage     = 500
-	maxEventOffset   = 1500
+	// maxListedEvents is how deep the listing reaches. A page that would
+	// end beyond it is cut short, and the answer says the ceiling is hit.
+	maxListedEvents = 2000
 )
 
 // eventPaging is a request for one page of a deployment's events.
@@ -659,7 +661,7 @@ func parseEventPaging(req *http.Request) (eventPaging, bool) {
 
 	offset, err := strconv.Atoi(strings.TrimSpace(query.Get("offset")))
 	if err == nil && offset > 0 {
-		paging.offset = min(offset, maxEventOffset)
+		paging.offset = offset
 	}
 
 	return paging, true
@@ -895,14 +897,31 @@ func (h *Handler) GetInstanceTaskLog(writer http.ResponseWriter, req *http.Reque
 // has_more in the X-Blacksmith-Has-More header, so its body is the array it
 // always was.
 func (h *Handler) listEventPage(ctx context.Context, deployment string, paging eventPaging, writer http.ResponseWriter) error {
+	paging.limit = min(paging.limit, maxListedEvents-paging.offset)
+	if paging.limit <= 0 {
+		return writeEventPage(writer, paging, nil, true, true)
+	}
+
 	listing, err := bosh.ListEventsFrom(ctx, h.director, deployment, paging.offset+paging.limit)
 	if err != nil {
 		return fmt.Errorf("list events for %s: %w", deployment, err)
 	}
 
 	page := append([]bosh.Event{}, listing.Events[min(paging.offset, len(listing.Events)):]...)
+	ceiling := listing.More && paging.offset+len(page) >= maxListedEvents
 
-	writer.Header().Set("X-Blacksmith-Has-More", strconv.FormatBool(listing.More))
+	return writeEventPage(writer, paging, page, listing.More, ceiling)
+}
+
+// writeEventPage answers with the object form, or with the bare array and
+// the paging answer in headers.
+func writeEventPage(writer http.ResponseWriter, paging eventPaging, page []bosh.Event, more, ceiling bool) error {
+	if page == nil {
+		page = []bosh.Event{}
+	}
+
+	writer.Header().Set("X-Blacksmith-Has-More", strconv.FormatBool(more))
+	writer.Header().Set("X-Blacksmith-Ceiling", strconv.FormatBool(ceiling))
 
 	if !paging.object {
 		response.HandleJSON(writer, page, nil)
@@ -914,7 +933,8 @@ func (h *Handler) listEventPage(ctx context.Context, deployment string, paging e
 		"events":   page,
 		"offset":   paging.offset,
 		"limit":    paging.limit,
-		"has_more": listing.More,
+		"has_more": more,
+		"ceiling":  ceiling,
 	}, nil)
 
 	return nil

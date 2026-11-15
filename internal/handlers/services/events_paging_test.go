@@ -133,3 +133,81 @@ func TestInstanceEventsBareFormCarriesHasMoreInAHeader(t *testing.T) {
 		t.Errorf("X-Blacksmith-Has-More = %q, want true", recorder.Header().Get("X-Blacksmith-Has-More"))
 	}
 }
+
+type eventsBody struct {
+	Events  []bosh.Event `json:"events"`
+	Offset  int          `json:"offset"`
+	Limit   int          `json:"limit"`
+	HasMore bool         `json:"has_more"`
+	Ceiling bool         `json:"ceiling"`
+}
+
+func readEvents(t *testing.T, director *eventsDirector, target string) eventsBody {
+	t.Helper()
+
+	recorder := eventsPage(t, director, target)
+
+	var got eventsBody
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &got)
+	if err != nil {
+		t.Fatalf("decode %q: %v", recorder.Body.String(), err)
+	}
+
+	return got
+}
+
+// The deepest page says it reached the ceiling, and a request past it is an
+// empty page that says so. Neither repeats rows already sent.
+func TestInstanceEventsSignalThePagingCeiling(t *testing.T) {
+	t.Parallel()
+
+	director := &eventsDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), total: 3000}
+	base := "/b/" + logsInstanceID + "/events?paged=1&limit=100&offset="
+
+	last := readEvents(t, director, base+"1900")
+	if len(last.Events) != 100 || last.Events[0].ID != "1100" || !last.HasMore || !last.Ceiling {
+		t.Fatalf("deepest page: %d events, more %v, ceiling %v", len(last.Events), last.HasMore, last.Ceiling)
+	}
+
+	beyond := readEvents(t, director, base+"2000")
+	if len(beyond.Events) != 0 || !beyond.Ceiling {
+		t.Fatalf("past the ceiling: %d events, ceiling %v", len(beyond.Events), beyond.Ceiling)
+	}
+
+	if readEvents(t, director, base+"1500").Ceiling {
+		t.Error("a page short of the ceiling must not report it")
+	}
+
+	exact := readEvents(t, &eventsDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), total: 2000}, base+"1900")
+	if exact.Ceiling || exact.HasMore {
+		t.Errorf("a history that ends at the ceiling has no more and no ceiling: %+v", exact)
+	}
+}
+
+// Offsets that are not usable numbers read from the start, an offset past the
+// end is an empty page, and a history that is an exact multiple of the page
+// ends with has_more false.
+func TestInstanceEventsOffsetEdges(t *testing.T) {
+	t.Parallel()
+
+	director := &eventsDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), total: 20}
+	base := "/b/" + logsInstanceID + "/events?paged=1&limit=10&offset="
+
+	for _, bad := range []string{"abc", "-5", ""} {
+		got := readEvents(t, director, base+bad)
+		if got.Offset != 0 || len(got.Events) != 10 || got.Events[0].ID != "20" {
+			t.Errorf("offset %q: offset %d, %d events", bad, got.Offset, len(got.Events))
+		}
+	}
+
+	past := readEvents(t, director, base+"40")
+	if len(past.Events) != 0 || past.HasMore {
+		t.Errorf("past the end: %d events, more %v", len(past.Events), past.HasMore)
+	}
+
+	edge := readEvents(t, director, base+"10")
+	if len(edge.Events) != 10 || edge.HasMore || edge.Events[0].ID != "10" {
+		t.Errorf("exact multiple: %d events, more %v", len(edge.Events), edge.HasMore)
+	}
+}
