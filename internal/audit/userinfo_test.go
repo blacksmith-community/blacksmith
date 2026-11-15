@@ -1,6 +1,8 @@
 package audit_test
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -9,31 +11,48 @@ import (
 
 const urlLeak = "s3cret-in-url-9a2e"
 
-// A URL with a password in its userinfo keeps its username and host and
-// loses its password, whatever the key, so a pasted URL never stores a
-// credential. A URL without a password is left alone.
+// urlPasswordCases are the values the broker and the page must both
+// treat alike. The page's test reads the same file.
+type urlPasswordCases struct {
+	Leak  string `json:"leak"`
+	Cases []struct {
+		Value string `json:"value"`
+		Want  string `json:"want"`
+	} `json:"cases"`
+}
+
+// A value holding userinfo with a password keeps its username and host
+// and loses its password, whatever the key, so a pasted URL never stores
+// a credential. That holds with or without a scheme, and for a password
+// that holds a raw /, ?, #, or @. A value without a password, a username
+// alone, a host and port, and a plain value with an @ are left alone.
 func TestSanitizeChangeStripsAURLPassword(t *testing.T) {
 	t.Parallel()
 
-	//nolint:gosec // the URLs are fixtures, and "(changed)" stands where a password was
-	for value, want := range map[string]string{
-		"https://admin:" + urlLeak + "@api.sys.example.test":            "https://admin:(changed)@api.sys.example.test",
-		"https://admin:" + urlLeak + "@api.sys.example.test:443/v3?x=1": "https://admin:(changed)@api.sys.example.test:443/v3?x=1",
-		"HTTPS://Admin:" + urlLeak + "@API.example.test":                "HTTPS://Admin:(changed)@API.example.test",
-		"https://admin:p@" + urlLeak + "@api.example.test/path":         "https://admin:(changed)@api.example.test/path",
-		"https://:" + urlLeak + "@api.example.test":                     "https://:(changed)@api.example.test",
-		"see https://admin:" + urlLeak + "@a.example.test and more":     "see https://admin:(changed)@a.example.test and more",
-		"https://admin@api.example.test":                                "https://admin@api.example.test",
-		"https://api.example.test:8443/a@b":                             "https://api.example.test:8443/a@b",
-		"not a url":                                                     "not a url",
-	} {
-		rec := audit.SanitizeChange(audit.ChangeRecord{Scope: audit.ScopeEndpoints, Key: keyAPIURL, Old: value, New: value})
-		if rec.Old != want || rec.New != want {
-			t.Errorf("SanitizeChange(%q) = old %q new %q, want %q", value, rec.Old, rec.New, want)
+	raw, err := os.ReadFile("testdata/url-passwords.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var vectors urlPasswordCases
+
+	err = json.Unmarshal(raw, &vectors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if vectors.Leak != urlLeak || len(vectors.Cases) < 20 {
+		t.Fatalf("the shared cases read %d cases for marker %q", len(vectors.Cases), vectors.Leak)
+	}
+
+	for _, vector := range vectors.Cases {
+		rec := audit.SanitizeChange(audit.ChangeRecord{Scope: audit.ScopeEndpoints, Key: keyAPIURL, Old: vector.Value, New: vector.Value})
+		if rec.Old != vector.Want || rec.New != vector.Want {
+			t.Errorf("SanitizeChange(%q) = old %q new %q, want %q", vector.Value, rec.Old, rec.New, vector.Want)
 		}
 
 		if strings.Contains(rec.Old+rec.New, urlLeak) {
-			t.Errorf("SanitizeChange(%q) kept the password", value)
+			t.Errorf("SanitizeChange(%q) kept the password", vector.Value)
 		}
 	}
 }
