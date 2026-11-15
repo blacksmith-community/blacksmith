@@ -529,3 +529,37 @@ t('a failed events refresh says the page still shows the last data, with no stat
  expect(note.textContent).not.toContain(SECRET);
  expect(host.textContent).toContain('kept row');
 });
+
+// Older logs stop loading on scroll after a failure, until the operator activates the line.
+const olderLogs=async()=>{
+ const state={answer:okJson({logs:'2026-01-01T00:00:00Z INFO first line\n',has_more:true,total_lines:50,limit:1,file:'f',files:[]})};
+ const out=await detailStart([['/b/blacksmith/logs',answers(state)]]);
+ await out.env.w.loadBlacksmithSection('blacksmith-logs');
+ await sleep(60);
+ out.state=state;
+ return out;
+};
+const logCalls=(env)=>env.calls.filter((c)=>c.includes('/b/blacksmith/logs')).length;
+
+t('after older logs fail, scrolling does not load again until the line is activated',async()=>{
+ const {env,state}=await olderLogs();
+ const {w,d}=env;
+ const display=d.getElementById('blacksmith-logs-display');
+ const more=d.getElementById('logs-load-more');
+ expect(display).not.toBeNull();
+ expect(more).not.toBeNull();
+ state.answer=fail(503,'Service Unavailable');
+ display.scrollTop=0;
+ display.dispatchEvent(new w.Event('scroll'));
+ await sleep(60);
+ const note=d.querySelector('#logs-load-more .load-more-text');
+ expect(note.getAttribute('role')).toBe('status');
+ expect(note.textContent).toContain('503 Service Unavailable');
+ const failedAt=logCalls(env);
+ for(let i=0;i<3;i++){ display.dispatchEvent(new w.Event('scroll')); await sleep(20); }
+ expect(logCalls(env)).toBe(failedAt);
+ state.answer=okJson({logs:'2026-01-01T00:00:01Z INFO older line\n',has_more:false,total_lines:50,limit:1,file:'f',files:[]});
+ // The button's own onclick attribute makes this call, and jsdom does not run inline handlers.
+ await w.loadMoreBlacksmithLogs();
+ expect(logCalls(env)).toBe(failedAt+1);
+});

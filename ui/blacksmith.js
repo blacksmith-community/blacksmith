@@ -16883,11 +16883,15 @@
   };
 
   // Load more blacksmith logs (older logs)
-  window.loadMoreBlacksmithLogs = async () => {
+  // Scrolling asks with auto set. After a failure only the operator activating
+  // the failure line asks again, so a scroll never repeats a failing request.
+  window.loadMoreBlacksmithLogs = async (options) => {
     const pagination = window.blacksmithLogsPagination;
     if (!pagination || !pagination.hasMore || pagination.isLoading) {
       return;
     }
+    if (options && options.auto === true && pagination.failed) return;
+    pagination.failed = false;
 
     const displayContainer = document.getElementById('blacksmith-logs-display');
     const loadMoreEl = document.getElementById('logs-load-more');
@@ -16969,8 +16973,9 @@
     } catch (error) {
       if (!current()) return;
       console.error('Failed to load more logs:', loggableError(error));
+      pagination.failed = true;
       if (loadMoreEl) {
-        loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Could not load older logs. ${escapeHtml(loadFailureDetail(error))} Click to retry.</span>`;
+        loadMoreEl.innerHTML = `<span class="load-more-text" role="status" style="color: var(--error-color);">Could not load older logs. ${escapeHtml(loadFailureDetail(error))} Click to retry.</span>`;
       }
     } finally {
       pagination.isLoading = false;
@@ -16994,7 +16999,7 @@
 
     // Check if scrolled near the top (within 100px)
     if (container.scrollTop < 100 && pagination && pagination.hasMore && !pagination.isLoading) {
-      window.loadMoreBlacksmithLogs();
+      window.loadMoreBlacksmithLogs({ auto: true });
     }
   };
 
