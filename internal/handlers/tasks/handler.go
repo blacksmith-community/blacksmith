@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -143,7 +144,18 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 
 	logger.Debug("Fetching tasks from director", "type", taskType, "limit", limit, "states", states, "team", team)
 
-	directorTasks, err := h.director.GetTasks(ctx, taskType, limit, states, team)
+	wantCounts := query.Get("counts") == "1"
+
+	// With counts and no states, the one window the director returns is both
+	// counted and returned. With states as well, the director is asked for
+	// its whole window so every state can still be counted, and the chosen
+	// states and the limit are applied here.
+	fetchLimit, fetchStates := limit, states
+	if wantCounts && len(states) > 0 {
+		fetchLimit, fetchStates = maxTaskWindow, nil
+	}
+
+	directorTasks, err := h.director.GetTasks(ctx, taskType, fetchLimit, fetchStates, team)
 	if err != nil {
 		logger.Error("Failed to fetch tasks from director: %v", err)
 
@@ -152,17 +164,52 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	var stateCounts map[string]int
+
+	if wantCounts {
+		stateCounts = map[string]int{"processing": 0, "queued": 0, "done": 0, "error": 0, "cancelled": 0}
+		for _, directorTask := range directorTasks {
+			stateCounts[directorTask.State]++
+		}
+	}
+
 	result := make([]Task, 0, len(directorTasks))
+
 	for _, directorTask := range directorTasks {
+		if wantCounts && len(states) > 0 && !slices.Contains(states, directorTask.State) {
+			continue
+		}
+
 		hTask := convertTask(directorTask)
 		if stateFilter != "" && !strings.EqualFold(hTask.State, stateFilter) {
 			continue
 		}
 
+		if wantCounts && len(result) >= limit {
+			break
+		}
+
 		result = append(result, hTask)
 	}
 
-	response.HandleJSON(writer, result, nil)
+	if !wantCounts {
+		response.HandleJSON(writer, result, nil)
+
+		return
+	}
+
+	response.HandleJSON(writer, listWithCounts{Tasks: result, StateCounts: stateCounts, Window: len(directorTasks)}, nil)
+}
+
+// maxTaskWindow is the most tasks the director adapter returns in one call.
+const maxTaskWindow = 200
+
+// listWithCounts is the answer to a list request that asked for counts. The
+// plain answer stays a bare array, so existing callers are unaffected.
+type listWithCounts struct {
+	Tasks       []Task         `json:"tasks"`
+	StateCounts map[string]int `json:"state_counts"`
+	Window      int            `json:"window"`
 }
 
 func convertTask(task bosh.Task) Task {

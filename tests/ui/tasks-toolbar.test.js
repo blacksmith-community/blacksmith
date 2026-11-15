@@ -164,3 +164,151 @@ test('the phone layout keeps its full-width fields and wrapping chips', () => {
   expect(css).toMatch(/compact-tasks-controls\.table-controls-container \.toolbar-group \{[^}]*flex: 1 1 100%/);
   expect(css).toMatch(/compact-tasks-controls\.table-controls-container \.toolbar-chips \{[^}]*min-width: 0/);
 });
+
+const tasksOf = (states) => states.map((state, i) => ({ id: i + 1, state, description: 'task', started_at: '2026-10-31T10:00:00Z' }));
+const chips = (bar) => Object.fromEntries(Array.from(bar.querySelectorAll('.toolbar-chips input')).map((i) => [i.value, i]));
+
+t('each state chip shows how many loaded tasks are in that state', () => {
+  const { w, d } = boot();
+  try {
+    const host = d.createElement('div');
+    host.innerHTML = w.__T.formatTasks(tasksOf(['done', 'done', 'error', 'processing']));
+    const byState = chips(host);
+    const shown = Object.fromEntries(Object.entries(byState).map(([k, i]) => [k, i.closest('label').querySelector('.chip-count').textContent]));
+    expect(shown).toEqual({ processing: '1', queued: '0', done: '2', error: '1', cancelled: '0' });
+  } finally { w.close(); }
+});
+
+t('an unpressed chip with no tasks is disabled and dimmed, and a pressed one stays enabled', () => {
+  const { w, d } = boot();
+  try {
+    const host = d.createElement('div');
+    d.getElementById('blacksmith').appendChild(host);
+    host.innerHTML = w.__T.formatTasks(tasksOf(['done', 'error']));
+    const byState = chips(host);
+    byState.cancelled.checked = false;
+    w.__T.syncTaskStateChips();
+    expect(byState.cancelled.disabled).toBe(true);
+    expect(byState.cancelled.getAttribute('aria-disabled')).toBe('true');
+    expect(byState.cancelled.closest('label').classList.contains('chip-dim')).toBe(true);
+    expect(byState.queued.disabled).toBe(false);
+    expect(byState.queued.hasAttribute('aria-disabled')).toBe(false);
+    expect(byState.done.disabled).toBe(false);
+    byState.done.checked = false;
+    w.__T.syncTaskStateChips();
+    expect(byState.done.disabled).toBe(false);
+  } finally { w.close(); }
+});
+
+// These drive refreshTasksTable the way the Refresh button does: through the
+// page's own request, its own rebuild of the table, and its own handlers.
+const { sleep } = require('./certificates/harness.js').main;
+const row = (id, state) => ({ id, state, description: `task ${id}`, started_at: '2026-10-31T10:00:00Z', timestamp: 1793000000 + id });
+const mountTasks = async (opts) => {
+  const { w, d, calls } = boot();
+  await sleep(50);
+  const root = d.getElementById('blacksmith');
+  root.classList.add('active');
+  root.innerHTML = '<div class="entity-workspace" data-section="tasks"><div class="detail-content"></div></div>';
+  w.__routes.push(['/b/tasks?', (u, o, json) => json(200, opts.body(u))]);
+  d.querySelector('#blacksmith .detail-content').innerHTML = w.__T.formatTasks(opts.first || []);
+  return { w, d, calls };
+};
+const press = (d, state, on) => {
+  const box = d.querySelector(`#blacksmith .toolbar-chips input[value="${state}"]`);
+  box.checked = on;
+  box.dispatchEvent(new d.defaultView.Event('change', { bubbles: true }));
+  return box;
+};
+const shown = (d) => Array.from(d.querySelectorAll('.tasks-table tbody tr')).filter((r) => r.style.display !== 'none').map((r) => r.textContent.trim().replace(/\s+/g, ' '));
+
+// A stand-in for the broker's list: it filters by states= and cuts to limit the
+// way the handler does, and answers with counts when they are asked for.
+const serve = (all) => (u) => {
+  const q = new URL(u, 'http://localhost').searchParams;
+  const states = (q.get('states') || '').split(',').filter(Boolean);
+  const limit = Number(q.get('limit')) || 50;
+  const counts = { processing: 0, queued: 0, done: 0, error: 0, cancelled: 0 };
+  all.forEach((task) => { counts[task.state] += 1; });
+  const rows = all.filter((task) => !states.length || states.includes(task.state)).slice(0, limit);
+  return q.get('counts') === '1' ? { tasks: rows, state_counts: counts, window: all.length } : rows;
+};
+
+t('a refresh asks for the whole window with counts and no states, and the chips count from state_counts', async () => {
+  const { w, d, calls } = await mountTasks({ body: serve([row(1, 'error'), row(2, 'error'), row(3, 'done'), row(4, 'done'), row(5, 'done')]) });
+  try {
+    press(d, 'done', false); press(d, 'processing', false);
+    await w.__T.refreshTasksTable();
+    await sleep(200);
+    const url = calls.filter((c) => c.includes('/b/tasks?')).pop();
+    expect(url).toContain('counts=1');
+    expect(url).toContain('limit=200');
+    expect(url).not.toMatch(/[?&]states=/);
+    const count = (s) => d.querySelector(`#blacksmith .toolbar-chips input[value="${s}"]`).closest('label').querySelector('.chip-count').textContent;
+    expect(count('done')).toBe('3');
+    expect(count('error')).toBe('2');
+    expect(d.querySelector('#blacksmith .tasks-count-note').textContent).toContain('latest 5');
+    expect(shown(d).length).toBe(2);
+  } finally { w.close(); }
+});
+
+t('a chip that reads Done 3 shows 3 rows after it is unpressed, refreshed, and pressed again', async () => {
+  const { w, d } = await mountTasks({ body: serve([row(1, 'error'), row(2, 'done'), row(3, 'done'), row(4, 'done')]) });
+  try {
+    press(d, 'done', false);
+    await w.__T.refreshTasksTable();
+    await sleep(200);
+    expect(shown(d).length).toBe(1);
+    press(d, 'done', true);
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').closest('label').querySelector('.chip-count').textContent).toBe('3');
+    expect(shown(d).length).toBe(4);
+  } finally { w.close(); }
+});
+
+t('a refresh that gets a bare array still counts its own rows', async () => {
+  // A plain array, whatever the query asks for, so the fallback in readTasksResponse is the only way to read it.
+  const { w, d } = await mountTasks({ body: () => [row(1, 'done'), row(2, 'error')] });
+  try {
+    await w.__T.refreshTasksTable();
+    await sleep(200);
+    expect(d.querySelector('#blacksmith .toolbar-chips input[value="done"]').closest('label').querySelector('.chip-count').textContent).toBe('1');
+  } finally { w.close(); }
+});
+
+t('typing a search never brings back a row the state chips hide, and a refresh keeps it so', async () => {
+  const { w, d } = await mountTasks({ body: serve([row(1, 'done'), row(2, 'error'), row(3, 'error')]) });
+  try {
+    await w.__T.refreshTasksTable();
+    await sleep(200);
+    ['processing', 'queued', 'done', 'cancelled'].forEach((s) => press(d, s, false));
+    expect(shown(d).length).toBe(2);
+    const input = d.getElementById('search-tasks-table');
+    input.value = 'task';
+    input.dispatchEvent(new w.Event('input'));
+    expect(shown(d).length).toBe(2);
+    expect(shown(d).join('|')).not.toContain('task 1');
+    await w.__T.refreshTasksTable();
+    await sleep(200);
+    expect(shown(d).length).toBe(2);
+    // With the search box empty, only the refresh itself can hide the done row again.
+    d.getElementById('search-tasks-table').value = '';
+    await w.__T.refreshTasksTable();
+    await sleep(200);
+    expect(shown(d).length).toBe(2);
+    press(d, 'done', true);
+    expect(shown(d).length).toBe(3);
+    input.value = '';
+  } finally { w.close(); }
+});
+
+t('unpressing a chip whose state has no tasks disables it at once', async () => {
+  const { w, d } = await mountTasks({ body: serve([row(1, 'done')]) });
+  try {
+    await w.__T.refreshTasksTable();
+    await sleep(200);
+    const box = press(d, 'cancelled', false);
+    expect(box.disabled).toBe(true);
+    expect(box.closest('label').classList.contains('chip-dim')).toBe(true);
+    expect(press(d, 'done', false).disabled).toBe(false);
+  } finally { w.close(); }
+});

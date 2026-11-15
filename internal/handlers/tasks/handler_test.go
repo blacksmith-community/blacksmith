@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,8 @@ type fakeDirector struct {
 
 	tasks          []bosh.Task
 	getTasksErr    error
+	gotLimit       int
+	gotStates      []string
 	taskDetails    map[int]bosh.Task
 	taskDetailErr  map[int]error
 	taskEvents     map[int][]bosh.TaskEvent
@@ -61,8 +64,22 @@ func (f *fakeDirector) GetTasks(_ context.Context, taskType string, limit int, s
 		return nil, f.getTasksErr
 	}
 
-	result := make([]bosh.Task, len(f.tasks))
-	copy(result, f.tasks)
+	f.gotLimit = limit
+	f.gotStates = states
+
+	result := make([]bosh.Task, 0, len(f.tasks))
+
+	for _, task := range f.tasks {
+		if len(states) > 0 && !slices.Contains(states, task.State) {
+			continue
+		}
+
+		result = append(result, task)
+	}
+
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
 
 	return result, nil
 }
@@ -214,6 +231,131 @@ func TestListTasksFiltersByState(t *testing.T) {
 
 	if len(payload) != 1 || payload[0].ID != 1 {
 		t.Fatalf("expected only task 1, got %+v", payload)
+	}
+}
+
+const errorState = "error"
+
+func TestListTasksCountsEveryStateInTheWindow(t *testing.T) {
+	t.Parallel()
+
+	fakeDir := newFakeDirector()
+	fakeDir.tasks = []bosh.Task{
+		{ID: 1, State: "done"}, {ID: 2, State: "done"}, {ID: 3, State: "done"},
+		{ID: 4, State: errorState}, {ID: 5, State: errorState}, {ID: 6, State: errorState},
+		{ID: 7, State: "processing"},
+	}
+
+	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/tasks?counts=1&states=error&limit=2", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ListTasks(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+
+	var payload struct {
+		Tasks       []tasks.Task   `json:"tasks"`
+		StateCounts map[string]int `json:"state_counts"`
+		Window      int            `json:"window"`
+	}
+
+	err = json.Unmarshal(recorder.Body.Bytes(), &payload)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(payload.Tasks) != 2 || payload.Tasks[0].State != errorState || payload.Tasks[1].State != errorState {
+		t.Fatalf("expected the two newest error tasks, got %+v", payload.Tasks)
+	}
+
+	want := map[string]int{"processing": 1, "queued": 0, "done": 3, errorState: 3, "cancelled": 0}
+	for state, count := range want {
+		if payload.StateCounts[state] != count {
+			t.Fatalf("state_counts[%s] = %d, want %d (all: %v)", state, payload.StateCounts[state], count, payload.StateCounts)
+		}
+	}
+
+	if payload.Window != 7 {
+		t.Fatalf("window = %d, want 7", payload.Window)
+	}
+}
+
+func TestListTasksCountsWithoutStatesAsksForOneWindow(t *testing.T) {
+	t.Parallel()
+
+	fakeDir := newFakeDirector()
+	fakeDir.tasks = []bosh.Task{
+		{ID: 1, State: "done"}, {ID: 2, State: errorState}, {ID: 3, State: "done"}, {ID: 4, State: "done"},
+	}
+
+	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/tasks?counts=1&limit=3", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ListTasks(recorder, req)
+
+	var payload struct {
+		Tasks       []tasks.Task   `json:"tasks"`
+		StateCounts map[string]int `json:"state_counts"`
+		Window      int            `json:"window"`
+	}
+
+	err = json.Unmarshal(recorder.Body.Bytes(), &payload)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if fakeDir.gotLimit != 3 || len(fakeDir.gotStates) != 0 {
+		t.Fatalf("director asked with limit %d and states %v, want the requested limit and no states", fakeDir.gotLimit, fakeDir.gotStates)
+	}
+
+	if len(payload.Tasks) != 3 || payload.Window != 3 || payload.StateCounts["done"] != 2 || payload.StateCounts[errorState] != 1 {
+		t.Fatalf("rows and counts must describe the same window, got %d rows, window %d, counts %v", len(payload.Tasks), payload.Window, payload.StateCounts)
+	}
+}
+
+func TestListTasksWithoutCountsStaysAnArray(t *testing.T) {
+	t.Parallel()
+
+	fakeDir := newFakeDirector()
+	fakeDir.tasks = []bosh.Task{{ID: 1, State: "done"}, {ID: 2, State: "error"}}
+
+	log, err := logger.New(logger.Config{Level: "debug", Format: "json"})
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	handler := tasks.NewHandler(tasks.Dependencies{Logger: log, Director: fakeDir})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/tasks?states=error", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ListTasks(recorder, req)
+
+	var payload []tasks.Task
+
+	err = json.Unmarshal(recorder.Body.Bytes(), &payload)
+	if err != nil {
+		t.Fatalf("the default response must stay a bare array: %v", err)
+	}
+
+	if len(payload) != 1 || payload[0].ID != 2 || fakeDir.gotStates[0] != "error" {
+		t.Fatalf("states=error must still reach the director and filter, got %+v", payload)
 	}
 }
 

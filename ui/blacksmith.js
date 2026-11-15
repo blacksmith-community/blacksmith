@@ -1535,6 +1535,28 @@
 
   // A table can match its rows on chosen fields instead of the row text.
   const tableRowMatchers = {};
+
+  // A table can add a second reason to hide a row. The Tasks table adds its
+  // state chips, so a row is shown only when the chips and the search agree.
+  const tableRowGates = new Map();
+  const tableSearchFilters = new Map();
+
+  // Show or hide the rows of a table from every reason at once. With a search
+  // box mounted, its own filter runs and applies the gate. Without one, the
+  // gate alone decides.
+  const applyTableVisibility = (tableId) => {
+    const searchInput = document.getElementById(`search-${tableId}`);
+    const filterTable = tableSearchFilters.get(tableId);
+    if (searchInput && filterTable && filterTable.input === searchInput) {
+      filterTable();
+      return;
+    }
+    const gate = tableRowGates.get(tableId);
+    document.querySelectorAll(`.${CSS.escape(tableId)} tbody tr`).forEach((row) => {
+      row.style.display = !gate || gate(row) ? '' : 'none';
+    });
+  };
+
   const attachSearchFilter = (tableId) => {
     const searchInput = document.getElementById(`search-${tableId}`);
     const clearBtn = document.getElementById(`clear-${tableId}`);
@@ -1552,7 +1574,8 @@
       rows.forEach(row => {
         const matcher = tableRowMatchers[tableId];
         const matches = matcher ? matcher(row, filter) : row.textContent.toLowerCase().includes(filter);
-        if (matches) {
+        const gate = tableRowGates.get(tableId);
+        if (matches && (!gate || gate(row))) {
           row.style.display = '';
           visibleCount++;
         } else {
@@ -1579,6 +1602,8 @@
       }
     };
 
+    filterTable.input = searchInput;
+    tableSearchFilters.set(tableId, filterTable);
     searchInput.addEventListener('input', filterTable);
     searchInput.addEventListener('keyup', filterTable);
 
@@ -10817,13 +10842,13 @@
         return renderBrokerTab();
       } else if (type === 'tasks') {
         // Fetch BOSH director tasks
-        const response = await fetch('/b/tasks?type=recent&limit=100', { cache: 'no-cache' });
+        const response = await fetch(`/b/tasks?type=recent&limit=${TASKS_WINDOW}&counts=1`, { cache: 'no-cache' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        const tasks = await response.json();
+        const loaded = readTasksResponse(await response.json());
         if (!isCurrent()) return '';
-        return formatTasks(tasks);
+        return formatTasks(loaded.tasks, 'tasks', loaded);
       } else if (type === 'configs') {
         // Fetch BOSH director configs
         const response = await fetch('/b/configs?limit=100', { cache: 'no-cache' });
@@ -11738,7 +11763,30 @@
   // label says that. The value the request carries is unchanged.
   const TASK_SCOPE_ALL_LABEL = 'Broker director (all tasks)';
 
-  const formatTasks = (tasks, dataKey = 'tasks') => {
+  // The most tasks the broker will list at once, and so the window the chips count.
+  const TASKS_WINDOW = 200;
+
+  const TASK_STATE_CHIPS = [['processing', 'Processing'], ['queued', 'Queued'], ['done', 'Done'], ['error', 'Error'], ['cancelled', 'Cancelled']];
+
+  // A state with no tasks has nothing to show, so its chip is disabled and
+  // dimmed. One that is pressed stays enabled so it can be turned off.
+  const syncTaskStateChips = () => {
+    document.querySelectorAll('#blacksmith .toolbar-chips input[type="checkbox"][data-count]').forEach((input) => {
+      const idle = Number(input.dataset.count) === 0 && !input.checked;
+      input.disabled = idle;
+      if (idle) input.setAttribute('aria-disabled', 'true'); else input.removeAttribute('aria-disabled');
+      input.closest('label')?.classList.toggle('chip-dim', idle);
+    });
+  };
+
+  // The list answers with a bare array, or with the rows plus a count of every
+  // state across the window the server looked at when counts were asked for.
+  const readTasksResponse = (body) => {
+    if (Array.isArray(body)) return { tasks: body, stateCounts: null, window: 0 };
+    return { tasks: body?.tasks || [], stateCounts: body?.state_counts || null, window: Number(body?.window) || 0 };
+  };
+
+  const formatTasks = (tasks, dataKey = 'tasks', meta = {}) => {
     // Always store data for sorting, even if empty
     tableOriginalData.set(dataKey, tasks || []);
 
@@ -11758,10 +11806,10 @@
               <option value="all">All</option>` })}
         ${tableToolbarField({ id: 'task-filter', label: 'Scope', keepKey: 'tasks-scope', options: `
               <option value="blacksmith">${TASK_SCOPE_ALL_LABEL}</option>` })}
-        ${tableToolbarChips({ legend: 'States', keepPrefix: 'tasks-state', chips: [
-          ['processing', 'Processing'], ['queued', 'Queued'], ['done', 'Done'], ['error', 'Error'], ['cancelled', 'Cancelled']] })}
+        ${tableToolbarChips({ legend: 'States', keepPrefix: 'tasks-state', chips: TASK_STATE_CHIPS.map(([value, text]) => [value, text, meta.stateCounts ? Number(meta.stateCounts[value]) || 0 : (tasks || []).filter((task) => task.state === value).length]) })}
         ${tableToolbarActions({ tableSelector: `.${tableId}`, noun: 'tasks', refresh: 'id="refresh-tasks-btn"', wrapperClass: 'tasks-action-buttons' })}
       </div>
+      <p class="tasks-count-note muted">${meta.window ? `State counts cover the latest ${meta.window} tasks, so a state with none there can still have older tasks.` : 'State counts cover the tasks loaded here.'}</p>
       <div class="tasks-table-container">
         <table class="${tableId}">
           <thead>
@@ -12661,10 +12709,12 @@
           </select>
         </div>`;
 
+  // A chip may carry a third entry, the number of rows it stands for. It then
+  // shows that number in the label and records it for the disabled check.
   const tableToolbarChips = ({ legend, keepPrefix, chips }) => `<fieldset class="toolbar-group">
           <legend>${legend}</legend>
           <div class="checkbox-group toolbar-chips">
-            ${chips.map(([value, text]) => `<label><input type="checkbox" value="${value}" data-keep-key="${keepPrefix}:${value}" checked> ${text}</label>`).join('\n            ')}
+            ${chips.map(([value, text, count]) => `<label><input type="checkbox" value="${value}" data-keep-key="${keepPrefix}:${value}"${count === undefined ? '' : ` data-count="${count}"`} checked> ${text}${count === undefined ? '' : ` <span class="chip-count">${count}</span>`}</label>`).join('\n            ')}
           </div>
         </fieldset>`;
 
@@ -18040,23 +18090,32 @@
     }
 
     try {
-      let url = `/b/tasks?type=${taskType}&limit=100&team=${encodeURIComponent(taskFilterValue)}`;
-      if (checkedStates.length > 0) {
-        url += `&states=${checkedStates.join(',')}`;
-      }
+      // The page asks for the whole window with no states, so the rows it
+      // holds and the chip counts describe the same tasks. The chips then
+      // filter those rows in the page.
+      const url = `/b/tasks?type=${taskType}&limit=${TASKS_WINDOW}&team=${encodeURIComponent(taskFilterValue)}&counts=1`;
 
       const response = await fetch(url, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const tasks = await response.json();
+      const loaded = readTasksResponse(await response.json());
+      const tasks = loaded.tasks;
       if (!refresh.current()) return;
       refresh.fetched();
       const contentContainer = refresh.container;
 
       if (contentContainer) {
-        contentContainer.innerHTML = formatTasks(tasks);
+        contentContainer.innerHTML = formatTasks(tasks, 'tasks', loaded);
+
+        // The new rows hold every state, so the unpressed chips hide theirs at
+        // once and no hidden row shows while the handlers are restored.
+        uncheckedStates.forEach((state) => {
+          const box = document.querySelector(`#blacksmith .checkbox-group input[type="checkbox"][value="${state}"]`);
+          if (box) box.checked = false;
+        });
+        applyTasksFilter();
 
         // Restore filter states after refresh
         setTimeout(async () => {
@@ -18107,6 +18166,7 @@
           initializeSorting('tasks-table');
           attachSearchFilter('tasks-table');
           restoreSearchFilterState('tasks-table', currentSearchFilter);
+          applyTasksFilter();
           // Don't call initializeTasksTab() again - it would repopulate the dropdown
         }, 50);
       }
@@ -18115,24 +18175,20 @@
     }
   };
 
-  // Apply state filters to existing task table
+  // A task row is shown only when its state chip is pressed. Rows without a
+  // state, such as the empty-table message, are never hidden by the chips.
+  tableRowGates.set('tasks-table', (row) => {
+    const stateCell = row.querySelector('.task-state .status-badge');
+    if (!stateCell) return true;
+    const checked = new Set(Array.from(document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked')).map((cb) => cb.value));
+    return checked.has(stateCell.dataset.state);
+  });
+
+  // Apply state filters to the task table, together with its search, and bring
+  // the chips' disabled marks in line with what is now pressed.
   const applyTasksFilter = () => {
-    const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked');
-    const checkedStates = new Set(Array.from(stateCheckboxes).map(cb => cb.value));
-
-    const rows = document.querySelectorAll('.tasks-table tbody tr');
-
-    rows.forEach(row => {
-      const stateCell = row.querySelector('.task-state .status-badge');
-      if (stateCell) {
-        const taskState = stateCell.dataset.state;
-        if (checkedStates.has(taskState)) {
-          row.style.display = '';
-        } else {
-          row.style.display = 'none';
-        }
-      }
-    });
+    applyTableVisibility('tasks-table');
+    syncTaskStateChips();
   };
 
   // Initialize configs tab functionality

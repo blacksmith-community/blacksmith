@@ -806,6 +806,9 @@ fieldset.toolbar-group > legend { float: left; }
 .table-controls-container .toolbar-chips label:has(input:focus-visible) { outline: 2px solid var(--ring); outline-offset: 1px; }
 /* The checkbox stays in the page for the keyboard and for screen readers, and the chip shows its state. */
 .table-controls-container .toolbar-chips input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.toolbar-chips .chip-count { font-variant-numeric: tabular-nums; font-weight: 700; }
+.table-controls-container .toolbar-chips label.chip-dim { opacity: .55; cursor: not-allowed; }
+.table-controls-container .toolbar-chips label.chip-dim input { cursor: not-allowed; }
 
 #blacksmith .compact-tasks-controls { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 10px; padding: 0 0 8px; }
 #blacksmith .compact-tasks-controls > * { margin-block: 0; }
