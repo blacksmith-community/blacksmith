@@ -11072,11 +11072,11 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .upgrade-task-stats .success {
-  color: #10b981;
+  color: var(--text-success);
 }
 
 #upgrade .upgrade-task-stats .failed {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 #upgrade .upgrade-task-stats .total {
@@ -11101,8 +11101,8 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .status-icon.success {
-  background-color: #10b981;
-  color: white;
+  background-color: var(--success);
+  color: var(--success-foreground);
 }
 
 #upgrade .status-icon.running {
@@ -11112,8 +11112,8 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .status-icon.failed {
-  background-color: #ef4444;
-  color: white;
+  background-color: var(--danger);
+  color: var(--danger-foreground);
 }
 
 #upgrade .status-icon.pending {
@@ -11184,7 +11184,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .task-detail-summary .value.status-completed {
-  color: #10b981;
+  color: var(--text-success);
 }
 
 #upgrade .task-detail-summary .value.status-running {
@@ -11192,7 +11192,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .task-detail-summary .value.status-failed {
-  color: #ef4444;
+  color: var(--text-error);
 }
 
 #upgrade .task-detail-summary .value.status-pending {
@@ -11270,7 +11270,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 [data-theme="dark"] #upgrade .upgrade-task-instance .instance-cancel-btn {
-  background: #dc2626;
+  background: color-mix(in srgb, var(--danger) 85%, var(--foreground));
 }
 
 [data-theme="dark"] #upgrade .upgrade-task-instance .instance-cancel-btn:hover {
@@ -11282,22 +11282,22 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 [data-theme="dark"] #upgrade .job-control-btn.resume-btn {
-  background: #059669;
+  background: color-mix(in srgb, var(--success) 85%, var(--foreground));
 }
 
 [data-theme="dark"] #upgrade .job-control-btn.cancel-btn {
-  background: #dc2626;
+  background: color-mix(in srgb, var(--danger) 85%, var(--foreground));
 }
 
 #upgrade .upgrade-task-instance .instance-error {
   font-size: 0.75rem;
-  color: #ef4444;
+  color: var(--text-error);
   margin-top: 0.25rem;
   word-break: break-word;
 }
 
 #upgrade .upgrade-task-instance.instance-success {
-  border-left: 3px solid #10b981;
+  border-left: 3px solid var(--text-success);
 }
 
 #upgrade .upgrade-task-instance.instance-running {
@@ -11305,7 +11305,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .upgrade-task-instance.instance-failed {
-  border-left: 3px solid #ef4444;
+  border-left: 3px solid var(--text-error);
 }
 
 #upgrade .upgrade-task-instance.instance-pending {
@@ -11342,8 +11342,8 @@ bs-tabs > .broker-tab-pane[hidden] {
   display: inline-block;
   font-size: 0.75rem;
   font-weight: 500;
-  color: #fff;
-  background: #ef4444;
+  color: var(--danger-foreground);
+  background: var(--danger);
   border: none;
   border-radius: 4px;
   padding: 0.25rem 0.625rem;
@@ -11352,7 +11352,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .upgrade-task-instance .instance-cancel-btn:hover {
-  background: #dc2626;
+  background: color-mix(in srgb, var(--danger) 85%, var(--foreground));
   transform: translateY(-1px);
 }
 
@@ -11384,21 +11384,21 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .job-control-btn.resume-btn {
-  background: #10b981;
-  color: #fff;
+  background: var(--success);
+  color: var(--success-foreground);
 }
 
 #upgrade .job-control-btn.resume-btn:hover {
-  background: #059669;
+  background: color-mix(in srgb, var(--success) 85%, var(--foreground));
 }
 
 #upgrade .job-control-btn.cancel-btn {
-  background: #ef4444;
-  color: #fff;
+  background: var(--danger);
+  color: var(--danger-foreground);
 }
 
 #upgrade .job-control-btn.cancel-btn:hover {
-  background: #dc2626;
+  background: color-mix(in srgb, var(--danger) 85%, var(--foreground));
 }
 
 #upgrade .job-control-btn.skip-btn {
@@ -11429,7 +11429,7 @@ bs-tabs > .broker-tab-pane[hidden] {
 }
 
 #upgrade .status-cancelled {
-  color: #ef4444;
+  color: var(--text-error);
   font-weight: 500;
 }
 
