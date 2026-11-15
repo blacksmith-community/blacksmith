@@ -211,15 +211,18 @@ func (s *ChangeStore) List(ctx context.Context, scope string, limit int) ([]Chan
 	ctx, cancel := context.WithTimeout(ctx, changeWriteTimeout)
 	defer cancel()
 
+	// The queue is read before the index. A record leaves the queue only
+	// once it is indexed, so one that lands in between is in the queue
+	// read, and listed marks it so the index read does not list it twice.
+	listed := make(map[string]bool)
+	records := s.pendingOf(scope, listed)
+
 	var index map[string]changeIndexEntry
 
 	_, err := s.kv.Get(ctx, ChangeVaultPath, &index)
 	if err != nil {
 		return nil, fmt.Errorf("reading the change index: %w", err)
 	}
-
-	listed := make(map[string]bool)
-	records := s.pendingOf(scope, listed)
 
 	for _, recordID := range newestIDs(index, scope, limit) {
 		if listed[recordID] {
