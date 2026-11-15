@@ -14546,3 +14546,9 @@ tr.row-link { cursor: pointer; }
 .entity-attention .entity-attention-row .entity-attention-fetched { color: inherit; }
 .entity-attention a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .entity-not-reported-note { display: block; color: var(--muted-foreground); font-size: .8125rem; }
+
+/* The could not load panel. Oat colours it from role="alert" and data-variant. */
+.load-error { margin: var(--space-4); padding: var(--space-3) var(--space-4); }
+.load-error p { margin: 0 0 var(--space-2); }
+.load-error .load-error-title { font-weight: 600; }
+.load-error button { margin-top: var(--space-2); }

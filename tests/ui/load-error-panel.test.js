@@ -90,3 +90,104 @@ t('a 401 keeps its plain sign-in message',async()=>{
  expect(panel.textContent).toContain('Authentication required');
  expect(panel.textContent).not.toContain(SECRET);
 });
+
+// The detail views of the broker and of an instance use the same panel.
+const detailStart=async(extra)=>{
+ const out=await start(okCatalog,extra);
+ const {env}=out;
+ out.container=(id)=>{
+  const host=env.d.querySelector(`#${id} .detail-content`)||(()=>{ const div=env.d.createElement('div'); div.className='detail-content'; env.d.getElementById(id).appendChild(div); return div; })();
+  return host;
+ };
+ return out;
+};
+const answers=(state)=>(u,o,j)=>state.answer(u,o,j);
+
+t('a broker tab that cannot load shows the panel and Retry reloads it',async()=>{
+ const state={answer:fail(503,'Service Unavailable')};
+ const {env}=await detailStart([['/b/configs',answers(state)]]);
+ const {w,d}=env;
+ expect(typeof w.loadBlacksmithSection).toBe('function');
+ await w.loadBlacksmithSection('configs');
+ await sleep(30);
+ const panel=d.querySelector('#blacksmith .detail-content [data-load-error]');
+ expect(panel).not.toBeNull();
+ expect(panel.getAttribute('role')).toBe('alert');
+ expect(panel.textContent).toContain('503');
+ expect(panel.textContent).not.toContain(SECRET);
+ expect(panel.textContent).not.toContain('/b/configs');
+ expect(d.querySelector('#blacksmith .detail-content').textContent).not.toContain('Failed to load');
+ state.answer=(u,o,j)=>j(200,[]);
+ panel.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(d.querySelector('#blacksmith .detail-content [data-load-error]')).toBeNull();
+});
+
+t('a manifest that cannot load shows the status and never the broker body',async()=>{
+ const state={answer:fail(500,'Internal Server Error')};
+ const {env}=await detailStart([['/manifest',answers(state)]]);
+ const {w,d}=env;
+ await w.loadBlacksmithSection('manifest');
+ await sleep(30);
+ const panel=d.querySelector('#blacksmith .detail-content [data-load-error]');
+ expect(panel).not.toBeNull();
+ expect(panel.textContent).toContain('500');
+ expect(panel.textContent).not.toContain(SECRET);
+});
+
+t('an instance tab that cannot load shows the panel and Retry reloads it',async()=>{
+ const state={answer:fail(502,'Bad Gateway')};
+ const {env}=await detailStart([['/b/inst1/vms',answers(state)]]);
+ const {w,d}=env;
+ const host=d.createElement('div'); host.className='detail-content'; d.getElementById('services').appendChild(host);
+ w.currentInstanceInfo={id:'inst1'};
+ expect(typeof w.loadInstanceSection).toBe('function');
+ await w.loadInstanceSection('inst1','vms');
+ await sleep(30);
+ const panel=host.querySelector('[data-load-error]');
+ expect(panel).not.toBeNull();
+ expect(panel.textContent).toContain('502');
+ expect(panel.textContent).toContain('Bad Gateway');
+ expect(panel.textContent).not.toContain(SECRET);
+ expect(panel.textContent).not.toContain('/b/inst1');
+ const calls=env.calls.filter((c)=>c.includes('/b/inst1/vms')).length;
+ state.answer=(u,o,j)=>j(200,[]);
+ panel.querySelector('[data-load-retry]').click();
+ await sleep(80);
+ expect(env.calls.filter((c)=>c.includes('/b/inst1/vms')).length).toBe(calls+1);
+ expect(host.querySelector('[data-load-error]')).toBeNull();
+});
+
+t('every Retry button on a page has its own keep key',async()=>{
+ const {env}=await detailStart([['/b/configs',fail(503,'Service Unavailable')]]);
+ const {w,d}=env;
+ await w.loadBlacksmithSection('configs');
+ await sleep(30);
+ const keys=[...d.querySelectorAll('[data-load-retry]')].map((b)=>b.getAttribute('data-keep-key'));
+ expect(keys.length).toBe(1);
+ expect(keys[0]).toMatch(/^load-retry:/);
+ expect(d.querySelectorAll(`[data-keep-key="${keys[0]}"]`).length).toBe(1);
+ // No other control in the page uses the same key shape twice.
+ const all=[...d.querySelectorAll('[data-keep-key]')].map((e)=>e.getAttribute('data-keep-key'));
+ expect(new Set(all).size).toBe(all.length);
+});
+
+t('a marketplace that cannot load shows the panel without the broker message',async()=>{
+ const state={answer:fail(502,'Bad Gateway')};
+ const {env}=await detailStart([['/marketplace',answers(state)]]);
+ const {w,d}=env;
+ const panel=d.createElement('div'); panel.setAttribute('data-panel','marketplace'); d.body.appendChild(panel);
+ const manager=w.CFEndpointManager;
+ manager.selectedEndpoint='e1';
+ await manager.loadTabContent('marketplace','e1');
+ const box=panel.querySelector('[data-load-error]');
+ expect(box).not.toBeNull();
+ expect(box.textContent).toContain('502');
+ expect(box.textContent).not.toContain(SECRET);
+ const before=env.calls.filter((c)=>c.includes('/marketplace')).length;
+ state.answer=(u,o,j)=>j(200,{services:[]});
+ box.querySelector('[data-load-retry]').click();
+ await sleep(60);
+ expect(env.calls.filter((c)=>c.includes('/marketplace')).length).toBe(before+1);
+ expect(panel.querySelector('[data-load-error]')).toBeNull();
+});

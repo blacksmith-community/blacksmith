@@ -10956,6 +10956,11 @@
     return null;
   };
 
+  const blacksmithDetailFailure = (type, error) => detailFailure('blacksmith', type, error, retryDetailLoad(
+    '#blacksmith .detail-content',
+    () => document.querySelector('#blacksmith .entity-workspace')?.dataset.section === type || !document.querySelector('#blacksmith .entity-workspace'),
+    () => window.loadBlacksmithSection(type)));
+
   // Fetch Blacksmith detail data
   const fetchBlacksmithDetail = async (deploymentName, type, isCurrent = () => true) => {
     // Validate deploymentName
@@ -11025,16 +11030,8 @@
         // shows or copies is a manifest the director did not return.
         const response = await fetch(`/b/deployments/${deploymentName}/manifest`, { cache: 'no-cache' });
         if (!response.ok) {
-          let reason = `HTTP ${response.status}: ${response.statusText}`;
-          try {
-            const body = await response.json();
-            if (body && body.error) {
-              reason = `HTTP ${response.status}: ${body.error}`;
-            }
-          } catch (parseError) {
-            // The body was not JSON, so the status line is all we have.
-          }
-          return `<div class="error">Failed to load the manifest of deployment ${escapeHtml(deploymentName)}: ${escapeHtml(reason)}</div>`;
+          // The broker's own words stay out of the panel, which names only the status.
+          return blacksmithDetailFailure('manifest', httpFailure(response));
         }
         const manifestData = await response.json();
 
@@ -11086,10 +11083,15 @@
 
       return `<div class="error">Unknown tab type: ${escapeHtml(type)}</div>`;
     } catch (error) {
-      return `<div class="error">Failed to load ${escapeHtml(type)}: ${escapeHtml(error.message)}</div>`;
+      return blacksmithDetailFailure(type, error);
     }
   };
 
+
+  const instanceDetailFailure = (instanceId, type, error) => detailFailure(`instance:${instanceId}`, type, error, retryDetailLoad(
+    '#services .detail-content',
+    () => window.currentInstanceInfo?.id === instanceId,
+    () => window.loadInstanceSection(instanceId, type)));
 
   // Fetch service detail data
   const fetchServiceDetail = async (instanceId, type, isCurrent = () => true) => {
@@ -11131,7 +11133,7 @@
     try {
       const response = await fetch(endpoints[type], { cache: 'no-cache' });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpFailure(response);
       }
 
       // Format based on type
@@ -11214,7 +11216,7 @@
       const text = await response.text();
       return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
     } catch (error) {
-      return `<div class="error">Failed to load ${type}: ${error.message}</div>`;
+      return instanceDetailFailure(instanceId, type, error);
     }
   };
 
@@ -11688,6 +11690,10 @@
       if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); }
     });
   });
+  const loadWhat = (type) => `the ${String(type).replace(/[-_]+/g, ' ')} view`;
+  const detailFailure = (scope, type, error, retry) => loadFailureHtml({ what: loadWhat(type), error, key: `${scope}:${type}`, retry });
+  // An HTTP answer that was not a success, as an error that carries only its status.
+  const httpFailure = (response) => Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
   // Puts the loading note in a detail pane and runs its load again. A pane
   // that has since moved to another view is left alone.
   const retryDetailLoad = (selector, stillCurrent, load) => () => {
@@ -13395,7 +13401,7 @@
       ]);
 
       if (!credsResponse.ok) {
-        return `<div class="error">Unable to fetch credentials for service testing</div>`;
+        return instanceDetailFailure(instanceId, 'testing', httpFailure(credsResponse));
       }
 
       const creds = await credsResponse.json();
@@ -13460,7 +13466,7 @@
       return renderServiceTestingInterface(instanceId, serviceType, enhancedCreds);
     } catch (error) {
       console.error('Error rendering service testing:', loggableError(error));
-      return `<div class="error">Failed to load service testing: ${error.message}</div>`;
+      return instanceDetailFailure(instanceId, 'testing', error);
     }
   };
 
@@ -17960,9 +17966,10 @@
           }
         } catch (error) {
           if (request !== blacksmithRequestSequence) return;
-          contentContainer.innerHTML = `<div class="error">Failed to load tab: ${error.message}</div>`;
+          contentContainer.innerHTML = blacksmithDetailFailure(tabType, error);
         }
       };
+      window.loadBlacksmithSection = loadBlacksmithDetailTab;
 
       // Render Blacksmith panel
       const blacksmithPanel = document.querySelector('#blacksmith');
@@ -24225,7 +24232,12 @@
             break;
         }
       } catch (error) {
-        if (current()) panel.innerHTML = `<div class="error">Failed to load ${escapeHtml(tabName)}: ${escapeHtml(error.message)}</div>`;
+        if (current()) {
+          panel.innerHTML = loadFailureHtml({
+            what: `the ${tabName} tab`, error, key: `endpoint:${endpointName}:${tabName}`,
+            retry: () => (this.selectedEndpoint === endpointName && panel.isConnected ? this.loadTabContent(tabName, endpointName) : undefined)
+          });
+        }
       }
     },
 
@@ -24238,7 +24250,7 @@
       const data = await response.json();
 
       if (!current()) return;
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      if (!response.ok) throw httpFailure(response);
       if (Array.isArray(data.services)) {
         const html = `
           <div class="marketplace-content">
