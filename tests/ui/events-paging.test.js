@@ -8,23 +8,28 @@ const ID = 'inst-1';
 // The deployment's events, newest first, every one by a different action so a search can pick one out.
 const history = (total) => Array.from({ length: total }, (_, i) => { const id = total - i; return { id: String(id), time: '2026-10-31T10:00:00Z', user: 'admin', action: `act-${id}`, object_type: 'deployment', object_name: 'valkey-1', task_id: String(1000 + id) }; });
 
-const serve = (all) => (u) => {
+// The broker's page of events. It lists `deep` events deep and says so at the end. The page only
+// follows the ceiling flag, so a test can use a shallow ceiling and stay fast.
+const serve = (all, deep = 2000) => (u) => {
   const q = new URL(u, 'http://localhost').searchParams;
   const limit = Number(q.get('limit')) || 100;
   const offset = Number(q.get('offset')) || 0;
-  return { events: all.slice(offset, offset + limit), offset, limit, has_more: all.length > offset + limit };
+  const room = Math.min(limit, deep - offset);
+  if (room <= 0) return { events: [], offset, limit: 0, has_more: true, ceiling: true };
+  const hasMore = all.length > offset + room;
+  return { events: all.slice(offset, offset + room), offset, limit: room, has_more: hasMore, ceiling: hasMore && offset + room >= deep };
 };
 
-const mount = async (all) => {
+const mount = async (all, deep) => {
   const { w, d, calls } = boot();
   await sleep(50);
   const host = d.createElement('div');
   d.body.appendChild(host);
-  w.__routes.push([`/b/${ID}/events`, (u, o, json) => json(200, serve(all)(u))]);
+  w.__routes.push([`/b/${ID}/events`, (u, o, json) => json(200, serve(all, deep)(u))]);
   host.innerHTML = await w.__T.fetchServiceDetail(ID, 'events');
   return { w, d, calls, host };
 };
-const rows = (host) => Array.from(host.querySelectorAll('.events-table tbody tr'));
+const rows = (host) => Array.from(host.querySelector('.events-table')?.tBodies[0]?.rows || []);
 const more = (host) => host.querySelector('[data-events-load-more]');
 const status = (host) => host.querySelector('.events-load-status');
 
@@ -126,5 +131,53 @@ t('a bare array from an older broker still renders and offers no button', async 
     host.innerHTML = await w.__T.fetchServiceDetail(ID, 'events');
     expect(rows(host).length).toBe(5);
     expect(more(host)).toBeNull();
+  } finally { w.close(); }
+});
+
+t('rows added by Load more fall into the sort the table already has', async () => {
+  const { w, d, host } = await mount(history(250));
+  try {
+    w.__T.initializeAllTables();
+    const header = Array.from(host.querySelectorAll('.events-table th')).find((th) => th.textContent === 'Task');
+    header.click();
+    await sleep(50);
+    const tasks = () => rows(host).map((r) => Number(r.querySelector('.event-task').textContent));
+    const sorted = tasks();
+    expect(sorted).toEqual([...sorted].sort((a, b) => a - b));
+    expect(sorted[0]).toBe(1151);
+    more(host).click();
+    await sleep(150);
+    const after = tasks();
+    expect(after.length).toBe(200);
+    expect(after).toEqual([...after].sort((a, b) => a - b));
+    expect(after[0]).toBe(1051);
+  } finally { w.close(); }
+});
+
+t('at the broker ceiling the button is gone and the status says older events are not listed', async () => {
+  const { w, host } = await mount(history(500), 300);
+  try {
+    for (let page = 1; page < 3; page++) {
+      const before = rows(host).length;
+      more(host).click();
+      for (let waited = 0; rows(host).length === before && waited < 5000; waited += 20) await sleep(20);
+    }
+    expect(rows(host).length).toBe(300);
+    expect(more(host)).toBeNull();
+    expect(status(host).textContent).toContain('Older events are not listed here');
+    expect(status(host).getAttribute('role')).toBe('status');
+  } finally { w.close(); }
+});
+
+t('a page that adds no new rows ends the list instead of leaving a button that loads nothing', async () => {
+  const { w, host } = await mount(history(250));
+  try {
+    // The broker keeps answering the same page, as an old broker that clamps the offset would.
+    w.__routes.unshift([`/b/${ID}/events`, (u, o, json) => json(200, { events: history(250).slice(0, 100), has_more: true })]);
+    more(host).click();
+    await sleep(150);
+    expect(rows(host).length).toBe(100);
+    expect(more(host)).toBeNull();
+    expect(status(host).textContent).toContain('not listed here');
   } finally { w.close(); }
 });

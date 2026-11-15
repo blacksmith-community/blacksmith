@@ -12108,6 +12108,9 @@
   // The rows one page of an instance's events holds.
   const EVENTS_PAGE = 100;
 
+  // The deepest the broker lists events.
+  const EVENTS_LISTED_MAX = 2000;
+
   // Re-apply the sort a header shows, without cycling it, so rows added to a
   // sorted table fall into place.
   const resortInPlace = (table) => {
@@ -12149,7 +12152,10 @@
       tbody.insertAdjacentHTML('beforeend', fresh.map(eventRowHtml).join(''));
       resortInPlace(table);
       applyTableVisibility(tableId);
-      if (loaded.hasMore) {
+      // A page that added nothing leaves a button that would load nothing, so it ends here with the ceiling.
+      if (loaded.ceiling || (loaded.hasMore && fresh.length === 0)) {
+        holder.innerHTML = `<p class="events-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing ${all.length} events. Older events are not listed here, because the broker lists at most ${EVENTS_LISTED_MAX} events.</p>`;
+      } else if (loaded.hasMore) {
         holder.querySelector('.events-load-status').textContent = `Showing ${all.length} events. Older events are available.`;
         holder.querySelector('.events-load-error')?.remove();
         button.disabled = false;
@@ -12209,8 +12215,8 @@
   // The events endpoint answers an object with the page and has_more when a
   // page is asked for, and a bare array otherwise or from an older broker.
   const readEventsResponse = (body) => {
-    if (Array.isArray(body)) return { events: body, hasMore: false };
-    return { events: Array.isArray(body?.events) ? body.events : [], hasMore: body?.has_more === true };
+    if (Array.isArray(body)) return { events: body, hasMore: false, ceiling: false };
+    return { events: Array.isArray(body?.events) ? body.events : [], hasMore: body?.has_more === true, ceiling: body?.ceiling === true };
   };
 
   const formatEvents = (events, dataKey = 'events', instanceId = null, meta = {}) => {
@@ -12253,7 +12259,9 @@
           </tbody>
         </table>
       </div>
-      ${meta.hasMore === true && instanceId ? `<div class="events-load-more">
+      ${meta.ceiling === true && instanceId ? `<div class="events-load-more">
+        <p class="events-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing ${events.length} events. Older events are not listed here, because the broker lists at most ${EVENTS_LISTED_MAX} events.</p>
+      </div>` : meta.hasMore === true && instanceId ? `<div class="events-load-more">
         <p class="events-load-status muted" role="status" aria-live="polite" aria-atomic="true">Showing ${events.length} events. Older events are available.</p>
         <button type="button" class="events-load-more-btn" data-events-load-more data-instance-id="${escapeAttribute(String(instanceId))}" data-events-key="${escapeAttribute(dataKey)}" data-keep-key="events-load-more:${escapeAttribute(dataKey)}">Load more events</button>
       </div>` : ''}
