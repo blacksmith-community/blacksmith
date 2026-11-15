@@ -40,7 +40,10 @@ func (h *Handler) CanHandleInstanceAction(path string) bool {
 //
 // The action holds the instance and its deployment in the mutation guard
 // while the director accepts the task, so it never runs beside an upgrade,
-// a certificate rotation, or a broker operation on the same instance. It
+// a certificate rotation, or a broker operation on the same instance. Under
+// the guard it first asks the director for a task already running on the
+// deployment, and answers 409 deployment_locked with that task when there
+// is one. It
 // answers 202 with the BOSH task the director created. When the director's
 // answer is lost after the request went out, the task may have started, so
 // it answers 504 outcome_unknown rather than reporting a failure.
@@ -85,19 +88,29 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 	}
 	defer release()
 
+	if !h.deploymentIsIdle(req.Context(), writer, logger, instanceID, deployment, action) {
+		return
+	}
+
 	actor, _ := audit.ActorFrom(req.Context())
 
 	task, err := h.runInstanceAction(req.Context(), deployment, action)
+	answerInstanceAction(writer, logger, actor, instanceActionProblem{InstanceID: instanceID, Deployment: deployment, Operation: action}, task, err)
+}
+
+// answerInstanceAction answers the director's reply to an instance action
+// and logs its audit line. A lost answer is unknown, a refusal failed, and
+// a task the director queued accepted.
+func answerInstanceAction(writer http.ResponseWriter, logger interfaces.Logger, actor audit.Actor, subject instanceActionProblem, task *bosh.Task, err error) {
+	instanceID, deployment, action := subject.InstanceID, subject.Deployment, subject.Operation
+
 	if errors.Is(err, bosh.ErrOutcomeUnknown) {
 		logger.Error("The director's answer to the %s of deployment %s of instance %s was lost: %v", action, deployment, instanceID, err)
 		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "unknown", 0)
-		response.JSON(writer, http.StatusGatewayTimeout, instanceActionProblem{
-			Code:       apierr.CodeOutcomeUnknown,
-			Error:      fmt.Sprintf("The director's answer was lost, so the %s of instance %s may have started. Check the tasks of deployment %s before you try again.", action, instanceID, deployment),
-			InstanceID: instanceID,
-			Deployment: deployment,
-			Operation:  action,
-		})
+
+		subject.Code = apierr.CodeOutcomeUnknown
+		subject.Error = fmt.Sprintf("The director's answer was lost, so the %s of instance %s may have started. Check the tasks of deployment %s before you try again.", action, instanceID, deployment)
+		response.JSON(writer, http.StatusGatewayTimeout, subject)
 
 		return
 	}
@@ -129,6 +142,41 @@ type instanceActionResponse struct {
 	Operation  string `json:"operation"`
 	TaskID     int    `json:"task_id"`
 	State      string `json:"state"`
+}
+
+// deploymentIsIdle asks the director whether it runs a task on the
+// deployment, as the certificate preflight does. A queued, processing, or
+// cancelling task holds the deployment's lock, so the director would fail
+// a new task, and the action answers 409 deployment_locked with the task
+// instead. A task list the director can't give refuses the action too,
+// because nobody then knows whether the deployment is locked. The caller
+// holds the guard, so no broker operation can start in between.
+func (h *Handler) deploymentIsIdle(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, instanceID, deployment, action string) bool {
+	running, err := h.director.FindRunningTasksForDeployment(ctx, deployment)
+	if err != nil {
+		logger.Error("Failed to list the running tasks of deployment %s before the %s of instance %s: %v", deployment, action, instanceID, err)
+		apierr.Write(writer, apierr.New(http.StatusBadGateway, apierr.CodeInternal,
+			fmt.Sprintf("The director did not list the tasks of deployment %s, so the %s of instance %s didn't start: %v", deployment, action, instanceID, err)), http.StatusBadGateway)
+
+		return false
+	}
+
+	if len(running) == 0 {
+		return true
+	}
+
+	taskID := running[0].ID
+	logger.Warning("Refusing the %s of instance %s: the director is running task %d on deployment %s", action, instanceID, taskID, deployment)
+	response.JSON(writer, http.StatusConflict, instanceActionProblem{
+		Code:       apierr.CodeDeploymentLocked,
+		Error:      fmt.Sprintf("The director is running task %d on deployment %s, so the %s of instance %s didn't start. Wait for that task to finish.", taskID, deployment, action, instanceID),
+		InstanceID: instanceID,
+		Deployment: deployment,
+		Operation:  action,
+		TaskID:     taskID,
+	})
+
+	return false
 }
 
 // instanceActionProblem is the body of an instance action that did not

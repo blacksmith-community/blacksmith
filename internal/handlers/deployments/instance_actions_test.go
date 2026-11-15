@@ -29,6 +29,10 @@ const (
 	instanceTaskID  = 4321
 	actionRestart   = "restart"
 	actionRecreate  = "recreate"
+
+	// directorCredential is the basic-auth user and password of the test
+	// director.
+	directorCredential = "admin"
 )
 
 var errInstanceDirectorRefused = errors.New("director refused the job-state change")
@@ -39,10 +43,13 @@ var errInstanceDirectorRefused = errors.New("director refused the job-state chan
 type instanceDirector struct {
 	*testutil.MockBOSHDirector
 
-	guard *mutation.Guard
-	fail  error
+	guard   *mutation.Guard
+	fail    error
+	running []bosh.Task
+	listErr error
 
 	mu       sync.Mutex
+	lookups  []string
 	calls    []string
 	held     []bool
 	restarts []bosh.RestartOpts
@@ -51,6 +58,20 @@ type instanceDirector struct {
 
 func newInstanceDirector(guard *mutation.Guard) *instanceDirector {
 	return &instanceDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), guard: guard}
+}
+
+// FindRunningTasksForDeployment answers with the running tasks set on the
+// fake, or with listErr, and records which deployment it was asked about.
+func (d *instanceDirector) FindRunningTasksForDeployment(_ context.Context, deployment string) ([]bosh.Task, error) {
+	d.mu.Lock()
+	d.lookups = append(d.lookups, deployment)
+	d.mu.Unlock()
+
+	if d.listErr != nil {
+		return nil, d.listErr
+	}
+
+	return d.running, nil
 }
 
 func (d *instanceDirector) RestartDeployment(_ context.Context, name string, opts bosh.RestartOpts) (*bosh.Task, error) {
@@ -501,12 +522,24 @@ func TestInstanceActionsReportADirectorRefusal(t *testing.T) {
 func newAdapterSetup(t *testing.T, answer boshtest.Handler) instanceActionSetup {
 	t.Helper()
 
-	server := boshtest.New(t, answer)
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if answer != nil && answer(writer, request) {
+			return true
+		}
+
+		if request.Method == http.MethodGet && request.URL.Path == "/tasks" {
+			boshtest.WriteJSON(writer, http.StatusOK, []interface{}{})
+
+			return true
+		}
+
+		return false
+	})
 
 	director, err := bosh.NewDirectorAdapter(bosh.Config{
 		Address:  server.URL,
-		Username: "admin",
-		Password: "admin",
+		Username: directorCredential,
+		Password: directorCredential,
 		CACert:   server.CACert,
 	})
 	if err != nil {
@@ -603,6 +636,128 @@ func TestInstanceActionsReportALostAnswerAsUnknown(t *testing.T) {
 				t.Errorf("audit lines = %q, want one with outcome unknown and the actor", lines)
 			}
 		})
+	}
+}
+
+// A task the director is already running on the deployment, such as an
+// earlier recreate, a manual deploy, or a resurrector scan-and-fix, holds
+// its lock. The action asks the director first, while the guard holds the
+// instance, and answers 409 deployment_locked with that task, so it never
+// queues a task the director would fail.
+func TestInstanceActionsRefuseWhileADirectorTaskRuns(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{actionRestart, actionRecreate} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+
+			setup := newInstanceActionSetup(deployments.Dependencies{})
+			setup.director.running = []bosh.Task{{ID: 812, State: "processing", Deployment: ownedDeployment}}
+
+			recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/"+action)
+
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409: %s", recorder.Code, recorder.Body.String())
+			}
+
+			body := decodeBody(t, recorder)
+			if body["code"] != apierr.CodeDeploymentLocked || body["task_id"] != float64(812) ||
+				body["operation"] != action || body["deployment"] != ownedDeployment || body["success"] != false {
+				t.Errorf("body = %v, want %s with task 812", body, apierr.CodeDeploymentLocked)
+			}
+
+			if message, _ := body["error"].(string); !strings.Contains(message, "task 812") {
+				t.Errorf("error = %q, want it to name task 812", message)
+			}
+
+			setup.director.mu.Lock()
+			lookups := append([]string(nil), setup.director.lookups...)
+			setup.director.mu.Unlock()
+
+			if len(lookups) != 1 || lookups[0] != ownedDeployment {
+				t.Errorf("running-task lookups = %v, want one for %s", lookups, ownedDeployment)
+			}
+
+			if calls, _ := setup.director.recorded(); len(calls) != 0 {
+				t.Errorf("director calls = %v, want none while task 812 runs", calls)
+			}
+
+			if snapshot := setup.guard.Snapshot(); len(snapshot) != 0 {
+				t.Errorf("guard still holds %v after the refusal", snapshot)
+			}
+		})
+	}
+}
+
+// When the director can't list the deployment's tasks, nobody knows whether
+// one holds the lock, so the action refuses rather than guess.
+func TestInstanceActionsRefuseWhenTheTaskListFails(t *testing.T) {
+	t.Parallel()
+
+	setup := newInstanceActionSetup(deployments.Dependencies{})
+	setup.director.listErr = errInstanceDirectorRefused
+
+	recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/restart")
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if calls, _ := setup.director.recorded(); len(calls) != 0 {
+		t.Errorf("director calls = %v, want none", calls)
+	}
+}
+
+// The real adapter asks the director for the deployment's queued,
+// processing, and cancelling tasks, and a listed one refuses the action.
+func TestInstanceActionsAskTheDirectorForRunningTasks(t *testing.T) {
+	t.Parallel()
+
+	var (
+		lock  sync.Mutex
+		query []string
+		puts  int
+	)
+
+	setup := newAdapterSetup(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		lock.Lock()
+		defer lock.Unlock()
+
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/tasks":
+			query = append(query, request.URL.RawQuery)
+
+			boshtest.WriteJSON(writer, http.StatusOK, []map[string]interface{}{
+				{"id": 812, "state": "processing", "description": "create deployment", "deployment": ownedDeployment, "user": "admin", "timestamp": 1700000000},
+			})
+
+			return true
+		case request.Method == http.MethodPut:
+			puts++
+		}
+
+		return false
+	})
+
+	recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/recreate")
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if body := decodeBody(t, recorder); body["code"] != apierr.CodeDeploymentLocked || body["task_id"] != float64(812) {
+		t.Errorf("body = %v, want %s with task 812", body, apierr.CodeDeploymentLocked)
+	}
+
+	lock.Lock()
+	defer lock.Unlock()
+
+	if len(query) != 1 || !strings.Contains(query[0], "deployment="+ownedDeployment) {
+		t.Errorf("task list queries = %q, want one for %s", query, ownedDeployment)
+	}
+
+	if puts != 0 {
+		t.Errorf("the director got %d job-state changes, want none", puts)
 	}
 }
 

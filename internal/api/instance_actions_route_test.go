@@ -34,12 +34,17 @@ func (v ownedIndexVault) FindInstance(_ context.Context, instanceID string) (*va
 	return &instance, true, nil
 }
 
-// restartOnlyDirector records the deployments it restarts or recreates and
-// panics, through the nil embedded Director, on any other call.
+// restartOnlyDirector lists no running tasks, records the deployments it
+// restarts or recreates, and panics, through the nil embedded Director, on
+// any other call.
 type restartOnlyDirector struct {
 	bosh.Director
 
 	calls []string
+}
+
+func (d *restartOnlyDirector) FindRunningTasksForDeployment(context.Context, string) ([]bosh.Task, error) {
+	return nil, nil
 }
 
 func (d *restartOnlyDirector) RestartDeployment(_ context.Context, name string, _ bosh.RestartOpts) (*bosh.Task, error) {
