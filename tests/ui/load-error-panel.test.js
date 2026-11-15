@@ -607,3 +607,48 @@ t('a config diff that cannot load shows the panel, never markup from the broker,
  expect(out.querySelector('[data-load-error]')).toBeNull();
  expect(out.textContent).toContain('+ b');
 });
+
+// The certificate views of the broker section and of an instance take the panel too.
+const certViews=[
+ {name:'trusted certificate files',route:/certificates\/trusted$/,host:'#trusted-certificates-list',
+  html:'<div id="trusted-certificates-results"><div id="trusted-certificates-list"></div></div>',
+  run:(w)=>w.fetchTrustedCertificates()},
+ {name:'a trusted certificate file',route:'/certificates/trusted/file',host:'#cert-file-details-0',
+  html:'<div class="cert-file-item" data-index="0"><button class="cert-file-load-btn">Load</button><div id="cert-file-details-0"></div></div>',
+  run:(w)=>w.loadTrustedCertificateFile('/etc/x.pem','x.pem',0)},
+ {name:'configuration certificates',route:'/b/internal/certificates/blacksmith',host:'#blacksmith-certificates-list',
+  html:'<div id="blacksmith-certificates-results"><div id="blacksmith-certificates-list"></div></div>',
+  run:(w)=>w.fetchBlacksmithCertificates()},
+ {name:'an endpoint certificate',route:'/b/internal/certificates/endpoint',host:'#endpoint-certificate-details',
+  html:'<input id="endpoint-address" value="example.com:443"><div id="endpoint-certificate-results"><div id="endpoint-certificate-details"></div></div>',
+  run:(w)=>w.fetchEndpointCertificate()},
+ {name:'the VM certificate files',route:'/b/i1/certificates/trusted',host:'#vm-certificates-list-i1',
+  html:'<div id="vm-certificates-results-i1"><div id="vm-certificates-list-i1"></div></div>',
+  run:(w)=>w.fetchServiceVMCertificates('i1')},
+ {name:'a VM certificate file',route:'/b/i1/certificates/trusted/file',host:'.cert-file-content',
+  html:'<div class="cert-file-item"><div class="cert-file-header"><button class="load-cert-btn">Load</button></div><div class="cert-file-content"></div></div>',
+  run:(w,d)=>w.loadCertificateFile({stopPropagation(){},target:d.querySelector('.load-cert-btn')},'i1','/etc/x.pem','x.pem')},
+ {name:'a service endpoint certificate',route:'/b/internal/certificates/endpoint',host:'#service-endpoint-details-i1',
+  html:'<input id="service-endpoint-address-i1" value="svc.example.com:443"><div id="service-endpoint-results-i1"><div id="service-endpoint-details-i1"></div></div>',
+  run:(w)=>w.fetchServiceEndpointCertificate('i1')}
+];
+for(const view of certViews){
+ t(`${view.name} that cannot load show the panel and Retry asks again`,async()=>{
+  const state={answer:fail(503,'Service Unavailable')};
+  const {env}=await detailStart([[view.route,answers(state)]]);
+  const {w,d}=env;
+  d.body.insertAdjacentHTML('beforeend',`<div id="cert-fixture">${view.html}</div>`);
+  await view.run(w,d);
+  const host=d.querySelector(view.host);
+  const box=host.querySelector('[data-load-error]');
+  expect(box).not.toBeNull();
+  expect(box.getAttribute('role')).toBe('alert');
+  expect(box.textContent).toContain('503');
+  expect(host.textContent).not.toContain(SECRET);
+  expect(host.textContent).not.toMatch(/HTTP \d+:|Server error|Failed to (load|list|connect)/);
+  const before=env.calls.length;
+  box.querySelector('[data-load-retry]').click();
+  await sleep(100);
+  expect(env.calls.length).toBeGreaterThan(before);
+ });
+}

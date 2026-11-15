@@ -20309,17 +20309,7 @@
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Authentication required. Please check your credentials.');
-        } else if (response.status === 403) {
-          throw new Error('Access denied. Insufficient permissions.');
-        } else if (response.status === 404) {
-          throw new Error('Certificates API not available.');
-        } else if (response.status >= 500) {
-          throw new Error(`Server error (${response.status}). Please try again later.`);
-        } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
+        throw httpFailure(response);
       }
 
       const data = await response.json();
@@ -20343,15 +20333,10 @@
     } catch (error) {
       console.error('Failed to fetch trusted certificate files:', loggableError(error));
 
-      const errorMessage = error.name === 'AbortError'
-        ? 'Request timed out. The server may be busy.'
-        : error.message;
-
-      listContainer.replaceChildren(CertView.errorBlock({
-        title: 'Failed to Load Trusted Certificate Files',
-        message: errorMessage,
-        onRetry: () => window.fetchTrustedCertificates()
-      }));
+      listContainer.innerHTML = loadFailureHtml({
+        what: 'the trusted certificate files', error, key: 'cert:trusted', compact: true,
+        retry: () => (listContainer.isConnected ? window.fetchTrustedCertificates() : undefined)
+      });
 
       // Error feedback on button
       if (button) {
@@ -20442,17 +20427,7 @@
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Authentication required. Please check your credentials.');
-        } else if (response.status === 403) {
-          throw new Error('Access denied. Insufficient permissions.');
-        } else if (response.status === 404) {
-          throw new Error('Certificate file not found.');
-        } else if (response.status >= 500) {
-          throw new Error(`Server error (${response.status}). Please try again later.`);
-        } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
+        throw httpFailure(response);
       }
 
       const data = await response.json();
@@ -20522,16 +20497,10 @@
     } catch (error) {
       console.error('Failed to load certificate file:', loggableError(error));
 
-      const errorMessage = error.name === 'AbortError'
-        ? 'Request timed out. The server may be busy.'
-        : error.message;
-
-      detailsContainer.replaceChildren(CertView.errorBlock({
-        title: 'Failed to Load Certificate',
-        headingTag: 'h5',
-        message: errorMessage,
-        onRetry: () => window.loadTrustedCertificateFile(filePath, fileName, index)
-      }));
+      detailsContainer.innerHTML = loadFailureHtml({
+        what: 'the certificate', error, key: `cert:trusted-file:${index}`, compact: true,
+        retry: () => (detailsContainer.isConnected ? window.loadTrustedCertificateFile(filePath, fileName, index) : undefined)
+      });
       detailsContainer.style.display = 'block';
 
       // Update button to error state
@@ -20588,7 +20557,7 @@
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpFailure(response);
       }
 
       const data = await response.json();
@@ -20614,7 +20583,10 @@
 
     } catch (error) {
       console.error('Failed to fetch blacksmith certificates:', loggableError(error));
-      CertView.setError(listContainer, `Failed to load configuration certificates: ${error.message}`);
+      listContainer.innerHTML = loadFailureHtml({
+        what: 'the configuration certificates', error, key: 'cert:config', compact: true,
+        retry: () => (listContainer.isConnected ? window.fetchBlacksmithCertificates() : undefined)
+      });
 
       // Error feedback
       if (button) {
@@ -20704,21 +20676,7 @@
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        if (response.status === 400) {
-          throw new Error('Invalid endpoint address or connection parameters.');
-        } else if (response.status === 401) {
-          throw new Error('Authentication required.');
-        } else if (response.status === 403) {
-          throw new Error('Access denied.');
-        } else if (response.status === 404) {
-          throw new Error('Endpoint certificates API not available.');
-        } else if (response.status === 408) {
-          throw new Error('Connection timeout. The endpoint may be unreachable.');
-        } else if (response.status >= 500) {
-          throw new Error(`Server error (${response.status}). Please try again later.`);
-        } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
+        throw httpFailure(response);
       }
 
       const data = await response.json();
@@ -20748,15 +20706,10 @@
     } catch (error) {
       console.error('Failed to fetch endpoint certificate:', loggableError(error));
 
-      const errorMessage = error.name === 'AbortError'
-        ? 'Connection timed out. The endpoint may be unreachable.'
-        : error.message;
-
-      detailsContainer.replaceChildren(CertView.errorBlock({
-        title: 'Connection Failed',
-        message: errorMessage,
-        onRetry: () => window.fetchEndpointCertificate()
-      }));
+      detailsContainer.innerHTML = loadFailureHtml({
+        what: 'the endpoint certificate', error, key: 'cert:endpoint', compact: true,
+        retry: () => (detailsContainer.isConnected ? window.fetchEndpointCertificate() : undefined)
+      });
 
       // Error feedback on button
       if (button) {
@@ -21087,7 +21040,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpFailure(response);
       }
 
       endpointFormDrafts.delete(form.dataset.draftKey);
@@ -21152,7 +21105,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpFailure(response);
       }
 
       const data = await response.json();
@@ -21172,7 +21125,10 @@
 
     } catch (error) {
       console.error('Failed to fetch VM certificate files:', loggableError(error));
-      CertView.setError(listContainer, `Failed to list VM certificate files: ${error.message}`);
+      listContainer.innerHTML = loadFailureHtml({
+        what: 'the VM certificate files', error, key: `cert:vm-files:${instanceId}`, compact: true,
+        retry: () => (listContainer.isConnected ? window.fetchServiceVMCertificates(instanceId) : undefined)
+      });
     }
   };
 
@@ -21272,7 +21228,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpFailure(response);
       }
 
       const data = await response.json();
@@ -21296,7 +21252,10 @@
 
     } catch (error) {
       console.error('Failed to load certificate file:', loggableError(error));
-      CertView.setError(contentDiv, `Failed to load certificate: ${error.message}`);
+      contentDiv.innerHTML = loadFailureHtml({
+        what: 'the certificate', error, key: `cert:vm-file:${instanceId}:${filePath}`, compact: true,
+        retry: () => (contentDiv.isConnected ? window.loadCertificateFile({ stopPropagation() {}, target: button }, instanceId, filePath, fileName) : undefined)
+      });
 
       // Reset button state
       button.innerHTML = `
@@ -21342,7 +21301,7 @@
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpFailure(response);
       }
 
       const data = await response.json();
@@ -21360,7 +21319,10 @@
 
     } catch (error) {
       console.error('Failed to fetch service endpoint certificate:', loggableError(error));
-      CertView.setError(detailsContainer, `Failed to connect to service endpoint: ${error.message}`);
+      detailsContainer.innerHTML = loadFailureHtml({
+        what: 'the service endpoint certificate', error, key: `cert:service-endpoint:${instanceId}`, compact: true,
+        retry: () => (detailsContainer.isConnected ? window.fetchServiceEndpointCertificate(instanceId) : undefined)
+      });
     }
   };
 
