@@ -215,3 +215,42 @@ func TestStartRegistrationRecordsTheAttempt(t *testing.T) {
 
 	changes.assertNoPassword(t)
 }
+
+const urlLeak = "url-s3cret-4d1b"
+
+// An API URL pasted with a password in it keeps its username and host in
+// the record and loses the password, so the change record, the Vault
+// write, the log, and the list never hold it.
+func TestCreateRegistrationStripsAPasswordFromTheAPIURL(t *testing.T) {
+	t.Parallel()
+
+	changes := newRegistrationChanges()
+	changes.serve(t, http.MethodPost, "/b/cf/registrations",
+		`{"id":"reg-1","name":"lab-cf","api_url":"https://admin:`+urlLeak+`@api.cf.example.com","username":"admin","broker_name":"blacksmith"}`)
+
+	rec, ok := changes.records(t)[audit.ChangeCreate+" "+keyAPIURL]
+	if !ok || rec.New != "https://admin:(changed)@api.cf.example.com" { //nolint:gosec // "(changed)" stands where the password was
+		t.Fatalf("api_url record = %+v, want the URL with its password replaced", rec)
+	}
+
+	listed, err := changes.store.List(t.Context(), audit.ScopeEndpoints, audit.MaxChangeList)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	for where, text := range map[string]string{"Vault": changes.kv.Dump(), "the log": changes.log.Text(), "the list": strings.Join(recordValues(listed), "\n")} {
+		if strings.Contains(text, urlLeak) {
+			t.Fatalf("the URL's password reached %s", where)
+		}
+	}
+}
+
+// recordValues returns every old and new value of the records.
+func recordValues(records []audit.ChangeRecord) []string {
+	values := make([]string, 0, 2*len(records))
+	for _, rec := range records {
+		values = append(values, rec.Old, rec.New)
+	}
+
+	return values
+}

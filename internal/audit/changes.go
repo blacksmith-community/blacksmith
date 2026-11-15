@@ -325,8 +325,9 @@ func sortNewestFirst(records []ChangeRecord) {
 
 // SanitizeChange hides both values of a key that names a secret, decided
 // by the key's name alone, drops control characters from every text
-// field so no value can forge a log line, and cuts each field to 1024
-// bytes.
+// field so no value can forge a log line, replaces the password of any URL
+// in a field with Changed, and cuts each field to 1024 bytes. The password
+// goes before the cut, so a cut can never leave part of one behind.
 func SanitizeChange(rec ChangeRecord) ChangeRecord {
 	if SecretKey(rec.Key) {
 		rec.Old = Changed
@@ -337,7 +338,7 @@ func SanitizeChange(rec ChangeRecord) ChangeRecord {
 		&rec.ID, &rec.Scope, &rec.Actor, &rec.From, &rec.Target, &rec.Change, &rec.Key,
 		&rec.Old, &rec.New, &rec.Instance, &rec.Deployment, &rec.Action, &rec.Outcome,
 	} {
-		*field = truncate(clean(*field), maxChangeText)
+		*field = truncate(stripURLPassword(clean(*field)), maxChangeText)
 	}
 
 	return rec
