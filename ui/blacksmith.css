@@ -12647,6 +12647,16 @@ bs-tabs > .broker-tab-pane[hidden] {
   font-size: 0.8125rem;
 }
 
+.cert-horizon-zero {
+  color: var(--text-secondary);
+}
+
+.cert-horizon-note {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
 .cert-settings-modal {
   max-width: 560px;
 }

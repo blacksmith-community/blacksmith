@@ -49,14 +49,17 @@ const openAll = async (certs, credhub) => {
 };
 const horizonChips = (d) => Array.from(d.querySelectorAll('.cert-chip-text')).filter((c) => /^expires within/.test(c.textContent));
 
-t('the horizon table shows cumulative counts for seven horizons', async () => {
+t('the horizon table has an Expired, seven cumulative, a Beyond 1 year, and an Unknown column', async () => {
   const { ok, failures } = checks();
-  const { d } = await open(spread());
+  const { d } = await openAll(spread());
   const tbl = table(d);
   ok(!!tbl && tbl.tagName === 'TABLE', 'a real table');
-  ok(/Certificates expiring within/.test(tbl.querySelector('caption').textContent), 'it has a caption');
-  ok(heads(d).join('|') === '1 week|2 weeks|30 days|60 days|90 days|180 days|1 year', 'headers: ' + heads(d).join('|'));
-  ok(counts(d).join(',') === '2,3,4,5,6,7,8', 'cumulative counts, excluding expired and unknown: ' + counts(d).join(','));
+  ok(/Certificates by time to expiry/.test(tbl.querySelector('caption').textContent), 'it has a caption');
+  ok(heads(d).join('|') === 'Expired|Within 1 week|Within 2 weeks|Within 30 days|Within 60 days|Within 90 days|Within 180 days|Within 1 year|Beyond 1 year|Unknown', 'headers: ' + heads(d).join('|'));
+  ok(counts(d).join(',') === '1,2,3,4,5,6,7,8,1,1', 'expired, cumulative counts, beyond, unknown: ' + counts(d).join(','));
+  const c = counts(d).map(Number);
+  ok(c[0] + c[7] + c[8] + c[9] === 11, 'Expired, 1 year, Beyond 1 year, and Unknown add up to every certificate: ' + (c[0] + c[7] + c[8] + c[9]));
+  ok(/Health and deployment problems are counted under Needs attention, separately from expiry\./.test(d.querySelector('#cert-horizon .cert-horizon-note').textContent), 'the muted line explains Needs attention');
   ok(!d.getElementById('cert-reassurance') && !/Nothing (we could observe )?expires/.test(d.getElementById('cert-fleet-notices').textContent), 'the reassurance sentence is gone');
   ok(horizonBtn(d, 14).getAttribute('aria-label') === '3 certificates expire within 2 weeks. Show them.', 'label: ' + horizonBtn(d, 14).getAttribute('aria-label'));
   expect(failures).toEqual([]);
@@ -66,7 +69,7 @@ t('the table renders while certificates are critical or warning', async () => {
   const { ok, failures } = checks();
   const { d, server } = await open(spread());
   ok(server.certs.some((c) => c.expiry === 'critical') && server.certs.some((c) => c.expiry === 'warning') && server.certs.some((c) => c.expiry === 'expired'), 'fixture has expired, critical, and warning');
-  ok(!!table(d) && counts(d).length === 7, 'table renders beside the problems');
+  ok(!!table(d) && counts(d).length === 10, 'table renders beside the problems');
   expect(failures).toEqual([]);
 }, 60000);
 
@@ -78,7 +81,7 @@ t('pressing a count filters the details table, and pressing again clears it', as
   ok(rows(d).join(',') === 'a3,b10,edge7', '2 weeks shows its three: ' + rows(d).join(','));
   ok(horizonBtn(d, 14).getAttribute('aria-pressed') === 'true', 'shows as pressed');
   ok(horizonChips(d).length === 1 && horizonChips(d)[0].textContent === 'expires within 14 days', 'an active-filter chip appears');
-  ok(counts(d).join(',') === '2,3,4,5,6,7,8', 'counts still describe the whole fleet');
+  ok(counts(d).join(',') === '1,2,3,4,5,6,7,8,1,1', 'counts still describe the whole fleet');
 
   await press(horizonBtn(d, 90));
   ok(rows(d).join(',') === 'a3,b10,c20,d45,e75,edge7', 'another horizon replaces it: ' + rows(d).join(','));
@@ -97,8 +100,7 @@ t('the horizon filter composes with another filter and clears with Clear filters
   const attention = Array.from(d.querySelectorAll('.cert-strip-btn')).find((b) => /^Needs attention/.test(b.getAttribute('aria-label')));
   await press(attention);
   ok(rows(d).join(',') === 'b10', 'attention alone: ' + rows(d).join(','));
-  await press(horizonBtn(d, 7));
-  ok(rows(d).length === 0, 'attention and 1 week share nothing: ' + rows(d).join(','));
+  ok(!horizonBtn(d, 7), 'with Needs attention on, 1 week counts none of them and has no button');
   await press(horizonBtn(d, 30));
   ok(rows(d).join(',') === 'b10', 'attention and 30 days: ' + rows(d).join(','));
   const clear = d.querySelector('.cert-clear-btn');
@@ -111,10 +113,13 @@ t('the horizon filter composes with another filter and clears with Clear filters
 t('a zero count is plain text', async () => {
   const { ok, failures } = checks();
   const { d } = await open([cert('far', 200), cert('farther', 400)]);
-  ok(counts(d).join(',') === '0,0,0,0,0,0,1', 'counts: ' + counts(d).join(','));
+  ok(counts(d).join(',') === '0,0,0,0,0,0,0,1,1,0', 'counts: ' + counts(d).join(','));
   const cells = Array.from(table(d).querySelectorAll('tbody td'));
-  ok(cells.slice(0, 6).every((td) => !td.querySelector('button') && td.textContent === '0'), 'zeros are not buttons');
-  ok(!!cells[6].querySelector('button'), 'a non-zero count is a button');
+  const zeros = cells.filter((td) => td.textContent === '0');
+  ok(zeros.length === 8 && zeros.every((td) => !td.querySelector('button')), 'zeros are not buttons');
+  ok(zeros.every((td) => td.querySelector('.cert-horizon-zero')), 'zeros are shown, and greyed out by a class');
+  ok(!!cells[7].querySelector('button'), 'a non-zero count is a button');
+  ok(cells[8].textContent === '1' && !cells[8].querySelector('button'), 'Beyond 1 year is a count and not a filter');
   expect(failures).toEqual([]);
 }, 60000);
 
@@ -123,7 +128,7 @@ t('the gap line appears only when there are gaps', async () => {
   let { d } = await open([cert('a', 3), cert('b', 20), unknown('unk')], 'not_configured');
   let line = d.querySelector('#cert-fleet-notices .cert-horizon-gaps');
   ok(!!line && line.textContent === 'These counts cover what we could observe. 1 certificate has an unknown expiry and CredHub is not available.', 'gap text: ' + (line && line.textContent));
-  ok(table(d).parentElement.nextElementSibling === line && line.getAttribute('role') === 'status', 'the line sits directly under the table and is a status');
+  ok(table(d).parentElement.nextElementSibling.classList.contains('cert-horizon-note') && table(d).parentElement.nextElementSibling.nextElementSibling === line && line.getAttribute('role') === 'status', 'the line sits under the table and its note and is a status');
 
   ({ d } = await open([cert('a', 3), cert('b', 20)]));
   ok(!d.querySelector('#cert-fleet-notices .cert-horizon-gaps'), 'no line without gaps');
@@ -163,11 +168,12 @@ t('the counts follow the clock between polls', async () => {
   const { ok, failures } = checks();
   const { env, clock } = await openFrozen(spread());
   const { d, w } = env;
-  ok(counts(d).join(',') === '2,3,4,5,6,7,8', 'at the start: ' + counts(d).join(','));
+  await press(d.querySelector('.cert-clear-btn'));
+  ok(counts(d).join(',') === '1,2,3,4,5,6,7,8,1,1', 'at the start: ' + counts(d).join(','));
   clock.at = now + 4 * day;
   await w.blacksmithCerts.refresh({ silent: true });
   await sleep(150);
-  ok(counts(d).join(',') === '2,2,3,4,5,6,7', 'four days later, with no new data, the expired certificate has left every count: ' + counts(d).join(','));
+  ok(counts(d).join(',') === '2,2,2,3,4,5,6,7,1,1', 'four days later, with no new data, the certificate that ran out has moved to Expired: ' + counts(d).join(','));
   await press(horizonBtn(d, 30));
   const q = lastQuery(env);
   ok(q.get('expires_after') === iso(now + 4 * day + 1) && q.get('expires_before') === iso(now + 34 * day + 1), 'the click query uses the advanced time: ' + q.get('expires_after') + ' ' + q.get('expires_before'));
@@ -200,7 +206,7 @@ t('a horizon after a timeline week intersects the two ranges', async () => {
 
 t('the pressed label, focus, accent, and narrow scrolling', async () => {
   const { ok, failures } = checks();
-  const { d } = await open(spread());
+  const { d } = await openAll(spread());
   const box = d.getElementById('cert-horizon');
   ok(box.classList.contains('cert-notice--error') && !box.classList.contains('cert-notice--ok'), 'the accent follows the fleet: ' + box.className);
   ok(box.getAttribute('data-variant')==='danger', 'the red accent is the danger variant');
@@ -241,7 +247,7 @@ t('a poll with unchanged data leaves the band, its focus, and its status line in
   env.server.certs = [cert('a', 3), cert('b', 20), cert('c', 25), unknown('unk')];
   await w.blacksmithCerts.refresh({ silent: true });
   await sleep(150);
-  ok(counts(d)[2] === '3' && d.querySelector('.cert-horizon-scroll') === scroll, 'a changed count patches the cell and keeps the region: ' + counts(d).join(','));
+  ok(counts(d)[3] === '3' && d.querySelector('.cert-horizon-scroll') === scroll, 'a changed count patches the cell and keeps the region: ' + counts(d).join(','));
   ok(d.activeElement === horizonBtn(d, 30), 'focus follows the rebuilt button');
   expect(failures).toEqual([]);
 }, 60000);
@@ -267,5 +273,61 @@ t('a quiet poll leaves the other notices, their open state, and their focus alon
   ok(d.querySelector('#cert-fleet-notices details') === help && help.open === true, 'the opened help section stays open and is the same node');
   ok(help.closest('.cert-notice') === helpBox && show.closest('.cert-notice') === showBox && d.contains(show), 'the notice elements are the same');
   ok(d.activeElement === show, 'focus stays on Show them');
+  expect(failures).toEqual([]);
+}, 60000);
+
+t('the horizon row follows the active filters, and an expiry choice does not collapse it', async () => {
+  const { ok, failures } = checks();
+  // Only b10 needs attention, so the opening view counts that one certificate.
+  const { d } = await open(spread());
+  ok(counts(d).join(',') === '0,0,1,1,1,1,1,1,0,0', 'Needs attention narrows the row: ' + counts(d).join(','));
+  await press(d.querySelector('.cert-clear-btn'));
+  ok(counts(d).join(',') === '1,2,3,4,5,6,7,8,1,1', 'clearing the filter counts the fleet: ' + counts(d).join(','));
+  const attention = Array.from(d.querySelectorAll('.cert-strip-btn')).find((b) => /^Needs attention/.test(b.getAttribute('aria-label')));
+  await press(attention);
+  await press(horizonBtn(d, 30));
+  ok(counts(d).join(',') === '0,0,1,1,1,1,1,1,0,0', 'a chosen horizon keeps the other buckets for the attention set: ' + counts(d).join(','));
+  expect(failures).toEqual([]);
+}, 60000);
+
+t('Expired and Unknown cells filter like the Expiry buttons, and every cell with a count stays reachable', async () => {
+  const { ok, failures } = checks();
+  const { d } = await openAll(spread());
+  const expired = d.querySelector('#cert-fleet-notices button[data-horizon-expiry="expired"]');
+  ok(!!expired && expired.dataset.keepKey === 'cert-horizon-expired', 'Expired is a keyed button');
+  await press(expired);
+  ok(rows(d).join(',') === 'expired', 'Expired shows the expired certificate: ' + rows(d).join(','));
+  ok(d.querySelector('#cert-fleet-notices button[data-horizon-expiry="expired"]').getAttribute('aria-pressed') === 'true', 'and shows as pressed');
+  await press(d.querySelector('#cert-fleet-notices button[data-horizon-expiry="expired"]'));
+  await press(d.querySelector('#cert-fleet-notices button[data-horizon-expiry="unknown"]'));
+  ok(rows(d).join(',') === 'unk', 'Unknown shows the unknown certificate: ' + rows(d).join(','));
+  expect(failures).toEqual([]);
+}, 60000);
+
+t('pressing Expired or Unknown keeps keyboard focus on that cell, and so does any pressable cell', async () => {
+  const { ok, failures } = checks();
+  const { d } = await openAll(spread());
+  for (const value of ['expired', 'unknown']) {
+    const b = d.querySelector(`#cert-fleet-notices button[data-horizon-expiry="${value}"]`);
+    b.focus();
+    await press(b);
+    const again = d.querySelector(`#cert-fleet-notices button[data-horizon-expiry="${value}"]`);
+    ok(again.getAttribute('aria-pressed') === 'true', `${value} is pressed`);
+    ok(d.activeElement === again, `focus stays on the rebuilt ${value} button: ${d.activeElement && d.activeElement.tagName}`);
+    await press(again);
+  }
+  expect(failures).toEqual([]);
+}, 60000);
+
+t('the row says its counts follow the active filters, and names Needs attention when it is on', async () => {
+  const { ok, failures } = checks();
+  const on = await open(spread());
+  const attention = Array.from(on.d.querySelectorAll('.cert-strip-btn')).find((b) => /^Needs attention/.test(b.getAttribute('aria-label')));
+  ok(attention.getAttribute('aria-pressed') === 'true', 'the tab opens on Needs attention');
+  const note = on.d.querySelector('#cert-horizon .cert-horizon-note').textContent;
+  ok(/\d+ of 11 certificates the filters leave/.test(note) && /Needs attention is on/.test(note), 'scoped note: ' + note);
+  await press(attention);
+  const all = on.d.querySelector('#cert-horizon .cert-horizon-note').textContent;
+  ok(!/of 11/.test(all) && !/filters leave/.test(all), 'with no filter the scope line is gone: ' + all);
   expect(failures).toEqual([]);
 }, 60000);

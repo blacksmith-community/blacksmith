@@ -26213,6 +26213,10 @@
       { pressed: (f) => f.finding.includes('unconverged'), clear: (f) => { f.finding = f.finding.filter((v) => !DIVERGENCE_FINDINGS.includes(v)); }, set: (f) => { f.finding = f.finding.filter((v) => !DIVERGENCE_FINDINGS.includes(v)).concat(DIVERGENCE_FINDINGS); } }
     ];
 
+    // The filters that remain once the ones on expiry are cleared. The expiry
+    // row counts this set, so its buckets stay visible while one is chosen.
+    const withoutExpiryFilters = (f) => ({ ...f, expiry: [], expires_after: '', expires_before: '', expires_within: 0, range_from: '', range_to: '' });
+
     const attentionPressedCount = (f) => ATTENTION_TOGGLES.filter((t) => t.pressed(f)).length;
 
     const attentionVariants = (filters) => {
@@ -26278,6 +26282,7 @@
       built: false,
       resp: null,
       fleet: [],
+      horizonBase: null,
       mode: 'loading',
       errorMessage: '',
       refreshError: '',
@@ -26651,18 +26656,29 @@
 
     const HORIZONS = EXPIRY_HORIZONS;
 
-    // Counts are cumulative. A certificate counts when its expiry falls
-    // after the current server time and on or before that time plus the
-    // horizon, so expired and unknown expiries never count.
+    // The week to year counts are cumulative. A certificate counts when its
+    // expiry falls after the current server time and on or before that time
+    // plus the horizon. Expired, Beyond 1 year, and Unknown are exclusive, so
+    // each certificate is in exactly one of them or in the cumulative counts
+    // up to 1 year. The set is the one the filters leave, without the
+    // expiry filters.
+    const horizonSource = () => (Array.isArray(view.horizonBase) ? view.horizonBase : view.fleet);
+
     const horizonCounts = () => {
       const anchor = serverNow();
-      return HORIZONS.map((h) => {
-        const limit = anchor + h.days * DAY_MS;
-        return view.fleet.filter((cert) => {
-          const t = Date.parse(cert.effective_not_after);
-          return !Number.isNaN(t) && t > anchor && t <= limit;
-        }).length;
+      const last = HORIZONS[HORIZONS.length - 1].days * DAY_MS;
+      const within = HORIZONS.map(() => 0);
+      let expired = 0;
+      let beyond = 0;
+      let unknown = 0;
+      horizonSource().forEach((cert) => {
+        const t = Date.parse(cert.effective_not_after);
+        if (Number.isNaN(t)) { unknown += 1; return; }
+        if (t <= anchor) { expired += 1; return; }
+        if (t > anchor + last) beyond += 1;
+        HORIZONS.forEach((h, i) => { if (t <= anchor + h.days * DAY_MS) within[i] += 1; });
       });
+      return { expired, within, beyond, unknown };
     };
 
     const coverageGaps = (resp) => {
@@ -26703,6 +26719,9 @@
       fresh.querySelectorAll('tbody td').forEach((cell, i) => {
         if (shownCells[i] && shownCells[i].innerHTML !== cell.innerHTML) shownCells[i].replaceChildren(...cell.childNodes);
       });
+      const shownNote = shown.querySelector('.cert-horizon-note');
+      const freshNote = fresh.querySelector('.cert-horizon-note');
+      if (shownNote && freshNote && shownNote.textContent !== freshNote.textContent) shownNote.textContent = freshNote.textContent;
       const shownGap = shown.querySelector('.cert-horizon-gaps');
       const freshGap = fresh.querySelector('.cert-horizon-gaps');
       if (shownGap && freshGap) {
@@ -26714,11 +26733,21 @@
       }
     };
 
+    // The row counts the certificates the filters leave, so its note says so
+    // whenever that is fewer than the whole fleet.
+    const horizonScope = (summary) => {
+      const total = Number(summary.certificates) || 0;
+      const covered = horizonSource().length;
+      if (covered >= total) return '';
+      return `This row counts the ${covered} of ${total} certificates the filters leave${state.attention ? ', and Needs attention is on' : ''}. `;
+    };
+
     const horizonNotice = (resp) => {
       const s = resp.summary || {};
       if ((s.certificates || 0) === 0) return null;
 
       const counts = horizonCounts();
+      const pickForm = (one, many, n) => (n === 1 ? one : many);
       // The accent follows the fleet, so it is never green beside red rows.
       const tone = (s.expired || 0) + (s.critical || 0) > 0 ? 'error' : ((s.warning || 0) > 0 ? 'warn' : 'ok');
       const box = el('div', `cert-notice cert-notice--${tone} cert-horizon`);
@@ -26727,18 +26756,42 @@
 
       const table = el('table', 'cert-horizon-table');
       table.dataset.sortable = 'false';
-      table.appendChild(el('caption', 'cert-horizon-caption', 'Certificates expiring within'));
+      table.appendChild(el('caption', 'cert-horizon-caption', 'Certificates by time to expiry'));
       const head = el('tr');
       const row = el('tr');
-      HORIZONS.forEach((h, i) => {
-        const th = el('th', null, h.label);
+      const addCell = (label, n, press) => {
+        const th = el('th', null, label);
         th.scope = 'col';
         head.appendChild(th);
         const td = el('td');
-        const n = counts[i];
+        if (n > 0 && press) {
+          td.appendChild(press);
+        } else {
+          td.appendChild(el('span', n > 0 ? 'cert-horizon-count' : 'cert-horizon-zero', String(n)));
+        }
+        row.appendChild(td);
+      };
+      // Expired and Unknown use the same toggles as the Expiry buttons.
+      const expiryCell = (label, value, n, noun) => {
+        const pressed = state.expiry.includes(value);
+        const b = button('cert-horizon-btn', String(n));
+        b.dataset.keepKey = `cert-horizon-${value}`;
+        b.dataset.horizonExpiry = value;
+        b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+        b.setAttribute('aria-label', `${plural(n, 'certificate')} ${noun}. ${pressed ? 'Showing them; press to clear.' : (n === 1 ? 'Show it.' : 'Show them.')}`);
+        b.addEventListener('click', () => {
+          toggleValue('expiry', value);
+          changed();
+        });
+        addCell(label, n, b);
+      };
+      expiryCell('Expired', 'expired', counts.expired, pickForm('has expired', 'have expired', counts.expired));
+      HORIZONS.forEach((h, i) => {
+        const n = counts.within[i];
+        let b = null;
         if (n > 0) {
           const pressed = state.expires_within === h.days;
-          const b = button('cert-horizon-btn', String(n));
+          b = button('cert-horizon-btn', String(n));
           b.dataset.horizon = String(h.days);
           b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
           const them = n === 1 ? 'it' : 'them';
@@ -26748,12 +26801,11 @@
             if (!pressed) clearRange();
             changed();
           });
-          td.appendChild(b);
-        } else {
-          td.textContent = '0';
         }
-        row.appendChild(td);
+        addCell(`Within ${h.label}`, n, b);
       });
+      addCell(`Beyond ${HORIZONS[HORIZONS.length - 1].label}`, counts.beyond, null);
+      expiryCell('Unknown', 'unknown', counts.unknown, pickForm('has an unknown expiry', 'have an unknown expiry', counts.unknown));
       table.appendChild(el('thead', null)).appendChild(head);
       table.appendChild(el('tbody', null)).appendChild(row);
       const scroll = el('div', 'cert-horizon-scroll');
@@ -26762,6 +26814,7 @@
       scroll.setAttribute('aria-label', 'Expiry horizons, scrolls sideways');
       scroll.appendChild(table);
       box.appendChild(scroll);
+      box.appendChild(el('p', 'cert-horizon-note', `${horizonScope(s)}The counts from 1 week to 1 year are cumulative. Health and deployment problems are counted under Needs attention, separately from expiry.`));
 
       const gaps = coverageGaps(resp);
       if (gaps.length > 0) {
@@ -26794,7 +26847,12 @@
       // band is patched cell by cell, so scroll position, focus, and the
       // status line survive.
       const active = document.activeElement;
-      const focusHorizon = active && holder.contains(active) ? active.dataset.horizon : null;
+      // A pressable cell is found again by its horizon, or by its keep key
+      // for the Expired and Unknown cells, since pressing rebuilds it.
+      const focusSelector = active && holder.contains(active)
+        ? (active.dataset.horizon ? `[data-horizon="${CSS.escape(active.dataset.horizon)}"]`
+          : (active.dataset.keepKey && active.closest('#cert-horizon') ? `[data-keep-key="${CSS.escape(active.dataset.keepKey)}"]` : null))
+        : null;
       const previous = Array.from(holder.children);
       const kept = nodes.map((node, i) => {
         const prev = previous[i];
@@ -26812,8 +26870,8 @@
       if (kept.length !== previous.length || kept.some((node, i) => node !== previous[i])) {
         holder.replaceChildren(...kept);
       }
-      if (focusHorizon && !holder.contains(document.activeElement)) {
-        const again = holder.querySelector(`[data-horizon="${focusHorizon}"]`);
+      if (focusSelector && !holder.contains(document.activeElement)) {
+        const again = holder.querySelector(focusSelector);
         if (again) again.focus({ preventScroll: true });
       }
     };
@@ -28455,7 +28513,7 @@
       }, running ? POLL_RUNNING_MS : POLL_IDLE_MS);
     };
 
-    const signatureOf = (resp, fleetCerts) => JSON.stringify([resp.summary, resp.filtered, resp.scan, resp.capabilities, resp.settings, resp.certificates, fleetCerts.length]);
+    const signatureOf = (resp, fleetCerts) => JSON.stringify([resp.summary, resp.filtered, resp.scan, resp.capabilities, resp.settings, resp.certificates, fleetCerts.length, (view.horizonBase || []).map((cert) => cert.id)]);
 
     const applyDefaults = async () => {
       if (view.defaultsApplied) return;
@@ -28482,6 +28540,12 @@
         const query = toQuery(state);
         const requests = [fetchInventory(state)];
         if (query !== '') requests.push(getJSON('/b/certificates/inventory'));
+        // The expiry row follows every filter except the ones on expiry
+        // itself, which would leave it counting only the bucket just chosen.
+        const baseFilters = withoutExpiryFilters(state);
+        const baseQuery = toQuery(baseFilters);
+        const baseNeedsRequest = baseQuery !== '' && baseQuery !== query;
+        if (baseNeedsRequest) requests.push(fetchInventory(baseFilters));
         const results = await Promise.all(requests);
         if (seq !== view.seq) return;
 
@@ -28515,6 +28579,13 @@
           const full = results[1];
           fleetCerts = full.ok && full.body && Array.isArray(full.body.certificates) ? full.body.certificates : view.fleet;
         }
+
+        let baseCerts = fleetCerts;
+        if (baseQuery !== '') {
+          const baseResult = baseNeedsRequest ? results[results.length - 1] : main;
+          baseCerts = baseResult.ok && baseResult.body && Array.isArray(baseResult.body.certificates) ? baseResult.body.certificates : view.horizonBase;
+        }
+        view.horizonBase = baseCerts;
 
         const signature = signatureOf(resp, fleetCerts);
         const same = signature === view.signature && view.mode === 'ready' && !view.refreshError && !opts.announce;
