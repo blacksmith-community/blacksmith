@@ -11879,7 +11879,19 @@
     loadRetryRunning.add(key);
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
-    Promise.resolve().then(() => retry(button)).catch((error) => console.error('Retry failed:', loggableError(error))).finally(() => {
+    Promise.resolve().then(() => retry(button)).catch((error) => {
+      console.error('Retry failed:', loggableError(error));
+      // The panel is the alert, so a line added to it is announced.
+      const panel = button.isConnected ? button.closest('[data-load-error]') : null;
+      if (!panel) return;
+      let note = panel.querySelector('.load-error-retry-failed');
+      if (!note) {
+        note = document.createElement('p');
+        note.className = 'load-error-retry-failed';
+        panel.insertBefore(note, button);
+      }
+      note.textContent = 'The retry failed too. Try again in a moment.';
+    }).finally(() => {
       loadRetryRunning.delete(key);
       if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); }
     });

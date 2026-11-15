@@ -360,6 +360,37 @@ t('a service list that cannot load shows the panel and Retry loads it again',asy
  expect(d.querySelector('#services-results [data-load-error]')).toBeNull();
 });
 
+t('a Retry that fails again says so inside the alert and stays usable',async()=>{
+ const state={answer:fail(502,'Bad Gateway')};
+ const {env}=await detailStart([['/spaces/sp1/services',answers(state)]]);
+ const {w,d}=env;
+ const host=d.createElement('div');
+ host.innerHTML='<select id="org-selector"><option value="o1" selected>o</option></select><select id="space-selector"><option value="sp1" selected>s</option></select><div id="services-results"></div>';
+ d.body.appendChild(host);
+ w.CFEndpointManager.selectedEndpoint='e1';
+ await w.CFEndpointManager.loadServiceInstances('e1','o1','sp1');
+ const box=d.querySelector('#services-results [data-load-error]');
+ expect(box.textContent).not.toContain('retry failed');
+ const original=w.CFEndpointManager.loadServiceInstances;
+ w.CFEndpointManager.loadServiceInstances=()=>Promise.reject(new Error(SECRET));
+ const button=box.querySelector('[data-load-retry]');
+ button.click();
+ await sleep(40);
+ expect(box.isConnected).toBe(true);
+ expect(box.getAttribute('role')).toBe('alert');
+ expect(box.textContent).toContain('The retry failed too.');
+ expect(box.textContent).not.toContain(SECRET);
+ expect(button.disabled).toBe(false);
+ button.click();
+ await sleep(40);
+ expect(box.querySelectorAll('.load-error-retry-failed').length).toBe(1);
+ w.CFEndpointManager.loadServiceInstances=original;
+ state.answer=okJson({services:[]});
+ button.click();
+ await sleep(80);
+ expect(d.querySelector('#services-results [data-load-error]')).toBeNull();
+});
+
 t('older logs that cannot load say what happened without the broker body',async()=>{
  const {env}=await detailStart([['/b/blacksmith/logs',fail(503,'Service Unavailable')]]);
  const {w,d}=env;
