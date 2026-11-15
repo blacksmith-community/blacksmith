@@ -1,6 +1,7 @@
 package bosh_test
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -215,5 +216,19 @@ func TestListEventsFollowsTheCursorAndReportsMore(t *testing.T) {
 
 	if len(all.Events) != total || all.More {
 		t.Fatalf("full listing: %d events, More=%v", len(all.Events), all.More)
+	}
+}
+
+// plainDirector is a director that has no exact listing.
+type plainDirector struct{ bosh.Director }
+
+// A director with no exact listing is refused, so a states query is never
+// answered from a plain window that can miss tasks.
+func TestListTasksFromRefusesADirectorThatCannotListExactly(t *testing.T) {
+	t.Parallel()
+
+	_, err := bosh.ListTasksFrom(t.Context(), plainDirector{}, "recent", 10, []string{batchTaskError}, "")
+	if !errors.Is(err, bosh.ErrExactListingUnsupported) {
+		t.Fatalf("expected ErrExactListingUnsupported, got %v", err)
 	}
 }

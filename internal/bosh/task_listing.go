@@ -2,6 +2,7 @@ package bosh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,8 +14,7 @@ const (
 	// maxListedTasks is the most tasks one listing returns. A caller that
 	// pages by offset asks for offset plus page size, so this also bounds
 	// how deep a page can start.
-	plainTaskWindow = 200 // what the director's plain task read holds
-	maxListedTasks  = 2000
+	maxListedTasks = 2000
 
 	// maxTaskScan is the most tasks one listing asks the director for. A
 	// listing that needs more than this to fill its page stops there and
@@ -31,6 +31,10 @@ const (
 
 	teamBlacksmith = "blacksmith"
 )
+
+// ErrExactListingUnsupported is returned when a director has no exact task
+// listing.
+var ErrExactListingUnsupported = errors.New("director cannot list tasks exactly")
 
 // TaskListing is the answer to an exact task listing.
 type TaskListing struct {
@@ -137,36 +141,32 @@ func (d *DirectorAdapter) ListTasks(ctx context.Context, taskType string, limit 
 }
 
 // scanTasks reads up to scan tasks of the type from the director, with the
-// states filtered by the director. exhausted is true when the director had no
+// states filtered by the director. The bool is true when the director had no
 // more tasks to give.
-//
-//nolint:nonamedreturns // the results are named to say which bool is which.
-func (d *DirectorAdapter) scanTasks(ctx context.Context, taskType string, scan int, states []string) (tasks []Task, exhausted bool, err error) {
+func (d *DirectorAdapter) scanTasks(ctx context.Context, taskType string, scan int, states []string) ([]Task, bool, error) {
 	if taskType == "current" {
-		tasks, err = d.listTasks(ctx, "list running tasks", &boshapi.TaskListOptions{State: runningTaskStates, Verbose: 1})
+		running, err := d.listTasks(ctx, "list running tasks", &boshapi.TaskListOptions{State: runningTaskStates, Verbose: 1})
 
-		return tasks, true, err
+		return running, true, err
 	}
 
 	state := strings.Join(states, ",")
 
 	if taskType == "all" {
-		var recent int
-
-		tasks, recent, err = d.listAllTasksWith(ctx, scan, state)
+		all, recent, err := d.listAllTasksWith(ctx, scan, state)
 		if err != nil {
 			return nil, false, err
 		}
 
-		return tasks, recent < scan, nil
+		return all, recent < scan, nil
 	}
 
-	tasks, err = d.listTasks(ctx, "list recent tasks", &boshapi.TaskListOptions{State: state, Limit: scan, Verbose: 1})
+	recent, err := d.listTasks(ctx, "list recent tasks", &boshapi.TaskListOptions{State: state, Limit: scan, Verbose: 1})
 	if err != nil {
 		return nil, false, err
 	}
 
-	return tasks, len(tasks) < scan, nil
+	return recent, len(recent) < scan, nil
 }
 
 // ListTasks implements TaskLister. A listing is a read, so it takes no slot.
@@ -189,29 +189,18 @@ func (b *BatchDirector) ListEvents(ctx context.Context, deployment string, limit
 	return ListEventsFrom(ctx, b.director, deployment, limit)
 }
 
-// ListTasksFrom lists with the director when it can list exactly, and
-// otherwise with its plain window, which is exact only when it returned
-// fewer tasks than it was asked for or no state was asked for.
+// ListTasksFrom lists with the director's exact listing. A director that
+// cannot list exactly is refused, because its plain window would answer a
+// states query with a page that can miss tasks and still look complete.
 func ListTasksFrom(ctx context.Context, director Director, taskType string, limit int, states []string, team string) (TaskListing, error) {
-	if lister, ok := director.(TaskLister); ok {
-		listing, err := lister.ListTasks(ctx, taskType, limit, states, team)
-		if err != nil {
-			return TaskListing{}, fmt.Errorf("list tasks: %w", err)
-		}
-
-		return listing, nil
+	lister, ok := director.(TaskLister)
+	if !ok {
+		return TaskListing{}, ErrExactListingUnsupported
 	}
 
-	asked := min(max(limit, 1)+1, plainTaskWindow)
-
-	tasks, err := director.GetTasks(ctx, taskType, asked, states, team)
+	listing, err := lister.ListTasks(ctx, taskType, limit, states, team)
 	if err != nil {
 		return TaskListing{}, fmt.Errorf("list tasks: %w", err)
-	}
-
-	listing := TaskListing{Tasks: tasks, More: len(tasks) >= asked, Exact: len(tasks) < asked || len(states) == 0}
-	if len(listing.Tasks) > limit {
-		listing.Tasks = listing.Tasks[:limit]
 	}
 
 	return listing, nil

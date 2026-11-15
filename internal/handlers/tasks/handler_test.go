@@ -84,6 +84,22 @@ func (f *fakeDirector) GetTasks(_ context.Context, taskType string, limit int, s
 	return result, nil
 }
 
+// ListTasks is the exact listing the handler reads. It records one more than
+// the limit, as the adapter asks the director for, and applies the states.
+func (f *fakeDirector) ListTasks(ctx context.Context, taskType string, limit int, states []string, team string) (bosh.TaskListing, error) {
+	tasks, err := f.GetTasks(ctx, taskType, limit+1, states, team)
+	if err != nil {
+		return bosh.TaskListing{}, err
+	}
+
+	listing := bosh.TaskListing{Tasks: tasks, More: len(tasks) > limit, Exact: true}
+	if listing.More {
+		listing.Tasks = tasks[:limit]
+	}
+
+	return listing, nil
+}
+
 func (f *fakeDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
 	if err, ok := f.taskDetailErr[taskID]; ok {
 		return nil, err
