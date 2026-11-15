@@ -7,6 +7,24 @@ import "time"
 // instance. The reconciler reports such deployments instead of adopting them.
 const MetadataUnclaimedDeployment = "unclaimed_deployment"
 
+// UnclaimedDeployment is a BOSH deployment that has neither a vault index
+// entry nor a Cloud Foundry service instance.
+type UnclaimedDeployment struct {
+	InstanceID     string
+	DeploymentName string
+	// FirstSeen is when a run first found the deployment unclaimed.
+	FirstSeen time.Time
+}
+
+// UnclaimedReport lists the unclaimed deployments the last run with complete
+// CF discovery found. Known is false until such a run has happened, because an
+// empty list from a run that could not ask CF would be a guess.
+type UnclaimedReport struct {
+	Deployments []UnclaimedDeployment
+	AsOf        time.Time
+	Known       bool
+}
+
 // API Configuration Constants.
 const (
 	// BOSH API defaults.

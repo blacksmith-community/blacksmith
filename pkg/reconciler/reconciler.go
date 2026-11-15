@@ -52,6 +52,10 @@ type ReconcilerManager struct {
 	// or unconfigured discovery.
 	cfDiscoveryComplete atomic.Bool
 
+	// unclaimed holds what the last run with complete CF discovery found.
+	unclaimedMu sync.RWMutex
+	unclaimed   UnclaimedReport
+
 	// Multiple run prevention
 	IsReconciling  atomic.Bool
 	runCounter     atomic.Uint64
@@ -886,6 +890,8 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 		return fmt.Errorf("phase 3 failed: %w", err)
 	}
 
+	r.recordUnclaimedDeployments(instances)
+
 	// Phase 4: Update Vault with rate limiting
 	updatedInstances, err := r.updateVaultWithRateLimit(ctx, instances)
 	if err != nil {
@@ -1502,6 +1508,59 @@ func (r *ReconcilerManager) isInstanceIndexed(instanceID string) (bool, bool) {
 	_, exists := idx[instanceID]
 
 	return exists, true
+}
+
+// UnclaimedDeployments returns the deployments that have neither an index
+// entry nor a CF service instance, as of the last run that could tell.
+func (r *ReconcilerManager) UnclaimedDeployments() UnclaimedReport {
+	r.unclaimedMu.RLock()
+	defer r.unclaimedMu.RUnlock()
+
+	report := r.unclaimed
+	report.Deployments = append([]UnclaimedDeployment(nil), r.unclaimed.Deployments...)
+
+	return report
+}
+
+// recordUnclaimedDeployments keeps the deployments the run flagged as
+// unclaimed, so the API can list them. A run whose CF discovery did not
+// complete flags nothing, so it leaves the last report as it was rather than
+// replace it with an empty one.
+func (r *ReconcilerManager) recordUnclaimedDeployments(instances []InstanceData) {
+	if !r.cfDiscoveryComplete.Load() {
+		return
+	}
+
+	now := time.Now()
+
+	r.unclaimedMu.Lock()
+	defer r.unclaimedMu.Unlock()
+
+	firstSeen := make(map[string]time.Time, len(r.unclaimed.Deployments))
+	for _, previous := range r.unclaimed.Deployments {
+		firstSeen[previous.DeploymentName] = previous.FirstSeen
+	}
+
+	found := make([]UnclaimedDeployment, 0)
+
+	for _, inst := range instances {
+		if !isUnclaimedDeployment(inst) {
+			continue
+		}
+
+		seen, known := firstSeen[inst.Deployment.Name]
+		if !known {
+			seen = now
+		}
+
+		found = append(found, UnclaimedDeployment{
+			InstanceID:     inst.ID,
+			DeploymentName: inst.Deployment.Name,
+			FirstSeen:      seen,
+		})
+	}
+
+	r.unclaimed = UnclaimedReport{Deployments: found, AsOf: now, Known: true}
 }
 
 // isUnclaimedDeployment reports whether markUnclaimedDeployment flagged the instance.
