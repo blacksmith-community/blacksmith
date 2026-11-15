@@ -2762,7 +2762,7 @@
   const ATTENTION_TIMEOUT_MS = 8000;
   const attentionTasks = {status: 'idle', failed: 0, atLeast: false, loadedAt: 0, pending: null};
   const attentionHealth = {status: 'idle', unhealthy: [], loadedAt: 0, pending: null};
-  const attentionOrphans = {status: 'idle', orphans: [], unclaimed: [], loadedAt: 0, pending: null};
+  const attentionOrphans = {status: 'idle', orphans: [], unclaimed: [], unclaimedKnown: false, loadedAt: 0, pending: null};
   // A request that never answers must not hold the box, so each one gives up
   // after a time and its row says Unknown.
   const attentionFetch = (url) => {
@@ -2823,14 +2823,15 @@
   });
   // Orphans are index entries the reconciler marked and will remove, and BOSH
   // deployments that Cloud Foundry does not know. Whether the second list is
-  // known depends on a reconciler run, and an unknown list is not an alarm, so
-  // only the first list and a failed request decide the all-clear.
+  // known depends on a reconciler run. An unknown list does not block the
+  // all-clear, but the box says it has not looked. The times are estimates,
+  // since the reconciler acts on its own interval and the interval can change.
   const loadAttentionOrphans = attentionLoader(attentionOrphans, async () => {
     const response = await attentionFetch('/b/orphans');
     if (!response.ok) throw new Error('unavailable');
     const body = await response.json();
     if (!body || !Array.isArray(body.orphans)) throw new Error('unavailable');
-    return {status: 'ready', orphans: body.orphans.filter(item => item && typeof item === 'object'), unclaimed: Array.isArray(body.unclaimed) ? body.unclaimed.filter(item => item && typeof item === 'object') : []};
+    return {status: 'ready', orphans: body.orphans.filter(item => item && typeof item === 'object'), unclaimed: Array.isArray(body.unclaimed) ? body.unclaimed.filter(item => item && typeof item === 'object') : [], unclaimedKnown: body.unclaimed_known === true};
   });
   const orphanTimeLeft = (orphan) => {
     if (orphan.due) return 'Removal is due on the next reconciler run';
@@ -2838,10 +2839,10 @@
     if (orphan.seconds_left == null || !Number.isFinite(seconds)) return 'Removal time unknown';
     if (seconds >= 3600) {
       const hours = Math.round(seconds / 3600);
-      return `Removed in about ${hours} hour${hours === 1 ? '' : 's'}`;
+      return `Expected removal in about ${hours} hour${hours === 1 ? '' : 's'}`;
     }
     const minutes = Math.max(1, Math.ceil(seconds / 60));
-    return `Removed in about ${minutes} minute${minutes === 1 ? '' : 's'}`;
+    return `Expected removal in about ${minutes} minute${minutes === 1 ? '' : 's'}`;
   };
   const ATTENTION_ICON = {critical: 'circle-x', warning: 'hourglass', notice: 'info'};
   const ATTENTION_WORD = {critical: 'Critical', warning: 'Warning', notice: 'Notice'};
@@ -2855,10 +2856,11 @@
     const fetched = (at) => at ? `<p class="entity-attention-fetched">Data fetched ${stampHtml(at)}</p>` : '';
     const heading = '<h3 id="entity-attention-heading">Attention required</h3>';
     const shell = (body) => `<section class="card entity-attention" aria-labelledby="entity-attention-heading">${heading}${body}</section>`;
+    const unclaimedNote = attentionOrphans.status === 'ready' && !attentionOrphans.unclaimedKnown ? '<p class="entity-attention-fetched" data-attention-note="unclaimed">BOSH deployments with no Cloud Foundry instance have not been checked since the broker started.</p>' : '';
     const failedTasks = attentionTasks.status === 'ready' ? attentionTasks.failed : 0;
     const tasksUnsettled = attentionTasks.status === 'ready' && !failedTasks && attentionTasks.incomplete;
     if (!alerts.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready' && attentionOrphans.status === 'ready' && !attentionOrphans.orphans.length && !attentionOrphans.unclaimed.length) {
-      return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${fetched(cert.fetchedAt)}`);
+      return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${unclaimedNote}${fetched(cert.fetchedAt)}`);
     }
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
     const row = (name, tone, body) => `<li class="entity-attention-row" data-attention="${name}" data-tone="${tone}"><span class="entity-attention-badge">${blacksmithIcon(ATTENTION_ICON[tone])}<span class="entity-attention-severity">${ATTENTION_WORD[tone]}</span></span><div class="entity-attention-body">${body}</div></li>`;
@@ -2880,7 +2882,7 @@
         const label = id ? `<a href="#/instances/${encodeURIComponent(id)}/summary" data-keep-key="attention-link:orphan:${escapeAttribute(id)}">${name}</a>` : name;
         return `<li>${label} <span class="entity-attention-state">${escapeHtml(orphanTimeLeft(orphan))}</span></li>`;
       }).join('');
-      const unclaimedItems = unclaimed.map(item => `<li>${escapeHtml(String(item.deployment_name || item.instance_id || ''))} <span class="entity-attention-state">${item.first_seen ? `First seen ${stampHtml(item.first_seen)}` : ''}</span></li>`).join('');
+      const unclaimedItems = unclaimed.map(item => `<li>${escapeHtml(String(item.deployment_name || item.instance_id || ''))} <span class="entity-attention-state">${item.first_seen ? `First seen ${stampHtml(item.first_seen)}, counted from when the broker started` : ''}</span></li>`).join('');
       const parts = [];
       if (orphans.length) parts.push(`<p>${plural(orphans.length, 'orphaned instance')}, which the reconciler removes on its own</p><ul>${orphanItems}</ul>`);
       if (unclaimed.length) parts.push(`<p>${plural(unclaimed.length, 'deployment')} with no Cloud Foundry instance, left for you to review</p><ul>${unclaimedItems}</ul>`);
@@ -2899,7 +2901,7 @@
     } else {
       tier3.push(row('certificates', 'notice', '<p>Certificates needing attention: <span class="entity-attention-unknown">Loading</span></p>'));
     }
-    return shell(`<ul class="entity-attention-list">${[...tier1, ...tier2, ...tier3].join('')}</ul>`);
+    return shell(`<ul class="entity-attention-list">${[...tier1, ...tier2, ...tier3].join('')}</ul>${unclaimedNote}`);
   };
   // The section is taken before the wait, and replaced where it sits after
   // it, so a summary set aside while the request ran still gets its answer.

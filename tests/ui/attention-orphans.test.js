@@ -25,7 +25,7 @@ test('an orphan is listed with the time left and a link to the instance',async()
   const text=row(panel).textContent.replace(/\s+/g,' ');
   expect(text).toContain('1 orphaned instance');
   expect(text).toContain('cache-old');
-  expect(text).toContain('Removed in about 4 hours');
+  expect(text).toContain('Expected removal in about 4 hours');
   const link=row(panel).querySelector('a');
   expect(link.getAttribute('href')).toBe('#/instances/o1/summary');
   expect(link.dataset.keepKey).toBe('attention-link:orphan:o1');
@@ -50,7 +50,7 @@ test('an entry that is due says so, and a short wait reads in minutes',async()=>
  try{
   const items=[...row(panel).querySelectorAll('li')].map(li=>li.textContent.replace(/\s+/g,' ').trim());
   expect(items[0]).toContain('Removal is due on the next reconciler run');
-  expect(items[1]).toContain('Removed in about 25 minutes');
+  expect(items[1]).toContain('Expected removal in about 25 minutes');
   expect(items[2]).toContain('Removal time unknown');
   expect(row(panel).textContent).toContain('3 orphaned instances');
  }finally{w.close();}
@@ -64,17 +64,37 @@ test('a deployment with no Cloud Foundry instance is listed as text without a li
   expect(text).toContain('valkey-solo-s1');
   expect(row(panel).querySelector('a')).toBeNull();
   expect(row(panel).querySelector('time')).not.toBeNull();
+  expect(text).toContain('counted from when the broker started');
  }finally{w.close();}
 });
 
-test('with nothing orphaned the box can say nothing needs attention, with or without a known unclaimed list',async()=>{
- for(const known of [true,false]){
-  const {w,panel}=await mount([answer({unclaimed_known:known})]);
-  try{
-   expect(panel.textContent).toContain('Nothing needs attention');
-   expect(row(panel)).toBeNull();
-  }finally{w.close();}
- }
+const note=(panel)=>panel.querySelector('[data-attention-note="unclaimed"]');
+
+test('with nothing orphaned and the unclaimed list known, the box is all clear with no note',async()=>{
+ const {w,panel}=await mount([answer({})]);
+ try{
+  expect(panel.textContent).toContain('Nothing needs attention');
+  expect(row(panel)).toBeNull();
+  expect(note(panel)).toBeNull();
+ }finally{w.close();}
+});
+
+test('with the unclaimed list unknown the box keeps the all-clear and says it has not looked',async()=>{
+ const {w,panel}=await mount([answer({unclaimed_known:false})]);
+ try{
+  expect(panel.textContent).toContain('Nothing needs attention');
+  expect(row(panel)).toBeNull();
+  expect(note(panel).textContent).toBe('BOSH deployments with no Cloud Foundry instance have not been checked since the broker started.');
+  expect(note(panel).classList.contains('entity-attention-fetched')).toBe(true);
+ }finally{w.close();}
+});
+
+test('the note also shows under a list of orphans when the unclaimed list is unknown',async()=>{
+ const {w,panel}=await mount([answer({orphans:[orphan()],unclaimed_known:false})]);
+ try{
+  expect(row(panel)).not.toBeNull();
+  expect(note(panel)).not.toBeNull();
+ }finally{w.close();}
 });
 
 test('a failed request says Unknown and never all clear',async()=>{
