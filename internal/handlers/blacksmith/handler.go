@@ -29,6 +29,7 @@ var (
 	ErrCommandNotAllowed         = errors.New("command not allowed")
 	ErrUnauthorizedLogFileAccess = errors.New("unauthorized log file access")
 	ErrFailedToReadLogFile       = errors.New("failed to read log file")
+	ErrCleanupNotImplemented     = errors.New("manual cleanup is not implemented; the reconciler removes orphaned instances on its own")
 )
 
 const (
@@ -547,7 +548,10 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 	response.HandleJSON(responseWriter, result, nil)
 }
 
-// Cleanup performs cleanup operations.
+// Cleanup reports that the manual cleanup job does not exist. The reconciler
+// removes orphaned index entries on its own, and /b/orphans lists the ones
+// waiting for that, so there is nothing for an operator to trigger here. The
+// route stays so a caller gets a clear answer instead of a missing page.
 func (h *Handler) Cleanup(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("blacksmith-cleanup")
 
@@ -559,39 +563,18 @@ func (h *Handler) Cleanup(responseWriter http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	logger.Info("Starting cleanup operation")
+	logger.Info("Cleanup requested, but the broker has no cleanup job")
 
-	// Parse request body for cleanup options
-	var cleanupRequest struct {
-		DryRun bool   `json:"dry_run"`
-		Target string `json:"target"`
+	responseWriter.Header().Set("Content-Type", "application/json")
+	responseWriter.WriteHeader(http.StatusNotImplemented)
+
+	body, err := json.Marshal(struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error"`
+	}{Success: false, Error: ErrCleanupNotImplemented.Error()})
+	if err == nil {
+		_, _ = responseWriter.Write(body)
 	}
-
-	err := json.NewDecoder(req.Body).Decode(&cleanupRequest)
-	if err != nil {
-		// If no body, use defaults
-		cleanupRequest.DryRun = false
-		cleanupRequest.Target = "all"
-	}
-
-	// TODO: Implement actual cleanup logic
-	// This might involve:
-	// - Cleaning up orphaned VMs
-	// - Removing stale service instances
-	// - Clearing temporary data
-
-	result := map[string]interface{}{
-		"status":  "completed",
-		"dry_run": cleanupRequest.DryRun,
-		"target":  cleanupRequest.Target,
-		"cleaned": map[string]int{
-			"orphaned_vms":    0,
-			"stale_instances": 0,
-			"temporary_files": 0,
-		},
-	}
-
-	response.HandleJSON(responseWriter, result, nil)
 }
 
 // GetEvents returns events for the blacksmith deployment.

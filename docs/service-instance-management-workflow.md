@@ -63,7 +63,7 @@ out := struct {
 #### Additional Endpoints
 
 - `/v2/catalog` - Service catalog from Open Service Broker API
-- `/b/cleanup` - Manual orphan instance cleanup
+- `/b/cleanup` - Reserved for a manual cleanup job, and it answers 501 Not Implemented today
 - `/b/deployments/{name}/events` - BOSH deployment events
 - `/b/deployments/{name}/vms` - VM information for deployments
 
@@ -265,7 +265,7 @@ Service instances progress through defined statuses:
 
 #### Orphaned Instances
 - **Symptom**: Instances in UI with no backing deployment
-- **Solution**: Run `/b/cleanup` endpoint or wait for reconciler
+- **Solution**: Wait for the reconciler, which removes orphaned entries on its own. The Summary page lists them with the time left before removal
 
 #### Stuck Provisioning
 - **Symptom**: Instance stays in `provisioning_started`
