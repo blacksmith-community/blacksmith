@@ -10516,43 +10516,103 @@
   // show, 'unknown' for a chain the inventory has not recorded yet, 'none'
   // for a recorded chain with no CA in it, and 'known' with the subject and
   // expiry of the issuing CA. The item leaves issuer_chain out until known.
-  const loadIssuingCa = async (instanceId) => {
+  // Each request aborts after ISSUING_CA_TIMEOUT_MS, and any stored PEM for
+  // the instance is dropped first, so only a known answer can hold one.
+  const ISSUING_CA_TIMEOUT_MS = 2500;
+  const timedJSON = async (url) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ISSUING_CA_TIMEOUT_MS);
     try {
-      const inv = await fetch(`/b/certificates/inventory?instance=${encodeURIComponent(instanceId)}`, { headers: { Accept: 'application/json' }, cache: 'no-cache' });
-      if (!inv.ok) return null;
-      const certs = (await inv.json()).certificates;
-      const listener = (Array.isArray(certs) ? certs : []).find((c) => c && c.id && (c.observations || []).some((o) => o.source === 'probe' && o.owner && o.owner.instance_id === instanceId));
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-cache', signal: controller.signal });
+      return res.ok ? await res.json() : null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // The listener item is one whose probe succeeded and presented a
+  // certificate. An item keyed by that certificate's fingerprint wins, and
+  // ties break on the probe's address and then the key, never on list order.
+  const pickListenerItem = (certs, instanceId) => {
+    const candidates = [];
+    for (const c of Array.isArray(certs) ? certs : []) {
+      if (!c || !c.id) continue;
+      for (const o of c.observations || []) {
+        if (o.source !== 'probe' || !o.owner || o.owner.instance_id !== instanceId) continue;
+        if (o.state !== 'ok' || !o.sha256_fingerprint) continue;
+        const exact = String(c.key || '').toLowerCase().includes(String(o.sha256_fingerprint).toLowerCase()) ? 0 : 1;
+        candidates.push({ c, rank: [exact, String(o.locator || ''), String(c.key || ''), String(c.id)] });
+      }
+    }
+    candidates.sort((x, y) => {
+      for (let i = 0; i < x.rank.length; i += 1) {
+        if (x.rank[i] !== y.rank[i]) return x.rank[i] < y.rank[i] ? -1 : 1;
+      }
+      return 0;
+    });
+    return candidates.length ? candidates[0].c : null;
+  };
+
+  const loadIssuingCa = async (instanceId) => {
+    issuingCaPems.delete(instanceId);
+    try {
+      const inv = await timedJSON(`/b/certificates/inventory?instance=${encodeURIComponent(instanceId)}`);
+      const listener = inv && pickListenerItem(inv.certificates, instanceId);
       if (!listener) return null;
-      const res = await fetch(`/b/certificates/items/${encodeURIComponent(listener.id)}`, { headers: { Accept: 'application/json' }, cache: 'no-cache' });
-      if (!res.ok) return null;
-      const item = await res.json();
-      if (!item || !Array.isArray(item.issuer_chain)) return { state: 'unknown' };
-      if (item.issuer_chain.length === 0) { issuingCaPems.delete(instanceId); return { state: 'none' }; }
+      const item = await timedJSON(`/b/certificates/items/${encodeURIComponent(listener.id)}`);
+      if (!item) return null;
+      if (!Array.isArray(item.issuer_chain)) return { state: 'unknown' };
+      if (item.issuer_chain.length === 0) return { state: 'none' };
       const first = (Array.isArray(item.issuer_chain_facts) && item.issuer_chain_facts[0]) || {};
       issuingCaPems.set(instanceId, item.issuer_chain.join(''));
-      return { state: 'known', instanceId, subject: first.common_name || '', notAfter: first.not_after || '', count: item.issuer_chain.length };
+      return { state: 'known', instanceId, subject: first.common_name || '', notAfter: first.not_after || '', count: item.issuer_chain.length, incomplete: item.issuer_chain_incomplete === true };
     } catch (_) {
       return null;
     }
   };
 
-  const issuingCaRow = (ca) => {
+  // The row is rendered as a loading row with the table. Once the lookup
+  // answers it is replaced, or removed when there is nothing to show. The
+  // caller inserts the markup after this returns, so the row is looked up
+  // for a short while.
+  const fillIssuingCaRow = (instanceId, lookup, attempt = 0) => {
+    const selector = `tr.issuing-ca-row[data-issuing-ca-instance="${CSS.escape(instanceId)}"]`;
+    lookup.then((ca) => {
+      const place = (tries) => {
+        const rows = document.querySelectorAll(selector);
+        if (rows.length === 0) {
+          if (tries < 40) setTimeout(() => place(tries + 1), 50);
+          return;
+        }
+        rows.forEach((el) => {
+          const html = issuingCaRow(ca, instanceId);
+          if (html) el.outerHTML = html; else el.remove();
+        });
+      };
+      place(attempt);
+    });
+  };
+
+  const issuingCaRow = (ca, instanceId) => {
     if (!ca) return '';
     let cell;
     if (ca.state === 'known') {
       const id = escapeAttribute(ca.instanceId);
       const expiry = certDay(ca.notAfter);
       const more = ca.count > 1 ? ` The chain has ${ca.count} certificates.` : '';
-      cell = `<span class="issuing-ca-text">${escapeHtml(ca.subject || 'Unnamed CA')}${expiry ? `, expires ${escapeHtml(expiry)}.` : '.'}${more}</span>
-        <span class="issuing-ca-actions"><button type="button" class="issuing-ca-copy" data-issuing-ca-action="copy" data-issuing-ca-key="${id}" data-keep-key="issuing-ca-copy:${id}">Copy PEM</button>
-        <button type="button" class="issuing-ca-download" data-issuing-ca-action="download" data-issuing-ca-key="${id}" data-keep-key="issuing-ca-download:${id}">Download (.pem)</button></span>`;
+      const short = ca.incomplete ? ' The chain does not reach a root, because a CA above it was not read.' : '';
+      cell = `<span class="issuing-ca-text">${escapeHtml(ca.subject || 'Unnamed CA')}${expiry ? `, expires ${escapeHtml(expiry)}.` : '.'}${more}${short}</span>
+        <span class="issuing-ca-actions"><button type="button" class="btn btn-sm btn-secondary issuing-ca-copy" data-issuing-ca-action="copy" data-issuing-ca-key="${id}" data-keep-key="issuing-ca-copy:${id}">Copy PEM</button>
+        <button type="button" class="btn btn-sm btn-secondary issuing-ca-download" data-issuing-ca-action="download" data-issuing-ca-key="${id}" data-keep-key="issuing-ca-download:${id}">Download (.pem)</button></span>`;
     } else if (ca.state === 'none') {
       cell = '<span class="issuing-ca-text">No issuing CA is on record for this certificate.</span>';
     } else {
       cell = '<span class="issuing-ca-text">The issuing CA is not known yet. It appears after the next certificate scan.</span>';
     }
-    return `<tr class="issuing-ca-row"><td class="cred-key">Issuing CA</td><td class="cred-value">${cell}</td></tr>`;
+    return `<tr class="issuing-ca-row" data-issuing-ca-instance="${escapeAttribute(instanceId)}"><td class="cred-key">Issuing CA</td><td class="cred-value">${cell}</td></tr>`;
   };
+
+  const issuingCaLoadingRow = (instanceId) => `<tr class="issuing-ca-row" data-issuing-ca-instance="${escapeAttribute(instanceId)}"><td class="cred-key">Issuing CA</td><td class="cred-value"><span class="issuing-ca-text" role="status">Looking up the issuing CA...</span></td></tr>`;
 
   const installIssuingCaActions = () => {
     if (issuingCaActionsInstalled) return;
@@ -11056,6 +11116,10 @@
       return `<div class="error">Unknown tab type: ${type}</div>`;
     }
 
+    // The issuing CA lookup runs beside the credentials request, so it never
+    // delays the table.
+    const issuerLookup = type === 'credentials' ? loadIssuingCa(instanceId) : null;
+
     try {
       const response = await fetch(endpoints[type], { cache: 'no-cache' });
       if (!response.ok) {
@@ -11084,10 +11148,10 @@
         }
       } else if (type === 'credentials') {
         const creds = await response.json();
-        const issuer = await loadIssuingCa(instanceId);
         if (!isCurrent()) return '';
         installIssuingCaActions();
-        return formatCredentials(creds, issuingCaRow(issuer));
+        fillIssuingCaRow(instanceId, issuerLookup);
+        return formatCredentials(creds, issuingCaLoadingRow(instanceId));
       } else if (type === 'logs') {
         const text = await response.text();
         try {
