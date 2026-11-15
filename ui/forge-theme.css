@@ -612,6 +612,14 @@ button:is(.copy-btn-inline, .secret-toggle, .copy-btn-logs, .copy-btn-manifest, 
 .resurrection-action { min-height: 2.5rem; padding: .375rem .75rem; white-space: nowrap; }
 .resurrection-action:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 
+/* Restart and Recreate sit beside resurrection, and their outcome reads as text. */
+.vm-instance-actions { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-left: .5rem; min-width: 0; }
+.instance-action-btn { min-height: 2.5rem; padding: .375rem .75rem; white-space: nowrap; }
+.instance-action-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.instance-action-status { font-size: .875rem; color: var(--text-primary); overflow-wrap: anywhere; }
+.instance-action-status:empty { display: none; }
+.instance-action-status[data-state="failed"] { color: var(--text-error); font-weight: 600; }
+
 /* Keep log controls outside the only scrolling region. */
 .job-logs-container { padding: 0; min-height: 0; }
 .job-logs-container > .table-controls-container {

@@ -13606,6 +13606,7 @@
               ${blacksmithIcon('trash-2', { size: 16 })}
             </button>
           </div>
+          ${instanceId ? instanceActionsHtml(instanceId) : ''}
           ${tableToolbarActions({ tableSelector: '.vms-table', noun: 'VMs', refresh: `onclick="${refreshFunction}"` })}
         </div>
         <div class="vms-table-container">
@@ -13635,6 +13636,101 @@
 
     return result;
   };
+
+  // The name an operator gave a service instance, or its ID when it has none.
+  const instanceNameOf = (id) => window.serviceInstances?.[id]?.instance_name || window.serviceInstances?.[id]?.name || id;
+
+  // Restart and Recreate act on every VM of a service instance through the
+  // broker, which checks that it owns the instance. The last outcome per
+  // instance is kept so the VMs table can render again without losing it.
+  const INSTANCE_ACTIONS = {
+    restart: { label: 'Restart', message: 'BOSH restarts the jobs on every VM of this instance, following the deployment\'s update policy. The service may be unavailable while its jobs restart.' },
+    recreate: { label: 'Recreate', message: 'BOSH deletes every VM of this instance and creates it again from its stemcell, following the deployment\'s update policy. Persistent disks are kept, and the service is unavailable on each VM while it is recreated.' }
+  };
+  const instanceActionOutcomes = new Map();
+  const instanceActionsBusy = new Set();
+
+  const instanceActionStatusHtml = (instanceId) => {
+    const outcome = instanceActionOutcomes.get(instanceId);
+    if (!outcome) return '';
+    const subject = `${INSTANCE_ACTIONS[outcome.action].label} of ${escapeHtml(instanceNameOf(instanceId))}`;
+    if (outcome.state === 'running') return `${subject} is starting…`;
+    if (outcome.state === 'failed') return `${subject} failed. ${escapeHtml(outcome.message)}`;
+    return `${subject} started. <a href="#" class="bosh-task-link" data-history-task-id="${outcome.taskId}" data-keep-key="instance-action-task:${escapeAttribute(instanceId)}:${outcome.taskId}">BOSH task ${outcome.taskId}</a>`;
+  };
+
+  const instanceActionsHtml = (instanceId) => {
+    const id = escapeAttribute(instanceId);
+    const busy = instanceActionsBusy.has(instanceId) ? ' disabled' : '';
+    const outcome = instanceActionOutcomes.get(instanceId);
+    const button = (action) => `<button type="button" class="outline small instance-action-btn" data-instance-action="${action}" data-instance-id="${id}" data-keep-key="instance-action:${action}:${id}"${busy}>${INSTANCE_ACTIONS[action].label}</button>`;
+    return `<div class="vm-instance-actions" role="group" aria-label="Instance VM actions">
+            ${button('restart')}
+            ${button('recreate')}
+            <span class="instance-action-status" id="instance-action-status-${id}" role="status" data-state="${outcome ? outcome.state : 'idle'}"${outcome?.state === 'running' ? ' aria-busy="true"' : ''}>${instanceActionStatusHtml(instanceId)}</span>
+          </div>`;
+  };
+
+  const paintInstanceActions = (instanceId) => {
+    const status = document.getElementById(`instance-action-status-${instanceId}`);
+    if (status) {
+      const outcome = instanceActionOutcomes.get(instanceId);
+      status.dataset.state = outcome ? outcome.state : 'idle';
+      if (outcome?.state === 'running') status.setAttribute('aria-busy', 'true');
+      else status.removeAttribute('aria-busy');
+      status.innerHTML = instanceActionStatusHtml(instanceId);
+    }
+    const busy = instanceActionsBusy.has(instanceId);
+    document.querySelectorAll('button[data-instance-action]').forEach((button) => {
+      if (button.dataset.instanceId === instanceId) button.disabled = busy;
+    });
+  };
+
+  const runInstanceAction = async (instanceId, action) => {
+    const spec = INSTANCE_ACTIONS[action];
+    if (!spec || !instanceId || instanceActionsBusy.has(instanceId)) return;
+    const name = instanceNameOf(instanceId);
+    const details = name === instanceId
+      ? [{ label: 'Instance ID', value: instanceId }]
+      : [{ label: 'Instance', value: name }, { label: 'Instance ID', value: instanceId }];
+    const confirmed = await showConfirmDialog({
+      title: `${spec.label} ${name}?`,
+      message: spec.message,
+      details,
+      confirmText: spec.label,
+      cancelText: 'Cancel',
+      danger: true
+    });
+    if (!confirmed || instanceActionsBusy.has(instanceId)) return;
+
+    instanceActionsBusy.add(instanceId);
+    instanceActionOutcomes.set(instanceId, { action, state: 'running' });
+    paintInstanceActions(instanceId);
+    try {
+      const response = await fetch(`/b/${encodeURIComponent(instanceId)}/${action}`, { method: 'POST', cache: 'no-cache' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.task_id) {
+        throw new Error(result.error || `The broker answered ${response.status}.`);
+      }
+      instanceActionOutcomes.set(instanceId, { action, state: 'started', taskId: Number(result.task_id) });
+      showNotification(`${spec.label} of ${name} started as BOSH task ${Number(result.task_id)}`, 'success');
+    } catch (error) {
+      console.error('Instance VM action failed:', loggableError(error));
+      instanceActionOutcomes.set(instanceId, { action, state: 'failed', message: error.message });
+      showNotification(`${spec.label} of ${name} failed: ${error.message}`, 'error');
+    } finally {
+      instanceActionsBusy.delete(instanceId);
+      paintInstanceActions(instanceId);
+    }
+  };
+  window.runInstanceAction = runInstanceAction;
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest?.('button[data-instance-action]');
+    if (!button || button.disabled) return;
+    event.preventDefault();
+    runInstanceAction(button.dataset.instanceId, button.dataset.instanceAction);
+  });
 
   // Fetch with API version header
   const fetchWithHeaders = async (url, options = {}) => {
