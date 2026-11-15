@@ -547,17 +547,15 @@ func (r *ReconcilerAdapter) ForceReconcile() error {
 	return nil
 }
 
-// UpdateInterval changes the reconciler interval at runtime and persists it to Vault.
+// UpdateInterval saves the reconciler interval to Vault and applies it once
+// the save lands, so a save that fails changes nothing and the running
+// interval always matches what Vault holds. An adapter without Vault
+// applies the interval for this run alone.
 func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Duration) error {
 	r.intervalMu.Lock()
 	defer r.intervalMu.Unlock()
 
-	manager := r.currentManager()
-	if manager != nil {
-		manager.UpdateInterval(interval)
-	}
-
-	r.setInterval(interval, reconcilerIntervalAPI)
+	source := reconcilerIntervalAPI
 
 	// Persist to Vault so it survives redeployment
 	if r.vault != nil {
@@ -569,10 +567,17 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 			return fmt.Errorf("failed to persist interval: %w", err)
 		}
 
-		r.setInterval(interval, reconcilerIntervalVault)
+		source = reconcilerIntervalVault
 	}
 
-	r.log().Info("Reconciler interval updated to %v and persisted to Vault", interval)
+	manager := r.currentManager()
+	if manager != nil {
+		manager.UpdateInterval(interval)
+	}
+
+	r.setInterval(interval, source)
+
+	r.log().Info("Reconciler interval updated to %v (%s)", interval, source)
 
 	return nil
 }
