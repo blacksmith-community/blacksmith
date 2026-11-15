@@ -8311,6 +8311,7 @@
             <span class="total">${activityCount(task.total_count)} ${activityCount(task.total_count) === 1 ? 'instance' : 'instances'}</span>
           </div>
           <div class="upgrade-task-time">${escapeHtml(formatTaskTime(task.created_at))}</div>
+          ${taskActorLine(task)}
         </div>
       `;
     }).join('');
@@ -8347,6 +8348,15 @@
 
   // Format task timestamp
   const formatTaskTime = (timestamp) => (timestamp ? formatStamp(timestamp) : '');
+
+  // Who started a job and the client address of the request, as the broker
+  // recorded them. The address's forwarded-for part is what the client sent.
+  const taskActorLine = (task) => {
+    const by = String(task.created_by || '');
+    if (!by) return '';
+    const from = String(task.created_from || '');
+    return `<div class="upgrade-task-actor">Started by <span class="upgrade-task-actor-name">${escapeHtml(by)}</span>${from ? ` from <span class="upgrade-task-actor-from">${escapeHtml(from)}</span>` : ''}</div>`;
+  };
 
   // Set up click handlers for task items
   const setupTaskClickHandlers = () => {
@@ -9728,6 +9738,8 @@
     const nodes = isCommand ? commandNodeProgress(task) : null;
     columns.push({ label: 'Progress', html: `${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} instances completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${upgradeProgressLabel(task)})${nodes && nodes.total ? (nodes.failed || nodes.skipped ? `; nodes: ${[`${nodes.ran} ran`, nodes.failed ? `${nodes.failed} failed` : '', nodes.skipped ? `${nodes.skipped} skipped` : '', nodes.total - nodes.done ? `${nodes.total - nodes.done} waiting` : ''].filter(Boolean).join(', ')}` : `, ${nodes.done}/${nodes.total} nodes`) : ''}` });
     columns.push({ label: 'Instances', html: String(instances.length) });
+    columns.push({ label: 'Started by', html: task.created_by ? escapeHtml(String(task.created_by)) : EMPTY_HTML });
+    columns.push({ label: 'Client address', html: task.created_from ? escapeHtml(String(task.created_from)) : EMPTY_HTML });
     columns.push({ label: 'Created', html: escapeHtml(formatTaskTime(task.created_at)) });
     const summaryTable = `<table class="task-summary-table" data-sortable="false"><thead><tr>${columns.map((c) => `<th scope="col" class="label">${escapeHtml(c.label)}</th>`).join('')}</tr></thead><tbody><tr>${columns.map((c) => `<td class="value${c.className ? ` ${c.className}` : ''}" data-label="${escapeAttribute(c.label)}">${c.html}</td>`).join('')}</tr></tbody></table>`;
     const notices = `${pausedOnFailure ? `

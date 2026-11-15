@@ -265,6 +265,12 @@ type TaskSummary struct {
 	// decisions can be resolved.
 	AwaitingDecisionCount int       `json:"awaiting_decision_count"`
 	CreatedAt             time.Time `json:"created_at"`
+	// CreatedBy and CreatedFrom say who started the task and where the
+	// request came from, as the task records them. The forwarded-for part
+	// of CreatedFrom is what the client reported, so it is for the record
+	// only.
+	CreatedBy   string `json:"created_by,omitempty"`
+	CreatedFrom string `json:"created_from,omitempty"`
 	// Command holds a command task's settings, without the command text.
 	Command *CommandSummary `json:"command,omitempty"`
 	// HeldInstanceIDs names the instances a command task holds, by ID
@@ -304,6 +310,8 @@ func (t *UpgradeTask) ToSummary() TaskSummary {
 		SkippedCount:    t.SkippedCount,
 		CancelledCount:  t.CancelledCount,
 		CreatedAt:       t.CreatedAt,
+		CreatedBy:       t.CreatedBy,
+		CreatedFrom:     t.CreatedFrom,
 
 		AwaitingDecisionCount: t.awaitingDecisionCount(),
 	}

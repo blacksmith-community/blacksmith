@@ -35,15 +35,15 @@ t('a command run summary is one data row with Status first and Created last',asy
  expect(table).not.toBeNull();
  expect(table.querySelectorAll('tbody tr').length).toBe(1);
  expect(table.getAttribute('data-sortable')).toBe('false');
- expect(headers(d)).toEqual(['Status','Run as','Shell','Timeout','Parallel','Reason','Progress','Instances','Created']);
+ expect(headers(d)).toEqual(['Status','Run as','Shell','Timeout','Parallel','Reason','Progress','Instances','Started by','Client address','Created']);
  expect(d.querySelector('#upgrade .task-detail-summary .summary-row')).toBeNull();
 });
 
 t('an upgrade and a certificate job use the same table with their own settings',async()=>{
  const up=await start(upgradeTask());
- expect(headers(up.d)).toEqual(['Status','System','After a failure','Progress','Instances','Created']);
+ expect(headers(up.d)).toEqual(['Status','System','After a failure','Progress','Instances','Started by','Client address','Created']);
  const cert=await start(certTask());
- expect(headers(cert.d)).toEqual(['Status','Mode','Reason','After a failure','Progress','Instances','Created']);
+ expect(headers(cert.d)).toEqual(['Status','Mode','Reason','After a failure','Progress','Instances','Started by','Client address','Created']);
 });
 
 t('Instances is a count in its own cell and the old heading is gone',async()=>{
