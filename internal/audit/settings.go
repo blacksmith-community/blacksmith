@@ -57,7 +57,7 @@ func (s *ChangeStore) RecordSettings(ctx context.Context, target string, old, cu
 		}
 	}
 
-	s.logger.Error("audit=change target=%q the old and new settings could not be compared, so no record was kept: %T to %T", truncate(clean(target), maxChangeText), old, current)
+	s.logError("audit=change target=%q the old and new settings could not be compared, so no record was kept: %T to %T", truncate(clean(target), maxChangeText), old, current)
 }
 
 // capChanges keeps the first MaxRecordsPerChange-1 changes and folds the

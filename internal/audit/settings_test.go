@@ -72,3 +72,19 @@ func TestRecordSettingsSkipsNoChangeAndUnreadableSettings(t *testing.T) {
 		t.Fatalf("log = %q, want the unreadable settings named", text)
 	}
 }
+
+// A store built without a logger still copes with settings it can't
+// compare, and keeps no record of them.
+func TestRecordSettingsWithoutALoggerKeepsNothing(t *testing.T) {
+	t.Parallel()
+
+	vault := audittest.NewKV()
+	store := audit.NewChangeStore(vault, nil)
+
+	store.RecordSettings(t.Context(), "broker", make(chan int), map[string]int{"max_batch_jobs": 1})
+	store.Wait()
+
+	if paths := vault.Paths(); len(paths) != 0 {
+		t.Fatalf("Vault holds %v, want nothing", paths)
+	}
+}
