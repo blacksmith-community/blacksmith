@@ -41,7 +41,9 @@ func (h *Handler) CanHandleInstanceAction(path string) bool {
 // The action holds the instance and its deployment in the mutation guard
 // while the director accepts the task, so it never runs beside an upgrade,
 // a certificate rotation, or a broker operation on the same instance. It
-// answers 202 with the BOSH task the director created.
+// answers 202 with the BOSH task the director created. When the director's
+// answer is lost after the request went out, the task may have started, so
+// it answers 504 outcome_unknown rather than reporting a failure.
 //
 // The broker's basic-auth wrapper puts the authenticated actor in the
 // request context, as it does for every /b/ request. Each action that
@@ -86,6 +88,20 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 	actor, _ := audit.ActorFrom(req.Context())
 
 	task, err := h.runInstanceAction(req.Context(), deployment, action)
+	if errors.Is(err, bosh.ErrOutcomeUnknown) {
+		logger.Error("The director's answer to the %s of deployment %s of instance %s was lost: %v", action, deployment, instanceID, err)
+		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "unknown", 0)
+		response.JSON(writer, http.StatusGatewayTimeout, instanceActionProblem{
+			Code:       apierr.CodeOutcomeUnknown,
+			Error:      fmt.Sprintf("The director's answer was lost, so the %s of instance %s may have started. Check the tasks of deployment %s before you try again.", action, instanceID, deployment),
+			InstanceID: instanceID,
+			Deployment: deployment,
+			Operation:  action,
+		})
+
+		return
+	}
+
 	if err != nil {
 		logger.Error("Failed to %s deployment %s of instance %s: %v", action, deployment, instanceID, err)
 		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "failed", 0)
@@ -113,6 +129,20 @@ type instanceActionResponse struct {
 	Operation  string `json:"operation"`
 	TaskID     int    `json:"task_id"`
 	State      string `json:"state"`
+}
+
+// instanceActionProblem is the body of an instance action that did not
+// start, or whose start can't be confirmed. It carries the error code and
+// message every broker error has, plus what the UI needs to point the
+// operator at the right deployment or task.
+type instanceActionProblem struct {
+	Success    bool   `json:"success"`
+	Code       string `json:"code"`
+	Error      string `json:"error"`
+	InstanceID string `json:"instance_id"`
+	Deployment string `json:"deployment"`
+	Operation  string `json:"operation"`
+	TaskID     int    `json:"task_id,omitempty"`
 }
 
 // ownedDeployment looks the instance up in the broker's index and returns

@@ -498,7 +498,7 @@ func TestInstanceActionsReportADirectorRefusal(t *testing.T) {
 // newAdapterSetup serves the instance actions through the broker's real
 // director adapter, against a test director that answers with answer. A
 // request answer declines gets the test director's defaults.
-func newAdapterSetup(t *testing.T, answer boshtest.Handler) (instanceActionSetup, *boshtest.Director) {
+func newAdapterSetup(t *testing.T, answer boshtest.Handler) instanceActionSetup {
 	t.Helper()
 
 	server := boshtest.New(t, answer)
@@ -524,7 +524,7 @@ func newAdapterSetup(t *testing.T, answer boshtest.Handler) (instanceActionSetup
 		Vault:    ownedVault(),
 	})
 
-	return setup, server
+	return setup
 }
 
 // A director that has no deployment for an instance the index still lists
@@ -538,7 +538,7 @@ func TestInstanceActionsReportAMissingDeployment(t *testing.T) {
 		t.Run(action, func(t *testing.T) {
 			t.Parallel()
 
-			setup, _ := newAdapterSetup(t, func(writer http.ResponseWriter, request *http.Request) bool {
+			setup := newAdapterSetup(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				if request.Method != http.MethodPut || request.URL.Path != "/deployments/"+ownedDeployment+"/jobs/*" {
 					return false
 				}
@@ -556,6 +556,51 @@ func TestInstanceActionsReportAMissingDeployment(t *testing.T) {
 
 			if body := decodeBody(t, recorder); body["code"] != apierr.CodeNotFound {
 				t.Errorf("body = %v, want %s", body, apierr.CodeNotFound)
+			}
+		})
+	}
+}
+
+// When the director's answer to the job-state change is lost after the
+// request went out, the director may have started the task. The action
+// answers 504 outcome_unknown, never a failure, so nobody resends it as if
+// nothing ran, and the audit line says the outcome is unknown.
+func TestInstanceActionsReportALostAnswerAsUnknown(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{actionRestart, actionRecreate} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+
+			setup := newAdapterSetup(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				if request.Method != http.MethodPut || request.URL.Path != "/deployments/"+ownedDeployment+"/jobs/*" {
+					return false
+				}
+
+				boshtest.DropAnswer(writer)
+
+				return true
+			})
+
+			recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/"+action)
+
+			if recorder.Code != http.StatusGatewayTimeout {
+				t.Fatalf("status = %d, want 504: %s", recorder.Code, recorder.Body.String())
+			}
+
+			body := decodeBody(t, recorder)
+			if body["code"] != apierr.CodeOutcomeUnknown || body["success"] != false ||
+				body["deployment"] != ownedDeployment || body["operation"] != action || body["instance_id"] != ownedInstance {
+				t.Errorf("body = %v, want code %s naming the deployment and operation", body, apierr.CodeOutcomeUnknown)
+			}
+
+			if message, _ := body["error"].(string); !strings.Contains(message, "may have started") {
+				t.Errorf("error = %q, want it to say the %s may have started", message, action)
+			}
+
+			lines := setup.log.audits()
+			if len(lines) != 1 || !strings.Contains(lines[0], `outcome="unknown"`) || !strings.Contains(lines[0], `actor="operator"`) {
+				t.Errorf("audit lines = %q, want one with outcome unknown and the actor", lines)
 			}
 		})
 	}

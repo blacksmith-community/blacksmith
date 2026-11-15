@@ -78,6 +78,10 @@ const (
 	CodeCredHubUnavailable = "credhub_unavailable" //nolint:gosec // An error code, not a credential.
 	CodeVaultUnavailable   = "vault_unavailable"
 	CodeCleanupNotStarted  = "cleanup_not_started"
+
+	// 504, when the director's answer to a request it may have accepted was
+	// lost, so nobody can say whether its task started.
+	CodeOutcomeUnknown = "outcome_unknown"
 )
 
 // Error is an error that knows the HTTP status and code it should be
