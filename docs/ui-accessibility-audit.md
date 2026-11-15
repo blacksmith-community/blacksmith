@@ -46,7 +46,7 @@ or third-party terminal escape sequence has been tested.
 
 ## Release checklist
 
-Before we tag a release, one of us runs a screen-reader pass over the web UI, because the automated checks above can't tell us how a page actually sounds. We use VoiceOver with Safari on macOS and NVDA with Firefox on Windows, and we run the pass in one light theme and one dark theme. The pass uses the same synthetic fixtures as the automated checks, so it never touches a live director, Cloud Foundry, or a service.
+Before we tag a release, one of us runs a screen-reader pass over the web UI, because the automated checks above can't tell us how a page sounds. We use VoiceOver with Safari on macOS and NVDA with Firefox on Windows, and we run the pass in one light theme and one dark theme. The pass uses the same synthetic fixtures as the automated checks, so it never touches a live director, Cloud Foundry, or a service.
 
 We start on the broker page and move through it by headings and landmarks, and every section should announce a heading that names it. Then we move through the broker and instance sidebars with the arrow keys, and each tab should read its name, its group, and whether it is selected. On a sortable table we sort a column from the keyboard and listen for the new sort direction, and on a table that doesn't sort we check that the column headers still read with each cell.
 
