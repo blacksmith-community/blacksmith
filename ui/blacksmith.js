@@ -27277,9 +27277,15 @@
         <div id="cert-fleet-main">
           <div id="cert-fleet-notices" class="cert-notices"></div>
           <div class="cert-strips" id="cert-strips">
+            <div class="cert-strip-group" role="group" aria-labelledby="cert-strip-attention-label">
+              <span class="cert-strip-group-label" id="cert-strip-attention-label">Needs attention</span>
+              <div class="cert-strip" id="cert-strip-attention"></div>
+            </div>
+            <div class="cert-strip-group" role="group" aria-labelledby="cert-strip-expiry-label">
+              <span class="cert-strip-group-label" id="cert-strip-expiry-label">Expiry</span>
+              <div class="cert-strip" id="cert-strip-expiry"></div>
+            </div>
             <span class="cert-strip-info" id="cert-next-expiry"></span>
-            <div class="cert-strip" id="cert-strip-attention" role="group" aria-label="Attention filters"></div>
-            <div class="cert-strip" id="cert-strip-expiry" role="group" aria-label="Expiry filters"></div>
           </div>
           <div id="cert-fleet-timeline" class="cert-timeline-wrap"></div>
           <div class="cert-range-wrap">
@@ -27768,6 +27774,11 @@
         STRIPS[name].forEach((def) => {
           const b = button(`cert-strip-btn cert-strip-btn--${def.tone}`);
           if (def.title) b.title = def.title;
+          // A pressed toggle shows a check beside its changed background.
+          const mark = el('span', 'cert-strip-check');
+          mark.innerHTML = blacksmithIcon('check', { size: 14 });
+          mark.hidden = true;
+          b.appendChild(mark);
           b.appendChild(el('span', 'cert-strip-label', def.label));
           const count = el('span', 'cert-strip-count', '0');
           b.appendChild(count);
@@ -27776,13 +27787,13 @@
             changed();
           });
           holder.appendChild(b);
-          view.refs.stripButtons.push({ def, b, count });
+          view.refs.stripButtons.push({ def, b, count, mark });
         });
       });
     };
 
-    // The next-expiry pill is information only. It is a plain span, so it
-    // is not a toggle, not focusable, and never looks pressed. It reads
+    // The next-expiry fact is information only. It is plain, muted text in a
+    // span, so it is not a toggle, not focusable, and never looks pressed. It reads
     // the whole fleet, so the figure does not change with the filters.
     const utcDay = (ms) => Math.floor(ms / DAY_MS);
 
@@ -27822,10 +27833,12 @@
     const renderStrips = () => {
       renderNextExpiry();
       const summary = (view.resp && view.resp.summary) || {};
-      view.refs.stripButtons.forEach(({ def, b, count }) => {
+      view.refs.stripButtons.forEach(({ def, b, count, mark }) => {
         const n = Number(def.count(summary)) || 0;
         count.textContent = String(n);
-        b.setAttribute('aria-pressed', def.pressed() ? 'true' : 'false');
+        const pressed = def.pressed();
+        b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+        mark.hidden = !pressed;
         b.setAttribute('aria-label', `${def.label}, ${n}`);
       });
     };

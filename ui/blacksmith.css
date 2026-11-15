@@ -12025,17 +12025,36 @@ bs-tabs > .broker-tab-pane[hidden] {
   box-shadow: inset 0 0 0 1px var(--border-active);
 }
 
+.cert-strip-group {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.cert-strip-group-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.cert-strip-check {
+  display: inline-flex;
+  align-items: center;
+}
+
+.cert-strip-check[hidden] {
+  display: none;
+}
+
 .cert-strip-info {
   display: inline-flex;
   align-items: center;
-  padding: 3px 10px;
-  border: 1px solid var(--cert-control-border);
-  border-left-width: 4px;
-  border-left-color: var(--border-active);
-  border-radius: 6px;
+  margin-inline-start: auto;
   font-size: 0.8125rem;
-  color: var(--text-primary);
-  background: var(--bg-secondary);
+  color: var(--text-secondary);
   cursor: default;
 }
 

@@ -32,7 +32,7 @@ t('next expiry pill and the 90 day section', async () => {
   let p = pill(d);
   ok(!!p && p.textContent === 'Next expiry in 5 days', 'N days: ' + (p && p.textContent));
   ok(/owner a/.test(p.title) && /var_a/.test(p.title), 'title names instance and variable: ' + p.title);
-  ok(p === d.querySelector('#cert-strips').firstElementChild, 'the pill comes first in the summary');
+  ok(p === d.querySelector('#cert-strips').lastElementChild && !p.closest('[role="group"]'), 'the next-expiry text sits last, outside the toggle groups');
   ok(p.tagName === 'SPAN' && !p.matches('button, [tabindex], [role=button]') && !p.hasAttribute('aria-pressed'), 'not a button, not focusable, never pressed');
   const before = d.getElementById('cert-fleet-timeline').hidden;
   p.click(); await sleep(60);
