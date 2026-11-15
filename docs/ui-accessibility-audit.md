@@ -43,3 +43,15 @@ checks is not a certification: real assistive-technology testing (VoiceOver/NVDA
 live terminal output, deployment-specific content, and user testing remain useful
 release acceptance checks. The review does not claim every possible runtime state
 or third-party terminal escape sequence has been tested.
+
+## Release checklist
+
+Before we tag a release, one of us runs a screen-reader pass over the web UI, because the automated checks above can't tell us how a page actually sounds. We use VoiceOver with Safari on macOS and NVDA with Firefox on Windows, and we run the pass in one light theme and one dark theme. The pass uses the same synthetic fixtures as the automated checks, so it never touches a live director, Cloud Foundry, or a service.
+
+We start on the broker page and move through it by headings and landmarks, and every section should announce a heading that names it. Then we move through the broker and instance sidebars with the arrow keys, and each tab should read its name, its group, and whether it is selected. On a sortable table we sort a column from the keyboard and listen for the new sort direction, and on a table that doesn't sort we check that the column headers still read with each cell.
+
+Next we open a task dialog and a config dialog, and we confirm that the screen reader stays inside the dialog and that Escape closes it and returns us to the control that opened it. We apply a broker setting and listen for the status line that says it was applied, and we enter a bad value to hear the error read with its field. We make a load fail and check that the failure message is announced and that Retry is reachable and named. For a destructive action, such as a recreate or a batch upgrade, we walk through the typed confirmation and make sure each step reads its purpose before anything runs.
+
+The Recent changes tables on the Settings and Endpoints pages need their own check. Each table should announce its caption and its six column headers, and a change to a secret should read as "(changed)" in both value columns. No secret value should ever be read aloud, whether from a cell, a label, a tooltip, or a status message.
+
+We record who ran the pass, the screen reader and browser versions, and the build we tested, and we file anything we find before the tag. A release doesn't ship while a control has no spoken name, while focus is lost after a dialog closes, or while a status is shown only by colour.
