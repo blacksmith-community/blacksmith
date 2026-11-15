@@ -9,7 +9,7 @@ const data=(extra={})=>({deployment:'blacksmith',env:'lab',plans:{},instances:{
 },...extra});
 const quiet=()=>({deployment:'blacksmith',env:'lab',plans:{},instances:{a1:{service_id:'redis',plan:{name:'small'},vm_status:'running'}}});
 const scanned={state:'completed',completed_at:'2026-10-30T10:00:00Z',errors:[]};
-const settled=[['/b/tasks',(u,o,json)=>json(200,[])],['/b/internal/health',(u,o,json)=>json(200,{overall_status:'healthy'})]];
+const settled=[['/b/tasks',(u,o,json)=>json(200,[])],['/b/orphans',(u,o,json)=>json(200,{orphans:[],unclaimed:[],unclaimed_known:true})],['/b/internal/health',(u,o,json)=>json(200,{overall_status:'healthy'})]];
 const inventory=(certs,status=200,scan=scanned)=>['/b/certificates/inventory?attention=true',(u,o,json)=>json(status,status===200?{certificates:certs,scan,summary:{certificates:certs.length}}:{error:'off'})];
 const mount=(w,d,input)=>{ const host=d.createElement('div'); d.body.appendChild(host); host.innerHTML=w.__T.renderBlacksmithOverview(input); return host; };
 const section=(host)=>host.querySelector('.entity-attention');

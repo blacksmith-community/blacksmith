@@ -9,8 +9,9 @@ const okHealth={overall_status:'healthy',bosh:{status:'healthy',available:true},
 const health=['/b/internal/health',(u,o,json)=>json(200,okHealth)];
 // The broker's object form. A test names only what it cares about.
 const answer=(body,seen)=>['/b/tasks',(u,o,json)=>{seen?.push(u);return json(200,{tasks:[],offset:0,limit:200,has_more:false,exact:true,...body});}];
+const noOrphans=['/b/orphans',(u,o,json)=>json(200,{orphans:[],unclaimed:[],unclaimed_known:true})];
 const mount=async(routes)=>{
- const env=boot({routes});const {w,d}=env;
+ const env=boot({routes:[...routes,noOrphans]});const {w,d}=env;
  const input=quiet();
  const host=d.createElement('div');d.body.appendChild(host);host.innerHTML=w.__T.renderBlacksmithOverview(input);
  await w.__T.refreshAttentionRequired(host,input);

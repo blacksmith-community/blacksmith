@@ -2762,6 +2762,7 @@
   const ATTENTION_TIMEOUT_MS = 8000;
   const attentionTasks = {status: 'idle', failed: 0, atLeast: false, loadedAt: 0, pending: null};
   const attentionHealth = {status: 'idle', unhealthy: [], loadedAt: 0, pending: null};
+  const attentionOrphans = {status: 'idle', orphans: [], unclaimed: [], loadedAt: 0, pending: null};
   // A request that never answers must not hold the box, so each one gives up
   // after a time and its row says Unknown.
   const attentionFetch = (url) => {
@@ -2820,6 +2821,28 @@
     const unhealthy = healthy ? [] : parts.filter(([key]) => body[key] && body[key].status && body[key].status !== 'healthy' && body[key].enabled !== false).map(([, name]) => name);
     return {status: healthy ? 'ready' : 'unhealthy', unhealthy};
   });
+  // Orphans are index entries the reconciler marked and will remove, and BOSH
+  // deployments that Cloud Foundry does not know. Whether the second list is
+  // known depends on a reconciler run, and an unknown list is not an alarm, so
+  // only the first list and a failed request decide the all-clear.
+  const loadAttentionOrphans = attentionLoader(attentionOrphans, async () => {
+    const response = await attentionFetch('/b/orphans');
+    if (!response.ok) throw new Error('unavailable');
+    const body = await response.json();
+    if (!body || !Array.isArray(body.orphans)) throw new Error('unavailable');
+    return {status: 'ready', orphans: body.orphans.filter(item => item && typeof item === 'object'), unclaimed: Array.isArray(body.unclaimed) ? body.unclaimed.filter(item => item && typeof item === 'object') : []};
+  });
+  const orphanTimeLeft = (orphan) => {
+    if (orphan.due) return 'Removal is due on the next reconciler run';
+    const seconds = Number(orphan.seconds_left);
+    if (orphan.seconds_left == null || !Number.isFinite(seconds)) return 'Removal time unknown';
+    if (seconds >= 3600) {
+      const hours = Math.round(seconds / 3600);
+      return `Removed in about ${hours} hour${hours === 1 ? '' : 's'}`;
+    }
+    const minutes = Math.max(1, Math.ceil(seconds / 60));
+    return `Removed in about ${minutes} minute${minutes === 1 ? '' : 's'}`;
+  };
   const ATTENTION_ICON = {critical: 'circle-x', warning: 'hourglass', notice: 'info'};
   const ATTENTION_WORD = {critical: 'Critical', warning: 'Warning', notice: 'Notice'};
   const renderAttentionRequired = (data) => {
@@ -2834,7 +2857,7 @@
     const shell = (body) => `<section class="card entity-attention" aria-labelledby="entity-attention-heading">${heading}${body}</section>`;
     const failedTasks = attentionTasks.status === 'ready' ? attentionTasks.failed : 0;
     const tasksUnsettled = attentionTasks.status === 'ready' && !failedTasks && attentionTasks.incomplete;
-    if (!alerts.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready') {
+    if (!alerts.length && cert.status === 'ready' && !certList.length && attentionTasks.status === 'ready' && !failedTasks && !tasksUnsettled && attentionHealth.status === 'ready' && attentionOrphans.status === 'ready' && !attentionOrphans.orphans.length && !attentionOrphans.unclaimed.length) {
       return shell(`<p class="entity-attention-clear">Nothing needs attention.</p>${fetched(cert.fetchedAt)}`);
     }
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -2848,6 +2871,22 @@
     else if (attentionHealth.status === 'unknown') tier1.push(row('broker-health', 'notice', '<p>Broker health: <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The health request failed</span></p>'));
     else if (attentionHealth.status !== 'ready') tier1.push(row('broker-health', 'notice', '<p>Broker health: <span class="entity-attention-unknown">Loading</span></p>'));
     if (alerts.length) tier1.push(row('instances', 'critical', `<p>${plural(alerts.length, 'instance')} with VM alerts</p><ul>${alerts.map(([id, instance]) => `<li><a href="#/instances/${encodeURIComponent(String(id))}/summary" data-keep-key="attention-link:instance:${escapeAttribute(String(id))}">${escapeHtml(String(instance.instance_name || id))}</a> <span class="entity-attention-state">VM job state: ${escapeHtml(String(instance.vm_status))}</span></li>`).join('')}</ul>${fetched(window.blacksmithDataFetchedAt)}`));
+    const orphans = attentionOrphans.orphans;
+    const unclaimed = attentionOrphans.unclaimed;
+    if (attentionOrphans.status === 'ready' && (orphans.length || unclaimed.length)) {
+      const orphanItems = orphans.map(orphan => {
+        const id = String(orphan.instance_id || '');
+        const name = escapeHtml(String(orphan.instance_name || orphan.deployment_name || id));
+        const label = id ? `<a href="#/instances/${encodeURIComponent(id)}/summary" data-keep-key="attention-link:orphan:${escapeAttribute(id)}">${name}</a>` : name;
+        return `<li>${label} <span class="entity-attention-state">${escapeHtml(orphanTimeLeft(orphan))}</span></li>`;
+      }).join('');
+      const unclaimedItems = unclaimed.map(item => `<li>${escapeHtml(String(item.deployment_name || item.instance_id || ''))} <span class="entity-attention-state">${item.first_seen ? `First seen ${stampHtml(item.first_seen)}` : ''}</span></li>`).join('');
+      const parts = [];
+      if (orphans.length) parts.push(`<p>${plural(orphans.length, 'orphaned instance')}, which the reconciler removes on its own</p><ul>${orphanItems}</ul>`);
+      if (unclaimed.length) parts.push(`<p>${plural(unclaimed.length, 'deployment')} with no Cloud Foundry instance, left for you to review</p><ul>${unclaimedItems}</ul>`);
+      tier1.push(row('orphans', 'warning', parts.join('')));
+    } else if (attentionOrphans.status === 'unknown') tier1.push(row('orphans', 'notice', '<p>Orphaned instances: <span class="entity-attention-unknown">Unknown</span> <span class="entity-attention-reason">The orphan request failed</span></p>'));
+    else if (attentionOrphans.status !== 'ready') tier1.push(row('orphans', 'notice', '<p>Orphaned instances: <span class="entity-attention-unknown">Loading</span></p>'));
     const link = (n, text, key) => `<a href="#/certificates?attention=true" data-attention-link data-keep-key="${key}">${plural(n, 'certificate')} ${text}</a>`;
     const tier2 = [];
     const tier3 = [];
@@ -2881,7 +2920,7 @@
       current = next;
       if (keep) [...next.querySelectorAll('[data-keep-key]')].find(node => node.dataset.keepKey === keep)?.focus({preventScroll: true});
     };
-    await Promise.allSettled([loadAttentionCertificates, loadAttentionTasks, loadAttentionHealth].map(load => load().then(repaint, repaint)));
+    await Promise.allSettled([loadAttentionCertificates, loadAttentionTasks, loadAttentionHealth, loadAttentionOrphans].map(load => load().then(repaint, repaint)));
   };
 
   const renderBlacksmithOverview = (data, creds = {}) => {

@@ -18,8 +18,9 @@ const tasks=(list,status=200)=>['/b/tasks',(u,o,json)=>{
 }];
 const health=(body,status=200)=>['/b/internal/health',(u,o,json)=>json(status,body)];
 const okHealth={overall_status:'healthy',bosh:{status:'healthy',available:true},vault:{status:'healthy',available:true},cf:{status:'healthy',enabled:true}};
+const noOrphans=['/b/orphans',(u,o,json)=>json(200,{orphans:[],unclaimed:[],unclaimed_known:true})];
 const mount=async(routes,input=data())=>{
- const env=boot({routes});const {w,d}=env;
+ const env=boot({routes:[...routes,noOrphans]});const {w,d}=env;
  const host=d.createElement('div');d.body.appendChild(host);host.innerHTML=w.__T.renderBlacksmithOverview(input);
  await w.__T.refreshAttentionRequired(host,input);
  return {...env,host,panel:host.querySelector('.entity-attention')};
