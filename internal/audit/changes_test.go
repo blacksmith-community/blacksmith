@@ -22,6 +22,7 @@ const (
 	keyVersions   = "vault_max_versions"
 	keyBatchJobs  = "max_batch_jobs"
 	operatorActor = "operator"
+	keyAPIURL     = "api_url"
 )
 
 var errSealed = errors.New("vault is sealed")
@@ -56,7 +57,7 @@ func TestSecretKeyDecidesByName(t *testing.T) {
 	}
 
 	for _, key := range []string{
-		keyVersions, keyInterval, keyBatchJobs, "username", "api_url", keyName,
+		keyVersions, keyInterval, keyBatchJobs, "username", keyAPIURL, keyName,
 		"broker_name", "auto_register", "warning_days", "probe_enabled", "monkey", "keyboard", "keep_versions", "",
 	} {
 		if audit.SecretKey(key) {

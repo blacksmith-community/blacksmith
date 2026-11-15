@@ -12,8 +12,14 @@ const Changed = "(changed)"
 // password, a token, a key, a credential, or a certificate's private key.
 // It looks at the key alone and never at a value, so a secret is hidden
 // whatever it holds. A dotted key, as a nested setting has, is a secret
-// when any part of it names one.
+// when any part of it names one. A key with any character outside ASCII
+// is a secret too, because a look-alike letter, such as a Cyrillic a in
+// "password", would slip past the word list.
 func SecretKey(key string) bool {
+	if !asciiOnly(key) {
+		return true
+	}
+
 	words := keyWords(key)
 
 	for _, word := range words {
@@ -36,7 +42,7 @@ func SecretKey(key string) bool {
 // secretWord reports whether one word of a key, by itself, names a secret.
 func secretWord(word string) bool {
 	switch word {
-	case "key", "keys", "pass", "pwd", "pin", "cred", "creds", "pem", "jwt", "otp", "seed", "salt", "nonce", "auth", "authorization", "cookie", "session":
+	case "key", "keys", "pass", "pw", "pwd", "pin", "cred", "creds", "pem", "jwt", "otp", "seed", "salt", "nonce", "auth", "authorization", "cookie", "session":
 		return true
 	default:
 		return false
@@ -50,8 +56,20 @@ func secretFragments() []string {
 	return []string{
 		"password", "passwd", "passphrase", "secret", "token", "credential",
 		"privatekey", "apikey", "accesskey", "signingkey", "encryptionkey",
-		"unsealkey", "bearer",
+		"unsealkey", "bearer", "passcode", "privkey", "sshkey", "masterkey",
+		"authkey", "session", "assertion",
 	}
+}
+
+// asciiOnly reports whether every character of the key is ASCII.
+func asciiOnly(key string) bool {
+	for _, char := range key {
+		if char > unicode.MaxASCII {
+			return false
+		}
+	}
+
+	return true
 }
 
 // keyWords splits a key into lower-case words at every character that is

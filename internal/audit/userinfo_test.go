@@ -27,7 +27,7 @@ func TestSanitizeChangeStripsAURLPassword(t *testing.T) {
 		"https://api.example.test:8443/a@b":                             "https://api.example.test:8443/a@b",
 		"not a url":                                                     "not a url",
 	} {
-		rec := audit.SanitizeChange(audit.ChangeRecord{Scope: audit.ScopeEndpoints, Key: "api_url", Old: value, New: value})
+		rec := audit.SanitizeChange(audit.ChangeRecord{Scope: audit.ScopeEndpoints, Key: keyAPIURL, Old: value, New: value})
 		if rec.Old != want || rec.New != want {
 			t.Errorf("SanitizeChange(%q) = old %q new %q, want %q", value, rec.Old, rec.New, want)
 		}
