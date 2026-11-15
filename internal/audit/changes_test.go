@@ -20,6 +20,7 @@ const (
 	halfHour      = "30m0s"
 	keyInterval   = "reconciler_interval"
 	keyVersions   = "vault_max_versions"
+	keyBatchJobs  = "max_batch_jobs"
 	operatorActor = "operator"
 )
 
@@ -55,7 +56,7 @@ func TestSecretKeyDecidesByName(t *testing.T) {
 	}
 
 	for _, key := range []string{
-		keyVersions, keyInterval, "max_batch_jobs", "username", "api_url", keyName,
+		keyVersions, keyInterval, keyBatchJobs, "username", "api_url", keyName,
 		"broker_name", "auto_register", "warning_days", "probe_enabled", "monkey", "keyboard", "keep_versions", "",
 	} {
 		if audit.SecretKey(key) {

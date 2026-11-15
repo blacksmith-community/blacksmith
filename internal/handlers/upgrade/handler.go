@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/config"
 	"blacksmith/internal/credhub"
@@ -20,6 +21,9 @@ import (
 	"blacksmith/pkg/http/response"
 )
 
+// batchSettingsTarget names the batch settings in a change record.
+const batchSettingsTarget = "batch"
+
 // Handler handles upgrade-related endpoints.
 type Handler struct {
 	logger  interfaces.Logger
@@ -27,6 +31,8 @@ type Handler struct {
 	tasks   taskManager
 	// commands reads the commands configuration, which may be nil.
 	commands func() config.CommandsConfig
+	// changes keeps a record of every settings change. Nil records none.
+	changes *audit.ChangeStore
 }
 
 // taskManager is the part of the upgrade manager that the handlers call.
@@ -93,6 +99,9 @@ type Dependencies struct {
 	// BOSH returns the BOSH configuration as it stands now, which tells a
 	// command preview how many director workers a parallel run may use.
 	BOSH func() config.BOSHConfig
+	// Changes keeps a record of every batch settings change. It may be
+	// nil, and then none is kept.
+	Changes *audit.ChangeStore
 }
 
 // NewHandler creates a new upgrade handler. It applies the persisted
@@ -120,6 +129,7 @@ func NewHandler(deps Dependencies) *Handler {
 		tasks:   manager,
 
 		commands: deps.Commands,
+		changes:  deps.Changes,
 	}
 }
 
@@ -909,6 +919,7 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	settings := upgrade.Settings(req)
+	old := h.tasks.GetSettings()
 
 	if err := h.tasks.UpdateSettings(r.Context(), settings); err != nil {
 		h.logger.Error("Failed to update settings: %v", err)
@@ -918,6 +929,7 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.Info("Updated upgrade settings: max_batch_jobs=%d", settings.MaxBatchJobs)
+	h.changes.RecordSettings(r.Context(), batchSettingsTarget, old, settings)
 	response.HandleJSON(w, map[string]interface{}{"success": true, "max_batch_jobs": settings.MaxBatchJobs}, nil)
 }
 

@@ -129,13 +129,13 @@ type apiHandlers struct {
 }
 
 func createHandlers(deps Dependencies) apiHandlers {
-	// The upgrade handler starts the manager, whose loaded gate holds the
-	// deployment actions back until the stored tasks hold their instances.
-	upgradeHandler := createUpgradeHandler(deps)
-
 	// One store keeps the change records of every handler that changes a
 	// setting, an endpoint, or an instance.
 	changes := createChangeStore(deps)
+
+	// The upgrade handler starts the manager, whose loaded gate holds the
+	// deployment actions back until the stored tasks hold their instances.
+	upgradeHandler := createUpgradeHandler(deps, changes)
 
 	return apiHandlers{
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
@@ -278,7 +278,7 @@ func createServicesHandler(deps Dependencies) *serviceshandler.Handler {
 	})
 }
 
-func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
+func createUpgradeHandler(deps Dependencies, changes *audit.ChangeStore) *upgradehandler.Handler {
 	// Use BatchDirector for batch upgrades if available, otherwise fall back to regular Director
 	director := deps.BatchDirector
 	if director == nil {
@@ -297,6 +297,7 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		Director:              director,
 		Vault:                 deps.Vault,
 		OnMaxBatchJobsChanged: deps.OnMaxBatchJobsChanged,
+		Changes:               changes,
 		Guard:                 deps.Guard,
 		CredHub:               credhubAPI,
 		Certificates:          deps.Certificates,
