@@ -157,6 +157,7 @@ type VMStatus struct {
 	LastUpdated time.Time              `json:"last_updated"`
 	NextUpdate  time.Time              `json:"next_update"`
 	VMs         []bosh.VM              `json:"vms,omitempty"`
+	IPs         []string               `json:"ips,omitempty"` // addresses of the cached VMs, for finding an instance by IP
 	Stemcell    *StemcellInfo          `json:"stemcell,omitempty"`
 	Details     map[string]interface{} `json:"details,omitempty"`
 }
@@ -346,8 +347,33 @@ func (m *Monitor) GetServiceVMStatus(ctx context.Context, serviceID string) (*VM
 
 	// Extract stemcell info from the first VM if available
 	status.Stemcell = extractStemcellFromVMs(statusData["vms"])
+	status.IPs = extractIPsFromVMs(statusData["vms"])
 
 	return status, nil
+}
+
+// extractIPsFromVMs lists the address of every VM in the cached status, in
+// the order the cache holds them.
+func extractIPsFromVMs(vmsData interface{}) []string {
+	vms, _ := vmsData.([]interface{})
+
+	var addresses []string
+
+	for _, entry := range vms {
+		vm, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		ips, _ := vm["ips"].([]interface{})
+		for _, ip := range ips {
+			if address, ok := ip.(string); ok && address != "" {
+				addresses = append(addresses, address)
+			}
+		}
+	}
+
+	return addresses
 }
 
 // extractStemcellFromVMs extracts stemcell info from the first VM in the list.

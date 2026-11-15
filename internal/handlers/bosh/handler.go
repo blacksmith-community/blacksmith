@@ -455,6 +455,13 @@ func (h *Handler) enrichInstancesWithFullData(ctx context.Context, instances map
 				logger.Debug("Added instance_name '%s' for instance %s", instanceName, instanceID)
 			}
 
+			// The org and space names let operators find an instance by where it belongs.
+			for _, field := range []string{"organization_name", "space_name"} {
+				if value, ok := fullData[field].(string); ok && value != "" {
+					instanceMap[field] = value
+				}
+			}
+
 			// Add any other important fields from full data that might be missing
 			if deploymentName, ok := fullData["deployment_name"].(string); ok && deploymentName != "" {
 				instanceMap["deployment_name"] = deploymentName
@@ -554,6 +561,11 @@ func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData int
 	instanceMap["vm_count"] = vmStatus.VMCount
 	instanceMap["vm_healthy"] = vmStatus.HealthyVMs
 	instanceMap["vm_last_updated"] = vmStatus.LastUpdated.Unix()
+
+	// The cached VM addresses let the list find an instance by IP.
+	if len(vmStatus.IPs) > 0 {
+		instanceMap["vm_ips"] = vmStatus.IPs
+	}
 
 	// Include stemcell info from vm-monitor
 	if vmStatus.Stemcell != nil {
