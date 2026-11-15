@@ -10973,6 +10973,10 @@
       </div>
     `;
 
+    // Recent changes to these and the other broker settings
+    html += '<div class="settings-divider"></div>';
+    html += `<div class="settings-section">${recentChangesSectionHtml('settings')}</div>`;
+
     // Divider
     html += '<div class="settings-divider"></div>';
 
@@ -11032,6 +11036,7 @@
             const unchanged = input.value.trim() === raw;
             if (unchanged) input.value = applied;
             message(`${field.name} applied: ${applied}.${unchanged ? '' : ' You have unapplied changes.'}`, 'success');
+            loadRecentChanges('settings');
           } else {
             if (res.status === 400 || res.status === 422) input.setAttribute('aria-invalid','true');
             message(data.error || 'Could not apply this setting. Your changes are kept.', 'error');
@@ -11043,6 +11048,7 @@
         }
       });
     });
+    return loadRecentChanges('settings');
   };
 
   // Helper function to extract the latest deployment task ID from events
@@ -11886,6 +11892,68 @@
   const detailFailure = (scope, type, error, retry) => loadFailureHtml({ what: loadWhat(type), error, key: `${scope}:${type}`, retry });
   // An HTTP answer that was not a success, as an error that carries only its status.
   const httpFailure = (response) => Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+
+  // Recent changes. The Settings and Endpoints pages each show the latest
+  // changes the broker recorded for them, newest first. The broker hides
+  // both values of a secret before it stores a record, and the page checks
+  // the key by name again, so a value under a secret key never reaches the
+  // markup. Values only ever appear as cell text, never in an attribute.
+  const RECENT_CHANGES_LIMIT = 10;
+  const RECENT_CHANGE_HIDDEN = '(changed)';
+  const RECENT_CHANGE_WORD = /(^|_)(key|keys|pass|pwd|pin|cred|creds|pem|jwt|otp|seed|salt|nonce|auth|authorization|cookie|session)(_|$)|credential|bearer|apikey|accesskey/;
+  const RECENT_CHANGE_LABELS = { create: 'Created', update: 'Changed', delete: 'Removed', register: 'Registration started' };
+  const RECENT_CHANGE_TARGETS = { broker: 'Broker', batch: 'Batch operations', certificates: 'Certificates' };
+  const RECENT_CHANGE_NOUNS = { settings: 'settings', endpoints: 'endpoint' };
+  const recentChangeSecret = (key) => String(key || '').split('.').some((part) => {
+    const name = snakeKey(part);
+    return SECRET_KEY.test(name) || RECENT_CHANGE_WORD.test(name);
+  });
+  const recentChangeValue = (record, value) => {
+    if (recentChangeSecret(record.key)) return escapeHtml(RECENT_CHANGE_HIDDEN);
+    return value === undefined || value === null || value === '' ? EMPTY_HTML : `<code>${escapeHtml(String(value))}</code>`;
+  };
+  const recentChangeRow = (record) => {
+    const target = RECENT_CHANGE_TARGETS[record.target] || String(record.target || '');
+    const label = RECENT_CHANGE_LABELS[record.change] || 'Changed';
+    const by = record.actor ? escapeHtml(String(record.actor)) : EMPTY_HTML;
+    const from = record.from ? ` <span class="recent-change-from">${escapeHtml(String(record.from))}</span>` : '';
+    const what = [
+      target ? `<span class="recent-change-target">${escapeHtml(target)}</span>` : '',
+      record.key ? `<code class="recent-change-key">${escapeHtml(String(record.key))}</code>` : ''
+    ].filter(Boolean).join(' ');
+    return `<tr><td>${stampHtml(record.at)}</td><td>${by}${from}</td><td>${what || EMPTY_HTML}</td><td>${escapeHtml(label)}</td><td>${recentChangeValue(record, record.old)}</td><td>${recentChangeValue(record, record.new)}</td></tr>`;
+  };
+  const recentChangesTableHtml = (records, scope) => {
+    const noun = RECENT_CHANGE_NOUNS[scope] || 'recorded';
+    if (!records.length) return `<p class="no-data">No ${escapeHtml(noun)} changes recorded yet.</p>`;
+    return `<div class="table-scroll"><table class="recent-changes-table" data-sortable="false"><caption class="visually-hidden">Recent ${escapeHtml(noun)} changes, newest first</caption><thead><tr><th scope="col">When</th><th scope="col">By</th><th scope="col">What</th><th scope="col">Change</th><th scope="col">Was</th><th scope="col">Now</th></tr></thead><tbody>${records.map(recentChangeRow).join('')}</tbody></table></div>`;
+  };
+  // The section a page renders, which loadRecentChanges fills in.
+  const recentChangesSectionHtml = (scope) => `<section class="recent-changes" data-recent-changes="${escapeAttribute(scope)}" aria-labelledby="recent-changes-heading-${escapeAttribute(scope)}">
+      <h3 class="recent-changes-heading" id="recent-changes-heading-${escapeAttribute(scope)}">Recent changes</h3>
+      <p class="settings-hint">The latest ${RECENT_CHANGES_LIMIT} changes, newest first. A secret shows as ${RECENT_CHANGE_HIDDEN}.</p>
+      <div class="recent-changes-body" aria-live="polite"><div class="loading">Loading recent changes...</div></div>
+    </section>`;
+  // Only the newest load of a scope draws, so a slow answer never replaces a newer one.
+  const recentChangesLoads = new Map();
+  const loadRecentChanges = async (scope) => {
+    const body = document.querySelector(`[data-recent-changes="${scope}"] .recent-changes-body`);
+    if (!body) return;
+    const load = (recentChangesLoads.get(scope) || 0) + 1;
+    recentChangesLoads.set(scope, load);
+    const current = () => recentChangesLoads.get(scope) === load && body.isConnected;
+    try {
+      const response = await fetch(`/b/blacksmith/changes?scope=${encodeURIComponent(scope)}&limit=${RECENT_CHANGES_LIMIT}`, { cache: 'no-cache' });
+      if (!response.ok) throw httpFailure(response);
+      const data = await response.json();
+      if (!current()) return;
+      const records = Array.isArray(data && data.changes) ? data.changes.slice(0, RECENT_CHANGES_LIMIT) : [];
+      body.innerHTML = recentChangesTableHtml(records, scope);
+    } catch (error) {
+      if (!current()) return;
+      body.innerHTML = loadFailureHtml({ what: 'recent changes', error, key: `recent-changes:${scope}`, retry: () => loadRecentChanges(scope) });
+    }
+  };
   // Puts the loading note in a detail pane and runs its load again. A pane
   // that has since moved to another view is left alone.
   const retryDetailLoad = (selector, stillCurrent, load) => () => {
@@ -21289,6 +21357,7 @@
             </div>
           </div>
         </bs-tabs>
+        ${recentChangesSectionHtml('endpoints')}
       </div>
     `;
   };
@@ -23673,6 +23742,7 @@
           this.showSuccess(`Registration ${verb}d successfully`);
           this.hideRegistrationModal();
           this.loadRegistrations();
+          loadRecentChanges('endpoints');
 
           // Auto-register starts the registration with the form's password,
           // and its progress view follows from the register answer.
@@ -23722,6 +23792,7 @@
         if (response.ok) {
           this.showSuccess('Registration process started');
           this.loadRegistrations(); // Refresh list
+          loadRecentChanges('endpoints');
           this.showProgressStream(registrationId);
         } else {
           this.showError('Failed to start registration: ' + (result.error || 'Unknown error'));
@@ -24035,6 +24106,7 @@
         if (response.ok) {
           this.showSuccess('Registration deleted successfully');
           this.loadRegistrations(); // Refresh list
+          loadRecentChanges('endpoints');
         } else {
           this.showError('Failed to delete registration: ' + (result.error || 'Unknown error'));
         }
@@ -24083,8 +24155,9 @@
       });
     }
 
-    // Load CF endpoints from configuration
-    return CFEndpointManager.loadEndpoints();
+    // Load CF endpoints from configuration, and the endpoint changes beside them
+    const changes = loadRecentChanges('endpoints');
+    return Promise.all([CFEndpointManager.loadEndpoints(), changes]).then(([endpoints]) => endpoints);
   };
 
   // The tab the strip shows, so a selection that changes nothing loads nothing
