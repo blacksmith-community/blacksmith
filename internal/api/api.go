@@ -149,7 +149,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 		bosh:              createBOSHHandler(deps),
 		blacksmith:        createBlacksmithHandler(deps, changes),
 		tasks:             createTasksHandler(deps),
-		deployments:       createDeploymentsHandler(deps, upgradeHandler.GetManager()),
+		deployments:       createDeploymentsHandler(deps, upgradeHandler.GetManager(), changes),
 		configuration:     createConfigurationHandler(deps),
 		services:          createServicesHandler(deps),
 		upgrade:           upgradeHandler,
@@ -256,7 +256,7 @@ func createTasksHandler(deps Dependencies) *tasks.Handler {
 	})
 }
 
-func createDeploymentsHandler(deps Dependencies, tasks *upgrade.Manager) *deployments.Handler {
+func createDeploymentsHandler(deps Dependencies, tasks *upgrade.Manager, changes *audit.ChangeStore) *deployments.Handler {
 	return deployments.NewHandler(deployments.Dependencies{
 		Logger:      deps.Logger,
 		Config:      deps.Config,
@@ -265,6 +265,7 @@ func createDeploymentsHandler(deps Dependencies, tasks *upgrade.Manager) *deploy
 		Guard:       deps.Guard,
 		TasksLoaded: tasks.Loaded(),
 		TaskWaiters: tasks,
+		Changes:     changes,
 	})
 }
 

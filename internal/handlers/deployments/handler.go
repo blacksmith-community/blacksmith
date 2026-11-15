@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"blacksmith/internal/apierr"
+	"blacksmith/internal/audit"
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
@@ -52,6 +53,7 @@ type Handler struct {
 	guard    *mutation.Guard
 	loaded   <-chan struct{}
 	waiters  TaskWaiters
+	changes  *audit.ChangeStore
 }
 
 // Dependencies contains all dependencies needed by the Deployments handler.
@@ -73,6 +75,9 @@ type Dependencies struct {
 	// deployment the guard holds for no one yet, and each action that
 	// changes that deployment answers 409. A nil TaskWaiters reports none.
 	TaskWaiters TaskWaiters
+	// Changes keeps a record of every instance restart and recreate
+	// attempt. A nil Changes keeps none.
+	Changes *audit.ChangeStore
 }
 
 // TaskWaiters reports the stored task that waits to reserve an instance,
@@ -115,6 +120,7 @@ func NewHandler(deps Dependencies) *Handler {
 		guard:    deps.Guard,
 		loaded:   deps.TasksLoaded,
 		waiters:  deps.TaskWaiters,
+		changes:  deps.Changes,
 	}
 }
 

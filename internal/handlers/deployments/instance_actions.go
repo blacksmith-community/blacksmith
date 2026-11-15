@@ -96,13 +96,13 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 
 	deployment, owned := h.ownedDeployment(req.Context(), writer, logger, instanceID)
 	if !owned {
-		logInstanceActionAudit(logger, actor, instanceID, "", action, "refused", 0)
+		h.auditInstanceAction(req.Context(), logger, actor, instanceID, "", action, "refused", 0)
 
 		return
 	}
 
 	if h.director == nil {
-		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "refused", 0)
+		h.auditInstanceAction(req.Context(), logger, actor, instanceID, deployment, action, "refused", 0)
 		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeDirectorUnavailable, errDirectorNotConfigured.Error()), http.StatusServiceUnavailable)
 
 		return
@@ -110,7 +110,7 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 
 	release, reserved := h.reserveInstance(writer, logger, instanceID, deployment, action)
 	if !reserved {
-		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "refused", 0)
+		h.auditInstanceAction(req.Context(), logger, actor, instanceID, deployment, action, "refused", 0)
 
 		return
 	}
@@ -120,14 +120,14 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 	defer cancel()
 
 	if runningTask, idle := h.deploymentIsIdle(ctx, writer, logger, instanceID, deployment, action); !idle {
-		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "refused", runningTask)
+		h.auditInstanceAction(req.Context(), logger, actor, instanceID, deployment, action, "refused", runningTask)
 
 		return
 	}
 
 	task, err := h.runInstanceAction(ctx, deployment, action)
 	err = outOfTime(ctx, err)
-	answerInstanceAction(writer, logger, actor, instanceActionProblem{InstanceID: instanceID, Deployment: deployment, Operation: action}, task, err)
+	h.answerInstanceAction(req.Context(), writer, logger, actor, instanceActionProblem{InstanceID: instanceID, Deployment: deployment, Operation: action}, task, err)
 }
 
 // instanceActionContext bounds the director calls of an instance action to
@@ -157,14 +157,14 @@ func outOfTime(ctx context.Context, err error) error {
 }
 
 // answerInstanceAction answers the director's reply to an instance action
-// and logs its audit line. A lost answer is unknown, a refusal failed, and
+// and audits it. A lost answer is unknown, a refusal failed, and
 // a task the director queued accepted.
-func answerInstanceAction(writer http.ResponseWriter, logger interfaces.Logger, actor audit.Actor, subject instanceActionProblem, task *bosh.Task, err error) {
+func (h *Handler) answerInstanceAction(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, actor audit.Actor, subject instanceActionProblem, task *bosh.Task, err error) {
 	instanceID, deployment, action := subject.InstanceID, subject.Deployment, subject.Operation
 
 	if errors.Is(err, bosh.ErrOutcomeUnknown) {
 		logger.Error("The director's answer to the %s of deployment %q of instance %q was lost: %v", action, deployment, instanceID, err)
-		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "unknown", 0)
+		h.auditInstanceAction(ctx, logger, actor, instanceID, deployment, action, "unknown", 0)
 
 		subject.Code = apierr.CodeOutcomeUnknown
 		subject.Error = fmt.Sprintf("The director's answer was lost or came too late, so the %s of instance %s may have started. Check the tasks of deployment %s before you try again.", action, instanceID, deployment)
@@ -175,13 +175,13 @@ func answerInstanceAction(writer http.ResponseWriter, logger interfaces.Logger, 
 
 	if err != nil {
 		logger.Error("Failed to %s deployment %q of instance %q: %v", action, deployment, instanceID, err)
-		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "failed", 0)
+		h.auditInstanceAction(ctx, logger, actor, instanceID, deployment, action, "failed", 0)
 		writeInstanceActionError(writer, deployment, err)
 
 		return
 	}
 
-	logInstanceActionAudit(logger, actor, instanceID, deployment, action, "accepted", task.ID)
+	h.auditInstanceAction(ctx, logger, actor, instanceID, deployment, action, "accepted", task.ID)
 
 	response.JSON(writer, http.StatusAccepted, instanceActionResponse{
 		InstanceID: instanceID,
@@ -376,6 +376,19 @@ func writeInstanceActionError(writer http.ResponseWriter, deployment string, err
 	}
 
 	apierr.Write(writer, apierr.Wrap(http.StatusBadGateway, apierr.CodeInternal, err), http.StatusBadGateway)
+}
+
+// auditInstanceAction logs the audit line of an instance action and keeps
+// its change record. The store writes the record in the background, so a
+// slow or failing Vault never changes the action's answer, and the store
+// logs a record it could not save.
+func (h *Handler) auditInstanceAction(ctx context.Context, logger interfaces.Logger, actor audit.Actor, instanceID, deployment, action, outcome string, taskID int) {
+	logInstanceActionAudit(logger, actor, instanceID, deployment, action, outcome, taskID)
+
+	h.changes.Record(ctx, audit.ChangeRecord{
+		Scope: audit.ScopeInstances, Target: instanceID, Instance: instanceID, Deployment: deployment,
+		Action: action, Outcome: outcome, TaskID: taskID,
+	})
 }
 
 // logInstanceActionAudit logs the audit line of an instance action. The
