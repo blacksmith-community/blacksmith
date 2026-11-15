@@ -2,6 +2,7 @@ package cf
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +27,8 @@ const (
 	keyUsername    = "username"
 	keyBrokerName  = "broker_name"
 	brokerName     = "blacksmith"
+	whereVault     = "Vault"
+	whereLog       = "the log"
 )
 
 // deletingVault is a memoryVault that can also delete a registration.
@@ -112,7 +115,7 @@ func (r registrationChanges) assertNoPassword(t *testing.T) {
 		}
 	}
 
-	for where, text := range map[string]string{"Vault": r.kv.Dump(), "the log": r.log.Text()} {
+	for where, text := range map[string]string{whereVault: r.kv.Dump(), whereLog: r.log.Text()} {
 		if strings.Contains(text, registrationPassword) {
 			t.Fatalf("the password reached %s", where)
 		}
@@ -238,7 +241,7 @@ func TestCreateRegistrationStripsAPasswordFromTheAPIURL(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	for where, text := range map[string]string{"Vault": changes.kv.Dump(), "the log": changes.log.Text(), "the list": strings.Join(recordValues(listed), "\n")} {
+	for where, text := range map[string]string{whereVault: changes.kv.Dump(), whereLog: changes.log.Text(), "the list": strings.Join(recordValues(listed), "\n")} {
 		if strings.Contains(text, urlLeak) {
 			t.Fatalf("the URL's password reached %s", where)
 		}
@@ -253,4 +256,138 @@ func recordValues(records []audit.ChangeRecord) []string {
 	}
 
 	return values
+}
+
+const unknownFieldValue = "unknown-field-raw-62b0"
+
+// A field the registration form does not have is recorded once, under its
+// top-level key, with both values hidden, however deep it goes. The form's
+// own fields keep their values.
+func TestRegistrationRecordsAnUnknownFieldAsChanged(t *testing.T) {
+	t.Parallel()
+
+	changes := newRegistrationChanges()
+	changes.serve(t, http.MethodPost, "/b/cf/registrations",
+		`{"id":"reg-1","name":"lab-cf","api_url":"https://api.cf.example.com","auto_register":true,`+
+			`"note":"`+unknownFieldValue+`","labels":{"team":"`+unknownFieldValue+`","tier":{"level":"`+unknownFieldValue+`"}}}`)
+
+	got := changes.records(t)
+	for key, want := range map[string]string{keyName: changeRegName, keyAPIURL: changeAPIURL, "auto_register": "true"} {
+		if rec := got[audit.ChangeCreate+" "+key]; rec.New != want {
+			t.Errorf("create record for %s = %+v, want %q", key, rec, want)
+		}
+	}
+
+	for _, key := range []string{"note", "labels"} {
+		rec, ok := got[audit.ChangeCreate+" "+key]
+		if !ok || rec.Old != audit.Changed || rec.New != audit.Changed {
+			t.Errorf("create record for %s = %+v, want one record with both values hidden", key, rec)
+		}
+	}
+
+	for key := range got {
+		if strings.Contains(key, ".") {
+			t.Errorf("an unknown field was recorded by its nested key %q", key)
+		}
+	}
+
+	for where, text := range map[string]string{whereVault: changes.kv.Dump(), whereLog: changes.log.Text()} {
+		if strings.Contains(text, unknownFieldValue) {
+			t.Fatalf("an unknown field's value reached %s", where)
+		}
+	}
+}
+
+// An update that sends the same unknown field again records nothing for
+// it, and one that changes it records it once.
+func TestRegistrationRecordsAnUnknownFieldOnlyWhenItChanges(t *testing.T) {
+	t.Parallel()
+
+	changes := newRegistrationChanges()
+	changes.serve(t, http.MethodPost, "/b/cf/registrations", `{"id":"reg-1","name":"lab-cf","labels":{"team":"a"}}`)
+	changes.serve(t, http.MethodPut, "/b/cf/registrations/reg-1", `{"id":"reg-1","name":"lab-cf","labels":{"team":"a"}}`)
+
+	if rec, ok := changes.records(t)[audit.ChangeUpdate+" labels"]; ok {
+		t.Fatalf("an unchanged unknown field was recorded: %+v", rec)
+	}
+
+	changes.serve(t, http.MethodPut, "/b/cf/registrations/reg-1", `{"id":"reg-1","name":"lab-cf","labels":{"team":"b"}}`)
+
+	if rec, ok := changes.records(t)[audit.ChangeUpdate+" labels"]; !ok || rec.New != audit.Changed {
+		t.Fatalf("a changed unknown field recorded %+v, want one hidden record", rec)
+	}
+}
+
+// One registration body with many fields leaves at most 32 records and 32
+// log lines, the last of which counts the keys it folded.
+func TestARegistrationChangeKeepsAtMost32Records(t *testing.T) {
+	t.Parallel()
+
+	fields := make([]string, 0, 100)
+	for i := range 100 {
+		fields = append(fields, fmt.Sprintf(`"extra_%03d":"x"`, i))
+	}
+
+	changes := newRegistrationChanges()
+	changes.serve(t, http.MethodPost, "/b/cf/registrations", `{"id":"reg-1","name":"lab-cf",`+strings.Join(fields, ",")+`}`)
+
+	records, err := changes.store.List(t.Context(), audit.ScopeEndpoints, audit.MaxChangeList)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	if len(records) != audit.MaxRecordsPerChange {
+		t.Fatalf("one change left %d records, want %d", len(records), audit.MaxRecordsPerChange)
+	}
+
+	folded := 0
+
+	for _, rec := range records {
+		if rec.Key == "and 70 more keys" {
+			folded++
+
+			if rec.Old != audit.Changed || rec.New != audit.Changed {
+				t.Errorf("the folded record shows values: %+v", rec)
+			}
+		}
+	}
+
+	if folded != 1 {
+		t.Fatalf("records = %+v, want one that folds the last 70 keys", records)
+	}
+
+	if lines := len(changes.log.Lines()); lines > audit.MaxRecordsPerChange+1 {
+		t.Fatalf("one change logged %d lines, want at most %d", lines, audit.MaxRecordsPerChange+1)
+	}
+}
+
+// A registration body larger than the test-connection limit is refused
+// before it is read whole, and leaves no record.
+func TestARegistrationBodyIsBounded(t *testing.T) {
+	t.Parallel()
+
+	big := `{"id":"reg-1","name":"lab-cf","note":"` + strings.Repeat("x", testConnectionBodyLimit) + `"}`
+
+	for _, request := range []struct{ method, path string }{
+		{http.MethodPost, "/b/cf/registrations"},
+		{http.MethodPut, "/b/cf/registrations/reg-1"},
+	} {
+		changes := newRegistrationChanges()
+		changes.vault.registrations[changeRegID] = map[string]interface{}{"id": changeRegID, keyName: changeRegName}
+
+		req := httptest.NewRequestWithContext(t.Context(), request.method, request.path, strings.NewReader(big))
+		req.Header.Set("Content-Type", "application/json")
+
+		recorder := httptest.NewRecorder()
+		changes.handler.ServeHTTP(recorder, req)
+		changes.store.Wait()
+
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("%s %s with a large body answered %d, want 400", request.method, request.path, recorder.Code)
+		}
+
+		if records, _ := changes.store.List(t.Context(), audit.ScopeEndpoints, audit.MaxChangeList); len(records) != 0 {
+			t.Errorf("%s %s with a large body left %d records", request.method, request.path, len(records))
+		}
+	}
 }

@@ -1,6 +1,9 @@
 package audit
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // RecordDiff keeps one record for each key whose value differs between
 // old and current. Every record copies base, the scope, target, and kind
@@ -10,11 +13,19 @@ func (s *ChangeStore) RecordDiff(ctx context.Context, base ChangeRecord, old, cu
 		return
 	}
 
-	changes := Diff(old, current)
-	if len(changes) == 0 {
+	s.RecordChanges(ctx, base, Diff(old, current))
+}
+
+// RecordChanges keeps one record for each change, copying base, and keeps
+// no more than MaxRecordsPerChange of them. Past that, the first 31 are
+// kept and the rest fold into one record that counts them, so one request
+// can't flood the trail or the log.
+func (s *ChangeStore) RecordChanges(ctx context.Context, base ChangeRecord, changes []KeyChange) {
+	if s == nil || len(changes) == 0 {
 		return
 	}
 
+	changes = capChanges(changes)
 	records := make([]ChangeRecord, len(changes))
 
 	for index, change := range changes {
@@ -47,4 +58,17 @@ func (s *ChangeStore) RecordSettings(ctx context.Context, target string, old, cu
 	}
 
 	s.logger.Error("audit=change target=%q the old and new settings could not be compared, so no record was kept: %T to %T", truncate(clean(target), maxChangeText), old, current)
+}
+
+// capChanges keeps the first MaxRecordsPerChange-1 changes and folds the
+// rest into one change that counts them, with both its values hidden.
+func capChanges(changes []KeyChange) []KeyChange {
+	if len(changes) <= MaxRecordsPerChange {
+		return changes
+	}
+
+	kept := make([]KeyChange, MaxRecordsPerChange-1, MaxRecordsPerChange)
+	copy(kept, changes)
+
+	return append(kept, KeyChange{Key: fmt.Sprintf("and %d more keys", len(changes)-len(kept)), Old: Changed, New: Changed})
 }

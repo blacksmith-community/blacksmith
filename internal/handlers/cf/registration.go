@@ -126,24 +126,47 @@ func (h *Handler) ConnectEndpoint(ctx context.Context, writer http.ResponseWrite
 	}, nil)
 }
 
+// registrationBodyLimit bounds a registration body, as the connection test
+// bounds its own, since the form sends a few short fields.
+const registrationBodyLimit = testConnectionBodyLimit
+
+// readRegistrationBody reads a registration body of at most
+// registrationBodyLimit bytes. It answers 400 for a larger body, and
+// reports false whenever it has answered.
+func readRegistrationBody(writer http.ResponseWriter, req *http.Request, logger interfaces.Logger) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(writer, req.Body, registrationBodyLimit))
+	if err == nil {
+		return body, true
+	}
+
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		apierr.Write(writer, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			fmt.Sprintf("The registration is larger than %d bytes.", tooLarge.Limit)), http.StatusBadRequest)
+
+		return nil, false
+	}
+
+	logger.Error("failed to read request body: %v", err)
+	response.HandleJSON(writer, nil, errFailedToReadRequestBody)
+
+	return nil, false
+}
+
 // CreateRegistration handles POST /b/cf/registrations.
 func (h *Handler) CreateRegistration(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("cf-create-registration")
 	logger.Debug("creating CF registration")
 
-	// Read request body
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		logger.Error("failed to read request body: %v", err)
-		response.HandleJSON(writer, nil, errFailedToReadRequestBody)
-
+	body, ok := readRegistrationBody(writer, req, logger)
+	if !ok {
 		return
 	}
 
 	// Parse registration request
 	var regReq map[string]interface{}
 
-	err = json.Unmarshal(body, &regReq)
+	err := json.Unmarshal(body, &regReq)
 	if err != nil {
 		logger.Error("failed to parse registration request: %v", err)
 		response.HandleJSON(writer, nil, fmt.Errorf("invalid request format: %w", err))
@@ -251,12 +274,8 @@ func (h *Handler) UpdateRegistration(writer http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	// Read request body
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		logger.Error("failed to read request body: %v", err)
-		response.HandleJSON(writer, nil, errFailedToReadRequestBody)
-
+	body, ok := readRegistrationBody(writer, req, logger)
+	if !ok {
 		return
 	}
 

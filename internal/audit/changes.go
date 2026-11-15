@@ -43,6 +43,9 @@ const (
 	maxChangeText = 1024
 	// MaxChangeList is the most records one List returns.
 	MaxChangeList = 100
+	// MaxRecordsPerChange is the most records one change leaves. The keys
+	// past the first 31 fold into one record that counts them.
+	MaxRecordsPerChange = 32
 )
 
 // ChangeRecord is one entry of the change audit trail. A settings or
