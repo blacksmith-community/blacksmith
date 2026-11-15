@@ -11648,6 +11648,54 @@
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
+  // One panel for a read that failed. It says in plain words what could not
+  // load and what the broker answered, never the body or the address, and its
+  // Retry button repeats the load. The panel is a live alert, so a screen
+  // reader announces it when it appears.
+  const LOAD_STATUS_WORDS = {
+    400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 408: 'Request Timeout',
+    429: 'Too Many Requests', 500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout'
+  };
+  const loadFailureStatus = (error) => {
+    const status = Number(error && error.status) || Number(/\bHTTP (\d{3})\b/.exec(String((error && error.message) || ''))?.[1]) || 0;
+    return status >= 400 && status <= 599 ? status : 0;
+  };
+  const loadFailureDetail = (error) => {
+    const status = loadFailureStatus(error);
+    if (status === 401) return 'Authentication required. Please check credentials.';
+    if (status) return `The broker answered with HTTP ${status} ${LOAD_STATUS_WORDS[status] || (status >= 500 ? 'Server Error' : 'Client Error')}.`;
+    if (error && error.name === 'TypeError') return 'The broker could not be reached.';
+    return 'The page could not read the broker\'s answer.';
+  };
+  const loadRetryHandlers = new Map();
+  const loadFailureHtml = ({ what, error, key, retry }) => {
+    loadRetryHandlers.set(key, retry);
+    return `<div class="load-error" data-load-error role="alert" data-variant="danger">
+      <p class="load-error-title">Could not load ${escapeHtml(what)}.</p>
+      <p class="load-error-detail">${escapeHtml(loadFailureDetail(error))}</p>
+      <button type="button" class="btn-secondary" data-load-retry="${escapeAttribute(key)}" data-keep-key="${escapeAttribute(`load-retry:${key}`)}">Retry</button>
+    </div>`;
+  };
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-load-retry]');
+    const retry = button && loadRetryHandlers.get(button.dataset.loadRetry);
+    if (!retry) return;
+    event.preventDefault();
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    Promise.resolve().then(() => retry(button)).catch((error) => console.error('Retry failed:', loggableError(error))).finally(() => {
+      if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); }
+    });
+  });
+  // Puts the loading note in a detail pane and runs its load again. A pane
+  // that has since moved to another view is left alone.
+  const retryDetailLoad = (selector, stillCurrent, load) => () => {
+    const container = document.querySelector(selector);
+    if (!container || !stillCurrent()) return;
+    container.innerHTML = '<div class="loading">Loading...</div>';
+    return load();
+  };
+
   // The part of an instance logs table's id and class that comes from its job
   // key. A slash becomes a dash, and white space becomes an underscore because
   // a space in a class attribute would split it into two classes. The key is
@@ -16967,6 +17015,8 @@
     // Ensure the default tab (blacksmith) is active on load
     switchTab('blacksmith').catch((error) => console.error('Tab switch failed:', loggableError(error)));
 
+    // The first read of the catalog and status. Retry on the error panel runs it again.
+    const loadInitialData = async () => {
     try {
       // First, try to fetch the catalog
       const catalogResponse = await fetchWithHeaders('/v2/catalog');
@@ -18078,15 +18128,18 @@
 
     } catch (error) {
       console.error('Error loading data:', loggableError(error));
-      const errorMessage = error.message.includes('401')
-        ? 'Authentication required. Please check credentials.'
-        : `Failed to load data: ${error.message}`;
-
-      document.querySelector('#blacksmith').innerHTML = `<div class="error">${errorMessage}</div>`;
-      document.querySelector('#services').innerHTML = '<div class="error">Service unavailable</div>';
+      const retryLoad = () => {
+        document.querySelector('#blacksmith').innerHTML = '<div class="loading">Loading...</div>';
+        document.querySelector('#services').innerHTML = '<div class="loading">Loading...</div>';
+        return loadInitialData();
+      };
+      document.querySelector('#blacksmith').innerHTML = loadFailureHtml({ what: 'the broker data', error, key: 'initial:blacksmith', retry: retryLoad });
+      document.querySelector('#services').innerHTML = loadFailureHtml({ what: 'the service instances', error, key: 'initial:services', retry: retryLoad });
       // Plans error will be shown when the sub-tab is accessed
       window.plansData = null;
     }
+    };
+    await loadInitialData();
   });
 
   // ================================================================
