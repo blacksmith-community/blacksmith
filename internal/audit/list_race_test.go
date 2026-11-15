@@ -2,6 +2,7 @@ package audit_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,5 +64,50 @@ func TestListShowsARecordThatLandsWhileItRuns(t *testing.T) {
 
 	if len(records) != 1 || records[0].New != "10" {
 		t.Fatalf("records = %+v, want the record that landed during the list", records)
+	}
+}
+
+// The parts of the hand-written bodies the unreadable-record test saves.
+const (
+	fieldScope = "scope"
+	goodID     = "good"
+	badID      = "bad"
+)
+
+// A record body that can't be read, such as one edited by hand with a
+// number for a value, is logged and skipped, and the rest still list.
+func TestListSkipsARecordItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	vault := audittest.NewKV()
+	log := &audittest.Logger{}
+	ctx := t.Context()
+	stamp := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+
+	for path, body := range map[string]interface{}{
+		audit.ChangeVaultPath + "/" + badID:  map[string]interface{}{"id": badID, "at": stamp, fieldScope: audit.ScopeSettings, "key": keyBatchJobs, "old": 5},
+		audit.ChangeVaultPath + "/" + goodID: audit.ChangeRecord{ID: goodID, At: stamp, Scope: audit.ScopeSettings, Key: keyInterval, Old: "1h", New: halfHour},
+		audit.ChangeVaultPath: map[string]interface{}{
+			badID:  map[string]string{"at": stamp.Format(time.RFC3339Nano), fieldScope: audit.ScopeSettings},
+			goodID: map[string]string{"at": stamp.Format(time.RFC3339Nano), fieldScope: audit.ScopeSettings},
+		},
+	} {
+		err := vault.Put(ctx, path, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	records, err := newStore(vault, log, stamp).List(ctx, audit.ScopeSettings, 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	if len(records) != 1 || records[0].ID != goodID {
+		t.Fatalf("records = %+v, want the readable record alone", records)
+	}
+
+	if text := log.Text(); !strings.Contains(text, badID) {
+		t.Fatalf("the unreadable record was not logged: %q", text)
 	}
 }

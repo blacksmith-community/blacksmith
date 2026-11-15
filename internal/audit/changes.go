@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -229,11 +230,9 @@ func (s *ChangeStore) List(ctx context.Context, scope string, limit int) ([]Chan
 			continue
 		}
 
-		var rec ChangeRecord
-
-		found, err := s.kv.Get(ctx, ChangeVaultPath+"/"+recordID, &rec)
+		rec, found, err := s.readChange(ctx, recordID)
 		if err != nil {
-			return nil, fmt.Errorf("reading change record %s: %w", recordID, err)
+			return nil, err
 		}
 
 		if found && rec.Scope == scope {
@@ -254,6 +253,40 @@ func (s *ChangeStore) List(ctx context.Context, scope string, limit int) ([]Chan
 	}
 
 	return records, nil
+}
+
+// readChange reads one record. The body is read as a plain object and
+// decoded here, so a body that Vault returns but that is not a change
+// record, such as one edited by hand, is logged and skipped rather than
+// failing the whole list. A record that can't be read from Vault at all
+// is an error.
+func (s *ChangeStore) readChange(ctx context.Context, recordID string) (ChangeRecord, bool, error) {
+	var (
+		body map[string]interface{}
+		rec  ChangeRecord
+	)
+
+	found, err := s.kv.Get(ctx, ChangeVaultPath+"/"+recordID, &body)
+	if err != nil {
+		return rec, false, fmt.Errorf("reading change record %s: %w", recordID, err)
+	}
+
+	if !found {
+		return rec, false, nil
+	}
+
+	encoded, err := json.Marshal(body)
+	if err == nil {
+		err = json.Unmarshal(encoded, &rec)
+	}
+
+	if err != nil {
+		s.logError("audit=change id=%s could not be read as a change record, so it is skipped: %v", truncate(clean(recordID), maxChangeText), err)
+
+		return rec, false, nil
+	}
+
+	return rec, true, nil
 }
 
 // pendingOf returns the queued records of the scope and marks them listed.
