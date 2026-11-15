@@ -881,7 +881,7 @@ func (s *IndexSynchronizer) cleanupStaleOrphans(idx map[string]interface{}) int 
 		// Check time-based: orphaned > 24 hours
 		if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
 			if t, err := time.Parse(time.RFC3339, orphanedAt); err == nil {
-				if time.Since(t) > 24*time.Hour {
+				if time.Since(t) > OrphanRemovalAfter {
 					shouldDelete = true
 					reason = fmt.Sprintf("orphaned for >24 hours (since %s)", orphanedAt)
 				}
@@ -897,7 +897,7 @@ func (s *IndexSynchronizer) cleanupStaleOrphans(idx map[string]interface{}) int 
 				count = int(c)
 			}
 
-			if count >= 24 {
+			if count >= OrphanRemovalChecks {
 				shouldDelete = true
 				reason = fmt.Sprintf("orphaned for 24+ check cycles (count: %d)", count)
 			}

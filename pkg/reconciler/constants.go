@@ -7,6 +7,14 @@ import "time"
 // instance. The reconciler reports such deployments instead of adopting them.
 const MetadataUnclaimedDeployment = "unclaimed_deployment"
 
+// OrphanRemovalAfter is how long an index entry stays marked orphaned before
+// the reconciler removes it, and OrphanRemovalChecks is how many reconciler
+// runs may find it orphaned before that removal. Whichever comes first wins.
+const (
+	OrphanRemovalAfter  = 24 * time.Hour
+	OrphanRemovalChecks = 24
+)
+
 // UnclaimedDeployment is a BOSH deployment that has neither a vault index
 // entry nor a Cloud Foundry service instance.
 type UnclaimedDeployment struct {

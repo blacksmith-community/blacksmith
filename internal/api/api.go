@@ -412,6 +412,7 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 	router.RegisterHandler("/b/blacksmith/config", http.HandlerFunc(handlers.blacksmith.GetConfig))
 	router.RegisterHandler("/b/blacksmith/settings", http.HandlerFunc(handlers.blacksmith.HandleSettings))
 	router.RegisterHandler("/b/cleanup", http.HandlerFunc(handlers.blacksmith.Cleanup))
+	router.RegisterHandler("/b/orphans", http.HandlerFunc(handlers.blacksmith.GetOrphans))
 
 	// Task endpoints
 	router.RegisterHandler("/b/tasks", handlers.tasks)

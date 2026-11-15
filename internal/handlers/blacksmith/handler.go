@@ -29,6 +29,8 @@ var (
 	ErrCommandNotAllowed         = errors.New("command not allowed")
 	ErrUnauthorizedLogFileAccess = errors.New("unauthorized log file access")
 	ErrFailedToReadLogFile       = errors.New("failed to read log file")
+	ErrVaultUnavailable          = errors.New("vault is not available")
+	ErrOrphanIndexUnreadable     = errors.New("the instance index could not be read")
 	ErrCleanupNotImplemented     = errors.New("manual cleanup is not implemented; the reconciler removes orphaned instances on its own")
 )
 

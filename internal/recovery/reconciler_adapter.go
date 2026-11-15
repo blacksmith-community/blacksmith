@@ -517,6 +517,21 @@ func (r *ReconcilerAdapter) GetStatus() reconciler.Status {
 	return manager.GetStatus()
 }
 
+// UnclaimedDeployments returns the BOSH deployments with neither an index
+// entry nor a Cloud Foundry service instance, as the running manager last
+// found them. The report is not known before the manager exists, or when it
+// cannot report.
+func (r *ReconcilerAdapter) UnclaimedDeployments() reconciler.UnclaimedReport {
+	reporter, ok := r.currentManager().(interface {
+		UnclaimedDeployments() reconciler.UnclaimedReport
+	})
+	if !ok {
+		return reconciler.UnclaimedReport{}
+	}
+
+	return reporter.UnclaimedDeployments()
+}
+
 // ForceReconcile forces an immediate reconciliation.
 func (r *ReconcilerAdapter) ForceReconcile() error {
 	manager := r.currentManager()
