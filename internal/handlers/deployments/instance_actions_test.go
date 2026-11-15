@@ -37,6 +37,11 @@ const (
 
 var errInstanceDirectorRefused = errors.New("director refused the job-state change")
 
+// runningTask returns a task the director runs on the owned deployment.
+func runningTask() bosh.Task {
+	return bosh.Task{ID: 812, State: "processing", Deployment: ownedDeployment}
+}
+
 // instanceDirector records each restart and recreate it receives, with the
 // options and whether the guard held both the instance and its deployment at
 // that moment. With fail set it refuses each one.
@@ -652,7 +657,7 @@ func TestInstanceActionsRefuseWhileADirectorTaskRuns(t *testing.T) {
 			t.Parallel()
 
 			setup := newInstanceActionSetup(deployments.Dependencies{})
-			setup.director.running = []bosh.Task{{ID: 812, State: "processing", Deployment: ownedDeployment}}
+			setup.director.running = []bosh.Task{runningTask()}
 
 			recorder := serveInstanceAction(t, setup.handler, http.MethodPost, "/b/"+ownedInstance+"/"+action)
 
@@ -777,8 +782,8 @@ func TestInstanceActionsRecordTheActor(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"instance=" + ownedInstance,
-		"deployment=" + ownedDeployment,
+		`instance="` + ownedInstance + `"`,
+		`deployment="` + ownedDeployment + `"`,
 		"operation=recreate",
 		`actor="operator"`,
 		`from="192.0.2.10:51234 via 198.51.100.7"`,
@@ -797,5 +802,154 @@ func TestInstanceActionsRecordTheActor(t *testing.T) {
 	lines = setup.log.audits()
 	if len(lines) != 2 || !strings.Contains(lines[1], `outcome="failed"`) || !strings.Contains(lines[1], `actor="operator"`) {
 		t.Errorf("audit lines after a refusal = %q", lines)
+	}
+}
+
+// newBareHandler serves the instance actions with only the dependencies
+// given, so a missing Vault or director stays missing.
+func newBareHandler(deps deployments.Dependencies) (*deployments.Handler, *auditLogger) {
+	log := &auditLogger{NoOpLogger: &logger.NoOpLogger{}}
+	deps.Logger = log
+
+	return deployments.NewHandler(deps), log
+}
+
+// A broker without a director answers 503 director_unavailable, and the
+// refusal is audited with the actor.
+func TestInstanceActionsNeedADirector(t *testing.T) {
+	t.Parallel()
+
+	handler, log := newBareHandler(deployments.Dependencies{Vault: ownedVault(), Guard: mutation.NewGuard(time.Now)})
+
+	recorder := serveInstanceAction(t, handler, http.MethodPost, "/b/"+ownedInstance+"/restart")
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if body := decodeBody(t, recorder); body["code"] != apierr.CodeDirectorUnavailable {
+		t.Errorf("body = %v, want code %s", body, apierr.CodeDirectorUnavailable)
+	}
+
+	assertRefusalAudited(t, log.audits(), ownedDeployment, 0)
+}
+
+// A broker without a Vault can't tell whether it owns the instance, so it
+// answers 503 vault_unavailable before anything else.
+func TestInstanceActionsNeedVault(t *testing.T) {
+	t.Parallel()
+
+	director := newInstanceDirector(mutation.NewGuard(time.Now))
+	handler, log := newBareHandler(deployments.Dependencies{Director: director})
+
+	recorder := serveInstanceAction(t, handler, http.MethodPost, "/b/"+ownedInstance+"/recreate")
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if body := decodeBody(t, recorder); body["code"] != apierr.CodeVaultUnavailable {
+		t.Errorf("body = %v, want code %s", body, apierr.CodeVaultUnavailable)
+	}
+
+	if calls, _ := director.recorded(); len(calls) != 0 {
+		t.Errorf("director calls = %v, want none", calls)
+	}
+
+	assertRefusalAudited(t, log.audits(), "", 0)
+}
+
+// Every attempt the broker refuses leaves one audit line with the actor,
+// where the request came from, and the outcome refused.
+func TestInstanceActionsAuditRefusals(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		path       string
+		deps       deployments.Dependencies
+		prepare    func(setup instanceActionSetup) func()
+		deployment string
+		taskID     int
+	}{
+		{name: "not owned", path: "/b/9f9f-not-ours/restart"},
+		{name: "vault unreadable", path: "/b/" + ownedInstance + "/restart", deps: deployments.Dependencies{Vault: &failingInstanceVault{}}},
+		{name: "tasks loading", path: "/b/" + ownedInstance + "/restart", deps: deployments.Dependencies{TasksLoaded: make(chan struct{})}, deployment: ownedDeployment},
+		{name: "busy", path: "/b/" + ownedInstance + "/recreate", deployment: ownedDeployment, prepare: func(setup instanceActionSetup) func() {
+			release, err := setup.guard.Acquire(ownedInstance, "", mutation.Holder{Kind: mutation.KindUpgrade, Description: "upgrade of 7a1b"})
+			if err != nil {
+				panic(err)
+			}
+
+			return release
+		}},
+		{name: "deployment locked", path: "/b/" + ownedInstance + "/restart", deployment: ownedDeployment, taskID: 812, prepare: func(setup instanceActionSetup) func() {
+			setup.director.running = []bosh.Task{runningTask()}
+
+			return func() {}
+		}},
+		{name: "task list failed", path: "/b/" + ownedInstance + "/restart", deployment: ownedDeployment, prepare: func(setup instanceActionSetup) func() {
+			setup.director.listErr = errInstanceDirectorRefused
+
+			return func() {}
+		}},
+	}
+
+	for _, refusal := range cases {
+		t.Run(refusal.name, func(t *testing.T) {
+			t.Parallel()
+
+			setup := newInstanceActionSetup(refusal.deps)
+
+			if refusal.prepare != nil {
+				defer refusal.prepare(setup)()
+			}
+
+			recorder := serveInstanceAction(t, setup.handler, http.MethodPost, refusal.path)
+			if recorder.Code < http.StatusBadRequest {
+				t.Fatalf("status = %d, want a refusal: %s", recorder.Code, recorder.Body.String())
+			}
+
+			assertRefusalAudited(t, setup.log.audits(), refusal.deployment, refusal.taskID)
+		})
+	}
+}
+
+// An instance ID from the path is quoted in the audit line, so a decoded
+// newline can't forge a second line.
+func TestInstanceActionsQuoteTheInstanceInTheAudit(t *testing.T) {
+	t.Parallel()
+
+	setup := newInstanceActionSetup(deployments.Dependencies{})
+
+	serveInstanceAction(t, setup.handler, http.MethodPost, "/b/evil%0Aaudit=instance-action/restart")
+
+	lines := setup.log.audits()
+	if len(lines) != 1 {
+		t.Fatalf("audit lines = %q, want one", lines)
+	}
+
+	if strings.Contains(lines[0], "\n") || !strings.Contains(lines[0], `instance="evil\naudit=instance-action"`) {
+		t.Errorf("audit line %q does not quote the instance", lines[0])
+	}
+}
+
+func assertRefusalAudited(t *testing.T, lines []string, deployment string, taskID int) {
+	t.Helper()
+
+	if len(lines) != 1 {
+		t.Fatalf("audit lines = %q, want one", lines)
+	}
+
+	for _, want := range []string{
+		`deployment="` + deployment + `"`,
+		`actor="operator"`,
+		`from="192.0.2.10:51234 via 198.51.100.7"`,
+		`outcome="refused"`,
+		fmt.Sprintf("task=%d", taskID),
+	} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("audit line %q lacks %q", lines[0], want)
+		}
 	}
 }

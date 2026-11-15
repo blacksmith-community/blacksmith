@@ -43,15 +43,17 @@ func (h *Handler) CanHandleInstanceAction(path string) bool {
 // a certificate rotation, or a broker operation on the same instance. Under
 // the guard it first asks the director for a task already running on the
 // deployment, and answers 409 deployment_locked with that task when there
-// is one. It
-// answers 202 with the BOSH task the director created. When the director's
-// answer is lost after the request went out, the task may have started, so
-// it answers 504 outcome_unknown rather than reporting a failure.
+// is one. It answers 202 with the BOSH task the director created. When the
+// director's answer is lost after the request went out, the task may have
+// started, so it answers 504 outcome_unknown rather than reporting a
+// failure.
 //
 // The broker's basic-auth wrapper puts the authenticated actor in the
 // request context, as it does for every /b/ request. Each action that
 // reaches the director logs one audit line with that actor, where the
-// request came from, the outcome, and the task.
+// request came from, the outcome, and the task. An attempt the broker
+// refuses before it reaches the director is audited as refused, with the
+// running task when that is what refused it.
 func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Request) {
 	matches := instanceActionPattern.FindStringSubmatch(req.URL.Path)
 	if matches == nil {
@@ -70,29 +72,35 @@ func (h *Handler) ServeInstanceAction(writer http.ResponseWriter, req *http.Requ
 	}
 
 	logger := h.logger.Named("instance-" + action)
+	actor, _ := audit.ActorFrom(req.Context())
 
 	deployment, owned := h.ownedDeployment(req.Context(), writer, logger, instanceID)
 	if !owned {
+		logInstanceActionAudit(logger, actor, instanceID, "", action, "refused", 0)
+
 		return
 	}
 
 	if h.director == nil {
-		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeInternal, errDirectorNotConfigured.Error()), http.StatusServiceUnavailable)
+		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "refused", 0)
+		apierr.Write(writer, apierr.New(http.StatusServiceUnavailable, apierr.CodeDirectorUnavailable, errDirectorNotConfigured.Error()), http.StatusServiceUnavailable)
 
 		return
 	}
 
 	release, reserved := h.reserveInstance(writer, logger, instanceID, deployment, action)
 	if !reserved {
+		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "refused", 0)
+
 		return
 	}
 	defer release()
 
-	if !h.deploymentIsIdle(req.Context(), writer, logger, instanceID, deployment, action) {
+	if runningTask, idle := h.deploymentIsIdle(req.Context(), writer, logger, instanceID, deployment, action); !idle {
+		logInstanceActionAudit(logger, actor, instanceID, deployment, action, "refused", runningTask)
+
 		return
 	}
-
-	actor, _ := audit.ActorFrom(req.Context())
 
 	task, err := h.runInstanceAction(req.Context(), deployment, action)
 	answerInstanceAction(writer, logger, actor, instanceActionProblem{InstanceID: instanceID, Deployment: deployment, Operation: action}, task, err)
@@ -150,19 +158,20 @@ type instanceActionResponse struct {
 // a new task, and the action answers 409 deployment_locked with the task
 // instead. A task list the director can't give refuses the action too,
 // because nobody then knows whether the deployment is locked. The caller
-// holds the guard, so no broker operation can start in between.
-func (h *Handler) deploymentIsIdle(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, instanceID, deployment, action string) bool {
+// holds the guard, so no broker operation can start in between. It returns
+// the running task, which is zero when there is none or the list failed.
+func (h *Handler) deploymentIsIdle(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, instanceID, deployment, action string) (int, bool) {
 	running, err := h.director.FindRunningTasksForDeployment(ctx, deployment)
 	if err != nil {
 		logger.Error("Failed to list the running tasks of deployment %s before the %s of instance %s: %v", deployment, action, instanceID, err)
 		apierr.Write(writer, apierr.New(http.StatusBadGateway, apierr.CodeInternal,
 			fmt.Sprintf("The director did not list the tasks of deployment %s, so the %s of instance %s didn't start: %v", deployment, action, instanceID, err)), http.StatusBadGateway)
 
-		return false
+		return 0, false
 	}
 
 	if len(running) == 0 {
-		return true
+		return 0, true
 	}
 
 	taskID := running[0].ID
@@ -176,7 +185,7 @@ func (h *Handler) deploymentIsIdle(ctx context.Context, writer http.ResponseWrit
 		TaskID:     taskID,
 	})
 
-	return false
+	return taskID, false
 }
 
 // instanceActionProblem is the body of an instance action that did not
@@ -318,9 +327,10 @@ func writeInstanceActionError(writer http.ResponseWriter, deployment string, err
 }
 
 // logInstanceActionAudit logs the audit line of an instance action. The
-// actor and its address are quoted, because the forwarded-for part is
-// whatever the client sent.
+// instance, deployment, actor, and address are quoted, because the instance
+// comes from the request path and the forwarded-for part is whatever the
+// client sent, so neither can forge a second line.
 func logInstanceActionAudit(logger interfaces.Logger, actor audit.Actor, instanceID, deployment, action, outcome string, taskID int) {
-	logger.Info("audit=instance-action instance=%s deployment=%s operation=%s actor=%q from=%q outcome=%q task=%d",
+	logger.Info("audit=instance-action instance=%q deployment=%q operation=%s actor=%q from=%q outcome=%q task=%d",
 		instanceID, deployment, action, actor.Username, actor.From(), outcome, taskID)
 }

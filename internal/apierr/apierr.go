@@ -79,6 +79,9 @@ const (
 	CodeVaultUnavailable   = "vault_unavailable"
 	CodeCleanupNotStarted  = "cleanup_not_started"
 
+	// 503, when the broker has no BOSH director to send an action to.
+	CodeDirectorUnavailable = "director_unavailable"
+
 	// 504, when the director's answer to a request it may have accepted was
 	// lost, so nobody can say whether its task started.
 	CodeOutcomeUnknown = "outcome_unknown"
