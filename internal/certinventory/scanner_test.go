@@ -580,6 +580,52 @@ func TestScanInstanceVersions(t *testing.T) {
 	if got := scan.Material.SigningCAs[caName]; got == nil || Fingerprint(got) != Fingerprint(ca.cert) {
 		t.Errorf("signing CAs = %v, want the services CA", scan.Material.SigningCAs)
 	}
+
+	if !scan.Material.CAsRead || len(scan.Material.CAVersions[caName]) != 1 {
+		t.Errorf("CAsRead %v, CA versions %v, want a recorded read of one version", scan.Material.CAsRead, scan.Material.CAVersions)
+	}
+}
+
+var errCredHubRefused = errors.New("dial tcp: connection refused")
+
+func TestScanInstanceCAsReadNeedsReachableCredHub(t *testing.T) {
+	t.Parallel()
+
+	rows := []struct {
+		name  string
+		state credhub.CapabilityState
+		err   error
+	}{
+		{"blocked", credhub.StateNotConfigured, nil},
+		{"down", credhub.StateConfigured, errCredHubRefused},
+	}
+
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			fixture := scannerFixture{
+				director: &fakeDirector{
+					manifest: loadManifest(t, "redis-cluster-7.yml"),
+					vars:     []bosh.Variable{{ID: "v1", Name: "/ws-bosh/redis-7a1b/redis_cluster_crt"}},
+					vms:      redisVMs(3),
+				},
+				credhub:  &fakeCredHub{err: row.err},
+				state:    row.state,
+				settings: DefaultSettings(),
+				leaf:     &fakeLeaf{},
+			}
+
+			scan := fixture.scanner().ScanInstance(context.Background(), testRef("redis-7a1b"))
+			if scan.Err != "" {
+				t.Fatalf("scan failed: %s", scan.Err)
+			}
+
+			if scan.Material.CAsRead {
+				t.Error("CAsRead is true although CredHub could not be read")
+			}
+		})
+	}
 }
 
 func TestScanInstanceExpectedListeners(t *testing.T) {

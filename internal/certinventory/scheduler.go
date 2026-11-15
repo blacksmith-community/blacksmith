@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	mrand "math/rand/v2"
 	"net/http"
 	"runtime/debug"
@@ -701,6 +702,8 @@ func (s *Scheduler) store(scan InstanceScan) {
 // time of the good read goes with it, so the certificate's coverage says it
 // is stale (spec 7.10). The previous scan's material is never changed.
 func keepLastGood(m ScanMaterial, prev InstanceScan) ScanMaterial {
+	m = keepLastCAs(m, prev)
+
 	good := map[string]CredHubCert{}
 
 	for _, ch := range prev.Material.CredHub {
@@ -766,6 +769,39 @@ func keepLastGood(m ScanMaterial, prev InstanceScan) ScanMaterial {
 	}
 
 	return m
+}
+
+// keepLastCAs carries the previous scan's signing CAs, with every version
+// it read, into mat for each CA name it did not read, and carries the CAsRead
+// state with them. A scan that failed to read the CAs then cannot turn an
+// issuer chain the broker already knew into one it does not. The previous
+// scan's maps are never changed.
+func keepLastCAs(mat ScanMaterial, prev InstanceScan) ScanMaterial {
+	if !prev.Material.CAsRead {
+		return mat
+	}
+
+	mat.CAsRead = true
+
+	for name, ca := range prev.Material.SigningCAs {
+		if _, ok := mat.SigningCAs[name]; ok {
+			continue
+		}
+
+		mat.SigningCAs = cloneWith(mat.SigningCAs, name, ca)
+		mat.CAVersions = cloneWith(mat.CAVersions, name, prev.Material.CAVersions[name])
+	}
+
+	return mat
+}
+
+// cloneWith returns a copy of in with key set to value. in is not changed.
+func cloneWith[V any](in map[string]V, key string, value V) map[string]V {
+	out := make(map[string]V, len(in)+1)
+	maps.Copy(out, in)
+	out[key] = value
+
+	return out
 }
 
 // drop removes every cached instance the index no longer lists, keeping the

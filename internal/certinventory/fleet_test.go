@@ -840,6 +840,8 @@ func TestFleetDivergenceSuppressesServedMismatch(t *testing.T) {
 const (
 	chainLeafName = "/ws-bosh/redis-i1/leaf_crt"
 	chainMidName  = "mid-ca"
+	chainRootName = "root-ca"
+	chainCAVar    = "/ws-bosh/ca"
 	chainLeafCN   = "leaf"
 )
 
@@ -893,7 +895,7 @@ func chainSubjects(t *testing.T, pems []string) []string {
 func TestItemIssuerChainVerifiedOrdered(t *testing.T) {
 	t.Parallel()
 
-	root := issue(t, issueSpec{cn: "root-ca", serial: 1, isCA: true})
+	root := issue(t, issueSpec{cn: chainRootName, serial: 1, isCA: true})
 	mid := issue(t, issueSpec{cn: chainMidName, serial: 2, isCA: true, parent: &root})
 	stray := issue(t, issueSpec{cn: "stray-ca", serial: 3, isCA: true})
 	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 4, parent: &mid})
@@ -909,13 +911,17 @@ func TestItemIssuerChainVerifiedOrdered(t *testing.T) {
 		t.Fatalf("chain not known: ok=%v", ok)
 	}
 
+	if item.IssuerChainIncomplete {
+		t.Error("a chain ending in a self-signed root is complete")
+	}
+
 	if item.IssuerChainFacts == nil || len(*item.IssuerChainFacts) != 2 ||
 		(*item.IssuerChainFacts)[0].CommonName != chainMidName || (*item.IssuerChainFacts)[1].NotAfter.IsZero() {
 		t.Fatalf("facts do not describe the chain: %v", item.IssuerChainFacts)
 	}
 
 	got := chainSubjects(t, *item.IssuerChain)
-	if len(got) != 2 || got[0] != chainMidName || got[1] != "root-ca" {
+	if len(got) != 2 || got[0] != chainMidName || got[1] != chainRootName {
 		t.Fatalf("chain = %v, want [mid-ca root-ca]", got)
 	}
 }
@@ -926,7 +932,7 @@ func TestItemIssuerChainMissingCAIsUnknown(t *testing.T) {
 	ca := issue(t, issueSpec{cn: "ca", serial: 1, isCA: true})
 	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 2, parent: &ca})
 
-	fleet, id := chainFleet(t, leaf.cert, "/ws-bosh/ca", nil, true)
+	fleet, id := chainFleet(t, leaf.cert, chainCAVar, nil, true)
 
 	item, _ := fleet.Item(id)
 	if item.IssuerChain != nil || item.IssuerChainFacts != nil {
@@ -945,14 +951,14 @@ func TestItemIssuerChainNotScannedUnderNewCodeIsUnknown(t *testing.T) {
 	ca := issue(t, issueSpec{cn: "ca", serial: 1, isCA: true})
 	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 2, parent: &ca})
 
-	fleet, id := chainFleet(t, leaf.cert, "/ws-bosh/ca", map[string]*x509.Certificate{"/ws-bosh/ca": ca.cert}, false)
+	fleet, id := chainFleet(t, leaf.cert, chainCAVar, map[string]*x509.Certificate{chainCAVar: ca.cert}, false)
 
 	if item, _ := fleet.Item(id); item.IssuerChain != nil {
 		t.Fatal("a scan that did not record CA reads must leave the chain unknown")
 	}
 }
 
-func TestItemIssuerChainCAThatDoesNotSignLeafIsEmptyNotMissing(t *testing.T) {
+func TestItemIssuerChainCAThatDoesNotSignLeafIsUnknown(t *testing.T) {
 	t.Parallel()
 
 	ca := issue(t, issueSpec{cn: "ca", serial: 1, isCA: true})
@@ -961,13 +967,126 @@ func TestItemIssuerChainCAThatDoesNotSignLeafIsEmptyNotMissing(t *testing.T) {
 
 	fleet, id := chainFleet(t, leaf.cert, "/ws-bosh/other", map[string]*x509.Certificate{"/ws-bosh/other": other.cert}, true)
 
+	if item, _ := fleet.Item(id); item.IssuerChain != nil {
+		t.Fatalf("no verifying CA and no proof of none must leave the chain unknown, got %v", *item.IssuerChain)
+	}
+}
+
+func TestItemIssuerChainProvenNoneIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	root := issue(t, issueSpec{cn: "self", serial: 1, isCA: true})
+
+	// A variable that names no signing CA, read by a scan that reached CredHub.
+	fleet, id := chainFleet(t, root.cert, "", nil, true)
+
 	item, _ := fleet.Item(id)
 	if item.IssuerChain == nil || len(*item.IssuerChain) != 0 {
-		t.Fatalf("a CA that does not sign the leaf must give a known empty chain, got %v", item.IssuerChain)
+		t.Fatalf("a variable with no signer must give a known empty chain, got %v", item.IssuerChain)
 	}
 
 	raw, err := json.Marshal(item)
 	if err != nil || !strings.Contains(string(raw), `"issuer_chain":[]`) {
 		t.Fatalf("known empty chain must serialise as []: %v %s", err, raw)
+	}
+}
+
+func TestItemIssuerChainVerifiesAgainstEveryCAVersion(t *testing.T) {
+	t.Parallel()
+
+	oldCA := issue(t, issueSpec{cn: "old-ca", serial: 1, isCA: true})
+	newCA := issue(t, issueSpec{cn: "new-ca", serial: 2, isCA: true})
+	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 3, parent: &oldCA})
+
+	scan := fleetScan("i1", fleetNow.Add(-time.Minute))
+	scan.Material.CAsRead = true
+	scan.Material.SigningCAs = map[string]*x509.Certificate{chainCAVar: newCA.cert}
+	scan.Material.CAVersions = map[string][]*x509.Certificate{chainCAVar: {newCA.cert, oldCA.cert}}
+	scan.Material.CredHub = []CredHubCert{{
+		Name: chainLeafName, Owner: instOwner("i1"), Deployed: leaf.cert, Versions: Versions{SigningCA: chainCAVar},
+	}}
+
+	fleet := Aggregate([]InstanceScan{scan}, DefaultSettings(), fleetCaps, nil, fleetNow)
+
+	item, _ := fleet.Item(fleet.Certificates()[0].ID)
+	if item.IssuerChain == nil {
+		t.Fatal("a leaf signed by the previous CA version must find it")
+	}
+
+	if got := chainSubjects(t, *item.IssuerChain); len(got) != 1 || got[0] != "old-ca" {
+		t.Fatalf("chain = %v, want [old-ca]", got)
+	}
+
+	if item.IssuerChainIncomplete {
+		t.Error("a chain ending in a self-signed root is complete")
+	}
+}
+
+func TestItemIssuerChainEndingShortOfRootIsIncomplete(t *testing.T) {
+	t.Parallel()
+
+	root := issue(t, issueSpec{cn: chainRootName, serial: 1, isCA: true})
+	mid := issue(t, issueSpec{cn: chainMidName, serial: 2, isCA: true, parent: &root})
+	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 3, parent: &mid})
+
+	fleet, id := chainFleet(t, leaf.cert, "/ws-bosh/mid", map[string]*x509.Certificate{"/ws-bosh/mid": mid.cert}, true)
+
+	item, _ := fleet.Item(id)
+	if item.IssuerChain == nil || len(*item.IssuerChain) != 1 || !item.IssuerChainIncomplete {
+		t.Fatalf("chain %v incomplete %v, want one entry marked incomplete", item.IssuerChain, item.IssuerChainIncomplete)
+	}
+
+	raw, err := json.Marshal(item)
+	if err != nil || !strings.Contains(string(raw), `"issuer_chain_incomplete":true`) {
+		t.Fatalf("incomplete flag missing from JSON: %s", raw)
+	}
+}
+
+// carriedChain aggregates the scan the scheduler would store after prev when
+// next could not read the CAs.
+func carriedChain(t *testing.T, next ScanMaterial) *[]string {
+	t.Helper()
+
+	root := issue(t, issueSpec{cn: chainRootName, serial: 1, isCA: true})
+	leaf := issue(t, issueSpec{cn: chainLeafCN, serial: 2, parent: &root})
+	name := "/ws-bosh/root"
+
+	prev := fleetScan("i1", fleetNow.Add(-2*time.Minute))
+	prev.Material.CAsRead = true
+	prev.Material.SigningCAs = map[string]*x509.Certificate{name: root.cert}
+	prev.Material.CAVersions = map[string][]*x509.Certificate{name: {root.cert}}
+	prev.Material.CredHub = []CredHubCert{{Name: chainLeafName, Owner: instOwner("i1"), Deployed: leaf.cert, Versions: Versions{SigningCA: name}}}
+
+	// The new scan still names the leaf, but could not read its certificates.
+	next.CredHub = []CredHubCert{{Name: chainLeafName, Owner: instOwner("i1"), Err: msgCredHubUnavailable, Versions: Versions{SigningCA: name}}}
+
+	scan := fleetScan("i1", fleetNow.Add(-time.Minute))
+	scan.Material = keepLastGood(next, prev)
+
+	fleet := Aggregate([]InstanceScan{scan}, DefaultSettings(), fleetCaps, nil, fleetNow)
+	if len(fleet.Certificates()) != 1 {
+		t.Fatalf("certificates = %d, want 1", len(fleet.Certificates()))
+	}
+
+	item, _ := fleet.Item(fleet.Certificates()[0].ID)
+
+	return item.IssuerChain
+}
+
+func TestKeepLastGoodKeepsChainWhenVariableListFailed(t *testing.T) {
+	t.Parallel()
+
+	// No CAs, and CAsRead false, as when the director's variable list failed.
+	if got := carriedChain(t, ScanMaterial{}); got == nil || len(*got) != 1 {
+		t.Fatalf("chain after a failed variable list = %v, want the carried chain", got)
+	}
+}
+
+func TestKeepLastGoodKeepsChainWhenCredHubWentDown(t *testing.T) {
+	t.Parallel()
+
+	// CredHub reachable at the start, down for the CA reads: nothing read.
+	if got := carriedChain(t, ScanMaterial{CAsRead: false, SigningCAs: map[string]*x509.Certificate{}}); got == nil || len(*got) != 1 {
+		t.Fatalf("chain after a CredHub outage = %v, want the carried chain", got)
 	}
 }

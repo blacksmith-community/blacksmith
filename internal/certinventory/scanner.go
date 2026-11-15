@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -93,9 +94,13 @@ type ScanMaterial struct {
 	// ServicesCADrift says the broker's services CA file differs from the
 	// copy in CredHub. Only the broker scan sets it.
 	ServicesCADrift bool
-	// CAsRead says the scan went through the signing CA step, so an
-	// issuer chain built from SigningCAs is a known answer. A scan
-	// without it has no chain, which is different from an empty one.
+	// CAVersions holds every version of each signing CA the scan read,
+	// the deployed and the latest, so a leaf signed by a CA that has
+	// since rotated still finds its issuer.
+	CAVersions map[string][]*x509.Certificate
+	// CAsRead says CredHub was reachable and the signing CA step ran, so
+	// an issuer chain built from the CAs is a known answer. A scan where
+	// CredHub was blocked or down leaves it false.
 	CAsRead bool
 }
 
@@ -290,9 +295,11 @@ func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings
 	} else {
 		var failed []RawObservation
 
-		scan.Material.CredHub, scan.Material.SigningCAs, failed = s.readCredHub(ctx, director, deployment, facts, vars, owner)
+		var reading caReading
+
+		scan.Material.CredHub, reading, failed = s.readCredHub(ctx, director, deployment, facts, vars, owner)
+		scan.Material.SigningCAs, scan.Material.CAVersions, scan.Material.CAsRead = reading.cas, reading.versions, reading.read
 		scan.Material.Raw = append(scan.Material.Raw, failed...)
-		scan.Material.CAsRead = true
 	}
 
 	hosts, hostsFailed := s.readHosts(ctx, ref.ID, owner)
@@ -575,7 +582,7 @@ func unreadCertificates(facts *ManifestFacts, director, deployment string, owner
 // could not be read.
 func (s *Scanner) readCredHub(ctx context.Context, director, deployment string, facts *ManifestFacts,
 	vars []bosh.Variable, owner Owner,
-) ([]CredHubCert, map[string]*x509.Certificate, []RawObservation) {
+) ([]CredHubCert, caReading, []RawObservation) {
 	names, signers := certificateNames(facts, director, deployment)
 	blocked := s.credhubBlocked()
 
@@ -624,12 +631,12 @@ func (s *Scanner) readCredHub(ctx context.Context, director, deployment string, 
 	}
 
 	if blocked != "" {
-		return out, nil, failed
+		return out, caReading{}, failed
 	}
 
-	cas, caFailed := s.readSigningCAs(ctx, out, down)
+	reading, caFailed := s.readSigningCAs(ctx, out, down)
 
-	return out, cas, append(failed, caFailed...)
+	return out, reading, append(failed, caFailed...)
 }
 
 // readCertificate fills ch from CredHub. It returns the failure message and
@@ -750,7 +757,7 @@ func (s *Scanner) readVersion(ctx context.Context, id string) (*x509.Certificate
 // certs. A CA that cannot be read is left out, which skips the findings that
 // compare against it, and each certificate it signs gets a failed
 // observation so its coverage reads incomplete.
-func (s *Scanner) readSigningCAs(ctx context.Context, certs []CredHubCert, down string) (map[string]*x509.Certificate, []RawObservation) {
+func (s *Scanner) readSigningCAs(ctx context.Context, certs []CredHubCert, down string) (caReading, []RawObservation) {
 	cas := map[string]*x509.Certificate{}
 	unread := map[string]string{}
 
@@ -783,11 +790,39 @@ func (s *Scanner) readSigningCAs(ctx context.Context, certs []CredHubCert, down 
 		}
 	}
 
+	reading := caReading{read: down == ""}
+
 	if len(cas) == 0 {
-		return nil, failed
+		return reading, failed
 	}
 
-	return cas, failed
+	reading.cas = cas
+	reading.versions = map[string][]*x509.Certificate{}
+
+	for name, cur := range cas {
+		versions := []*x509.Certificate{cur}
+
+		if k, ok := known[name]; ok {
+			for _, v := range []*x509.Certificate{k.Latest, k.Deployed} {
+				if v != nil && !slices.ContainsFunc(versions, v.Equal) {
+					versions = append(versions, v)
+				}
+			}
+		}
+
+		reading.versions[name] = versions
+	}
+
+	return reading, failed
+}
+
+// caReading is what the signing CA step read. read is true only when
+// CredHub was reachable throughout, so an empty cas then means nothing was
+// there to read and not that CredHub could not be asked.
+type caReading struct {
+	cas      map[string]*x509.Certificate
+	versions map[string][]*x509.Certificate
+	read     bool
 }
 
 // signingCA returns a CA's current certificate, from the certificates

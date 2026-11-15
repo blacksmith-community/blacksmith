@@ -1,6 +1,7 @@
 package certinventory
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/pem"
 	"slices"
@@ -19,6 +20,7 @@ type Fleet struct {
 	// is built from. chainRead holds the IDs of certificates whose owning
 	// scan recorded its CA reads.
 	cas       map[string]*x509.Certificate
+	caPool    []*x509.Certificate
 	chainRead map[string]bool
 	// everScanned says at least one scan in the input had succeeded at some
 	// point, so an empty fleet means nothing was found and not that nothing
@@ -40,6 +42,9 @@ type ItemDetail struct {
 	// IssuerChainFacts describes each IssuerChain entry in the same order,
 	// and is present exactly when IssuerChain is.
 	IssuerChainFacts *[]CertFacts `json:"issuer_chain_facts,omitempty"`
+	// IssuerChainIncomplete says the chain does not end in a self-signed
+	// root, so a CA above its last entry is missing from what the scans read.
+	IssuerChainIncomplete bool `json:"issuer_chain_incomplete,omitempty"`
 }
 
 // Certificates returns the fleet's certificates sorted by ID. Callers must
@@ -70,8 +75,14 @@ func (f *Fleet) Item(id string) (ItemDetail, bool) {
 		detail.Facts = Facts(rep)
 
 		if f.chainRead[id] {
-			chain, facts := issuerChain(rep, f.cas)
-			detail.IssuerChain, detail.IssuerChainFacts = &chain, &facts
+			chain, facts, complete := issuerChain(rep, f.caPool)
+
+			switch {
+			case len(chain) > 0:
+				detail.IssuerChain, detail.IssuerChainFacts, detail.IssuerChainIncomplete = &chain, &facts, !complete
+			case noSigner(&f.certs[i], rep):
+				detail.IssuerChain, detail.IssuerChainFacts = &chain, &facts
+			}
 		}
 	}
 
@@ -162,6 +173,7 @@ func Aggregate(scans []InstanceScan, s Settings, caps Capabilities, div map[stri
 	fleet.stampCredHub(primary, extras)
 
 	fleet.cas = cas
+	fleet.caPool = caPool(ordered)
 	fleet.chainRead = chainKnown(fleet, byInstance, cas)
 
 	expected := map[string]int{}
@@ -489,22 +501,61 @@ func chainKnown(f *Fleet, byInstance map[string]*InstanceScan, cas map[string]*x
 	return known
 }
 
+// caPool collects every CA certificate the scans read, every version of
+// each, in a stable order and without duplicates.
+func caPool(scans []InstanceScan) []*x509.Certificate {
+	var pool []*x509.Certificate
+
+	add := func(ca *x509.Certificate) {
+		if ca != nil && !slices.ContainsFunc(pool, ca.Equal) {
+			pool = append(pool, ca)
+		}
+	}
+
+	for i := range scans {
+		m := &scans[i].Material
+
+		for _, name := range sortedKeys(m.SigningCAs) {
+			add(m.SigningCAs[name])
+
+			for _, v := range m.CAVersions[name] {
+				add(v)
+			}
+		}
+	}
+
+	return pool
+}
+
+// noSigner says the scans prove leaf has no issuer to find, because it is
+// self-signed or because it is a CredHub variable that names no signing CA.
+// A certificate only seen on a listener proves nothing, since its issuer may
+// simply not have been read.
+func noSigner(cert *Certificate, leaf *x509.Certificate) bool {
+	if leaf.CheckSignatureFrom(leaf) == nil && bytes.Equal(leaf.RawIssuer, leaf.RawSubject) {
+		return true
+	}
+
+	return cert.Versions != nil && cert.Versions.SigningCA == ""
+}
+
 // issuerChain returns the CA certificates from pool that verify leaf,
-// ordered from its issuer up to the root, as PEM and as parsed facts. Each
-// link must verify the one below it by signature, so a CA that did not sign
-// the chain is left out. Only certificates are encoded, never keys.
-func issuerChain(leaf *x509.Certificate, pool map[string]*x509.Certificate) ([]string, []CertFacts) {
+// ordered from its issuer up to the root, as PEM and as parsed facts, and
+// whether the last one is a self-signed root. Each link must verify the one
+// below it by signature, so a CA that did not sign the chain is left out.
+// Only certificates are encoded, never keys.
+func issuerChain(leaf *x509.Certificate, pool []*x509.Certificate) ([]string, []CertFacts, bool) {
 	out := []string{}
 	facts := []CertFacts{}
 	seen := map[string]bool{string(leaf.Raw): true}
 	cur := leaf
+	root := false
 
 	for range maxChainDepth {
 		var next *x509.Certificate
 
-		for _, name := range sortedKeys(pool) {
-			issuer := pool[name]
-			if issuer == nil || seen[string(issuer.Raw)] || !issuer.IsCA {
+		for _, issuer := range pool {
+			if seen[string(issuer.Raw)] || !issuer.IsCA {
 				continue
 			}
 
@@ -523,7 +574,13 @@ func issuerChain(leaf *x509.Certificate, pool map[string]*x509.Certificate) ([]s
 		out = append(out, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: next.Raw})))
 		facts = append(facts, Facts(next))
 		cur = next
+
+		if next.CheckSignatureFrom(next) == nil && bytes.Equal(next.RawIssuer, next.RawSubject) {
+			root = true
+
+			break
+		}
 	}
 
-	return out, facts
+	return out, facts, root
 }
