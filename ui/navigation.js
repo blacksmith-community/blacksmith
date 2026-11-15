@@ -59,12 +59,16 @@
     if (!text.includes(':') || !/^[0-9a-f:.]+$/i.test(text)) return '';
     try { return new URL(`http://[${text}]/`).hostname.slice(1, -1); } catch (_) { return ''; }
   }
-  // When an address is searched for and no instance has reported its VM
-  // addresses yet, an empty result would mislead, so this says why.
+  // When an address is searched for and some instances have no cached VM
+  // addresses, a miss proves nothing, so this says how many could not be read.
   function ipLookupNote(instances, query) {
     if (!normalizeAddress(query)) return '';
-    const known = Object.values(instances || {}).some(item => item && Array.isArray(item.vm_ips) && item.vm_ips.length);
-    return known ? '' : 'VM addresses are not available yet, so an IP cannot be matched. Try again after the VM monitor has run.';
+    const live = Object.values(instances || {}).filter(item => item && item.deleted !== true);
+    const missing = live.filter(item => !(Array.isArray(item.vm_ips) && item.vm_ips.length)).length;
+    if (!missing) return '';
+    return missing === live.length
+      ? 'VM addresses are not available yet, so an IP cannot be matched. Try again after the VM monitor has run.'
+      : `${missing} of ${live.length} instances have no VM addresses cached yet, so this address may belong to one of them.`;
   }
   function indexed(entry) {
     if (!index.has(entry)) index.set(entry, {

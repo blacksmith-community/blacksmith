@@ -3066,7 +3066,7 @@
       const org = String(details.organization_name || '');
       const space = String(details.space_name || '');
       const ips = (Array.isArray(details.vm_ips) ? details.vm_ips : []).join(' ');
-      return `<tr class="row-link" data-instance-row data-instance-id="${escapeAttribute(String(id))}" data-org="${escapeAttribute(org)}" data-space="${escapeAttribute(space)}" data-ips="${escapeAttribute(ips)}" title="Open ${escapeAttribute(name)}"><td><a class="row-link-anchor" href="${escapeAttribute(instanceHref(id))}">${escapeHtml(name)}</a></td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${escapeHtml(orgSpaceText(org, space))}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">Unknown</td></tr>`;
+      return `<tr class="row-link" data-instance-row data-instance-id="${escapeAttribute(String(id))}" data-service="${escapeAttribute(String(serviceIdToName[details.service_id] || (details.deleted ? '' : details.service_id || '')))}" data-plan="${escapeAttribute(String(details.plan?.name || ''))}" data-org="${escapeAttribute(org)}" data-space="${escapeAttribute(space)}" data-ips="${escapeAttribute(ips)}" title="Open ${escapeAttribute(name)}"><td><a class="row-link-anchor" href="${escapeAttribute(instanceHref(id))}">${escapeHtml(name)}</a></td><td>${service ? escapeHtml(service) : EMPTY_HTML}</td><td>${plan ? escapeHtml(plan) : EMPTY_HTML}</td><td>${escapeHtml(orgSpaceText(org, space))}</td><td>${status ? escapeHtml(status) : EMPTY_HTML}</td><td data-instance-certificates="${escapeAttribute(String(id))}">Unknown</td></tr>`;
     }).join('');
     if (!rows) return '<div class="no-data">No services have been provisioned yet.</div>';
     return `<div class="instances-overview">
@@ -3130,12 +3130,13 @@
   tableRowMatchers['instances-overview-table'] = (row, query) => instanceMatchesQuery(query, {
     name: row.cells[0]?.textContent, id: row.dataset.instanceId, service: row.cells[1]?.textContent, plan: row.cells[2]?.textContent,
     org: row.dataset.org, space: row.dataset.space, ips: splitAddresses(row.dataset.ips)});
-  // The org and space filters sit in the list beside the service and plan
-  // filters, and they narrow the overview rows through its row gate.
+  // The service, plan, org, and space filters sit in the list, and they
+  // narrow the overview rows through its row gate, so both views agree.
   tableRowGates.set('instances-overview-table', (row) => {
-    const org = document.getElementById('org-filter')?.value;
-    const space = document.getElementById('space-filter')?.value;
-    return (!org || row.dataset.org === org) && (!space || row.dataset.space === space);
+    const chosen = (id) => document.getElementById(id)?.value;
+    const service = chosen('service-filter'), plan = chosen('plan-filter'), org = chosen('org-filter'), space = chosen('space-filter');
+    return (!service || row.dataset.service === service) && (!plan || row.dataset.plan === plan)
+      && (!org || row.dataset.org === org) && (!space || row.dataset.space === space);
   });
   const listItemMatches = (item, query) => instanceMatchesQuery(query, {
     name: item.querySelector('.service-instance-name')?.textContent, id: item.dataset.instanceId, service: item.dataset.service, plan: item.dataset.plan,
@@ -3143,16 +3144,30 @@
   // An address that nothing matches reads as "no such instance" unless no
   // instance has reported its VM addresses yet, and then it says so.
   const IP_NOT_READY = 'VM addresses are not available yet, so an IP cannot be matched. Try again after the VM monitor has run.';
-  const ipLookupPending = (query) => !!normalizeAddress(query)
-    && !Object.values(window.serviceInstances || {}).some(item => item && Array.isArray(item.vm_ips) && item.vm_ips.length);
+  // When some instances have no cached addresses, a miss does not prove that no
+  // VM has the address, so the note says how many instances could not be read.
+  const ipLookupNote = (query) => {
+    if (!normalizeAddress(query)) return '';
+    const live = Object.values(window.serviceInstances || {}).filter(item => item && item.deleted !== true);
+    const missing = live.filter(item => !(Array.isArray(item.vm_ips) && item.vm_ips.length)).length;
+    if (!missing) return '';
+    return missing === live.length ? IP_NOT_READY
+      : `${missing} of ${live.length} instances have no VM addresses cached yet, so this address may belong to one of them.`;
+  };
+  // The overview's empty result carries the note. Every filter pass resets that
+  // message, so each pass puts the note back.
+  const refreshIpNote = () => {
+    const query = document.getElementById('search-instances-overview-table')?.value || document.getElementById('instance-search')?.value;
+    const text = ipLookupNote(query);
+    const note = document.querySelector('.instances-overview .no-results-msg');
+    if (note && text) note.textContent = text;
+  };
   // The list's search box and the overview's search box are one filter.
   const instanceSearchBoxes = () => [document.getElementById('instance-search'), document.getElementById('search-instances-overview-table')];
   const syncInstanceSearch = (source) => {
     setInstanceSearch(source.value);
     // The overview has filtered by now, so its empty result can say why.
-    if (!ipLookupPending(source.value)) return;
-    const note = document.querySelector('.instances-overview .no-results-msg');
-    if (note) note.textContent = IP_NOT_READY;
+    refreshIpNote();
   };
   // Every programmatic change goes through here, so both boxes and both
   // views always show the same query.
@@ -3202,8 +3217,10 @@
     // Only show filter if we have catalog data and services
     const showFilter = hasCatalog && services.size > 0;
 
-    const orgs = [...new Set(Object.values(instances || {}).map(details => details?.organization_name).filter(Boolean))].sort();
-    const spaces = [...new Set(Object.values(instances || {}).map(details => details?.space_name).filter(Boolean))].sort();
+    // A deleted instance is not in the overview, so it offers no org or space.
+    const liveDetails = Object.values(instances || {}).filter(details => details && details.deleted !== true);
+    const orgs = [...new Set(liveDetails.map(details => details.organization_name).filter(Boolean))].sort();
+    const spaces = [...new Set(liveDetails.map(details => details.space_name).filter(Boolean))].sort();
     const optionList = (values) => values.map(value => `<option value="${escapeAttribute(String(value))}">${escapeAttribute(String(value))}</option>`).join('');
     const orgSpaceFilters = orgs.length || spaces.length ? `
         <div class="filter-row">
@@ -17104,8 +17121,9 @@
             previous.disabled = page === 0;
             next.disabled = (page + 1) * 50 >= matching.length;
             pageLabel.textContent = `${page + 1} / ${Math.max(1, Math.ceil(matching.length / 50))}`;
-            filterCount.textContent = !matching.length && ipLookupPending(search.value) ? IP_NOT_READY : `${matching.length} matching · ${allItems.length} total`;
+            filterCount.textContent = (!matching.length && ipLookupNote(search.value)) || `${matching.length} matching · ${allItems.length} total`;
             applyTableVisibility('instances-overview-table');
+            refreshIpNote();
           };
           search.addEventListener('input', () => applyFilters());
           previous.addEventListener('click', () => applyFilters(page - 1));
@@ -17128,12 +17146,15 @@
           // value the filters no longer offer is refused before anything changes.
           window.applyServicesFilter = (service = '', plan = '', org = '', space = '') => {
             const offers = (select, value) => !!select && [...select.options].some(option => option.value === value);
+            // Every value is checked before any filter changes.
             if (org && !offers(orgFilter, org)) throw new Error('This organization is no longer available.');
+            if (space && !(spaceFilter && spacesFor(org).includes(space))) throw new Error('This space is no longer available.');
+            if (service && !offers(serviceFilter, service)) throw new Error('This service type is no longer available.');
+            if (service && plan && !buildServiceFilterIndex(window.serviceInstances).plansPerService[service]?.has(plan)) throw new Error('This service plan is no longer available.');
             if (orgFilter) {
               orgFilter.value = org;
               orgFilter.dispatchEvent(new Event('change'));
             }
-            if (space && !offers(spaceFilter, space)) throw new Error('This space is no longer available.');
             if (spaceFilter) spaceFilter.value = space;
             if (!service) {
               if (serviceFilter) serviceFilter.value = '';
@@ -17141,14 +17162,8 @@
               applyFilters();
               return;
             }
-            if (!offers(serviceFilter, service)) throw new Error('This service type is no longer available.');
             serviceFilter.value = service;
             serviceFilter.dispatchEvent(new Event('change'));
-            if (plan && !offers(planFilter, plan)) {
-              serviceFilter.value = '';
-              serviceFilter.dispatchEvent(new Event('change'));
-              throw new Error('This service plan is no longer available.');
-            }
             planFilter.value = plan;
             planFilter.dispatchEvent(new Event('change'));
           };
@@ -17471,11 +17486,12 @@
           }
 
           // The space choices follow the chosen org, as the plan choices follow the service.
+          const spacesFor = (org) => [...new Set(Object.values(window.serviceInstances || {})
+            .filter(details => details && details.deleted !== true && (!org || details.organization_name === org)).map(details => details.space_name).filter(Boolean))].sort();
           const offerSpaces = (org) => {
             if (!spaceFilter) return;
             const chosen = spaceFilter.value;
-            const names = [...new Set(Object.values(window.serviceInstances || {})
-              .filter(details => details && (!org || details.organization_name === org)).map(details => details.space_name).filter(Boolean))].sort();
+            const names = spacesFor(org);
             spaceFilter.replaceChildren(new Option('All Spaces', ''), ...names.map(name => new Option(name, name)));
             spaceFilter.value = names.includes(chosen) ? chosen : '';
           };
