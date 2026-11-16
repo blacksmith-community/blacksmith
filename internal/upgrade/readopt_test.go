@@ -134,7 +134,7 @@ func loadedTask() *UpgradeTask { return &UpgradeTask{ID: loadedTaskID} }
 func eventuallyWithin(t *testing.T, manager *Manager, taskID string, within time.Duration, what string, done func(UpgradeTask) bool) UpgradeTask {
 	t.Helper()
 
-	deadline := time.Now().Add(within)
+	deadline := time.Now().Add(max(within, time.Until(waitDeadline(t))))
 
 	for {
 		manager.mu.RLock()

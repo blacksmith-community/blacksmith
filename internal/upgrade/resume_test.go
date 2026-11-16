@@ -327,11 +327,33 @@ func (l *processLogger) processedCount(taskID string) int {
 	return l.processed[taskID]
 }
 
+// waitDeadline is when a wait for an event gives up. A race-instrumented run
+// on a loaded machine can take longer than any fixed number of seconds, so
+// the wait lasts up to a minute, and never past the time the test binary has
+// left, less a few seconds so the failure is reported instead of killed.
+func waitDeadline(t *testing.T) time.Time {
+	t.Helper()
+
+	const (
+		longest = time.Minute
+		reserve = 5 * time.Second
+	)
+
+	deadline := time.Now().Add(longest)
+
+	limit, ok := t.Deadline()
+	if ok && limit.Add(-reserve).Before(deadline) {
+		deadline = limit.Add(-reserve)
+	}
+
+	return deadline
+}
+
 // waitUntil waits until done holds, and fails the test when it never does.
 func waitUntil(t *testing.T, what string, done func() bool) {
 	t.Helper()
 
-	deadline := time.Now().Add(waitTimeout)
+	deadline := waitDeadline(t)
 
 	for !done() {
 		if time.Now().After(deadline) {
