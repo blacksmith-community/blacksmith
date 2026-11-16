@@ -130,11 +130,16 @@ func waitForLoad(t *testing.T, manager *Manager) {
 // helpers that read the manager's own copy by ID.
 func loadedTask() *UpgradeTask { return &UpgradeTask{ID: loadedTaskID} }
 
-// eventuallyWithin is eventually with its own deadline.
+// eventuallyWithin is eventually with its own deadline. A within of zero
+// reads the task once and fails at once when it is missing or done does
+// not hold, which is how a test reads the manager's copy as it stands.
 func eventuallyWithin(t *testing.T, manager *Manager, taskID string, within time.Duration, what string, done func(UpgradeTask) bool) UpgradeTask {
 	t.Helper()
 
 	deadline := time.Now().Add(max(within, time.Until(waitDeadline(t))))
+	if within == 0 {
+		deadline = time.Time{}
+	}
 
 	for {
 		manager.mu.RLock()
