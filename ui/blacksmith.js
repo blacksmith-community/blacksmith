@@ -11182,9 +11182,9 @@
           return '<div class="no-data">No deployment task found in events</div>';
         }
 
-        // Fetch the appropriate log type
-        const logType = type === 'logs' ? 'log' : 'debug';
-        const logResponse = await fetch(`/b/deployments/${deploymentName}/tasks/${taskId}/${logType}`, { cache: 'no-cache' });
+        // The broker serves a task's events from its output route, for the
+        // log and the debug view alike, as it does for a service instance.
+        const logResponse = await fetch(`/b/tasks/${encodeURIComponent(taskId)}/output?type=event`, { cache: 'no-cache' });
         if (!logResponse.ok) {
           throw new Error(`HTTP ${logResponse.status}: ${logResponse.statusText}`);
         }
