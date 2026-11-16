@@ -172,6 +172,7 @@ func TestVaultClientRejectsAnUnusableCACert(t *testing.T) {
 		"a file with no cert":   empty,
 		"PEM with no cert":      "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydA==\n-----END CERTIFICATE-----\n",
 		"a body without header": "TUlJQmtUQ0IrNkFEQWdFQ0FoUUJhc2U2NGJvZHlsb3N0aGVhZGVy\nc2Vjb25kbGluZW9mdGhlYm9keQ==\n",
+		"a short fragment":      "TUlJQmtUQ0IrNkFEQWdFQ0FoUUJhc2U2NGJvZHlsb3N0aGVhZGVy",
 	} {
 		err := vault.New("https://127.0.0.1:1", "", false).SetCACert(value)
 		if err == nil {
@@ -184,15 +185,16 @@ func TestVaultClientRejectsAnUnusableCACert(t *testing.T) {
 			t.Errorf("the error for %s repeats the certificate text: %v", name, err)
 		}
 
-		// A single-line path may be named, so only a multi-line value
-		// is held to never appearing in the error.
-		if len(strings.Fields(value)) < 2 {
-			continue
-		}
-
+		// No part of the value may appear in the error, because a
+		// short value may be a piece of a certificate as easily as a
+		// path.
 		for _, line := range strings.Fields(value) {
-			if len(line) > 16 && strings.Contains(err.Error(), line[:16]) {
-				t.Errorf("the error for %s repeats part of the value: %v", name, err)
+			for start := 0; start+16 <= len(line); start += 8 {
+				if strings.Contains(err.Error(), line[start:start+16]) {
+					t.Errorf("the error for %s repeats part of the value: %v", name, err)
+
+					break
+				}
 			}
 		}
 	}

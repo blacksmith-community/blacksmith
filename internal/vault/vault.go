@@ -74,10 +74,6 @@ func NewWithTimeout(url, token string, insecure bool, timeout time.Duration) *Va
 	}
 }
 
-// maxCACertPathLength bounds a vault.cacert value that may be named in an
-// error, since a longer single line is more likely a pasted body than a path.
-const maxCACertPathLength = 256
-
 // ErrInvalidCACert reports a vault.cacert value that holds no usable CA.
 var ErrInvalidCACert = errors.New("vault cacert has no usable CA certificate")
 
@@ -95,7 +91,7 @@ func (vault *Vault) SetCACert(value string) error {
 	if !strings.Contains(value, "-----BEGIN") {
 		data, err := os.ReadFile(value) //nolint:gosec // the operator names this file in the broker's own config
 		if err != nil {
-			return unreadableCACertError(value, err)
+			return unreadableCACertError(err)
 		}
 
 		pemBytes = data
@@ -117,10 +113,10 @@ func (vault *Vault) SetCACert(value string) error {
 }
 
 // unreadableCACertError describes a vault.cacert value that is not PEM text
-// and could not be read as a file. A pasted certificate body that lost its
-// header looks like a path, so the value is named only when it is a single
-// line with no whitespace, and the cause is the bare errno.
-func unreadableCACertError(value string, err error) error {
+// and could not be read as a file. It never names any part of the value,
+// because a short value may be a piece of a certificate as easily as a path,
+// and the cause is the bare errno.
+func unreadableCACertError(err error) error {
 	cause := err
 
 	var pathErr *fs.PathError
@@ -128,11 +124,7 @@ func unreadableCACertError(value string, err error) error {
 		cause = pathErr.Err
 	}
 
-	if len(strings.Fields(value)) == 1 && !strings.ContainsAny(value, "\r\n") && len(value) <= maxCACertPathLength {
-		return fmt.Errorf("vault cacert %q is neither PEM text nor a readable file: %w", value, cause)
-	}
-
-	return fmt.Errorf("vault cacert is neither PEM text nor a readable file: %w", cause)
+	return fmt.Errorf("vault cacert is neither PEM text nor a readable file, so check vault.cacert: %w", cause)
 }
 
 // SetToken updates the in-memory token and refreshes it on the underlying client if present.
