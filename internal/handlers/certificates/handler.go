@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -333,14 +334,39 @@ func (h *Handler) loadVaultCACertificate(ctx context.Context, cfg interface {
 		return
 	}
 
-	cert, err := h.loadCertificateFromFile(ctx, vaultCACert, "Vault CA Certificate")
+	// vault.cacert is either PEM text or the path of a PEM file.
+	var (
+		cert *certificates.CertificateListItem
+		err  error
+	)
+
+	if strings.Contains(vaultCACert, "-----BEGIN") {
+		cert, err = h.loadCertificateFromPEM(ctx, vaultCACert, "Vault CA Certificate", "config:vault.cacert")
+	} else {
+		cert, err = h.loadCertificateFromFile(ctx, vaultCACert, "Vault CA Certificate")
+	}
+
 	if err != nil {
-		log.Error("failed to load vault CA certificate: %s", err)
+		// The value may be a certificate body that lost its header, and
+		// a read error would repeat it, so only the cause is logged.
+		log.Error("failed to load vault CA certificate from vault.cacert: %s", loadFailureCause(err))
 
 		return
 	}
 
 	*certList = append(*certList, *cert)
+}
+
+// loadFailureCause returns the part of a load error that is safe to log. A
+// file read error carries the path it tried, which for a configuration value
+// may be certificate text, so only the underlying cause is kept.
+func loadFailureCause(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+
+	return err
 }
 
 // loadBOSHCACertificate loads the BOSH CA certificate if configured.

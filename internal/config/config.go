@@ -937,7 +937,8 @@ func (c *Config) GetBrokerTLSCertificate() string {
 	return c.Broker.TLS.Certificate
 }
 
-// GetVaultCACert returns the path to the Vault CA certificate.
+// GetVaultCACert returns vault.cacert, which is either PEM text or the path
+// of a PEM file.
 func (c *Config) GetVaultCACert() string {
 	return c.Vault.CACert
 }

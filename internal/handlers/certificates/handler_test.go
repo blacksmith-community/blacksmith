@@ -14,6 +14,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,11 +30,11 @@ func NewTestLogger(component, _ string) logger.Logger {
 }
 
 // testConfig implements the Config interface for testing.
-type testConfig struct{ boshCACert string }
+type testConfig struct{ boshCACert, vaultCACert string }
 
 func (c *testConfig) GetBrokerTLSEnabled() bool       { return false }
 func (c *testConfig) GetBrokerTLSCertificate() string { return "" }
-func (c *testConfig) GetVaultCACert() string          { return "" }
+func (c *testConfig) GetVaultCACert() string          { return c.vaultCACert }
 func (c *testConfig) GetBOSHCACert() string           { return c.boshCACert }
 
 type certificateRequestTestCase struct {
@@ -783,10 +785,9 @@ func TestCertificateResponse_Structure(t *testing.T) {
 	}
 }
 
-func TestBlacksmithCertificatesIncludesBOSHCAFromPEM(t *testing.T) {
-	t.Parallel()
-
-	const commonName = "Test BOSH CA"
+// selfSignedCAPEM returns a self-signed CA certificate as PEM text.
+func selfSignedCAPEM(t *testing.T, commonName string) string {
+	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -808,35 +809,73 @@ func TestBlacksmithCertificatesIncludesBOSHCAFromPEM(t *testing.T) {
 		t.Fatalf("create certificate: %v", err)
 	}
 
-	pemText := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
 
-	api := certificates.NewHandler(&testConfig{boshCACert: pemText}, NewTestLogger("test", "INFO"), nil)
+// blacksmithCertificate returns the item with the given name that the
+// blacksmith certificates route lists for cfg.
+func blacksmithCertificate(t *testing.T, cfg *testConfig, name string) pkgCertificates.CertificateListItem {
+	t.Helper()
+
+	api := certificates.NewHandler(cfg, NewTestLogger("test", "INFO"), nil)
 
 	recorder := httptest.NewRecorder()
 	api.HandleBlacksmithCertificates(recorder, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/b/internal/certificates/blacksmith", nil))
 
 	var response pkgCertificates.CertificateResponse
 
-	err = json.Unmarshal(recorder.Body.Bytes(), &response)
+	err := json.Unmarshal(recorder.Body.Bytes(), &response)
 	if err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
 
 	for _, item := range response.Data.Certificates {
-		if item.Name != "BOSH CA Certificate" {
-			continue
+		if item.Name == name {
+			return item
 		}
-
-		if item.Path != "config:bosh.cacert" {
-			t.Errorf("Path = %q, want config:bosh.cacert", item.Path)
-		}
-
-		if item.Details.Subject.CommonName != commonName {
-			t.Errorf("common name = %q, want %q", item.Details.Subject.CommonName, commonName)
-		}
-
-		return
 	}
 
-	t.Fatalf("BOSH CA Certificate item missing from %d items", len(response.Data.Certificates))
+	t.Fatalf("%s item missing from %d items", name, len(response.Data.Certificates))
+
+	return pkgCertificates.CertificateListItem{}
+}
+
+// A configured CA may be PEM text or a file path, for BOSH and for Vault.
+func TestBlacksmithCertificatesIncludesConfiguredCAs(t *testing.T) {
+	t.Parallel()
+
+	filePath := filepath.Join(t.TempDir(), "vault-ca.pem")
+
+	err := os.WriteFile(filePath, []byte(selfSignedCAPEM(t, "File Vault CA")), 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name       string
+		cfg        *testConfig
+		item       string
+		wantPath   string
+		wantCommon string
+	}{
+		{"BOSH PEM", &testConfig{boshCACert: selfSignedCAPEM(t, "Test BOSH CA")}, "BOSH CA Certificate", "config:bosh.cacert", "Test BOSH CA"},
+		{"Vault PEM", &testConfig{vaultCACert: selfSignedCAPEM(t, "Test Vault CA")}, "Vault CA Certificate", "config:vault.cacert", "Test Vault CA"},
+		{"Vault file", &testConfig{vaultCACert: filePath}, "Vault CA Certificate", filePath, "File Vault CA"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			item := blacksmithCertificate(t, testCase.cfg, testCase.item)
+
+			if item.Path != testCase.wantPath {
+				t.Errorf("Path = %q, want %q", item.Path, testCase.wantPath)
+			}
+
+			if item.Details.Subject.CommonName != testCase.wantCommon {
+				t.Errorf("common name = %q, want %q", item.Details.Subject.CommonName, testCase.wantCommon)
+			}
+		})
+	}
 }
