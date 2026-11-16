@@ -221,8 +221,8 @@ type VMMonitoringConfig struct {
 	NormalInterval int   `yaml:"normal_interval"` // Seconds between checks for healthy deployments
 	FailedInterval int   `yaml:"failed_interval"` // Seconds between checks for unhealthy deployments
 	MaxRetries     int   `yaml:"max_retries"`
-	Timeout        int   `yaml:"timeout"` // The deadline for each check's VM listing (seconds); 0 means 300
-	MaxConcurrent  int   `yaml:"max_concurrent"`
+	Timeout        int   `yaml:"timeout"`        // The deadline for each check's VM listing (seconds); 0 means 300
+	MaxConcurrent  int   `yaml:"max_concurrent"` // How many instances one check cycle checks at once; 0 means 3
 }
 
 type TLSConfig struct {
@@ -860,6 +860,12 @@ func (c *Config) GetVMMonitoringFailedInterval() int {
 // in seconds.
 func (c *Config) GetVMMonitoringTimeout() int {
 	return c.VMMonitoring.Timeout
+}
+
+// GetVMMonitoringMaxConcurrent returns how many instances the VM monitor
+// checks at the same time.
+func (c *Config) GetVMMonitoringMaxConcurrent() int {
+	return c.VMMonitoring.MaxConcurrent
 }
 
 // IsVMMonitoringEnabled returns whether VM monitoring is enabled.

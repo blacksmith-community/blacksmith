@@ -81,6 +81,10 @@ const statusDeleted = "deleted"
 // config sets none.
 const defaultCheckTimeout = 5 * time.Minute
 
+// defaultMaxConcurrent is how many instances one check cycle checks at the
+// same time when the config sets no usable limit.
+const defaultMaxConcurrent = 3
+
 // Monitor handles scheduled VM monitoring for service instances.
 type Monitor struct {
 	vault        vmVault
@@ -95,6 +99,11 @@ type Monitor struct {
 	// each check, so one listing whose BOSH task waits behind a busy
 	// director cannot hold a worker for longer.
 	checkTimeout time.Duration
+
+	// maxConcurrent is how many instances one check cycle checks at the
+	// same time. A zero value, as a monitor built without New has, means
+	// defaultMaxConcurrent.
+	maxConcurrent int
 
 	services map[string]*ServiceMonitor
 
@@ -202,6 +211,25 @@ func New(vault *internalVault.Vault, boshDirector bosh.Director, claims Operatio
 		}
 	}
 
+	// The worker count has its own interface too, so a config that does
+	// not offer it gets the default.
+	type concurrencyGetter interface {
+		GetVMMonitoringMaxConcurrent() int
+	}
+
+	maxConcurrent := defaultMaxConcurrent
+
+	if c, ok := cfg.(concurrencyGetter); ok {
+		maxConcurrent = c.GetVMMonitoringMaxConcurrent()
+		if maxConcurrent <= 0 {
+			logger.Get().Named("vm-monitor").Warn(
+				"vm_monitoring.max_concurrent is %d, and it must be at least 1, so the monitor uses the default of %d",
+				maxConcurrent, defaultMaxConcurrent)
+
+			maxConcurrent = defaultMaxConcurrent
+		}
+	}
+
 	return &Monitor{
 		vault:          vault,
 		boshDirector:   boshDirector,
@@ -210,6 +238,7 @@ func New(vault *internalVault.Vault, boshDirector bosh.Director, claims Operatio
 		normalInterval: normalInterval,
 		failedInterval: failedInterval,
 		checkTimeout:   checkTimeout,
+		maxConcurrent:  maxConcurrent,
 		services:       make(map[string]*ServiceMonitor),
 		checking:       make(map[string]bool),
 		cancel:         nil, // Will be set in Start()
@@ -708,9 +737,12 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	logger.Info("Starting check cycle: %d services due out of %d total", len(servicesDue), totalServices)
 
 	// Process services with concurrency limit
-	const maxConcurrentChecks = 3
+	maxConcurrentChecks := m.maxConcurrent
+	if maxConcurrentChecks <= 0 {
+		maxConcurrentChecks = defaultMaxConcurrent
+	}
 
-	sem := make(chan struct{}, maxConcurrentChecks) // Max 3 concurrent checks
+	sem := make(chan struct{}, maxConcurrentChecks)
 
 	var waitGroup sync.WaitGroup
 
