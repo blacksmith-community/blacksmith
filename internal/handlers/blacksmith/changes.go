@@ -16,6 +16,7 @@ const (
 
 	settingVaultMaxVersions   = "vault_max_versions"
 	settingReconcilerInterval = "reconciler_interval"
+	settingErrandTimeout      = "errand_timeout"
 
 	// defaultChangeList is how many changes a page shows unless it asks
 	// for another number.

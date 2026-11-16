@@ -461,6 +461,10 @@ func (h *Handler) GetSettings(responseWriter http.ResponseWriter, req *http.Requ
 		result["reconciler_interval"] = h.reconciler.GetInterval().String()
 	}
 
+	choice := h.errandChoice(ctx)
+	result[settingErrandTimeout] = choice.Wait.String()
+	result[settingErrandTimeout+"_source"] = choice.Source
+
 	response.HandleJSON(responseWriter, result, nil)
 }
 
@@ -472,6 +476,7 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 	var body struct {
 		VaultMaxVersions   *int    `json:"vault_max_versions"`
 		ReconcilerInterval *string `json:"reconciler_interval"`
+		ErrandTimeout      *string `json:"errand_timeout"`
 	}
 
 	err := json.NewDecoder(req.Body).Decode(&body)
@@ -563,6 +568,10 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 		logger.Info("Reconciler interval updated to %v", interval)
 		h.recordSetting(ctx, settingReconcilerInterval, oldInterval, interval.String())
 		result["reconciler_interval"] = interval.String()
+	}
+
+	if body.ErrandTimeout != nil && !h.saveErrandTimeout(ctx, responseWriter, *body.ErrandTimeout, result) {
+		return
 	}
 
 	response.HandleJSON(responseWriter, result, nil)

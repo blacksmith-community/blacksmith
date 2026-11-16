@@ -262,6 +262,10 @@ type BrokerConfig struct {
 // absent.
 const DefaultErrandTimeout = 30 * time.Minute
 
+// ErrandTimeoutEnvKey is the environment variable that sets the errand wait,
+// below a value saved in the Vault settings and above broker.errand_timeout.
+const ErrandTimeoutEnvKey = "BLACKSMITH_ERRAND_TIMEOUT"
+
 // ErrandWait returns the longest the broker waits for an errand.
 func (b BrokerConfig) ErrandWait() time.Duration {
 	if b.ErrandTimeout == nil {

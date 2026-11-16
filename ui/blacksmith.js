@@ -10949,6 +10949,8 @@
   const renderBlacksmithSettings = (settings, config) => {
     const maxVersions = settings.vault_max_versions || 0;
     const reconcilerInterval = settings.reconciler_interval || '';
+    const errandTimeout = settings.errand_timeout || '';
+    const errandSource = settings.errand_timeout_source ? ` Now set by: ${settings.errand_timeout_source}.` : '';
 
     let html = '<div class="blacksmith-settings">';
 
@@ -10973,6 +10975,15 @@
           </div>
           <span id="help-reconciler-interval" class="settings-hint">How often the reconciler syncs BOSH deployments with Vault (minimum 10s). Persisted across restarts.</span>
           <span id="feedback-reconciler-interval" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settings-errand-timeout">Errand Timeout</label>
+          <div class="settings-input-group">
+            <input type="text" id="settings-errand-timeout" class="settings-input" value="${escapeAttribute(String(errandTimeout))}" placeholder="e.g. 30m, 1h" aria-describedby="help-errand-timeout feedback-errand-timeout" />
+            <button type="button" id="apply-errand-timeout" class="settings-apply-btn" aria-label="Apply errand timeout">Apply</button>
+          </div>
+          <span id="help-errand-timeout" class="settings-hint">The longest the broker waits for a BOSH errand to finish, above zero. Persisted across restarts, and it beats the environment and the configuration file.${escapeHtml(errandSource)}</span>
+          <span id="feedback-errand-timeout" class="settings-feedback" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
       </div>
     `;
@@ -11000,7 +11011,8 @@
   const setupBlacksmithSettingsHandlers = () => {
     const fields = [
       {id:'max-versions', key:'vault_max_versions', name:'Vault maximum versions', number:true},
-      {id:'reconciler-interval', key:'reconciler_interval', name:'Reconciler interval'}
+      {id:'reconciler-interval', key:'reconciler_interval', name:'Reconciler interval', empty:'Enter an interval, for example 1h, 30m, or 5m.'},
+      {id:'errand-timeout', key:'errand_timeout', name:'Errand timeout', empty:'Enter a duration, for example 30m or 1h.'}
     ];
     fields.forEach(field => {
       const input = document.getElementById(`settings-${field.id}`);
@@ -11023,7 +11035,7 @@
         const value = field.number ? Number(raw) : raw;
         const error = field.number
           ? (!raw || !Number.isInteger(value) || value < 0 || value > 1000 ? 'Enter a whole number between 0 and 1000.' : '')
-          : (!raw ? 'Enter an interval, for example 1h, 30m, or 5m.' : '');
+          : (!raw ? field.empty : '');
         if (error) {
           input.setAttribute('aria-invalid', 'true'); message(error, 'error'); input.focus(); return;
         }

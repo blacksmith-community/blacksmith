@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"blacksmith/internal/settings"
 	"context"
 	"errors"
 	"fmt"
@@ -559,9 +560,7 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 
 	// Persist to Vault so it survives redeployment
 	if r.vault != nil {
-		err := r.vault.Put(ctx, "blacksmith/settings", map[string]interface{}{
-			"reconciler_interval": interval.String(),
-		})
+		err := settings.Save(ctx, r.vault, "reconciler_interval", interval.String())
 		if err != nil {
 			r.log().Error("Failed to persist reconciler interval to Vault: %s", err)
 			return fmt.Errorf("failed to persist interval: %w", err)
