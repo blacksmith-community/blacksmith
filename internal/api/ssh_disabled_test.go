@@ -29,7 +29,10 @@ func (terminalOffConfig) IsSSHUITerminalEnabled() bool { return false }
 func newSSHGateAPI(t *testing.T, cfg api.Dependencies) *api.InternalAPI {
 	t.Helper()
 
-	cfg.Logger = &mockLogger{}
+	if cfg.Logger == nil {
+		cfg.Logger = &mockLogger{}
+	}
+
 	cfg.Vault = &memoryVault{saved: map[string][]byte{}}
 	cfg.Broker = &mockBroker{}
 	cfg.Director = &startupDirector{}
@@ -180,5 +183,27 @@ func TestCommandAvailabilityReportsSSHOff(t *testing.T) {
 
 	if body.Enabled || body.AllowRoot || body.Reason != "ssh_disabled" {
 		t.Errorf("got %+v, want commands off with reason ssh_disabled", body)
+	}
+}
+
+// A refusal goes through the router's middleware, so the request is logged
+// with its 403 like any other.
+func TestSSHRefusalIsLogged(t *testing.T) {
+	t.Parallel()
+
+	log := &wiringLog{}
+	router := newSSHGateAPI(t, api.Dependencies{Config: &sshOffConfig{}, Logger: log})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, trustedPath, nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+
+	if !strings.Contains(log.joined(), "Status: 403") {
+		t.Errorf("the refused request was not logged: %q", log.joined())
 	}
 }

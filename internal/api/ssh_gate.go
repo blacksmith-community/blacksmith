@@ -8,6 +8,7 @@ import (
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/upgrade"
+	pkgmiddleware "blacksmith/pkg/http/middleware"
 	"blacksmith/pkg/http/response"
 )
 
@@ -42,6 +43,22 @@ func isSSHBackedRoute(path string) bool {
 	}
 
 	return false
+}
+
+// sshGate refuses a request for an SSH-backed route with a 403 while
+// ssh.enabled is false. It sits inside the router's middleware chain.
+func sshGate(sshEnabled func() bool) pkgmiddleware.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+			if sshEnabled != nil && !sshEnabled() && isSSHBackedRoute(req.URL.Path) {
+				refuseSSHDisabled(writer)
+
+				return
+			}
+
+			next.ServeHTTP(writer, req)
+		})
+	}
 }
 
 // refuseSSHDisabled answers 403 with the SSH-disabled code and message.

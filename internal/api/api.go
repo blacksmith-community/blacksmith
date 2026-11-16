@@ -41,7 +41,6 @@ const (
 
 // InternalAPI represents the refactored internal API with proper separation of concerns.
 type InternalAPI struct {
-	sshEnabled               func() bool
 	router                   *routing.Router
 	certificateHandler       *certificates.Handler
 	cfHandler                *cf.Handler
@@ -339,6 +338,8 @@ func createRouterWithMiddleware(deps Dependencies) *routing.Router {
 	middlewareChain := pkgmiddleware.New(
 		middleware.LoggingMiddleware(deps.Logger),
 		middleware.SecurityMiddleware(deps.SecurityMiddleware),
+		// Innermost, so a refusal is logged and secured like any answer.
+		sshGate(deps.Config.IsSSHEnabled),
 	)
 
 	return routing.NewRouter(middlewareChain)
@@ -484,7 +485,6 @@ func NewInternalAPI(deps Dependencies) *InternalAPI {
 	// Create and return the API instance
 	return &InternalAPI{
 		router:                   router,
-		sshEnabled:               deps.Config.IsSSHEnabled,
 		certificateHandler:       handlers.certificate,
 		cfHandler:                handlers.cf,
 		instanceHandler:          handlers.instance,
@@ -675,12 +675,6 @@ func (api *InternalAPI) Changes() *audit.ChangeStore {
 
 // ServeHTTP implements the http.Handler interface.
 func (api *InternalAPI) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
-	if api.sshEnabled != nil && !api.sshEnabled() && isSSHBackedRoute(req.URL.Path) {
-		refuseSSHDisabled(writer)
-
-		return
-	}
-
 	// Use the router to find and execute the appropriate handler
 	if handler := api.router.FindHandler(req.URL.Path); handler != nil {
 		handler.ServeHTTP(writer, req)
