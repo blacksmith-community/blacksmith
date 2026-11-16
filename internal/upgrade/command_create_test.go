@@ -21,7 +21,9 @@ import (
 	"blacksmith/internal/bosh/sshconn"
 	"blacksmith/internal/config"
 	"blacksmith/internal/mutation"
+	"blacksmith/internal/ownership"
 	"blacksmith/pkg/logger"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
 const cmdRequestID = "7c1d"
@@ -118,6 +120,26 @@ func (v *cmdCreateVault) Get(ctx context.Context, path string, result interface{
 
 	if blind {
 		return false, errGetRefused
+	}
+
+	if path == ownership.IndexPath {
+		index := make(map[string]*vaultPkg.Instance, len(v.records))
+
+		for instanceID := range v.records {
+			index[instanceID] = &vaultPkg.Instance{ServiceID: fixtureService}
+		}
+
+		raw, err := json.Marshal(index)
+		if err != nil {
+			return false, fmt.Errorf("marshal the index: %w", err)
+		}
+
+		err = json.Unmarshal(raw, result)
+		if err != nil {
+			return false, fmt.Errorf("decode the index: %w", err)
+		}
+
+		return true, nil
 	}
 
 	record, ok := v.records[path]

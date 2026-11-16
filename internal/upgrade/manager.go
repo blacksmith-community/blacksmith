@@ -15,6 +15,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
+	"blacksmith/internal/ownership"
 	vaultPkg "blacksmith/pkg/vault"
 
 	"github.com/google/uuid"
@@ -646,16 +647,19 @@ func validateTargets(req CreateTaskRequest) error {
 func (m *Manager) buildInstanceList(ctx context.Context, instanceIDs []string) ([]InstanceUpgrade, error) {
 	instances := make([]InstanceUpgrade, 0, len(instanceIDs))
 
+	index, indexErr := ownership.Index(ctx, m.vault)
+
 	for _, instanceID := range instanceIDs {
 		instance := InstanceUpgrade{
 			InstanceID: instanceID,
 			Status:     InstanceStatusPending,
 		}
 
-		// Get instance info from vault
+		// Get instance info from vault, but only for an instance the index
+		// holds live.
 		var instanceData map[string]interface{}
 
-		exists, err := m.vault.Get(ctx, instanceID, &instanceData)
+		exists, err := m.readLiveInstance(ctx, index, indexErr, instanceID, &instanceData)
 		if err != nil {
 			m.logger.Error("Failed to get instance %s from vault: %v", instanceID, err)
 			instance.Error = fmt.Sprintf("failed to get instance data: %v", err)

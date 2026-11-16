@@ -1932,6 +1932,10 @@ func (h *Handler) handleInstanceOperation(writer http.ResponseWriter, req *http.
 	instanceID := matches[1]
 	operation := matches[2]
 
+	if !h.permitInstance(writer, req, instanceID) {
+		return true
+	}
+
 	switch operation {
 	case "vms":
 		h.GetInstanceVMs(writer, req, instanceID)

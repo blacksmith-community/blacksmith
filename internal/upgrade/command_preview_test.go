@@ -19,19 +19,43 @@ import (
 	"blacksmith/internal/config"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/mutation"
+	"blacksmith/internal/ownership"
 	"blacksmith/pkg/logger"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
-const secretCommand = "echo top-secret-marker"
+const (
+	secretCommand  = "echo top-secret-marker"
+	fixtureService = "fixture"
+	redisI1        = "redis-i1"
+	goneInstance   = "gone"
+)
 
 // cmdVault holds instance records by instance ID.
 type cmdVault struct {
 	interfaces.Vault
 
-	records map[string]map[string]any
+	records    map[string]map[string]any
+	tombstones map[string]bool
+	indexErr   error
 }
 
 func (v *cmdVault) Get(_ context.Context, path string, result interface{}) (bool, error) {
+	if path == ownership.IndexPath {
+		if v.indexErr != nil {
+			return false, v.indexErr
+		}
+
+		target, isIndex := result.(*map[string]*vaultPkg.Instance)
+		if !isIndex {
+			return false, errors.New("cmdVault serves the index as an instance map") //nolint:err113 // test fake
+		}
+
+		*target = v.index()
+
+		return true, nil
+	}
+
 	record, ok := v.records[path]
 	if !ok {
 		return false, nil
@@ -45,6 +69,24 @@ func (v *cmdVault) Get(_ context.Context, path string, result interface{}) (bool
 	*target = record
 
 	return true, nil
+}
+
+// index serves the service index from the records. A record whose ID is
+// in tombstones reads as a deprovisioned entry, so the index lists every
+// record, live or not, as the broker's does.
+func (v *cmdVault) index() map[string]*vaultPkg.Instance {
+	index := make(map[string]*vaultPkg.Instance, len(v.records))
+
+	for instanceID := range v.records {
+		entry := &vaultPkg.Instance{ServiceID: fixtureService}
+		if v.tombstones[instanceID] {
+			entry.Status = vaultPkg.StatusDeleted
+		}
+
+		index[instanceID] = entry
+	}
+
+	return index
 }
 
 // cmdDirector lists VMs by deployment.
@@ -626,7 +668,7 @@ func TestPreviewCommandReadFailuresFailThePreview(t *testing.T) {
 	env.manager.vault = &failVault{}
 
 	_, err := env.manager.PreviewCommand(context.Background(), cmdReq("i1", "i3"))
-	wantAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+	wantAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeVaultUnavailable)
 
 	env = newCmdEnv(t, nil)
 	env.manager.director = &failDirector{}

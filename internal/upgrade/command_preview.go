@@ -18,6 +18,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/config"
+	"blacksmith/internal/ownership"
 )
 
 const (
@@ -281,6 +282,11 @@ func (m *Manager) PreviewCommand(ctx context.Context, req CommandPreviewRequest)
 		Instances:         make([]CommandPreviewInstance, 0, len(req.InstanceIDs)),
 	}
 
+	index, err := ownership.Index(ctx, m.vault)
+	if err != nil {
+		return nil, indexUnreadable(err)
+	}
+
 	seen := make(map[string]bool, len(req.InstanceIDs))
 	services := make(map[string]bool)
 
@@ -291,7 +297,7 @@ func (m *Manager) PreviewCommand(ctx context.Context, req CommandPreviewRequest)
 
 		seen[id] = true
 
-		inst, err := m.previewCommandInstance(ctx, id)
+		inst, err := m.previewLiveCommandInstance(ctx, index, id)
 		if err != nil {
 			return nil, err
 		}

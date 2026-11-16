@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,8 +14,10 @@ import (
 	"blacksmith/internal/bosh/boshtest"
 	upgradehandler "blacksmith/internal/handlers/upgrade"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownership"
 	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/logger"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
 const (
@@ -50,6 +53,10 @@ func newMemoryVault() *memoryVault { return &memoryVault{saved: make(map[string]
 func (v *memoryVault) Get(_ context.Context, path string, result interface{}) (bool, error) {
 	v.mu.Lock()
 	raw, ok := v.saved[path]
+
+	if path == ownership.IndexPath && !ok {
+		raw, ok = memoryIndex(v.saved)
+	}
 	v.mu.Unlock()
 
 	if !ok {
@@ -62,6 +69,22 @@ func (v *memoryVault) Get(_ context.Context, path string, result interface{}) (b
 	}
 
 	return true, nil
+}
+
+// memoryIndex is the service index of the instances the test stored, which
+// are the saved records whose path is a bare ID.
+func memoryIndex(saved map[string][]byte) ([]byte, bool) {
+	index := make(map[string]*vaultPkg.Instance)
+
+	for path := range saved {
+		if !strings.Contains(path, "/") {
+			index[path] = &vaultPkg.Instance{ServiceID: "fixture"}
+		}
+	}
+
+	raw, err := json.Marshal(index)
+
+	return raw, err == nil
 }
 
 func (v *memoryVault) Put(_ context.Context, path string, data interface{}) error {

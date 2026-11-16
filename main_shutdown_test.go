@@ -499,6 +499,15 @@ func startShutdownVault(t *testing.T) *internalVault.Vault {
 		t.Fatalf("storing the instance: %v", err)
 	}
 
+	// The service index lists the instance, because the upgrade deploys
+	// only an instance the index holds live.
+	err = vault.Put(t.Context(), "db", map[string]interface{}{
+		shutdownInstanceID: map[string]interface{}{"deployment_name": shutdownDeployment},
+	})
+	if err != nil {
+		t.Fatalf("storing the service index: %v", err)
+	}
+
 	return vault
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -12,7 +13,9 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/ownership"
 	"blacksmith/pkg/logger"
+	vaultPkg "blacksmith/pkg/vault"
 )
 
 const (
@@ -41,7 +44,41 @@ type waitVault struct {
 
 func newWaitVault() *waitVault { return &waitVault{saved: make(map[string][]byte)} }
 
+// waitIndexIDs are the instance IDs the fake's service index lists live.
+// The fake answers every "instance-" record, and the index needs the IDs
+// by name, so it names the ones the tests use.
+func waitIndexIDs() []string {
+	ids := make([]string, 0, 27)
+	ids = append(ids, "instance-a", "instance-b", "instance-c", "instance-held", "instance-run-1", "instance-diverged", "instance-clean")
+
+	for number := range 20 {
+		ids = append(ids, "instance-"+strconv.Itoa(number))
+	}
+
+	return ids
+}
+
 func (v *waitVault) Get(_ context.Context, path string, result interface{}) (bool, error) {
+	if path == ownership.IndexPath {
+		index := make(map[string]*vaultPkg.Instance)
+
+		for _, instanceID := range waitIndexIDs() {
+			index[instanceID] = &vaultPkg.Instance{ServiceID: fixtureService}
+		}
+
+		raw, err := json.Marshal(index)
+		if err != nil {
+			return false, fmt.Errorf("marshal the index: %w", err)
+		}
+
+		err = json.Unmarshal(raw, result)
+		if err != nil {
+			return false, fmt.Errorf("decode the index: %w", err)
+		}
+
+		return true, nil
+	}
+
 	if strings.HasPrefix(path, "instance-") {
 		raw, _ := json.Marshal(map[string]string{"deployment_name": "redis-" + path})
 

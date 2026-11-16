@@ -5,7 +5,9 @@ package ownership
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	vaultPkg "blacksmith/pkg/vault"
 )
@@ -57,4 +59,54 @@ func ManagedDeployment(ctx context.Context, store Store, deploymentName string) 
 	}
 
 	return false, nil
+}
+
+// ErrInvalidID says an instance ID can't name an index entry, because it
+// is empty or holds a path separator, a parent reference, or an empty
+// segment. Such an ID would reach other Vault paths when a handler joins
+// it into one.
+var ErrInvalidID = errors.New("invalid instance ID")
+
+// ErrNotLive says the index holds no live entry for an instance ID. The
+// instance was never created, or it was deprovisioned and only its
+// tombstone remains.
+var ErrNotLive = errors.New("no live instance with that ID")
+
+// ValidID reports whether id can name an instance. It refuses an empty ID
+// and any ID that holds a slash, a backslash, or "..".
+func ValidID(id string) bool {
+	return id != "" && !strings.ContainsAny(id, `/\`) && !strings.Contains(id, "..")
+}
+
+// LiveInstance returns the live index entry for instanceID. It answers
+// ErrInvalidID for an ID that can't name an instance, ErrNotLive for an ID
+// the index doesn't hold or holds only as a tombstone, and a wrapped error
+// when the index can't be read.
+func LiveInstance(ctx context.Context, store Store, instanceID string) (*vaultPkg.Instance, error) {
+	if !ValidID(instanceID) {
+		return nil, ErrInvalidID
+	}
+
+	index, err := Index(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+
+	return LiveEntry(index, instanceID)
+}
+
+// LiveEntry returns the live entry of an index already read, with the same
+// answers as LiveInstance, so a caller that checks many IDs reads the
+// index once.
+func LiveEntry(index map[string]*vaultPkg.Instance, instanceID string) (*vaultPkg.Instance, error) {
+	if !ValidID(instanceID) {
+		return nil, ErrInvalidID
+	}
+
+	instance := index[instanceID]
+	if instance == nil || instance.IsTombstone() {
+		return nil, ErrNotLive
+	}
+
+	return instance, nil
 }
