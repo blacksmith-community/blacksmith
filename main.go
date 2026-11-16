@@ -1416,7 +1416,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		OnMaxBatchJobsChanged:          onMaxBatchJobsChanged,
 		ServicesManager:                services.NewManagerWithCFConfig(logger.Named("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
 		CFManager:                      cfManager,
-		VMMonitor:                      vmMonitor,
+		VMMonitor:                      apiVMMonitor(vmMonitor),
 		SSHService:                     sshService,
 		RabbitMQSSHService:             rabbitmqSSHService,
 		RabbitMQMetadataService:        rabbitmqMetadataService,
@@ -1742,6 +1742,17 @@ func apiReconciler(reconciler *recovery.ReconcilerAdapter) blacksmith.Reconciler
 	}
 
 	return reconciler
+}
+
+// apiVMMonitor gives the API its VM monitor. A nil monitor becomes a nil
+// interface, because a nil pointer wrapped in an interface passes the status
+// handler's nil check and then panics on the first call.
+func apiVMMonitor(monitor *vmmonitor.Monitor) interfaces.VMMonitor {
+	if monitor == nil {
+		return nil
+	}
+
+	return monitor
 }
 
 // setupVMMonitor builds the vm-monitor over the broker, which it asks for

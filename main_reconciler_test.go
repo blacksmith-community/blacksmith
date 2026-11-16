@@ -28,3 +28,14 @@ func TestAPIReconcilerIsNilWithoutAnAdapter(t *testing.T) {
 		t.Fatalf("apiReconciler(nil) = %#v, want a nil interface", got)
 	}
 }
+
+// A nil monitor must reach the API as a nil interface. A nil pointer inside
+// a non-nil interface would pass the status handler's nil check and then
+// panic on the first call.
+func TestAPIVMMonitorIsNilWithoutAMonitor(t *testing.T) {
+	t.Parallel()
+
+	if got := apiVMMonitor(nil); got != nil {
+		t.Fatalf("apiVMMonitor(nil) = %#v, want a nil interface", got)
+	}
+}
