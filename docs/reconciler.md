@@ -77,7 +77,7 @@ The reconciler is implemented as a modular system with clean separation of conce
 - **Responsibilities**:
   - Collects reconciliation performance metrics
   - Tracks error rates and recent failures
-  - Provides Prometheus-compatible metrics export
+  - Renders its counters in the Prometheus text format, although no route serves them
   - Monitors system health indicators
 
 ## Configuration
@@ -86,16 +86,20 @@ The reconciler can be configured through both the `blacksmith.conf` file and env
 
 ### Configuration Options
 
+The settings below can come from the config file or from an environment variable, and the environment variable wins when both are set. A boolean environment variable is true when it holds `true`, `1`, or `yes`, and any other non-empty value makes it false.
+
 | Environment Variable | Config File | Default | Description |
 |---------------------|-------------|---------|-------------|
 | `BLACKSMITH_RECONCILER_ENABLED` | `reconciler.enabled` | `true` | Enable/disable the reconciler |
 | `BLACKSMITH_RECONCILER_INTERVAL` | `reconciler.interval` | `5m` | Time between reconciliation runs (Go duration or bare seconds) |
-| `BLACKSMITH_RECONCILER_MAX_CONCURRENCY` | `reconciler.max_concurrency` | `5` | Maximum concurrent deployment processing |
+| `BLACKSMITH_RECONCILER_MAX_CONCURRENT` | `reconciler.max_concurrency` | `4` | Maximum deployments processed at the same time |
 | `BLACKSMITH_RECONCILER_BATCH_SIZE` | `reconciler.batch_size` | `10` | Number of deployments to process per batch |
-| `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `reconciler.retry_attempts` | `3` | Number of retry attempts for failed operations |
-| `BLACKSMITH_RECONCILER_RETRY_DELAY` | `reconciler.retry_delay` | `10s` | Delay between retry attempts |
-| `BLACKSMITH_RECONCILER_CACHE_TTL` | `reconciler.cache_ttl` | `5m` | Cache time-to-live for deployment details |
-| `BLACKSMITH_RECONCILER_DEBUG` | `reconciler.debug` | `false` | Enable detailed debug logging |
+| `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `reconciler.retry_attempts` | `3` | Number of attempts for a failed operation |
+| `BLACKSMITH_RECONCILER_DEBUG` | `reconciler.debug` | the top-level `debug` setting | Enable detailed debug logging |
+
+The config file also accepts `reconciler.retry_delay` and `reconciler.cache_ttl`, and the broker reads both without error. Neither one has any effect, and neither has an environment variable. The delay between retries comes from `BLACKSMITH_RECONCILER_RETRY_INITIAL_DELAY`, and the deployment cache lives for a fixed five minutes.
+
+The config loader can't tell a `false` in the file from a setting that was left out, so it treats both as unset and applies the default of `true`. That holds for `reconciler.enabled` and for every `reconciler.backup` switch. To turn one of them off, set its environment variable to `false`.
 
 #### Interval Format and Precedence
 
@@ -115,7 +119,7 @@ Blacksmith takes the interval from the first of these sources that holds a valid
 
 A saved interval takes effect at once, and because it lives in Vault, it persists across restarts and redeploys. It overrides the environment variable and the config file, so operators can change the interval without a redeploy. Changing the environment variable or the config file has no effect on the interval while a saved value exists, so save a new interval through the UI or the settings API instead.
 
-The settings API takes the same forms as the config file. At startup, Blacksmith logs the interval it starts with and its source, and when it loads a saved interval from Vault, it logs which value the saved one replaces. If Blacksmith can't read the saved interval from Vault at startup, for example because Vault is still sealed, it logs a warning that says so and names the interval it runs with instead.
+To change the interval at runtime, use the Broker settings page in the console or `POST /b/blacksmith/settings`, as [Changing the Interval at Runtime](#changing-the-interval-at-runtime) shows. The settings API takes the same forms as the config file. At startup, Blacksmith logs the interval it starts with and its source, and when it loads a saved interval from Vault, it logs which value the saved one replaces. If Blacksmith can't read the saved interval from Vault at startup, for example because Vault is still sealed, it logs a warning that says so and names the interval it runs with instead.
 
 #### Backup Configuration
 
@@ -167,147 +171,17 @@ This approach ensures:
 
 ### Configuration File Example
 
+The config file holds only the settings in the two tables above. This is a complete `reconciler` section.
+
 ```yaml
 # blacksmith.conf
-# Enhanced Reconciler Configuration Example
-# This configuration is optimized for handling hundreds of service instances
-
 reconciler:
-  # Basic settings
   enabled: true
   interval: "30m"
   debug: false
-  max_concurrency: 10
-  batch_size: 20
-  retry_attempts: 5
-  retry_delay: "15s"
-  cache_ttl: "10m"
-
-  # Concurrency controls - Critical for preventing overload
-  concurrency:
-    max_concurrent: 4              # Process max 4 deployments simultaneously
-    max_deployments_per_run: 100   # Limit deployments per reconciliation run
-    queue_size: 1000               # Work queue size
-    worker_pool_size: 10           # Number of worker goroutines
-    cooldown_period: "2s"          # Delay between batches to prevent bursts
-
-  # API-specific rate limiting and circuit breakers
-  apis:
-    bosh:
-      rate_limit:
-        requests_per_second: 10    # Max 10 requests/second to BOSH
-        burst: 5                   # Allow burst of 5 requests
-        wait_timeout: "5s"         # Max time to wait for rate limit
-      circuit_breaker:
-        enabled: true
-        failure_threshold: 5       # Open circuit after 5 failures
-        success_threshold: 2       # Close circuit after 2 successes
-        timeout: "60s"            # Wait 60s before attempting recovery
-        max_concurrent: 1         # Max concurrent requests when half-open
-      timeout: "30s"              # Request timeout
-      max_connections: 10         # Connection pool size
-      keep_alive: "30s"          # Keep-alive interval
-
-    cf:
-      rate_limit:
-        requests_per_second: 20    # CF can handle more requests
-        burst: 10
-        wait_timeout: "5s"
-      circuit_breaker:
-        enabled: true
-        failure_threshold: 3       # CF is more critical, fail faster
-        success_threshold: 2
-        timeout: "30s"
-        max_concurrent: 2
-      timeout: "15s"
-      max_connections: 20
-      keep_alive: "30s"
-
-    vault:
-      rate_limit:
-        requests_per_second: 50    # Vault is fast, allow more
-        burst: 20
-        wait_timeout: "3s"
-      circuit_breaker:
-        enabled: true
-        failure_threshold: 5
-        success_threshold: 2
-        timeout: "45s"
-        max_concurrent: 3
-      timeout: "10s"
-      max_connections: 30
-      keep_alive: "30s"
-
-  # Retry configuration with exponential backoff
-  retry:
-    max_attempts: 3
-    initial_delay: "1s"           # Start with 1 second delay
-    max_delay: "30s"             # Cap at 30 seconds
-    multiplier: 2.0              # Double delay each retry
-    jitter: 0.1                  # Add 10% jitter to prevent thundering herd
-    retryable_errors:            # Patterns to retry
-      - "timeout"
-      - "connection refused"
-      - "rate limit"
-      - "temporary"
-
-  # Batch processing configuration
-  batch:
-    size: 10                     # Process 10 items per batch
-    delay: "500ms"              # Delay between batches
-    max_parallel_batch: 2       # Max 2 batches in parallel
-    adaptive_scaling: true      # Adjust batch size based on performance
-    min_size: 5                 # Minimum batch size
-    max_size: 50               # Maximum batch size
-
-  # Timeout configuration
-  timeouts:
-    reconciliation_run: "15m"    # Overall reconciliation timeout
-    deployment_scan: "5m"        # BOSH deployment scan timeout
-    instance_discovery: "3m"     # CF instance discovery timeout
-    vault_operations: "2m"       # Vault operations timeout
-    health_check: "30s"         # Health check timeout
-    shutdown_grace_period: "30s" # Graceful shutdown timeout
-
-  # Metrics collection
-  metrics:
-    enabled: true
-    collection_interval: "30s"   # Collect metrics every 30 seconds
-    retention_period: "24h"      # Keep metrics for 24 hours
-    export_prometheus: true      # Export to Prometheus
-    prometheus_port: 9090        # Prometheus metrics port
-
-  # Backup configuration (existing)
-  backup:
-    enabled: true
-    retention_count: 5           # Keep 5 backups
-    retention_days: 7           # Keep backups for 7 days
-    compression_level: 9        # Maximum compression
-    cleanup_enabled: true       # Auto cleanup old backups
-    backup_on_update: true      # Backup before updates
-    backup_on_delete: true      # Backup before deletes
-
-# Production configuration for 500+ instances
-# Adjust these values based on your infrastructure capacity:
-#
-# For 100-200 instances:
-# - max_concurrent: 4
-# - batch.size: 10
-# - apis.bosh.requests_per_second: 10
-#
-# For 200-500 instances:
-# - max_concurrent: 6
-# - batch.size: 20
-# - apis.bosh.requests_per_second: 15
-#
-# For 500+ instances:
-# - max_concurrent: 8
-# - batch.size: 30
-# - apis.bosh.requests_per_second: 20
-#
-# Monitor your API response times and adjust accordingly.
-# If APIs start timing out, reduce concurrency and rate limits.
-reconciler:
+  max_concurrency: 4
+  batch_size: 10
+  retry_attempts: 3
   backup:
     enabled: true
     retention_count: 10
@@ -318,6 +192,55 @@ reconciler:
     backup_on_delete: true
 ```
 
+### Tuning With Environment Variables
+
+The remaining knobs have no config file key, so an operator sets them as environment variables only.
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `BLACKSMITH_RECONCILER_MAX_DEPLOYMENTS_PER_RUN` | `100` | Most deployments one run handles |
+| `BLACKSMITH_RECONCILER_QUEUE_SIZE` | `1000` | Work queue size |
+| `BLACKSMITH_RECONCILER_WORKER_POOL_SIZE` | `10` | Worker goroutines |
+| `BLACKSMITH_RECONCILER_COOLDOWN_PERIOD` | `2s` | Pause between batches |
+| `BLACKSMITH_RECONCILER_RETRY_INITIAL_DELAY` | `1s` | First retry delay, which doubles on each retry with 10 percent jitter |
+| `BLACKSMITH_RECONCILER_RETRY_MAX_DELAY` | `30s` | Longest retry delay |
+| `BLACKSMITH_RECONCILER_BATCH_DELAY` | `500ms` | Pause between batches |
+| `BLACKSMITH_RECONCILER_MAX_PARALLEL_BATCH` | `2` | Batches processed in parallel |
+| `BLACKSMITH_RECONCILER_ADAPTIVE_SCALING` | `true` | Adjust the batch size from observed performance |
+| `BLACKSMITH_RECONCILER_MIN_BATCH_SIZE` | `5` | Smallest adaptive batch |
+| `BLACKSMITH_RECONCILER_MAX_BATCH_SIZE` | `50` | Largest adaptive batch |
+| `BLACKSMITH_RECONCILER_RUN_TIMEOUT` | `15m` | Deadline for one whole run |
+| `BLACKSMITH_RECONCILER_SCAN_TIMEOUT` | `5m` | Deadline for the BOSH deployment scan |
+| `BLACKSMITH_RECONCILER_DISCOVERY_TIMEOUT` | `3m` | Deadline for Cloud Foundry instance discovery |
+| `BLACKSMITH_RECONCILER_VAULT_TIMEOUT` | `2m` | Deadline for Vault operations |
+| `BLACKSMITH_RECONCILER_HEALTH_TIMEOUT` | `30s` | Deadline for health checks |
+| `BLACKSMITH_RECONCILER_SHUTDOWN_TIMEOUT` | `30s` | Grace period at shutdown |
+| `BLACKSMITH_RECONCILER_METRICS_ENABLED` | `true` | Collect metrics in memory |
+| `BLACKSMITH_RECONCILER_METRICS_INTERVAL` | `30s` | How often metrics are collected |
+| `BLACKSMITH_RECONCILER_METRICS_RETENTION` | `24h` | How long metrics are kept |
+| `BLACKSMITH_RECONCILER_METRICS_PROMETHEUS` | `false` | Accepted, but nothing is exported yet (see [Metrics and Monitoring](#metrics-and-monitoring)) |
+| `BLACKSMITH_RECONCILER_METRICS_PORT` | `9090` | Accepted, but nothing listens on it |
+
+Durations take Go syntax such as `500ms` or `15m`, and a value that does not parse is ignored in favor of the default.
+
+The rate limits, circuit breakers, and connection settings for the three systems the reconciler talks to use one naming pattern, `BLACKSMITH_<SYSTEM>_<SETTING>`, where the system is `BOSH`, `CF`, or `VAULT`.
+
+| Setting | BOSH | CF | Vault |
+|---------|------|----|-------|
+| `REQUESTS_PER_SECOND` | `4` | `20` | `50` |
+| `BURST` | `2` | `10` | `20` |
+| `WAIT_TIMEOUT` | `5s` | `5s` | `3s` |
+| `CIRCUIT_BREAKER` (on or off) | `true` | `true` | `true` |
+| `FAILURE_THRESHOLD` | `5` | `3` | `5` |
+| `SUCCESS_THRESHOLD` | `2` | `2` | `2` |
+| `BREAKER_TIMEOUT` | `60s` | `30s` | `45s` |
+| `BREAKER_MAX_CONCURRENT` | `1` | `2` | `3` |
+| `TIMEOUT` | `30s` | `15s` | `10s` |
+| `MAX_CONNECTIONS` | `bosh.max_connections`, which defaults to `4` | `20` | `30` |
+| `KEEP_ALIVE` | `30s` | `30s` | `30s` |
+
+For example, `BLACKSMITH_BOSH_REQUESTS_PER_SECOND=2` slows the reconciler's calls to the director.
+
 ### Environment Variable Example
 
 ```bash
@@ -327,11 +250,11 @@ export BLACKSMITH_RECONCILER_INTERVAL=30m
 export BLACKSMITH_RECONCILER_DEBUG=false
 
 # Performance tuning
-export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=10
+export BLACKSMITH_RECONCILER_MAX_CONCURRENT=6
 export BLACKSMITH_RECONCILER_BATCH_SIZE=20
 export BLACKSMITH_RECONCILER_RETRY_ATTEMPTS=5
-export BLACKSMITH_RECONCILER_RETRY_DELAY=15s
-export BLACKSMITH_RECONCILER_CACHE_TTL=10m
+export BLACKSMITH_RECONCILER_RETRY_INITIAL_DELAY=2s
+export BLACKSMITH_BOSH_REQUESTS_PER_SECOND=8
 
 # Backup configuration
 export BLACKSMITH_RECONCILER_BACKUP_ENABLED=true
@@ -342,6 +265,8 @@ export BLACKSMITH_RECONCILER_BACKUP_CLEANUP=true
 export BLACKSMITH_RECONCILER_BACKUP_ON_UPDATE=true
 export BLACKSMITH_RECONCILER_BACKUP_ON_DELETE=true
 ```
+
+As a rough guide to sizing, a director with 100 to 200 instances is comfortable at the defaults. Between 200 and 500 instances, raise `MAX_CONCURRENT` to 6, `BATCH_SIZE` to 20, and `BLACKSMITH_BOSH_REQUESTS_PER_SECOND` to 15. Past 500 instances, try 8, 30, and 20. Watch the director's response times, and lower the concurrency and the rate limits if calls start to time out.
 
 ### Configuration Precedence
 
@@ -363,12 +288,7 @@ To disable backup creation entirely:
 export BLACKSMITH_RECONCILER_BACKUP_ENABLED=false
 ```
 
-Or in `blacksmith.conf`:
-```yaml
-reconciler:
-  backup:
-    enabled: false
-```
+A `false` in `blacksmith.conf` does not disable backups, because the loader reads it as unset and applies the default of `true`. Use the environment variable.
 
 ### Unlimited Backup Retention
 
@@ -472,89 +392,88 @@ Synchronizes the service instance index for fast lookups.
 - Ensures fast service instance lookups
 
 ### Phase 6: Orphan Handling
-Identifies and processes orphaned instances.
+Marks instances whose deployments have gone missing, and removes the marks that have gone unanswered. The next section describes the rules.
 
 **Orphan types detected**:
-- **CF Orphans**: CF service instances without BOSH deployments
-- **BOSH Orphans**: BOSH deployments without CF service instances
-- **Vault Orphans**: Vault entries without corresponding CF or BOSH resources
+- **Index orphans**: Vault index entries whose BOSH deployment no longer exists
+- **Unclaimed deployments**: BOSH deployments that have neither a Vault index entry nor a Cloud Foundry service instance
 
 ## Orphan Detection
 
-The reconciler identifies "orphaned" instances - service instances that exist in Vault but have no corresponding BOSH deployment.
+The reconciler handles an orphan in two steps, which are marking and sweeping. It never removes an entry the first time it finds the deployment missing.
 
-Orphaned instances may indicate:
-- Failed deployments that need cleanup
-- Manual BOSH deployment deletions
-- Incomplete deprovision operations
+### Marking
+
+On each run, the reconciler compares the Vault index against the deployments the director reports. When an indexed service instance has no deployment and no Cloud Foundry match, the reconciler marks the entry as orphaned. The mark records `orphaned`, `orphaned_at`, and an `orphaned_reason` of `no_bosh_deployment`. On every later run that still finds the deployment missing, the reconciler adds one to the entry's `orphan_check_count`.
+
+The reconciler marks nothing when the deployment scan comes back empty, because an empty scan is more likely a failed scan than an empty director. When a deployment shows up again, the reconciler clears the mark and counts.
+
+### Removing marked entries
+
+A marked entry stays in the index until one of two limits is reached, and whichever comes first wins.
+
+- The entry was marked more than 24 hours ago.
+
+- The reconciler has found the deployment missing on 24 runs.
+
+Every start of the broker resets the clock on all marked entries, so operators get a fresh 24 hours after a redeploy to investigate before anything is removed. Removing an entry deletes the index record only. The instance's secrets stay in Vault, as they do after a normal deprovision, so they remain available for audits.
+
+### The faster sweep
+
+A separate sweep removes an entry without waiting for those limits, but only when the evidence is strong. It removes an index entry when all of these hold.
+
+- The entry is at least two hours old, so a provision that has not reached BOSH yet is not mistaken for an orphan.
+
+- The director answers a direct request for the deployment with a 404. A deployment that is missing from the list, or one with an empty manifest, does not count.
+
+- The director has no running task on that deployment.
+
+- The instance's task record in Vault shows no provision in flight and no action whose outcome is unknown.
+
+A tombstone, which is an entry the VM monitor marked `deleted` after the director answered 404, goes through the same checks. A tombstone that names no deployment has nothing left to confirm, so its age alone decides.
+
+Once the sweep removes an entry, it hands the entry's deployment to the CredHub cleanup, which is described under `credhub.cleanup` in [config.md](config.md).
+
+### Unclaimed deployments
+
+When Cloud Foundry discovery completes, the reconciler reports any BOSH deployment that has no index entry and no Cloud Foundry service instance, and it leaves that deployment alone. Adopting it would give the broker a live-looking instance for a service that no longer exists. Until a run with complete discovery has happened, the broker has no answer to give, and the console shows the list as unchecked.
+
+### Seeing what is marked
+
+`GET /b/orphans` lists every marked entry with the time left before removal, and it lists the unclaimed deployments. See [API Endpoints](#api-endpoints).
 
 ## Metrics and Monitoring
 
-The reconciler provides  metrics for operational monitoring and observability:
+The reconciler keeps operational metrics in memory while it runs.
 
-### Metrics Structure
+### What the Collector Tracks
 
-```go
-type Metrics struct {
-    TotalRuns            int64         // Total reconciliation runs
-    SuccessfulRuns       int64         // Successful runs
-    FailedRuns           int64         // Failed runs
-    TotalDuration        time.Duration // Total time spent reconciling
-    AverageDuration      time.Duration // Average reconciliation duration
-    LastRunDuration      time.Duration // Duration of last run
-    TotalDeployments     int64         // Total deployments scanned
-    TotalInstancesFound  int64         // Total instances matched
-    TotalInstancesSynced int64         // Total instances synchronized
-    TotalErrors          int64         // Total errors encountered
-}
-```
+- Total, successful, and failed reconciliation runs
 
-### Prometheus Metrics Export
+- The total, average, and last run duration
 
-The reconciler exports Prometheus-compatible metrics:
+- Deployments scanned, instances found, instances synchronized, and errors encountered
+
+### Prometheus Text Format
+
+The collector can render its counters in the Prometheus text format, with these names.
 
 ```
-# Reconciliation run counters
-blacksmith_reconciler_runs_total 42
-blacksmith_reconciler_runs_successful 40
-blacksmith_reconciler_runs_failed 2
-
-# Performance metrics
-blacksmith_reconciler_last_run_duration_seconds 45.123
-blacksmith_reconciler_deployments_total 150
-blacksmith_reconciler_instances_found_total 75
-blacksmith_reconciler_instances_synced_total 73
-blacksmith_reconciler_errors_total 3
+blacksmith_reconciler_runs_total
+blacksmith_reconciler_runs_successful
+blacksmith_reconciler_runs_failed
+blacksmith_reconciler_last_run_duration_seconds
+blacksmith_reconciler_deployments_total
+blacksmith_reconciler_instances_found_total
+blacksmith_reconciler_instances_synced_total
+blacksmith_reconciler_errors_total
 ```
 
-### Accessing Metrics
+### Reaching the Metrics
 
-```go
-// Get reconciler status
-status := reconciler.GetStatus()
+The broker does not expose reconciler metrics or status over HTTP. No route serves them, and `BLACKSMITH_RECONCILER_METRICS_PROMETHEUS` and `BLACKSMITH_RECONCILER_METRICS_PORT` are accepted but start no listener, so there is nothing for a Prometheus server to scrape. The collector keeps its numbers in memory for the running process.
 
-// Get detailed metrics
-metrics := reconciler.GetMetrics()
-
-// Get recent errors for debugging
-errors := reconciler.GetRecentErrors()
-
-// Export as Prometheus format
-prometheusMetrics := reconciler.PrometheusMetrics()
-```
-
-### Status Information
-
-```go
-type Status struct {
-    Running         bool
-    LastRunTime     time.Time
-    LastRunDuration time.Duration
-    InstancesFound  int
-    InstancesSynced int
-    Errors          []error
-}
-```
+To see what the reconciler is doing, read its log lines. Each run logs an `Index synchronized` line that counts the entries it updated, added, marked orphaned, un-orphaned, and removed. For the orphan state, call `GET /b/orphans`.
 
 ## Logging
 
@@ -600,16 +519,7 @@ Critical issues that require attention:
 The reconciler implements robust error handling:
 
 ### Retry Logic
-Failed operations are retried with exponential backoff:
-```go
-for attempt := 1; attempt <= maxRetries; attempt++ {
-    err := operation()
-    if err == nil {
-        break
-    }
-    time.Sleep(retryDelay * time.Duration(attempt))
-}
-```
+Failed operations are retried with exponential backoff. The first delay is one second and it doubles on each retry up to a limit of 30 seconds, with 10 percent jitter added. The number of attempts defaults to three. See [Tuning With Environment Variables](#tuning-with-environment-variables) for the settings.
 
 ### Partial Failure Handling
 The reconciler continues processing even when individual deployments fail:
@@ -618,26 +528,18 @@ The reconciler continues processing even when individual deployments fail:
 - Next reconciliation attempt will retry failed deployments
 
 ### Graceful Shutdown
-The reconciler supports graceful shutdown:
-```go
-// Stop reconciler gracefully
-reconciler.Stop()
-// Waits for current reconciliation to complete
-// Cancels scheduled reconciliations
-// Cleans up resources
-```
+When the broker stops, the reconciler stops its background workers and gives a running reconciliation up to 30 seconds to finish. `BLACKSMITH_RECONCILER_SHUTDOWN_TIMEOUT` changes that grace period.
 
 ## Performance Considerations
 
 ### Caching
 Deployment details are cached to reduce BOSH API calls:
-- Default TTL: 5 minutes
-- Cache is cleared on forced reconciliation
-- Stale cache entries are automatically purged
+- The cache lives for a fixed five minutes, and no setting changes that
+- Expired entries are dropped when they are next read
 
 ### Concurrency Control
 The reconciler processes deployments concurrently with limits:
-- Default: 5 concurrent operations
+- Default: 4 concurrent operations
 - Prevents overwhelming BOSH Director
 - Configurable based on deployment size
 
@@ -649,21 +551,25 @@ Large deployment lists are processed in batches:
 
 ## Troubleshooting
 
+In the examples below, `BROKER_USER` and `BROKER_PASS` hold the broker's basic-auth credentials, and `blacksmith.example.com` stands for the broker's address.
+
 ### Reconciler Not Starting
 
-Check if reconciler is enabled:
+Check whether the reconciler is enabled. The environment variable decides first, so a value of `false` there turns it off whatever the config file says.
 ```bash
 echo $BLACKSMITH_RECONCILER_ENABLED
 ```
 
-Check logs for initialization errors:
+Check the logs for initialization messages. A healthy start logs `Initializing deployment reconciler`, then the line `Reconciler interval:` with the interval and where it came from, and finally `Deployment reconciler started successfully`. A disabled reconciler logs `Deployment reconciler is disabled`.
 ```bash
 grep "reconciler" blacksmith.log
 ```
 
-Verify reconciler status through API:
+The reconciler waits up to 30 seconds for Vault to be ready. If Vault never answers, the log says the reconciler runs with degraded functionality.
+
+Confirm the interval the running reconciler uses. The answer holds `reconciler_interval`, and it carries a Vault-saved value when one exists.
 ```bash
-curl -s https://blacksmith.example.com/b/status | jq .reconciler
+curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/blacksmith/settings | jq .reconciler_interval
 ```
 
 ### CF Service Discovery Issues
@@ -727,20 +633,27 @@ grep "matching\|cross-reference" blacksmith.log
 Adjust concurrency settings:
 ```bash
 # Reduce concurrency for slower systems
-export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=2
+export BLACKSMITH_RECONCILER_MAX_CONCURRENT=2
 export BLACKSMITH_RECONCILER_BATCH_SIZE=5
 
-# Increase cache TTL to reduce API calls
-export BLACKSMITH_RECONCILER_CACHE_TTL=15m
+# Slow the reconciler's calls to the director
+export BLACKSMITH_BOSH_REQUESTS_PER_SECOND=2
 ```
 
-### Force Reconciliation
+### Orphans That Never Clear
 
-To trigger immediate reconciliation:
-```go
-// Programmatically
-reconciler.ForceReconcile()
+List the marked entries and the unclaimed deployments, with the time left before each removal:
+```bash
+curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/orphans | jq .
 ```
+
+An entry with a `seconds_left` of null has no limit the broker can time, and an entry with `due` set to true goes on the next run. An empty `unclaimed` list means something only when `unclaimed_known` is true, because the broker cannot say until a run has finished Cloud Foundry discovery. See [Orphan Detection](#orphan-detection) for the rules.
+
+### Changing the Interval or Forcing a Run
+
+Change the interval through the settings API or the Broker settings page in the console. The change takes effect at once. See [Changing the Interval at Runtime](#changing-the-interval-at-runtime).
+
+The broker has no route that starts a run on demand. The reconciler runs once when the broker starts and then on every interval, so lowering the interval or restarting the broker is how an operator gets a run sooner.
 
 ## Integration with Blacksmith
 
@@ -778,14 +691,14 @@ The reconciler integrates seamlessly with existing Blacksmith components using a
 ### Operational Guidelines
 
 1. **Regular Monitoring**: Check reconciler metrics and status regularly
-   - Monitor `blacksmith_reconciler_*` Prometheus metrics
-   - Check reconciler status via `/b/status` API endpoint
+   - Read the `Index synchronized` log line after each run
+   - Check `GET /b/orphans` for entries waiting for removal
    - Review error logs for failed reconciliation attempts
 
 2. **Appropriate Intervals**: Set reconciliation frequency based on environment:
-   - **Production**: 1-2 hours (stable, infrequent changes)
-   - **Staging**: 30-60 minutes (moderate change frequency)
-   - **Development**: 10-15 minutes (rapid iteration cycles)
+   - **Default**: 5 minutes
+   - **Stable environments**: 30 minutes to 2 hours when instances rarely change
+   - **Development**: 10 seconds is the shortest interval the reconciler accepts
    - **Large Environments**: Consider longer intervals to reduce system load
 
 3. **Resource Allocation**: Size resources appropriately:
@@ -799,20 +712,15 @@ The reconciler integrates seamlessly with existing Blacksmith components using a
 4. **Concurrency Tuning**: Adjust based on your infrastructure capacity:
    ```bash
    # For smaller environments
-   export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=3
+   export BLACKSMITH_RECONCILER_MAX_CONCURRENT=3
    export BLACKSMITH_RECONCILER_BATCH_SIZE=5
 
    # For larger, robust environments
-   export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=15
+   export BLACKSMITH_RECONCILER_MAX_CONCURRENT=15
    export BLACKSMITH_RECONCILER_BATCH_SIZE=25
    ```
 
-5. **Cache Management**: Optimize cache settings for your environment:
-   - **Stable environments**: Longer TTL (15-30 minutes)
-   - **Dynamic environments**: Shorter TTL (2-5 minutes)
-   - **Large deployments**: Balance between API load and data freshness
-
-6. **Backup Optimization**: Configure backup settings for storage efficiency:
+5. **Backup Optimization**: Configure backup settings for storage efficiency:
    ```bash
    # Space-conscious environments
    export BLACKSMITH_RECONCILER_BACKUP_COMPRESSION=9
@@ -825,14 +733,13 @@ The reconciler integrates seamlessly with existing Blacksmith components using a
 
 ### Operational Procedures
 
-7. **Error Investigation**: Investigate issues systematically:
-   - **CF Orphans**: May indicate incomplete deprovision operations
-   - **BOSH Orphans**: Could reveal manual deployment deletions
-   - **Vault Orphans**: Might suggest data corruption or migration issues
+6. **Error Investigation**: Investigate issues systematically:
+   - **Index orphans**: Usually mean someone deleted a deployment by hand, or a deprovision did not finish
+   - **Unclaimed deployments**: Often follow a deprovision that raced a provision
 
-8. **Maintenance Windows**: Plan reconciler operations around maintenance:
+7. **Maintenance Windows**: Plan reconciler operations around maintenance:
    - Disable reconciler during major CF/BOSH maintenance
-   - Force reconciliation after significant infrastructure changes
+   - Lower the interval for a while after significant infrastructure changes
    - Monitor increased activity after system restarts
 
 ## CF-Query Workflow Deep Dive
@@ -885,45 +792,50 @@ The reconciler operates with  security measures:
 
 ## API Endpoints
 
-The reconciler exposes several API endpoints for monitoring and control:
+Every route here sits behind the broker's basic authentication. The reconciler has no routes of its own for status, metrics, or starting a run.
 
-### Status Endpoint
+### Orphans
+
+`GET /b/orphans` lists the index entries the reconciler marked orphaned and the unclaimed BOSH deployments.
+
 ```bash
-# Get  reconciler status
-curl -s http://localhost:3000/b/status | jq .reconciler
-
-# Response format
-{
-  "running": true,
-  "last_run_time": "2024-08-30T14:30:00Z",
-  "last_run_duration": "45.123s",
-  "instances_found": 75,
-  "instances_synced": 73,
-  "errors": []
-}
+curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/orphans | jq .
 ```
 
-### Metrics Endpoint
-```bash
-# Get Prometheus metrics
-curl -s http://localhost:3000/b/metrics
+The answer has these fields.
 
-# Includes reconciler-specific metrics:
-# blacksmith_reconciler_runs_total
-# blacksmith_reconciler_runs_successful
-# blacksmith_reconciler_runs_failed
-# blacksmith_reconciler_last_run_duration_seconds
-# blacksmith_reconciler_deployments_total
-# blacksmith_reconciler_instances_found_total
-# blacksmith_reconciler_instances_synced_total
-# blacksmith_reconciler_errors_total
+- `orphans` holds the marked entries, soonest removal first. Each one has `instance_id`, `instance_name`, `deployment_name`, `service_id`, `plan_id`, `orphaned_at`, `reason`, and `check_count`. It also carries `seconds_left`, which is null when no limit can be timed, `due`, which is true when the next run removes the entry, and `basis`, which says whether the 24-hour limit (`age`) or the 24-run limit (`checks`) comes first.
+
+- `unclaimed` holds the deployments with no index entry and no Cloud Foundry instance, each with `deployment_name`, `instance_id`, and `first_seen`.
+
+- `unclaimed_known` is false until a run with complete Cloud Foundry discovery has happened, and `unclaimed_as_of` gives the time of that run.
+
+- `removal_after_seconds` is the 24-hour limit in seconds, and `timestamp` is the time of the answer.
+
+### Changing the Interval at Runtime
+
+`GET /b/blacksmith/settings` returns the settings the console shows, which include `reconciler_interval` as a Go duration string such as `5m0s`.
+
+`POST /b/blacksmith/settings` changes them. The body is JSON, and a field that is left out stays as it is.
+
+```bash
+curl -s -u "$BROKER_USER:$BROKER_PASS" -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"reconciler_interval": "10m"}' \
+  https://blacksmith.example.com/b/blacksmith/settings
 ```
 
-### Force Reconciliation
-```bash
-# Trigger immediate reconciliation (if API available)
-curl -X POST http://localhost:3000/b/reconcile
-```
+The value takes the same forms as the config file, a Go duration or bare seconds, and the shortest value it accepts is ten seconds. A shorter or unparseable value gets a 400 response that names the minimum. The broker saves the value to Vault first and applies it only after the save lands, so a failed save changes nothing and answers 500. The new interval takes effect at once, and it survives restarts because it is stored in Vault. It also outranks the environment variable and the config file, as [Interval Format and Precedence](#interval-format-and-precedence) explains.
+
+The Broker settings page in the console makes the same call.
+
+### Recent Changes
+
+The broker audits changes to its settings, including the reconciler interval, and it also audits Cloud Foundry endpoint registrations and instance restart and recreate attempts. `GET /b/blacksmith/changes` returns the newest records, and it takes `scope` (`settings`, `endpoints`, or `instances`, with `settings` the default) and `limit` (1 to 100, with 10 the default). A record shows the old and new values of a setting, and secret values never appear. The console shows the same records on its Settings and Endpoints pages.
+
+### Cleanup
+
+`POST /b/cleanup` answers 501 with a message that says manual cleanup is not implemented. The reconciler removes orphaned entries on its own, as [Orphan Detection](#orphan-detection) describes, and `GET /b/orphans` shows what is waiting.
 
 ## Future Enhancements
 
@@ -935,7 +847,7 @@ Planned improvements for the reconciler:
 4. **Custom Matching Rules** User-defined deployment matching strategies
 5. **Multi-Foundation Support** Enhanced CF integration across multiple foundations
 6. **Historical Analytics** Long-term trends and reconciliation performance analysis
-7. **Auto-remediation** Configurable automatic cleanup of orphaned instances
+7. **Operator-triggered cleanup** An on-demand job behind `POST /b/cleanup`, which answers 501 until it exists
 8. **Multi-BOSH Support** Reconcile across multiple BOSH Directors simultaneously
 9. **Advanced Backup Features** Incremental backups and cross-instance deduplication
 10. **Integration Testing** Built-in health checks and dependency validation
