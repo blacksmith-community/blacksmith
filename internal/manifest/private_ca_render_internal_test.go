@@ -9,24 +9,41 @@ import (
 )
 
 // A template's (( vault )) lookup has to trust vault.cacert, as every other
-// Vault connection of the broker does. graft builds that client from the
-// environment and cannot yet be given a CA, so this test waits for the graft
-// change that adds one, and then for the render engine to be built with it.
+// Vault connection of the broker does, and has to read a KV v1 mount as well
+// as a KV v2 one.
 //
 //nolint:paralleltest // GenManifest holds a process-wide lock, and the test sets process environment
 func TestGenManifestTrustsThePrivateCAOfVault(t *testing.T) {
-	t.Skip("pending the graft change that lets a render engine trust a private CA")
+	for name, testCase := range map[string]struct{ mount, response string }{
+		"KV v2": {
+			mount:    `{"data":{"path":"secret/","type":"kv","options":{"version":"2"}}}`,
+			response: `{"data":{"data":{"value":"vm-from-vault"},"metadata":{"version":1}}}`,
+		},
+		"KV v1": {
+			mount:    `{"data":{"path":"secret/","type":"kv","options":{"version":"1"}}}`,
+			response: `{"data":{"value":"vm-from-vault"}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			renderAgainstPrivateCAVault(t, testCase.mount, testCase.response)
+		})
+	}
+}
+
+//nolint:paralleltest // GenManifest holds a process-wide lock, and the test sets process environment
+func renderAgainstPrivateCAVault(t *testing.T, mount, response string) {
+	t.Helper()
 
 	vaultServer := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 
 		if strings.HasPrefix(req.URL.Path, "/v1/sys/internal/ui/mounts") {
-			_, _ = writer.Write([]byte(`{"data":{"path":"secret/","type":"kv","options":{"version":"2"}}}`))
+			_, _ = writer.Write([]byte(mount))
 
 			return
 		}
 
-		_, _ = writer.Write([]byte(`{"data":{"data":{"value":"vm-from-vault"},"metadata":{"version":1}}}`))
+		_, _ = writer.Write([]byte(response))
 	}))
 	t.Cleanup(vaultServer.Close)
 

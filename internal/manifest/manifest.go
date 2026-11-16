@@ -436,7 +436,7 @@ func GenManifest(p services.Plan, instanceID string, manifests ...map[string]int
 // reports an evaluation failure as a PartialEvaluationError, so the error
 // says which of the two steps failed.
 func mergeAndEvaluate(documents []graft.Document) (interface{}, error) {
-	engine, err := graft.NewEngine(graft.WithCacheDisabled())
+	engine, err := graft.NewEngine(renderEngineOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the graft engine for the manifest: %w", err)
 	}
@@ -453,6 +453,31 @@ func mergeAndEvaluate(documents []graft.Document) (interface{}, error) {
 	}
 
 	return merged.RawData(), nil
+}
+
+// renderEngineOptions builds the graft options of a render. A template's
+// (( vault )) lookup reaches the Vault named by VAULT_ADDR with the broker's
+// token, and trusts the configured vault.cacert in place of the system
+// roots, as every other Vault connection of the broker does. With
+// skip-verify on, no CA is passed, because skip-verify wins. Without a
+// Vault address the lookup keeps graft's own environment-driven reader.
+func renderEngineOptions() []graft.EngineOption {
+	address := os.Getenv("VAULT_ADDR")
+	if address == "" {
+		return []graft.EngineOption{graft.WithCacheDisabled()}
+	}
+
+	config := graft.VaultConfig{Address: address, Token: os.Getenv("VAULT_TOKEN")}
+
+	config.SkipVerify, _ = strconv.ParseBool(os.Getenv("VAULT_SKIP_VERIFY"))
+
+	if !config.SkipVerify {
+		vaultCA.mu.RLock()
+		config.CACert = vaultCA.path
+		vaultCA.mu.RUnlock()
+	}
+
+	return []graft.EngineOption{graft.WithCacheDisabled(), graft.WithVault(config), graft.WithBackendRegistry(true)}
 }
 
 func UploadReleasesFromManifest(ctx context.Context, raw string, director bosh.Director, loggerInstance logger.Logger, progress func(message string)) error {
