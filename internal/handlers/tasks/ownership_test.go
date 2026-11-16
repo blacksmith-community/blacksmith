@@ -26,6 +26,10 @@ const (
 	ownDeployment     = "lab-blacksmith"
 	stateProcessing   = "processing"
 	valkeyService     = "valkey"
+	outputTypeTask    = "task"
+	managedTaskRoute  = "/b/tasks/1"
+	managedOutputPath = "/b/tasks/1/output"
+	managedCancelPath = "/b/tasks/1/cancel"
 )
 
 var errIndexDown = errors.New("vault is down")
@@ -52,7 +56,7 @@ func newTaskScenario(t *testing.T, vault interfaces.Vault) taskScenario {
 	director.taskDetails[4] = bosh.Task{ID: 4, State: stateProcessing, Deployment: ownDeployment}
 
 	for id := 1; id <= 4; id++ {
-		director.taskOutputs[outputKey{id: id, typ: "task"}] = "output"
+		director.taskOutputs[outputKey{id: id, typ: outputTypeTask}] = "output"
 		director.taskOutputs[outputKey{id: id, typ: "result"}] = ""
 	}
 
@@ -133,9 +137,9 @@ func TestTaskRoutesServeATaskOfAManagedDeployment(t *testing.T) {
 	scenario := newTaskScenario(t, managingTaskVault())
 
 	for _, route := range []struct{ method, path string }{
-		{http.MethodGet, "/b/tasks/1"},
-		{http.MethodGet, "/b/tasks/1/output"},
-		{http.MethodPost, "/b/tasks/1/cancel"},
+		{http.MethodGet, managedTaskRoute},
+		{http.MethodGet, managedOutputPath},
+		{http.MethodPost, managedCancelPath},
 	} {
 		recorder := scenario.call(t, route.method, route.path)
 
@@ -188,9 +192,9 @@ func TestTaskRoutesAnswer503WhenTheIndexCannotBeRead(t *testing.T) {
 		scenario := newTaskScenario(t, vault)
 
 		for _, route := range []struct{ method, path string }{
-			{http.MethodGet, "/b/tasks/1"},
-			{http.MethodGet, "/b/tasks/1/output"},
-			{http.MethodPost, "/b/tasks/1/cancel"},
+			{http.MethodGet, managedTaskRoute},
+			{http.MethodGet, managedOutputPath},
+			{http.MethodPost, managedCancelPath},
 		} {
 			recorder := scenario.call(t, route.method, route.path)
 
@@ -237,5 +241,44 @@ func TestTaskRoutesAnswer404ForAnUnknownTask(t *testing.T) {
 		if recorder := scenario.call(t, route.method, route.path); recorder.Code != http.StatusNotFound {
 			t.Errorf("%s %s = %d, want 404", route.method, route.path, recorder.Code)
 		}
+	}
+}
+
+// Only the director's own answer that a task does not exist gives a 404.
+// An outage, a timeout, or any other failure of the read answers 502, so an
+// operator never reads a director that could not answer as a task that is
+// gone. A failed read of the output answers the same way.
+func TestTaskRoutesAnswer502WhenTheDirectorFails(t *testing.T) {
+	t.Parallel()
+
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, managedTaskRoute},
+		{http.MethodGet, managedOutputPath},
+		{http.MethodPost, managedCancelPath},
+	} {
+		scenario := newTaskScenario(t, managingTaskVault())
+		scenario.director.taskDetailErr[1] = errDirectorDown
+
+		recorder := scenario.call(t, route.method, route.path)
+		if recorder.Code != http.StatusBadGateway || codeOf(t, recorder) != apierr.CodeInternal {
+			t.Errorf("%s %s = %d %q, want 502 %s", route.method, route.path, recorder.Code, codeOf(t, recorder), apierr.CodeInternal)
+		}
+
+		if len(scenario.director.cancelledTasks) != 0 {
+			t.Errorf("%s %s cancelled %v", route.method, route.path, scenario.director.cancelledTasks)
+		}
+	}
+
+	scenario := newTaskScenario(t, managingTaskVault())
+	scenario.director.taskOutputErr[outputKey{id: 1, typ: outputTypeTask}] = errDirectorDown
+
+	if recorder := scenario.call(t, http.MethodGet, managedOutputPath); recorder.Code != http.StatusBadGateway {
+		t.Errorf("a failed output read = %d, want 502", recorder.Code)
+	}
+
+	scenario.director.taskOutputErr[outputKey{id: 1, typ: outputTypeTask}] = errFakeNotFound
+
+	if recorder := scenario.call(t, http.MethodGet, managedOutputPath); recorder.Code != http.StatusNotFound {
+		t.Errorf("an output the director does not have = %d, want 404", recorder.Code)
 	}
 }

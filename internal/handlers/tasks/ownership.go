@@ -11,7 +11,25 @@ import (
 	"blacksmith/internal/ownership"
 	"blacksmith/internal/ownname"
 	"blacksmith/pkg/http/response"
+
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
+
+// writeDirectorReadFailure answers a failed read of a task from the
+// director. It answers 404 only when the director says the task does not
+// exist, because an operator reads a 404 as a task that is gone. Any other
+// failure, such as an outage, a timeout, or a refusal, answers 502 with
+// internal_error, as the broker answers a director failure elsewhere.
+func writeDirectorReadFailure(writer http.ResponseWriter, err error, taskID int, what string) {
+	if boshapi.IsNotFound(err) {
+		response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("task %d %s not found", taskID, what))
+
+		return
+	}
+
+	apierr.Write(writer, apierr.New(http.StatusBadGateway, apierr.CodeInternal,
+		fmt.Sprintf("the director could not give %s of task %d, so nothing is known about it: %v", what, taskID, err)), http.StatusBadGateway)
+}
 
 // permitTask fetches the task from the director and reports it, and true,
 // when the request may go on. Otherwise it has answered and returns false.
@@ -28,7 +46,7 @@ func (h *Handler) permitTask(ctx context.Context, writer http.ResponseWriter, lo
 	task, err := h.director.GetTask(ctx, taskID)
 	if err != nil {
 		logger.Error("Failed to fetch task %d: %v", taskID, err)
-		response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("task %d not found", taskID))
+		writeDirectorReadFailure(writer, err, taskID, "task")
 
 		return nil, false
 	}

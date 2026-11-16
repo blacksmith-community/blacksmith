@@ -15,10 +15,13 @@ import (
 	"blacksmith/internal/handlers/tasks"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/testutil"
+
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
 var (
-	errFakeNotFound     = errors.New("not found")
+	errDirectorDown     = errors.New("dial tcp: connection refused")
+	errFakeNotFound     = &boshapi.APIError{StatusCode: http.StatusNotFound, Code: boshapi.ErrorCodeTaskNotFound, Description: "task not found"}
 	errTestBoom         = errors.New("boom")
 	errTestEventFailure = errors.New("event failure")
 )

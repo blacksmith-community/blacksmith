@@ -475,7 +475,7 @@ func (h *Handler) GetTaskOutput(writer http.ResponseWriter, req *http.Request, t
 	output, err := h.director.GetTaskOutput(ctx, taskID, outputType)
 	if err != nil {
 		logger.Error("Failed to fetch task output for %d (type=%s): %v", taskID, outputType, err)
-		response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("task %d output not found", taskID))
+		writeDirectorReadFailure(writer, err, taskID, "output")
 
 		return
 	}
