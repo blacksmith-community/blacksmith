@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/apierr"
 	bosh "blacksmith/internal/bosh"
 	boshssh "blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/interfaces"
@@ -52,9 +53,6 @@ const (
 	// SSH execution defaults.
 	defaultSSHMaxOutputSize = 1024 * 1024 // 1MB
 	defaultSSHTimeout       = 30          // 30 seconds
-
-	// Default Redis port.
-	defaultRedisPort = 6379
 
 	// Maximum certificate ID length.
 	maxCertificateIDLength = 24
@@ -724,46 +722,43 @@ func (h *Handler) GetInstanceManifest(writer http.ResponseWriter, req *http.Requ
 
 // writeManifestResponse writes the manifest response.
 
-// GetInstanceCredentials returns credentials for a service instance.
+// GetInstanceCredentials returns the credentials Vault holds for a service
+// instance. When it cannot, it answers an error that says why, and it never
+// answers a made-up set. A 404 means nothing is stored for the instance, and
+// a 503 means Vault is not configured or does not answer.
 func (h *Handler) GetInstanceCredentials(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("instance-credentials")
 	logger.Debug("Getting credentials for instance: %s", instanceID)
 
-	if h.vault != nil {
-		var creds map[string]interface{}
+	if h.vault == nil {
+		logger.Error("Vault not configured")
+		response.WriteErrorCode(writer, http.StatusServiceUnavailable, apierr.CodeVaultUnavailable,
+			"credentials are not available because Vault is not configured")
 
-		path := instanceID + "/credentials"
+		return
+	}
 
-		exists, err := h.vault.Get(req.Context(), path, &creds)
-		if err != nil {
-			logger.Error("Failed to fetch credentials from Vault: %v", err)
-			response.HandleJSON(writer, map[string]interface{}{
-				"error": fmt.Sprintf("Failed to fetch credentials: %v", err),
-			}, nil)
+	var creds map[string]interface{}
 
-			return
-		}
+	exists, err := h.vault.Get(req.Context(), instanceID+"/credentials", &creds)
+	if err != nil {
+		logger.Error("Failed to fetch credentials from Vault: %v", err)
+		response.WriteErrorCode(writer, http.StatusServiceUnavailable, apierr.CodeVaultUnavailable,
+			"credentials are not available because Vault did not answer")
 
-		if exists && creds != nil {
-			logger.Debug("Retrieved credentials for instance %s from Vault", instanceID)
-			response.HandleJSON(writer, creds, nil)
+		return
+	}
 
-			return
-		}
-
+	if !exists || len(creds) == 0 {
 		logger.Debug("No credentials found in Vault for instance %s", instanceID)
+		response.WriteErrorCode(writer, http.StatusNotFound, apierr.CodeNotFound,
+			"credentials are not available because nothing is stored for this instance")
+
+		return
 	}
 
-	// Return placeholder if Vault is not configured or credentials not found
-	credentials := map[string]interface{}{
-		"host":     "10.0.0.1",
-		"port":     defaultRedisPort,
-		"username": "admin",
-		"password": "***",
-		"uri":      fmt.Sprintf("%s://admin:***@10.0.0.1:%d", extractServiceType(instanceID), defaultRedisPort),
-	}
-
-	response.HandleJSON(writer, credentials, nil)
+	logger.Debug("Retrieved credentials for instance %s from Vault", instanceID)
+	response.HandleJSON(writer, creds, nil)
 }
 
 // GetInstanceDetails returns detailed info for a service instance.
@@ -2904,26 +2899,4 @@ func buildTaskEvent(boshEvent boshEventData) bosh.TaskEvent {
 	}
 
 	return event
-}
-
-// extractServiceType attempts to extract service type from deployment name.
-func extractServiceType(deploymentName string) string {
-	if strings.HasPrefix(deploymentName, serviceTypeRedis+"-") {
-		return serviceTypeRedis
-	}
-
-	if strings.HasPrefix(deploymentName, serviceTypeRabbitMQ+"-") {
-		return serviceTypeRabbitMQ
-	}
-
-	if strings.HasPrefix(deploymentName, "postgresql-") {
-		return "postgresql"
-	}
-
-	parts := strings.Split(deploymentName, "-")
-	if len(parts) > 0 {
-		return parts[0]
-	}
-
-	return "unknown"
 }
