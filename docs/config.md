@@ -589,7 +589,7 @@ The `ssh` section configures SSH connection behavior for all SSH operations incl
 ```yaml
 # New location (recommended)
 ssh:
-  enabled: true                    # SSH functionality is always on; see below
+  enabled: true                    # SSH functionality (default: true)
   ui_terminal_enabled: true        # SSH terminal UI in the web interface (default: true)
   keep_alive: 10                   # Keep-alive interval in seconds (default: 10)
   timeout: 600                     # Overall timeout in seconds (default: 600)
@@ -615,12 +615,12 @@ bosh:
 #### `enabled` (boolean)
 **Default:** `true`
 
-The loader reads a `false` here as unset and applies `true`, so the file cannot turn SSH off.
+The key defaults to `true` when it is absent from the file, and an explicit `false` is kept as written. The broker does not read this key anywhere else today, so setting it to `false` does not hide the terminal. Use `ui_terminal_enabled` for that.
 
 #### `ui_terminal_enabled` (boolean)
 **Default:** `true`
 
-This setting controls whether the web interface offers the SSH terminal, and it only affects the web interface, never the backend SSH functionality. The loader reads a `false` here as unset and applies `true`, so the configuration file cannot turn the terminal off. The terminal is always available, and no other setting or runtime toggle hides it.
+This setting controls whether the web interface offers the SSH terminal, and it affects only the web interface, never the backend SSH functionality. The key defaults to `true` when it is absent from the file, and an explicit `false` turns the terminal off. With the terminal off, the web interface hides its SSH terminal buttons, the WebSocket SSH endpoints for the Blacksmith deployment and for service instances answer 403 Forbidden, and `GET /b/config/ssh/ui-terminal-status` reports `enabled` as `false`. A deployment that wants no web-based terminal access can set it to `false` and still keep the backend SSH functionality.
 
 #### `keep_alive` (integer)
 **Default:** `10`
