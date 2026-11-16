@@ -615,12 +615,34 @@ bosh:
 #### `enabled` (boolean)
 **Default:** `true`
 
-The key defaults to `true` when it is absent from the file, and an explicit `false` is kept as written. The broker does not read this key anywhere else today, so setting it to `false` does not hide the terminal. Use `ui_terminal_enabled` for that.
+The key defaults to `true` when it is absent from the file, and an explicit `false` turns SSH off for the whole broker. When it is `false`, the broker refuses every SSH-backed entry point with a 403 answer, the error code `ssh_disabled`, and a message that starts "SSH is disabled". Those entry points fall into five groups.
+
+- The terminal and command routes
+
+  The two terminal WebSockets, `/b/blacksmith/ssh/stream` and `/b/{id}/ssh/stream`, along with `/b/ssh/status` and `/b/{id}/ssh/execute`.
+
+- The RabbitMQ routes
+
+  The SSH, `rabbitmqctl`, and plugins routes under `/b/{id}/rabbitmq/`.
+
+- The trusted-certificate routes
+
+  `GET`, `POST`, and `DELETE` on `/b/{id}/certificates/trusted`, and the `/trusted/file` route beneath it.
+
+- The batch operations
+
+  `/b/upgrade/commands/preview`, and `POST /b/upgrade/tasks` with the kind `command`. Certificate rotation in patch mode is refused too, which covers its preview, its create, and its preflight.
+
+- The runners
+
+  The patch and command runners open no session either, so a task created before the switch went off opens none.
+
+`GET /b/upgrade/commands/availability` reports commands as unavailable with the reason `ssh_disabled`, and `GET /b/config/ssh/ui-terminal-status` reports `enabled` as `false` when either this key or `ui_terminal_enabled` is off. The `ui_terminal_enabled` key is narrower, because it turns off only the two terminal WebSockets.
 
 #### `ui_terminal_enabled` (boolean)
 **Default:** `true`
 
-This setting controls whether the web interface offers the SSH terminal, and it affects only the web interface, never the backend SSH functionality. The key defaults to `true` when it is absent from the file, and an explicit `false` turns the terminal off. With the terminal off, the web interface hides its SSH terminal buttons, the WebSocket SSH endpoints for the Blacksmith deployment and for service instances answer 403 Forbidden, and `GET /b/config/ssh/ui-terminal-status` reports `enabled` as `false`. A deployment that wants no web-based terminal access can set it to `false` and still keep the backend SSH functionality.
+This setting controls whether the web interface offers the SSH terminal, and it affects only the web interface, never the backend SSH functionality. The key defaults to `true` when it is absent from the file, and an explicit `false` turns the terminal off. With the terminal off, the web interface hides its SSH terminal buttons, the two terminal WebSockets, `/b/blacksmith/ssh/stream` and `/b/{id}/ssh/stream`, answer 403 Forbidden, and `GET /b/config/ssh/ui-terminal-status` reports `enabled` as `false`. Every other SSH-backed route keeps working, so a deployment that wants no web-based terminal access can set this key to `false` and keep the rest of SSH. The `enabled` key above is the one that turns all of SSH off.
 
 #### `keep_alive` (integer)
 **Default:** `10`
