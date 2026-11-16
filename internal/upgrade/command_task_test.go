@@ -480,15 +480,20 @@ func (f *taskFixture) snapshot() UpgradeTask {
 func (f *taskFixture) waitFor(what string, done func(UpgradeTask) bool) UpgradeTask {
 	f.t.Helper()
 
-	var last UpgradeTask
+	deadline := waitDeadline(f.t)
 
-	waitUntil(f.t, what, func() bool {
-		last = f.snapshot()
+	for {
+		last := f.snapshot()
+		if done(last) {
+			return last
+		}
 
-		return done(last)
-	})
+		if time.Now().After(deadline) {
+			f.t.Fatalf("%s never happened, and the last task seen was %+v", what, last)
+		}
 
-	return last
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (f *taskFixture) assertNoCommandText() {
