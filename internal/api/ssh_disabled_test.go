@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -148,5 +149,36 @@ func TestTerminalOffLeavesOtherSSHRoutesOpen(t *testing.T) {
 
 	if strings.Contains(rec.Body.String(), "ssh_disabled") {
 		t.Errorf("ssh.enabled is true, yet the route was refused as SSH disabled: %s", rec.Body.String())
+	}
+}
+
+// With ssh.enabled false, the availability read says commands are off and
+// gives ssh_disabled as the reason, and it still answers 200.
+func TestCommandAvailabilityReportsSSHOff(t *testing.T) {
+	t.Parallel()
+
+	router := newSSHGateAPI(t, api.Dependencies{Config: &sshOffConfig{}})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/upgrade/commands/availability", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Enabled   bool   `json:"enabled"`
+		AllowRoot bool   `json:"allow_root"`
+		Reason    string `json:"reason"`
+	}
+
+	err := json.Unmarshal(rec.Body.Bytes(), &body)
+	if err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+
+	if body.Enabled || body.AllowRoot || body.Reason != "ssh_disabled" {
+		t.Errorf("got %+v, want commands off with reason ssh_disabled", body)
 	}
 }

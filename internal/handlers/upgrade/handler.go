@@ -575,16 +575,30 @@ func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, 
 // it is marked as not storable.
 func (h *Handler) CommandAvailability(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	response.JSON(w, http.StatusOK, commandAvailabilityAnswer{
+
+	answer := commandAvailabilityAnswer{
 		CommandAvailability: h.manager.Authorizer().Availability(),
 		MaxInFlightLimit:    h.manager.CommandMaxInFlightLimit(r.Context()),
-	})
+	}
+
+	// A command runs over SSH, so with ssh.enabled false commands are off
+	// whatever their own switches say. The answer is still a 200, because
+	// this is a status read, and the reason tells the console why.
+	if h.sshEnabled != nil && !h.sshEnabled() {
+		answer.CommandAvailability = upgrade.CommandAvailability{}
+		answer.Reason = apierr.CodeSSHDisabled
+	}
+
+	response.JSON(w, http.StatusOK, answer)
 }
 
 // commandAvailabilityAnswer is the body of the availability answer.
 type commandAvailabilityAnswer struct {
 	upgrade.CommandAvailability
 	MaxInFlightLimit int `json:"max_in_flight_limit"`
+	// Reason is set only when commands are off for a reason beyond their
+	// own switches, which today is ssh_disabled.
+	Reason string `json:"reason,omitempty"`
 }
 
 // PreviewCommand handles POST /b/upgrade/commands/preview. It takes the
