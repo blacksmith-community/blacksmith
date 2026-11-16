@@ -2452,7 +2452,9 @@ func (m *Manager) noteResumeLocked(task *UpgradeTask) {
 // processed before a restart, that is not paused, has no instance
 // settling or waiting for its reservation, and is not owned becomes owned
 // and is queued, once no lookup of a loaded deploy is still running. A cancelled upgrade with no
-// instance settling skips its pending instances. Anything else waits for
+// instance settling skips its pending instances, ends its idle ones, and
+// starts what follows the rest, as a cancel that finds no settle does,
+// so a cancel that landed while a settle held the task is not lost. Anything else waits for
 // its settles, the lookups, its resume, or its processor, and a manager
 // that is stopping queues nothing. With no BOSH director, an upgrade that
 // would be queued stays as it is, because it has nothing to deploy with,
@@ -2484,7 +2486,7 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	case settled && task.Status == TaskStatusCancelled:
 		skipped = m.skipPendingLocked(task)
 		ended = m.cancelIdleLocked(task)
-		finish = m.resumeCancelledLocked(task)
+		finish = m.settleCancelledLocked(task)
 	case settled && task.KindOrDefault() == TaskKindCommand && taskEndedLocked(task):
 		// A completed or failed command task an earlier build ended with
 		// a node unresolved cleans it as a cancelled one does.

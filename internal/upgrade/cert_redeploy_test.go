@@ -2361,6 +2361,45 @@ func TestCertificateCancelLoadedPauseAwaitsResolve(t *testing.T) {
 	expectReleased(t, manager)
 }
 
+// A cancel that lands while the loader's settle still holds the task
+// starts no verification, so when that settle ends, the cancelled task
+// must verify its done deploy as a cancel that finds no settle does, and
+// the instance must not stay held.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelDuringSettleVerifiesWhenItEnds(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.loadedVerifyPause(t)
+
+	// The loader's settle is still running, as it is when a cancel lands
+	// between the pause it records and the end of the settle.
+	manager.mu.Lock()
+	task := manager.tasks[certTaskID]
+	inst := &task.Instances[0]
+	manager.settling[certTaskID]++
+	manager.mu.Unlock()
+
+	env.director.failLists(0)
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	if got := current(t, manager).Instances[0].Status; got != InstanceStatusRunning {
+		t.Fatalf("expected the instance to stay running while the settle holds the task, got %s", got)
+	}
+
+	manager.endSettling(loadedDeploy{task: task, instance: inst})
+
+	got := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if got.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", got.Status)
+	}
+
+	expectReleased(t, manager)
+}
+
 // A loaded instance whose deploy saved no ID goes back to pending, and a
 // cancel then skips it, saying that its new versions are deploy_pending,
 // whether nothing processes the paused task or its processor waits out a
