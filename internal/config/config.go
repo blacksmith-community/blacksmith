@@ -751,16 +751,65 @@ func setSSHDefaults(config *Config) {
 
 // migrateSSHConfiguration migrates SSH configuration from old location to new location.
 func migrateSSHConfiguration(config *Config) {
-	// Support both bosh.ssh (deprecated) and top-level ssh
-	if boolSet(config.BOSH.SSH.Enabled) || config.BOSH.SSH.Timeout > 0 || config.BOSH.SSH.MaxConcurrent > 0 {
-		// Old configuration exists under bosh.ssh
-		if !boolSet(config.SSH.Enabled) && config.SSH.Timeout == 0 {
-			// New location is empty, migrate from old location
-			config.SSH = config.BOSH.SSH
+	// Support both bosh.ssh (deprecated) and top-level ssh. The legacy block
+	// fills only the fields the top-level block leaves unset, so a value the
+	// top-level block sets, a false included, is never overwritten.
+	legacy := config.BOSH.SSH
+	if legacy.Enabled == nil && legacy.UITerminalEnabled == nil && legacy.Timeout == 0 && legacy.MaxConcurrent == 0 {
+		return
+	}
 
-			logger.Get().Named("config").Info("Migrated SSH configuration from bosh.ssh to top-level ssh. Please update your configuration file.")
+	merged := mergeSSH(config.SSH, legacy)
+
+	logger.Get().Named("config").Info("Migrated SSH configuration from bosh.ssh to top-level ssh. Please update your configuration file.")
+
+	config.SSH = merged
+}
+
+// mergeSSH returns the primary SSH block with each field that it leaves
+// unset taken from the fallback.
+func mergeSSH(primary, fallback SSHConfig) SSHConfig {
+	if primary.Enabled == nil {
+		primary.Enabled = fallback.Enabled
+	}
+
+	if primary.UITerminalEnabled == nil {
+		primary.UITerminalEnabled = fallback.UITerminalEnabled
+	}
+
+	for _, pair := range []struct{ dst, src *int }{
+		{&primary.Timeout, &fallback.Timeout},
+		{&primary.ConnectTimeout, &fallback.ConnectTimeout},
+		{&primary.SessionInitTimeout, &fallback.SessionInitTimeout},
+		{&primary.OutputReadTimeout, &fallback.OutputReadTimeout},
+		{&primary.MaxConcurrent, &fallback.MaxConcurrent},
+		{&primary.MaxOutputSize, &fallback.MaxOutputSize},
+		{&primary.KeepAlive, &fallback.KeepAlive},
+		{&primary.RetryAttempts, &fallback.RetryAttempts},
+		{&primary.RetryDelay, &fallback.RetryDelay},
+		{&primary.WebSocket.ReadBufferSize, &fallback.WebSocket.ReadBufferSize},
+		{&primary.WebSocket.WriteBufferSize, &fallback.WebSocket.WriteBufferSize},
+		{&primary.WebSocket.HandshakeTimeout, &fallback.WebSocket.HandshakeTimeout},
+		{&primary.WebSocket.MaxMessageSize, &fallback.WebSocket.MaxMessageSize},
+		{&primary.WebSocket.PingInterval, &fallback.WebSocket.PingInterval},
+		{&primary.WebSocket.PongTimeout, &fallback.WebSocket.PongTimeout},
+		{&primary.WebSocket.SessionTimeout, &fallback.WebSocket.SessionTimeout},
+		{&primary.WebSocket.MaxSessions, &fallback.WebSocket.MaxSessions},
+	} {
+		if *pair.dst == 0 {
+			*pair.dst = *pair.src
 		}
 	}
+
+	if primary.WebSocket.Enabled == nil {
+		primary.WebSocket.Enabled = fallback.WebSocket.Enabled
+	}
+
+	if !primary.WebSocket.EnableCompression {
+		primary.WebSocket.EnableCompression = fallback.WebSocket.EnableCompression
+	}
+
+	return primary
 }
 
 // setSSHEnabledDefaults sets default enabled flags for SSH features.
@@ -830,11 +879,6 @@ func setSSHRetryDefaults(config *Config) {
 // clearDeprecatedSSHConfig clears the deprecated BOSH.SSH configuration.
 func clearDeprecatedSSHConfig(config *Config) {
 	config.BOSH.SSH = SSHConfig{}
-}
-
-// boolSet reports whether an optional bool is present and true.
-func boolSet(value *bool) bool {
-	return value != nil && *value
 }
 
 // IsSSHEnabled returns whether SSH-backed features may open sessions to VMs.
