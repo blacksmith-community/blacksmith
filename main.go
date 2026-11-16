@@ -32,6 +32,7 @@ import (
 	boshhandler "blacksmith/internal/handlers/bosh"
 	upgradehandler "blacksmith/internal/handlers/upgrade"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/manifest"
 	"blacksmith/internal/mutation"
 	"blacksmith/internal/planstore"
 	"blacksmith/internal/recovery"
@@ -330,12 +331,26 @@ func initializeVault(cfg *config.Config, logger loggerPkg.Logger) *internalVault
 	return vault
 }
 
+// removeVaultCAFile removes the file that holds a vault.cacert given as PEM
+// text, once the broker stops. It is a no-op until createVaultClient runs.
+//
+//nolint:gochecknoglobals // one CA file for the whole process
+var removeVaultCAFile = func() {}
+
 func createVaultClient(cfg *config.Config) *internalVault.Vault {
 	vault := internalVault.New(cfg.Vault.Address, "", cfg.Vault.Insecure)
 
 	err := vault.SetCACert(cfg.Vault.CACert)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vault.cacert is not usable: %s\n", err)
+		os.Exit(exitCodeError)
+	}
+
+	// The forge init scripts reach Vault through safe, which needs the CA
+	// as a file path. Neither error repeats the value.
+	removeVaultCAFile, err = manifest.SetVaultCACert(cfg.Vault.CACert)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vault.cacert is not usable for the init scripts: %s\n", err)
 		os.Exit(exitCodeError)
 	}
 
@@ -1623,6 +1638,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	sshService, apiHandler, upgradeHandler, certificates, changes := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
+	defer removeVaultCAFile()
 
 	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancelWithCause, logger)
 

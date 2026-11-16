@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -157,9 +158,13 @@ func buildInitCommand(ctx context.Context, plan services.Plan, instanceID string
 	return cmd
 }
 
+// vaultCAFileMode keeps the CA file readable by the broker alone.
+const vaultCAFileMode = 0o600
+
 func buildInitEnvironment(instanceID, planID string) []string {
 	env := appendSafeBinaryToPath(os.Environ())
 	env = appendVaultToken(env)
+	env = appendVaultCACert(env)
 	env = appendBlacksmithVariables(env, instanceID, planID)
 
 	log := logger.Get().Named("manifest")
@@ -179,6 +184,87 @@ func appendSafeBinaryToPath(env []string) []string {
 	}
 
 	return env
+}
+
+// vaultCAPath is the file that init scripts trust for Vault, set by
+// SetVaultCACert.
+//
+//nolint:gochecknoglobals // one CA file for the whole process
+var vaultCA struct {
+	mu   sync.RWMutex
+	path string
+}
+
+// SetVaultCACert records the CA that the forge init scripts trust when they
+// reach Vault through safe, which reads VAULT_CACERT as the path of a PEM
+// file. The value is vault.cacert, which may be a path or PEM text. PEM text
+// goes to a file with mode 0600 in a private directory. The returned
+// function removes that file and forgets the CA. An empty value leaves the
+// init scripts' environment as the operator set it.
+func SetVaultCACert(value string) (func(), error) {
+	if strings.TrimSpace(value) == "" {
+		return func() {}, nil
+	}
+
+	path := value
+	cleanup := func() { clearVaultCACert("") }
+
+	if strings.Contains(value, "-----BEGIN") {
+		dir, err := os.MkdirTemp("", "blacksmith-vault-ca-")
+		if err != nil {
+			return nil, fmt.Errorf("cannot create a directory for the vault CA: %w", err)
+		}
+
+		path = filepath.Join(dir, "ca.pem")
+
+		err = os.WriteFile(path, []byte(value), vaultCAFileMode)
+		if err != nil {
+			_ = os.RemoveAll(dir)
+
+			return nil, fmt.Errorf("cannot write the vault CA file: %w", errors.Unwrap(err))
+		}
+
+		cleanup = func() { clearVaultCACert(dir) }
+	}
+
+	vaultCA.mu.Lock()
+	vaultCA.path = path
+	vaultCA.mu.Unlock()
+
+	return cleanup, nil
+}
+
+// clearVaultCACert forgets the CA and removes dir when it is not empty.
+func clearVaultCACert(dir string) {
+	vaultCA.mu.Lock()
+	vaultCA.path = ""
+	vaultCA.mu.Unlock()
+
+	if dir != "" {
+		_ = os.RemoveAll(dir)
+	}
+}
+
+// appendVaultCACert hands the init script the configured Vault CA in place
+// of any VAULT_CACERT it would inherit.
+func appendVaultCACert(env []string) []string {
+	vaultCA.mu.RLock()
+	path := vaultCA.path
+	vaultCA.mu.RUnlock()
+
+	if path == "" {
+		return env
+	}
+
+	kept := env[:0:0]
+
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "VAULT_CACERT=") {
+			kept = append(kept, entry)
+		}
+	}
+
+	return append(kept, "VAULT_CACERT="+path)
 }
 
 func appendVaultToken(env []string) []string {

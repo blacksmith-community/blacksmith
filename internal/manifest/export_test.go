@@ -27,3 +27,8 @@ func SetReleasePollTimes(t *testing.T, interval, deadline time.Duration) {
 func CreateJobFromVM(instance bosh.VM, plan services.Plan, deployment, networkDNS string) services.Job {
 	return createJobFromVM(instance, plan, deployment, networkDNS)
 }
+
+// BuildInitEnvironment exposes the environment a forge init script runs in.
+func BuildInitEnvironment(instanceID, planID string) []string {
+	return buildInitEnvironment(instanceID, planID)
+}
