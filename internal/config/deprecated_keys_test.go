@@ -34,13 +34,20 @@ func (w *warnCapture) Named(string) logger.Logger { return w }
 func readWithWarnings(t *testing.T, extra string) []string {
 	t.Helper()
 
+	return readRawWithWarnings(t, "vault:\n  address: https://vault.example.com:8200\nbosh:\n  address: https://10.0.0.6:25555\n  username: admin\n  password: bosh-secret\n"+extra)
+}
+
+// readRawWithWarnings loads the given config text and returns the warnings
+// the load logged.
+func readRawWithWarnings(t *testing.T, raw string) []string {
+	t.Helper()
+
 	capture := &warnCapture{NoOpLogger: &logger.NoOpLogger{}}
 	previous := logger.Get()
 
 	logger.Set(capture)
 	t.Cleanup(func() { logger.Set(previous) })
 
-	raw := "vault:\n  address: https://vault.example.com:8200\nbosh:\n  address: https://10.0.0.6:25555\n  username: admin\n  password: bosh-secret\n" + extra
 	path := filepath.Join(t.TempDir(), "blacksmith.yml")
 
 	err := os.WriteFile(path, []byte(raw), 0o600)
@@ -127,5 +134,21 @@ func TestReadConfigWarnsOfDeprecatedKeysSetToZero(t *testing.T) { //nolint:paral
 		if got := countMentions(lines, key); got != 1 {
 			t.Errorf("got %d warnings naming %s set to 0, want 1: %q", got, key, lines)
 		}
+	}
+}
+
+// With skip_ssl_validation set, vault.cacert is never consulted, so a config
+// that sets both gets one warning that says so.
+func TestReadConfigWarnsWhenVaultCACertIsIgnored(t *testing.T) { //nolint:paralleltest // swaps the global logger
+	base := "bosh:\n  address: https://10.0.0.6:25555\n  username: admin\n  password: bosh-secret\n"
+
+	both := readRawWithWarnings(t, "vault:\n  address: https://vault.example.com:8200\n  skip_ssl_validation: true\n  cacert: /etc/ca.pem\n"+base)
+	if got := countMentions(both, "vault.cacert"); got != 1 {
+		t.Errorf("got %d warnings about vault.cacert with both set, want 1: %q", got, both)
+	}
+
+	caOnly := readRawWithWarnings(t, "vault:\n  address: https://vault.example.com:8200\n  cacert: /etc/ca.pem\n"+base)
+	if got := countMentions(caOnly, "vault.cacert"); got != 0 {
+		t.Errorf("got %d warnings about vault.cacert with only the CA set, want 0: %q", got, caOnly)
 	}
 }

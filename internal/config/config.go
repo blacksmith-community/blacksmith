@@ -432,8 +432,17 @@ func loadConfigFromFile(path string) (Config, error) {
 	}
 
 	warnDeprecatedKeys(b)
+	warnIgnoredVaultCACert(&config)
 
 	return config, nil
+}
+
+// warnIgnoredVaultCACert warns when vault.cacert is set next to
+// skip_ssl_validation, which wins and leaves the CA unused.
+func warnIgnoredVaultCACert(config *Config) {
+	if config.Vault.Insecure && strings.TrimSpace(config.Vault.CACert) != "" {
+		logger.Get().Named("config").Warn("vault.cacert is ignored while vault.skip_ssl_validation is true")
+	}
 }
 
 // deprecatedKeys is the part of the config file that holds the deprecated
