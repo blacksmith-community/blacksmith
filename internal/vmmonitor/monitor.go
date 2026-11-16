@@ -750,10 +750,23 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 
 	startTime := time.Now()
 
-	for _, svc := range servicesDue {
-		waitGroup.Add(1)
+	for index, svc := range servicesDue {
+		// A shutdown signal stops the dispatch, whether or not a slot is
+		// free. The instances it did not reach go back to unclaimed, so the
+		// next cycle finds them due.
+		if ctx.Err() != nil || !acquireSlot(ctx, sem) {
+			for _, skipped := range servicesDue[index:] {
+				m.finishCheck(skipped.ServiceID)
+			}
 
-		sem <- struct{}{}
+			logger.Info("Check cycle stopped by shutdown: %d of %d services not checked", len(servicesDue)-index, len(servicesDue))
+
+			waitGroup.Wait()
+
+			return
+		}
+
+		waitGroup.Add(1)
 
 		go func(s *ServiceMonitor) {
 			defer waitGroup.Done()
@@ -779,6 +792,23 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 
 	elapsed := time.Since(startTime)
 	logger.Info("Check cycle completed: %d services checked in %v", len(servicesDue), elapsed)
+}
+
+// acquireSlot takes a slot of the check cycle's semaphore. It takes a free
+// slot at once, and it waits for a busy one only until the context ends.
+func acquireSlot(ctx context.Context, sem chan struct{}) bool {
+	select {
+	case sem <- struct{}{}:
+		return true
+	default:
+	}
+
+	select {
+	case sem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // checkService performs health check for a specific service.

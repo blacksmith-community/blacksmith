@@ -251,7 +251,7 @@ func TestAnEndedCheckLetsTheNextCycleCheckAgain(t *testing.T) {
 			},
 		},
 		{
-			name:   "a check run with a cancelled context",
+			name:   "a check that ends under a cancelled context",
 			listed: func(int) ([]bosh.VM, error) { return nil, errProxyNotFound },
 			cancel: true,
 		},
@@ -266,6 +266,11 @@ func TestAnEndedCheckLetsTheNextCycleCheckAgain(t *testing.T) {
 				listings int
 			)
 
+			// The cancelled case ends the first check's context while the
+			// check runs, so the check ends under a cancelled context.
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
 			director := goneDirector(nil)
 			director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) { return nil, errDirectorUnavailable }
 			director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) {
@@ -274,6 +279,10 @@ func TestAnEndedCheckLetsTheNextCycleCheckAgain(t *testing.T) {
 				count := listings
 				listMu.Unlock()
 
+				if ended.cancel && count == 1 {
+					cancel()
+				}
+
 				return ended.listed(count)
 			}
 
@@ -281,14 +290,6 @@ func TestAnEndedCheckLetsTheNextCycleCheckAgain(t *testing.T) {
 			monitor := vmmonitor.NewWithVault(vault, director, noClaims{})
 
 			addInFlight(t, monitor)
-
-			ctx := t.Context()
-			if ended.cancel {
-				cancelled, cancel := context.WithCancel(ctx)
-				cancel()
-
-				ctx = cancelled
-			}
 
 			monitor.CheckScheduledServices(ctx)
 			monitor.TriggerRefreshAll(t.Context())

@@ -1,6 +1,7 @@
 package vmmonitor_test
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -78,14 +79,7 @@ func peakChecks(t *testing.T, cfg interface{}, want, instances int) int {
 		return []bosh.VM{{ID: name + "-vm", JobState: vmStatusRunning}}, nil
 	}
 
-	entries := map[string]interface{}{}
-
-	for index := range instances {
-		id := fmt.Sprintf("instance-%d", index)
-		entry := oldEntry()
-		entry[nameKey] = "standalone-valkey-" + id
-		entries[id] = entry
-	}
+	entries := instanceEntries(instances)
 
 	monitor := vmmonitor.New(nil, director, noClaims{}, cfg)
 	monitor.UseVault(&indexVault{entries: entries})
@@ -185,4 +179,145 @@ func containsAll(line string, parts []string) bool {
 	}
 
 	return true
+}
+
+// After a shutdown signal the check cycle stops dispatching. The instances it
+// did not reach stay due, so the next cycle checks them.
+func TestCheckCycleStopsDispatchingAfterShutdown(t *testing.T) {
+	t.Parallel()
+
+	const instances = 4
+
+	var (
+		lock    sync.Mutex
+		listed  int
+		started = make(chan struct{}, instances)
+		release = make(chan struct{})
+	)
+
+	director := goneDirector(nil)
+	director.GetDeploymentVMsFn = func(name string) ([]bosh.VM, error) {
+		lock.Lock()
+		listed++
+		lock.Unlock()
+
+		started <- struct{}{}
+
+		<-release
+
+		return []bosh.VM{{ID: name + "-vm", JobState: vmStatusRunning}}, nil
+	}
+
+	entries := instanceEntries(instances)
+
+	monitor := vmmonitor.New(nil, director, noClaims{}, concurrencyConfig{workers: 1})
+	monitor.UseVault(&indexVault{entries: entries})
+
+	err := monitor.ScanAllServices(t.Context())
+	if err != nil {
+		t.Fatalf("the scan failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		monitor.CheckScheduledServices(ctx)
+	}()
+
+	<-started
+	cancel()
+	// The dispatch loop is parked on the full semaphore, so it sees the
+	// cancellation at once. The pause lets it do that before the running
+	// check frees its slot.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	<-done
+
+	lock.Lock()
+	first := listed
+	lock.Unlock()
+
+	if first != 1 {
+		t.Fatalf("the cycle listed %d instances after the shutdown signal, want only the one already running", first)
+	}
+
+	monitor.CheckScheduledServices(t.Context())
+
+	lock.Lock()
+	defer lock.Unlock()
+
+	if listed != instances {
+		t.Errorf("the next cycle brought the listings to %d, want %d, so the undispatched instances must stay due", listed, instances)
+	}
+}
+
+// instanceEntries returns the vault index entries of that many instances.
+func instanceEntries(count int) map[string]interface{} {
+	entries := map[string]interface{}{}
+
+	for index := range count {
+		id := fmt.Sprintf("instance-%d", index)
+		entry := oldEntry()
+		entry[nameKey] = "standalone-valkey-" + id
+		entries[id] = entry
+	}
+
+	return entries
+}
+
+// A cycle that starts with a cancelled context dispatches nothing, whether or
+// not a slot is free, and the next cycle still finds every instance due.
+func TestCancelledCycleDispatchesNothing(t *testing.T) {
+	t.Parallel()
+
+	const instances = 3
+
+	var (
+		lock   sync.Mutex
+		listed int
+	)
+
+	director := goneDirector(nil)
+	director.GetDeploymentVMsFn = func(name string) ([]bosh.VM, error) {
+		lock.Lock()
+		listed++
+		lock.Unlock()
+
+		return []bosh.VM{{ID: name + "-vm", JobState: vmStatusRunning}}, nil
+	}
+
+	monitor := vmmonitor.New(nil, director, noClaims{}, concurrencyConfig{workers: instances})
+	monitor.UseVault(&indexVault{entries: instanceEntries(instances)})
+
+	err := monitor.ScanAllServices(t.Context())
+	if err != nil {
+		t.Fatalf("the scan failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	monitor.CheckScheduledServices(ctx)
+
+	lock.Lock()
+	first := listed
+	lock.Unlock()
+
+	if first != 0 {
+		t.Fatalf("a cancelled cycle listed %d instances, want none", first)
+	}
+
+	monitor.CheckScheduledServices(t.Context())
+
+	lock.Lock()
+	defer lock.Unlock()
+
+	if listed != instances {
+		t.Errorf("the next cycle brought the listings to %d, want %d", listed, instances)
+	}
 }
