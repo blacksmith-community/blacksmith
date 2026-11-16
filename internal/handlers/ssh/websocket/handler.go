@@ -11,8 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/services"
+	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/http/response"
 	"github.com/fivetwenty-io/graft/pkg/yaml"
 )
@@ -25,7 +27,6 @@ const (
 // Error variables for err113 compliance.
 var (
 	errSSHTerminalUIDisabled           = errors.New("SSH Terminal UI is disabled in configuration")
-	errSSHDisabled                     = errors.New("SSH is disabled in configuration")
 	errMethodNotAllowedWebSocket       = errors.New("method not allowed: use GET or CONNECT for WebSocket")
 	errWebSocketSSHServiceNotAvailable = errors.New("WebSocket SSH service not available")
 	errServiceInstanceNotFound         = errors.New("service instance not found")
@@ -559,8 +560,7 @@ func (h *Handler) handleSSHStatus(writer http.ResponseWriter, _ *http.Request) {
 
 	if !h.config.IsSSHEnabled() {
 		logger.Info("SSH status denied - SSH is disabled in configuration")
-		writer.WriteHeader(http.StatusForbidden)
-		response.HandleJSON(writer, nil, errSSHDisabled)
+		response.WriteErrorCode(writer, http.StatusForbidden, apierr.CodeSSHDisabled, upgrade.SSHDisabledMessage)
 
 		return
 	}
@@ -585,8 +585,7 @@ func (h *Handler) refuseWhenDisabled(writer http.ResponseWriter, logger interfac
 	switch {
 	case !h.config.IsSSHEnabled():
 		logger.Info("SSH access denied - SSH is disabled in configuration")
-		writer.WriteHeader(http.StatusForbidden)
-		response.HandleJSON(writer, nil, errSSHDisabled)
+		response.WriteErrorCode(writer, http.StatusForbidden, apierr.CodeSSHDisabled, upgrade.SSHDisabledMessage)
 
 		return true
 	case !h.isSSHUIEnabled():

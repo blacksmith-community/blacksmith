@@ -1,13 +1,16 @@
 package websocket_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"blacksmith/internal/apierr"
 	"blacksmith/internal/handlers/ssh/websocket"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/testutil"
 	vaultPkg "blacksmith/pkg/vault"
@@ -91,5 +94,39 @@ func TestSSHStatusRefusedWhenSSHIsOff(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "SSH is disabled") {
 		t.Fatalf("got %d %s, want 403 SSH is disabled", rec.Code, rec.Body.String())
+	}
+}
+
+// Without the router in front, the handler's own refusal carries the same
+// ssh_disabled code and message as the gate, on the terminal and the status
+// routes.
+func TestSSHOffRefusalCarriesTheCode(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/b/ssh/status", "/b/blacksmith/ssh/stream"} {
+		handler := websocket.NewHandler(websocket.Dependencies{
+			Logger:           logger.Get().Named("test"),
+			Config:           offConfig{ssh: false, terminal: true},
+			WebSocketHandler: &sessionRecorder{},
+		})
+
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		var body struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+
+		err := json.Unmarshal(rec.Body.Bytes(), &body)
+		if err != nil {
+			t.Fatalf("%s: body %q is not JSON: %v", path, rec.Body.String(), err)
+		}
+
+		if body.Code != apierr.CodeSSHDisabled || body.Error != upgrade.SSHDisabledMessage {
+			t.Errorf("%s: got code %q and error %q, want %q and %q", path, body.Code, body.Error, apierr.CodeSSHDisabled, upgrade.SSHDisabledMessage)
+		}
 	}
 }
